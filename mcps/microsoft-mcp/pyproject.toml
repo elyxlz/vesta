@@ -1,0 +1,29 @@
+[project]
+name = "microsoft-mcp"
+version = "0.1.0"
+description = "Microsoft Graph MCP server for Outlook, Calendar, and OneDrive with multi-account support"
+readme = "README.md"
+authors = [
+    { name = "elyx", email = "elio@pascarelli.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "fastmcp>=2.8.0",
+    "httpx>=0.28.1",
+    "msal>=1.32.3",
+    "python-dotenv>=1.1.0",
+]
+
+[project.scripts]
+microsoft-mcp = "microsoft_mcp.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "mcp>=1.9.3",
+    "pytest>=8.4.0",
+    "pytest-asyncio>=1.0.0",
+]
