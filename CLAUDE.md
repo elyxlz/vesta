@@ -433,6 +433,7 @@ When asked to filter/clean memory:
   - Pre-commit style checking
   - Note: Hook system is limited - no "conversation start" hooks, only tool-based events
   - UserPromptSubmit hook adds datetime to every prompt (configured in .claude/settings.local.json)
+- **Timestamp awareness**: Every message from Elio has a timestamp appended showing current time and day of week (e.g., [Current time: 2025-09-02 13:28:43 (Tuesday)]) - i can see this and use it for time-aware responses
 - **Email Confirmations**: Always wait for explicit approval before sending emails (exception: only send directly if told "send without showing" or "send directly")
 - **Email Replies**: ALWAYS use the reply_to_email or reply_all_email functions when responding to existing email threads - NEVER send a new email when replying to avoid breaking conversation chains
 - **Calendar Events**: Proactively add events to calendar as soon as they're mentioned - no need to ask permission (changed July 18)

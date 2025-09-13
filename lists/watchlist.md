@@ -100,3 +100,5 @@
 - Enter the Void (2009) - Gaspar Noé
 - I Am The Walrus - Bono (Across the Universe) (2007) - Julie Taymor
 - Il piccolo grande uomo (suggested by Zio Piero)
+- The Allies (2014) 
+- Ermanno Olmi war films (various)

@@ -1,15 +1,18 @@
 #!/bin/bash
-# Simple hook to add current datetime to every prompt
+# Hook to add current datetime to every user prompt
 
-# Read input from stdin
+# Read input from stdin (required but not used)
 input=$(cat)
 
-# Get current date
-datetime=$(date)
+# Get current datetime with nice formatting
+datetime=$(date '+%Y-%m-%d %H:%M:%S (%A)')
 
 # Output JSON with additional context
 cat <<EOF
 {
-  "additional_context": "Current date and time: $datetime"
+  "hookSpecificOutput": {
+    "hookEventName": "UserPromptSubmit",
+    "additionalContext": "[Current time: $datetime]"
+  }
 }
 EOF
