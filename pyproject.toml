@@ -1,0 +1,20 @@
+[project]
+name = "vesta"
+version = "0.1.0"
+description = "Personal assistant agent that works autonomously on your behalf"
+readme = "README.md"
+authors = [
+    { name = "elyx", email = "elio@pascarelli.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "claude-code-sdk>=0.0.22",
+    "toml>=0.10.2",
+]
+
+[project.scripts]
+vesta = "vesta:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

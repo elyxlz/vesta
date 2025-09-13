@@ -1,0 +1,13 @@
+[[hooks]]
+event = "UserPromptSubmit"
+command = "uv run .claude/hooks/add-timestamp.py"
+
+[[hooks]]
+event = "PreCompact"
+command = "uv run .claude/hooks/memory-consolidate.py"
+matcher = "auto"  # Only on automatic compaction
+
+[[hooks]]
+event = "PreCompact" 
+command = "uv run .claude/hooks/memory-consolidate.py"
+matcher = "manual"  # Also on manual /compact

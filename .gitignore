@@ -1,0 +1,68 @@
+# Personal data
+CLAUDE.md
+notifications/
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Local development
+.env
+.env.local
+*.log
+*.sqlite
+*.db
+
+# Temporary files
+*.tmp
+*.bak
+*.orig
+tmp/
+
+# Test artifacts
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+
+# MCP data
+mcps/*/data/
+mcps/*/notifications/
+mcps/*/*.db
+mcps/*/*.sqlite
+
+# WhatsApp session
+mcps/whatsapp-mcp/whatsapp-bridge/whatsapp.db
+mcps/whatsapp-mcp/whatsapp-bridge/session/
+
+# Scheduler data
+mcps/scheduler-mcp/reminders.db
+
+# Microsoft MCP tokens
+mcps/microsoft-mcp/token_cache.json
+mcps/microsoft-mcp/.env
+
+# Old vesta folder (if still present)
+old_vesta/
+
+# Keep the template
+!CLAUDE.md.tmp

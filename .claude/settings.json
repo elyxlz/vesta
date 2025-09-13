@@ -1,14 +1,16 @@
 {
-  "hooks": {
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/add-datetime.sh"
-          }
-        ]
-      }
-    ]
+  "mcpServers": {
+    "microsoft": {
+      "command": "uv",
+      "args": ["run", "--directory", "mcps/microsoft-mcp", "microsoft-mcp"]
+    },
+    "whatsapp": {
+      "command": "uv",
+      "args": ["run", "--directory", "mcps/whatsapp-mcp/whatsapp-mcp-server", "main.py"]
+    },
+    "scheduler": {
+      "command": "uv",
+      "args": ["run", "--directory", "mcps/scheduler-mcp", "scheduler-mcp"]
+    }
   }
 }

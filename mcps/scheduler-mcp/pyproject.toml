@@ -1,0 +1,16 @@
+[project]
+name = "scheduler-mcp"
+version = "0.1.0"
+description = "Scheduler MCP for setting reminders and timed notifications"
+requires-python = ">=3.12"
+dependencies = [
+    "fastmcp>=2.8.0",
+    "apscheduler>=3.10.0",
+]
+
+[project.scripts]
+scheduler-mcp = "scheduler_mcp.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
