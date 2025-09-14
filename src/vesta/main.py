@@ -4,6 +4,7 @@ import os
 import logging
 import signal
 import subprocess
+import threading
 from pathlib import Path
 from datetime import datetime, timedelta
 
@@ -62,8 +63,7 @@ class Colors:
 CLIENT = None
 CONVERSATION_HISTORY = []
 SHUTDOWN_EVENT: asyncio.Event | None = None
-SHUTDOWN_COUNT = 0
-SHUTDOWN_PRINTED = False
+SHUTDOWN_LOCK = threading.Lock()
 
 def load_prompts():
     prompts = []
@@ -186,20 +186,22 @@ async def check_context_usage():
     if total_tokens >= MAX_CONTEXT_TOKENS:
         await preserve_memory()
 
-def signal_handler(signum, frame):
-    global SHUTDOWN_COUNT, SHUTDOWN_PRINTED
+signal_handler_state = {"first_call": True, "count": 0}
 
-    if SHUTDOWN_COUNT == 0:
-        SHUTDOWN_COUNT = 1
-        if not SHUTDOWN_PRINTED:
-            print(f"\n{Colors.YELLOW}📝 Preserving memory...{Colors.RESET}")
-            SHUTDOWN_PRINTED = True
-        if SHUTDOWN_EVENT:
-            SHUTDOWN_EVENT.set()
-    elif SHUTDOWN_COUNT >= 1:
-        print(f"\n{Colors.YELLOW}⚡ Force shutdown!{Colors.RESET}")
-        import os
-        os._exit(0)
+def signal_handler(signum, frame):
+    with SHUTDOWN_LOCK:
+        signal_handler_state["count"] += 1
+
+        if signal_handler_state["count"] == 1:
+            if signal_handler_state["first_call"]:
+                print(f"\n{Colors.YELLOW}📝 Preserving memory...{Colors.RESET}")
+                signal_handler_state["first_call"] = False
+            if SHUTDOWN_EVENT:
+                SHUTDOWN_EVENT.set()
+        elif signal_handler_state["count"] > 2:  # Allow some buffer for duplicate signals
+            print(f"\n{Colors.YELLOW}⚡ Force shutdown!{Colors.RESET}")
+            import os
+            os._exit(0)
 
 async def graceful_shutdown():
     try:
