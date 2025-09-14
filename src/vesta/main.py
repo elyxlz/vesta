@@ -124,7 +124,13 @@ def signal_handler(signum, frame):
             os._exit(0)
 
 async def graceful_shutdown():
-    await preserve_memory()
+    try:
+        await asyncio.wait_for(preserve_memory(), timeout=20.0)
+    except asyncio.TimeoutError:
+        print(f"{C['yellow']}⚠️ Memory preservation timeout{C['reset']}")
+    except Exception as e:
+        print(f"{C['yellow']}⚠️ Memory error: {e}{C['reset']}")
+
     CONVERSATION_HISTORY.clear()
     try:
         if CLIENT: await CLIENT.__aexit__(None, None, None)
@@ -213,6 +219,9 @@ async def run_vesta():
             try:
                 msg, is_user = await asyncio.wait_for(message_queue.get(), timeout=1.0)
 
+                # Add natural delay before typing
+                await asyncio.sleep(0.8 + datetime.now().microsecond / 3000000)  # 0.8-1.1s random delay
+
                 # Show typing indicator
                 await show_typing()
 
@@ -296,7 +305,7 @@ async def run_vesta():
     except asyncio.TimeoutError: pass
 
     try:
-        await asyncio.wait_for(graceful_shutdown(), timeout=15.0)  # More time for memory preservation
+        await asyncio.wait_for(graceful_shutdown(), timeout=30.0)  # More time for memory preservation
     except asyncio.TimeoutError:
         print(f"{C['yellow']}⚠️ Shutdown timeout{C['reset']}")
 

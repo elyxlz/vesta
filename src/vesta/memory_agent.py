@@ -62,9 +62,12 @@ Check MEMORY.md and update it with any new important information from this conve
         await client.__aenter__()
         await client.query(prompt)
 
-        # Let the agent handle the response
-        async for _ in client.receive_response():
-            pass  # Agent will use Read/Write tools directly
+        # Let the agent handle the response with timeout
+        try:
+            async for _ in client.receive_response():
+                pass  # Agent will use Read/Write tools directly
+        except asyncio.TimeoutError:
+            print(f"⚠️ Memory agent timeout")
 
         print(f"✅ Memory preservation complete")
     except Exception as e:
