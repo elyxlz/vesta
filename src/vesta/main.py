@@ -203,12 +203,24 @@ async def run_vesta():
         else:
             print(f"{C['dim']}[{timestamp}]{C['reset']} {C['yellow']}{text}{C['reset']}")
 
+    async def show_typing():
+        timestamp = datetime.now().strftime("%I:%M %p")
+        print(f"{C['dim']}[{timestamp}]{C['reset']} {C['magenta']}vesta{C['reset']} {C['dim']}is typing...{C['reset']}", end='', flush=True)
+
     async def process_queue():
         assert SHUTDOWN_EVENT is not None
         while not SHUTDOWN_EVENT.is_set():
             try:
                 msg, is_user = await asyncio.wait_for(message_queue.get(), timeout=1.0)
+
+                # Show typing indicator
+                await show_typing()
+
                 responses = await send_message(msg, show_in_chat=is_user)
+
+                # Clear typing indicator line
+                print(f"\r\033[K", end='', flush=True)
+
                 for i, response in enumerate(responses):
                     if response and response.strip():
                         if i > 0: await asyncio.sleep(0.3)
