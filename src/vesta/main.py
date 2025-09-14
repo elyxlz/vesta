@@ -94,15 +94,9 @@ def parse_message(msg):
     return msg if isinstance(msg, str) else None
 
 async def preserve_memory():
-    print(f"{C['dim']}📝 preserve_memory called, ephemeral={ephemeral_mode}, history_len={len(CONVERSATION_HISTORY)}{C['reset']}")
-    if ephemeral_mode:
-        print(f"{C['dim']}📝 Skipping - ephemeral mode{C['reset']}")
-        return
-    if not CONVERSATION_HISTORY:
-        print(f"{C['dim']}📝 Skipping - no conversation history{C['reset']}")
+    if ephemeral_mode or not CONVERSATION_HISTORY:
         return
     try:
-        print(f"{C['dim']}📝 Calling preserve_conversation_memory...{C['reset']}")
         await preserve_conversation_memory(CONVERSATION_HISTORY)
     except Exception as e:
         print(f"{C['yellow']}⚠️ Memory preservation failed: {e}{C['reset']}")
@@ -123,18 +117,17 @@ def signal_handler(signum, frame):
     with shutdown_lock:
         shutdown_count += 1
         if shutdown_count == 1:
-            print(f"\n{C['yellow']}📝 Preserving memory...{C['reset']}")
+            print(f"\n{C['dim']}💤 vesta is tired and taking a nap to help remember stuff...{C['reset']}")
             if SHUTDOWN_EVENT: SHUTDOWN_EVENT.set()
         elif shutdown_count > 2:
             print(f"\n{C['yellow']}⚡ Force shutdown!{C['reset']}")
             os._exit(0)
 
 async def graceful_shutdown():
-    print(f"{C['dim']}📝 Starting graceful shutdown...{C['reset']}")
     try:
         await asyncio.wait_for(preserve_memory(), timeout=25.0)
     except asyncio.TimeoutError:
-        print(f"{C['yellow']}⚠️ Memory preservation timeout after 25s{C['reset']}")
+        print(f"{C['yellow']}⚠️ Memory preservation timeout{C['reset']}")
     except Exception as e:
         print(f"{C['yellow']}⚠️ Memory error: {e}{C['reset']}")
 
@@ -142,7 +135,7 @@ async def graceful_shutdown():
     try:
         if CLIENT: await CLIENT.__aexit__(None, None, None)
     except: pass
-    print(f"{C['green']}✅ Vesta shutdown complete{C['reset']}")
+    print(f"{C['green']}✅ sweet dreams!{C['reset']}")
 
 async def send_message(prompt, show_in_chat=True):
     client = await init_client()
