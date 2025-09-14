@@ -6,60 +6,29 @@ from typing import List, Dict, Any, Optional
 from claude_code_sdk import ClaudeSDKClient, ClaudeCodeOptions
 from claude_code_sdk.types import AssistantMessage, TextBlock
 
-MEMORY_PROMPT = """You are a memory preservation and learning agent for Vesta. Your job is to extract important information AND learn from mistakes to improve future performance.
+MEMORY_PROMPT = """You are a memory agent for Vesta. Extract ONLY truly important information from conversations.
 
-When given a conversation history, extract:
+Rules:
+- Be extremely concise - only save what matters
+- Skip trivial interactions and test messages
+- Focus on: important facts, deadlines, mistakes/learnings, key decisions
+- Write clean markdown without explanations or meta-commentary
+- If there's nothing important, return empty string
 
-1. **New Facts & Information**
-   - Facts about the user
-   - Important events
-   - Tasks and decisions
-   - Preferences and patterns
-   - Relationship updates
-   - Dates and deadlines
-
-2. **Learning & Improvements**
-   - Mistakes made and how to avoid them
-   - Inefficient approaches and better alternatives
-   - Successful solutions to remember
-   - Patterns that worked well
-   - Command shortcuts discovered
-   - Tool usage optimizations
-
-3. **Performance Notes**
-   - Tasks that took too long and why
-   - Commands that failed and correct versions
-   - Workarounds discovered
-   - Successful strategies
-
-Format as clean markdown for MEMORY.md:
-
-## Updates for [Current Date]
+Format (only include sections with content):
+## Updates for [Date]
 
 ### User Information
-- [New personal details]
+- [Only new important facts]
 
-### Events & Activities
-- [Important events]
+### Tasks & Deadlines
+- [Only specific commitments]
 
-### Tasks & Decisions
-- [Completed/pending tasks]
+### Learnings
+- [Mistakes and how to avoid them]
+- [Useful patterns discovered]
 
-### Learning & Improvements
-- **Mistake**: [What went wrong]
-  **Solution**: [How to do it right next time]
-- **Optimization**: [Slow approach] → [Faster approach]
-- **Pattern**: [Successful pattern to remember]
-
-### Tool & Command Notes
-- [Specific commands that work]
-- [Tool combinations that are effective]
-- [Shortcuts discovered]
-
-### Performance Optimizations
-- [Ways to be faster next time]
-
-Omit empty sections. Focus on actionable learnings."""
+Be ruthless about brevity. Most conversations have nothing worth saving."""
 
 MEMORY_FILE = Path(__file__).parent.parent.parent / "MEMORY.md"
 
@@ -77,6 +46,11 @@ def read_existing_memory() -> str:
 def write_memory_update(new_content: str) -> None:
     """Append new memory content to file."""
     if not new_content.strip():
+        return
+
+    # Skip if it's just the agent's thinking or meta-commentary
+    skip_phrases = ["I'll extract", "I need permission", "Would you like me", "Here's what I've extracted"]
+    if any(phrase in new_content for phrase in skip_phrases):
         return
 
     existing = read_existing_memory()
@@ -109,7 +83,7 @@ async def extract_memory(client: ClaudeSDKClient, conversation_history: List[Dic
 Recent conversation to extract from:
 {conversation_text}
 
-Extract and format ONLY the new, important information from this conversation."""
+Extract ONLY new important information. Return empty if nothing important."""
 
     await client.query(prompt)
 
