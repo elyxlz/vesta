@@ -253,9 +253,7 @@ async def send_message(prompt, show_in_chat=True):
 
 def print_header():
     print(f"\n{Colors.BRIGHT_CYAN}╔" + "═"*58 + "╗")
-    print("║" + " "*20 + f"{Colors.BRIGHT_YELLOW}🌟 VESTA v2.0{Colors.BRIGHT_CYAN}" + " "*25 + "║")
-    print("╠" + "═"*58 + "╣")
-    print("║  💬 Type and press Enter  |  🛑 Exit: Ctrl+C" + " "*10 + "║")
+    print("║" + " "*23 + f"{Colors.BRIGHT_YELLOW}🔥 VESTA{Colors.BRIGHT_CYAN}" + " "*27 + "║")
     print("╚" + "═"*58 + f"╝{Colors.RESET}\n")
 
 def start_whatsapp_bridge():
@@ -266,11 +264,15 @@ def start_whatsapp_bridge():
             # Always use --force to kill existing bridges first
             result = subprocess.run([str(script_path), "--force"], capture_output=True, text=True)
             if result.returncode == 0:
-                print(f"{Colors.BRIGHT_GREEN}✓ WhatsApp bridge started{Colors.RESET}")
+                print(f"{Colors.BRIGHT_GREEN}✓ WhatsApp bridge connected{Colors.RESET}")
+                return True
             else:
-                print(f"{Colors.YELLOW}⚠ WhatsApp bridge startup issue: {result.stderr}{Colors.RESET}")
+                print(f"{Colors.YELLOW}⚠ WhatsApp bridge issue: {result.stderr}{Colors.RESET}")
+                return False
         except Exception as e:
             print(f"{Colors.YELLOW}⚠ Could not start WhatsApp bridge: {e}{Colors.RESET}")
+            return False
+    return False
 
 async def run_vesta():
     global SHUTDOWN_EVENT
@@ -340,6 +342,8 @@ async def run_vesta():
     async def monitor_system():
         nonlocal last_proactive
         assert SHUTDOWN_EVENT is not None
+        last_bridge_check = datetime.now()
+        bridge_check_interval = timedelta(seconds=30)  # Check bridge every 30 seconds
 
         while not SHUTDOWN_EVENT.is_set():
             try:
@@ -349,6 +353,21 @@ async def run_vesta():
 
             if SHUTDOWN_EVENT.is_set():
                 break
+
+            # Check WhatsApp bridge health
+            now = datetime.now()
+            if now - last_bridge_check >= bridge_check_interval:
+                # Check if bridge is running by looking for the process
+                check_result = subprocess.run(
+                    ["pgrep", "-f", "whatsapp-bridge"],
+                    capture_output=True,
+                    text=True
+                )
+                if not check_result.stdout.strip():
+                    # Bridge is not running, restart it
+                    print_chat("🔄 WhatsApp bridge disconnected, restarting...", "System")
+                    start_whatsapp_bridge()
+                last_bridge_check = now
 
             notifications = await process_notifications()
             for notif in notifications:
@@ -376,7 +395,6 @@ async def run_vesta():
                 print_chat(display, "System")
                 await message_queue.put((prompt, True))
 
-            now = datetime.now()
             if now - last_proactive >= proactive_interval:
                 print_chat("⏰ Running 30-minute check...", "System")
                 await message_queue.put(("It's been 30 minutes. Is there anything useful you could do right now?", False))
