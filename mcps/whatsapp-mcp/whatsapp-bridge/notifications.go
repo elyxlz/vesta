@@ -7,11 +7,10 @@ import (
 	"time"
 )
 
+var NotificationsDir string = "../../../notifications"
+
 func WriteNotification(chatJID, chatName, sender, content string, mediaType string) {
-	notifDir := os.Getenv("NOTIFICATIONS_DIR")
-	if notifDir == "" {
-		notifDir = "../../../notifications"
-	}
+	notifDir := NotificationsDir
 	os.MkdirAll(notifDir, 0755)
 
 	data, _ := json.MarshalIndent(map[string]interface{}{

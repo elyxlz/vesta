@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/binary"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"math"
 	"math/rand"
@@ -31,7 +32,6 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// Message represents a chat message for our client
 type Message struct {
 	Time      time.Time
 	Sender    string
@@ -41,25 +41,20 @@ type Message struct {
 	Filename  string
 }
 
-// Database handler for storing message history
 type MessageStore struct {
 	db *sql.DB
 }
 
-// Initialize message store
 func NewMessageStore() (*MessageStore, error) {
-	// Create directory for database if it doesn't exist
 	if err := os.MkdirAll("store", 0755); err != nil {
 		return nil, fmt.Errorf("failed to create store directory: %v", err)
 	}
 
-	// Open SQLite database for messages
 	db, err := sql.Open("sqlite3", "file:store/messages.db?_foreign_keys=on")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open message database: %v", err)
 	}
 
-	// Create tables if they don't exist
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS chats (
 			jid TEXT PRIMARY KEY,
@@ -93,12 +88,10 @@ func NewMessageStore() (*MessageStore, error) {
 	return &MessageStore{db: db}, nil
 }
 
-// Close the database connection
 func (store *MessageStore) Close() error {
 	return store.db.Close()
 }
 
-// Store a chat in the database
 func (store *MessageStore) StoreChat(jid, name string, lastMessageTime time.Time) error {
 	_, err := store.db.Exec(
 		"INSERT OR REPLACE INTO chats (jid, name, last_message_time) VALUES (?, ?, ?)",
@@ -107,7 +100,6 @@ func (store *MessageStore) StoreChat(jid, name string, lastMessageTime time.Time
 	return err
 }
 
-// Store a message in the database
 func (store *MessageStore) StoreMessage(id, chatJID, sender, content string, timestamp time.Time, isFromMe bool,
 	mediaType, filename, url string, mediaKey, fileSHA256, fileEncSHA256 []byte, fileLength uint64) error {
 	// Only store if there's actual content or media
@@ -361,12 +353,24 @@ func sendWhatsAppMessage(client *whatsmeow.Client, recipient string, message str
 		msg.Conversation = proto.String(message)
 	}
 
+	// Set online presence
+	client.SendPresence(types.PresenceAvailable)
+
+	// Send typing indicator
+	client.SendChatPresence(recipientJID, types.ChatPresenceComposing, types.ChatPresenceMediaText)
+
+	// Small delay to show typing
+	time.Sleep(1 * time.Second)
+
 	// Send message
 	_, err = client.SendMessage(context.Background(), recipientJID, msg)
 
 	if err != nil {
 		return false, fmt.Sprintf("Error sending message: %v", err)
 	}
+
+	// Clear typing indicator
+	client.SendChatPresence(recipientJID, types.ChatPresencePaused, types.ChatPresenceMediaText)
 
 	return true, fmt.Sprintf("Message sent to %s", recipient)
 }
@@ -793,9 +797,14 @@ func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port 
 }
 
 func main() {
+	// Parse command line flags
+	flag.StringVar(&NotificationsDir, "notifications-dir", "../../../notifications", "Directory to write notifications")
+	flag.Parse()
+
 	// Set up logger
 	logger := waLog.Stdout("Client", "INFO", true)
 	logger.Infof("Starting WhatsApp client...")
+	logger.Infof("Notifications directory: %s", NotificationsDir)
 
 	// Create database connection for storing session data
 	dbLog := waLog.Stdout("Database", "INFO", true)
@@ -854,6 +863,8 @@ func main() {
 
 		case *events.Connected:
 			logger.Infof("Connected to WhatsApp")
+			// Set online presence
+			client.SendPresence(types.PresenceAvailable)
 
 		case *events.LoggedOut:
 			logger.Warnf("Device logged out, please scan QR code to log in again")
