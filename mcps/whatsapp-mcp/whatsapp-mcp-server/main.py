@@ -1,4 +1,9 @@
+import subprocess
+import os
+import sys
+import atexit
 from typing import List, Dict, Any, Optional
+from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 from whatsapp import (
     search_contacts as whatsapp_search_contacts,
@@ -17,6 +22,63 @@ from whatsapp import (
 
 # Initialize FastMCP server
 mcp = FastMCP("whatsapp")
+
+# Global variable to track the bridge process
+bridge_process = None
+
+def start_whatsapp_bridge():
+    """Start the WhatsApp bridge if it's not already running"""
+    global bridge_process
+    
+    # Check if bridge is already running
+    if bridge_process and bridge_process.poll() is None:
+        return
+    
+    # Find the bridge directory
+    bridge_dir = Path(__file__).parent.parent / "whatsapp-bridge"
+    bridge_exe = bridge_dir / "whatsapp-bridge"
+    
+    if not bridge_exe.exists():
+        # Try to build the bridge
+        print("Building WhatsApp bridge...", file=sys.stderr)
+        build_result = subprocess.run(
+            ["go", "build", "-o", "whatsapp-bridge", "."],
+            cwd=bridge_dir,
+            capture_output=True,
+            text=True
+        )
+        if build_result.returncode != 0:
+            print(f"Failed to build WhatsApp bridge: {build_result.stderr}", file=sys.stderr)
+            return
+    
+    # Start the bridge
+    print("Starting WhatsApp bridge...", file=sys.stderr)
+    bridge_process = subprocess.Popen(
+        [str(bridge_exe)],
+        cwd=bridge_dir,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env={**os.environ, "PYTHONUNBUFFERED": "1"}
+    )
+    
+    # Register cleanup
+    atexit.register(stop_whatsapp_bridge)
+    print("WhatsApp bridge started successfully", file=sys.stderr)
+
+def stop_whatsapp_bridge():
+    """Stop the WhatsApp bridge if it's running"""
+    global bridge_process
+    if bridge_process and bridge_process.poll() is None:
+        print("Stopping WhatsApp bridge...", file=sys.stderr)
+        bridge_process.terminate()
+        try:
+            bridge_process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            bridge_process.kill()
+        bridge_process = None
+
+# Start the bridge when the MCP server starts
+start_whatsapp_bridge()
 
 
 @mcp.tool()

@@ -1,7 +1,7 @@
 import base64
 import datetime as dt
 import pathlib as pl
-from typing import Any
+from typing import Any, Union, Optional
 from fastmcp import FastMCP
 from . import graph, auth
 
@@ -133,10 +133,16 @@ def complete_authentication(flow_cache: str) -> dict[str, str]:
 def list_emails(
     account_id: str,
     folder: str = "inbox",
-    limit: int = 10,
-    include_body: bool = True,
+    limit: Union[int, str] = 10,
+    include_body: Union[bool, str] = True,
 ) -> list[dict[str, Any]]:
     """List emails from specified folder"""
+    # Convert string parameters to proper types
+    if isinstance(limit, str):
+        limit = int(limit) if limit.isdigit() else 10
+    if isinstance(include_body, str):
+        include_body = include_body.lower() in ('true', '1', 'yes')
+    
     folder_path = FOLDERS.get(folder.casefold(), folder)
 
     if include_body:
@@ -166,9 +172,9 @@ def list_emails(
 def get_email(
     email_id: str,
     account_id: str,
-    include_body: bool = True,
-    body_max_length: int = 50000,
-    include_attachments: bool = True,
+    include_body: Union[bool, str] = True,
+    body_max_length: Union[int, str] = 50000,
+    include_attachments: Union[bool, str] = True,
 ) -> dict[str, Any]:
     """Get email details with size limits
 
@@ -179,6 +185,14 @@ def get_email(
         body_max_length: Maximum characters for body content (default: 50000)
         include_attachments: Whether to include attachment metadata (default: True)
     """
+    # Convert string parameters to proper types
+    if isinstance(include_body, str):
+        include_body = include_body.lower() in ('true', '1', 'yes')
+    if isinstance(body_max_length, str):
+        body_max_length = int(body_max_length) if body_max_length.isdigit() else 50000
+    if isinstance(include_attachments, str):
+        include_attachments = include_attachments.lower() in ('true', '1', 'yes')
+    
     params = {}
     if include_attachments:
         params["$expand"] = "attachments($select=id,name,size,contentType)"
@@ -212,14 +226,30 @@ def get_email(
 @mcp.tool
 def create_email_draft(
     account_id: str,
-    to: str | list[str],
+    to: str,
     subject: str,
     body: str,
-    cc: str | list[str] | None = None,
-    attachments: str | list[str] | None = None,
+    cc: Optional[str] = None,
+    attachments: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Create an email draft with file path(s) as attachments"""
-    to_list = [to] if isinstance(to, str) else to
+    """Create an email draft with file path(s) as attachments
+    
+    Args:
+        account_id: The account ID
+        to: Email addresses - accepts:
+            - Single email: "user@example.com"
+            - Multiple emails: "user1@example.com,user2@example.com"
+        subject: Email subject
+        body: Email body text
+        cc: CC email addresses (optional) - accepts:
+            - Single email: "user@example.com"
+            - Multiple emails: "user1@example.com,user2@example.com"
+        attachments: File paths (optional) - accepts:
+            - Single path: "/path/to/file.pdf"
+            - Multiple paths: "/path/to/file1.pdf,/path/to/file2.docx"
+    """
+    # Handle both single and comma-separated email addresses
+    to_list = [addr.strip() for addr in to.split(',') if addr.strip()] if ',' in to else [to]
 
     message = {
         "subject": subject,
@@ -228,7 +258,7 @@ def create_email_draft(
     }
 
     if cc:
-        cc_list = [cc] if isinstance(cc, str) else cc
+        cc_list = [addr.strip() for addr in cc.split(',') if addr.strip()] if ',' in cc else [cc]
         message["ccRecipients"] = [
             {"emailAddress": {"address": addr}} for addr in cc_list
         ]
@@ -237,10 +267,8 @@ def create_email_draft(
     large_attachments = []
 
     if attachments:
-        # Convert single path to list
-        attachment_paths = (
-            [attachments] if isinstance(attachments, str) else attachments
-        )
+        # Handle both single and comma-separated paths
+        attachment_paths = [path.strip() for path in attachments.split(',') if path.strip()] if ',' in attachments else [attachments]
         for file_path in attachment_paths:
             path = pl.Path(file_path).expanduser().resolve()
             content_bytes = path.read_bytes()
@@ -288,14 +316,30 @@ def create_email_draft(
 @mcp.tool
 def send_email(
     account_id: str,
-    to: str | list[str],
+    to: str,
     subject: str,
     body: str,
-    cc: str | list[str] | None = None,
-    attachments: str | list[str] | None = None,
+    cc: Optional[str] = None,
+    attachments: Optional[str] = None,
 ) -> dict[str, str]:
-    """Send an email immediately with file path(s) as attachments"""
-    to_list = [to] if isinstance(to, str) else to
+    """Send an email immediately with file path(s) as attachments
+    
+    Args:
+        account_id: The account ID
+        to: Email addresses - accepts:
+            - Single email: "user@example.com"
+            - Multiple emails: "user1@example.com,user2@example.com"
+        subject: Email subject
+        body: Email body text
+        cc: CC email addresses (optional) - accepts:
+            - Single email: "user@example.com"
+            - Multiple emails: "user1@example.com,user2@example.com"
+        attachments: File paths (optional) - accepts:
+            - Single path: "/path/to/file.pdf"
+            - Multiple paths: "/path/to/file1.pdf,/path/to/file2.docx"
+    """
+    # Handle both single and comma-separated email addresses
+    to_list = [addr.strip() for addr in to.split(',') if addr.strip()] if ',' in to else [to]
 
     message = {
         "subject": subject,
@@ -304,7 +348,7 @@ def send_email(
     }
 
     if cc:
-        cc_list = [cc] if isinstance(cc, str) else cc
+        cc_list = [addr.strip() for addr in cc.split(',') if addr.strip()] if ',' in cc else [cc]
         message["ccRecipients"] = [
             {"emailAddress": {"address": addr}} for addr in cc_list
         ]
@@ -314,10 +358,8 @@ def send_email(
     processed_attachments = []
 
     if attachments:
-        # Convert single path to list
-        attachment_paths = (
-            [attachments] if isinstance(attachments, str) else attachments
-        )
+        # Handle both single and comma-separated paths
+        attachment_paths = [path.strip() for path in attachments.split(',') if path.strip()] if ',' in attachments else [attachments]
         for file_path in attachment_paths:
             path = pl.Path(file_path).expanduser().resolve()
             content_bytes = path.read_bytes()
@@ -350,7 +392,7 @@ def send_email(
     elif has_large_attachments:
         # Create draft first, then add large attachments, then send
         # We need to handle large attachments manually here
-        to_list = [to] if isinstance(to, str) else to
+        to_list = [addr.strip() for addr in to.split(',') if addr.strip()] if ',' in to else [to]
         message = {
             "subject": subject,
             "body": {"contentType": "Text", "content": body},
@@ -454,31 +496,167 @@ def move_email(
 
 
 @mcp.tool
-def reply_to_email(account_id: str, email_id: str, body: str) -> dict[str, str]:
-    """Reply to an email (sender only)"""
-    endpoint = f"/me/messages/{email_id}/reply"
-    payload = {"message": {"body": {"contentType": "Text", "content": body}}}
-    graph.request("POST", endpoint, account_id, json=payload)
-    return {"status": "sent"}
+def reply_to_email(
+    account_id: str, 
+    email_id: str, 
+    body: str,
+    attachments: Optional[str] = None
+) -> dict[str, str]:
+    """Reply to an email (sender only) with optional attachments
+    
+    Args:
+        account_id: The account ID
+        email_id: The email ID to reply to
+        body: Reply message body
+        attachments: File paths for attachments (optional) - accepts:
+            - Single path: "/path/to/file.pdf"
+            - Multiple paths: "/path/to/file1.pdf,/path/to/file2.docx"
+    """
+    # If we have attachments, we need to create a draft first, add attachments, then send
+    if attachments:
+        # Get the original message to extract sender
+        original = graph.request("GET", f"/me/messages/{email_id}", account_id, 
+                                params={"$select": "from,subject,conversationId"})
+        if not original:
+            raise ValueError(f"Email with ID {email_id} not found")
+        
+        # Create reply draft
+        draft = graph.request("POST", f"/me/messages/{email_id}/createReply", account_id)
+        if not draft or "id" not in draft:
+            raise ValueError("Failed to create reply draft")
+        
+        draft_id = draft["id"]
+        
+        # Update draft body
+        graph.request("PATCH", f"/me/messages/{draft_id}", account_id,
+                     json={"body": {"contentType": "Text", "content": body}})
+        
+        # Add attachments
+        attachment_paths = [path.strip() for path in attachments.split(',') if path.strip()] if ',' in attachments else [attachments]
+        for file_path in attachment_paths:
+            path = pl.Path(file_path).expanduser().resolve()
+            content_bytes = path.read_bytes()
+            att_size = len(content_bytes)
+            att_name = path.name
+            
+            if att_size < 3 * 1024 * 1024:
+                # Small attachment
+                attachment = {
+                    "@odata.type": "#microsoft.graph.fileAttachment",
+                    "name": att_name,
+                    "contentBytes": base64.b64encode(content_bytes).decode("utf-8"),
+                }
+                graph.request("POST", f"/me/messages/{draft_id}/attachments", account_id, json=attachment)
+            else:
+                # Large attachment
+                graph.upload_large_mail_attachment(
+                    draft_id,
+                    att_name,
+                    content_bytes,
+                    account_id,
+                    "application/octet-stream"
+                )
+        
+        # Send the draft
+        graph.request("POST", f"/me/messages/{draft_id}/send", account_id)
+        return {"status": "sent"}
+    else:
+        # Simple reply without attachments
+        endpoint = f"/me/messages/{email_id}/reply"
+        payload = {"message": {"body": {"contentType": "Text", "content": body}}}
+        graph.request("POST", endpoint, account_id, json=payload)
+        return {"status": "sent"}
 
 
 @mcp.tool
-def reply_all_email(account_id: str, email_id: str, body: str) -> dict[str, str]:
-    """Reply to all recipients of an email"""
-    endpoint = f"/me/messages/{email_id}/replyAll"
-    payload = {"message": {"body": {"contentType": "Text", "content": body}}}
-    graph.request("POST", endpoint, account_id, json=payload)
-    return {"status": "sent"}
+def reply_all_email(
+    account_id: str, 
+    email_id: str, 
+    body: str,
+    attachments: Optional[str] = None
+) -> dict[str, str]:
+    """Reply to all recipients of an email with optional attachments
+    
+    Args:
+        account_id: The account ID
+        email_id: The email ID to reply to
+        body: Reply message body
+        attachments: File paths for attachments (optional) - accepts:
+            - Single path: "/path/to/file.pdf"
+            - Multiple paths: "/path/to/file1.pdf,/path/to/file2.docx"
+    """
+    # If we have attachments, we need to create a draft first, add attachments, then send
+    if attachments:
+        # Get the original message to extract recipients
+        original = graph.request("GET", f"/me/messages/{email_id}", account_id, 
+                                params={"$select": "from,toRecipients,ccRecipients,subject,conversationId"})
+        if not original:
+            raise ValueError(f"Email with ID {email_id} not found")
+        
+        # Create reply all draft
+        draft = graph.request("POST", f"/me/messages/{email_id}/createReplyAll", account_id)
+        if not draft or "id" not in draft:
+            raise ValueError("Failed to create reply all draft")
+        
+        draft_id = draft["id"]
+        
+        # Update draft body
+        graph.request("PATCH", f"/me/messages/{draft_id}", account_id,
+                     json={"body": {"contentType": "Text", "content": body}})
+        
+        # Add attachments
+        attachment_paths = [path.strip() for path in attachments.split(',') if path.strip()] if ',' in attachments else [attachments]
+        for file_path in attachment_paths:
+            path = pl.Path(file_path).expanduser().resolve()
+            content_bytes = path.read_bytes()
+            att_size = len(content_bytes)
+            att_name = path.name
+            
+            if att_size < 3 * 1024 * 1024:
+                # Small attachment
+                attachment = {
+                    "@odata.type": "#microsoft.graph.fileAttachment",
+                    "name": att_name,
+                    "contentBytes": base64.b64encode(content_bytes).decode("utf-8"),
+                }
+                graph.request("POST", f"/me/messages/{draft_id}/attachments", account_id, json=attachment)
+            else:
+                # Large attachment
+                graph.upload_large_mail_attachment(
+                    draft_id,
+                    att_name,
+                    content_bytes,
+                    account_id,
+                    "application/octet-stream"
+                )
+        
+        # Send the draft
+        graph.request("POST", f"/me/messages/{draft_id}/send", account_id)
+        return {"status": "sent"}
+    else:
+        # Simple reply all without attachments
+        endpoint = f"/me/messages/{email_id}/replyAll"
+        payload = {"message": {"body": {"contentType": "Text", "content": body}}}
+        graph.request("POST", endpoint, account_id, json=payload)
+        return {"status": "sent"}
 
 
 @mcp.tool
 def list_events(
     account_id: str,
-    days_ahead: int = 7,
-    days_back: int = 0,
-    include_details: bool = True,
+    days_ahead: Union[int, str] = 7,
+    days_back: Union[int, str] = 0,
+    include_details: Union[bool, str] = True,
 ) -> list[dict[str, Any]]:
     """List calendar events within specified date range, including recurring event instances"""
+    # Convert string parameters to proper types
+    if isinstance(days_ahead, str):
+        days_ahead = int(days_ahead) if days_ahead.isdigit() else 7
+    if isinstance(days_back, str):
+        days_back = int(days_back) if days_back.isdigit() else 0
+    if isinstance(include_details, str):
+        include_details = include_details.lower() in ('true', '1', 'yes')
+    
     now = dt.datetime.now(dt.timezone.utc)
     start = (now - dt.timedelta(days=days_back)).isoformat()
     end = (now + dt.timedelta(days=days_ahead)).isoformat()
@@ -520,12 +698,25 @@ def create_event(
     subject: str,
     start: str,
     end: str,
-    location: str | None = None,
-    body: str | None = None,
-    attendees: str | list[str] | None = None,
+    location: Optional[str] = None,
+    body: Optional[str] = None,
+    attendees: Optional[str] = None,
     timezone: str = "UTC",
 ) -> dict[str, Any]:
-    """Create a calendar event"""
+    """Create a calendar event
+    
+    Args:
+        account_id: The account ID
+        subject: Event subject/title
+        start: Event start datetime (ISO format, e.g., "2024-01-15T14:00:00")
+        end: Event end datetime (ISO format, e.g., "2024-01-15T15:00:00")
+        location: Event location (optional)
+        body: Event description (optional)
+        attendees: Email addresses of attendees (optional) - accepts:
+            - Single attendee: "user@example.com"
+            - Multiple attendees: "user1@example.com,user2@example.com"
+        timezone: Timezone for the event (default: UTC)
+    """
     event = {
         "subject": subject,
         "start": {"dateTime": start, "timeZone": timezone},
@@ -539,7 +730,7 @@ def create_event(
         event["body"] = {"contentType": "Text", "content": body}
 
     if attendees:
-        attendees_list = [attendees] if isinstance(attendees, str) else attendees
+        attendees_list = [addr.strip() for addr in attendees.split(',') if addr.strip()] if ',' in attendees else [attendees]
         event["attendees"] = [
             {"emailAddress": {"address": a}, "type": "required"} for a in attendees_list
         ]
@@ -582,9 +773,13 @@ def update_event(
 
 @mcp.tool
 def delete_event(
-    account_id: str, event_id: str, send_cancellation: bool = True
+    account_id: str, event_id: str, send_cancellation: Union[bool, str] = True
 ) -> dict[str, str]:
     """Delete or cancel a calendar event"""
+    # Convert string parameter to proper type
+    if isinstance(send_cancellation, str):
+        send_cancellation = send_cancellation.lower() in ('true', '1', 'yes')
+    
     if send_cancellation:
         graph.request("POST", f"/me/events/{event_id}/cancel", account_id, json={})
     else:
@@ -613,15 +808,24 @@ def check_availability(
     account_id: str,
     start: str,
     end: str,
-    attendees: str | list[str] | None = None,
+    attendees: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Check calendar availability for scheduling"""
+    """Check calendar availability for scheduling
+    
+    Args:
+        account_id: The account ID
+        start: Start datetime (ISO format, e.g., "2024-01-15T14:00:00")
+        end: End datetime (ISO format, e.g., "2024-01-15T18:00:00")
+        attendees: Email addresses to check availability for (optional) - accepts:
+            - Single person: "user@example.com"
+            - Multiple people: "user1@example.com,user2@example.com"
+    """
     me_info = graph.request("GET", "/me", account_id)
     if not me_info or "mail" not in me_info:
         raise ValueError("Failed to get user email address")
     schedules = [me_info["mail"]]
     if attendees:
-        attendees_list = [attendees] if isinstance(attendees, str) else attendees
+        attendees_list = [addr.strip() for addr in attendees.split(',') if addr.strip()] if ',' in attendees else [attendees]
         schedules.extend(attendees_list)
 
     payload = {
@@ -638,8 +842,12 @@ def check_availability(
 
 
 @mcp.tool
-def list_contacts(account_id: str, limit: int = 50) -> list[dict[str, Any]]:
+def list_contacts(account_id: str, limit: Union[int, str] = 50) -> list[dict[str, Any]]:
     """List contacts"""
+    # Convert string parameter to proper type
+    if isinstance(limit, str):
+        limit = int(limit) if limit.isdigit() else 50
+    
     params = {"$top": min(limit, 100)}
 
     contacts = list(
@@ -662,32 +870,54 @@ def get_contact(contact_id: str, account_id: str) -> dict[str, Any]:
 def create_contact(
     account_id: str,
     given_name: str,
-    surname: str | None = None,
-    email_addresses: str | list[str] | None = None,
-    phone_numbers: dict[str, str] | None = None,
+    surname: Optional[str] = None,
+    email_addresses: Optional[str] = None,
+    phone_numbers: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Create a new contact"""
+    """Create a new contact
+    
+    Args:
+        account_id: The account ID
+        given_name: Contact's first name
+        surname: Contact's last name (optional)
+        email_addresses: Email addresses (optional) - accepts:
+            - Single email: "user@example.com"
+            - Multiple emails: "personal@example.com,work@company.com"
+        phone_numbers: Phone numbers (optional) - format: "type:number[,type:number...]"
+            - Types: mobile, business, home
+            - Single phone: "mobile:+1234567890"
+            - Multiple phones: "mobile:+1234567890,business:+0987654321,home:+1112223333"
+    """
     contact: dict[str, Any] = {"givenName": given_name}
 
     if surname:
         contact["surname"] = surname
 
     if email_addresses:
-        email_list = (
-            [email_addresses] if isinstance(email_addresses, str) else email_addresses
-        )
+        email_list = [email.strip() for email in email_addresses.split(',') if email.strip()] if ',' in email_addresses else [email_addresses]
         contact["emailAddresses"] = [
             {"address": email, "name": f"{given_name} {surname or ''}".strip()}
             for email in email_list
         ]
 
     if phone_numbers:
-        if "business" in phone_numbers:
-            contact["businessPhones"] = [phone_numbers["business"]]
-        if "home" in phone_numbers:
-            contact["homePhones"] = [phone_numbers["home"]]
-        if "mobile" in phone_numbers:
-            contact["mobilePhone"] = phone_numbers["mobile"]
+        # Parse phone numbers from "type:number" or "type:number,type:number" format
+        phones = {}
+        if ',' in phone_numbers:
+            for entry in phone_numbers.split(','):
+                if ':' in entry:
+                    phone_type, number = entry.split(':', 1)
+                    phones[phone_type.strip().lower()] = number.strip()
+        elif ':' in phone_numbers:
+            phone_type, number = phone_numbers.split(':', 1)
+            phones[phone_type.strip().lower()] = number.strip()
+        
+        if "business" in phones:
+            contact["businessPhones"] = [phones["business"]]
+        if "home" in phones:
+            contact["homePhones"] = [phones["home"]]
+        if "mobile" in phones:
+            contact["mobilePhone"] = phones["mobile"]
 
     result = graph.request("POST", "/me/contacts", account_id, json=contact)
     if not result:
@@ -715,9 +945,13 @@ def delete_contact(contact_id: str, account_id: str) -> dict[str, str]:
 
 @mcp.tool
 def list_files(
-    account_id: str, path: str = "/", limit: int = 50
+    account_id: str, path: str = "/", limit: Union[int, str] = 50
 ) -> list[dict[str, Any]]:
     """List files and folders in OneDrive"""
+    # Convert string parameter to proper type
+    if isinstance(limit, str):
+        limit = int(limit) if limit.isdigit() else 50
+    
     endpoint = (
         "/me/drive/root/children"
         if path == "/"
@@ -841,9 +1075,13 @@ def get_attachment(
 def search_files(
     query: str,
     account_id: str,
-    limit: int = 50,
+    limit: Union[int, str] = 50,
 ) -> list[dict[str, Any]]:
     """Search for files in OneDrive using the modern search API."""
+    # Convert string parameter to proper type
+    if isinstance(limit, str):
+        limit = int(limit) if limit.isdigit() else 50
+    
     items = list(graph.search_query(query, ["driveItem"], account_id, limit))
 
     return [
@@ -863,10 +1101,14 @@ def search_files(
 def search_emails(
     query: str,
     account_id: str,
-    limit: int = 50,
-    folder: str | None = None,
+    limit: Union[int, str] = 50,
+    folder: Union[str, None] = None,
 ) -> list[dict[str, Any]]:
     """Search emails using the modern search API."""
+    # Convert string parameter to proper type
+    if isinstance(limit, str):
+        limit = int(limit) if limit.isdigit() else 50
+    
     if folder:
         # For folder-specific search, use the traditional endpoint
         folder_path = FOLDERS.get(folder.casefold(), folder)
@@ -889,11 +1131,19 @@ def search_emails(
 def search_events(
     query: str,
     account_id: str,
-    days_ahead: int = 365,
-    days_back: int = 365,
-    limit: int = 50,
+    days_ahead: Union[int, str] = 365,
+    days_back: Union[int, str] = 365,
+    limit: Union[int, str] = 50,
 ) -> list[dict[str, Any]]:
     """Search calendar events using the modern search API."""
+    # Convert string parameters to proper types
+    if isinstance(days_ahead, str):
+        days_ahead = int(days_ahead) if days_ahead.isdigit() else 365
+    if isinstance(days_back, str):
+        days_back = int(days_back) if days_back.isdigit() else 365
+    if isinstance(limit, str):
+        limit = int(limit) if limit.isdigit() else 50
+    
     events = list(graph.search_query(query, ["event"], account_id, limit))
 
     # Filter by date range if needed
@@ -923,9 +1173,13 @@ def search_events(
 def search_contacts(
     query: str,
     account_id: str,
-    limit: int = 50,
+    limit: Union[int, str] = 50,
 ) -> list[dict[str, Any]]:
     """Search contacts. Uses traditional search since unified_search doesn't support contacts."""
+    # Convert string parameter to proper type
+    if isinstance(limit, str):
+        limit = int(limit) if limit.isdigit() else 50
+    
     params = {
         "$search": f'"{query}"',
         "$top": min(limit, 100),
@@ -942,20 +1196,34 @@ def search_contacts(
 def unified_search(
     query: str,
     account_id: str,
-    entity_types: list[str] | None = None,
-    limit: int = 50,
+    entity_types: Optional[str] = None,
+    limit: Union[int, str] = 50,
 ) -> dict[str, list[dict[str, Any]]]:
     """Search across multiple Microsoft 365 resources using the modern search API
 
-    entity_types can include: 'message', 'event', 'drive', 'driveItem', 'list', 'listItem', 'site'
-    If not specified, searches across all available types.
+    Args:
+        query: Search query string
+        account_id: The account ID
+        entity_types: Entity types to search (optional) - accepts:
+            - Single type: "message"
+            - Multiple types: "message,event,driveItem"
+            - Available types: message, event, drive, driveItem, list, listItem, site
+            - Default if not specified: "message,event,driveItem"
+        limit: Maximum number of results to return (default: 50)
     """
-    if not entity_types:
-        entity_types = ["message", "event", "driveItem"]
+    # Convert string parameter to proper type
+    if isinstance(limit, str):
+        limit = int(limit) if limit.isdigit() else 50
+    
+    if entity_types:
+        # Parse comma-separated entity types
+        entity_types_list = [t.strip() for t in entity_types.split(',') if t.strip()] if ',' in entity_types else [entity_types]
+    else:
+        entity_types_list = ["message", "event", "driveItem"]
 
-    results = {entity_type: [] for entity_type in entity_types}
+    results = {entity_type: [] for entity_type in entity_types_list}
 
-    items = list(graph.search_query(query, entity_types, account_id, limit))
+    items = list(graph.search_query(query, entity_types_list, account_id, limit))
 
     for item in items:
         resource_type = item.get("@odata.type", "").split(".")[-1]

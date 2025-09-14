@@ -1,5 +1,5 @@
 # Personal data
-CLAUDE.md
+MEMORY.md
 notifications/
 data/
 
@@ -64,5 +64,3 @@ mcps/microsoft-mcp/.env
 # Old vesta folder (if still present)
 old_vesta/
 
-# Keep the template
-!CLAUDE.md.tmp

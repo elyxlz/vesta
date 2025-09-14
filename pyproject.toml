@@ -8,6 +8,7 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "aioconsole>=0.8.1",
     "claude-code-sdk>=0.0.22",
     "toml>=0.10.2",
 ]

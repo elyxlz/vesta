@@ -8,8 +8,12 @@ import (
 )
 
 func WriteNotification(chatJID, chatName, sender, content string, mediaType string) {
-	os.MkdirAll("notifications", 0755)
-	
+	notifDir := os.Getenv("NOTIFICATIONS_DIR")
+	if notifDir == "" {
+		notifDir = "../../../notifications"
+	}
+	os.MkdirAll(notifDir, 0755)
+
 	data, _ := json.MarshalIndent(map[string]interface{}{
 		"timestamp": time.Now().Format(time.RFC3339),
 		"source":    "whatsapp",
@@ -20,9 +24,10 @@ func WriteNotification(chatJID, chatName, sender, content string, mediaType stri
 			"sender":     sender,
 			"content":    content,
 			"media_type": mediaType,
+			"message":   content,
 		},
 	}, "", "  ")
 	
-	os.WriteFile(fmt.Sprintf("notifications/%d-whatsapp-message.json", 
+	os.WriteFile(fmt.Sprintf("%s/%d-whatsapp-message.json", notifDir,
 		time.Now().UnixNano()), data, 0644)
 }
