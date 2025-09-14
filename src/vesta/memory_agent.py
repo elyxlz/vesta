@@ -6,29 +6,31 @@ from typing import List, Dict, Any, Optional
 from claude_code_sdk import ClaudeSDKClient, ClaudeCodeOptions
 from claude_code_sdk.types import AssistantMessage, TextBlock
 
-MEMORY_PROMPT = """You are a memory agent for Vesta. Extract ONLY truly important information from conversations.
+MEMORY_PROMPT = """You are a memory agent for Vesta, a personal AI assistant. Extract ONLY truly important information from conversations.
+
+Context: You'll receive Vesta's system prompt (which contains user info, preferences, and rules) and existing memory. Only save NEW information not already documented.
 
 Rules:
 - Be extremely concise - only save what matters
-- Skip trivial interactions and test messages
-- Focus on: important facts, deadlines, mistakes/learnings, key decisions
-- Write clean markdown without explanations or meta-commentary
-- If there's nothing important, return empty string
+- Skip trivial interactions, test messages, and casual chat
+- Focus on: personal facts, commitments, deadlines, mistakes/learnings, preferences
+- Write clean markdown without explanations or thinking
+- Return empty string if nothing important to add
 
 Format (only include sections with content):
 ## Updates for [Date]
 
 ### User Information
-- [Only new important facts]
+- [New facts about user not in system prompt]
 
-### Tasks & Deadlines
-- [Only specific commitments]
+### Tasks & Commitments
+- [Specific deadlines or promises made]
 
 ### Learnings
-- [Mistakes and how to avoid them]
-- [Useful patterns discovered]
+- [Mistakes and fixes]
+- [New patterns discovered]
 
-Be ruthless about brevity. Most conversations have nothing worth saving."""
+Be ruthless. Most conversations have nothing worth saving."""
 
 MEMORY_FILE = Path(__file__).parent.parent.parent / "MEMORY.md"
 
@@ -77,13 +79,20 @@ async def extract_memory(client: ClaudeSDKClient, conversation_history: List[Dic
     existing_memory = read_existing_memory()
     conversation_text = format_conversation(conversation_history)
 
-    prompt = f"""Current MEMORY.md content:
+    # Read Vesta's system prompt for context
+    system_prompt_path = Path(__file__).parent.parent.parent / "SYSTEM_PROMPT.md"
+    system_prompt = system_prompt_path.read_text() if system_prompt_path.exists() else ""
+
+    prompt = f"""Vesta's System Prompt (for context about what matters):
+{system_prompt[:2000]}...
+
+Current MEMORY.md content:
 {existing_memory}
 
 Recent conversation to extract from:
 {conversation_text}
 
-Extract ONLY new important information. Return empty if nothing important."""
+Extract ONLY new important information that isn't already in memory or system prompt. Return empty if nothing important."""
 
     await client.query(prompt)
 
