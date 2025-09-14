@@ -63,6 +63,7 @@ CLIENT = None
 CONVERSATION_HISTORY = []
 SHUTDOWN_EVENT: asyncio.Event | None = None
 SHUTDOWN_COUNT = 0
+SHUTDOWN_PRINTED = False
 
 def load_prompts():
     prompts = []
@@ -186,11 +187,13 @@ async def check_context_usage():
         await preserve_memory()
 
 def signal_handler(signum, frame):
-    global SHUTDOWN_COUNT
+    global SHUTDOWN_COUNT, SHUTDOWN_PRINTED
     SHUTDOWN_COUNT += 1
 
     if SHUTDOWN_COUNT == 1:
-        print(f"\n{Colors.YELLOW}📝 Preserving memory...{Colors.RESET}")
+        if not SHUTDOWN_PRINTED:
+            print(f"\n{Colors.YELLOW}📝 Preserving memory...{Colors.RESET}")
+            SHUTDOWN_PRINTED = True
         if SHUTDOWN_EVENT:
             SHUTDOWN_EVENT.set()
     else:
