@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import logging
+import subprocess
 from pathlib import Path
 from datetime import datetime, timedelta
 
@@ -183,8 +184,23 @@ def print_header():
     print("║  💬 Type and press Enter  |  🛑 Exit: Ctrl+C" + " "*10 + "║")
     print("╚" + "═"*58 + f"╝{Colors.RESET}\n")
 
+def start_whatsapp_bridge():
+    """Start the WhatsApp bridge if the startup script exists"""
+    script_path = Path(__file__).parent.parent.parent / "start_whatsapp_bridge.sh"
+    if script_path.exists():
+        try:
+            # Always use --force to kill existing bridges first
+            result = subprocess.run([str(script_path), "--force"], capture_output=True, text=True)
+            if result.returncode == 0:
+                print(f"{Colors.BRIGHT_GREEN}✓ WhatsApp bridge started{Colors.RESET}")
+            else:
+                print(f"{Colors.YELLOW}⚠ WhatsApp bridge startup issue: {result.stderr}{Colors.RESET}")
+        except Exception as e:
+            print(f"{Colors.YELLOW}⚠ Could not start WhatsApp bridge: {e}{Colors.RESET}")
+
 async def run_vesta():
     print_header()
+    start_whatsapp_bridge()
 
     last_proactive = datetime.now()
     proactive_interval = timedelta(minutes=PROACTIVE_CHECK_INTERVAL)
@@ -262,7 +278,7 @@ async def run_vesta():
                     prompt = f"[Notification at {timestamp}] From {source}: {content}"
 
                 print_chat(display, "System")
-                await message_queue.put((prompt, False))
+                await message_queue.put((prompt, True))
 
             now = datetime.now()
             if now - last_proactive >= proactive_interval:

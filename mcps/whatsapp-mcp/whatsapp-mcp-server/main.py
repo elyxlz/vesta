@@ -2,6 +2,8 @@ import subprocess
 import os
 import sys
 import atexit
+import threading
+import time
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 from mcp.server.fastmcp import FastMCP
@@ -23,21 +25,34 @@ from whatsapp import (
 # Initialize FastMCP server
 mcp = FastMCP("whatsapp")
 
-# Global variable to track the bridge process
+# Global variables to track the bridge process and monitor thread
 bridge_process = None
+monitor_thread = None
+shutdown_flag = False
+
+def tail_log_file(log_path, lines=10):
+    """Tail a log file and print recent lines to stderr"""
+    try:
+        if log_path.exists():
+            with open(log_path, 'r') as f:
+                content = f.readlines()
+                for line in content[-lines:]:
+                    print(f"[LOG] {line.rstrip()}", file=sys.stderr)
+    except Exception:
+        pass  # Silently ignore errors in tailing
 
 def start_whatsapp_bridge():
     """Start the WhatsApp bridge if it's not already running"""
     global bridge_process
-    
+
     # Check if bridge is already running
     if bridge_process and bridge_process.poll() is None:
         return
-    
+
     # Find the bridge directory
     bridge_dir = Path(__file__).parent.parent / "whatsapp-bridge"
     bridge_exe = bridge_dir / "whatsapp-bridge"
-    
+
     if not bridge_exe.exists():
         # Try to build the bridge
         print("Building WhatsApp bridge...", file=sys.stderr)
@@ -49,25 +64,62 @@ def start_whatsapp_bridge():
         )
         if build_result.returncode != 0:
             print(f"Failed to build WhatsApp bridge: {build_result.stderr}", file=sys.stderr)
-            return
-    
+            return False
+
+    # Create logs directory
+    logs_dir = Path(__file__).parent.parent.parent.parent / "logs"
+    logs_dir.mkdir(exist_ok=True)
+
+    # Open log files
+    stdout_log = open(logs_dir / "whatsapp-bridge-stdout.log", "a")
+    stderr_log = open(logs_dir / "whatsapp-bridge-stderr.log", "a")
+
+    # Write timestamp
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    stdout_log.write(f"\n=== WhatsApp Bridge Started at {timestamp} ===\n")
+    stdout_log.flush()
+    stderr_log.write(f"\n=== WhatsApp Bridge Started at {timestamp} ===\n")
+    stderr_log.flush()
+
+    # Get notifications directory from environment or use default
+    notifications_dir = os.environ.get("NOTIFICATIONS_DIR")
+    if not notifications_dir:
+        # Use the same directory structure as logs
+        notifications_dir = str(Path(__file__).parent.parent.parent.parent / "notifications")
+
     # Start the bridge
     print("Starting WhatsApp bridge...", file=sys.stderr)
-    bridge_process = subprocess.Popen(
-        [str(bridge_exe)],
-        cwd=bridge_dir,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        env={**os.environ, "PYTHONUNBUFFERED": "1"}
-    )
-    
-    # Register cleanup
-    atexit.register(stop_whatsapp_bridge)
-    print("WhatsApp bridge started successfully", file=sys.stderr)
+    print(f"Logs will be saved to {logs_dir}", file=sys.stderr)
+    print(f"Notifications will be saved to {notifications_dir}", file=sys.stderr)
+
+    try:
+        bridge_env = os.environ.copy()
+        bridge_env["PYTHONUNBUFFERED"] = "1"
+        bridge_env["NOTIFICATIONS_DIR"] = notifications_dir
+
+        bridge_process = subprocess.Popen(
+            [str(bridge_exe)],
+            cwd=bridge_dir,
+            stdout=stdout_log,
+            stderr=stderr_log,
+            env=bridge_env
+        )
+        print("WhatsApp bridge started successfully", file=sys.stderr)
+
+        # Also log to stderr for real-time monitoring
+        threading.Thread(target=lambda: tail_log_file(logs_dir / "whatsapp-bridge-stdout.log"), daemon=True).start()
+
+        return True
+    except Exception as e:
+        print(f"Failed to start WhatsApp bridge: {e}", file=sys.stderr)
+        stdout_log.close()
+        stderr_log.close()
+        return False
 
 def stop_whatsapp_bridge():
     """Stop the WhatsApp bridge if it's running"""
-    global bridge_process
+    global bridge_process, shutdown_flag
+    shutdown_flag = True
     if bridge_process and bridge_process.poll() is None:
         print("Stopping WhatsApp bridge...", file=sys.stderr)
         bridge_process.terminate()
@@ -77,8 +129,29 @@ def stop_whatsapp_bridge():
             bridge_process.kill()
         bridge_process = None
 
-# Start the bridge when the MCP server starts
-start_whatsapp_bridge()
+def monitor_bridge():
+    """Monitor the bridge process and restart it if it crashes"""
+    global bridge_process, shutdown_flag
+    while not shutdown_flag:
+        if bridge_process is None or bridge_process.poll() is not None:
+            if not shutdown_flag:
+                print("WhatsApp bridge not running, restarting...", file=sys.stderr)
+                start_whatsapp_bridge()
+        time.sleep(5)  # Check every 5 seconds
+
+def start_bridge_monitor():
+    """Start the bridge monitor thread"""
+    global monitor_thread
+    if monitor_thread is None or not monitor_thread.is_alive():
+        monitor_thread = threading.Thread(target=monitor_bridge, daemon=True)
+        monitor_thread.start()
+        print("WhatsApp bridge monitor started", file=sys.stderr)
+
+# DON'T start the bridge here - Vesta's main.py handles it
+# Having multiple bridges causes WebSocket disconnection issues
+# start_whatsapp_bridge()
+# start_bridge_monitor()
+# atexit.register(stop_whatsapp_bridge)
 
 
 @mcp.tool()
