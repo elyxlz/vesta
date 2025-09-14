@@ -38,7 +38,7 @@ shutdown_count = 0
 def load_prompts():
     paths = [
         Path(__file__).parent.parent.parent / "SYSTEM_PROMPT.md",
-        Path.home() / ".prompts" / "python-coding.md"
+        Path(__file__).parent.parent.parent / "MEMORY.md"
     ]
     prompts = [p.read_text() for p in paths if p.exists()]
     return "\n\n".join(prompts) if prompts else "You are Vesta, a helpful AI assistant."
@@ -190,6 +190,14 @@ async def run_vesta():
     SHUTDOWN_EVENT = asyncio.Event()
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
+
+    # Check if MEMORY.md exists, if not copy from template
+    memory_file = Path(__file__).parent.parent.parent / "MEMORY.md"
+    memory_template = Path(__file__).parent.parent.parent / "MEMORY.md.tmp"
+    if not memory_file.exists() and memory_template.exists():
+        import shutil
+        shutil.copy(memory_template, memory_file)
+        print(f"{C['dim']}📝 Created MEMORY.md from template{C['reset']}")
 
     print_header()
     start_whatsapp_bridge()

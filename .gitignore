@@ -64,3 +64,4 @@ mcps/microsoft-mcp/.env
 # Old vesta folder (if still present)
 old_vesta/
 
+MEMORY.md
