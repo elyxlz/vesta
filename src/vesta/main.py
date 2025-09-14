@@ -188,24 +188,31 @@ async def check_context_usage():
 
 def signal_handler(signum, frame):
     global SHUTDOWN_COUNT, SHUTDOWN_PRINTED
-    SHUTDOWN_COUNT += 1
 
-    if SHUTDOWN_COUNT == 1:
+    if SHUTDOWN_COUNT == 0:
+        SHUTDOWN_COUNT = 1
         if not SHUTDOWN_PRINTED:
             print(f"\n{Colors.YELLOW}📝 Preserving memory...{Colors.RESET}")
             SHUTDOWN_PRINTED = True
         if SHUTDOWN_EVENT:
             SHUTDOWN_EVENT.set()
-    else:
+    elif SHUTDOWN_COUNT >= 1:
         print(f"\n{Colors.YELLOW}⚡ Force shutdown!{Colors.RESET}")
-        import sys
-        sys.exit(0)
+        import os
+        os._exit(0)
 
 async def graceful_shutdown():
-    await preserve_memory()
+    try:
+        await preserve_memory()
+    except Exception as e:
+        print(f"{Colors.YELLOW}⚠️ Memory preservation error: {e}{Colors.RESET}")
 
-    if CLIENT:
-        await CLIENT.__aexit__(None, None, None)
+    try:
+        if CLIENT:
+            await CLIENT.__aexit__(None, None, None)
+    except Exception as e:
+        # Ignore cleanup errors during shutdown
+        pass
 
     print(f"{Colors.BRIGHT_GREEN}✅ Vesta shutdown complete{Colors.RESET}")
 
@@ -418,20 +425,31 @@ async def run_vesta():
     for task in tasks:
         task.cancel()
 
-    # Wait for tasks to finish
-    await asyncio.gather(*tasks, return_exceptions=True)
+    # Wait for tasks to finish with timeout
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(*tasks, return_exceptions=True),
+            timeout=2.0
+        )
+    except asyncio.TimeoutError:
+        pass
 
-    # Run graceful shutdown
-    await graceful_shutdown()
+    # Run graceful shutdown with timeout
+    try:
+        await asyncio.wait_for(graceful_shutdown(), timeout=5.0)
+    except asyncio.TimeoutError:
+        print(f"{Colors.YELLOW}⚠️ Shutdown timeout{Colors.RESET}")
 
 def main():
     try:
         asyncio.run(run_vesta())
     except KeyboardInterrupt:
-        print("\n👋 Bye!")
+        # Handled by signal handler
+        pass
     except Exception as e:
         print(f"\n💥 Fatal error: {e}")
-        raise
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
     main()
