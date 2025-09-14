@@ -94,9 +94,15 @@ def parse_message(msg):
     return msg if isinstance(msg, str) else None
 
 async def preserve_memory():
-    if ephemeral_mode or not CONVERSATION_HISTORY:
+    print(f"{C['dim']}📝 preserve_memory called, ephemeral={ephemeral_mode}, history_len={len(CONVERSATION_HISTORY)}{C['reset']}")
+    if ephemeral_mode:
+        print(f"{C['dim']}📝 Skipping - ephemeral mode{C['reset']}")
+        return
+    if not CONVERSATION_HISTORY:
+        print(f"{C['dim']}📝 Skipping - no conversation history{C['reset']}")
         return
     try:
+        print(f"{C['dim']}📝 Calling preserve_conversation_memory...{C['reset']}")
         await preserve_conversation_memory(CONVERSATION_HISTORY)
     except Exception as e:
         print(f"{C['yellow']}⚠️ Memory preservation failed: {e}{C['reset']}")
@@ -124,10 +130,11 @@ def signal_handler(signum, frame):
             os._exit(0)
 
 async def graceful_shutdown():
+    print(f"{C['dim']}📝 Starting graceful shutdown...{C['reset']}")
     try:
-        await asyncio.wait_for(preserve_memory(), timeout=20.0)
+        await asyncio.wait_for(preserve_memory(), timeout=25.0)
     except asyncio.TimeoutError:
-        print(f"{C['yellow']}⚠️ Memory preservation timeout{C['reset']}")
+        print(f"{C['yellow']}⚠️ Memory preservation timeout after 25s{C['reset']}")
     except Exception as e:
         print(f"{C['yellow']}⚠️ Memory error: {e}{C['reset']}")
 

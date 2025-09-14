@@ -32,10 +32,14 @@ def format_conversation(history: List[Dict[str, Any]]) -> str:
 
 async def preserve_conversation_memory(conversation_history: List[Dict[str, Any]]) -> None:
     """Extract and save important information from conversation."""
+    print(f"📝 Memory agent: Starting preservation...")
+
     if not conversation_history:
+        print(f"📝 Memory agent: No conversation history to preserve")
         return
 
     conversation_text = format_conversation(conversation_history)
+    print(f"📝 Memory agent: Processing {len(conversation_history)} messages")
 
     # Read system prompt for context
     system_prompt_path = Path(__file__).parent.parent.parent / "SYSTEM_PROMPT.md"
@@ -59,18 +63,27 @@ Check MEMORY.md and update it with any new important information from this conve
     client = ClaudeSDKClient(options=options)
 
     try:
+        print(f"📝 Memory agent: Initializing Claude client...")
         await client.__aenter__()
+
+        print(f"📝 Memory agent: Sending query to agent...")
         await client.query(prompt)
 
         # Let the agent handle the response with timeout
+        print(f"📝 Memory agent: Waiting for agent response...")
+        response_count = 0
         try:
-            async for _ in client.receive_response():
-                pass  # Agent will use Read/Write tools directly
+            async for msg in client.receive_response():
+                response_count += 1
+                print(f"📝 Memory agent: Received response {response_count}")
         except asyncio.TimeoutError:
-            print(f"⚠️ Memory agent timeout")
+            print(f"⚠️ Memory agent timeout after {response_count} responses")
 
         print(f"✅ Memory preservation complete")
     except Exception as e:
+        import traceback
         print(f"⚠️ Memory preservation failed: {e}")
+        print(f"📝 Traceback: {traceback.format_exc()}")
     finally:
+        print(f"📝 Memory agent: Cleaning up...")
         await client.__aexit__(None, None, None)
