@@ -284,7 +284,7 @@ async def run_vesta():
     except asyncio.TimeoutError: pass
 
     try:
-        await asyncio.wait_for(graceful_shutdown(), timeout=5.0)
+        await asyncio.wait_for(graceful_shutdown(), timeout=15.0)  # More time for memory preservation
     except asyncio.TimeoutError:
         print(f"{C['yellow']}⚠️ Shutdown timeout{C['reset']}")
 

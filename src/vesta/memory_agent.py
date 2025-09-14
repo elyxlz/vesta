@@ -18,7 +18,7 @@ Rules:
 - Return empty string if nothing important to add
 
 Format (only include sections with content):
-## Updates for [Date]
+## Updates for January 2025
 
 ### User Information
 - [New facts about user not in system prompt]
