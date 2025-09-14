@@ -125,7 +125,7 @@ def signal_handler(signum, frame):
 
 async def graceful_shutdown():
     try:
-        await asyncio.wait_for(preserve_memory(), timeout=25.0)
+        await asyncio.wait_for(preserve_memory(), timeout=300.0)  # 5 minutes
     except asyncio.TimeoutError:
         print(f"{C['yellow']}⚠️ Memory preservation timeout{C['reset']}")
     except Exception as e:
@@ -156,7 +156,7 @@ async def send_message(prompt, show_in_chat=True):
                         for line in text.split('\n'):
                             if line.strip():
                                 if line.startswith('🔧'):
-                                    print(f"{C['yellow']}> {line}{C['reset']}")
+                                    print(f"{C['yellow']}>{line}{C['reset']}")
                                 else:
                                     responses.append(line)
         await asyncio.wait_for(collect(), timeout=30.0)
@@ -318,7 +318,7 @@ async def run_vesta():
     except asyncio.TimeoutError: pass
 
     try:
-        await asyncio.wait_for(graceful_shutdown(), timeout=30.0)  # More time for memory preservation
+        await asyncio.wait_for(graceful_shutdown(), timeout=310.0)  # 5+ minutes for memory preservation
     except asyncio.TimeoutError:
         print(f"{C['yellow']}⚠️ Shutdown timeout{C['reset']}")
 
