@@ -163,11 +163,9 @@ async def preserve_memory():
     if not CONVERSATION_HISTORY:
         return
 
-    print(f"{Colors.YELLOW}📝 Preserving memory...{Colors.RESET}")
-
     try:
         await preserve_conversation_memory(CONVERSATION_HISTORY)
-        CONVERSATION_HISTORY.clear()
+        # Don't clear here - let the caller decide whether to clear
     except Exception as e:
         print(f"{Colors.YELLOW}⚠️ Memory preservation failed: {e}{Colors.RESET}")
 
@@ -184,7 +182,11 @@ async def check_context_usage():
     total_tokens = sum(estimate_tokens(str(msg)) for msg in CONVERSATION_HISTORY)
 
     if total_tokens >= MAX_CONTEXT_TOKENS:
+        print(f"{Colors.YELLOW}📊 Context limit reached, preserving memory...{Colors.RESET}")
         await preserve_memory()
+        # Clear history after preservation to continue with fresh context
+        CONVERSATION_HISTORY.clear()
+        print(f"{Colors.BRIGHT_GREEN}✅ Context cleared, continuing...{Colors.RESET}")
 
 signal_handler_state = {"first_call": True, "count": 0}
 
@@ -204,8 +206,12 @@ def signal_handler(signum, frame):
             os._exit(0)
 
 async def graceful_shutdown():
+    global CONVERSATION_HISTORY
+
     try:
         await preserve_memory()
+        # Clear history after preservation during shutdown
+        CONVERSATION_HISTORY.clear()
     except Exception as e:
         print(f"{Colors.YELLOW}⚠️ Memory preservation error: {e}{Colors.RESET}")
 
