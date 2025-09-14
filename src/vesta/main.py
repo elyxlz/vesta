@@ -87,9 +87,9 @@ def parse_message(msg):
             elif isinstance(block, ToolUseBlock):
                 tool_name = block.name
                 tool_input = json.dumps(block.input) if isinstance(block.input, dict) else str(block.input)
-                tool_input = tool_input[:57] + "..." if len(tool_input) > 60 else tool_input
+                tool_input = tool_input[:150] + "..." if len(tool_input) > 150 else tool_input
                 prefix = f"mcp.{tool_name.replace('mcp__', '').replace('__', '.')}" if tool_name.startswith('mcp__') else tool_name
-                texts.append(f"🔧 {prefix} {tool_input}")
+                texts.append(f"\n🔧 {prefix} {tool_input}")
         return '\n'.join(texts) if texts else None
     return msg if isinstance(msg, str) else None
 
@@ -218,7 +218,13 @@ async def run_vesta():
 
     async def show_typing():
         timestamp = datetime.now().strftime("%I:%M %p")
-        print(f"{C['dim']}[{timestamp}]{C['reset']} {C['magenta']}vesta{C['reset']} {C['dim']}is typing...{C['reset']}", end='', flush=True)
+        dots = ['   ', '.  ', '.. ', '...']
+        dot_idx = 0
+        while True:
+            print(f"\r{C['dim']}[{timestamp}]{C['reset']} {C['magenta']}vesta{C['reset']} {C['dim']}is typing{dots[dot_idx]}{C['reset']}", end='', flush=True)
+            dot_idx = (dot_idx + 1) % 4
+            await asyncio.sleep(0.5)
+            # Will be cancelled when done typing
 
     async def process_queue():
         assert SHUTDOWN_EVENT is not None
@@ -230,9 +236,16 @@ async def run_vesta():
                 await asyncio.sleep(0.8 + datetime.now().microsecond / 3000000)  # 0.8-1.1s random delay
 
                 # Show typing indicator
-                await show_typing()
+                typing_task = asyncio.create_task(show_typing())
 
                 responses = await send_message(msg, show_in_chat=is_user)
+
+                # Cancel typing animation
+                typing_task.cancel()
+                try:
+                    await typing_task
+                except asyncio.CancelledError:
+                    pass
 
                 # Clear typing indicator line
                 print(f"\r\033[K", end='', flush=True)
