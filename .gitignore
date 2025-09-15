@@ -50,6 +50,8 @@ mcps/*/*.sqlite
 # WhatsApp session
 mcps/whatsapp-mcp/whatsapp-bridge/whatsapp.db
 mcps/whatsapp-mcp/whatsapp-bridge/session/
+mcps/whatsapp-mcp/whatsapp-bridge/whatsapp-bridge
+mcps/whatsapp-mcp/whatsapp-bridge/store/
 
 # Scheduler data
 mcps/scheduler-mcp/reminders.db

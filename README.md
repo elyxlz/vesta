@@ -1,5 +1,6 @@
 
 
+whatsapp authentication
 improve personality from poke
 dont have her auth other people
 browser

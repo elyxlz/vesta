@@ -48,11 +48,31 @@ else
     fi
 fi
 
-# Build bridge if needed
+# Build bridge if needed or if binary is incompatible
 cd "$BRIDGE_DIR"
+BUILD_NEEDED=false
+
 if [ ! -f "whatsapp-bridge" ]; then
-    echo "Building WhatsApp bridge..."
+    echo "WhatsApp bridge binary not found, building..."
+    BUILD_NEEDED=true
+else
+    # Test if the binary can execute on this architecture
+    ./whatsapp-bridge --help >/dev/null 2>&1
+    if [ $? -ne 0 ]; then
+        echo "WhatsApp bridge binary incompatible with this architecture, rebuilding..."
+        rm -f whatsapp-bridge
+        BUILD_NEEDED=true
+    fi
+fi
+
+if [ "$BUILD_NEEDED" = true ]; then
+    echo "Building WhatsApp bridge for $(uname -m) architecture..."
     go build -o whatsapp-bridge .
+    if [ $? -ne 0 ]; then
+        echo "ERROR: Failed to build WhatsApp bridge" >&2
+        exit 1
+    fi
+    echo "Build successful!"
 fi
 
 # Start the bridge with notifications directory as argument
