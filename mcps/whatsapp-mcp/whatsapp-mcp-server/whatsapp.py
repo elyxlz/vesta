@@ -873,7 +873,7 @@ def send_reaction(chat_jid: str, message_id: str, emoji: str = "👍") -> tuple[
     """Send a reaction to a WhatsApp message."""
     try:
         response = requests.post(
-            f"{BRIDGE_URL}/api/react",
+            f"{WHATSAPP_API_BASE_URL}/react",
             json={
                 "chat_jid": chat_jid,
                 "message_id": message_id,
