@@ -189,5 +189,12 @@ def download_media(message_id: str, chat_jid: str) -> Dict[str, Any]:
     return {"success": False, "message": "Failed to download media"}
 
 
+@mcp.tool()
+def transcribe_audio(file_path: str) -> str:
+    """Transcribe audio file to text (supports 99 languages including Italian)."""
+    from transcribe import transcribe
+    return transcribe(file_path)
+
+
 if __name__ == "__main__":
     mcp.run(transport="stdio")
