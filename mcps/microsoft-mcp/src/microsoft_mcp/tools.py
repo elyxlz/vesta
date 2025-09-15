@@ -141,8 +141,8 @@ def list_emails(
     if isinstance(limit, str):
         limit = int(limit) if limit.isdigit() else 10
     if isinstance(include_body, str):
-        include_body = include_body.lower() in ('true', '1', 'yes')
-    
+        include_body = include_body.lower() in ("true", "1", "yes")
+
     folder_path = FOLDERS.get(folder.casefold(), folder)
 
     if include_body:
@@ -187,12 +187,12 @@ def get_email(
     """
     # Convert string parameters to proper types
     if isinstance(include_body, str):
-        include_body = include_body.lower() in ('true', '1', 'yes')
+        include_body = include_body.lower() in ("true", "1", "yes")
     if isinstance(body_max_length, str):
         body_max_length = int(body_max_length) if body_max_length.isdigit() else 50000
     if isinstance(include_attachments, str):
-        include_attachments = include_attachments.lower() in ('true', '1', 'yes')
-    
+        include_attachments = include_attachments.lower() in ("true", "1", "yes")
+
     params = {}
     if include_attachments:
         params["$expand"] = "attachments($select=id,name,size,contentType)"
@@ -233,7 +233,7 @@ def create_email_draft(
     attachments: Optional[str] = None,
 ) -> dict[str, Any]:
     """Create an email draft with file path(s) as attachments
-    
+
     Args:
         account_id: The account ID
         to: Email addresses - accepts:
@@ -249,7 +249,9 @@ def create_email_draft(
             - Multiple paths: "/path/to/file1.pdf,/path/to/file2.docx"
     """
     # Handle both single and comma-separated email addresses
-    to_list = [addr.strip() for addr in to.split(',') if addr.strip()] if ',' in to else [to]
+    to_list = (
+        [addr.strip() for addr in to.split(",") if addr.strip()] if "," in to else [to]
+    )
 
     message = {
         "subject": subject,
@@ -258,7 +260,11 @@ def create_email_draft(
     }
 
     if cc:
-        cc_list = [addr.strip() for addr in cc.split(',') if addr.strip()] if ',' in cc else [cc]
+        cc_list = (
+            [addr.strip() for addr in cc.split(",") if addr.strip()]
+            if "," in cc
+            else [cc]
+        )
         message["ccRecipients"] = [
             {"emailAddress": {"address": addr}} for addr in cc_list
         ]
@@ -268,7 +274,11 @@ def create_email_draft(
 
     if attachments:
         # Handle both single and comma-separated paths
-        attachment_paths = [path.strip() for path in attachments.split(',') if path.strip()] if ',' in attachments else [attachments]
+        attachment_paths = (
+            [path.strip() for path in attachments.split(",") if path.strip()]
+            if "," in attachments
+            else [attachments]
+        )
         for file_path in attachment_paths:
             path = pl.Path(file_path).expanduser().resolve()
             content_bytes = path.read_bytes()
@@ -323,7 +333,7 @@ def send_email(
     attachments: Optional[str] = None,
 ) -> dict[str, str]:
     """Send an email immediately with file path(s) as attachments
-    
+
     Args:
         account_id: The account ID
         to: Email addresses - accepts:
@@ -339,7 +349,9 @@ def send_email(
             - Multiple paths: "/path/to/file1.pdf,/path/to/file2.docx"
     """
     # Handle both single and comma-separated email addresses
-    to_list = [addr.strip() for addr in to.split(',') if addr.strip()] if ',' in to else [to]
+    to_list = (
+        [addr.strip() for addr in to.split(",") if addr.strip()] if "," in to else [to]
+    )
 
     message = {
         "subject": subject,
@@ -348,7 +360,11 @@ def send_email(
     }
 
     if cc:
-        cc_list = [addr.strip() for addr in cc.split(',') if addr.strip()] if ',' in cc else [cc]
+        cc_list = (
+            [addr.strip() for addr in cc.split(",") if addr.strip()]
+            if "," in cc
+            else [cc]
+        )
         message["ccRecipients"] = [
             {"emailAddress": {"address": addr}} for addr in cc_list
         ]
@@ -359,7 +375,11 @@ def send_email(
 
     if attachments:
         # Handle both single and comma-separated paths
-        attachment_paths = [path.strip() for path in attachments.split(',') if path.strip()] if ',' in attachments else [attachments]
+        attachment_paths = (
+            [path.strip() for path in attachments.split(",") if path.strip()]
+            if "," in attachments
+            else [attachments]
+        )
         for file_path in attachment_paths:
             path = pl.Path(file_path).expanduser().resolve()
             content_bytes = path.read_bytes()
@@ -392,7 +412,11 @@ def send_email(
     elif has_large_attachments:
         # Create draft first, then add large attachments, then send
         # We need to handle large attachments manually here
-        to_list = [addr.strip() for addr in to.split(',') if addr.strip()] if ',' in to else [to]
+        to_list = (
+            [addr.strip() for addr in to.split(",") if addr.strip()]
+            if "," in to
+            else [to]
+        )
         message = {
             "subject": subject,
             "body": {"contentType": "Text", "content": body},
@@ -497,13 +521,10 @@ def move_email(
 
 @mcp.tool
 def reply_to_email(
-    account_id: str, 
-    email_id: str, 
-    body: str,
-    attachments: Optional[str] = None
+    account_id: str, email_id: str, body: str, attachments: Optional[str] = None
 ) -> dict[str, str]:
     """Reply to an email (sender only) with optional attachments
-    
+
     Args:
         account_id: The account ID
         email_id: The email ID to reply to
@@ -515,30 +536,44 @@ def reply_to_email(
     # If we have attachments, we need to create a draft first, add attachments, then send
     if attachments:
         # Get the original message to extract sender
-        original = graph.request("GET", f"/me/messages/{email_id}", account_id, 
-                                params={"$select": "from,subject,conversationId"})
+        original = graph.request(
+            "GET",
+            f"/me/messages/{email_id}",
+            account_id,
+            params={"$select": "from,subject,conversationId"},
+        )
         if not original:
             raise ValueError(f"Email with ID {email_id} not found")
-        
+
         # Create reply draft
-        draft = graph.request("POST", f"/me/messages/{email_id}/createReply", account_id)
+        draft = graph.request(
+            "POST", f"/me/messages/{email_id}/createReply", account_id
+        )
         if not draft or "id" not in draft:
             raise ValueError("Failed to create reply draft")
-        
+
         draft_id = draft["id"]
-        
+
         # Update draft body
-        graph.request("PATCH", f"/me/messages/{draft_id}", account_id,
-                     json={"body": {"contentType": "Text", "content": body}})
-        
+        graph.request(
+            "PATCH",
+            f"/me/messages/{draft_id}",
+            account_id,
+            json={"body": {"contentType": "Text", "content": body}},
+        )
+
         # Add attachments
-        attachment_paths = [path.strip() for path in attachments.split(',') if path.strip()] if ',' in attachments else [attachments]
+        attachment_paths = (
+            [path.strip() for path in attachments.split(",") if path.strip()]
+            if "," in attachments
+            else [attachments]
+        )
         for file_path in attachment_paths:
             path = pl.Path(file_path).expanduser().resolve()
             content_bytes = path.read_bytes()
             att_size = len(content_bytes)
             att_name = path.name
-            
+
             if att_size < 3 * 1024 * 1024:
                 # Small attachment
                 attachment = {
@@ -546,7 +581,12 @@ def reply_to_email(
                     "name": att_name,
                     "contentBytes": base64.b64encode(content_bytes).decode("utf-8"),
                 }
-                graph.request("POST", f"/me/messages/{draft_id}/attachments", account_id, json=attachment)
+                graph.request(
+                    "POST",
+                    f"/me/messages/{draft_id}/attachments",
+                    account_id,
+                    json=attachment,
+                )
             else:
                 # Large attachment
                 graph.upload_large_mail_attachment(
@@ -554,9 +594,9 @@ def reply_to_email(
                     att_name,
                     content_bytes,
                     account_id,
-                    "application/octet-stream"
+                    "application/octet-stream",
                 )
-        
+
         # Send the draft
         graph.request("POST", f"/me/messages/{draft_id}/send", account_id)
         return {"status": "sent"}
@@ -570,13 +610,10 @@ def reply_to_email(
 
 @mcp.tool
 def reply_all_email(
-    account_id: str, 
-    email_id: str, 
-    body: str,
-    attachments: Optional[str] = None
+    account_id: str, email_id: str, body: str, attachments: Optional[str] = None
 ) -> dict[str, str]:
     """Reply to all recipients of an email with optional attachments
-    
+
     Args:
         account_id: The account ID
         email_id: The email ID to reply to
@@ -588,30 +625,44 @@ def reply_all_email(
     # If we have attachments, we need to create a draft first, add attachments, then send
     if attachments:
         # Get the original message to extract recipients
-        original = graph.request("GET", f"/me/messages/{email_id}", account_id, 
-                                params={"$select": "from,toRecipients,ccRecipients,subject,conversationId"})
+        original = graph.request(
+            "GET",
+            f"/me/messages/{email_id}",
+            account_id,
+            params={"$select": "from,toRecipients,ccRecipients,subject,conversationId"},
+        )
         if not original:
             raise ValueError(f"Email with ID {email_id} not found")
-        
+
         # Create reply all draft
-        draft = graph.request("POST", f"/me/messages/{email_id}/createReplyAll", account_id)
+        draft = graph.request(
+            "POST", f"/me/messages/{email_id}/createReplyAll", account_id
+        )
         if not draft or "id" not in draft:
             raise ValueError("Failed to create reply all draft")
-        
+
         draft_id = draft["id"]
-        
+
         # Update draft body
-        graph.request("PATCH", f"/me/messages/{draft_id}", account_id,
-                     json={"body": {"contentType": "Text", "content": body}})
-        
+        graph.request(
+            "PATCH",
+            f"/me/messages/{draft_id}",
+            account_id,
+            json={"body": {"contentType": "Text", "content": body}},
+        )
+
         # Add attachments
-        attachment_paths = [path.strip() for path in attachments.split(',') if path.strip()] if ',' in attachments else [attachments]
+        attachment_paths = (
+            [path.strip() for path in attachments.split(",") if path.strip()]
+            if "," in attachments
+            else [attachments]
+        )
         for file_path in attachment_paths:
             path = pl.Path(file_path).expanduser().resolve()
             content_bytes = path.read_bytes()
             att_size = len(content_bytes)
             att_name = path.name
-            
+
             if att_size < 3 * 1024 * 1024:
                 # Small attachment
                 attachment = {
@@ -619,7 +670,12 @@ def reply_all_email(
                     "name": att_name,
                     "contentBytes": base64.b64encode(content_bytes).decode("utf-8"),
                 }
-                graph.request("POST", f"/me/messages/{draft_id}/attachments", account_id, json=attachment)
+                graph.request(
+                    "POST",
+                    f"/me/messages/{draft_id}/attachments",
+                    account_id,
+                    json=attachment,
+                )
             else:
                 # Large attachment
                 graph.upload_large_mail_attachment(
@@ -627,9 +683,9 @@ def reply_all_email(
                     att_name,
                     content_bytes,
                     account_id,
-                    "application/octet-stream"
+                    "application/octet-stream",
                 )
-        
+
         # Send the draft
         graph.request("POST", f"/me/messages/{draft_id}/send", account_id)
         return {"status": "sent"}
@@ -655,8 +711,8 @@ def list_events(
     if isinstance(days_back, str):
         days_back = int(days_back) if days_back.isdigit() else 0
     if isinstance(include_details, str):
-        include_details = include_details.lower() in ('true', '1', 'yes')
-    
+        include_details = include_details.lower() in ("true", "1", "yes")
+
     now = dt.datetime.now(dt.timezone.utc)
     start = (now - dt.timedelta(days=days_back)).isoformat()
     end = (now + dt.timedelta(days=days_ahead)).isoformat()
@@ -704,7 +760,7 @@ def create_event(
     timezone: str = "UTC",
 ) -> dict[str, Any]:
     """Create a calendar event
-    
+
     Args:
         account_id: The account ID
         subject: Event subject/title
@@ -730,7 +786,11 @@ def create_event(
         event["body"] = {"contentType": "Text", "content": body}
 
     if attendees:
-        attendees_list = [addr.strip() for addr in attendees.split(',') if addr.strip()] if ',' in attendees else [attendees]
+        attendees_list = (
+            [addr.strip() for addr in attendees.split(",") if addr.strip()]
+            if "," in attendees
+            else [attendees]
+        )
         event["attendees"] = [
             {"emailAddress": {"address": a}, "type": "required"} for a in attendees_list
         ]
@@ -778,8 +838,8 @@ def delete_event(
     """Delete or cancel a calendar event"""
     # Convert string parameter to proper type
     if isinstance(send_cancellation, str):
-        send_cancellation = send_cancellation.lower() in ('true', '1', 'yes')
-    
+        send_cancellation = send_cancellation.lower() in ("true", "1", "yes")
+
     if send_cancellation:
         graph.request("POST", f"/me/events/{event_id}/cancel", account_id, json={})
     else:
@@ -811,7 +871,7 @@ def check_availability(
     attendees: Optional[str] = None,
 ) -> dict[str, Any]:
     """Check calendar availability for scheduling
-    
+
     Args:
         account_id: The account ID
         start: Start datetime (ISO format, e.g., "2024-01-15T14:00:00")
@@ -825,7 +885,11 @@ def check_availability(
         raise ValueError("Failed to get user email address")
     schedules = [me_info["mail"]]
     if attendees:
-        attendees_list = [addr.strip() for addr in attendees.split(',') if addr.strip()] if ',' in attendees else [attendees]
+        attendees_list = (
+            [addr.strip() for addr in attendees.split(",") if addr.strip()]
+            if "," in attendees
+            else [attendees]
+        )
         schedules.extend(attendees_list)
 
     payload = {
@@ -847,7 +911,7 @@ def list_contacts(account_id: str, limit: Union[int, str] = 50) -> list[dict[str
     # Convert string parameter to proper type
     if isinstance(limit, str):
         limit = int(limit) if limit.isdigit() else 50
-    
+
     params = {"$top": min(limit, 100)}
 
     contacts = list(
@@ -875,7 +939,7 @@ def create_contact(
     phone_numbers: Optional[str] = None,
 ) -> dict[str, Any]:
     """Create a new contact
-    
+
     Args:
         account_id: The account ID
         given_name: Contact's first name
@@ -894,7 +958,11 @@ def create_contact(
         contact["surname"] = surname
 
     if email_addresses:
-        email_list = [email.strip() for email in email_addresses.split(',') if email.strip()] if ',' in email_addresses else [email_addresses]
+        email_list = (
+            [email.strip() for email in email_addresses.split(",") if email.strip()]
+            if "," in email_addresses
+            else [email_addresses]
+        )
         contact["emailAddresses"] = [
             {"address": email, "name": f"{given_name} {surname or ''}".strip()}
             for email in email_list
@@ -903,15 +971,15 @@ def create_contact(
     if phone_numbers:
         # Parse phone numbers from "type:number" or "type:number,type:number" format
         phones = {}
-        if ',' in phone_numbers:
-            for entry in phone_numbers.split(','):
-                if ':' in entry:
-                    phone_type, number = entry.split(':', 1)
+        if "," in phone_numbers:
+            for entry in phone_numbers.split(","):
+                if ":" in entry:
+                    phone_type, number = entry.split(":", 1)
                     phones[phone_type.strip().lower()] = number.strip()
-        elif ':' in phone_numbers:
-            phone_type, number = phone_numbers.split(':', 1)
+        elif ":" in phone_numbers:
+            phone_type, number = phone_numbers.split(":", 1)
             phones[phone_type.strip().lower()] = number.strip()
-        
+
         if "business" in phones:
             contact["businessPhones"] = [phones["business"]]
         if "home" in phones:
@@ -951,7 +1019,7 @@ def list_files(
     # Convert string parameter to proper type
     if isinstance(limit, str):
         limit = int(limit) if limit.isdigit() else 50
-    
+
     endpoint = (
         "/me/drive/root/children"
         if path == "/"
@@ -1081,7 +1149,7 @@ def search_files(
     # Convert string parameter to proper type
     if isinstance(limit, str):
         limit = int(limit) if limit.isdigit() else 50
-    
+
     items = list(graph.search_query(query, ["driveItem"], account_id, limit))
 
     return [
@@ -1108,7 +1176,7 @@ def search_emails(
     # Convert string parameter to proper type
     if isinstance(limit, str):
         limit = int(limit) if limit.isdigit() else 50
-    
+
     if folder:
         # For folder-specific search, use the traditional endpoint
         folder_path = FOLDERS.get(folder.casefold(), folder)
@@ -1143,7 +1211,7 @@ def search_events(
         days_back = int(days_back) if days_back.isdigit() else 365
     if isinstance(limit, str):
         limit = int(limit) if limit.isdigit() else 50
-    
+
     events = list(graph.search_query(query, ["event"], account_id, limit))
 
     # Filter by date range if needed
@@ -1179,7 +1247,7 @@ def search_contacts(
     # Convert string parameter to proper type
     if isinstance(limit, str):
         limit = int(limit) if limit.isdigit() else 50
-    
+
     params = {
         "$search": f'"{query}"',
         "$top": min(limit, 100),
@@ -1214,10 +1282,14 @@ def unified_search(
     # Convert string parameter to proper type
     if isinstance(limit, str):
         limit = int(limit) if limit.isdigit() else 50
-    
+
     if entity_types:
         # Parse comma-separated entity types
-        entity_types_list = [t.strip() for t in entity_types.split(',') if t.strip()] if ',' in entity_types else [entity_types]
+        entity_types_list = (
+            [t.strip() for t in entity_types.split(",") if t.strip()]
+            if "," in entity_types
+            else [entity_types]
+        )
     else:
         entity_types_list = ["message", "event", "driveItem"]
 

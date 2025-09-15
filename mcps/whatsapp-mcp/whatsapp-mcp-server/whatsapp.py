@@ -794,8 +794,6 @@ def send_audio_message(recipient: str, media_path: str) -> Tuple[bool, str]:
         return False, f"Unexpected error: {str(e)}"
 
 
-
-
 def download_media(message_id: str, chat_jid: str) -> Optional[str]:
     """Download media from a message and return the local file path.
 
@@ -836,21 +834,16 @@ def download_media(message_id: str, chat_jid: str) -> Optional[str]:
         return None
 
 
-def send_reaction(chat_jid: str, message_id: str, emoji: str = "👍", sender_jid: str = None) -> tuple[bool, str]:
+def send_reaction(
+    chat_jid: str, message_id: str, emoji: str = "👍", sender_jid: str = None
+) -> tuple[bool, str]:
     """Send a reaction to a WhatsApp message."""
     try:
-        payload = {
-            "chat_jid": chat_jid,
-            "message_id": message_id,
-            "emoji": emoji
-        }
+        payload = {"chat_jid": chat_jid, "message_id": message_id, "emoji": emoji}
         if sender_jid:
             payload["sender_jid"] = sender_jid
 
-        response = requests.post(
-            f"{WHATSAPP_API_BASE_URL}/reaction",
-            json=payload
-        )
+        response = requests.post(f"{WHATSAPP_API_BASE_URL}/reaction", json=payload)
 
         if response.status_code == 200:
             result = response.json()
@@ -867,7 +860,7 @@ def create_group(name: str, participants: list[str]) -> tuple[bool, str, str]:
     try:
         response = requests.post(
             f"{WHATSAPP_API_BASE_URL}/group/create",
-            json={"name": name, "participants": participants}
+            json={"name": name, "participants": participants},
         )
         result = response.json()
         if result["success"]:
@@ -881,8 +874,7 @@ def leave_group(group_jid: str) -> tuple[bool, str]:
     """Leave a WhatsApp group."""
     try:
         response = requests.post(
-            f"{WHATSAPP_API_BASE_URL}/group/leave",
-            json={"group_jid": group_jid}
+            f"{WHATSAPP_API_BASE_URL}/group/leave", json={"group_jid": group_jid}
         )
         result = response.json()
         return result.get("success", False), result.get("message", "")
@@ -914,12 +906,18 @@ def get_group_invite_link(group_jid: str) -> tuple[bool, str]:
         return False, str(e)
 
 
-def update_group_participants(group_jid: str, participants: list[str], action: str) -> tuple[bool, str]:
+def update_group_participants(
+    group_jid: str, participants: list[str], action: str
+) -> tuple[bool, str]:
     """Add or remove participants from a group."""
     try:
         response = requests.post(
             f"{WHATSAPP_API_BASE_URL}/group/participants",
-            json={"group_jid": group_jid, "participants": participants, "action": action}
+            json={
+                "group_jid": group_jid,
+                "participants": participants,
+                "action": action,
+            },
         )
         result = response.json()
         return result.get("success", False), result.get("message", "")
@@ -927,22 +925,20 @@ def update_group_participants(group_jid: str, participants: list[str], action: s
         return False, str(e)
 
 
-def send_reaction(chat_jid: str, message_id: str, emoji: str, sender_jid: str | None = None) -> tuple[bool, str]:
-    """Send a reaction to a WhatsApp message with NO SILENT FAILURES."""
+def send_reaction(chat_jid: str, message_id: str, emoji: str) -> tuple[bool, str]:
+    """Send a reaction to a WhatsApp message. Bridge automatically determines correct sender."""
     if not chat_jid:
         raise ValueError("chat_jid is required")
     if not message_id:
         raise ValueError("message_id is required")
 
     payload = {"chat_jid": chat_jid, "message_id": message_id, "emoji": emoji}
-
-    # NEVER auto-set sender_jid - let Go bridge determine correct sender (client's own JID)
-    # Only pass sender_jid if explicitly provided (for advanced use cases)
-    if sender_jid:
-        payload["sender_jid"] = sender_jid
+    # No sender_jid - bridge handles everything automatically
 
     try:
-        response = requests.post(f"{WHATSAPP_API_BASE_URL}/reaction", json=payload, timeout=10)
+        response = requests.post(
+            f"{WHATSAPP_API_BASE_URL}/reaction", json=payload, timeout=10
+        )
 
         if response.status_code != 200:
             return False, f"HTTP {response.status_code}: {response.text}"
@@ -972,7 +968,7 @@ def _get_sender_from_db(message_id: str, chat_jid: str) -> str | None:
         cursor = conn.cursor()
         cursor.execute(
             "SELECT sender FROM messages WHERE message_id = ? AND chat_id = ?",
-            (message_id, chat_jid)
+            (message_id, chat_jid),
         )
         result = cursor.fetchone()
         return result[0] if result else None

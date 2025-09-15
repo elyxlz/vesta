@@ -23,6 +23,7 @@ from whatsapp import (
 
 mcp = FastMCP("whatsapp")
 
+
 @mcp.tool()
 def search_contacts(query: str) -> List[Dict[str, Any]]:
     """Search WhatsApp contacts by name or phone number."""
@@ -158,14 +159,13 @@ def send_audio_message(recipient: str, media_path: str) -> Dict[str, Any]:
 
 
 @mcp.tool()
-def send_reaction(chat_jid: str, message_id: str, emoji: str, sender_jid: str | None = None) -> dict[str, Any]:
+def send_reaction(chat_jid: str, message_id: str, emoji: str) -> dict[str, Any]:
+    """Send a reaction to a WhatsApp message. Bridge automatically determines correct sender."""
     try:
-        success, message = whatsapp_send_reaction(chat_jid, message_id, emoji, sender_jid)
+        success, message = whatsapp_send_reaction(chat_jid, message_id, emoji)
         return {"success": success, "message": message}
     except Exception as e:
         return {"success": False, "message": str(e)}
-
-
 
 
 @mcp.tool()
@@ -193,6 +193,7 @@ def download_media(message_id: str, chat_jid: str) -> Dict[str, Any]:
 def transcribe_audio(file_path: str) -> str:
     """Transcribe audio file to text (supports 99 languages including Italian)."""
     from transcribe import transcribe
+
     return transcribe(file_path)
 
 
@@ -219,14 +220,20 @@ def list_groups() -> List[Dict[str, str]]:
 @mcp.tool()
 def add_group_participants(group_jid: str, participants: List[str]) -> Dict[str, Any]:
     """Add participants to a WhatsApp group."""
-    success, message = whatsapp_update_group_participants(group_jid, participants, "add")
+    success, message = whatsapp_update_group_participants(
+        group_jid, participants, "add"
+    )
     return {"success": success, "message": message}
 
 
 @mcp.tool()
-def remove_group_participants(group_jid: str, participants: List[str]) -> Dict[str, Any]:
+def remove_group_participants(
+    group_jid: str, participants: List[str]
+) -> Dict[str, Any]:
     """Remove participants from a WhatsApp group."""
-    success, message = whatsapp_update_group_participants(group_jid, participants, "remove")
+    success, message = whatsapp_update_group_participants(
+        group_jid, participants, "remove"
+    )
     return {"success": success, "message": message}
 
 
@@ -240,16 +247,24 @@ def get_group_invite_link(group_jid: str) -> Dict[str, Any]:
 
 
 @mcp.tool()
-def promote_group_participants(group_jid: str, participants: List[str]) -> Dict[str, Any]:
+def promote_group_participants(
+    group_jid: str, participants: List[str]
+) -> Dict[str, Any]:
     """Promote participants to admin in a WhatsApp group."""
-    success, message = whatsapp_update_group_participants(group_jid, participants, "promote")
+    success, message = whatsapp_update_group_participants(
+        group_jid, participants, "promote"
+    )
     return {"success": success, "message": message}
 
 
 @mcp.tool()
-def demote_group_participants(group_jid: str, participants: List[str]) -> Dict[str, Any]:
+def demote_group_participants(
+    group_jid: str, participants: List[str]
+) -> Dict[str, Any]:
     """Demote admins to regular participants in a WhatsApp group."""
-    success, message = whatsapp_update_group_participants(group_jid, participants, "demote")
+    success, message = whatsapp_update_group_participants(
+        group_jid, participants, "demote"
+    )
     return {"success": success, "message": message}
 
 

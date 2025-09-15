@@ -9,15 +9,16 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 
 # Get directories from environment or fail
-NOTIF_DIR = Path(os.environ.get('NOTIFICATIONS_DIR', '../../notifications')).resolve()
-DATA_DIR = Path(os.environ.get('DATA_DIR', 'data')) / "scheduler"
+NOTIF_DIR = Path(os.environ.get("NOTIFICATIONS_DIR", "../../notifications")).resolve()
+DATA_DIR = Path(os.environ.get("DATA_DIR", "data")) / "scheduler"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # Configure scheduler with persistent storage
 scheduler = AsyncIOScheduler(
     jobstores={"default": SQLAlchemyJobStore(url=f"sqlite:///{DATA_DIR}/reminders.db")},
-    job_defaults={'coalesce': True, 'max_instances': 1, 'misfire_grace_time': 60}
+    job_defaults={"coalesce": True, "max_instances": 1, "misfire_grace_time": 60},
 )
+
 
 def write_notification(reminder_id: str, message: str, data: dict = None):
     if not reminder_id or not message:
@@ -34,7 +35,7 @@ def write_notification(reminder_id: str, message: str, data: dict = None):
         "source": "scheduler",
         "type": "reminder",
         "message": message,
-        "metadata": metadata
+        "metadata": metadata,
     }
 
     filename = f"{int(time.time() * 1e6)}-scheduler-reminder.json"

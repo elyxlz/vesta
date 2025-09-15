@@ -39,6 +39,8 @@ var (
 	presenceMutex      sync.Mutex
 	presenceTimeout    = 1 * time.Minute // Go offline after 1 minute of inactivity
 	globalWhatsAppClient *whatsmeow.Client // Store client reference globally for presence management
+	messageSenders     = make(map[string]string) // Track message ID -> sender JID for reactions
+	messageSendersMutex sync.RWMutex // Protect the messageSenders map
 )
 
 type Message struct {
@@ -519,6 +521,11 @@ func handleMessage(client *whatsmeow.Client, messageStore *MessageStore, msg *ev
 	fmt.Printf("  - Is Group: %v\n", msg.Info.IsGroup)
 	fmt.Printf("  - Message ID: %s\n", msg.Info.ID)
 
+	// Store message sender for reactions
+	messageSendersMutex.Lock()
+	messageSenders[msg.Info.ID] = senderFullJID
+	messageSendersMutex.Unlock()
+
 	// Get appropriate chat name (pass nil for conversation since we don't have one for regular messages)
 	name := GetChatName(client, messageStore, msg.Info.Chat, chatJID, nil, sender, logger)
 
@@ -953,21 +960,37 @@ func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port 
 			}
 			senderJID = parsed
 		} else {
-			// Auto-determine sender based on chat type
-			// For reactions, we should use the full client JID, not ToNonAD()
-			fmt.Printf("[DEBUG] Client Store ID full: %s\n", client.Store.ID)
-			fmt.Printf("[DEBUG] Client Store ID ToNonAD(): %s\n", client.Store.ID.ToNonAD())
-
+			// Ultra-minimal reaction logic: auto-determine sender
 			if chatJID.Server == "s.whatsapp.net" {
-				// Private chat: Use chat JID as sender (fromMe:false works!)
+				// Private chat: use chat JID as sender (proven working)
 				senderJID = chatJID
-				fmt.Printf("[DEBUG] Using chat JID as sender for private chat: %s\n", senderJID)
+				fmt.Printf("[DEBUG] Private chat: using chat JID as sender: %s\n", senderJID)
 			} else if chatJID.Server == "g.us" {
-				// Group chat: We need to find the message sender and use their JID
-				// For now, this is a placeholder - we need message context to get sender
-				// TEMPORARY: Use ToNonAD until we implement proper sender lookup
-				senderJID = client.Store.ID.ToNonAD()
-				fmt.Printf("[DEBUG] Using ToNonAD for group chat (needs message sender lookup): %s\n", senderJID)
+				// Group chat: lookup original message sender
+				messageSendersMutex.RLock()
+				storedSender := messageSenders[req.MessageID]
+				messageSendersMutex.RUnlock()
+
+				if storedSender != "" {
+					var err error
+					senderJID, err = types.ParseJID(storedSender)
+					if err != nil {
+						w.WriteHeader(http.StatusBadRequest)
+						json.NewEncoder(w).Encode(map[string]interface{}{
+							"success": false,
+							"message": fmt.Sprintf("Invalid stored sender JID: %v", err),
+						})
+						return
+					}
+					fmt.Printf("[DEBUG] Group chat: using stored message sender: %s\n", senderJID)
+				} else {
+					w.WriteHeader(http.StatusBadRequest)
+					json.NewEncoder(w).Encode(map[string]interface{}{
+						"success": false,
+						"message": "Message not found or too old for reactions",
+					})
+					return
+				}
 			} else {
 				w.WriteHeader(http.StatusBadRequest)
 				json.NewEncoder(w).Encode(map[string]interface{}{
