@@ -16,14 +16,12 @@ from whatsapp import (
     send_reaction as whatsapp_send_reaction,
 )
 
-# Initialize FastMCP server
 mcp = FastMCP("whatsapp")
 
 @mcp.tool()
 def search_contacts(query: str) -> List[Dict[str, Any]]:
     """Search WhatsApp contacts by name or phone number."""
-    contacts = whatsapp_search_contacts(query)
-    return contacts
+    return whatsapp_search_contacts(query)
 
 
 @mcp.tool()
@@ -40,7 +38,7 @@ def list_messages(
     context_after: int = 1,
 ) -> List[Dict[str, Any]]:
     """Get WhatsApp messages with filters. Dates in ISO-8601 format. Include context shows surrounding messages."""
-    messages = whatsapp_list_messages(
+    return whatsapp_list_messages(
         after=after,
         before=before,
         sender_phone_number=sender_phone_number,
@@ -52,7 +50,6 @@ def list_messages(
         context_before=context_before,
         context_after=context_after,
     )
-    return messages
 
 
 @mcp.tool()
@@ -64,42 +61,37 @@ def list_chats(
     sort_by: str = "last_active",
 ) -> List[Dict[str, Any]]:
     """Get WhatsApp chats sorted by 'last_active' or 'name'."""
-    chats = whatsapp_list_chats(
+    return whatsapp_list_chats(
         query=query,
         limit=limit,
         page=page,
         include_last_message=include_last_message,
         sort_by=sort_by,
     )
-    return chats
 
 
 @mcp.tool()
 def get_chat(chat_jid: str, include_last_message: bool = True) -> Dict[str, Any]:
     """Get WhatsApp chat metadata by JID."""
-    chat = whatsapp_get_chat(chat_jid, include_last_message)
-    return chat
+    return whatsapp_get_chat(chat_jid, include_last_message)
 
 
 @mcp.tool()
 def get_direct_chat_by_contact(sender_phone_number: str) -> Dict[str, Any]:
     """Get WhatsApp chat metadata by phone number."""
-    chat = whatsapp_get_direct_chat_by_contact(sender_phone_number)
-    return chat
+    return whatsapp_get_direct_chat_by_contact(sender_phone_number)
 
 
 @mcp.tool()
 def get_contact_chats(jid: str, limit: int = 20, page: int = 0) -> List[Dict[str, Any]]:
     """Get all WhatsApp chats involving the contact."""
-    chats = whatsapp_get_contact_chats(jid, limit, page)
-    return chats
+    return whatsapp_get_contact_chats(jid, limit, page)
 
 
 @mcp.tool()
 def get_last_interaction(jid: str) -> str:
     """Get most recent WhatsApp message involving the contact."""
-    message = whatsapp_get_last_interaction(jid)
-    return message
+    return whatsapp_get_last_interaction(jid)
 
 
 @mcp.tool()
@@ -107,8 +99,7 @@ def get_message_context(
     message_id: str, before: int = 5, after: int = 5
 ) -> Dict[str, Any]:
     """Get context around a specific WhatsApp message."""
-    context = whatsapp_get_message_context(message_id, before, after)
-    return context
+    return whatsapp_get_message_context(message_id, before, after)
 
 
 @mcp.tool()
@@ -123,11 +114,8 @@ def send_message(recipient: str, message: str) -> Dict[str, Any]:
     Returns:
         A dictionary containing success status and a status message
     """
-    # Validate input
     if not recipient:
         return {"success": False, "message": "Recipient must be provided"}
-
-    # Call the whatsapp_send_message function with the unified recipient parameter
     success, status_message = whatsapp_send_message(recipient, message)
     return {"success": success, "message": status_message}
 
@@ -144,8 +132,6 @@ def send_file(recipient: str, media_path: str) -> Dict[str, Any]:
     Returns:
         A dictionary containing success status and a status message
     """
-
-    # Call the whatsapp_send_file function
     success, status_message = whatsapp_send_file(recipient, media_path)
     return {"success": success, "message": status_message}
 
@@ -194,17 +180,14 @@ def download_media(message_id: str, chat_jid: str) -> Dict[str, Any]:
         A dictionary containing success status, a status message, and the file path if successful
     """
     file_path = whatsapp_download_media(message_id, chat_jid)
-
     if file_path:
         return {
             "success": True,
             "message": "Media downloaded successfully",
             "file_path": file_path,
         }
-    else:
-        return {"success": False, "message": "Failed to download media"}
+    return {"success": False, "message": "Failed to download media"}
 
 
 if __name__ == "__main__":
-    # Initialize and run the server
     mcp.run(transport="stdio")
