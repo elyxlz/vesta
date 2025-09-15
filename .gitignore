@@ -1,7 +1,4 @@
-# Personal data
-MEMORY.md
-notifications/
-data/
+# Personal data (keep MEMORY.md.tmp as template)
 
 # Python
 __pycache__/
@@ -63,5 +60,3 @@ mcps/microsoft-mcp/.env
 
 # Old vesta folder (if still present)
 old_vesta/
-
-MEMORY.md

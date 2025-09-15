@@ -1,0 +1,12 @@
+{
+  "data": {
+    "chat_jid": "393483589770@s.whatsapp.net",
+    "chat_name": "393483589770",
+    "content": "hi",
+    "media_type": "",
+    "sender": "393483589770"
+  },
+  "source": "whatsapp",
+  "timestamp": "2025-09-14T02:13:49+01:00",
+  "type": "message"
+}

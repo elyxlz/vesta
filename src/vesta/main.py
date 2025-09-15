@@ -142,8 +142,14 @@ async def send_message(prompt, show_in_chat=True):
     timestamp = datetime.now().strftime("%A, %B %d, %Y at %I:%M:%S %p %Z")
     CONVERSATION_HISTORY.append({"role": "user", "content": prompt})
 
-    await client.query(f"[Current time: {timestamp}]\n{prompt}")
-    await check_context_usage()
+    try:
+        await client.query(f"[Current time: {timestamp}]\n{prompt}")
+        await check_context_usage()
+    except Exception as e:
+        error_msg = f"failed to send message: {str(e)[:100]}"
+        print(f"{C['yellow']}⚠️ {error_msg}{C['reset']}")
+        CONVERSATION_HISTORY.append({"role": "assistant", "content": error_msg})
+        return [error_msg]
 
     responses, seen = [], set()
     try:
@@ -159,11 +165,11 @@ async def send_message(prompt, show_in_chat=True):
                                     print(f"{C['yellow']}>{line}{C['reset']}")
                                 else:
                                     responses.append(line)
-        await asyncio.wait_for(collect(), timeout=30.0)
+        await asyncio.wait_for(collect(), timeout=300.0)
     except asyncio.TimeoutError:
-        responses.append("[Response timeout]")
+        responses.append("[Response timeout after 5 minutes]")
     except Exception as e:
-        responses.append(f"[Error: {e}]")
+        responses.append(f"[Error: {str(e)[:100]}]")
 
     if responses:
         CONVERSATION_HISTORY.append({"role": "assistant", "content": " ".join(responses)})
@@ -239,24 +245,29 @@ async def run_vesta():
                 # Show typing indicator
                 typing_task = asyncio.create_task(show_typing())
 
-                responses = await send_message(msg, show_in_chat=is_user)
-
-                # Cancel typing animation
-                typing_task.cancel()
                 try:
-                    await typing_task
-                except asyncio.CancelledError:
-                    pass
+                    responses = await send_message(msg, show_in_chat=is_user)
+                except Exception as e:
+                    responses = [f"something went wrong: {str(e)[:50]}"]
+                    print(f"{C['yellow']}⚠️ Message processing error: {str(e)[:100]}{C['reset']}")
+                finally:
+                    # Always cancel typing animation
+                    typing_task.cancel()
+                    try:
+                        await typing_task
+                    except asyncio.CancelledError:
+                        pass
 
-                # Clear typing indicator line
-                print(f"\r\033[K", end='', flush=True)
+                    # Clear typing indicator line
+                    print(f"\r\033[K", end='', flush=True)
 
                 for i, response in enumerate(responses):
                     if response and response.strip():
                         if i > 0: await asyncio.sleep(0.3)
                         print_chat(response, "Vesta")
             except asyncio.TimeoutError: continue
-            except Exception as e: print_chat(f"Error: {e}", "System")
+            except Exception as e:
+                print(f"{C['yellow']}⚠️ Queue error: {str(e)[:100]}{C['reset']}")
 
     async def handle_input():
         assert SHUTDOWN_EVENT is not None

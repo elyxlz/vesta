@@ -1,0 +1,22 @@
+{
+  "18862cb0": {
+    "message": "send elio his weekly monday briefing on whatsapp - calendar events, emails to respond to, tasks, deadlines",
+    "schedule_type": "weekly on monday at 09:00",
+    "next_run": "2025-09-22T09:00:00+01:00"
+  },
+  "a7f85f6a": {
+    "message": "CALL YOUR NONNA RIGHT NOW. no excuses, she's waiting to hear from you",
+    "schedule_type": "once (in 7.5 hours)",
+    "next_run": "2025-09-15T18:34:54.425271"
+  },
+  "9f70fa98": {
+    "message": "REMINDER: i'm on strike until you call nonna. no help with ANYTHING until you do. stop procrastinating and call her NOW",
+    "schedule_type": "once (in 8.0 hours)",
+    "next_run": "2025-09-15T19:05:48.506591"
+  },
+  "60d6b511": {
+    "message": "book flights: london \u2192 rome (dec 20 or 22) and rome \u2192 london (jan 3). check trip.com. figure out if you can work remote dec 23-24 to minimize missed days",
+    "schedule_type": "once (in 1.0 day)",
+    "next_run": "2025-09-16T11:25:27.698592"
+  }
+}

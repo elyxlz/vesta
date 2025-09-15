@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -30,6 +31,14 @@ import (
 	"go.mau.fi/whatsmeow/types/events"
 	waLog "go.mau.fi/whatsmeow/util/log"
 	"google.golang.org/protobuf/proto"
+)
+
+// Global presence management
+var (
+	presenceTimer      *time.Timer
+	presenceMutex      sync.Mutex
+	presenceTimeout    = 1 * time.Minute // Go offline after 1 minute of inactivity
+	globalWhatsAppClient *whatsmeow.Client // Store client reference globally for presence management
 )
 
 type Message struct {
@@ -353,8 +362,9 @@ func sendWhatsAppMessage(client *whatsmeow.Client, recipient string, message str
 		msg.Conversation = proto.String(message)
 	}
 
-	// Set online presence
+	// Set online presence and start/reset offline timer
 	client.SendPresence(types.PresenceAvailable)
+	managePresence(client)
 
 	// Send typing indicator
 	client.SendChatPresence(recipientJID, types.ChatPresenceComposing, types.ChatPresenceMediaText)
@@ -412,6 +422,24 @@ func extractMediaInfo(msg *waProto.Message) (mediaType string, filename string, 
 	return "", "", "", nil, nil, nil, 0
 }
 
+// managePresence handles automatic offline status after inactivity
+func managePresence(client *whatsmeow.Client) {
+	presenceMutex.Lock()
+	defer presenceMutex.Unlock()
+
+	// Cancel existing timer
+	if presenceTimer != nil {
+		presenceTimer.Stop()
+	}
+
+	// Set new timer to go offline after timeout
+	presenceTimer = time.AfterFunc(presenceTimeout, func() {
+		if client != nil && client.IsConnected() {
+			client.SendPresence(types.PresenceUnavailable)
+		}
+	})
+}
+
 // Handle regular incoming messages with media support
 func handleMessage(client *whatsmeow.Client, messageStore *MessageStore, msg *events.Message, logger waLog.Logger) {
 	// Save message to database
@@ -458,8 +486,27 @@ func handleMessage(client *whatsmeow.Client, messageStore *MessageStore, msg *ev
 	if err != nil {
 		logger.Warnf("Failed to store message: %v", err)
 	} else {
-		// Write notification for incoming messages
+		// Mark message as read for incoming messages
 		if !msg.Info.IsFromMe {
+			// Add a small delay to make read receipts feel more human (0.5-2 seconds)
+			go func() {
+				delay := time.Duration(500+rand.Intn(1500)) * time.Millisecond
+				time.Sleep(delay)
+
+				// Set online presence when reading messages and reset timer
+				client.SendPresence(types.PresenceAvailable)
+				managePresence(client)
+
+				// Mark this message as read
+				err := client.MarkRead([]types.MessageID{msg.Info.ID}, msg.Info.Timestamp, msg.Info.Chat, msg.Info.Sender)
+				if err != nil {
+					logger.Warnf("Failed to mark message as read: %v", err)
+				} else {
+					logger.Debugf("Marked message %s as read after %v", msg.Info.ID, delay)
+				}
+			}()
+
+			// Write notification for incoming messages
 			WriteNotification(chatJID, name, sender, content, mediaType)
 		}
 		
@@ -863,8 +910,7 @@ func main() {
 
 		case *events.Connected:
 			logger.Infof("Connected to WhatsApp")
-			// Set online presence
-			client.SendPresence(types.PresenceAvailable)
+			// Don't set online presence automatically - only when actively using
 
 		case *events.LoggedOut:
 			logger.Warnf("Device logged out, please scan QR code to log in again")

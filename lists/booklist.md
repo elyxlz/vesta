@@ -1,0 +1,5 @@
+- Procopius - Secret History (Historia Arcana)
+- The Glittering Horn: Secret Memoirs of the Court of Justinian
+- Accabadora by Michela Murgia
+- Woman at Point Zero by Nawal El Saadawi
+- The Hidden Face of Eve by Nawal El Saadawi
