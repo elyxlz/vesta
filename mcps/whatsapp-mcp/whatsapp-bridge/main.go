@@ -186,14 +186,24 @@ func extractTextContent(msg *waProto.Message) string {
 		return ""
 	}
 
-	// Try to get text content
+	// Try regular text messages
 	if text := msg.GetConversation(); text != "" {
 		return text
 	} else if extendedText := msg.GetExtendedTextMessage(); extendedText != nil {
 		return extendedText.GetText()
 	}
 
-	// For now, we're ignoring non-text messages
+	// Extract captions from media messages
+	if img := msg.GetImageMessage(); img != nil && img.GetCaption() != "" {
+		return img.GetCaption()
+	}
+	if vid := msg.GetVideoMessage(); vid != nil && vid.GetCaption() != "" {
+		return vid.GetCaption()
+	}
+	if doc := msg.GetDocumentMessage(); doc != nil && doc.GetCaption() != "" {
+		return doc.GetCaption()
+	}
+
 	return ""
 }
 
@@ -562,7 +572,7 @@ func handleMessage(client *whatsmeow.Client, messageStore *MessageStore, msg *ev
 			}()
 
 			// Write notification for incoming messages
-			WriteNotification(chatJID, name, sender, content, mediaType, isForwarded)
+			WriteNotification(msg.Info.ID, chatJID, name, sender, content, mediaType, isForwarded)
 		}
 		
 		// Log message reception

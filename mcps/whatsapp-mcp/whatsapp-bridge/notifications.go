@@ -9,12 +9,13 @@ import (
 
 var NotificationsDir string = "../../../notifications"
 
-func WriteNotification(chatJID, chatName, sender, content string, mediaType string, isForwarded bool) {
+func WriteNotification(messageID, chatJID, chatName, sender, content string, mediaType string, isForwarded bool) {
 	notifDir := NotificationsDir
 	os.MkdirAll(notifDir, 0755)
 
 	// Build metadata - only include non-empty values
 	metadata := make(map[string]interface{})
+	metadata["message_id"] = messageID
 	metadata["chat_jid"] = chatJID
 	metadata["chat_name"] = chatName
 	metadata["sender"] = sender
