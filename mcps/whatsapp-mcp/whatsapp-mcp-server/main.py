@@ -17,6 +17,7 @@ from whatsapp import (
     create_group as whatsapp_create_group,
     leave_group as whatsapp_leave_group,
     list_groups as whatsapp_list_groups,
+    get_group_invite_link as whatsapp_get_group_invite_link,
     update_group_participants as whatsapp_update_group_participants,
 )
 
@@ -157,19 +158,14 @@ def send_audio_message(recipient: str, media_path: str) -> Dict[str, Any]:
 
 
 @mcp.tool()
-def send_reaction(chat_jid: str, message_id: str, emoji: str = "👍") -> Dict[str, Any]:
-    """Send a reaction emoji to a WhatsApp message.
+def send_reaction(chat_jid: str, message_id: str, emoji: str, sender_jid: str | None = None) -> dict[str, Any]:
+    try:
+        success, message = whatsapp_send_reaction(chat_jid, message_id, emoji, sender_jid)
+        return {"success": success, "message": message}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
 
-    Args:
-        chat_jid: The JID of the chat containing the message
-        message_id: The ID of the message to react to
-        emoji: The emoji to react with (empty string removes reaction, default is thumbs up)
 
-    Returns:
-        A dictionary containing success status and a status message
-    """
-    success, status_message = whatsapp_send_reaction(chat_jid, message_id, emoji)
-    return {"success": success, "message": status_message}
 
 
 @mcp.tool()
@@ -203,8 +199,8 @@ def transcribe_audio(file_path: str) -> str:
 @mcp.tool()
 def create_group(name: str, participants: List[str]) -> Dict[str, Any]:
     """Create a WhatsApp group with specified participants (phone numbers without country code symbols)."""
-    success, group_jid, group_name = whatsapp_create_group(name, participants)
-    return {"success": success, "group_jid": group_jid, "name": group_name}
+    success, group_jid, message = whatsapp_create_group(name, participants)
+    return {"success": success, "group_jid": group_jid, "message": message}
 
 
 @mcp.tool()
@@ -231,6 +227,29 @@ def add_group_participants(group_jid: str, participants: List[str]) -> Dict[str,
 def remove_group_participants(group_jid: str, participants: List[str]) -> Dict[str, Any]:
     """Remove participants from a WhatsApp group."""
     success, message = whatsapp_update_group_participants(group_jid, participants, "remove")
+    return {"success": success, "message": message}
+
+
+@mcp.tool()
+def get_group_invite_link(group_jid: str) -> Dict[str, Any]:
+    """Get an invite link for a WhatsApp group. Useful when adding participants directly fails."""
+    success, link = whatsapp_get_group_invite_link(group_jid)
+    if success:
+        return {"success": True, "link": link}
+    return {"success": False, "message": link}
+
+
+@mcp.tool()
+def promote_group_participants(group_jid: str, participants: List[str]) -> Dict[str, Any]:
+    """Promote participants to admin in a WhatsApp group."""
+    success, message = whatsapp_update_group_participants(group_jid, participants, "promote")
+    return {"success": success, "message": message}
+
+
+@mcp.tool()
+def demote_group_participants(group_jid: str, participants: List[str]) -> Dict[str, Any]:
+    """Demote admins to regular participants in a WhatsApp group."""
+    success, message = whatsapp_update_group_participants(group_jid, participants, "demote")
     return {"success": success, "message": message}
 
 

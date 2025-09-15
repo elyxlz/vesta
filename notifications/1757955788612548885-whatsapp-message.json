@@ -1,0 +1,12 @@
+{
+  "message": "test fixed reactions",
+  "metadata": {
+    "chat_jid": "393483589770@s.whatsapp.net",
+    "chat_name": "393483589770",
+    "message_id": "3EB0E5D55E83F998AC24FA",
+    "sender": "393483589770:41@s.whatsapp.net"
+  },
+  "source": "whatsapp",
+  "timestamp": "2025-09-15T18:03:08+01:00",
+  "type": "message"
+}

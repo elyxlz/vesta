@@ -505,7 +505,19 @@ func managePresence(client *whatsmeow.Client) {
 func handleMessage(client *whatsmeow.Client, messageStore *MessageStore, msg *events.Message, logger waLog.Logger) {
 	// Save message to database
 	chatJID := msg.Info.Chat.String()
+
+	// Extract full sender JID
+	senderFullJID := msg.Info.Sender.String()
 	sender := msg.Info.Sender.User
+
+	// Extensive logging for debugging sender JID
+	fmt.Printf("[DEBUG] Message Event Info:\n")
+	fmt.Printf("  - Chat JID: %s\n", chatJID)
+	fmt.Printf("  - Sender Full JID: %s\n", senderFullJID)
+	fmt.Printf("  - Sender User Part: %s\n", sender)
+	fmt.Printf("  - Sender Server: %s\n", msg.Info.Sender.Server)
+	fmt.Printf("  - Is Group: %v\n", msg.Info.IsGroup)
+	fmt.Printf("  - Message ID: %s\n", msg.Info.ID)
 
 	// Get appropriate chat name (pass nil for conversation since we don't have one for regular messages)
 	name := GetChatName(client, messageStore, msg.Info.Chat, chatJID, nil, sender, logger)
@@ -571,8 +583,8 @@ func handleMessage(client *whatsmeow.Client, messageStore *MessageStore, msg *ev
 				}
 			}()
 
-			// Write notification for incoming messages
-			WriteNotification(msg.Info.ID, chatJID, name, sender, content, mediaType, isForwarded)
+			// Write notification for incoming messages with full sender JID
+			WriteNotification(msg.Info.ID, chatJID, name, senderFullJID, content, mediaType, isForwarded)
 		}
 		
 		// Log message reception
@@ -602,9 +614,20 @@ func handleReaction(client *whatsmeow.Client, msg *events.Message, logger waLog.
 		return
 	}
 	chatJID := msg.Info.Chat.String()
+
+	// Extract full sender JID for reactions
+	senderFullJID := msg.Info.Sender.String()
 	sender := msg.Info.Sender.User
 	targetMessageID := reaction.GetKey().GetID()
 	emoji := reaction.GetText()
+
+	// Extensive logging for debugging reaction sender JID
+	fmt.Printf("[DEBUG] Reaction Event Info:\n")
+	fmt.Printf("  - Chat JID: %s\n", chatJID)
+	fmt.Printf("  - Sender Full JID: %s\n", senderFullJID)
+	fmt.Printf("  - Sender User Part: %s\n", sender)
+	fmt.Printf("  - Target Message ID: %s\n", targetMessageID)
+	fmt.Printf("  - Emoji: %s\n", emoji)
 
 	name := sender
 	ctx := context.Background()
@@ -616,7 +639,8 @@ func handleReaction(client *whatsmeow.Client, msg *events.Message, logger waLog.
 		name = contact.FullName
 	}
 
-	WriteReactionNotification(targetMessageID, chatJID, name, sender, emoji, emoji == "")
+	// Write reaction notification with full sender JID
+	WriteReactionNotification(targetMessageID, chatJID, name, senderFullJID, emoji, emoji == "")
 
 	timestamp := msg.Info.Timestamp.Format("2006-01-02 15:04:05")
 	if emoji == "" {
@@ -880,7 +904,7 @@ func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port 
 		})
 	})
 
-	http.HandleFunc("/api/react", func(w http.ResponseWriter, r *http.Request) {
+	reactionHandler := func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -890,6 +914,7 @@ func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port 
 			ChatJID   string `json:"chat_jid"`
 			MessageID string `json:"message_id"`
 			Emoji     string `json:"emoji"`
+			SenderJID string `json:"sender_jid,omitempty"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "Invalid request format", http.StatusBadRequest)
@@ -901,18 +926,80 @@ func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port 
 			return
 		}
 
-		jid, err := types.ParseJID(req.ChatJID)
+		fmt.Printf("Reaction request: chat=%s, msg=%s, emoji=%s, sender=%s\n", req.ChatJID, req.MessageID, req.Emoji, req.SenderJID)
+
+		chatJID, err := types.ParseJID(req.ChatJID)
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"success": false,
-				"message": fmt.Sprintf("Invalid JID: %v", err),
+				"message": fmt.Sprintf("Invalid chat JID: %v", err),
 			})
 			return
 		}
 
-		reactionMsg := client.BuildReaction(jid, jid, req.MessageID, req.Emoji)
-		_, err = client.SendMessage(context.Background(), jid, reactionMsg)
+		// Determine sender JID based on chat type
+		var senderJID types.JID
+		if req.SenderJID != "" {
+			// Use provided sender JID
+			parsed, err := types.ParseJID(req.SenderJID)
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"success": false,
+					"message": fmt.Sprintf("Invalid sender JID: %v", err),
+				})
+				return
+			}
+			senderJID = parsed
+		} else {
+			// Auto-determine sender based on chat type
+			// For reactions, we should use the full client JID, not ToNonAD()
+			fmt.Printf("[DEBUG] Client Store ID full: %s\n", client.Store.ID)
+			fmt.Printf("[DEBUG] Client Store ID ToNonAD(): %s\n", client.Store.ID.ToNonAD())
+
+			if chatJID.Server == "s.whatsapp.net" {
+				// Private chat: Use chat JID as sender (fromMe:false works!)
+				senderJID = chatJID
+				fmt.Printf("[DEBUG] Using chat JID as sender for private chat: %s\n", senderJID)
+			} else if chatJID.Server == "g.us" {
+				// Group chat: We need to find the message sender and use their JID
+				// For now, this is a placeholder - we need message context to get sender
+				// TEMPORARY: Use ToNonAD until we implement proper sender lookup
+				senderJID = client.Store.ID.ToNonAD()
+				fmt.Printf("[DEBUG] Using ToNonAD for group chat (needs message sender lookup): %s\n", senderJID)
+			} else {
+				w.WriteHeader(http.StatusBadRequest)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"success": false,
+					"message": fmt.Sprintf("Unsupported chat type: %s", chatJID.Server),
+				})
+				return
+			}
+		}
+
+		fmt.Printf("Reaction: chat=%s, sender=%s, msgID=%s, emoji=%s\n", chatJID, senderJID, req.MessageID, req.Emoji)
+
+		// More detailed logging before building reaction
+		fmt.Printf("[DEBUG] Building reaction message...\n")
+		fmt.Printf("[DEBUG] - Target chat JID: %s\n", chatJID)
+		fmt.Printf("[DEBUG] - Sender JID: %s\n", senderJID)
+		fmt.Printf("[DEBUG] - Message ID: %s\n", req.MessageID)
+		fmt.Printf("[DEBUG] - Emoji: %s (bytes: %v)\n", req.Emoji, []byte(req.Emoji))
+		fmt.Printf("[DEBUG] - Client connected: %v\n", client.IsConnected())
+		fmt.Printf("[DEBUG] - Client store ID: %s\n", client.Store.ID)
+
+		reactionMsg := client.BuildReaction(chatJID, senderJID, req.MessageID, req.Emoji)
+
+		fmt.Printf("[DEBUG] Reaction message built successfully\n")
+		fmt.Printf("[DEBUG] Reaction message type: %T\n", reactionMsg)
+		fmt.Printf("[DEBUG] Reaction message content: %+v\n", reactionMsg)
+		fmt.Printf("[DEBUG] Attempting to send reaction message...\n")
+
+		sendResponse, err := client.SendMessage(context.Background(), chatJID, reactionMsg)
+
+		fmt.Printf("[DEBUG] Send response: %+v\n", sendResponse)
+		fmt.Printf("Reaction result: %v\n", err)
 
 		w.Header().Set("Content-Type", "application/json")
 		if err != nil {
@@ -931,7 +1018,13 @@ func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port 
 				"message": fmt.Sprintf("Reaction %s successfully", action),
 			})
 		}
-	})
+	}
+
+	// Handler for sending reactions - legacy endpoint
+	http.HandleFunc("/api/react", reactionHandler)
+
+	// Handler for sending reactions - new endpoint for Python compatibility
+	http.HandleFunc("/api/reaction", reactionHandler)
 
 	// Handler for downloading media
 	http.HandleFunc("/api/download", func(w http.ResponseWriter, r *http.Request) {
@@ -1072,6 +1165,10 @@ func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port 
 			action = whatsmeow.ParticipantChangeAdd
 		} else if req.Action == "remove" {
 			action = whatsmeow.ParticipantChangeRemove
+		} else if req.Action == "promote" {
+			action = whatsmeow.ParticipantChangePromote
+		} else if req.Action == "demote" {
+			action = whatsmeow.ParticipantChangeDemote
 		} else {
 			http.Error(w, "Invalid action", http.StatusBadRequest)
 			return

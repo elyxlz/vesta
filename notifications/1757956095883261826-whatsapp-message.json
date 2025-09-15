@@ -1,0 +1,12 @@
+{
+  "message": "xx",
+  "metadata": {
+    "chat_jid": "393483589770@s.whatsapp.net",
+    "chat_name": "393483589770",
+    "message_id": "3EB06E44DD48F5C498519A",
+    "sender": "393483589770:41@s.whatsapp.net"
+  },
+  "source": "whatsapp",
+  "timestamp": "2025-09-15T18:08:15+01:00",
+  "type": "message"
+}

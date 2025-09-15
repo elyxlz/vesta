@@ -1,0 +1,12 @@
+{
+  "message": "abc",
+  "metadata": {
+    "chat_jid": "120363420369811560@g.us",
+    "chat_name": "elio maddy vesta",
+    "message_id": "3EB0CD6CC934B7259CBF37",
+    "sender": "68569270337562:41@lid"
+  },
+  "source": "whatsapp",
+  "timestamp": "2025-09-15T17:59:16+01:00",
+  "type": "message"
+}
