@@ -596,6 +596,36 @@ func handleMessage(client *whatsmeow.Client, messageStore *MessageStore, msg *ev
 	}
 }
 
+func handleReaction(client *whatsmeow.Client, msg *events.Message, logger waLog.Logger) {
+	reaction := msg.Message.GetReactionMessage()
+	if reaction == nil {
+		return
+	}
+	chatJID := msg.Info.Chat.String()
+	sender := msg.Info.Sender.User
+	targetMessageID := reaction.GetKey().GetID()
+	emoji := reaction.GetText()
+
+	name := sender
+	ctx := context.Background()
+	if msg.Info.Chat.Server == "g.us" {
+		if info, err := client.GetGroupInfo(msg.Info.Chat); err == nil {
+			name = info.Name
+		}
+	} else if contact, err := client.Store.Contacts.GetContact(ctx, msg.Info.Chat); err == nil && contact.FullName != "" {
+		name = contact.FullName
+	}
+
+	WriteReactionNotification(targetMessageID, chatJID, name, sender, emoji, emoji == "")
+
+	timestamp := msg.Info.Timestamp.Format("2006-01-02 15:04:05")
+	if emoji == "" {
+		fmt.Printf("[%s] 💔 %s removed reaction from %s\n", timestamp, sender, targetMessageID[:8])
+	} else {
+		fmt.Printf("[%s] %s %s reacted to %s\n", timestamp, emoji, sender, targetMessageID[:8])
+	}
+}
+
 // DownloadMediaRequest represents the request body for the download media API
 type DownloadMediaRequest struct {
 	MessageID string `json:"message_id"`
@@ -687,8 +717,8 @@ func downloadMedia(client *whatsmeow.Client, messageStore *MessageStore, message
 	var fileLength uint64
 	var err error
 
-	// First, check if we already have this file
-	chatDir := fmt.Sprintf("store/%s", strings.ReplaceAll(chatJID, ":", "_"))
+	// Use /tmp for media storage
+	chatDir := fmt.Sprintf("/tmp/whatsapp_media/%s", strings.ReplaceAll(chatJID, ":", "_"))
 	localPath := ""
 
 	// Get media info from the database
@@ -850,6 +880,59 @@ func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port 
 		})
 	})
 
+	http.HandleFunc("/api/react", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var req struct {
+			ChatJID   string `json:"chat_jid"`
+			MessageID string `json:"message_id"`
+			Emoji     string `json:"emoji"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request format", http.StatusBadRequest)
+			return
+		}
+
+		if req.ChatJID == "" || req.MessageID == "" {
+			http.Error(w, "Chat JID and Message ID are required", http.StatusBadRequest)
+			return
+		}
+
+		jid, err := types.ParseJID(req.ChatJID)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"message": fmt.Sprintf("Invalid JID: %v", err),
+			})
+			return
+		}
+
+		reactionMsg := client.BuildReaction(jid, jid, req.MessageID, req.Emoji)
+		_, err = client.SendMessage(context.Background(), jid, reactionMsg)
+
+		w.Header().Set("Content-Type", "application/json")
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"message": fmt.Sprintf("Failed to send reaction: %v", err),
+			})
+		} else {
+			action := "sent"
+			if req.Emoji == "" {
+				action = "removed"
+			}
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": true,
+				"message": fmt.Sprintf("Reaction %s successfully", action),
+			})
+		}
+	})
+
 	// Handler for downloading media
 	http.HandleFunc("/api/download", func(w http.ResponseWriter, r *http.Request) {
 		// Only allow POST requests
@@ -971,8 +1054,12 @@ func main() {
 	client.AddEventHandler(func(evt interface{}) {
 		switch v := evt.(type) {
 		case *events.Message:
-			// Process regular messages
-			handleMessage(client, messageStore, v, logger)
+			// Check if it's a reaction
+			if v.Message.GetReactionMessage() != nil {
+				handleReaction(client, v, logger)
+			} else {
+				handleMessage(client, messageStore, v, logger)
+			}
 
 		case *events.HistorySync:
 			// Process history sync events

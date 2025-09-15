@@ -13,6 +13,7 @@ from whatsapp import (
     send_file as whatsapp_send_file,
     send_audio_message as whatsapp_audio_voice_message,
     download_media as whatsapp_download_media,
+    send_reaction as whatsapp_send_reaction,
 )
 
 # Initialize FastMCP server
@@ -162,6 +163,22 @@ def send_audio_message(recipient: str, media_path: str) -> Dict[str, Any]:
         A dictionary containing success status and a status message
     """
     success, status_message = whatsapp_audio_voice_message(recipient, media_path)
+    return {"success": success, "message": status_message}
+
+
+@mcp.tool()
+def send_reaction(chat_jid: str, message_id: str, emoji: str = "👍") -> Dict[str, Any]:
+    """Send a reaction emoji to a WhatsApp message.
+
+    Args:
+        chat_jid: The JID of the chat containing the message
+        message_id: The ID of the message to react to
+        emoji: The emoji to react with (empty string removes reaction, default is thumbs up)
+
+    Returns:
+        A dictionary containing success status and a status message
+    """
+    success, status_message = whatsapp_send_reaction(chat_jid, message_id, emoji)
     return {"success": success, "message": status_message}
 
 

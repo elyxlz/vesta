@@ -11,7 +11,7 @@
 - **Important context**: Has anxiety about doing things, admin tasks, and staying on top of responsibilities - built me to help manage this
 - **Communication habits**: Has trouble responding to messages on WhatsApp - gets my help with this
 - **Primary phone number**: +44 7939 865977 (UK)
-- **Other numbers**: +393483589770 (Italy)
+- **Other numbers**: +393483589770 (Italy - WhatsApp is on this number)
 - **Personal documents**: All passport and ID details stored in Keeper record "Elio Personal Info"
 
 ## Family

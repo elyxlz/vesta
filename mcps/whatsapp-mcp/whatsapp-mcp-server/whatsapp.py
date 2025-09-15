@@ -794,6 +794,41 @@ def send_audio_message(recipient: str, media_path: str) -> Tuple[bool, str]:
         return False, f"Unexpected error: {str(e)}"
 
 
+def send_reaction(chat_jid: str, message_id: str, emoji: str) -> Tuple[bool, str]:
+    """Send a reaction to a WhatsApp message.
+
+    Args:
+        chat_jid: The JID of the chat containing the message
+        message_id: The ID of the message to react to
+        emoji: The emoji to react with (empty string to remove reaction)
+
+    Returns:
+        Tuple of (success, status_message)
+    """
+    try:
+        url = f"{WHATSAPP_API_BASE_URL}/react"
+        payload = {
+            "chat_jid": chat_jid,
+            "message_id": message_id,
+            "emoji": emoji
+        }
+
+        response = requests.post(url, json=payload)
+
+        if response.status_code == 200:
+            result = response.json()
+            if result.get("success", False):
+                return True, result.get("message", "Reaction sent")
+            else:
+                return False, result.get("message", "Failed to send reaction")
+        else:
+            return False, f"HTTP {response.status_code}: {response.text}"
+
+    except requests.RequestException as e:
+        print(f"Error sending reaction: {e}")
+        return False, str(e)
+
+
 def download_media(message_id: str, chat_jid: str) -> Optional[str]:
     """Download media from a message and return the local file path.
 
@@ -832,3 +867,25 @@ def download_media(message_id: str, chat_jid: str) -> Optional[str]:
     except Exception as e:
         print(f"Unexpected error: {str(e)}")
         return None
+
+
+def send_reaction(chat_jid: str, message_id: str, emoji: str = "👍") -> tuple[bool, str]:
+    """Send a reaction to a WhatsApp message."""
+    try:
+        response = requests.post(
+            f"{BRIDGE_URL}/api/react",
+            json={
+                "chat_jid": chat_jid,
+                "message_id": message_id,
+                "emoji": emoji
+            }
+        )
+
+        if response.status_code == 200:
+            result = response.json()
+            return result.get("success", False), result.get("message", "")
+        else:
+            return False, f"HTTP {response.status_code}: {response.text}"
+
+    except Exception as e:
+        return False, str(e)
