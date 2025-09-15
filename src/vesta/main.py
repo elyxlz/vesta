@@ -301,20 +301,21 @@ async def run_vesta():
                 last_bridge_check = now
 
             for notif in await process_notifications():
-                source, data, timestamp = notif['source'], notif['data'], notif['timestamp']
+                source, message = notif['source'], notif['message']
+                metadata = notif.get('metadata', {})
 
-                if source == 'whatsapp':
-                    sender = data.get('sender', 'Unknown')
-                    chat_name = data.get('chat_name', sender)
-                    content = data.get('content', data.get('message', ''))
-                    media_type = data.get('media_type', '')
+                icons = {'whatsapp': '📱', 'scheduler': '⏰', 'email': '📧'}
+                icon = icons.get(source, '🔔')
 
-                    display = f"📱 WhatsApp [{chat_name}]: [{media_type}] {content[:50]}..." if media_type else f"📱 WhatsApp [{chat_name}]: {content[:80]}..."
-                    prompt = f"[WhatsApp message at {timestamp}] From {chat_name} ({sender}): {content}"
+                if source == 'whatsapp' and metadata.get('chat_name'):
+                    extras = f"[FORWARDED] " if metadata.get('is_forwarded') else ""
+                    extras += f"[{metadata['media_type']}] " if metadata.get('media_type') else ""
+                    display = f"{icon} WhatsApp [{metadata['chat_name']}]: {extras}{message[:80]}..."
                 else:
-                    content = data.get('message', str(data))
-                    display = f"🔔 {source}: {content[:80]}..."
-                    prompt = f"[Notification at {timestamp}] From {source}: {content}"
+                    display = f"{icon} {source}: {message[:80]}..."
+
+                meta_str = f" (metadata: {', '.join(f'{k}={v}' for k,v in metadata.items() if v)})" if metadata else ""
+                prompt = f"[{notif['type']} from {source} at {notif['timestamp']}]{meta_str}: {message}"
 
                 print_chat(display, "System")
                 await message_queue.put((prompt, True))

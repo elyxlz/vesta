@@ -42,12 +42,13 @@ var (
 )
 
 type Message struct {
-	Time      time.Time
-	Sender    string
-	Content   string
-	IsFromMe  bool
-	MediaType string
-	Filename  string
+	Time       time.Time
+	Sender     string
+	Content    string
+	IsFromMe   bool
+	IsForwarded bool
+	MediaType  string
+	Filename   string
 }
 
 type MessageStore struct {
@@ -70,7 +71,7 @@ func NewMessageStore() (*MessageStore, error) {
 			name TEXT,
 			last_message_time TIMESTAMP
 		);
-		
+
 		CREATE TABLE IF NOT EXISTS messages (
 			id TEXT,
 			chat_jid TEXT,
@@ -78,6 +79,7 @@ func NewMessageStore() (*MessageStore, error) {
 			content TEXT,
 			timestamp TIMESTAMP,
 			is_from_me BOOLEAN,
+			is_forwarded BOOLEAN DEFAULT 0,
 			media_type TEXT,
 			filename TEXT,
 			url TEXT,
@@ -94,6 +96,11 @@ func NewMessageStore() (*MessageStore, error) {
 		return nil, fmt.Errorf("failed to create tables: %v", err)
 	}
 
+	// Add is_forwarded column if it doesn't exist (for existing databases)
+	_, err = db.Exec(`ALTER TABLE messages ADD COLUMN is_forwarded BOOLEAN DEFAULT 0`)
+	// Ignore error if column already exists
+	_ = err
+
 	return &MessageStore{db: db}, nil
 }
 
@@ -109,7 +116,7 @@ func (store *MessageStore) StoreChat(jid, name string, lastMessageTime time.Time
 	return err
 }
 
-func (store *MessageStore) StoreMessage(id, chatJID, sender, content string, timestamp time.Time, isFromMe bool,
+func (store *MessageStore) StoreMessage(id, chatJID, sender, content string, timestamp time.Time, isFromMe bool, isForwarded bool,
 	mediaType, filename, url string, mediaKey, fileSHA256, fileEncSHA256 []byte, fileLength uint64) error {
 	// Only store if there's actual content or media
 	if content == "" && mediaType == "" {
@@ -117,10 +124,10 @@ func (store *MessageStore) StoreMessage(id, chatJID, sender, content string, tim
 	}
 
 	_, err := store.db.Exec(
-		`INSERT OR REPLACE INTO messages 
-		(id, chat_jid, sender, content, timestamp, is_from_me, media_type, filename, url, media_key, file_sha256, file_enc_sha256, file_length) 
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, chatJID, sender, content, timestamp, isFromMe, mediaType, filename, url, mediaKey, fileSHA256, fileEncSHA256, fileLength,
+		`INSERT OR REPLACE INTO messages
+		(id, chat_jid, sender, content, timestamp, is_from_me, is_forwarded, media_type, filename, url, media_key, file_sha256, file_enc_sha256, file_length)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, chatJID, sender, content, timestamp, isFromMe, isForwarded, mediaType, filename, url, mediaKey, fileSHA256, fileEncSHA256, fileLength,
 	)
 	return err
 }
@@ -188,6 +195,50 @@ func extractTextContent(msg *waProto.Message) string {
 
 	// For now, we're ignoring non-text messages
 	return ""
+}
+
+// Check if a message is forwarded
+func isMessageForwarded(msg *waProto.Message) bool {
+	if msg == nil {
+		return false
+	}
+
+	// Check ExtendedTextMessage for forwarded status
+	if extMsg := msg.GetExtendedTextMessage(); extMsg != nil {
+		if contextInfo := extMsg.GetContextInfo(); contextInfo != nil {
+			return contextInfo.GetIsForwarded()
+		}
+	}
+
+	// Check ImageMessage for forwarded status
+	if imgMsg := msg.GetImageMessage(); imgMsg != nil {
+		if contextInfo := imgMsg.GetContextInfo(); contextInfo != nil {
+			return contextInfo.GetIsForwarded()
+		}
+	}
+
+	// Check VideoMessage for forwarded status
+	if vidMsg := msg.GetVideoMessage(); vidMsg != nil {
+		if contextInfo := vidMsg.GetContextInfo(); contextInfo != nil {
+			return contextInfo.GetIsForwarded()
+		}
+	}
+
+	// Check AudioMessage for forwarded status
+	if audMsg := msg.GetAudioMessage(); audMsg != nil {
+		if contextInfo := audMsg.GetContextInfo(); contextInfo != nil {
+			return contextInfo.GetIsForwarded()
+		}
+	}
+
+	// Check DocumentMessage for forwarded status
+	if docMsg := msg.GetDocumentMessage(); docMsg != nil {
+		if contextInfo := docMsg.GetContextInfo(); contextInfo != nil {
+			return contextInfo.GetIsForwarded()
+		}
+	}
+
+	return false
 }
 
 // SendMessageResponse represents the response for the send message API
@@ -458,6 +509,9 @@ func handleMessage(client *whatsmeow.Client, messageStore *MessageStore, msg *ev
 	// Extract text content
 	content := extractTextContent(msg.Message)
 
+	// Check if message is forwarded
+	isForwarded := isMessageForwarded(msg.Message)
+
 	// Extract media info
 	mediaType, filename, url, mediaKey, fileSHA256, fileEncSHA256, fileLength := extractMediaInfo(msg.Message)
 
@@ -474,6 +528,7 @@ func handleMessage(client *whatsmeow.Client, messageStore *MessageStore, msg *ev
 		content,
 		msg.Info.Timestamp,
 		msg.Info.IsFromMe,
+		isForwarded,
 		mediaType,
 		filename,
 		url,
@@ -507,7 +562,7 @@ func handleMessage(client *whatsmeow.Client, messageStore *MessageStore, msg *ev
 			}()
 
 			// Write notification for incoming messages
-			WriteNotification(chatJID, name, sender, content, mediaType)
+			WriteNotification(chatJID, name, sender, content, mediaType, isForwarded)
 		}
 		
 		// Log message reception
@@ -518,10 +573,15 @@ func handleMessage(client *whatsmeow.Client, messageStore *MessageStore, msg *ev
 		}
 
 		// Log based on message type
+		forwardedLabel := ""
+		if isForwarded {
+			forwardedLabel = " [FORWARDED]"
+		}
+
 		if mediaType != "" {
-			fmt.Printf("[%s] %s %s: [%s: %s] %s\n", timestamp, direction, sender, mediaType, filename, content)
+			fmt.Printf("[%s] %s %s%s: [%s: %s] %s\n", timestamp, direction, sender, forwardedLabel, mediaType, filename, content)
 		} else if content != "" {
-			fmt.Printf("[%s] %s %s: %s\n", timestamp, direction, sender, content)
+			fmt.Printf("[%s] %s %s%s: %s\n", timestamp, direction, sender, forwardedLabel, content)
 		}
 	}
 }
@@ -1128,6 +1188,12 @@ func handleHistorySync(client *whatsmeow.Client, messageStore *MessageStore, his
 					}
 				}
 
+				// Check if message is forwarded
+				var isForwarded bool
+				if msg.Message.Message != nil {
+					isForwarded = isMessageForwarded(msg.Message.Message)
+				}
+
 				// Extract media info
 				var mediaType, filename, url string
 				var mediaKey, fileSHA256, fileEncSHA256 []byte
@@ -1184,6 +1250,7 @@ func handleHistorySync(client *whatsmeow.Client, messageStore *MessageStore, his
 					content,
 					timestamp,
 					isFromMe,
+					isForwarded,
 					mediaType,
 					filename,
 					url,

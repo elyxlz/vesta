@@ -20,29 +20,22 @@ scheduler = AsyncIOScheduler(
 )
 
 def write_notification(reminder_id: str, message: str, data: dict = None):
-    """Write notification when reminder triggers"""
-    if not reminder_id:
-        raise ValueError("reminder_id cannot be empty")
-    if not message:
-        raise ValueError("message cannot be empty")
-    
+    if not reminder_id or not message:
+        raise ValueError("reminder_id and message required")
+
     NOTIF_DIR.mkdir(exist_ok=True)
-    
+
+    metadata = {"reminder_id": reminder_id}
+    if data:
+        metadata.update(data)
+
     notif = {
         "timestamp": datetime.now().isoformat(),
         "source": "scheduler",
         "type": "reminder",
-        "data": {
-            "reminder_id": reminder_id, 
-            "message": message,
-            **(data if data else {})
-        },
+        "message": message,
+        "metadata": metadata
     }
-    
-    assert "timestamp" in notif, "Missing timestamp field"
-    assert "source" in notif, "Missing source field"
-    assert "data" in notif, "Missing data field"
-    assert "message" in notif["data"], "Missing message in data field"
-    
+
     filename = f"{int(time.time() * 1e6)}-scheduler-reminder.json"
     (NOTIF_DIR / filename).write_text(json.dumps(notif, indent=2))
