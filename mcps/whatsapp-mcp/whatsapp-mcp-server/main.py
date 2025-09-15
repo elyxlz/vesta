@@ -14,6 +14,10 @@ from whatsapp import (
     send_audio_message as whatsapp_audio_voice_message,
     download_media as whatsapp_download_media,
     send_reaction as whatsapp_send_reaction,
+    create_group as whatsapp_create_group,
+    leave_group as whatsapp_leave_group,
+    list_groups as whatsapp_list_groups,
+    update_group_participants as whatsapp_update_group_participants,
 )
 
 mcp = FastMCP("whatsapp")
@@ -194,6 +198,40 @@ def transcribe_audio(file_path: str) -> str:
     """Transcribe audio file to text (supports 99 languages including Italian)."""
     from transcribe import transcribe
     return transcribe(file_path)
+
+
+@mcp.tool()
+def create_group(name: str, participants: List[str]) -> Dict[str, Any]:
+    """Create a WhatsApp group with specified participants (phone numbers without country code symbols)."""
+    success, group_jid, group_name = whatsapp_create_group(name, participants)
+    return {"success": success, "group_jid": group_jid, "name": group_name}
+
+
+@mcp.tool()
+def leave_group(group_jid: str) -> Dict[str, Any]:
+    """Leave a WhatsApp group by its JID."""
+    success, message = whatsapp_leave_group(group_jid)
+    return {"success": success, "message": message}
+
+
+@mcp.tool()
+def list_groups() -> List[Dict[str, str]]:
+    """List all joined WhatsApp groups."""
+    return whatsapp_list_groups()
+
+
+@mcp.tool()
+def add_group_participants(group_jid: str, participants: List[str]) -> Dict[str, Any]:
+    """Add participants to a WhatsApp group."""
+    success, message = whatsapp_update_group_participants(group_jid, participants, "add")
+    return {"success": success, "message": message}
+
+
+@mcp.tool()
+def remove_group_participants(group_jid: str, participants: List[str]) -> Dict[str, Any]:
+    """Remove participants from a WhatsApp group."""
+    success, message = whatsapp_update_group_participants(group_jid, participants, "remove")
+    return {"success": success, "message": message}
 
 
 if __name__ == "__main__":

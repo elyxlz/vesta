@@ -889,3 +889,56 @@ def send_reaction(chat_jid: str, message_id: str, emoji: str = "👍") -> tuple[
 
     except Exception as e:
         return False, str(e)
+
+
+def create_group(name: str, participants: list[str]) -> tuple[bool, str, str]:
+    """Create a WhatsApp group."""
+    try:
+        response = requests.post(
+            f"{WHATSAPP_API_BASE_URL}/group/create",
+            json={"name": name, "participants": participants}
+        )
+        result = response.json()
+        if result.get("success"):
+            return True, result.get("group_jid", ""), result.get("name", "")
+        return False, "", result.get("message", "Failed to create group")
+    except Exception as e:
+        return False, "", str(e)
+
+
+def leave_group(group_jid: str) -> tuple[bool, str]:
+    """Leave a WhatsApp group."""
+    try:
+        response = requests.post(
+            f"{WHATSAPP_API_BASE_URL}/group/leave",
+            json={"group_jid": group_jid}
+        )
+        result = response.json()
+        return result.get("success", False), result.get("message", "")
+    except Exception as e:
+        return False, str(e)
+
+
+def list_groups() -> list[dict]:
+    """List all joined WhatsApp groups."""
+    try:
+        response = requests.get(f"{WHATSAPP_API_BASE_URL}/group/list")
+        result = response.json()
+        if result.get("success"):
+            return result.get("groups", [])
+        return []
+    except Exception:
+        return []
+
+
+def update_group_participants(group_jid: str, participants: list[str], action: str) -> tuple[bool, str]:
+    """Add or remove participants from a group."""
+    try:
+        response = requests.post(
+            f"{WHATSAPP_API_BASE_URL}/group/participants",
+            json={"group_jid": group_jid, "participants": participants, "action": action}
+        )
+        result = response.json()
+        return result.get("success", False), result.get("message", "")
+    except Exception as e:
+        return False, str(e)

@@ -984,6 +984,134 @@ func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port 
 		})
 	})
 
+	http.HandleFunc("/api/group/create", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req struct {
+			Name         string   `json:"name"`
+			Participants []string `json:"participants"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request", http.StatusBadRequest)
+			return
+		}
+		var jids []types.JID
+		for _, p := range req.Participants {
+			jid, _ := types.ParseJID(p + "@s.whatsapp.net")
+			jids = append(jids, jid)
+		}
+		info, err := client.CreateGroup(context.Background(), whatsmeow.ReqCreateGroup{
+			Name:         req.Name,
+			Participants: jids,
+		})
+		w.Header().Set("Content-Type", "application/json")
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"message": err.Error(),
+			})
+		} else {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success":   true,
+				"group_jid": info.JID.String(),
+				"name":      info.Name,
+			})
+		}
+	})
+
+	http.HandleFunc("/api/group/leave", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req struct {
+			GroupJID string `json:"group_jid"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request", http.StatusBadRequest)
+			return
+		}
+		jid, _ := types.ParseJID(req.GroupJID)
+		err := client.LeaveGroup(jid)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": err == nil,
+			"message": func() string {
+				if err != nil {
+					return err.Error()
+				}
+				return "Left group successfully"
+			}(),
+		})
+	})
+
+	http.HandleFunc("/api/group/participants", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req struct {
+			GroupJID     string   `json:"group_jid"`
+			Participants []string `json:"participants"`
+			Action       string   `json:"action"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request", http.StatusBadRequest)
+			return
+		}
+		groupJID, _ := types.ParseJID(req.GroupJID)
+		var jids []types.JID
+		for _, p := range req.Participants {
+			jid, _ := types.ParseJID(p + "@s.whatsapp.net")
+			jids = append(jids, jid)
+		}
+		var action whatsmeow.ParticipantChange
+		if req.Action == "add" {
+			action = whatsmeow.ParticipantChangeAdd
+		} else if req.Action == "remove" {
+			action = whatsmeow.ParticipantChangeRemove
+		} else {
+			http.Error(w, "Invalid action", http.StatusBadRequest)
+			return
+		}
+		_, err := client.UpdateGroupParticipants(groupJID, jids, action)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": err == nil,
+			"message": func() string {
+				if err != nil {
+					return err.Error()
+				}
+				return fmt.Sprintf("Successfully %sd participants", req.Action)
+			}(),
+		})
+	})
+
+	http.HandleFunc("/api/group/list", func(w http.ResponseWriter, r *http.Request) {
+		groups, err := client.GetJoinedGroups(context.Background())
+		w.Header().Set("Content-Type", "application/json")
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"message": err.Error(),
+			})
+		} else {
+			result := []map[string]string{}
+			for _, g := range groups {
+				result = append(result, map[string]string{
+					"jid":  g.JID.String(),
+					"name": g.Name,
+				})
+			}
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": true,
+				"groups":  result,
+			})
+		}
+	})
+
 	// Start the server
 	serverAddr := fmt.Sprintf(":%d", port)
 	fmt.Printf("Starting REST API server on %s...\n", serverAddr)
