@@ -834,25 +834,7 @@ def download_media(message_id: str, chat_jid: str) -> Optional[str]:
         return None
 
 
-def send_reaction(
-    chat_jid: str, message_id: str, emoji: str = "👍", sender_jid: str = None
-) -> tuple[bool, str]:
-    """Send a reaction to a WhatsApp message."""
-    try:
-        payload = {"chat_jid": chat_jid, "message_id": message_id, "emoji": emoji}
-        if sender_jid:
-            payload["sender_jid"] = sender_jid
-
-        response = requests.post(f"{WHATSAPP_API_BASE_URL}/reaction", json=payload)
-
-        if response.status_code == 200:
-            result = response.json()
-            return result.get("success", False), result.get("message", "")
-        else:
-            return False, f"HTTP {response.status_code}: {response.text}"
-
-    except Exception as e:
-        return False, str(e)
+# Removed duplicate function - see line 928 for the updated version
 
 
 def create_group(name: str, participants: list[str]) -> tuple[bool, str, str]:

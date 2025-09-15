@@ -40,7 +40,7 @@ def ensure_scheduler_started():
             # Sync metadata with actual jobs on startup
             sync_metadata_with_jobs()
             _scheduler_started = True
-        except:
+        except Exception:
             _scheduler_started = True
 
 
@@ -248,5 +248,5 @@ def cancel_reminder(reminder_id: str) -> dict:
                 "status": "cancelled",
             }
         return {"reminder_id": reminder_id, "status": "cancelled"}
-    except:
+    except Exception:
         return {"reminder_id": reminder_id, "status": "not_found"}

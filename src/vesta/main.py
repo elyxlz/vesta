@@ -94,7 +94,7 @@ async def process_notifications():
         try:
             notifications.append(json.loads(file.read_text()))
             file.unlink()
-        except:
+        except Exception:
             pass
     return notifications
 
@@ -192,7 +192,7 @@ async def graceful_shutdown():
     try:
         if CLIENT:
             await CLIENT.__aexit__(None, None, None)
-    except:
+    except Exception:
         pass
     print(f"{C['green']}✅ sweet dreams!{C['reset']}")
 
@@ -256,7 +256,7 @@ def start_whatsapp_bridge():
             if result.returncode == 0:
                 print(f"{C['green']}✓ WhatsApp bridge connected{C['reset']}")
                 return True
-        except:
+        except Exception:
             pass
     return False
 
