@@ -60,12 +60,10 @@ shutdown_count = 0
 
 
 def load_prompts():
-    paths = [
-        Path(__file__).parent.parent.parent / "SYSTEM_PROMPT.md",
-        Path(__file__).parent.parent.parent / "MEMORY.md",
-    ]
-    prompts = [p.read_text() for p in paths if p.exists()]
-    return "\n\n".join(prompts) if prompts else "You are Vesta, a helpful AI assistant."
+    memory_path = Path(__file__).parent.parent.parent / "MEMORY.md"
+    if not memory_path.exists():
+        raise FileNotFoundError(f"MEMORY.md not found at {memory_path}")
+    return memory_path.read_text()
 
 
 def get_mcp_config():
