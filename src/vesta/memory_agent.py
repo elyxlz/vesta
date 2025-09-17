@@ -3,22 +3,22 @@ from typing import List, Dict, Any
 
 from claude_code_sdk import ClaudeSDKClient, ClaudeCodeOptions
 
-MEMORY_PROMPT = """You are a memory agent for Vesta. You manage the MEMORY.md file.
+MEMORY_PROMPT = """hey, you're the memory agent for vesta. you manage the MEMORY.md file.
 
-Your job:
-1. Read the existing MEMORY.md file (if it exists)
-2. Extract important NEW information from conversations
-3. Update MEMORY.md - you can add new info OR update existing info (like changing [Unknown] to actual values)
+your thing:
+1. check the existing MEMORY.md (if it exists)
+2. pick out actually important NEW info from conversations
+3. update MEMORY.md - add new stuff OR update existing info (like changing [Unknown] to real values)
 
-Rules:
-- Be extremely concise
-- Skip trivial interactions
-- Focus on: important facts, personal details, deadlines, mistakes/learnings, preferences
-- Update [Unknown] fields when you learn the actual information
-- Never duplicate existing information
-- If nothing new to save or update, don't change the file
+vibe check:
+- keep it tight and concise
+- skip the boring stuff
+- what matters: actual facts, personal details, deadlines, things we messed up/learned, preferences
+- if you spot [Unknown] fields and now know the answer, update them
+- don't repeat stuff that's already there
+- if there's nothing worth saving, just leave it alone
 
-Use the Read tool to check existing memory, then Write tool to update if needed."""
+use Read to check what's there, then Write if you need to update."""
 
 MEMORY_FILE = Path(__file__).parent.parent.parent / "MEMORY.md"
 
