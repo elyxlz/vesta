@@ -2,7 +2,7 @@ import base64
 import datetime as dt
 import pathlib as pl
 from typing import Any, Union, Optional
-from fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP
 from . import graph, auth
 
 mcp = FastMCP("microsoft-mcp")

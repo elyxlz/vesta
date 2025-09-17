@@ -1,10 +1,10 @@
 """MCP tools for scheduling reminders"""
 
 from datetime import datetime as dt, timedelta
-from typing import Optional, Union
+from typing import Union
 import json
 import uuid
-from fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP
 from .scheduler import scheduler, write_notification, DATA_DIR
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.cron import CronTrigger
@@ -65,15 +65,15 @@ def sync_metadata_with_jobs():
 @mcp.tool
 def set_reminder(
     message: str,
-    datetime: Optional[str] = None,
-    seconds: Union[float, int, str, None] = None,
-    minutes: Union[float, int, str, None] = None,
-    hours: Union[float, int, str, None] = None,
-    days: Union[float, int, str, None] = None,
-    recurring: Optional[str] = None,
-    interval_minutes: Union[float, int, str, None] = None,
-    day_of_week: Optional[str] = None,
-    time_of_day: Optional[str] = None,
+    datetime: str | None = None,
+    seconds: float | None = None,
+    minutes: float | None = None,
+    hours: float | None = None,
+    days: float | None = None,
+    recurring: str | None = None,
+    interval_minutes: float | None = None,
+    day_of_week: str | None = None,
+    time_of_day: str | None = None,
 ) -> dict:
     """Set a one-time or recurring reminder
 
@@ -96,20 +96,6 @@ def set_reminder(
 
     if not message or not message.strip():
         raise ValueError("Message cannot be empty")
-
-    def parse_number(value, name):
-        if isinstance(value, str):
-            try:
-                return float(value)
-            except ValueError:
-                raise ValueError(f"Invalid {name} value: '{value}' must be a number")
-        return value
-
-    seconds = parse_number(seconds, "seconds")
-    minutes = parse_number(minutes, "minutes")
-    hours = parse_number(hours, "hours")
-    days = parse_number(days, "days")
-    interval_minutes = parse_number(interval_minutes, "interval_minutes")
 
     if not any([datetime, seconds, minutes, hours, days, recurring, interval_minutes]):
         raise ValueError(
