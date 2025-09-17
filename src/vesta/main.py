@@ -57,6 +57,7 @@ CONVERSATION_HISTORY = []
 SHUTDOWN_EVENT: asyncio.Event | None = None
 shutdown_lock = threading.Lock()
 shutdown_count = 0
+IS_PROCESSING = False
 
 
 def load_prompts():
@@ -309,10 +310,12 @@ async def run_vesta():
             # Will be cancelled when done typing
 
     async def process_queue():
+        global IS_PROCESSING
         assert SHUTDOWN_EVENT is not None
         while not SHUTDOWN_EVENT.is_set():
             try:
                 msg, is_user = await asyncio.wait_for(message_queue.get(), timeout=1.0)
+                IS_PROCESSING = True
 
                 # Add natural delay before typing
                 await asyncio.sleep(
@@ -345,6 +348,7 @@ async def run_vesta():
                         if i > 0:
                             await asyncio.sleep(0.3)
                         print_chat(response, "Vesta")
+                IS_PROCESSING = False
             except asyncio.TimeoutError:
                 continue
             except Exception as e:
@@ -413,7 +417,8 @@ async def run_vesta():
             if (
                 notification_buffer
                 and buffer_start_time
-                and (now - buffer_start_time).total_seconds() >= 3
+                and (now - buffer_start_time).total_seconds()
+                >= (0 if IS_PROCESSING else 3)
             ):
                 if len(notification_buffer) == 1:
                     notif = notification_buffer[0]

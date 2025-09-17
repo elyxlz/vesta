@@ -33,5 +33,10 @@
     "message": "morning briefing: send elio his daily schedule, important tasks, and weather check for the day on whatsapp",
     "schedule_type": "daily",
     "next_run": "2025-09-18T09:00:00+01:00"
+  },
+  "0ae647eb": {
+    "message": "call UK national insurance number: 0800 141 2075 - finally sort this out, they never sent the interview letter",
+    "schedule_type": "once (in 3.0 days -1.0 hours)",
+    "next_run": "2025-09-20T10:44:05.391739"
   }
 }

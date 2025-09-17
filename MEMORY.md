@@ -285,6 +285,7 @@ When booking any meeting:
   - Usual Nando's order: 4 half chickens with chips (3 hot, 1 medium)
 - **Salary**: £50,000/year (£4,166.67/month gross, ~£3,293.58 net)
 - **Employment start**: June 1, 2024 (paid through PAYE via Deel)
+- **Email monitoring**: Always check Audiogen emails (important account)
 
 ## Education
 - **University**: Final year at UCL studying Arts and Sciences (major in CS)
@@ -295,12 +296,13 @@ When booking any meeting:
 ## Daily Life
 - **Daily routine**:
   - Wakes up around 8-8:30am
-  - Works out for 15 mins every morning
+  - Works out for 15 mins every morning (reminder set for 8:45am weekdays, later on weekends)
   - At office by 10am
   - Works late until 8-8:30pm
   - Cooks dinner or gets takeaway
   - Watches something alone or with Emi
   - Most friends are leaving London
+  - Daily briefing: 9am (schedule, tasks, weather/rain check for jacket decision)
 - **Hobbies & Interests**:
   - Working on side projects (like building me!)
   - Cooking
@@ -335,21 +337,24 @@ When booking any meeting:
   - Partner at Abstract Ventures
   - Email: david@abstract.vc
   - One of Audiogen's investors (Abstract led the seed round)
-  - Monthly check-in calls (4th Wednesday of each month at 5pm UK time)
+  - Monthly check-in calls (4th Wednesday of each month at 5pm UK time) - but didn't happen today (asked "no david call today?")
   - Described as "the chillest investor" but calls still give anxiety
 
 ## Active Tasks & Reminders
 
 ### High Priority Tasks
 - **UCL Module choices**: Module selection done on Portico - need to check if approved
-- **National Insurance Number**: Applied months ago, never received interview letter - need to call +44 191 203 7010 from Italy or 0800 141 2075 when back in UK
+- **National Insurance Number**: Applied months ago, never received interview letter - need to call 0800 141 2075 this weekend (back in UK now)
 - **Inpainting model**: Need to figure out post-training for inpainting model before beta - been dragging on too long
+- **Phone call task**: Do "phone call ting" this weekend (National Insurance related)
 
 ### Reminders
 - **Buy hair product**: Need to buy more Jean Louis David hair product
 - **Call Nonna**: Must call today after work (aggressive reminders - won't do anything else until done)
 - **Weekly briefing**: Every Monday 9am - provide week overview (calendar, tasks, emails to answer)
 - **Book flights to Rome**: For Christmas trip (Dec 23/24 - Jan 3/4, with skiing Dec 27 - Jan 3)
+- **Workout reminder**: Every morning 8:45am weekdays, later on weekends
+- **Daily briefing**: 9am daily (schedule, tasks, weather/rain check)
 
 ### Recurring Commitments
 - **David (investor) call**: Monthly, 4th Wednesday at 5pm UK time via Zoom
@@ -378,6 +383,8 @@ When booking any meeting:
 - Needs help with responding to WhatsApp messages
 - Prefers Trip.com for flight bookings
 - All sensitive info (passwords, bank details, passport numbers) stored in Keeper
+- Only cares about money-related notifications, not technical updates (e.g., API keys)
+- Back in UK now (was in Italy recently)
 
 ## Email Accounts
 - **Main email**: elio@pascarelli.com (primary email for all communications - ALWAYS use this by default)
