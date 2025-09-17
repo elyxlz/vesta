@@ -402,7 +402,7 @@ async def run_vesta():
             if (
                 notification_buffer
                 and buffer_start_time
-                and (now - buffer_start_time).total_seconds() >= 5
+                and (now - buffer_start_time).total_seconds() >= 3
             ):
                 if len(notification_buffer) == 1:
                     notif = notification_buffer[0]
@@ -434,18 +434,25 @@ async def run_vesta():
                     await message_queue.put((prompt, True))
                 else:
                     print_chat(
-                        f"📦 Processing {len(notification_buffer)} notifications...",
+                        f"📦 Batching {len(notification_buffer)} notifications:",
                         "System",
                     )
                     prompt_parts = [
                         f"[{len(notification_buffer)} notifications received]"
                     ]
                     for notif in notification_buffer:
+                        source = notif["source"]
+                        message = notif["message"]
                         meta = notif.get("metadata", {})
                         sender = meta.get(
-                            "chat_name", meta.get("sender", notif["source"])
+                            "chat_name", meta.get("sender", source)
                         )
-                        prompt_parts.append(f"{sender}: {notif['message']}")
+                        # Show each notification to user
+                        icons = {"whatsapp": "📱", "scheduler": "⏰", "email": "📧"}
+                        icon = icons.get(source, "🔔")
+                        display = f"{icon} {sender}: {message[:200] + '...' if len(message) > 200 else message}"
+                        print_chat(display, "System")
+                        prompt_parts.append(f"{sender}: {message}")
                     await message_queue.put(("\n".join(prompt_parts), True))
 
                 notification_buffer = []
