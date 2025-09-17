@@ -145,7 +145,10 @@ async def preserve_memory():
     if ephemeral_mode or not CONVERSATION_HISTORY:
         return
     try:
-        await preserve_conversation_memory(CONVERSATION_HISTORY)
+        diff = await preserve_conversation_memory(CONVERSATION_HISTORY)
+        if diff:
+            print(f"\n{C['cyan']}📝 Memory updated:{C['reset']}")
+            print(diff)
     except Exception as e:
         print(f"{C['yellow']}⚠️ Memory preservation failed: {e}{C['reset']}")
 

@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import List, Dict, Any
+import difflib
 
 from claude_code_sdk import ClaudeSDKClient, ClaudeCodeOptions
 
@@ -32,14 +33,12 @@ def format_conversation(history: List[Dict[str, Any]]) -> str:
 
 async def preserve_conversation_memory(
     conversation_history: List[Dict[str, Any]],
-) -> None:
-    """Extract and save important information from conversation."""
+) -> str:
     if not conversation_history:
-        return
+        return ""
 
-    conversation_text = format_conversation(conversation_history)
+    before = MEMORY_FILE.read_text() if MEMORY_FILE.exists() else ""
 
-    # Read system prompt for context
     system_prompt_path = Path(__file__).parent.parent.parent / "SYSTEM_PROMPT.md"
     system_prompt = (
         system_prompt_path.read_text() if system_prompt_path.exists() else ""
@@ -49,28 +48,41 @@ async def preserve_conversation_memory(
 {system_prompt[:2000]}...
 
 Recent conversation to process:
-{conversation_text}
+{format_conversation(conversation_history)}
 
 Check MEMORY.md and update it with any new important information from this conversation."""
 
-    # Create client with file permissions
-    options = ClaudeCodeOptions(
-        system_prompt=MEMORY_PROMPT,
-        mcp_servers={},
-        permission_mode="bypassPermissions",  # Allow file operations without prompts
+    client = ClaudeSDKClient(
+        ClaudeCodeOptions(
+            system_prompt=MEMORY_PROMPT,
+            mcp_servers={},
+            permission_mode="bypassPermissions",
+        )
     )
-
-    client = ClaudeSDKClient(options=options)
 
     try:
         await client.__aenter__()
         await client.query(prompt)
-
-        # Let the agent handle the response
         async for _ in client.receive_response():
-            pass  # Agent will use Read/Write tools directly
-
+            pass
     except Exception as e:
         print(f"⚠️ Memory preservation failed: {e}")
+        return ""
     finally:
         await client.__aexit__(None, None, None)
+
+    after = MEMORY_FILE.read_text() if MEMORY_FILE.exists() else ""
+    if before == after:
+        return ""
+
+    colors = {"+": "\033[92m", "-": "\033[91m", "@": "\033[96m"}
+    diff = difflib.unified_diff(
+        before.splitlines(keepends=True), after.splitlines(keepends=True), n=1
+    )
+
+    return "\n".join(
+        f"{colors.get(line[0], '')}{line.rstrip()}\033[0m"
+        if line[0] in colors
+        else line.rstrip()
+        for line in list(diff)[2:]
+    )
