@@ -954,3 +954,38 @@ def _get_sender_from_db(message_id: str, chat_jid: str) -> str | None:
         )
         result = cursor.fetchone()
         return result[0] if result else None
+
+
+def update_contact(phone_or_jid: str, name: str) -> dict:
+    """Add or update a WhatsApp contact name in the local database."""
+    try:
+        # Format JID if just phone number provided
+        if "@" not in phone_or_jid:
+            # Remove any non-digit characters
+            phone = "".join(c for c in phone_or_jid if c.isdigit())
+            jid = f"{phone}@s.whatsapp.net"
+        else:
+            jid = phone_or_jid
+
+        url = f"{WHATSAPP_API_BASE_URL}/contact/update"
+        response = requests.post(url, json={"jid": jid, "name": name})
+        return response.json()
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+
+def get_contact(phone_or_jid: str) -> dict:
+    """Get contact information from the local database."""
+    try:
+        # Format JID if just phone number provided
+        if "@" not in phone_or_jid:
+            phone = "".join(c for c in phone_or_jid if c.isdigit())
+            jid = f"{phone}@s.whatsapp.net"
+        else:
+            jid = phone_or_jid
+
+        url = f"{WHATSAPP_API_BASE_URL}/contact/get"
+        response = requests.get(url, params={"jid": jid})
+        return response.json()
+    except Exception as e:
+        return {"success": False, "message": str(e)}

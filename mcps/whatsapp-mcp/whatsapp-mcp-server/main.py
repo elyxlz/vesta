@@ -19,6 +19,8 @@ from whatsapp import (
     list_groups as whatsapp_list_groups,
     get_group_invite_link as whatsapp_get_group_invite_link,
     update_group_participants as whatsapp_update_group_participants,
+    update_contact as whatsapp_update_contact,
+    get_contact as whatsapp_get_contact,
 )
 
 mcp = FastMCP("whatsapp")
@@ -244,6 +246,18 @@ def get_group_invite_link(group_jid: str) -> Dict[str, Any]:
     if success:
         return {"success": True, "link": link}
     return {"success": False, "message": link}
+
+
+@mcp.tool()
+def update_contact(phone_number: str, name: str) -> Dict[str, Any]:
+    """Add or update a WhatsApp contact name. Phone number can be with or without country code."""
+    return whatsapp_update_contact(phone_number, name)
+
+
+@mcp.tool()
+def get_contact(phone_number: str) -> Dict[str, Any]:
+    """Get WhatsApp contact information. Phone number can be with or without country code."""
+    return whatsapp_get_contact(phone_number)
 
 
 @mcp.tool()

@@ -1232,6 +1232,76 @@ func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port 
 		}
 	})
 
+	// Contact management endpoints
+	http.HandleFunc("/api/contact/update", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method != "POST" {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"message": "Only POST method allowed",
+			})
+			return
+		}
+
+		var req struct {
+			JID  string `json:"jid"`
+			Name string `json:"name"`
+		}
+
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"message": "Invalid request body",
+			})
+			return
+		}
+
+		// Update or insert contact in database
+		_, err := messageStore.db.Exec(
+			"INSERT OR REPLACE INTO chats (jid, name, last_message_time) VALUES (?, ?, COALESCE((SELECT last_message_time FROM chats WHERE jid = ?), CURRENT_TIMESTAMP))",
+			req.JID, req.Name, req.JID,
+		)
+
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"message": err.Error(),
+			})
+		} else {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": true,
+				"message": "Contact updated successfully",
+			})
+		}
+	})
+
+	http.HandleFunc("/api/contact/get", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		jid := r.URL.Query().Get("jid")
+		if jid == "" {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"message": "JID parameter required",
+			})
+			return
+		}
+
+		var name string
+		err := messageStore.db.QueryRow("SELECT name FROM chats WHERE jid = ?", jid).Scan(&name)
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"message": "Contact not found",
+			})
+		} else {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": true,
+				"jid":     jid,
+				"name":    name,
+			})
+		}
+	})
+
 	// Start the server
 	serverAddr := fmt.Sprintf(":%d", port)
 	fmt.Printf("Starting REST API server on %s...\n", serverAddr)

@@ -373,6 +373,7 @@ async def run_vesta():
         assert SHUTDOWN_EVENT is not None
         notification_buffer = []
         buffer_start_time = None
+        icons = {"whatsapp": "📱", "scheduler": "⏰", "email": "📧"}
 
         while not SHUTDOWN_EVENT.is_set():
             try:
@@ -395,6 +396,16 @@ async def run_vesta():
 
             new_notifs = await process_notifications()
             if new_notifs:
+                for notif in new_notifs:
+                    meta = notif.get("metadata", {})
+                    sender = meta.get("chat_name", meta.get("sender", notif["source"]))
+                    icon = icons.get(notif["source"], "🔔")
+                    msg = notif["message"]
+                    print_chat(
+                        f"{icon} {sender}: {msg[:200] + '...' if len(msg) > 200 else msg}",
+                        "System",
+                    )
+
                 notification_buffer.extend(new_notifs)
                 if buffer_start_time is None:
                     buffer_start_time = now
@@ -406,53 +417,27 @@ async def run_vesta():
             ):
                 if len(notification_buffer) == 1:
                     notif = notification_buffer[0]
-                    source, message = notif["source"], notif["message"]
-                    metadata = notif.get("metadata", {})
-
-                    icons = {"whatsapp": "📱", "scheduler": "⏰", "email": "📧"}
-                    icon = icons.get(source, "🔔")
-
-                    if source == "whatsapp" and metadata.get("chat_name"):
-                        extras = "[FORWARDED] " if metadata.get("is_forwarded") else ""
-                        extras += (
-                            f"[{metadata['media_type']}] "
-                            if metadata.get("media_type")
-                            else ""
-                        )
-                        display = f"{icon} WhatsApp [{metadata['chat_name']}]: {extras}{message[:80]}..."
-                    else:
-                        display = f"{icon} {source}: {message[:80]}..."
-
                     meta_str = (
-                        f" (metadata: {', '.join(f'{k}={v}' for k, v in metadata.items() if v)})"
-                        if metadata
+                        f" (metadata: {', '.join(f'{k}={v}' for k, v in notif.get('metadata', {}).items() if v)})"
+                        if notif.get("metadata")
                         else ""
                     )
-                    prompt = f"[{notif['type']} from {source} at {notif['timestamp']}]{meta_str}: {message}"
-
-                    print_chat(display, "System")
+                    prompt = f"[{notif['type']} from {notif['source']} at {notif['timestamp']}]{meta_str}: {notif['message']}"
                     await message_queue.put((prompt, True))
                 else:
                     print_chat(
-                        f"📦 Batching {len(notification_buffer)} notifications:",
+                        f"📦 Processing {len(notification_buffer)} notifications together...",
                         "System",
                     )
                     prompt_parts = [
                         f"[{len(notification_buffer)} notifications received]"
                     ]
                     for notif in notification_buffer:
-                        source = notif["source"]
-                        message = notif["message"]
                         meta = notif.get("metadata", {})
                         sender = meta.get(
-                            "chat_name", meta.get("sender", source)
+                            "chat_name", meta.get("sender", notif["source"])
                         )
-                        # Show each notification to user
-                        icons = {"whatsapp": "📱", "scheduler": "⏰", "email": "📧"}
-                        icon = icons.get(source, "🔔")
-                        display = f"{icon} {sender}: {message[:200] + '...' if len(message) > 200 else message}"
-                        print_chat(display, "System")
-                        prompt_parts.append(f"{sender}: {message}")
+                        prompt_parts.append(f"{sender}: {notif['message']}")
                     await message_queue.put(("\n".join(prompt_parts), True))
 
                 notification_buffer = []
