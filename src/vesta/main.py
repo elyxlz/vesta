@@ -371,6 +371,9 @@ async def run_vesta():
     async def monitor():
         nonlocal last_proactive, last_bridge_check
         assert SHUTDOWN_EVENT is not None
+        notification_buffer = []
+        buffer_start_time = None
+
         while not SHUTDOWN_EVENT.is_set():
             try:
                 await asyncio.sleep(NOTIFICATION_CHECK_INTERVAL)
@@ -390,33 +393,63 @@ async def run_vesta():
                     start_whatsapp_bridge()
                 last_bridge_check = now
 
-            for notif in await process_notifications():
-                source, message = notif["source"], notif["message"]
-                metadata = notif.get("metadata", {})
+            new_notifs = await process_notifications()
+            if new_notifs:
+                notification_buffer.extend(new_notifs)
+                if buffer_start_time is None:
+                    buffer_start_time = now
 
-                icons = {"whatsapp": "📱", "scheduler": "⏰", "email": "📧"}
-                icon = icons.get(source, "🔔")
+            if (
+                notification_buffer
+                and buffer_start_time
+                and (now - buffer_start_time).total_seconds() >= 5
+            ):
+                if len(notification_buffer) == 1:
+                    notif = notification_buffer[0]
+                    source, message = notif["source"], notif["message"]
+                    metadata = notif.get("metadata", {})
 
-                if source == "whatsapp" and metadata.get("chat_name"):
-                    extras = "[FORWARDED] " if metadata.get("is_forwarded") else ""
-                    extras += (
-                        f"[{metadata['media_type']}] "
-                        if metadata.get("media_type")
+                    icons = {"whatsapp": "📱", "scheduler": "⏰", "email": "📧"}
+                    icon = icons.get(source, "🔔")
+
+                    if source == "whatsapp" and metadata.get("chat_name"):
+                        extras = "[FORWARDED] " if metadata.get("is_forwarded") else ""
+                        extras += (
+                            f"[{metadata['media_type']}] "
+                            if metadata.get("media_type")
+                            else ""
+                        )
+                        display = f"{icon} WhatsApp [{metadata['chat_name']}]: {extras}{message[:80]}..."
+                    else:
+                        display = f"{icon} {source}: {message[:80]}..."
+
+                    meta_str = (
+                        f" (metadata: {', '.join(f'{k}={v}' for k, v in metadata.items() if v)})"
+                        if metadata
                         else ""
                     )
-                    display = f"{icon} WhatsApp [{metadata['chat_name']}]: {extras}{message[:80]}..."
+                    prompt = f"[{notif['type']} from {source} at {notif['timestamp']}]{meta_str}: {message}"
+
+                    print_chat(display, "System")
+                    await message_queue.put((prompt, True))
                 else:
-                    display = f"{icon} {source}: {message[:80]}..."
+                    print_chat(
+                        f"📦 Processing {len(notification_buffer)} notifications...",
+                        "System",
+                    )
+                    prompt_parts = [
+                        f"[{len(notification_buffer)} notifications received]"
+                    ]
+                    for notif in notification_buffer:
+                        meta = notif.get("metadata", {})
+                        sender = meta.get(
+                            "chat_name", meta.get("sender", notif["source"])
+                        )
+                        prompt_parts.append(f"{sender}: {notif['message']}")
+                    await message_queue.put(("\n".join(prompt_parts), True))
 
-                meta_str = (
-                    f" (metadata: {', '.join(f'{k}={v}' for k, v in metadata.items() if v)})"
-                    if metadata
-                    else ""
-                )
-                prompt = f"[{notif['type']} from {source} at {notif['timestamp']}]{meta_str}: {message}"
-
-                print_chat(display, "System")
-                await message_queue.put((prompt, True))
+                notification_buffer = []
+                buffer_start_time = None
 
             if now - last_proactive >= timedelta(minutes=PROACTIVE_CHECK_INTERVAL):
                 print_chat("⏰ Running 30-minute check...", "System")
