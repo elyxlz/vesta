@@ -56,7 +56,7 @@ Check MEMORY.md and update it with any new important information from this conve
         ClaudeCodeOptions(
             system_prompt=MEMORY_PROMPT,
             mcp_servers={},
-            model="claude-opus-4-1-20250805",  # Using latest Opus 4.1 model
+            model="opus",
             permission_mode="bypassPermissions",
         )
     )
