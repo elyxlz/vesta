@@ -108,6 +108,7 @@ async def init_client():
             system_prompt=load_prompts(),
             mcp_servers=get_mcp_config(),
             hooks={},
+            model="opus",
             permission_mode="bypassPermissions",
         )
     )

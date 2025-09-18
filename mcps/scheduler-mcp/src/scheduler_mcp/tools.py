@@ -1,7 +1,6 @@
 """MCP tools for scheduling reminders"""
 
 from datetime import datetime as dt, timedelta
-from typing import Union
 import json
 import uuid
 from mcp.server.fastmcp import FastMCP
