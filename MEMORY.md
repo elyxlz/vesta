@@ -284,6 +284,7 @@ When booking any meeting:
   - Office phone: 0657056906
   - IBAN: IT07B0306903356021410960123
 - **Dad**: Retired, lives in Sardinia but spends lots of time in Rome
+  - Phone: +39 348 382 6189
 - **Brother Emilio (Emi)**:
   - Older brother (3.5 years older)
   - COO/Co-founder of Audiogen
@@ -372,7 +373,8 @@ When booking any meeting:
   - Needs help with uni application
 
 ### Friends & Contacts
-- **Alex**: Friend/flatmate for next year, has a piano that Elio can use
+- **Alex**: Friend/flatmate for next year, has a piano that Elio can use.
+  - Phone: +351 914 173970**:
 - **Markos**: Having breakfast with on Saturday morning (with Alex)
 - **Annabelle**: Has Elio's bedsheets that need to be picked up
 - **David Kwon**:
@@ -381,6 +383,10 @@ When booking any meeting:
   - One of Audiogen's investors (Abstract led the seed round)
   - Monthly check-in calls (4th Wednesday of each month at 5pm UK time) - but didn't happen today (asked "no david call today?")
   - Described as "the chillest investor" but calls still give anxiety
+- **Emil**:
+  - Phone: +44 7578 946082
+  - Friend who made a WhatsApp audio transcription project (no longer needed since vesta can transcribe)
+  - Got spam aubergine emojis from Elio (via vesta)
 
 ## Active Tasks & Reminders
 
