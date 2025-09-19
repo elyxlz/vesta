@@ -58,6 +58,7 @@ SHUTDOWN_EVENT: asyncio.Event | None = None
 shutdown_lock = threading.Lock()
 shutdown_count = 0
 IS_PROCESSING = False
+CURRENT_TASK = None
 
 
 def load_prompts():
@@ -322,12 +323,14 @@ async def run_vesta():
             # Will be cancelled when done typing
 
     async def process_queue():
-        global IS_PROCESSING
+        global IS_PROCESSING, CURRENT_TASK
         assert SHUTDOWN_EVENT is not None
+
         while not SHUTDOWN_EVENT.is_set():
             try:
                 msg, is_user = await asyncio.wait_for(message_queue.get(), timeout=1.0)
                 IS_PROCESSING = True
+                CURRENT_TASK = msg  # Track what we're working on
 
                 # Add natural delay before typing
                 await asyncio.sleep(
@@ -361,6 +364,7 @@ async def run_vesta():
                             await asyncio.sleep(0.3)
                         print_chat(response, "Vesta")
                 IS_PROCESSING = False
+                CURRENT_TASK = None
             except asyncio.TimeoutError:
                 continue
             except Exception as e:
@@ -377,6 +381,7 @@ async def run_vesta():
                     continue
                 print("\033[1A\033[K", end="")
                 print_chat(user_msg, "You")
+
                 await message_queue.put((user_msg.strip(), True))
             except (KeyboardInterrupt, EOFError):
                 SHUTDOWN_EVENT.set()
@@ -426,36 +431,90 @@ async def run_vesta():
                 if buffer_start_time is None:
                     buffer_start_time = now
 
+            # Process buffered notifications after 3 seconds
             if (
                 notification_buffer
                 and buffer_start_time
-                and (now - buffer_start_time).total_seconds()
-                >= (0 if IS_PROCESSING else 3)
+                and (now - buffer_start_time).total_seconds() >= 3
             ):
-                if len(notification_buffer) == 1:
-                    notif = notification_buffer[0]
-                    meta_str = (
-                        f" (metadata: {', '.join(f'{k}={v}' for k, v in notif.get('metadata', {}).items() if v)})"
-                        if notif.get("metadata")
-                        else ""
+                # If currently processing, interrupt and send immediately
+                if IS_PROCESSING and CLIENT:
+                    print(
+                        f"{C['yellow']}⚡ Interrupting for notifications...{C['reset']}"
                     )
-                    prompt = f"[{notif['type']} from {notif['source']} at {notif['timestamp']}]{meta_str}: {notif['message']}"
-                    await message_queue.put((prompt, True))
-                else:
-                    print_chat(
-                        f"📦 Processing {len(notification_buffer)} notifications together...",
-                        "System",
-                    )
-                    prompt_parts = [
-                        f"[{len(notification_buffer)} notifications received]"
-                    ]
-                    for notif in notification_buffer:
-                        meta = notif.get("metadata", {})
-                        sender = meta.get(
-                            "chat_name", meta.get("sender", notif["source"])
+                    try:
+                        await CLIENT.interrupt()
+
+                        # Send notifications IMMEDIATELY to the same client
+                        timestamp = datetime.now().strftime(
+                            "%A, %B %d, %Y at %I:%M:%S %p %Z"
                         )
-                        prompt_parts.append(f"{sender}: {notif['message']}")
-                    await message_queue.put(("\n".join(prompt_parts), True))
+
+                        if len(notification_buffer) == 1:
+                            notif = notification_buffer[0]
+                            meta_str = (
+                                f" (metadata: {', '.join(f'{k}={v}' for k, v in notif.get('metadata', {}).items() if v)})"
+                                if notif.get("metadata")
+                                else ""
+                            )
+                            prompt = f"[{notif['type']} from {notif['source']} at {notif['timestamp']}]{meta_str}: {notif['message']}"
+                            await CLIENT.query(f"[Current time: {timestamp}]\n{prompt}")
+                        else:
+                            # Send multiple notifications as one message
+                            prompts = []
+                            for notif in notification_buffer:
+                                meta_str = (
+                                    f" (metadata: {', '.join(f'{k}={v}' for k, v in notif.get('metadata', {}).items() if v)})"
+                                    if notif.get("metadata")
+                                    else ""
+                                )
+                                prompts.append(
+                                    f"[{notif['type']} from {notif['source']}]{meta_str}: {notif['message']}"
+                                )
+                            await CLIENT.query(
+                                f"[Current time: {timestamp}]\n[NOTIFICATIONS RECEIVED DURING TASK]\n"
+                                + "\n".join(prompts)
+                            )
+
+                        # Process the response from the notification
+                        try:
+                            async for msg in CLIENT.receive_response():
+                                text = parse_message(msg)
+                                if text:
+                                    for line in text.split("\n"):
+                                        if line.strip():
+                                            if line.startswith("🔧"):
+                                                print(
+                                                    f"{C['yellow']}>{line}{C['reset']}"
+                                                )
+                                            else:
+                                                print_chat(line, "Vesta")
+                        except Exception:
+                            pass
+
+                    except Exception as e:
+                        print(
+                            f"{C['dim']}Could not interrupt: {str(e)[:50]}{C['reset']}"
+                        )
+                        # Fall back to queueing if interrupt fails
+                        for notif in notification_buffer:
+                            meta_str = (
+                                f" (metadata: {', '.join(f'{k}={v}' for k, v in notif.get('metadata', {}).items() if v)})"
+                                if notif.get("metadata")
+                                else ""
+                            )
+                            prompt = f"[{notif['type']} from {notif['source']} at {notif['timestamp']}]{meta_str}: {notif['message']}"
+                            await message_queue.put((prompt, True))
+                else:
+                    # Not processing, just queue normally
+                    for notif in notification_buffer:
+                        meta_str = (
+                            f" (metadata: {', '.join(f'{k}={v}' for k, v in notif.get('metadata', {}).items() if v)})"
+                            if notif.get("metadata")
+                            else ""
+                        )
+                        prompt = f"[{notif['type']} from {notif['source']} at {notif['timestamp']}]{meta_str}: {notif['message']}"
+                        await message_queue.put((prompt, True))
 
                 notification_buffer = []
                 buffer_start_time = None
