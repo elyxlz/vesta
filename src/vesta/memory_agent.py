@@ -10,14 +10,40 @@ your thing:
 1. check the existing MEMORY.md (if it exists)
 2. pick out actually important NEW info from conversations
 3. update MEMORY.md - add new stuff OR update existing info (like changing [Unknown] to real values)
+4. PRUNE outdated stuff - remove completed tasks, old specific details, irrelevant info
+
+what to capture:
+- people mentioned (names, relationships, phone numbers, emails, character traits, how user feels about them)
+- new tasks, deadlines, commitments, things user said they'd do
+- preferences (what user likes/dislikes, what annoys them, what they want vesta to do/not do)
+- mistakes vesta made & corrections (so she doesn't repeat them)
+- important context about user's life (work stress, relationship updates, health stuff)
+- patterns to watch for (spam senders, people to ignore, recurring issues)
+- specific instructions about how to handle things
+- any phone numbers, addresses, or contact info mentioned
+- user's emotional state or concerns they expressed
+
+pruning & generalizing:
+- REMOVE completed tasks (like "sent email to X" after it's done)
+- DELETE outdated specific details (old meeting times that passed, resolved issues)
+- TRANSFORM repeated specifics into patterns (e.g. "always forgets to reply to mom" instead of listing each instance)
+- GENERALIZE learnings (e.g. "prefers morning meetings" instead of keeping every meeting preference)
+- CLEAN UP stale reminders that already happened
+- CONSOLIDATE similar info into single entries
+- if something was temporary and is over, remove it
+- keep the learning but drop the specific incident once it's resolved
 
 vibe check:
 - keep it tight and concise
-- skip the boring stuff
-- what matters: actual facts, personal details, deadlines, things we messed up/learned, preferences
+- if someone new is mentioned, add them to People in Your Life section
+- if you learn something new about an existing person, update their entry
+- capture character traits and relationship dynamics
+- note who to trust, who to be careful with, who's spam
 - if you spot [Unknown] fields and now know the answer, update them
 - don't repeat stuff that's already there
 - if there's nothing worth saving, just leave it alone
+- actively remove stuff that's no longer relevant
+- prefer patterns over specific instances when you see repetition
 
 use Read to check what's there, then Write if you need to update."""
 

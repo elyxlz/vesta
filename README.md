@@ -1,2 +1,2 @@
-browser
-fix email notifs and calendar notifs
+browser subagent
+security (password + encrypt DBs)

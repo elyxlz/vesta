@@ -143,6 +143,12 @@ def parse_message(msg):
     return msg if isinstance(msg, str) else None
 
 
+def format_notif(notif):
+    meta = notif.get("metadata", {})
+    meta_str = f" (metadata: {', '.join(f'{k}={v}' for k, v in meta.items() if v)})" if meta else ""
+    return f"[{notif['type']} from {notif['source']}]{meta_str}: {notif['message']}"
+
+
 async def preserve_memory():
     if ephemeral_mode or not CONVERSATION_HISTORY:
         return
@@ -186,7 +192,7 @@ def signal_handler(signum, frame):
 
 async def graceful_shutdown():
     try:
-        await asyncio.wait_for(preserve_memory(), timeout=300.0)  # 5 minutes
+        await asyncio.wait_for(preserve_memory(), timeout=300.0)
     except asyncio.TimeoutError:
         print(f"{C['yellow']}⚠️ Memory preservation timeout{C['reset']}")
     except Exception as e:
@@ -248,14 +254,8 @@ def print_header():
     print(f"\n{C['cyan']}╔{'═' * 58}╗")
     print(f"║{' ' * 23}{C['yellow']}🔥 VESTA{C['cyan']}{' ' * 27}║")
     print(f"╚{'═' * 58}╝{C['reset']}\n")
-
-    # Show active MCPs
-    active_mcps = []
-    for name in MCP_SERVERS.keys():
-        active_mcps.append(name)
-
-    if active_mcps:
-        print(f"{C['dim']}Active MCPs: {', '.join(active_mcps)}{C['reset']}\n")
+    if MCP_SERVERS:
+        print(f"{C['dim']}Active MCPs: {', '.join(MCP_SERVERS.keys())}{C['reset']}\n")
 
 
 def start_whatsapp_bridge():
@@ -279,7 +279,6 @@ async def run_vesta():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    # Check if MEMORY.md exists, if not copy from template
     memory_file = Path(__file__).parent.parent.parent / "MEMORY.md"
     memory_template = Path(__file__).parent.parent.parent / "MEMORY.md.tmp"
     if not memory_file.exists() and memory_template.exists():
@@ -320,7 +319,6 @@ async def run_vesta():
             )
             dot_idx = (dot_idx + 1) % 4
             await asyncio.sleep(0.5)
-            # Will be cancelled when done typing
 
     async def process_queue():
         global IS_PROCESSING, CURRENT_TASK
@@ -330,14 +328,12 @@ async def run_vesta():
             try:
                 msg, is_user = await asyncio.wait_for(message_queue.get(), timeout=1.0)
                 IS_PROCESSING = True
-                CURRENT_TASK = msg  # Track what we're working on
+                CURRENT_TASK = msg
 
-                # Add natural delay before typing
                 await asyncio.sleep(
                     0.8 + datetime.now().microsecond / 3000000
-                )  # 0.8-1.1s random delay
+                )
 
-                # Show typing indicator
                 typing_task = asyncio.create_task(show_typing())
 
                 try:
@@ -348,14 +344,11 @@ async def run_vesta():
                         f"{C['yellow']}⚠️ Message processing error: {str(e)[:100]}{C['reset']}"
                     )
                 finally:
-                    # Always cancel typing animation
                     typing_task.cancel()
                     try:
                         await typing_task
                     except asyncio.CancelledError:
                         pass
-
-                    # Clear typing indicator line
                     print("\r\033[K", end="", flush=True)
 
                 for i, response in enumerate(responses):
@@ -431,52 +424,25 @@ async def run_vesta():
                 if buffer_start_time is None:
                     buffer_start_time = now
 
-            # Process buffered notifications after 3 seconds
             if (
                 notification_buffer
                 and buffer_start_time
                 and (now - buffer_start_time).total_seconds() >= 3
             ):
-                # If currently processing, interrupt and send immediately
                 if IS_PROCESSING and CLIENT:
-                    print(
-                        f"{C['yellow']}⚡ Interrupting for notifications...{C['reset']}"
-                    )
+                    print(f"{C['yellow']}⚡ Interrupting for notifications...{C['reset']}")
                     try:
                         await CLIENT.interrupt()
-
-                        # Send notifications IMMEDIATELY to the same client
-                        timestamp = datetime.now().strftime(
-                            "%A, %B %d, %Y at %I:%M:%S %p %Z"
-                        )
+                        timestamp = datetime.now().strftime("%A, %B %d, %Y at %I:%M:%S %p %Z")
 
                         if len(notification_buffer) == 1:
-                            notif = notification_buffer[0]
-                            meta_str = (
-                                f" (metadata: {', '.join(f'{k}={v}' for k, v in notif.get('metadata', {}).items() if v)})"
-                                if notif.get("metadata")
-                                else ""
-                            )
-                            prompt = f"[{notif['type']} from {notif['source']} at {notif['timestamp']}]{meta_str}: {notif['message']}"
-                            await CLIENT.query(f"[Current time: {timestamp}]\n{prompt}")
+                            prompt = format_notif(notification_buffer[0])
                         else:
-                            # Send multiple notifications as one message
-                            prompts = []
-                            for notif in notification_buffer:
-                                meta_str = (
-                                    f" (metadata: {', '.join(f'{k}={v}' for k, v in notif.get('metadata', {}).items() if v)})"
-                                    if notif.get("metadata")
-                                    else ""
-                                )
-                                prompts.append(
-                                    f"[{notif['type']} from {notif['source']}]{meta_str}: {notif['message']}"
-                                )
-                            await CLIENT.query(
-                                f"[Current time: {timestamp}]\n[NOTIFICATIONS RECEIVED DURING TASK]\n"
-                                + "\n".join(prompts)
-                            )
+                            prompts = [format_notif(n) for n in notification_buffer]
+                            prompt = "[NOTIFICATIONS RECEIVED DURING TASK]\n" + "\n".join(prompts)
 
-                        # Process the response from the notification
+                        await CLIENT.query(f"[Current time: {timestamp}]\n{prompt}")
+
                         try:
                             async for msg in CLIENT.receive_response():
                                 text = parse_message(msg)
@@ -484,37 +450,21 @@ async def run_vesta():
                                     for line in text.split("\n"):
                                         if line.strip():
                                             if line.startswith("🔧"):
-                                                print(
-                                                    f"{C['yellow']}>{line}{C['reset']}"
-                                                )
+                                                print(f"{C['yellow']}>{line}{C['reset']}")
                                             else:
                                                 print_chat(line, "Vesta")
                         except Exception:
                             pass
-
                     except Exception as e:
-                        print(
-                            f"{C['dim']}Could not interrupt: {str(e)[:50]}{C['reset']}"
-                        )
-                        # Fall back to queueing if interrupt fails
+                        print(f"{C['dim']}Could not interrupt: {str(e)[:50]}{C['reset']}")
                         for notif in notification_buffer:
-                            meta_str = (
-                                f" (metadata: {', '.join(f'{k}={v}' for k, v in notif.get('metadata', {}).items() if v)})"
-                                if notif.get("metadata")
-                                else ""
-                            )
-                            prompt = f"[{notif['type']} from {notif['source']} at {notif['timestamp']}]{meta_str}: {notif['message']}"
-                            await message_queue.put((prompt, True))
+                            await message_queue.put((format_notif(notif), True))
                 else:
-                    # Not processing, just queue normally
-                    for notif in notification_buffer:
-                        meta_str = (
-                            f" (metadata: {', '.join(f'{k}={v}' for k, v in notif.get('metadata', {}).items() if v)})"
-                            if notif.get("metadata")
-                            else ""
-                        )
-                        prompt = f"[{notif['type']} from {notif['source']} at {notif['timestamp']}]{meta_str}: {notif['message']}"
-                        await message_queue.put((prompt, True))
+                    if len(notification_buffer) == 1:
+                        await message_queue.put((format_notif(notification_buffer[0]), True))
+                    else:
+                        prompts = [format_notif(n) for n in notification_buffer]
+                        await message_queue.put(("[NOTIFICATIONS]\n" + "\n".join(prompts), True))
 
                 notification_buffer = []
                 buffer_start_time = None
@@ -548,9 +498,7 @@ async def run_vesta():
         pass
 
     try:
-        await asyncio.wait_for(
-            graceful_shutdown(), timeout=310.0
-        )  # 5+ minutes for memory preservation
+        await asyncio.wait_for(graceful_shutdown(), timeout=310.0)
     except asyncio.TimeoutError:
         print(f"{C['yellow']}⚠️ Shutdown timeout{C['reset']}")
 

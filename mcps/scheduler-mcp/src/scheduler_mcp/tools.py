@@ -31,16 +31,24 @@ def init_db():
             )
         """)
         conn.execute("""
-            CREATE TABLE IF NOT EXISTS todos (
+            CREATE TABLE IF NOT EXISTS tasks (
                 id TEXT PRIMARY KEY,
                 title TEXT NOT NULL,
-                status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'working', 'done')),
+                status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'done')),
                 priority INTEGER DEFAULT 2 CHECK(priority IN (1, 2, 3)),
                 due_date TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 completed_at TEXT
             )
         """)
+        # Migrate from old todos table if it exists
+        try:
+            conn.execute("""
+                INSERT OR IGNORE INTO tasks SELECT * FROM todos
+            """)
+            conn.execute("DROP TABLE IF EXISTS todos")
+        except sqlite3.OperationalError:
+            pass  # todos table doesn't exist
         conn.commit()
 
 
@@ -235,25 +243,25 @@ def cancel_reminder(reminder_id: str) -> dict:
 
 
 @mcp.tool()
-def add_todo(title: str, due: str | None = None, priority: int = 2) -> dict:
-    """Add a todo item"""
+def add_task(title: str, due: str | None = None, priority: int = 2) -> dict:
+    """Add a task"""
     ensure_scheduler_started()
 
     if priority not in (1, 2, 3):
         raise ValueError("Priority must be 1 (low), 2 (normal), or 3 (high)")
 
-    todo_id = str(uuid.uuid4())[:8]
+    task_id = str(uuid.uuid4())[:8]
     due_date = parse_relative_date(due) if due else None
 
     with closing(get_db()) as conn:
         conn.execute(
-            "INSERT INTO todos (id, title, priority, due_date) VALUES (?, ?, ?, ?)",
-            (todo_id, title, priority, due_date),
+            "INSERT INTO tasks (id, title, priority, due_date) VALUES (?, ?, ?, ?)",
+            (task_id, title, priority, due_date),
         )
         conn.commit()
 
     return {
-        "id": todo_id,
+        "id": task_id,
         "title": title,
         "status": "pending",
         "priority": priority,
@@ -262,35 +270,35 @@ def add_todo(title: str, due: str | None = None, priority: int = 2) -> dict:
 
 
 @mcp.tool()
-def list_todos(show_completed: bool = False) -> list[dict]:
-    """List todos sorted by priority and due date"""
+def list_tasks(show_completed: bool = False) -> list[dict]:
+    """List tasks sorted by priority and due date"""
     ensure_scheduler_started()
 
     with closing(get_db()) as conn:
-        query = "SELECT * FROM todos"
+        query = "SELECT * FROM tasks"
         if not show_completed:
             query += " WHERE status != 'done'"
         query += " ORDER BY priority DESC, due_date ASC NULLS LAST, created_at DESC"
 
         cursor = conn.execute(query)
-        todos = [dict(row) for row in cursor]
+        tasks = [dict(row) for row in cursor]
 
-    return todos
+    return tasks
 
 
 @mcp.tool()
-def update_todo(id: str, status: str | None = None, title: str | None = None) -> dict:
-    """Update todo"""
+def update_task(id: str, status: str | None = None, title: str | None = None) -> dict:
+    """Update task"""
     ensure_scheduler_started()
 
-    if status and status not in ("pending", "working", "done"):
-        raise ValueError("Status must be pending, working, or done")
+    if status and status not in ("pending", "done"):
+        raise ValueError("Status must be pending or done")
 
     with closing(get_db()) as conn:
-        cursor = conn.execute("SELECT * FROM todos WHERE id = ?", (id,))
+        cursor = conn.execute("SELECT * FROM tasks WHERE id = ?", (id,))
         result = cursor.fetchone()
         if not result:
-            raise ValueError(f"Todo {id} not found")
+            raise ValueError(f"Task {id} not found")
 
         updates = []
         params = []
@@ -301,7 +309,7 @@ def update_todo(id: str, status: str | None = None, title: str | None = None) ->
             if status == "done":
                 updates.append("completed_at = ?")
                 params.append(dt.now().isoformat())
-            elif status in ("pending", "working"):
+            elif status == "pending":
                 updates.append("completed_at = NULL")
 
         if title is not None:
@@ -310,25 +318,25 @@ def update_todo(id: str, status: str | None = None, title: str | None = None) ->
 
         if updates:
             params.append(id)
-            query = f"UPDATE todos SET {', '.join(updates)} WHERE id = ?"
+            query = f"UPDATE tasks SET {', '.join(updates)} WHERE id = ?"
             conn.execute(query, params)
             conn.commit()
 
-        cursor = conn.execute("SELECT * FROM todos WHERE id = ?", (id,))
-        todo = dict(cursor.fetchone())
+        cursor = conn.execute("SELECT * FROM tasks WHERE id = ?", (id,))
+        task = dict(cursor.fetchone())
 
-    return todo
+    return task
 
 
 @mcp.tool()
 def clear_completed() -> dict:
-    """Delete completed todos older than 24 hours"""
+    """Delete completed tasks older than 24 hours"""
     ensure_scheduler_started()
 
     cutoff = (dt.now() - timedelta(hours=24)).isoformat()
     with closing(get_db()) as conn:
         cursor = conn.execute(
-            "DELETE FROM todos WHERE status = 'done' AND completed_at < ?",
+            "DELETE FROM tasks WHERE status = 'done' AND completed_at < ?",
             (cutoff,),
         )
         count = cursor.rowcount
