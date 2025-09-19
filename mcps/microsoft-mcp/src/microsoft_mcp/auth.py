@@ -2,9 +2,9 @@ import os
 import msal
 import pathlib as pl
 from typing import NamedTuple
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 
-load_dotenv()
+load_dotenv(find_dotenv())
 
 CACHE_FILE = pl.Path.home() / ".microsoft_mcp_token_cache.json"
 SCOPES = ["https://graph.microsoft.com/.default"]
@@ -91,10 +91,14 @@ def get_token(account_id: str | None = None) -> str:
 
 def list_accounts() -> list[Account]:
     app = get_app()
-    return [
-        Account(username=a["username"], account_id=a["home_account_id"])
-        for a in app.get_accounts()
-    ]
+    seen_usernames = set()
+    accounts = []
+    for a in app.get_accounts():
+        username = a["username"]
+        if username not in seen_usernames:
+            seen_usernames.add(username)
+            accounts.append(Account(username=username, account_id=a["home_account_id"]))
+    return accounts
 
 
 def authenticate_new_account() -> Account | None:

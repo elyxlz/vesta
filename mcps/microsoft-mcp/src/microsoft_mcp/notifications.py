@@ -1,18 +1,17 @@
-"""Write notifications to Vesta's directory"""
-
 import json
+import os
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
-NOTIF_DIR = Path("notifications")
+NOTIF_DIR = Path(os.environ.get("NOTIFICATIONS_DIR", "../../notifications")).resolve()
 
 
 def write_notification(type: str, message: str, metadata: dict):
     NOTIF_DIR.mkdir(exist_ok=True)
 
     notif = {
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "source": "microsoft",
         "type": type,
         "message": message,

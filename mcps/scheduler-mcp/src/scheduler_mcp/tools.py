@@ -1,7 +1,6 @@
-"""MCP tools for scheduling reminders"""
-
 from datetime import datetime as dt, timedelta
-import json
+from contextlib import closing
+import sqlite3
 import uuid
 from mcp.server.fastmcp import FastMCP
 from .scheduler import scheduler, write_notification, DATA_DIR
@@ -11,57 +10,96 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 mcp = FastMCP("scheduler-mcp")
 
-METADATA_FILE = DATA_DIR / "reminders_metadata.json"
-
-
-def load_metadata():
-    """Load reminder metadata from file"""
-    if METADATA_FILE.exists():
-        return json.loads(METADATA_FILE.read_text())
-    return {}
-
-
-def save_metadata(data):
-    """Save reminder metadata to file"""
-    METADATA_FILE.write_text(json.dumps(data, indent=2))
-
-
-active_reminders = load_metadata()
+DB_PATH = DATA_DIR / "reminders.db"
 _scheduler_started = False
 
 
+def get_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db():
+    with closing(get_db()) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS reminders (
+                id TEXT PRIMARY KEY,
+                message TEXT NOT NULL,
+                schedule_type TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS todos (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'working', 'done')),
+                priority INTEGER DEFAULT 2 CHECK(priority IN (1, 2, 3)),
+                due_date TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                completed_at TEXT
+            )
+        """)
+        conn.commit()
+
+
+init_db()
+
+
+def check_missed_reminders():
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+
+    for job in scheduler.get_jobs():
+        if job.next_run_time and job.next_run_time < now:
+            with closing(get_db()) as conn:
+                cursor = conn.execute(
+                    "SELECT message FROM reminders WHERE id = ?", (job.id,)
+                )
+                result = cursor.fetchone()
+                if result:
+                    write_notification(
+                        job.id,
+                        result["message"],
+                        {"late": True, "original_time": job.next_run_time.isoformat()},
+                    )
+
+
 def ensure_scheduler_started():
-    """Start scheduler if not already started"""
     global _scheduler_started
     if not _scheduler_started:
         try:
             scheduler.start()
-            # Sync metadata with actual jobs on startup
-            sync_metadata_with_jobs()
+            check_missed_reminders()
             _scheduler_started = True
         except Exception:
             _scheduler_started = True
 
 
-def sync_metadata_with_jobs():
-    """Sync metadata with actual scheduled jobs after startup"""
-    global active_reminders
-    current_jobs = {job.id for job in scheduler.get_jobs()}
+def parse_relative_date(date_str: str) -> str | None:
+    if not date_str:
+        return None
 
-    # Remove metadata for jobs that no longer exist
-    to_remove = []
-    for reminder_id in active_reminders:
-        if reminder_id not in current_jobs:
-            to_remove.append(reminder_id)
+    date_str = date_str.lower().strip()
+    now = dt.now()
 
-    for reminder_id in to_remove:
-        del active_reminders[reminder_id]
+    if date_str == "today":
+        return now.date().isoformat()
+    elif date_str == "tomorrow":
+        return (now + timedelta(days=1)).date().isoformat()
+    elif date_str.startswith("in ") and date_str.endswith(" days"):
+        try:
+            days = int(date_str[3:-5])
+            return (now + timedelta(days=days)).date().isoformat()
+        except ValueError:
+            pass
 
-    if to_remove:
-        save_metadata(active_reminders)
+    return date_str
 
 
-@mcp.tool
+@mcp.tool()
 def set_reminder(
     message: str,
     datetime: str | None = None,
@@ -70,168 +108,230 @@ def set_reminder(
     hours: float | None = None,
     days: float | None = None,
     recurring: str | None = None,
-    interval_minutes: float | None = None,
     day_of_week: str | None = None,
-    time_of_day: str | None = None,
+    time: str | None = None,
 ) -> dict:
-    """Set a one-time or recurring reminder
-
-    Args:
-        message: The reminder message
-        datetime: ISO datetime string or "HH:MM" for daily reminders
-        seconds: Seconds from now (for one-time reminders, supports decimals)
-        minutes: Minutes from now (for one-time reminders, supports decimals like 0.5)
-        hours: Hours from now (for one-time reminders, supports decimals like 1.5)
-        days: Days from now (for one-time reminders, supports decimals)
-        recurring: "daily", "hourly", "weekly" for recurring reminders
-        interval_minutes: Custom interval in minutes for recurring
-        day_of_week: For weekly recurring: "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"
-        time_of_day: For weekly recurring: "HH:MM" format (e.g., "14:30")
-
-    Returns:
-        Confirmation with reminder ID and schedule details
-    """
+    """Schedule a reminder notification"""
     ensure_scheduler_started()
 
-    if not message or not message.strip():
-        raise ValueError("Message cannot be empty")
-
-    if not any([datetime, seconds, minutes, hours, days, recurring, interval_minutes]):
-        raise ValueError(
-            "Must provide either datetime, seconds, minutes, hours, days, recurring, or interval_minutes"
-        )
-
     reminder_id = str(uuid.uuid4())[:8]
+    schedule_info = None
 
-    # Determine trigger type
-    if recurring == "daily" or (datetime and ":" in datetime and "T" not in datetime):
-        hour, minute = datetime.split(":")
-        trigger = CronTrigger(hour=int(hour), minute=int(minute))
-        schedule_type = "daily"
-        next_run = trigger.get_next_fire_time(None, dt.now())
+    if recurring == "daily":
+        if time:
+            try:
+                h, m = map(int, time.split(":"))
+            except ValueError:
+                raise ValueError("Time must be in HH:MM format")
+        else:
+            h, m = 9, 0
+        trigger = CronTrigger(hour=h, minute=m)
+        schedule_info = "daily" + (f" at {time}" if time else "")
     elif recurring == "hourly":
         trigger = IntervalTrigger(hours=1)
-        schedule_type = "hourly"
-        next_run = dt.now() + timedelta(hours=1)
-    elif recurring == "weekly":
-        if day_of_week and time_of_day:
-            # Map day names to APScheduler day numbers (0=Monday, 6=Sunday)
-            day_map = {
-                "monday": 0,
-                "tuesday": 1,
-                "wednesday": 2,
-                "thursday": 3,
-                "friday": 4,
-                "saturday": 5,
-                "sunday": 6,
-            }
-            if day_of_week.lower() not in day_map:
-                raise ValueError(
-                    f"Invalid day_of_week: {day_of_week}. Use monday, tuesday, etc."
-                )
-
-            if ":" not in time_of_day:
-                raise ValueError("time_of_day must be in HH:MM format")
-
-            hour, minute = time_of_day.split(":")
-            trigger = CronTrigger(
-                day_of_week=day_map[day_of_week.lower()],
-                hour=int(hour),
-                minute=int(minute),
-            )
-            schedule_type = f"weekly on {day_of_week} at {time_of_day}"
-            next_run = trigger.get_next_fire_time(None, dt.now())
+        schedule_info = "hourly"
+    elif recurring == "weekly" and day_of_week:
+        if time:
+            try:
+                h, m = map(int, time.split(":"))
+            except ValueError:
+                raise ValueError("Time must be in HH:MM format")
         else:
-            trigger = IntervalTrigger(weeks=1)
-            schedule_type = "weekly"
-            next_run = dt.now() + timedelta(weeks=1)
-    elif interval_minutes:
-        trigger = IntervalTrigger(minutes=interval_minutes)
-        schedule_type = f"every {interval_minutes} minutes"
-        next_run = dt.now() + timedelta(minutes=interval_minutes)
-    elif seconds or minutes or hours or days:
-        delta = timedelta(
-            seconds=seconds or 0, minutes=minutes or 0, hours=hours or 0, days=days or 0
+            h, m = 9, 0
+        trigger = CronTrigger(day_of_week=day_of_week[:3].lower(), hour=h, minute=m)
+        schedule_info = f"weekly on {day_of_week}" + (f" at {time}" if time else "")
+    elif datetime:
+        trigger = DateTrigger(run_date=dt.fromisoformat(datetime))
+        schedule_info = f"once at {datetime}"
+    else:
+        offset = timedelta(
+            seconds=seconds or 0,
+            minutes=minutes or 0,
+            hours=hours or 0,
+            days=days or 0,
         )
-        next_run = dt.now() + delta
-        trigger = DateTrigger(run_date=next_run)
+
+        if not offset:
+            raise ValueError("Must specify when to send reminder")
+
+        run_time = dt.now() + offset
+        trigger = DateTrigger(run_date=run_time)
+
         parts = []
         if days:
-            parts.append(f"{days} day{'s' if days != 1 else ''}")
+            parts.append(f"{days} days")
         if hours:
-            parts.append(f"{hours} hour{'s' if hours != 1 else ''}")
+            parts.append(f"{hours} hours")
         if minutes:
-            parts.append(f"{minutes} minute{'s' if minutes != 1 else ''}")
+            parts.append(f"{minutes} minutes")
         if seconds:
-            parts.append(f"{seconds} second{'s' if seconds != 1 else ''}")
-        schedule_type = f"once (in {' '.join(parts)})"
-    else:
-        next_run = dt.fromisoformat(datetime.replace("Z", "+00:00"))
-        trigger = DateTrigger(run_date=next_run)
-        schedule_type = "once"
+            parts.append(f"{seconds} seconds")
+        schedule_info = f"once (in {' '.join(parts)})"
 
     scheduler.add_job(
-        write_notification, trigger, args=[reminder_id, message], id=reminder_id
+        func=write_notification,
+        trigger=trigger,
+        args=[reminder_id, message],
+        id=reminder_id,
+        replace_existing=True,
     )
 
-    active_reminders[reminder_id] = {
-        "message": message,
-        "schedule_type": schedule_type,
-        "next_run": next_run.isoformat() if next_run else "calculating...",
-    }
-    save_metadata(active_reminders)
+    with closing(get_db()) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO reminders (id, message, schedule_type) VALUES (?, ?, ?)",
+            (reminder_id, message, schedule_info),
+        )
+        conn.commit()
 
+    next_run = scheduler.get_job(reminder_id).next_run_time
     return {
-        "reminder_id": reminder_id,
+        "id": reminder_id,
         "message": message,
-        "schedule_type": schedule_type,
-        "next_run": active_reminders[reminder_id]["next_run"],
+        "schedule": schedule_info,
+        "next_run": next_run.isoformat() if next_run else None,
         "status": "scheduled",
     }
 
 
-@mcp.tool
+@mcp.tool()
 def list_reminders() -> list[dict]:
     """List all active reminders"""
     ensure_scheduler_started()
+
+    with closing(get_db()) as conn:
+        cursor = conn.execute("SELECT * FROM reminders")
+        reminder_data = {row["id"]: dict(row) for row in cursor}
+
     reminders = []
     for job in scheduler.get_jobs():
-        if job.id in active_reminders:
-            next_run = job.next_run_time
+        if job.id in reminder_data:
             reminders.append(
                 {
                     "id": job.id,
-                    "message": active_reminders[job.id]["message"],
-                    "schedule_type": active_reminders[job.id]["schedule_type"],
-                    "next_run_time": next_run.isoformat() if next_run else None,
-                    "status": "active",
+                    "message": reminder_data[job.id]["message"],
+                    "schedule": reminder_data[job.id]["schedule_type"],
+                    "next_run": (
+                        job.next_run_time.isoformat() if job.next_run_time else None
+                    ),
+                    "status": "active" if job.next_run_time else "paused",
                 }
             )
     return reminders
 
 
-@mcp.tool
+@mcp.tool()
 def cancel_reminder(reminder_id: str) -> dict:
-    """Cancel a scheduled reminder
-
-    Args:
-        reminder_id: ID of the reminder to cancel
-
-    Returns:
-        Confirmation of cancellation
-    """
+    """Cancel a scheduled reminder"""
     ensure_scheduler_started()
+
     try:
         scheduler.remove_job(reminder_id)
-        if reminder_id in active_reminders:
-            message = active_reminders[reminder_id]["message"]
-            del active_reminders[reminder_id]
-            save_metadata(active_reminders)
-            return {
-                "reminder_id": reminder_id,
-                "message": message,
-                "status": "cancelled",
-            }
-        return {"reminder_id": reminder_id, "status": "cancelled"}
-    except Exception:
-        return {"reminder_id": reminder_id, "status": "not_found"}
+        with closing(get_db()) as conn:
+            conn.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))
+            conn.commit()
+        return {"status": "cancelled", "id": reminder_id}
+    except Exception as e:
+        raise ValueError(f"Reminder {reminder_id} not found") from e
+
+
+@mcp.tool()
+def add_todo(title: str, due: str | None = None, priority: int = 2) -> dict:
+    """Add a todo item"""
+    ensure_scheduler_started()
+
+    if priority not in (1, 2, 3):
+        raise ValueError("Priority must be 1 (low), 2 (normal), or 3 (high)")
+
+    todo_id = str(uuid.uuid4())[:8]
+    due_date = parse_relative_date(due) if due else None
+
+    with closing(get_db()) as conn:
+        conn.execute(
+            "INSERT INTO todos (id, title, priority, due_date) VALUES (?, ?, ?, ?)",
+            (todo_id, title, priority, due_date),
+        )
+        conn.commit()
+
+    return {
+        "id": todo_id,
+        "title": title,
+        "status": "pending",
+        "priority": priority,
+        "due_date": due_date,
+    }
+
+
+@mcp.tool()
+def list_todos(show_completed: bool = False) -> list[dict]:
+    """List todos sorted by priority and due date"""
+    ensure_scheduler_started()
+
+    with closing(get_db()) as conn:
+        query = "SELECT * FROM todos"
+        if not show_completed:
+            query += " WHERE status != 'done'"
+        query += " ORDER BY priority DESC, due_date ASC NULLS LAST, created_at DESC"
+
+        cursor = conn.execute(query)
+        todos = [dict(row) for row in cursor]
+
+    return todos
+
+
+@mcp.tool()
+def update_todo(id: str, status: str | None = None, title: str | None = None) -> dict:
+    """Update todo"""
+    ensure_scheduler_started()
+
+    if status and status not in ("pending", "working", "done"):
+        raise ValueError("Status must be pending, working, or done")
+
+    with closing(get_db()) as conn:
+        cursor = conn.execute("SELECT * FROM todos WHERE id = ?", (id,))
+        result = cursor.fetchone()
+        if not result:
+            raise ValueError(f"Todo {id} not found")
+
+        updates = []
+        params = []
+
+        if status is not None:
+            updates.append("status = ?")
+            params.append(status)
+            if status == "done":
+                updates.append("completed_at = ?")
+                params.append(dt.now().isoformat())
+            elif status in ("pending", "working"):
+                updates.append("completed_at = NULL")
+
+        if title is not None:
+            updates.append("title = ?")
+            params.append(title)
+
+        if updates:
+            params.append(id)
+            query = f"UPDATE todos SET {', '.join(updates)} WHERE id = ?"
+            conn.execute(query, params)
+            conn.commit()
+
+        cursor = conn.execute("SELECT * FROM todos WHERE id = ?", (id,))
+        todo = dict(cursor.fetchone())
+
+    return todo
+
+
+@mcp.tool()
+def clear_completed() -> dict:
+    """Delete completed todos older than 24 hours"""
+    ensure_scheduler_started()
+
+    cutoff = (dt.now() - timedelta(hours=24)).isoformat()
+    with closing(get_db()) as conn:
+        cursor = conn.execute(
+            "DELETE FROM todos WHERE status = 'done' AND completed_at < ?",
+            (cutoff,),
+        )
+        count = cursor.rowcount
+        conn.commit()
+
+    return {"deleted": count}

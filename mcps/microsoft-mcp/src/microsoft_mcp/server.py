@@ -1,8 +1,12 @@
 import os
 import sys
 import threading
+import logging
 from .tools import mcp
 from .monitor import run as run_monitor
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 def main() -> None:
@@ -13,10 +17,12 @@ def main() -> None:
         )
         sys.exit(1)
 
-    # Start notification monitor in background thread
+    logger.info("Starting Microsoft MCP server")
+    logger.info(f"NOTIFICATIONS_DIR: {os.getenv('NOTIFICATIONS_DIR', 'Not set')}")
+
     monitor_thread = threading.Thread(target=run_monitor, daemon=True)
     monitor_thread.start()
-    print("Microsoft Graph notification monitor started")
+    logger.info("Microsoft Graph notification monitor thread started")
 
     mcp.run()
 

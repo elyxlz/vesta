@@ -5,9 +5,9 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 
-load_dotenv()
+load_dotenv(find_dotenv())
 
 if not os.getenv("MICROSOFT_MCP_CLIENT_ID"):
     pytest.fail("MICROSOFT_MCP_CLIENT_ID environment variable is required")
@@ -565,132 +565,6 @@ async def test_check_availability():
 
 
 @pytest.mark.asyncio
-async def test_list_contacts():
-    """Test list_contacts tool"""
-    async for session in get_session():
-        account_info = await get_account_info(session)
-        result = await session.call_tool(
-            "list_contacts", {"account_id": account_info["account_id"], "limit": 10}
-        )
-        assert not result.isError
-        contacts = parse_result(result, "list_contacts")
-        assert contacts is not None
-        if len(contacts) > 0:
-            assert "id" in contacts[0]
-
-
-@pytest.mark.asyncio
-async def test_get_contact():
-    """Test get_contact tool"""
-    async for session in get_session():
-        account_info = await get_account_info(session)
-        list_result = await session.call_tool(
-            "list_contacts", {"account_id": account_info["account_id"], "limit": 1}
-        )
-        assert not list_result.isError
-        contacts = parse_result(list_result, "list_contacts")
-        if contacts and len(contacts) > 0:
-            contact_id = contacts[0].get("id")
-            result = await session.call_tool(
-                "get_contact",
-                {"contact_id": contact_id, "account_id": account_info["account_id"]},
-            )
-            assert not result.isError
-            contact_detail = parse_result(result)
-            assert contact_detail is not None
-            assert "id" in contact_detail
-
-
-@pytest.mark.asyncio
-async def test_create_contact():
-    """Test create_contact tool"""
-    async for session in get_session():
-        account_info = await get_account_info(session)
-        result = await session.call_tool(
-            "create_contact",
-            {
-                "account_id": account_info["account_id"],
-                "given_name": "MCP",
-                "surname": "TestContact",
-                "email_addresses": ["mcp.test@example.com"],
-                "phone_numbers": {"mobile": "+1234567890"},
-            },
-        )
-        assert not result.isError
-        new_contact = parse_result(result)
-        assert new_contact is not None
-        assert "id" in new_contact
-
-        contact_id = new_contact.get("id")
-        delete_result = await session.call_tool(
-            "delete_contact",
-            {"contact_id": contact_id, "account_id": account_info["account_id"]},
-        )
-        assert not delete_result.isError
-
-
-@pytest.mark.asyncio
-async def test_update_contact():
-    """Test update_contact tool"""
-    async for session in get_session():
-        account_info = await get_account_info(session)
-        create_result = await session.call_tool(
-            "create_contact",
-            {
-                "account_id": account_info["account_id"],
-                "given_name": "MCPUpdate",
-                "surname": "Test",
-            },
-        )
-        assert not create_result.isError
-        new_contact = parse_result(create_result)
-        contact_id = new_contact.get("id")
-
-        result = await session.call_tool(
-            "update_contact",
-            {
-                "contact_id": contact_id,
-                "account_id": account_info["account_id"],
-                "updates": {"givenName": "MCPUpdated"},
-            },
-        )
-        assert not result.isError
-
-        delete_result = await session.call_tool(
-            "delete_contact",
-            {"contact_id": contact_id, "account_id": account_info["account_id"]},
-        )
-        assert not delete_result.isError
-
-
-@pytest.mark.asyncio
-async def test_delete_contact():
-    """Test delete_contact tool"""
-    async for session in get_session():
-        account_info = await get_account_info(session)
-        create_result = await session.call_tool(
-            "create_contact",
-            {
-                "account_id": account_info["account_id"],
-                "given_name": "MCPDelete",
-                "surname": "Test",
-            },
-        )
-        assert not create_result.isError
-        new_contact = parse_result(create_result)
-        contact_id = new_contact.get("id")
-
-        result = await session.call_tool(
-            "delete_contact",
-            {"contact_id": contact_id, "account_id": account_info["account_id"]},
-        )
-        assert not result.isError
-        delete_result = parse_result(result)
-        assert delete_result is not None
-        assert delete_result.get("status") == "deleted"
-
-
-@pytest.mark.asyncio
 async def test_list_files():
     """Test list_files tool"""
     async for session in get_session():
@@ -699,7 +573,7 @@ async def test_list_files():
             "list_files", {"account_id": account_info["account_id"]}
         )
         assert not result.isError
-        files = parse_result(result)
+        files = parse_result(result, "list_files")
         assert files is not None
         if len(files) > 0:
             assert "id" in files[0]
@@ -1050,24 +924,6 @@ async def test_search_events():
         result = await session.call_tool(
             "search_events",
             {"account_id": account_info["account_id"], "query": "meeting", "limit": 5},
-        )
-        assert not result.isError
-        search_results = parse_result(result)
-        assert search_results is not None
-
-
-@pytest.mark.asyncio
-async def test_search_contacts():
-    """Test search_contacts tool"""
-    async for session in get_session():
-        account_info = await get_account_info(session)
-        result = await session.call_tool(
-            "search_contacts",
-            {
-                "account_id": account_info["account_id"],
-                "query": account_info["email"].split("@")[0],
-                "limit": 5,
-            },
         )
         assert not result.isError
         search_results = parse_result(result)

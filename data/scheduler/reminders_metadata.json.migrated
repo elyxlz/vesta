@@ -4,11 +4,6 @@
     "schedule_type": "weekly on monday at 09:00",
     "next_run": "2025-09-22T09:00:00+01:00"
   },
-  "a0847fb8": {
-    "message": "text 351914173970 back",
-    "schedule_type": "once (in 20.0 minutes)",
-    "next_run": "2025-09-17T11:25:59.774514"
-  },
   "cb74b277": {
     "message": "CALL NONNA NOW - no excuses, you said you'd do it today",
     "schedule_type": "once (in 7.0 hours)",

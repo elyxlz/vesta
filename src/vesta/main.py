@@ -248,6 +248,14 @@ def print_header():
     print(f"║{' ' * 23}{C['yellow']}🔥 VESTA{C['cyan']}{' ' * 27}║")
     print(f"╚{'═' * 58}╝{C['reset']}\n")
 
+    # Show active MCPs
+    active_mcps = []
+    for name in MCP_SERVERS.keys():
+        active_mcps.append(name)
+
+    if active_mcps:
+        print(f"{C['dim']}Active MCPs: {', '.join(active_mcps)}{C['reset']}\n")
+
 
 def start_whatsapp_bridge():
     script_path = Path(__file__).parent.parent.parent / "start_whatsapp_bridge.sh"
