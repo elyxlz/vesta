@@ -11,7 +11,6 @@ from typing import Dict, List, Any, Optional, Tuple
 import aioconsole
 from claude_code_sdk import ClaudeSDKClient, ClaudeCodeOptions
 from claude_code_sdk.types import (
-    McpStdioServerConfig,
     AssistantMessage,
     TextBlock,
     ToolUseBlock,
@@ -27,7 +26,7 @@ NOTIFICATION_CHECK_INTERVAL = 2
 PROACTIVE_CHECK_INTERVAL = 30
 NOTIFICATION_BUFFER_DELAY = 3
 WHATSAPP_BRIDGE_CHECK_INTERVAL = 30
-RESPONSE_TIMEOUT = 300
+RESPONSE_TIMEOUT = 60
 TYPING_ANIMATION_DELAY = 0.5
 SHUTDOWN_TIMEOUT = 310
 TASK_GATHER_TIMEOUT = 2
@@ -75,6 +74,7 @@ MCP_SERVERS = {
             "--browser", "chromium",
             "--blocked-origins", "googleads.g.doubleclick.net;googlesyndication.com",
             "--output-dir", "data/screenshots",
+            "--image-responses", "omit",
         ],
     },
 }
@@ -98,7 +98,7 @@ def load_prompts() -> str:
     return memory_path.read_text()
 
 
-def get_mcp_config() -> Dict[str, McpStdioServerConfig]:
+def get_mcp_config() -> Dict[str, Any]:
     root = get_root_path()
     logs_dir = root / "logs"
     logs_dir.mkdir(exist_ok=True)
@@ -117,11 +117,11 @@ def get_mcp_config() -> Dict[str, McpStdioServerConfig]:
             env["DEBUG"] = "pw:api,pw:browser,mcp:*"
             env["NODE_DEBUG"] = "mcp"
 
-        config[name] = McpStdioServerConfig(
-            command=server["command"],
-            args=server["args"],
-            env=env,
-        )
+        config[name] = {
+            "command": server["command"],
+            "args": server["args"],
+            "env": env,
+        }
 
     return config
 
@@ -147,6 +147,12 @@ async def init_client() -> ClaudeSDKClient:
 def format_tool_call(name: str, input_data: Any) -> str:
     input_str = json.dumps(input_data) if isinstance(input_data, dict) else str(input_data)
     input_preview = (input_str[:150] + "...") if len(input_str) > 150 else input_str
+
+    # Check if this is a Task (sub-agent) call
+    if name == "Task":
+        agent_type = input_data.get("subagent_type", "unknown") if isinstance(input_data, dict) else "unknown"
+        description = input_data.get("description", "") if isinstance(input_data, dict) else ""
+        return f"🤖 Task [{agent_type}]: {description or input_preview}"
 
     if name.startswith("mcp__"):
         parts = name.replace("mcp__", "").split("__")
@@ -245,7 +251,9 @@ async def check_context_and_preserve() -> None:
 
 def output_line(text: str, is_tool: bool = False) -> None:
     if text and text.strip():
-        if is_tool or text.startswith("🔧"):
+        if text.startswith("🤖"):  # Sub-agent task
+            print(f"{C['cyan']}>>{text}{C['reset']}", flush=True)
+        elif is_tool or text.startswith("🔧"):
             print(f"{C['yellow']}>{text}{C['reset']}", flush=True)
         else:
             print_timestamp_message(text, "Vesta")
@@ -407,7 +415,9 @@ async def handle_notifications_via_interrupt(
 
         return True
     except Exception as e:
-        print(f"{C['yellow']}⚠️ Could not interrupt: {str(e)}{C['reset']}")
+        import traceback
+        print(f"{C['yellow']}⚠️ INTERRUPT FAILED: {str(e)}{C['reset']}")
+        print(f"{C['yellow']}Traceback: {traceback.format_exc()}{C['reset']}")
         return False
 
 
@@ -420,10 +430,12 @@ async def process_notification_batch(
 
     if CLIENT:
         success = await handle_notifications_via_interrupt(notifications, CLIENT)
-        if success:
-            await delete_notification_files(notifications)
-            return
+        await delete_notification_files(notifications)
+        if not success:
+            print(f"{C['yellow']}⚠️ Interrupt failed - notifications may be delayed{C['reset']}")
+        return
 
+    # Only queue if no CLIENT exists
     if len(notifications) == 1:
         await queue.put((format_notification(notifications[0]), True))
     else:
@@ -485,7 +497,7 @@ def ensure_memory_file() -> None:
 async def message_processor(queue: asyncio.Queue) -> None:
     global IS_PROCESSING
 
-    while not SHUTDOWN_EVENT.is_set():
+    while SHUTDOWN_EVENT and not SHUTDOWN_EVENT.is_set():
         try:
             msg, is_user = await asyncio.wait_for(queue.get(), timeout=1.0)
             IS_PROCESSING = True
@@ -507,10 +519,10 @@ async def message_processor(queue: asyncio.Queue) -> None:
 
 
 async def input_handler(queue: asyncio.Queue) -> None:
-    while not SHUTDOWN_EVENT.is_set():
+    while SHUTDOWN_EVENT and not SHUTDOWN_EVENT.is_set():
         try:
             user_msg = await aioconsole.ainput(f"{C['green']}>{C['reset']} ")
-            if SHUTDOWN_EVENT.is_set():
+            if SHUTDOWN_EVENT and SHUTDOWN_EVENT.is_set():
                 break
             if not user_msg.strip():
                 continue
@@ -519,7 +531,8 @@ async def input_handler(queue: asyncio.Queue) -> None:
             print_timestamp_message(user_msg, "You")
             await queue.put((user_msg.strip(), True))
         except (KeyboardInterrupt, EOFError):
-            SHUTDOWN_EVENT.set()
+            if SHUTDOWN_EVENT:
+                SHUTDOWN_EVENT.set()
             break
         except asyncio.CancelledError:
             break
@@ -560,13 +573,13 @@ async def monitor_loop(queue: asyncio.Queue) -> None:
     notification_buffer = []
     buffer_start_time = None
 
-    while not SHUTDOWN_EVENT.is_set():
+    while SHUTDOWN_EVENT and not SHUTDOWN_EVENT.is_set():
         try:
             await asyncio.sleep(NOTIFICATION_CHECK_INTERVAL)
         except asyncio.CancelledError:
             break
 
-        if SHUTDOWN_EVENT.is_set():
+        if SHUTDOWN_EVENT and SHUTDOWN_EVENT.is_set():
             break
 
         now = datetime.now()
@@ -581,6 +594,7 @@ async def monitor_loop(queue: asyncio.Queue) -> None:
             if buffer_start_time is None:
                 buffer_start_time = now
 
+        # Process buffered notifications after delay
         if (notification_buffer and buffer_start_time and
             (now - buffer_start_time).total_seconds() >= NOTIFICATION_BUFFER_DELAY):
 

@@ -41,14 +41,6 @@ def init_db():
                 completed_at TEXT
             )
         """)
-        # Migrate from old todos table if it exists
-        try:
-            conn.execute("""
-                INSERT OR IGNORE INTO tasks SELECT * FROM todos
-            """)
-            conn.execute("DROP TABLE IF EXISTS todos")
-        except sqlite3.OperationalError:
-            pass  # todos table doesn't exist
         conn.commit()
 
 
