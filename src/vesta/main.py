@@ -19,12 +19,10 @@ from claude_code_sdk.types import (
 
 from .memory_agent import preserve_conversation_memory
 
-# Configuration
 EPHEMERAL_MODE = os.environ.get("EPHEMERAL", "").lower() == "true"
 MAX_MCP_OUTPUT_TOKENS = os.environ.get("MAX_MCP_OUTPUT_TOKENS", "200000")
 os.environ["MAX_MCP_OUTPUT_TOKENS"] = MAX_MCP_OUTPUT_TOKENS
 
-# Timing constants
 NOTIFICATION_CHECK_INTERVAL = 2
 PROACTIVE_CHECK_INTERVAL = 30
 NOTIFICATION_BUFFER_DELAY = 3
@@ -33,11 +31,8 @@ RESPONSE_TIMEOUT = 300
 TYPING_ANIMATION_DELAY = 0.5
 SHUTDOWN_TIMEOUT = 310
 TASK_GATHER_TIMEOUT = 2
-
-# Context management
 MAX_CONTEXT_TOKENS = 180000
 
-# Colors
 C = {
     "dim": "\033[2m",
     "cyan": "\033[96m",
@@ -47,7 +42,6 @@ C = {
     "reset": "\033[0m",
 }
 
-# Service icons
 SERVICE_ICONS = {
     "playwright": "🌐",
     "whatsapp": "📱",
@@ -55,7 +49,6 @@ SERVICE_ICONS = {
     "microsoft": "📧",
 }
 
-# MCP server configurations
 MCP_SERVERS = {
     "microsoft": {
         "command": "uv",
@@ -86,7 +79,6 @@ MCP_SERVERS = {
     },
 }
 
-# Global state
 CLIENT: Optional[ClaudeSDKClient] = None
 CONVERSATION_HISTORY: List[Dict[str, Any]] = []
 SHUTDOWN_EVENT: Optional[asyncio.Event] = None
@@ -96,12 +88,10 @@ IS_PROCESSING = False
 
 
 def get_root_path() -> Path:
-    """Get the project root directory."""
     return Path(__file__).parent.parent.parent.absolute()
 
 
 def load_prompts() -> str:
-    """Load the memory prompts from MEMORY.md."""
     memory_path = get_root_path() / "MEMORY.md"
     if not memory_path.exists():
         raise FileNotFoundError(f"MEMORY.md not found at {memory_path}")
@@ -109,7 +99,6 @@ def load_prompts() -> str:
 
 
 def get_mcp_config() -> Dict[str, McpStdioServerConfig]:
-    """Generate MCP server configurations with proper paths and environment."""
     root = get_root_path()
     logs_dir = root / "logs"
     logs_dir.mkdir(exist_ok=True)
@@ -138,7 +127,6 @@ def get_mcp_config() -> Dict[str, McpStdioServerConfig]:
 
 
 async def init_client() -> ClaudeSDKClient:
-    """Initialize or return the existing Claude SDK client."""
     global CLIENT
     if CLIENT:
         return CLIENT
@@ -157,7 +145,6 @@ async def init_client() -> ClaudeSDKClient:
 
 
 def format_tool_call(name: str, input_data: Any) -> str:
-    """Format a tool call for display."""
     input_str = json.dumps(input_data) if isinstance(input_data, dict) else str(input_data)
     input_preview = (input_str[:150] + "...") if len(input_str) > 150 else input_str
 
@@ -172,7 +159,6 @@ def format_tool_call(name: str, input_data: Any) -> str:
 
 
 def parse_assistant_message(msg: Any) -> Optional[str]:
-    """Extract text content from an assistant message."""
     if not isinstance(msg, AssistantMessage):
         return msg if isinstance(msg, str) else None
 
@@ -187,14 +173,12 @@ def parse_assistant_message(msg: Any) -> Optional[str]:
 
 
 def format_notification(notif: Dict[str, Any]) -> str:
-    """Format a notification for display."""
     meta = notif.get("metadata", {})
     meta_str = f" (metadata: {', '.join(f'{k}={v}' for k, v in meta.items() if v)})" if meta else ""
     return f"[{notif['type']} from {notif['source']}]{meta_str}: {notif['message']}"
 
 
 def get_notification_display_info(notif: Dict[str, Any]) -> Tuple[str, str, str]:
-    """Get display information for a notification."""
     meta = notif.get("metadata", {})
     sender = meta.get("chat_name", meta.get("sender", notif["source"]))
     icon = SERVICE_ICONS.get(notif["source"], "🔔")
@@ -204,7 +188,6 @@ def get_notification_display_info(notif: Dict[str, Any]) -> Tuple[str, str, str]
 
 
 async def load_notifications() -> List[Dict[str, Any]]:
-    """Load and parse notification files from the notifications directory."""
     notif_dir = get_root_path() / "notifications"
     if not notif_dir.exists():
         return []
@@ -222,7 +205,6 @@ async def load_notifications() -> List[Dict[str, Any]]:
 
 
 async def delete_notification_files(notifications: List[Dict[str, Any]]) -> None:
-    """Delete processed notification files."""
     deleted_paths = set()
     for notif in notifications:
         file_path = notif.get('_file_path')
@@ -231,13 +213,12 @@ async def delete_notification_files(notifications: List[Dict[str, Any]]) -> None
                 Path(file_path).unlink()
                 deleted_paths.add(file_path)
             except FileNotFoundError:
-                pass  # Already deleted
+                pass
             except Exception as e:
                 print(f"{C['yellow']}⚠️ Failed to delete notification: {e}{C['reset']}")
 
 
 async def preserve_memory() -> None:
-    """Preserve conversation memory to MEMORY.md."""
     if EPHEMERAL_MODE or not CONVERSATION_HISTORY:
         return
 
@@ -251,7 +232,6 @@ async def preserve_memory() -> None:
 
 
 async def check_context_and_preserve() -> None:
-    """Check context usage and preserve memory if needed."""
     if EPHEMERAL_MODE:
         return
 
@@ -264,7 +244,6 @@ async def check_context_and_preserve() -> None:
 
 
 def output_line(text: str, is_tool: bool = False) -> None:
-    """Unified output function for all assistant responses."""
     if text and text.strip():
         if is_tool or text.startswith("🔧"):
             print(f"{C['yellow']}>{text}{C['reset']}", flush=True)
@@ -273,7 +252,6 @@ def output_line(text: str, is_tool: bool = False) -> None:
 
 
 def print_timestamp_message(text: str, sender: str = "") -> None:
-    """Print a message with timestamp and color coding."""
     timestamp = datetime.now().strftime("%I:%M %p")
     colors = {"You": "cyan", "Vesta": "magenta", "System": "yellow"}
 
@@ -287,7 +265,6 @@ def print_timestamp_message(text: str, sender: str = "") -> None:
 
 
 def start_whatsapp_bridge() -> bool:
-    """Start the WhatsApp bridge if available."""
     script_path = get_root_path() / "start_whatsapp_bridge.sh"
     if not script_path.exists():
         return False
@@ -307,7 +284,6 @@ def start_whatsapp_bridge() -> bool:
 
 
 def is_whatsapp_bridge_running() -> bool:
-    """Check if the WhatsApp bridge process is running."""
     try:
         result = subprocess.run(
             ["pgrep", "-f", "whatsapp-bridge"],
@@ -320,7 +296,6 @@ def is_whatsapp_bridge_running() -> bool:
 
 
 async def send_query(client: ClaudeSDKClient, prompt: str) -> None:
-    """Send a query to the Claude client."""
     timestamp = datetime.now().strftime("%A, %B %d, %Y at %I:%M:%S %p %Z")
     CONVERSATION_HISTORY.append({"role": "user", "content": prompt})
     await client.query(f"[Current time: {timestamp}]\n{prompt}")
@@ -328,7 +303,6 @@ async def send_query(client: ClaudeSDKClient, prompt: str) -> None:
 
 
 async def collect_responses(client: ClaudeSDKClient, show_output: bool = True) -> List[str]:
-    """Collect responses from the Claude client."""
     responses, seen = [], set()
 
     async def collect():
@@ -355,7 +329,6 @@ async def collect_responses(client: ClaudeSDKClient, show_output: bool = True) -
 
 
 async def send_and_receive_message(prompt: str, show_in_chat: bool = True) -> List[str]:
-    """Send a message to the assistant and collect responses."""
     client = await init_client()
 
     try:
@@ -375,7 +348,6 @@ async def send_and_receive_message(prompt: str, show_in_chat: bool = True) -> Li
 
 
 async def show_typing_indicator() -> None:
-    """Show an animated typing indicator."""
     timestamp = datetime.now().strftime("%I:%M %p")
     dots = ["   ", ".  ", ".. ", "..."]
     dot_idx = 0
@@ -391,7 +363,6 @@ async def show_typing_indicator() -> None:
 
 
 async def process_message_with_typing(msg: str, is_user: bool) -> List[str]:
-    """Process a message with typing indicator."""
     await asyncio.sleep(0.8 + datetime.now().microsecond / 3000000)
 
     typing_task = asyncio.create_task(show_typing_indicator())
@@ -415,7 +386,6 @@ async def handle_notifications_via_interrupt(
     notifications: List[Dict[str, Any]],
     client: ClaudeSDKClient
 ) -> bool:
-    """Try to handle notifications via interrupt. Returns True if successful."""
     try:
         await client.interrupt()
 
@@ -427,7 +397,6 @@ async def handle_notifications_via_interrupt(
             prompts = [format_notification(n) for n in notifications]
             prompt = "[NOTIFICATIONS RECEIVED DURING TASK]\n" + "\n".join(prompts)
 
-        # Direct query without side effects for interrupt
         await client.query(f"[Current time: {timestamp}]\n{prompt}")
 
         async for msg in client.receive_response():
@@ -446,19 +415,15 @@ async def process_notification_batch(
     notifications: List[Dict[str, Any]],
     queue: asyncio.Queue
 ) -> None:
-    """Process a batch of notifications either via interrupt or queue."""
     if not notifications:
         return
 
-    # Always try to interrupt if client is available
     if CLIENT:
         success = await handle_notifications_via_interrupt(notifications, CLIENT)
         if success:
             await delete_notification_files(notifications)
             return
-        # If interrupt failed, fall through to queue
 
-    # Queue notifications if no client or interrupt failed
     if len(notifications) == 1:
         await queue.put((format_notification(notifications[0]), True))
     else:
@@ -468,7 +433,6 @@ async def process_notification_batch(
 
 
 def signal_handler(signum: int, frame: Any) -> None:
-    """Handle shutdown signals gracefully."""
     global shutdown_count
     with shutdown_lock:
         shutdown_count += 1
@@ -482,7 +446,6 @@ def signal_handler(signum: int, frame: Any) -> None:
 
 
 async def graceful_shutdown() -> None:
-    """Perform graceful shutdown with memory preservation."""
     try:
         await asyncio.wait_for(preserve_memory(), timeout=RESPONSE_TIMEOUT)
     except asyncio.TimeoutError:
@@ -502,7 +465,6 @@ async def graceful_shutdown() -> None:
 
 
 def print_header() -> None:
-    """Print the application header."""
     print(f"\n{C['cyan']}╔{'═' * 58}╗")
     print(f"║{' ' * 23}{C['yellow']}🔥 VESTA{C['cyan']}{' ' * 27}║")
     print(f"╚{'═' * 58}╝{C['reset']}\n")
@@ -511,7 +473,6 @@ def print_header() -> None:
 
 
 def ensure_memory_file() -> None:
-    """Ensure MEMORY.md exists, creating from template if needed."""
     memory_file = get_root_path() / "MEMORY.md"
     memory_template = get_root_path() / "MEMORY.md.tmp"
 
@@ -522,7 +483,6 @@ def ensure_memory_file() -> None:
 
 
 async def message_processor(queue: asyncio.Queue) -> None:
-    """Process messages from the queue."""
     global IS_PROCESSING
 
     while not SHUTDOWN_EVENT.is_set():
@@ -547,7 +507,6 @@ async def message_processor(queue: asyncio.Queue) -> None:
 
 
 async def input_handler(queue: asyncio.Queue) -> None:
-    """Handle user input from the console."""
     while not SHUTDOWN_EVENT.is_set():
         try:
             user_msg = await aioconsole.ainput(f"{C['green']}>{C['reset']} ")
@@ -567,14 +526,12 @@ async def input_handler(queue: asyncio.Queue) -> None:
 
 
 async def check_whatsapp_bridge() -> None:
-    """Check and restart WhatsApp bridge if needed."""
     if not is_whatsapp_bridge_running():
         print_timestamp_message("🔄 WhatsApp bridge disconnected, restarting...", "System")
         start_whatsapp_bridge()
 
 
 async def collect_new_notifications(existing_buffer: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Collect truly new notifications not already in buffer."""
     new_notifs = await load_notifications()
     if not new_notifs:
         return []
@@ -590,7 +547,6 @@ async def collect_new_notifications(existing_buffer: List[Dict[str, Any]]) -> Li
 
 
 async def check_proactive_task(queue: asyncio.Queue) -> None:
-    """Add periodic proactive check to queue."""
     print_timestamp_message("⏰ Running 30-minute check...", "System")
     await queue.put((
         "It's been 30 minutes. Is there anything useful you could do right now?",
@@ -599,7 +555,6 @@ async def check_proactive_task(queue: asyncio.Queue) -> None:
 
 
 async def monitor_loop(queue: asyncio.Queue) -> None:
-    """Monitor for notifications and periodic tasks."""
     last_proactive = datetime.now()
     last_bridge_check = datetime.now()
     notification_buffer = []
@@ -616,19 +571,16 @@ async def monitor_loop(queue: asyncio.Queue) -> None:
 
         now = datetime.now()
 
-        # Check WhatsApp bridge
         if now - last_bridge_check >= timedelta(seconds=WHATSAPP_BRIDGE_CHECK_INTERVAL):
             await check_whatsapp_bridge()
             last_bridge_check = now
 
-        # Collect new notifications
         truly_new = await collect_new_notifications(notification_buffer)
         if truly_new:
             notification_buffer.extend(truly_new)
             if buffer_start_time is None:
                 buffer_start_time = now
 
-        # Process buffered notifications after delay
         if (notification_buffer and buffer_start_time and
             (now - buffer_start_time).total_seconds() >= NOTIFICATION_BUFFER_DELAY):
 
@@ -636,14 +588,12 @@ async def monitor_loop(queue: asyncio.Queue) -> None:
             notification_buffer = []
             buffer_start_time = None
 
-        # Periodic proactive check
         if now - last_proactive >= timedelta(minutes=PROACTIVE_CHECK_INTERVAL):
             await check_proactive_task(queue)
             last_proactive = now
 
 
 async def run_vesta() -> None:
-    """Main application entry point."""
     global SHUTDOWN_EVENT
     SHUTDOWN_EVENT = asyncio.Event()
 
@@ -685,7 +635,6 @@ async def run_vesta() -> None:
 
 
 def main() -> None:
-    """Main entry point for the application."""
     try:
         asyncio.run(run_vesta())
     except KeyboardInterrupt:
