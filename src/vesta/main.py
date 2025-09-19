@@ -4,6 +4,7 @@ import os
 import signal
 import subprocess
 import threading
+from dataclasses import dataclass, field
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional, Tuple
@@ -18,19 +19,23 @@ from claude_code_sdk.types import (
 
 from .memory_agent import preserve_conversation_memory
 
-EPHEMERAL_MODE = os.environ.get("EPHEMERAL", "").lower() == "true"
-MAX_MCP_OUTPUT_TOKENS = os.environ.get("MAX_MCP_OUTPUT_TOKENS", "200000")
-os.environ["MAX_MCP_OUTPUT_TOKENS"] = MAX_MCP_OUTPUT_TOKENS
+@dataclass(frozen=True)
+class ConfigClass:
+    EPHEMERAL_MODE: bool = os.environ.get("EPHEMERAL", "").lower() == "true"
+    MAX_MCP_OUTPUT_TOKENS: str = os.environ.get("MAX_MCP_OUTPUT_TOKENS", "200000")
+    NOTIFICATION_CHECK_INTERVAL: int = 2
+    NOTIFICATION_BUFFER_DELAY: int = 3
+    PROACTIVE_CHECK_INTERVAL: int = 30
+    WHATSAPP_BRIDGE_CHECK_INTERVAL: int = 30
+    RESPONSE_TIMEOUT: int = 60
+    TYPING_ANIMATION_DELAY: float = 0.5
+    SHUTDOWN_TIMEOUT: int = 310
+    TASK_GATHER_TIMEOUT: int = 2
+    MAX_CONTEXT_TOKENS: int = 180000
 
-NOTIFICATION_CHECK_INTERVAL = 2
-PROACTIVE_CHECK_INTERVAL = 30
-NOTIFICATION_BUFFER_DELAY = 3
-WHATSAPP_BRIDGE_CHECK_INTERVAL = 30
-RESPONSE_TIMEOUT = 60
-TYPING_ANIMATION_DELAY = 0.5
-SHUTDOWN_TIMEOUT = 310
-TASK_GATHER_TIMEOUT = 2
-MAX_CONTEXT_TOKENS = 180000
+Config = ConfigClass()
+
+os.environ["MAX_MCP_OUTPUT_TOKENS"] = Config.MAX_MCP_OUTPUT_TOKENS
 
 C = {
     "dim": "\033[2m",
@@ -79,12 +84,17 @@ MCP_SERVERS = {
     },
 }
 
-CLIENT: Optional[ClaudeSDKClient] = None
-CONVERSATION_HISTORY: List[Dict[str, Any]] = []
-SHUTDOWN_EVENT: Optional[asyncio.Event] = None
-shutdown_lock = threading.Lock()
-shutdown_count = 0
-IS_PROCESSING = False
+@dataclass
+class State:
+    client: Optional[ClaudeSDKClient] = None
+    conversation_history: List[Dict[str, Any]] = field(default_factory=list)
+    shutdown_event: Optional[asyncio.Event] = None
+    shutdown_lock: threading.Lock = field(default_factory=threading.Lock)
+    shutdown_count: int = 0
+    is_processing: bool = False
+    sub_agent_context: Optional[str] = None
+
+state = State()
 
 
 def get_root_path() -> Path:
@@ -127,11 +137,10 @@ def get_mcp_config() -> Dict[str, Any]:
 
 
 async def init_client() -> ClaudeSDKClient:
-    global CLIENT
-    if CLIENT:
-        return CLIENT
+    if state.client:
+        return state.client
 
-    CLIENT = ClaudeSDKClient(
+    state.client = ClaudeSDKClient(
         options=ClaudeCodeOptions(
             system_prompt=load_prompts(),
             mcp_servers=get_mcp_config(),
@@ -140,28 +149,30 @@ async def init_client() -> ClaudeSDKClient:
             permission_mode="bypassPermissions",
         )
     )
-    await CLIENT.__aenter__()
-    return CLIENT
+    await state.client.__aenter__()
+    return state.client
 
 
 def format_tool_call(name: str, input_data: Any) -> str:
     input_str = json.dumps(input_data) if isinstance(input_data, dict) else str(input_data)
     input_preview = (input_str[:150] + "...") if len(input_str) > 150 else input_str
 
-    # Check if this is a Task (sub-agent) call
     if name == "Task":
         agent_type = input_data.get("subagent_type", "unknown") if isinstance(input_data, dict) else "unknown"
         description = input_data.get("description", "") if isinstance(input_data, dict) else ""
+        state.sub_agent_context = agent_type
         return f"🤖 Task [{agent_type}]: {description or input_preview}"
+
+    prefix = f"[{state.sub_agent_context}] " if state.sub_agent_context else ""
 
     if name.startswith("mcp__"):
         parts = name.replace("mcp__", "").split("__")
         service = parts[0] if parts else "unknown"
         action = ".".join(parts[1:]) if len(parts) > 1 else "action"
         icon = SERVICE_ICONS.get(service, "🔧")
-        return f"🔧 {icon} [{service}] {action}: {input_preview}"
+        return f"🔧 {prefix}{icon} [{service}] {action}: {input_preview}"
 
-    return f"🔧 {name}: {input_preview}"
+    return f"🔧 {prefix}{name}: {input_preview}"
 
 
 def parse_assistant_message(msg: Any) -> Optional[str]:
@@ -169,11 +180,19 @@ def parse_assistant_message(msg: Any) -> Optional[str]:
         return msg if isinstance(msg, str) else None
 
     texts = []
+    has_task_result = False
+
     for block in msg.content:
         if isinstance(block, TextBlock):
-            texts.append(block.text)
+            text = block.text
+            if state.sub_agent_context and "completed" in text.lower():
+                has_task_result = True
+            texts.append(text)
         elif isinstance(block, ToolUseBlock):
             texts.append(format_tool_call(block.name, block.input))
+
+    if has_task_result and state.sub_agent_context:
+        state.sub_agent_context = None
 
     return "\n".join(texts) if texts else None
 
@@ -225,11 +244,11 @@ async def delete_notification_files(notifications: List[Dict[str, Any]]) -> None
 
 
 async def preserve_memory() -> None:
-    if EPHEMERAL_MODE or not CONVERSATION_HISTORY:
+    if Config.EPHEMERAL_MODE or not state.conversation_history:
         return
 
     try:
-        diff = await preserve_conversation_memory(CONVERSATION_HISTORY)
+        diff = await preserve_conversation_memory(state.conversation_history)
         if diff:
             print(f"\n{C['cyan']}📝 Memory updated:{C['reset']}")
             print(diff)
@@ -238,33 +257,38 @@ async def preserve_memory() -> None:
 
 
 async def check_context_and_preserve() -> None:
-    if EPHEMERAL_MODE:
+    if Config.EPHEMERAL_MODE:
         return
 
-    total_tokens = sum(len(str(msg)) // 4 for msg in CONVERSATION_HISTORY)
-    if total_tokens >= MAX_CONTEXT_TOKENS:
+    total_tokens = sum(len(str(msg)) // 4 for msg in state.conversation_history)
+    if total_tokens >= Config.MAX_CONTEXT_TOKENS:
         print(f"{C['yellow']}📊 Context limit reached, preserving memory...{C['reset']}")
         await preserve_memory()
-        CONVERSATION_HISTORY.clear()
+        state.conversation_history.clear()
         print(f"{C['green']}✅ Context cleared, continuing...{C['reset']}")
 
 
 def output_line(text: str, is_tool: bool = False) -> None:
     if text and text.strip():
-        if text.startswith("🤖"):  # Sub-agent task
+        if text.startswith("🤖"):
             print(f"{C['cyan']}>>{text}{C['reset']}", flush=True)
+        elif state.sub_agent_context and (is_tool or text.startswith("🔧")):
+            print(f"{C['cyan']}  >{text}{C['reset']}", flush=True)
         elif is_tool or text.startswith("🔧"):
             print(f"{C['yellow']}>{text}{C['reset']}", flush=True)
         else:
-            print_timestamp_message(text, "Vesta")
+            sender = f"Vesta[{state.sub_agent_context}]" if state.sub_agent_context else "Vesta"
+            print_timestamp_message(text, sender)
 
 
 def print_timestamp_message(text: str, sender: str = "") -> None:
     timestamp = datetime.now().strftime("%I:%M %p")
     colors = {"You": "cyan", "Vesta": "magenta", "System": "yellow"}
+    base_sender = sender.split("[")[0] if "[" in sender else sender
 
-    if sender in colors:
-        prefix = f"{C['dim']}[{timestamp}]{C['reset']} {C[colors[sender]]}{sender.lower()}:{C['reset']}"
+    if base_sender in colors:
+        display_sender = sender.lower()
+        prefix = f"{C['dim']}[{timestamp}]{C['reset']} {C[colors[base_sender]]}{display_sender}:{C['reset']}"
         for line in text.split("\n"):
             if line.strip():
                 print(f"{prefix} {line}")
@@ -305,7 +329,7 @@ def is_whatsapp_bridge_running() -> bool:
 
 async def send_query(client: ClaudeSDKClient, prompt: str) -> None:
     timestamp = datetime.now().strftime("%A, %B %d, %Y at %I:%M:%S %p %Z")
-    CONVERSATION_HISTORY.append({"role": "user", "content": prompt})
+    state.conversation_history.append({"role": "user", "content": prompt})
     await client.query(f"[Current time: {timestamp}]\n{prompt}")
     await check_context_and_preserve()
 
@@ -327,9 +351,9 @@ async def collect_responses(client: ClaudeSDKClient, show_output: bool = True) -
                                 responses.append(line)
 
     try:
-        await asyncio.wait_for(collect(), timeout=RESPONSE_TIMEOUT)
+        await asyncio.wait_for(collect(), timeout=Config.RESPONSE_TIMEOUT)
     except asyncio.TimeoutError:
-        responses.append("[Response timeout after 5 minutes]")
+        responses.append("[Response timeout]")
     except Exception as e:
         responses.append(f"[Error: {str(e)[:100]}]")
 
@@ -344,13 +368,13 @@ async def send_and_receive_message(prompt: str, show_in_chat: bool = True) -> Li
     except Exception as e:
         error_msg = f"failed to send message: {str(e)[:100]}"
         print(f"{C['yellow']}⚠️ {error_msg}{C['reset']}")
-        CONVERSATION_HISTORY.append({"role": "assistant", "content": error_msg})
+        state.conversation_history.append({"role": "assistant", "content": error_msg})
         return [error_msg]
 
     responses = await collect_responses(client, show_in_chat)
 
     if responses:
-        CONVERSATION_HISTORY.append({"role": "assistant", "content": " ".join(responses)})
+        state.conversation_history.append({"role": "assistant", "content": " ".join(responses)})
 
     return responses
 
@@ -367,7 +391,7 @@ async def show_typing_indicator() -> None:
             end="", flush=True
         )
         dot_idx = (dot_idx + 1) % 4
-        await asyncio.sleep(TYPING_ANIMATION_DELAY)
+        await asyncio.sleep(Config.TYPING_ANIMATION_DELAY)
 
 
 async def process_message_with_typing(msg: str, is_user: bool) -> List[str]:
@@ -390,20 +414,19 @@ async def process_message_with_typing(msg: str, is_user: bool) -> List[str]:
     return responses
 
 
-async def handle_notifications_via_interrupt(
+async def handle_notifications_interrupt(
     notifications: List[Dict[str, Any]],
     client: ClaudeSDKClient
-) -> bool:
+) -> None:
     try:
         await client.interrupt()
 
         timestamp = datetime.now().strftime("%A, %B %d, %Y at %I:%M:%S %p %Z")
-
         if len(notifications) == 1:
             prompt = format_notification(notifications[0])
         else:
             prompts = [format_notification(n) for n in notifications]
-            prompt = "[NOTIFICATIONS RECEIVED DURING TASK]\n" + "\n".join(prompts)
+            prompt = "[NOTIFICATIONS]\n" + "\n".join(prompts)
 
         await client.query(f"[Current time: {timestamp}]\n{prompt}")
 
@@ -412,13 +435,8 @@ async def handle_notifications_via_interrupt(
             if text:
                 for line in text.split("\n"):
                     output_line(line, is_tool=line.startswith("🔧"))
-
-        return True
     except Exception as e:
-        import traceback
-        print(f"{C['yellow']}⚠️ INTERRUPT FAILED: {str(e)}{C['reset']}")
-        print(f"{C['yellow']}Traceback: {traceback.format_exc()}{C['reset']}")
-        return False
+        print(f"{C['yellow']}⚠️ Interrupt error: {str(e)}{C['reset']}")
 
 
 async def process_notification_batch(
@@ -428,48 +446,43 @@ async def process_notification_batch(
     if not notifications:
         return
 
-    if CLIENT:
-        success = await handle_notifications_via_interrupt(notifications, CLIENT)
-        await delete_notification_files(notifications)
-        if not success:
-            print(f"{C['yellow']}⚠️ Interrupt failed - notifications may be delayed{C['reset']}")
-        return
-
-    # Only queue if no CLIENT exists
-    if len(notifications) == 1:
-        await queue.put((format_notification(notifications[0]), True))
+    if state.client and state.is_processing:
+        await handle_notifications_interrupt(notifications, state.client)
     else:
-        prompts = [format_notification(n) for n in notifications]
-        await queue.put(("[NOTIFICATIONS]\n" + "\n".join(prompts), True))
+        if len(notifications) == 1:
+            await queue.put((format_notification(notifications[0]), True))
+        else:
+            prompts = [format_notification(n) for n in notifications]
+            await queue.put(("[NOTIFICATIONS]\n" + "\n".join(prompts), True))
+
     await delete_notification_files(notifications)
 
 
 def signal_handler(signum: int, frame: Any) -> None:
-    global shutdown_count
-    with shutdown_lock:
-        shutdown_count += 1
-        if shutdown_count == 1:
+    with state.shutdown_lock:
+        state.shutdown_count += 1
+        if state.shutdown_count == 1:
             print(f"\n{C['dim']}💤 vesta is tired and taking a nap to help remember stuff...{C['reset']}")
-            if SHUTDOWN_EVENT:
-                SHUTDOWN_EVENT.set()
-        elif shutdown_count > 2:
+            if state.shutdown_event:
+                state.shutdown_event.set()
+        elif state.shutdown_count > 2:
             print(f"\n{C['yellow']}⚡ Force shutdown!{C['reset']}")
             os._exit(0)
 
 
 async def graceful_shutdown() -> None:
     try:
-        await asyncio.wait_for(preserve_memory(), timeout=RESPONSE_TIMEOUT)
+        await asyncio.wait_for(preserve_memory(), timeout=Config.RESPONSE_TIMEOUT)
     except asyncio.TimeoutError:
         print(f"{C['yellow']}⚠️ Memory preservation timeout{C['reset']}")
     except Exception as e:
         print(f"{C['yellow']}⚠️ Memory error: {e}{C['reset']}")
 
-    CONVERSATION_HISTORY.clear()
+    state.conversation_history.clear()
 
-    if CLIENT:
+    if state.client:
         try:
-            await CLIENT.__aexit__(None, None, None)
+            await state.client.__aexit__(None, None, None)
         except Exception:
             pass
 
@@ -495,12 +508,11 @@ def ensure_memory_file() -> None:
 
 
 async def message_processor(queue: asyncio.Queue) -> None:
-    global IS_PROCESSING
 
-    while SHUTDOWN_EVENT and not SHUTDOWN_EVENT.is_set():
+    while state.shutdown_event and not state.shutdown_event.is_set():
         try:
             msg, is_user = await asyncio.wait_for(queue.get(), timeout=1.0)
-            IS_PROCESSING = True
+            state.is_processing = True
 
             responses = await process_message_with_typing(msg, is_user)
 
@@ -510,19 +522,19 @@ async def message_processor(queue: asyncio.Queue) -> None:
                         await asyncio.sleep(0.3)
                     output_line(response)
 
-            IS_PROCESSING = False
+            state.is_processing = False
         except asyncio.TimeoutError:
             continue
         except Exception as e:
             print(f"{C['yellow']}⚠️ Queue error: {str(e)[:100]}{C['reset']}")
-            IS_PROCESSING = False
+            state.is_processing = False
 
 
 async def input_handler(queue: asyncio.Queue) -> None:
-    while SHUTDOWN_EVENT and not SHUTDOWN_EVENT.is_set():
+    while state.shutdown_event and not state.shutdown_event.is_set():
         try:
             user_msg = await aioconsole.ainput(f"{C['green']}>{C['reset']} ")
-            if SHUTDOWN_EVENT and SHUTDOWN_EVENT.is_set():
+            if state.shutdown_event and state.shutdown_event.is_set():
                 break
             if not user_msg.strip():
                 continue
@@ -531,8 +543,8 @@ async def input_handler(queue: asyncio.Queue) -> None:
             print_timestamp_message(user_msg, "You")
             await queue.put((user_msg.strip(), True))
         except (KeyboardInterrupt, EOFError):
-            if SHUTDOWN_EVENT:
-                SHUTDOWN_EVENT.set()
+            if state.shutdown_event:
+                state.shutdown_event.set()
             break
         except asyncio.CancelledError:
             break
@@ -573,43 +585,48 @@ async def monitor_loop(queue: asyncio.Queue) -> None:
     notification_buffer = []
     buffer_start_time = None
 
-    while SHUTDOWN_EVENT and not SHUTDOWN_EVENT.is_set():
+    while state.shutdown_event and not state.shutdown_event.is_set():
         try:
-            await asyncio.sleep(NOTIFICATION_CHECK_INTERVAL)
+            await asyncio.sleep(Config.NOTIFICATION_CHECK_INTERVAL)
         except asyncio.CancelledError:
             break
 
-        if SHUTDOWN_EVENT and SHUTDOWN_EVENT.is_set():
+        if state.shutdown_event and state.shutdown_event.is_set():
             break
 
         now = datetime.now()
 
-        if now - last_bridge_check >= timedelta(seconds=WHATSAPP_BRIDGE_CHECK_INTERVAL):
+        if now - last_bridge_check >= timedelta(seconds=Config.WHATSAPP_BRIDGE_CHECK_INTERVAL):
             await check_whatsapp_bridge()
             last_bridge_check = now
 
-        truly_new = await collect_new_notifications(notification_buffer)
-        if truly_new:
-            notification_buffer.extend(truly_new)
-            if buffer_start_time is None:
-                buffer_start_time = now
+        new_notifs = await load_notifications()
+        if new_notifs:
+            existing_paths = {n.get('_file_path') for n in notification_buffer}
+            truly_new = [n for n in new_notifs if n.get('_file_path') not in existing_paths]
 
-        # Process buffered notifications after delay
+            if truly_new:
+                notification_buffer.extend(truly_new)
+                if buffer_start_time is None:
+                    buffer_start_time = now
+
+                for notif in truly_new:
+                    icon, sender, display_msg = get_notification_display_info(notif)
+                    print_timestamp_message(f"{icon} {sender}: {display_msg}", "System")
+
         if (notification_buffer and buffer_start_time and
-            (now - buffer_start_time).total_seconds() >= NOTIFICATION_BUFFER_DELAY):
-
+            (now - buffer_start_time).total_seconds() >= Config.NOTIFICATION_BUFFER_DELAY):
             await process_notification_batch(notification_buffer, queue)
             notification_buffer = []
             buffer_start_time = None
 
-        if now - last_proactive >= timedelta(minutes=PROACTIVE_CHECK_INTERVAL):
+        if now - last_proactive >= timedelta(minutes=Config.PROACTIVE_CHECK_INTERVAL):
             await check_proactive_task(queue)
             last_proactive = now
 
 
 async def run_vesta() -> None:
-    global SHUTDOWN_EVENT
-    SHUTDOWN_EVENT = asyncio.Event()
+    state.shutdown_event = asyncio.Event()
 
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
@@ -627,9 +644,9 @@ async def run_vesta() -> None:
     ]
 
     try:
-        await SHUTDOWN_EVENT.wait()
+        await state.shutdown_event.wait()
     except (KeyboardInterrupt, asyncio.CancelledError):
-        SHUTDOWN_EVENT.set()
+        state.shutdown_event.set()
 
     for task in tasks:
         task.cancel()
@@ -637,13 +654,13 @@ async def run_vesta() -> None:
     try:
         await asyncio.wait_for(
             asyncio.gather(*tasks, return_exceptions=True),
-            timeout=TASK_GATHER_TIMEOUT
+            timeout=Config.TASK_GATHER_TIMEOUT
         )
     except asyncio.TimeoutError:
         pass
 
     try:
-        await asyncio.wait_for(graceful_shutdown(), timeout=SHUTDOWN_TIMEOUT)
+        await asyncio.wait_for(graceful_shutdown(), timeout=Config.SHUTDOWN_TIMEOUT)
     except asyncio.TimeoutError:
         print(f"{C['yellow']}⚠️ Shutdown timeout{C['reset']}")
 

@@ -98,189 +98,100 @@ def get_contact_chats(jid: str, limit: int = 20, page: int = 0) -> List[Dict[str
 
 @mcp.tool()
 def get_last_interaction(jid: str) -> str:
-    """Get most recent WhatsApp message involving the contact."""
+    """Get formatted string of last interaction with contact."""
     return whatsapp_get_last_interaction(jid)
 
 
 @mcp.tool()
 def get_message_context(
-    message_id: str, before: int = 5, after: int = 5
-) -> Dict[str, Any]:
-    """Get context around a specific WhatsApp message."""
-    return whatsapp_get_message_context(message_id, before, after)
+    jid: str,
+    message_id: str,
+    context_before: int = 3,
+    context_after: int = 3
+) -> List[Dict[str, Any]]:
+    """Get messages around a specific message for context."""
+    return whatsapp_get_message_context(jid, message_id, context_before, context_after)
 
 
 @mcp.tool()
 def send_message(recipient: str, message: str) -> Dict[str, Any]:
-    """Send a WhatsApp message to a person or group. For group chats use the JID.
-
-    Args:
-        recipient: The recipient - either a phone number with country code but no + or other symbols,
-                 or a JID (e.g., "123456789@s.whatsapp.net" or a group JID like "123456789@g.us")
-        message: The message text to send
-
-    Returns:
-        A dictionary containing success status and a status message
-    """
-    if not recipient:
-        return {"success": False, "message": "Recipient must be provided"}
-    success, status_message = whatsapp_send_message(recipient, message)
-    return {"success": success, "message": status_message}
+    """Send text message to WhatsApp contact or group."""
+    return whatsapp_send_message(recipient, message)
 
 
 @mcp.tool()
-def send_file(recipient: str, media_path: str) -> Dict[str, Any]:
-    """Send a file such as a picture, raw audio, video or document via WhatsApp to the specified recipient. For group messages use the JID.
-
-    Args:
-        recipient: The recipient - either a phone number with country code but no + or other symbols,
-                 or a JID (e.g., "123456789@s.whatsapp.net" or a group JID like "123456789@g.us")
-        media_path: The absolute path to the media file to send (image, video, document)
-
-    Returns:
-        A dictionary containing success status and a status message
-    """
-    success, status_message = whatsapp_send_file(recipient, media_path)
-    return {"success": success, "message": status_message}
+def send_file(recipient: str, file_path: str, caption: Optional[str] = None) -> Dict[str, Any]:
+    """Send file to WhatsApp contact or group."""
+    return whatsapp_send_file(recipient, file_path, caption)
 
 
 @mcp.tool()
-def send_audio_message(recipient: str, media_path: str) -> Dict[str, Any]:
-    """Send any audio file as a WhatsApp audio message to the specified recipient. For group messages use the JID. If it errors due to ffmpeg not being installed, use send_file instead.
-
-    Args:
-        recipient: The recipient - either a phone number with country code but no + or other symbols,
-                 or a JID (e.g., "123456789@s.whatsapp.net" or a group JID like "123456789@g.us")
-        media_path: The absolute path to the audio file to send (will be converted to Opus .ogg if it's not a .ogg file)
-
-    Returns:
-        A dictionary containing success status and a status message
-    """
-    success, status_message = whatsapp_audio_voice_message(recipient, media_path)
-    return {"success": success, "message": status_message}
+def send_audio_message(recipient: str, file_path: str) -> Dict[str, Any]:
+    """Send audio file as voice message to WhatsApp."""
+    return whatsapp_audio_voice_message(recipient, file_path)
 
 
 @mcp.tool()
-def send_reaction(chat_jid: str, message_id: str, emoji: str) -> dict[str, Any]:
-    """Send a reaction to a WhatsApp message. Bridge automatically determines correct sender."""
-    try:
-        success, message = whatsapp_send_reaction(chat_jid, message_id, emoji)
-        return {"success": success, "message": message}
-    except Exception as e:
-        return {"success": False, "message": str(e)}
+def download_media(
+    message_id: str,
+    download_path: Optional[str] = None,
+    jid: Optional[str] = None
+) -> Dict[str, Any]:
+    """Download media from WhatsApp message."""
+    return whatsapp_download_media(message_id, download_path, jid)
 
 
 @mcp.tool()
-def download_media(message_id: str, chat_jid: str) -> Dict[str, Any]:
-    """Download media from a WhatsApp message and get the local file path.
-
-    Args:
-        message_id: The ID of the message containing the media
-        chat_jid: The JID of the chat containing the message
-
-    Returns:
-        A dictionary containing success status, a status message, and the file path if successful
-    """
-    file_path = whatsapp_download_media(message_id, chat_jid)
-    if file_path:
-        return {
-            "success": True,
-            "message": "Media downloaded successfully",
-            "file_path": file_path,
-        }
-    return {"success": False, "message": "Failed to download media"}
+def send_reaction(message_id: str, emoji: str, jid: str) -> Dict[str, Any]:
+    """Send emoji reaction to WhatsApp message."""
+    return whatsapp_send_reaction(message_id, emoji, jid)
 
 
 @mcp.tool()
-def transcribe_audio(file_path: str) -> str:
-    """Transcribe audio file to text (supports 99 languages including Italian)."""
-    from transcribe import transcribe
-
-    return transcribe(file_path)
-
-
-@mcp.tool()
-def create_group(name: str, participants: List[str]) -> Dict[str, Any]:
-    """Create a WhatsApp group with specified participants (phone numbers without country code symbols)."""
-    success, group_jid, message = whatsapp_create_group(name, participants)
-    return {"success": success, "group_jid": group_jid, "message": message}
+def create_group(group_name: str, participants: List[str]) -> Dict[str, Any]:
+    """Create WhatsApp group with participants."""
+    return whatsapp_create_group(group_name, participants)
 
 
 @mcp.tool()
 def leave_group(group_jid: str) -> Dict[str, Any]:
-    """Leave a WhatsApp group by its JID."""
-    success, message = whatsapp_leave_group(group_jid)
-    return {"success": success, "message": message}
+    """Leave WhatsApp group."""
+    return whatsapp_leave_group(group_jid)
 
 
 @mcp.tool()
-def list_groups() -> List[Dict[str, str]]:
-    """List all joined WhatsApp groups."""
-    return whatsapp_list_groups()
-
-
-@mcp.tool()
-def add_group_participants(group_jid: str, participants: List[str]) -> Dict[str, Any]:
-    """Add participants to a WhatsApp group."""
-    success, message = whatsapp_update_group_participants(
-        group_jid, participants, "add"
-    )
-    return {"success": success, "message": message}
-
-
-@mcp.tool()
-def remove_group_participants(
-    group_jid: str, participants: List[str]
-) -> Dict[str, Any]:
-    """Remove participants from a WhatsApp group."""
-    success, message = whatsapp_update_group_participants(
-        group_jid, participants, "remove"
-    )
-    return {"success": success, "message": message}
+def list_groups(limit: int = 50, page: int = 0) -> List[Dict[str, Any]]:
+    """List WhatsApp groups."""
+    return whatsapp_list_groups(limit, page)
 
 
 @mcp.tool()
 def get_group_invite_link(group_jid: str) -> Dict[str, Any]:
-    """Get an invite link for a WhatsApp group. Useful when adding participants directly fails."""
-    success, link = whatsapp_get_group_invite_link(group_jid)
-    if success:
-        return {"success": True, "link": link}
-    return {"success": False, "message": link}
+    """Get invite link for WhatsApp group."""
+    return whatsapp_get_group_invite_link(group_jid)
 
 
 @mcp.tool()
-def update_contact(phone_number: str, name: str) -> Dict[str, Any]:
-    """Add or update a WhatsApp contact name. Phone number can be with or without country code."""
-    return whatsapp_update_contact(phone_number, name)
-
-
-@mcp.tool()
-def get_contact(phone_number: str) -> Dict[str, Any]:
-    """Get WhatsApp contact information. Phone number can be with or without country code."""
-    return whatsapp_get_contact(phone_number)
-
-
-@mcp.tool()
-def promote_group_participants(
-    group_jid: str, participants: List[str]
+def update_group_participants(
+    group_jid: str,
+    action: str,
+    participants: List[str]
 ) -> Dict[str, Any]:
-    """Promote participants to admin in a WhatsApp group."""
-    success, message = whatsapp_update_group_participants(
-        group_jid, participants, "promote"
-    )
-    return {"success": success, "message": message}
+    """Add or remove participants from WhatsApp group. Action can be 'add' or 'remove'."""
+    return whatsapp_update_group_participants(group_jid, action, participants)
 
 
 @mcp.tool()
-def demote_group_participants(
-    group_jid: str, participants: List[str]
-) -> Dict[str, Any]:
-    """Demote admins to regular participants in a WhatsApp group."""
-    success, message = whatsapp_update_group_participants(
-        group_jid, participants, "demote"
-    )
-    return {"success": success, "message": message}
+def update_contact(jid: str, name: str) -> Dict[str, Any]:
+    """Update contact name in WhatsApp."""
+    return whatsapp_update_contact(jid, name)
+
+
+@mcp.tool()
+def get_contact(jid: str) -> Dict[str, Any]:
+    """Get contact information by JID."""
+    return whatsapp_get_contact(jid)
 
 
 if __name__ == "__main__":
-    mcp.run(transport="stdio")
+    mcp.run()
