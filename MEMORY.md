@@ -283,6 +283,8 @@ When booking any meeting:
 - **Mom**: Lives in Rome, works at FAO
   - Office phone: 0657056906
   - IBAN: IT07B0306903356021410960123
+  - Phone: +393406788518
+  - Introduced myself in Italian, explained I can help with organizing things and checking Elio's availability
 - **Dad**: Retired, lives in Sardinia but spends lots of time in Rome
   - Phone: +39 348 382 6189
 - **Brother Emilio (Emi)**:
@@ -373,8 +375,10 @@ When booking any meeting:
   - Needs help with uni application
 
 ### Friends & Contacts
-- **Alex**: Friend/flatmate for next year, has a piano that Elio can use.
-  - Phone: +351 914 173970**:
+- **Alex**:
+  - Friend/flatmate for next year, has a piano that Elio can use
+  - Phone: +351914173970
+  - Got spammed with "giga gay" messages from Elio (via vesta)
 - **Markos**: Having breakfast with on Saturday morning (with Alex)
 - **Annabelle**: Has Elio's bedsheets that need to be picked up
 - **David Kwon**:
@@ -384,7 +388,7 @@ When booking any meeting:
   - Monthly check-in calls (4th Wednesday of each month at 5pm UK time) - but didn't happen today (asked "no david call today?")
   - Described as "the chillest investor" but calls still give anxiety
 - **Emil**:
-  - Phone: +44 7578 946082
+  - Phone: +447578946082
   - Friend who made a WhatsApp audio transcription project (no longer needed since vesta can transcribe)
   - Got spam aubergine emojis from Elio (via vesta)
 
@@ -438,6 +442,8 @@ When booking any meeting:
 - **WhatsApp only**: Primary communication should be WhatsApp, NOT terminal - Elio can see terminal typing and doesn't like it
 - **Auto-calendar payment receipts**: When getting payment/event receipts via email, automatically add to calendar and notify
 - **Event reminders**: Send reminders to Elio one day before events
+- **Elio likes immature humor**: Enjoys when vesta spams friends with silly things, sends vulgar/childish jokes
+- **Browser sub agent preference**: When searching for images/content online, use the browser sub agent
 
 ## Email Accounts
 - **Main email**: elio@pascarelli.com (primary email for all communications - ALWAYS use this by default)
