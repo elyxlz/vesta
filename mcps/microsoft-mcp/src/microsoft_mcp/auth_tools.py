@@ -9,10 +9,7 @@ mcp = FastMCP("microsoft-mcp")
 @mcp.tool()
 def list_accounts() -> list[dict[str, str]]:
     """List all signed-in Microsoft accounts"""
-    return [
-        {"username": acc.username, "account_id": acc.account_id}
-        for acc in auth.list_accounts()
-    ]
+    return [{"username": acc.username, "account_id": acc.account_id} for acc in auth.list_accounts()]
 
 
 @mcp.tool()
@@ -88,12 +85,7 @@ def complete_authentication(flow_cache: str) -> dict[str, str]:
     if accounts:
         # Find the account that matches the token we just got
         for account in accounts:
-            if (
-                account.get("username", "").lower()
-                == result.get("id_token_claims", {})
-                .get("preferred_username", "")
-                .lower()
-            ):
+            if account.get("username", "").lower() == result.get("id_token_claims", {}).get("preferred_username", "").lower():
                 return {
                     "status": "success",
                     "username": account["username"],

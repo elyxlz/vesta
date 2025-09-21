@@ -31,11 +31,7 @@ def unified_search(
             entity_types_list = entity_types
         else:
             # Parse comma-separated entity types
-            entity_types_list = (
-                [t.strip() for t in entity_types.split(",") if t.strip()]
-                if "," in entity_types
-                else [entity_types]
-            )
+            entity_types_list = [t.strip() for t in entity_types.split(",") if t.strip()] if "," in entity_types else [entity_types]
     else:
         entity_types_list = ["message", "event", "driveItem"]
 

@@ -1,7 +1,6 @@
 import sqlite3
 from datetime import datetime
 from dataclasses import dataclass
-from typing import Optional, List, Tuple
 import os.path
 import requests
 import json
@@ -25,18 +24,18 @@ class Message:
     is_from_me: bool
     chat_jid: str
     id: str
-    chat_name: Optional[str] = None
-    media_type: Optional[str] = None
+    chat_name: str | None = None
+    media_type: str | None = None
 
 
 @dataclass
 class Chat:
     jid: str
-    name: Optional[str]
-    last_message_time: Optional[datetime]
-    last_message: Optional[str] = None
-    last_sender: Optional[str] = None
-    last_is_from_me: Optional[bool] = None
+    name: str | None
+    last_message_time: datetime | None
+    last_message: str | None = None
+    last_sender: str | None = None
+    last_is_from_me: bool | None = None
 
     @property
     def is_group(self) -> bool:
@@ -47,15 +46,15 @@ class Chat:
 @dataclass
 class Contact:
     phone_number: str
-    name: Optional[str]
+    name: str | None
     jid: str
 
 
 @dataclass
 class MessageContext:
     message: Message
-    before: List[Message]
-    after: List[Message]
+    before: list[Message]
+    after: list[Message]
 
 
 def get_sender_name(sender_jid: str) -> str:
@@ -123,16 +122,14 @@ def format_message(message: Message, show_chat_info: bool = True) -> None:
         content_prefix = f"[{message.media_type} - Message ID: {message.id} - Chat JID: {message.chat_jid}] "
 
     try:
-        sender_name = (
-            get_sender_name(message.sender) if not message.is_from_me else "Me"
-        )
+        sender_name = get_sender_name(message.sender) if not message.is_from_me else "Me"
         output += f"From: {sender_name}: {content_prefix}{message.content}\n"
     except Exception as e:
         print(f"Error formatting message: {e}")
     return output
 
 
-def format_messages_list(messages: List[Message], show_chat_info: bool = True) -> None:
+def format_messages_list(messages: list[Message], show_chat_info: bool = True) -> None:
     output = ""
     if not messages:
         output += "No messages to display."
@@ -144,17 +141,17 @@ def format_messages_list(messages: List[Message], show_chat_info: bool = True) -
 
 
 def list_messages(
-    after: Optional[str] = None,
-    before: Optional[str] = None,
-    sender_phone_number: Optional[str] = None,
-    chat_jid: Optional[str] = None,
-    query: Optional[str] = None,
+    after: str | None = None,
+    before: str | None = None,
+    sender_phone_number: str | None = None,
+    chat_jid: str | None = None,
+    query: str | None = None,
     limit: int = 20,
     page: int = 0,
     include_context: bool = True,
     context_before: int = 1,
     context_after: int = 1,
-) -> List[Message]:
+) -> list[Message]:
     """Get messages matching the specified criteria with optional context."""
     try:
         conn = sqlite3.connect(MESSAGES_DB_PATH)
@@ -173,9 +170,7 @@ def list_messages(
             try:
                 after = datetime.fromisoformat(after)
             except ValueError:
-                raise ValueError(
-                    f"Invalid date format for 'after': {after}. Please use ISO-8601 format."
-                )
+                raise ValueError(f"Invalid date format for 'after': {after}. Please use ISO-8601 format.")
 
             where_clauses.append("messages.timestamp > ?")
             params.append(after)
@@ -184,9 +179,7 @@ def list_messages(
             try:
                 before = datetime.fromisoformat(before)
             except ValueError:
-                raise ValueError(
-                    f"Invalid date format for 'before': {before}. Please use ISO-8601 format."
-                )
+                raise ValueError(f"Invalid date format for 'before': {before}. Please use ISO-8601 format.")
 
             where_clauses.append("messages.timestamp < ?")
             params.append(before)
@@ -251,9 +244,7 @@ def list_messages(
             conn.close()
 
 
-def get_message_context(
-    message_id: str, before: int = 5, after: int = 5
-) -> MessageContext:
+def get_message_context(message_id: str, before: int = 5, after: int = 5) -> MessageContext:
     """Get context around a specific message."""
     try:
         conn = sqlite3.connect(MESSAGES_DB_PATH)
@@ -341,9 +332,7 @@ def get_message_context(
                 )
             )
 
-        return MessageContext(
-            message=target_message, before=before_messages, after=after_messages
-        )
+        return MessageContext(message=target_message, before=before_messages, after=after_messages)
 
     except sqlite3.Error as e:
         print(f"Database error: {e}")
@@ -354,12 +343,12 @@ def get_message_context(
 
 
 def list_chats(
-    query: Optional[str] = None,
+    query: str | None = None,
     limit: int = 20,
     page: int = 0,
     include_last_message: bool = True,
     sort_by: str = "last_active",
-) -> List[Chat]:
+) -> list[Chat]:
     """Get chats matching the specified criteria."""
     try:
         conn = sqlite3.connect(MESSAGES_DB_PATH)
@@ -389,18 +378,14 @@ def list_chats(
         params = []
 
         if query:
-            where_clauses.append(
-                "(LOWER(chats.name) LIKE LOWER(?) OR chats.jid LIKE ?)"
-            )
+            where_clauses.append("(LOWER(chats.name) LIKE LOWER(?) OR chats.jid LIKE ?)")
             params.extend([f"%{query}%", f"%{query}%"])
 
         if where_clauses:
             query_parts.append("WHERE " + " AND ".join(where_clauses))
 
         # Add sorting
-        order_by = (
-            "chats.last_message_time DESC" if sort_by == "last_active" else "chats.name"
-        )
+        order_by = "chats.last_message_time DESC" if sort_by == "last_active" else "chats.name"
         query_parts.append(f"ORDER BY {order_by}")
 
         # Add pagination
@@ -416,9 +401,7 @@ def list_chats(
             chat = Chat(
                 jid=chat_data[0],
                 name=chat_data[1],
-                last_message_time=datetime.fromisoformat(chat_data[2])
-                if chat_data[2]
-                else None,
+                last_message_time=datetime.fromisoformat(chat_data[2]) if chat_data[2] else None,
                 last_message=chat_data[3],
                 last_sender=chat_data[4],
                 last_is_from_me=chat_data[5],
@@ -435,7 +418,7 @@ def list_chats(
             conn.close()
 
 
-def search_contacts(query: str) -> List[Contact]:
+def search_contacts(query: str) -> list[Contact]:
     """Search contacts by name or phone number."""
     try:
         conn = sqlite3.connect(MESSAGES_DB_PATH)
@@ -480,7 +463,7 @@ def search_contacts(query: str) -> List[Contact]:
             conn.close()
 
 
-def get_contact_chats(jid: str, limit: int = 20, page: int = 0) -> List[Chat]:
+def get_contact_chats(jid: str, limit: int = 20, page: int = 0) -> list[Chat]:
     """Get all chats involving the contact.
 
     Args:
@@ -517,9 +500,7 @@ def get_contact_chats(jid: str, limit: int = 20, page: int = 0) -> List[Chat]:
             chat = Chat(
                 jid=chat_data[0],
                 name=chat_data[1],
-                last_message_time=datetime.fromisoformat(chat_data[2])
-                if chat_data[2]
-                else None,
+                last_message_time=datetime.fromisoformat(chat_data[2]) if chat_data[2] else None,
                 last_message=chat_data[3],
                 last_sender=chat_data[4],
                 last_is_from_me=chat_data[5],
@@ -588,7 +569,7 @@ def get_last_interaction(jid: str) -> str:
             conn.close()
 
 
-def get_chat(chat_jid: str, include_last_message: bool = True) -> Optional[Chat]:
+def get_chat(chat_jid: str, include_last_message: bool = True) -> Chat | None:
     """Get chat metadata by JID."""
     try:
         conn = sqlite3.connect(MESSAGES_DB_PATH)
@@ -622,9 +603,7 @@ def get_chat(chat_jid: str, include_last_message: bool = True) -> Optional[Chat]
         return Chat(
             jid=chat_data[0],
             name=chat_data[1],
-            last_message_time=datetime.fromisoformat(chat_data[2])
-            if chat_data[2]
-            else None,
+            last_message_time=datetime.fromisoformat(chat_data[2]) if chat_data[2] else None,
             last_message=chat_data[3],
             last_sender=chat_data[4],
             last_is_from_me=chat_data[5],
@@ -638,7 +617,7 @@ def get_chat(chat_jid: str, include_last_message: bool = True) -> Optional[Chat]
             conn.close()
 
 
-def get_direct_chat_by_contact(sender_phone_number: str) -> Optional[Chat]:
+def get_direct_chat_by_contact(sender_phone_number: str) -> Chat | None:
     """Get chat metadata by sender phone number."""
     try:
         conn = sqlite3.connect(MESSAGES_DB_PATH)
@@ -670,9 +649,7 @@ def get_direct_chat_by_contact(sender_phone_number: str) -> Optional[Chat]:
         return Chat(
             jid=chat_data[0],
             name=chat_data[1],
-            last_message_time=datetime.fromisoformat(chat_data[2])
-            if chat_data[2]
-            else None,
+            last_message_time=datetime.fromisoformat(chat_data[2]) if chat_data[2] else None,
             last_message=chat_data[3],
             last_sender=chat_data[4],
             last_is_from_me=chat_data[5],
@@ -686,7 +663,7 @@ def get_direct_chat_by_contact(sender_phone_number: str) -> Optional[Chat]:
             conn.close()
 
 
-def send_message(recipient: str, message: str) -> Tuple[bool, str]:
+def send_message(recipient: str, message: str) -> tuple[bool, str]:
     try:
         # Validate input
         if not recipient:
@@ -703,9 +680,7 @@ def send_message(recipient: str, message: str) -> Tuple[bool, str]:
         # Check if the request was successful
         if response.status_code == 200:
             result = response.json()
-            return result.get("success", False), result.get(
-                "message", "Unknown response"
-            )
+            return result.get("success", False), result.get("message", "Unknown response")
         else:
             return False, f"Error: HTTP {response.status_code} - {response.text}"
 
@@ -717,7 +692,7 @@ def send_message(recipient: str, message: str) -> Tuple[bool, str]:
         return False, f"Unexpected error: {str(e)}"
 
 
-def send_file(recipient: str, media_path: str) -> Tuple[bool, str]:
+def send_file(recipient: str, media_path: str) -> tuple[bool, str]:
     try:
         # Validate input
         if not recipient:
@@ -737,9 +712,7 @@ def send_file(recipient: str, media_path: str) -> Tuple[bool, str]:
         # Check if the request was successful
         if response.status_code == 200:
             result = response.json()
-            return result.get("success", False), result.get(
-                "message", "Unknown response"
-            )
+            return result.get("success", False), result.get("message", "Unknown response")
         else:
             return False, f"Error: HTTP {response.status_code} - {response.text}"
 
@@ -751,7 +724,7 @@ def send_file(recipient: str, media_path: str) -> Tuple[bool, str]:
         return False, f"Unexpected error: {str(e)}"
 
 
-def send_audio_message(recipient: str, media_path: str) -> Tuple[bool, str]:
+def send_audio_message(recipient: str, media_path: str) -> tuple[bool, str]:
     try:
         # Validate input
         if not recipient:
@@ -780,9 +753,7 @@ def send_audio_message(recipient: str, media_path: str) -> Tuple[bool, str]:
         # Check if the request was successful
         if response.status_code == 200:
             result = response.json()
-            return result.get("success", False), result.get(
-                "message", "Unknown response"
-            )
+            return result.get("success", False), result.get("message", "Unknown response")
         else:
             return False, f"Error: HTTP {response.status_code} - {response.text}"
 
@@ -794,7 +765,7 @@ def send_audio_message(recipient: str, media_path: str) -> Tuple[bool, str]:
         return False, f"Unexpected error: {str(e)}"
 
 
-def download_media(message_id: str, chat_jid: str) -> Optional[str]:
+def download_media(message_id: str, chat_jid: str) -> str | None:
     """Download media from a message and return the local file path.
 
     Args:
@@ -855,9 +826,7 @@ def create_group(name: str, participants: list[str]) -> tuple[bool, str, str]:
 def leave_group(group_jid: str) -> tuple[bool, str]:
     """Leave a WhatsApp group."""
     try:
-        response = requests.post(
-            f"{WHATSAPP_API_BASE_URL}/group/leave", json={"group_jid": group_jid}
-        )
+        response = requests.post(f"{WHATSAPP_API_BASE_URL}/group/leave", json={"group_jid": group_jid})
         result = response.json()
         return result.get("success", False), result.get("message", "")
     except Exception as e:
@@ -888,9 +857,7 @@ def get_group_invite_link(group_jid: str) -> tuple[bool, str]:
         return False, str(e)
 
 
-def update_group_participants(
-    group_jid: str, participants: list[str], action: str
-) -> tuple[bool, str]:
+def update_group_participants(group_jid: str, participants: list[str], action: str) -> tuple[bool, str]:
     """Add or remove participants from a group."""
     try:
         response = requests.post(
@@ -918,9 +885,7 @@ def send_reaction(chat_jid: str, message_id: str, emoji: str) -> tuple[bool, str
     # No sender_jid - bridge handles everything automatically
 
     try:
-        response = requests.post(
-            f"{WHATSAPP_API_BASE_URL}/reaction", json=payload, timeout=10
-        )
+        response = requests.post(f"{WHATSAPP_API_BASE_URL}/reaction", json=payload, timeout=10)
 
         if response.status_code != 200:
             return False, f"HTTP {response.status_code}: {response.text}"

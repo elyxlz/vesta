@@ -27,16 +27,12 @@ def list_events(
     }
 
     if include_details:
-        params["$select"] = (
-            "id,subject,start,end,location,body,attendees,organizer,isAllDay,recurrence,onlineMeeting,seriesMasterId"
-        )
+        params["$select"] = "id,subject,start,end,location,body,attendees,organizer,isAllDay,recurrence,onlineMeeting,seriesMasterId"
     else:
         params["$select"] = "id,subject,start,end,location,organizer,seriesMasterId"
 
     # Use calendarView to get recurring event instances
-    events = list(
-        graph.request_paginated("/me/calendarView", account_id, params=params)
-    )
+    events = list(graph.request_paginated("/me/calendarView", account_id, params=params))
 
     return events
 
@@ -92,14 +88,8 @@ def create_event(
         if isinstance(attendees, list):
             attendees_list = attendees
         else:
-            attendees_list = (
-                [addr.strip() for addr in attendees.split(",") if addr.strip()]
-                if "," in attendees
-                else [attendees]
-            )
-        event["attendees"] = [
-            {"emailAddress": {"address": a}, "type": "required"} for a in attendees_list
-        ]
+            attendees_list = [addr.strip() for addr in attendees.split(",") if addr.strip()] if "," in attendees else [attendees]
+        event["attendees"] = [{"emailAddress": {"address": a}, "type": "required"} for a in attendees_list]
 
     result = graph.request("POST", "/me/events", account_id, json=event)
     if not result:
@@ -108,9 +98,7 @@ def create_event(
 
 
 @mcp.tool()
-def update_event(
-    event_id: str, updates: dict[str, Any], account_id: str
-) -> dict[str, Any]:
+def update_event(event_id: str, updates: dict[str, Any], account_id: str) -> dict[str, Any]:
     """Update event properties"""
     formatted_updates = {}
 
@@ -131,16 +119,12 @@ def update_event(
     if "body" in updates:
         formatted_updates["body"] = {"contentType": "Text", "content": updates["body"]}
 
-    result = graph.request(
-        "PATCH", f"/me/events/{event_id}", account_id, json=formatted_updates
-    )
+    result = graph.request("PATCH", f"/me/events/{event_id}", account_id, json=formatted_updates)
     return result or {"status": "updated"}
 
 
 @mcp.tool()
-def delete_event(
-    account_id: str, event_id: str, send_cancellation: bool = True
-) -> dict[str, str]:
+def delete_event(account_id: str, event_id: str, send_cancellation: bool = True) -> dict[str, str]:
     """Delete or cancel a calendar event"""
 
     if send_cancellation:
@@ -192,11 +176,7 @@ def check_availability(
         if isinstance(attendees, list):
             attendees_list = attendees
         else:
-            attendees_list = (
-                [addr.strip() for addr in attendees.split(",") if addr.strip()]
-                if "," in attendees
-                else [attendees]
-            )
+            attendees_list = [addr.strip() for addr in attendees.split(",") if addr.strip()] if "," in attendees else [attendees]
         schedules.extend(attendees_list)
 
     payload = {
@@ -232,12 +212,8 @@ def search_events(
 
         filtered_events = []
         for event in events:
-            event_start = dt.datetime.fromisoformat(
-                event.get("start", {}).get("dateTime", "").replace("Z", "+00:00")
-            )
-            event_end = dt.datetime.fromisoformat(
-                event.get("end", {}).get("dateTime", "").replace("Z", "+00:00")
-            )
+            event_start = dt.datetime.fromisoformat(event.get("start", {}).get("dateTime", "").replace("Z", "+00:00"))
+            event_end = dt.datetime.fromisoformat(event.get("end", {}).get("dateTime", "").replace("Z", "+00:00"))
 
             if event_start <= end and event_end >= start:
                 filtered_events.append(event)

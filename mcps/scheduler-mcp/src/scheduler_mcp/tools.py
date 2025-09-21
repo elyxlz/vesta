@@ -61,7 +61,7 @@ def init_db():
             PRAGMA table_info(tasks)
         """)
         columns = [row[1] for row in conn.fetchall()]
-        if 'metadata' not in columns:
+        if "metadata" not in columns:
             conn.execute("ALTER TABLE tasks ADD COLUMN metadata TEXT")
         conn.commit()
 
@@ -226,9 +226,7 @@ def list_reminders() -> list[dict]:
                     "id": job.id,
                     "message": reminder_data[job.id]["message"],
                     "schedule": reminder_data[job.id]["schedule_type"],
-                    "next_run": (
-                        job.next_run_time.isoformat() if job.next_run_time else None
-                    ),
+                    "next_run": (job.next_run_time.isoformat() if job.next_run_time else None),
                     "status": "active" if job.next_run_time else "paused",
                 }
             )

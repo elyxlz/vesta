@@ -105,9 +105,7 @@ def get_last_interaction(jid: str) -> str:
 
 
 @mcp.tool()
-def get_message_context(
-    jid: str, message_id: str, context_before: int = 3, context_after: int = 3
-) -> list[dict[str, Any]]:
+def get_message_context(jid: str, message_id: str, context_before: int = 3, context_after: int = 3) -> list[dict[str, Any]]:
     """Get messages around a specific message for context."""
     return whatsapp_get_message_context(jid, message_id, context_before, context_after)
 
@@ -119,9 +117,7 @@ def send_message(recipient: str, message: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-def send_file(
-    recipient: str, file_path: str, caption: str | None = None
-) -> dict[str, Any]:
+def send_file(recipient: str, file_path: str, caption: str | None = None) -> dict[str, Any]:
     """Send file to WhatsApp contact or group."""
     return whatsapp_send_file(recipient, file_path, caption)
 
@@ -133,9 +129,7 @@ def send_audio_message(recipient: str, file_path: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-def download_media(
-    message_id: str, download_path: str | None = None, jid: str | None = None
-) -> dict[str, Any]:
+def download_media(message_id: str, download_path: str | None = None, jid: str | None = None) -> dict[str, Any]:
     """Download media from WhatsApp message."""
     return whatsapp_download_media(message_id, download_path, jid)
 
@@ -171,9 +165,7 @@ def get_group_invite_link(group_jid: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-def update_group_participants(
-    group_jid: str, action: str, participants: list[str]
-) -> dict[str, Any]:
+def update_group_participants(group_jid: str, action: str, participants: list[str]) -> dict[str, Any]:
     """Add or remove participants from WhatsApp group. Action can be 'add' or 'remove'."""
     return whatsapp_update_group_participants(group_jid, action, participants)
 

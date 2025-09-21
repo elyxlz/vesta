@@ -20,3 +20,13 @@ vesta = "vesta:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+
+[tool.ruff]
+line-length = 144
+indent-width = 4
+target-version = "py310"
+
+[tool.ruff.lint]
+ignore = ["E402", "E702", "E731", "UP008", "E712"]
+extend-select = ["UP"]

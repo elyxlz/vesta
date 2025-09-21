@@ -23,9 +23,7 @@ def init_monitor(base_dir: Path, state_file: Path, log_file: Path):
 
     if not logger.handlers:
         file_handler = logging.FileHandler(_log_file)
-        file_handler.setFormatter(
-            logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-        )
+        file_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
         logger.addHandler(file_handler)
 
 
@@ -40,30 +38,20 @@ def run():
             # On first run, check if we were offline and need to catch up
             if first_run and _state_file.exists():
                 last_check_str = _state_file.read_text().strip()
-                last_check_dt = datetime.fromisoformat(
-                    last_check_str.replace("Z", "+00:00")
-                )
-                gap_seconds = (
-                    datetime.now(timezone.utc) - last_check_dt
-                ).total_seconds()
+                last_check_dt = datetime.fromisoformat(last_check_str.replace("Z", "+00:00"))
+                gap_seconds = (datetime.now(timezone.utc) - last_check_dt).total_seconds()
 
                 # If gap > 120s (normal is 60s), we were offline - use old timestamp to catch up
                 if gap_seconds > 120:
-                    logger.info(
-                        f"Detected offline period of {gap_seconds:.0f}s, catching up from {last_check_str}"
-                    )
+                    logger.info(f"Detected offline period of {gap_seconds:.0f}s, catching up from {last_check_str}")
                     last_check = last_check_str
                     catching_up = True
                 else:
-                    last_check = (
-                        datetime.now(timezone.utc) - timedelta(hours=1)
-                    ).isoformat()
+                    last_check = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
                 first_run = False
             else:
                 last_check = (
-                    _state_file.read_text().strip()
-                    if _state_file.exists()
-                    else (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+                    _state_file.read_text().strip() if _state_file.exists() else (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
                 )
                 catching_up = False
 
@@ -91,9 +79,7 @@ def run():
 
                     for email in emails:
                         sender = email.get("from", {}).get("emailAddress", {})
-                        logger.info(
-                            f"Writing notification for email from {sender.get('address')}"
-                        )
+                        logger.info(f"Writing notification for email from {sender.get('address')}")
                         metadata = {
                             "account": acc.username,
                             "subject": email.get("subject"),
@@ -116,9 +102,7 @@ def run():
                     now = datetime.now(timezone.utc)
                     # If catching up, also check for events that happened during offline period
                     if catching_up:
-                        start_time = datetime.fromisoformat(
-                            last_check.replace("Z", "+00:00")
-                        )
+                        start_time = datetime.fromisoformat(last_check.replace("Z", "+00:00"))
                     else:
                         start_time = now
 
@@ -127,36 +111,22 @@ def run():
                         "/me/calendarView",
                         acc.account_id,
                         params={
-                            "startDateTime": start_time.isoformat().replace(
-                                "+00:00", "Z"
-                            ),
-                            "endDateTime": (now + timedelta(minutes=15))
-                            .isoformat()
-                            .replace("+00:00", "Z"),
+                            "startDateTime": start_time.isoformat().replace("+00:00", "Z"),
+                            "endDateTime": (now + timedelta(minutes=15)).isoformat().replace("+00:00", "Z"),
                             "$select": "subject,start,location",
                         },
                     )
 
                     events = (cal_result or {}).get("value", [])
-                    logger.info(
-                        f"Found {len(events)} upcoming calendar events for {acc.username}"
-                    )
+                    logger.info(f"Found {len(events)} upcoming calendar events for {acc.username}")
 
                     for event in events:
                         start = event.get("start", {}).get("dateTime")
-                        event_time = (
-                            datetime.fromisoformat(start.replace("Z", "+00:00"))
-                            if start
-                            else now
-                        )
-                        mins = (
-                            int((event_time - now).total_seconds() / 60) if start else 0
-                        )
+                        event_time = datetime.fromisoformat(start.replace("Z", "+00:00")) if start else now
+                        mins = int((event_time - now).total_seconds() / 60) if start else 0
 
                         loc = event.get("location", {}).get("displayName")
-                        logger.info(
-                            f"Writing notification for calendar event: {event.get('subject')}"
-                        )
+                        logger.info(f"Writing notification for calendar event: {event.get('subject')}")
 
                         # Determine event status
                         if mins < -5:
@@ -180,8 +150,7 @@ def run():
 
                         notifications.write_notification(
                             "calendar",
-                            f"Calendar event {time_desc}: {event.get('subject', '(No title)')}"
-                            + (f" at {loc}" if loc else ""),
+                            f"Calendar event {time_desc}: {event.get('subject', '(No title)')}" + (f" at {loc}" if loc else ""),
                             metadata,
                         )
                 except Exception as e:

@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import Any
 import difflib
 
 from claude_code_sdk import ClaudeSDKClient, ClaudeCodeOptions
@@ -62,15 +62,13 @@ remember: you're maintaining a living document. keep it organized, current, and 
 MEMORY_FILE = Path(__file__).parent.parent.parent / "MEMORY.md"
 
 
-def format_conversation(history: List[Dict[str, Any]]) -> str:
+def format_conversation(history: list[dict[str, Any]]) -> str:
     """Convert conversation history to formatted text."""
-    return "\n".join(
-        f"{msg.get('role', 'unknown')}: {msg.get('content', '')}" for msg in history
-    )
+    return "\n".join(f"{msg.get('role', 'unknown')}: {msg.get('content', '')}" for msg in history)
 
 
 async def preserve_conversation_memory(
-    conversation_history: List[Dict[str, Any]],
+    conversation_history: list[dict[str, Any]],
 ) -> str:
     if not conversation_history:
         return ""
@@ -78,9 +76,7 @@ async def preserve_conversation_memory(
     before = MEMORY_FILE.read_text() if MEMORY_FILE.exists() else ""
 
     system_prompt_path = Path(__file__).parent.parent.parent / "SYSTEM_PROMPT.md"
-    system_prompt = (
-        system_prompt_path.read_text() if system_prompt_path.exists() else ""
-    )
+    system_prompt = system_prompt_path.read_text() if system_prompt_path.exists() else ""
 
     prompt = f"""System context (first 2000 chars):
 {system_prompt[:2000]}...
@@ -115,13 +111,6 @@ Check MEMORY.md and update it with any new important information from this conve
         return ""
 
     colors = {"+": "\033[92m", "-": "\033[91m", "@": "\033[96m"}
-    diff = difflib.unified_diff(
-        before.splitlines(keepends=True), after.splitlines(keepends=True), n=1
-    )
+    diff = difflib.unified_diff(before.splitlines(keepends=True), after.splitlines(keepends=True), n=1)
 
-    return "\n".join(
-        f"{colors.get(line[0], '')}{line.rstrip()}\033[0m"
-        if line[0] in colors
-        else line.rstrip()
-        for line in list(diff)[2:]
-    )
+    return "\n".join(f"{colors.get(line[0], '')}{line.rstrip()}\033[0m" if line[0] in colors else line.rstrip() for line in list(diff)[2:])

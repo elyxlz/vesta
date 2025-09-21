@@ -34,9 +34,7 @@ def main():
     scheduler.start()
     tools.init_tools(scheduler, data_dir, notifications_dir)
 
-    print(
-        f"Scheduler MCP started - data: {data_dir}, notifications: {notifications_dir}"
-    )
+    print(f"Scheduler MCP started - data: {data_dir}, notifications: {notifications_dir}")
     mcp.run()
 
 

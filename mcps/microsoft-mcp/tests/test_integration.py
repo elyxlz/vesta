@@ -56,9 +56,7 @@ async def get_account_info(session):
     result = await session.call_tool("list_accounts", {})
     assert not result.isError
     accounts = parse_result(result, "list_accounts")
-    assert accounts and len(accounts) > 0, (
-        "No accounts found - please authenticate first"
-    )
+    assert accounts and len(accounts) > 0, "No accounts found - please authenticate first"
 
     return {"email": accounts[0]["username"], "account_id": accounts[0]["account_id"]}
 
@@ -123,9 +121,7 @@ async def test_get_email():
     """Test get_email tool"""
     async for session in get_session():
         account_info = await get_account_info(session)
-        list_result = await session.call_tool(
-            "list_emails", {"account_id": account_info["account_id"], "limit": 1}
-        )
+        list_result = await session.call_tool("list_emails", {"account_id": account_info["account_id"], "limit": 1})
         emails = parse_result(list_result, "list_emails")
 
         if emails and len(emails) > 0:
@@ -173,9 +169,7 @@ async def test_update_email():
     """Test update_email tool"""
     async for session in get_session():
         account_info = await get_account_info(session)
-        list_result = await session.call_tool(
-            "list_emails", {"account_id": account_info["account_id"], "limit": 1}
-        )
+        list_result = await session.call_tool("list_emails", {"account_id": account_info["account_id"], "limit": 1})
         emails = parse_result(list_result, "list_emails")
 
         if emails and len(emails) > 0:
@@ -275,9 +269,7 @@ async def test_reply_to_email():
     async for session in get_session():
         account_info = await get_account_info(session)
         await asyncio.sleep(2)
-        list_result = await session.call_tool(
-            "list_emails", {"account_id": account_info["account_id"], "limit": 5}
-        )
+        list_result = await session.call_tool("list_emails", {"account_id": account_info["account_id"], "limit": 5})
         emails = parse_result(list_result, "list_emails")
 
         test_email = None
@@ -308,9 +300,7 @@ async def test_reply_all_email():
     async for session in get_session():
         account_info = await get_account_info(session)
         await asyncio.sleep(2)
-        list_result = await session.call_tool(
-            "list_emails", {"account_id": account_info["account_id"], "limit": 5}
-        )
+        list_result = await session.call_tool("list_emails", {"account_id": account_info["account_id"], "limit": 5})
         emails = parse_result(list_result, "list_emails")
 
         test_email = None
@@ -363,9 +353,7 @@ async def test_get_event():
     """Test get_event tool"""
     async for session in get_session():
         account_info = await get_account_info(session)
-        list_result = await session.call_tool(
-            "list_events", {"account_id": account_info["account_id"], "days_ahead": 30}
-        )
+        list_result = await session.call_tool("list_events", {"account_id": account_info["account_id"], "days_ahead": 30})
         events = parse_result(list_result, "list_events")
 
         if events and len(events) > 0:
@@ -508,9 +496,7 @@ async def test_respond_event():
     """Test respond_event tool"""
     async for session in get_session():
         account_info = await get_account_info(session)
-        list_result = await session.call_tool(
-            "list_events", {"account_id": account_info["account_id"], "days_ahead": 30}
-        )
+        list_result = await session.call_tool("list_events", {"account_id": account_info["account_id"], "days_ahead": 30})
         events = parse_result(list_result, "list_events")
 
         if events:
@@ -539,16 +525,8 @@ async def test_check_availability():
     """Test check_availability tool"""
     async for session in get_session():
         account_info = await get_account_info(session)
-        check_start = (
-            (datetime.now(timezone.utc) + timedelta(days=1))
-            .replace(hour=10, minute=0)
-            .isoformat()
-        )
-        check_end = (
-            (datetime.now(timezone.utc) + timedelta(days=1))
-            .replace(hour=17, minute=0)
-            .isoformat()
-        )
+        check_start = (datetime.now(timezone.utc) + timedelta(days=1)).replace(hour=10, minute=0).isoformat()
+        check_end = (datetime.now(timezone.utc) + timedelta(days=1)).replace(hour=17, minute=0).isoformat()
 
         result = await session.call_tool(
             "check_availability",
@@ -569,9 +547,7 @@ async def test_list_files():
     """Test list_files tool"""
     async for session in get_session():
         account_info = await get_account_info(session)
-        result = await session.call_tool(
-            "list_files", {"account_id": account_info["account_id"]}
-        )
+        result = await session.call_tool("list_files", {"account_id": account_info["account_id"]})
         assert not result.isError
         files = parse_result(result, "list_files")
         assert files is not None
@@ -633,7 +609,7 @@ async def test_get_file():
             assert retrieved_file["name"] == test_filename
             assert "size_mb" in retrieved_file
 
-            with open(tmp_path, "r") as f:
+            with open(tmp_path) as f:
                 downloaded_content = f.read()
             assert downloaded_content == test_content
 
@@ -654,9 +630,7 @@ async def test_create_file():
     async for session in get_session():
         account_info = await get_account_info(session)
         test_content = f"MCP Integration Test\nTimestamp: {datetime.now().isoformat()}"
-        test_filename = (
-            f"mcp-test-create-{datetime.now().strftime('%Y%m%d-%H%M%S')}.txt"
-        )
+        test_filename = f"mcp-test-create-{datetime.now().strftime('%Y%m%d-%H%M%S')}.txt"
 
         # Create a temporary local file
         import tempfile
@@ -697,9 +671,7 @@ async def test_update_file():
     async for session in get_session():
         account_info = await get_account_info(session)
         test_content = "Original content"
-        test_filename = (
-            f"mcp-test-update-{datetime.now().strftime('%Y%m%d-%H%M%S')}.txt"
-        )
+        test_filename = f"mcp-test-update-{datetime.now().strftime('%Y%m%d-%H%M%S')}.txt"
 
         # Create a temporary local file
         import tempfile
@@ -759,9 +731,7 @@ async def test_delete_file():
     async for session in get_session():
         account_info = await get_account_info(session)
         test_content = "File to be deleted"
-        test_filename = (
-            f"mcp-test-delete-{datetime.now().strftime('%Y%m%d-%H%M%S')}.txt"
-        )
+        test_filename = f"mcp-test-delete-{datetime.now().strftime('%Y%m%d-%H%M%S')}.txt"
 
         # Create a temporary local file
         import tempfile
@@ -870,7 +840,7 @@ async def test_get_attachment():
 
             # Verify file was saved
             assert os.path.exists(save_path)
-            with open(save_path, "r") as f:
+            with open(save_path) as f:
                 content = f.read()
                 assert content == "This is a test attachment content"
         finally:

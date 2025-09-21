@@ -21,9 +21,7 @@ def test_set_reminder():
 
     # Test with datetime
     future_time = datetime.now() + timedelta(hours=1)
-    result2 = set_reminder(
-        message="Test at specific time", datetime=future_time.isoformat()
-    )
+    result2 = set_reminder(message="Test at specific time", datetime=future_time.isoformat())
     assert "reminder_id" in result2
     assert result2["status"] == "scheduled"
     print(f"✓ Created timed reminder: {result2['reminder_id']}")

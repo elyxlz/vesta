@@ -7,24 +7,16 @@ from . import graph
 
 
 @mcp.tool()
-def list_files(
-    account_id: str, path: str = "/", limit: int = 50
-) -> list[dict[str, Any]]:
+def list_files(account_id: str, path: str = "/", limit: int = 50) -> list[dict[str, Any]]:
     """List files and folders in OneDrive"""
 
-    endpoint = (
-        "/me/drive/root/children"
-        if path == "/"
-        else f"/me/drive/root:/{path}:/children"
-    )
+    endpoint = "/me/drive/root/children" if path == "/" else f"/me/drive/root:/{path}:/children"
     params = {
         "$top": min(limit, 100),
         "$select": "id,name,size,lastModifiedDateTime,folder,file,@microsoft.graph.downloadUrl",
     }
 
-    items = list(
-        graph.request_paginated(endpoint, account_id, params=params, limit=limit)
-    )
+    items = list(graph.request_paginated(endpoint, account_id, params=params, limit=limit))
 
     return [
         {
@@ -70,15 +62,11 @@ def get_file(file_id: str, account_id: str, download_path: str) -> dict[str, Any
 
 
 @mcp.tool()
-def create_file(
-    onedrive_path: str, local_file_path: str, account_id: str
-) -> dict[str, Any]:
+def create_file(onedrive_path: str, local_file_path: str, account_id: str) -> dict[str, Any]:
     """Upload a local file to OneDrive"""
     path = pl.Path(local_file_path).expanduser().resolve()
     data = path.read_bytes()
-    result = graph.upload_large_file(
-        f"/me/drive/root:/{onedrive_path}:", data, account_id
-    )
+    result = graph.upload_large_file(f"/me/drive/root:/{onedrive_path}:", data, account_id)
     if not result:
         raise ValueError(f"Failed to create file at path: {onedrive_path}")
     return result

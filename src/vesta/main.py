@@ -7,7 +7,7 @@ import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from datetime import datetime, timedelta
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Any
 
 import aioconsole
 from claude_code_sdk import ClaudeSDKClient, ClaudeCodeOptions
@@ -21,7 +21,7 @@ from .memory_agent import preserve_conversation_memory
 
 
 @dataclass(frozen=True)
-class ConfigClass:
+class VestaConfig:
     EPHEMERAL_MODE: bool = os.environ.get("EPHEMERAL", "").lower() == "true"
     MAX_MCP_OUTPUT_TOKENS: str = os.environ.get("MAX_MCP_OUTPUT_TOKENS", "200000")
     NOTIFICATION_CHECK_INTERVAL: int = 2
@@ -36,7 +36,7 @@ class ConfigClass:
     MAX_CONTEXT_TOKENS: int = 180000
 
 
-Config = ConfigClass()
+Config = VestaConfig()
 
 os.environ["MAX_MCP_OUTPUT_TOKENS"] = Config.MAX_MCP_OUTPUT_TOKENS
 
@@ -121,13 +121,13 @@ MCP_SERVERS = get_mcp_servers()
 
 @dataclass
 class State:
-    client: Optional[ClaudeSDKClient] = None
-    conversation_history: List[Dict[str, Any]] = field(default_factory=list)
-    shutdown_event: Optional[asyncio.Event] = None
+    client: ClaudeSDKClient | None = None
+    conversation_history: list[dict[str, Any]] = field(default_factory=list)
+    shutdown_event: asyncio.Event | None = None
     shutdown_lock: threading.Lock = field(default_factory=threading.Lock)
     shutdown_count: int = 0
     is_processing: bool = False
-    sub_agent_context: Optional[str] = None
+    sub_agent_context: str | None = None
 
 
 state = State()
@@ -144,7 +144,7 @@ def load_prompts() -> str:
     return memory_path.read_text()
 
 
-def get_mcp_config() -> Dict[str, Any]:
+def get_mcp_config() -> dict[str, Any]:
     root = get_root_path()
     logs_dir = root / "logs"
     logs_dir.mkdir(exist_ok=True)
@@ -185,20 +185,12 @@ async def init_client() -> ClaudeSDKClient:
 
 
 def format_tool_call(name: str, input_data: Any) -> str:
-    input_str = (
-        json.dumps(input_data) if isinstance(input_data, dict) else str(input_data)
-    )
+    input_str = json.dumps(input_data) if isinstance(input_data, dict) else str(input_data)
     input_preview = (input_str[:150] + "...") if len(input_str) > 150 else input_str
 
     if name == "Task":
-        agent_type = (
-            input_data.get("subagent_type", "unknown")
-            if isinstance(input_data, dict)
-            else "unknown"
-        )
-        description = (
-            input_data.get("description", "") if isinstance(input_data, dict) else ""
-        )
+        agent_type = input_data.get("subagent_type", "unknown") if isinstance(input_data, dict) else "unknown"
+        description = input_data.get("description", "") if isinstance(input_data, dict) else ""
         state.sub_agent_context = agent_type
         return f"🤖 Task [{agent_type}]: {description or input_preview}"
 
@@ -214,7 +206,7 @@ def format_tool_call(name: str, input_data: Any) -> str:
     return f"🔧 {prefix}{name}: {input_preview}"
 
 
-def parse_assistant_message(msg: Any) -> Optional[str]:
+def parse_assistant_message(msg: Any) -> str | None:
     if not isinstance(msg, AssistantMessage):
         return msg if isinstance(msg, str) else None
 
@@ -236,17 +228,13 @@ def parse_assistant_message(msg: Any) -> Optional[str]:
     return "\n".join(texts) if texts else None
 
 
-def format_notification(notif: Dict[str, Any]) -> str:
+def format_notification(notif: dict[str, Any]) -> str:
     meta = notif.get("metadata", {})
-    meta_str = (
-        f" (metadata: {', '.join(f'{k}={v}' for k, v in meta.items() if v)})"
-        if meta
-        else ""
-    )
+    meta_str = f" (metadata: {', '.join(f'{k}={v}' for k, v in meta.items() if v)})" if meta else ""
     return f"[{notif['type']} from {notif['source']}]{meta_str}: {notif['message']}"
 
 
-def get_notification_display_info(notif: Dict[str, Any]) -> Tuple[str, str, str]:
+def get_notification_display_info(notif: dict[str, Any]) -> tuple[str, str, str]:
     meta = notif.get("metadata", {})
     sender = meta.get("chat_name", meta.get("sender", notif["source"]))
     icon = SERVICE_ICONS.get(notif["source"], "🔔")
@@ -255,7 +243,7 @@ def get_notification_display_info(notif: Dict[str, Any]) -> Tuple[str, str, str]
     return icon, sender, display_msg
 
 
-async def load_notifications() -> List[Dict[str, Any]]:
+async def load_notifications() -> list[dict[str, Any]]:
     notif_dir = get_root_path() / "notifications"
     if not notif_dir.exists():
         return []
@@ -267,14 +255,12 @@ async def load_notifications() -> List[Dict[str, Any]]:
             data["_file_path"] = str(file)
             notifications.append(data)
         except Exception as e:
-            print(
-                f"{C['yellow']}⚠️ Failed to read notification {file.name}: {e}{C['reset']}"
-            )
+            print(f"{C['yellow']}⚠️ Failed to read notification {file.name}: {e}{C['reset']}")
 
     return notifications
 
 
-async def delete_notification_files(notifications: List[Dict[str, Any]]) -> None:
+async def delete_notification_files(notifications: list[dict[str, Any]]) -> None:
     deleted_paths = set()
     for notif in notifications:
         file_path = notif.get("_file_path")
@@ -307,9 +293,7 @@ async def check_context_and_preserve() -> None:
 
     total_tokens = sum(len(str(msg)) // 4 for msg in state.conversation_history)
     if total_tokens >= Config.MAX_CONTEXT_TOKENS:
-        print(
-            f"{C['yellow']}📊 Context limit reached, preserving memory...{C['reset']}"
-        )
+        print(f"{C['yellow']}📊 Context limit reached, preserving memory...{C['reset']}")
         await preserve_memory()
         state.conversation_history.clear()
         print(f"{C['green']}✅ Context cleared, continuing...{C['reset']}")
@@ -324,11 +308,7 @@ def output_line(text: str, is_tool: bool = False) -> None:
         elif is_tool or text.startswith("🔧"):
             print(f"{C['yellow']}>{text}{C['reset']}", flush=True)
         else:
-            sender = (
-                f"Vesta[{state.sub_agent_context}]"
-                if state.sub_agent_context
-                else "Vesta"
-            )
+            sender = f"Vesta[{state.sub_agent_context}]" if state.sub_agent_context else "Vesta"
             print_timestamp_message(text, sender)
 
 
@@ -353,9 +333,7 @@ def start_whatsapp_bridge() -> bool:
         return False
 
     try:
-        result = subprocess.run(
-            [str(script_path), "--force"], capture_output=True, text=True
-        )
+        result = subprocess.run([str(script_path), "--force"], capture_output=True, text=True)
         if result.returncode == 0:
             print(f"{C['green']}✓ WhatsApp bridge connected{C['reset']}")
             return True
@@ -366,9 +344,7 @@ def start_whatsapp_bridge() -> bool:
 
 def is_whatsapp_bridge_running() -> bool:
     try:
-        result = subprocess.run(
-            ["pgrep", "-f", "whatsapp-bridge"], capture_output=True, text=True
-        )
+        result = subprocess.run(["pgrep", "-f", "whatsapp-bridge"], capture_output=True, text=True)
         return bool(result.stdout.strip())
     except Exception:
         return False
@@ -381,9 +357,7 @@ async def send_query(client: ClaudeSDKClient, prompt: str) -> None:
     await check_context_and_preserve()
 
 
-async def collect_responses(
-    client: ClaudeSDKClient, show_output: bool = True
-) -> List[str]:
+async def collect_responses(client: ClaudeSDKClient, show_output: bool = True) -> list[str]:
     responses, seen = [], set()
 
     async def collect():
@@ -409,7 +383,7 @@ async def collect_responses(
     return responses
 
 
-async def send_and_receive_message(prompt: str, show_in_chat: bool = True) -> List[str]:
+async def send_and_receive_message(prompt: str, show_in_chat: bool = True) -> list[str]:
     client = await init_client()
 
     try:
@@ -423,9 +397,7 @@ async def send_and_receive_message(prompt: str, show_in_chat: bool = True) -> Li
     responses = await collect_responses(client, show_in_chat)
 
     if responses:
-        state.conversation_history.append(
-            {"role": "assistant", "content": " ".join(responses)}
-        )
+        state.conversation_history.append({"role": "assistant", "content": " ".join(responses)})
 
     return responses
 
@@ -437,8 +409,7 @@ async def show_typing_indicator() -> None:
 
     while True:
         print(
-            f"\r{C['dim']}[{timestamp}]{C['reset']} {C['magenta']}vesta{C['reset']} "
-            f"{C['dim']}is typing{dots[dot_idx]}{C['reset']}",
+            f"\r{C['dim']}[{timestamp}]{C['reset']} {C['magenta']}vesta{C['reset']} {C['dim']}is typing{dots[dot_idx]}{C['reset']}",
             end="",
             flush=True,
         )
@@ -446,7 +417,7 @@ async def show_typing_indicator() -> None:
         await asyncio.sleep(Config.TYPING_ANIMATION_DELAY)
 
 
-async def process_message_with_typing(msg: str, is_user: bool) -> List[str]:
+async def process_message_with_typing(msg: str, is_user: bool) -> list[str]:
     await asyncio.sleep(0.8 + datetime.now().microsecond / 3000000)
 
     typing_task = asyncio.create_task(show_typing_indicator())
@@ -466,9 +437,7 @@ async def process_message_with_typing(msg: str, is_user: bool) -> List[str]:
     return responses
 
 
-async def handle_notifications_interrupt(
-    notifications: List[Dict[str, Any]], client: ClaudeSDKClient
-) -> None:
+async def handle_notifications_interrupt(notifications: list[dict[str, Any]], client: ClaudeSDKClient) -> None:
     try:
         await client.interrupt()
 
@@ -490,9 +459,7 @@ async def handle_notifications_interrupt(
         print(f"{C['yellow']}⚠️ Interrupt error: {str(e)}{C['reset']}")
 
 
-async def process_notification_batch(
-    notifications: List[Dict[str, Any]], queue: asyncio.Queue
-) -> None:
+async def process_notification_batch(notifications: list[dict[str, Any]], queue: asyncio.Queue) -> None:
     if not notifications:
         return
 
@@ -512,9 +479,7 @@ def signal_handler(signum: int, frame: Any) -> None:
     with state.shutdown_lock:
         state.shutdown_count += 1
         if state.shutdown_count == 1:
-            print(
-                f"\n{C['dim']}💤 vesta is tired and taking a nap to help remember stuff...{C['reset']}"
-            )
+            print(f"\n{C['dim']}💤 vesta is tired and taking a nap to help remember stuff...{C['reset']}")
             if state.shutdown_event:
                 state.shutdown_event.set()
         elif state.shutdown_count > 2:
@@ -604,9 +569,7 @@ async def input_handler(queue: asyncio.Queue) -> None:
 
 async def check_whatsapp_bridge() -> None:
     if not is_whatsapp_bridge_running():
-        print_timestamp_message(
-            "🔄 WhatsApp bridge disconnected, restarting...", "System"
-        )
+        print_timestamp_message("🔄 WhatsApp bridge disconnected, restarting...", "System")
         start_whatsapp_bridge()
 
 
@@ -626,8 +589,8 @@ async def check_mcp_health() -> None:
 
 
 async def collect_new_notifications(
-    existing_buffer: List[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
+    existing_buffer: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     new_notifs = await load_notifications()
     if not new_notifs:
         return []
@@ -670,9 +633,7 @@ async def monitor_loop(queue: asyncio.Queue) -> None:
 
         now = datetime.now()
 
-        if now - last_bridge_check >= timedelta(
-            seconds=Config.WHATSAPP_BRIDGE_CHECK_INTERVAL
-        ):
+        if now - last_bridge_check >= timedelta(seconds=Config.WHATSAPP_BRIDGE_CHECK_INTERVAL):
             await check_whatsapp_bridge()
             last_bridge_check = now
 
@@ -683,9 +644,7 @@ async def monitor_loop(queue: asyncio.Queue) -> None:
         new_notifs = await load_notifications()
         if new_notifs:
             existing_paths = {n.get("_file_path") for n in notification_buffer}
-            truly_new = [
-                n for n in new_notifs if n.get("_file_path") not in existing_paths
-            ]
+            truly_new = [n for n in new_notifs if n.get("_file_path") not in existing_paths]
 
             if truly_new:
                 notification_buffer.extend(truly_new)
@@ -696,12 +655,7 @@ async def monitor_loop(queue: asyncio.Queue) -> None:
                     icon, sender, display_msg = get_notification_display_info(notif)
                     print_timestamp_message(f"{icon} {sender}: {display_msg}", "System")
 
-        if (
-            notification_buffer
-            and buffer_start_time
-            and (now - buffer_start_time).total_seconds()
-            >= Config.NOTIFICATION_BUFFER_DELAY
-        ):
+        if notification_buffer and buffer_start_time and (now - buffer_start_time).total_seconds() >= Config.NOTIFICATION_BUFFER_DELAY:
             await process_notification_batch(notification_buffer, queue)
             notification_buffer = []
             buffer_start_time = None

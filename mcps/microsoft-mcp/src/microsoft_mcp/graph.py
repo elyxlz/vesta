@@ -1,6 +1,7 @@
 import httpx
 import time
-from typing import Any, Iterator
+from typing import Any
+from collections.abc import Iterator
 from .auth import get_token
 
 BASE_URL = "https://graph.microsoft.com/v1.0"
@@ -29,15 +30,9 @@ def request(
         elif "body" in (params or {}).get("$select", ""):
             headers["Prefer"] = 'outlook.body-content-type="text"'
     else:
-        headers["Content-Type"] = (
-            "application/json" if json else "application/octet-stream"
-        )
+        headers["Content-Type"] = "application/json" if json else "application/octet-stream"
 
-    if params and (
-        "$search" in params
-        or "contains(" in params.get("$filter", "")
-        or "/any(" in params.get("$filter", "")
-    ):
+    if params and ("$search" in params or "contains(" in params.get("$filter", "") or "/any(" in params.get("$filter", "")):
         headers["ConsistencyLevel"] = "eventual"
         params.setdefault("$count", "true")
 
@@ -114,9 +109,7 @@ def request_paginated(
             break
 
 
-def download_raw(
-    path: str, account_id: str | None = None, max_retries: int = 3
-) -> bytes:
+def download_raw(path: str, account_id: str | None = None, max_retries: int = 3) -> bytes:
     headers = {"Authorization": f"Bearer {get_token(account_id)}"}
 
     retry_count = 0
@@ -166,9 +159,7 @@ def _do_chunked_upload(
 
         chunk_headers = headers.copy()
         chunk_headers["Content-Length"] = str(len(chunk))
-        chunk_headers["Content-Range"] = (
-            f"bytes {chunk_start}-{chunk_end - 1}/{file_size}"
-        )
+        chunk_headers["Content-Range"] = f"bytes {chunk_start}-{chunk_end - 1}/{file_size}"
 
         retry_count = 0
         while retry_count <= 3:
