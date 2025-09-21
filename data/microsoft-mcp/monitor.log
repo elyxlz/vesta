@@ -8888,3 +8888,34 @@ requests.exceptions.ConnectionError: HTTPSConnectionPool(host='login.microsofton
 2025-09-21 16:53:24,788 - INFO - Found 0 new emails for elio@audiogen.co
 2025-09-21 16:53:24,957 - INFO - Found 0 upcoming calendar events for elio@audiogen.co
 2025-09-21 16:53:24,958 - INFO - Completed check cycle, sleeping for 60 seconds
+2025-09-21 18:38:12,274 - INFO - Monitor thread started
+2025-09-21 18:38:12,276 - INFO - Detected offline period of 6288s, catching up from 2025-09-21T15:53:24.004861+00:00
+2025-09-21 18:38:12,278 - INFO - Checking for updates since 2025-09-21T15:53:24.004861+00:00
+2025-09-21 18:38:12,594 - INFO - Checking account: elio@pascarelli.com
+2025-09-21 18:38:13,002 - INFO - Found 0 new emails for elio@pascarelli.com
+2025-09-21 18:38:13,212 - INFO - Found 1 upcoming calendar events for elio@pascarelli.com
+2025-09-21 18:38:13,213 - ERROR - Error fetching calendar for elio@pascarelli.com: can't subtract offset-naive and offset-aware datetimes
+2025-09-21 18:38:13,215 - INFO - Checking account: elio@audiogen.co
+2025-09-21 18:38:13,522 - INFO - Found 0 new emails for elio@audiogen.co
+2025-09-21 18:38:13,718 - INFO - Found 0 upcoming calendar events for elio@audiogen.co
+2025-09-21 18:38:13,719 - INFO - Completed check cycle, sleeping for 60 seconds
+2025-09-21 18:39:13,721 - INFO - Checking for updates since 2025-09-21T17:38:12.281529+00:00
+2025-09-21 18:39:13,852 - INFO - Checking account: elio@pascarelli.com
+2025-09-21 18:39:14,084 - INFO - Found 0 new emails for elio@pascarelli.com
+2025-09-21 18:39:14,291 - INFO - Found 1 upcoming calendar events for elio@pascarelli.com
+2025-09-21 18:39:14,292 - ERROR - Error fetching calendar for elio@pascarelli.com: can't subtract offset-naive and offset-aware datetimes
+2025-09-21 18:39:14,295 - INFO - Checking account: elio@audiogen.co
+2025-09-21 18:39:14,449 - INFO - Found 0 new emails for elio@audiogen.co
+2025-09-21 18:39:14,645 - INFO - Found 0 upcoming calendar events for elio@audiogen.co
+2025-09-21 18:39:14,645 - INFO - Completed check cycle, sleeping for 60 seconds
+2025-09-21 18:45:37,761 - INFO - Monitor thread started
+2025-09-21 18:45:37,763 - INFO - Detected offline period of 384s, catching up from 2025-09-21T17:39:13.724940+00:00
+2025-09-21 18:45:37,766 - INFO - Checking for updates since 2025-09-21T17:39:13.724940+00:00
+2025-09-21 18:45:37,995 - INFO - Checking account: elio@pascarelli.com
+2025-09-21 18:45:38,319 - INFO - Found 0 new emails for elio@pascarelli.com
+2025-09-21 18:45:38,577 - INFO - Found 1 upcoming calendar events for elio@pascarelli.com
+2025-09-21 18:45:38,580 - ERROR - Error fetching calendar for elio@pascarelli.com: can't subtract offset-naive and offset-aware datetimes
+2025-09-21 18:45:38,583 - INFO - Checking account: elio@audiogen.co
+2025-09-21 18:45:38,788 - INFO - Found 0 new emails for elio@audiogen.co
+2025-09-21 18:45:38,999 - INFO - Found 0 upcoming calendar events for elio@audiogen.co
+2025-09-21 18:45:39,000 - INFO - Completed check cycle, sleeping for 60 seconds

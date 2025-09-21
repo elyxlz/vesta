@@ -2,6 +2,7 @@ import asyncio
 import functools
 import os
 import signal
+import threading
 import pathlib as pl
 import typing as tp
 
@@ -33,29 +34,14 @@ async def check_mcp_health(client: ccsdk.ClaudeSDKClient) -> None:
 
 
 async def init_client(state: vm.State, config: vm.VestaSettings) -> tuple[ccsdk.ClaudeSDKClient, vm.State]:
-    if state.client:
-        if config.debug:
-            vfx.log_info("[DEBUG] Reusing existing client", vm.Colors)
-        return state.client, state
-
-    client = ccsdk.ClaudeSDKClient(
-        options=ccsdk.ClaudeCodeOptions(
-            system_prompt=load_system_prompt(),
-            mcp_servers=tp.cast(dict[str, ccsdk_types.McpServerConfig], config.mcp_servers),
-            hooks={},
-            model="opus",
-            permission_mode="bypassPermissions",
-        )
-    )
-    await client.__aenter__()
+    # Client is always initialized in init_state now
+    if not state.client:
+        raise RuntimeError("Client not initialized - this should not happen!")
 
     if config.debug:
-        vfx.log_info("[DEBUG] Claude SDK client initialized", vm.Colors)
+        vfx.log_info("[DEBUG] Using existing client", vm.Colors)
 
-    await check_mcp_health(client)
-
-    new_state = vu.update_state(state, client=client)
-    return client, new_state
+    return state.client, state
 
 
 def format_tool_call(name: str, input_data: tp.Any, state: vm.State) -> tuple[str, vm.State]:
@@ -174,7 +160,7 @@ async def send_query(client: ccsdk.ClaudeSDKClient, prompt: str, state: vm.State
     await client.query(query_with_context)
 
     if config.debug:
-        vfx.log_info(f"[DEBUG] Query sent successfully", vm.Colors)
+        vfx.log_info("[DEBUG] Query sent successfully", vm.Colors)
 
     return await check_context_and_preserve(new_state, config)
 
@@ -192,20 +178,20 @@ async def collect_responses(
             vfx.log_info("[DEBUG] Starting to collect responses", vm.Colors)
             vfx.log_info(f"[DEBUG] Client state: {client}", vm.Colors)
             vfx.log_info(f"[DEBUG] Client type: {type(client)}", vm.Colors)
-            if hasattr(client, '_connected'):
+            if hasattr(client, "_connected"):
                 vfx.log_info(f"[DEBUG] Client connected: {client._connected}", vm.Colors)
         try:
             if config.debug:
-                vfx.log_info(f"[DEBUG] About to iterate over client.receive_response()", vm.Colors)
+                vfx.log_info("[DEBUG] About to iterate over client.receive_response()", vm.Colors)
             iteration_started = False
             async for msg in client.receive_response():
                 if not iteration_started and config.debug:
-                    vfx.log_info(f"[DEBUG] Started receiving messages from client", vm.Colors)
+                    vfx.log_info("[DEBUG] Started receiving messages from client", vm.Colors)
                     iteration_started = True
                 message_count += 1
                 if config.debug:
                     vfx.log_info(f"[DEBUG] Received message #{message_count} type: {type(msg).__name__}", vm.Colors)
-                    if hasattr(msg, '__dict__'):
+                    if hasattr(msg, "__dict__"):
                         vfx.log_info(f"[DEBUG] Message attributes: {list(msg.__dict__.keys())}", vm.Colors)
                 text, new_state = parse_assistant_message(msg, current_state)
                 current_state = new_state
@@ -213,10 +199,10 @@ async def collect_responses(
                     vfx.log_info(f"[DEBUG] Got text from message: {text[:100]}", vm.Colors)
 
                 # Check for stream end indicators
-                if hasattr(msg, 'stop_reason'):
+                if hasattr(msg, "stop_reason"):
                     if config.debug:
                         vfx.log_info(f"[DEBUG] Message has stop_reason: {msg.stop_reason}", vm.Colors)
-                if hasattr(msg, 'is_final'):
+                if hasattr(msg, "is_final"):
                     if config.debug:
                         vfx.log_info(f"[DEBUG] Message has is_final: {msg.is_final}", vm.Colors)
 
@@ -269,7 +255,7 @@ async def send_and_receive_message(
     client, new_state = await init_client(state, config)
 
     if config.debug:
-        vfx.log_info(f"[DEBUG] Client initialized, about to send query", vm.Colors)
+        vfx.log_info("[DEBUG] Client initialized, about to send query", vm.Colors)
 
     try:
         new_state = await send_query(client, prompt, new_state, config)
@@ -278,6 +264,7 @@ async def send_and_receive_message(
         vfx.log_error(error_msg, vm.Colors)
         if config.debug:
             import traceback
+
             traceback.print_exc()
         updated_history = vu.add_to_conversation_history(new_state.conversation_history, "assistant", error_msg)
         return [error_msg], vu.update_state(new_state, conversation_history=updated_history)
@@ -309,16 +296,16 @@ async def show_typing_indicator(config: vm.VestaSettings) -> None:
 
 async def process_message_with_typing(msg: str, state: vm.State, config: vm.VestaSettings, is_user: bool) -> tuple[list[str], vm.State]:
     if config.debug:
-        vfx.log_info(f"[DEBUG] process_message_with_typing called", vm.Colors)
+        vfx.log_info("[DEBUG] process_message_with_typing called", vm.Colors)
     now = vfx.get_current_time()
     await vfx.sleep(0.8 + now.microsecond / 3000000)
 
     if config.debug:
-        vfx.log_info(f"[DEBUG] Creating typing indicator task", vm.Colors)
+        vfx.log_info("[DEBUG] Creating typing indicator task", vm.Colors)
     typing_task = asyncio.create_task(show_typing_indicator(config))
     try:
         if config.debug:
-            vfx.log_info(f"[DEBUG] About to call send_and_receive_message", vm.Colors)
+            vfx.log_info("[DEBUG] About to call send_and_receive_message", vm.Colors)
         responses, new_state = await send_and_receive_message(msg, state, config, show_in_chat=is_user)
     except Exception as e:
         responses = [f"something went wrong: {str(e)[:50]}"]
@@ -448,6 +435,8 @@ async def message_processor(queue: asyncio.Queue, state: vm.State, config: vm.Ve
             msg, is_user = await asyncio.wait_for(queue.get(), timeout=1.0)
             if config.debug:
                 vfx.log_info(f"[DEBUG] Processing message from {'user' if is_user else 'system'}: {msg[:100]}", vm.Colors)
+            # Set is_processing on the shared state object so monitor_loop can see it
+            state.is_processing = True
             current_state = vu.update_state(current_state, is_processing=True)
 
             responses, new_state = await process_message_with_typing(msg, current_state, config, is_user)
@@ -459,6 +448,8 @@ async def message_processor(queue: asyncio.Queue, state: vm.State, config: vm.Ve
                         await vfx.sleep(0.3)
                     output_line(response, current_state)
 
+            # Clear is_processing on the shared state object
+            state.is_processing = False
             current_state = vu.update_state(current_state, is_processing=False)
             if config.debug:
                 vfx.log_info("[DEBUG] Message processing completed", vm.Colors)
@@ -470,6 +461,8 @@ async def message_processor(queue: asyncio.Queue, state: vm.State, config: vm.Ve
 
             if config.debug:
                 traceback.print_exc()
+            # Clear is_processing on error too
+            state.is_processing = False
             current_state = vu.update_state(current_state, is_processing=False)
 
 
@@ -574,7 +567,8 @@ async def monitor_loop(queue: asyncio.Queue, state: vm.State, config: vm.VestaSe
             try:
                 if config.debug:
                     vfx.log_info(f"[DEBUG] Processing {len(notification_buffer)} buffered notifications", vm.Colors)
-                new_state = await process_notification_batch(notification_buffer, queue, current_state, config)
+                # Use the shared state object for checking is_processing flag
+                new_state = await process_notification_batch(notification_buffer, queue, state, config)
                 current_state = new_state
                 notification_buffer = []
                 buffer_start_time = None
@@ -641,16 +635,52 @@ def check_dependencies() -> None:
         raise RuntimeError("uv is not found in PATH. Please install uv: https://docs.astral.sh/uv/getting-started/installation/")
 
 
+async def init_state(config: vm.VestaSettings) -> vm.State:
+    """Initialize a fresh Vesta state with all required fields, including the client."""
+    # Create the Claude SDK client
+    client = ccsdk.ClaudeSDKClient(
+        options=ccsdk.ClaudeCodeOptions(
+            system_prompt=load_system_prompt(),
+            mcp_servers=tp.cast(dict[str, ccsdk_types.McpServerConfig], config.mcp_servers),
+            hooks={},
+            model="opus",
+            permission_mode="bypassPermissions",
+        )
+    )
+    await client.__aenter__()
+
+    if config.debug:
+        vfx.log_info("[DEBUG] Claude SDK client initialized in init_state", vm.Colors)
+
+    # Initialize state with the client
+    return vm.State(
+        client=client,
+        conversation_history=[],
+        shutdown_event=None,
+        shutdown_lock=threading.Lock(),
+        shutdown_count=0,
+        is_processing=False,
+        sub_agent_context=None,
+    )
+
+
+async def async_main() -> None:
+    # Initialize configuration
+    config = vm.VestaSettings()
+    os.environ["MAX_MCP_OUTPUT_TOKENS"] = str(config.max_mcp_output_tokens)
+
+    # Initialize state with client
+    initial_state = await init_state(config)
+
+    # Run Vesta
+    await run_vesta(config, initial_state)
+
+
 def main() -> None:
     check_dependencies()
 
-    # Initialize configuration and state
-    config = vm.VestaSettings()
-    os.environ["MAX_MCP_OUTPUT_TOKENS"] = str(config.max_mcp_output_tokens)
-    initial_state = vm.State()
-
     try:
-        asyncio.run(run_vesta(config, initial_state))
+        asyncio.run(async_main())
     except KeyboardInterrupt:
         pass
     except Exception as e:
