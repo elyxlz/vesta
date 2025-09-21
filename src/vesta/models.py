@@ -106,6 +106,7 @@ def _get_default_mcp_servers() -> dict[str, McpServer]:
 
 class VestaSettings(pyd_settings.BaseSettings):
     ephemeral: bool = False
+    debug: bool = False
     max_mcp_output_tokens: int = 200000
     notification_check_interval: int = 2
     notification_buffer_delay: int = 3

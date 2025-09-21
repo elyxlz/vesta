@@ -530,15 +530,20 @@ func handleMessage(client *whatsmeow.Client, messageStore *MessageStore, msg *ev
 	name := GetChatName(client, messageStore, msg.Info.Chat, chatJID, nil, sender, logger)
 
 	var senderDisplayName string
-	ctx := context.Background()
-	senderContact, contactErr := client.Store.Contacts.GetContact(ctx, msg.Info.Sender)
 
-	if contactErr == nil && senderContact.FullName != "" {
-		senderDisplayName = senderContact.FullName
-	} else if contactErr == nil && senderContact.PushName != "" {
-		senderDisplayName = senderContact.PushName
+	if !msg.Info.IsGroup {
+		senderDisplayName = name
 	} else {
-		senderDisplayName = sender
+		ctx := context.Background()
+		senderContact, contactErr := client.Store.Contacts.GetContact(ctx, msg.Info.Sender)
+
+		if contactErr == nil && senderContact.FullName != "" {
+			senderDisplayName = senderContact.FullName
+		} else if contactErr == nil && senderContact.PushName != "" {
+			senderDisplayName = senderContact.PushName
+		} else {
+			senderDisplayName = sender
+		}
 	}
 
 	// Update chat in database with the message timestamp (keeps last message time updated)

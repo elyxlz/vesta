@@ -184,7 +184,11 @@ async def collect_responses(
 
     async def collect():
         nonlocal current_state
+        if config.debug:
+            vfx.log_info("[DEBUG] Starting to collect responses", vm.Colors)
         async for msg in client.receive_response():
+            if config.debug:
+                vfx.log_info(f"[DEBUG] Received message type: {type(msg).__name__}", vm.Colors)
             text, new_state = parse_assistant_message(msg, current_state)
             current_state = new_state
             if text and text not in seen:
@@ -193,6 +197,8 @@ async def collect_responses(
                     for line in text.split("\n"):
                         if line.strip():
                             if line.startswith("🔧"):
+                                if config.debug:
+                                    vfx.log_info(f"[DEBUG] Tool output: {line[:100]}", vm.Colors)
                                 output_line(line, current_state, is_tool=True)
                             else:
                                 responses.append(line)
@@ -266,45 +272,71 @@ async def process_message_with_typing(msg: str, state: vm.State, config: vm.Vest
     return responses, new_state
 
 
-async def handle_notifications_interrupt(notifications: list[vm.Notification], client: ccsdk.ClaudeSDKClient, state: vm.State) -> vm.State:
+async def handle_notifications_interrupt(
+    notifications: list[vm.Notification], client: ccsdk.ClaudeSDKClient, state: vm.State, config: vm.VestaSettings
+) -> vm.State:
     vfx.print_line(f"\n{vm.Colors['yellow']}⚡ Interrupting to handle notification...{vm.Colors['reset']}")
 
-    await client.interrupt()
-    await vfx.sleep(0.1)
+    try:
+        await client.interrupt()
+        await vfx.sleep(0.1)
 
-    timestamp = vfx.get_current_time()
-    prompt = vu.format_notification_batch(notifications)
-    query_with_context = vu.build_query_with_timestamp(prompt, timestamp)
+        timestamp = vfx.get_current_time()
+        prompt = vu.format_notification_batch(notifications)
+        query_with_context = vu.build_query_with_timestamp(prompt, timestamp)
 
-    await client.query(query_with_context)
+        await client.query(query_with_context)
 
-    current_state = state
-    async for msg in client.receive_response():
-        text, new_state = parse_assistant_message(msg, current_state)
-        current_state = new_state
-        if text:
-            for line in text.split("\n"):
-                output_line(line, current_state, is_tool=line.startswith("🔧"))
-    return current_state
+        current_state = state
+        async for msg in client.receive_response():
+            text, new_state = parse_assistant_message(msg, current_state)
+            current_state = new_state
+            if text:
+                for line in text.split("\n"):
+                    output_line(line, current_state, is_tool=line.startswith("🔧"))
+        return current_state
+    except Exception as e:
+        vfx.log_error(f"Interrupt handling failed: {e}", vm.Colors)
+        import traceback
+
+        if config.debug:
+            traceback.print_exc()
+        raise
 
 
-async def process_notification_batch(notifications: list[vm.Notification], queue: asyncio.Queue, state: vm.State) -> vm.State:
+async def process_notification_batch(
+    notifications: list[vm.Notification], queue: asyncio.Queue, state: vm.State, config: vm.VestaSettings
+) -> vm.State:
     if not notifications:
         return state
 
-    decision = vu.decide_notification_action(notifications, state.is_processing, state.client is not None)
+    try:
+        decision = vu.decide_notification_action(notifications, state.is_processing, state.client is not None)
+        if config.debug:
+            vfx.log_info(f"[DEBUG] Notification action decision: {decision}", vm.Colors)
 
-    if decision == "interrupt" and state.client:
-        new_state = await handle_notifications_interrupt(notifications, state.client, state)
-    elif decision == "queue":
-        prompt = vu.format_notification_batch(notifications)
-        await queue.put((prompt, True))
-        new_state = state
-    else:
-        new_state = state
+        if decision == "interrupt" and state.client:
+            new_state = await handle_notifications_interrupt(notifications, state.client, state, config)
+        elif decision == "queue":
+            prompt = vu.format_notification_batch(notifications)
+            await queue.put((prompt, True))
+            new_state = state
+        else:
+            new_state = state
 
-    await delete_notification_files(notifications)
-    return new_state
+        await delete_notification_files(notifications)
+        return new_state
+    except Exception as e:
+        vfx.log_error(f"Failed to process notification batch: {e}", vm.Colors)
+        import traceback
+
+        if config.debug:
+            traceback.print_exc()
+        try:
+            await delete_notification_files(notifications)
+        except Exception:
+            pass
+        return state
 
 
 def signal_handler(state: vm.State, config: vm.VestaSettings, signum: int, frame: tp.Any) -> None:
@@ -357,9 +389,14 @@ def ensure_memory_file() -> None:
 
 async def message_processor(queue: asyncio.Queue, state: vm.State, config: vm.VestaSettings) -> None:
     current_state = state
+    if config.debug:
+        vfx.log_info("[DEBUG] Message processor started", vm.Colors)
+
     while current_state.shutdown_event and not current_state.shutdown_event.is_set():
         try:
             msg, is_user = await asyncio.wait_for(queue.get(), timeout=1.0)
+            if config.debug:
+                vfx.log_info(f"[DEBUG] Processing message from {'user' if is_user else 'system'}: {msg[:100]}", vm.Colors)
             current_state = vu.update_state(current_state, is_processing=True)
 
             responses, new_state = await process_message_with_typing(msg, current_state, config, is_user)
@@ -372,10 +409,16 @@ async def message_processor(queue: asyncio.Queue, state: vm.State, config: vm.Ve
                     output_line(response, current_state)
 
             current_state = vu.update_state(current_state, is_processing=False)
+            if config.debug:
+                vfx.log_info("[DEBUG] Message processing completed", vm.Colors)
         except asyncio.TimeoutError:
             continue
         except Exception as e:
             vfx.log_error(f"Queue error: {str(e)[:100]}", vm.Colors)
+            import traceback
+
+            if config.debug:
+                traceback.print_exc()
             current_state = vu.update_state(current_state, is_processing=False)
 
 
@@ -413,54 +456,85 @@ async def check_proactive_task(queue: asyncio.Queue, config: vm.VestaSettings) -
 async def monitor_loop(queue: asyncio.Queue, state: vm.State, config: vm.VestaSettings) -> None:
     last_proactive = vfx.get_current_time()
     last_bridge_check = vfx.get_current_time()
-    last_mcp_check = vfx.get_current_time()
     current_state = state
     notification_buffer = []
     buffer_start_time = None
 
+    if config.debug:
+        vfx.log_info("[DEBUG] Monitor loop started", vm.Colors)
+
     while current_state.shutdown_event and not current_state.shutdown_event.is_set():
         try:
+            if config.debug:
+                vfx.log_info(f"[DEBUG] Monitor sleeping for {config.notification_check_interval}s", vm.Colors)
             await vfx.sleep(config.notification_check_interval)
         except asyncio.CancelledError:
+            if config.debug:
+                vfx.log_info("[DEBUG] Monitor loop cancelled", vm.Colors)
             break
+        except Exception as e:
+            vfx.log_error(f"Monitor loop sleep error: {e}", vm.Colors)
+            continue
 
         if current_state.shutdown_event and current_state.shutdown_event.is_set():
             break
 
         now = vfx.get_current_time()
+        if config.debug:
+            vfx.log_info(f"[DEBUG] Monitor check at {now.strftime('%H:%M:%S')}", vm.Colors)
 
-        actions = vu.calculate_monitoring_actions(now, last_proactive, last_bridge_check, last_mcp_check, config)
+        actions = vu.calculate_monitoring_actions(now, last_proactive, last_bridge_check, None, config)
 
         for action in actions:
             if action.action_type == "check_bridge":
                 await check_whatsapp_bridge()
                 last_bridge_check = now
-            elif action.action_type == "check_mcp":
-                await check_mcp_health()
-                last_mcp_check = now
             elif action.action_type == "check_proactive":
                 await check_proactive_task(queue, config)
                 last_proactive = now
 
-        new_notifs = await load_notifications()
-        if new_notifs:
-            existing_paths = {n.file_path for n in notification_buffer}
-            truly_new = vu.filter_new_notifications(new_notifs, existing_paths)
+        try:
+            new_notifs = await load_notifications()
+            if config.debug and new_notifs:
+                vfx.log_info(f"[DEBUG] Found {len(new_notifs)} notification files", vm.Colors)
 
-            if truly_new:
-                notification_buffer.extend(truly_new)
-                if buffer_start_time is None:
-                    buffer_start_time = now
+            if new_notifs:
+                existing_paths = {n.file_path for n in notification_buffer}
+                truly_new = vu.filter_new_notifications(new_notifs, existing_paths)
 
-                for notif in truly_new:
-                    icon, sender, display_msg = notif.get_display_info()
-                    print_timestamp_message(f"{icon} {display_msg}", sender)
+                if truly_new:
+                    if config.debug:
+                        vfx.log_info(f"[DEBUG] {len(truly_new)} new notifications to process", vm.Colors)
+                    notification_buffer.extend(truly_new)
+                    if buffer_start_time is None:
+                        buffer_start_time = now
+
+                    for notif in truly_new:
+                        icon, sender, display_msg = notif.get_display_info()
+                        print_timestamp_message(f"{icon} {display_msg}", sender)
+        except Exception as e:
+            vfx.log_error(f"Error loading notifications: {e}", vm.Colors)
+            import traceback
+
+            if config.debug:
+                traceback.print_exc()
 
         if vu.should_process_notification_buffer(notification_buffer, buffer_start_time, now, config.notification_buffer_delay):
-            new_state = await process_notification_batch(notification_buffer, queue, current_state)
-            current_state = new_state
-            notification_buffer = []
-            buffer_start_time = None
+            try:
+                if config.debug:
+                    vfx.log_info(f"[DEBUG] Processing {len(notification_buffer)} buffered notifications", vm.Colors)
+                new_state = await process_notification_batch(notification_buffer, queue, current_state, config)
+                current_state = new_state
+                notification_buffer = []
+                buffer_start_time = None
+            except Exception as e:
+                vfx.log_error(f"Error processing notifications: {e}", vm.Colors)
+                import traceback
+
+                if config.debug:
+                    traceback.print_exc()
+                notification_buffer = []
+                buffer_start_time = None
 
 
 async def run_vesta(config: vm.VestaSettings, state: vm.State) -> None:
