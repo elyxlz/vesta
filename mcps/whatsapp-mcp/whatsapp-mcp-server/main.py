@@ -184,9 +184,15 @@ def send_message(recipient: str, message: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-def send_file(recipient: str, file_path: str, caption: str | None = None) -> dict[str, Any]:
-    """Send file to WhatsApp contact or group."""
-    return whatsapp_send_file(recipient, file_path, caption)
+def send_file(recipient: str, file_path: str) -> dict[str, Any]:
+    """Send file (PDF, image, document, etc.) to WhatsApp contact or group.
+    Supports sending any file type including PDFs, images, documents, etc.
+
+    Args:
+        recipient: Phone number (with country code) or group JID
+        file_path: Absolute path to the file to send
+    """
+    return whatsapp_send_file(recipient, file_path)
 
 
 @mcp.tool()

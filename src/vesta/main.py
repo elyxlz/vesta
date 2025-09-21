@@ -65,9 +65,6 @@ async def load_notifications() -> list[vm.Notification]:
     notif_dir = get_root_path() / "notifications"
     file_contents = vfx.load_notification_files(notif_dir)
 
-    # Debug: log the raw files found
-    vfx.log_info(f"[DEBUG] load_notification_files returned {len(file_contents)} files from {notif_dir}", vm.Colors)
-
     notifications = []
     for file, content in file_contents:
         if content:
