@@ -50,10 +50,19 @@ def init_db():
                 status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'done')),
                 priority INTEGER DEFAULT 2 CHECK(priority IN (1, 2, 3)),
                 due_date TEXT,
+                metadata TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 completed_at TEXT
             )
         """)
+
+        # Add metadata column to existing tasks table if it doesn't exist
+        conn.execute("""
+            PRAGMA table_info(tasks)
+        """)
+        columns = [row[1] for row in conn.fetchall()]
+        if 'metadata' not in columns:
+            conn.execute("ALTER TABLE tasks ADD COLUMN metadata TEXT")
         conn.commit()
 
 
@@ -240,8 +249,15 @@ def cancel_reminder(reminder_id: str) -> dict:
 
 
 @mcp.tool()
-def add_task(title: str, due: str | None = None, priority: int = 2) -> dict:
-    """Add a task"""
+def add_task(title: str, due: str | None = None, priority: int = 2, metadata: str | None = None) -> dict:
+    """Add a task with optional metadata/notes.
+
+    Args:
+        title: Task title/description
+        due: Due date ('today', 'tomorrow', or YYYY-MM-DD)
+        priority: 1=low, 2=normal, 3=high
+        metadata: Additional information, notes, contacts, links, etc.
+    """
     if priority not in (1, 2, 3):
         raise ValueError("Priority must be 1 (low), 2 (normal), or 3 (high)")
 
@@ -250,8 +266,8 @@ def add_task(title: str, due: str | None = None, priority: int = 2) -> dict:
 
     with closing(get_db()) as conn:
         conn.execute(
-            "INSERT INTO tasks (id, title, priority, due_date) VALUES (?, ?, ?, ?)",
-            (task_id, title, priority, due_date),
+            "INSERT INTO tasks (id, title, priority, due_date, metadata) VALUES (?, ?, ?, ?, ?)",
+            (task_id, title, priority, due_date, metadata),
         )
         conn.commit()
 
@@ -261,6 +277,7 @@ def add_task(title: str, due: str | None = None, priority: int = 2) -> dict:
         "status": "pending",
         "priority": priority,
         "due_date": due_date,
+        "metadata": metadata,
     }
 
 
@@ -280,10 +297,20 @@ def list_tasks(show_completed: bool = False) -> list[dict]:
 
 
 @mcp.tool()
-def update_task(id: str, status: str | None = None, title: str | None = None) -> dict:
-    """Update task"""
+def update_task(id: str, status: str | None = None, title: str | None = None, metadata: str | None = None, priority: int | None = None) -> dict:
+    """Update task properties.
+
+    Args:
+        id: Task ID to update
+        status: New status ('pending' or 'done')
+        title: New title
+        metadata: New or updated metadata/notes
+        priority: New priority (1=low, 2=normal, 3=high)
+    """
     if status and status not in ("pending", "done"):
         raise ValueError("Status must be pending or done")
+    if priority is not None and priority not in (1, 2, 3):
+        raise ValueError("Priority must be 1 (low), 2 (normal), or 3 (high)")
 
     with closing(get_db()) as conn:
         cursor = conn.execute("SELECT * FROM tasks WHERE id = ?", (id,))
@@ -306,6 +333,14 @@ def update_task(id: str, status: str | None = None, title: str | None = None) ->
         if title is not None:
             updates.append("title = ?")
             params.append(title)
+
+        if metadata is not None:
+            updates.append("metadata = ?")
+            params.append(metadata)
+
+        if priority is not None:
+            updates.append("priority = ?")
+            params.append(priority)
 
         if updates:
             params.append(id)

@@ -178,7 +178,6 @@ async def init_client() -> ClaudeSDKClient:
             hooks={},
             model="opus",
             permission_mode="bypassPermissions",
-            continue_conversation=True
         )
     )
     await state.client.__aenter__()
