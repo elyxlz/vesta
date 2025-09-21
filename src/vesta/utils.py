@@ -17,6 +17,9 @@ def format_timestamp_message(text: str, sender: str, timestamp: dt.datetime, col
         display_sender = sender.lower()
         prefix = f"{colors['dim']}[{timestamp_str}]{colors['reset']} {colors[color_map[base_sender]]}{display_sender}:{colors['reset']}"
         return [f"{prefix} {line}" for line in text.split("\n") if line.strip()]
+    elif sender:
+        prefix = f"{colors['dim']}[{timestamp_str}]{colors['reset']} {colors['green']}{sender}:{colors['reset']}"
+        return [f"{prefix} {line}" for line in text.split("\n") if line.strip()]
     else:
         return [f"{colors['dim']}[{timestamp_str}]{colors['reset']} {colors['yellow']}{text}{colors['reset']}"]
 

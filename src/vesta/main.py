@@ -506,7 +506,19 @@ async def run_vesta(config: vm.VestaSettings, state: vm.State) -> None:
         vfx.log_error("Shutdown timeout", vm.Colors)
 
 
+def check_dependencies() -> None:
+    import shutil
+
+    if shutil.which("npm") is None:
+        raise RuntimeError("npm is not found in PATH. Please install Node.js and npm: https://nodejs.org/")
+
+    if shutil.which("uv") is None:
+        raise RuntimeError("uv is not found in PATH. Please install uv: https://docs.astral.sh/uv/getting-started/installation/")
+
+
 def main() -> None:
+    check_dependencies()
+
     # Initialize configuration and state
     config = vm.VestaSettings()
     os.environ["MAX_MCP_OUTPUT_TOKENS"] = str(config.max_mcp_output_tokens)
