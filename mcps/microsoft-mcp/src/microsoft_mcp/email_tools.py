@@ -83,10 +83,7 @@ def get_email(
     if include_body and "body" in result and "content" in result["body"]:
         content = result["body"]["content"]
         if len(content) > body_max_length:
-            result["body"]["content"] = (
-                content[:body_max_length]
-                + f"\n\n[Content truncated - {len(content)} total characters]"
-            )
+            result["body"]["content"] = content[:body_max_length] + f"\n\n[Content truncated - {len(content)} total characters]"
             result["body"]["truncated"] = True
             result["body"]["total_length"] = len(content)
     elif not include_body and "body" in result:
@@ -127,9 +124,7 @@ def create_email_draft(
             - Multiple paths: "/path/to/file1.pdf,/path/to/file2.docx"
     """
     # Handle both single and comma-separated email addresses
-    to_list = (
-        [addr.strip() for addr in to.split(",") if addr.strip()] if "," in to else [to]
-    )
+    to_list = [addr.strip() for addr in to.split(",") if addr.strip()] if "," in to else [to]
 
     message = {
         "subject": subject,
@@ -138,25 +133,15 @@ def create_email_draft(
     }
 
     if cc:
-        cc_list = (
-            [addr.strip() for addr in cc.split(",") if addr.strip()]
-            if "," in cc
-            else [cc]
-        )
-        message["ccRecipients"] = [
-            {"emailAddress": {"address": addr}} for addr in cc_list
-        ]
+        cc_list = [addr.strip() for addr in cc.split(",") if addr.strip()] if "," in cc else [cc]
+        message["ccRecipients"] = [{"emailAddress": {"address": addr}} for addr in cc_list]
 
     small_attachments = []
     large_attachments = []
 
     if attachments:
         # Handle both single and comma-separated paths
-        attachment_paths = (
-            [path.strip() for path in attachments.split(",") if path.strip()]
-            if "," in attachments
-            else [attachments]
-        )
+        attachment_paths = [path.strip() for path in attachments.split(",") if path.strip()] if "," in attachments else [attachments]
         for file_path in attachment_paths:
             path = pl.Path(file_path).expanduser().resolve()
             content_bytes = path.read_bytes()
@@ -227,9 +212,7 @@ def send_email(
             - Multiple paths: "/path/to/file1.pdf,/path/to/file2.docx"
     """
     # Handle both single and comma-separated email addresses
-    to_list = (
-        [addr.strip() for addr in to.split(",") if addr.strip()] if "," in to else [to]
-    )
+    to_list = [addr.strip() for addr in to.split(",") if addr.strip()] if "," in to else [to]
 
     message = {
         "subject": subject,
@@ -238,14 +221,8 @@ def send_email(
     }
 
     if cc:
-        cc_list = (
-            [addr.strip() for addr in cc.split(",") if addr.strip()]
-            if "," in cc
-            else [cc]
-        )
-        message["ccRecipients"] = [
-            {"emailAddress": {"address": addr}} for addr in cc_list
-        ]
+        cc_list = [addr.strip() for addr in cc.split(",") if addr.strip()] if "," in cc else [cc]
+        message["ccRecipients"] = [{"emailAddress": {"address": addr}} for addr in cc_list]
 
     # Check if we have large attachments
     has_large_attachments = False
@@ -253,11 +230,7 @@ def send_email(
 
     if attachments:
         # Handle both single and comma-separated paths
-        attachment_paths = (
-            [path.strip() for path in attachments.split(",") if path.strip()]
-            if "," in attachments
-            else [attachments]
-        )
+        attachment_paths = [path.strip() for path in attachments.split(",") if path.strip()] if "," in attachments else [attachments]
         for file_path in attachment_paths:
             path = pl.Path(file_path).expanduser().resolve()
             content_bytes = path.read_bytes()
@@ -290,11 +263,7 @@ def send_email(
     elif has_large_attachments:
         # Create draft first, then add large attachments, then send
         # We need to handle large attachments manually here
-        to_list = (
-            [addr.strip() for addr in to.split(",") if addr.strip()]
-            if "," in to
-            else [to]
-        )
+        to_list = [addr.strip() for addr in to.split(",") if addr.strip()] if "," in to else [to]
         message = {
             "subject": subject,
             "body": {"contentType": "Text", "content": body},
@@ -302,9 +271,7 @@ def send_email(
         }
         if cc:
             cc_list = [cc] if isinstance(cc, str) else cc
-            message["ccRecipients"] = [
-                {"emailAddress": {"address": addr}} for addr in cc_list
-            ]
+            message["ccRecipients"] = [{"emailAddress": {"address": addr}} for addr in cc_list]
 
         result = graph.request("POST", "/me/messages", account_id, json=message)
         if not result:
@@ -325,9 +292,7 @@ def send_email(
                 small_att = {
                     "@odata.type": "#microsoft.graph.fileAttachment",
                     "name": att["name"],
-                    "contentBytes": base64.b64encode(att["content_bytes"]).decode(
-                        "utf-8"
-                    ),
+                    "contentBytes": base64.b64encode(att["content_bytes"]).decode("utf-8"),
                 }
                 graph.request(
                     "POST",
@@ -344,13 +309,9 @@ def send_email(
 
 
 @mcp.tool()
-def update_email(
-    email_id: str, updates: dict[str, Any], account_id: str
-) -> dict[str, Any]:
+def update_email(email_id: str, updates: dict[str, Any], account_id: str) -> dict[str, Any]:
     """Update email properties (isRead, categories, flag, etc.)"""
-    result = graph.request(
-        "PATCH", f"/me/messages/{email_id}", account_id, json=updates
-    )
+    result = graph.request("PATCH", f"/me/messages/{email_id}", account_id, json=updates)
     if not result:
         raise ValueError(f"Failed to update email {email_id} - no response")
     return result
@@ -364,9 +325,7 @@ def delete_email(email_id: str, account_id: str) -> dict[str, str]:
 
 
 @mcp.tool()
-def move_email(
-    email_id: str, destination_folder: str, account_id: str
-) -> dict[str, Any]:
+def move_email(email_id: str, destination_folder: str, account_id: str) -> dict[str, Any]:
     """Move email to another folder"""
     folder_path = FOLDERS.get(destination_folder.casefold(), destination_folder)
 
@@ -387,9 +346,7 @@ def move_email(
         raise ValueError(f"Folder '{destination_folder}' not found")
 
     payload = {"destinationId": folder_id}
-    result = graph.request(
-        "POST", f"/me/messages/{email_id}/move", account_id, json=payload
-    )
+    result = graph.request("POST", f"/me/messages/{email_id}/move", account_id, json=payload)
     if not result:
         raise ValueError("Failed to move email - no response from server")
     if "id" not in result:
@@ -398,9 +355,7 @@ def move_email(
 
 
 @mcp.tool()
-def reply_to_email(
-    account_id: str, email_id: str, body: str, attachments: str | None = None
-) -> dict[str, str]:
+def reply_to_email(account_id: str, email_id: str, body: str, attachments: str | None = None) -> dict[str, str]:
     """Reply to an email (sender only) with optional attachments
 
     Args:
@@ -424,9 +379,7 @@ def reply_to_email(
             raise ValueError(f"Email with ID {email_id} not found")
 
         # Create reply draft
-        draft = graph.request(
-            "POST", f"/me/messages/{email_id}/createReply", account_id
-        )
+        draft = graph.request("POST", f"/me/messages/{email_id}/createReply", account_id)
         if not draft or "id" not in draft:
             raise ValueError("Failed to create reply draft")
 
@@ -441,11 +394,7 @@ def reply_to_email(
         )
 
         # Add attachments
-        attachment_paths = (
-            [path.strip() for path in attachments.split(",") if path.strip()]
-            if "," in attachments
-            else [attachments]
-        )
+        attachment_paths = [path.strip() for path in attachments.split(",") if path.strip()] if "," in attachments else [attachments]
         for file_path in attachment_paths:
             path = pl.Path(file_path).expanduser().resolve()
             content_bytes = path.read_bytes()
@@ -487,9 +436,7 @@ def reply_to_email(
 
 
 @mcp.tool()
-def reply_all_email(
-    account_id: str, email_id: str, body: str, attachments: str | None = None
-) -> dict[str, str]:
+def reply_all_email(account_id: str, email_id: str, body: str, attachments: str | None = None) -> dict[str, str]:
     """Reply to all recipients of an email with optional attachments
 
     Args:
@@ -513,9 +460,7 @@ def reply_all_email(
             raise ValueError(f"Email with ID {email_id} not found")
 
         # Create reply all draft
-        draft = graph.request(
-            "POST", f"/me/messages/{email_id}/createReplyAll", account_id
-        )
+        draft = graph.request("POST", f"/me/messages/{email_id}/createReplyAll", account_id)
         if not draft or "id" not in draft:
             raise ValueError("Failed to create reply all draft")
 
@@ -530,11 +475,7 @@ def reply_all_email(
         )
 
         # Add attachments
-        attachment_paths = (
-            [path.strip() for path in attachments.split(",") if path.strip()]
-            if "," in attachments
-            else [attachments]
-        )
+        attachment_paths = [path.strip() for path in attachments.split(",") if path.strip()] if "," in attachments else [attachments]
         for file_path in attachment_paths:
             path = pl.Path(file_path).expanduser().resolve()
             content_bytes = path.read_bytes()
@@ -576,13 +517,9 @@ def reply_all_email(
 
 
 @mcp.tool()
-def get_attachment(
-    email_id: str, attachment_id: str, save_path: str, account_id: str
-) -> dict[str, Any]:
+def get_attachment(email_id: str, attachment_id: str, save_path: str, account_id: str) -> dict[str, Any]:
     """Download email attachment to a specified file path"""
-    result = graph.request(
-        "GET", f"/me/messages/{email_id}/attachments/{attachment_id}", account_id
-    )
+    result = graph.request("GET", f"/me/messages/{email_id}/attachments/{attachment_id}", account_id)
 
     if not result:
         raise ValueError("Attachment not found")
@@ -624,8 +561,6 @@ def search_emails(
             "$select": "id,subject,from,toRecipients,receivedDateTime,hasAttachments,body,conversationId,isRead",
         }
 
-        return list(
-            graph.request_paginated(endpoint, account_id, params=params, limit=limit)
-        )
+        return list(graph.request_paginated(endpoint, account_id, params=params, limit=limit))
 
     return list(graph.search_query(query, ["message"], account_id, limit))

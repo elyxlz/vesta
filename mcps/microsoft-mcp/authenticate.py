@@ -20,9 +20,7 @@ load_dotenv(find_dotenv())
 
 def main():
     parser = argparse.ArgumentParser(description="Authenticate Microsoft accounts")
-    parser.add_argument(
-        "--data-dir", type=str, required=True, help="Directory for storing token cache"
-    )
+    parser.add_argument("--data-dir", type=str, required=True, help="Directory for storing token cache")
     args = parser.parse_args()
 
     data_dir = Path(args.data_dir).resolve()
@@ -62,9 +60,7 @@ def main():
                     print(f"Signed in as: {new_account.username}")
                     print(f"Account ID: {new_account.account_id}")
                 else:
-                    print(
-                        "\n✗ Authentication failed: Could not retrieve account information"
-                    )
+                    print("\n✗ Authentication failed: Could not retrieve account information")
             except Exception as e:
                 print(f"\n✗ Authentication failed: {e}")
                 continue
@@ -82,9 +78,7 @@ def main():
             print(f"• {account.username}")
             print(f"  Account ID: {account.account_id}")
 
-        print(
-            "\nYou can use these account IDs with any MCP tool by passing account_id parameter."
-        )
+        print("\nYou can use these account IDs with any MCP tool by passing account_id parameter.")
         print("Example: send_email(..., account_id='<account-id>')")
     else:
         print("\nNo accounts authenticated.")

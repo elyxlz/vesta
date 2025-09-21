@@ -92,9 +92,7 @@ async def test_cancel_reminder():
         reminder_id = response["reminder_id"]
 
         # Cancel it
-        cancel_result = await session.call_tool(
-            "cancel_reminder", {"reminder_id": reminder_id}
-        )
+        cancel_result = await session.call_tool("cancel_reminder", {"reminder_id": reminder_id})
 
         assert not cancel_result.isError
         cancel_response = json.loads(cancel_result.content[0].text)
@@ -162,18 +160,14 @@ async def test_daily_recurring_reminder():
         assert response["schedule_type"] == "daily"
 
         # Clean up
-        await session.call_tool(
-            "cancel_reminder", {"reminder_id": response["reminder_id"]}
-        )
+        await session.call_tool("cancel_reminder", {"reminder_id": response["reminder_id"]})
 
 
 @pytest.mark.asyncio
 async def test_interval_reminder():
     """Test setting an interval-based reminder"""
     async for session in get_session():
-        set_result = await session.call_tool(
-            "set_reminder", {"message": "Check emails", "interval_minutes": 30}
-        )
+        set_result = await session.call_tool("set_reminder", {"message": "Check emails", "interval_minutes": 30})
 
         assert not set_result.isError
         response = json.loads(set_result.content[0].text)
@@ -182,18 +176,14 @@ async def test_interval_reminder():
         assert "30 minutes" in response["schedule_type"]
 
         # Clean up
-        await session.call_tool(
-            "cancel_reminder", {"reminder_id": response["reminder_id"]}
-        )
+        await session.call_tool("cancel_reminder", {"reminder_id": response["reminder_id"]})
 
 
 @pytest.mark.asyncio
 async def test_one_time_reminder():
     """Test setting a one-time reminder with relative time"""
     async for session in get_session():
-        set_result = await session.call_tool(
-            "set_reminder", {"message": "Take a break", "minutes": 15}
-        )
+        set_result = await session.call_tool("set_reminder", {"message": "Take a break", "minutes": 15})
 
         assert not set_result.isError
         response = json.loads(set_result.content[0].text)
@@ -203,9 +193,7 @@ async def test_one_time_reminder():
         assert "15 minute" in response["schedule_type"]
 
         # Clean up
-        await session.call_tool(
-            "cancel_reminder", {"reminder_id": response["reminder_id"]}
-        )
+        await session.call_tool("cancel_reminder", {"reminder_id": response["reminder_id"]})
 
 
 @pytest.mark.asyncio
@@ -221,9 +209,7 @@ async def test_invalid_weekly_reminder():
         assert not result.isError
 
         response = json.loads(result.content[0].text)
-        await session.call_tool(
-            "cancel_reminder", {"reminder_id": response["reminder_id"]}
-        )
+        await session.call_tool("cancel_reminder", {"reminder_id": response["reminder_id"]})
 
         # Invalid day name
         result = await session.call_tool(

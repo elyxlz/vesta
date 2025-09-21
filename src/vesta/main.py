@@ -1,537 +1,311 @@
 import asyncio
-import json
+import functools
 import os
 import signal
-import subprocess
-import threading
-from dataclasses import dataclass, field
-from pathlib import Path
-from datetime import datetime, timedelta
-from typing import Dict, List, Any, Optional, Tuple
+import pathlib as pl
+import typing as tp
 
 import aioconsole
-from claude_code_sdk import ClaudeSDKClient, ClaudeCodeOptions
-from claude_code_sdk.types import (
-    AssistantMessage,
-    TextBlock,
-    ToolUseBlock,
-)
+import claude_code_sdk as ccsdk
+import claude_code_sdk.types as ccsdk_types
 
-from .memory_agent import preserve_conversation_memory
-
-
-@dataclass(frozen=True)
-class ConfigClass:
-    EPHEMERAL_MODE: bool = os.environ.get("EPHEMERAL", "").lower() == "true"
-    MAX_MCP_OUTPUT_TOKENS: str = os.environ.get("MAX_MCP_OUTPUT_TOKENS", "200000")
-    NOTIFICATION_CHECK_INTERVAL: int = 2
-    NOTIFICATION_BUFFER_DELAY: int = 3
-    PROACTIVE_CHECK_INTERVAL: int = 30
-    WHATSAPP_BRIDGE_CHECK_INTERVAL: int = 30
-    RESPONSE_TIMEOUT: int = 60
-    MEMORY_AGENT_TIMEOUT: int = 1200  # 20 minutes for memory agent
-    TYPING_ANIMATION_DELAY: float = 0.5
-    SHUTDOWN_TIMEOUT: int = 310
-    TASK_GATHER_TIMEOUT: int = 2
-    MAX_CONTEXT_TOKENS: int = 180000
+import vesta.memory_agent as vma
+import vesta.models as vm
+import vesta.utils as vu
+import vesta.effects as vfx
 
 
-Config = ConfigClass()
-
-os.environ["MAX_MCP_OUTPUT_TOKENS"] = Config.MAX_MCP_OUTPUT_TOKENS
-
-C = {
-    "dim": "\033[2m",
-    "cyan": "\033[96m",
-    "magenta": "\033[95m",
-    "yellow": "\033[93m",
-    "green": "\033[92m",
-    "reset": "\033[0m",
-}
-
-SERVICE_ICONS = {
-    "playwright": "🌐",
-    "whatsapp": "📱",
-    "scheduler": "⏰",
-    "microsoft": "📧",
-}
+def get_root_path() -> pl.Path:
+    return pl.Path(__file__).parent.parent.parent.absolute()
 
 
-def get_mcp_servers():
-    root = Path(__file__).parent.parent.parent.absolute()
-    return {
-        "microsoft": {
-            "command": "uv",
-            "args": [
-                "run",
-                "--directory",
-                "mcps/microsoft-mcp",
-                "microsoft-mcp",
-                "--data-dir",
-                str(root / "data/microsoft-mcp"),
-                "--notifications-dir",
-                str(root / "notifications"),
-            ],
-        },
-        "whatsapp": {
-            "command": "uv",
-            "args": [
-                "run",
-                "--directory",
-                "mcps/whatsapp-mcp/whatsapp-mcp-server",
-                "main.py",
-                "--data-dir",
-                str(root / "data/whatsapp-mcp"),
-            ],
-        },
-        "scheduler": {
-            "command": "uv",
-            "args": [
-                "run",
-                "--directory",
-                "mcps/scheduler-mcp",
-                "scheduler-mcp",
-                "--data-dir",
-                str(root / "data/scheduler-mcp"),
-                "--notifications-dir",
-                str(root / "notifications"),
-            ],
-        },
-        "playwright": {
-            "command": "npx",
-            "args": [
-                "--prefix",
-                "mcps/playwright-mcp",
-                "mcp-server-playwright",
-                "--browser",
-                "chromium",
-                "--blocked-origins",
-                "googleads.g.doubleclick.net;googlesyndication.com",
-                "--output-dir",
-                str(root / "data/playwright-mcp/screenshots"),
-                "--image-responses",
-                "omit",
-            ],
-        },
-    }
-
-
-MCP_SERVERS = get_mcp_servers()
-
-
-@dataclass
-class State:
-    client: Optional[ClaudeSDKClient] = None
-    conversation_history: List[Dict[str, Any]] = field(default_factory=list)
-    shutdown_event: Optional[asyncio.Event] = None
-    shutdown_lock: threading.Lock = field(default_factory=threading.Lock)
-    shutdown_count: int = 0
-    is_processing: bool = False
-    sub_agent_context: Optional[str] = None
-
-
-state = State()
-
-
-def get_root_path() -> Path:
-    return Path(__file__).parent.parent.parent.absolute()
-
-
-def load_prompts() -> str:
+def load_system_prompt() -> str:
     memory_path = get_root_path() / "MEMORY.md"
     if not memory_path.exists():
         raise FileNotFoundError(f"MEMORY.md not found at {memory_path}")
     return memory_path.read_text()
 
 
-def get_mcp_config() -> Dict[str, Any]:
-    root = get_root_path()
-    logs_dir = root / "logs"
-    logs_dir.mkdir(exist_ok=True)
-
-    config = {}
-    for name, server in MCP_SERVERS.items():
-        env = {
-            "PYTHONUNBUFFERED": "1",
-        }
-
-        if name == "playwright":
-            env["NODE_PATH"] = str(root / "mcps" / "playwright-mcp" / "node_modules")
-
-        config[name] = {
-            "command": server["command"],
-            "args": server["args"],
-            "env": env,
-        }
-
-    return config
-
-
-async def init_client() -> ClaudeSDKClient:
+async def init_client(state: vm.State, config: vm.VestaSettings) -> tuple[ccsdk.ClaudeSDKClient, vm.State]:
     if state.client:
-        return state.client
+        return state.client, state
 
-    state.client = ClaudeSDKClient(
-        options=ClaudeCodeOptions(
-            system_prompt=load_prompts(),
-            mcp_servers=get_mcp_config(),
+    client = ccsdk.ClaudeSDKClient(
+        options=ccsdk.ClaudeCodeOptions(
+            system_prompt=load_system_prompt(),
+            mcp_servers=tp.cast(dict[str, ccsdk_types.McpServerConfig], config.mcp_servers),
             hooks={},
             model="opus",
             permission_mode="bypassPermissions",
-            continue_conversation=True
         )
     )
-    await state.client.__aenter__()
-    return state.client
+    await client.__aenter__()
+    new_state = vu.update_state(state, client=client)
+    return client, new_state
 
 
-def format_tool_call(name: str, input_data: Any) -> str:
-    input_str = (
-        json.dumps(input_data) if isinstance(input_data, dict) else str(input_data)
-    )
-    input_preview = (input_str[:150] + "...") if len(input_str) > 150 else input_str
-
-    if name == "Task":
-        agent_type = (
-            input_data.get("subagent_type", "unknown")
-            if isinstance(input_data, dict)
-            else "unknown"
-        )
-        description = (
-            input_data.get("description", "") if isinstance(input_data, dict) else ""
-        )
-        state.sub_agent_context = agent_type
-        return f"🤖 Task [{agent_type}]: {description or input_preview}"
-
-    prefix = f"[{state.sub_agent_context}] " if state.sub_agent_context else ""
-
-    if name.startswith("mcp__"):
-        parts = name.replace("mcp__", "").split("__")
-        service = parts[0] if parts else "unknown"
-        action = ".".join(parts[1:]) if len(parts) > 1 else "action"
-        icon = SERVICE_ICONS.get(service, "🔧")
-        return f"🔧 {prefix}{icon} [{service}] {action}: {input_preview}"
-
-    return f"🔧 {prefix}{name}: {input_preview}"
+def format_tool_call(name: str, input_data: tp.Any, state: vm.State) -> tuple[str, vm.State]:
+    formatted, new_context = vu.format_tool_call(name, input_data, state.sub_agent_context, vm.SERVICE_ICONS)
+    new_state = vu.update_state(state, sub_agent_context=new_context) if new_context != state.sub_agent_context else state
+    return formatted, new_state
 
 
-def parse_assistant_message(msg: Any) -> Optional[str]:
-    if not isinstance(msg, AssistantMessage):
-        return msg if isinstance(msg, str) else None
-
-    texts = []
-    has_task_result = False
-
-    for block in msg.content:
-        if isinstance(block, TextBlock):
-            text = block.text
-            if state.sub_agent_context and "completed" in text.lower():
-                has_task_result = True
-            texts.append(text)
-        elif isinstance(block, ToolUseBlock):
-            texts.append(format_tool_call(block.name, block.input))
-
-    if has_task_result and state.sub_agent_context:
-        state.sub_agent_context = None
-
-    return "\n".join(texts) if texts else None
+def parse_assistant_message(msg: tp.Any, state: vm.State) -> tuple[str | None, vm.State]:
+    texts, new_context = vu.parse_assistant_message(msg, state.sub_agent_context, vm.SERVICE_ICONS)
+    new_state = vu.update_state(state, sub_agent_context=new_context)
+    return "\n".join(texts) if texts else None, new_state
 
 
-def format_notification(notif: Dict[str, Any]) -> str:
-    meta = notif.get("metadata", {})
-    meta_str = (
-        f" (metadata: {', '.join(f'{k}={v}' for k, v in meta.items() if v)})"
-        if meta
-        else ""
-    )
-    return f"[{notif['type']} from {notif['source']}]{meta_str}: {notif['message']}"
+def format_notification(notif: vm.Notification) -> str:
+    return notif.format_for_display()
 
 
-def get_notification_display_info(notif: Dict[str, Any]) -> Tuple[str, str, str]:
-    meta = notif.get("metadata", {})
-    sender = meta.get("chat_name", meta.get("sender", notif["source"]))
-    icon = SERVICE_ICONS.get(notif["source"], "🔔")
-    msg = notif["message"]
-    display_msg = msg[:200] + "..." if len(msg) > 200 else msg
-    return icon, sender, display_msg
-
-
-async def load_notifications() -> List[Dict[str, Any]]:
+async def load_notifications() -> list[vm.Notification]:
     notif_dir = get_root_path() / "notifications"
-    if not notif_dir.exists():
-        return []
+    file_contents = vfx.load_notification_files(notif_dir)
 
     notifications = []
-    for file in notif_dir.glob("*.json"):
-        try:
-            data = json.loads(file.read_text())
-            data["_file_path"] = str(file)
-            notifications.append(data)
-        except Exception as e:
-            print(
-                f"{C['yellow']}⚠️ Failed to read notification {file.name}: {e}{C['reset']}"
-            )
+    for file, content in file_contents:
+        if content:
+            try:
+                data = vu.parse_notification_file_content(content)
+                notif = vm.Notification(**data)
+                notif.file_path = str(file)
+                notifications.append(notif)
+            except Exception as e:
+                vfx.log_error(f"Failed to read notification {file.name}: {e}", vm.Colors)
 
     return notifications
 
 
-async def delete_notification_files(notifications: List[Dict[str, Any]]) -> None:
-    deleted_paths = set()
-    for notif in notifications:
-        file_path = notif.get("_file_path")
-        if file_path and file_path not in deleted_paths:
-            try:
-                Path(file_path).unlink()
-                deleted_paths.add(file_path)
-            except FileNotFoundError:
-                pass
-            except Exception as e:
-                print(f"{C['yellow']}⚠️ Failed to delete notification: {e}{C['reset']}")
+async def delete_notification_files(notifications: list[vm.Notification]) -> None:
+    paths = vu.extract_paths_to_delete(notifications)
+    results = vfx.delete_files(paths)
+
+    for path, success in results.items():
+        if not success:
+            vfx.log_error(f"Failed to delete notification: {path}", vm.Colors)
 
 
-async def preserve_memory() -> None:
-    if Config.EPHEMERAL_MODE or not state.conversation_history:
+async def preserve_memory(state: vm.State, config: vm.VestaSettings) -> None:
+    if config.ephemeral or not state.conversation_history:
         return
 
     try:
-        diff = await preserve_conversation_memory(state.conversation_history)
+        diff = await vma.preserve_conversation_memory(state.conversation_history)
         if diff:
-            print(f"\n{C['cyan']}📝 Memory updated:{C['reset']}")
-            print(diff)
+            vfx.print_line(f"\n{vm.Colors['cyan']}📝 Memory updated:{vm.Colors['reset']}")
+            vfx.print_line(diff)
     except Exception as e:
-        print(f"{C['yellow']}⚠️ Memory preservation failed: {e}{C['reset']}")
+        vfx.log_error(f"Memory preservation failed: {e}", vm.Colors)
 
 
-async def check_context_and_preserve() -> None:
-    if Config.EPHEMERAL_MODE:
+async def check_context_and_preserve(state: vm.State, config: vm.VestaSettings) -> vm.State:
+    if vu.should_preserve_memory(state.conversation_history, config.max_context_tokens, config.ephemeral):
+        vfx.print_line(f"{vm.Colors['yellow']}📊 Context limit reached, preserving memory...{vm.Colors['reset']}")
+        await preserve_memory(state, config)
+        new_state = vu.update_state(state, conversation_history=[])
+        vfx.log_success("Context cleared, continuing...", vm.Colors)
+        return new_state
+    return state
+
+
+def output_line(text: str, state: vm.State, is_tool: bool = False) -> None:
+    if not text or not text.strip():
         return
 
-    total_tokens = sum(len(str(msg)) // 4 for msg in state.conversation_history)
-    if total_tokens >= Config.MAX_CONTEXT_TOKENS:
-        print(
-            f"{C['yellow']}📊 Context limit reached, preserving memory...{C['reset']}"
-        )
-        await preserve_memory()
-        state.conversation_history.clear()
-        print(f"{C['green']}✅ Context cleared, continuing...{C['reset']}")
+    line_type = vu.classify_output_line(text, state.sub_agent_context, is_tool)
 
-
-def output_line(text: str, is_tool: bool = False) -> None:
-    if text and text.strip():
-        if text.startswith("🤖"):
-            print(f"{C['cyan']}>>{text}{C['reset']}", flush=True)
-        elif state.sub_agent_context and (is_tool or text.startswith("🔧")):
-            print(f"{C['cyan']}  >{text}{C['reset']}", flush=True)
-        elif is_tool or text.startswith("🔧"):
-            print(f"{C['yellow']}>{text}{C['reset']}", flush=True)
-        else:
-            sender = (
-                f"Vesta[{state.sub_agent_context}]"
-                if state.sub_agent_context
-                else "Vesta"
-            )
-            print_timestamp_message(text, sender)
+    if line_type == "message":
+        sender = f"Vesta[{state.sub_agent_context}]" if state.sub_agent_context else "Vesta"
+        print_timestamp_message(text, sender)
+    else:
+        formatted = vu.format_output_line(text, line_type, state.sub_agent_context, vm.Colors)
+        vfx.print_line(formatted, flush=True)
 
 
 def print_timestamp_message(text: str, sender: str = "") -> None:
-    timestamp = datetime.now().strftime("%I:%M %p")
-    colors = {"You": "cyan", "Vesta": "magenta", "System": "yellow"}
-    base_sender = sender.split("[")[0] if "[" in sender else sender
-
-    if base_sender in colors:
-        display_sender = sender.lower()
-        prefix = f"{C['dim']}[{timestamp}]{C['reset']} {C[colors[base_sender]]}{display_sender}:{C['reset']}"
-        for line in text.split("\n"):
-            if line.strip():
-                print(f"{prefix} {line}")
-    else:
-        print(f"{C['dim']}[{timestamp}]{C['reset']} {C['yellow']}{text}{C['reset']}")
+    timestamp = vfx.get_current_time()
+    formatted_lines = vu.format_timestamp_message(text, sender, timestamp, vm.Colors)
+    vfx.render_messages(formatted_lines)
 
 
 def start_whatsapp_bridge() -> bool:
     script_path = get_root_path() / "start_whatsapp_bridge.sh"
-    if not script_path.exists():
+    if not vfx.file_exists(script_path):
         return False
 
-    try:
-        result = subprocess.run(
-            [str(script_path), "--force"], capture_output=True, text=True
-        )
-        if result.returncode == 0:
-            print(f"{C['green']}✓ WhatsApp bridge connected{C['reset']}")
-            return True
-    except Exception:
-        pass
+    returncode, _, _ = vfx.run_subprocess([str(script_path), "--force"])
+    if returncode == 0:
+        vfx.log_success("WhatsApp bridge connected", vm.Colors)
+        return True
     return False
 
 
 def is_whatsapp_bridge_running() -> bool:
-    try:
-        result = subprocess.run(
-            ["pgrep", "-f", "whatsapp-bridge"], capture_output=True, text=True
-        )
-        return bool(result.stdout.strip())
-    except Exception:
-        return False
+    return vfx.check_process_running("whatsapp-bridge")
 
 
-async def send_query(client: ClaudeSDKClient, prompt: str) -> None:
-    timestamp = datetime.now().strftime("%A, %B %d, %Y at %I:%M:%S %p %Z")
-    state.conversation_history.append({"role": "user", "content": prompt})
-    await client.query(f"[Current time: {timestamp}]\n{prompt}")
-    await check_context_and_preserve()
+async def send_query(client: ccsdk.ClaudeSDKClient, prompt: str, state: vm.State, config: vm.VestaSettings) -> vm.State:
+    timestamp = vfx.get_current_time()
+    query_with_context = vu.build_query_with_timestamp(prompt, timestamp)
+    new_history = vu.add_to_conversation_history(state.conversation_history, "user", prompt)
+    new_state = vu.update_state(state, conversation_history=new_history)
+    await client.query(query_with_context)
+    return await check_context_and_preserve(new_state, config)
 
 
 async def collect_responses(
-    client: ClaudeSDKClient, show_output: bool = True
-) -> List[str]:
+    client: ccsdk.ClaudeSDKClient, state: vm.State, config: vm.VestaSettings, show_output: bool = True
+) -> tuple[list[str], vm.State]:
     responses, seen = [], set()
+    current_state = state
 
     async def collect():
+        nonlocal current_state
         async for msg in client.receive_response():
-            text = parse_assistant_message(msg)
+            text, new_state = parse_assistant_message(msg, current_state)
+            current_state = new_state
             if text and text not in seen:
                 seen.add(text)
                 if show_output:
                     for line in text.split("\n"):
                         if line.strip():
                             if line.startswith("🔧"):
-                                output_line(line, is_tool=True)
+                                output_line(line, current_state, is_tool=True)
                             else:
                                 responses.append(line)
 
     try:
-        await asyncio.wait_for(collect(), timeout=Config.RESPONSE_TIMEOUT)
+        await asyncio.wait_for(collect(), timeout=config.response_timeout)
     except asyncio.TimeoutError:
         responses.append("[Response timeout]")
+        current_state = vu.update_state(current_state, sub_agent_context=None)
     except Exception as e:
         responses.append(f"[Error: {str(e)[:100]}]")
+        current_state = vu.update_state(current_state, sub_agent_context=None)
 
-    return responses
+    return responses, current_state
 
 
-async def send_and_receive_message(prompt: str, show_in_chat: bool = True) -> List[str]:
-    client = await init_client()
+async def send_and_receive_message(
+    prompt: str, state: vm.State, config: vm.VestaSettings, show_in_chat: bool = True
+) -> tuple[list[str], vm.State]:
+    client, new_state = await init_client(state, config)
 
     try:
-        await send_query(client, prompt)
+        new_state = await send_query(client, prompt, new_state, config)
     except Exception as e:
         error_msg = f"failed to send message: {str(e)[:100]}"
-        print(f"{C['yellow']}⚠️ {error_msg}{C['reset']}")
-        state.conversation_history.append({"role": "assistant", "content": error_msg})
-        return [error_msg]
+        vfx.log_error(error_msg, vm.Colors)
+        updated_history = vu.add_to_conversation_history(new_state.conversation_history, "assistant", error_msg)
+        return [error_msg], vu.update_state(new_state, conversation_history=updated_history)
 
-    responses = await collect_responses(client, show_in_chat)
+    responses, final_state = await collect_responses(client, new_state, config, show_in_chat)
 
     if responses:
-        state.conversation_history.append(
-            {"role": "assistant", "content": " ".join(responses)}
-        )
+        updated_history = vu.add_to_conversation_history(final_state.conversation_history, "assistant", " ".join(responses))
+        final_state = vu.update_state(final_state, conversation_history=updated_history)
 
-    return responses
+    return responses, final_state
 
 
-async def show_typing_indicator() -> None:
-    timestamp = datetime.now().strftime("%I:%M %p")
+async def show_typing_indicator(config: vm.VestaSettings) -> None:
+    timestamp_str = vfx.get_timestamp_string("%I:%M %p")
     dots = ["   ", ".  ", ".. ", "..."]
     dot_idx = 0
 
     while True:
-        print(
-            f"\r{C['dim']}[{timestamp}]{C['reset']} {C['magenta']}vesta{C['reset']} "
-            f"{C['dim']}is typing{dots[dot_idx]}{C['reset']}",
-            end="",
-            flush=True,
+        vfx.print_inline(
+            f"\r{vm.Colors['dim']}[{timestamp_str}]{vm.Colors['reset']} {vm.Colors['magenta']}vesta{vm.Colors['reset']} {vm.Colors['dim']}is typing{dots[dot_idx]}{vm.Colors['reset']}"
         )
         dot_idx = (dot_idx + 1) % 4
-        await asyncio.sleep(Config.TYPING_ANIMATION_DELAY)
+        await vfx.sleep(config.typing_animation_delay)
 
 
-async def process_message_with_typing(msg: str, is_user: bool) -> List[str]:
-    await asyncio.sleep(0.8 + datetime.now().microsecond / 3000000)
+async def process_message_with_typing(msg: str, state: vm.State, config: vm.VestaSettings, is_user: bool) -> tuple[list[str], vm.State]:
+    now = vfx.get_current_time()
+    await vfx.sleep(0.8 + now.microsecond / 3000000)
 
-    typing_task = asyncio.create_task(show_typing_indicator())
+    typing_task = asyncio.create_task(show_typing_indicator(config))
     try:
-        responses = await send_and_receive_message(msg, show_in_chat=is_user)
+        responses, new_state = await send_and_receive_message(msg, state, config, show_in_chat=is_user)
     except Exception as e:
         responses = [f"something went wrong: {str(e)[:50]}"]
-        print(f"{C['yellow']}⚠️ Message processing error: {str(e)[:100]}{C['reset']}")
+        vfx.log_error(f"Message processing error: {str(e)[:100]}", vm.Colors)
+        new_state = state
     finally:
         typing_task.cancel()
         try:
             await typing_task
         except asyncio.CancelledError:
             pass
-        print("\r\033[K", end="", flush=True)
+        vfx.clear_line()
 
-    return responses
+    return responses, new_state
 
 
-async def handle_notifications_interrupt(
-    notifications: List[Dict[str, Any]], client: ClaudeSDKClient
-) -> None:
+async def handle_notifications_interrupt(notifications: list[vm.Notification], client: ccsdk.ClaudeSDKClient, state: vm.State) -> vm.State:
     try:
         await client.interrupt()
 
-        timestamp = datetime.now().strftime("%A, %B %d, %Y at %I:%M:%S %p %Z")
-        if len(notifications) == 1:
-            prompt = format_notification(notifications[0])
-        else:
-            prompts = [format_notification(n) for n in notifications]
-            prompt = "[NOTIFICATIONS]\n" + "\n".join(prompts)
+        timestamp = vfx.get_current_time()
+        prompt = vu.format_notification_batch(notifications)
+        query_with_context = vu.build_query_with_timestamp(prompt, timestamp)
 
-        await client.query(f"[Current time: {timestamp}]\n{prompt}")
+        await client.query(query_with_context)
 
+        current_state = state
         async for msg in client.receive_response():
-            text = parse_assistant_message(msg)
+            text, new_state = parse_assistant_message(msg, current_state)
+            current_state = new_state
             if text:
                 for line in text.split("\n"):
-                    output_line(line, is_tool=line.startswith("🔧"))
+                    output_line(line, current_state, is_tool=line.startswith("🔧"))
+        return current_state
     except Exception as e:
-        print(f"{C['yellow']}⚠️ Interrupt error: {str(e)}{C['reset']}")
+        vfx.log_error(f"Interrupt error: {str(e)}", vm.Colors)
+        return state
 
 
-async def process_notification_batch(
-    notifications: List[Dict[str, Any]], queue: asyncio.Queue
-) -> None:
+async def process_notification_batch(notifications: list[vm.Notification], queue: asyncio.Queue, state: vm.State) -> vm.State:
     if not notifications:
-        return
+        return state
 
-    if state.client and state.is_processing:
-        await handle_notifications_interrupt(notifications, state.client)
+    decision = vu.decide_notification_action(notifications, state.is_processing, state.client is not None)
+
+    if decision == "interrupt" and state.client:
+        new_state = await handle_notifications_interrupt(notifications, state.client, state)
+    elif decision == "queue":
+        prompt = vu.format_notification_batch(notifications)
+        await queue.put((prompt, True))
+        new_state = state
     else:
-        if len(notifications) == 1:
-            await queue.put((format_notification(notifications[0]), True))
-        else:
-            prompts = [format_notification(n) for n in notifications]
-            await queue.put(("[NOTIFICATIONS]\n" + "\n".join(prompts), True))
+        new_state = state
 
     await delete_notification_files(notifications)
+    return new_state
 
 
-def signal_handler(signum: int, frame: Any) -> None:
+def signal_handler(state: vm.State, config: vm.VestaSettings, signum: int, frame: tp.Any) -> None:
     with state.shutdown_lock:
         state.shutdown_count += 1
         if state.shutdown_count == 1:
-            print(
-                f"\n{C['dim']}💤 vesta is tired and taking a nap to help remember stuff...{C['reset']}"
-            )
+            vfx.print_line(f"\n{vm.Colors['dim']}💤 vesta is tired and taking a nap to help remember stuff...{vm.Colors['reset']}")
             if state.shutdown_event:
                 state.shutdown_event.set()
         elif state.shutdown_count > 2:
-            print(f"\n{C['yellow']}⚡ Force shutdown!{C['reset']}")
-            os._exit(0)
+            vfx.print_line(f"\n{vm.Colors['yellow']}⚡ Force shutdown!{vm.Colors['reset']}")
+            vfx.exit_process(0)
 
 
-async def graceful_shutdown() -> None:
+async def graceful_shutdown(state: vm.State, config: vm.VestaSettings) -> None:
     try:
-        await asyncio.wait_for(preserve_memory(), timeout=Config.MEMORY_AGENT_TIMEOUT)
+        await asyncio.wait_for(preserve_memory(state, config), timeout=config.memory_agent_timeout)
     except asyncio.TimeoutError:
-        print(f"{C['yellow']}⚠️ Memory preservation timeout{C['reset']}")
+        vfx.log_error("Memory preservation timeout", vm.Colors)
     except Exception as e:
-        print(f"{C['yellow']}⚠️ Memory error: {e}{C['reset']}")
-
-    state.conversation_history.clear()
+        vfx.log_error(f"Memory error: {e}", vm.Colors)
 
     if state.client:
         try:
@@ -539,15 +313,15 @@ async def graceful_shutdown() -> None:
         except Exception:
             pass
 
-    print(f"{C['green']}✅ sweet dreams!{C['reset']}")
+    vfx.log_success("sweet dreams!", vm.Colors)
 
 
-def print_header() -> None:
-    print(f"\n{C['cyan']}╔{'═' * 58}╗")
-    print(f"║{' ' * 23}{C['yellow']}🔥 VESTA{C['cyan']}{' ' * 27}║")
-    print(f"╚{'═' * 58}╝{C['reset']}\n")
-    if MCP_SERVERS:
-        print(f"{C['dim']}Active MCPs: {', '.join(MCP_SERVERS.keys())}{C['reset']}\n")
+def print_header(config: vm.VestaSettings) -> None:
+    vfx.print_line(f"\n{vm.Colors['cyan']}╔{'═' * 58}╗")
+    vfx.print_line(f"║{' ' * 23}{vm.Colors['yellow']}🔥 VESTA{vm.Colors['cyan']}{' ' * 27}║")
+    vfx.print_line(f"╚{'═' * 58}╝{vm.Colors['reset']}\n")
+    if config.mcp_servers:
+        vfx.print_line(f"{vm.Colors['dim']}Active MCPs: {', '.join(config.mcp_servers.keys())}{vm.Colors['reset']}\n")
 
 
 def ensure_memory_file() -> None:
@@ -558,41 +332,43 @@ def ensure_memory_file() -> None:
         import shutil
 
         shutil.copy(memory_template, memory_file)
-        print(f"{C['dim']}📝 Created MEMORY.md from template{C['reset']}")
+        vfx.log_info("Created MEMORY.md from template", vm.Colors)
 
 
-async def message_processor(queue: asyncio.Queue) -> None:
-    while state.shutdown_event and not state.shutdown_event.is_set():
+async def message_processor(queue: asyncio.Queue, state: vm.State, config: vm.VestaSettings) -> None:
+    current_state = state
+    while current_state.shutdown_event and not current_state.shutdown_event.is_set():
         try:
             msg, is_user = await asyncio.wait_for(queue.get(), timeout=1.0)
-            state.is_processing = True
+            current_state = vu.update_state(current_state, is_processing=True)
 
-            responses = await process_message_with_typing(msg, is_user)
+            responses, new_state = await process_message_with_typing(msg, current_state, config, is_user)
+            current_state = new_state
 
             for i, response in enumerate(responses):
                 if response and response.strip():
                     if i > 0:
-                        await asyncio.sleep(0.3)
-                    output_line(response)
+                        await vfx.sleep(0.3)
+                    output_line(response, current_state)
 
-            state.is_processing = False
+            current_state = vu.update_state(current_state, is_processing=False)
         except asyncio.TimeoutError:
             continue
         except Exception as e:
-            print(f"{C['yellow']}⚠️ Queue error: {str(e)[:100]}{C['reset']}")
-            state.is_processing = False
+            vfx.log_error(f"Queue error: {str(e)[:100]}", vm.Colors)
+            current_state = vu.update_state(current_state, is_processing=False)
 
 
-async def input_handler(queue: asyncio.Queue) -> None:
+async def input_handler(queue: asyncio.Queue, state: vm.State) -> None:
     while state.shutdown_event and not state.shutdown_event.is_set():
         try:
-            user_msg = await aioconsole.ainput(f"{C['green']}>{C['reset']} ")
+            user_msg = await aioconsole.ainput(f"{vm.Colors['green']}>{vm.Colors['reset']} ")
             if state.shutdown_event and state.shutdown_event.is_set():
                 break
             if not user_msg.strip():
                 continue
 
-            print("\033[1A\033[K", end="")
+            vfx.move_cursor_up_and_clear()
             print_timestamp_message(user_msg, "You")
             await queue.put((user_msg.strip(), True))
         except (KeyboardInterrupt, EOFError):
@@ -605,88 +381,56 @@ async def input_handler(queue: asyncio.Queue) -> None:
 
 async def check_whatsapp_bridge() -> None:
     if not is_whatsapp_bridge_running():
-        print_timestamp_message(
-            "🔄 WhatsApp bridge disconnected, restarting...", "System"
-        )
+        print_timestamp_message("🔄 WhatsApp bridge disconnected, restarting...", "System")
         start_whatsapp_bridge()
 
 
 async def check_mcp_health() -> None:
-    if not state.client:
-        return
-    try:
-        tools = [t.name for t in await state.client.list_tools()]
-        for mcp in MCP_SERVERS:
-            if not any(t.startswith(f"mcp__{mcp}__") for t in tools):
-                print_timestamp_message(
-                    f"⚠️ {SERVICE_ICONS.get(mcp, '🔧')} MCP '{mcp}' disconnected!",
-                    "System",
-                )
-    except Exception:
-        pass
+    # TODO: Implement when list_tools is available in ClaudeSDKClient
+    pass
 
 
-async def collect_new_notifications(
-    existing_buffer: List[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
-    new_notifs = await load_notifications()
-    if not new_notifs:
-        return []
-
-    existing_paths = {n.get("_file_path") for n in existing_buffer}
-    truly_new = [n for n in new_notifs if n.get("_file_path") not in existing_paths]
-
-    for notif in truly_new:
-        icon, sender, display_msg = get_notification_display_info(notif)
-        print_timestamp_message(f"{icon} {sender}: {display_msg}", "System")
-
-    return truly_new
-
-
-async def check_proactive_task(queue: asyncio.Queue) -> None:
+async def check_proactive_task(queue: asyncio.Queue, config: vm.VestaSettings) -> None:
     print_timestamp_message("⏰ Running 30-minute check...", "System")
-    await queue.put(
-        (
-            "It's been 30 minutes. Is there anything useful you could do right now?",
-            False,
-        )
-    )
+    await queue.put((config.proactive_check_message, False))
 
 
-async def monitor_loop(queue: asyncio.Queue) -> None:
-    last_proactive = datetime.now()
-    last_bridge_check = datetime.now()
-    last_mcp_check = datetime.now()
+async def monitor_loop(queue: asyncio.Queue, state: vm.State, config: vm.VestaSettings) -> None:
+    last_proactive = vfx.get_current_time()
+    last_bridge_check = vfx.get_current_time()
+    last_mcp_check = vfx.get_current_time()
+    current_state = state
     notification_buffer = []
     buffer_start_time = None
 
-    while state.shutdown_event and not state.shutdown_event.is_set():
+    while current_state.shutdown_event and not current_state.shutdown_event.is_set():
         try:
-            await asyncio.sleep(Config.NOTIFICATION_CHECK_INTERVAL)
+            await vfx.sleep(config.notification_check_interval)
         except asyncio.CancelledError:
             break
 
-        if state.shutdown_event and state.shutdown_event.is_set():
+        if current_state.shutdown_event and current_state.shutdown_event.is_set():
             break
 
-        now = datetime.now()
+        now = vfx.get_current_time()
 
-        if now - last_bridge_check >= timedelta(
-            seconds=Config.WHATSAPP_BRIDGE_CHECK_INTERVAL
-        ):
-            await check_whatsapp_bridge()
-            last_bridge_check = now
+        actions = vu.calculate_monitoring_actions(now, last_proactive, last_bridge_check, last_mcp_check, config)
 
-        if now - last_mcp_check >= timedelta(seconds=60):  # Check MCPs every minute
-            await check_mcp_health()
-            last_mcp_check = now
+        for action in actions:
+            if action.action_type == "check_bridge":
+                await check_whatsapp_bridge()
+                last_bridge_check = now
+            elif action.action_type == "check_mcp":
+                await check_mcp_health()
+                last_mcp_check = now
+            elif action.action_type == "check_proactive":
+                await check_proactive_task(queue, config)
+                last_proactive = now
 
         new_notifs = await load_notifications()
         if new_notifs:
-            existing_paths = {n.get("_file_path") for n in notification_buffer}
-            truly_new = [
-                n for n in new_notifs if n.get("_file_path") not in existing_paths
-            ]
+            existing_paths = {n.file_path for n in notification_buffer}
+            truly_new = vu.filter_new_notifications(new_notifs, existing_paths)
 
             if truly_new:
                 notification_buffer.extend(truly_new)
@@ -694,46 +438,41 @@ async def monitor_loop(queue: asyncio.Queue) -> None:
                     buffer_start_time = now
 
                 for notif in truly_new:
-                    icon, sender, display_msg = get_notification_display_info(notif)
-                    print_timestamp_message(f"{icon} {sender}: {display_msg}", "System")
+                    icon, sender, display_msg = notif.get_display_info()
+                    print_timestamp_message(f"{icon} {display_msg}", sender)
 
-        if (
-            notification_buffer
-            and buffer_start_time
-            and (now - buffer_start_time).total_seconds()
-            >= Config.NOTIFICATION_BUFFER_DELAY
-        ):
-            await process_notification_batch(notification_buffer, queue)
+        if vu.should_process_notification_buffer(notification_buffer, buffer_start_time, now, config.notification_buffer_delay):
+            new_state = await process_notification_batch(notification_buffer, queue, current_state)
+            current_state = new_state
             notification_buffer = []
             buffer_start_time = None
 
-        if now - last_proactive >= timedelta(minutes=Config.PROACTIVE_CHECK_INTERVAL):
-            await check_proactive_task(queue)
-            last_proactive = now
 
+async def run_vesta(config: vm.VestaSettings, state: vm.State) -> None:
+    state = vu.update_state(state, shutdown_event=asyncio.Event())
 
-async def run_vesta() -> None:
-    state.shutdown_event = asyncio.Event()
-
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
+    handler = functools.partial(signal_handler, state, config)
+    signal.signal(signal.SIGINT, handler)
+    signal.signal(signal.SIGTERM, handler)
 
     ensure_memory_file()
-    print_header()
+    print_header(config)
     start_whatsapp_bridge()
 
     message_queue = asyncio.Queue()
 
     tasks = [
-        asyncio.create_task(input_handler(message_queue)),
-        asyncio.create_task(message_processor(message_queue)),
-        asyncio.create_task(monitor_loop(message_queue)),
+        asyncio.create_task(input_handler(message_queue, state)),
+        asyncio.create_task(message_processor(message_queue, state, config)),
+        asyncio.create_task(monitor_loop(message_queue, state, config)),
     ]
 
     try:
-        await state.shutdown_event.wait()
+        if state.shutdown_event:
+            await state.shutdown_event.wait()
     except (KeyboardInterrupt, asyncio.CancelledError):
-        state.shutdown_event.set()
+        if state.shutdown_event:
+            state.shutdown_event.set()
 
     for task in tasks:
         task.cancel()
@@ -741,24 +480,29 @@ async def run_vesta() -> None:
     try:
         await asyncio.wait_for(
             asyncio.gather(*tasks, return_exceptions=True),
-            timeout=Config.TASK_GATHER_TIMEOUT,
+            timeout=config.task_gather_timeout,
         )
     except asyncio.TimeoutError:
         pass
 
     try:
-        await asyncio.wait_for(graceful_shutdown(), timeout=Config.SHUTDOWN_TIMEOUT)
+        await asyncio.wait_for(graceful_shutdown(state, config), timeout=config.shutdown_timeout)
     except asyncio.TimeoutError:
-        print(f"{C['yellow']}⚠️ Shutdown timeout{C['reset']}")
+        vfx.log_error("Shutdown timeout", vm.Colors)
 
 
 def main() -> None:
+    # Initialize configuration and state
+    config = vm.VestaSettings()
+    os.environ["MAX_MCP_OUTPUT_TOKENS"] = str(config.max_mcp_output_tokens)
+    initial_state = vm.State()
+
     try:
-        asyncio.run(run_vesta())
+        asyncio.run(run_vesta(config, initial_state))
     except KeyboardInterrupt:
         pass
     except Exception as e:
-        print(f"\n💥 Fatal error: {e}")
+        vfx.print_line(f"\n💥 Fatal error: {e}")
         import traceback
 
         traceback.print_exc()

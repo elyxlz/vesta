@@ -46,9 +46,7 @@ def get_app() -> msal.PublicClientApplication:
     if cache_content:
         cache.deserialize(cache_content)
 
-    app = msal.PublicClientApplication(
-        client_id, authority=authority, token_cache=cache
-    )
+    app = msal.PublicClientApplication(client_id, authority=authority, token_cache=cache)
 
     return app
 
@@ -60,9 +58,7 @@ def get_token(account_id: str | None = None) -> str:
     account = None
 
     if account_id:
-        account = next(
-            (a for a in accounts if a["home_account_id"] == account_id), None
-        )
+        account = next((a for a in accounts if a["home_account_id"] == account_id), None)
     elif accounts:
         account = accounts[0]
 
@@ -71,22 +67,16 @@ def get_token(account_id: str | None = None) -> str:
     if not result:
         flow = app.initiate_device_flow(scopes=SCOPES)
         if "user_code" not in flow:
-            raise Exception(
-                f"Failed to get device code: {flow.get('error_description', 'Unknown error')}"
-            )
+            raise Exception(f"Failed to get device code: {flow.get('error_description', 'Unknown error')}")
         verification_uri = flow.get(
             "verification_uri",
             flow.get("verification_url", "https://microsoft.com/devicelogin"),
         )
-        print(
-            f"\nTo authenticate:\n1. Visit {verification_uri}\n2. Enter code: {flow['user_code']}"
-        )
+        print(f"\nTo authenticate:\n1. Visit {verification_uri}\n2. Enter code: {flow['user_code']}")
         result = app.acquire_token_by_device_flow(flow)
 
     if "error" in result:
-        raise Exception(
-            f"Auth failed: {result.get('error_description', result['error'])}"
-        )
+        raise Exception(f"Auth failed: {result.get('error_description', result['error'])}")
 
     cache = app.token_cache
     if isinstance(cache, msal.SerializableTokenCache) and cache.has_state_changed:
@@ -113,14 +103,10 @@ def authenticate_new_account() -> Account | None:
 
     flow = app.initiate_device_flow(scopes=SCOPES)
     if "user_code" not in flow:
-        raise Exception(
-            f"Failed to get device code: {flow.get('error_description', 'Unknown error')}"
-        )
+        raise Exception(f"Failed to get device code: {flow.get('error_description', 'Unknown error')}")
 
     print("\nTo authenticate:")
-    print(
-        f"1. Visit: {flow.get('verification_uri', flow.get('verification_url', 'https://microsoft.com/devicelogin'))}"
-    )
+    print(f"1. Visit: {flow.get('verification_uri', flow.get('verification_url', 'https://microsoft.com/devicelogin'))}")
     print(f"2. Enter code: {flow['user_code']}")
     print("3. Sign in with your Microsoft account")
     print("\nWaiting for authentication...")
@@ -128,9 +114,7 @@ def authenticate_new_account() -> Account | None:
     result = app.acquire_token_by_device_flow(flow)
 
     if "error" in result:
-        raise Exception(
-            f"Auth failed: {result.get('error_description', result['error'])}"
-        )
+        raise Exception(f"Auth failed: {result.get('error_description', result['error'])}")
 
     cache = app.token_cache
     if isinstance(cache, msal.SerializableTokenCache) and cache.has_state_changed:
@@ -141,19 +125,10 @@ def authenticate_new_account() -> Account | None:
     if accounts:
         # Find the account that matches the token we just got
         for account in accounts:
-            if (
-                account.get("username", "").lower()
-                == result.get("id_token_claims", {})
-                .get("preferred_username", "")
-                .lower()
-            ):
-                return Account(
-                    username=account["username"], account_id=account["home_account_id"]
-                )
+            if account.get("username", "").lower() == result.get("id_token_claims", {}).get("preferred_username", "").lower():
+                return Account(username=account["username"], account_id=account["home_account_id"])
         # If exact match not found, return the last account
         account = accounts[-1]
-        return Account(
-            username=account["username"], account_id=account["home_account_id"]
-        )
+        return Account(username=account["username"], account_id=account["home_account_id"])
 
     return None

@@ -8,9 +8,7 @@ from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 
 def create_scheduler(data_dir: Path) -> BackgroundScheduler:
     scheduler = BackgroundScheduler(
-        jobstores={
-            "default": SQLAlchemyJobStore(url=f"sqlite:///{data_dir}/reminders.db")
-        },
+        jobstores={"default": SQLAlchemyJobStore(url=f"sqlite:///{data_dir}/reminders.db")},
         job_defaults={
             "coalesce": True,
             "max_instances": 1,
@@ -19,9 +17,7 @@ def create_scheduler(data_dir: Path) -> BackgroundScheduler:
     return scheduler
 
 
-def write_notification(
-    notif_dir: Path, reminder_id: str, message: str, data: dict = None
-):
+def write_notification(notif_dir: Path, reminder_id: str, message: str, data: dict = None):
     if not reminder_id or not message:
         raise ValueError("reminder_id and message required")
 

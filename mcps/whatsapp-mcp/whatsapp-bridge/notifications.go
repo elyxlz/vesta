@@ -21,7 +21,6 @@ func WriteNotification(messageID, chatJID, chatName, sender, content string, med
 	metadata["message_id"] = messageID
 	metadata["chat_jid"] = chatJID
 	metadata["chat_name"] = chatName
-	metadata["sender"] = sender
 
 	if mediaType != "" {
 		metadata["media_type"] = mediaType
@@ -30,12 +29,13 @@ func WriteNotification(messageID, chatJID, chatName, sender, content string, med
 		metadata["is_forwarded"] = isForwarded
 	}
 
-	// Use standardized structure
+	// Use standardized structure with sender as top-level field
 	data, err := json.MarshalIndent(map[string]interface{}{
 		"timestamp": time.Now().Format(time.RFC3339),
 		"source":    "whatsapp",
 		"type":      "message",
 		"message":   content,
+		"sender":    sender,
 		"metadata":  metadata,
 	}, "", "  ")
 	if err != nil {
@@ -60,7 +60,6 @@ func WriteReactionNotification(targetMessageID, chatJID, chatName, sender, emoji
 	metadata["target_message_id"] = targetMessageID
 	metadata["chat_jid"] = chatJID
 	metadata["chat_name"] = chatName
-	metadata["sender"] = sender
 	metadata["is_removed"] = isRemoved
 
 	message := ""
@@ -75,6 +74,7 @@ func WriteReactionNotification(targetMessageID, chatJID, chatName, sender, emoji
 		"source":    "whatsapp",
 		"type":      "reaction",
 		"message":   message,
+		"sender":    sender,
 		"metadata":  metadata,
 	}, "", "  ")
 	if err != nil {
