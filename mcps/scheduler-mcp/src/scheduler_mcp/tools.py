@@ -11,7 +11,6 @@ from .scheduler import write_notification
 
 mcp = FastMCP("scheduler-mcp")
 
-# These will be set by init_tools()
 _scheduler = None
 _data_dir = None
 _notif_dir = None
@@ -55,16 +54,6 @@ def init_db():
                 completed_at TEXT
             )
         """)
-
-        # Migrate existing tables if needed
-        cursor = conn.execute("PRAGMA table_info(reminders)")
-        columns = {row[1] for row in cursor.fetchall()}
-
-        if 'scheduled_time' not in columns:
-            conn.execute("ALTER TABLE reminders ADD COLUMN scheduled_time TEXT")
-        if 'fired' not in columns:
-            conn.execute("ALTER TABLE reminders ADD COLUMN fired INTEGER DEFAULT 0")
-
         conn.commit()
 
 
@@ -211,8 +200,6 @@ def set_reminder(
 @mcp.tool()
 def list_reminders() -> list[dict]:
     """List all active reminders"""
-    # Scheduler already started in server.py
-
     with closing(get_db()) as conn:
         cursor = conn.execute("SELECT * FROM reminders")
         reminder_data = {row["id"]: dict(row) for row in cursor}
@@ -237,8 +224,6 @@ def list_reminders() -> list[dict]:
 @mcp.tool()
 def cancel_reminder(reminder_id: str) -> dict:
     """Cancel a scheduled reminder"""
-    # Scheduler already started in server.py
-
     try:
         _scheduler.remove_job(reminder_id)
         with closing(get_db()) as conn:
@@ -252,8 +237,6 @@ def cancel_reminder(reminder_id: str) -> dict:
 @mcp.tool()
 def add_task(title: str, due: str | None = None, priority: int = 2) -> dict:
     """Add a task"""
-    # Tasks don't use scheduler
-
     if priority not in (1, 2, 3):
         raise ValueError("Priority must be 1 (low), 2 (normal), or 3 (high)")
 
@@ -279,8 +262,6 @@ def add_task(title: str, due: str | None = None, priority: int = 2) -> dict:
 @mcp.tool()
 def list_tasks(show_completed: bool = False) -> list[dict]:
     """List tasks sorted by priority and due date"""
-    # Tasks don't use scheduler
-
     with closing(get_db()) as conn:
         query = "SELECT * FROM tasks"
         if not show_completed:
@@ -296,8 +277,6 @@ def list_tasks(show_completed: bool = False) -> list[dict]:
 @mcp.tool()
 def update_task(id: str, status: str | None = None, title: str | None = None) -> dict:
     """Update task"""
-    # Tasks don't use scheduler
-
     if status and status not in ("pending", "done"):
         raise ValueError("Status must be pending or done")
 
@@ -338,8 +317,6 @@ def update_task(id: str, status: str | None = None, title: str | None = None) ->
 @mcp.tool()
 def clear_completed() -> dict:
     """Delete completed tasks older than 24 hours"""
-    # Tasks don't use scheduler
-
     cutoff = (dt.now() - timedelta(hours=24)).isoformat()
     with closing(get_db()) as conn:
         cursor = conn.execute(
