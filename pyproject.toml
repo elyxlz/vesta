@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.scripts]
-vesta = "vesta:main"
+vesta = "vesta.main:main"
 
 [build-system]
 requires = ["hatchling"]

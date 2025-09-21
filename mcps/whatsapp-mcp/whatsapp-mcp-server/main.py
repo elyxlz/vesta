@@ -1,4 +1,8 @@
 import argparse
+import atexit
+import os
+import subprocess
+import time
 from pathlib import Path
 from typing import Any
 from mcp.server.fastmcp import FastMCP
@@ -27,6 +31,68 @@ from whatsapp import (
 )
 
 mcp = FastMCP("whatsapp")
+
+# Global variable to track bridge process
+bridge_process = None
+
+
+def start_whatsapp_bridge(notifications_dir: str) -> bool:
+    """Start the WhatsApp bridge subprocess with same logic as Vesta."""
+    global bridge_process
+
+    # Get paths
+    current_dir = Path(__file__).parent
+    bridge_dir = current_dir.parent / "whatsapp-bridge"
+    bridge_binary = bridge_dir / "whatsapp-bridge"
+
+    # Kill any existing bridges first
+    try:
+        subprocess.run(["pkill", "-f", "whatsapp-bridge"], capture_output=True)
+        subprocess.run(["pkill", "-f", ":8080"], capture_output=True)
+        time.sleep(1)
+    except (subprocess.SubprocessError, OSError):
+        pass
+
+    # Change to bridge directory
+    original_dir = os.getcwd()
+    os.chdir(bridge_dir)
+
+    try:
+        # Check if binary exists and build if needed
+        if not bridge_binary.exists():
+            print("WhatsApp bridge binary not found, building...")
+            result = subprocess.run(["go", "build", "-o", "whatsapp-bridge", "."], capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"ERROR: Failed to build WhatsApp bridge: {result.stderr}")
+                return False
+            print("Build successful!")
+
+        # Start the bridge
+        print("Starting WhatsApp bridge...")
+        bridge_process = subprocess.Popen([str(bridge_binary), "--notifications-dir", notifications_dir])
+
+        # Register cleanup function
+        atexit.register(cleanup_bridge)
+
+        print(f"WhatsApp bridge started with PID {bridge_process.pid}")
+        return True
+
+    finally:
+        os.chdir(original_dir)
+
+
+def cleanup_bridge():
+    """Clean up bridge process on exit."""
+    global bridge_process
+    if bridge_process:
+        try:
+            bridge_process.terminate()
+            bridge_process.wait(timeout=5)
+        except (subprocess.TimeoutExpired, OSError):
+            try:
+                bridge_process.kill()
+            except (ProcessLookupError, OSError):
+                pass
 
 
 @mcp.tool()
@@ -191,12 +257,36 @@ if __name__ == "__main__":
         required=True,
         help="Directory for storing persistent data (database copies)",
     )
+    parser.add_argument(
+        "--notifications-dir",
+        type=str,
+        help="Directory for notifications (defaults to ../../../notifications)",
+    )
     args = parser.parse_args()
 
     data_dir = Path(args.data_dir).resolve()
     data_dir.mkdir(parents=True, exist_ok=True)
 
+    # Default notifications dir relative to this script
+    if args.notifications_dir:
+        notifications_dir = args.notifications_dir
+    else:
+        notifications_dir = str(Path(__file__).parent.parent.parent.parent / "notifications")
+
     whatsapp.MESSAGES_DB_PATH = str(data_dir / "messages.db")
     print(f"WhatsApp MCP using data directory: {data_dir}")
+    print(f"WhatsApp MCP using notifications directory: {notifications_dir}")
 
-    mcp.run()
+    # Start the WhatsApp bridge
+    if start_whatsapp_bridge(notifications_dir):
+        print("✅ WhatsApp bridge started successfully")
+        # Give bridge a moment to start up
+        time.sleep(2)
+    else:
+        print("❌ Failed to start WhatsApp bridge")
+        exit(1)
+
+    try:
+        mcp.run()
+    finally:
+        cleanup_bridge()

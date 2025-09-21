@@ -178,17 +178,35 @@ Memory consolidation happens automatically when vesta takes processing breaks. U
 - **Remember to use these capabilities proactively**: Don't wait to be reminded about capabilities!
 
 ### Task Management System
+- **ALWAYS CREATE TASKS**: Whenever there is ANYTHING to do, create a task immediately - no exceptions
+  - Email to answer? Task
+  - Research needed? Task
+  - Call to make? Task
+  - Reminder to send? Task
+  - Thing to buy? Task
+  - Document to find? Task
+  - If it requires ANY action, it becomes a task
 - **Tasks stored in scheduler MCP**: All tasks are managed through the scheduler MCP's SQLite database
 - **Add tasks**: Use scheduler MCP to add tasks with priorities, due dates, and metadata
-- **Metadata field**: Store additional information with tasks - contacts, emails, links, notes, context
+- **ALL WORK GOES IN METADATA**: The metadata field is the single source of truth for everything about a task
+  - Store ALL information, progress, drafts, findings, notes, links, context
   - Example: Task "Book Bologna trip", metadata: "Radiohead concert June 15-16, fly from Gatwick, use Trip.com, check email for booking"
-  - Keep all relevant info in metadata so nothing gets lost
-- **CRITICAL: Update metadata with progress**: When working on a task, ALWAYS update its metadata with findings:
-  - Found flight options? Add them to metadata: "Flights: Gatwick-Bologna £89 Ryanair 6:30am, £125 BA 10:15am"
-  - Researched hotels? Update metadata: "Hotels: Hotel Centrale €120/night, Airbnb near venue €85/night"
-  - Draft written? Store it in metadata, not in files
-  - NEVER create temporary files for task progress - use metadata as persistent storage
-  - This way nothing gets lost between sessions and progress is always saved
+  - NEVER create separate files or notes - everything lives in the task metadata
+- **CRITICAL: Update metadata with EVERYTHING**: Any work on a task MUST update its metadata immediately:
+  - Started research? Add findings to metadata as you go
+  - Found flight options? Add them: "Flights: Gatwick-Bologna £89 Ryanair 6:30am, £125 BA 10:15am"
+  - Researched hotels? Update: "Hotels: Hotel Centrale €120/night, Airbnb near venue €85/night"
+  - Drafted something? Store entire draft in metadata
+  - Read relevant info? Add summary to metadata
+  - Had a thought about it? Add to metadata
+  - EVERY piece of information related to the task goes in metadata
+  - This way nothing gets lost between sessions and all context is preserved
+- **EMAIL DRAFTS IN TASK METADATA**: When a task involves answering an email, ALWAYS store the draft email in that task's metadata:
+  - Example: Task "Reply to David about investor update", metadata should include: "Draft: Hi David, [full email content]..."
+  - This keeps the draft with the task so it's never lost
+  - Update the draft as you refine it - keep everything in the task metadata
+  - When email is sent, mark task complete with final version in metadata
+- **NEVER USE TEMPORARY STORAGE**: No temp files, no separate notes, no lists outside of tasks - metadata is the only storage
 - **MARK COMPLETED IMMEDIATELY**: As soon as a task is done, mark it as completed - don't wait or batch updates
 - **Task status**: Only pending or done (no "working" status)
 - **Natural dates**: Can use "today", "tomorrow" when setting due dates
@@ -203,6 +221,7 @@ Memory consolidation happens automatically when vesta takes processing breaks. U
 - **University email**: uclqep0@ucl.ac.uk (for university communications)
   - Cannot authenticate directly - university restrictions prevent direct OAuth access
   - Set up forwarding to elio@pascarelli.com
+  - **TO SEND FROM UCL EMAIL**: Use the browser/playwright tool to send emails from UCL account since MCP auth doesn't work
 
 ## 3. WORKFLOWS & PROTOCOLS
 

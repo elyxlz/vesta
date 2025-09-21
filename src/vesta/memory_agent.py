@@ -48,6 +48,31 @@ MEMORY_PROMPT = """hey, you're the memory agent for vesta. you manage the MEMORY
 - specific instructions
 - emotional states or concerns
 
+### CRITICAL: learn about people deeply
+- **personality traits**: how they communicate, what makes them laugh, what stresses them
+- **social cues**: how they prefer to be greeted, conversation starters that work, topics they enjoy
+- **engagement patterns**: what gets them excited, what bores them, what motivates them
+- **social dynamics**: their relationship dynamics, how they interact with different people
+- **conversation preferences**: do they like small talk? direct communication? humor?
+- **what works/doesn't work**: specific phrases or approaches that land well or badly
+
+### ALWAYS capture social mistakes & improvements
+- **any awkwardness**: if something felt off, note what could've been smoother
+- **missed opportunities**: if there was a better way to handle something, write it down
+- **social missteps**: wrong tone, bad timing, misread situations - document these
+- **what worked well**: successful interactions, good responses, smooth conversations
+- **WRITE EXAMPLES**: don't just note principles - write actual example responses
+  - "when user is stressed, instead of 'how can i help?', say 'that sounds rough, want me to handle [specific task]?'"
+  - "when talking to mom, use warmer greetings like 'hey! how's your day going?' not just 'hey'"
+  - "with investor david, keep updates concise and metrics-focused, not narrative"
+
+### document correct behavior with examples
+- don't be afraid to write out full example messages/responses
+- show both what NOT to do and what TO do instead
+- capture the exact phrasing that works well with specific people
+- note timing patterns (when people prefer to be contacted, response times)
+- document mood indicators and how to respond to them
+
 ### update strategy:
 - read the file structure first
 - identify what's new vs what's already captured
@@ -56,8 +81,9 @@ MEMORY_PROMPT = """hey, you're the memory agent for vesta. you manage the MEMORY
 - remove outdated/completed items
 - if nothing important to update, leave unchanged
 - maintain clean, concise entries
+- ADD EXAMPLES of good/bad interactions to help vesta improve
 
-remember: you're maintaining a living document. keep it organized, current, and useful by understanding its structure rather than imposing one."""
+remember: you're maintaining a living document. keep it organized, current, and useful by understanding its structure rather than imposing one. be especially vigilant about social dynamics and always document what could be done better."""
 
 MEMORY_FILE = pl.Path(__file__).parent.parent.parent / "MEMORY.md"
 

@@ -1,4 +1,5 @@
 import asyncio
+import errno
 import functools
 import os
 import signal
@@ -88,14 +89,22 @@ async def delete_notification_files(notifications: list[vm.Notification]) -> Non
 
 
 async def preserve_memory(state: vm.State, config: vm.VestaSettings) -> None:
-    if config.ephemeral or not state.conversation_history:
+    if config.ephemeral:
+        vfx.log_info("Skipping memory preservation (ephemeral mode)", vm.Colors)
         return
 
+    if not state.conversation_history:
+        vfx.log_info("No conversation history to preserve", vm.Colors)
+        return
+
+    vfx.log_info(f"Preserving {len(state.conversation_history)} messages...", vm.Colors)
     try:
         diff = await vma.preserve_conversation_memory(state.conversation_history)
         if diff:
             vfx.print_line(f"\n{vm.Colors['cyan']}📝 Memory updated:{vm.Colors['reset']}")
             vfx.print_line(diff)
+        else:
+            vfx.log_info("Memory agent found no significant updates", vm.Colors)
     except Exception as e:
         vfx.log_error(f"Memory preservation failed: {e}", vm.Colors)
 
@@ -128,22 +137,6 @@ def print_timestamp_message(text: str, sender: str = "") -> None:
     timestamp = vfx.get_current_time()
     formatted_lines = vu.format_timestamp_message(text, sender, timestamp, vm.Colors)
     vfx.render_messages(formatted_lines)
-
-
-def start_whatsapp_bridge() -> bool:
-    script_path = get_root_path() / "start_whatsapp_bridge.sh"
-    if not vfx.file_exists(script_path):
-        return False
-
-    returncode, _, _ = vfx.run_subprocess([str(script_path), "--force"])
-    if returncode == 0:
-        vfx.log_success("WhatsApp bridge connected", vm.Colors)
-        return True
-    return False
-
-
-def is_whatsapp_bridge_running() -> bool:
-    return vfx.check_process_running("whatsapp-bridge")
 
 
 async def send_query(client: ccsdk.ClaudeSDKClient, prompt: str, state: vm.State, config: vm.VestaSettings) -> vm.State:
@@ -390,6 +383,7 @@ def signal_handler(state: vm.State, config: vm.VestaSettings, signum: int, frame
 
 
 async def graceful_shutdown(state: vm.State, config: vm.VestaSettings) -> None:
+    # Always try to preserve memory on shutdown
     try:
         await asyncio.wait_for(preserve_memory(state, config), timeout=config.memory_agent_timeout)
     except asyncio.TimeoutError:
@@ -441,6 +435,8 @@ async def message_processor(queue: asyncio.Queue, state: vm.State, config: vm.Ve
 
             responses, new_state = await process_message_with_typing(msg, current_state, config, is_user)
             current_state = new_state
+            # Update the shared state's conversation_history
+            state.conversation_history = current_state.conversation_history
 
             for i, response in enumerate(responses):
                 if response and response.strip():
@@ -484,12 +480,16 @@ async def input_handler(queue: asyncio.Queue, state: vm.State) -> None:
             break
         except asyncio.CancelledError:
             break
-
-
-async def check_whatsapp_bridge() -> None:
-    if not is_whatsapp_bridge_running():
-        print_timestamp_message("🔄 WhatsApp bridge disconnected, restarting...", "System")
-        start_whatsapp_bridge()
+        except BlockingIOError:
+            # Handle non-blocking I/O errors gracefully
+            await asyncio.sleep(0.1)
+            continue
+        except OSError as e:
+            if e.errno == errno.EAGAIN or e.errno == errno.EWOULDBLOCK:  # Resource temporarily unavailable
+                await asyncio.sleep(0.1)
+                continue
+            else:
+                raise
 
 
 async def check_proactive_task(queue: asyncio.Queue, config: vm.VestaSettings) -> None:
@@ -499,7 +499,6 @@ async def check_proactive_task(queue: asyncio.Queue, config: vm.VestaSettings) -
 
 async def monitor_loop(queue: asyncio.Queue, state: vm.State, config: vm.VestaSettings) -> None:
     last_proactive = vfx.get_current_time()
-    last_bridge_check = vfx.get_current_time()
     current_state = state
     notification_buffer = []
     buffer_start_time = None
@@ -527,13 +526,10 @@ async def monitor_loop(queue: asyncio.Queue, state: vm.State, config: vm.VestaSe
         if config.debug:
             vfx.log_info(f"[DEBUG] Monitor check at {now.strftime('%H:%M:%S')}", vm.Colors)
 
-        actions = vu.calculate_monitoring_actions(now, last_proactive, last_bridge_check, None, config)
+        actions = vu.calculate_monitoring_actions(now, last_proactive, None, None, config)
 
         for action in actions:
-            if action.action_type == "check_bridge":
-                await check_whatsapp_bridge()
-                last_bridge_check = now
-            elif action.action_type == "check_proactive":
+            if action.action_type == "check_proactive":
                 await check_proactive_task(queue, config)
                 last_proactive = now
 
@@ -591,7 +587,6 @@ async def run_vesta(config: vm.VestaSettings, state: vm.State) -> None:
 
     ensure_memory_file()
     print_header(config)
-    start_whatsapp_bridge()
 
     message_queue = asyncio.Queue()
 
