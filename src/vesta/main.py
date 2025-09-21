@@ -405,11 +405,6 @@ async def check_whatsapp_bridge() -> None:
         start_whatsapp_bridge()
 
 
-async def check_mcp_health() -> None:
-    # TODO: Implement when list_tools is available in ClaudeSDKClient
-    pass
-
-
 async def check_proactive_task(queue: asyncio.Queue, config: vm.VestaSettings) -> None:
     print_timestamp_message("⏰ Running 30-minute check...", "System")
     await queue.put((config.proactive_check_message, False))

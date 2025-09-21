@@ -147,7 +147,9 @@ class Notification(pyd.BaseModel):
         if self.metadata:
             meta_items = [f"{k}={v}" for k, v in self.metadata.items() if v]
             meta_str = f" (metadata: {', '.join(meta_items)})" if meta_items else ""
-        return f"[{self.type} from {self.source}]{meta_str}: {self.message}"
+
+        from_str = self.sender if self.sender else self.source
+        return f"[{self.type} from {from_str}]{meta_str}: {self.message}"
 
     def get_display_info(self) -> tuple[str, str, str]:
         display_sender = self.sender or self.source

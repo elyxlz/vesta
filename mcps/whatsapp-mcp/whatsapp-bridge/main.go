@@ -529,23 +529,16 @@ func handleMessage(client *whatsmeow.Client, messageStore *MessageStore, msg *ev
 	// Get appropriate chat name (pass nil for conversation since we don't have one for regular messages)
 	name := GetChatName(client, messageStore, msg.Info.Chat, chatJID, nil, sender, logger)
 
-	// Get sender's display name for notification
 	var senderDisplayName string
-	if msg.Info.IsGroup {
-		// For group messages, get the sender's contact name
-		ctx := context.Background()
-		senderContact, err := client.Store.Contacts.GetContact(ctx, msg.Info.Sender)
-		if err == nil && senderContact.FullName != "" {
-			senderDisplayName = senderContact.FullName
-		} else if err == nil && senderContact.PushName != "" {
-			senderDisplayName = senderContact.PushName
-		} else {
-			// Fallback to phone number without @s.whatsapp.net
-			senderDisplayName = sender
-		}
+	ctx := context.Background()
+	senderContact, contactErr := client.Store.Contacts.GetContact(ctx, msg.Info.Sender)
+
+	if contactErr == nil && senderContact.FullName != "" {
+		senderDisplayName = senderContact.FullName
+	} else if contactErr == nil && senderContact.PushName != "" {
+		senderDisplayName = senderContact.PushName
 	} else {
-		// For direct messages, use the chat name (which is the contact's name)
-		senderDisplayName = name
+		senderDisplayName = sender
 	}
 
 	// Update chat in database with the message timestamp (keeps last message time updated)
@@ -609,7 +602,6 @@ func handleMessage(client *whatsmeow.Client, messageStore *MessageStore, msg *ev
 				}
 			}()
 
-			// Write notification for incoming messages with sender's display name
 			WriteNotification(msg.Info.ID, chatJID, name, senderDisplayName, content, mediaType, isForwarded)
 		}
 		
