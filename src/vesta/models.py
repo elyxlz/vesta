@@ -29,7 +29,7 @@ Colors = {
 }
 
 
-class MCPServerConfig(tp.TypedDict):
+class McpServer(tp.TypedDict):
     command: str
     args: list[str]
 
@@ -45,7 +45,7 @@ class State:
     sub_agent_context: str | None = None
 
 
-def _get_default_mcp_servers() -> dict[str, MCPServerConfig]:
+def _get_default_mcp_servers() -> dict[str, McpServer]:
     root = pl.Path(__file__).parent.parent.parent.absolute()
     return {
         "microsoft": {
@@ -112,13 +112,13 @@ class VestaSettings(pyd_settings.BaseSettings):
     proactive_check_interval: int = 30
     proactive_check_message: str = "It's been 30 minutes. Is there anything useful you could do right now?"
     whatsapp_bridge_check_interval: int = 30
-    response_timeout: int = 60
+    response_timeout: int = 180
     memory_agent_timeout: int = 1200
     typing_animation_delay: float = 0.5
     shutdown_timeout: int = 310
     task_gather_timeout: int = 2
     max_context_tokens: int = 180000
-    mcp_servers: dict[str, MCPServerConfig] = pyd.Field(default_factory=_get_default_mcp_servers)
+    mcp_servers: dict[str, McpServer] = pyd.Field(default_factory=_get_default_mcp_servers)
 
 
 class Notification(pyd.BaseModel):
