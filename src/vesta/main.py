@@ -53,45 +53,49 @@ SERVICE_ICONS = {
     "microsoft": "📧",
 }
 
-MCP_SERVERS = {
-    "microsoft": {
-        "command": "uv",
-        "args": [
-            "run", "--directory", "mcps/microsoft-mcp", "microsoft-mcp",
-            "--data-dir", "data/microsoft-mcp",
-            "--notifications-dir", "notifications"
-        ],
-    },
-    "whatsapp": {
-        "command": "uv",
-        "args": [
-            "run",
-            "--directory",
-            "mcps/whatsapp-mcp/whatsapp-mcp-server",
-            "main.py",
-            "--data-dir", "data/whatsapp-mcp"
-        ],
-    },
-    "scheduler": {
-        "command": "uv",
-        "args": [
-            "run", "--directory", "mcps/scheduler-mcp", "scheduler-mcp",
-            "--data-dir", "data/scheduler-mcp",
-            "--notifications-dir", "notifications"
-        ],
-    },
-    "playwright": {
-        "command": "npx",
-        "args": [
-            "--prefix", "mcps/playwright-mcp",
-            "mcp-server-playwright",
-            "--browser", "chromium",
-            "--blocked-origins", "googleads.g.doubleclick.net;googlesyndication.com",
-            "--output-dir", "data/playwright-mcp/screenshots",
-            "--image-responses", "omit",
-        ],
-    },
-}
+def get_mcp_servers():
+    root = Path(__file__).parent.parent.parent.absolute()
+    return {
+        "microsoft": {
+            "command": "uv",
+            "args": [
+                "run", "--directory", "mcps/microsoft-mcp", "microsoft-mcp",
+                "--data-dir", str(root / "data/microsoft-mcp"),
+                "--notifications-dir", str(root / "notifications")
+            ],
+        },
+        "whatsapp": {
+            "command": "uv",
+            "args": [
+                "run",
+                "--directory",
+                "mcps/whatsapp-mcp/whatsapp-mcp-server",
+                "main.py",
+                "--data-dir", str(root / "data/whatsapp-mcp")
+            ],
+        },
+        "scheduler": {
+            "command": "uv",
+            "args": [
+                "run", "--directory", "mcps/scheduler-mcp", "scheduler-mcp",
+                "--data-dir", str(root / "data/scheduler-mcp"),
+                "--notifications-dir", str(root / "notifications")
+            ],
+        },
+        "playwright": {
+            "command": "npx",
+            "args": [
+                "--prefix", "mcps/playwright-mcp",
+                "mcp-server-playwright",
+                "--browser", "chromium",
+                "--blocked-origins", "googleads.g.doubleclick.net;googlesyndication.com",
+                "--output-dir", str(root / "data/playwright-mcp/screenshots"),
+                "--image-responses", "omit",
+            ],
+        },
+    }
+
+MCP_SERVERS = get_mcp_servers()
 
 @dataclass
 class State:

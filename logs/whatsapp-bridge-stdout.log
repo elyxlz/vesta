@@ -10098,3 +10098,76 @@ Disconnecting...
 Starting REST API server on :8080...
 REST server is running. Press Ctrl+C to disconnect and exit.
 Disconnecting...
+01:47:11.494[36m [Client INFO] Starting WhatsApp client...[0m
+01:47:11.494[36m [Client INFO] Notifications directory: /home/elyx/Repos/vesta2/notifications[0m
+01:47:11.636[36m [Client INFO] Successfully authenticated[0m
+01:47:12.073[36m [Client INFO] Connected to WhatsApp[0m
+[DEBUG] Message Event Info:
+  - Chat JID: 393483589770@s.whatsapp.net
+  - Sender Full JID: 393483589770:41@s.whatsapp.net
+  - Sender User Part: 393483589770
+  - Sender Server: s.whatsapp.net
+  - Is Group: false
+  - Message ID: 3EB0E958694951E98AA00B
+01:47:12.286[36m [Client INFO] Using existing chat name for 393483589770@s.whatsapp.net: Elio[0m
+[2025-09-21 01:46:09] ← 393483589770: hi
+[DEBUG] Message Event Info:
+  - Chat JID: 393483589770@s.whatsapp.net
+  - Sender Full JID: 447523177927:2@s.whatsapp.net
+  - Sender User Part: 447523177927
+  - Sender Server: s.whatsapp.net
+  - Is Group: false
+  - Message ID: 3EB0EA7A1FBB7926FB93E1
+01:47:12.293[36m [Client INFO] Using existing chat name for 393483589770@s.whatsapp.net: Elio[0m
+[2025-09-21 01:46:26] → 447523177927: hey! you're up late
+[DEBUG] Message Event Info:
+  - Chat JID: 393483589770@s.whatsapp.net
+  - Sender Full JID: 447523177927:2@s.whatsapp.net
+  - Sender User Part: 447523177927
+  - Sender Server: s.whatsapp.net
+  - Is Group: false
+  - Message ID: 3EB09C3B30AA8DE8C98AEF
+01:47:12.316[36m [Client INFO] Using existing chat name for 393483589770@s.whatsapp.net: Elio[0m
+[2025-09-21 01:46:31] → 447523177927: everything alright?
+[DEBUG] Message Event Info:
+  - Chat JID: 393483589770@s.whatsapp.net
+  - Sender Full JID: 393483589770:41@s.whatsapp.net
+  - Sender User Part: 393483589770
+  - Sender Server: s.whatsapp.net
+  - Is Group: false
+  - Message ID: 3EB0E1F8F6322BA061B4B4
+01:47:12.332[36m [Client INFO] Using existing chat name for 393483589770@s.whatsapp.net: Elio[0m
+[2025-09-21 01:46:34] ← 393483589770: give me active tasks pls
+[DEBUG] Message Event Info:
+  - Chat JID: 393483589770@s.whatsapp.net
+  - Sender Full JID: 447523177927:2@s.whatsapp.net
+  - Sender User Part: 447523177927
+  - Sender Server: s.whatsapp.net
+  - Is Group: false
+  - Message ID: 3EB0DD4CCD0FCAE00BB4B3
+01:47:12.343[36m [Client INFO] Using existing chat name for 393483589770@s.whatsapp.net: Elio[0m
+[2025-09-21 01:46:50] → 447523177927: no active tasks right now actually
+[DEBUG] Message Event Info:
+  - Chat JID: 393483589770@s.whatsapp.net
+  - Sender Full JID: 447523177927:2@s.whatsapp.net
+  - Sender User Part: 447523177927
+  - Sender Server: s.whatsapp.net
+  - Is Group: false
+  - Message ID: 3EB043BFB11AB354F38058
+01:47:12.365[36m [Client INFO] Using existing chat name for 393483589770@s.whatsapp.net: Elio[0m
+[2025-09-21 01:46:57] → 447523177927: your list is empty for once lol
+
+✓ Connected to WhatsApp! Type 'help' for commands.
+Starting REST API server on :8080...
+REST server is running. Press Ctrl+C to disconnect and exit.
+Received request to send message hey 
+Disconnecting...
+01:52:40.813[36m [Client INFO] Starting WhatsApp client...[0m
+01:52:40.814[36m [Client INFO] Notifications directory: /home/elyx/Repos/vesta2/notifications[0m
+01:52:40.910[36m [Client INFO] Successfully authenticated[0m
+01:52:41.315[36m [Client INFO] Connected to WhatsApp[0m
+
+✓ Connected to WhatsApp! Type 'help' for commands.
+Starting REST API server on :8080...
+REST server is running. Press Ctrl+C to disconnect and exit.
+Disconnecting...

@@ -2875,3 +2875,7 @@ requests.exceptions.ConnectionError: HTTPSConnectionPool(host='login.microsofton
 2025-09-19 23:46:01,549 - INFO - Found 0 new emails for elio@audiogen.co
 2025-09-19 23:46:01,708 - INFO - Found 0 upcoming calendar events for elio@audiogen.co
 2025-09-19 23:46:01,711 - INFO - Completed check cycle, sleeping for 60 seconds
+2025-09-21 01:52:44,023 - INFO - Monitor thread started
+2025-09-21 01:52:44,026 - INFO - Detected offline period of 94003s, catching up from 2025-09-19T22:46:00.982250+00:00
+2025-09-21 01:52:44,027 - INFO - Checking for updates since 2025-09-19T22:46:00.982250+00:00
+2025-09-21 01:52:44,172 - INFO - Completed check cycle, sleeping for 60 seconds
