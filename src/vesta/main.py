@@ -29,6 +29,7 @@ class ConfigClass:
     PROACTIVE_CHECK_INTERVAL: int = 30
     WHATSAPP_BRIDGE_CHECK_INTERVAL: int = 30
     RESPONSE_TIMEOUT: int = 60
+    MEMORY_AGENT_TIMEOUT: int = 1200  # 20 minutes for memory agent
     TYPING_ANIMATION_DELAY: float = 0.5
     SHUTDOWN_TIMEOUT: int = 310
     TASK_GATHER_TIMEOUT: int = 2
@@ -177,6 +178,7 @@ async def init_client() -> ClaudeSDKClient:
             hooks={},
             model="opus",
             permission_mode="bypassPermissions",
+            continue_conversation=True
         )
     )
     await state.client.__aenter__()
@@ -523,7 +525,7 @@ def signal_handler(signum: int, frame: Any) -> None:
 
 async def graceful_shutdown() -> None:
     try:
-        await asyncio.wait_for(preserve_memory(), timeout=Config.RESPONSE_TIMEOUT)
+        await asyncio.wait_for(preserve_memory(), timeout=Config.MEMORY_AGENT_TIMEOUT)
     except asyncio.TimeoutError:
         print(f"{C['yellow']}⚠️ Memory preservation timeout{C['reset']}")
     except Exception as e:
