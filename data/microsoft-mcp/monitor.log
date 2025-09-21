@@ -2879,3 +2879,47 @@ requests.exceptions.ConnectionError: HTTPSConnectionPool(host='login.microsofton
 2025-09-21 01:52:44,026 - INFO - Detected offline period of 94003s, catching up from 2025-09-19T22:46:00.982250+00:00
 2025-09-21 01:52:44,027 - INFO - Checking for updates since 2025-09-19T22:46:00.982250+00:00
 2025-09-21 01:52:44,172 - INFO - Completed check cycle, sleeping for 60 seconds
+2025-09-21 02:13:26,989 - INFO - Monitor thread started
+2025-09-21 02:13:26,990 - INFO - Detected offline period of 1243s, catching up from 2025-09-21T00:52:44.030989+00:00
+2025-09-21 02:13:26,991 - INFO - Checking for updates since 2025-09-21T00:52:44.030989+00:00
+2025-09-21 02:13:27,143 - INFO - Completed check cycle, sleeping for 60 seconds
+2025-09-21 02:14:27,144 - INFO - Checking for updates since 2025-09-21T01:13:26.991891+00:00
+2025-09-21 02:14:27,245 - INFO - Completed check cycle, sleeping for 60 seconds
+2025-09-21 02:15:27,248 - INFO - Checking for updates since 2025-09-21T01:14:27.145548+00:00
+2025-09-21 02:15:27,365 - INFO - Completed check cycle, sleeping for 60 seconds
+2025-09-21 02:16:27,367 - INFO - Checking for updates since 2025-09-21T01:15:27.251443+00:00
+2025-09-21 02:16:27,478 - INFO - Completed check cycle, sleeping for 60 seconds
+2025-09-21 02:17:27,481 - INFO - Checking for updates since 2025-09-21T01:16:27.370139+00:00
+2025-09-21 02:17:27,560 - INFO - Checking account: elio@pascarelli.com
+2025-09-21 02:17:27,831 - INFO - Found 0 new emails for elio@pascarelli.com
+2025-09-21 02:17:28,003 - INFO - Found 0 upcoming calendar events for elio@pascarelli.com
+2025-09-21 02:17:28,005 - INFO - Completed check cycle, sleeping for 60 seconds
+2025-09-21 02:18:28,008 - INFO - Checking for updates since 2025-09-21T01:17:27.484020+00:00
+2025-09-21 02:18:28,072 - INFO - Checking account: elio@pascarelli.com
+2025-09-21 02:18:28,207 - INFO - Found 0 new emails for elio@pascarelli.com
+2025-09-21 02:18:28,351 - INFO - Found 0 upcoming calendar events for elio@pascarelli.com
+2025-09-21 02:18:28,352 - INFO - Completed check cycle, sleeping for 60 seconds
+2025-09-21 02:19:28,353 - INFO - Checking for updates since 2025-09-21T01:18:28.010987+00:00
+2025-09-21 02:19:28,429 - INFO - Checking account: elio@pascarelli.com
+2025-09-21 02:19:28,728 - INFO - Found 0 new emails for elio@pascarelli.com
+2025-09-21 02:19:28,878 - INFO - Found 0 upcoming calendar events for elio@pascarelli.com
+2025-09-21 02:19:28,881 - INFO - Completed check cycle, sleeping for 60 seconds
+2025-09-21 02:20:27,006 - INFO - Monitor thread started
+2025-09-21 02:20:27,007 - INFO - Checking for updates since 2025-09-21T00:20:27.007274+00:00
+2025-09-21 02:20:27,116 - INFO - Checking account: elio@pascarelli.com
+2025-09-21 02:20:27,279 - INFO - Found 0 new emails for elio@pascarelli.com
+2025-09-21 02:20:27,438 - INFO - Found 0 upcoming calendar events for elio@pascarelli.com
+2025-09-21 02:20:27,442 - INFO - Completed check cycle, sleeping for 60 seconds
+2025-09-21 02:21:27,445 - INFO - Checking for updates since 2025-09-21T01:20:27.007859+00:00
+2025-09-21 02:21:27,552 - INFO - Checking account: elio@pascarelli.com
+2025-09-21 02:21:27,698 - INFO - Found 0 new emails for elio@pascarelli.com
+2025-09-21 02:21:27,843 - INFO - Found 0 upcoming calendar events for elio@pascarelli.com
+2025-09-21 02:21:27,847 - INFO - Completed check cycle, sleeping for 60 seconds
+2025-09-21 02:22:27,850 - INFO - Checking for updates since 2025-09-21T01:21:27.450446+00:00
+2025-09-21 02:22:27,927 - INFO - Checking account: elio@pascarelli.com
+2025-09-21 02:22:28,079 - INFO - Found 0 new emails for elio@pascarelli.com
+2025-09-21 02:22:28,239 - INFO - Found 0 upcoming calendar events for elio@pascarelli.com
+2025-09-21 02:22:28,243 - INFO - Checking account: elio@audiogen.co
+2025-09-21 02:22:28,376 - INFO - Found 0 new emails for elio@audiogen.co
+2025-09-21 02:22:28,517 - INFO - Found 0 upcoming calendar events for elio@audiogen.co
+2025-09-21 02:22:28,521 - INFO - Completed check cycle, sleeping for 60 seconds

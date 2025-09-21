@@ -46,7 +46,6 @@ mcps/whatsapp-mcp/whatsapp-bridge/whatsapp-bridge
 # Scheduler data
 
 # Microsoft MCP tokens
-mcps/microsoft-mcp/token_cache.json
 
 # Old vesta folder (if still present)
 old_vesta/
