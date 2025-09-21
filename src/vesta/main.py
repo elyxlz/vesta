@@ -56,7 +56,11 @@ SERVICE_ICONS = {
 MCP_SERVERS = {
     "microsoft": {
         "command": "uv",
-        "args": ["run", "--directory", "mcps/microsoft-mcp", "microsoft-mcp"],
+        "args": [
+            "run", "--directory", "mcps/microsoft-mcp", "microsoft-mcp",
+            "--data-dir", "data/microsoft-mcp",
+            "--notifications-dir", "notifications"
+        ],
     },
     "whatsapp": {
         "command": "uv",
@@ -65,11 +69,16 @@ MCP_SERVERS = {
             "--directory",
             "mcps/whatsapp-mcp/whatsapp-mcp-server",
             "main.py",
+            "--data-dir", "data/whatsapp-mcp"
         ],
     },
     "scheduler": {
         "command": "uv",
-        "args": ["run", "--directory", "mcps/scheduler-mcp", "scheduler-mcp"],
+        "args": [
+            "run", "--directory", "mcps/scheduler-mcp", "scheduler-mcp",
+            "--data-dir", "data/scheduler-mcp",
+            "--notifications-dir", "notifications"
+        ],
     },
     "playwright": {
         "command": "npx",
@@ -78,7 +87,7 @@ MCP_SERVERS = {
             "mcp-server-playwright",
             "--browser", "chromium",
             "--blocked-origins", "googleads.g.doubleclick.net;googlesyndication.com",
-            "--output-dir", "data/screenshots",
+            "--output-dir", "data/playwright-mcp/screenshots",
             "--image-responses", "omit",
         ],
     },
@@ -117,15 +126,10 @@ def get_mcp_config() -> Dict[str, Any]:
     for name, server in MCP_SERVERS.items():
         env = {
             "PYTHONUNBUFFERED": "1",
-            "NOTIFICATIONS_DIR": str(root / "notifications"),
-            "DATA_DIR": str(root / "data"),
-            "BROWSER_PROFILES_DIR": str(root / "data" / "browser-profiles"),
-            "NODE_PATH": str(root / "mcps" / "playwright-mcp" / "node_modules"),
         }
 
         if name == "playwright":
-            env["DEBUG"] = "pw:api,pw:browser,mcp:*"
-            env["NODE_DEBUG"] = "mcp"
+            env["NODE_PATH"] = str(root / "mcps" / "playwright-mcp" / "node_modules")
 
         config[name] = {
             "command": server["command"],

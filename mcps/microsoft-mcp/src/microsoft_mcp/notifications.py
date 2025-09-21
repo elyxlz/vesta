@@ -1,14 +1,19 @@
 import json
-import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-NOTIF_DIR = Path(os.environ.get("NOTIFICATIONS_DIR", "../../notifications")).resolve()
+_notif_dir: Path | None = None
+
+
+def init_notifications(notif_dir: Path):
+    global _notif_dir
+    _notif_dir = notif_dir
 
 
 def write_notification(type: str, message: str, metadata: dict):
-    NOTIF_DIR.mkdir(exist_ok=True)
+    assert _notif_dir
+    _notif_dir.mkdir(exist_ok=True)
 
     notif = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -19,4 +24,4 @@ def write_notification(type: str, message: str, metadata: dict):
     }
 
     filename = f"{int(time.time() * 1e6)}-microsoft-{type}.json"
-    (NOTIF_DIR / filename).write_text(json.dumps(notif, indent=2))
+    (_notif_dir / filename).write_text(json.dumps(notif, indent=2))

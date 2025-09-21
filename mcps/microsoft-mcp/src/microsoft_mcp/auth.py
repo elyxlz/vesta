@@ -4,10 +4,14 @@ import pathlib as pl
 from typing import NamedTuple
 from dotenv import load_dotenv, find_dotenv
 
-load_dotenv(find_dotenv())
-
-CACHE_FILE = pl.Path.home() / ".microsoft_mcp_token_cache.json"
+_cache_file: pl.Path | None = None
 SCOPES = ["https://graph.microsoft.com/.default"]
+
+
+def init_auth(cache_file: pl.Path):
+    global _cache_file
+    _cache_file = cache_file
+    load_dotenv(find_dotenv())
 
 
 class Account(NamedTuple):
@@ -16,15 +20,17 @@ class Account(NamedTuple):
 
 
 def _read_cache() -> str | None:
+    assert _cache_file
     try:
-        return CACHE_FILE.read_text()
+        return _cache_file.read_text()
     except FileNotFoundError:
         return None
 
 
 def _write_cache(content: str) -> None:
-    CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    CACHE_FILE.write_text(content)
+    assert _cache_file
+    _cache_file.parent.mkdir(parents=True, exist_ok=True)
+    _cache_file.write_text(content)
 
 
 def get_app() -> msal.PublicClientApplication:

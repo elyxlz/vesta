@@ -2,20 +2,32 @@ from datetime import datetime as dt, timedelta
 from contextlib import closing
 import sqlite3
 import uuid
+from pathlib import Path
 from mcp.server.fastmcp import FastMCP
-from .scheduler import scheduler, write_notification, DATA_DIR
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
+from .scheduler import write_notification
 
 mcp = FastMCP("scheduler-mcp")
 
-DB_PATH = DATA_DIR / "reminders.db"
-_scheduler_started = False
+# These will be set by init_tools()
+_scheduler = None
+_data_dir = None
+_notif_dir = None
+
+
+def init_tools(scheduler, data_dir: Path, notif_dir: Path):
+    global _scheduler, _data_dir, _notif_dir
+    _scheduler = scheduler
+    _data_dir = data_dir
+    _notif_dir = notif_dir
+    init_db()
+    check_missed_reminders()
 
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(_data_dir / "reminders.db")
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -27,6 +39,8 @@ def init_db():
                 id TEXT PRIMARY KEY,
                 message TEXT NOT NULL,
                 schedule_type TEXT,
+                scheduled_time TEXT NOT NULL,
+                fired INTEGER DEFAULT 0,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -44,38 +58,25 @@ def init_db():
         conn.commit()
 
 
-init_db()
-
-
 def check_missed_reminders():
     from datetime import datetime, timezone
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc).isoformat()
 
-    for job in scheduler.get_jobs():
-        if job.next_run_time and job.next_run_time < now:
-            with closing(get_db()) as conn:
-                cursor = conn.execute(
-                    "SELECT message FROM reminders WHERE id = ?", (job.id,)
-                )
-                result = cursor.fetchone()
-                if result:
-                    write_notification(
-                        job.id,
-                        result["message"],
-                        {"late": True, "original_time": job.next_run_time.isoformat()},
-                    )
-
-
-def ensure_scheduler_started():
-    global _scheduler_started
-    if not _scheduler_started:
-        try:
-            scheduler.start()
-            check_missed_reminders()
-            _scheduler_started = True
-        except Exception:
-            _scheduler_started = True
+    with closing(get_db()) as conn:
+        cursor = conn.execute(
+            "SELECT id, message, scheduled_time FROM reminders WHERE fired = 0 AND scheduled_time < ?",
+            (now,)
+        )
+        for row in cursor:
+            write_notification(
+                _notif_dir,
+                row["id"],
+                row["message"],
+                {"missed": True, "scheduled_time": row["scheduled_time"]},
+            )
+            conn.execute("UPDATE reminders SET fired = 1 WHERE id = ?", (row["id"],))
+        conn.commit()
 
 
 def parse_relative_date(date_str: str) -> str | None:
@@ -112,7 +113,6 @@ def set_reminder(
     time: str | None = None,
 ) -> dict:
     """Schedule a reminder notification"""
-    ensure_scheduler_started()
 
     reminder_id = str(uuid.uuid4())[:8]
     schedule_info = None
@@ -168,22 +168,27 @@ def set_reminder(
             parts.append(f"{seconds} seconds")
         schedule_info = f"once (in {' '.join(parts)})"
 
-    scheduler.add_job(
-        func=write_notification,
+    def send_reminder():
+        write_notification(_notif_dir, reminder_id, message)
+        with closing(get_db()) as conn:
+            conn.execute("UPDATE reminders SET fired = 1 WHERE id = ?", (reminder_id,))
+            conn.commit()
+
+    _scheduler.add_job(
+        func=send_reminder,
         trigger=trigger,
-        args=[reminder_id, message],
         id=reminder_id,
         replace_existing=True,
     )
 
+    next_run = _scheduler.get_job(reminder_id).next_run_time
+
     with closing(get_db()) as conn:
         conn.execute(
-            "INSERT OR REPLACE INTO reminders (id, message, schedule_type) VALUES (?, ?, ?)",
-            (reminder_id, message, schedule_info),
+            "INSERT OR REPLACE INTO reminders (id, message, schedule_type, scheduled_time, fired) VALUES (?, ?, ?, ?, 0)",
+            (reminder_id, message, schedule_info, next_run.isoformat() if next_run else None),
         )
         conn.commit()
-
-    next_run = scheduler.get_job(reminder_id).next_run_time
     return {
         "id": reminder_id,
         "message": message,
@@ -196,14 +201,14 @@ def set_reminder(
 @mcp.tool()
 def list_reminders() -> list[dict]:
     """List all active reminders"""
-    ensure_scheduler_started()
+    # Scheduler already started in server.py
 
     with closing(get_db()) as conn:
         cursor = conn.execute("SELECT * FROM reminders")
         reminder_data = {row["id"]: dict(row) for row in cursor}
 
     reminders = []
-    for job in scheduler.get_jobs():
+    for job in _scheduler.get_jobs():
         if job.id in reminder_data:
             reminders.append(
                 {
@@ -222,10 +227,10 @@ def list_reminders() -> list[dict]:
 @mcp.tool()
 def cancel_reminder(reminder_id: str) -> dict:
     """Cancel a scheduled reminder"""
-    ensure_scheduler_started()
+    # Scheduler already started in server.py
 
     try:
-        scheduler.remove_job(reminder_id)
+        _scheduler.remove_job(reminder_id)
         with closing(get_db()) as conn:
             conn.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))
             conn.commit()
@@ -237,7 +242,7 @@ def cancel_reminder(reminder_id: str) -> dict:
 @mcp.tool()
 def add_task(title: str, due: str | None = None, priority: int = 2) -> dict:
     """Add a task"""
-    ensure_scheduler_started()
+    # Tasks don't use scheduler
 
     if priority not in (1, 2, 3):
         raise ValueError("Priority must be 1 (low), 2 (normal), or 3 (high)")
@@ -264,7 +269,7 @@ def add_task(title: str, due: str | None = None, priority: int = 2) -> dict:
 @mcp.tool()
 def list_tasks(show_completed: bool = False) -> list[dict]:
     """List tasks sorted by priority and due date"""
-    ensure_scheduler_started()
+    # Tasks don't use scheduler
 
     with closing(get_db()) as conn:
         query = "SELECT * FROM tasks"
@@ -281,7 +286,7 @@ def list_tasks(show_completed: bool = False) -> list[dict]:
 @mcp.tool()
 def update_task(id: str, status: str | None = None, title: str | None = None) -> dict:
     """Update task"""
-    ensure_scheduler_started()
+    # Tasks don't use scheduler
 
     if status and status not in ("pending", "done"):
         raise ValueError("Status must be pending or done")
@@ -323,7 +328,7 @@ def update_task(id: str, status: str | None = None, title: str | None = None) ->
 @mcp.tool()
 def clear_completed() -> dict:
     """Delete completed tasks older than 24 hours"""
-    ensure_scheduler_started()
+    # Tasks don't use scheduler
 
     cutoff = (dt.now() - timedelta(hours=24)).isoformat()
     with closing(get_db()) as conn:
