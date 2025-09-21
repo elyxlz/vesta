@@ -28,8 +28,9 @@ def load_system_prompt() -> str:
 
 async def check_mcp_health(client: ccsdk.ClaudeSDKClient) -> None:
     await client.query("")
+    found_init = False
     async for msg in client.receive_response():
-        if hasattr(msg, "subtype") and msg.subtype == "init":
+        if not found_init and hasattr(msg, "subtype") and msg.subtype == "init":
             mcp_servers = msg.data.get("mcp_servers", [])
             failed_mcps = [server["name"] for server in mcp_servers if server.get("status") == "failed"]
 
@@ -41,7 +42,7 @@ async def check_mcp_health(client: ccsdk.ClaudeSDKClient) -> None:
             connected_mcps = [server["name"] for server in mcp_servers if server.get("status") == "connected"]
             if connected_mcps:
                 vfx.log_success(f"Connected to MCPs: {', '.join(connected_mcps)}", vm.Colors)
-            break
+            found_init = True
 
 
 async def init_client(state: vm.State, config: vm.VestaSettings) -> tuple[ccsdk.ClaudeSDKClient, vm.State]:
@@ -172,6 +173,10 @@ async def send_query(client: ccsdk.ClaudeSDKClient, prompt: str, state: vm.State
     query_with_context = vu.build_query_with_timestamp(prompt, timestamp)
     new_history = vu.add_to_conversation_history(state.conversation_history, "user", prompt)
     new_state = vu.update_state(state, conversation_history=new_history)
+
+    if config.debug:
+        vfx.log_info(f"[DEBUG] Sending query: {prompt[:100]}...", vm.Colors)
+
     await client.query(query_with_context)
     return await check_context_and_preserve(new_state, config)
 
@@ -179,26 +184,27 @@ async def send_query(client: ccsdk.ClaudeSDKClient, prompt: str, state: vm.State
 async def collect_responses(
     client: ccsdk.ClaudeSDKClient, state: vm.State, config: vm.VestaSettings, show_output: bool = True
 ) -> tuple[list[str], vm.State]:
-    responses, seen = [], set()
+    responses = []
     current_state = state
+    message_count = 0
 
     async def collect():
-        nonlocal current_state
+        nonlocal current_state, message_count
         if config.debug:
             vfx.log_info("[DEBUG] Starting to collect responses", vm.Colors)
         async for msg in client.receive_response():
+            message_count += 1
             if config.debug:
-                vfx.log_info(f"[DEBUG] Received message type: {type(msg).__name__}", vm.Colors)
+                vfx.log_info(f"[DEBUG] Received message #{message_count} type: {type(msg).__name__}", vm.Colors)
             text, new_state = parse_assistant_message(msg, current_state)
             current_state = new_state
-            if text and text not in seen:
-                seen.add(text)
+            if text:
                 if show_output:
                     for line in text.split("\n"):
                         if line.strip():
                             if line.startswith("🔧"):
                                 if config.debug:
-                                    vfx.log_info(f"[DEBUG] Tool output: {line[:100]}", vm.Colors)
+                                    vfx.log_info(f"[DEBUG] Tool output (msg #{message_count}): {line[:100]}", vm.Colors)
                                 output_line(line, current_state, is_tool=True)
                             else:
                                 responses.append(line)
@@ -211,6 +217,9 @@ async def collect_responses(
     except Exception as e:
         responses.append(f"[Error: {str(e)[:100]}]")
         current_state = vu.update_state(current_state, sub_agent_context=None)
+
+    if config.debug:
+        vfx.log_info(f"[DEBUG] Finished collecting {message_count} messages", vm.Colors)
 
     return responses, current_state
 
@@ -332,10 +341,6 @@ async def process_notification_batch(
 
         if config.debug:
             traceback.print_exc()
-        try:
-            await delete_notification_files(notifications)
-        except Exception:
-            pass
         return state
 
 

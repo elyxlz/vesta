@@ -835,3 +835,11 @@ REST server is running. Press Ctrl+C to disconnect and exit.
 16:53:00.701[36m [Client INFO] Using existing chat name for 393483589770@s.whatsapp.net: Elio[0m
 [2025-09-21 16:44:14] ← 393483589770: hi vesta send me all active tasks
 Disconnecting...
+17:39:05.733[36m [Client INFO] Starting WhatsApp client...[0m
+17:39:05.733[36m [Client INFO] Notifications directory: /home/elyx/Repos/vesta2/notifications[0m
+17:39:05.998[36m [Client INFO] Successfully authenticated[0m
+17:39:06.532[36m [Client INFO] Connected to WhatsApp[0m
+
+✓ Connected to WhatsApp! Type 'help' for commands.
+Starting REST API server on :8080...
+REST server is running. Press Ctrl+C to disconnect and exit.

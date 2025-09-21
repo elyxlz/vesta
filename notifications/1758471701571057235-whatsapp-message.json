@@ -1,0 +1,12 @@
+{
+  "message": "say \"banan\" here",
+  "metadata": {
+    "chat_jid": "393483589770@s.whatsapp.net",
+    "chat_name": "Elio",
+    "message_id": "3EB0A53F894E1EF0F9ED94"
+  },
+  "sender": "Elio",
+  "source": "whatsapp",
+  "timestamp": "2025-09-21T17:21:41+01:00",
+  "type": "message"
+}
