@@ -8919,3 +8919,222 @@ requests.exceptions.ConnectionError: HTTPSConnectionPool(host='login.microsofton
 2025-09-21 18:45:38,788 - INFO - Found 0 new emails for elio@audiogen.co
 2025-09-21 18:45:38,999 - INFO - Found 0 upcoming calendar events for elio@audiogen.co
 2025-09-21 18:45:39,000 - INFO - Completed check cycle, sleeping for 60 seconds
+2025-09-21 23:50:27,815 - INFO - Monitor thread started
+2025-09-21 23:50:27,818 - INFO - Detected offline period of 18290s, catching up from 2025-09-21T17:45:37.768759+00:00
+2025-09-21 23:50:27,820 - INFO - Checking for updates since 2025-09-21T17:45:37.768759+00:00
+2025-09-21 23:50:27,990 - INFO - Checking account: elio@pascarelli.com
+2025-09-21 23:50:28,289 - INFO - Found 6 new emails for elio@pascarelli.com
+2025-09-21 23:50:28,291 - INFO - Writing notification for email from elio@pascarelli.com
+2025-09-21 23:50:28,294 - INFO - Writing notification for email from notifications@github.com
+2025-09-21 23:50:28,296 - INFO - Writing notification for email from notifications@github.com
+2025-09-21 23:50:28,298 - INFO - Writing notification for email from graduateadmissions@uidaho.edu
+2025-09-21 23:50:28,301 - INFO - Writing notification for email from notifications@github.com
+2025-09-21 23:50:28,303 - INFO - Writing notification for email from elio.pascarelli.21@ucl.ac.uk
+2025-09-21 23:50:28,481 - INFO - Found 1 upcoming calendar events for elio@pascarelli.com
+2025-09-21 23:50:28,482 - ERROR - Error fetching calendar for elio@pascarelli.com: can't subtract offset-naive and offset-aware datetimes
+2025-09-21 23:50:28,484 - INFO - Checking account: elio@audiogen.co
+2025-09-21 23:50:28,768 - INFO - Found 1 new emails for elio@audiogen.co
+2025-09-21 23:50:28,769 - INFO - Writing notification for email from james@startuptoscaleup.com
+2025-09-21 23:50:28,914 - INFO - Found 0 upcoming calendar events for elio@audiogen.co
+2025-09-21 23:50:28,914 - INFO - Completed check cycle, sleeping for 60 seconds
+2025-09-21 23:53:50,950 - INFO - Monitor thread started
+2025-09-21 23:53:50,953 - INFO - Detected offline period of 203s, catching up from 2025-09-21T22:50:27.822365+00:00
+2025-09-21 23:53:50,955 - INFO - Checking for updates since 2025-09-21T22:50:27.822365+00:00
+2025-09-21 23:53:51,091 - INFO - Checking account: elio@pascarelli.com
+2025-09-21 23:53:51,278 - INFO - Found 0 new emails for elio@pascarelli.com
+2025-09-21 23:53:51,484 - INFO - Found 1 upcoming calendar events for elio@pascarelli.com
+2025-09-21 23:53:51,486 - ERROR - Error fetching calendar for elio@pascarelli.com: can't subtract offset-naive and offset-aware datetimes
+2025-09-21 23:53:51,489 - INFO - Checking account: elio@audiogen.co
+2025-09-21 23:53:51,602 - INFO - Found 0 new emails for elio@audiogen.co
+2025-09-21 23:53:51,716 - INFO - Found 0 upcoming calendar events for elio@audiogen.co
+2025-09-21 23:53:51,719 - INFO - Completed check cycle, sleeping for 60 seconds
+2025-09-21 23:54:15,463 - INFO - Monitor thread started
+2025-09-21 23:54:15,466 - INFO - Checking for updates since 2025-09-21T21:54:15.466092+00:00
+2025-09-21 23:54:15,609 - INFO - Checking account: elio@pascarelli.com
+2025-09-21 23:54:15,774 - INFO - Found 1 new emails for elio@pascarelli.com
+2025-09-21 23:54:15,776 - INFO - Writing notification for email from elio.pascarelli.21@ucl.ac.uk
+2025-09-21 23:54:15,955 - INFO - Found 1 upcoming calendar events for elio@pascarelli.com
+2025-09-21 23:54:15,957 - ERROR - Error fetching calendar for elio@pascarelli.com: can't subtract offset-naive and offset-aware datetimes
+2025-09-21 23:54:15,959 - INFO - Checking account: elio@audiogen.co
+2025-09-21 23:54:16,101 - INFO - Found 0 new emails for elio@audiogen.co
+2025-09-21 23:54:16,223 - INFO - Found 0 upcoming calendar events for elio@audiogen.co
+2025-09-21 23:54:16,224 - INFO - Completed check cycle, sleeping for 60 seconds
+2025-09-21 23:55:32,139 - INFO - Monitor thread started
+2025-09-21 23:55:32,141 - INFO - Checking for updates since 2025-09-21T21:55:32.141660+00:00
+2025-09-21 23:55:32,780 - INFO - Checking account: elio@pascarelli.com
+2025-09-21 23:55:33,591 - INFO - Found 1 new emails for elio@pascarelli.com
+2025-09-21 23:55:33,594 - INFO - Writing notification for email from elio.pascarelli.21@ucl.ac.uk
+2025-09-21 23:55:33,944 - INFO - Found 1 upcoming calendar events for elio@pascarelli.com
+2025-09-21 23:55:33,947 - ERROR - Error fetching calendar for elio@pascarelli.com: can't subtract offset-naive and offset-aware datetimes
+2025-09-21 23:55:33,949 - INFO - Checking account: elio@audiogen.co
+2025-09-21 23:55:34,137 - INFO - Found 0 new emails for elio@audiogen.co
+2025-09-21 23:55:34,403 - INFO - Found 0 upcoming calendar events for elio@audiogen.co
+2025-09-21 23:55:34,405 - INFO - Completed check cycle, sleeping for 60 seconds
+2025-09-21 23:57:01,329 - INFO - Monitor thread started
+2025-09-21 23:57:01,333 - INFO - Checking for updates since 2025-09-21T21:57:01.333791+00:00
+2025-09-21 23:57:01,466 - INFO - Checking account: elio@pascarelli.com
+2025-09-21 23:57:01,695 - INFO - Found 1 new emails for elio@pascarelli.com
+2025-09-21 23:57:01,698 - INFO - Writing notification for email from elio.pascarelli.21@ucl.ac.uk
+2025-09-21 23:57:01,854 - INFO - Found 1 upcoming calendar events for elio@pascarelli.com
+2025-09-21 23:57:01,856 - ERROR - Error fetching calendar for elio@pascarelli.com: can't subtract offset-naive and offset-aware datetimes
+2025-09-21 23:57:01,858 - INFO - Checking account: elio@audiogen.co
+2025-09-21 23:57:01,994 - INFO - Found 0 new emails for elio@audiogen.co
+2025-09-21 23:57:02,136 - INFO - Found 0 upcoming calendar events for elio@audiogen.co
+2025-09-21 23:57:02,138 - INFO - Completed check cycle, sleeping for 60 seconds
+2025-09-21 23:57:24,824 - INFO - Monitor thread started
+2025-09-21 23:57:24,826 - INFO - Checking for updates since 2025-09-21T21:57:24.826261+00:00
+2025-09-21 23:57:24,945 - INFO - Checking account: elio@pascarelli.com
+2025-09-21 23:57:25,135 - INFO - Found 1 new emails for elio@pascarelli.com
+2025-09-21 23:57:25,138 - INFO - Writing notification for email from elio.pascarelli.21@ucl.ac.uk
+2025-09-21 23:57:25,320 - INFO - Found 1 upcoming calendar events for elio@pascarelli.com
+2025-09-21 23:57:25,322 - ERROR - Error fetching calendar for elio@pascarelli.com: can't subtract offset-naive and offset-aware datetimes
+2025-09-21 23:57:25,324 - INFO - Checking account: elio@audiogen.co
+2025-09-21 23:57:25,444 - INFO - Found 0 new emails for elio@audiogen.co
+2025-09-21 23:57:25,572 - INFO - Found 0 upcoming calendar events for elio@audiogen.co
+2025-09-21 23:57:25,572 - INFO - Completed check cycle, sleeping for 60 seconds
+2025-09-21 23:58:25,575 - INFO - Checking for updates since 2025-09-21T22:57:24.827637+00:00
+2025-09-21 23:58:25,646 - INFO - Checking account: elio@pascarelli.com
+2025-09-21 23:58:25,857 - INFO - Found 0 new emails for elio@pascarelli.com
+2025-09-21 23:58:26,065 - INFO - Found 1 upcoming calendar events for elio@pascarelli.com
+2025-09-21 23:58:26,066 - ERROR - Error fetching calendar for elio@pascarelli.com: can't subtract offset-naive and offset-aware datetimes
+2025-09-21 23:58:26,067 - INFO - Checking account: elio@audiogen.co
+2025-09-21 23:58:26,195 - INFO - Found 0 new emails for elio@audiogen.co
+2025-09-21 23:58:26,345 - INFO - Found 0 upcoming calendar events for elio@audiogen.co
+2025-09-21 23:58:26,347 - INFO - Completed check cycle, sleeping for 60 seconds
+2025-09-21 23:58:51,158 - INFO - Monitor thread started
+2025-09-21 23:58:51,160 - INFO - Checking for updates since 2025-09-21T21:58:51.160767+00:00
+2025-09-21 23:58:51,278 - INFO - Checking account: elio@pascarelli.com
+2025-09-21 23:58:51,446 - INFO - Found 1 new emails for elio@pascarelli.com
+2025-09-21 23:58:51,447 - INFO - Writing notification for email from elio.pascarelli.21@ucl.ac.uk
+2025-09-21 23:58:51,658 - INFO - Found 1 upcoming calendar events for elio@pascarelli.com
+2025-09-21 23:58:51,661 - ERROR - Error fetching calendar for elio@pascarelli.com: can't subtract offset-naive and offset-aware datetimes
+2025-09-21 23:58:51,664 - INFO - Checking account: elio@audiogen.co
+2025-09-21 23:58:51,807 - INFO - Found 0 new emails for elio@audiogen.co
+2025-09-21 23:58:51,942 - INFO - Found 0 upcoming calendar events for elio@audiogen.co
+2025-09-21 23:58:51,945 - INFO - Completed check cycle, sleeping for 60 seconds
+2025-09-21 23:59:51,948 - INFO - Checking for updates since 2025-09-21T22:58:51.164125+00:00
+2025-09-21 23:59:52,047 - INFO - Checking account: elio@pascarelli.com
+2025-09-21 23:59:52,230 - INFO - Found 0 new emails for elio@pascarelli.com
+2025-09-21 23:59:52,361 - INFO - Found 0 upcoming calendar events for elio@pascarelli.com
+2025-09-21 23:59:52,362 - INFO - Checking account: elio@audiogen.co
+2025-09-21 23:59:52,488 - INFO - Found 0 new emails for elio@audiogen.co
+2025-09-21 23:59:52,711 - INFO - Found 0 upcoming calendar events for elio@audiogen.co
+2025-09-21 23:59:52,711 - INFO - Completed check cycle, sleeping for 60 seconds
+2025-09-22 00:00:52,712 - INFO - Checking for updates since 2025-09-21T22:59:51.952641+00:00
+2025-09-22 00:00:52,819 - INFO - Checking account: elio@pascarelli.com
+2025-09-22 00:00:52,943 - INFO - Found 0 new emails for elio@pascarelli.com
+2025-09-22 00:00:53,125 - INFO - Found 0 upcoming calendar events for elio@pascarelli.com
+2025-09-22 00:00:53,127 - INFO - Checking account: elio@audiogen.co
+2025-09-22 00:00:53,239 - INFO - Found 0 new emails for elio@audiogen.co
+2025-09-22 00:00:53,345 - INFO - Found 0 upcoming calendar events for elio@audiogen.co
+2025-09-22 00:00:53,347 - INFO - Completed check cycle, sleeping for 60 seconds
+2025-09-22 00:03:15,229 - INFO - Monitor thread started
+2025-09-22 00:03:15,231 - INFO - Detected offline period of 143s, catching up from 2025-09-21T23:00:52.715275+00:00
+2025-09-22 00:03:15,232 - INFO - Checking for updates since 2025-09-21T23:00:52.715275+00:00
+2025-09-22 00:03:15,377 - INFO - Checking account: elio@pascarelli.com
+2025-09-22 00:03:15,569 - INFO - Found 0 new emails for elio@pascarelli.com
+2025-09-22 00:03:15,726 - INFO - Found 0 upcoming calendar events for elio@pascarelli.com
+2025-09-22 00:03:15,728 - INFO - Checking account: elio@audiogen.co
+2025-09-22 00:03:15,842 - INFO - Found 0 new emails for elio@audiogen.co
+2025-09-22 00:03:16,040 - INFO - Found 0 upcoming calendar events for elio@audiogen.co
+2025-09-22 00:03:16,043 - INFO - Completed check cycle, sleeping for 60 seconds
+2025-09-22 00:03:31,436 - INFO - Monitor thread started
+2025-09-22 00:03:31,441 - INFO - Checking for updates since 2025-09-21T22:03:31.441072+00:00
+2025-09-22 00:03:31,586 - INFO - Checking account: elio@pascarelli.com
+2025-09-22 00:03:31,752 - INFO - Found 1 new emails for elio@pascarelli.com
+2025-09-22 00:03:31,755 - INFO - Writing notification for email from elio.pascarelli.21@ucl.ac.uk
+2025-09-22 00:03:31,906 - INFO - Found 0 upcoming calendar events for elio@pascarelli.com
+2025-09-22 00:03:31,909 - INFO - Checking account: elio@audiogen.co
+2025-09-22 00:03:32,017 - INFO - Found 0 new emails for elio@audiogen.co
+2025-09-22 00:03:32,145 - INFO - Found 0 upcoming calendar events for elio@audiogen.co
+2025-09-22 00:03:32,146 - INFO - Completed check cycle, sleeping for 60 seconds
+2025-09-22 00:03:36,619 - INFO - Monitor thread started
+2025-09-22 00:03:36,622 - INFO - Checking for updates since 2025-09-21T22:03:36.622479+00:00
+2025-09-22 00:03:36,751 - INFO - Checking account: elio@pascarelli.com
+2025-09-22 00:03:36,902 - INFO - Found 1 new emails for elio@pascarelli.com
+2025-09-22 00:03:36,905 - INFO - Writing notification for email from elio.pascarelli.21@ucl.ac.uk
+2025-09-22 00:03:37,070 - INFO - Found 0 upcoming calendar events for elio@pascarelli.com
+2025-09-22 00:03:37,073 - INFO - Checking account: elio@audiogen.co
+2025-09-22 00:03:37,190 - INFO - Found 0 new emails for elio@audiogen.co
+2025-09-22 00:03:37,306 - INFO - Found 0 upcoming calendar events for elio@audiogen.co
+2025-09-22 00:03:37,309 - INFO - Completed check cycle, sleeping for 60 seconds
+2025-09-22 00:04:37,311 - INFO - Checking for updates since 2025-09-21T23:03:36.624318+00:00
+2025-09-22 00:04:37,428 - INFO - Checking account: elio@pascarelli.com
+2025-09-22 00:04:37,586 - INFO - Found 0 new emails for elio@pascarelli.com
+2025-09-22 00:04:37,750 - INFO - Found 0 upcoming calendar events for elio@pascarelli.com
+2025-09-22 00:04:37,752 - INFO - Checking account: elio@audiogen.co
+2025-09-22 00:04:37,887 - INFO - Found 0 new emails for elio@audiogen.co
+2025-09-22 00:04:38,052 - INFO - Found 0 upcoming calendar events for elio@audiogen.co
+2025-09-22 00:04:38,053 - INFO - Completed check cycle, sleeping for 60 seconds
+2025-09-22 00:05:38,056 - INFO - Checking for updates since 2025-09-21T23:04:37.314303+00:00
+2025-09-22 00:05:38,203 - INFO - Checking account: elio@pascarelli.com
+2025-09-22 00:05:38,394 - INFO - Found 0 new emails for elio@pascarelli.com
+2025-09-22 00:05:38,536 - INFO - Found 0 upcoming calendar events for elio@pascarelli.com
+2025-09-22 00:05:38,537 - INFO - Checking account: elio@audiogen.co
+2025-09-22 00:05:38,673 - INFO - Found 0 new emails for elio@audiogen.co
+2025-09-22 00:05:38,805 - INFO - Found 0 upcoming calendar events for elio@audiogen.co
+2025-09-22 00:05:38,807 - INFO - Completed check cycle, sleeping for 60 seconds
+2025-09-22 00:06:38,809 - INFO - Checking for updates since 2025-09-21T23:05:38.059440+00:00
+2025-09-22 00:06:38,894 - INFO - Checking account: elio@pascarelli.com
+2025-09-22 00:06:39,046 - INFO - Found 0 new emails for elio@pascarelli.com
+2025-09-22 00:06:39,184 - INFO - Found 0 upcoming calendar events for elio@pascarelli.com
+2025-09-22 00:06:39,186 - INFO - Checking account: elio@audiogen.co
+2025-09-22 00:06:39,294 - INFO - Found 0 new emails for elio@audiogen.co
+2025-09-22 00:06:39,432 - INFO - Found 0 upcoming calendar events for elio@audiogen.co
+2025-09-22 00:06:39,434 - INFO - Completed check cycle, sleeping for 60 seconds
+2025-09-22 00:07:39,437 - INFO - Checking for updates since 2025-09-21T23:06:38.812034+00:00
+2025-09-22 00:07:39,544 - INFO - Checking account: elio@pascarelli.com
+2025-09-22 00:07:44,940 - INFO - Found 0 new emails for elio@pascarelli.com
+2025-09-22 00:07:45,102 - INFO - Found 0 upcoming calendar events for elio@pascarelli.com
+2025-09-22 00:07:45,104 - INFO - Checking account: elio@audiogen.co
+2025-09-22 00:07:45,230 - INFO - Found 0 new emails for elio@audiogen.co
+2025-09-22 00:07:45,347 - INFO - Found 0 upcoming calendar events for elio@audiogen.co
+2025-09-22 00:07:45,347 - INFO - Completed check cycle, sleeping for 60 seconds
+2025-09-22 00:08:45,349 - INFO - Checking for updates since 2025-09-21T23:07:39.440238+00:00
+2025-09-22 00:08:45,454 - INFO - Checking account: elio@pascarelli.com
+2025-09-22 00:08:45,593 - INFO - Found 0 new emails for elio@pascarelli.com
+2025-09-22 00:08:45,738 - INFO - Found 0 upcoming calendar events for elio@pascarelli.com
+2025-09-22 00:08:45,741 - INFO - Checking account: elio@audiogen.co
+2025-09-22 00:08:45,877 - INFO - Found 0 new emails for elio@audiogen.co
+2025-09-22 00:08:46,019 - INFO - Found 0 upcoming calendar events for elio@audiogen.co
+2025-09-22 00:08:46,020 - INFO - Completed check cycle, sleeping for 60 seconds
+2025-09-22 00:09:46,022 - INFO - Checking for updates since 2025-09-21T23:08:45.352640+00:00
+2025-09-22 00:09:46,120 - INFO - Checking account: elio@pascarelli.com
+2025-09-22 00:09:46,316 - INFO - Found 0 new emails for elio@pascarelli.com
+2025-09-22 00:09:46,503 - INFO - Found 0 upcoming calendar events for elio@pascarelli.com
+2025-09-22 00:09:46,506 - INFO - Checking account: elio@audiogen.co
+2025-09-22 00:09:46,609 - INFO - Found 0 new emails for elio@audiogen.co
+2025-09-22 00:09:46,749 - INFO - Found 0 upcoming calendar events for elio@audiogen.co
+2025-09-22 00:09:46,750 - INFO - Completed check cycle, sleeping for 60 seconds
+2025-09-22 00:10:46,752 - INFO - Checking for updates since 2025-09-21T23:09:46.025582+00:00
+2025-09-22 00:10:51,974 - INFO - Checking account: elio@pascarelli.com
+2025-09-22 00:10:52,146 - INFO - Found 0 new emails for elio@pascarelli.com
+2025-09-22 00:10:52,291 - INFO - Found 0 upcoming calendar events for elio@pascarelli.com
+2025-09-22 00:10:52,292 - INFO - Checking account: elio@audiogen.co
+2025-09-22 00:10:52,394 - INFO - Found 0 new emails for elio@audiogen.co
+2025-09-22 00:10:52,550 - INFO - Found 0 upcoming calendar events for elio@audiogen.co
+2025-09-22 00:10:52,552 - INFO - Completed check cycle, sleeping for 60 seconds
+2025-09-22 00:11:52,555 - INFO - Checking for updates since 2025-09-21T23:10:46.755447+00:00
+2025-09-22 00:11:52,641 - INFO - Checking account: elio@pascarelli.com
+2025-09-22 00:11:52,763 - INFO - Found 0 new emails for elio@pascarelli.com
+2025-09-22 00:11:52,918 - INFO - Found 0 upcoming calendar events for elio@pascarelli.com
+2025-09-22 00:11:52,919 - INFO - Checking account: elio@audiogen.co
+2025-09-22 00:11:53,036 - INFO - Found 0 new emails for elio@audiogen.co
+2025-09-22 00:11:53,139 - INFO - Found 0 upcoming calendar events for elio@audiogen.co
+2025-09-22 00:11:53,141 - INFO - Completed check cycle, sleeping for 60 seconds
+2025-09-22 00:12:53,144 - INFO - Checking for updates since 2025-09-21T23:11:52.557839+00:00
+2025-09-22 00:12:53,205 - INFO - Checking account: elio@pascarelli.com
+2025-09-22 00:12:53,383 - INFO - Found 0 new emails for elio@pascarelli.com
+2025-09-22 00:12:53,508 - INFO - Found 0 upcoming calendar events for elio@pascarelli.com
+2025-09-22 00:12:53,511 - INFO - Checking account: elio@audiogen.co
+2025-09-22 00:12:53,661 - INFO - Found 0 new emails for elio@audiogen.co
+2025-09-22 00:12:53,792 - INFO - Found 0 upcoming calendar events for elio@audiogen.co
+2025-09-22 00:12:53,793 - INFO - Completed check cycle, sleeping for 60 seconds
+2025-09-22 00:13:53,794 - INFO - Checking for updates since 2025-09-21T23:12:53.147257+00:00
+2025-09-22 00:13:53,887 - INFO - Checking account: elio@pascarelli.com
+2025-09-22 00:13:54,075 - INFO - Found 0 new emails for elio@pascarelli.com
+2025-09-22 00:13:54,214 - INFO - Found 0 upcoming calendar events for elio@pascarelli.com
+2025-09-22 00:13:54,216 - INFO - Checking account: elio@audiogen.co
+2025-09-22 00:13:54,356 - INFO - Found 0 new emails for elio@audiogen.co
+2025-09-22 00:13:54,490 - INFO - Found 0 upcoming calendar events for elio@audiogen.co
+2025-09-22 00:13:54,491 - INFO - Completed check cycle, sleeping for 60 seconds

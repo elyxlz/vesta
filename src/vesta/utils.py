@@ -115,14 +115,9 @@ class MonitoringAction:
 def calculate_monitoring_actions(
     current_time: dt.datetime,
     last_proactive: dt.datetime,
-    last_bridge_check: dt.datetime,
-    last_mcp_check: dt.datetime | None,
     config: vm.VestaSettings,
 ) -> list[MonitoringAction]:
     actions = []
-
-    if current_time - last_bridge_check >= dt.timedelta(seconds=config.whatsapp_bridge_check_interval):
-        actions.append(MonitoringAction("check_bridge"))
 
     if current_time - last_proactive >= dt.timedelta(minutes=config.proactive_check_interval):
         actions.append(MonitoringAction("check_proactive"))

@@ -65,6 +65,9 @@ async def load_notifications() -> list[vm.Notification]:
     notif_dir = get_root_path() / "notifications"
     file_contents = vfx.load_notification_files(notif_dir)
 
+    # Debug: log the raw files found
+    vfx.log_info(f"[DEBUG] load_notification_files returned {len(file_contents)} files from {notif_dir}", vm.Colors)
+
     notifications = []
     for file, content in file_contents:
         if content:
@@ -209,7 +212,6 @@ async def collect_responses(
                                     output_line(line, current_state, is_tool=True)
                                 else:
                                     responses.append(line)
-                                    output_line(line, current_state)
             if config.debug:
                 vfx.log_info(f"[DEBUG] Finished iterating over responses normally, received {message_count} messages", vm.Colors)
         except Exception as e:
@@ -522,60 +524,86 @@ async def monitor_loop(queue: asyncio.Queue, state: vm.State, config: vm.VestaSe
         if current_state.shutdown_event and current_state.shutdown_event.is_set():
             break
 
-        now = vfx.get_current_time()
-        if config.debug:
-            vfx.log_info(f"[DEBUG] Monitor check at {now.strftime('%H:%M:%S')}", vm.Colors)
-
-        actions = vu.calculate_monitoring_actions(now, last_proactive, None, None, config)
-
-        for action in actions:
-            if action.action_type == "check_proactive":
-                await check_proactive_task(queue, config)
-                last_proactive = now
-
+        # Wrap the entire monitor iteration in a try-catch to prevent silent failures
         try:
-            new_notifs = await load_notifications()
-            if config.debug and new_notifs:
-                vfx.log_info(f"[DEBUG] Found {len(new_notifs)} notification files", vm.Colors)
-
-            if new_notifs:
-                existing_paths = {n.file_path for n in notification_buffer}
-                truly_new = vu.filter_new_notifications(new_notifs, existing_paths)
-
-                if truly_new:
-                    if config.debug:
-                        vfx.log_info(f"[DEBUG] {len(truly_new)} new notifications to process", vm.Colors)
-                    notification_buffer.extend(truly_new)
-                    if buffer_start_time is None:
-                        buffer_start_time = now
-
-                    for notif in truly_new:
-                        icon, sender, display_msg = notif.get_display_info()
-                        print_timestamp_message(f"{icon} {display_msg}", sender)
-        except Exception as e:
-            vfx.log_error(f"Error loading notifications: {e}", vm.Colors)
-            import traceback
-
+            now = vfx.get_current_time()
             if config.debug:
-                traceback.print_exc()
+                vfx.log_info(f"[DEBUG] Monitor check at {now.strftime('%H:%M:%S')}", vm.Colors)
+                vfx.log_info("[DEBUG] About to calculate monitoring actions", vm.Colors)
 
-        if vu.should_process_notification_buffer(notification_buffer, buffer_start_time, now, config.notification_buffer_delay):
             try:
+                actions = vu.calculate_monitoring_actions(now, last_proactive, config)
                 if config.debug:
-                    vfx.log_info(f"[DEBUG] Processing {len(notification_buffer)} buffered notifications", vm.Colors)
-                # Use the shared state object for checking is_processing flag
-                new_state = await process_notification_batch(notification_buffer, queue, state, config)
-                current_state = new_state
-                notification_buffer = []
-                buffer_start_time = None
+                    vfx.log_info(f"[DEBUG] Got {len(actions)} actions from calculate_monitoring_actions", vm.Colors)
             except Exception as e:
-                vfx.log_error(f"Error processing notifications: {e}", vm.Colors)
+                vfx.log_error(f"Error in calculate_monitoring_actions: {e}", vm.Colors)
                 import traceback
 
                 if config.debug:
                     traceback.print_exc()
-                notification_buffer = []
-                buffer_start_time = None
+                actions = []
+
+            for action in actions:
+                if action.action_type == "check_proactive":
+                    await check_proactive_task(queue, config)
+                    last_proactive = now
+
+            if config.debug:
+                vfx.log_info("[DEBUG] After processing actions, checking notifications...", vm.Colors)
+
+            try:
+                if config.debug:
+                    vfx.log_info("[DEBUG] About to call load_notifications()", vm.Colors)
+                new_notifs = await load_notifications()
+                if config.debug:
+                    vfx.log_info(f"[DEBUG] load_notifications returned {len(new_notifs)} notifications", vm.Colors)
+
+                if new_notifs:
+                    existing_paths = {n.file_path for n in notification_buffer}
+                    truly_new = vu.filter_new_notifications(new_notifs, existing_paths)
+
+                    if truly_new:
+                        if config.debug:
+                            vfx.log_info(f"[DEBUG] {len(truly_new)} new notifications to process", vm.Colors)
+                        notification_buffer.extend(truly_new)
+                        if buffer_start_time is None:
+                            buffer_start_time = now
+
+                        for notif in truly_new:
+                            icon, sender, display_msg = notif.get_display_info()
+                            print_timestamp_message(f"{icon} {display_msg}", sender)
+            except Exception as e:
+                vfx.log_error(f"Error loading notifications: {e}", vm.Colors)
+                import traceback
+
+                if config.debug:
+                    traceback.print_exc()
+
+            if vu.should_process_notification_buffer(notification_buffer, buffer_start_time, now, config.notification_buffer_delay):
+                try:
+                    if config.debug:
+                        vfx.log_info(f"[DEBUG] Processing {len(notification_buffer)} buffered notifications", vm.Colors)
+                    # Use the shared state object for checking is_processing flag
+                    new_state = await process_notification_batch(notification_buffer, queue, state, config)
+                    current_state = new_state
+                    notification_buffer = []
+                    buffer_start_time = None
+                except Exception as e:
+                    vfx.log_error(f"Error processing notifications: {e}", vm.Colors)
+                    import traceback
+
+                    if config.debug:
+                        traceback.print_exc()
+                    notification_buffer = []
+                    buffer_start_time = None
+
+        except Exception as e:
+            vfx.log_error(f"CRITICAL: Monitor loop iteration crashed: {e}", vm.Colors)
+            import traceback
+
+            traceback.print_exc()
+            # Continue to next iteration even if this one failed
+            continue
 
 
 async def run_vesta(config: vm.VestaSettings, state: vm.State) -> None:
