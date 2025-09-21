@@ -43,11 +43,13 @@ async def check_mcp_health(client: ccsdk.ClaudeSDKClient) -> None:
             if connected_mcps:
                 vfx.log_success(f"Connected to MCPs: {', '.join(connected_mcps)}", vm.Colors)
             found_init = True
-        # Continue consuming all messages until the stream ends
+            break  # Exit after finding init message - don't wait forever!
 
 
 async def init_client(state: vm.State, config: vm.VestaSettings) -> tuple[ccsdk.ClaudeSDKClient, vm.State]:
     if state.client:
+        if config.debug:
+            vfx.log_info("[DEBUG] Reusing existing client", vm.Colors)
         return state.client, state
 
     client = ccsdk.ClaudeSDKClient(
@@ -60,6 +62,9 @@ async def init_client(state: vm.State, config: vm.VestaSettings) -> tuple[ccsdk.
         )
     )
     await client.__aenter__()
+
+    if config.debug:
+        vfx.log_info("[DEBUG] Claude SDK client initialized", vm.Colors)
 
     await check_mcp_health(client)
 
@@ -177,8 +182,14 @@ async def send_query(client: ccsdk.ClaudeSDKClient, prompt: str, state: vm.State
 
     if config.debug:
         vfx.log_info(f"[DEBUG] Sending query: {prompt[:100]}...", vm.Colors)
+        vfx.log_info(f"[DEBUG] Full query being sent: {query_with_context[:200]}...", vm.Colors)
+        vfx.log_info(f"[DEBUG] Client before query: {client}", vm.Colors)
 
     await client.query(query_with_context)
+
+    if config.debug:
+        vfx.log_info(f"[DEBUG] Query sent successfully", vm.Colors)
+
     return await check_context_and_preserve(new_state, config)
 
 
@@ -193,26 +204,59 @@ async def collect_responses(
         nonlocal current_state, message_count
         if config.debug:
             vfx.log_info("[DEBUG] Starting to collect responses", vm.Colors)
-        async for msg in client.receive_response():
-            message_count += 1
+            vfx.log_info(f"[DEBUG] Client state: {client}", vm.Colors)
+            vfx.log_info(f"[DEBUG] Client type: {type(client)}", vm.Colors)
+            if hasattr(client, '_connected'):
+                vfx.log_info(f"[DEBUG] Client connected: {client._connected}", vm.Colors)
+        try:
             if config.debug:
-                vfx.log_info(f"[DEBUG] Received message #{message_count} type: {type(msg).__name__}", vm.Colors)
-            text, new_state = parse_assistant_message(msg, current_state)
-            current_state = new_state
-            if text:
-                if show_output:
-                    for line in text.split("\n"):
-                        if line.strip():
-                            if line.startswith("🔧"):
-                                if config.debug:
-                                    vfx.log_info(f"[DEBUG] Tool output (msg #{message_count}): {line[:100]}", vm.Colors)
-                                output_line(line, current_state, is_tool=True)
-                            else:
-                                responses.append(line)
+                vfx.log_info(f"[DEBUG] About to iterate over client.receive_response()", vm.Colors)
+            iteration_started = False
+            async for msg in client.receive_response():
+                if not iteration_started and config.debug:
+                    vfx.log_info(f"[DEBUG] Started receiving messages from client", vm.Colors)
+                    iteration_started = True
+                message_count += 1
+                if config.debug:
+                    vfx.log_info(f"[DEBUG] Received message #{message_count} type: {type(msg).__name__}", vm.Colors)
+                    if hasattr(msg, '__dict__'):
+                        vfx.log_info(f"[DEBUG] Message attributes: {list(msg.__dict__.keys())}", vm.Colors)
+                text, new_state = parse_assistant_message(msg, current_state)
+                current_state = new_state
+                if config.debug and text:
+                    vfx.log_info(f"[DEBUG] Got text from message: {text[:100]}", vm.Colors)
+
+                # Check for stream end indicators
+                if hasattr(msg, 'stop_reason'):
+                    if config.debug:
+                        vfx.log_info(f"[DEBUG] Message has stop_reason: {msg.stop_reason}", vm.Colors)
+                if hasattr(msg, 'is_final'):
+                    if config.debug:
+                        vfx.log_info(f"[DEBUG] Message has is_final: {msg.is_final}", vm.Colors)
+
+                if text:
+                    if show_output:
+                        for line in text.split("\n"):
+                            if line.strip():
+                                if line.startswith("🔧"):
+                                    if config.debug:
+                                        vfx.log_info(f"[DEBUG] Tool output (msg #{message_count}): {line[:100]}", vm.Colors)
+                                    output_line(line, current_state, is_tool=True)
+                                else:
+                                    responses.append(line)
+                                    output_line(line, current_state)
+            if config.debug:
+                vfx.log_info(f"[DEBUG] Finished iterating over responses normally, received {message_count} messages", vm.Colors)
+        except Exception as e:
+            if config.debug:
+                vfx.log_info(f"[DEBUG] Error in collect loop: {str(e)}", vm.Colors)
+            raise
 
     try:
         await asyncio.wait_for(collect(), timeout=config.response_timeout)
     except asyncio.TimeoutError:
+        if config.debug:
+            vfx.log_info(f"[DEBUG] Response collection timed out after {config.response_timeout}s", vm.Colors)
         responses.append("[Response timeout]")
         current_state = vu.update_state(current_state, sub_agent_context=None)
     except asyncio.CancelledError:
@@ -233,17 +277,29 @@ async def collect_responses(
 async def send_and_receive_message(
     prompt: str, state: vm.State, config: vm.VestaSettings, show_in_chat: bool = True
 ) -> tuple[list[str], vm.State]:
+    if config.debug:
+        vfx.log_info(f"[DEBUG] send_and_receive_message called with prompt: {prompt[:100]}", vm.Colors)
+
     client, new_state = await init_client(state, config)
+
+    if config.debug:
+        vfx.log_info(f"[DEBUG] Client initialized, about to send query", vm.Colors)
 
     try:
         new_state = await send_query(client, prompt, new_state, config)
     except Exception as e:
         error_msg = f"failed to send message: {str(e)[:100]}"
         vfx.log_error(error_msg, vm.Colors)
+        if config.debug:
+            import traceback
+            traceback.print_exc()
         updated_history = vu.add_to_conversation_history(new_state.conversation_history, "assistant", error_msg)
         return [error_msg], vu.update_state(new_state, conversation_history=updated_history)
 
     responses, final_state = await collect_responses(client, new_state, config, show_in_chat)
+
+    if config.debug:
+        vfx.log_info(f"[DEBUG] Collected {len(responses)} responses", vm.Colors)
 
     if responses:
         updated_history = vu.add_to_conversation_history(final_state.conversation_history, "assistant", " ".join(responses))
@@ -266,11 +322,17 @@ async def show_typing_indicator(config: vm.VestaSettings) -> None:
 
 
 async def process_message_with_typing(msg: str, state: vm.State, config: vm.VestaSettings, is_user: bool) -> tuple[list[str], vm.State]:
+    if config.debug:
+        vfx.log_info(f"[DEBUG] process_message_with_typing called", vm.Colors)
     now = vfx.get_current_time()
     await vfx.sleep(0.8 + now.microsecond / 3000000)
 
+    if config.debug:
+        vfx.log_info(f"[DEBUG] Creating typing indicator task", vm.Colors)
     typing_task = asyncio.create_task(show_typing_indicator(config))
     try:
+        if config.debug:
+            vfx.log_info(f"[DEBUG] About to call send_and_receive_message", vm.Colors)
         responses, new_state = await send_and_receive_message(msg, state, config, show_in_chat=is_user)
     except Exception as e:
         responses = [f"something went wrong: {str(e)[:50]}"]
@@ -400,7 +462,7 @@ async def message_processor(queue: asyncio.Queue, state: vm.State, config: vm.Ve
             msg, is_user = await asyncio.wait_for(queue.get(), timeout=1.0)
             if config.debug:
                 vfx.log_info(f"[DEBUG] Processing message from {'user' if is_user else 'system'}: {msg[:100]}", vm.Colors)
-            state.is_processing = True
+            current_state = vu.update_state(current_state, is_processing=True)
 
             responses, new_state = await process_message_with_typing(msg, current_state, config, is_user)
             current_state = new_state
@@ -411,7 +473,7 @@ async def message_processor(queue: asyncio.Queue, state: vm.State, config: vm.Ve
                         await vfx.sleep(0.3)
                     output_line(response, current_state)
 
-            state.is_processing = False
+            current_state = vu.update_state(current_state, is_processing=False)
             if config.debug:
                 vfx.log_info("[DEBUG] Message processing completed", vm.Colors)
         except asyncio.TimeoutError:
@@ -422,7 +484,7 @@ async def message_processor(queue: asyncio.Queue, state: vm.State, config: vm.Ve
 
             if config.debug:
                 traceback.print_exc()
-            state.is_processing = False
+            current_state = vu.update_state(current_state, is_processing=False)
 
 
 async def input_handler(queue: asyncio.Queue, state: vm.State) -> None:
