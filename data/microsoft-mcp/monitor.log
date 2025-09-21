@@ -2923,3 +2923,20 @@ requests.exceptions.ConnectionError: HTTPSConnectionPool(host='login.microsofton
 2025-09-21 02:22:28,376 - INFO - Found 0 new emails for elio@audiogen.co
 2025-09-21 02:22:28,517 - INFO - Found 0 upcoming calendar events for elio@audiogen.co
 2025-09-21 02:22:28,521 - INFO - Completed check cycle, sleeping for 60 seconds
+2025-09-21 02:23:28,524 - INFO - Checking for updates since 2025-09-21T01:22:27.854092+00:00
+2025-09-21 02:23:28,609 - INFO - Checking account: elio@pascarelli.com
+2025-09-21 02:23:28,756 - INFO - Found 0 new emails for elio@pascarelli.com
+2025-09-21 02:23:28,909 - INFO - Found 0 upcoming calendar events for elio@pascarelli.com
+2025-09-21 02:23:28,912 - INFO - Checking account: elio@audiogen.co
+2025-09-21 02:23:29,042 - INFO - Found 0 new emails for elio@audiogen.co
+2025-09-21 02:23:29,184 - INFO - Found 0 upcoming calendar events for elio@audiogen.co
+2025-09-21 02:23:29,185 - INFO - Completed check cycle, sleeping for 60 seconds
+2025-09-21 02:24:27,284 - INFO - Monitor thread started
+2025-09-21 02:24:27,286 - INFO - Checking for updates since 2025-09-21T00:24:27.286809+00:00
+2025-09-21 02:24:27,395 - INFO - Checking account: elio@pascarelli.com
+2025-09-21 02:24:27,552 - INFO - Found 0 new emails for elio@pascarelli.com
+2025-09-21 02:24:27,682 - INFO - Found 0 upcoming calendar events for elio@pascarelli.com
+2025-09-21 02:24:27,682 - INFO - Checking account: elio@audiogen.co
+2025-09-21 02:24:27,781 - INFO - Found 0 new emails for elio@audiogen.co
+2025-09-21 02:24:27,922 - INFO - Found 0 upcoming calendar events for elio@audiogen.co
+2025-09-21 02:24:27,924 - INFO - Completed check cycle, sleeping for 60 seconds

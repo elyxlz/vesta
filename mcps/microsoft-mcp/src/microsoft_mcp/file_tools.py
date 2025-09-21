@@ -2,10 +2,8 @@
 
 import pathlib as pl
 from typing import Any
-from mcp.server.fastmcp import FastMCP
+from .auth_tools import mcp  # Use the shared MCP instance
 from . import graph
-
-mcp = FastMCP("microsoft-mcp")
 
 
 @mcp.tool()

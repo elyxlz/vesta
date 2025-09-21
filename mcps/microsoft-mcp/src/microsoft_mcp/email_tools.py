@@ -3,10 +3,8 @@
 import base64
 import pathlib as pl
 from typing import Any
-from mcp.server.fastmcp import FastMCP
 from . import graph
-
-mcp = FastMCP("microsoft-mcp")
+from .auth_tools import mcp  # Use the shared MCP instance
 
 FOLDERS = {
     k.casefold(): v
