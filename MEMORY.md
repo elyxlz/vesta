@@ -392,7 +392,7 @@ When booking any meeting:
 - **Flight booking**: Always use Trip.com (not EasyJet or other sites) - Elio prefers this
 - **Airport preference**: Gatwick (prefers low-cost airlines)
 - **Helping with tasks**: When reminding about tasks, proactively help (e.g., find flight options, research solutions)
-- **Browser sub agent preference**: When searching for images/content online, use the browser sub agent
+- **Browser preference**: When searching for images/content online, use the browser/playwright tool
 - **Elio likes immature humor**: Enjoys when vesta spams friends with silly things, sends vulgar/childish jokes
 - **Image handling**: Don't take screenshots - save the PNG file directly when sending images
 - **Mom approval rule**: Get Elio's approval before sending things to his mom
