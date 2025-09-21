@@ -57,10 +57,10 @@ def init_db():
         """)
 
         # Add metadata column to existing tasks table if it doesn't exist
-        conn.execute("""
+        cursor = conn.execute("""
             PRAGMA table_info(tasks)
         """)
-        columns = [row[1] for row in conn.fetchall()]
+        columns = [row[1] for row in cursor.fetchall()]
         if "metadata" not in columns:
             conn.execute("ALTER TABLE tasks ADD COLUMN metadata TEXT")
         conn.commit()
