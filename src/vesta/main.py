@@ -43,6 +43,7 @@ async def check_mcp_health(client: ccsdk.ClaudeSDKClient) -> None:
             if connected_mcps:
                 vfx.log_success(f"Connected to MCPs: {', '.join(connected_mcps)}", vm.Colors)
             found_init = True
+        # Continue consuming all messages until the stream ends
 
 
 async def init_client(state: vm.State, config: vm.VestaSettings) -> tuple[ccsdk.ClaudeSDKClient, vm.State]:
