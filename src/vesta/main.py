@@ -27,23 +27,9 @@ def load_system_prompt() -> str:
 
 
 async def check_mcp_health(client: ccsdk.ClaudeSDKClient) -> None:
-    await client.query("")
-    found_init = False
-    async for msg in client.receive_response():
-        if not found_init and hasattr(msg, "subtype") and msg.subtype == "init":
-            mcp_servers = msg.data.get("mcp_servers", [])
-            failed_mcps = [server["name"] for server in mcp_servers if server.get("status") == "failed"]
-
-            if failed_mcps:
-                error_msg = f"Failed to connect to MCP servers: {', '.join(failed_mcps)}"
-                vfx.log_error(error_msg, vm.Colors)
-                raise RuntimeError(error_msg)
-
-            connected_mcps = [server["name"] for server in mcp_servers if server.get("status") == "connected"]
-            if connected_mcps:
-                vfx.log_success(f"Connected to MCPs: {', '.join(connected_mcps)}", vm.Colors)
-            found_init = True
-            break  # Exit after finding init message - don't wait forever!
+    # MCP connection status is already shown during initialization
+    # No need to send empty queries that consume the response stream
+    pass
 
 
 async def init_client(state: vm.State, config: vm.VestaSettings) -> tuple[ccsdk.ClaudeSDKClient, vm.State]:
