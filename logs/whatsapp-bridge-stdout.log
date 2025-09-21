@@ -664,3 +664,174 @@ Disconnecting...
 Starting REST API server on :8080...
 REST server is running. Press Ctrl+C to disconnect and exit.
 Disconnecting...
+16:52:57.776[36m [Client INFO] Starting WhatsApp client...[0m
+16:52:57.776[36m [Client INFO] Notifications directory: /home/elyx/Repos/vesta2/notifications[0m
+16:52:58.241[36m [Client INFO] Successfully authenticated[0m
+16:52:58.554[36m [Client INFO] Connected to WhatsApp[0m
+[DEBUG] Message Event Info:
+  - Chat JID: 393483589770@s.whatsapp.net
+  - Sender Full JID: 447523177927:2@s.whatsapp.net
+  - Sender User Part: 447523177927
+  - Sender Server: s.whatsapp.net
+  - Is Group: false
+  - Message ID: 3EB05A026AC7E923232C7B
+16:52:58.731[36m [Client INFO] Using existing chat name for 393483589770@s.whatsapp.net: Elio[0m
+[2025-09-21 16:31:29] → 447523177927: hey sup, just handling your messages
+[DEBUG] Message Event Info:
+  - Chat JID: 393483589770@s.whatsapp.net
+  - Sender Full JID: 447523177927:2@s.whatsapp.net
+  - Sender User Part: 447523177927
+  - Sender Server: s.whatsapp.net
+  - Is Group: false
+  - Message ID: 3EB08970F581FED1B794C5
+16:52:58.850[36m [Client INFO] Using existing chat name for 393483589770@s.whatsapp.net: Elio[0m
+[2025-09-21 16:31:34] → 447523177927: maddy messaged asking for help with cambridge masters application
+[DEBUG] Message Event Info:
+  - Chat JID: 393514637719@s.whatsapp.net
+  - Sender Full JID: 447523177927:2@s.whatsapp.net
+  - Sender User Part: 447523177927
+  - Sender Server: s.whatsapp.net
+  - Is Group: false
+  - Message ID: 3EB0C3F38ACF14FAA9C26C
+16:52:58.861[36m [Client INFO] Using existing chat name for 393514637719@s.whatsapp.net: 393514637719[0m
+[2025-09-21 16:31:39] → 447523177927: hey maddy! cambridge masters nice! what do you need help with?
+[DEBUG] Message Event Info:
+  - Chat JID: 393483589770@s.whatsapp.net
+  - Sender Full JID: 447523177927:2@s.whatsapp.net
+  - Sender User Part: 447523177927
+  - Sender Server: s.whatsapp.net
+  - Is Group: false
+  - Message ID: 3EB0CB1942F99E132D053D
+16:52:58.975[36m [Client INFO] Using existing chat name for 393483589770@s.whatsapp.net: Elio[0m
+[2025-09-21 16:31:45] → 447523177927: thanks for cleaning the code lol, checking those spam emails now
+[DEBUG] Message Event Info:
+  - Chat JID: 393483589770@s.whatsapp.net
+  - Sender Full JID: 393483589770:41@s.whatsapp.net
+  - Sender User Part: 393483589770
+  - Sender Server: s.whatsapp.net
+  - Is Group: false
+  - Message ID: 3EB0096C730D4201421559
+16:52:59.120[36m [Client INFO] Using existing chat name for 393483589770@s.whatsapp.net: Elio[0m
+[2025-09-21 16:32:55] ← 393483589770: wait stop
+[DEBUG] Message Event Info:
+  - Chat JID: 393514637719@s.whatsapp.net
+  - Sender Full JID: 393514637719:6@s.whatsapp.net
+  - Sender User Part: 393514637719
+  - Sender Server: s.whatsapp.net
+  - Is Group: false
+  - Message ID: 3BD3E3980F40F31BC229
+16:52:59.127[36m [Client INFO] Using existing chat name for 393514637719@s.whatsapp.net: 393514637719[0m
+[2025-09-21 16:33:17] ← 393514637719: remind elio throughout the day that after dinner he has to help me with the application
+[DEBUG] Message Event Info:
+  - Chat JID: 393483589770@s.whatsapp.net
+  - Sender Full JID: 447523177927:2@s.whatsapp.net
+  - Sender User Part: 447523177927
+  - Sender Server: s.whatsapp.net
+  - Is Group: false
+  - Message ID: 3EB044222E6F79F6A808D1
+16:52:59.241[36m [Client INFO] Using existing chat name for 393483589770@s.whatsapp.net: Elio[0m
+[2025-09-21 16:33:20] → 447523177927: linkedin pass updated in keeper
+[DEBUG] Message Event Info:
+  - Chat JID: 393483589770@s.whatsapp.net
+  - Sender Full JID: 447523177927:2@s.whatsapp.net
+  - Sender User Part: 447523177927
+  - Sender Server: s.whatsapp.net
+  - Is Group: false
+  - Message ID: 3EB0D8B7970AA2622A68BB
+16:52:59.250[36m [Client INFO] Using existing chat name for 393483589770@s.whatsapp.net: Elio[0m
+[2025-09-21 16:33:25] → 447523177927: for the spam emails:
+[DEBUG] Message Event Info:
+  - Chat JID: 393483589770@s.whatsapp.net
+  - Sender Full JID: 447523177927:2@s.whatsapp.net
+  - Sender User Part: 447523177927
+  - Sender Server: s.whatsapp.net
+  - Is Group: false
+  - Message ID: 3EB0553D4B47F7A84B83A3
+16:52:59.376[36m [Client INFO] Using existing chat name for 393483589770@s.whatsapp.net: Elio[0m
+[2025-09-21 16:33:31] → 447523177927: plex: go to plex.tv/email-preferences and unsubscribe from pro week stuff
+[DEBUG] Message Event Info:
+  - Chat JID: 393483589770@s.whatsapp.net
+  - Sender Full JID: 447523177927:2@s.whatsapp.net
+  - Sender User Part: 447523177927
+  - Sender Server: s.whatsapp.net
+  - Is Group: false
+  - Message ID: 3EB03EC4F20A3DCDDE5A84
+16:52:59.489[36m [Client INFO] Using existing chat name for 393483589770@s.whatsapp.net: Elio[0m
+[2025-09-21 16:33:37] → 447523177927: bottle of italy: they should have an unsubscribe link at the bottom of their emails, or block them if you want
+[DEBUG] Message Event Info:
+  - Chat JID: 393483589770@s.whatsapp.net
+  - Sender Full JID: 447523177927:2@s.whatsapp.net
+  - Sender User Part: 447523177927
+  - Sender Server: s.whatsapp.net
+  - Is Group: false
+  - Message ID: 3EB04182D684F5337CCAC0
+16:52:59.582[36m [Client INFO] Using existing chat name for 393483589770@s.whatsapp.net: Elio[0m
+[2025-09-21 16:33:43] → 447523177927: btw told maddy i'd help with her cambridge application
+[DEBUG] Message Event Info:
+  - Chat JID: 393483589770@s.whatsapp.net
+  - Sender Full JID: 447523177927:2@s.whatsapp.net
+  - Sender User Part: 447523177927
+  - Sender Server: s.whatsapp.net
+  - Is Group: false
+  - Message ID: 3EB0FDA5FFCE7E13888B4D
+16:52:59.624[36m [Client INFO] Using existing chat name for 393483589770@s.whatsapp.net: Elio[0m
+[2025-09-21 16:33:49] → 447523177927: also nice code cleanup 👍
+[DEBUG] Message Event Info:
+  - Chat JID: 393514637719@s.whatsapp.net
+  - Sender Full JID: 393514637719:6@s.whatsapp.net
+  - Sender User Part: 393514637719
+  - Sender Server: s.whatsapp.net
+  - Is Group: false
+  - Message ID: 3BDABAE9A4F109390BBE
+16:52:59.747[36m [Client INFO] Using existing chat name for 393514637719@s.whatsapp.net: 393514637719[0m
+[2025-09-21 16:33:52] ← 393514637719: tell elio not to tell his gf she’s crazy and that he has to bring respect
+[DEBUG] Message Event Info:
+  - Chat JID: 393483589770@s.whatsapp.net
+  - Sender Full JID: 393483589770:41@s.whatsapp.net
+  - Sender User Part: 393483589770
+  - Sender Server: s.whatsapp.net
+  - Is Group: false
+  - Message ID: 3EB0551B82DF517FBA6356
+16:52:59.855[36m [Client INFO] Using existing chat name for 393483589770@s.whatsapp.net: Elio[0m
+[2025-09-21 16:33:53] ← 393483589770: stop doing everything wait a sec
+[DEBUG] Message Event Info:
+  - Chat JID: 393514637719@s.whatsapp.net
+  - Sender Full JID: 393514637719:6@s.whatsapp.net
+  - Sender User Part: 393514637719
+  - Sender Server: s.whatsapp.net
+  - Is Group: false
+  - Message ID: 3B2292032CA505F2E420
+16:52:59.870[36m [Client INFO] Using existing chat name for 393514637719@s.whatsapp.net: 393514637719[0m
+[2025-09-21 16:34:12] ← 393514637719: also tell him i treat you very kindly
+[DEBUG] Message Event Info:
+  - Chat JID: 393483589770@s.whatsapp.net
+  - Sender Full JID: 447523177927:2@s.whatsapp.net
+  - Sender User Part: 447523177927
+  - Sender Server: s.whatsapp.net
+  - Is Group: false
+  - Message ID: 3EB0B548B3BDAF6D6F38D7
+16:52:59.943[36m [Client INFO] Using existing chat name for 393483589770@s.whatsapp.net: Elio[0m
+[2025-09-21 16:35:42] → 447523177927: btw got 3 more emails:
+[DEBUG] Message Event Info:
+  - Chat JID: 393483589770@s.whatsapp.net
+  - Sender Full JID: 447523177927:2@s.whatsapp.net
+  - Sender User Part: 447523177927
+  - Sender Server: s.whatsapp.net
+  - Is Group: false
+  - Message ID: 3EB015E5F2050AA57EC264
+16:52:59.988[36m [Client INFO] Using existing chat name for 393483589770@s.whatsapp.net: Elio[0m
+[2025-09-21 16:35:47] → 447523177927: 1. linkedin device registration (prob from you logging in with new pass)
+
+✓ Connected to WhatsApp! Type 'help' for commands.
+Starting REST API server on :8080...
+REST server is running. Press Ctrl+C to disconnect and exit.
+[DEBUG] Message Event Info:
+  - Chat JID: 393483589770@s.whatsapp.net
+  - Sender Full JID: 393483589770:41@s.whatsapp.net
+  - Sender User Part: 393483589770
+  - Sender Server: s.whatsapp.net
+  - Is Group: false
+  - Message ID: 3EB01DF41F11B8397EC77A
+16:53:00.701[36m [Client INFO] Using existing chat name for 393483589770@s.whatsapp.net: Elio[0m
+[2025-09-21 16:44:14] ← 393483589770: hi vesta send me all active tasks
+Disconnecting...

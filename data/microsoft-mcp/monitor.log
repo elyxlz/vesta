@@ -8862,3 +8862,29 @@ requests.exceptions.ConnectionError: HTTPSConnectionPool(host='login.microsofton
 2025-09-21 14:38:27,801 - INFO - Found 0 new emails for elio@audiogen.co
 2025-09-21 14:38:28,059 - INFO - Found 0 upcoming calendar events for elio@audiogen.co
 2025-09-21 14:38:28,064 - INFO - Completed check cycle, sleeping for 60 seconds
+2025-09-21 16:52:37,665 - INFO - Monitor thread started
+2025-09-21 16:52:37,668 - INFO - Detected offline period of 8052s, catching up from 2025-09-21T13:38:26.114380+00:00
+2025-09-21 16:52:37,670 - INFO - Checking for updates since 2025-09-21T13:38:26.114380+00:00
+2025-09-21 16:52:37,918 - INFO - Checking account: elio@pascarelli.com
+2025-09-21 16:52:38,454 - INFO - Found 3 new emails for elio@pascarelli.com
+2025-09-21 16:52:38,456 - INFO - Writing notification for email from invitations@linkedin.com
+2025-09-21 16:52:38,460 - INFO - Writing notification for email from hello@mail.plex.tv
+2025-09-21 16:52:38,462 - INFO - Writing notification for email from security-noreply@linkedin.com
+2025-09-21 16:52:38,705 - INFO - Found 1 upcoming calendar events for elio@pascarelli.com
+2025-09-21 16:52:38,708 - ERROR - Error fetching calendar for elio@pascarelli.com: can't subtract offset-naive and offset-aware datetimes
+2025-09-21 16:52:38,711 - INFO - Checking account: elio@audiogen.co
+2025-09-21 16:52:39,032 - INFO - Found 0 new emails for elio@audiogen.co
+2025-09-21 16:53:23,997 - INFO - Monitor thread started
+2025-09-21 16:53:24,000 - INFO - Detected offline period of 8098s, catching up from 2025-09-21T13:38:26.114380+00:00
+2025-09-21 16:53:24,001 - INFO - Checking for updates since 2025-09-21T13:38:26.114380+00:00
+2025-09-21 16:53:24,173 - INFO - Checking account: elio@pascarelli.com
+2025-09-21 16:53:24,392 - INFO - Found 3 new emails for elio@pascarelli.com
+2025-09-21 16:53:24,393 - INFO - Writing notification for email from invitations@linkedin.com
+2025-09-21 16:53:24,395 - INFO - Writing notification for email from hello@mail.plex.tv
+2025-09-21 16:53:24,398 - INFO - Writing notification for email from security-noreply@linkedin.com
+2025-09-21 16:53:24,629 - INFO - Found 1 upcoming calendar events for elio@pascarelli.com
+2025-09-21 16:53:24,631 - ERROR - Error fetching calendar for elio@pascarelli.com: can't subtract offset-naive and offset-aware datetimes
+2025-09-21 16:53:24,633 - INFO - Checking account: elio@audiogen.co
+2025-09-21 16:53:24,788 - INFO - Found 0 new emails for elio@audiogen.co
+2025-09-21 16:53:24,957 - INFO - Found 0 upcoming calendar events for elio@audiogen.co
+2025-09-21 16:53:24,958 - INFO - Completed check cycle, sleeping for 60 seconds
