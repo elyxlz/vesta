@@ -1,4 +1,7 @@
-from .main import main, run_vesta
+import vesta.main as main_module
+
+main = main_module.main
+run_vesta = main_module.run_vesta
 
 __all__ = ["main", "run_vesta"]
 

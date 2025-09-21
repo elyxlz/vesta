@@ -11,6 +11,8 @@ dependencies = [
     "aioconsole>=0.8.1",
     "claude-code-sdk>=0.0.22",
     "pillow>=11.3.0",
+    "pydantic>=2.10.4",
+    "pydantic-settings>=2.7.0",
     "toml>=0.10.2",
 ]
 

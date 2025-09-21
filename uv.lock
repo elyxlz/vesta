@@ -541,6 +541,8 @@ dependencies = [
     { name = "aioconsole" },
     { name = "claude-code-sdk" },
     { name = "pillow" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
     { name = "toml" },
 ]
 
@@ -549,5 +551,7 @@ requires-dist = [
     { name = "aioconsole", specifier = ">=0.8.1" },
     { name = "claude-code-sdk", specifier = ">=0.0.22" },
     { name = "pillow", specifier = ">=11.3.0" },
+    { name = "pydantic", specifier = ">=2.10.4" },
+    { name = "pydantic-settings", specifier = ">=2.7.0" },
     { name = "toml", specifier = ">=0.10.2" },
 ]
