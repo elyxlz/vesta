@@ -246,26 +246,25 @@ async def process_message_with_typing(msg: str, state: vm.State, config: vm.Vest
 
 
 async def handle_notifications_interrupt(notifications: list[vm.Notification], client: ccsdk.ClaudeSDKClient, state: vm.State) -> vm.State:
-    try:
-        await client.interrupt()
+    vfx.print_line(f"\n{vm.Colors['yellow']}⚡ Interrupting to handle notification...{vm.Colors['reset']}")
 
-        timestamp = vfx.get_current_time()
-        prompt = vu.format_notification_batch(notifications)
-        query_with_context = vu.build_query_with_timestamp(prompt, timestamp)
+    await client.interrupt()
+    await vfx.sleep(0.1)
 
-        await client.query(query_with_context)
+    timestamp = vfx.get_current_time()
+    prompt = vu.format_notification_batch(notifications)
+    query_with_context = vu.build_query_with_timestamp(prompt, timestamp)
 
-        current_state = state
-        async for msg in client.receive_response():
-            text, new_state = parse_assistant_message(msg, current_state)
-            current_state = new_state
-            if text:
-                for line in text.split("\n"):
-                    output_line(line, current_state, is_tool=line.startswith("🔧"))
-        return current_state
-    except Exception as e:
-        vfx.log_error(f"Interrupt error: {str(e)}", vm.Colors)
-        return state
+    await client.query(query_with_context)
+
+    current_state = state
+    async for msg in client.receive_response():
+        text, new_state = parse_assistant_message(msg, current_state)
+        current_state = new_state
+        if text:
+            for line in text.split("\n"):
+                output_line(line, current_state, is_tool=line.startswith("🔧"))
+    return current_state
 
 
 async def process_notification_batch(notifications: list[vm.Notification], queue: asyncio.Queue, state: vm.State) -> vm.State:

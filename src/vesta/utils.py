@@ -198,7 +198,7 @@ def decide_notification_action(
     if not notifications:
         return "skip"
 
-    if has_client and is_processing:
+    if has_client:
         return "interrupt"
     else:
         return "queue"
