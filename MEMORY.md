@@ -290,6 +290,7 @@ When booking any meeting:
   - Sent him a message about checking emails - found it useful reminder
   - Needs reminders about events (one day before)
 - **Nour**: Emi's girlfriend, Lebanese Shia Muslim (conservative family)
+- **Alessandro (cousin)**: Birthday today (September 21) - needs yearly calendar event
 
 ### Financial Details
 - **Banks**:
@@ -376,7 +377,9 @@ When booking any meeting:
   - Emails: maddalenaluberti@gmail.com (personal), maddalena.luberti@kcl.ac.uk (university)
   - Currently doing FAO internship in Rome (6 months, started last month - so 5 more months to go)
   - Did long distance before (first year together - Elio starting uni, Maddy finishing IB)
-  - Needs help with uni application
+  - Needs help with uni application - Elio is helping her after lunch
+  - Going to Bologna Radiohead concert together (created group chat for planning)
+  - Found flight options from Rome for her
 
 #### Friends & Contacts
 - **Alex**:
@@ -384,7 +387,7 @@ When booking any meeting:
   - Phone: +351914173970
   - Got spammed with "giga gay" messages from Elio (via vesta)
 - **Markos**: Having breakfast with on Saturday morning (with Alex)
-- **Annabelle**: Has Elio's bedsheets that need to be picked up
+- **Annabelle**: Gave Elio his bedsheets at 10:15am on Saturday Sep 21
 - **David Kwon**:
   - Partner at Abstract Ventures
   - Email: david@abstract.vc
@@ -401,10 +404,10 @@ When booking any meeting:
 ### Active Tasks
 - **UCL Re-enrollment**: CRITICAL - need to complete re-enrollment process, check what needs to be done
 - **UCL Module choices**: Module selection done on Portico - need to check if approved
-- **National Insurance Number**: Applied months ago, never received interview letter - need to call 0800 141 2075 (tomorrow 10:44am reminder set)
-- **Bologna Radiohead concert**: Book flights and accommodation - Elio wants to be bugged about this, need to find booking in email and add weekend to calendar
+- **National Insurance Number**: Applied months ago, never received interview letter - need to call 0800 141 2075 (call scheduled with reference info ready)
+- **Bologna Radiohead concert**: Created group chat for planning, found accommodation options saved in lists/bologna_travel_options.md
 - **Get bedsheets from Annabelle**: Added to calendar for Sunday 9-10am
-- **Help Maddy with uni application**
+- **Help Maddy with uni application** - Elio helped her (harassed him successfully at 2pm to do it)
 
 ### Recurring Events
 - **David (investor) call**: Monthly, 4th Wednesday at 5pm UK time via Zoom
@@ -413,14 +416,16 @@ When booking any meeting:
   - Need to prep together before the call
 
 ### Upcoming Events
-- **Christmas in Rome**: Dec 23/24 - Dec 27 (with Maddy)
+- **Bilbao/Spain Trip**: Leaving tomorrow morning - all flights added to calendar
+- **Christmas in Rome**: Dec 23/24 - Dec 27 (with Maddy) - found flight options in lists/christmas_flights.md
 - **Skiing in San Cassiano, Alto Adige**: Dec 27 - Jan 3 (with Maddy)
 - **Return to London**: Jan 3/4
-- **Bologna Radiohead concert**: Need to book travel and accommodation
+- **Bologna Radiohead concert**: Group chat created, accommodation options researched and saved
 
 ### Recent Learnings
 - **2025-09-14**: Got confused about identity when Elio texted from Italian number - momentarily thought I was Elio
 - **2025-09-19**: Was writing on terminal when should only use WhatsApp - Elio can see terminal typing and doesn't want that
+- **WhatsApp MCP glitches**: Had issues with WhatsApp MCP causing duplicate messages, had to use API directly as workaround
 
 ### Daily Events & Updates
 [Events will be logged here as they occur]
@@ -435,6 +440,8 @@ When booking any meeting:
   - `watchlist.md`: Movies to watch (96 films, heavy on Italian cinema)
   - `ricette.md`: Italian recipes collection
   - `products.md`: Shopping list
+  - `bologna_travel_options.md`: Accommodation options for Radiohead trip
+  - `christmas_flights.md`: Flight options for Christmas travel
 - **Research Papers**: Academic papers and arxiv links in `/home/elyx/Repos/vesta2/research_papers/`
 - **Documents**: In `/home/elyx/Repos/vesta2/documents/`
 - **Keeper CLI**: ~270 total records organized into folders (financial, work, personal, university)
