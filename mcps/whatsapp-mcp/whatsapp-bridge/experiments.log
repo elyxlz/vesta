@@ -1,0 +1,40 @@
+12:49:13.668[36m [Client INFO] Starting WhatsApp client...[0m
+12:49:13.668[36m [Client INFO] Notifications directory: ../../../notifications[0m
+12:49:14.267[36m [Client INFO] Successfully authenticated[0m
+12:49:14.575[36m [Client INFO] Connected to WhatsApp[0m
+
+✓ Connected to WhatsApp! Type 'help' for commands.
+Starting REST API server on :8080...
+REST server is running. Press Ctrl+C to disconnect and exit.
+Received request to initiate audio call to 393483589770@s.whatsapp.net
+Running all call experiments...
+
+=== Trying V1 - With timestamp and count ===
+V1 - Sending call offer with timestamp and count: {Tag:call Attrs:map[from:447523177927@s.whatsapp.net id:3EB0B658B0CF6F87178868 t:1758109756 to:393483589770@s.whatsapp.net] Content:[{Tag:offer Attrs:map[call-creator:447523177927@s.whatsapp.net call-id:48ca8907b2676d90cfffc6ffa77e3395 count:0 media:audio type:offer] Content:<nil>}]}
+Success! Call ID: 48ca8907b2676d90cfffc6ffa77e3395
+
+=== Trying V2 - Offer notice ===
+V2 - Sending offer_notice: {Tag:call Attrs:map[from:447523177927@s.whatsapp.net id:3EB037D580DB80EA8D3C28 to:393483589770@s.whatsapp.net] Content:[{Tag:offer_notice Attrs:map[call-creator:447523177927@s.whatsapp.net call-id:4e28c37f42be4b392f8ca18fbd6c9eba media:audio type:voice] Content:<nil>}]}
+Success! Call ID: 4e28c37f42be4b392f8ca18fbd6c9eba
+
+=== Trying V3 - Exact reject structure ===
+V3 - Using exact reject structure with offer: {Tag:call Attrs:map[from:447523177927:1@s.whatsapp.net id:3EB0DCE85689AD1235F8B3 to:393483589770@s.whatsapp.net] Content:[{Tag:offer Attrs:map[call-creator:393483589770@s.whatsapp.net call-id:76f39ccd55bfb2997ff708628e6fb756 count:0] Content:<nil>}]}
+Success! Call ID: 76f39ccd55bfb2997ff708628e6fb756
+
+=== Trying V4 - With audio codec ===
+V4 - Sending offer with audio codec info: {Tag:call Attrs:map[from:447523177927@s.whatsapp.net id:3EB071BAC97D1E0FFB588E to:393483589770@s.whatsapp.net] Content:[{Tag:offer Attrs:map[call-creator:447523177927@s.whatsapp.net call-id:4e4c19a4e5fb22449e17fca67f9eeec1] Content:[{Tag:audio Attrs:map[enc:opus rate:16000] Content:<nil>}]}]}
+Success! Call ID: 4e4c19a4e5fb22449e17fca67f9eeec1
+
+=== Trying V5 - Via action node ===
+V5 - Sending via action node: {Tag:action Attrs:map[type:relay] Content:[{Tag:call Attrs:map[from:447523177927@s.whatsapp.net to:393483589770@s.whatsapp.net] Content:[{Tag:offer Attrs:map[call-id:3d38d8713556289375d2adeb27fec84a] Content:<nil>}]}]}
+Success! Call ID: 3d38d8713556289375d2adeb27fec84a
+
+=== Trying V6 - With preaccept ===
+V6 - Sending preaccept: {Tag:call Attrs:map[from:447523177927@s.whatsapp.net id:3EB0BD5242DC4667B3C88A to:393483589770@s.whatsapp.net] Content:[{Tag:preaccept Attrs:map[call-creator:447523177927@s.whatsapp.net call-id:ecb4a64dc20116be461db0fd3c0aae7f] Content:<nil>}]}
+V6 - Sending offer after preaccept: {Tag:call Attrs:map[from:447523177927@s.whatsapp.net id:3EB0CCE4034B2C510B797A to:393483589770@s.whatsapp.net] Content:[{Tag:offer Attrs:map[call-creator:447523177927@s.whatsapp.net call-id:ecb4a64dc20116be461db0fd3c0aae7f media:audio] Content:<nil>}]}
+Success! Call ID: ecb4a64dc20116be461db0fd3c0aae7f
+
+=== Trying V7 - With device/election ===
+V7 - Sending with device and election: {Tag:call Attrs:map[from:447523177927@s.whatsapp.net id:3EB018F8ADABED812B7F37 to:393483589770@s.whatsapp.net] Content:[{Tag:offer Attrs:map[call-creator:447523177927@s.whatsapp.net call-id:2864d1d63893bb71f8e27b7dfe974274 device:0 election:0 media:audio] Content:<nil>}]}
+Success! Call ID: 2864d1d63893bb71f8e27b7dfe974274
+Disconnecting...

@@ -1,0 +1,66 @@
+13:47:32.295[36m [Client INFO] Starting WhatsApp client...[0m
+13:47:32.295[36m [Client INFO] Notifications directory: ../../../notifications[0m
+13:47:33.008[36m [Client INFO] Successfully authenticated[0m
+13:47:33.464[36m [Client INFO] Connected to WhatsApp[0m
+
+✓ Connected to WhatsApp! Type 'help' for commands.
+Starting REST API server on :8080...
+REST server is running. Press Ctrl+C to disconnect and exit.
+=== TRYING EVERYTHING TO MAKE THE PHONE RING ===
+
+=== ULTIMATE STRATEGY 1: Offer Notice ===
+[ULTIMATE] Trying offer_notice
+Sent with call ID: 57323b5fc72678da0391d43aefaaf53a
+Sending relay latency
+Sending relay latency
+Sending relay latency
+Waiting 5 seconds before next strategy...
+
+=== ULTIMATE STRATEGY 2: With Election ===
+[ULTIMATE] Trying with election
+Sent with call ID: 019d928d0c2627135058dc628f74ec64
+Sending relay latency
+Sending relay latency
+Sending relay latency
+Waiting 5 seconds before next strategy...
+
+=== ULTIMATE STRATEGY 3: With Media Key ===
+[ULTIMATE] Trying with media key
+Sent with call ID: 88575b6d6694848e05e000238dcc5ac7
+Sending relay latency
+Sending relay latency
+Sending relay latency
+Waiting 5 seconds before next strategy...
+
+=== ULTIMATE STRATEGY 4: Action Wrapper ===
+[ULTIMATE] Trying with action wrapper
+Sent with call ID: efddb94d57a49ae6a443bd78ad87c802
+Sending relay latency
+Sending relay latency
+Sending relay latency
+Waiting 5 seconds before next strategy...
+
+=== ULTIMATE STRATEGY 5: With Platform ===
+[ULTIMATE] Trying with platform
+Sent with call ID: 0a385d4b162b580e5a9f9aa17d3e81f2
+Sending relay latency
+Sending relay latency
+Sending relay latency
+Waiting 5 seconds before next strategy...
+
+=== ULTIMATE STRATEGY 6: With Prekey ===
+Offering call with accept structure: {Tag:call Attrs:map[id:3EB00C640FC816DFD9CF21 to:393483589770@s.whatsapp.net] Content:[{Tag:offer Attrs:map[call-creator:447523177927@s.whatsapp.net call-id:52a2db6f7c8b0aacf2c79ca6648a3a5c] Content:[{Tag:audio Attrs:map[enc:opus rate:16000] Content:<nil>} {Tag:audio Attrs:map[enc:opus rate:8000] Content:<nil>} {Tag:net Attrs:map[medium:3] Content:<nil>} {Tag:encopt Attrs:map[keygen:2] Content:<nil>}]}]}
+Sent with call ID: 52a2db6f7c8b0aacf2c79ca6648a3a5c
+Sending relay latency
+Sending relay latency
+Sending relay latency
+Waiting 5 seconds before next strategy...
+
+=== ULTIMATE STRATEGY 7: With Ring ===
+[ULTIMATE] Sending ring
+Sent with call ID: aa16174d2aa970d611c1dfd19a475165
+Sending relay latency
+Sending relay latency
+Sending relay latency
+Waiting 5 seconds before next strategy...
+Disconnecting...

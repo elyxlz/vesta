@@ -1,0 +1,58 @@
+13:29:19.312[36m [Client INFO] Starting WhatsApp client...[0m
+13:29:19.312[36m [Client INFO] Notifications directory: ../../../notifications[0m
+13:29:19.503[36m [Client INFO] Successfully authenticated[0m
+13:29:20.006[36m [Client INFO] Connected to WhatsApp[0m
+
+✓ Connected to WhatsApp! Type 'help' for commands.
+Starting REST API server on :8080...
+REST server is running. Press Ctrl+C to disconnect and exit.
+Received request to initiate audio call to 393483589770@s.whatsapp.net
+=== ENHANCED CALL ATTEMPT ===
+[CALL] Starting enhanced call to 393483589770@s.whatsapp.net with ID 9bc059e23ea450989a9a31dac7192529
+[CALL] Sending pre-accept
+[CALL] Sending enhanced offer
+[CALL] Sending initial relay latency
+[CALL] Sending accept signal
+Call initiated with ID: 9bc059e23ea450989a9a31dac7192529
+Sending relay latency
+[CALL] Sent relay latency 1/10
+Sending relay latency
+Sent relay latency for call 9bc059e23ea450989a9a31dac7192529
+Sending relay latency
+[CALL] Sent relay latency 2/10
+Sending relay latency
+Sent relay latency for call 9bc059e23ea450989a9a31dac7192529
+Sending relay latency
+[CALL] Sent relay latency 3/10
+Sending relay latency
+[CALL] Sent relay latency 4/10
+Sending relay latency
+Sent relay latency for call 9bc059e23ea450989a9a31dac7192529
+Sending relay latency
+[CALL] Sent relay latency 5/10
+Sending relay latency
+Sent relay latency for call 9bc059e23ea450989a9a31dac7192529
+Sending relay latency
+[CALL] Sent relay latency 6/10
+Sending relay latency
+[CALL] Sent relay latency 7/10
+Sending relay latency
+Sent relay latency for call 9bc059e23ea450989a9a31dac7192529
+Sending relay latency
+[CALL] Sent relay latency 8/10
+Sending relay latency
+Sent relay latency for call 9bc059e23ea450989a9a31dac7192529
+Sending relay latency
+[CALL] Sent relay latency 9/10
+Sending relay latency
+[CALL] Sent relay latency 10/10
+Sending relay latency
+Sent relay latency for call 9bc059e23ea450989a9a31dac7192529
+Sending relay latency
+Sent relay latency for call 9bc059e23ea450989a9a31dac7192529
+Sending relay latency
+Sent relay latency for call 9bc059e23ea450989a9a31dac7192529
+Sending relay latency
+Sent relay latency for call 9bc059e23ea450989a9a31dac7192529
+Call 9bc059e23ea450989a9a31dac7192529 timeout, terminating
+Disconnecting...

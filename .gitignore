@@ -1,4 +1,4 @@
-# Personal data (keep MEMORY.md.tmp as template)
+# Personal data
 
 # Python
 __pycache__/
@@ -23,14 +23,9 @@ build/
 .DS_Store
 
 # Local development
-.env
 .env.local
-*.log
-*.sqlite
-*.db
 
 # Temporary files
-*.tmp
 *.bak
 *.orig
 tmp/
@@ -42,23 +37,16 @@ htmlcov/
 .tox/
 
 # MCP data
-mcps/*/data/
 mcps/*/notifications/
-mcps/*/*.db
-mcps/*/*.sqlite
 
 # WhatsApp session
-mcps/whatsapp-mcp/whatsapp-bridge/whatsapp.db
 mcps/whatsapp-mcp/whatsapp-bridge/session/
 mcps/whatsapp-mcp/whatsapp-bridge/whatsapp-bridge
-mcps/whatsapp-mcp/whatsapp-bridge/store/
 
 # Scheduler data
-mcps/scheduler-mcp/reminders.db
 
 # Microsoft MCP tokens
 mcps/microsoft-mcp/token_cache.json
-mcps/microsoft-mcp/.env
 
 # Old vesta folder (if still present)
 old_vesta/

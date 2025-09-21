@@ -1,0 +1,11 @@
+13:42:40.269[36m [Client INFO] Starting WhatsApp client...[0m
+13:42:40.269[36m [Client INFO] Notifications directory: ../../../notifications[0m
+13:42:40.776[36m [Client INFO] Successfully authenticated[0m
+13:42:41.082[36m [Client INFO] Connected to WhatsApp[0m
+
+✓ Connected to WhatsApp! Type 'help' for commands.
+Starting REST API server on :8080...
+REST server is running. Press Ctrl+C to disconnect and exit.
+Testing new call approach: self
+Offering call with accept structure: {Tag:call Attrs:map[id:3EB09730AFC18C54E11D6D to:447523177927@s.whatsapp.net] Content:[{Tag:offer Attrs:map[call-creator:447523177927@s.whatsapp.net call-id:c4d5ead766ad1f0174d1743dd4277aa6] Content:[{Tag:audio Attrs:map[enc:opus rate:16000] Content:<nil>} {Tag:audio Attrs:map[enc:opus rate:8000] Content:<nil>} {Tag:net Attrs:map[medium:3] Content:<nil>} {Tag:encopt Attrs:map[keygen:2] Content:<nil>}]}]}
+Disconnecting...

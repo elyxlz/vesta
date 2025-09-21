@@ -1,0 +1,50 @@
+13:03:16.359[36m [Client INFO] Starting WhatsApp client...[0m
+13:03:16.359[36m [Client INFO] Notifications directory: ../../../notifications[0m
+13:03:16.780[36m [Client INFO] Successfully authenticated[0m
+13:03:17.145[36m [Client INFO] Connected to WhatsApp[0m
+
+✓ Connected to WhatsApp! Type 'help' for commands.
+Starting REST API server on :8080...
+REST server is running. Press Ctrl+C to disconnect and exit.
+Testing new call approach: self
+Offering call with accept structure: {Tag:call Attrs:map[id:3EB04E543B4CB0AC8B2C58 to:447523177927@s.whatsapp.net] Content:[{Tag:offer Attrs:map[call-creator:447523177927@s.whatsapp.net call-id:56d9c7d6172a6c33cf7c39a0bb4282fe] Content:[{Tag:audio Attrs:map[enc:opus rate:16000] Content:<nil>} {Tag:audio Attrs:map[enc:opus rate:8000] Content:<nil>} {Tag:net Attrs:map[medium:3] Content:<nil>} {Tag:encopt Attrs:map[keygen:2] Content:<nil>}]}]}
+Testing new call approach: accept_structure
+Offering call with accept structure: {Tag:call Attrs:map[id:3EB0BA90A89B223F8BD36E to:393483589770@s.whatsapp.net] Content:[{Tag:offer Attrs:map[call-creator:447523177927@s.whatsapp.net call-id:aa2625fee8930b8420732c463b982762] Content:[{Tag:audio Attrs:map[enc:opus rate:16000] Content:<nil>} {Tag:audio Attrs:map[enc:opus rate:8000] Content:<nil>} {Tag:net Attrs:map[medium:3] Content:<nil>} {Tag:encopt Attrs:map[keygen:2] Content:<nil>}]}]}
+Testing new call approach: multi
+Step 1: Sending call message
+Sent call message with key: rALwDQML9lIDG0Gtlk325n5J/f8MuRF/uuxYYQ2cQyA=
+Step 2: Sending offer
+Offering call with accept structure: {Tag:call Attrs:map[id:3EB0DEF206A8D861E89E4F to:393483589770@s.whatsapp.net] Content:[{Tag:offer Attrs:map[call-creator:447523177927@s.whatsapp.net call-id:e407250f9f3fd5633869a9f0e1353005] Content:[{Tag:audio Attrs:map[enc:opus rate:16000] Content:<nil>} {Tag:audio Attrs:map[enc:opus rate:8000] Content:<nil>} {Tag:net Attrs:map[medium:3] Content:<nil>} {Tag:encopt Attrs:map[keygen:2] Content:<nil>}]}]}
+Step 3: Sending relay latency
+Sending relay latency
+Testing new call approach: all
+
+=== Call Protocol Message ===
+Sent call message with key: ASMac4/wK5HpUgXo6IEMao97drJGQtrPZfCEcbOyh5I=
+Success!
+
+=== Offer with Accept Structure ===
+Offering call with accept structure: {Tag:call Attrs:map[id:3EB0A82E3AD54C942755D7 to:393483589770@s.whatsapp.net] Content:[{Tag:offer Attrs:map[call-creator:447523177927@s.whatsapp.net call-id:80f19f475a3cfc4f383a1b0e0caa58d3] Content:[{Tag:audio Attrs:map[enc:opus rate:16000] Content:<nil>} {Tag:audio Attrs:map[enc:opus rate:8000] Content:<nil>} {Tag:net Attrs:map[medium:3] Content:<nil>} {Tag:encopt Attrs:map[keygen:2] Content:<nil>}]}]}
+Success!
+
+=== Call Yourself Test ===
+Offering call with accept structure: {Tag:call Attrs:map[id:3EB04106B072FA0DFD73C3 to:447523177927@s.whatsapp.net] Content:[{Tag:offer Attrs:map[call-creator:447523177927@s.whatsapp.net call-id:55f5b7060b17150feef805cd43132471] Content:[{Tag:audio Attrs:map[enc:opus rate:16000] Content:<nil>} {Tag:audio Attrs:map[enc:opus rate:8000] Content:<nil>} {Tag:net Attrs:map[medium:3] Content:<nil>} {Tag:encopt Attrs:map[keygen:2] Content:<nil>}]}]}
+Success!
+
+=== WebRTC SDP Offer ===
+Offering with WebRTC SDP
+Success!
+
+=== Terminate then Offer ===
+Sending terminate first to clear state
+Offering call with accept structure: {Tag:call Attrs:map[id:3EB0AFA5A22B1BC31CF4F8 to:393483589770@s.whatsapp.net] Content:[{Tag:offer Attrs:map[call-creator:447523177927@s.whatsapp.net call-id:752482cde9691ab1ccb2a7ca5153bdf8] Content:[{Tag:audio Attrs:map[enc:opus rate:16000] Content:<nil>} {Tag:audio Attrs:map[enc:opus rate:8000] Content:<nil>} {Tag:net Attrs:map[medium:3] Content:<nil>} {Tag:encopt Attrs:map[keygen:2] Content:<nil>}]}]}
+Success!
+
+=== Multi-step Call ===
+Step 1: Sending call message
+Sent call message with key: zS6EmodxjZKXfCcfHoNe46bezTD62okfXTi0iIQiW28=
+Step 2: Sending offer
+Offering call with accept structure: {Tag:call Attrs:map[id:3EB063441278AD5871C420 to:393483589770@s.whatsapp.net] Content:[{Tag:offer Attrs:map[call-creator:447523177927@s.whatsapp.net call-id:3954ca78ce1efc90aeeeecda6cfd5618] Content:[{Tag:audio Attrs:map[enc:opus rate:16000] Content:<nil>} {Tag:audio Attrs:map[enc:opus rate:8000] Content:<nil>} {Tag:net Attrs:map[medium:3] Content:<nil>} {Tag:encopt Attrs:map[keygen:2] Content:<nil>}]}]}
+Step 3: Sending relay latency
+Sending relay latency
+Success!
