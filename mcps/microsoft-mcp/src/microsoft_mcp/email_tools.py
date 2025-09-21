@@ -4,7 +4,7 @@ import base64
 import pathlib as pl
 from typing import Any
 from mcp.server.fastmcp import FastMCP
-from . import graph, auth
+from . import graph
 
 mcp = FastMCP("microsoft-mcp")
 

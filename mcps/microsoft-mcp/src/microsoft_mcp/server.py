@@ -18,13 +18,13 @@ def main() -> None:
         "--data-dir",
         type=str,
         required=True,
-        help="Directory for storing persistent data (tokens, logs, state)"
+        help="Directory for storing persistent data (tokens, logs, state)",
     )
     parser.add_argument(
         "--notifications-dir",
         type=str,
         required=True,
-        help="Directory for writing notifications"
+        help="Directory for writing notifications",
     )
     args = parser.parse_args()
 
@@ -35,6 +35,7 @@ def main() -> None:
     notifications_dir.mkdir(parents=True, exist_ok=True)
 
     from . import monitor, notifications
+
     auth.init_auth(data_dir / "token_cache.json")
     monitor.init_monitor(data_dir, data_dir / "last_check", data_dir / "monitor.log")
     notifications.init_notifications(notifications_dir)

@@ -19,6 +19,7 @@ from claude_code_sdk.types import (
 
 from .memory_agent import preserve_conversation_memory
 
+
 @dataclass(frozen=True)
 class ConfigClass:
     EPHEMERAL_MODE: bool = os.environ.get("EPHEMERAL", "").lower() == "true"
@@ -32,6 +33,7 @@ class ConfigClass:
     SHUTDOWN_TIMEOUT: int = 310
     TASK_GATHER_TIMEOUT: int = 2
     MAX_CONTEXT_TOKENS: int = 180000
+
 
 Config = ConfigClass()
 
@@ -53,15 +55,21 @@ SERVICE_ICONS = {
     "microsoft": "📧",
 }
 
+
 def get_mcp_servers():
     root = Path(__file__).parent.parent.parent.absolute()
     return {
         "microsoft": {
             "command": "uv",
             "args": [
-                "run", "--directory", "mcps/microsoft-mcp", "microsoft-mcp",
-                "--data-dir", str(root / "data/microsoft-mcp"),
-                "--notifications-dir", str(root / "notifications")
+                "run",
+                "--directory",
+                "mcps/microsoft-mcp",
+                "microsoft-mcp",
+                "--data-dir",
+                str(root / "data/microsoft-mcp"),
+                "--notifications-dir",
+                str(root / "notifications"),
             ],
         },
         "whatsapp": {
@@ -71,31 +79,44 @@ def get_mcp_servers():
                 "--directory",
                 "mcps/whatsapp-mcp/whatsapp-mcp-server",
                 "main.py",
-                "--data-dir", str(root / "data/whatsapp-mcp")
+                "--data-dir",
+                str(root / "data/whatsapp-mcp"),
             ],
         },
         "scheduler": {
             "command": "uv",
             "args": [
-                "run", "--directory", "mcps/scheduler-mcp", "scheduler-mcp",
-                "--data-dir", str(root / "data/scheduler-mcp"),
-                "--notifications-dir", str(root / "notifications")
+                "run",
+                "--directory",
+                "mcps/scheduler-mcp",
+                "scheduler-mcp",
+                "--data-dir",
+                str(root / "data/scheduler-mcp"),
+                "--notifications-dir",
+                str(root / "notifications"),
             ],
         },
         "playwright": {
             "command": "npx",
             "args": [
-                "--prefix", "mcps/playwright-mcp",
+                "--prefix",
+                "mcps/playwright-mcp",
                 "mcp-server-playwright",
-                "--browser", "chromium",
-                "--blocked-origins", "googleads.g.doubleclick.net;googlesyndication.com",
-                "--output-dir", str(root / "data/playwright-mcp/screenshots"),
-                "--image-responses", "omit",
+                "--browser",
+                "chromium",
+                "--blocked-origins",
+                "googleads.g.doubleclick.net;googlesyndication.com",
+                "--output-dir",
+                str(root / "data/playwright-mcp/screenshots"),
+                "--image-responses",
+                "omit",
             ],
         },
     }
 
+
 MCP_SERVERS = get_mcp_servers()
+
 
 @dataclass
 class State:
@@ -106,6 +127,7 @@ class State:
     shutdown_count: int = 0
     is_processing: bool = False
     sub_agent_context: Optional[str] = None
+
 
 state = State()
 
@@ -162,12 +184,20 @@ async def init_client() -> ClaudeSDKClient:
 
 
 def format_tool_call(name: str, input_data: Any) -> str:
-    input_str = json.dumps(input_data) if isinstance(input_data, dict) else str(input_data)
+    input_str = (
+        json.dumps(input_data) if isinstance(input_data, dict) else str(input_data)
+    )
     input_preview = (input_str[:150] + "...") if len(input_str) > 150 else input_str
 
     if name == "Task":
-        agent_type = input_data.get("subagent_type", "unknown") if isinstance(input_data, dict) else "unknown"
-        description = input_data.get("description", "") if isinstance(input_data, dict) else ""
+        agent_type = (
+            input_data.get("subagent_type", "unknown")
+            if isinstance(input_data, dict)
+            else "unknown"
+        )
+        description = (
+            input_data.get("description", "") if isinstance(input_data, dict) else ""
+        )
         state.sub_agent_context = agent_type
         return f"🤖 Task [{agent_type}]: {description or input_preview}"
 
@@ -207,7 +237,11 @@ def parse_assistant_message(msg: Any) -> Optional[str]:
 
 def format_notification(notif: Dict[str, Any]) -> str:
     meta = notif.get("metadata", {})
-    meta_str = f" (metadata: {', '.join(f'{k}={v}' for k, v in meta.items() if v)})" if meta else ""
+    meta_str = (
+        f" (metadata: {', '.join(f'{k}={v}' for k, v in meta.items() if v)})"
+        if meta
+        else ""
+    )
     return f"[{notif['type']} from {notif['source']}]{meta_str}: {notif['message']}"
 
 
@@ -216,7 +250,7 @@ def get_notification_display_info(notif: Dict[str, Any]) -> Tuple[str, str, str]
     sender = meta.get("chat_name", meta.get("sender", notif["source"]))
     icon = SERVICE_ICONS.get(notif["source"], "🔔")
     msg = notif["message"]
-    display_msg = msg[:200] + '...' if len(msg) > 200 else msg
+    display_msg = msg[:200] + "..." if len(msg) > 200 else msg
     return icon, sender, display_msg
 
 
@@ -229,10 +263,12 @@ async def load_notifications() -> List[Dict[str, Any]]:
     for file in notif_dir.glob("*.json"):
         try:
             data = json.loads(file.read_text())
-            data['_file_path'] = str(file)
+            data["_file_path"] = str(file)
             notifications.append(data)
         except Exception as e:
-            print(f"{C['yellow']}⚠️ Failed to read notification {file.name}: {e}{C['reset']}")
+            print(
+                f"{C['yellow']}⚠️ Failed to read notification {file.name}: {e}{C['reset']}"
+            )
 
     return notifications
 
@@ -240,7 +276,7 @@ async def load_notifications() -> List[Dict[str, Any]]:
 async def delete_notification_files(notifications: List[Dict[str, Any]]) -> None:
     deleted_paths = set()
     for notif in notifications:
-        file_path = notif.get('_file_path')
+        file_path = notif.get("_file_path")
         if file_path and file_path not in deleted_paths:
             try:
                 Path(file_path).unlink()
@@ -270,7 +306,9 @@ async def check_context_and_preserve() -> None:
 
     total_tokens = sum(len(str(msg)) // 4 for msg in state.conversation_history)
     if total_tokens >= Config.MAX_CONTEXT_TOKENS:
-        print(f"{C['yellow']}📊 Context limit reached, preserving memory...{C['reset']}")
+        print(
+            f"{C['yellow']}📊 Context limit reached, preserving memory...{C['reset']}"
+        )
         await preserve_memory()
         state.conversation_history.clear()
         print(f"{C['green']}✅ Context cleared, continuing...{C['reset']}")
@@ -285,7 +323,11 @@ def output_line(text: str, is_tool: bool = False) -> None:
         elif is_tool or text.startswith("🔧"):
             print(f"{C['yellow']}>{text}{C['reset']}", flush=True)
         else:
-            sender = f"Vesta[{state.sub_agent_context}]" if state.sub_agent_context else "Vesta"
+            sender = (
+                f"Vesta[{state.sub_agent_context}]"
+                if state.sub_agent_context
+                else "Vesta"
+            )
             print_timestamp_message(text, sender)
 
 
@@ -311,9 +353,7 @@ def start_whatsapp_bridge() -> bool:
 
     try:
         result = subprocess.run(
-            [str(script_path), "--force"],
-            capture_output=True,
-            text=True
+            [str(script_path), "--force"], capture_output=True, text=True
         )
         if result.returncode == 0:
             print(f"{C['green']}✓ WhatsApp bridge connected{C['reset']}")
@@ -326,9 +366,7 @@ def start_whatsapp_bridge() -> bool:
 def is_whatsapp_bridge_running() -> bool:
     try:
         result = subprocess.run(
-            ["pgrep", "-f", "whatsapp-bridge"],
-            capture_output=True,
-            text=True
+            ["pgrep", "-f", "whatsapp-bridge"], capture_output=True, text=True
         )
         return bool(result.stdout.strip())
     except Exception:
@@ -342,7 +380,9 @@ async def send_query(client: ClaudeSDKClient, prompt: str) -> None:
     await check_context_and_preserve()
 
 
-async def collect_responses(client: ClaudeSDKClient, show_output: bool = True) -> List[str]:
+async def collect_responses(
+    client: ClaudeSDKClient, show_output: bool = True
+) -> List[str]:
     responses, seen = [], set()
 
     async def collect():
@@ -382,7 +422,9 @@ async def send_and_receive_message(prompt: str, show_in_chat: bool = True) -> Li
     responses = await collect_responses(client, show_in_chat)
 
     if responses:
-        state.conversation_history.append({"role": "assistant", "content": " ".join(responses)})
+        state.conversation_history.append(
+            {"role": "assistant", "content": " ".join(responses)}
+        )
 
     return responses
 
@@ -396,7 +438,8 @@ async def show_typing_indicator() -> None:
         print(
             f"\r{C['dim']}[{timestamp}]{C['reset']} {C['magenta']}vesta{C['reset']} "
             f"{C['dim']}is typing{dots[dot_idx]}{C['reset']}",
-            end="", flush=True
+            end="",
+            flush=True,
         )
         dot_idx = (dot_idx + 1) % 4
         await asyncio.sleep(Config.TYPING_ANIMATION_DELAY)
@@ -423,8 +466,7 @@ async def process_message_with_typing(msg: str, is_user: bool) -> List[str]:
 
 
 async def handle_notifications_interrupt(
-    notifications: List[Dict[str, Any]],
-    client: ClaudeSDKClient
+    notifications: List[Dict[str, Any]], client: ClaudeSDKClient
 ) -> None:
     try:
         await client.interrupt()
@@ -448,8 +490,7 @@ async def handle_notifications_interrupt(
 
 
 async def process_notification_batch(
-    notifications: List[Dict[str, Any]],
-    queue: asyncio.Queue
+    notifications: List[Dict[str, Any]], queue: asyncio.Queue
 ) -> None:
     if not notifications:
         return
@@ -470,7 +511,9 @@ def signal_handler(signum: int, frame: Any) -> None:
     with state.shutdown_lock:
         state.shutdown_count += 1
         if state.shutdown_count == 1:
-            print(f"\n{C['dim']}💤 vesta is tired and taking a nap to help remember stuff...{C['reset']}")
+            print(
+                f"\n{C['dim']}💤 vesta is tired and taking a nap to help remember stuff...{C['reset']}"
+            )
             if state.shutdown_event:
                 state.shutdown_event.set()
         elif state.shutdown_count > 2:
@@ -511,12 +554,12 @@ def ensure_memory_file() -> None:
 
     if not memory_file.exists() and memory_template.exists():
         import shutil
+
         shutil.copy(memory_template, memory_file)
         print(f"{C['dim']}📝 Created MEMORY.md from template{C['reset']}")
 
 
 async def message_processor(queue: asyncio.Queue) -> None:
-
     while state.shutdown_event and not state.shutdown_event.is_set():
         try:
             msg, is_user = await asyncio.wait_for(queue.get(), timeout=1.0)
@@ -560,17 +603,36 @@ async def input_handler(queue: asyncio.Queue) -> None:
 
 async def check_whatsapp_bridge() -> None:
     if not is_whatsapp_bridge_running():
-        print_timestamp_message("🔄 WhatsApp bridge disconnected, restarting...", "System")
+        print_timestamp_message(
+            "🔄 WhatsApp bridge disconnected, restarting...", "System"
+        )
         start_whatsapp_bridge()
 
 
-async def collect_new_notifications(existing_buffer: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+async def check_mcp_health() -> None:
+    if not state.client:
+        return
+    try:
+        tools = [t.name for t in await state.client.list_tools()]
+        for mcp in MCP_SERVERS:
+            if not any(t.startswith(f"mcp__{mcp}__") for t in tools):
+                print_timestamp_message(
+                    f"⚠️ {SERVICE_ICONS.get(mcp, '🔧')} MCP '{mcp}' disconnected!",
+                    "System",
+                )
+    except Exception:
+        pass
+
+
+async def collect_new_notifications(
+    existing_buffer: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
     new_notifs = await load_notifications()
     if not new_notifs:
         return []
 
-    existing_paths = {n.get('_file_path') for n in existing_buffer}
-    truly_new = [n for n in new_notifs if n.get('_file_path') not in existing_paths]
+    existing_paths = {n.get("_file_path") for n in existing_buffer}
+    truly_new = [n for n in new_notifs if n.get("_file_path") not in existing_paths]
 
     for notif in truly_new:
         icon, sender, display_msg = get_notification_display_info(notif)
@@ -581,15 +643,18 @@ async def collect_new_notifications(existing_buffer: List[Dict[str, Any]]) -> Li
 
 async def check_proactive_task(queue: asyncio.Queue) -> None:
     print_timestamp_message("⏰ Running 30-minute check...", "System")
-    await queue.put((
-        "It's been 30 minutes. Is there anything useful you could do right now?",
-        False
-    ))
+    await queue.put(
+        (
+            "It's been 30 minutes. Is there anything useful you could do right now?",
+            False,
+        )
+    )
 
 
 async def monitor_loop(queue: asyncio.Queue) -> None:
     last_proactive = datetime.now()
     last_bridge_check = datetime.now()
+    last_mcp_check = datetime.now()
     notification_buffer = []
     buffer_start_time = None
 
@@ -604,14 +669,22 @@ async def monitor_loop(queue: asyncio.Queue) -> None:
 
         now = datetime.now()
 
-        if now - last_bridge_check >= timedelta(seconds=Config.WHATSAPP_BRIDGE_CHECK_INTERVAL):
+        if now - last_bridge_check >= timedelta(
+            seconds=Config.WHATSAPP_BRIDGE_CHECK_INTERVAL
+        ):
             await check_whatsapp_bridge()
             last_bridge_check = now
 
+        if now - last_mcp_check >= timedelta(seconds=60):  # Check MCPs every minute
+            await check_mcp_health()
+            last_mcp_check = now
+
         new_notifs = await load_notifications()
         if new_notifs:
-            existing_paths = {n.get('_file_path') for n in notification_buffer}
-            truly_new = [n for n in new_notifs if n.get('_file_path') not in existing_paths]
+            existing_paths = {n.get("_file_path") for n in notification_buffer}
+            truly_new = [
+                n for n in new_notifs if n.get("_file_path") not in existing_paths
+            ]
 
             if truly_new:
                 notification_buffer.extend(truly_new)
@@ -622,8 +695,12 @@ async def monitor_loop(queue: asyncio.Queue) -> None:
                     icon, sender, display_msg = get_notification_display_info(notif)
                     print_timestamp_message(f"{icon} {sender}: {display_msg}", "System")
 
-        if (notification_buffer and buffer_start_time and
-            (now - buffer_start_time).total_seconds() >= Config.NOTIFICATION_BUFFER_DELAY):
+        if (
+            notification_buffer
+            and buffer_start_time
+            and (now - buffer_start_time).total_seconds()
+            >= Config.NOTIFICATION_BUFFER_DELAY
+        ):
             await process_notification_batch(notification_buffer, queue)
             notification_buffer = []
             buffer_start_time = None
@@ -648,7 +725,7 @@ async def run_vesta() -> None:
     tasks = [
         asyncio.create_task(input_handler(message_queue)),
         asyncio.create_task(message_processor(message_queue)),
-        asyncio.create_task(monitor_loop(message_queue))
+        asyncio.create_task(monitor_loop(message_queue)),
     ]
 
     try:
@@ -662,7 +739,7 @@ async def run_vesta() -> None:
     try:
         await asyncio.wait_for(
             asyncio.gather(*tasks, return_exceptions=True),
-            timeout=Config.TASK_GATHER_TIMEOUT
+            timeout=Config.TASK_GATHER_TIMEOUT,
         )
     except asyncio.TimeoutError:
         pass
@@ -681,6 +758,7 @@ def main() -> None:
     except Exception as e:
         print(f"\n💥 Fatal error: {e}")
         import traceback
+
         traceback.print_exc()
 
 

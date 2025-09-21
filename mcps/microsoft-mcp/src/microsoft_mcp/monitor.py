@@ -40,16 +40,24 @@ def run():
             # On first run, check if we were offline and need to catch up
             if first_run and _state_file.exists():
                 last_check_str = _state_file.read_text().strip()
-                last_check_dt = datetime.fromisoformat(last_check_str.replace('Z', '+00:00'))
-                gap_seconds = (datetime.now(timezone.utc) - last_check_dt).total_seconds()
+                last_check_dt = datetime.fromisoformat(
+                    last_check_str.replace("Z", "+00:00")
+                )
+                gap_seconds = (
+                    datetime.now(timezone.utc) - last_check_dt
+                ).total_seconds()
 
                 # If gap > 120s (normal is 60s), we were offline - use old timestamp to catch up
                 if gap_seconds > 120:
-                    logger.info(f"Detected offline period of {gap_seconds:.0f}s, catching up from {last_check_str}")
+                    logger.info(
+                        f"Detected offline period of {gap_seconds:.0f}s, catching up from {last_check_str}"
+                    )
                     last_check = last_check_str
                     catching_up = True
                 else:
-                    last_check = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+                    last_check = (
+                        datetime.now(timezone.utc) - timedelta(hours=1)
+                    ).isoformat()
                 first_run = False
             else:
                 last_check = (
@@ -108,7 +116,9 @@ def run():
                     now = datetime.now(timezone.utc)
                     # If catching up, also check for events that happened during offline period
                     if catching_up:
-                        start_time = datetime.fromisoformat(last_check.replace('Z', '+00:00'))
+                        start_time = datetime.fromisoformat(
+                            last_check.replace("Z", "+00:00")
+                        )
                     else:
                         start_time = now
 
@@ -117,7 +127,9 @@ def run():
                         "/me/calendarView",
                         acc.account_id,
                         params={
-                            "startDateTime": start_time.isoformat().replace("+00:00", "Z"),
+                            "startDateTime": start_time.isoformat().replace(
+                                "+00:00", "Z"
+                            ),
                             "endDateTime": (now + timedelta(minutes=15))
                             .isoformat()
                             .replace("+00:00", "Z"),
@@ -132,8 +144,14 @@ def run():
 
                     for event in events:
                         start = event.get("start", {}).get("dateTime")
-                        event_time = datetime.fromisoformat(start.replace("Z", "+00:00")) if start else now
-                        mins = int((event_time - now).total_seconds() / 60) if start else 0
+                        event_time = (
+                            datetime.fromisoformat(start.replace("Z", "+00:00"))
+                            if start
+                            else now
+                        )
+                        mins = (
+                            int((event_time - now).total_seconds() / 60) if start else 0
+                        )
 
                         loc = event.get("location", {}).get("displayName")
                         logger.info(

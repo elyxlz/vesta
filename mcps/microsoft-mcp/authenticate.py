@@ -6,6 +6,7 @@ Run this script to sign in to one or more Microsoft accounts.
 
 import os
 import sys
+import argparse
 from pathlib import Path
 
 # Add src to path so we can import our modules
@@ -18,6 +19,15 @@ load_dotenv(find_dotenv())
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Authenticate Microsoft accounts")
+    parser.add_argument(
+        "--data-dir", type=str, required=True, help="Directory for storing token cache"
+    )
+    args = parser.parse_args()
+
+    data_dir = Path(args.data_dir).resolve()
+    data_dir.mkdir(parents=True, exist_ok=True)
+    auth.init_auth(data_dir / "token_cache.json")
     if not os.getenv("MICROSOFT_MCP_CLIENT_ID"):
         print("Error: MICROSOFT_MCP_CLIENT_ID environment variable is required")
         print("\nPlease set it in your .env file or environment:")

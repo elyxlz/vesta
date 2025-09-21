@@ -65,7 +65,7 @@ def check_missed_reminders():
     with closing(get_db()) as conn:
         cursor = conn.execute(
             "SELECT id, message, scheduled_time FROM reminders WHERE fired = 0 AND scheduled_time < ?",
-            (now,)
+            (now,),
         )
         for row in cursor:
             write_notification(
@@ -185,7 +185,12 @@ def set_reminder(
     with closing(get_db()) as conn:
         conn.execute(
             "INSERT OR REPLACE INTO reminders (id, message, schedule_type, scheduled_time, fired) VALUES (?, ?, ?, ?, 0)",
-            (reminder_id, message, schedule_info, next_run.isoformat() if next_run else None),
+            (
+                reminder_id,
+                message,
+                schedule_info,
+                next_run.isoformat() if next_run else None,
+            ),
         )
         conn.commit()
     return {

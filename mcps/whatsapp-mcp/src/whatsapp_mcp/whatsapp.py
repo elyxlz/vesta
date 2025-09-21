@@ -936,9 +936,7 @@ def send_reaction(chat_jid: str, message_id: str, emoji: str) -> tuple[bool, str
     # No sender_jid - bridge handles everything automatically
 
     try:
-        response = requests.post(
-            f"{_api_url}/reaction", json=payload, timeout=10
-        )
+        response = requests.post(f"{_api_url}/reaction", json=payload, timeout=10)
 
         if response.status_code != 200:
             return False, f"HTTP {response.status_code}: {response.text}"

@@ -11,13 +11,13 @@ def main():
         "--data-dir",
         type=str,
         required=True,
-        help="Directory for storing persistent data (database, logs)"
+        help="Directory for storing persistent data (database, logs)",
     )
     parser.add_argument(
         "--notifications-dir",
         type=str,
         required=True,
-        help="Directory for writing notifications"
+        help="Directory for writing notifications",
     )
     args = parser.parse_args()
 
@@ -34,7 +34,9 @@ def main():
     scheduler.start()
     tools.init_tools(scheduler, data_dir, notifications_dir)
 
-    print(f"Scheduler MCP started - data: {data_dir}, notifications: {notifications_dir}")
+    print(
+        f"Scheduler MCP started - data: {data_dir}, notifications: {notifications_dir}"
+    )
     mcp.run()
 
 
