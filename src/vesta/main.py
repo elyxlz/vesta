@@ -214,8 +214,13 @@ async def collect_responses(
     except asyncio.TimeoutError:
         responses.append("[Response timeout]")
         current_state = vu.update_state(current_state, sub_agent_context=None)
+    except asyncio.CancelledError:
+        if config.debug:
+            vfx.log_info("[DEBUG] Response collection interrupted", vm.Colors)
+        current_state = vu.update_state(current_state, sub_agent_context=None)
     except Exception as e:
-        responses.append(f"[Error: {str(e)[:100]}]")
+        if config.debug:
+            vfx.log_info(f"[DEBUG] Response collection error: {str(e)}", vm.Colors)
         current_state = vu.update_state(current_state, sub_agent_context=None)
 
     if config.debug:
@@ -282,30 +287,21 @@ async def process_message_with_typing(msg: str, state: vm.State, config: vm.Vest
 
 
 async def handle_notifications_interrupt(
-    notifications: list[vm.Notification], client: ccsdk.ClaudeSDKClient, state: vm.State, config: vm.VestaSettings
-) -> vm.State:
-    vfx.print_line(f"\n{vm.Colors['yellow']}⚡ Interrupting to handle notification...{vm.Colors['reset']}")
+    notifications: list[vm.Notification], client: ccsdk.ClaudeSDKClient, queue: asyncio.Queue, config: vm.VestaSettings
+) -> None:
+    vfx.print_line(f"\n{vm.Colors['yellow']}⚡ Interrupting current task...{vm.Colors['reset']}")
 
     try:
         await client.interrupt()
-        await vfx.sleep(0.1)
 
-        timestamp = vfx.get_current_time()
+        # Queue the notification for processing after interrupt
         prompt = vu.format_notification_batch(notifications)
-        query_with_context = vu.build_query_with_timestamp(prompt, timestamp)
+        await queue.put((prompt, True))
 
-        await client.query(query_with_context)
-
-        current_state = state
-        async for msg in client.receive_response():
-            text, new_state = parse_assistant_message(msg, current_state)
-            current_state = new_state
-            if text:
-                for line in text.split("\n"):
-                    output_line(line, current_state, is_tool=line.startswith("🔧"))
-        return current_state
+        if config.debug:
+            vfx.log_info("[DEBUG] Interrupt sent, notification queued", vm.Colors)
     except Exception as e:
-        vfx.log_error(f"Interrupt handling failed: {e}", vm.Colors)
+        vfx.log_error(f"Interrupt failed: {e}", vm.Colors)
         import traceback
 
         if config.debug:
@@ -325,7 +321,8 @@ async def process_notification_batch(
             vfx.log_info(f"[DEBUG] Notification action decision: {decision}", vm.Colors)
 
         if decision == "interrupt" and state.client:
-            new_state = await handle_notifications_interrupt(notifications, state.client, state, config)
+            await handle_notifications_interrupt(notifications, state.client, queue, config)
+            new_state = state
         elif decision == "queue":
             prompt = vu.format_notification_batch(notifications)
             await queue.put((prompt, True))
@@ -402,7 +399,7 @@ async def message_processor(queue: asyncio.Queue, state: vm.State, config: vm.Ve
             msg, is_user = await asyncio.wait_for(queue.get(), timeout=1.0)
             if config.debug:
                 vfx.log_info(f"[DEBUG] Processing message from {'user' if is_user else 'system'}: {msg[:100]}", vm.Colors)
-            current_state = vu.update_state(current_state, is_processing=True)
+            state.is_processing = True
 
             responses, new_state = await process_message_with_typing(msg, current_state, config, is_user)
             current_state = new_state
@@ -413,7 +410,7 @@ async def message_processor(queue: asyncio.Queue, state: vm.State, config: vm.Ve
                         await vfx.sleep(0.3)
                     output_line(response, current_state)
 
-            current_state = vu.update_state(current_state, is_processing=False)
+            state.is_processing = False
             if config.debug:
                 vfx.log_info("[DEBUG] Message processing completed", vm.Colors)
         except asyncio.TimeoutError:
@@ -424,7 +421,7 @@ async def message_processor(queue: asyncio.Queue, state: vm.State, config: vm.Ve
 
             if config.debug:
                 traceback.print_exc()
-            current_state = vu.update_state(current_state, is_processing=False)
+            state.is_processing = False
 
 
 async def input_handler(queue: asyncio.Queue, state: vm.State) -> None:
