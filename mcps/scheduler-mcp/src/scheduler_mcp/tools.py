@@ -39,7 +39,7 @@ def init_db():
                 id TEXT PRIMARY KEY,
                 message TEXT NOT NULL,
                 schedule_type TEXT,
-                scheduled_time TEXT NOT NULL,
+                scheduled_time TEXT,
                 fired INTEGER DEFAULT 0,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
@@ -55,6 +55,16 @@ def init_db():
                 completed_at TEXT
             )
         """)
+
+        # Migrate existing tables if needed
+        cursor = conn.execute("PRAGMA table_info(reminders)")
+        columns = {row[1] for row in cursor.fetchall()}
+
+        if 'scheduled_time' not in columns:
+            conn.execute("ALTER TABLE reminders ADD COLUMN scheduled_time TEXT")
+        if 'fired' not in columns:
+            conn.execute("ALTER TABLE reminders ADD COLUMN fired INTEGER DEFAULT 0")
+
         conn.commit()
 
 

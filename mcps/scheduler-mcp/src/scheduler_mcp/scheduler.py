@@ -2,19 +2,18 @@ import json
 import time
 from datetime import datetime
 from pathlib import Path
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 
 
-def create_scheduler(data_dir: Path) -> AsyncIOScheduler:
-    scheduler = AsyncIOScheduler(
+def create_scheduler(data_dir: Path) -> BackgroundScheduler:
+    scheduler = BackgroundScheduler(
         jobstores={"default": SQLAlchemyJobStore(url=f"sqlite:///{data_dir}/reminders.db")},
         job_defaults={
             "coalesce": True,
             "max_instances": 1,
         },
     )
-    scheduler.start()
     return scheduler
 
 
