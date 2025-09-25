@@ -1,0 +1,14 @@
+{
+  "timestamp": "2025-09-24T09:18:11.006848+00:00",
+  "source": "microsoft",
+  "type": "email",
+  "message": "New email from Mercury: Emilio sent $250.00 to Virgil Law LLP via ACH Payment",
+  "metadata": {
+    "account": "elio@audiogen.co",
+    "subject": "Emilio sent $250.00 to Virgil Law LLP via ACH Payment",
+    "sender_name": "Mercury",
+    "sender_address": "hello@mercury.com",
+    "preview": "Emilio sent an ACH Payment of $250.00 to Virgil Law LLP.\r\n\r\nHi Elio,\r\nEmilio sent an ACH Payment of $250.00 to Virgil Law LLP. The money was sent from Audiogen Inc\u2019s Mercury checking account \u2022\u20223885.\r\n",
+    "received_at": "2025-09-24T09:18:06Z"
+  }
+}

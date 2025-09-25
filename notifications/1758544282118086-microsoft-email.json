@@ -1,0 +1,14 @@
+{
+  "timestamp": "2025-09-22T12:31:22.118078+00:00",
+  "source": "microsoft",
+  "type": "email",
+  "message": "New email from Vueling: Your flight to London (Gatwick): Upgrade available",
+  "metadata": {
+    "account": "elio@pascarelli.com",
+    "subject": "Your flight to London (Gatwick): Upgrade available",
+    "sender_name": "Vueling",
+    "sender_address": "betterseat@vueling.com",
+    "preview": "Limited upgrade seats available for your upcoming flight\r\nView in browser\r\nEspa\u00f1ol English\r\n\r\n\r\n\r\nGreat news!\r\n\r\nBooking reference: ZH8V7C\r\n\r\nTreat yourself with BetterSeat\r\n\r\n\r\nYou can now get the ex",
+    "received_at": "2025-09-22T12:31:02Z"
+  }
+}

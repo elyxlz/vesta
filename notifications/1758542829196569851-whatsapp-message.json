@@ -1,0 +1,12 @@
+{
+  "message": "you there",
+  "metadata": {
+    "chat_jid": "393483589770@s.whatsapp.net",
+    "chat_name": "Elio",
+    "message_id": "AC037BC859EB551F0F4967970A9CEA23"
+  },
+  "sender": "Elio",
+  "source": "whatsapp",
+  "timestamp": "2025-09-22T13:07:09+01:00",
+  "type": "message"
+}

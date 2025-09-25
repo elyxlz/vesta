@@ -1,0 +1,14 @@
+{
+  "timestamp": "2025-09-23T15:18:50.775342+00:00",
+  "source": "microsoft",
+  "type": "email",
+  "message": "New email from Adriano Vieira: Re: [astral-sh/uv] Using `uv run` as a task runner (Issue #5903)",
+  "metadata": {
+    "account": "elio@pascarelli.com",
+    "subject": "Re: [astral-sh/uv] Using `uv run` as a task runner (Issue #5903)",
+    "sender_name": "Adriano Vieira",
+    "sender_address": "notifications@github.com",
+    "preview": "adrianovieira left a comment (astral-sh/uv#5903)\r\n\r\nTypical, I spent ages searching for a tool to do this and couldn't find anything. Guess I shouldn't have skim read the OP comment \ud83d\ude13\r\n\r\n@wevertonms s",
+    "received_at": "2025-09-23T15:18:25Z"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "timestamp": "2025-09-24T03:17:37.984593+00:00",
+  "source": "microsoft",
+  "type": "email",
+  "message": "New email from Cosmos: Sequence No. 2 | Culture, Curated by Cosmos",
+  "metadata": {
+    "account": "elio@pascarelli.com",
+    "subject": "Sequence No. 2 | Culture, Curated by Cosmos",
+    "sender_name": "Cosmos",
+    "sender_address": "discover@cosmos.so",
+    "preview": "From James Turrell\u2019s chromatic office to Virgil Abloh\u2019s secret archive \u2014 step into the dreamscapes shaping our world.\r\n\r\n\u034f\u200b \u2007\u00ad\u034f\u200b \u2007\u00ad\u034f\u200b \u2007\u00ad\u034f\u200b \u2007\u00ad\u034f\u200b \u2007\u00ad\u034f\u200b \u2007\u00ad\u034f\u200b \u2007\u00ad\u034f\u200b \u2007\u00ad\u034f\u200b \u2007\u00ad\u034f\u200b \u2007\u00ad\u034f\u200b \u2007\u00ad\u034f\u200b \u2007\u00ad\u034f\u200b \u2007\u00ad\u034f\u200b \u2007\u00ad\u034f\u200b \u2007\u00ad\u034f\u200b \u2007",
+    "received_at": "2025-09-24T03:17:27Z"
+  }
+}

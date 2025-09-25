@@ -1,0 +1,14 @@
+{
+  "timestamp": "2025-09-22T19:16:20.847773+00:00",
+  "source": "microsoft",
+  "type": "email",
+  "message": "New email from Product Team at Gem: Gem Product Newsletter - September 2025",
+  "metadata": {
+    "account": "elio@audiogen.co",
+    "subject": "Gem Product Newsletter - September 2025",
+    "sender_name": "Product Team at Gem",
+    "sender_address": "product@gem.com",
+    "preview": "Hi Elio,\r\nWe're excited to share September's product updates focused on giving teams the flexibility to customize Gem exactly how they work. From major enhancements in Gem ATS to a unified scheduling ",
+    "received_at": "2025-09-22T19:16:02Z"
+  }
+}

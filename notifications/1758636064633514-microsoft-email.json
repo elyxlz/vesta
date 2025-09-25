@@ -1,0 +1,14 @@
+{
+  "timestamp": "2025-09-23T14:01:04.633484+00:00",
+  "source": "microsoft",
+  "type": "email",
+  "message": "New email from Jacob Tomlinson: Re: [astral-sh/uv] Using `uv run` as a task runner (Issue #5903)",
+  "metadata": {
+    "account": "elio@pascarelli.com",
+    "subject": "Re: [astral-sh/uv] Using `uv run` as a task runner (Issue #5903)",
+    "sender_name": "Jacob Tomlinson",
+    "sender_address": "notifications@github.com",
+    "preview": "jacobtomlinson left a comment (astral-sh/uv#5903)\r\n\r\nFor anyone looking for this I made a quick utility called uv-job for doing this with uv.\r\n\r\nAdd it as a dev dependency\r\n\r\nuv add --dev uv-job\r\n\r\nDe",
+    "received_at": "2025-09-23T14:00:36Z"
+  }
+}

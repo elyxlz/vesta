@@ -1,0 +1,14 @@
+{
+  "timestamp": "2025-09-24T09:36:33.014709+00:00",
+  "source": "microsoft",
+  "type": "email",
+  "message": "New email from HSBC UK : Your latest HSBC current account statement is available to view",
+  "metadata": {
+    "account": "elio@pascarelli.com",
+    "subject": "Your latest HSBC current account statement is available to view",
+    "sender_name": "HSBC UK ",
+    "sender_address": "statements@email1.hsbc.co.uk",
+    "preview": "Statements at your fingertips...\r\nIt's what we do\r\n\r\nDear Mr Pascarelli,\r\n\r\nYour latest statement for account ending 7349 is ready for you to view using Online Banking or our Mobile app.\r\n\r\nViewing yo",
+    "received_at": "2025-09-24T09:36:18Z"
+  }
+}

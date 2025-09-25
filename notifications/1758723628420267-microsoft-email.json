@@ -1,0 +1,14 @@
+{
+  "timestamp": "2025-09-24T14:20:28.420255+00:00",
+  "source": "microsoft",
+  "type": "email",
+  "message": "New email from David Kwon: Canceled event: Monthly Zoom Mtg: Elio (Audiogen) // David (Abstract) @ Wed Sep 24, 2025 5pm - 5:30pm (GMT+1) (elio@audiogen.co)",
+  "metadata": {
+    "account": "elio@audiogen.co",
+    "subject": "Canceled event: Monthly Zoom Mtg: Elio (Audiogen) // David (Abstract) @ Wed Sep 24, 2025 5pm - 5:30pm (GMT+1) (elio@audiogen.co)",
+    "sender_name": "David Kwon",
+    "sender_address": "david@abstract.vc",
+    "preview": "Monthly Zoom Mtg: Elio (Audiogen) // David (Abstract)\r\n\r\nThis event has been canceled.\r\n\r\n\r\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r\n\r\nDavid is inviting you to a scheduled Zoom meeting.\r\nJoin Zoom Meeting\r\nhttps://us02web.zoom.us",
+    "received_at": "2025-09-24T14:19:46Z"
+  }
+}

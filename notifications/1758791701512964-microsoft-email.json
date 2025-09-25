@@ -1,0 +1,14 @@
+{
+  "timestamp": "2025-09-25T09:15:01.512931+00:00",
+  "source": "microsoft",
+  "type": "email",
+  "message": "New email from CLIE.Modules: Studying a language module at the UCL CLIE in 2025-2026 REMINDER",
+  "metadata": {
+    "account": "elio@pascarelli.com",
+    "subject": "Studying a language module at the UCL CLIE in 2025-2026 REMINDER",
+    "sender_name": "CLIE.Modules",
+    "sender_address": "clie-modules@ucl.ac.uk",
+    "preview": "Dear Elio,\r\n\r\nThank you for your interest in taking a language module for credit at the UCL Centre for Languages & International Education (CLIE) in 2025-2026.\r\n\r\nYou have selected LCFR0005: French Le",
+    "received_at": "2025-09-25T09:14:30Z"
+  }
+}

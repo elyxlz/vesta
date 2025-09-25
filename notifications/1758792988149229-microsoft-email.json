@@ -1,0 +1,14 @@
+{
+  "timestamp": "2025-09-25T09:36:28.149200+00:00",
+  "source": "microsoft",
+  "type": "email",
+  "message": "New email from The Michelin Guide: Reset your Password",
+  "metadata": {
+    "account": "elio@pascarelli.com",
+    "subject": "Reset your Password",
+    "sender_name": "The Michelin Guide",
+    "sender_address": "cs@guide.michelin.com",
+    "preview": "We\u2019ve received a request to reset your password. Please reset your password below in the next 24 hours.\r\n\r\nIf you didn\u2019t make the request, you may ignore this message.\r\n\r\nReset password\r\n\r\nNeed a text",
+    "received_at": "2025-09-25T09:36:15Z"
+  }
+}

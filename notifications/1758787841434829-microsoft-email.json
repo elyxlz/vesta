@@ -1,0 +1,14 @@
+{
+  "timestamp": "2025-09-25T08:10:41.434800+00:00",
+  "source": "microsoft",
+  "type": "email",
+  "message": "New email from Trip.com: Hotel Flash Sale is Live! \u26a1\ufe0f",
+  "metadata": {
+    "account": "elio@pascarelli.com",
+    "subject": "Hotel Flash Sale is Live! \u26a1\ufe0f",
+    "sender_name": "Trip.com",
+    "sender_address": "Trip.com@newsletter.trip.com",
+    "preview": "Save up to 60% \ud83c\udfe8 Las Vegas & Philippines\r\nFlights         Hotels          Trains          Attractions & Tours\r\n\r\n\u2b50 Hotel Flash Sale is Now Live\ud83c\udf0d\r\n\r\n\u2708\ufe0f Tuesdays \u2708\ufe0f\r\n\r\n50% off flight coupons to Canada\r\n",
+    "received_at": "2025-09-25T08:10:23Z"
+  }
+}

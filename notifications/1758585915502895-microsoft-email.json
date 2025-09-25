@@ -1,0 +1,14 @@
+{
+  "timestamp": "2025-09-23T00:05:15.502865+00:00",
+  "source": "microsoft",
+  "type": "email",
+  "message": "New email from MB2 Raceway: 2 for 2's-Day @ MB2 Raceway! \ud83c\udfce",
+  "metadata": {
+    "account": "elio@pascarelli.com",
+    "subject": "2 for 2's-Day @ MB2 Raceway! \ud83c\udfce",
+    "sender_name": "MB2 Raceway",
+    "sender_address": "info@mb2raceway.com",
+    "preview": "Looking for a way to boost your adrenaline, AND save some cash?\r\nLook no further!\r\n\r\nEvery Tuesday from now until November 4th, when you buy one race at normal price, you can get the 2nd one for just ",
+    "received_at": "2025-09-23T00:04:24Z"
+  }
+}

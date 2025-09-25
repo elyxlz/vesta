@@ -1,0 +1,14 @@
+{
+  "timestamp": "2025-09-24T14:49:02.559823+00:00",
+  "source": "microsoft",
+  "type": "email",
+  "message": "New email from Vueling: Vueling flight to London (Gatwick) \u2013 What to expect",
+  "metadata": {
+    "account": "elio@pascarelli.com",
+    "subject": "Vueling flight to London (Gatwick) \u2013 What to expect",
+    "sender_name": "Vueling",
+    "sender_address": "betterseat@vueling.com",
+    "preview": "Upgrade available for next leg.\r\nView in browser\r\nEspa\u00f1ol English\r\n\r\n\r\n\r\n\r\nHi,\r\nBid for a BetterSeat\r\n\r\nYou\u2019re just a few clicks away from an upgraded flight! Whether you need room for an overhead cab",
+    "received_at": "2025-09-24T14:48:05Z"
+  }
+}

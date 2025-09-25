@@ -1,0 +1,14 @@
+{
+  "timestamp": "2025-09-24T09:30:25.573147+00:00",
+  "source": "microsoft",
+  "type": "email",
+  "message": "New email from quarantine@messaging.microsoft.com: Microsoft 365 security: You have messages in quarantine",
+  "metadata": {
+    "account": "elio@pascarelli.com",
+    "subject": "Microsoft 365 security: You have messages in quarantine",
+    "sender_name": "quarantine@messaging.microsoft.com",
+    "sender_address": "quarantine@messaging.microsoft.com",
+    "preview": "Review These Messages\r\n1 messages are being held for you to review as of 9/24/2025 9:21:50 AM (UTC).\r\nReview them within 30 days of the received date by going to the Quarantine page in the Security Ce",
+    "received_at": "2025-09-24T09:30:00Z"
+  }
+}

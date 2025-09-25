@@ -1,0 +1,14 @@
+{
+  "timestamp": "2025-09-22T13:53:08.744913+00:00",
+  "source": "microsoft",
+  "type": "email",
+  "message": "New email from support@hyperoptic.com: Your Hyperoptic bill is ready",
+  "metadata": {
+    "account": "elio@pascarelli.com",
+    "subject": "Your Hyperoptic bill is ready",
+    "sender_name": "support@hyperoptic.com",
+    "sender_address": "support@hyperoptic.com",
+    "preview": "Hi Elio Pascarelli,\r\n\r\nWe're getting in touch to let you know that your latest bill is now ready to view in My Account.\r\n\r\nPlease note that \u00a325.00 will be due for payment in 14 calendar days.\r\n\r\nTo ma",
+    "received_at": "2025-09-22T13:53:00Z"
+  }
+}

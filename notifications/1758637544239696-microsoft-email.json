@@ -1,0 +1,14 @@
+{
+  "timestamp": "2025-09-23T14:25:44.239666+00:00",
+  "source": "microsoft",
+  "type": "email",
+  "message": "New email from Jacob Tomlinson: Re: [astral-sh/uv] Using `uv run` as a task runner (Issue #5903)",
+  "metadata": {
+    "account": "elio@pascarelli.com",
+    "subject": "Re: [astral-sh/uv] Using `uv run` as a task runner (Issue #5903)",
+    "sender_name": "Jacob Tomlinson",
+    "sender_address": "notifications@github.com",
+    "preview": "jacobtomlinson left a comment (astral-sh/uv#5903)\r\n\r\nTypical, I spent ages searching for a tool to do this and couldn't find anything.\r\n\r\n@wevertonms sweet, I was under the impression Poe was just for",
+    "received_at": "2025-09-23T14:25:36Z"
+  }
+}

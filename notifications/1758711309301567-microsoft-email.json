@@ -1,0 +1,14 @@
+{
+  "timestamp": "2025-09-24T10:55:09.301555+00:00",
+  "source": "microsoft",
+  "type": "email",
+  "message": "New email from Mercury: Jacopo\u2019s card has been charged $377.69 by Carrefour",
+  "metadata": {
+    "account": "elio@audiogen.co",
+    "subject": "Jacopo\u2019s card has been charged $377.69 by Carrefour",
+    "sender_name": "Mercury",
+    "sender_address": "hello@mercury.com",
+    "preview": "Jacopo\u2019s Mercury debit card \u2022\u20225010 was preauthorized for $377.69 by Carrefour.\r\n\r\nHi Elio,\r\nJacopo\u2019s Mercury debit card \u2022\u20225010 was preauthorized for $377.69 by Carrefour.\r\nThe settled amount may be di",
+    "received_at": "2025-09-24T10:54:12Z"
+  }
+}
