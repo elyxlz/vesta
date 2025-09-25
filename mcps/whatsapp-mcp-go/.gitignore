@@ -1,0 +1,30 @@
+# The whatsapp-mcp binary is intentionally tracked in git
+# so users don't need to build it themselves
+
+# Go build artifacts
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Go workspace file
+go.work
+go.work.sum
+
+# Dependency directories
+vendor/
+
+# WhatsApp data
+store/
+*.db
+*.db-shm
+*.db-wal
+
+# Logs
+*.log
