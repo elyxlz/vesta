@@ -43,6 +43,9 @@ mcps/*/notifications/
 mcps/whatsapp-mcp/whatsapp-bridge/session/
 mcps/whatsapp-mcp/whatsapp-bridge/whatsapp-bridge
 
+# Go binaries
+mcps/whatsapp-mcp-go/whatsapp-mcp
+
 # Scheduler data
 
 # Microsoft MCP tokens

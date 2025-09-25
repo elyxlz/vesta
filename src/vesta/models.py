@@ -62,12 +62,10 @@ def _get_default_mcp_servers() -> dict[str, McpServer]:
             ],
         },
         "whatsapp": {
-            "command": str(root / "mcps/whatsapp-mcp-go/whatsapp-mcp"),
+            "command": "sh",
             "args": [
-                "--data-dir",
-                str(root / "data/whatsapp-mcp"),
-                "--notifications-dir",
-                str(root / "notifications"),
+                "-c",
+                f"cd {root}/mcps/whatsapp-mcp-go && go build -o whatsapp-mcp . && ./whatsapp-mcp --data-dir {root}/data/whatsapp-mcp --notifications-dir {root}/notifications",
             ],
         },
         "scheduler": {
