@@ -421,7 +421,8 @@ When booking any meeting:
   - Currently doing FAO internship in Rome (6 months, started last month - so 5 more months to go)
   - Did long distance before (first year together - Elio starting uni, Maddy finishing IB)
   - Needs help with uni application - Elio is helping her after lunch
-  - Going to Bologna Radiohead concert together (created group chat for planning)
+  - Going to Bologna Radiohead concert together (November 15, 2025 at 6pm)
+  - Planning to spend time in Rome together after concert before Elio returns to London
   - Found flight options from Rome for her
 
 #### Friends & Contacts
@@ -431,6 +432,7 @@ When booking any meeting:
   - Got spammed with "giga gay" messages from Elio (via vesta)
 - **Markos**: Having breakfast with on Saturday morning (with Alex)
 - **Annabelle**: Gave Elio his bedsheets at 10:15am on Saturday Sep 21
+- **Emi's cleaning lady**: Elio asked vesta to send cleaning lady to Emi next week (message: "Puoi mandare la brasiliana da emi la prox settimana?")
 - **David Kwon**:
   - Partner at Abstract Ventures
   - Email: david@abstract.vc
@@ -448,9 +450,12 @@ When booking any meeting:
 - **UCL Re-enrollment**: CRITICAL - need to complete re-enrollment process, check what needs to be done
 - **UCL Module choices**: Module selection done on Portico - need to check if approved
 - **National Insurance Number**: Applied months ago, never received interview letter - need to call 0800 141 2075 (call scheduled with reference info ready)
-- **Bologna Radiohead concert**: Created group chat for planning, found accommodation options saved in lists/bologna_travel_options.md
-- **Get bedsheets from Annabelle**: Added to calendar for Sunday 9-10am
-- **Help Maddy with uni application** - Elio helped her (harassed him successfully at 2pm to do it)
+- **Bologna Radiohead concert (Nov 15)**:
+  - **Outbound finalized**: Luton to Bologna direct, Ryanair FR9534, 6:30am, £99
+  - **Return finalized**: Bologna-Rome train (2:19pm, €45.20), then Rome CIA to Stansted Ryanair 6pm, £52
+  - **Need to book**: Accommodation with Maddy (looking for cheap hostel with private room)
+  - **Task for cleaning lady**: Send Emi's cleaning lady next week
+- **Christmas flights to Rome**: Found cheap option at $274 - book soon before price goes up
 
 ### Recurring Events
 - **David (investor) call**: Monthly, 4th Wednesday at 5pm UK time via Zoom
@@ -459,13 +464,13 @@ When booking any meeting:
   - Need to prep together before the call
 
 ### Upcoming Events
-- **Bilbao/Spain Trip**: Tomorrow morning (Sep 22) - Flight VY5293 at 10:10am from Gatwick, seat 14C, booking ZH8V7C
-  - Return: Sep 25, 6:25am from Bilbao
-  - Boarding pass downloaded and sent to WhatsApp
-- **Christmas in Rome**: Dec 23/24 - Dec 27 (with Maddy) - found flight options in lists/christmas_flights.md
+- **Bologna Radiohead concert**: November 15, 2025 at 6pm
+  - Travel finalized: Luton-Bologna direct, return via Rome
+  - With Maddy - planning extra time in Rome after concert
+  - Still need to book accommodation
+- **Christmas in Rome**: Dec 23/24 - Dec 27 (with Maddy) - found flight options at $274 (book soon!)
 - **Skiing in San Cassiano, Alto Adige**: Dec 27 - Jan 3 (with Maddy)
 - **Return to London**: Jan 3/4
-- **Bologna Radiohead concert**: Group chat created, accommodation options researched and saved
 
 ### Recent Learnings
 - **2025-09-14**: Got confused about identity when Elio texted from Italian number - momentarily thought I was Elio
