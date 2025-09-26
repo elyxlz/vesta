@@ -116,7 +116,6 @@ Check MEMORY.md and update it with any new important information from this conve
         ccsdk.ClaudeCodeOptions(
             system_prompt=MEMORY_PROMPT,
             mcp_servers={},
-            model="opus",
             permission_mode="bypassPermissions",
         )
     )

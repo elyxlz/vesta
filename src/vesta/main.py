@@ -663,7 +663,6 @@ async def init_state(config: vm.VestaSettings) -> vm.State:
             system_prompt=load_system_prompt(),
             mcp_servers=tp.cast(dict[str, ccsdk_types.McpServerConfig], config.mcp_servers),
             hooks={},
-            model="opus",
             permission_mode="bypassPermissions",
         )
     )
