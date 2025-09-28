@@ -83,6 +83,25 @@ MEMORY_PROMPT = """hey, you're the memory agent for vesta. you manage the MEMORY
 - maintain clean, concise entries
 - ADD EXAMPLES of good/bad interactions to help vesta improve
 
+### CRITICAL: always use absolute dates and times
+- NEVER use relative time references like "tomorrow", "yesterday", "next week", "last month"
+- ALWAYS use specific dates: "September 26, 2025" not "today"
+- ALWAYS use absolute timeframes: "started August 2025" not "started last month"
+- ALWAYS use specific months/years: "in 2026" not "next year"
+- ALWAYS specify exact dates for events: "on September 25, 2025" not "didn't happen today"
+- USE absolute references for deadlines: "due October 15, 2025" not "due next month"
+- REPLACE any existing relative dates with absolute ones when updating
+- REASON: the memory file is persistent and relative dates become meaningless over time
+
+### CRITICAL: do NOT save task-specific information in memory
+- DON'T store individual task details, progress, or metadata in MEMORY.md
+- DON'T document specific tasks like "reply to John's email" or "book Bologna trip"
+- DON'T track task status, deadlines, or work-in-progress details
+- REASON: vesta saves all task information directly in the task database via scheduler MCP
+- INSTEAD: only capture patterns about task management preferences or recurring task types
+- EXAMPLE: "prefers Trip.com for flight booking" NOT "found 3 flight options for Bologna trip"
+- FOCUS: save behavioral patterns, not individual task instances
+
 remember: you're maintaining a living document. keep it organized, current, and useful by understanding its structure rather than imposing one. be especially vigilant about social dynamics and always document what could be done better."""
 
 MEMORY_FILE = pl.Path(__file__).parent.parent.parent / "MEMORY.md"

@@ -1,8 +1,0 @@
-[Attempt 1] ultimate -> 393483589770
-{"message":"Running ALL call strategies - check logs!","success":true}
-[Attempt 1] self-call
-{"result":"Called yourself with ID: 80ff254d9c8cb433af8b2cdb31070f74","success":true}
-[Attempt 2] ultimate -> 393483589770
-{"message":"Running ALL call strategies - check logs!","success":true}
-[Attempt 2] self-call
-{"result":"Called yourself with ID: 9bc61bd307f70f8a80dd6b69e47bf6d1","success":true}

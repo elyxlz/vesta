@@ -106,8 +106,8 @@ class VestaSettings(pyd_settings.BaseSettings):
     max_mcp_output_tokens: int = 200000
     notification_check_interval: int = 2
     notification_buffer_delay: int = 3
-    proactive_check_interval: int = 30
-    proactive_check_message: str = "It's been 30 minutes. Is there anything useful you could do right now?"
+    proactive_check_interval: int = 60
+    proactive_check_message: str = "It's been 60 minutes. Is there anything useful you could do right now?"
     whatsapp_bridge_check_interval: int = 30
     response_timeout: int = 180
     memory_agent_timeout: int = 1200

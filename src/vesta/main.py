@@ -492,7 +492,7 @@ async def input_handler(queue: asyncio.Queue, state: vm.State) -> None:
 
 
 async def check_proactive_task(queue: asyncio.Queue, config: vm.VestaSettings) -> None:
-    print_timestamp_message("⏰ Running 30-minute check...", "System")
+    print_timestamp_message("⏰ Running 60-minute check...", "System")
     await queue.put((config.proactive_check_message, False))
 
 
