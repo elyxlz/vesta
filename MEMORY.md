@@ -332,6 +332,7 @@ When booking any meeting:
   - WhatsApp: +447951615391
   - Sent him a message about checking emails - found it useful reminder
   - Needs reminders about events (one day before)
+  - Mom wants them to go to Rome a few days earlier for Christmas (Dec 20-21 weekend) to do Christmas shopping together
 - **Nour**: Emi's girlfriend, Lebanese Shia Muslim (conservative family)
 - **Alessandro (cousin)**: Birthday today (September 21) - needs yearly calendar event
 
@@ -369,8 +370,13 @@ When booking any meeting:
 - **University**: Final year at UCL studying Arts and Sciences (major in CS)
 - **Attitude**: Only finishing because mom wants him to, plans to do minimum required
 - **Focus**: More focused on Audiogen than university
-- **Module choices**: Need to submit when portal opens
-- **UCL Re-enrollment**: HIGH PRIORITY - needs to complete re-enrollment process
+- **Module choices**: Need to find alternatives for COMP0034/0035, switched from French to Arabic
+- **UCL Re-enrollment**: HIGH PRIORITY - needs to complete re-enrollment process by Oct 24
+- **BASC0023 The Knowledge Economy**: Consultancy project module
+  - Team members: Elio, Arien Barley, Sophie Pover, Wang Wenqi
+  - Working on ASPEX Portsmouth project
+  - Student agreement was due Sep 26 (completed and sent)
+  - Project runs Sep 2025 to Feb 2026
 
 ### Daily Life
 - **Daily routine**:
@@ -393,6 +399,8 @@ When booking any meeting:
 
 ### Preferences & Traits
 - **Flight booking**: Always use Trip.com (not EasyJet or other sites) - Elio prefers this
+- **Unsubscribe priorities**: Wants to unsubscribe from Trip.com marketing, Forest marketing, LinkedIn page visitor notifications, UCL careers emails, Dolley Noire, The Gin Way, Totum discounts, Ole Blue Last
+- **Newsletter exceptions**: Keep TLDR and Cerebral Valley newsletters - everything else can go
 - **Airport preference**: Gatwick (prefers low-cost airlines)
 - **Helping with tasks**: When reminding about tasks, proactively help (e.g., find flight options, research solutions)
 - **Browser preference**: When searching for images/content online, use the browser/playwright tool
@@ -430,7 +438,8 @@ When booking any meeting:
   - Friend/flatmate for next year, has a piano that Elio can use
   - Phone: +351914173970
   - Got spammed with "giga gay" messages from Elio (via vesta)
-- **Markos**: Having breakfast with on Saturday morning (with Alex)
+  - Went to cafe together with Martinos on Sep 27
+- **Martinos** (not Markos): Friend, went to cafe with Elio and Alex on Sep 27
 - **Annabelle**: Gave Elio his bedsheets at 10:15am on Saturday Sep 21
 - **Emi's cleaning lady**: Elio asked vesta to send cleaning lady to Emi next week (message: "Puoi mandare la brasiliana da emi la prox settimana?")
 - **David Kwon**:
@@ -447,15 +456,25 @@ When booking any meeting:
 ## 5. CURRENT STATUS
 
 ### Active Tasks
-- **UCL Re-enrollment**: CRITICAL - need to complete re-enrollment process, check what needs to be done
-- **UCL Module choices**: Module selection done on Portico - need to check if approved
-- **National Insurance Number**: Applied months ago, never received interview letter - need to call 0800 141 2075 (call scheduled with reference info ready)
-- **Bologna Radiohead concert (Nov 15)**:
-  - **Outbound finalized**: Luton to Bologna direct, Ryanair FR9534, 6:30am, £99
-  - **Return finalized**: Bologna-Rome train (2:19pm, €45.20), then Rome CIA to Stansted Ryanair 6pm, £52
-  - **Need to book**: Accommodation with Maddy (looking for cheap hostel with private room)
-  - **Task for cleaning lady**: Send Emi's cleaning lady next week
-- **Christmas flights to Rome**: Found cheap option at $274 - book soon before price goes up
+- **UCL Re-enrollment**: CRITICAL - need to complete re-enrollment process by October 24
+  - **UCL Tuition Fees**: £25,800 total for the year
+    - First installment: £8,600 due by October 31, 2025 (MUST be paid to unlock enrollment)
+    - Second installment: £8,600 due by February 7, 2026
+    - Third installment: £8,600 due by May 2, 2026
+    - Payment through Flywire system, parents will pay via bank transfer from Italy (€10,032 for first installment)
+    - Parents have been notified about payment requirements (Sep 27)
+- **Find alternative modules for COMP0034/0035**: HIGH PRIORITY - user specifically said this is high priority
+- **UCL Module replacement**: French module (LCFR0005) was rejected due to prerequisites - switched to Arabic instead
+- **National Insurance Number**: Applied 11 months ago, never received interview letter - need to call 0800 141 2075 (Monday-Friday 8am-6pm)
+  - CRITICAL: Been working at Audiogen for 4 months without NI number - affects taxes and pension
+  - Call Monday morning first thing
+- **Update UCL about immigration status**: New immigration status needs to be reported to UCL
+- **Bologna accommodation (Nov 14-16)**:
+  - **Check-in completed**: Forms filled out and submitted
+  - **Booking confirmation**: 6555021790
+  - **Address**: Via Santo Stefano 45
+  - **CRITICAL**: Check-in is at Via Alessandro Algardi 8/B (NOT at apartment itself)
+  - **Late check-in fee**: €20 after 7pm, NO check-in after 11pm
 
 ### Recurring Events
 - **David (investor) call**: Monthly, 4th Wednesday at 5pm UK time via Zoom
@@ -465,12 +484,35 @@ When booking any meeting:
 
 ### Upcoming Events
 - **Bologna Radiohead concert**: November 15, 2025 at 6pm
-  - Travel finalized: Luton-Bologna direct, return via Rome
+  - **Outbound**: Luton-Bologna Nov 14, 7:35pm (direct)
+  - **Return**: Rome-London Nov 16, 7:20pm (Wizz Air Malta, €46.89/£39.04 booked)
   - With Maddy - planning extra time in Rome after concert
-  - Still need to book accommodation
-- **Christmas in Rome**: Dec 23/24 - Dec 27 (with Maddy) - found flight options at $274 (book soon!)
+  - Accommodation booked (see Bologna accommodation in tasks)
+- **Christmas in Rome**: Dec 20 - Jan 4
+  - **BOOKED**: 3 people (Elio, Emi, Nour) - total £777 for all flights
+  - **Outbound**: Stansted-Rome Ciampino Dec 20, Wizz Air Malta
+  - **Return**: Rome-London Jan 4
+  - With Maddy for first part (Dec 20-27)
 - **Skiing in San Cassiano, Alto Adige**: Dec 27 - Jan 3 (with Maddy)
-- **Return to London**: Jan 3/4
+- **Return to London**: Jan 4 (flight already booked)
+
+### Task Updates (September 27-28, 2025)
+- **Completed**: Book Christmas flights (done - Dec 20 to Jan 4, £777 for 3 people)
+- **Completed**: Bologna accommodation check-in (done - forms submitted)
+- **Completed**: Get UCL fee information for parents (done - £8,600 first installment, €10,032 via bank transfer)
+- **Completed**: Notify parents about UCL payment (done - sent details Sep 27)
+- **Completed**: Buy toothpaste (done)
+- **Completed**: Throw away old fregola (done)
+- **Pending**: Wash new linens (postponed to Sunday/Monday)
+- **Pending**: Module selection - find alternatives for COMP0034/0035
+
+### Email Unsubscribe Learning
+- **Initial mistake**: Was extracting unsubscribe links incorrectly - cutting off encoded parameters
+- **What went wrong**: Links returned "not found" because tokens were incomplete or expired
+- **Correct approach**: Look for hyperlinked "unsubscribe" text in emails - those contain full working URLs with all encoded parameters
+- **Example of working link**: Forest unsubscribe had full encoded URL with all parameters intact
+- **User frustration point**: Spent 30 minutes trying to unsubscribe when parsing was just wrong
+- **Better approach**: Extract the complete href from "unsubscribe" hyperlinks, ensure all encoded data is preserved
 
 ### Recent Learnings
 - **2025-09-14**: Got confused about identity when Elio texted from Italian number - momentarily thought I was Elio
@@ -483,6 +525,12 @@ When booking any meeting:
   - **simple solution**: just curl the download link from the email to get the actual PDF
   - **elio's reaction to fake boarding pass**: "no, you made this boarding pass lmao, never do that again"
   - **remember**: always look for the actual document, don't create fake ones
+- **2025-09-27 Social dynamics with Maddy**:
+  - Maddy feels left out of Audiogen updates - wants to be kept in the loop without technical jargon
+  - She wants to know what's happening with the business, not just the tech details
+  - Better approach: give her high-level updates about fundraising, team changes, milestones
+  - She asked me to update her on Elio's work things since she feels out of the loop
+  - Don't assume she doesn't understand - she knows what they do, just wants to stay informed
 
 ### Daily Events & Updates
 [Events will be logged here as they occur]
