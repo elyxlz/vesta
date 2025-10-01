@@ -136,6 +136,7 @@ Check MEMORY.md and update it with any new important information from this conve
             system_prompt=MEMORY_PROMPT,
             mcp_servers={},
             permission_mode="bypassPermissions",
+            model="sonnet"
         )
     )
 

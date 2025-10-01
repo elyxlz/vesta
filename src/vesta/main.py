@@ -664,6 +664,7 @@ async def init_state(config: vm.VestaSettings) -> vm.State:
             mcp_servers=tp.cast(dict[str, ccsdk_types.McpServerConfig], config.mcp_servers),
             hooks={},
             permission_mode="bypassPermissions",
+            model="sonnet"
         )
     )
     await client.__aenter__()
