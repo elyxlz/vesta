@@ -132,12 +132,7 @@ Recent conversation to process:
 Check MEMORY.md and update it with any new important information from this conversation."""
 
     client = ccsdk.ClaudeSDKClient(
-        ccsdk.ClaudeCodeOptions(
-            system_prompt=MEMORY_PROMPT,
-            mcp_servers={},
-            permission_mode="bypassPermissions",
-            model="sonnet"
-        )
+        ccsdk.ClaudeCodeOptions(system_prompt=MEMORY_PROMPT, mcp_servers={}, permission_mode="bypassPermissions", model="sonnet")
     )
 
     try:

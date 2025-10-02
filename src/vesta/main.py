@@ -51,10 +51,10 @@ def format_tool_call(name: str, input_data: tp.Any, state: vm.State) -> tuple[st
     return formatted, new_state
 
 
-def parse_assistant_message(msg: tp.Any, state: vm.State) -> tuple[str | None, vm.State]:
-    texts, new_context = vu.parse_assistant_message(msg, state.sub_agent_context, vm.SERVICE_ICONS)
+def parse_assistant_message(msg: tp.Any, state: vm.State) -> tuple[str | None, vm.State, dict[str, tp.Any] | None]:
+    texts, new_context, usage_data = vu.parse_assistant_message(msg, state.sub_agent_context, vm.SERVICE_ICONS)
     new_state = vu.update_state(state, sub_agent_context=new_context)
-    return "\n".join(texts) if texts else None, new_state
+    return "\n".join(texts) if texts else None, new_state, usage_data
 
 
 def format_notification(notif: vm.Notification) -> str:
@@ -186,8 +186,31 @@ async def collect_responses(
                     vfx.log_info(f"[DEBUG] Received message #{message_count} type: {type(msg).__name__}", vm.Colors)
                     if hasattr(msg, "__dict__"):
                         vfx.log_info(f"[DEBUG] Message attributes: {list(msg.__dict__.keys())}", vm.Colors)
-                text, new_state = parse_assistant_message(msg, current_state)
+                text, new_state, usage_data = parse_assistant_message(msg, current_state)
                 current_state = new_state
+
+                # Show context usage when it increases by 5% or more
+                if usage_data:
+                    total_tokens = (
+                        usage_data.get("input_tokens", 0)
+                        + usage_data.get("cache_read_input_tokens", 0)
+                        + usage_data.get("cache_creation_input_tokens", 0)
+                        + usage_data.get("output_tokens", 0)
+                    )
+                    context_pct = (total_tokens / config.max_context_tokens) * 100
+
+                    if config.debug:
+                        vfx.log_info(
+                            f"[DEBUG] Context usage: {context_pct:.1f}% ({total_tokens:,}/{config.max_context_tokens:,} tokens)", vm.Colors
+                        )
+
+                    # Print when context increases by 5% or more
+                    if context_pct - current_state.last_context_pct >= 5.0:
+                        vfx.print_line(
+                            f"{vm.Colors['yellow']}📊 Context usage: {context_pct:.1f}% ({total_tokens:,} tokens){vm.Colors['reset']}"
+                        )
+                        current_state = vu.update_state(current_state, last_context_pct=context_pct)
+
                 if config.debug and text:
                     vfx.log_info(f"[DEBUG] Got text from message: {text[:100]}", vm.Colors)
 
@@ -434,8 +457,9 @@ async def message_processor(queue: asyncio.Queue, state: vm.State, config: vm.Ve
 
             responses, new_state = await process_message_with_typing(msg, current_state, config, is_user)
             current_state = new_state
-            # Update the shared state's conversation_history
+            # Update the shared state's conversation_history and last_context_pct
             state.conversation_history = current_state.conversation_history
+            state.last_context_pct = current_state.last_context_pct
 
             for i, response in enumerate(responses):
                 if response and response.strip():
@@ -664,7 +688,7 @@ async def init_state(config: vm.VestaSettings) -> vm.State:
             mcp_servers=tp.cast(dict[str, ccsdk_types.McpServerConfig], config.mcp_servers),
             hooks={},
             permission_mode="bypassPermissions",
-            model="sonnet"
+            model="sonnet",
         )
     )
     await client.__aenter__()

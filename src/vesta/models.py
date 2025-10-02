@@ -43,6 +43,7 @@ class State:
     shutdown_count: int = 0
     is_processing: bool = False
     sub_agent_context: str | None = None
+    last_context_pct: float = 0.0
 
 
 def _get_default_mcp_servers() -> dict[str, McpServer]:

@@ -45,9 +45,29 @@ def format_tool_call(name: str, input_data: tp.Any, sub_agent_context: str | Non
     return f"🔧 {prefix}{name}: {input_preview}", sub_agent_context
 
 
-def parse_assistant_message(msg: tp.Any, sub_agent_context: str | None, service_icons: dict[str, str]) -> tuple[list[str], str | None]:
+def extract_usage_from_result(msg: ccsdk_types.ResultMessage) -> dict[str, tp.Any] | None:
+    """Extract token usage information from a ResultMessage."""
+    if not msg.usage:
+        return None
+
+    return {
+        "input_tokens": msg.usage.get("input_tokens", 0),
+        "cache_read_input_tokens": msg.usage.get("cache_read_input_tokens", 0),
+        "cache_creation_input_tokens": msg.usage.get("cache_creation_input_tokens", 0),
+        "output_tokens": msg.usage.get("output_tokens", 0),
+        "total_cost_usd": msg.total_cost_usd or 0.0,
+    }
+
+
+def parse_assistant_message(
+    msg: tp.Any, sub_agent_context: str | None, service_icons: dict[str, str]
+) -> tuple[list[str], str | None, dict[str, tp.Any] | None]:
+    # Handle ResultMessage
+    if isinstance(msg, ccsdk_types.ResultMessage):
+        return ([], sub_agent_context, extract_usage_from_result(msg))
+
     if not isinstance(msg, ccsdk_types.AssistantMessage):
-        return ([msg] if isinstance(msg, str) else [], sub_agent_context)
+        return ([msg] if isinstance(msg, str) else [], sub_agent_context, None)
 
     texts = []
     has_task_result = False
@@ -68,7 +88,7 @@ def parse_assistant_message(msg: tp.Any, sub_agent_context: str | None, service_
     if has_task_result and current_context:
         current_context = None
 
-    return texts, current_context
+    return texts, current_context, None
 
 
 def update_state(state: vm.State, **updates) -> vm.State:
