@@ -327,6 +327,9 @@ When booking any meeting:
   - Introduced myself in Italian, explained I can help with organizing things and checking Elio's availability
   - Likes cat pictures
   - Thanked for Rome tickets for the 23rd
+  - Flight: Friday October 3, 2025 at 1:40pm with ITA Airways
+  - Hilarious personality: introduced herself as "Gioconda, Donatella's assistant" (pretending to be her own AI assistant)
+  - Shares tech articles with Elio about European startup ecosystem
 - **Dad**: Retired, lives in Sardinia but spends lots of time in Rome
   - Phone: +39 348 382 6189
 - **Brother Emilio (Emi)**:
@@ -386,7 +389,7 @@ When booking any meeting:
 - **Programme**: BASc Arts and Sciences: Sciences and Engineering (UBBASCSSEN18)
 - **Attitude**: Only finishing because mom wants him to, plans to do minimum required
 - **Focus**: More focused on Audiogen than university
-- **UCL Re-enrollment**: Payment sent September 30, 2025 (£8,600 via Flywire) - waiting 2-3 days for processing to unlock enrollment
+- **UCL Re-enrollment**: Payment sent September 30, 2025 (£8,600 via Flywire) - payment cleared but enrollment button still not live as of October 2, 2025
 - **UCL ID Card**: Need to get after enrollment unlocks (can be done at Student Centre, library, or online)
 - **Module status as of September 29, 2025**:
   - BASC0023 The Knowledge Economy (T1, 15 credits) - Approved
@@ -394,9 +397,12 @@ When booking any meeting:
   - BASC0048 Computers and Humans (T2, 15 credits) - Approved
   - HPSC0065 Philosophy of Information (T1, 15 credits) - Approved
   - PSYC0031 Cognitive Neuroscience (T2, 15 credits) - Pending Review (added by Cristy on Sep 29)
-  - SOCS0081 Social Networks (T2, 15 credits) - Reselection Pending Review
+  - SOCS0081 Social Networks (T2, 15 credits) - Module full, registration declined as of October 2, 2025
+  - Need to select alternative module from replacement options
   - Total: 90-105 credits depending on pending approvals
   - Cristy Meadows said still need 15 more credits if SOCS0081 not approved
+  - **Alternative module research**: Need to find 100% coursework modules from available options
+  - Task created to research coursework-only modules on UCL module catalogue
 - **BASC0023 The Knowledge Economy**: Consultancy project module
   - Team members: Elio, Arien Barley, Sophie Pover, Wenqi Wang
   - Working on ASPEX Portsmouth TKE project
@@ -452,6 +458,7 @@ When booking any meeting:
 - **Maddalena (Maddy)**:
   - Girlfriend of 4 years
   - Anniversary: July 4th (4th year anniversary in 2025)
+  - Phone: +393514637719
   - Emails: maddalenaluberti@gmail.com (personal), maddalena.luberti@kcl.ac.uk (university)
   - Currently doing FAO internship in Rome (6 months, started August 2025 - ending January 2026)
   - Did long distance before (first year together - Elio starting uni, Maddy finishing IB)
@@ -459,6 +466,8 @@ When booking any meeting:
   - Going to Bologna Radiohead concert together (November 15, 2025 at 6pm)
   - Planning to spend time in Rome together after concert before Elio returns to London
   - Found flight options from Rome for her
+  - Flight: October 2, 2025 at 6:55pm (but transport sorted with her dad)
+  - Aware of Palestine general strike affecting flights on October 2, 2025
 
 #### Friends & Contacts
 - **Alex**:
@@ -467,6 +476,7 @@ When booking any meeting:
   - Got spammed with "giga gay" messages from Elio (via vesta)
   - Went to cafe together with Martinos on Sep 27
   - Council tax: Looking into it, will call and find out amount
+  - Will help with formal shoes for Emi's wedding ceremony (Elio waiting for response)
 - **Marco** (not Markos):
   - Phone: +44 7471 558038
   - Asked about Alex's council tax September 30, 2025
@@ -489,6 +499,15 @@ When booking any meeting:
   - Wants Elio to have a 30min chat with Max (MusixMatch CEO)
   - Italian business contact
   - **CRITICAL**: Never mention university to work contacts - it's secret
+- **Cesare**:
+  - Phone: +447521931162
+  - Made advertising for Audiogen
+  - Gets trolled by Elio via vesta with aubergine emojis and childish messages
+  - Responds with humor ("Hey gay oy") but eventually asks to stop
+- **Louis**:
+  - Friend/flatmate for next year
+  - Phone: +33 6 70 79 01 13
+  - Needs reminder about cleaning lady coming Saturday 1pm
 
 ## 7. OPERATIONAL HISTORY
 
@@ -498,7 +517,13 @@ When booking any meeting:
   - Gives anxiety despite David being "the chillest investor"
 
 ### Upcoming Events
-- **Emi's wedding ceremony thing** (not actual wedding): Saturday night October 4, 2025
+- **Emi's wedding ceremony** (not actual wedding): Saturday October 5, 2025 at 3:30pm
+  - Bring suits to Emi's house Saturday 11am
+  - Cleaning lady coming Saturday 1pm (Alex and Louis reminded Friday evening)
+  - Mom/dad/Maddy arriving Friday evening (around 6pm estimate)
+  - Greta/Flavio arriving Sunday (around 2pm estimate)
+  - Need new haircut before Saturday
+  - Still figuring out formal shoes
 - **Cambridge day trip with Maddy**: Sunday October 5, 2025
   - Trains booked: 10:28am departure from London Liverpool Street
   - Just for fun, not planning anything specific
@@ -506,6 +531,23 @@ When booking any meeting:
 - **Bologna Radiohead concert**: November 15, 2025 at 6pm (with Maddy) - flights already booked as of September 29, 2025
 - **Christmas in Rome**: Dec 23/24 - Dec 27 (with Maddy)
 - **Skiing in San Cassiano, Alto Adige**: Dec 27 - Jan 3 (with Maddy)
+
+### Recent Events (October 2025)
+- **Palestine general strike coordination**: Successfully coordinated between mom and Maddy about flight status during Palestine strike on October 2, 2025
+  - Mom confirmed flights might have problems but status still uncertain
+  - Maddy's flight at 6:55pm, transport sorted with her dad
+  - All parties informed about potential disruptions
+- **Wedding preparation coordination**: Actively helping coordinate Emi's wedding ceremony logistics
+  - Suits need to be brought to Emi's house Saturday 11am
+  - Alex and Louis reminded about cleaning lady Saturday 1pm
+  - Still waiting for Alex's response about formal shoes
+- **UCL module selection issue**: SOCS0081 Social Networks declined due to module being full
+  - Need to research alternative modules that are 100% coursework
+  - Created task to review available replacement options on UCL module catalogue
+- **Mom's "Gioconda" personality**: Discovered mom has hilarious sense of humor
+  - Introduced herself as "Gioconda, Donatella's assistant" (pretending to be her own AI assistant)
+  - Shows she understands and plays along with AI assistant concept
+  - Shares tech articles about European startup ecosystem with Elio
 
 ### Recent Learnings
 - **2025-09-29 Email sending mistake**:
