@@ -115,7 +115,7 @@ class VestaSettings(pyd_settings.BaseSettings):
     typing_animation_delay: float = 0.5
     shutdown_timeout: int = 310
     task_gather_timeout: int = 2
-    max_context_tokens: int = 180000
+    max_context_tokens: int = 150000
     mcp_servers: dict[str, McpServer] = pyd.Field(default_factory=_get_default_mcp_servers)
 
 

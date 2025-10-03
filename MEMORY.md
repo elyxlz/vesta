@@ -154,7 +154,6 @@ Whenever ANYONE else messages vesta (even known contacts), always update the mai
 - **Main medium**: This is the primary way to communicate - not email, not other channels, not terminal
 - **Proactive messages**: Send WhatsApp messages for reminders, updates, notifications
 - **Real-time chat**: WhatsApp is where conversations happen
-- **NEVER use terminal for messaging**: User explicitly said they can see when I write on terminal and doesn't want that
 - **Channel Response Rule**: ALWAYS respond through the same channel the message came from:
   - Terminal message → Reply in terminal ONLY
   - WhatsApp message → Reply via WhatsApp ONLY (don't duplicate in terminal)
@@ -190,7 +189,6 @@ Whenever ANYONE else messages vesta (even known contacts), always update the mai
 - **Clean Up Protocol**: After completing tasks, always: kill processes started, remove temp files, stop servers/services
 - **Lists & References**: Organize lists in appropriate folders
 - **Remember to use these capabilities proactively**: Don't wait to be reminded about capabilities!
-- **Playwright MCP**: Available for web scraping when needed (but often simpler solutions work better)
 
 ### Task Management System
 - **ALWAYS CREATE TASKS**: Whenever there is ANYTHING to do, create a task immediately - no exceptions
@@ -224,12 +222,7 @@ Whenever ANYONE else messages vesta (even known contacts), always update the mai
   - This keeps the draft with the task so it's never lost
   - Update the draft as you refine it - keep everything in the task metadata
   - When email is sent, mark task complete with final version in metadata
-- **NEVER USE TEMPORARY STORAGE**: No temp files, no separate notes, no lists outside of tasks - metadata is the only storage
 - **MARK COMPLETED IMMEDIATELY**: As soon as a task is done, mark it as completed - don't wait or batch updates
-- **Task status**: Only pending or done (no "working" status)
-- **Natural dates**: Can use "today", "tomorrow" when setting due dates
-- **Priority levels**: 1=low, 2=normal, 3=high
-- **Update tasks**: Can update title, status, priority, or metadata as needed
 
 ### Email Configuration
 - **Main email**: elio@pascarelli.com (primary email for all communications - ALWAYS use this by default)
@@ -258,7 +251,6 @@ Memory consolidation happens automatically when vesta takes processing breaks. U
   - **Then get specific email**: Once relevant email is found, get full content
 - **Email Replies**: Use reply functions for existing threads - never break chains
 - **Email monitoring**: Always check Audiogen emails (important account)
-- **Vueling boarding passes**: Look for "Download now" button links in emails (click.comms.vueling.com) and curl them to get actual PDFs
 
 ### Calendar Protocol
 - **ALWAYS ADD TIME-BASED ITEMS TO CALENDAR**: Anything that requires Elio's time should go in the calendar - meetings, deadlines, appointments, work blocks, travel, social events
@@ -307,7 +299,7 @@ When booking any meeting:
 - **Date of birth**: April 18, 2003
 - **Gender**: Male
 - **In London**: Since 2021 (4 years) - moved for university
-- **Living situation**: Always lived with brother Emilio, moving to Chadwell Mews with Alex and Louis
+- **Living situation**: Always lived with brother Emilio, now lives at Chadwell Mews with Alex and Louis
 - **Current address**: Chadwell Mews, EC1R 1AF
 - **Previous address**: 3D Webber Street (where NI letter might be)
 - **Important context**: Has anxiety about doing things, admin tasks, and staying on top of responsibilities - built me to help manage this
@@ -368,7 +360,6 @@ When booking any meeting:
   - Working on AudiogenAI projects (eve, model-factory)
   - Jaco (JacopoMadaluni) is a coworker who assigns issues and reviews PRs
   - autoregression is another collaborator on the projects
-  - Recent work includes fixing the Eve aligner (issue #688) and various PR reviews
 - **What Audiogen does**:
   - Research and train generative models for music (focusing on diffusion models)
   - Building an extremely simple DAW (Digital Audio Workstation)
@@ -377,7 +368,6 @@ When booking any meeting:
 - **Food ordering**:
   - Deliveroo account: emilio@pascarelli.com (check Keeper for login)
   - Company card: Visa ending in 5xxx (in Keeper)
-  - Usual Nando's order: 4 half chickens with chips (3 hot, 1 medium)
 - **Salary**: £50,000/year (£4,166.67/month gross, ~£3,293.58 net)
 - **Employment start**: June 1, 2024 (paid through PAYE via Deel)
 - **Immigration status**: Global Talent Visa (not settled status, post-Brexit status)
@@ -390,7 +380,7 @@ When booking any meeting:
 - **Attitude**: Only finishing because mom wants him to, plans to do minimum required
 - **Focus**: More focused on Audiogen than university
 - **UCL Re-enrollment**: Payment sent September 30, 2025 (£8,600 via Flywire) - payment cleared but enrollment button still not live as of October 2, 2025
-- **UCL ID Card**: Need to get after enrollment unlocks (can be done at Student Centre, library, or online)
+- **UCL ID Card**: Can be obtained at Student Centre, library, or online after enrollment unlocks
 - **Module status as of September 29, 2025**:
   - BASC0023 The Knowledge Economy (T1, 15 credits) - Approved
   - BASC0024 Final Year Dissertation (T1/2, 30 credits) - Approved
@@ -398,18 +388,15 @@ When booking any meeting:
   - HPSC0065 Philosophy of Information (T1, 15 credits) - Approved
   - PSYC0031 Cognitive Neuroscience (T2, 15 credits) - Pending Review (added by Cristy on Sep 29)
   - SOCS0081 Social Networks (T2, 15 credits) - Module full, registration declined as of October 2, 2025
-  - Need to select alternative module from replacement options
   - Total: 90-105 credits depending on pending approvals
   - Cristy Meadows said still need 15 more credits if SOCS0081 not approved
-  - **Alternative module research**: Need to find 100% coursework modules from available options
-  - Task created to research coursework-only modules on UCL module catalogue
+  - Prefers 100% coursework modules when selecting alternatives
 - **BASC0023 The Knowledge Economy**: Consultancy project module
   - Team members: Elio, Arien Barley, Sophie Pover, Wenqi Wang
   - Working on ASPEX Portsmouth TKE project
   - WhatsApp group created September 29, 2025 (Elio gave Italian number)
   - Sophie mentioned "see you guys tomorrow" - likely meeting September 30, 2025
   - Project runs Sep 2025 to Feb 2026
-- **Dissertation briefing**: October 1, 2025 at 1pm - mandatory attendance
 
 ### Daily Life
 - **Daily routine**:
@@ -475,15 +462,12 @@ When booking any meeting:
   - Phone: +351914173970
   - Got spammed with "giga gay" messages from Elio (via vesta)
   - Went to cafe together with Martinos on Sep 27
-  - Council tax: Looking into it, will call and find out amount
-  - Will help with formal shoes for Emi's wedding ceremony (Elio waiting for response)
 - **Marco** (not Markos):
   - Phone: +44 7471 558038
   - Asked about Alex's council tax September 30, 2025
   - Elio refers to him as "gay marco" to differentiate from other Marcos
 - **Martinos** (not Markos): Friend, went to cafe with Elio and Alex on Sep 27
 - **Annabelle**: Gave Elio his bedsheets at 10:15am on Saturday Sep 21
-- **Emi's cleaning lady**: Elio asked vesta to send cleaning lady to Emi next week (message: "Puoi mandare la brasiliana da emi la prox settimana?")
 - **David Kwon**:
   - Partner at Abstract Ventures
   - Email: david@abstract.vc
@@ -507,7 +491,6 @@ When booking any meeting:
 - **Louis**:
   - Friend/flatmate for next year
   - Phone: +33 6 70 79 01 13
-  - Needs reminder about cleaning lady coming Saturday 1pm
 
 ## 7. OPERATIONAL HISTORY
 
@@ -518,12 +501,9 @@ When booking any meeting:
 
 ### Upcoming Events
 - **Emi's wedding ceremony** (not actual wedding): Saturday October 5, 2025 at 3:30pm
-  - Bring suits to Emi's house Saturday 11am
   - Cleaning lady coming Saturday 1pm (Alex and Louis reminded Friday evening)
   - Mom/dad/Maddy arriving Friday evening (around 6pm estimate)
   - Greta/Flavio arriving Sunday (around 2pm estimate)
-  - Need new haircut before Saturday
-  - Still figuring out formal shoes
 - **Cambridge day trip with Maddy**: Sunday October 5, 2025
   - Trains booked: 10:28am departure from London Liverpool Street
   - Just for fun, not planning anything specific
@@ -538,12 +518,8 @@ When booking any meeting:
   - Maddy's flight at 6:55pm, transport sorted with her dad
   - All parties informed about potential disruptions
 - **Wedding preparation coordination**: Actively helping coordinate Emi's wedding ceremony logistics
-  - Suits need to be brought to Emi's house Saturday 11am
   - Alex and Louis reminded about cleaning lady Saturday 1pm
-  - Still waiting for Alex's response about formal shoes
 - **UCL module selection issue**: SOCS0081 Social Networks declined due to module being full
-  - Need to research alternative modules that are 100% coursework
-  - Created task to review available replacement options on UCL module catalogue
 - **Mom's "Gioconda" personality**: Discovered mom has hilarious sense of humor
   - Introduced herself as "Gioconda, Donatella's assistant" (pretending to be her own AI assistant)
   - Shows she understands and plays along with AI assistant concept
