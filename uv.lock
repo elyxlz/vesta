@@ -54,15 +54,15 @@ wheels = [
 
 [[package]]
 name = "claude-code-sdk"
-version = "0.0.22"
+version = "0.0.25"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
     { name = "mcp" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/17/f4/18af88204c4090be0a852a73e528177482f4b9c88e6c58708eb3aa09fd22/claude_code_sdk-0.0.22.tar.gz", hash = "sha256:67dc234fcd3454fd0e229621df6ae1265e5efdeac8f94c840f55b9ffa6699853", size = 40694, upload-time = "2025-09-12T15:25:30.177Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ec/0d/0f4a71415826578a5ace16817c52df84d76ffbda5cdad02f520a2b963bde/claude_code_sdk-0.0.25.tar.gz", hash = "sha256:0d9e1eba432d4fe8a2f75f06ec9bb4c310f39b1d55246e7e4b2c69bfdd69eab3", size = 41273, upload-time = "2025-09-29T20:14:51.882Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/01/5d/cea7b9cd70fac6cc8e1e6952bbd141e7ee695f5c004833d22575d8eadb63/claude_code_sdk-0.0.22-py3-none-any.whl", hash = "sha256:c66f5d01e2c9c803a100d5f22579cbafa338e6ce604e58033fcc03e8f5ddd7df", size = 30688, upload-time = "2025-09-12T15:25:28.688Z" },
+    { url = "https://files.pythonhosted.org/packages/f5/41/c934058080f3233bbc95bc9abac5e0191bf336ad5f69a33b5f54a4737e88/claude_code_sdk-0.0.25-py3-none-any.whl", hash = "sha256:3d6a4ef958182f311d6050776d2675d9b39650a2db221c582a0a5156472dcee3", size = 31031, upload-time = "2025-09-29T20:14:50.687Z" },
 ]
 
 [[package]]
@@ -549,7 +549,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "aioconsole", specifier = ">=0.8.1" },
-    { name = "claude-code-sdk", specifier = ">=0.0.22" },
+    { name = "claude-code-sdk", specifier = ">=0.0.25" },
     { name = "pillow", specifier = ">=11.3.0" },
     { name = "pydantic", specifier = ">=2.10.4" },
     { name = "pydantic-settings", specifier = ">=2.7.0" },

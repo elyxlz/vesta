@@ -186,6 +186,7 @@ async def collect_responses(
                     vfx.log_info(f"[DEBUG] Received message #{message_count} type: {type(msg).__name__}", vm.Colors)
                     if hasattr(msg, "__dict__"):
                         vfx.log_info(f"[DEBUG] Message attributes: {list(msg.__dict__.keys())}", vm.Colors)
+
                 text, new_state, usage_data = parse_assistant_message(msg, current_state)
                 current_state = new_state
 

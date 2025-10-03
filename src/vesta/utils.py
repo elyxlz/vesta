@@ -104,11 +104,9 @@ def calculate_token_count(history: list[dict[str, tp.Any]]) -> int:
 
 
 def should_preserve_memory(history: list[dict[str, tp.Any]], max_tokens: int, ephemeral: bool) -> bool:
-    # TEMPORARILY DISABLED FOR DEBUGGING
-    return False
-    # if ephemeral or not history:
-    #     return False
-    # return calculate_token_count(history) >= max_tokens
+    if ephemeral or not history:
+        return False
+    return calculate_token_count(history) >= max_tokens
 
 
 def filter_new_notifications(all_notifications: list[vm.Notification], existing_paths: set[str]) -> list[vm.Notification]:
