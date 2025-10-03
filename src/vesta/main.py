@@ -204,12 +204,11 @@ async def collect_responses(
                             f"[DEBUG] Context usage: {context_pct:.1f}% ({total_tokens:,}/{config.max_context_tokens:,} tokens)", vm.Colors
                         )
 
-                    # Print when context increases by 5% or more
-                    if context_pct - current_state.last_context_pct >= 5.0:
-                        vfx.print_line(
-                            f"{vm.Colors['yellow']}📊 Context usage: {context_pct:.1f}% ({total_tokens:,} tokens){vm.Colors['reset']}"
-                        )
-                        current_state = vu.update_state(current_state, last_context_pct=context_pct)
+                    # Print context usage on EVERY event for debugging
+                    vfx.print_line(
+                        f"{vm.Colors['yellow']}📊 Context usage: {context_pct:.1f}% ({total_tokens:,} tokens) [input:{usage_data.get('input_tokens', 0):,} cache_read:{usage_data.get('cache_read_input_tokens', 0):,} cache_create:{usage_data.get('cache_creation_input_tokens', 0):,} output:{usage_data.get('output_tokens', 0):,}]{vm.Colors['reset']}"
+                    )
+                    current_state = vu.update_state(current_state, last_context_pct=context_pct)
 
                 if config.debug and text:
                     vfx.log_info(f"[DEBUG] Got text from message: {text[:100]}", vm.Colors)
