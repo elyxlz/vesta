@@ -1,0 +1,54 @@
+# Personal data
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Local development
+.env.local
+
+# Temporary files
+*.bak
+*.orig
+tmp/
+
+# Test artifacts
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+
+# MCP data
+mcps/*/notifications/
+
+# WhatsApp session
+mcps/whatsapp-mcp/whatsapp-bridge/session/
+mcps/whatsapp-mcp/whatsapp-bridge/whatsapp-bridge
+
+# Go binaries
+mcps/whatsapp-mcp-go/whatsapp-mcp
+
+# Scheduler data
+
+# Microsoft MCP tokens
+
+# Old vesta folder (if still present)
+old_vesta/

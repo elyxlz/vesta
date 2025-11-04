@@ -1,0 +1,37 @@
+{
+  "18862cb0": {
+    "message": "send elio his weekly monday briefing on whatsapp - calendar events, emails to respond to, tasks, deadlines",
+    "schedule_type": "weekly on monday at 09:00",
+    "next_run": "2025-09-22T09:00:00+01:00"
+  },
+  "cb74b277": {
+    "message": "CALL NONNA NOW - no excuses, you said you'd do it today",
+    "schedule_type": "once (in 7.0 hours)",
+    "next_run": "2025-09-17T18:36:07.937858"
+  },
+  "b0e231e7": {
+    "message": "morning workout time! 15 mins lets gooo",
+    "schedule_type": "daily",
+    "next_run": "2025-09-18T08:45:00+01:00"
+  },
+  "d9c6ea34": {
+    "message": "weekend workout time - bit later today, 15 mins",
+    "schedule_type": "weekly on saturday at 09:30",
+    "next_run": "2025-09-20T09:30:00+01:00"
+  },
+  "53b7f45f": {
+    "message": "weekend workout time - bit later today, 15 mins",
+    "schedule_type": "weekly on sunday at 09:30",
+    "next_run": "2025-09-21T09:30:00+01:00"
+  },
+  "ff0de4b2": {
+    "message": "morning briefing: send elio his daily schedule, important tasks, and weather check for the day on whatsapp",
+    "schedule_type": "daily",
+    "next_run": "2025-09-18T09:00:00+01:00"
+  },
+  "0ae647eb": {
+    "message": "call UK national insurance number: 0800 141 2075 - finally sort this out, they never sent the interview letter",
+    "schedule_type": "once (in 3.0 days -1.0 hours)",
+    "next_run": "2025-09-20T10:44:05.391739"
+  }
+}

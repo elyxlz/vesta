@@ -54,6 +54,7 @@
 - Alici fritte
 - Calamari fritti
 - Zuppa di pesce alla mediterranea
+- Bouillabaisse (YouTube: https://www.youtube.com/watch?v=OT_HUWZHT2c&list=PLo4d5zChZQfGGu72jqkcbM4dytuUR5irV&index=23)
 
 ### Carne
 
@@ -65,7 +66,7 @@
 - Filetto olio sale
 - Polpette alla cacciatora
 - Polpette al sugo
-- Saltimbocca alla romana
+- Saltimbocca alla romana (YouTube: https://www.youtube.com/watch?v=WZJQPJk-koo&list=PLo4d5zChZQfGGu72jqkcbM4dytuUR5irV&index=7)
 - Fettine panate
 - Ossobuco alla milanese
 - Bistecca alla fiorentina
@@ -85,6 +86,7 @@
 - Filetto di baccalà
 - Fiori di zucca fritti
 - Pizza e mortazza
+- Pizza bianca (YouTube: https://www.youtube.com/watch?v=6J49lcJU3VA&list=PLo4d5zChZQfGGu72jqkcbM4dytuUR5irV&index=12)
 - Piadina romagnola
 - Frittelle di broccolo romanesco
 - Frittelle di mentuccia
@@ -117,6 +119,8 @@
 - Stracciatella alla romana
 - Brodo di pollo fatto in casa
 - Shakshuka
+- Zuppa etrusca del Luogo di Aimo e Nadia (YouTube: https://www.youtube.com/watch?v=Tx3xoCThDbE)
+- Avgolemono (Greek chicken soup with egg-lemon sauce)
 
 ## Piatti Internazionali
 
@@ -132,7 +136,7 @@
 
 - Maritozzo con la panna
 - Tarte Tatin
-- Strudel di mele
+- Strudel di mele (YouTube: https://www.youtube.com/watch?v=XM7UuNt8FtY&list=PLo4d5zChZQfGGu72jqkcbM4dytuUR5irV&index=3)
 - Crema catalana
 - Crème caramel
 - Tiramisù
@@ -152,12 +156,15 @@
 
 - Garum
 - Posca (bevanda romana antica a base di aceto)
+- Pickles (YouTube: https://www.youtube.com/watch?v=vD6XWXj9l8Q&list=PLo4d5zChZQfGGu72jqkcbM4dytuUR5irV&index=8)
 
 ## Bevande
 
 - Vino da viaggiatori (vino con miele e spezie)
 - Vin brulé
 - Focaccia con il Bimby
+- Pita bread (YouTube: https://www.youtube.com/watch?v=rzmj2ejfNO0&list=PLo4d5zChZQfGGu72jqkcbM4dytuUR5irV)
+- 5 minute baguette (YouTube: https://www.youtube.com/watch?v=Z-husjZkxHw&list=PLo4d5zChZQfGGu72jqkcbM4dytuUR5irV&index=21)
 
 # Vini preferiti
 
@@ -171,6 +178,8 @@
 # Ricette Dettagliate
 
 ## Boeuf Bourguignon
+
+**YouTube:** https://www.youtube.com/watch?v=XK7nkKHlkvU&list=PLo4d5zChZQfGGu72jqkcbM4dytuUR5irV&index=10
 
 *Prima cosa da fare, guardare il video una seconda volta. Noterai cose che non avevi visto la prima volta.*
 
@@ -262,4 +271,95 @@ In entrambi i casi, la carne dovrebbe essere morbidissima e tenera. Se non lo è
 3. La salsa dovrebbe essere lucida. Se non lo è, puoi sempre aggiungere alcuni pezzi di burro freddo fuori dal fuoco, e mescolare fino a scioglimento.
 
 Un pezzo di pane a lato e FACCI LA SCARPETTA!
+
+## Avgolemono (Greek Chicken Soup) - Elio's Version
+
+### 🧂 Ingredients
+
+**For the broth:**
+- 1 whole chicken (about 1.2–1.5 kg / 2½–3 lb), bone-in and skin-on
+- 2 L (about 8 cups) cold water — enough to cover the chicken
+- 1 large onion, halved (no need to peel fully)
+- 1 carrot, peeled and chopped
+- 1 celery stalk, chopped
+- 1 bay leaf
+- Peel of 1 lemon (use a vegetable peeler to get wide strips)
+- 3-4 garlic cloves, smashed
+- 1 tsp salt (add more later to taste)
+- 6–8 black peppercorns
+- Olive oil for searing
+
+**For the soup:**
+- 1 cup orzo (κριθαράκι)
+- Salt and black pepper to taste
+- Optional: drizzle of good olive oil
+
+**For the avgolemono:**
+- 3 large eggs (room temperature)
+- Juice of 2 lemons (about 80 ml / ⅓ cup)
+- A pinch of salt
+
+### 🔪 Instructions
+
+**1️⃣ Sear the chicken**
+- Pat the chicken completely dry with paper towels.
+- Season generously with salt and pepper all over.
+- Heat 2-3 tablespoons olive oil in a large heavy pot over medium-high heat.
+- Sear the chicken breast-side down first for 4-5 minutes until golden brown.
+- Flip and sear the back for another 4-5 minutes until golden.
+- Remove chicken and set aside (it won't be cooked through yet - that's fine).
+
+**2️⃣ Make the aromatic broth**
+- In the same pot with the chicken drippings, add the onion, carrot, celery, and garlic.
+- Sauté for 2-3 minutes to release flavors.
+- Return the seared chicken to the pot.
+- Add cold water to cover the chicken completely.
+- Add bay leaf, lemon peel, peppercorns, and 1 tsp salt.
+- Slowly bring to a gentle simmer over medium heat.
+- **IMPORTANT**: As soon as it starts simmering, reduce heat to low and skim off all the foam and impurities that rise to the surface using a ladle or spoon.
+- Continue skimming every 10-15 minutes for the first 30 minutes.
+- Simmer gently for 1-1.5 hours until chicken is very tender.
+- 💡 Elio's Rule: Never let it boil hard; gentle bubbling keeps the broth clear and rich.
+
+**3️⃣ Strain and prepare**
+- Carefully remove the chicken and set aside to cool.
+- Strain the broth through a fine mesh sieve, discarding all the solids.
+- Return the clear, golden broth to the pot.
+- Shred the cooled chicken by hand, discarding bones and skin.
+- Taste the broth and adjust salt.
+
+**4️⃣ Cook the orzo**
+- Bring the strained broth to a gentle boil.
+- Add the orzo and cook uncovered for 8-10 minutes until just tender.
+- Don't overcook - it will continue cooking slightly.
+
+**5️⃣ Prepare the avgolemono (egg-lemon mixture)**
+- In a large bowl, whisk the eggs until frothy and pale (about 2 minutes).
+- Add the lemon juice and a pinch of salt, whisk again.
+- **Critical tempering step**:
+  - Turn heat under the soup to the lowest setting.
+  - Slowly ladle 3-4 scoops of hot broth into the egg-lemon bowl, whisking constantly.
+  - Add each ladle very slowly while whisking to prevent curdling.
+  - The mixture should be warm but not hot.
+
+**6️⃣ Combine everything**
+- Make sure the soup is barely steaming (no bubbling).
+- Slowly pour the tempered egg-lemon mixture into the pot while stirring the soup in a circular motion.
+- Add the shredded chicken immediately.
+- Stir gently over very low heat for 1-2 minutes until the soup turns silky and slightly thickened.
+- **NEVER let it boil** after adding eggs - remove from heat if it starts to steam heavily.
+
+**🌿 To Serve**
+- Taste and adjust salt, pepper, and lemon juice.
+- Add a drizzle of extra virgin olive oil for richness.
+- Sprinkle fresh dill or parsley if desired.
+- Serve immediately with crusty bread and lemon wedges.
+
+**💛 Elio's Pro Tips**
+- Searing the chicken first = deeper, richer flavor
+- Constant skimming = crystal clear broth
+- Lemon peel in broth = bright citrus notes without acidity
+- Garlic adds aromatic depth
+- Room temperature eggs + slow tempering = no curdling
+- Taste and adjust lemon at the end - some days need more brightness
 

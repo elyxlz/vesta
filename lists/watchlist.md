@@ -1,3 +1,13 @@
+- Rome (2005-2007) - TV Series - HBO
+- Odissea (1968) - TV Mini Series - Franco Rossi
+- Iphigenia (1977) - Michael Cacoyannis
+- Spartacus (1960) - Stanley Kubrick
+- The Gospel According to St. Matthew (1964) - Pier Paolo Pasolini - textually faithful
+- The Trojan Women (1971) - Michael Cacoyannis
+- Apocalypto (2006) - Mel Gibson
+- The Last Temptation of Christ (1988) - Martin Scorsese
+- Troy (2004) - Wolfgang Petersen
+- Fellini Satyricon (1969) - Federico Fellini
 - Todo sobre mi madre (All About My Mother) - Pedro Almodóvar
 - Vicky Cristina Barcelona - Woody Allen
 - Taste of Cement (2017) - Ziad Kalthoum - Syrian construction workers rebuilding Beirut
@@ -102,3 +112,4 @@
 - Il piccolo grande uomo (suggested by Zio Piero)
 - The Allies (2014) 
 - Ermanno Olmi war films (various)
+- Orpheus and Eurydice

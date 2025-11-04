@@ -1,0 +1,23 @@
+[project]
+name = "scheduler-mcp"
+version = "0.1.0"
+description = "Scheduler MCP for setting reminders and timed notifications"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp[cli]>=1.6.0",
+    "apscheduler>=3.10.0",
+    "sqlalchemy>=2.0.43",
+]
+
+[project.scripts]
+scheduler-mcp = "scheduler_mcp.server:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.0",
+    "pytest-asyncio>=1.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

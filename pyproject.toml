@@ -1,0 +1,34 @@
+[project]
+name = "vesta"
+version = "0.1.0"
+description = "Personal assistant agent that works autonomously on your behalf"
+readme = "README.md"
+authors = [
+    { name = "elyx", email = "elio@pascarelli.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "aioconsole>=0.8.1",
+    "claude-code-sdk>=0.0.25",
+    "pillow>=11.3.0",
+    "pydantic>=2.10.4",
+    "pydantic-settings>=2.7.0",
+    "toml>=0.10.2",
+]
+
+[project.scripts]
+vesta = "vesta.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+
+[tool.ruff]
+line-length = 144
+indent-width = 4
+target-version = "py310"
+
+[tool.ruff.lint]
+ignore = ["E402", "E702", "E731", "UP008", "E712"]
+extend-select = ["UP"]
