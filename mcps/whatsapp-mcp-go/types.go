@@ -116,16 +116,6 @@ type SendFileOutput struct {
 	Message string `json:"message"`
 }
 
-type SendAudioMessageInput struct {
-	Recipient string `json:"recipient" jsonschema:"Phone number or group JID"`
-	FilePath  string `json:"file_path" jsonschema:"Path to audio file"`
-}
-
-type SendAudioMessageOutput struct {
-	Success bool   `json:"success"`
-	Message string `json:"message"`
-}
-
 type DownloadMediaInput struct {
 	MessageID    string `json:"message_id" jsonschema:"Message ID containing media"`
 	DownloadPath string `json:"download_path,omitempty" jsonschema:"Optional path to save media"`

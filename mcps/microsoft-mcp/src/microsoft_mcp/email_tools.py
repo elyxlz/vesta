@@ -309,13 +309,6 @@ def send_email(
 
 
 @mcp.tool()
-def delete_email(email_id: str, account_id: str) -> dict[str, str]:
-    """Delete an email"""
-    graph.request("DELETE", f"/me/messages/{email_id}", account_id)
-    return {"status": "deleted"}
-
-
-@mcp.tool()
 def reply_to_email(account_id: str, email_id: str, body: str, attachments: str | None = None) -> dict[str, str]:
     """Reply to an email (sender only) with optional attachments
 

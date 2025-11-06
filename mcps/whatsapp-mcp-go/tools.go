@@ -157,15 +157,6 @@ func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 		return nil, SendFileOutput{Success: success, Message: message}, nil
 	})
 
-	// send_audio_message
-	mcp.AddTool(s, &mcp.Tool{
-		Name:        "send_audio_message",
-		Description: "Send audio as voice message",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, input SendAudioMessageInput) (*mcp.CallToolResult, SendAudioMessageOutput, error) {
-		success, message := wac.SendAudioMessage(input.Recipient, input.FilePath)
-		return nil, SendAudioMessageOutput{Success: success, Message: message}, nil
-	})
-
 	// download_media
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "download_media",
