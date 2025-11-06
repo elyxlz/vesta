@@ -13,7 +13,6 @@ def list_events(
     days_back: int = 0,
     include_details: bool = True,
 ) -> list[dict[str, Any]]:
-    """List calendar events"""
 
     now = dt.datetime.now(dt.timezone.utc)
     start = (now - dt.timedelta(days=days_back)).isoformat()
@@ -48,7 +47,6 @@ def create_event(
     attendees: str | list[str] | None = None,
     timezone: str = "UTC",
 ) -> dict[str, Any]:
-    """Create calendar event"""
     event = {
         "subject": subject,
         "start": {"dateTime": start, "timeZone": timezone},
@@ -76,7 +74,6 @@ def create_event(
 
 @mcp.tool()
 def update_event(event_id: str, updates: dict[str, Any], account_id: str) -> dict[str, Any]:
-    """Update event properties"""
     formatted_updates = {}
 
     if "subject" in updates:

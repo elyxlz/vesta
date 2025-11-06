@@ -26,7 +26,6 @@ def list_emails(
     limit: int = 10,
     include_body: bool = True,
 ) -> list[dict[str, Any]]:
-    """List emails from specified folder"""
 
     folder_path = FOLDERS.get(folder.casefold(), folder)
 
@@ -61,7 +60,6 @@ def get_email(
     body_max_length: int = 50000,
     include_attachments: bool = True,
 ) -> dict[str, Any]:
-    """Get email details"""
 
     params = {}
     if include_attachments:
@@ -99,7 +97,6 @@ def create_email_draft(
     cc: str | None = None,
     attachments: str | None = None,
 ) -> dict[str, Any]:
-    """Create email draft with attachments"""
     # Handle both single and comma-separated email addresses
     to_list = [addr.strip() for addr in to.split(",") if addr.strip()] if "," in to else [to]
 
@@ -172,7 +169,6 @@ def send_email(
     cc: str | None = None,
     attachments: str | None = None,
 ) -> dict[str, str]:
-    """Send email with attachments"""
     # Handle both single and comma-separated email addresses
     to_list = [addr.strip() for addr in to.split(",") if addr.strip()] if "," in to else [to]
 
@@ -272,7 +268,6 @@ def send_email(
 
 @mcp.tool()
 def reply_to_email(account_id: str, email_id: str, body: str, attachments: str | None = None, reply_all: bool = False) -> dict[str, str]:
-    """Reply to email"""
     create_endpoint = "createReplyAll" if reply_all else "createReply"
     reply_endpoint = "replyAll" if reply_all else "reply"
 
@@ -329,7 +324,6 @@ def reply_to_email(account_id: str, email_id: str, body: str, attachments: str |
 
 @mcp.tool()
 def get_attachment(email_id: str, attachment_id: str, save_path: str, account_id: str) -> dict[str, Any]:
-    """Download email attachment to a specified file path"""
     result = graph.request("GET", f"/me/messages/{email_id}/attachments/{attachment_id}", account_id)
 
     if not result:
@@ -359,7 +353,6 @@ def search_emails(
     limit: int = 50,
     folder: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Search emails"""
 
     if folder:
         # For folder-specific search, use the traditional endpoint

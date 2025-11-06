@@ -8,13 +8,11 @@ mcp = FastMCP("microsoft-mcp")
 
 @mcp.tool()
 def list_accounts() -> list[dict[str, str]]:
-    """List all signed-in Microsoft accounts"""
     return [{"username": acc.username, "account_id": acc.account_id} for acc in auth.list_accounts()]
 
 
 @mcp.tool()
 def authenticate_account() -> dict[str, str]:
-    """Authenticate Microsoft account"""
     app = auth.get_app()
     flow = app.initiate_device_flow(scopes=auth.SCOPES)
 
@@ -43,7 +41,6 @@ def authenticate_account() -> dict[str, str]:
 
 @mcp.tool()
 def complete_authentication(flow_cache: str) -> dict[str, str]:
-    """Complete authentication process"""
     import ast
 
     try:
