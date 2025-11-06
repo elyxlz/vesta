@@ -122,6 +122,7 @@ def set_reminder(
     day_of_week: str | None = None,
     time: str | None = None,
 ) -> dict:
+    """datetime: ISO-8601 format. time: HH:MM format. recurring: 'daily', 'hourly', or 'weekly'"""
 
     reminder_id = str(uuid.uuid4())[:8]
     schedule_info = None
@@ -252,6 +253,7 @@ def cancel_reminder(reminder_id: str) -> dict:
 
 @mcp.tool()
 def add_task(title: str, due: str | None = None, priority: int = 2, metadata: str | None = None) -> dict:
+    """priority: 1 (low), 2 (normal), 3 (high). due: 'today', 'tomorrow', or YYYY-MM-DD"""
     if priority not in (1, 2, 3):
         raise ValueError("Priority must be 1 (low), 2 (normal), or 3 (high)")
 
@@ -291,6 +293,7 @@ def list_tasks(show_completed: bool = False) -> list[dict]:
 
 @mcp.tool()
 def update_task(id: str, status: str | None = None, title: str | None = None, metadata: str | None = None, priority: int | None = None) -> dict:
+    """priority: 1 (low), 2 (normal), 3 (high). status: 'pending' or 'done'"""
     if status and status not in ("pending", "done"):
         raise ValueError("Status must be pending or done")
     if priority is not None and priority not in (1, 2, 3):

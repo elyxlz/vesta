@@ -47,6 +47,7 @@ def create_event(
     attendees: str | list[str] | None = None,
     timezone: str = "UTC",
 ) -> dict[str, Any]:
+    """start/end: ISO-8601 datetime (e.g. '2024-01-15T14:00:00')"""
     event = {
         "subject": subject,
         "start": {"dateTime": start, "timeZone": timezone},
