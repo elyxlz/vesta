@@ -58,7 +58,7 @@ def get_email(
     email_id: str,
     account_id: str,
     include_body: bool = True,
-    body_max_length: int = 50000,
+    body_max_length: int = 25000,
     include_attachments: bool = True,
     save_to_file: str | None = None,
 ) -> dict[str, Any]:
@@ -68,7 +68,7 @@ def get_email(
         email_id: The email ID
         account_id: The account ID
         include_body: Whether to include the email body (default: True)
-        body_max_length: Maximum characters for body content (default: 50000)
+        body_max_length: Maximum characters for body content (default: 25000)
         include_attachments: Whether to include attachment metadata (default: True)
         save_to_file: Optional file path to save email (defaults to /tmp/email_{email_id}.txt if set to empty string)
     """
