@@ -58,8 +58,8 @@ def get_email(
     email_id: str,
     account_id: str,
     include_body: bool = True,
-    body_max_length: int = 50000,
     include_attachments: bool = True,
+    save_to_file: str | None = None,
 ) -> dict[str, Any]:
     params = {}
     if include_attachments:
@@ -69,7 +69,7 @@ def get_email(
     if not result:
         raise ValueError(f"Email with ID {email_id} not found")
 
-    # Truncate body if needed
+    body_max_length = 25000
     if include_body and "body" in result and "content" in result["body"]:
         content = result["body"]["content"]
         if len(content) > body_max_length:
@@ -84,6 +84,27 @@ def get_email(
         for attachment in result["attachments"]:
             if "contentBytes" in attachment:
                 del attachment["contentBytes"]
+
+    if save_to_file is not None:
+        file_path = save_to_file if save_to_file else f"/tmp/email_{email_id[:8]}.txt"
+        path = pl.Path(file_path).expanduser().resolve()
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        content_lines = [
+            f"From: {result.get('from', {}).get('emailAddress', {}).get('address', 'unknown')}",
+            f"Subject: {result.get('subject', 'No subject')}",
+            f"Date: {result.get('receivedDateTime', 'unknown')}",
+            f"To: {', '.join([r.get('emailAddress', {}).get('address', '') for r in result.get('toRecipients', [])])}",
+        ]
+
+        if result.get('ccRecipients'):
+            content_lines.append(f"Cc: {', '.join([r.get('emailAddress', {}).get('address', '') for r in result.get('ccRecipients', [])])}")
+
+        content_lines.extend(["", "=" * 80, "", result.get('body', {}).get('content', 'No content')])
+
+        path.write_text("\n".join(content_lines))
+        result["saved_to"] = str(path)
+        result["saved_size"] = path.stat().st_size
 
     return result
 
