@@ -309,49 +309,10 @@ def send_email(
 
 
 @mcp.tool()
-def update_email(email_id: str, updates: dict[str, Any], account_id: str) -> dict[str, Any]:
-    """Update email properties (isRead, categories, flag, etc.)"""
-    result = graph.request("PATCH", f"/me/messages/{email_id}", account_id, json=updates)
-    if not result:
-        raise ValueError(f"Failed to update email {email_id} - no response")
-    return result
-
-
-@mcp.tool()
 def delete_email(email_id: str, account_id: str) -> dict[str, str]:
     """Delete an email"""
     graph.request("DELETE", f"/me/messages/{email_id}", account_id)
     return {"status": "deleted"}
-
-
-@mcp.tool()
-def move_email(email_id: str, destination_folder: str, account_id: str) -> dict[str, Any]:
-    """Move email to another folder"""
-    folder_path = FOLDERS.get(destination_folder.casefold(), destination_folder)
-
-    folders = graph.request("GET", "/me/mailFolders", account_id)
-    folder_id = None
-
-    if not folders:
-        raise ValueError("Failed to retrieve mail folders")
-    if "value" not in folders:
-        raise ValueError(f"Unexpected folder response structure: {folders}")
-
-    for folder in folders["value"]:
-        if folder["displayName"].lower() == folder_path.lower():
-            folder_id = folder["id"]
-            break
-
-    if not folder_id:
-        raise ValueError(f"Folder '{destination_folder}' not found")
-
-    payload = {"destinationId": folder_id}
-    result = graph.request("POST", f"/me/messages/{email_id}/move", account_id, json=payload)
-    if not result:
-        raise ValueError("Failed to move email - no response from server")
-    if "id" not in result:
-        raise ValueError(f"Failed to move email - unexpected response: {result}")
-    return {"status": "moved", "new_id": result["id"]}
 
 
 @mcp.tool()

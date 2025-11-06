@@ -156,39 +156,6 @@ func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 		return nil, GetContactChatsOutput{Chats: chats}, nil
 	})
 
-	// get_last_interaction
-	mcp.AddTool(s, &mcp.Tool{
-		Name:        "get_last_interaction",
-		Description: "Get last interaction with contact",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, input GetLastInteractionInput) (*mcp.CallToolResult, GetLastInteractionOutput, error) {
-		interaction, err := wac.store.GetLastInteraction(input.JID)
-		if err != nil {
-			return nil, GetLastInteractionOutput{}, err
-		}
-		return nil, GetLastInteractionOutput{Interaction: interaction}, nil
-	})
-
-	// get_message_context
-	mcp.AddTool(s, &mcp.Tool{
-		Name:        "get_message_context",
-		Description: "Get messages around a specific message",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, input GetMessageContextInput) (*mcp.CallToolResult, GetMessageContextOutput, error) {
-		before := input.ContextBefore
-		if before == 0 {
-			before = 3
-		}
-		after := input.ContextAfter
-		if after == 0 {
-			after = 3
-		}
-
-		messages, err := wac.store.GetMessageContext(input.JID, input.MessageID, before, after)
-		if err != nil {
-			return nil, GetMessageContextOutput{}, err
-		}
-		return nil, GetMessageContextOutput{Messages: messages}, nil
-	})
-
 	// send_message
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "send_message",
@@ -290,15 +257,6 @@ func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input UpdateGroupParticipantsInput) (*mcp.CallToolResult, UpdateGroupParticipantsOutput, error) {
 		success, message := wac.UpdateGroupParticipants(input.GroupJID, input.Action, input.Participants)
 		return nil, UpdateGroupParticipantsOutput{Success: success, Message: message}, nil
-	})
-
-	// update_contact
-	mcp.AddTool(s, &mcp.Tool{
-		Name:        "update_contact",
-		Description: "Update contact name",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, input UpdateContactInput) (*mcp.CallToolResult, UpdateContactOutput, error) {
-		// Not yet implemented
-		return nil, UpdateContactOutput{Success: false, Message: "Not implemented"}, nil
 	})
 
 	// get_contact

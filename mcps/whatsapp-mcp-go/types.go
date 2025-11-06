@@ -105,25 +105,6 @@ type GetContactChatsOutput struct {
 	Chats []Chat `json:"chats"`
 }
 
-type GetLastInteractionInput struct {
-	JID string `json:"jid" jsonschema:"Contact JID"`
-}
-
-type GetLastInteractionOutput struct {
-	Interaction string `json:"interaction"`
-}
-
-type GetMessageContextInput struct {
-	JID           string `json:"jid" jsonschema:"Chat JID"`
-	MessageID     string `json:"message_id" jsonschema:"Message ID to get context for"`
-	ContextBefore int    `json:"context_before,omitempty" jsonschema:"Messages before"`
-	ContextAfter  int    `json:"context_after,omitempty" jsonschema:"Messages after"`
-}
-
-type GetMessageContextOutput struct {
-	Messages []Message `json:"messages"`
-}
-
 type SendMessageInput struct {
 	Recipient string `json:"recipient" jsonschema:"Phone number or group JID"`
 	Message   string `json:"message" jsonschema:"Text message to send"`
@@ -224,16 +205,6 @@ type UpdateGroupParticipantsInput struct {
 }
 
 type UpdateGroupParticipantsOutput struct {
-	Success bool   `json:"success"`
-	Message string `json:"message"`
-}
-
-type UpdateContactInput struct {
-	JID  string `json:"jid" jsonschema:"Contact JID"`
-	Name string `json:"name" jsonschema:"New name for contact"`
-}
-
-type UpdateContactOutput struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`
 }
