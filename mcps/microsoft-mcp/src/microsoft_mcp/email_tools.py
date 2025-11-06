@@ -97,10 +97,10 @@ def get_email(
             f"To: {', '.join([r.get('emailAddress', {}).get('address', '') for r in result.get('toRecipients', [])])}",
         ]
 
-        if result.get('ccRecipients'):
+        if result.get("ccRecipients"):
             content_lines.append(f"Cc: {', '.join([r.get('emailAddress', {}).get('address', '') for r in result.get('ccRecipients', [])])}")
 
-        content_lines.extend(["", "=" * 80, "", result.get('body', {}).get('content', 'No content')])
+        content_lines.extend(["", "=" * 80, "", result.get("body", {}).get("content", "No content")])
 
         path.write_text("\n".join(content_lines))
         result["saved_to"] = str(path)

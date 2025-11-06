@@ -1,5 +1,6 @@
 from datetime import datetime as dt, timedelta
 from contextlib import closing
+from dataclasses import dataclass
 import sqlite3
 import uuid
 from pathlib import Path
@@ -7,27 +8,32 @@ from mcp.server.fastmcp import FastMCP
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.schedulers.background import BackgroundScheduler
 from .scheduler import write_notification
 
 mcp = FastMCP("scheduler-mcp")
 
-_scheduler = None  # type: ignore
-_data_dir: Path | None = None
-_notif_dir: Path | None = None
+
+@dataclass
+class SchedulerContext:
+    scheduler: BackgroundScheduler
+    data_dir: Path
+    notif_dir: Path
 
 
-def init_tools(scheduler, data_dir: Path, notif_dir: Path):
-    global _scheduler, _data_dir, _notif_dir
-    _scheduler = scheduler
-    _data_dir = data_dir
-    _notif_dir = notif_dir
+_context: SchedulerContext | None = None
+
+
+def init_tools(scheduler: BackgroundScheduler, data_dir: Path, notif_dir: Path):
+    global _context
+    _context = SchedulerContext(scheduler, data_dir, notif_dir)
     init_db()
     check_missed_reminders()
 
 
 def get_db():
-    assert _data_dir is not None
-    conn = sqlite3.connect(_data_dir / "reminders.db")
+    assert _context is not None
+    conn = sqlite3.connect(_context.data_dir / "reminders.db")
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -67,10 +73,19 @@ def init_db():
         conn.commit()
 
 
+def send_reminder_job(reminder_id: str, message: str):
+    """Module-level function for APScheduler to call"""
+    assert _context is not None
+    write_notification(_context.notif_dir, reminder_id, message)
+    with closing(get_db()) as conn:
+        conn.execute("UPDATE reminders SET fired = 1 WHERE id = ?", (reminder_id,))
+        conn.commit()
+
+
 def check_missed_reminders():
     from datetime import datetime, timezone
 
-    assert _notif_dir is not None
+    assert _context is not None
     now = datetime.now(timezone.utc).isoformat()
 
     with closing(get_db()) as conn:
@@ -80,7 +95,7 @@ def check_missed_reminders():
         )
         for row in cursor:
             write_notification(
-                _notif_dir,
+                _context.notif_dir,
                 row["id"],
                 row["message"],
                 {"missed": True, "scheduled_time": row["scheduled_time"]},
@@ -178,22 +193,16 @@ def set_reminder(
             parts.append(f"{seconds} seconds")
         schedule_info = f"once (in {' '.join(parts)})"
 
-    def send_reminder():
-        assert _notif_dir is not None
-        write_notification(_notif_dir, reminder_id, message)
-        with closing(get_db()) as conn:
-            conn.execute("UPDATE reminders SET fired = 1 WHERE id = ?", (reminder_id,))
-            conn.commit()
-
-    assert _scheduler is not None
-    _scheduler.add_job(
-        func=send_reminder,
+    assert _context is not None
+    _context.scheduler.add_job(
+        func=send_reminder_job,
         trigger=trigger,
+        args=[reminder_id, message],
         id=reminder_id,
         replace_existing=True,
     )
 
-    next_run = _scheduler.get_job(reminder_id).next_run_time
+    next_run = _context.scheduler.get_job(reminder_id).next_run_time
 
     with closing(get_db()) as conn:
         conn.execute(
@@ -218,13 +227,13 @@ def set_reminder(
 @mcp.tool()
 def list_reminders() -> list[dict]:
     """List all active reminders"""
-    assert _scheduler is not None
+    assert _context is not None
     with closing(get_db()) as conn:
         cursor = conn.execute("SELECT * FROM reminders")
         reminder_data = {row["id"]: dict(row) for row in cursor}
 
     reminders = []
-    for job in _scheduler.get_jobs():
+    for job in _context.scheduler.get_jobs():
         if job.id in reminder_data:
             reminders.append(
                 {
@@ -240,9 +249,9 @@ def list_reminders() -> list[dict]:
 
 @mcp.tool()
 def cancel_reminder(reminder_id: str) -> dict:
-    assert _scheduler is not None
+    assert _context is not None
     try:
-        _scheduler.remove_job(reminder_id)
+        _context.scheduler.remove_job(reminder_id)
         with closing(get_db()) as conn:
             conn.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))
             conn.commit()
