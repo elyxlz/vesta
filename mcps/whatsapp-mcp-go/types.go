@@ -78,52 +78,6 @@ type ListChatsOutput struct {
 	Chats []Chat `json:"chats"`
 }
 
-type GetChatInput struct {
-	ChatJID            string `json:"chat_jid" jsonschema:"Chat JID to retrieve"`
-	IncludeLastMessage bool   `json:"include_last_message,omitempty" jsonschema:"Include last message in chat"`
-}
-
-type GetChatOutput struct {
-	Chat Chat `json:"chat"`
-}
-
-type GetDirectChatInput struct {
-	SenderPhoneNumber string `json:"sender_phone_number" jsonschema:"Phone number to find chat for"`
-}
-
-type GetDirectChatOutput struct {
-	Chat Chat `json:"chat"`
-}
-
-type GetContactChatsInput struct {
-	JID   string `json:"jid" jsonschema:"Contact JID"`
-	Limit int    `json:"limit,omitempty" jsonschema:"Maximum number of chats"`
-	Page  int    `json:"page,omitempty" jsonschema:"Page number"`
-}
-
-type GetContactChatsOutput struct {
-	Chats []Chat `json:"chats"`
-}
-
-type GetLastInteractionInput struct {
-	JID string `json:"jid" jsonschema:"Contact JID"`
-}
-
-type GetLastInteractionOutput struct {
-	Interaction string `json:"interaction"`
-}
-
-type GetMessageContextInput struct {
-	JID           string `json:"jid" jsonschema:"Chat JID"`
-	MessageID     string `json:"message_id" jsonschema:"Message ID to get context for"`
-	ContextBefore int    `json:"context_before,omitempty" jsonschema:"Messages before"`
-	ContextAfter  int    `json:"context_after,omitempty" jsonschema:"Messages after"`
-}
-
-type GetMessageContextOutput struct {
-	Messages []Message `json:"messages"`
-}
-
 type SendMessageInput struct {
 	Recipient string `json:"recipient" jsonschema:"Phone number or group JID"`
 	Message   string `json:"message" jsonschema:"Text message to send"`
@@ -141,16 +95,6 @@ type SendFileInput struct {
 }
 
 type SendFileOutput struct {
-	Success bool   `json:"success"`
-	Message string `json:"message"`
-}
-
-type SendAudioMessageInput struct {
-	Recipient string `json:"recipient" jsonschema:"Phone number or group JID"`
-	FilePath  string `json:"file_path" jsonschema:"Path to audio file"`
-}
-
-type SendAudioMessageOutput struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`
 }
@@ -207,16 +151,6 @@ type ListGroupsOutput struct {
 	Groups []Chat `json:"groups"`
 }
 
-type GetGroupInviteLinkInput struct {
-	GroupJID string `json:"group_jid" jsonschema:"Group JID"`
-}
-
-type GetGroupInviteLinkOutput struct {
-	Success    bool   `json:"success"`
-	InviteLink string `json:"invite_link,omitempty"`
-	Message    string `json:"message"`
-}
-
 type UpdateGroupParticipantsInput struct {
 	GroupJID     string   `json:"group_jid" jsonschema:"Group JID"`
 	Action       string   `json:"action" jsonschema:"Action to perform (add or remove)"`
@@ -226,22 +160,4 @@ type UpdateGroupParticipantsInput struct {
 type UpdateGroupParticipantsOutput struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`
-}
-
-type UpdateContactInput struct {
-	JID  string `json:"jid" jsonschema:"Contact JID"`
-	Name string `json:"name" jsonschema:"New name for contact"`
-}
-
-type UpdateContactOutput struct {
-	Success bool   `json:"success"`
-	Message string `json:"message"`
-}
-
-type GetContactInput struct {
-	JID string `json:"jid" jsonschema:"Contact JID"`
-}
-
-type GetContactOutput struct {
-	Contact Contact `json:"contact"`
 }

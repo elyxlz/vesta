@@ -122,7 +122,7 @@ def set_reminder(
     day_of_week: str | None = None,
     time: str | None = None,
 ) -> dict:
-    """Schedule a reminder notification"""
+    """datetime: ISO-8601 format. time: HH:MM format. recurring: 'daily', 'hourly', or 'weekly'"""
 
     reminder_id = str(uuid.uuid4())[:8]
     schedule_info = None
@@ -240,7 +240,6 @@ def list_reminders() -> list[dict]:
 
 @mcp.tool()
 def cancel_reminder(reminder_id: str) -> dict:
-    """Cancel a scheduled reminder"""
     assert _scheduler is not None
     try:
         _scheduler.remove_job(reminder_id)
@@ -254,14 +253,7 @@ def cancel_reminder(reminder_id: str) -> dict:
 
 @mcp.tool()
 def add_task(title: str, due: str | None = None, priority: int = 2, metadata: str | None = None) -> dict:
-    """Add a task with optional metadata/notes.
-
-    Args:
-        title: Task title/description
-        due: Due date ('today', 'tomorrow', or YYYY-MM-DD)
-        priority: 1=low, 2=normal, 3=high
-        metadata: Additional information, notes, contacts, links, etc.
-    """
+    """priority: 1 (low), 2 (normal), 3 (high). due: 'today', 'tomorrow', or YYYY-MM-DD"""
     if priority not in (1, 2, 3):
         raise ValueError("Priority must be 1 (low), 2 (normal), or 3 (high)")
 
@@ -287,7 +279,6 @@ def add_task(title: str, due: str | None = None, priority: int = 2, metadata: st
 
 @mcp.tool()
 def list_tasks(show_completed: bool = False) -> list[dict]:
-    """List tasks sorted by priority and due date"""
     with closing(get_db()) as conn:
         query = "SELECT * FROM tasks"
         if not show_completed:
@@ -302,15 +293,7 @@ def list_tasks(show_completed: bool = False) -> list[dict]:
 
 @mcp.tool()
 def update_task(id: str, status: str | None = None, title: str | None = None, metadata: str | None = None, priority: int | None = None) -> dict:
-    """Update task properties.
-
-    Args:
-        id: Task ID to update
-        status: New status ('pending' or 'done')
-        title: New title
-        metadata: New or updated metadata/notes
-        priority: New priority (1=low, 2=normal, 3=high)
-    """
+    """priority: 1 (low), 2 (normal), 3 (high). status: 'pending' or 'done'"""
     if status and status not in ("pending", "done"):
         raise ValueError("Status must be pending or done")
     if priority is not None and priority not in (1, 2, 3):
@@ -358,16 +341,3 @@ def update_task(id: str, status: str | None = None, title: str | None = None, me
     return task
 
 
-@mcp.tool()
-def clear_completed() -> dict:
-    """Delete completed tasks older than 24 hours"""
-    cutoff = (dt.now() - timedelta(hours=24)).isoformat()
-    with closing(get_db()) as conn:
-        cursor = conn.execute(
-            "DELETE FROM tasks WHERE status = 'done' AND completed_at < ?",
-            (cutoff,),
-        )
-        count = cursor.rowcount
-        conn.commit()
-
-    return {"deleted": count}
