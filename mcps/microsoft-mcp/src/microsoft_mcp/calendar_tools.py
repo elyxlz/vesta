@@ -13,7 +13,6 @@ def list_events(
     days_back: int = 0,
     include_details: bool = True,
 ) -> list[dict[str, Any]]:
-
     now = dt.datetime.now(dt.timezone.utc)
     start = (now - dt.timedelta(days=days_back)).isoformat()
     end = (now + dt.timedelta(days=days_ahead)).isoformat()
@@ -124,5 +123,3 @@ def respond_event(
 
     graph.request("POST", f"/me/events/{event_id}/{response}", account_id, json=payload)
     return {"status": response}
-
-

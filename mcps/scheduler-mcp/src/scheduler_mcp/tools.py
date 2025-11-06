@@ -339,5 +339,3 @@ def update_task(id: str, status: str | None = None, title: str | None = None, me
         task = dict(cursor.fetchone())
 
     return task
-
-

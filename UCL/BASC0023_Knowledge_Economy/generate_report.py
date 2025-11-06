@@ -29,60 +29,53 @@ import base64
 from jinja2 import Template
 from weasyprint import HTML
 
-warnings.filterwarnings('ignore')
+warnings.filterwarnings("ignore")
 
 # Set style for clean charts
 sns.set_style("whitegrid")
 sns.set_palette("husl")
 
+
 def load_and_clean_pipeline_data(filepath):
     """Load and parse the fundraising pipeline CSV"""
     print("Loading fundraising pipeline data...")
-    df = pd.read_csv(filepath, encoding='utf-8-sig')
-    df = df.dropna(how='all')
+    df = pd.read_csv(filepath, encoding="utf-8-sig")
+    df = df.dropna(how="all")
     df_clean = df[df.iloc[:, 0].notna()].copy()
 
     if len(df_clean.columns) > 6:
-        df_clean.columns = ['Funder', 'Deadline', 'Progress', 'Project', 'Dates', 'Amount', 'Lead', 'Notes_Fund'] + list(df_clean.columns[8:])
+        df_clean.columns = ["Funder", "Deadline", "Progress", "Project", "Dates", "Amount", "Lead", "Notes_Fund"] + list(df_clean.columns[8:])
 
     # Remove section headers (they contain "targets:" or "PROG")
-    df_clean = df_clean[~df_clean['Funder'].str.contains('targets:|PROG|Further funders', case=False, na=False)]
-    df_clean = df_clean[df_clean['Funder'].str.len() > 3]
+    df_clean = df_clean[~df_clean["Funder"].str.contains("targets:|PROG|Further funders", case=False, na=False)]
+    df_clean = df_clean[df_clean["Funder"].str.len() > 3]
 
     # Remove header rows that snuck through
-    df_clean = df_clean[~df_clean['Funder'].isin([
-        'Applying to',
-        'Fundraising / Future Projects IN PROGRESS'
-    ])]
-    df_clean = df_clean[~df_clean['Project'].isin([
-        'Project name',
-        'Project dates'
-    ])]
-    if 'Progress' in df_clean.columns:
-        df_clean = df_clean[~df_clean['Progress'].str.contains(
-            'Progress \\(',
-            regex=True,
-            na=False
-        )]
+    df_clean = df_clean[~df_clean["Funder"].isin(["Applying to", "Fundraising / Future Projects IN PROGRESS"])]
+    df_clean = df_clean[~df_clean["Project"].isin(["Project name", "Project dates"])]
+    if "Progress" in df_clean.columns:
+        df_clean = df_clean[~df_clean["Progress"].str.contains("Progress \\(", regex=True, na=False)]
 
     # Normalize project names
-    if 'Project' in df_clean.columns:
-        df_clean['Project'] = df_clean['Project'].str.strip()  # Remove leading/trailing spaces
-        df_clean['Project'] = df_clean['Project'].str.replace('?', '', regex=False)  # Remove ?
-        df_clean['Project'] = df_clean['Project'].fillna('Unspecified')
+    if "Project" in df_clean.columns:
+        df_clean["Project"] = df_clean["Project"].str.strip()  # Remove leading/trailing spaces
+        df_clean["Project"] = df_clean["Project"].str.replace("?", "", regex=False)  # Remove ?
+        df_clean["Project"] = df_clean["Project"].fillna("Unspecified")
 
     return df_clean
+
 
 def load_funders_database(filepath):
     """Load the arts funders database"""
     print("Loading arts funders database...")
     try:
-        df = pd.read_csv(filepath, encoding='utf-8-sig', nrows=1000)
-        df = df.dropna(how='all')
+        df = pd.read_csv(filepath, encoding="utf-8-sig", nrows=1000)
+        df = df.dropna(how="all")
         return df
     except Exception as e:
         print(f"Error loading funders database: {e}")
         return None
+
 
 def extract_amount(amount_str):
     """Extract funding amount from various text formats"""
@@ -92,42 +85,42 @@ def extract_amount(amount_str):
     amount_str = str(amount_str).upper()
 
     # Handle TBC, N/A
-    if 'TBC' in amount_str or 'N/A' in amount_str or amount_str.strip() == '':
+    if "TBC" in amount_str or "N/A" in amount_str or amount_str.strip() == "":
         return None
 
     # Try patterns in order of specificity
     patterns = [
-        (r'MAX\.?\s*£([\d,]+)K', 1000),         # "Max £35K" or "Max. £35K"
-        (r'MAX\.?\s*£([\d,]+)', 1),             # "Max £35000"
-        (r'MIN\.?\s*£([\d,]+)K', 1000),         # "Min. £10K"
-        (r'MIN\.?\s*£([\d,]+)', 1),             # "Min. £10000"
-        (r'UNDER\s*£([\d,]+)', 1),              # "under £7,500"
-        (r'UP TO\s*£([\d,]+)K', 1000),          # "Up to £40K"
-        (r'UP TO\s*£([\d,]+)', 1),              # "Up to £40000"
-        (r'BETWEEN\s*£([\d,]+)', 1000),         # "Between £10-25K" (take first)
-        (r'£([\d,]+)K?-[£]?([\d,]+)K', 1000),  # "£500-£5K" or "£10-25K" (take second/higher)
-        (r'£([\d,]+)K', 1000),                  # "£50K"
-        (r'£([\d,]+)', 1),                      # "£7,500"
+        (r"MAX\.?\s*£([\d,]+)K", 1000),  # "Max £35K" or "Max. £35K"
+        (r"MAX\.?\s*£([\d,]+)", 1),  # "Max £35000"
+        (r"MIN\.?\s*£([\d,]+)K", 1000),  # "Min. £10K"
+        (r"MIN\.?\s*£([\d,]+)", 1),  # "Min. £10000"
+        (r"UNDER\s*£([\d,]+)", 1),  # "under £7,500"
+        (r"UP TO\s*£([\d,]+)K", 1000),  # "Up to £40K"
+        (r"UP TO\s*£([\d,]+)", 1),  # "Up to £40000"
+        (r"BETWEEN\s*£([\d,]+)", 1000),  # "Between £10-25K" (take first)
+        (r"£([\d,]+)K?-[£]?([\d,]+)K", 1000),  # "£500-£5K" or "£10-25K" (take second/higher)
+        (r"£([\d,]+)K", 1000),  # "£50K"
+        (r"£([\d,]+)", 1),  # "£7,500"
     ]
 
     import re
 
     # Special handling for ranges "£500-£5K" - take the higher value
-    range_match = re.search(r'£([\d,]+)K?-[£]?([\d,]+)K', amount_str)
+    range_match = re.search(r"£([\d,]+)K?-[£]?([\d,]+)K", amount_str)
     if range_match:
         # Take the second (higher) value
-        amount = float(range_match.group(2).replace(',', ''))
+        amount = float(range_match.group(2).replace(",", ""))
         if amount < 1000:
             amount *= 1000
         return amount
 
     # Try other patterns
     for pattern, multiplier in patterns:
-        if r'£([\d,]+)K?-[£]?([\d,]+)K' in pattern:
+        if r"£([\d,]+)K?-[£]?([\d,]+)K" in pattern:
             continue  # Skip range pattern, already handled
         match = re.search(pattern, amount_str)
         if match:
-            amount = float(match.group(1).replace(',', ''))
+            amount = float(match.group(1).replace(",", ""))
             # Only multiply if multiplier is 1000 and amount < 1000
             if multiplier == 1000 and amount < 1000:
                 amount *= multiplier
@@ -135,104 +128,109 @@ def extract_amount(amount_str):
 
     return None
 
+
 def analyze_pipeline(df):
     """Analyze the fundraising pipeline"""
     print("Analyzing pipeline data...")
 
     analysis = {
-        'total_applications': len(df),
-        'by_progress': df['Progress'].value_counts().to_dict() if 'Progress' in df.columns else {},
-        'by_project': df['Project'].value_counts().to_dict() if 'Project' in df.columns else {},
+        "total_applications": len(df),
+        "by_progress": df["Progress"].value_counts().to_dict() if "Progress" in df.columns else {},
+        "by_project": df["Project"].value_counts().to_dict() if "Project" in df.columns else {},
     }
 
-    if 'Amount' in df.columns:
+    if "Amount" in df.columns:
         amounts = []
         for idx, row in df.iterrows():
             amount = None
 
             # Try to parse from Amount column first
-            if pd.notna(row['Amount']):
-                amount = extract_amount(row['Amount'])
+            if pd.notna(row["Amount"]):
+                amount = extract_amount(row["Amount"])
 
             # If no amount in Amount column, try Notes_Fund column as fallback
-            if amount is None and 'Notes_Fund' in df.columns and pd.notna(row['Notes_Fund']):
-                amount = extract_amount(row['Notes_Fund'])
+            if amount is None and "Notes_Fund" in df.columns and pd.notna(row["Notes_Fund"]):
+                amount = extract_amount(row["Notes_Fund"])
 
             if amount is not None:
                 amounts.append(amount)
 
         if amounts:
-            analysis['total_potential_funding'] = sum(amounts)
-            analysis['avg_grant_size'] = np.mean(amounts)
-            analysis['amounts'] = amounts
-            analysis['amounts_count'] = len(amounts)
+            analysis["total_potential_funding"] = sum(amounts)
+            analysis["avg_grant_size"] = np.mean(amounts)
+            analysis["amounts"] = amounts
+            analysis["amounts_count"] = len(amounts)
 
     return analysis
+
 
 def fig_to_base64(fig):
     """Convert matplotlib figure to base64 string"""
     buf = io.BytesIO()
-    fig.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor='white')
+    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight", facecolor="white")
     buf.seek(0)
-    img_base64 = base64.b64encode(buf.read()).decode('utf-8')
+    img_base64 = base64.b64encode(buf.read()).decode("utf-8")
     buf.close()
     plt.close(fig)
     return f"data:image/png;base64,{img_base64}"
 
+
 def create_pipeline_chart(analysis):
     """Create pipeline status chart"""
-    if 'by_progress' in analysis and analysis['by_progress']:
+    if "by_progress" in analysis and analysis["by_progress"]:
         fig, ax = plt.subplots(figsize=(7, 4))
-        progress_data = pd.Series(analysis['by_progress'])
-        colors = ['#ff6b6b', '#ffd93d', '#6bcf7f', '#4d96ff']
-        progress_data.plot(kind='barh', ax=ax, color=colors[:len(progress_data)])
-        ax.set_xlabel('Number of Applications', fontsize=10)
-        ax.set_title('Pipeline Status', fontsize=12, fontweight='bold', pad=10)
-        ax.grid(axis='x', alpha=0.3)
+        progress_data = pd.Series(analysis["by_progress"])
+        colors = ["#ff6b6b", "#ffd93d", "#6bcf7f", "#4d96ff"]
+        progress_data.plot(kind="barh", ax=ax, color=colors[: len(progress_data)])
+        ax.set_xlabel("Number of Applications", fontsize=10)
+        ax.set_title("Pipeline Status", fontsize=12, fontweight="bold", pad=10)
+        ax.grid(axis="x", alpha=0.3)
 
         for i, v in enumerate(progress_data.values):
-            ax.text(v + 0.1, i, str(v), va='center', fontweight='bold')
+            ax.text(v + 0.1, i, str(v), va="center", fontweight="bold")
 
         plt.tight_layout()
         return fig_to_base64(fig)
     return None
+
 
 def create_category_chart(analysis):
     """Create application category chart"""
-    if 'by_project' in analysis and analysis['by_project']:
+    if "by_project" in analysis and analysis["by_project"]:
         fig, ax = plt.subplots(figsize=(7, 4))
-        project_data = pd.Series(analysis['by_project']).head(8)
+        project_data = pd.Series(analysis["by_project"]).head(8)
         colors_palette = sns.color_palette("husl", len(project_data))
-        project_data.plot(kind='bar', ax=ax, color=colors_palette)
-        ax.set_ylabel('Number of Applications', fontsize=10)
-        ax.set_xlabel('Project/Programme', fontsize=10)
-        ax.set_title('Applications by Category', fontsize=12, fontweight='bold', pad=10)
-        ax.tick_params(axis='x', rotation=45)
-        ax.grid(axis='y', alpha=0.3)
+        project_data.plot(kind="bar", ax=ax, color=colors_palette)
+        ax.set_ylabel("Number of Applications", fontsize=10)
+        ax.set_xlabel("Project/Programme", fontsize=10)
+        ax.set_title("Applications by Category", fontsize=12, fontweight="bold", pad=10)
+        ax.tick_params(axis="x", rotation=45)
+        ax.grid(axis="y", alpha=0.3)
 
         for i, v in enumerate(project_data.values):
-            ax.text(i, v + 0.1, str(v), ha='center', fontweight='bold', fontsize=9)
+            ax.text(i, v + 0.1, str(v), ha="center", fontweight="bold", fontsize=9)
 
         plt.tight_layout()
         return fig_to_base64(fig)
     return None
 
+
 def create_amounts_chart(analysis):
     """Create funding amounts distribution chart"""
-    if 'amounts' in analysis and len(analysis['amounts']) > 0:
+    if "amounts" in analysis and len(analysis["amounts"]) > 0:
         fig, ax = plt.subplots(figsize=(7, 4))
-        amounts = np.array(analysis['amounts'])
+        amounts = np.array(analysis["amounts"])
 
         max_amount = max(amounts)
         possible_bins = [0, 5000, 10000, 25000, 50000, 100000]
-        possible_labels = ['<£5K', '£5-10K', '£10-25K', '£25-50K', '£50-100K', '>£100K']
+        possible_labels = ["<£5K", "£5-10K", "£10-25K", "£25-50K", "£50-100K", ">£100K"]
 
         bins = [0]
         labels = []
         for i, b in enumerate(possible_bins[1:], start=1):
             if b < max_amount:
                 bins.append(b)
-                labels.append(possible_labels[i-1])
+                labels.append(possible_labels[i - 1])
             else:
                 break
 
@@ -241,40 +239,47 @@ def create_amounts_chart(analysis):
             labels.append(possible_labels[len(labels)])
 
         if len(bins) < 3:
-            bins = [0, max_amount/2, max_amount + 1]
-            labels = [f'<£{max_amount/2:.0f}', f'£{max_amount/2:.0f}+']
+            bins = [0, max_amount / 2, max_amount + 1]
+            labels = [f"<£{max_amount / 2:.0f}", f"£{max_amount / 2:.0f}+"]
 
         amounts_categorized = pd.cut(amounts, bins=bins, labels=labels, include_lowest=True)
         amounts_counts = amounts_categorized.value_counts().sort_index()
 
-        colors = ['#e8f4f8', '#a7d7e8', '#6bb6d6', '#2e86ab', '#005f73', '#001219']
-        amounts_counts.plot(kind='bar', ax=ax, color=colors[:len(amounts_counts)])
-        ax.set_ylabel('Number of Opportunities', fontsize=10)
-        ax.set_xlabel('Funding Range', fontsize=10)
-        ax.set_title('Grant Size Distribution', fontsize=12, fontweight='bold', pad=10)
-        ax.tick_params(axis='x', rotation=45)
-        ax.grid(axis='y', alpha=0.3)
+        colors = ["#e8f4f8", "#a7d7e8", "#6bb6d6", "#2e86ab", "#005f73", "#001219"]
+        amounts_counts.plot(kind="bar", ax=ax, color=colors[: len(amounts_counts)])
+        ax.set_ylabel("Number of Opportunities", fontsize=10)
+        ax.set_xlabel("Funding Range", fontsize=10)
+        ax.set_title("Grant Size Distribution", fontsize=12, fontweight="bold", pad=10)
+        ax.tick_params(axis="x", rotation=45)
+        ax.grid(axis="y", alpha=0.3)
 
         for i, v in enumerate(amounts_counts.values):
-            ax.text(i, v + 0.05, str(v), ha='center', fontweight='bold', fontsize=9)
+            ax.text(i, v + 0.05, str(v), ha="center", fontweight="bold", fontsize=9)
 
         total = sum(amounts)
-        ax.text(0.95, 0.95, f'Total: £{total:,.0f}',
-                transform=ax.transAxes, ha='right', va='top',
-                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5),
-                fontsize=9, fontweight='bold')
+        ax.text(
+            0.95,
+            0.95,
+            f"Total: £{total:,.0f}",
+            transform=ax.transAxes,
+            ha="right",
+            va="top",
+            bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5),
+            fontsize=9,
+            fontweight="bold",
+        )
 
         # Add data quality note with more space below for x-axis labels
-        total_apps = analysis.get('total_applications', 0)
+        total_apps = analysis.get("total_applications", 0)
         note = f"Based on {len(amounts)} of {total_apps} applications with parseable amounts"
 
         # Adjust subplot to make room for the note below the x-axis label
         plt.subplots_adjust(bottom=0.30)
-        ax.text(0.5, -0.45, note, transform=ax.transAxes,
-                ha='center', fontsize=8, style='italic', color='#666')
+        ax.text(0.5, -0.45, note, transform=ax.transAxes, ha="center", fontsize=8, style="italic", color="#666")
 
         return fig_to_base64(fig)
     return None
+
 
 def create_funders_chart(df_funders):
     """Create funder types chart"""
@@ -282,11 +287,11 @@ def create_funders_chart(df_funders):
         fig, ax = plt.subplots(figsize=(7, 4))
 
         keywords = {
-            'Arts & Culture': ['art', 'culture', 'museum', 'gallery'],
-            'Community': ['community', 'social', 'inclusion'],
-            'Education': ['education', 'learning', 'student'],
-            'International': ['international', 'global', 'abroad'],
-            'Heritage': ['heritage', 'conservation', 'historic']
+            "Arts & Culture": ["art", "culture", "museum", "gallery"],
+            "Community": ["community", "social", "inclusion"],
+            "Education": ["education", "learning", "student"],
+            "International": ["international", "global", "abroad"],
+            "Heritage": ["heritage", "conservation", "historic"],
         }
 
         funder_types = {k: 0 for k in keywords.keys()}
@@ -299,18 +304,19 @@ def create_funders_chart(df_funders):
                     funder_types[ftype] += 1
 
         types_series = pd.Series(funder_types).sort_values(ascending=True)
-        colors = ['#264653', '#2a9d8f', '#e9c46a', '#f4a261', '#e76f51']
-        types_series.plot(kind='barh', ax=ax, color=colors)
-        ax.set_xlabel('Number of Funders', fontsize=10)
-        ax.set_title('Funder Types in Database', fontsize=12, fontweight='bold', pad=10)
-        ax.grid(axis='x', alpha=0.3)
+        colors = ["#264653", "#2a9d8f", "#e9c46a", "#f4a261", "#e76f51"]
+        types_series.plot(kind="barh", ax=ax, color=colors)
+        ax.set_xlabel("Number of Funders", fontsize=10)
+        ax.set_title("Funder Types in Database", fontsize=12, fontweight="bold", pad=10)
+        ax.grid(axis="x", alpha=0.3)
 
         for i, v in enumerate(types_series.values):
-            ax.text(v + 1, i, str(v), va='center', fontweight='bold', fontsize=9)
+            ax.text(v + 1, i, str(v), va="center", fontweight="bold", fontsize=9)
 
         plt.tight_layout()
         return fig_to_base64(fig)
     return None
+
 
 # HTML template with professional CSS
 HTML_TEMPLATE = """
@@ -551,6 +557,7 @@ HTML_TEMPLATE = """
 </html>
 """
 
+
 def generate_report():
     """Main function to generate the PDF report"""
     print("=" * 60)
@@ -559,8 +566,8 @@ def generate_report():
     print()
 
     # Load data
-    df_pipeline = load_and_clean_pipeline_data('Fundraising_Future_Projects.csv')
-    df_funders = load_funders_database('Arts_Funders_and_Websites.csv')
+    df_pipeline = load_and_clean_pipeline_data("Fundraising_Future_Projects.csv")
+    df_funders = load_funders_database("Arts_Funders_and_Websites.csv")
 
     # Analyze
     analysis = analyze_pipeline(df_pipeline)
@@ -574,13 +581,13 @@ def generate_report():
 
     # Prepare template data
     template_data = {
-        'date': datetime.now().strftime("%B %Y"),
-        'total_apps': analysis.get('total_applications', 'N/A'),
-        'total_funding': f"£{analysis.get('total_potential_funding', 0):,.0f}" if 'total_potential_funding' in analysis else 'N/A',
-        'chart_pipeline': chart_pipeline,
-        'chart_category': chart_category,
-        'chart_amounts': chart_amounts,
-        'chart_funders': chart_funders,
+        "date": datetime.now().strftime("%B %Y"),
+        "total_apps": analysis.get("total_applications", "N/A"),
+        "total_funding": f"£{analysis.get('total_potential_funding', 0):,.0f}" if "total_potential_funding" in analysis else "N/A",
+        "chart_pipeline": chart_pipeline,
+        "chart_category": chart_category,
+        "chart_amounts": chart_amounts,
+        "chart_funders": chart_funders,
     }
 
     # Render HTML
@@ -590,13 +597,13 @@ def generate_report():
 
     # Convert to PDF
     print("Converting HTML to PDF with WeasyPrint...")
-    output_file = 'aspex_fundraising_report.pdf'
+    output_file = "aspex_fundraising_report.pdf"
     HTML(string=html_content).write_pdf(output_file)
 
     print(f"\n✓ Report generated successfully: {output_file}")
     print(f"✓ Analysis included: {analysis.get('total_applications', 'N/A')} applications")
 
-    if 'total_potential_funding' in analysis:
+    if "total_potential_funding" in analysis:
         print(f"✓ Total potential funding identified: £{analysis['total_potential_funding']:,.0f}")
 
     print("\n" + "=" * 60)
@@ -607,11 +614,12 @@ def generate_report():
     print("\nOpening report in Brave browser...")
     try:
         pdf_path = os.path.abspath(output_file)
-        subprocess.Popen(['brave-browser', pdf_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.Popen(["brave-browser", pdf_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         print("✓ Browser opened!")
     except Exception as e:
         print(f"⚠ Could not open browser automatically: {e}")
         print(f"Open manually: {os.path.abspath(output_file)}")
+
 
 if __name__ == "__main__":
     try:
@@ -619,4 +627,5 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\n✗ Error generating report: {e}")
         import traceback
+
         traceback.print_exc()

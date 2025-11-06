@@ -109,8 +109,6 @@ async def preserve_memory(state: vm.State, config: vm.VestaSettings) -> None:
         vfx.log_error(f"Memory preservation failed: {e}", vm.Colors)
 
 
-
-
 def output_line(text: str, state: vm.State, is_tool: bool = False) -> None:
     if not text or not text.strip():
         return

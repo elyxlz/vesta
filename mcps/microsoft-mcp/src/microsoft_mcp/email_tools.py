@@ -61,7 +61,6 @@ def get_email(
     body_max_length: int = 50000,
     include_attachments: bool = True,
 ) -> dict[str, Any]:
-
     params = {}
     if include_attachments:
         params["$expand"] = "attachments($select=id,name,size,contentType)"
@@ -357,7 +356,6 @@ def search_emails(
     limit: int = 50,
     folder: str | None = None,
 ) -> list[dict[str, Any]]:
-
     if folder:
         # For folder-specific search, use the traditional endpoint
         folder_path = FOLDERS.get(folder.casefold(), folder)

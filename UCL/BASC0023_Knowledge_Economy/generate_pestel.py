@@ -15,46 +15,46 @@ import os
 
 # PESTEL data
 pestel_data = {
-    'Political': [
-        'Graduate visa policies (2-year post-study work visa)',
-        'Higher education funding cuts',
-        'Brexit impact on EU student employment'
+    "Political": [
+        "Graduate visa policies (2-year post-study work visa)",
+        "Higher education funding cuts",
+        "Brexit impact on EU student employment",
     ],
-    'Economic': [
-        'Economic recession reducing graduate job openings',
-        'High cost of living in London affecting job choice',
-        'Startup ecosystem funding drought'
+    "Economic": [
+        "Economic recession reducing graduate job openings",
+        "High cost of living in London affecting job choice",
+        "Startup ecosystem funding drought",
     ],
-    'Social': [
+    "Social": [
         'Employer bias against "generalist" degrees',
-        'Limited alumni network (new program)',
-        'Class privilege in unpaid internship culture'
+        "Limited alumni network (new program)",
+        "Class privilege in unpaid internship culture",
     ],
-    'Technological': [
-        'AI automating entry-level jobs',
-        'Remote work creating global competition',
-        'Digital skills gap in traditional industries'
+    "Technological": [
+        "AI automating entry-level jobs",
+        "Remote work creating global competition",
+        "Digital skills gap in traditional industries",
     ],
-    'Environmental': [
-        'Green economy creating new job types',
-        'ESG requirements creating interdisciplinary roles',
-        'Climate change forcing industry transitions'
+    "Environmental": [
+        "Green economy creating new job types",
+        "ESG requirements creating interdisciplinary roles",
+        "Climate change forcing industry transitions",
     ],
-    'Legal': [
-        'Employment law changes (IR35, gig economy)',
-        'Professional qualification requirements',
-        'Data protection laws affecting recruitment processes'
-    ]
+    "Legal": [
+        "Employment law changes (IR35, gig economy)",
+        "Professional qualification requirements",
+        "Data protection laws affecting recruitment processes",
+    ],
 }
 
 # Color scheme for each category
 colors = {
-    'Political': '#e76f51',      # coral red
-    'Economic': '#2a9d8f',       # teal
-    'Social': '#e9c46a',         # yellow
-    'Technological': '#4d96ff',  # blue
-    'Environmental': '#6bcf7f',  # green
-    'Legal': '#9d4edd'          # purple
+    "Political": "#e76f51",  # coral red
+    "Economic": "#2a9d8f",  # teal
+    "Social": "#e9c46a",  # yellow
+    "Technological": "#4d96ff",  # blue
+    "Environmental": "#6bcf7f",  # green
+    "Legal": "#9d4edd",  # purple
 }
 
 # HTML template
@@ -171,6 +171,7 @@ HTML_TEMPLATE = """
 </html>
 """
 
+
 def generate_pestel():
     """Generate PESTEL diagram PDF"""
     print("=" * 60)
@@ -185,7 +186,7 @@ def generate_pestel():
     html_content = template.render(data=pestel_data, colors=colors)
 
     # Convert to PDF
-    output_file = 'basc_employability_pestel.pdf'
+    output_file = "basc_employability_pestel.pdf"
     HTML(string=html_content).write_pdf(output_file)
 
     print(f"\n✓ PESTEL diagram generated successfully: {output_file}")
@@ -198,11 +199,13 @@ def generate_pestel():
     try:
         pdf_path = os.path.abspath(output_file)
         import subprocess
-        subprocess.Popen(['brave-browser', pdf_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        subprocess.Popen(["brave-browser", pdf_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         print("✓ Browser opened!")
     except Exception as e:
         print(f"⚠ Could not open browser automatically: {e}")
         print(f"Open manually: {os.path.abspath(output_file)}")
+
 
 if __name__ == "__main__":
     try:
@@ -210,4 +213,5 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\n✗ Error generating PESTEL diagram: {e}")
         import traceback
+
         traceback.print_exc()
