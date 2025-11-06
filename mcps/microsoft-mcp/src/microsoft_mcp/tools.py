@@ -22,14 +22,6 @@ from .email_tools import (
     get_attachment,
     search_emails,
 )
-from .file_tools import (
-    list_files,
-    get_file,
-    create_file,
-    update_file,
-    delete_file,
-    search_files,
-)
 
 __all__ = [
     "mcp",
@@ -51,11 +43,4 @@ __all__ = [
     "reply_to_email",
     "get_attachment",
     "search_emails",
-    # Files
-    "list_files",
-    "get_file",
-    "create_file",
-    "update_file",
-    "delete_file",
-    "search_files",
 ]
