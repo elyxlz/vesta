@@ -278,7 +278,7 @@ def reply_to_email(account_id: str, email_id: str, body: str, attachments: str |
     if attachments:
         draft = graph.request("POST", f"/me/messages/{email_id}/{create_endpoint}", account_id)
         if not draft or "id" not in draft:
-            raise ValueError(f"Failed to create reply draft")
+            raise ValueError("Failed to create reply draft")
 
         draft_id = draft["id"]
 
