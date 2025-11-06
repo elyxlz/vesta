@@ -41,6 +41,7 @@ def authenticate_account() -> dict[str, str]:
 
 @mcp.tool()
 def complete_authentication(flow_cache: str) -> dict[str, str]:
+    """flow_cache: use _flow_cache value from authenticate_account response"""
     import ast
 
     try:

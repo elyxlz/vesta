@@ -47,7 +47,7 @@ def create_event(
     attendees: str | list[str] | None = None,
     timezone: str = "UTC",
 ) -> dict[str, Any]:
-    """start/end: ISO-8601 datetime (e.g. '2024-01-15T14:00:00')"""
+    """start/end: ISO-8601 datetime (e.g. '2024-01-15T14:00:00'). attendees: comma-separated emails or list"""
     event = {
         "subject": subject,
         "start": {"dateTime": start, "timeZone": timezone},
@@ -75,6 +75,7 @@ def create_event(
 
 @mcp.tool()
 def update_event(event_id: str, updates: dict[str, Any], account_id: str) -> dict[str, Any]:
+    """updates keys: 'subject', 'start' (ISO-8601), 'end' (ISO-8601), 'location', 'body', 'timezone'"""
     formatted_updates = {}
 
     if "subject" in updates:

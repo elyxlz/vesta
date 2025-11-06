@@ -26,6 +26,7 @@ def list_emails(
     limit: int = 10,
     include_body: bool = True,
 ) -> list[dict[str, Any]]:
+    """folder: 'inbox', 'sent', 'drafts', 'deleted', 'junk', 'archive' (case-insensitive)"""
 
     folder_path = FOLDERS.get(folder.casefold(), folder)
 
@@ -97,6 +98,7 @@ def create_email_draft(
     cc: str | None = None,
     attachments: str | None = None,
 ) -> dict[str, Any]:
+    """to/cc: comma-separated emails. attachments: comma-separated file paths"""
     # Handle both single and comma-separated email addresses
     to_list = [addr.strip() for addr in to.split(",") if addr.strip()] if "," in to else [to]
 
@@ -169,6 +171,7 @@ def send_email(
     cc: str | None = None,
     attachments: str | None = None,
 ) -> dict[str, str]:
+    """to/cc: comma-separated emails. attachments: comma-separated file paths"""
     # Handle both single and comma-separated email addresses
     to_list = [addr.strip() for addr in to.split(",") if addr.strip()] if "," in to else [to]
 
@@ -268,6 +271,7 @@ def send_email(
 
 @mcp.tool()
 def reply_to_email(account_id: str, email_id: str, body: str, attachments: str | None = None, reply_all: bool = False) -> dict[str, str]:
+    """attachments: comma-separated file paths"""
     create_endpoint = "createReplyAll" if reply_all else "createReply"
     reply_endpoint = "replyAll" if reply_all else "reply"
 

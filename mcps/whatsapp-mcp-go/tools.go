@@ -61,6 +61,7 @@ func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 	// list_messages
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "list_messages",
+		Description: "after/before: ISO-8601 datetime. sender_phone_number: E.164 format (+1234567890). chat_jid: JID format (phone@s.whatsapp.net or groupid@g.us)",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input ListMessagesInput) (*mcp.CallToolResult, ListMessagesOutput, error) {
 		var after, before *time.Time
 		if input.After != "" {
@@ -93,6 +94,7 @@ func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 	// list_chats
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "list_chats",
+		Description: "sort_by: 'last_active' or 'name'",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input ListChatsInput) (*mcp.CallToolResult, ListChatsOutput, error) {
 		limit := input.Limit
 		if limit == 0 {
@@ -114,6 +116,7 @@ func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 	// send_message
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "send_message",
+		Description: "recipient: phone number (E.164: +1234567890) or JID (phone@s.whatsapp.net or groupid@g.us)",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input SendMessageInput) (*mcp.CallToolResult, SendMessageOutput, error) {
 		success, message := wac.SendMessage(input.Recipient, input.Message)
 		return nil, SendMessageOutput{Success: success, Message: message}, nil
@@ -122,6 +125,7 @@ func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 	// send_file
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "send_file",
+		Description: "recipient: phone number (E.164: +1234567890) or JID (phone@s.whatsapp.net or groupid@g.us)",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input SendFileInput) (*mcp.CallToolResult, SendFileOutput, error) {
 		success, message := wac.SendFile(input.Recipient, input.FilePath, input.Caption)
 		return nil, SendFileOutput{Success: success, Message: message}, nil
@@ -143,6 +147,7 @@ func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 	// send_reaction
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "send_reaction",
+		Description: "emoji: single emoji character (👍, ❤️, 😂). jid: chat JID (phone@s.whatsapp.net or groupid@g.us)",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input SendReactionInput) (*mcp.CallToolResult, SendReactionOutput, error) {
 		success, message := wac.SendReaction(input.MessageID, input.Emoji, input.JID)
 		return nil, SendReactionOutput{Success: success, Message: message}, nil
@@ -151,6 +156,7 @@ func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 	// create_group
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "create_group",
+		Description: "participants: array of phone numbers in E.164 format (['+1234567890', '+0987654321'])",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input CreateGroupInput) (*mcp.CallToolResult, CreateGroupOutput, error) {
 		success, groupJID, message := wac.CreateGroup(input.GroupName, input.Participants)
 		return nil, CreateGroupOutput{Success: success, GroupJID: groupJID, Message: message}, nil
@@ -183,6 +189,7 @@ func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 	// update_group_participants
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "update_group_participants",
+		Description: "action: 'add' or 'remove'. participants: array of E.164 phone numbers",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input UpdateGroupParticipantsInput) (*mcp.CallToolResult, UpdateGroupParticipantsOutput, error) {
 		success, message := wac.UpdateGroupParticipants(input.GroupJID, input.Action, input.Participants)
 		return nil, UpdateGroupParticipantsOutput{Success: success, Message: message}, nil
