@@ -9,7 +9,6 @@ BASc Employability PESTEL Analysis Generator - PNG Version
 """
 
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
 from matplotlib.patches import FancyBboxPatch
 import os
 
@@ -155,7 +154,7 @@ def create_pestel_diagram():
     plt.close()
 
     print(f"\n✓ PESTEL diagram generated successfully: {output_file}")
-    print(f"✓ Resolution: 300 DPI")
+    print("✓ Resolution: 300 DPI")
     print("\n" + "=" * 60)
     print("GENERATION COMPLETE")
     print("=" * 60)

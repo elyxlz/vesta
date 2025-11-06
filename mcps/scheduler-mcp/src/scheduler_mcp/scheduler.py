@@ -17,7 +17,7 @@ def create_scheduler(data_dir: Path) -> BackgroundScheduler:
     return scheduler
 
 
-def write_notification(notif_dir: Path, reminder_id: str, message: str, data: dict = None):
+def write_notification(notif_dir: Path, reminder_id: str, message: str, data: dict | None = None):
     if not reminder_id or not message:
         raise ValueError("reminder_id and message required")
 
