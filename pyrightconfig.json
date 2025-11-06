@@ -1,0 +1,13 @@
+{
+  "include": [
+    "vesta"
+  ],
+  "exclude": [
+    "mcps",
+    "UCL",
+    "**/__pycache__",
+    "**/.venv"
+  ],
+  "pythonVersion": "3.12",
+  "typeCheckingMode": "basic"
+}
