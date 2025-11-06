@@ -11,9 +11,9 @@ from .scheduler import write_notification
 
 mcp = FastMCP("scheduler-mcp")
 
-_scheduler = None
-_data_dir = None
-_notif_dir = None
+_scheduler = None  # type: ignore
+_data_dir: Path | None = None
+_notif_dir: Path | None = None
 
 
 def init_tools(scheduler, data_dir: Path, notif_dir: Path):
@@ -26,6 +26,7 @@ def init_tools(scheduler, data_dir: Path, notif_dir: Path):
 
 
 def get_db():
+    assert _data_dir is not None
     conn = sqlite3.connect(_data_dir / "reminders.db")
     conn.row_factory = sqlite3.Row
     return conn
@@ -69,6 +70,7 @@ def init_db():
 def check_missed_reminders():
     from datetime import datetime, timezone
 
+    assert _notif_dir is not None
     now = datetime.now(timezone.utc).isoformat()
 
     with closing(get_db()) as conn:
@@ -177,11 +179,13 @@ def set_reminder(
         schedule_info = f"once (in {' '.join(parts)})"
 
     def send_reminder():
+        assert _notif_dir is not None
         write_notification(_notif_dir, reminder_id, message)
         with closing(get_db()) as conn:
             conn.execute("UPDATE reminders SET fired = 1 WHERE id = ?", (reminder_id,))
             conn.commit()
 
+    assert _scheduler is not None
     _scheduler.add_job(
         func=send_reminder,
         trigger=trigger,
@@ -214,6 +218,7 @@ def set_reminder(
 @mcp.tool()
 def list_reminders() -> list[dict]:
     """List all active reminders"""
+    assert _scheduler is not None
     with closing(get_db()) as conn:
         cursor = conn.execute("SELECT * FROM reminders")
         reminder_data = {row["id"]: dict(row) for row in cursor}
@@ -236,6 +241,7 @@ def list_reminders() -> list[dict]:
 @mcp.tool()
 def cancel_reminder(reminder_id: str) -> dict:
     """Cancel a scheduled reminder"""
+    assert _scheduler is not None
     try:
         _scheduler.remove_job(reminder_id)
         with closing(get_db()) as conn:

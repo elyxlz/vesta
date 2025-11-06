@@ -172,7 +172,7 @@ async def collect_responses(
             vfx.log_info(f"[DEBUG] Client state: {client}", vm.Colors)
             vfx.log_info(f"[DEBUG] Client type: {type(client)}", vm.Colors)
             if hasattr(client, "_connected"):
-                vfx.log_info(f"[DEBUG] Client connected: {client._connected}", vm.Colors)
+                vfx.log_info(f"[DEBUG] Client connected: {client._connected}", vm.Colors)  # type: ignore
         try:
             if config.debug:
                 vfx.log_info("[DEBUG] About to iterate over client.receive_response()", vm.Colors)
@@ -217,10 +217,10 @@ async def collect_responses(
                 # Check for stream end indicators
                 if hasattr(msg, "stop_reason"):
                     if config.debug:
-                        vfx.log_info(f"[DEBUG] Message has stop_reason: {msg.stop_reason}", vm.Colors)
+                        vfx.log_info(f"[DEBUG] Message has stop_reason: {msg.stop_reason}", vm.Colors)  # type: ignore
                 if hasattr(msg, "is_final"):
                     if config.debug:
-                        vfx.log_info(f"[DEBUG] Message has is_final: {msg.is_final}", vm.Colors)
+                        vfx.log_info(f"[DEBUG] Message has is_final: {msg.is_final}", vm.Colors)  # type: ignore
 
                 if text:
                     if show_output:

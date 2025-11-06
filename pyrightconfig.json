@@ -1,13 +1,15 @@
 {
   "include": [
-    "vesta"
+    "src/vesta",
+    "mcps/microsoft-mcp/src",
+    "mcps/scheduler-mcp/src"
   ],
   "exclude": [
-    "mcps",
-    "UCL",
+    "**/tests",
     "**/__pycache__",
     "**/.venv"
   ],
   "pythonVersion": "3.12",
-  "typeCheckingMode": "basic"
+  "typeCheckingMode": "basic",
+  "reportMissingImports": false
 }
