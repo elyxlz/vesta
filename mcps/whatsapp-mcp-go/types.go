@@ -95,16 +95,6 @@ type GetDirectChatOutput struct {
 	Chat Chat `json:"chat"`
 }
 
-type GetContactChatsInput struct {
-	JID   string `json:"jid" jsonschema:"Contact JID"`
-	Limit int    `json:"limit,omitempty" jsonschema:"Maximum number of chats"`
-	Page  int    `json:"page,omitempty" jsonschema:"Page number"`
-}
-
-type GetContactChatsOutput struct {
-	Chats []Chat `json:"chats"`
-}
-
 type SendMessageInput struct {
 	Recipient string `json:"recipient" jsonschema:"Phone number or group JID"`
 	Message   string `json:"message" jsonschema:"Text message to send"`
@@ -186,16 +176,6 @@ type ListGroupsInput struct {
 
 type ListGroupsOutput struct {
 	Groups []Chat `json:"groups"`
-}
-
-type GetGroupInviteLinkInput struct {
-	GroupJID string `json:"group_jid" jsonschema:"Group JID"`
-}
-
-type GetGroupInviteLinkOutput struct {
-	Success    bool   `json:"success"`
-	InviteLink string `json:"invite_link,omitempty"`
-	Message    string `json:"message"`
 }
 
 type UpdateGroupParticipantsInput struct {

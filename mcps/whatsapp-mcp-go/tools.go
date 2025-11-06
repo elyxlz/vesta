@@ -139,23 +139,6 @@ func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 		return nil, GetDirectChatOutput{Chat: *chat}, nil
 	})
 
-	// get_contact_chats
-	mcp.AddTool(s, &mcp.Tool{
-		Name:        "get_contact_chats",
-		Description: "Get all chats involving contact",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, input GetContactChatsInput) (*mcp.CallToolResult, GetContactChatsOutput, error) {
-		limit := input.Limit
-		if limit == 0 {
-			limit = 20
-		}
-
-		chats, err := wac.store.GetContactChats(input.JID, limit, input.Page*limit)
-		if err != nil {
-			return nil, GetContactChatsOutput{}, err
-		}
-		return nil, GetContactChatsOutput{Chats: chats}, nil
-	})
-
 	// send_message
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "send_message",
@@ -239,15 +222,6 @@ func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 			return nil, ListGroupsOutput{}, err
 		}
 		return nil, ListGroupsOutput{Groups: groups}, nil
-	})
-
-	// get_group_invite_link
-	mcp.AddTool(s, &mcp.Tool{
-		Name:        "get_group_invite_link",
-		Description: "Get group invite link",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, input GetGroupInviteLinkInput) (*mcp.CallToolResult, GetGroupInviteLinkOutput, error) {
-		success, link, message := wac.GetGroupInviteLink(input.GroupJID)
-		return nil, GetGroupInviteLinkOutput{Success: success, InviteLink: link, Message: message}, nil
 	})
 
 	// update_group_participants
