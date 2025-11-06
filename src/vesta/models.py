@@ -44,6 +44,7 @@ class State:
     is_processing: bool = False
     sub_agent_context: str | None = None
     last_context_pct: float = 0.0
+    last_memory_consolidation: dt.datetime | None = None
 
 
 def _get_default_mcp_servers() -> dict[str, McpServer]:
@@ -116,6 +117,8 @@ class VestaSettings(pyd_settings.BaseSettings):
     shutdown_timeout: int = 310
     task_gather_timeout: int = 2
     max_context_tokens: int = 150000
+    enable_nightly_memory: bool = True
+    nightly_memory_time: int = 4
     mcp_servers: dict[str, McpServer] = pyd.Field(default_factory=_get_default_mcp_servers)
 
 

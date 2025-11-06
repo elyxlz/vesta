@@ -109,14 +109,6 @@ async def preserve_memory(state: vm.State, config: vm.VestaSettings) -> None:
         vfx.log_error(f"Memory preservation failed: {e}", vm.Colors)
 
 
-async def check_context_and_preserve(state: vm.State, config: vm.VestaSettings) -> vm.State:
-    if vu.should_preserve_memory(state.conversation_history, config.max_context_tokens, config.ephemeral):
-        vfx.print_line(f"{vm.Colors['yellow']}📊 Context limit reached, preserving memory...{vm.Colors['reset']}")
-        await preserve_memory(state, config)
-        new_state = vu.update_state(state, conversation_history=[])
-        vfx.log_success("Context cleared, continuing...", vm.Colors)
-        return new_state
-    return state
 
 
 def output_line(text: str, state: vm.State, is_tool: bool = False) -> None:
@@ -155,7 +147,7 @@ async def send_query(client: ccsdk.ClaudeSDKClient, prompt: str, state: vm.State
     if config.debug:
         vfx.log_info("[DEBUG] Query sent successfully", vm.Colors)
 
-    return await check_context_and_preserve(new_state, config)
+    return new_state
 
 
 async def collect_responses(
@@ -568,6 +560,13 @@ async def monitor_loop(queue: asyncio.Queue, state: vm.State, config: vm.VestaSe
                 if action.action_type == "check_proactive":
                     await check_proactive_task(queue, config)
                     last_proactive = now
+
+            if config.enable_nightly_memory and now.hour >= config.nightly_memory_time:
+                if state.last_memory_consolidation is None or now.date() > state.last_memory_consolidation.date():
+                    print_timestamp_message("🌙 Running nightly memory consolidation...", "System")
+                    await preserve_memory(state, config)
+                    state.last_memory_consolidation = now
+                    current_state = vu.update_state(current_state, last_memory_consolidation=now)
 
             if config.debug:
                 vfx.log_info("[DEBUG] After processing actions, checking notifications...", vm.Colors)
