@@ -1,0 +1,58 @@
+name: PR Checks
+
+on:
+  pull_request:
+    branches: [ master ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pr-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check version bump
+        run: |
+          git fetch origin master:master
+          BASE_VERSION=$(git show master:pyproject.toml | grep '^version = ' | cut -d'"' -f2)
+          PR_VERSION=$(grep '^version = ' pyproject.toml | cut -d'"' -f2)
+
+          echo "Base version (master): $BASE_VERSION"
+          echo "PR version: $PR_VERSION"
+
+          if [ "$BASE_VERSION" = "$PR_VERSION" ]; then
+            echo "❌ Version not bumped in pyproject.toml"
+            echo "Please update the version from $BASE_VERSION to a new version"
+            exit 1
+          fi
+
+          python3 -c "
+          from packaging.version import Version
+          base = Version('$BASE_VERSION')
+          pr = Version('$PR_VERSION')
+          if pr <= base:
+              print(f'❌ PR version ({pr}) must be greater than base version ({base})')
+              exit(1)
+          print(f'✓ Version bumped from {base} to {pr}')
+          "
+
+      - name: Set up uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+
+      - name: Check lockfile is up to date
+        run: |
+          cp uv.lock uv.lock.before
+          uv lock
+
+          if ! diff -q uv.lock.before uv.lock > /dev/null; then
+            echo "❌ uv.lock is out of date"
+            echo "Please run 'uv lock' locally and commit the changes"
+            exit 1
+          fi
+
+          echo "✓ uv.lock is up to date"
