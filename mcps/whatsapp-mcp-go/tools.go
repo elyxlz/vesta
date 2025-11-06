@@ -12,7 +12,7 @@ func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 	// authenticate_whatsapp
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "authenticate_whatsapp",
-		Description: "Check WhatsApp authentication status and get QR code path if needed",
+		Description: "Check WhatsApp authentication status",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input struct{}) (*mcp.CallToolResult, struct {
 		Status string `json:"status"`
 		QRPath string `json:"qr_path,omitempty"`
@@ -47,7 +47,7 @@ func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 	// search_contacts
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "search_contacts",
-		Description: "Search WhatsApp contacts by name or phone number",
+		Description: "Search WhatsApp contacts",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input SearchContactsInput) (*mcp.CallToolResult, SearchContactsOutput, error) {
 		contacts, err := wac.store.SearchContacts(input.Query)
 		if err != nil {
@@ -63,7 +63,7 @@ func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 	// list_messages
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "list_messages",
-		Description: "Get WhatsApp messages with filters",
+		Description: "List WhatsApp messages",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input ListMessagesInput) (*mcp.CallToolResult, ListMessagesOutput, error) {
 		var after, before *time.Time
 		if input.After != "" {
@@ -96,7 +96,7 @@ func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 	// list_chats
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "list_chats",
-		Description: "Get WhatsApp chats",
+		Description: "List WhatsApp chats",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input ListChatsInput) (*mcp.CallToolResult, ListChatsOutput, error) {
 		limit := input.Limit
 		if limit == 0 {
@@ -136,7 +136,7 @@ func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 	// download_media
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "download_media",
-		Description: "Download media from message",
+		Description: "Download WhatsApp media",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input DownloadMediaInput) (*mcp.CallToolResult, DownloadMediaOutput, error) {
 		path, err := wac.DownloadMedia(input.MessageID, input.JID)
 		success := err == nil
@@ -150,7 +150,7 @@ func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 	// send_reaction
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "send_reaction",
-		Description: "Send emoji reaction",
+		Description: "Send WhatsApp reaction",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input SendReactionInput) (*mcp.CallToolResult, SendReactionOutput, error) {
 		success, message := wac.SendReaction(input.MessageID, input.Emoji, input.JID)
 		return nil, SendReactionOutput{Success: success, Message: message}, nil
@@ -194,7 +194,7 @@ func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 	// update_group_participants
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "update_group_participants",
-		Description: "Add/remove group participants",
+		Description: "Update WhatsApp group participants",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input UpdateGroupParticipantsInput) (*mcp.CallToolResult, UpdateGroupParticipantsOutput, error) {
 		success, message := wac.UpdateGroupParticipants(input.GroupJID, input.Action, input.Participants)
 		return nil, UpdateGroupParticipantsOutput{Success: success, Message: message}, nil

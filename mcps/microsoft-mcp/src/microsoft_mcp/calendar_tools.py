@@ -13,7 +13,7 @@ def list_events(
     days_back: int = 0,
     include_details: bool = True,
 ) -> list[dict[str, Any]]:
-    """List calendar events within specified date range, including recurring event instances"""
+    """List calendar events"""
 
     now = dt.datetime.now(dt.timezone.utc)
     start = (now - dt.timedelta(days=days_back)).isoformat()
@@ -48,21 +48,7 @@ def create_event(
     attendees: str | list[str] | None = None,
     timezone: str = "UTC",
 ) -> dict[str, Any]:
-    """Create a calendar event
-
-    Args:
-        account_id: The account ID
-        subject: Event subject/title
-        start: Event start datetime (ISO format, e.g., "2024-01-15T14:00:00")
-        end: Event end datetime (ISO format, e.g., "2024-01-15T15:00:00")
-        location: Event location (optional)
-        body: Event description (optional)
-        attendees: Email addresses of attendees (optional) - accepts:
-            - Single attendee: "user@example.com"
-            - Multiple attendees: "user1@example.com,user2@example.com"
-            - List of attendees: ["user1@example.com", "user2@example.com"]
-        timezone: Timezone for the event (default: UTC)
-    """
+    """Create calendar event"""
     event = {
         "subject": subject,
         "start": {"dateTime": start, "timeZone": timezone},

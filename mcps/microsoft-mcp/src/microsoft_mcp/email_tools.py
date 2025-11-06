@@ -61,15 +61,7 @@ def get_email(
     body_max_length: int = 50000,
     include_attachments: bool = True,
 ) -> dict[str, Any]:
-    """Get email details with size limits
-
-    Args:
-        email_id: The email ID
-        account_id: The account ID
-        include_body: Whether to include the email body (default: True)
-        body_max_length: Maximum characters for body content (default: 50000)
-        include_attachments: Whether to include attachment metadata (default: True)
-    """
+    """Get email details"""
 
     params = {}
     if include_attachments:
@@ -107,22 +99,7 @@ def create_email_draft(
     cc: str | None = None,
     attachments: str | None = None,
 ) -> dict[str, Any]:
-    """Create an email draft with file path(s) as attachments
-
-    Args:
-        account_id: The account ID
-        to: Email addresses - accepts:
-            - Single email: "user@example.com"
-            - Multiple emails: "user1@example.com,user2@example.com"
-        subject: Email subject
-        body: Email body text
-        cc: CC email addresses (optional) - accepts:
-            - Single email: "user@example.com"
-            - Multiple emails: "user1@example.com,user2@example.com"
-        attachments: File paths (optional) - accepts:
-            - Single path: "/path/to/file.pdf"
-            - Multiple paths: "/path/to/file1.pdf,/path/to/file2.docx"
-    """
+    """Create email draft with attachments"""
     # Handle both single and comma-separated email addresses
     to_list = [addr.strip() for addr in to.split(",") if addr.strip()] if "," in to else [to]
 
@@ -195,22 +172,7 @@ def send_email(
     cc: str | None = None,
     attachments: str | None = None,
 ) -> dict[str, str]:
-    """Send an email immediately with file path(s) as attachments
-
-    Args:
-        account_id: The account ID
-        to: Email addresses - accepts:
-            - Single email: "user@example.com"
-            - Multiple emails: "user1@example.com,user2@example.com"
-        subject: Email subject
-        body: Email body text
-        cc: CC email addresses (optional) - accepts:
-            - Single email: "user@example.com"
-            - Multiple emails: "user1@example.com,user2@example.com"
-        attachments: File paths (optional) - accepts:
-            - Single path: "/path/to/file.pdf"
-            - Multiple paths: "/path/to/file1.pdf,/path/to/file2.docx"
-    """
+    """Send email with attachments"""
     # Handle both single and comma-separated email addresses
     to_list = [addr.strip() for addr in to.split(",") if addr.strip()] if "," in to else [to]
 
@@ -310,17 +272,7 @@ def send_email(
 
 @mcp.tool()
 def reply_to_email(account_id: str, email_id: str, body: str, attachments: str | None = None, reply_all: bool = False) -> dict[str, str]:
-    """Reply to an email with optional attachments
-
-    Args:
-        account_id: The account ID
-        email_id: The email ID to reply to
-        body: Reply message body
-        attachments: File paths for attachments (optional) - accepts:
-            - Single path: "/path/to/file.pdf"
-            - Multiple paths: "/path/to/file1.pdf,/path/to/file2.docx"
-        reply_all: If True, reply to all recipients. If False, reply to sender only (default: False)
-    """
+    """Reply to email"""
     create_endpoint = "createReplyAll" if reply_all else "createReply"
     reply_endpoint = "replyAll" if reply_all else "reply"
 
@@ -407,7 +359,7 @@ def search_emails(
     limit: int = 50,
     folder: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Search emails using the modern search API."""
+    """Search emails"""
 
     if folder:
         # For folder-specific search, use the traditional endpoint

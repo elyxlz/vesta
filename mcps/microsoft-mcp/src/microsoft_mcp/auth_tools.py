@@ -14,11 +14,7 @@ def list_accounts() -> list[dict[str, str]]:
 
 @mcp.tool()
 def authenticate_account() -> dict[str, str]:
-    """Authenticate a new Microsoft account using device flow authentication
-
-    Returns authentication instructions and device code for the user to complete authentication.
-    The user must visit the URL and enter the code to authenticate their Microsoft account.
-    """
+    """Authenticate Microsoft account"""
     app = auth.get_app()
     flow = app.initiate_device_flow(scopes=auth.SCOPES)
 
@@ -47,14 +43,7 @@ def authenticate_account() -> dict[str, str]:
 
 @mcp.tool()
 def complete_authentication(flow_cache: str) -> dict[str, str]:
-    """Complete the authentication process after the user has entered the device code
-
-    Args:
-        flow_cache: The flow data returned from authenticate_account (the _flow_cache field)
-
-    Returns:
-        Account information if authentication was successful
-    """
+    """Complete authentication process"""
     import ast
 
     try:
