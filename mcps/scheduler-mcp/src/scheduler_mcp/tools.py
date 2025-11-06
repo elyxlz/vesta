@@ -358,16 +358,3 @@ def update_task(id: str, status: str | None = None, title: str | None = None, me
     return task
 
 
-@mcp.tool()
-def clear_completed() -> dict:
-    """Delete completed tasks older than 24 hours"""
-    cutoff = (dt.now() - timedelta(hours=24)).isoformat()
-    with closing(get_db()) as conn:
-        cursor = conn.execute(
-            "DELETE FROM tasks WHERE status = 'done' AND completed_at < ?",
-            (cutoff,),
-        )
-        count = cursor.rowcount
-        conn.commit()
-
-    return {"deleted": count}
