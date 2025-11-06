@@ -34,7 +34,6 @@ from .file_tools import (
     delete_file,
     search_files,
 )
-from .search_tools import unified_search
 
 __all__ = [
     "mcp",
@@ -67,6 +66,4 @@ __all__ = [
     "update_file",
     "delete_file",
     "search_files",
-    # Search
-    "unified_search",
 ]
