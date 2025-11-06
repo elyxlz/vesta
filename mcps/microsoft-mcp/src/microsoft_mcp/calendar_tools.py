@@ -38,15 +38,6 @@ def list_events(
 
 
 @mcp.tool()
-def get_event(event_id: str, account_id: str) -> dict[str, Any]:
-    """Get full event details"""
-    result = graph.request("GET", f"/me/events/{event_id}", account_id)
-    if not result:
-        raise ValueError(f"Event with ID {event_id} not found")
-    return result
-
-
-@mcp.tool()
 def create_event(
     account_id: str,
     subject: str,
@@ -150,74 +141,3 @@ def respond_event(
     return {"status": response}
 
 
-@mcp.tool()
-def check_availability(
-    account_id: str,
-    start: str,
-    end: str,
-    attendees: str | list[str] | None = None,
-) -> dict[str, Any]:
-    """Check calendar availability for scheduling
-
-    Args:
-        account_id: The account ID
-        start: Start datetime (ISO format, e.g., "2024-01-15T14:00:00")
-        end: End datetime (ISO format, e.g., "2024-01-15T18:00:00")
-        attendees: Email addresses to check availability for (optional) - accepts:
-            - Single person: "user@example.com"
-            - Multiple people: "user1@example.com,user2@example.com"
-            - List of attendees: ["user1@example.com", "user2@example.com"]
-    """
-    me_info = graph.request("GET", "/me", account_id)
-    if not me_info or "mail" not in me_info:
-        raise ValueError("Failed to get user email address")
-    schedules = [me_info["mail"]]
-    if attendees:
-        if isinstance(attendees, list):
-            attendees_list = attendees
-        else:
-            attendees_list = [addr.strip() for addr in attendees.split(",") if addr.strip()] if "," in attendees else [attendees]
-        schedules.extend(attendees_list)
-
-    payload = {
-        "schedules": schedules,
-        "startTime": {"dateTime": start, "timeZone": "UTC"},
-        "endTime": {"dateTime": end, "timeZone": "UTC"},
-        "availabilityViewInterval": 30,
-    }
-
-    result = graph.request("POST", "/me/calendar/getSchedule", account_id, json=payload)
-    if not result:
-        raise ValueError("Failed to check availability")
-    return result
-
-
-@mcp.tool()
-def search_events(
-    query: str,
-    account_id: str,
-    days_ahead: int = 365,
-    days_back: int = 365,
-    limit: int = 50,
-) -> list[dict[str, Any]]:
-    """Search calendar events using the modern search API."""
-
-    events = list(graph.search_query(query, ["event"], account_id, limit))
-
-    # Filter by date range if needed
-    if days_ahead != 365 or days_back != 365:
-        now = dt.datetime.now(dt.timezone.utc)
-        start = now - dt.timedelta(days=days_back)
-        end = now + dt.timedelta(days=days_ahead)
-
-        filtered_events = []
-        for event in events:
-            event_start = dt.datetime.fromisoformat(event.get("start", {}).get("dateTime", "").replace("Z", "+00:00"))
-            event_end = dt.datetime.fromisoformat(event.get("end", {}).get("dateTime", "").replace("Z", "+00:00"))
-
-            if event_start <= end and event_end >= start:
-                filtered_events.append(event)
-
-        return filtered_events
-
-    return events

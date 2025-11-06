@@ -78,23 +78,6 @@ type ListChatsOutput struct {
 	Chats []Chat `json:"chats"`
 }
 
-type GetChatInput struct {
-	ChatJID            string `json:"chat_jid" jsonschema:"Chat JID to retrieve"`
-	IncludeLastMessage bool   `json:"include_last_message,omitempty" jsonschema:"Include last message in chat"`
-}
-
-type GetChatOutput struct {
-	Chat Chat `json:"chat"`
-}
-
-type GetDirectChatInput struct {
-	SenderPhoneNumber string `json:"sender_phone_number" jsonschema:"Phone number to find chat for"`
-}
-
-type GetDirectChatOutput struct {
-	Chat Chat `json:"chat"`
-}
-
 type SendMessageInput struct {
 	Recipient string `json:"recipient" jsonschema:"Phone number or group JID"`
 	Message   string `json:"message" jsonschema:"Text message to send"`
@@ -177,12 +160,4 @@ type UpdateGroupParticipantsInput struct {
 type UpdateGroupParticipantsOutput struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`
-}
-
-type GetContactInput struct {
-	JID string `json:"jid" jsonschema:"Contact JID"`
-}
-
-type GetContactOutput struct {
-	Contact Contact `json:"contact"`
 }

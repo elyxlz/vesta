@@ -8,13 +8,10 @@ from .auth_tools import (
 )
 from .calendar_tools import (
     list_events,
-    get_event,
     create_event,
     update_event,
     delete_event,
     respond_event,
-    check_availability,
-    search_events,
 )
 from .email_tools import (
     list_emails,
@@ -43,13 +40,10 @@ __all__ = [
     "complete_authentication",
     # Calendar
     "list_events",
-    "get_event",
     "create_event",
     "update_event",
     "delete_event",
     "respond_event",
-    "check_availability",
-    "search_events",
     # Email
     "list_emails",
     "get_email",

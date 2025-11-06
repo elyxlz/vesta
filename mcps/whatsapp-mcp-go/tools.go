@@ -115,30 +115,6 @@ func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 		return nil, ListChatsOutput{Chats: chats}, nil
 	})
 
-	// get_chat
-	mcp.AddTool(s, &mcp.Tool{
-		Name:        "get_chat",
-		Description: "Get WhatsApp chat metadata by JID",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, input GetChatInput) (*mcp.CallToolResult, GetChatOutput, error) {
-		chat, err := wac.store.GetChat(input.ChatJID, input.IncludeLastMessage)
-		if err != nil || chat == nil {
-			return nil, GetChatOutput{}, fmt.Errorf("chat not found")
-		}
-		return nil, GetChatOutput{Chat: *chat}, nil
-	})
-
-	// get_direct_chat_by_contact
-	mcp.AddTool(s, &mcp.Tool{
-		Name:        "get_direct_chat_by_contact",
-		Description: "Get WhatsApp chat by phone number",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, input GetDirectChatInput) (*mcp.CallToolResult, GetDirectChatOutput, error) {
-		chat, err := wac.store.GetDirectChatByContact(input.SenderPhoneNumber)
-		if err != nil || chat == nil {
-			return nil, GetDirectChatOutput{}, fmt.Errorf("chat not found")
-		}
-		return nil, GetDirectChatOutput{Chat: *chat}, nil
-	})
-
 	// send_message
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "send_message",
@@ -224,15 +200,4 @@ func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 		return nil, UpdateGroupParticipantsOutput{Success: success, Message: message}, nil
 	})
 
-	// get_contact
-	mcp.AddTool(s, &mcp.Tool{
-		Name:        "get_contact",
-		Description: "Get contact by JID",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, input GetContactInput) (*mcp.CallToolResult, GetContactOutput, error) {
-		contacts, err := wac.store.SearchContacts(input.JID)
-		if err != nil || len(contacts) == 0 {
-			return nil, GetContactOutput{}, fmt.Errorf("contact not found")
-		}
-		return nil, GetContactOutput{Contact: contacts[0]}, nil
-	})
 }
