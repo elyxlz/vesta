@@ -309,8 +309,8 @@ def send_email(
 
 
 @mcp.tool()
-def reply_to_email(account_id: str, email_id: str, body: str, attachments: str | None = None) -> dict[str, str]:
-    """Reply to an email (sender only) with optional attachments
+def reply_to_email(account_id: str, email_id: str, body: str, attachments: str | None = None, reply_all: bool = False) -> dict[str, str]:
+    """Reply to an email with optional attachments
 
     Args:
         account_id: The account ID
@@ -319,27 +319,18 @@ def reply_to_email(account_id: str, email_id: str, body: str, attachments: str |
         attachments: File paths for attachments (optional) - accepts:
             - Single path: "/path/to/file.pdf"
             - Multiple paths: "/path/to/file1.pdf,/path/to/file2.docx"
+        reply_all: If True, reply to all recipients. If False, reply to sender only (default: False)
     """
-    # If we have attachments, we need to create a draft first, add attachments, then send
-    if attachments:
-        # Get the original message to extract sender
-        original = graph.request(
-            "GET",
-            f"/me/messages/{email_id}",
-            account_id,
-            params={"$select": "from,subject,conversationId"},
-        )
-        if not original:
-            raise ValueError(f"Email with ID {email_id} not found")
+    create_endpoint = "createReplyAll" if reply_all else "createReply"
+    reply_endpoint = "replyAll" if reply_all else "reply"
 
-        # Create reply draft
-        draft = graph.request("POST", f"/me/messages/{email_id}/createReply", account_id)
+    if attachments:
+        draft = graph.request("POST", f"/me/messages/{email_id}/{create_endpoint}", account_id)
         if not draft or "id" not in draft:
-            raise ValueError("Failed to create reply draft")
+            raise ValueError(f"Failed to create reply draft")
 
         draft_id = draft["id"]
 
-        # Update draft body
         graph.request(
             "PATCH",
             f"/me/messages/{draft_id}",
@@ -347,7 +338,6 @@ def reply_to_email(account_id: str, email_id: str, body: str, attachments: str |
             json={"body": {"contentType": "Text", "content": body}},
         )
 
-        # Add attachments
         attachment_paths = [path.strip() for path in attachments.split(",") if path.strip()] if "," in attachments else [attachments]
         for file_path in attachment_paths:
             path = pl.Path(file_path).expanduser().resolve()
@@ -356,7 +346,6 @@ def reply_to_email(account_id: str, email_id: str, body: str, attachments: str |
             att_name = path.name
 
             if att_size < 3 * 1024 * 1024:
-                # Small attachment
                 attachment = {
                     "@odata.type": "#microsoft.graph.fileAttachment",
                     "name": att_name,
@@ -369,7 +358,6 @@ def reply_to_email(account_id: str, email_id: str, body: str, attachments: str |
                     json=attachment,
                 )
             else:
-                # Large attachment
                 graph.upload_large_mail_attachment(
                     draft_id,
                     att_name,
@@ -378,93 +366,10 @@ def reply_to_email(account_id: str, email_id: str, body: str, attachments: str |
                     "application/octet-stream",
                 )
 
-        # Send the draft
         graph.request("POST", f"/me/messages/{draft_id}/send", account_id)
         return {"status": "sent"}
     else:
-        # Simple reply without attachments
-        endpoint = f"/me/messages/{email_id}/reply"
-        payload = {"message": {"body": {"contentType": "Text", "content": body}}}
-        graph.request("POST", endpoint, account_id, json=payload)
-        return {"status": "sent"}
-
-
-@mcp.tool()
-def reply_all_email(account_id: str, email_id: str, body: str, attachments: str | None = None) -> dict[str, str]:
-    """Reply to all recipients of an email with optional attachments
-
-    Args:
-        account_id: The account ID
-        email_id: The email ID to reply to
-        body: Reply message body
-        attachments: File paths for attachments (optional) - accepts:
-            - Single path: "/path/to/file.pdf"
-            - Multiple paths: "/path/to/file1.pdf,/path/to/file2.docx"
-    """
-    # If we have attachments, we need to create a draft first, add attachments, then send
-    if attachments:
-        # Get the original message to extract recipients
-        original = graph.request(
-            "GET",
-            f"/me/messages/{email_id}",
-            account_id,
-            params={"$select": "from,toRecipients,ccRecipients,subject,conversationId"},
-        )
-        if not original:
-            raise ValueError(f"Email with ID {email_id} not found")
-
-        # Create reply all draft
-        draft = graph.request("POST", f"/me/messages/{email_id}/createReplyAll", account_id)
-        if not draft or "id" not in draft:
-            raise ValueError("Failed to create reply all draft")
-
-        draft_id = draft["id"]
-
-        # Update draft body
-        graph.request(
-            "PATCH",
-            f"/me/messages/{draft_id}",
-            account_id,
-            json={"body": {"contentType": "Text", "content": body}},
-        )
-
-        # Add attachments
-        attachment_paths = [path.strip() for path in attachments.split(",") if path.strip()] if "," in attachments else [attachments]
-        for file_path in attachment_paths:
-            path = pl.Path(file_path).expanduser().resolve()
-            content_bytes = path.read_bytes()
-            att_size = len(content_bytes)
-            att_name = path.name
-
-            if att_size < 3 * 1024 * 1024:
-                # Small attachment
-                attachment = {
-                    "@odata.type": "#microsoft.graph.fileAttachment",
-                    "name": att_name,
-                    "contentBytes": base64.b64encode(content_bytes).decode("utf-8"),
-                }
-                graph.request(
-                    "POST",
-                    f"/me/messages/{draft_id}/attachments",
-                    account_id,
-                    json=attachment,
-                )
-            else:
-                # Large attachment
-                graph.upload_large_mail_attachment(
-                    draft_id,
-                    att_name,
-                    content_bytes,
-                    account_id,
-                    "application/octet-stream",
-                )
-
-        # Send the draft
-        graph.request("POST", f"/me/messages/{draft_id}/send", account_id)
-        return {"status": "sent"}
-    else:
-        # Simple reply all without attachments
-        endpoint = f"/me/messages/{email_id}/replyAll"
+        endpoint = f"/me/messages/{email_id}/{reply_endpoint}"
         payload = {"message": {"body": {"contentType": "Text", "content": body}}}
         graph.request("POST", endpoint, account_id, json=payload)
         return {"status": "sent"}

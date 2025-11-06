@@ -19,7 +19,6 @@ from .email_tools import (
     create_email_draft,
     send_email,
     reply_to_email,
-    reply_all_email,
     get_attachment,
     search_emails,
 )
@@ -50,7 +49,6 @@ __all__ = [
     "create_email_draft",
     "send_email",
     "reply_to_email",
-    "reply_all_email",
     "get_attachment",
     "search_emails",
     # Files
