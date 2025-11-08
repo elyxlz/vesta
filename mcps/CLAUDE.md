@@ -13,12 +13,12 @@
 - **Comments only when necessary**: Complex algorithms or non-obvious business logic
 - **No redundant comments**: Don't describe what the code clearly shows
 - **FUNCTIONAL**: Use functional programming patterns, no OOP/classes
-- **NO GLOBAL STATE**: Avoid global variables and mutable module-level state
+- **NO GLOBAL STATE**: Use lifespan pattern for resource management (see Development Patterns section)
 
 ### Initialization Principle
 - **LAZY INITIALIZATION**: Never initialize resources at import time
-- **EXPLICIT SETUP**: All initialization happens in main() after parsing args
-- **PASS DEPENDENCIES**: Pass initialized resources to functions that need them
+- **LIFESPAN PATTERN**: All initialization happens in the lifespan async context manager
+- **DEPENDENCY INJECTION**: Resources passed via context, not as function parameters
 - **NO IMPORT SIDE EFFECTS**: Importing a module should never create connections, files, or start services
 
 ### Independence Principle
@@ -43,8 +43,9 @@ mcp-name/
 ├── src/
 │   └── mcp_name/           # Use underscore in package name
 │       ├── __init__.py
-│       ├── server.py        # Entry point with argparse for --data-dir and --notifications-dir
-│       ├── tools.py         # FastMCP tool definitions (keep under 400 lines)
+│       ├── server.py        # Just calls mcp.run() - 10 lines max
+│       ├── context.py       # Context dataclass with all shared resources
+│       ├── tools.py         # FastMCP instance with lifespan + tools (400 lines max)
 │       ├── [domain]_tools.py # Split large tools into domain files
 │       └── [api].py         # API/service integration modules
 ├── tests/
@@ -60,9 +61,208 @@ mcp-name/
 - **tools.py**: Maximum 400 lines. Split into domain-specific files if larger:
   - `email_tools.py`, `calendar_tools.py`, `file_tools.py` etc.
 - **Each domain file**: Maximum 500 lines
-- **server.py**: Maximum 100 lines (just initialization and argument parsing)
+- **server.py**: Maximum 10 lines (just imports mcp and calls mcp.run())
+- **context.py**: Keep under 50 lines (just dataclass definition)
 
 ## Development Patterns
+
+### Lifespan Pattern (Resource Management)
+
+**REQUIRED**: All MCPs MUST use the lifespan pattern for resource management. Never use global variables.
+
+#### Why Lifespan?
+- **Zero Globals**: All resources managed via context, no module-level state
+- **Proper Lifecycle**: Resources created on startup, cleaned up on shutdown
+- **Type Safety**: Full type checking with dataclasses
+- **Dependency Injection**: FastMCP auto-injects context into tools
+- **Easier Testing**: Mock contexts without changing global state
+
+#### Basic Structure
+
+```python
+from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from pathlib import Path
+from mcp.server.fastmcp import FastMCP, Context
+
+@dataclass
+class MyContext:
+    data_dir: Path
+    # Add all shared resources here
+
+@asynccontextmanager
+async def my_lifespan(server: FastMCP) -> AsyncIterator[MyContext]:
+    """Manage MCP lifecycle"""
+    # 1. Parse CLI arguments
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data-dir", type=str, required=True)
+    args, _ = parser.parse_known_args()
+
+    # 2. Initialize resources
+    data_dir = Path(args.data_dir).resolve()
+    data_dir.mkdir(parents=True, exist_ok=True)
+    ctx = MyContext(data_dir=data_dir)
+
+    # 3. Yield context (MCP runs here)
+    try:
+        yield ctx
+    finally:
+        # 4. Cleanup resources
+        pass
+
+mcp = FastMCP("my-mcp", lifespan=my_lifespan)
+
+@mcp.tool()
+def my_tool(ctx: Context, param: str) -> dict:
+    """FastMCP auto-injects ctx, excludes it from tool schema"""
+    context: MyContext = ctx.request_context.lifespan_context
+    # Use context.data_dir, etc.
+    return {"result": "ok"}
+```
+
+#### Key Rules
+
+1. **Context Dataclass**: Define all shared resources in a dataclass
+2. **Async Context Manager**: Use `@asynccontextmanager` for lifespan
+3. **CLI Args in Lifespan**: Parse args in lifespan, NOT in `main()`
+4. **Context Injection**: Add `ctx: Context` as first param to ALL tool functions
+5. **Extract Context**: `context: MyContext = ctx.request_context.lifespan_context`
+6. **Simplified server.py**: Just call `mcp.run()`, no initialization code
+
+#### Complete Example (Scheduler-MCP)
+
+```python
+# tools.py
+@dataclass
+class SchedulerContext:
+    scheduler: BackgroundScheduler
+    data_dir: Path
+    notif_dir: Path
+
+@asynccontextmanager
+async def scheduler_lifespan(server: FastMCP) -> AsyncIterator[SchedulerContext]:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data-dir", type=str, required=True)
+    parser.add_argument("--notifications-dir", type=str, required=True)
+    args, _ = parser.parse_known_args()
+
+    data_dir = Path(args.data_dir).resolve()
+    data_dir.mkdir(parents=True, exist_ok=True)
+    notif_dir = Path(args.notifications_dir).resolve()
+    notif_dir.mkdir(parents=True, exist_ok=True)
+
+    from . import scheduler as scheduler_module
+    scheduler = scheduler_module.create_scheduler(data_dir)
+    scheduler.start()
+
+    ctx = SchedulerContext(scheduler, data_dir, notif_dir)
+    init_db(ctx)
+    check_missed_reminders(ctx)
+
+    try:
+        yield ctx
+    finally:
+        scheduler.shutdown(wait=True)
+
+mcp = FastMCP("scheduler-mcp", lifespan=scheduler_lifespan)
+
+@mcp.tool()
+def set_reminder(ctx: Context, message: str, minutes: float | None = None) -> dict:
+    context: SchedulerContext = ctx.request_context.lifespan_context
+    # Use context.scheduler, context.data_dir, etc.
+    return {"id": "...", "status": "scheduled"}
+
+# server.py
+from .tools import mcp
+
+def main():
+    mcp.run()  # That's it!
+```
+
+#### Advanced: HTTP Clients & Background Threads
+
+```python
+@dataclass
+class MicrosoftContext:
+    cache_file: Path
+    http_client: httpx.Client
+    notif_dir: Path
+    monitor_stop_event: threading.Event
+    monitor_logger: logging.Logger
+
+@asynccontextmanager
+async def microsoft_lifespan(server: FastMCP) -> AsyncIterator[MicrosoftContext]:
+    # Parse args
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data-dir", type=str, required=True)
+    args, _ = parser.parse_known_args()
+
+    # Setup resources
+    http_client = httpx.Client(timeout=30.0, follow_redirects=True)
+    monitor_stop_event = threading.Event()
+
+    ctx = MicrosoftContext(
+        cache_file=data_dir / "cache.bin",
+        http_client=http_client,
+        notif_dir=notif_dir,
+        monitor_stop_event=monitor_stop_event,
+        monitor_logger=logger,
+    )
+
+    # Start background thread
+    monitor_thread = threading.Thread(target=monitor.run, args=(ctx,), daemon=True)
+    monitor_thread.start()
+
+    try:
+        yield ctx
+    finally:
+        # Graceful shutdown
+        monitor_stop_event.set()
+        monitor_thread.join(timeout=5)
+        http_client.close()
+```
+
+#### Testing with Mock Context
+
+```python
+@dataclass
+class MockRequestContext:
+    lifespan_context: SchedulerContext
+
+@dataclass
+class MockContext:
+    request_context: MockRequestContext
+
+@pytest.fixture
+def mock_ctx(scheduler_context):
+    return MockContext(request_context=MockRequestContext(lifespan_context=scheduler_context))
+
+def test_tool(mock_ctx):
+    result = my_tool(mock_ctx, param="value")
+    assert result["status"] == "ok"
+```
+
+#### Passing Context to Non-Tool Functions
+
+For helper functions that can't accept `Context` (e.g., APScheduler jobs, monitor threads):
+- Pass individual resources as function parameters
+- For APScheduler: Pass paths/IDs as args, not context objects (can't serialize)
+- For threads: Pass entire context object
+
+```python
+# APScheduler jobs - pass individual params
+def job_function(reminder_id: str, message: str, data_dir: Path, notif_dir: Path):
+    # Can't receive Context because APScheduler serializes job args
+    pass
+
+# Background threads - pass context
+def monitor_thread(ctx: MicrosoftContext):
+    while not ctx.monitor_stop_event.is_set():
+        # Use ctx.http_client, ctx.cache_file, etc.
+        pass
+```
 
 ### Tool Definition (using FastMCP from mcp.server)
 ```python
