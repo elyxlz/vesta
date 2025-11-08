@@ -3,8 +3,10 @@
 import base64
 import pathlib as pl
 from typing import Any
+from mcp.server.fastmcp import Context
 from . import graph
 from .auth_tools import mcp  # Use the shared MCP instance
+from .context import MicrosoftContext
 
 FOLDERS = {
     k.casefold(): v
@@ -21,12 +23,14 @@ FOLDERS = {
 
 @mcp.tool()
 def list_emails(
+    ctx: Context,
     account_id: str,
     folder: str = "inbox",
     limit: int = 10,
     include_body: bool = True,
 ) -> list[dict[str, Any]]:
     """folder: 'inbox', 'sent', 'drafts', 'deleted', 'junk', 'archive' (case-insensitive)"""
+    context: MicrosoftContext = ctx.request_context.lifespan_context
 
     folder_path = FOLDERS.get(folder.casefold(), folder)
 
@@ -43,6 +47,8 @@ def list_emails(
 
     emails = list(
         graph.request_paginated(
+            context.http_client,
+            context.cache_file,
             f"/me/mailFolders/{folder_path}/messages",
             account_id,
             params=params,
@@ -55,17 +61,19 @@ def list_emails(
 
 @mcp.tool()
 def get_email(
+    ctx: Context,
     email_id: str,
     account_id: str,
     include_body: bool = True,
     include_attachments: bool = True,
     save_to_file: str | None = None,
 ) -> dict[str, Any]:
+    context: MicrosoftContext = ctx.request_context.lifespan_context
     params = {}
     if include_attachments:
         params["$expand"] = "attachments($select=id,name,size,contentType)"
 
-    result = graph.request("GET", f"/me/messages/{email_id}", account_id, params=params)
+    result = graph.request(context.http_client, context.cache_file, "GET", f"/me/messages/{email_id}", account_id, params=params)
     if not result:
         raise ValueError(f"Email with ID {email_id} not found")
 
@@ -111,6 +119,7 @@ def get_email(
 
 @mcp.tool()
 def create_email_draft(
+    ctx: Context,
     account_id: str,
     to: str,
     subject: str,
@@ -119,6 +128,7 @@ def create_email_draft(
     attachments: str | None = None,
 ) -> dict[str, Any]:
     """to/cc: comma-separated emails. attachments: comma-separated file paths"""
+    context: MicrosoftContext = ctx.request_context.lifespan_context
     # Handle both single and comma-separated email addresses
     to_list = [addr.strip() for addr in to.split(",") if addr.strip()] if "," in to else [to]
 
@@ -164,7 +174,7 @@ def create_email_draft(
     if small_attachments:
         message["attachments"] = small_attachments
 
-    result = graph.request("POST", "/me/messages", account_id, json=message)
+    result = graph.request(context.http_client, context.cache_file, "POST", "/me/messages", account_id, json=message)
     if not result:
         raise ValueError("Failed to create email draft")
 
@@ -172,6 +182,8 @@ def create_email_draft(
 
     for att in large_attachments:
         graph.upload_large_mail_attachment(
+            context.http_client,
+            context.cache_file,
             message_id,
             att["name"],
             att["content_bytes"],
@@ -184,6 +196,7 @@ def create_email_draft(
 
 @mcp.tool()
 def send_email(
+    ctx: Context,
     account_id: str,
     to: str,
     subject: str,
@@ -192,6 +205,7 @@ def send_email(
     attachments: str | None = None,
 ) -> dict[str, str]:
     """to/cc: comma-separated emails. attachments: comma-separated file paths"""
+    context: MicrosoftContext = ctx.request_context.lifespan_context
     # Handle both single and comma-separated email addresses
     to_list = [addr.strip() for addr in to.split(",") if addr.strip()] if "," in to else [to]
 
@@ -239,7 +253,7 @@ def send_email(
             }
             for att in processed_attachments
         ]
-        graph.request("POST", "/me/sendMail", account_id, json={"message": message})
+        graph.request(context.http_client, context.cache_file, "POST", "/me/sendMail", account_id, json={"message": message})
         return {"status": "sent"}
     elif has_large_attachments:
         # Create draft first, then add large attachments, then send
@@ -254,7 +268,7 @@ def send_email(
             cc_list = [cc] if isinstance(cc, str) else cc
             message["ccRecipients"] = [{"emailAddress": {"address": addr}} for addr in cc_list]
 
-        result = graph.request("POST", "/me/messages", account_id, json=message)
+        result = graph.request(context.http_client, context.cache_file, "POST", "/me/messages", account_id, json=message)
         if not result:
             raise ValueError("Failed to create email draft")
 
@@ -263,6 +277,8 @@ def send_email(
         for att in processed_attachments:
             if att["size"] >= 3 * 1024 * 1024:
                 graph.upload_large_mail_attachment(
+                    context.http_client,
+                    context.cache_file,
                     message_id,
                     att["name"],
                     att["content_bytes"],
@@ -276,33 +292,38 @@ def send_email(
                     "contentBytes": base64.b64encode(att["content_bytes"]).decode("utf-8"),
                 }
                 graph.request(
+                    context.http_client,
+                    context.cache_file,
                     "POST",
                     f"/me/messages/{message_id}/attachments",
                     account_id,
                     json=small_att,
                 )
 
-        graph.request("POST", f"/me/messages/{message_id}/send", account_id)
+        graph.request(context.http_client, context.cache_file, "POST", f"/me/messages/{message_id}/send", account_id)
         return {"status": "sent"}
     else:
-        graph.request("POST", "/me/sendMail", account_id, json={"message": message})
+        graph.request(context.http_client, context.cache_file, "POST", "/me/sendMail", account_id, json={"message": message})
         return {"status": "sent"}
 
 
 @mcp.tool()
-def reply_to_email(account_id: str, email_id: str, body: str, attachments: str | None = None, reply_all: bool = False) -> dict[str, str]:
+def reply_to_email(ctx: Context, account_id: str, email_id: str, body: str, attachments: str | None = None, reply_all: bool = False) -> dict[str, str]:
     """attachments: comma-separated file paths"""
+    context: MicrosoftContext = ctx.request_context.lifespan_context
     create_endpoint = "createReplyAll" if reply_all else "createReply"
     reply_endpoint = "replyAll" if reply_all else "reply"
 
     if attachments:
-        draft = graph.request("POST", f"/me/messages/{email_id}/{create_endpoint}", account_id)
+        draft = graph.request(context.http_client, context.cache_file, "POST", f"/me/messages/{email_id}/{create_endpoint}", account_id)
         if not draft or "id" not in draft:
             raise ValueError("Failed to create reply draft")
 
         draft_id = draft["id"]
 
         graph.request(
+            context.http_client,
+            context.cache_file,
             "PATCH",
             f"/me/messages/{draft_id}",
             account_id,
@@ -323,6 +344,8 @@ def reply_to_email(account_id: str, email_id: str, body: str, attachments: str |
                     "contentBytes": base64.b64encode(content_bytes).decode("utf-8"),
                 }
                 graph.request(
+                    context.http_client,
+                    context.cache_file,
                     "POST",
                     f"/me/messages/{draft_id}/attachments",
                     account_id,
@@ -330,6 +353,8 @@ def reply_to_email(account_id: str, email_id: str, body: str, attachments: str |
                 )
             else:
                 graph.upload_large_mail_attachment(
+                    context.http_client,
+                    context.cache_file,
                     draft_id,
                     att_name,
                     content_bytes,
@@ -337,18 +362,19 @@ def reply_to_email(account_id: str, email_id: str, body: str, attachments: str |
                     "application/octet-stream",
                 )
 
-        graph.request("POST", f"/me/messages/{draft_id}/send", account_id)
+        graph.request(context.http_client, context.cache_file, "POST", f"/me/messages/{draft_id}/send", account_id)
         return {"status": "sent"}
     else:
         endpoint = f"/me/messages/{email_id}/{reply_endpoint}"
         payload = {"message": {"body": {"contentType": "Text", "content": body}}}
-        graph.request("POST", endpoint, account_id, json=payload)
+        graph.request(context.http_client, context.cache_file, "POST", endpoint, account_id, json=payload)
         return {"status": "sent"}
 
 
 @mcp.tool()
-def get_attachment(email_id: str, attachment_id: str, save_path: str, account_id: str) -> dict[str, Any]:
-    result = graph.request("GET", f"/me/messages/{email_id}/attachments/{attachment_id}", account_id)
+def get_attachment(ctx: Context, email_id: str, attachment_id: str, save_path: str, account_id: str) -> dict[str, Any]:
+    context: MicrosoftContext = ctx.request_context.lifespan_context
+    result = graph.request(context.http_client, context.cache_file, "GET", f"/me/messages/{email_id}/attachments/{attachment_id}", account_id)
 
     if not result:
         raise ValueError("Attachment not found")
@@ -372,11 +398,13 @@ def get_attachment(email_id: str, attachment_id: str, save_path: str, account_id
 
 @mcp.tool()
 def search_emails(
+    ctx: Context,
     query: str,
     account_id: str,
     limit: int = 50,
     folder: str | None = None,
 ) -> list[dict[str, Any]]:
+    context: MicrosoftContext = ctx.request_context.lifespan_context
     if folder:
         # For folder-specific search, use the traditional endpoint
         folder_path = FOLDERS.get(folder.casefold(), folder)
@@ -388,6 +416,6 @@ def search_emails(
             "$select": "id,subject,from,toRecipients,receivedDateTime,hasAttachments,body,conversationId,isRead",
         }
 
-        return list(graph.request_paginated(endpoint, account_id, params=params, limit=limit))
+        return list(graph.request_paginated(context.http_client, context.cache_file, endpoint, account_id, params=params, limit=limit))
 
-    return list(graph.search_query(query, ["message"], account_id, limit))
+    return list(graph.search_query(context.http_client, context.cache_file, query, ["message"], account_id, limit))

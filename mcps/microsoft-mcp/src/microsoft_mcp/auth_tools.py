@@ -1,19 +1,84 @@
 """Authentication-related tools for Microsoft MCP"""
 
-from mcp.server.fastmcp import FastMCP
-from . import auth
+import argparse
+import httpx
+import logging
+import threading
+from pathlib import Path
+from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator
+from mcp.server.fastmcp import FastMCP, Context
+from . import auth, monitor
+from .context import MicrosoftContext
 
-mcp = FastMCP("microsoft-mcp")
+
+@asynccontextmanager
+async def microsoft_lifespan(server: FastMCP) -> AsyncIterator[MicrosoftContext]:
+    """Manage Microsoft MCP lifecycle"""
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data-dir", type=str, required=True)
+    parser.add_argument("--notifications-dir", type=str, required=True)
+    args, _ = parser.parse_known_args()
+
+    data_dir = Path(args.data_dir).resolve()
+    data_dir.mkdir(parents=True, exist_ok=True)
+    notif_dir = Path(args.notifications_dir).resolve()
+    notif_dir.mkdir(parents=True, exist_ok=True)
+
+    cache_file = data_dir / "auth_cache.bin"
+    http_client = httpx.Client(timeout=30.0, follow_redirects=True)
+
+    # Setup monitor
+    monitor_base_dir = data_dir / "monitor"
+    monitor_base_dir.mkdir(parents=True, exist_ok=True)
+    monitor_state_file = monitor_base_dir / "state.txt"
+    monitor_log_file = monitor_base_dir / "monitor.log"
+
+    monitor_logger = logging.getLogger("microsoft_mcp.monitor")
+    monitor_logger.setLevel(logging.INFO)
+    if not monitor_logger.handlers:
+        file_handler = logging.FileHandler(monitor_log_file)
+        file_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+        monitor_logger.addHandler(file_handler)
+
+    monitor_stop_event = threading.Event()
+
+    ctx = MicrosoftContext(
+        cache_file=cache_file,
+        http_client=http_client,
+        notif_dir=notif_dir,
+        monitor_base_dir=monitor_base_dir,
+        monitor_state_file=monitor_state_file,
+        monitor_log_file=monitor_log_file,
+        monitor_logger=monitor_logger,
+        monitor_stop_event=monitor_stop_event,
+    )
+
+    # Start monitor thread
+    monitor_thread = threading.Thread(target=monitor.run, args=(ctx,), daemon=True)
+    monitor_thread.start()
+
+    try:
+        yield ctx
+    finally:
+        monitor_stop_event.set()
+        monitor_thread.join(timeout=5)
+        http_client.close()
+
+
+mcp = FastMCP("microsoft-mcp", lifespan=microsoft_lifespan)
 
 
 @mcp.tool()
-def list_accounts() -> list[dict[str, str]]:
-    return [{"username": acc.username, "account_id": acc.account_id} for acc in auth.list_accounts()]
+def list_accounts(ctx: Context) -> list[dict[str, str]]:
+    context: MicrosoftContext = ctx.request_context.lifespan_context
+    return [{"username": acc.username, "account_id": acc.account_id} for acc in auth.list_accounts(context.cache_file)]
 
 
 @mcp.tool()
-def authenticate_account() -> dict[str, str]:
-    app = auth.get_app()
+def authenticate_account(ctx: Context) -> dict[str, str]:
+    context: MicrosoftContext = ctx.request_context.lifespan_context
+    app = auth.get_app(context.cache_file)
     flow = app.initiate_device_flow(scopes=auth.SCOPES)
 
     if "user_code" not in flow:
@@ -40,16 +105,18 @@ def authenticate_account() -> dict[str, str]:
 
 
 @mcp.tool()
-def complete_authentication(flow_cache: str) -> dict[str, str]:
+def complete_authentication(ctx: Context, flow_cache: str) -> dict[str, str]:
     """flow_cache: use _flow_cache value from authenticate_account response"""
     import ast
+
+    context: MicrosoftContext = ctx.request_context.lifespan_context
 
     try:
         flow = ast.literal_eval(flow_cache)
     except (ValueError, SyntaxError):
         raise ValueError("Invalid flow cache data")
 
-    app = auth.get_app()
+    app = auth.get_app(context.cache_file)
     result = app.acquire_token_by_device_flow(flow)
 
     if "error" in result:
@@ -65,7 +132,7 @@ def complete_authentication(flow_cache: str) -> dict[str, str]:
     # Save the token cache
     cache = app.token_cache
     if isinstance(cache, auth.msal.SerializableTokenCache) and cache.has_state_changed:
-        auth._write_cache(cache.serialize())
+        auth._write_cache(context.cache_file, cache.serialize())
 
     # Get the newly added account
     accounts = app.get_accounts()

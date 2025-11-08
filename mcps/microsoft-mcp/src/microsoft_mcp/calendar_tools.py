@@ -2,17 +2,21 @@
 
 import datetime as dt
 from typing import Any
+from mcp.server.fastmcp import Context
 from .auth_tools import mcp  # Use the shared MCP instance
 from . import graph
+from .context import MicrosoftContext
 
 
 @mcp.tool()
 def list_events(
+    ctx: Context,
     account_id: str,
     days_ahead: int = 7,
     days_back: int = 0,
     include_details: bool = True,
 ) -> list[dict[str, Any]]:
+    context: MicrosoftContext = ctx.request_context.lifespan_context
     now = dt.datetime.now(dt.timezone.utc)
     start = (now - dt.timedelta(days=days_back)).isoformat()
     end = (now + dt.timedelta(days=days_ahead)).isoformat()
@@ -30,13 +34,14 @@ def list_events(
         params["$select"] = "id,subject,start,end,location,organizer,seriesMasterId"
 
     # Use calendarView to get recurring event instances
-    events = list(graph.request_paginated("/me/calendarView", account_id, params=params))
+    events = list(graph.request_paginated(context.http_client, context.cache_file, "/me/calendarView", account_id, params=params))
 
     return events
 
 
 @mcp.tool()
 def create_event(
+    ctx: Context,
     account_id: str,
     subject: str,
     start: str,
@@ -47,6 +52,7 @@ def create_event(
     timezone: str = "UTC",
 ) -> dict[str, Any]:
     """start/end: ISO-8601 datetime (e.g. '2024-01-15T14:00:00'). attendees: comma-separated emails or list"""
+    context: MicrosoftContext = ctx.request_context.lifespan_context
     event = {
         "subject": subject,
         "start": {"dateTime": start, "timeZone": timezone},
@@ -66,15 +72,16 @@ def create_event(
             attendees_list = [addr.strip() for addr in attendees.split(",") if addr.strip()] if "," in attendees else [attendees]
         event["attendees"] = [{"emailAddress": {"address": a}, "type": "required"} for a in attendees_list]
 
-    result = graph.request("POST", "/me/events", account_id, json=event)
+    result = graph.request(context.http_client, context.cache_file, "POST", "/me/events", account_id, json=event)
     if not result:
         raise ValueError("Failed to create event")
     return result
 
 
 @mcp.tool()
-def update_event(event_id: str, updates: dict[str, Any], account_id: str) -> dict[str, Any]:
+def update_event(ctx: Context, event_id: str, updates: dict[str, Any], account_id: str) -> dict[str, Any]:
     """updates keys: 'subject', 'start' (ISO-8601), 'end' (ISO-8601), 'location', 'body', 'timezone'"""
+    context: MicrosoftContext = ctx.request_context.lifespan_context
     formatted_updates = {}
 
     if "subject" in updates:
@@ -94,32 +101,35 @@ def update_event(event_id: str, updates: dict[str, Any], account_id: str) -> dic
     if "body" in updates:
         formatted_updates["body"] = {"contentType": "Text", "content": updates["body"]}
 
-    result = graph.request("PATCH", f"/me/events/{event_id}", account_id, json=formatted_updates)
+    result = graph.request(context.http_client, context.cache_file, "PATCH", f"/me/events/{event_id}", account_id, json=formatted_updates)
     return result or {"status": "updated"}
 
 
 @mcp.tool()
-def delete_event(account_id: str, event_id: str, send_cancellation: bool = True) -> dict[str, str]:
+def delete_event(ctx: Context, account_id: str, event_id: str, send_cancellation: bool = True) -> dict[str, str]:
     """Delete or cancel a calendar event"""
+    context: MicrosoftContext = ctx.request_context.lifespan_context
 
     if send_cancellation:
-        graph.request("POST", f"/me/events/{event_id}/cancel", account_id, json={})
+        graph.request(context.http_client, context.cache_file, "POST", f"/me/events/{event_id}/cancel", account_id, json={})
     else:
-        graph.request("DELETE", f"/me/events/{event_id}", account_id)
+        graph.request(context.http_client, context.cache_file, "DELETE", f"/me/events/{event_id}", account_id)
     return {"status": "deleted"}
 
 
 @mcp.tool()
 def respond_event(
+    ctx: Context,
     account_id: str,
     event_id: str,
     response: str = "accept",
     message: str | None = None,
 ) -> dict[str, str]:
     """Respond to event invitation (accept, decline, tentativelyAccept)"""
+    context: MicrosoftContext = ctx.request_context.lifespan_context
     payload: dict[str, Any] = {"sendResponse": True}
     if message:
         payload["comment"] = message
 
-    graph.request("POST", f"/me/events/{event_id}/{response}", account_id, json=payload)
+    graph.request(context.http_client, context.cache_file, "POST", f"/me/events/{event_id}/{response}", account_id, json=payload)
     return {"status": response}

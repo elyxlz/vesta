@@ -1,17 +1,17 @@
 from datetime import datetime as dt, timedelta
-from contextlib import closing
+from contextlib import closing, asynccontextmanager
 from dataclasses import dataclass
+from collections.abc import AsyncIterator
+import argparse
 import sqlite3
 import uuid
 from pathlib import Path
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP, Context
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.schedulers.background import BackgroundScheduler
 from .scheduler import write_notification
-
-mcp = FastMCP("scheduler-mcp")
 
 
 @dataclass
@@ -21,25 +21,44 @@ class SchedulerContext:
     notif_dir: Path
 
 
-_context: SchedulerContext | None = None
+@asynccontextmanager
+async def scheduler_lifespan(server: FastMCP) -> AsyncIterator[SchedulerContext]:
+    """Manage scheduler lifecycle."""
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data-dir", type=str, required=True)
+    parser.add_argument("--notifications-dir", type=str, required=True)
+    args, _ = parser.parse_known_args()
+
+    data_dir = Path(args.data_dir).resolve()
+    data_dir.mkdir(parents=True, exist_ok=True)
+    notif_dir = Path(args.notifications_dir).resolve()
+    notif_dir.mkdir(parents=True, exist_ok=True)
+
+    from . import scheduler as scheduler_module
+    scheduler = scheduler_module.create_scheduler(data_dir)
+    scheduler.start()
+
+    ctx = SchedulerContext(scheduler, data_dir, notif_dir)
+    init_db(ctx)
+    check_missed_reminders(ctx)
+
+    try:
+        yield ctx
+    finally:
+        scheduler.shutdown(wait=True)
 
 
-def init_tools(scheduler: BackgroundScheduler, data_dir: Path, notif_dir: Path):
-    global _context
-    _context = SchedulerContext(scheduler, data_dir, notif_dir)
-    init_db()
-    check_missed_reminders()
+mcp = FastMCP("scheduler-mcp", lifespan=scheduler_lifespan)
 
 
-def get_db():
-    assert _context is not None
-    conn = sqlite3.connect(_context.data_dir / "reminders.db")
+def get_db(ctx: SchedulerContext):
+    conn = sqlite3.connect(ctx.data_dir / "reminders.db")
     conn.row_factory = sqlite3.Row
     return conn
 
 
-def init_db():
-    with closing(get_db()) as conn:
+def init_db(ctx: SchedulerContext):
+    with closing(get_db(ctx)) as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS reminders (
                 id TEXT PRIMARY KEY,
@@ -73,29 +92,29 @@ def init_db():
         conn.commit()
 
 
-def send_reminder_job(reminder_id: str, message: str):
+def send_reminder_job(reminder_id: str, message: str, data_dir: Path, notif_dir: Path):
     """Module-level function for APScheduler to call"""
-    assert _context is not None
-    write_notification(_context.notif_dir, reminder_id, message)
-    with closing(get_db()) as conn:
+    write_notification(notif_dir, reminder_id, message)
+    conn = sqlite3.connect(data_dir / "reminders.db")
+    conn.row_factory = sqlite3.Row
+    with closing(conn):
         conn.execute("UPDATE reminders SET fired = 1 WHERE id = ?", (reminder_id,))
         conn.commit()
 
 
-def check_missed_reminders():
+def check_missed_reminders(ctx: SchedulerContext):
     from datetime import datetime, timezone
 
-    assert _context is not None
     now = datetime.now(timezone.utc).isoformat()
 
-    with closing(get_db()) as conn:
+    with closing(get_db(ctx)) as conn:
         cursor = conn.execute(
             "SELECT id, message, scheduled_time FROM reminders WHERE fired = 0 AND scheduled_time < ?",
             (now,),
         )
         for row in cursor:
             write_notification(
-                _context.notif_dir,
+                ctx.notif_dir,
                 row["id"],
                 row["message"],
                 {"missed": True, "scheduled_time": row["scheduled_time"]},
@@ -127,6 +146,7 @@ def parse_relative_date(date_str: str) -> str | None:
 
 @mcp.tool()
 def set_reminder(
+    ctx: Context,
     message: str,
     datetime: str | None = None,
     seconds: float | None = None,
@@ -138,6 +158,7 @@ def set_reminder(
     time: str | None = None,
 ) -> dict:
     """datetime: ISO-8601 format. time: HH:MM format. recurring: 'daily', 'hourly', or 'weekly'"""
+    context: SchedulerContext = ctx.request_context.lifespan_context
 
     reminder_id = str(uuid.uuid4())[:8]
     schedule_info = None
@@ -193,18 +214,17 @@ def set_reminder(
             parts.append(f"{seconds} seconds")
         schedule_info = f"once (in {' '.join(parts)})"
 
-    assert _context is not None
-    _context.scheduler.add_job(
+    context.scheduler.add_job(
         func=send_reminder_job,
         trigger=trigger,
-        args=[reminder_id, message],
+        args=[reminder_id, message, context.data_dir, context.notif_dir],
         id=reminder_id,
         replace_existing=True,
     )
 
-    next_run = _context.scheduler.get_job(reminder_id).next_run_time
+    next_run = context.scheduler.get_job(reminder_id).next_run_time
 
-    with closing(get_db()) as conn:
+    with closing(get_db(context)) as conn:
         conn.execute(
             "INSERT OR REPLACE INTO reminders (id, message, schedule_type, scheduled_time, fired) VALUES (?, ?, ?, ?, 0)",
             (
@@ -225,15 +245,15 @@ def set_reminder(
 
 
 @mcp.tool()
-def list_reminders() -> list[dict]:
+def list_reminders(ctx: Context) -> list[dict]:
     """List all active reminders"""
-    assert _context is not None
-    with closing(get_db()) as conn:
+    context: SchedulerContext = ctx.request_context.lifespan_context
+    with closing(get_db(context)) as conn:
         cursor = conn.execute("SELECT * FROM reminders")
         reminder_data = {row["id"]: dict(row) for row in cursor}
 
     reminders = []
-    for job in _context.scheduler.get_jobs():
+    for job in context.scheduler.get_jobs():
         if job.id in reminder_data:
             reminders.append(
                 {
@@ -248,11 +268,11 @@ def list_reminders() -> list[dict]:
 
 
 @mcp.tool()
-def cancel_reminder(reminder_id: str) -> dict:
-    assert _context is not None
+def cancel_reminder(ctx: Context, reminder_id: str) -> dict:
+    context: SchedulerContext = ctx.request_context.lifespan_context
     try:
-        _context.scheduler.remove_job(reminder_id)
-        with closing(get_db()) as conn:
+        context.scheduler.remove_job(reminder_id)
+        with closing(get_db(context)) as conn:
             conn.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))
             conn.commit()
         return {"status": "cancelled", "id": reminder_id}
@@ -261,15 +281,16 @@ def cancel_reminder(reminder_id: str) -> dict:
 
 
 @mcp.tool()
-def add_task(title: str, due: str | None = None, priority: int = 2, metadata: str | None = None) -> dict:
+def add_task(ctx: Context, title: str, due: str | None = None, priority: int = 2, metadata: str | None = None) -> dict:
     """priority: 1 (low), 2 (normal), 3 (high). due: 'today', 'tomorrow', or YYYY-MM-DD"""
+    context: SchedulerContext = ctx.request_context.lifespan_context
     if priority not in (1, 2, 3):
         raise ValueError("Priority must be 1 (low), 2 (normal), or 3 (high)")
 
     task_id = str(uuid.uuid4())[:8]
     due_date = parse_relative_date(due) if due else None
 
-    with closing(get_db()) as conn:
+    with closing(get_db(context)) as conn:
         conn.execute(
             "INSERT INTO tasks (id, title, priority, due_date, metadata) VALUES (?, ?, ?, ?, ?)",
             (task_id, title, priority, due_date, metadata),
@@ -287,8 +308,9 @@ def add_task(title: str, due: str | None = None, priority: int = 2, metadata: st
 
 
 @mcp.tool()
-def list_tasks(show_completed: bool = False) -> list[dict]:
-    with closing(get_db()) as conn:
+def list_tasks(ctx: Context, show_completed: bool = False) -> list[dict]:
+    context: SchedulerContext = ctx.request_context.lifespan_context
+    with closing(get_db(context)) as conn:
         query = "SELECT * FROM tasks"
         if not show_completed:
             query += " WHERE status != 'done'"
@@ -301,14 +323,15 @@ def list_tasks(show_completed: bool = False) -> list[dict]:
 
 
 @mcp.tool()
-def update_task(id: str, status: str | None = None, title: str | None = None, metadata: str | None = None, priority: int | None = None) -> dict:
+def update_task(ctx: Context, id: str, status: str | None = None, title: str | None = None, metadata: str | None = None, priority: int | None = None) -> dict:
     """priority: 1 (low), 2 (normal), 3 (high). status: 'pending' or 'done'"""
+    context: SchedulerContext = ctx.request_context.lifespan_context
     if status and status not in ("pending", "done"):
         raise ValueError("Status must be pending or done")
     if priority is not None and priority not in (1, 2, 3):
         raise ValueError("Priority must be 1 (low), 2 (normal), or 3 (high)")
 
-    with closing(get_db()) as conn:
+    with closing(get_db(context)) as conn:
         cursor = conn.execute("SELECT * FROM tasks WHERE id = ?", (id,))
         result = cursor.fetchone()
         if not result:
