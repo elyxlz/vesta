@@ -264,45 +264,40 @@ def monitor_thread(ctx: MicrosoftContext):
         pass
 ```
 
-### Tool Definition (using FastMCP from mcp.server)
+### Tool Docstrings
+
+**Rule**: Only write docstrings for tools when the tool name + parameter types don't make the intent clear.
+
 ```python
-from mcp.server.fastmcp import FastMCP
+# Good - no docstring needed, name + types are clear
+@mcp.tool()
+def list_emails(ctx: Context, account_id: str, limit: int = 10) -> list[dict]:
+    ...
 
-mcp = FastMCP("mcp-name")
+# Good - docstring adds value for constraints
+@mcp.tool()
+def create_event(ctx: Context, account_id: str, start: str, end: str) -> dict:
+    """start/end: ISO-8601 datetime (e.g. '2024-01-15T14:00:00')"""
+    ...
 
-@mcp.tool()  # Note the parentheses
-def tool_name(param: str) -> dict:
-    """Tool description for LLM"""
-    # Implementation
-    return result
+# Bad - docstring just repeats the function signature
+@mcp.tool()
+def send_email(ctx: Context, to: str, subject: str, body: str) -> dict:
+    """Send an email with to, subject, and body"""  # Redundant!
+    ...
 ```
+
+Keep docstrings minimal:
+- Document format constraints (ISO-8601, E.164, etc.)
+- Document enum values
+- Document special parameter formats (comma-separated, etc.)
+- **Don't** repeat what's obvious from name + types
 
 ### Authentication
 - Store credentials in environment variables
 - Use `.env` file for local development
 - Check for required env vars at startup
 - Provide clear error messages if missing
-
-### Testing
-```python
-# Integration tests using MCP client
-async def get_session():
-    server_params = StdioServerParameters(
-        command="uv",
-        args=["run", "mcp-name"],
-        env={"REQUIRED_VAR": os.getenv("REQUIRED_VAR")}
-    )
-    async with stdio_client(server_params) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            yield session
-
-@pytest.mark.asyncio
-async def test_tool():
-    async for session in get_session():
-        result = await session.call_tool("tool_name", {"param": "value"})
-        assert not result.isError
-```
 
 ## Creating a New MCP
 
@@ -364,14 +359,6 @@ MCP_NAME_API_KEY=your-api-key-here
 MCP_NAME_ENDPOINT=https://api.example.com
 ```
 
-## Notification Support
-
-For MCPs that need to send notifications to Vesta:
-1. Write to shared `notifications.json` file
-2. Use file locking for concurrent access
-3. Include timestamp, source, type, and data fields
-4. Vesta will process and clear notifications on each run
-
 ## Error Handling
 
 - Return clear error messages that help Vesta understand what went wrong
@@ -396,33 +383,13 @@ For MCPs that need to send notifications to Vesta:
       ...
   ```
 
-## Required Refactoring Status
-
-### ✅ WhatsApp MCP (COMPLETED)
-- ✅ Moved from `whatsapp-mcp-server/` to `src/whatsapp_mcp/`
-- ✅ Split main.py into server.py and tools.py
-- ✅ Updated pyproject.toml with proper metadata
-- ✅ Added .env.example file
-
-### ✅ Microsoft MCP (COMPLETED)
-- ✅ Split 1155-line tools.py into domain modules:
-  - email_tools.py - Email operations
-  - calendar_tools.py - Calendar operations
-  - file_tools.py - OneDrive operations
-  - auth_tools.py - Authentication
-  - search_tools.py - Search operations
-- ✅ Added .env.example file
-
-### ✅ Scheduler MCP (ALREADY COMPLIANT)
-- Structure already follows standards
-- ✅ Added .env.example file
-
 ## Enforcement Rules
 
 1. **File Size Limits**: Enforce during code review
    - tools.py: max 400 lines
    - Domain modules: max 500 lines
-   - server.py: max 100 lines
+   - server.py: max 10 lines
+   - context.py: max 50 lines
 
 2. **Structure Validation**: Check before commits
    - Must have src/mcp_name/ structure
