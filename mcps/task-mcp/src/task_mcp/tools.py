@@ -9,21 +9,42 @@ from pathlib import Path
 from mcp.server.fastmcp import FastMCP, Context
 
 
+def _validate_directory(path_str: str | None, param_name: str) -> Path:
+    """Validate and prepare a directory parameter"""
+    if not path_str:
+        raise ValueError(f"Error: --{param_name} is required")
+
+    path = Path(path_str).resolve()
+    path.mkdir(parents=True, exist_ok=True)
+
+    # Test writability
+    test_file = path / ".write_test"
+    try:
+        test_file.touch()
+        test_file.unlink()
+    except Exception as e:
+        raise RuntimeError(f"Error: --{param_name} directory is not writable: {path} ({e})")
+
+    return path
+
+
 @dataclass
 class TaskContext:
     data_dir: Path
+    log_dir: Path
 
 
 @asynccontextmanager
 async def task_lifespan(server: FastMCP) -> AsyncIterator[TaskContext]:
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", type=str, required=True)
+    parser.add_argument("--log-dir", type=str, required=True)
     args, _ = parser.parse_known_args()
 
-    data_dir = Path(args.data_dir).resolve()
-    data_dir.mkdir(parents=True, exist_ok=True)
+    data_dir = _validate_directory(args.data_dir, "data-dir")
+    log_dir = _validate_directory(args.log_dir, "log-dir")
 
-    ctx = TaskContext(data_dir)
+    ctx = TaskContext(data_dir, log_dir)
     init_db(ctx)
 
     try:
@@ -135,9 +156,15 @@ def list_tasks(ctx: Context, show_completed: bool = False) -> list[dict]:
 
 @mcp.tool()
 def update_task(
-    ctx: Context, task_id: str, status: str | None = None, title: str | None = None, metadata: str | None = None, priority: int | str | None = None
+    ctx: Context,
+    task_id: str,
+    status: str | None = None,
+    title: str | None = None,
+    metadata: str | None = None,
+    priority: int | str | None = None,
+    append_metadata: bool = True,
 ) -> dict:
-    """priority: 1-3 or 'low'/'normal'/'high'. status: 'pending' or 'done'"""
+    """priority: 1-3 or 'low'/'normal'/'high'. status: 'pending' or 'done'. append_metadata: if True (default), appends to existing metadata; if False, replaces it"""
     context: TaskContext = ctx.request_context.lifespan_context
     if status and status not in ("pending", "done"):
         raise ValueError(f"Status must be pending or done, got {status}")
@@ -162,7 +189,13 @@ def update_task(
             elif status == "pending":
                 updates.append("completed_at = NULL")
 
-        for field, value in [("title", title), ("metadata", metadata), ("priority", priority)]:
+        final_metadata = metadata
+        if metadata is not None and append_metadata:
+            current_metadata = result["metadata"]
+            if current_metadata:
+                final_metadata = f"{current_metadata}\n{metadata}"
+
+        for field, value in [("title", title), ("metadata", final_metadata), ("priority", priority)]:
             if value is not None:
                 updates.append(f"{field} = ?")
                 params.append(value)

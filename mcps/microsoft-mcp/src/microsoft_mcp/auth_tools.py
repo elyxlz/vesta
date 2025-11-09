@@ -13,6 +13,25 @@ from . import auth, monitor
 from .context import MicrosoftContext
 
 
+def _validate_directory(path_str: str | None, param_name: str) -> Path:
+    """Validate and prepare a directory parameter"""
+    if not path_str:
+        raise ValueError(f"Error: --{param_name} is required")
+
+    path = Path(path_str).resolve()
+    path.mkdir(parents=True, exist_ok=True)
+
+    # Test writability
+    test_file = path / ".write_test"
+    try:
+        test_file.touch()
+        test_file.unlink()
+    except Exception as e:
+        raise RuntimeError(f"Error: --{param_name} directory is not writable: {path} ({e})")
+
+    return path
+
+
 @asynccontextmanager
 async def microsoft_lifespan(server: FastMCP) -> AsyncIterator[MicrosoftContext]:
     """Manage Microsoft MCP lifecycle"""
@@ -20,13 +39,13 @@ async def microsoft_lifespan(server: FastMCP) -> AsyncIterator[MicrosoftContext]
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", type=str, required=True)
+    parser.add_argument("--log-dir", type=str, required=True)
     parser.add_argument("--notifications-dir", type=str, required=True)
     args, _ = parser.parse_known_args()
 
-    data_dir = Path(args.data_dir).resolve()
-    data_dir.mkdir(parents=True, exist_ok=True)
-    notif_dir = Path(args.notifications_dir).resolve()
-    notif_dir.mkdir(parents=True, exist_ok=True)
+    data_dir = _validate_directory(args.data_dir, "data-dir")
+    log_dir = _validate_directory(args.log_dir, "log-dir")
+    notif_dir = _validate_directory(args.notifications_dir, "notifications-dir")
 
     cache_file = data_dir / "auth_cache.bin"
     http_client = httpx.Client(timeout=30.0, follow_redirects=True)
@@ -35,7 +54,7 @@ async def microsoft_lifespan(server: FastMCP) -> AsyncIterator[MicrosoftContext]
     monitor_base_dir = data_dir / "monitor"
     monitor_base_dir.mkdir(parents=True, exist_ok=True)
     monitor_state_file = monitor_base_dir / "state.txt"
-    monitor_log_file = monitor_base_dir / "monitor.log"
+    monitor_log_file = log_dir / "monitor.log"
 
     monitor_logger = logging.getLogger("microsoft_mcp.monitor")
     monitor_logger.setLevel(logging.INFO)
@@ -62,6 +81,7 @@ async def microsoft_lifespan(server: FastMCP) -> AsyncIterator[MicrosoftContext]
     ctx = MicrosoftContext(
         cache_file=cache_file,
         http_client=http_client,
+        log_dir=log_dir,
         notif_dir=notif_dir,
         monitor_base_dir=monitor_base_dir,
         monitor_state_file=monitor_state_file,

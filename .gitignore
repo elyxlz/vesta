@@ -1,4 +1,7 @@
 # Personal data
+data/
+logs/
+notifications/
 
 # Python
 __pycache__/
@@ -29,6 +32,9 @@ build/
 *.bak
 *.orig
 tmp/
+
+# OneDrive mount
+onedrive/
 
 # Test artifacts
 .coverage

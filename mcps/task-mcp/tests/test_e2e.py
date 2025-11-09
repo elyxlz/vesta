@@ -26,14 +26,16 @@ def parse_result(result, is_list_tool=False):
 
 async def get_session():
     """Create MCP client session for testing"""
-    # Create temporary directory for data
+    # Create temporary directories for data and logs
     test_dir = Path(tempfile.mkdtemp(prefix="task_mcp_test_"))
     data_dir = test_dir / "data"
+    log_dir = test_dir / "logs"
     data_dir.mkdir(parents=True)
+    log_dir.mkdir(parents=True)
 
     server_params = StdioServerParameters(
         command="uv",
-        args=["run", "task-mcp", "--data-dir", str(data_dir)],
+        args=["run", "task-mcp", "--data-dir", str(data_dir), "--log-dir", str(log_dir)],
         cwd=str(Path(__file__).parent.parent),
     )
 

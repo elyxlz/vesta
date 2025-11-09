@@ -44,6 +44,8 @@ def run(ctx: MicrosoftContext):
                     result = graph.request(
                         ctx.http_client,
                         ctx.cache_file,
+                        ctx.scopes,
+                        ctx.base_url,
                         "GET",
                         "/me/mailFolders/inbox/messages",
                         acc.account_id,
@@ -90,6 +92,8 @@ def run(ctx: MicrosoftContext):
                     cal_result = graph.request(
                         ctx.http_client,
                         ctx.cache_file,
+                        ctx.scopes,
+                        ctx.base_url,
                         "GET",
                         "/me/calendarView",
                         acc.account_id,

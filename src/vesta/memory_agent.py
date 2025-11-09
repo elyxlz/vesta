@@ -1,8 +1,9 @@
-import pathlib as pl
 import typing as tp
 import difflib
 
 import claude_code_sdk as ccsdk
+
+from . import models as vm
 
 MEMORY_PROMPT = """hey, you're the memory agent for vesta. you manage the MEMORY.md file intelligently.
 
@@ -114,8 +115,6 @@ MEMORY_PROMPT = """hey, you're the memory agent for vesta. you manage the MEMORY
 
 remember: you're maintaining a living document. keep it organized, current, and useful by understanding its structure rather than imposing one. be especially vigilant about social dynamics and always document what could be done better."""
 
-MEMORY_FILE = pl.Path(__file__).parent.parent.parent / "MEMORY.md"
-
 
 def format_conversation(history: list[dict[str, tp.Any]]) -> str:
     """Convert conversation history to formatted text."""
@@ -124,14 +123,13 @@ def format_conversation(history: list[dict[str, tp.Any]]) -> str:
 
 async def preserve_conversation_memory(
     conversation_history: list[dict[str, tp.Any]],
+    config: vm.VestaSettings,
 ) -> str:
     if not conversation_history:
         return ""
 
-    before = MEMORY_FILE.read_text() if MEMORY_FILE.exists() else ""
-
-    system_prompt_path = pl.Path(__file__).parent.parent.parent / "SYSTEM_PROMPT.md"
-    system_prompt = system_prompt_path.read_text() if system_prompt_path.exists() else ""
+    before = config.memory_file.read_text() if config.memory_file.exists() else ""
+    system_prompt = config.system_prompt_file.read_text() if config.system_prompt_file.exists() else ""
 
     prompt = f"""System context (first 2000 chars):
 {system_prompt[:2000]}...
@@ -156,7 +154,7 @@ Check MEMORY.md and update it with any new important information from this conve
     finally:
         await client.__aexit__(None, None, None)
 
-    after = MEMORY_FILE.read_text() if MEMORY_FILE.exists() else ""
+    after = config.memory_file.read_text() if config.memory_file.exists() else ""
     if before == after:
         return ""
 

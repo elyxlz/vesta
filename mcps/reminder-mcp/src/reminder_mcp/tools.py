@@ -14,10 +14,30 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from .scheduler import write_notification
 
 
+def _validate_directory(path_str: str | None, param_name: str) -> Path:
+    """Validate and prepare a directory parameter"""
+    if not path_str:
+        raise ValueError(f"Error: --{param_name} is required")
+
+    path = Path(path_str).resolve()
+    path.mkdir(parents=True, exist_ok=True)
+
+    # Test writability
+    test_file = path / ".write_test"
+    try:
+        test_file.touch()
+        test_file.unlink()
+    except Exception as e:
+        raise RuntimeError(f"Error: --{param_name} directory is not writable: {path} ({e})")
+
+    return path
+
+
 @dataclass
 class ReminderContext:
     scheduler: BackgroundScheduler
     data_dir: Path
+    log_dir: Path
     notif_dir: Path
 
 
@@ -25,20 +45,20 @@ class ReminderContext:
 async def reminder_lifespan(server: FastMCP) -> AsyncIterator[ReminderContext]:
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", type=str, required=True)
+    parser.add_argument("--log-dir", type=str, required=True)
     parser.add_argument("--notifications-dir", type=str, required=True)
     args, _ = parser.parse_known_args()
 
-    data_dir = Path(args.data_dir).resolve()
-    data_dir.mkdir(parents=True, exist_ok=True)
-    notif_dir = Path(args.notifications_dir).resolve()
-    notif_dir.mkdir(parents=True, exist_ok=True)
+    data_dir = _validate_directory(args.data_dir, "data-dir")
+    log_dir = _validate_directory(args.log_dir, "log-dir")
+    notif_dir = _validate_directory(args.notifications_dir, "notifications-dir")
 
     from . import scheduler as scheduler_module
 
     scheduler = scheduler_module.create_scheduler(data_dir)
     scheduler.start()
 
-    ctx = ReminderContext(scheduler, data_dir, notif_dir)
+    ctx = ReminderContext(scheduler, data_dir, log_dir, notif_dir)
     init_db(ctx)
     check_missed_reminders(ctx)
 

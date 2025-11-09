@@ -9,6 +9,7 @@ from dataclasses import dataclass
 class MicrosoftContext:
     cache_file: Path
     http_client: httpx.Client
+    log_dir: Path
     notif_dir: Path
     monitor_base_dir: Path
     monitor_state_file: Path

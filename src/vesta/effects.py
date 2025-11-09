@@ -1,7 +1,10 @@
+import asyncio
 import subprocess
 import pathlib as pl
 import datetime as dt
 import shutil
+
+from vesta.constants import Formats
 
 
 def read_file(path: pl.Path) -> str | None:
@@ -69,7 +72,7 @@ def get_current_time() -> dt.datetime:
     return dt.datetime.now()
 
 
-def get_timestamp_string(format: str = "%I:%M %p") -> str:
+def get_timestamp_string(format: str = Formats.TIMESTAMP) -> str:
     return dt.datetime.now().strftime(format)
 
 
@@ -132,8 +135,6 @@ def log_info(message: str, colors: dict[str, str]) -> None:
 
 
 async def sleep(seconds: float) -> None:
-    import asyncio
-
     await asyncio.sleep(seconds)
 
 

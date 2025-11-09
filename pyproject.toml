@@ -38,3 +38,18 @@ target-version = "py310"
 [tool.ruff.lint]
 ignore = ["E402", "E702", "E731", "UP008", "E712"]
 extend-select = ["UP"]
+
+[tool.pyright]
+include = [
+    "src/vesta",
+    "mcps/microsoft-mcp/src",
+    "mcps/scheduler-mcp/src"
+]
+exclude = [
+    "**/tests",
+    "**/__pycache__",
+    "**/.venv"
+]
+pythonVersion = "3.12"
+typeCheckingMode = "basic"
+reportMissingImports = false

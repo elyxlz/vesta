@@ -38,16 +38,18 @@ def parse_result(result, tool_name=None):
 
 async def get_session():
     """Get MCP session"""
-    # Create temporary directories for data and notifications
+    # Create temporary directories for data, logs, and notifications
     test_dir = Path(tempfile.mkdtemp(prefix="microsoft_mcp_test_"))
     data_dir = test_dir / "data"
+    log_dir = test_dir / "logs"
     notif_dir = test_dir / "notifications"
     data_dir.mkdir(parents=True)
+    log_dir.mkdir(parents=True)
     notif_dir.mkdir(parents=True)
 
     server_params = StdioServerParameters(
         command="uv",
-        args=["run", "microsoft-mcp", "--data-dir", str(data_dir), "--notifications-dir", str(notif_dir)],
+        args=["run", "microsoft-mcp", "--data-dir", str(data_dir), "--log-dir", str(log_dir), "--notifications-dir", str(notif_dir)],
         env={
             "MICROSOFT_MCP_CLIENT_ID": os.getenv("MICROSOFT_MCP_CLIENT_ID", ""),
             "MICROSOFT_MCP_TENANT_ID": os.getenv("MICROSOFT_MCP_TENANT_ID", "common"),

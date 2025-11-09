@@ -6,11 +6,12 @@ import typing as tp
 
 import claude_code_sdk.types as ccsdk_types
 import vesta.models as vm
+from vesta.constants import Emoji, Senders, Formats
 
 
 def format_timestamp_message(text: str, sender: str, timestamp: dt.datetime, colors: dict[str, str]) -> list[str]:
-    timestamp_str = timestamp.strftime("%I:%M %p")
-    color_map = {"You": "cyan", "Vesta": "magenta", "System": "yellow"}
+    timestamp_str = timestamp.strftime(Formats.TIMESTAMP)
+    color_map = {Senders.USER: "cyan", Senders.ASSISTANT: "magenta", Senders.SYSTEM: "yellow"}
     base_sender = sender.split("[")[0] if "[" in sender else sender
 
     if base_sender in color_map:
@@ -31,7 +32,7 @@ def format_tool_call(name: str, input_data: tp.Any, sub_agent_context: str | Non
     if name == "Task":
         agent_type = input_data.get("subagent_type", "unknown") if isinstance(input_data, dict) else "unknown"
         description = input_data.get("description", "") if isinstance(input_data, dict) else ""
-        return f"🤖 Task [{agent_type}]: {description or input_preview}", agent_type
+        return f"{Emoji.ROBOT} Task [{agent_type}]: {description or input_preview}", agent_type
 
     prefix = f"[{sub_agent_context}] " if sub_agent_context else ""
 
@@ -39,10 +40,10 @@ def format_tool_call(name: str, input_data: tp.Any, sub_agent_context: str | Non
         parts = name.replace("mcp__", "").split("__")
         service = parts[0] if parts else "unknown"
         action = ".".join(parts[1:]) if len(parts) > 1 else "action"
-        icon = service_icons.get(service, "🔧")
-        return f"🔧 {prefix}{icon} [{service}] {action}: {input_preview}", sub_agent_context
+        icon = service_icons.get(service, Emoji.TOOL)
+        return f"{Emoji.TOOL} {prefix}{icon} [{service}] {action}: {input_preview}", sub_agent_context
 
-    return f"🔧 {prefix}{name}: {input_preview}", sub_agent_context
+    return f"{Emoji.TOOL} {prefix}{name}: {input_preview}", sub_agent_context
 
 
 def extract_usage_from_result(msg: ccsdk_types.ResultMessage) -> dict[str, tp.Any] | None:

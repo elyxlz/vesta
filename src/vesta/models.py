@@ -17,16 +17,7 @@ SERVICE_ICONS = {
     "reminder": "⏰",
     "task": "✅",
     "microsoft": "📧",
-}
-
-
-Colors = {
-    "dim": "\033[2m",
-    "cyan": "\033[96m",
-    "magenta": "\033[95m",
-    "yellow": "\033[93m",
-    "green": "\033[92m",
-    "reset": "\033[0m",
+    "what-day": "📅",
 }
 
 
@@ -51,6 +42,10 @@ class State:
 
 def _get_default_mcp_servers() -> dict[str, McpServer]:
     root = pl.Path(__file__).parent.parent.parent.absolute()
+    data_dir = root / "data"
+    logs_dir = root / "logs"
+    notifications_dir = root / "notifications"
+
     return {
         "microsoft": {
             "command": "uv",
@@ -60,16 +55,18 @@ def _get_default_mcp_servers() -> dict[str, McpServer]:
                 "mcps/microsoft-mcp",
                 "microsoft-mcp",
                 "--data-dir",
-                str(root / "data/microsoft-mcp"),
+                str(data_dir / "microsoft-mcp"),
+                "--log-dir",
+                str(logs_dir / "microsoft-mcp"),
                 "--notifications-dir",
-                str(root / "notifications"),
+                str(notifications_dir),
             ],
         },
         "whatsapp": {
             "command": "sh",
             "args": [
                 "-c",
-                f"cd {root}/mcps/whatsapp-mcp-go && go build -o whatsapp-mcp . && ./whatsapp-mcp --data-dir {root}/data/whatsapp-mcp --notifications-dir {root}/notifications",
+                f"cd {root / 'mcps' / 'whatsapp-mcp-go'} && go build -o whatsapp-mcp . && ./whatsapp-mcp --data-dir {data_dir / 'whatsapp-mcp'} --log-dir {logs_dir / 'whatsapp-mcp'} --notifications-dir {notifications_dir}",
             ],
         },
         "reminder": {
@@ -80,9 +77,11 @@ def _get_default_mcp_servers() -> dict[str, McpServer]:
                 "mcps/reminder-mcp",
                 "reminder-mcp",
                 "--data-dir",
-                str(root / "data/reminder-mcp"),
+                str(data_dir / "reminder-mcp"),
+                "--log-dir",
+                str(logs_dir / "reminder-mcp"),
                 "--notifications-dir",
-                str(root / "notifications"),
+                str(notifications_dir),
             ],
         },
         "task": {
@@ -93,7 +92,9 @@ def _get_default_mcp_servers() -> dict[str, McpServer]:
                 "mcps/task-mcp",
                 "task-mcp",
                 "--data-dir",
-                str(root / "data/task-mcp"),
+                str(data_dir / "task-mcp"),
+                "--log-dir",
+                str(logs_dir / "task-mcp"),
             ],
         },
         "playwright": {
@@ -107,9 +108,22 @@ def _get_default_mcp_servers() -> dict[str, McpServer]:
                 "--blocked-origins",
                 "googleads.g.doubleclick.net;googlesyndication.com",
                 "--output-dir",
-                str(root / "data/playwright-mcp/screenshots"),
+                str(data_dir / "playwright-mcp" / "screenshots"),
                 "--image-responses",
                 "omit",
+            ],
+        },
+        "what-day": {
+            "command": "uv",
+            "args": [
+                "run",
+                "--directory",
+                "mcps/what-day-mcp",
+                "what-day-mcp",
+                "--data-dir",
+                str(data_dir / "what-day-mcp"),
+                "--log-dir",
+                str(logs_dir / "what-day-mcp"),
             ],
         },
     }
@@ -127,12 +141,69 @@ class VestaSettings(pyd_settings.BaseSettings):
     response_timeout: int = 180
     memory_agent_timeout: int = 1200
     typing_animation_delay: float = 0.5
+    pre_typing_delay: float = 0.8
+    response_spacing_delay: float = 0.3
     shutdown_timeout: int = 310
     task_gather_timeout: int = 2
     max_context_tokens: int = 150000
     enable_nightly_memory: bool = True
     nightly_memory_time: int = 4
     mcp_servers: dict[str, McpServer] = pyd.Field(default_factory=_get_default_mcp_servers)
+
+    # OneDrive configuration
+    onedrive_client_id: str | None = None
+    onedrive_client_secret: str | None = None
+    onedrive_tenant_id: str | None = None
+    onedrive_token: str | None = None
+    onedrive_remote_name: str = "onedrive"
+    onedrive_remote_path: str = "/"
+
+    @property
+    def root_dir(self) -> pl.Path:
+        return pl.Path(__file__).parent.parent.parent.absolute()
+
+    @property
+    def memory_file(self) -> pl.Path:
+        return self.root_dir / "MEMORY.md"
+
+    @property
+    def memory_template(self) -> pl.Path:
+        return self.root_dir / "MEMORY.md.tmp"
+
+    @property
+    def system_prompt_file(self) -> pl.Path:
+        return self.root_dir / "SYSTEM_PROMPT.md"
+
+    @property
+    def notifications_dir(self) -> pl.Path:
+        return self.root_dir / "notifications"
+
+    @property
+    def data_dir(self) -> pl.Path:
+        return self.root_dir / "data"
+
+    @property
+    def logs_dir(self) -> pl.Path:
+        return self.root_dir / "logs"
+
+    @property
+    def onedrive_dir(self) -> pl.Path:
+        return self.root_dir / "onedrive"
+
+    @property
+    def rclone_config_file(self) -> pl.Path:
+        return self.data_dir / "rclone.conf"
+
+    def get_mcp_data_dir(self, mcp_name: str) -> pl.Path:
+        return self.data_dir / f"{mcp_name}-mcp"
+
+    @property
+    def playwright_screenshots_dir(self) -> pl.Path:
+        return self.get_mcp_data_dir("playwright") / "screenshots"
+
+    @property
+    def whatsapp_build_dir(self) -> pl.Path:
+        return self.root_dir / "mcps" / "whatsapp-mcp-go"
 
 
 class Notification(pyd.BaseModel):
