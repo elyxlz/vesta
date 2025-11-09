@@ -2,6 +2,10 @@
 name = "task-mcp"
 version = "0.1.0"
 description = "Task management MCP with priority tracking and due dates"
+readme = "README.md"
+authors = [
+    { name = "elyx", email = "elio@pascarelli.com" }
+]
 requires-python = ">=3.11"
 dependencies = [
     "mcp[cli]>=1.6.0",

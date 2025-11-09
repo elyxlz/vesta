@@ -23,7 +23,6 @@ class ReminderContext:
 
 @asynccontextmanager
 async def reminder_lifespan(server: FastMCP) -> AsyncIterator[ReminderContext]:
-    """Manage reminder lifecycle."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", type=str, required=True)
     parser.add_argument("--notifications-dir", type=str, required=True)
@@ -73,7 +72,6 @@ def init_db(ctx: ReminderContext):
 
 
 def send_reminder_job(reminder_id: str, message: str, data_dir: Path, notif_dir: Path):
-    """Module-level function for APScheduler to call"""
     write_notification(notif_dir, reminder_id, message)
     conn = sqlite3.connect(data_dir / "reminders.db")
     conn.row_factory = sqlite3.Row
@@ -205,7 +203,6 @@ def set_reminder(
 
 @mcp.tool()
 def list_reminders(ctx: Context) -> list[dict]:
-    """List all active reminders"""
     context: ReminderContext = ctx.request_context.lifespan_context
     with closing(get_db(context)) as conn:
         cursor = conn.execute("SELECT * FROM reminders")
@@ -229,11 +226,15 @@ def list_reminders(ctx: Context) -> list[dict]:
 @mcp.tool()
 def cancel_reminder(ctx: Context, reminder_id: str) -> dict:
     context: ReminderContext = ctx.request_context.lifespan_context
+    from apscheduler.jobstores.base import JobLookupError
+
     try:
         context.scheduler.remove_job(reminder_id)
-        with closing(get_db(context)) as conn:
-            conn.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))
-            conn.commit()
-        return {"status": "cancelled", "id": reminder_id}
-    except Exception as e:
-        raise ValueError(f"Reminder {reminder_id} not found") from e
+    except JobLookupError:
+        raise ValueError(f"Reminder {reminder_id} not found in scheduler")
+
+    with closing(get_db(context)) as conn:
+        conn.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))
+        conn.commit()
+
+    return {"status": "cancelled", "id": reminder_id}

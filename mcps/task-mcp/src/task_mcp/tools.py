@@ -16,7 +16,6 @@ class TaskContext:
 
 @asynccontextmanager
 async def task_lifespan(server: FastMCP) -> AsyncIterator[TaskContext]:
-    """Manage task lifecycle."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", type=str, required=True)
     args, _ = parser.parse_known_args()
@@ -85,7 +84,7 @@ def add_task(ctx: Context, title: str, due: str | None = None, priority: int = 2
     """priority: 1 (low), 2 (normal), 3 (high). due: 'today', 'tomorrow', or YYYY-MM-DD"""
     context: TaskContext = ctx.request_context.lifespan_context
     if priority not in (1, 2, 3):
-        raise ValueError("Priority must be 1 (low), 2 (normal), or 3 (high)")
+        raise ValueError(f"Priority must be 1 (low), 2 (normal), or 3 (high), got {priority}")
 
     task_id = str(uuid.uuid4())[:8]
     due_date = parse_relative_date(due) if due else None
@@ -127,9 +126,9 @@ def update_task(ctx: Context, id: str, status: str | None = None, title: str | N
     """priority: 1 (low), 2 (normal), 3 (high). status: 'pending' or 'done'"""
     context: TaskContext = ctx.request_context.lifespan_context
     if status and status not in ("pending", "done"):
-        raise ValueError("Status must be pending or done")
+        raise ValueError(f"Status must be pending or done, got {status}")
     if priority is not None and priority not in (1, 2, 3):
-        raise ValueError("Priority must be 1 (low), 2 (normal), or 3 (high)")
+        raise ValueError(f"Priority must be 1 (low), 2 (normal), or 3 (high), got {priority}")
 
     with closing(get_db(context)) as conn:
         cursor = conn.execute("SELECT * FROM tasks WHERE id = ?", (id,))
