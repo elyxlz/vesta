@@ -62,6 +62,7 @@ class VestaSettings(pyd_settings.BaseSettings):
     max_context_tokens: int = 150000
     enable_nightly_memory: bool = True
     nightly_memory_time: int = 4
+    interrupt_timeout: float = 5.0
 
     # Microsoft MCP secrets
     microsoft_mcp_client_id: str | None = None

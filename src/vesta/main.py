@@ -26,6 +26,26 @@ def load_system_prompt(config: vm.VestaSettings) -> str:
     return config.memory_file.read_text()
 
 
+async def attempt_interrupt(state: vm.State, *, config: vm.VestaSettings, reason: str) -> bool:
+    """Best-effort interrupt with a short timeout so we don't hang indefinitely."""
+    if not state.client:
+        return False
+
+    try:
+        await asyncio.wait_for(state.client.interrupt(), timeout=config.interrupt_timeout)
+        vfx.log_info(f"{reason}: interrupt sent", colors=Colors)
+        return True
+    except asyncio.TimeoutError:
+        vfx.log_error(
+            f"{reason}: interrupt timed out after {config.interrupt_timeout} seconds (tool may still be running)",
+            colors=Colors,
+        )
+    except Exception as e:
+        vfx.log_error(f"{reason}: interrupt failed ({str(e)[:120]})", colors=Colors)
+        traceback.print_exc()
+    return False
+
+
 def parse_assistant_message(msg: tp.Any, *, state: vm.State) -> tuple[str | None, vm.State, dict[str, tp.Any] | None]:
     texts, new_context, usage_data = vu.parse_assistant_message(msg, state.sub_agent_context, service_icons=vm.SERVICE_ICONS)
     state.sub_agent_context = new_context
@@ -138,10 +158,12 @@ async def collect_responses(
     except asyncio.TimeoutError:
         responses.append("[Response timeout]")
         state.sub_agent_context = None
+        await attempt_interrupt(state, config=config, reason="Response timeout")
     except asyncio.CancelledError:
         state.sub_agent_context = None
     except Exception:
         state.sub_agent_context = None
+        await attempt_interrupt(state, config=config, reason="Response stream error")
 
     return responses, state
 
@@ -206,20 +228,22 @@ async def process_message_with_typing(msg: str, state: vm.State, config: vm.Vest
 
 
 async def handle_notifications_interrupt(
-    notifications: list[vm.Notification], client: ccsdk.ClaudeSDKClient, queue: asyncio.Queue, config: vm.VestaSettings, *, lock: "asyncio.Lock"
+    notifications: list[vm.Notification], queue: asyncio.Queue, state: vm.State, config: vm.VestaSettings, *, lock: "asyncio.Lock"
 ) -> None:
     await vfx.print_locked(lock, f"\n{Colors['yellow']}{Messages.INTERRUPTING_TASK}{Colors['reset']}", flush=False)
 
-    try:
-        await client.interrupt()
+    prompt = vu.format_notification_batch(notifications)
+    success = await attempt_interrupt(state, config=config, reason="Notification interrupt")
 
-        # Queue the notification for processing after interrupt
-        prompt = vu.format_notification_batch(notifications)
-        await queue.put((prompt, True))
-    except Exception as e:
-        vfx.log_error(f"Interrupt failed: {e}", colors=Colors)
-        traceback.print_exc()
-        raise
+    if not success:
+        await vfx.print_locked(
+            lock,
+            f"{Colors['yellow']}⚠️ Could not interrupt current task; queued notification for later.{Colors['reset']}",
+            flush=False,
+        )
+
+    # Queue the notification — even if interrupt failed we'll process it later
+    await queue.put((prompt, True))
 
 
 async def process_notification_batch(
@@ -232,7 +256,7 @@ async def process_notification_batch(
         decision = vu.decide_notification_action(notifications, is_processing=state.is_processing, has_client=state.client is not None)
 
         if decision == "interrupt" and state.client:
-            await handle_notifications_interrupt(notifications, state.client, queue, config, lock=state.output_lock)
+            await handle_notifications_interrupt(notifications, queue, state, config, lock=state.output_lock)
         elif decision == "queue":
             prompt = vu.format_notification_batch(notifications)
             await queue.put((prompt, True))

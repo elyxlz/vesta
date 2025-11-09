@@ -10,6 +10,7 @@ Time-based notification MCP for Vesta that creates scheduled reminders.
 - Recurring patterns: daily, hourly, weekly
 - Automatic missed reminder detection
 - Writes notifications to Vesta's notification directory
+- **Agent-delivered reminders**: Reminders are delivered to Vesta/the agent first. She can then decide how (or whether) to relay them to the end user.
 
 ## Tools
 
