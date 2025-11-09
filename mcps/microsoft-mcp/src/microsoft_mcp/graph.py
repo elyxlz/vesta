@@ -112,7 +112,9 @@ def request_paginated(
             break
 
 
-def download_raw(client: httpx.Client, cache_file: pl.Path, scopes: list[str], base_url: str, path: str, account_id: str | None = None, max_retries: int = 3) -> bytes:
+def download_raw(
+    client: httpx.Client, cache_file: pl.Path, scopes: list[str], base_url: str, path: str, account_id: str | None = None, max_retries: int = 3
+) -> bytes:
     headers = {"Authorization": f"Bearer {get_token(cache_file, scopes, account_id)}"}
 
     retry_count = 0

@@ -34,6 +34,7 @@ async def reminder_lifespan(server: FastMCP) -> AsyncIterator[ReminderContext]:
     notif_dir.mkdir(parents=True, exist_ok=True)
 
     from . import scheduler as scheduler_module
+
     scheduler = scheduler_module.create_scheduler(data_dir)
     scheduler.start()
 

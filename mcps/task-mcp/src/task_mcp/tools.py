@@ -122,7 +122,9 @@ def list_tasks(ctx: Context, show_completed: bool = False) -> list[dict]:
 
 
 @mcp.tool()
-def update_task(ctx: Context, id: str, status: str | None = None, title: str | None = None, metadata: str | None = None, priority: int | None = None) -> dict:
+def update_task(
+    ctx: Context, id: str, status: str | None = None, title: str | None = None, metadata: str | None = None, priority: int | None = None
+) -> dict:
     """priority: 1 (low), 2 (normal), 3 (high). status: 'pending' or 'done'"""
     context: TaskContext = ctx.request_context.lifespan_context
     if status and status not in ("pending", "done"):

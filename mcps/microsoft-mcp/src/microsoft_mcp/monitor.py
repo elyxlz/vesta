@@ -1,5 +1,3 @@
-import time
-import logging
 from datetime import datetime, timedelta, timezone
 from . import graph, auth, notifications
 from .context import MicrosoftContext
@@ -29,7 +27,9 @@ def run(ctx: MicrosoftContext):
                 first_run = False
             else:
                 last_check = (
-                    ctx.monitor_state_file.read_text().strip() if ctx.monitor_state_file.exists() else (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+                    ctx.monitor_state_file.read_text().strip()
+                    if ctx.monitor_state_file.exists()
+                    else (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
                 )
                 catching_up = False
 
