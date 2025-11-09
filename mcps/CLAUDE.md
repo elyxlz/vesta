@@ -50,7 +50,7 @@ mcp-name/
 │       └── [api].py         # API/service integration modules
 ├── tests/
 │   ├── __init__.py
-│   └── test_integration.py
+│   └── test_e2e.py
 ├── pyproject.toml           # Standardized metadata
 ├── README.md
 ├── .env.example             # Required env vars documentation
@@ -224,26 +224,6 @@ async def microsoft_lifespan(server: FastMCP) -> AsyncIterator[MicrosoftContext]
         http_client.close()
 ```
 
-#### Testing with Mock Context
-
-```python
-@dataclass
-class MockRequestContext:
-    lifespan_context: SchedulerContext
-
-@dataclass
-class MockContext:
-    request_context: MockRequestContext
-
-@pytest.fixture
-def mock_ctx(scheduler_context):
-    return MockContext(request_context=MockRequestContext(lifespan_context=scheduler_context))
-
-def test_tool(mock_ctx):
-    result = my_tool(mock_ctx, param="value")
-    assert result["status"] == "ok"
-```
-
 #### Passing Context to Non-Tool Functions
 
 For helper functions that can't accept `Context` (e.g., APScheduler jobs, monitor threads):
@@ -304,7 +284,7 @@ Keep docstrings minimal:
 1. Copy structure from existing MCP (e.g., microsoft-mcp)
 2. Update `pyproject.toml` with new name and dependencies
 3. Implement tools in `src/mcp_name/tools.py`
-4. Add integration tests
+4. Add e2e tests
 5. Document tool usage in README.md
 
 ## Project Metadata Standards
