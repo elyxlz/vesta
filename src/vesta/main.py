@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import datetime as dt
 import errno
 import functools
@@ -44,6 +45,24 @@ async def attempt_interrupt(state: vm.State, *, config: vm.VestaSettings, reason
         vfx.log_error(f"{reason}: interrupt failed ({str(e)[:120]})", colors=Colors)
         traceback.print_exc()
     return False
+
+
+async def settle_collect_task(task: "asyncio.Task[tp.Any]", *, timeout: float) -> None:
+    """Ensure the response collection task finishes cleanly without leaking."""
+    if task.done():
+        with contextlib.suppress(Exception):
+            task.result()
+        return
+
+    try:
+        await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+    except asyncio.TimeoutError:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+    except Exception:
+        # Any parse errors are already logged upstream; swallow here.
+        pass
 
 
 def parse_assistant_message(msg: tp.Any, *, state: vm.State) -> tuple[str | None, vm.State, dict[str, tp.Any] | None]:
@@ -153,17 +172,22 @@ async def collect_responses(
         except Exception:
             raise
 
+    collect_task = asyncio.create_task(collect())
+
     try:
-        await asyncio.wait_for(collect(), timeout=config.response_timeout)
+        await asyncio.wait_for(asyncio.shield(collect_task), timeout=config.response_timeout)
     except asyncio.TimeoutError:
         responses.append("[Response timeout]")
         state.sub_agent_context = None
         await attempt_interrupt(state, config=config, reason="Response timeout")
     except asyncio.CancelledError:
         state.sub_agent_context = None
+        collect_task.cancel()
     except Exception:
         state.sub_agent_context = None
         await attempt_interrupt(state, config=config, reason="Response stream error")
+    finally:
+        await settle_collect_task(collect_task, timeout=config.interrupt_timeout)
 
     return responses, state
 
