@@ -656,7 +656,6 @@ func (wac *WhatsAppClient) ResolveRecipient(identifier string) (types.JID, error
 	// 2. If starts with "+", treat as phone number
 	if strings.HasPrefix(identifier, "+") {
 		phone := strings.TrimPrefix(identifier, "+")
-		// Validate it's all digits
 		if !isNumeric(phone) {
 			return types.JID{}, fmt.Errorf("invalid phone number '%s': must contain only digits after '+'", identifier)
 		}
@@ -668,70 +667,89 @@ func (wac *WhatsAppClient) ResolveRecipient(identifier string) (types.JID, error
 		return types.NewJID(identifier, types.DefaultUserServer), nil
 	}
 
-	// 4. Search contacts by name (case-insensitive fuzzy match)
+	// 4. Search contacts by name
 	contacts, err := wac.store.SearchContacts(identifier, 50)
-	if err == nil && len(contacts) > 0 {
-		if len(contacts) == 1 {
-			// Single match - use it
-			jid, err := types.ParseJID(contacts[0].JID)
-			if err != nil {
-				return types.JID{}, fmt.Errorf("invalid contact JID: %v", err)
-			}
-			return jid, nil
+	if err == nil {
+		if jid, err := resolveFromContacts(contacts, identifier); err != nil || jid.User != "" {
+			return jid, err
 		}
-		// Multiple matches - return error with suggestions
-		var names []string
-		for i, c := range contacts {
-			if i >= 5 { // Limit to first 5
-				names = append(names, "...")
-				break
-			}
-			displayName := c.Name
-			if displayName == "" {
-				displayName = c.PhoneNumber
-			}
-			names = append(names, fmt.Sprintf("%s (%s)", displayName, c.PhoneNumber))
-		}
-		return types.JID{}, fmt.Errorf("multiple contacts match '%s': %s. Please use full name or phone number",
-			identifier, strings.Join(names, ", "))
 	}
 
-	// 5. Search groups by name (case-insensitive fuzzy match)
+	// 5. Search groups by name
 	groups, err := wac.store.ListGroups(50, 0)
-	if err == nil && len(groups) > 0 {
-		var matches []Chat
-		lowerIdentifier := strings.ToLower(identifier)
-		for _, g := range groups {
-			if strings.Contains(strings.ToLower(g.Name), lowerIdentifier) {
-				matches = append(matches, g)
-			}
-		}
-
-		if len(matches) == 1 {
-			// Single match - use it
-			jid, err := types.ParseJID(matches[0].JID)
-			if err != nil {
-				return types.JID{}, fmt.Errorf("invalid group JID: %v", err)
-			}
-			return jid, nil
-		}
-		if len(matches) > 1 {
-			// Multiple matches - return error with suggestions
-			var names []string
-			for i, g := range matches {
-				if i >= 5 { // Limit to first 5
-					names = append(names, "...")
-					break
-				}
-				names = append(names, g.Name)
-			}
-			return types.JID{}, fmt.Errorf("multiple groups match '%s': %s. Please use full group name or JID",
-				identifier, strings.Join(names, ", "))
+	if err == nil {
+		if jid, err := resolveFromGroups(groups, identifier); err != nil || jid.User != "" {
+			return jid, err
 		}
 	}
 
 	// 6. No matches found
 	return types.JID{}, fmt.Errorf("no contact or group found matching '%s'. Use search_contacts or list_groups to find available recipients", identifier)
+}
+
+func resolveFromContacts(contacts []Contact, identifier string) (types.JID, error) {
+	if len(contacts) == 0 {
+		return types.JID{}, nil
+	}
+
+	if len(contacts) == 1 {
+		jid, err := types.ParseJID(contacts[0].JID)
+		if err != nil {
+			return types.JID{}, fmt.Errorf("invalid contact JID: %v", err)
+		}
+		return jid, nil
+	}
+
+	// Multiple matches - build suggestions
+	var names []string
+	for i, c := range contacts {
+		if i >= 5 {
+			names = append(names, "...")
+			break
+		}
+		displayName := c.Name
+		if displayName == "" {
+			displayName = c.PhoneNumber
+		}
+		names = append(names, fmt.Sprintf("%s (%s)", displayName, c.PhoneNumber))
+	}
+	return types.JID{}, fmt.Errorf("multiple contacts match '%s': %s. Please use full name or phone number",
+		identifier, strings.Join(names, ", "))
+}
+
+func resolveFromGroups(groups []Chat, identifier string) (types.JID, error) {
+	// Filter matches
+	var matches []Chat
+	lowerIdentifier := strings.ToLower(identifier)
+	for _, g := range groups {
+		if strings.Contains(strings.ToLower(g.Name), lowerIdentifier) {
+			matches = append(matches, g)
+		}
+	}
+
+	if len(matches) == 0 {
+		return types.JID{}, nil
+	}
+
+	if len(matches) == 1 {
+		jid, err := types.ParseJID(matches[0].JID)
+		if err != nil {
+			return types.JID{}, fmt.Errorf("invalid group JID: %v", err)
+		}
+		return jid, nil
+	}
+
+	// Multiple matches - build suggestions
+	var names []string
+	for i, g := range matches {
+		if i >= 5 {
+			names = append(names, "...")
+			break
+		}
+		names = append(names, g.Name)
+	}
+	return types.JID{}, fmt.Errorf("multiple groups match '%s': %s. Please use full group name or JID",
+		identifier, strings.Join(names, ", "))
 }
 
 func isNumeric(s string) bool {
@@ -768,12 +786,12 @@ func (wac *WhatsAppClient) UpdateGroupParticipants(groupJID, action string, part
 		return false, err.Error()
 	}
 
-	changeType := map[string]whatsmeow.ParticipantChange{
+	changeType, ok := map[string]whatsmeow.ParticipantChange{
 		"add":    whatsmeow.ParticipantChangeAdd,
 		"remove": whatsmeow.ParticipantChangeRemove,
 	}[action]
 
-	if changeType == 0 {
+	if !ok {
 		return false, "Invalid action: must be 'add' or 'remove'"
 	}
 
