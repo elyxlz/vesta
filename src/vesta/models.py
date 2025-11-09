@@ -14,7 +14,8 @@ import claude_code_sdk as ccsdk
 SERVICE_ICONS = {
     "playwright": "🌐",
     "whatsapp": "📱",
-    "scheduler": "⏰",
+    "reminder": "⏰",
+    "task": "✅",
     "microsoft": "📧",
 }
 
@@ -70,17 +71,28 @@ def _get_default_mcp_servers() -> dict[str, McpServer]:
                 f"cd {root}/mcps/whatsapp-mcp-go && go build -o whatsapp-mcp . && ./whatsapp-mcp --data-dir {root}/data/whatsapp-mcp --notifications-dir {root}/notifications",
             ],
         },
-        "scheduler": {
+        "reminder": {
             "command": "uv",
             "args": [
                 "run",
                 "--directory",
-                "mcps/scheduler-mcp",
-                "scheduler-mcp",
+                "mcps/reminder-mcp",
+                "reminder-mcp",
                 "--data-dir",
-                str(root / "data/scheduler-mcp"),
+                str(root / "data/reminder-mcp"),
                 "--notifications-dir",
                 str(root / "notifications"),
+            ],
+        },
+        "task": {
+            "command": "uv",
+            "args": [
+                "run",
+                "--directory",
+                "mcps/task-mcp",
+                "task-mcp",
+                "--data-dir",
+                str(root / "data/task-mcp"),
             ],
         },
         "playwright": {
