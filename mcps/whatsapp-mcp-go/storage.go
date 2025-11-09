@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,7 +23,9 @@ func NewMessageStore(dataDir string) (*MessageStore, error) {
 		return nil, fmt.Errorf("failed to create data directory: %v", err)
 	}
 
-	db, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?_foreign_keys=on", dbPath))
+	// Use url.PathEscape to prevent SQL injection via file path
+	escapedPath := url.PathEscape(dbPath)
+	db, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?_foreign_keys=on", escapedPath))
 	if err != nil {
 		return nil, fmt.Errorf("failed to open message database: %v", err)
 	}

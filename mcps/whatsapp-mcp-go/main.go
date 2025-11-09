@@ -29,18 +29,20 @@ func main() {
 	}
 
 	// Resolve paths
-	dataDir, err := filepath.Abs(dataDir)
+	absDataDir, err := filepath.Abs(dataDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error resolving data directory: %v\n", err)
 		os.Exit(1)
 	}
+	dataDir = absDataDir
 
 	if notificationsDir != "" {
-		notificationsDir, err = filepath.Abs(notificationsDir)
+		absNotifDir, err := filepath.Abs(notificationsDir)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error resolving notifications directory: %v\n", err)
 			os.Exit(1)
 		}
+		notificationsDir = absNotifDir
 	}
 
 	// Create directories if they don't exist

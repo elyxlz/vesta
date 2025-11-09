@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 func WriteNotification(notifDir, messageID, chatJID, chatName, sender, content, mediaType string, isForwarded bool) error {
@@ -43,7 +45,8 @@ func WriteNotification(notifDir, messageID, chatJID, chatName, sender, content, 
 		return fmt.Errorf("failed to marshal notification: %v", err)
 	}
 
-	filename := fmt.Sprintf("%d-whatsapp-message.json", time.Now().UnixNano())
+	// Use UUID to prevent race conditions in concurrent notifications
+	filename := fmt.Sprintf("%s-whatsapp-message.json", uuid.New().String())
 	filePath := filepath.Join(notifDir, filename)
 
 	return os.WriteFile(filePath, data, 0644)
@@ -85,7 +88,8 @@ func WriteReactionNotification(notifDir, targetMessageID, chatJID, chatName, sen
 		return fmt.Errorf("failed to marshal reaction notification: %v", err)
 	}
 
-	filename := fmt.Sprintf("%d-whatsapp-reaction.json", time.Now().UnixNano())
+	// Use UUID to prevent race conditions in concurrent notifications
+	filename := fmt.Sprintf("%s-whatsapp-reaction.json", uuid.New().String())
 	filePath := filepath.Join(notifDir, filename)
 
 	return os.WriteFile(filePath, data, 0644)

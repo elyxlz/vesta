@@ -433,6 +433,11 @@ func (wac *WhatsAppClient) SendFile(recipient, filePath, caption string) (bool, 
 		return false, "Recipient and file path are required. Provide recipient (contact name, phone number, or JID) and file path"
 	}
 
+	// Validate file path for security
+	if err := validateFilePath(filePath); err != nil {
+		return false, fmt.Sprintf("Invalid file path: %v", err)
+	}
+
 	// Check file exists and get size
 	fileInfo, err := os.Stat(filePath)
 	if err != nil {
@@ -524,6 +529,11 @@ func (wac *WhatsAppClient) SendFile(recipient, filePath, caption string) (bool, 
 func (wac *WhatsAppClient) SendAudioMessage(recipient, filePath string) (bool, string) {
 	if recipient == "" || filePath == "" {
 		return false, "Recipient and file path are required. Provide recipient (contact name, phone number, or JID) and audio file path"
+	}
+
+	// Validate file path for security
+	if err := validateFilePath(filePath); err != nil {
+		return false, fmt.Sprintf("Invalid file path: %v", err)
 	}
 
 	// Resolve recipient to JID
@@ -669,6 +679,11 @@ func (wac *WhatsAppClient) DownloadMedia(messageID, chatIdentifier, downloadPath
 			filename = fmt.Sprintf("%s_%s%s", messageID, time.Now().Format("20060102_150405"), ext)
 		}
 		savePath = filepath.Join(downloadsDir, filename)
+	} else {
+		// Validate user-provided download path
+		if err := validateFilePath(downloadPath); err != nil {
+			return "", fmt.Errorf("invalid download path: %v", err)
+		}
 	}
 
 	// Ensure parent directory exists
@@ -953,6 +968,28 @@ func isNumeric(s string) bool {
 	return err == nil && len(s) > 0
 }
 
+func validateFilePath(path string) error {
+	if path == "" {
+		return fmt.Errorf("file path cannot be empty")
+	}
+
+	// Clean the path to resolve any .. or .
+	cleanPath := filepath.Clean(path)
+
+	// Convert to absolute path
+	absPath, err := filepath.Abs(cleanPath)
+	if err != nil {
+		return fmt.Errorf("invalid file path: %v", err)
+	}
+
+	// Check for path traversal attempts
+	if strings.Contains(absPath, "..") {
+		return fmt.Errorf("path traversal detected in file path")
+	}
+
+	return nil
+}
+
 func parseParticipantJIDs(participants []string) ([]types.JID, error) {
 	jids := make([]types.JID, 0, len(participants))
 	for _, p := range participants {
@@ -1085,11 +1122,11 @@ func analyzeOpusOgg(data []byte) (uint32, []byte) {
 
 	// Generate placeholder waveform
 	waveform := make([]byte, 64)
-	rand.Seed(int64(duration))
+	rng := rand.New(rand.NewSource(int64(duration)))
 	for i := range waveform {
 		pos := float64(i) / 64.0
 		val := 35.0 * math.Sin(pos*math.Pi*8)
-		val += (rand.Float64() - 0.5) * 15
+		val += (rng.Float64() - 0.5) * 15
 		val += 50
 		if val < 0 {
 			val = 0
