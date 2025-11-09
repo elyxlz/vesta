@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"math"
-	"math/rand"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -37,18 +37,19 @@ const (
 )
 
 type WhatsAppClient struct {
-	client           *whatsmeow.Client
-	store            *MessageStore
-	logger           waLog.Logger
-	dataDir          string
-	notificationsDir string
-	messageSenders   map[string]string
-	sendersMutex     sync.RWMutex
-	authStatus       AuthStatus
-	authMutex        sync.RWMutex
-	qrPath           string
-	presenceActive   bool
-	presenceMutex    sync.RWMutex
+	client            *whatsmeow.Client
+	store             *MessageStore
+	logger            waLog.Logger
+	dataDir           string
+	notificationsDir  string
+	messageSenders    map[string]string
+	sendersMutex      sync.RWMutex
+	authStatus        AuthStatus
+	authMutex         sync.RWMutex
+	qrPath            string
+	presenceActive    bool
+	presenceMutex     sync.RWMutex
+	lastMessageSentAt time.Time
 }
 
 func NewWhatsAppClient(dataDir, notificationsDir string, logger waLog.Logger) (*WhatsAppClient, error) {
@@ -206,6 +207,10 @@ func (wac *WhatsAppClient) IsAuthenticated() bool {
 }
 
 func (wac *WhatsAppClient) Disconnect() {
+	wac.presenceMutex.Lock()
+	wac.presenceActive = false
+	wac.presenceMutex.Unlock()
+
 	wac.client.Disconnect()
 	wac.store.Close()
 }
@@ -224,6 +229,9 @@ func (wac *WhatsAppClient) eventHandler(evt interface{}) {
 		wac.logger.Infof("Connected to WhatsApp")
 	case *events.LoggedOut:
 		wac.logger.Warnf("Device logged out")
+		wac.presenceMutex.Lock()
+		wac.presenceActive = false
+		wac.presenceMutex.Unlock()
 	}
 }
 
@@ -280,12 +288,15 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 
 	// Send read receipt if not from me
 	if !info.IsFromMe && wac.client.IsConnected() {
-		go wac.sendReadReceiptDelayed(evt, content)
+		// Copy fields to avoid race condition with event data
+		msgID := info.ID
+		chatJID := info.Chat
+		senderJID := info.Sender
+		go wac.sendReadReceiptDelayed(msgID, chatJID, senderJID, content)
 	}
 }
 
-func (wac *WhatsAppClient) sendReadReceiptDelayed(evt *events.Message, content string) {
-	info := evt.Info
+func (wac *WhatsAppClient) sendReadReceiptDelayed(msgID string, chatJID, senderJID types.JID, content string) {
 
 	// Calculate reading delay based on content length
 	// Base: 2 seconds, +50ms per character, cap at 10 seconds
@@ -296,7 +307,9 @@ func (wac *WhatsAppClient) sendReadReceiptDelayed(evt *events.Message, content s
 
 	// Add random variance (±20%)
 	variance := int(float64(readDelay.Milliseconds()) * 0.2)
-	readDelay += time.Duration(rand.Intn(variance*2)-variance) * time.Millisecond
+	if variance > 0 {
+		readDelay += time.Duration(rand.IntN(variance*2)-variance) * time.Millisecond
+	}
 
 	time.Sleep(readDelay)
 
@@ -308,17 +321,17 @@ func (wac *WhatsAppClient) sendReadReceiptDelayed(evt *events.Message, content s
 
 	// Mark as read
 	err := wac.client.MarkRead(
-		[]types.MessageID{info.ID},
+		[]types.MessageID{msgID},
 		time.Now(),
-		info.Chat,
-		info.Sender,
+		chatJID,
+		senderJID,
 		types.ReceiptTypeRead,
 	)
 
 	if err != nil {
 		wac.logger.Warnf("Failed to send read receipt: %v", err)
 	} else {
-		wac.logger.Debugf("Sent read receipt for message %s after %v delay", info.ID, readDelay)
+		wac.logger.Debugf("Sent read receipt for message %s after %v delay", msgID, readDelay)
 	}
 }
 
@@ -475,41 +488,56 @@ func (wac *WhatsAppClient) SendMessageWithPresence(recipient, message string) (b
 		wac.logger.Warnf("Failed to set online status: %v", err)
 	}
 
-	// Human reaction delay (0.5-1s)
-	reactionDelay := time.Duration(500+rand.Intn(500)) * time.Millisecond
-	time.Sleep(reactionDelay)
+	// Check if this is a rapid message (< 3 seconds since last message)
+	wac.presenceMutex.RLock()
+	timeSinceLastMessage := time.Since(wac.lastMessageSentAt)
+	wac.presenceMutex.RUnlock()
 
-	// Start typing indicator
-	err = wac.client.SendChatPresence(
-		jid,
-		types.ChatPresenceComposing,
-		types.ChatPresenceMediaText,
-	)
-	if err != nil {
-		wac.logger.Warnf("Failed to send typing indicator: %v", err)
+	isRapidMessage := timeSinceLastMessage < 3*time.Second
+
+	// Skip all delays for rapid messages
+	if !isRapidMessage {
+		// Human reaction delay (0.5-1s)
+		reactionDelay := time.Duration(500+rand.IntN(500)) * time.Millisecond
+		time.Sleep(reactionDelay)
+
+		// Start typing indicator
+		err = wac.client.SendChatPresence(
+			jid,
+			types.ChatPresenceComposing,
+			types.ChatPresenceMediaText,
+		)
+		if err != nil {
+			wac.logger.Warnf("Failed to send typing indicator: %v", err)
+		}
+
+		// Calculate typing duration (30ms per character, min 2s, max 8s)
+		typingDuration := time.Duration(2000+len(message)*30) * time.Millisecond
+		if typingDuration > 8*time.Second {
+			typingDuration = 8 * time.Second
+		}
+		// Add randomness (±20%)
+		variance := int(float64(typingDuration.Milliseconds()) * 0.2)
+		if variance > 0 {
+			typingDuration += time.Duration(rand.IntN(variance*2)-variance) * time.Millisecond
+		}
+
+		time.Sleep(typingDuration)
+
+		// Stop typing
+		err = wac.client.SendChatPresence(
+			jid,
+			types.ChatPresencePaused,
+			types.ChatPresenceMediaText,
+		)
+		if err != nil {
+			wac.logger.Debugf("Failed to stop typing indicator: %v", err)
+		}
+
+		// Small delay before sending (0.3-0.5s)
+		sendDelay := time.Duration(300+rand.IntN(200)) * time.Millisecond
+		time.Sleep(sendDelay)
 	}
-
-	// Calculate typing duration (30ms per character, min 2s, max 8s)
-	typingDuration := time.Duration(2000+len(message)*30) * time.Millisecond
-	if typingDuration > 8*time.Second {
-		typingDuration = 8 * time.Second
-	}
-	// Add randomness (±20%)
-	variance := int(float64(typingDuration.Milliseconds()) * 0.2)
-	typingDuration += time.Duration(rand.Intn(variance*2)-variance) * time.Millisecond
-
-	time.Sleep(typingDuration)
-
-	// Stop typing
-	wac.client.SendChatPresence(
-		jid,
-		types.ChatPresencePaused,
-		types.ChatPresenceMediaText,
-	)
-
-	// Small delay before sending (0.3-0.5s)
-	sendDelay := time.Duration(300+rand.Intn(200)) * time.Millisecond
-	time.Sleep(sendDelay)
 
 	// Actually send the message
 	msg := &waProto.Message{
@@ -520,6 +548,11 @@ func (wac *WhatsAppClient) SendMessageWithPresence(recipient, message string) (b
 	if err != nil {
 		return false, fmt.Sprintf("Failed to send message: %v", err)
 	}
+
+	// Update last message sent time
+	wac.presenceMutex.Lock()
+	wac.lastMessageSentAt = time.Now()
+	wac.presenceMutex.Unlock()
 
 	return true, fmt.Sprintf("Message sent successfully (ID: %s)", resp.ID)
 }
@@ -673,7 +706,7 @@ func (wac *WhatsAppClient) SendAudioMessageWithPresence(recipient, filePath stri
 	}
 
 	// Human reaction delay (0.5-1s)
-	reactionDelay := time.Duration(500+rand.Intn(500)) * time.Millisecond
+	reactionDelay := time.Duration(500+rand.IntN(500)) * time.Millisecond
 	time.Sleep(reactionDelay)
 
 	// Start recording indicator
@@ -728,14 +761,17 @@ func (wac *WhatsAppClient) SendAudioMessageWithPresence(recipient, filePath stri
 	}
 
 	// Stop recording indicator
-	wac.client.SendChatPresence(
+	err = wac.client.SendChatPresence(
 		jid,
 		types.ChatPresencePaused,
 		types.ChatPresenceMediaAudio,
 	)
+	if err != nil {
+		wac.logger.Debugf("Failed to stop recording indicator: %v", err)
+	}
 
 	// Small delay before sending (0.3-0.5s)
-	sendDelay := time.Duration(300+rand.Intn(200)) * time.Millisecond
+	sendDelay := time.Duration(300+rand.IntN(200)) * time.Millisecond
 	time.Sleep(sendDelay)
 
 	// Create audio message
@@ -1373,7 +1409,7 @@ func analyzeOpusOgg(data []byte) (uint32, []byte) {
 
 	// Generate placeholder waveform
 	waveform := make([]byte, 64)
-	rng := rand.New(rand.NewSource(int64(duration)))
+	rng := rand.New(rand.NewPCG(uint64(duration), uint64(duration)))
 	for i := range waveform {
 		pos := float64(i) / 64.0
 		val := 35.0 * math.Sin(pos*math.Pi*8)
