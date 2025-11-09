@@ -16,12 +16,12 @@ def _read_cache(cache_file: pl.Path) -> str | None:
         return None
 
 
-def _write_cache(cache_file: pl.Path, content: str) -> None:
+def _write_cache(cache_file: pl.Path, *, content: str) -> None:
     cache_file.parent.mkdir(parents=True, exist_ok=True)
     cache_file.write_text(content)
 
 
-def get_app(cache_file: pl.Path, settings: MicrosoftSettings) -> msal.PublicClientApplication:
+def get_app(cache_file: pl.Path, *, settings: MicrosoftSettings) -> msal.PublicClientApplication:
     if not settings.microsoft_mcp_client_id:
         raise ValueError("MICROSOFT_MCP_CLIENT_ID is required")
 
@@ -37,8 +37,8 @@ def get_app(cache_file: pl.Path, settings: MicrosoftSettings) -> msal.PublicClie
     return app
 
 
-def get_token(cache_file: pl.Path, scopes: list[str], settings: MicrosoftSettings, account_id: str | None = None) -> str:
-    app = get_app(cache_file, settings)
+def get_token(cache_file: pl.Path, scopes: list[str], settings: MicrosoftSettings, *, account_id: str | None = None) -> str:
+    app = get_app(cache_file, settings=settings)
 
     accounts = app.get_accounts()
     account = next((a for a in accounts if a["home_account_id"] == account_id), None) if account_id else (accounts[0] if accounts else None)
@@ -58,13 +58,13 @@ def get_token(cache_file: pl.Path, scopes: list[str], settings: MicrosoftSetting
 
     cache = app.token_cache
     if isinstance(cache, msal.SerializableTokenCache) and cache.has_state_changed:
-        _write_cache(cache_file, cache.serialize())
+        _write_cache(cache_file, content=cache.serialize())
 
     return result["access_token"]
 
 
-def list_accounts(cache_file: pl.Path, settings: MicrosoftSettings) -> list[Account]:
-    app = get_app(cache_file, settings)
+def list_accounts(cache_file: pl.Path, *, settings: MicrosoftSettings) -> list[Account]:
+    app = get_app(cache_file, settings=settings)
     seen_usernames = set()
     accounts = []
     for a in app.get_accounts():
@@ -75,9 +75,9 @@ def list_accounts(cache_file: pl.Path, settings: MicrosoftSettings) -> list[Acco
     return accounts
 
 
-def get_account_id_by_email(email: str, cache_file: pl.Path, settings: MicrosoftSettings) -> str:
+def get_account_id_by_email(email: str, cache_file: pl.Path, *, settings: MicrosoftSettings) -> str:
     """Map email address to account_id. Raises ValueError if email not found."""
-    accounts = list_accounts(cache_file, settings)
+    accounts = list_accounts(cache_file, settings=settings)
     email_lower = email.lower()
     for account in accounts:
         if account.username.lower() == email_lower:
@@ -90,9 +90,9 @@ def get_account_id_by_email(email: str, cache_file: pl.Path, settings: Microsoft
         raise ValueError(f"No account found with email '{email}'. No accounts are authenticated. Use authenticate_account() to add an account.")
 
 
-def authenticate_new_account(cache_file: pl.Path, scopes: list[str], settings: MicrosoftSettings) -> Account | None:
+def authenticate_new_account(cache_file: pl.Path, scopes: list[str], *, settings: MicrosoftSettings) -> Account | None:
     """Authenticate a new account interactively"""
-    app = get_app(cache_file, settings)
+    app = get_app(cache_file, settings=settings)
 
     flow = app.initiate_device_flow(scopes=scopes)
     if "user_code" not in flow:
@@ -111,7 +111,7 @@ def authenticate_new_account(cache_file: pl.Path, scopes: list[str], settings: M
 
     cache = app.token_cache
     if isinstance(cache, msal.SerializableTokenCache) and cache.has_state_changed:
-        _write_cache(cache_file, cache.serialize())
+        _write_cache(cache_file, content=cache.serialize())
 
     # Get the newly added account
     accounts = app.get_accounts()

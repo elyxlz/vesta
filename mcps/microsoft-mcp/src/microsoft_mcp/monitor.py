@@ -37,7 +37,7 @@ def run(ctx: MicrosoftContext):
 
             new_check_time = datetime.now(timezone.utc)
 
-            for acc in auth.list_accounts(ctx.cache_file):
+            for acc in auth.list_accounts(ctx.cache_file, settings=ctx.settings):
                 logger.info(f"Checking account: {acc.username}")
 
                 try:
@@ -45,6 +45,7 @@ def run(ctx: MicrosoftContext):
                         ctx.http_client,
                         ctx.cache_file,
                         ctx.scopes,
+                        ctx.settings,
                         ctx.base_url,
                         "GET",
                         "/me/mailFolders/inbox/messages",
@@ -93,6 +94,7 @@ def run(ctx: MicrosoftContext):
                         ctx.http_client,
                         ctx.cache_file,
                         ctx.scopes,
+                        ctx.settings,
                         ctx.base_url,
                         "GET",
                         "/me/calendarView",

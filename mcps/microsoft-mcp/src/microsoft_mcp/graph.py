@@ -4,6 +4,7 @@ import pathlib as pl
 from typing import Any
 from collections.abc import Iterator
 from .auth import get_token
+from .settings import MicrosoftSettings
 
 
 def _retry_http_call(call_func, max_retries: int = 3):
@@ -44,6 +45,7 @@ def request(
     client: httpx.Client,
     cache_file: pl.Path,
     scopes: list[str],
+    settings: MicrosoftSettings,
     base_url: str,
     method: str,
     path: str,
@@ -54,7 +56,7 @@ def request(
     max_retries: int = 3,
 ) -> dict[str, Any] | None:
     headers = {
-        "Authorization": f"Bearer {get_token(cache_file, scopes, account_id)}",
+        "Authorization": f"Bearer {get_token(cache_file, scopes, settings, account_id=account_id)}",
     }
 
     if method == "GET":
@@ -90,6 +92,7 @@ def request_paginated(
     client: httpx.Client,
     cache_file: pl.Path,
     scopes: list[str],
+    settings: MicrosoftSettings,
     base_url: str,
     path: str,
     account_id: str | None = None,
@@ -102,9 +105,9 @@ def request_paginated(
 
     while True:
         if next_link:
-            result = request(client, cache_file, scopes, base_url, "GET", next_link.replace(base_url, ""), account_id)
+            result = request(client, cache_file, scopes, settings, base_url, "GET", next_link.replace(base_url, ""), account_id)
         else:
-            result = request(client, cache_file, scopes, base_url, "GET", path, account_id, params=params)
+            result = request(client, cache_file, scopes, settings, base_url, "GET", path, account_id, params=params)
 
         if not result:
             break
@@ -122,9 +125,16 @@ def request_paginated(
 
 
 def download_raw(
-    client: httpx.Client, cache_file: pl.Path, scopes: list[str], base_url: str, path: str, account_id: str | None = None, max_retries: int = 3
+    client: httpx.Client,
+    cache_file: pl.Path,
+    scopes: list[str],
+    settings: MicrosoftSettings,
+    base_url: str,
+    path: str,
+    account_id: str | None = None,
+    max_retries: int = 3,
 ) -> bytes:
-    headers = {"Authorization": f"Bearer {get_token(cache_file, scopes, account_id)}"}
+    headers = {"Authorization": f"Bearer {get_token(cache_file, scopes, settings, account_id=account_id)}"}
 
     response = _retry_http_call(lambda: client.get(f"{base_url}{path}", headers=headers), max_retries)
     if not response:
@@ -164,6 +174,7 @@ def create_upload_session(
     client: httpx.Client,
     cache_file: pl.Path,
     scopes: list[str],
+    settings: MicrosoftSettings,
     base_url: str,
     path: str,
     account_id: str | None = None,
@@ -171,7 +182,7 @@ def create_upload_session(
 ) -> dict[str, Any]:
     """Create an upload session for large files"""
     payload = {"item": item_properties or {}}
-    result = request(client, cache_file, scopes, base_url, "POST", f"{path}/createUploadSession", account_id, json=payload)
+    result = request(client, cache_file, scopes, settings, base_url, "POST", f"{path}/createUploadSession", account_id, json=payload)
     if not result:
         raise ValueError("Failed to create upload session")
     return result
@@ -181,6 +192,7 @@ def upload_large_file(
     client: httpx.Client,
     cache_file: pl.Path,
     scopes: list[str],
+    settings: MicrosoftSettings,
     base_url: str,
     upload_chunk_size: int,
     path: str,
@@ -192,15 +204,15 @@ def upload_large_file(
     file_size = len(data)
 
     if file_size <= upload_chunk_size:
-        result = request(client, cache_file, scopes, base_url, "PUT", f"{path}/content", account_id, data=data)
+        result = request(client, cache_file, scopes, settings, base_url, "PUT", f"{path}/content", account_id, data=data)
         if not result:
             raise ValueError("Failed to upload file")
         return result
 
-    session = create_upload_session(client, cache_file, scopes, base_url, path, account_id, item_properties)
+    session = create_upload_session(client, cache_file, scopes, settings, base_url, path, account_id, item_properties)
     upload_url = session["uploadUrl"]
 
-    headers = {"Authorization": f"Bearer {get_token(cache_file, scopes, account_id)}"}
+    headers = {"Authorization": f"Bearer {get_token(cache_file, scopes, settings, account_id=account_id)}"}
     return _do_chunked_upload(client, upload_url, data, headers, upload_chunk_size)
 
 
@@ -208,6 +220,7 @@ def create_mail_upload_session(
     client: httpx.Client,
     cache_file: pl.Path,
     scopes: list[str],
+    settings: MicrosoftSettings,
     base_url: str,
     message_id: str,
     attachment_item: dict[str, Any],
@@ -218,6 +231,7 @@ def create_mail_upload_session(
         client,
         cache_file,
         scopes,
+        settings,
         base_url,
         "POST",
         f"/me/messages/{message_id}/attachments/createUploadSession",
@@ -233,6 +247,7 @@ def upload_large_mail_attachment(
     client: httpx.Client,
     cache_file: pl.Path,
     scopes: list[str],
+    settings: MicrosoftSettings,
     base_url: str,
     upload_chunk_size: int,
     message_id: str,
@@ -251,10 +266,10 @@ def upload_large_mail_attachment(
         "contentType": content_type,
     }
 
-    session = create_mail_upload_session(client, cache_file, scopes, base_url, message_id, attachment_item, account_id)
+    session = create_mail_upload_session(client, cache_file, scopes, settings, base_url, message_id, attachment_item, account_id)
     upload_url = session["uploadUrl"]
 
-    headers = {"Authorization": f"Bearer {get_token(cache_file, scopes, account_id)}"}
+    headers = {"Authorization": f"Bearer {get_token(cache_file, scopes, settings, account_id=account_id)}"}
     return _do_chunked_upload(client, upload_url, data, headers, upload_chunk_size)
 
 
@@ -262,6 +277,7 @@ def search_query(
     client: httpx.Client,
     cache_file: pl.Path,
     scopes: list[str],
+    settings: MicrosoftSettings,
     base_url: str,
     query: str,
     entity_types: list[str],
@@ -287,7 +303,7 @@ def search_query(
     items_returned = 0
 
     while True:
-        result = request(client, cache_file, scopes, base_url, "POST", "/search/query", account_id, json=payload)
+        result = request(client, cache_file, scopes, settings, base_url, "POST", "/search/query", account_id, json=payload)
 
         if not result or "value" not in result:
             break

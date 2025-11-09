@@ -113,13 +113,13 @@ mcp = FastMCP("microsoft-mcp", lifespan=microsoft_lifespan)
 @mcp.tool()
 def list_accounts(ctx: Context) -> list[dict[str, str]]:
     context: MicrosoftContext = ctx.request_context.lifespan_context
-    return [{"email": acc.username, "account_id": acc.account_id} for acc in auth.list_accounts(context.cache_file, context.settings)]
+    return [{"email": acc.username, "account_id": acc.account_id} for acc in auth.list_accounts(context.cache_file, settings=context.settings)]
 
 
 @mcp.tool()
 def authenticate_account(ctx: Context) -> dict[str, str]:
     context: MicrosoftContext = ctx.request_context.lifespan_context
-    app = auth.get_app(context.cache_file, context.settings)
+    app = auth.get_app(context.cache_file, settings=context.settings)
     flow = app.initiate_device_flow(scopes=context.scopes)
 
     if "user_code" not in flow:
@@ -157,7 +157,7 @@ def complete_authentication(ctx: Context, flow_cache: str) -> dict[str, str]:
     except (ValueError, SyntaxError):
         raise ValueError("Invalid flow cache data")
 
-    app = auth.get_app(context.cache_file, context.settings)
+    app = auth.get_app(context.cache_file, settings=context.settings)
     result = app.acquire_token_by_device_flow(flow)
 
     if "error" in result:
@@ -173,7 +173,7 @@ def complete_authentication(ctx: Context, flow_cache: str) -> dict[str, str]:
     # Save the token cache
     cache = app.token_cache
     if isinstance(cache, auth.msal.SerializableTokenCache) and cache.has_state_changed:
-        auth._write_cache(context.cache_file, cache.serialize())
+        auth._write_cache(context.cache_file, content=cache.serialize())
 
     # Get the newly added account
     accounts = app.get_accounts()

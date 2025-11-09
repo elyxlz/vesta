@@ -55,7 +55,7 @@ def list_json_files(directory: pl.Path) -> list[pl.Path]:
         return []
 
 
-def run_subprocess(command: list[str], capture_output: bool = True) -> tuple[int, str, str]:
+def run_subprocess(command: list[str], *, capture_output: bool = True) -> tuple[int, str, str]:
     try:
         result = subprocess.run(command, capture_output=capture_output, text=True)
         return result.returncode, result.stdout or "", result.stderr or ""
@@ -72,11 +72,11 @@ def get_current_time() -> dt.datetime:
     return dt.datetime.now()
 
 
-def get_timestamp_string(format: str = Formats.TIMESTAMP) -> str:
+def get_timestamp_string(*, format: str = Formats.TIMESTAMP) -> str:
     return dt.datetime.now().strftime(format)
 
 
-def print_line(text: str, flush: bool = False) -> None:
+def print_line(text: str, *, flush: bool = False) -> None:
     print(text, flush=flush)
 
 
@@ -122,15 +122,15 @@ def exit_process(code: int = 0) -> None:
     os._exit(code)
 
 
-def log_error(message: str, colors: dict[str, str]) -> None:
+def log_error(message: str, *, colors: dict[str, str]) -> None:
     print_line(f"{colors['yellow']}⚠️ {message}{colors['reset']}")
 
 
-def log_success(message: str, colors: dict[str, str]) -> None:
+def log_success(message: str, *, colors: dict[str, str]) -> None:
     print_line(f"{colors['green']}✅ {message}{colors['reset']}")
 
 
-def log_info(message: str, colors: dict[str, str]) -> None:
+def log_info(message: str, *, colors: dict[str, str]) -> None:
     print_line(f"{colors['cyan']}📝 {message}{colors['reset']}")
 
 
@@ -138,13 +138,13 @@ async def sleep(seconds: float) -> None:
     await asyncio.sleep(seconds)
 
 
-async def print_locked(lock: "asyncio.Lock", text: str, flush: bool = False) -> None:
+async def print_locked(lock: "asyncio.Lock", text: str, *, flush: bool = False) -> None:
     """Print with lock to prevent concurrent writes to terminal."""
     async with lock:
         print(text, flush=flush)
 
 
-async def print_inline_locked(lock: "asyncio.Lock", text: str) -> None:
+async def print_inline_locked(lock: "asyncio.Lock", *, text: str) -> None:
     """Print inline with lock to prevent concurrent writes to terminal."""
     async with lock:
         print(text, end="", flush=True)
@@ -162,7 +162,7 @@ async def move_cursor_up_and_clear_locked(lock: "asyncio.Lock") -> None:
         print("\033[1A\033[K", end="")
 
 
-async def render_messages_locked(lock: "asyncio.Lock", lines: list[str]) -> None:
+async def render_messages_locked(lock: "asyncio.Lock", *, lines: list[str]) -> None:
     """Render messages with lock to prevent concurrent writes to terminal."""
     async with lock:
         for line in lines:

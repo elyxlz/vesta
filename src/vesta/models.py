@@ -69,6 +69,8 @@ class VestaSettings(pyd_settings.BaseSettings):
 
     # OneDrive configuration
     onedrive_token: str | None = None
+    onedrive_client_id: str | None = None
+    onedrive_client_secret: str | None = None
     onedrive_remote_name: str = "onedrive"
     onedrive_remote_path: str = "/"
 

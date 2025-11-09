@@ -29,7 +29,7 @@ def check_rclone_installed() -> bool:
         return False
 
 
-def setup_rclone_config(config: VestaSettings, config_path: pl.Path) -> None:
+def setup_rclone_config(config: VestaSettings, *, config_path: pl.Path) -> None:
     """Generate rclone configuration file from environment variables.
 
     Args:
@@ -75,6 +75,7 @@ async def mount_onedrive(
     config: VestaSettings,
     mount_dir: pl.Path,
     config_path: pl.Path,
+    *,
     timeout: int = 30,
 ) -> subprocess.Popen:
     """Mount OneDrive using rclone.
@@ -150,7 +151,7 @@ async def mount_onedrive(
         raise RuntimeError(f"Failed to mount OneDrive: {e}") from e
 
 
-def unmount_onedrive(mount_dir: pl.Path, timeout: int = 10) -> None:
+def unmount_onedrive(mount_dir: pl.Path, *, timeout: int = 10) -> None:
     """Unmount OneDrive and cleanup.
 
     Args:

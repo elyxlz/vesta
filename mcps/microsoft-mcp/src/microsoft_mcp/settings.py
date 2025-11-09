@@ -8,5 +8,5 @@ class MicrosoftSettings(BaseSettings):
         extra="ignore",
     )
 
-    microsoft_mcp_client_id: str
+    microsoft_mcp_client_id: str | None = None
     microsoft_mcp_tenant_id: str = "common"

@@ -14,7 +14,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from .scheduler import write_notification
 
 
-def _validate_directory(path_str: str | None, param_name: str) -> Path:
+def _validate_directory(path_str: str | None, *, param_name: str) -> Path:
     """Validate and prepare a directory parameter"""
     if not path_str:
         raise ValueError(f"Error: --{param_name} is required")
@@ -49,9 +49,9 @@ async def reminder_lifespan(server: FastMCP) -> AsyncIterator[ReminderContext]:
     parser.add_argument("--notifications-dir", type=str, required=True)
     args, _ = parser.parse_known_args()
 
-    data_dir = _validate_directory(args.data_dir, "data-dir")
-    log_dir = _validate_directory(args.log_dir, "log-dir")
-    notif_dir = _validate_directory(args.notifications_dir, "notifications-dir")
+    data_dir = _validate_directory(args.data_dir, param_name="data-dir")
+    log_dir = _validate_directory(args.log_dir, param_name="log-dir")
+    notif_dir = _validate_directory(args.notifications_dir, param_name="notifications-dir")
 
     from . import scheduler as scheduler_module
 
@@ -92,7 +92,7 @@ def init_db(ctx: ReminderContext):
         conn.commit()
 
 
-def send_reminder_job(reminder_id: str, message: str, data_dir: Path, notif_dir: Path):
+def send_reminder_job(reminder_id: str, message: str, data_dir: Path, *, notif_dir: Path):
     write_notification(notif_dir, reminder_id, message)
     conn = sqlite3.connect(data_dir / "reminders.db")
     conn.row_factory = sqlite3.Row
@@ -116,7 +116,7 @@ def check_missed_reminders(ctx: ReminderContext):
                 ctx.notif_dir,
                 row["id"],
                 row["message"],
-                {"missed": True, "scheduled_time": row["scheduled_time"]},
+                data={"missed": True, "scheduled_time": row["scheduled_time"]},
             )
             conn.execute("UPDATE reminders SET fired = 1 WHERE id = ?", (row["id"],))
         conn.commit()
@@ -124,7 +124,10 @@ def check_missed_reminders(ctx: ReminderContext):
 
 def parse_time(time_str: str) -> tuple[int, int]:
     try:
-        return tuple(map(int, time_str.split(":")))
+        parts = tuple(map(int, time_str.split(":")))
+        if len(parts) != 2:
+            raise ValueError("Time must be in HH:MM format")
+        return parts  # type: ignore
     except ValueError:
         raise ValueError("Time must be in HH:MM format")
 
@@ -241,7 +244,7 @@ def list_reminders(ctx: Context, limit: int = 50) -> list[dict]:
 
 
 @mcp.tool()
-def update_reminder(ctx: Context, reminder_id: str, message: str) -> dict:
+def update_reminder(ctx: Context, reminder_id: str, *, message: str) -> dict:
     """Update a reminder's message"""
     context: ReminderContext = ctx.request_context.lifespan_context
 

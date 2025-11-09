@@ -123,6 +123,7 @@ def format_conversation(history: list[dict[str, tp.Any]]) -> str:
 
 async def preserve_conversation_memory(
     conversation_history: list[dict[str, tp.Any]],
+    *,
     config: vm.VestaSettings,
 ) -> str:
     if not conversation_history:
