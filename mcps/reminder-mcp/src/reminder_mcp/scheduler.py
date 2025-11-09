@@ -23,9 +23,7 @@ def write_notification(notif_dir: Path, reminder_id: str, message: str, data: di
 
     notif_dir.mkdir(exist_ok=True)
 
-    metadata = {"reminder_id": reminder_id}
-    if data:
-        metadata.update(data)
+    metadata = {"reminder_id": reminder_id, **(data or {})}
 
     notif = {
         "timestamp": datetime.now().isoformat(),

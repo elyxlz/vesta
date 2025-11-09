@@ -6,6 +6,7 @@ from mcp.server.fastmcp import Context
 from .auth_tools import mcp  # Use the shared MCP instance
 from . import graph
 from .context import MicrosoftContext
+from .email_tools import _parse_comma_separated
 
 
 @mcp.tool()
@@ -70,10 +71,7 @@ def create_event(
         event["body"] = {"contentType": "Text", "content": body}
 
     if attendees:
-        if isinstance(attendees, list):
-            attendees_list = attendees
-        else:
-            attendees_list = [addr.strip() for addr in attendees.split(",") if addr.strip()] if "," in attendees else [attendees]
+        attendees_list = attendees if isinstance(attendees, list) else _parse_comma_separated(attendees)
         event["attendees"] = [{"emailAddress": {"address": a}, "type": "required"} for a in attendees_list]
 
     result = graph.request(

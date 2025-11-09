@@ -51,15 +51,12 @@ async def microsoft_lifespan(server: FastMCP) -> AsyncIterator[MicrosoftContext]
     base_url = "https://graph.microsoft.com/v1.0"
     upload_chunk_size = 15 * 320 * 1024
     folders = {
-        k.casefold(): v
-        for k, v in {
-            "inbox": "inbox",
-            "sent": "sentitems",
-            "drafts": "drafts",
-            "deleted": "deleteditems",
-            "junk": "junkemail",
-            "archive": "archive",
-        }.items()
+        "inbox": "inbox",
+        "sent": "sentitems",
+        "drafts": "drafts",
+        "deleted": "deleteditems",
+        "junk": "junkemail",
+        "archive": "archive",
     }
 
     ctx = MicrosoftContext(

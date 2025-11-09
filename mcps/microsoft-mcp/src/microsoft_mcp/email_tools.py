@@ -9,6 +9,19 @@ from .auth_tools import mcp  # Use the shared MCP instance
 from .context import MicrosoftContext
 
 
+def _parse_comma_separated(value: str) -> list[str]:
+    """Parse comma-separated string into list of stripped non-empty values"""
+    return [x.strip() for x in value.split(",") if x.strip()]
+
+
+def _remove_attachment_bytes(result: dict[str, Any]) -> None:
+    """Remove contentBytes from attachments to reduce response size"""
+    if "attachments" in result and result["attachments"]:
+        for attachment in result["attachments"]:
+            if "contentBytes" in attachment:
+                del attachment["contentBytes"]
+
+
 @mcp.tool()
 def list_emails(
     ctx: Context,
@@ -79,11 +92,7 @@ def get_email(
     elif not include_body and "body" in result:
         del result["body"]
 
-    # Remove attachment content bytes to reduce size
-    if "attachments" in result and result["attachments"]:
-        for attachment in result["attachments"]:
-            if "contentBytes" in attachment:
-                del attachment["contentBytes"]
+    _remove_attachment_bytes(result)
 
     if save_to_file is not None:
         file_path = save_to_file if save_to_file else f"/tmp/email_{email_id[:8]}.txt"
@@ -121,8 +130,7 @@ def create_email_draft(
 ) -> dict[str, Any]:
     """to/cc: comma-separated emails. attachments: comma-separated file paths"""
     context: MicrosoftContext = ctx.request_context.lifespan_context
-    # Handle both single and comma-separated email addresses
-    to_list = [addr.strip() for addr in to.split(",") if addr.strip()] if "," in to else [to]
+    to_list = _parse_comma_separated(to)
 
     message = {
         "subject": subject,
@@ -131,15 +139,13 @@ def create_email_draft(
     }
 
     if cc:
-        cc_list = [addr.strip() for addr in cc.split(",") if addr.strip()] if "," in cc else [cc]
-        message["ccRecipients"] = [{"emailAddress": {"address": addr}} for addr in cc_list]
+        message["ccRecipients"] = [{"emailAddress": {"address": addr}} for addr in _parse_comma_separated(cc)]
 
     small_attachments = []
     large_attachments = []
 
     if attachments:
-        # Handle both single and comma-separated paths
-        attachment_paths = [path.strip() for path in attachments.split(",") if path.strip()] if "," in attachments else [attachments]
+        attachment_paths = _parse_comma_separated(attachments)
         for file_path in attachment_paths:
             path = pl.Path(file_path).expanduser().resolve()
             content_bytes = path.read_bytes()
@@ -203,8 +209,7 @@ def send_email(
 ) -> dict[str, str]:
     """to/cc: comma-separated emails. attachments: comma-separated file paths"""
     context: MicrosoftContext = ctx.request_context.lifespan_context
-    # Handle both single and comma-separated email addresses
-    to_list = [addr.strip() for addr in to.split(",") if addr.strip()] if "," in to else [to]
+    to_list = _parse_comma_separated(to)
 
     message = {
         "subject": subject,
@@ -213,16 +218,13 @@ def send_email(
     }
 
     if cc:
-        cc_list = [addr.strip() for addr in cc.split(",") if addr.strip()] if "," in cc else [cc]
-        message["ccRecipients"] = [{"emailAddress": {"address": addr}} for addr in cc_list]
+        message["ccRecipients"] = [{"emailAddress": {"address": addr}} for addr in _parse_comma_separated(cc)]
 
-    # Check if we have large attachments
     has_large_attachments = False
     processed_attachments = []
 
     if attachments:
-        # Handle both single and comma-separated paths
-        attachment_paths = [path.strip() for path in attachments.split(",") if path.strip()] if "," in attachments else [attachments]
+        attachment_paths = _parse_comma_separated(attachments)
         for file_path in attachment_paths:
             path = pl.Path(file_path).expanduser().resolve()
             content_bytes = path.read_bytes()
@@ -262,17 +264,14 @@ def send_email(
         )
         return {"status": "sent"}
     elif has_large_attachments:
-        # Create draft first, then add large attachments, then send
-        # We need to handle large attachments manually here
-        to_list = [addr.strip() for addr in to.split(",") if addr.strip()] if "," in to else [to]
+        to_list = _parse_comma_separated(to)
         message = {
             "subject": subject,
             "body": {"contentType": "Text", "content": body},
             "toRecipients": [{"emailAddress": {"address": addr}} for addr in to_list],
         }
         if cc:
-            cc_list = [cc] if isinstance(cc, str) else cc
-            message["ccRecipients"] = [{"emailAddress": {"address": addr}} for addr in cc_list]
+            message["ccRecipients"] = [{"emailAddress": {"address": addr}} for addr in _parse_comma_separated(cc)]
 
         result = graph.request(
             context.http_client, context.cache_file, context.scopes, context.base_url, "POST", "/me/messages", account_id, json=message
@@ -366,7 +365,7 @@ def reply_to_email(
             json={"body": {"contentType": "Text", "content": body}},
         )
 
-        attachment_paths = [path.strip() for path in attachments.split(",") if path.strip()] if "," in attachments else [attachments]
+        attachment_paths = _parse_comma_separated(attachments)
         for file_path in attachment_paths:
             path = pl.Path(file_path).expanduser().resolve()
             content_bytes = path.read_bytes()

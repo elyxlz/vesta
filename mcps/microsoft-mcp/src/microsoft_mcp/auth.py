@@ -43,12 +43,7 @@ def get_token(cache_file: pl.Path, scopes: list[str], account_id: str | None = N
     app = get_app(cache_file)
 
     accounts = app.get_accounts()
-    account = None
-
-    if account_id:
-        account = next((a for a in accounts if a["home_account_id"] == account_id), None)
-    elif accounts:
-        account = accounts[0]
+    account = next((a for a in accounts if a["home_account_id"] == account_id), None) if account_id else (accounts[0] if accounts else None)
 
     result = app.acquire_token_silent(scopes, account=account)
 
@@ -56,10 +51,7 @@ def get_token(cache_file: pl.Path, scopes: list[str], account_id: str | None = N
         flow = app.initiate_device_flow(scopes=scopes)
         if "user_code" not in flow:
             raise Exception(f"Failed to get device code: {flow.get('error_description', 'Unknown error')}")
-        verification_uri = flow.get(
-            "verification_uri",
-            flow.get("verification_url", "https://microsoft.com/devicelogin"),
-        )
+        verification_uri = flow.get("verification_uri") or flow.get("verification_url") or "https://microsoft.com/devicelogin"
         print(f"\nTo authenticate:\n1. Visit {verification_uri}\n2. Enter code: {flow['user_code']}")
         result = app.acquire_token_by_device_flow(flow)
 

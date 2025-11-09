@@ -102,6 +102,13 @@ def check_missed_reminders(ctx: ReminderContext):
         conn.commit()
 
 
+def parse_time(time_str: str) -> tuple[int, int]:
+    try:
+        return tuple(map(int, time_str.split(":")))
+    except ValueError:
+        raise ValueError("Time must be in HH:MM format")
+
+
 @mcp.tool()
 def set_reminder(
     ctx: Context,
@@ -119,41 +126,23 @@ def set_reminder(
     context: ReminderContext = ctx.request_context.lifespan_context
 
     reminder_id = str(uuid.uuid4())[:8]
-    schedule_info = None
 
     if recurring == "daily":
-        if time:
-            try:
-                h, m = map(int, time.split(":"))
-            except ValueError:
-                raise ValueError("Time must be in HH:MM format")
-        else:
-            h, m = 9, 0
+        h, m = parse_time(time) if time else (9, 0)
         trigger = CronTrigger(hour=h, minute=m)
         schedule_info = "daily" + (f" at {time}" if time else "")
     elif recurring == "hourly":
         trigger = IntervalTrigger(hours=1)
         schedule_info = "hourly"
     elif recurring == "weekly" and day_of_week:
-        if time:
-            try:
-                h, m = map(int, time.split(":"))
-            except ValueError:
-                raise ValueError("Time must be in HH:MM format")
-        else:
-            h, m = 9, 0
+        h, m = parse_time(time) if time else (9, 0)
         trigger = CronTrigger(day_of_week=day_of_week[:3].lower(), hour=h, minute=m)
         schedule_info = f"weekly on {day_of_week}" + (f" at {time}" if time else "")
     elif datetime:
         trigger = DateTrigger(run_date=dt.fromisoformat(datetime))
         schedule_info = f"once at {datetime}"
     else:
-        offset = timedelta(
-            seconds=seconds or 0,
-            minutes=minutes or 0,
-            hours=hours or 0,
-            days=days or 0,
-        )
+        offset = timedelta(seconds=seconds or 0, minutes=minutes or 0, hours=hours or 0, days=days or 0)
 
         if not offset:
             raise ValueError("Must specify when to send reminder")
@@ -161,15 +150,7 @@ def set_reminder(
         run_time = dt.now() + offset
         trigger = DateTrigger(run_date=run_time)
 
-        parts = []
-        if days:
-            parts.append(f"{days} days")
-        if hours:
-            parts.append(f"{hours} hours")
-        if minutes:
-            parts.append(f"{minutes} minutes")
-        if seconds:
-            parts.append(f"{seconds} seconds")
+        parts = [f"{v} {u}" for v, u in [(days, "days"), (hours, "hours"), (minutes, "minutes"), (seconds, "seconds")] if v]
         schedule_info = f"once (in {' '.join(parts)})"
 
     context.scheduler.add_job(
@@ -209,19 +190,17 @@ def list_reminders(ctx: Context) -> list[dict]:
         cursor = conn.execute("SELECT * FROM reminders")
         reminder_data = {row["id"]: dict(row) for row in cursor}
 
-    reminders = []
-    for job in context.scheduler.get_jobs():
-        if job.id in reminder_data:
-            reminders.append(
-                {
-                    "id": job.id,
-                    "message": reminder_data[job.id]["message"],
-                    "schedule": reminder_data[job.id]["schedule_type"],
-                    "next_run": (job.next_run_time.isoformat() if job.next_run_time else None),
-                    "status": "active" if job.next_run_time else "paused",
-                }
-            )
-    return reminders
+    return [
+        {
+            "id": job.id,
+            "message": reminder_data[job.id]["message"],
+            "schedule": reminder_data[job.id]["schedule_type"],
+            "next_run": (job.next_run_time.isoformat() if job.next_run_time else None),
+            "status": "active" if job.next_run_time else "paused",
+        }
+        for job in context.scheduler.get_jobs()
+        if job.id in reminder_data
+    ]
 
 
 @mcp.tool()

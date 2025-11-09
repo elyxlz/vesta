@@ -6,6 +6,40 @@ from collections.abc import Iterator
 from .auth import get_token
 
 
+def _retry_http_call(call_func, max_retries: int = 3):
+    """Helper to retry HTTP calls with exponential backoff and rate limit handling"""
+    retry_count = 0
+    while retry_count <= max_retries:
+        try:
+            response = call_func()
+
+            if response.status_code == 429:
+                retry_after = int(response.headers.get("Retry-After", "5"))
+                if retry_count < max_retries:
+                    time.sleep(min(retry_after, 60))
+                    retry_count += 1
+                    continue
+
+            if response.status_code >= 500 and retry_count < max_retries:
+                wait_time = (2**retry_count) * 1
+                time.sleep(wait_time)
+                retry_count += 1
+                continue
+
+            response.raise_for_status()
+            return response
+
+        except httpx.HTTPStatusError as e:
+            if retry_count < max_retries and e.response.status_code >= 500:
+                wait_time = (2**retry_count) * 1
+                time.sleep(wait_time)
+                retry_count += 1
+                continue
+            raise
+
+    return None
+
+
 def request(
     client: httpx.Client,
     cache_file: pl.Path,
@@ -35,45 +69,20 @@ def request(
         headers["ConsistencyLevel"] = "eventual"
         params.setdefault("$count", "true")
 
-    retry_count = 0
-    while retry_count <= max_retries:
-        try:
-            response = client.request(
-                method=method,
-                url=f"{base_url}{path}",
-                headers=headers,
-                params=params,
-                json=json,
-                content=data,
-            )
+    response = _retry_http_call(
+        lambda: client.request(
+            method=method,
+            url=f"{base_url}{path}",
+            headers=headers,
+            params=params,
+            json=json,
+            content=data,
+        ),
+        max_retries,
+    )
 
-            if response.status_code == 429:
-                retry_after = int(response.headers.get("Retry-After", "5"))
-                if retry_count < max_retries:
-                    time.sleep(min(retry_after, 60))
-                    retry_count += 1
-                    continue
-
-            if response.status_code >= 500 and retry_count < max_retries:
-                wait_time = (2**retry_count) * 1
-                time.sleep(wait_time)
-                retry_count += 1
-                continue
-
-            response.raise_for_status()
-
-            if response.content:
-                return response.json()
-            return None
-
-        except httpx.HTTPStatusError as e:
-            if retry_count < max_retries and e.response.status_code >= 500:
-                wait_time = (2**retry_count) * 1
-                time.sleep(wait_time)
-                retry_count += 1
-                continue
-            raise
-
+    if response and response.content:
+        return response.json()
     return None
 
 
@@ -117,36 +126,10 @@ def download_raw(
 ) -> bytes:
     headers = {"Authorization": f"Bearer {get_token(cache_file, scopes, account_id)}"}
 
-    retry_count = 0
-    while retry_count <= max_retries:
-        try:
-            response = client.get(f"{base_url}{path}", headers=headers)
-
-            if response.status_code == 429:
-                retry_after = int(response.headers.get("Retry-After", "5"))
-                if retry_count < max_retries:
-                    time.sleep(min(retry_after, 60))
-                    retry_count += 1
-                    continue
-
-            if response.status_code >= 500 and retry_count < max_retries:
-                wait_time = (2**retry_count) * 1
-                time.sleep(wait_time)
-                retry_count += 1
-                continue
-
-            response.raise_for_status()
-            return response.content
-
-        except httpx.HTTPStatusError as e:
-            if retry_count < max_retries and e.response.status_code >= 500:
-                wait_time = (2**retry_count) * 1
-                time.sleep(wait_time)
-                retry_count += 1
-                continue
-            raise
-
-    raise ValueError("Failed to download file after all retries")
+    response = _retry_http_call(lambda: client.get(f"{base_url}{path}", headers=headers), max_retries)
+    if not response:
+        raise ValueError("Failed to download file after all retries")
+    return response.content
 
 
 def _do_chunked_upload(
@@ -168,30 +151,11 @@ def _do_chunked_upload(
         chunk_headers["Content-Length"] = str(len(chunk))
         chunk_headers["Content-Range"] = f"bytes {chunk_start}-{chunk_end - 1}/{file_size}"
 
-        retry_count = 0
-        while retry_count <= 3:
-            try:
-                response = client.put(upload_url, content=chunk, headers=chunk_headers)
-
-                if response.status_code == 429:
-                    retry_after = int(response.headers.get("Retry-After", "5"))
-                    if retry_count < 3:
-                        time.sleep(min(retry_after, 60))
-                        retry_count += 1
-                        continue
-
-                response.raise_for_status()
-
-                if response.status_code in (200, 201):
-                    return response.json()
-                break
-
-            except httpx.HTTPStatusError as e:
-                if retry_count < 3 and e.response.status_code >= 500:
-                    time.sleep((2**retry_count) * 1)
-                    retry_count += 1
-                    continue
-                raise
+        response = _retry_http_call(lambda: client.put(upload_url, content=chunk, headers=chunk_headers), 3)
+        if response:
+            if response.status_code in (200, 201):
+                return response.json()
+            break
 
     raise ValueError("Upload completed but no final response received")
 

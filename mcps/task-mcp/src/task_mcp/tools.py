@@ -71,8 +71,7 @@ def parse_relative_date(date_str: str) -> str | None:
         return (now + timedelta(days=1)).date().isoformat()
     elif date_str.startswith("in ") and date_str.endswith(" days"):
         try:
-            days = int(date_str[3:-5])
-            return (now + timedelta(days=days)).date().isoformat()
+            return (now + timedelta(days=int(date_str[3:-5]))).date().isoformat()
         except ValueError:
             pass
 
@@ -150,17 +149,10 @@ def update_task(
             elif status == "pending":
                 updates.append("completed_at = NULL")
 
-        if title is not None:
-            updates.append("title = ?")
-            params.append(title)
-
-        if metadata is not None:
-            updates.append("metadata = ?")
-            params.append(metadata)
-
-        if priority is not None:
-            updates.append("priority = ?")
-            params.append(priority)
+        for field, value in [("title", title), ("metadata", metadata), ("priority", priority)]:
+            if value is not None:
+                updates.append(f"{field} = ?")
+                params.append(value)
 
         if updates:
             params.append(id)
