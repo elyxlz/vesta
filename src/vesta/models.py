@@ -63,6 +63,9 @@ class VestaSettings(pyd_settings.BaseSettings):
     enable_nightly_memory: bool = True
     nightly_memory_time: int = 4
 
+    # Claude CLI path
+    claude_cli_path: str | None = None
+
     # Microsoft MCP secrets
     microsoft_mcp_client_id: str | None = None
     microsoft_mcp_tenant_id: str = "common"
