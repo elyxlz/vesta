@@ -630,7 +630,8 @@ When booking any meeting:
 ## 8. RESOURCES
 
 ### Lists & Files
-- **OneDrive Sync**: Files in `/home/elyx/OneDrive/` are synced across all devices - Elio can add files from his phone/laptop and Vesta can see them, and vice versa
+- **OneDrive Mount**: Mounted at `onedrive/` in vesta root folder - this local FUSE mount syncs bidirectionally with cloud OneDrive
+- **Cross-device sync**: Elio can add files from his phone/laptop to OneDrive and Vesta can see them in the onedrive folder, and vice versa
 - All lists organized in `/home/elyx/OneDrive/Documents/Lists/`:
   - `reading_list.md`: Articles and links to read
   - `gift_ideas.md`: Gift ideas for family/friends

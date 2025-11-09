@@ -242,7 +242,7 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 	// Extract message content
 	content := extractTextContent(msg)
 	isForwarded := isMessageForwarded(msg)
-	mediaType, filename, _, _, _, _, _ := extractMediaInfo(msg)
+	mediaType, filename, url, mediaKey, fileSHA256, fileEncSHA256, fileLength := extractMediaInfo(msg)
 
 	// Skip empty messages
 	if content == "" && mediaType == "" {
@@ -269,12 +269,24 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 		isForwarded,
 		mediaType,
 		filename,
-		"", nil, nil, nil, 0,
+		url,
+		mediaKey,
+		fileSHA256,
+		fileEncSHA256,
+		fileLength,
 	)
 
 	// Write notification
 	if wac.notificationsDir != "" && !info.IsFromMe {
 		contactName, contactPhone, contactSaved := wac.notificationContactInfo(info.Chat, chatName)
+		senderDisplay := info.Sender.String()
+		if contactSaved && contactName != "" {
+			if contactPhone != "" {
+				senderDisplay = fmt.Sprintf("%s (%s)", contactName, contactPhone)
+			} else {
+				senderDisplay = contactName
+			}
+		}
 		WriteNotification(
 			wac.notificationsDir,
 			info.ID,
@@ -284,7 +296,7 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 			contactPhone,
 			contactSaved,
 			info.Chat.Server == types.DefaultUserServer,
-			info.Sender.String(),
+			senderDisplay,
 			content,
 			mediaType,
 			isForwarded,
@@ -356,6 +368,14 @@ func (wac *WhatsAppClient) handleReaction(evt *events.Message) {
 	// Write notification
 	if wac.notificationsDir != "" {
 		contactName, contactPhone, contactSaved := wac.notificationContactInfo(evt.Info.Chat, chatName)
+		senderDisplay := evt.Info.Sender.String()
+		if contactSaved && contactName != "" {
+			if contactPhone != "" {
+				senderDisplay = fmt.Sprintf("%s (%s)", contactName, contactPhone)
+			} else {
+				senderDisplay = contactName
+			}
+		}
 		WriteReactionNotification(
 			wac.notificationsDir,
 			targetID,
@@ -365,7 +385,7 @@ func (wac *WhatsAppClient) handleReaction(evt *events.Message) {
 			contactPhone,
 			contactSaved,
 			evt.Info.Chat.Server == types.DefaultUserServer,
-			evt.Info.Sender.String(),
+			senderDisplay,
 			emoji,
 			isRemoved,
 		)
