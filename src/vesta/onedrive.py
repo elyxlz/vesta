@@ -29,6 +29,20 @@ def check_rclone_installed() -> bool:
         return False
 
 
+def check_fusermount_installed() -> bool:
+    """Check if fusermount3 is installed and available in PATH."""
+    try:
+        result = subprocess.run(
+            ["fusermount3", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return result.returncode == 0
+    except (subprocess.SubprocessError, FileNotFoundError):
+        return False
+
+
 def setup_rclone_config(config: VestaSettings, *, config_path: pl.Path) -> None:
     """Generate rclone configuration file from environment variables.
 
@@ -99,6 +113,15 @@ async def mount_onedrive(
     """
     global _mount_process
 
+    # Check if fusermount3 is available (required for FUSE mounts)
+    if not check_fusermount_installed():
+        raise RuntimeError(
+            "fusermount3 is not installed. OneDrive mounting requires FUSE support.\n"
+            "Install it with: sudo pacman -S fuse3  (Arch/Endeavour)\n"
+            "               or: sudo apt install fuse3  (Debian/Ubuntu)\n"
+            "               or: sudo dnf install fuse3  (Fedora/RHEL)"
+        )
+
     # Create mount directory if it doesn't exist
     mount_dir.mkdir(parents=True, exist_ok=True)
 
@@ -131,22 +154,23 @@ async def mount_onedrive(
         # Wait for mount to be ready by checking if directory is accessible
         start_time = time.time()
         while time.time() - start_time < timeout:
-            # Check if process has exited with error
-            if process.poll() is not None:
-                stdout, stderr = process.communicate()
-                raise RuntimeError(f"rclone mount process exited with code {process.returncode}\nstdout: {stdout}\nstderr: {stderr}")
-
             # Try to list the mount directory to verify it's mounted
             try:
                 list(mount_dir.iterdir())
-                logger.info(f"OneDrive successfully mounted at {mount_dir}")
-                return process
-            except (OSError, PermissionError):
+                # Verify mount is actually in /proc/mounts (catches daemon crashes)
+                with open("/proc/mounts") as f:
+                    if str(mount_dir) in f.read():
+                        logger.info(f"OneDrive successfully mounted at {mount_dir}")
+                        return process
+            except (OSError, PermissionError, FileNotFoundError):
                 # Mount not ready yet, wait a bit
                 await asyncio.sleep(0.5)
 
-        # Timeout reached
-        raise RuntimeError(f"Timeout waiting for OneDrive mount to be ready after {timeout}s")
+        # Mount failed - raise with helpful error
+        raise RuntimeError(
+            f"OneDrive mount failed after {timeout}s. Check: ps aux | grep rclone\n"
+            f"If you see '<defunct>' processes, fusermount3 may be missing or crashed."
+        )
 
     except Exception as e:
         # Cleanup on failure
