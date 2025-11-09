@@ -336,3 +336,43 @@ func (ms *MessageStore) ListGroups(limit, offset int) ([]Chat, error) {
 
 	return groups, nil
 }
+
+func (ms *MessageStore) GetMessageMediaInfo(messageID, chatJID string) (*MediaInfo, error) {
+	var info MediaInfo
+	var mediaType, filename, url sql.NullString
+	var mediaKey, fileSHA256, fileEncSHA256 []byte
+	var fileLength sql.NullInt64
+
+	err := ms.db.QueryRow(`
+		SELECT id, chat_jid, media_type, filename, url,
+			media_key, file_sha256, file_enc_sha256, file_length
+		FROM messages
+		WHERE id = ? AND chat_jid = ?
+	`, messageID, chatJID).Scan(
+		&info.MessageID, &info.ChatJID, &mediaType, &filename, &url,
+		&mediaKey, &fileSHA256, &fileEncSHA256, &fileLength,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("message not found: %s in chat %s", messageID, chatJID)
+		}
+		return nil, fmt.Errorf("failed to query media info: %v", err)
+	}
+
+	info.MediaType = mediaType.String
+	info.Filename = filename.String
+	info.URL = url.String
+	info.MediaKey = mediaKey
+	info.FileSHA256 = fileSHA256
+	info.FileEncSHA256 = fileEncSHA256
+	if fileLength.Valid {
+		info.FileLength = uint64(fileLength.Int64)
+	}
+
+	if info.MediaType == "" || info.URL == "" {
+		return nil, fmt.Errorf("message %s has no media", messageID)
+	}
+
+	return &info, nil
+}

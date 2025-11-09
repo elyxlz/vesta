@@ -39,6 +39,18 @@ type MessageContext struct {
 	After   []Message `json:"after"`
 }
 
+type MediaInfo struct {
+	MessageID     string
+	ChatJID       string
+	MediaType     string
+	Filename      string
+	URL           string
+	MediaKey      []byte
+	FileSHA256    []byte
+	FileEncSHA256 []byte
+	FileLength    uint64
+}
+
 // Tool Input/Output types for MCP
 
 type SearchContactsInput struct {

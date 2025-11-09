@@ -150,7 +150,7 @@ func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 		Name:        "download_media",
 		Description: "Download media from a message. 'to' accepts contact name, phone number, group name, or JID.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input DownloadMediaInput) (*mcp.CallToolResult, DownloadMediaOutput, error) {
-		path, err := wac.DownloadMedia(input.MessageID, input.To)
+		path, err := wac.DownloadMedia(input.MessageID, input.To, input.DownloadPath)
 		success := err == nil
 		msg := "Media downloaded"
 		if err != nil {

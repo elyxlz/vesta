@@ -31,6 +31,11 @@ const (
 	AuthStatusAuthenticated    AuthStatus = "authenticated"
 )
 
+const (
+	MaxFileSizeBytes  = 100 * 1024 * 1024 // 100 MB
+	MaxAudioSizeBytes = 16 * 1024 * 1024  // 16 MB (WhatsApp limit for audio)
+)
+
 type WhatsAppClient struct {
 	client           *whatsmeow.Client
 	store            *MessageStore
@@ -428,9 +433,16 @@ func (wac *WhatsAppClient) SendFile(recipient, filePath, caption string) (bool, 
 		return false, "Recipient and file path are required. Provide recipient (contact name, phone number, or JID) and file path"
 	}
 
-	// Check file exists
-	if _, err := os.Stat(filePath); err != nil {
+	// Check file exists and get size
+	fileInfo, err := os.Stat(filePath)
+	if err != nil {
 		return false, fmt.Sprintf("File not found: %s", filePath)
+	}
+
+	// Check file size
+	if fileInfo.Size() > MaxFileSizeBytes {
+		return false, fmt.Sprintf("File too large: %d MB (max %d MB)",
+			fileInfo.Size()/(1024*1024), MaxFileSizeBytes/(1024*1024))
 	}
 
 	// Resolve recipient to JID
@@ -445,15 +457,48 @@ func (wac *WhatsAppClient) SendFile(recipient, filePath, caption string) (bool, 
 		return false, fmt.Sprintf("Failed to read file: %v", err)
 	}
 
-	// Upload file
-	uploaded, err := wac.client.Upload(context.Background(), data, whatsmeow.MediaDocument)
+	// Detect media type
+	mediaType, mimeType := detectMediaType(filePath)
+
+	// Upload file with appropriate media type
+	uploaded, err := wac.client.Upload(context.Background(), data, mediaType)
 	if err != nil {
 		return false, fmt.Sprintf("Failed to upload file: %v", err)
 	}
 
-	// Create message
-	msg := &waProto.Message{
-		DocumentMessage: &waProto.DocumentMessage{
+	// Create message based on media type
+	msg := &waProto.Message{}
+	switch mediaType {
+	case whatsmeow.MediaImage:
+		msg.ImageMessage = &waProto.ImageMessage{
+			URL:           proto.String(uploaded.URL),
+			DirectPath:    proto.String(uploaded.DirectPath),
+			MediaKey:      uploaded.MediaKey,
+			FileEncSHA256: uploaded.FileEncSHA256,
+			FileSHA256:    uploaded.FileSHA256,
+			FileLength:    proto.Uint64(uploaded.FileLength),
+			Mimetype:      proto.String(mimeType),
+		}
+		if caption != "" {
+			msg.ImageMessage.Caption = proto.String(caption)
+		}
+
+	case whatsmeow.MediaVideo:
+		msg.VideoMessage = &waProto.VideoMessage{
+			URL:           proto.String(uploaded.URL),
+			DirectPath:    proto.String(uploaded.DirectPath),
+			MediaKey:      uploaded.MediaKey,
+			FileEncSHA256: uploaded.FileEncSHA256,
+			FileSHA256:    uploaded.FileSHA256,
+			FileLength:    proto.Uint64(uploaded.FileLength),
+			Mimetype:      proto.String(mimeType),
+		}
+		if caption != "" {
+			msg.VideoMessage.Caption = proto.String(caption)
+		}
+
+	default: // MediaDocument
+		msg.DocumentMessage = &waProto.DocumentMessage{
 			URL:           proto.String(uploaded.URL),
 			DirectPath:    proto.String(uploaded.DirectPath),
 			MediaKey:      uploaded.MediaKey,
@@ -461,11 +506,11 @@ func (wac *WhatsAppClient) SendFile(recipient, filePath, caption string) (bool, 
 			FileSHA256:    uploaded.FileSHA256,
 			FileLength:    proto.Uint64(uploaded.FileLength),
 			FileName:      proto.String(filepath.Base(filePath)),
-		},
-	}
-
-	if caption != "" {
-		msg.DocumentMessage.Caption = proto.String(caption)
+			Mimetype:      proto.String(mimeType),
+		}
+		if caption != "" {
+			msg.DocumentMessage.Caption = proto.String(caption)
+		}
 	}
 
 	resp, err := wac.client.SendMessage(context.Background(), jid, msg)
@@ -495,6 +540,16 @@ func (wac *WhatsAppClient) SendAudioMessage(recipient, filePath string) (bool, s
 		}
 		filePath = converted
 		defer os.Remove(converted)
+	}
+
+	// Check file size
+	fileInfo, err := os.Stat(filePath)
+	if err != nil {
+		return false, fmt.Sprintf("Audio file not found: %v", err)
+	}
+	if fileInfo.Size() > MaxAudioSizeBytes {
+		return false, fmt.Sprintf("Audio file too large: %d MB (max %d MB)",
+			fileInfo.Size()/(1024*1024), MaxAudioSizeBytes/(1024*1024))
 	}
 
 	// Read file
@@ -536,16 +591,157 @@ func (wac *WhatsAppClient) SendAudioMessage(recipient, filePath string) (bool, s
 	return true, fmt.Sprintf("Audio message sent successfully (ID: %s)", resp.ID)
 }
 
-func (wac *WhatsAppClient) DownloadMedia(messageID, chatIdentifier string) (string, error) {
+func (wac *WhatsAppClient) DownloadMedia(messageID, chatIdentifier, downloadPath string) (string, error) {
+	if messageID == "" {
+		return "", fmt.Errorf("message ID cannot be empty")
+	}
+
 	// Resolve chat identifier to JID
-	_, err := wac.ResolveRecipient(chatIdentifier)
+	jid, err := wac.ResolveRecipient(chatIdentifier)
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve chat: %v", err)
 	}
 
-	// This would need implementation to download media from stored message info
-	// For now, return placeholder
-	return "", fmt.Errorf("media download not yet implemented")
+	// Get media info from database
+	mediaInfo, err := wac.store.GetMessageMediaInfo(messageID, jid.String())
+	if err != nil {
+		return "", err
+	}
+
+	// Create downloadable message based on media type
+	var downloadable whatsmeow.DownloadableMessage
+	switch mediaInfo.MediaType {
+	case "image":
+		downloadable = &waProto.ImageMessage{
+			URL:           proto.String(mediaInfo.URL),
+			MediaKey:      mediaInfo.MediaKey,
+			FileSHA256:    mediaInfo.FileSHA256,
+			FileEncSHA256: mediaInfo.FileEncSHA256,
+			FileLength:    proto.Uint64(mediaInfo.FileLength),
+		}
+	case "video":
+		downloadable = &waProto.VideoMessage{
+			URL:           proto.String(mediaInfo.URL),
+			MediaKey:      mediaInfo.MediaKey,
+			FileSHA256:    mediaInfo.FileSHA256,
+			FileEncSHA256: mediaInfo.FileEncSHA256,
+			FileLength:    proto.Uint64(mediaInfo.FileLength),
+		}
+	case "audio":
+		downloadable = &waProto.AudioMessage{
+			URL:           proto.String(mediaInfo.URL),
+			MediaKey:      mediaInfo.MediaKey,
+			FileSHA256:    mediaInfo.FileSHA256,
+			FileEncSHA256: mediaInfo.FileEncSHA256,
+			FileLength:    proto.Uint64(mediaInfo.FileLength),
+		}
+	case "document":
+		downloadable = &waProto.DocumentMessage{
+			URL:           proto.String(mediaInfo.URL),
+			MediaKey:      mediaInfo.MediaKey,
+			FileSHA256:    mediaInfo.FileSHA256,
+			FileEncSHA256: mediaInfo.FileEncSHA256,
+			FileLength:    proto.Uint64(mediaInfo.FileLength),
+		}
+	default:
+		return "", fmt.Errorf("unsupported media type: %s", mediaInfo.MediaType)
+	}
+
+	// Download media from WhatsApp servers
+	data, err := wac.client.Download(context.Background(), downloadable)
+	if err != nil {
+		return "", fmt.Errorf("failed to download media: %v", err)
+	}
+
+	// Determine save path
+	savePath := downloadPath
+	if savePath == "" {
+		// Default to downloads directory
+		downloadsDir := filepath.Join(wac.dataDir, "downloads")
+		if err := os.MkdirAll(downloadsDir, 0755); err != nil {
+			return "", fmt.Errorf("failed to create downloads directory: %v", err)
+		}
+
+		// Use filename if available, otherwise generate one
+		filename := mediaInfo.Filename
+		if filename == "" {
+			ext := getExtensionForMediaType(mediaInfo.MediaType)
+			filename = fmt.Sprintf("%s_%s%s", messageID, time.Now().Format("20060102_150405"), ext)
+		}
+		savePath = filepath.Join(downloadsDir, filename)
+	}
+
+	// Ensure parent directory exists
+	if err := os.MkdirAll(filepath.Dir(savePath), 0755); err != nil {
+		return "", fmt.Errorf("failed to create directory: %v", err)
+	}
+
+	// Write to file
+	if err := os.WriteFile(savePath, data, 0644); err != nil {
+		return "", fmt.Errorf("failed to save file: %v", err)
+	}
+
+	return savePath, nil
+}
+
+func getExtensionForMediaType(mediaType string) string {
+	switch mediaType {
+	case "image":
+		return ".jpg"
+	case "video":
+		return ".mp4"
+	case "audio":
+		return ".ogg"
+	case "document":
+		return ".bin"
+	default:
+		return ".bin"
+	}
+}
+
+func detectMediaType(filePath string) (mediaType whatsmeow.MediaType, mimeType string) {
+	ext := strings.ToLower(filepath.Ext(filePath))
+
+	// Image types
+	switch ext {
+	case ".jpg", ".jpeg":
+		return whatsmeow.MediaImage, "image/jpeg"
+	case ".png":
+		return whatsmeow.MediaImage, "image/png"
+	case ".gif":
+		return whatsmeow.MediaImage, "image/gif"
+	case ".webp":
+		return whatsmeow.MediaImage, "image/webp"
+	}
+
+	// Video types
+	switch ext {
+	case ".mp4":
+		return whatsmeow.MediaVideo, "video/mp4"
+	case ".mov":
+		return whatsmeow.MediaVideo, "video/quicktime"
+	case ".avi":
+		return whatsmeow.MediaVideo, "video/x-msvideo"
+	case ".mkv":
+		return whatsmeow.MediaVideo, "video/x-matroska"
+	case ".webm":
+		return whatsmeow.MediaVideo, "video/webm"
+	}
+
+	// Audio types
+	switch ext {
+	case ".mp3":
+		return whatsmeow.MediaAudio, "audio/mpeg"
+	case ".ogg":
+		return whatsmeow.MediaAudio, "audio/ogg"
+	case ".m4a":
+		return whatsmeow.MediaAudio, "audio/mp4"
+	case ".wav":
+		return whatsmeow.MediaAudio, "audio/wav"
+	}
+
+	// Default to document
+	return whatsmeow.MediaDocument, "application/octet-stream"
 }
 
 func (wac *WhatsAppClient) SendReaction(messageID, emoji, chatIdentifier string) (bool, string) {
