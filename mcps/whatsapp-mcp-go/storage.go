@@ -112,7 +112,10 @@ func (ms *MessageStore) GetChatName(jid string) (string, error) {
 	return name.String, nil
 }
 
-func (ms *MessageStore) SearchContacts(query string) ([]Contact, error) {
+func (ms *MessageStore) SearchContacts(query string, limit int) ([]Contact, error) {
+	if limit == 0 {
+		limit = 50
+	}
 	searchPattern := "%" + query + "%"
 	rows, err := ms.db.Query(`
 		SELECT DISTINCT jid, name
@@ -120,8 +123,8 @@ func (ms *MessageStore) SearchContacts(query string) ([]Contact, error) {
 		WHERE (name LIKE ? OR jid LIKE ?)
 		AND jid NOT LIKE '%@g.us'
 		ORDER BY name
-		LIMIT 50
-	`, searchPattern, searchPattern)
+		LIMIT ?
+	`, searchPattern, searchPattern, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -289,186 +292,6 @@ func (ms *MessageStore) ListChats(
 	return chats, nil
 }
 
-func (ms *MessageStore) GetChat(chatJID string, includeLastMessage bool) (*Chat, error) {
-	var c Chat
-	var name, lastMsg, lastSender sql.NullString
-	var lastTime sql.NullTime
-	var lastIsFromMe sql.NullBool
-
-	query := `
-		SELECT
-			c.jid, c.name, c.last_message_time
-	`
-	if includeLastMessage {
-		query += `,
-			m.content, m.sender, m.is_from_me
-		FROM chats c
-		LEFT JOIN messages m ON c.jid = m.chat_jid
-			AND c.last_message_time = m.timestamp
-		WHERE c.jid = ?`
-	} else {
-		query += `,
-			NULL, NULL, NULL
-		FROM chats c
-		WHERE c.jid = ?`
-	}
-
-	err := ms.db.QueryRow(query, chatJID).Scan(
-		&c.JID, &name, &lastTime,
-		&lastMsg, &lastSender, &lastIsFromMe,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	c.Name = name.String
-	if lastTime.Valid {
-		c.LastMessageTime = lastTime.Time
-	}
-	c.LastMessage = lastMsg.String
-	c.LastSender = lastSender.String
-	c.LastIsFromMe = lastIsFromMe.Bool
-	c.IsGroup = strings.HasSuffix(c.JID, "@g.us")
-
-	return &c, nil
-}
-
-func (ms *MessageStore) GetDirectChatByContact(phoneNumber string) (*Chat, error) {
-	pattern := "%" + phoneNumber + "%"
-	var c Chat
-	var name, lastMsg, lastSender sql.NullString
-	var lastTime sql.NullTime
-	var lastIsFromMe sql.NullBool
-
-	err := ms.db.QueryRow(`
-		SELECT
-			c.jid, c.name, c.last_message_time,
-			m.content, m.sender, m.is_from_me
-		FROM chats c
-		LEFT JOIN messages m ON c.jid = m.chat_jid
-			AND c.last_message_time = m.timestamp
-		WHERE c.jid LIKE ? AND c.jid NOT LIKE '%@g.us'
-		LIMIT 1
-	`, pattern).Scan(
-		&c.JID, &name, &lastTime,
-		&lastMsg, &lastSender, &lastIsFromMe,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	c.Name = name.String
-	if lastTime.Valid {
-		c.LastMessageTime = lastTime.Time
-	}
-	c.LastMessage = lastMsg.String
-	c.LastSender = lastSender.String
-	c.LastIsFromMe = lastIsFromMe.Bool
-
-	return &c, nil
-}
-
-func (ms *MessageStore) GetMessageContext(chatJID, messageID string, before, after int) ([]Message, error) {
-	// First get the target message timestamp
-	var targetTime time.Time
-	err := ms.db.QueryRow(`
-		SELECT timestamp FROM messages
-		WHERE chat_jid = ? AND id = ?
-	`, chatJID, messageID).Scan(&targetTime)
-	if err != nil {
-		return nil, err
-	}
-
-	// Get messages before
-	beforeMessages := []Message{}
-	if before > 0 {
-		rows, err := ms.db.Query(`
-			SELECT
-				m.id, m.chat_jid, c.name, m.sender, m.content,
-				m.timestamp, m.is_from_me, m.is_forwarded, m.media_type, m.filename
-			FROM messages m
-			JOIN chats c ON m.chat_jid = c.jid
-			WHERE m.chat_jid = ? AND m.timestamp < ?
-			ORDER BY m.timestamp DESC
-			LIMIT ?
-		`, chatJID, targetTime, before)
-		if err == nil {
-			defer rows.Close()
-			for rows.Next() {
-				var m Message
-				var chatName, mediaType, filename sql.NullString
-				if err := rows.Scan(
-					&m.ID, &m.ChatJID, &chatName, &m.Sender, &m.Content,
-					&m.Timestamp, &m.IsFromMe, &m.IsForwarded, &mediaType, &filename,
-				); err == nil {
-					m.ChatName = chatName.String
-					m.MediaType = mediaType.String
-					m.Filename = filename.String
-					beforeMessages = append([]Message{m}, beforeMessages...)
-				}
-			}
-		}
-	}
-
-	// Get the target message
-	var targetMessage Message
-	var chatName, mediaType, filename sql.NullString
-	err = ms.db.QueryRow(`
-		SELECT
-			m.id, m.chat_jid, c.name, m.sender, m.content,
-			m.timestamp, m.is_from_me, m.is_forwarded, m.media_type, m.filename
-		FROM messages m
-		JOIN chats c ON m.chat_jid = c.jid
-		WHERE m.chat_jid = ? AND m.id = ?
-	`, chatJID, messageID).Scan(
-		&targetMessage.ID, &targetMessage.ChatJID, &chatName, &targetMessage.Sender, &targetMessage.Content,
-		&targetMessage.Timestamp, &targetMessage.IsFromMe, &targetMessage.IsForwarded, &mediaType, &filename,
-	)
-	if err != nil {
-		return nil, err
-	}
-	targetMessage.ChatName = chatName.String
-	targetMessage.MediaType = mediaType.String
-	targetMessage.Filename = filename.String
-
-	// Get messages after
-	afterMessages := []Message{}
-	if after > 0 {
-		rows, err := ms.db.Query(`
-			SELECT
-				m.id, m.chat_jid, c.name, m.sender, m.content,
-				m.timestamp, m.is_from_me, m.is_forwarded, m.media_type, m.filename
-			FROM messages m
-			JOIN chats c ON m.chat_jid = c.jid
-			WHERE m.chat_jid = ? AND m.timestamp > ?
-			ORDER BY m.timestamp ASC
-			LIMIT ?
-		`, chatJID, targetTime, after)
-		if err == nil {
-			defer rows.Close()
-			for rows.Next() {
-				var m Message
-				var chatName, mediaType, filename sql.NullString
-				if err := rows.Scan(
-					&m.ID, &m.ChatJID, &chatName, &m.Sender, &m.Content,
-					&m.Timestamp, &m.IsFromMe, &m.IsForwarded, &mediaType, &filename,
-				); err == nil {
-					m.ChatName = chatName.String
-					m.MediaType = mediaType.String
-					m.Filename = filename.String
-					afterMessages = append(afterMessages, m)
-				}
-			}
-		}
-	}
-
-	// Combine all messages
-	result := append(beforeMessages, targetMessage)
-	result = append(result, afterMessages...)
-
-	return result, nil
-}
-
 func (ms *MessageStore) ListGroups(limit, offset int) ([]Chat, error) {
 	rows, err := ms.db.Query(`
 		SELECT
@@ -513,99 +336,4 @@ func (ms *MessageStore) ListGroups(limit, offset int) ([]Chat, error) {
 	}
 
 	return groups, nil
-}
-
-func (ms *MessageStore) GetLastInteraction(jid string) (string, error) {
-	var m Message
-	var chatName, mediaType, filename sql.NullString
-
-	err := ms.db.QueryRow(`
-		SELECT
-			m.id, m.chat_jid, c.name, m.sender, m.content,
-			m.timestamp, m.is_from_me, m.is_forwarded, m.media_type, m.filename
-		FROM messages m
-		JOIN chats c ON m.chat_jid = c.jid
-		WHERE m.sender = ? OR c.jid = ?
-		ORDER BY m.timestamp DESC
-		LIMIT 1
-	`, jid, jid).Scan(
-		&m.ID, &m.ChatJID, &chatName, &m.Sender, &m.Content,
-		&m.Timestamp, &m.IsFromMe, &m.IsForwarded, &mediaType, &filename,
-	)
-	if err != nil {
-		return "", err
-	}
-
-	m.ChatName = chatName.String
-	m.MediaType = mediaType.String
-	m.Filename = filename.String
-
-	// Format the interaction message
-	sender := m.Sender
-	if m.IsFromMe {
-		sender = "You"
-	}
-
-	interaction := fmt.Sprintf("[%s] %s: %s",
-		m.Timestamp.Format("2006-01-02 15:04"),
-		sender,
-		m.Content,
-	)
-
-	if m.MediaType != "" {
-		interaction = fmt.Sprintf("[%s] %s: [%s]",
-			m.Timestamp.Format("2006-01-02 15:04"),
-			sender,
-			m.MediaType,
-		)
-	}
-
-	return interaction, nil
-}
-
-func (ms *MessageStore) GetContactChats(jid string, limit, offset int) ([]Chat, error) {
-	rows, err := ms.db.Query(`
-		SELECT DISTINCT
-			c.jid, c.name, c.last_message_time,
-			m.content, m.sender, m.is_from_me
-		FROM messages msg
-		JOIN chats c ON msg.chat_jid = c.jid
-		LEFT JOIN messages m ON c.jid = m.chat_jid
-			AND c.last_message_time = m.timestamp
-		WHERE msg.sender = ? OR msg.chat_jid = ?
-		ORDER BY c.last_message_time DESC
-		LIMIT ? OFFSET ?
-	`, jid, jid, limit, offset)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var chats []Chat
-	for rows.Next() {
-		var c Chat
-		var name, lastMsg, lastSender sql.NullString
-		var lastTime sql.NullTime
-		var lastIsFromMe sql.NullBool
-
-		if err := rows.Scan(
-			&c.JID, &name, &lastTime,
-			&lastMsg, &lastSender, &lastIsFromMe,
-		); err != nil {
-			continue
-		}
-
-		c.Name = name.String
-		if lastTime.Valid {
-			c.LastMessageTime = lastTime.Time
-		}
-		c.LastMessage = lastMsg.String
-		c.LastSender = lastSender.String
-		c.LastIsFromMe = lastIsFromMe.Bool
-		c.IsGroup = strings.HasSuffix(c.JID, "@g.us")
-
-		chats = append(chats, c)
-	}
-
-	return chats, nil
 }

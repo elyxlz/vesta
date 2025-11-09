@@ -395,28 +395,18 @@ func (wac *WhatsAppClient) getChatNameFromConversation(jid types.JID, conversati
 
 func (wac *WhatsAppClient) SendMessage(recipient, message string) (bool, string) {
 	if recipient == "" || message == "" {
-		return false, "Recipient and message are required"
+		return false, "Recipient and message are required. Provide recipient (contact name, phone number, or JID) and message text"
 	}
 
 	// Check if connected
 	if !wac.client.IsConnected() {
-		return false, "WhatsApp is not connected"
+		return false, "WhatsApp is not connected. Ensure WhatsApp is authenticated and connected"
 	}
 
-	// Parse recipient JID
-	var jid types.JID
-	var err error
-
-	if strings.Contains(recipient, "@") {
-		jid, err = types.ParseJID(recipient)
-	} else {
-		// Assume it's a phone number - remove + if present
-		phone := strings.TrimPrefix(recipient, "+")
-		jid = types.NewJID(phone, types.DefaultUserServer)
-	}
-
+	// Resolve recipient to JID
+	jid, err := wac.ResolveRecipient(recipient)
 	if err != nil {
-		return false, fmt.Sprintf("Invalid recipient: %v", err)
+		return false, err.Error()
 	}
 
 	// Send message
@@ -434,7 +424,7 @@ func (wac *WhatsAppClient) SendMessage(recipient, message string) (bool, string)
 
 func (wac *WhatsAppClient) SendFile(recipient, filePath, caption string) (bool, string) {
 	if recipient == "" || filePath == "" {
-		return false, "Recipient and file path are required"
+		return false, "Recipient and file path are required. Provide recipient (contact name, phone number, or JID) and file path"
 	}
 
 	// Check file exists
@@ -442,18 +432,10 @@ func (wac *WhatsAppClient) SendFile(recipient, filePath, caption string) (bool, 
 		return false, fmt.Sprintf("File not found: %s", filePath)
 	}
 
-	// Parse recipient JID
-	var jid types.JID
-	var err error
-
-	if strings.Contains(recipient, "@") {
-		jid, err = types.ParseJID(recipient)
-	} else {
-		jid = types.NewJID(recipient, types.DefaultUserServer)
-	}
-
+	// Resolve recipient to JID
+	jid, err := wac.ResolveRecipient(recipient)
 	if err != nil {
-		return false, fmt.Sprintf("Invalid recipient: %v", err)
+		return false, err.Error()
 	}
 
 	// Read file
@@ -495,7 +477,13 @@ func (wac *WhatsAppClient) SendFile(recipient, filePath, caption string) (bool, 
 
 func (wac *WhatsAppClient) SendAudioMessage(recipient, filePath string) (bool, string) {
 	if recipient == "" || filePath == "" {
-		return false, "Recipient and file path are required"
+		return false, "Recipient and file path are required. Provide recipient (contact name, phone number, or JID) and audio file path"
+	}
+
+	// Resolve recipient to JID
+	jid, err := wac.ResolveRecipient(recipient)
+	if err != nil {
+		return false, err.Error()
 	}
 
 	// Convert to opus if needed
@@ -512,18 +500,6 @@ func (wac *WhatsAppClient) SendAudioMessage(recipient, filePath string) (bool, s
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return false, fmt.Sprintf("Failed to read audio file: %v", err)
-	}
-
-	// Parse recipient JID
-	var jid types.JID
-	if strings.Contains(recipient, "@") {
-		jid, err = types.ParseJID(recipient)
-	} else {
-		jid = types.NewJID(recipient, types.DefaultUserServer)
-	}
-
-	if err != nil {
-		return false, fmt.Sprintf("Invalid recipient: %v", err)
 	}
 
 	// Calculate duration and waveform
@@ -559,16 +535,23 @@ func (wac *WhatsAppClient) SendAudioMessage(recipient, filePath string) (bool, s
 	return true, fmt.Sprintf("Audio message sent successfully (ID: %s)", resp.ID)
 }
 
-func (wac *WhatsAppClient) DownloadMedia(messageID, chatJID string) (string, error) {
+func (wac *WhatsAppClient) DownloadMedia(messageID, chatIdentifier string) (string, error) {
+	// Resolve chat identifier to JID
+	_, err := wac.ResolveRecipient(chatIdentifier)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve chat: %v", err)
+	}
+
 	// This would need implementation to download media from stored message info
 	// For now, return placeholder
 	return "", fmt.Errorf("media download not yet implemented")
 }
 
-func (wac *WhatsAppClient) SendReaction(messageID, emoji, chatJID string) (bool, string) {
-	jid, err := types.ParseJID(chatJID)
+func (wac *WhatsAppClient) SendReaction(messageID, emoji, chatIdentifier string) (bool, string) {
+	// Resolve chat identifier to JID
+	jid, err := wac.ResolveRecipient(chatIdentifier)
 	if err != nil {
-		return false, fmt.Sprintf("Invalid chat JID: %v", err)
+		return false, fmt.Sprintf("Failed to resolve chat: %v", err)
 	}
 
 	// Determine sender JID
@@ -667,6 +650,110 @@ func (wac *WhatsAppClient) GetGroupInviteLink(groupJID string) (bool, string, st
 	}
 
 	return true, link, "Invite link retrieved successfully"
+}
+
+func (wac *WhatsAppClient) ResolveRecipient(identifier string) (types.JID, error) {
+	if identifier == "" {
+		return types.JID{}, fmt.Errorf("recipient identifier cannot be empty")
+	}
+
+	// 1. If contains "@", parse as JID directly
+	if strings.Contains(identifier, "@") {
+		jid, err := types.ParseJID(identifier)
+		if err != nil {
+			return types.JID{}, fmt.Errorf("invalid JID format '%s': %v. Use phone (+1234567890), contact name, or valid JID", identifier, err)
+		}
+		return jid, nil
+	}
+
+	// 2. If starts with "+", treat as phone number
+	if strings.HasPrefix(identifier, "+") {
+		phone := strings.TrimPrefix(identifier, "+")
+		// Validate it's all digits
+		if !isNumeric(phone) {
+			return types.JID{}, fmt.Errorf("invalid phone number '%s': must contain only digits after '+'", identifier)
+		}
+		return types.NewJID(phone, types.DefaultUserServer), nil
+	}
+
+	// 3. If all digits, treat as phone number without "+"
+	if isNumeric(identifier) {
+		return types.NewJID(identifier, types.DefaultUserServer), nil
+	}
+
+	// 4. Search contacts by name (case-insensitive fuzzy match)
+	contacts, err := wac.store.SearchContacts(identifier, 50)
+	if err == nil && len(contacts) > 0 {
+		if len(contacts) == 1 {
+			// Single match - use it
+			jid, err := types.ParseJID(contacts[0].JID)
+			if err != nil {
+				return types.JID{}, fmt.Errorf("invalid contact JID: %v", err)
+			}
+			return jid, nil
+		}
+		// Multiple matches - return error with suggestions
+		var names []string
+		for i, c := range contacts {
+			if i >= 5 { // Limit to first 5
+				names = append(names, "...")
+				break
+			}
+			displayName := c.Name
+			if displayName == "" {
+				displayName = c.PhoneNumber
+			}
+			names = append(names, fmt.Sprintf("%s (%s)", displayName, c.PhoneNumber))
+		}
+		return types.JID{}, fmt.Errorf("multiple contacts match '%s': %s. Please use full name or phone number",
+			identifier, strings.Join(names, ", "))
+	}
+
+	// 5. Search groups by name (case-insensitive fuzzy match)
+	groups, err := wac.store.ListGroups(50, 0)
+	if err == nil && len(groups) > 0 {
+		var matches []Chat
+		lowerIdentifier := strings.ToLower(identifier)
+		for _, g := range groups {
+			if strings.Contains(strings.ToLower(g.Name), lowerIdentifier) {
+				matches = append(matches, g)
+			}
+		}
+
+		if len(matches) == 1 {
+			// Single match - use it
+			jid, err := types.ParseJID(matches[0].JID)
+			if err != nil {
+				return types.JID{}, fmt.Errorf("invalid group JID: %v", err)
+			}
+			return jid, nil
+		}
+		if len(matches) > 1 {
+			// Multiple matches - return error with suggestions
+			var names []string
+			for i, g := range matches {
+				if i >= 5 { // Limit to first 5
+					names = append(names, "...")
+					break
+				}
+				names = append(names, g.Name)
+			}
+			return types.JID{}, fmt.Errorf("multiple groups match '%s': %s. Please use full group name or JID",
+				identifier, strings.Join(names, ", "))
+		}
+	}
+
+	// 6. No matches found
+	return types.JID{}, fmt.Errorf("no contact or group found matching '%s'. Use search_contacts or list_groups to find available recipients", identifier)
+}
+
+func isNumeric(s string) bool {
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return len(s) > 0
 }
 
 func (wac *WhatsAppClient) UpdateGroupParticipants(groupJID, action string, participants []string) (bool, string) {

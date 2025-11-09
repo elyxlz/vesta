@@ -46,8 +46,13 @@ func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 	// search_contacts
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "search_contacts",
+		Description: "Search WhatsApp contacts by name or phone number. Returns contacts excluding groups.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input SearchContactsInput) (*mcp.CallToolResult, SearchContactsOutput, error) {
-		contacts, err := wac.store.SearchContacts(input.Query)
+		limit := input.Limit
+		if limit == 0 {
+			limit = 50
+		}
+		contacts, err := wac.store.SearchContacts(input.Query, limit)
 		if err != nil {
 			return nil, SearchContactsOutput{}, err
 		}
@@ -61,7 +66,7 @@ func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 	// list_messages
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "list_messages",
-		Description: "after/before: ISO-8601 datetime. sender_phone_number: E.164 format (+1234567890). chat_jid: JID format (phone@s.whatsapp.net or groupid@g.us)",
+		Description: "List WhatsApp messages with optional filters. Use 'to' to filter by chat (contact name, phone number, group name, or JID). Supports time range filtering and pagination.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input ListMessagesInput) (*mcp.CallToolResult, ListMessagesOutput, error) {
 		var after, before *time.Time
 		if input.After != "" {
@@ -75,12 +80,22 @@ func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 
 		limit := input.Limit
 		if limit == 0 {
-			limit = 20
+			limit = 50
+		}
+
+		// Resolve 'to' parameter to JID if provided
+		var chatJID string
+		if input.To != "" {
+			jid, err := wac.ResolveRecipient(input.To)
+			if err != nil {
+				return nil, ListMessagesOutput{}, fmt.Errorf("failed to resolve chat: %v", err)
+			}
+			chatJID = jid.String()
 		}
 
 		messages, err := wac.store.ListMessages(
 			after, before,
-			input.SenderPhone, input.ChatJID, input.Query,
+			input.SenderPhone, chatJID, input.Query,
 			limit, input.Page*limit,
 			input.IncludeContext,
 			input.ContextBefore, input.ContextAfter,
@@ -94,11 +109,11 @@ func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 	// list_chats
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "list_chats",
-		Description: "sort_by: 'last_active' or 'name'",
+		Description: "List WhatsApp chats with optional sorting. Use 'sort_by' with 'last_active' (default) or 'name'.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input ListChatsInput) (*mcp.CallToolResult, ListChatsOutput, error) {
 		limit := input.Limit
 		if limit == 0 {
-			limit = 20
+			limit = 50
 		}
 
 		chats, err := wac.store.ListChats(
@@ -116,26 +131,27 @@ func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 	// send_message
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "send_message",
-		Description: "recipient: phone number (E.164: +1234567890) or JID (phone@s.whatsapp.net or groupid@g.us)",
+		Description: "Send a WhatsApp message. 'to' accepts contact name, phone number (+1234567890), group name, or JID.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input SendMessageInput) (*mcp.CallToolResult, SendMessageOutput, error) {
-		success, message := wac.SendMessage(input.Recipient, input.Message)
+		success, message := wac.SendMessage(input.To, input.Message)
 		return nil, SendMessageOutput{Success: success, Message: message}, nil
 	})
 
 	// send_file
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "send_file",
-		Description: "recipient: phone number (E.164: +1234567890) or JID (phone@s.whatsapp.net or groupid@g.us)",
+		Description: "Send a file via WhatsApp. 'to' accepts contact name, phone number (+1234567890), group name, or JID.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input SendFileInput) (*mcp.CallToolResult, SendFileOutput, error) {
-		success, message := wac.SendFile(input.Recipient, input.FilePath, input.Caption)
+		success, message := wac.SendFile(input.To, input.FilePath, input.Caption)
 		return nil, SendFileOutput{Success: success, Message: message}, nil
 	})
 
 	// download_media
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "download_media",
+		Description: "Download media from a message. 'to' accepts contact name, phone number, group name, or JID.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input DownloadMediaInput) (*mcp.CallToolResult, DownloadMediaOutput, error) {
-		path, err := wac.DownloadMedia(input.MessageID, input.JID)
+		path, err := wac.DownloadMedia(input.MessageID, input.To)
 		success := err == nil
 		msg := "Media downloaded"
 		if err != nil {
@@ -147,9 +163,9 @@ func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 	// send_reaction
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "send_reaction",
-		Description: "emoji: single emoji character (👍, ❤️, 😂). jid: chat JID (phone@s.whatsapp.net or groupid@g.us)",
+		Description: "React to a message with an emoji. 'to' accepts contact name, phone number, group name, or JID.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input SendReactionInput) (*mcp.CallToolResult, SendReactionOutput, error) {
-		success, message := wac.SendReaction(input.MessageID, input.Emoji, input.JID)
+		success, message := wac.SendReaction(input.MessageID, input.Emoji, input.To)
 		return nil, SendReactionOutput{Success: success, Message: message}, nil
 	})
 
