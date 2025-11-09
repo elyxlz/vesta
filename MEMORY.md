@@ -610,10 +610,13 @@ When booking any meeting:
   - **Reason**: He can see terminal activity and finds it annoying
   - **Exception**: ONLY respond in terminal if message comes from terminal
   - **Channel Response Rule**: Always respond through same channel message came from
-- **November 2025 - WhatsApp contact names in tools**:
+- **November 9, 2025 - WhatsApp contact names in tools**:
   - **send_message `to` field**: Accepts contact names, group names, phone numbers, or JIDs — no need to paste numbers if the name is saved
   - **Best practice**: Prefer contact names (e.g., "Maddy", "Gina Spoon") for clarity and to avoid copying raw numbers
   - **Prep step**: Use `add_contact` / `list_contacts` if you need to save or check a contact before messaging
+  - **CRITICAL**: Elio questioned why Vesta used phone number instead of name when describing message - reinforced preference for name-based addressing
+  - **Pattern identified**: User asked "explain what inclined you to send message with my phone number instead of 'Elio'" - this shows using numbers feels impersonal
+  - **User asked about contact listing**: "do you not have a list contacts tool?" - need to be aware of available WhatsApp MCP tools and use them proactively
 
 - **October 6-7, 2025 - Date/day checking critical issue**:
   - **Major frustration point**: When I get days of week wrong for dates
