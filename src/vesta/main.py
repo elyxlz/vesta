@@ -610,6 +610,7 @@ async def init_state(*, config: vm.VestaSettings) -> vm.State:
     await client.__aenter__()
 
     # Initialize state with the client
+    now = vfx.get_current_time()
     return vm.State(
         client=client,
         conversation_history=[],
@@ -618,6 +619,7 @@ async def init_state(*, config: vm.VestaSettings) -> vm.State:
         shutdown_count=0,
         is_processing=False,
         sub_agent_context=None,
+        last_memory_consolidation=now,
     )
 
 

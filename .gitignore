@@ -57,3 +57,4 @@ mcps/whatsapp-mcp-go/whatsapp-mcp
 
 # Old vesta folder (if still present)
 old_vesta/
+.cache

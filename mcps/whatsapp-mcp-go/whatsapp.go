@@ -1296,6 +1296,10 @@ func resolveFromContacts(contacts []Contact, identifier string) (types.JID, erro
 		return types.JID{}, nil
 	}
 
+	if jid, handled, err := preferExactContactMatch(contacts, identifier); handled {
+		return jid, err
+	}
+
 	if len(contacts) == 1 {
 		jid, err := types.ParseJID(contacts[0].JID)
 		if err != nil {
@@ -1319,6 +1323,51 @@ func resolveFromContacts(contacts []Contact, identifier string) (types.JID, erro
 	}
 	return types.JID{}, fmt.Errorf("multiple contacts match '%s': %s. Please use full name or phone number",
 		identifier, strings.Join(names, ", "))
+}
+
+func preferExactContactMatch(contacts []Contact, identifier string) (types.JID, bool, error) {
+	trimmed := strings.TrimSpace(identifier)
+	if trimmed == "" {
+		return types.JID{}, false, nil
+	}
+
+	var matches []Contact
+	for _, c := range contacts {
+		if c.Name != "" && strings.EqualFold(strings.TrimSpace(c.Name), trimmed) {
+			matches = append(matches, c)
+		}
+	}
+
+	if len(matches) > 1 {
+		return types.JID{}, true, fmt.Errorf("multiple contacts share the exact name '%s'. Please disambiguate with a phone number or JID", identifier)
+	}
+
+	if len(matches) == 1 {
+		jid, err := types.ParseJID(matches[0].JID)
+		return jid, true, err
+	}
+
+	digits := digitsOnly(trimmed)
+	if digits == "" {
+		return types.JID{}, false, nil
+	}
+
+	var phoneMatch *Contact
+	for i := range contacts {
+		if digitsOnly(contacts[i].PhoneNumber) == digits {
+			if phoneMatch != nil {
+				return types.JID{}, true, fmt.Errorf("multiple contacts share that phone number. Please use a specific JID (phone@s.whatsapp.net)")
+			}
+			phoneMatch = &contacts[i]
+		}
+	}
+
+	if phoneMatch == nil {
+		return types.JID{}, false, nil
+	}
+
+	jid, err := types.ParseJID(phoneMatch.JID)
+	return jid, true, err
 }
 
 func resolveFromGroups(groups []Chat, identifier string) (types.JID, error) {

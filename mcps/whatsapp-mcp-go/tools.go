@@ -70,6 +70,18 @@ func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 		return textResult("Found %d contacts", len(contacts)), SearchContactsOutput{Contacts: contacts}, nil
 	})
 
+	// list_contacts
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "list_contacts",
+		Description: "List saved and recently seen WhatsApp contacts. Supports optional search query and limit.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input ListContactsInput) (*mcp.CallToolResult, ListContactsOutput, error) {
+		contacts, err := wac.store.SearchContacts(input.Query, defaultLimit(input.Limit))
+		if err != nil {
+			return nil, ListContactsOutput{}, err
+		}
+		return textResult("Found %d contacts", len(contacts)), ListContactsOutput{Contacts: contacts}, nil
+	})
+
 	// add_contact
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "add_contact",

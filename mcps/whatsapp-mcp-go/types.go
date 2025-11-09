@@ -63,6 +63,15 @@ type SearchContactsOutput struct {
 	Contacts []Contact `json:"contacts"`
 }
 
+type ListContactsInput struct {
+	Query string `json:"query,omitempty" jsonschema:"Optional search query for contact name or phone number"`
+	Limit int    `json:"limit,omitempty" jsonschema:"Maximum number of contacts to return (default 50)"`
+}
+
+type ListContactsOutput struct {
+	Contacts []Contact `json:"contacts"`
+}
+
 type AddContactInput struct {
 	Name        string `json:"name" jsonschema:"Display name for the contact"`
 	PhoneNumber string `json:"phone_number" jsonschema:"Phone number in E.164 format (+1234567890)"`
