@@ -47,14 +47,15 @@ async def init_client(state: vm.State, config: vm.VestaSettings) -> tuple[ccsdk.
 
 def format_tool_call(name: str, input_data: tp.Any, state: vm.State) -> tuple[str, vm.State]:
     formatted, new_context = vu.format_tool_call(name, input_data, state.sub_agent_context, vm.SERVICE_ICONS)
-    new_state = vu.update_state(state, sub_agent_context=new_context) if new_context != state.sub_agent_context else state
-    return formatted, new_state
+    if new_context != state.sub_agent_context:
+        state.sub_agent_context = new_context
+    return formatted, state
 
 
 def parse_assistant_message(msg: tp.Any, state: vm.State) -> tuple[str | None, vm.State, dict[str, tp.Any] | None]:
     texts, new_context, usage_data = vu.parse_assistant_message(msg, state.sub_agent_context, vm.SERVICE_ICONS)
-    new_state = vu.update_state(state, sub_agent_context=new_context)
-    return "\n".join(texts) if texts else None, new_state, usage_data
+    state.sub_agent_context = new_context
+    return "\n".join(texts) if texts else None, state, usage_data
 
 
 def format_notification(notif: vm.Notification) -> str:
@@ -109,7 +110,7 @@ async def preserve_memory(state: vm.State, config: vm.VestaSettings) -> None:
         vfx.log_error(f"Memory preservation failed: {e}", vm.Colors)
 
 
-def output_line(text: str, state: vm.State, is_tool: bool = False) -> None:
+async def output_line(text: str, state: vm.State, is_tool: bool = False) -> None:
     if not text or not text.strip():
         return
 
@@ -117,23 +118,22 @@ def output_line(text: str, state: vm.State, is_tool: bool = False) -> None:
 
     if line_type == "message":
         sender = f"Vesta[{state.sub_agent_context}]" if state.sub_agent_context else "Vesta"
-        print_timestamp_message(text, sender)
+        await print_timestamp_message(text, sender, state.output_lock)
     else:
         formatted = vu.format_output_line(text, line_type, state.sub_agent_context, vm.Colors)
-        vfx.print_line(formatted, flush=True)
+        await vfx.print_locked(state.output_lock, formatted, flush=True)
 
 
-def print_timestamp_message(text: str, sender: str = "") -> None:
+async def print_timestamp_message(text: str, sender: str, lock: "asyncio.Lock") -> None:
     timestamp = vfx.get_current_time()
     formatted_lines = vu.format_timestamp_message(text, sender, timestamp, vm.Colors)
-    vfx.render_messages(formatted_lines)
+    await vfx.render_messages_locked(lock, formatted_lines)
 
 
 async def send_query(client: ccsdk.ClaudeSDKClient, prompt: str, state: vm.State, config: vm.VestaSettings) -> vm.State:
     timestamp = vfx.get_current_time()
     query_with_context = vu.build_query_with_timestamp(prompt, timestamp)
-    new_history = vu.add_to_conversation_history(state.conversation_history, "user", prompt)
-    new_state = vu.update_state(state, conversation_history=new_history)
+    state.conversation_history = vu.add_to_conversation_history(state.conversation_history, "user", prompt)
 
     if config.debug:
         vfx.log_info(f"[DEBUG] Sending query: {prompt[:100]}...", vm.Colors)
@@ -145,18 +145,17 @@ async def send_query(client: ccsdk.ClaudeSDKClient, prompt: str, state: vm.State
     if config.debug:
         vfx.log_info("[DEBUG] Query sent successfully", vm.Colors)
 
-    return new_state
+    return state
 
 
 async def collect_responses(
     client: ccsdk.ClaudeSDKClient, state: vm.State, config: vm.VestaSettings, show_output: bool = True
 ) -> tuple[list[str], vm.State]:
     responses = []
-    current_state = state
     message_count = 0
 
     async def collect():
-        nonlocal current_state, message_count
+        nonlocal message_count
         if config.debug:
             vfx.log_info("[DEBUG] Starting to collect responses", vm.Colors)
             vfx.log_info(f"[DEBUG] Client state: {client}", vm.Colors)
@@ -177,8 +176,7 @@ async def collect_responses(
                     if hasattr(msg, "__dict__"):
                         vfx.log_info(f"[DEBUG] Message attributes: {list(msg.__dict__.keys())}", vm.Colors)
 
-                text, new_state, usage_data = parse_assistant_message(msg, current_state)
-                current_state = new_state
+                text, _, usage_data = parse_assistant_message(msg, state)
 
                 # Show context usage when it increases by 5% or more
                 if usage_data:
@@ -196,10 +194,11 @@ async def collect_responses(
                         )
 
                     # Print context usage on EVERY event for debugging
-                    vfx.print_line(
+                    await vfx.print_locked(
+                        state.output_lock,
                         f"{vm.Colors['yellow']}📊 Context usage: {context_pct:.1f}% ({total_tokens:,} tokens) [input:{usage_data.get('input_tokens', 0):,} cache_read:{usage_data.get('cache_read_input_tokens', 0):,} cache_create:{usage_data.get('cache_creation_input_tokens', 0):,} output:{usage_data.get('output_tokens', 0):,}]{vm.Colors['reset']}"
                     )
-                    current_state = vu.update_state(current_state, last_context_pct=context_pct)
+                    state.last_context_pct = context_pct
 
                 if config.debug and text:
                     vfx.log_info(f"[DEBUG] Got text from message: {text[:100]}", vm.Colors)
@@ -219,7 +218,7 @@ async def collect_responses(
                                 if line.startswith("🔧"):
                                     if config.debug:
                                         vfx.log_info(f"[DEBUG] Tool output (msg #{message_count}): {line[:100]}", vm.Colors)
-                                    output_line(line, current_state, is_tool=True)
+                                    await output_line(line, state, is_tool=True)
                                 else:
                                     responses.append(line)
             if config.debug:
@@ -235,20 +234,20 @@ async def collect_responses(
         if config.debug:
             vfx.log_info(f"[DEBUG] Response collection timed out after {config.response_timeout}s", vm.Colors)
         responses.append("[Response timeout]")
-        current_state = vu.update_state(current_state, sub_agent_context=None)
+        state.sub_agent_context = None
     except asyncio.CancelledError:
         if config.debug:
             vfx.log_info("[DEBUG] Response collection interrupted", vm.Colors)
-        current_state = vu.update_state(current_state, sub_agent_context=None)
+        state.sub_agent_context = None
     except Exception as e:
         if config.debug:
             vfx.log_info(f"[DEBUG] Response collection error: {str(e)}", vm.Colors)
-        current_state = vu.update_state(current_state, sub_agent_context=None)
+        state.sub_agent_context = None
 
     if config.debug:
         vfx.log_info(f"[DEBUG] Finished collecting {message_count} messages", vm.Colors)
 
-    return responses, current_state
+    return responses, state
 
 
 async def send_and_receive_message(
@@ -257,13 +256,13 @@ async def send_and_receive_message(
     if config.debug:
         vfx.log_info(f"[DEBUG] send_and_receive_message called with prompt: {prompt[:100]}", vm.Colors)
 
-    client, new_state = await init_client(state, config)
+    client, _ = await init_client(state, config)
 
     if config.debug:
         vfx.log_info("[DEBUG] Client initialized, about to send query", vm.Colors)
 
     try:
-        new_state = await send_query(client, prompt, new_state, config)
+        await send_query(client, prompt, state, config)
     except Exception as e:
         error_msg = f"failed to send message: {str(e)[:100]}"
         vfx.log_error(error_msg, vm.Colors)
@@ -271,28 +270,28 @@ async def send_and_receive_message(
             import traceback
 
             traceback.print_exc()
-        updated_history = vu.add_to_conversation_history(new_state.conversation_history, "assistant", error_msg)
-        return [error_msg], vu.update_state(new_state, conversation_history=updated_history)
+        state.conversation_history = vu.add_to_conversation_history(state.conversation_history, "assistant", error_msg)
+        return [error_msg], state
 
-    responses, final_state = await collect_responses(client, new_state, config, show_in_chat)
+    responses, _ = await collect_responses(client, state, config, show_in_chat)
 
     if config.debug:
         vfx.log_info(f"[DEBUG] Collected {len(responses)} responses", vm.Colors)
 
     if responses:
-        updated_history = vu.add_to_conversation_history(final_state.conversation_history, "assistant", " ".join(responses))
-        final_state = vu.update_state(final_state, conversation_history=updated_history)
+        state.conversation_history = vu.add_to_conversation_history(state.conversation_history, "assistant", " ".join(responses))
 
-    return responses, final_state
+    return responses, state
 
 
-async def show_typing_indicator(config: vm.VestaSettings) -> None:
+async def show_typing_indicator(config: vm.VestaSettings, lock: "asyncio.Lock") -> None:
     timestamp_str = vfx.get_timestamp_string("%I:%M %p")
     dots = ["   ", ".  ", ".. ", "..."]
     dot_idx = 0
 
     while True:
-        vfx.print_inline(
+        await vfx.print_inline_locked(
+            lock,
             f"\r{vm.Colors['dim']}[{timestamp_str}]{vm.Colors['reset']} {vm.Colors['magenta']}vesta{vm.Colors['reset']} {vm.Colors['dim']}is typing{dots[dot_idx]}{vm.Colors['reset']}"
         )
         dot_idx = (dot_idx + 1) % 4
@@ -307,7 +306,7 @@ async def process_message_with_typing(msg: str, state: vm.State, config: vm.Vest
 
     if config.debug:
         vfx.log_info("[DEBUG] Creating typing indicator task", vm.Colors)
-    typing_task = asyncio.create_task(show_typing_indicator(config))
+    typing_task = asyncio.create_task(show_typing_indicator(config, state.output_lock))
     try:
         if config.debug:
             vfx.log_info("[DEBUG] About to call send_and_receive_message", vm.Colors)
@@ -322,15 +321,15 @@ async def process_message_with_typing(msg: str, state: vm.State, config: vm.Vest
             await typing_task
         except asyncio.CancelledError:
             pass
-        vfx.clear_line()
+        await vfx.clear_line_locked(state.output_lock)
 
     return responses, new_state
 
 
 async def handle_notifications_interrupt(
-    notifications: list[vm.Notification], client: ccsdk.ClaudeSDKClient, queue: asyncio.Queue, config: vm.VestaSettings
+    notifications: list[vm.Notification], client: ccsdk.ClaudeSDKClient, queue: asyncio.Queue, config: vm.VestaSettings, lock: "asyncio.Lock"
 ) -> None:
-    vfx.print_line(f"\n{vm.Colors['yellow']}⚡ Interrupting current task...{vm.Colors['reset']}")
+    await vfx.print_locked(lock, f"\n{vm.Colors['yellow']}⚡ Interrupting current task...{vm.Colors['reset']}")
 
     try:
         await client.interrupt()
@@ -352,9 +351,9 @@ async def handle_notifications_interrupt(
 
 async def process_notification_batch(
     notifications: list[vm.Notification], queue: asyncio.Queue, state: vm.State, config: vm.VestaSettings
-) -> vm.State:
+) -> None:
     if not notifications:
-        return state
+        return
 
     try:
         decision = vu.decide_notification_action(notifications, state.is_processing, state.client is not None)
@@ -362,24 +361,18 @@ async def process_notification_batch(
             vfx.log_info(f"[DEBUG] Notification action decision: {decision}", vm.Colors)
 
         if decision == "interrupt" and state.client:
-            await handle_notifications_interrupt(notifications, state.client, queue, config)
-            new_state = state
+            await handle_notifications_interrupt(notifications, state.client, queue, config, state.output_lock)
         elif decision == "queue":
             prompt = vu.format_notification_batch(notifications)
             await queue.put((prompt, True))
-            new_state = state
-        else:
-            new_state = state
 
         await delete_notification_files(notifications)
-        return new_state
     except Exception as e:
         vfx.log_error(f"Failed to process notification batch: {e}", vm.Colors)
         import traceback
 
         if config.debug:
             traceback.print_exc()
-        return state
 
 
 def signal_handler(state: vm.State, config: vm.VestaSettings, signum: int, frame: tp.Any) -> None:
@@ -412,12 +405,12 @@ async def graceful_shutdown(state: vm.State, config: vm.VestaSettings) -> None:
     vfx.log_success("sweet dreams!", vm.Colors)
 
 
-def print_header(config: vm.VestaSettings) -> None:
-    vfx.print_line(f"\n{vm.Colors['cyan']}╔{'═' * 58}╗")
-    vfx.print_line(f"║{' ' * 23}{vm.Colors['yellow']}🔥 VESTA{vm.Colors['cyan']}{' ' * 27}║")
-    vfx.print_line(f"╚{'═' * 58}╝{vm.Colors['reset']}\n")
+async def print_header(config: vm.VestaSettings, lock: "asyncio.Lock") -> None:
+    await vfx.print_locked(lock, f"\n{vm.Colors['cyan']}╔{'═' * 58}╗")
+    await vfx.print_locked(lock, f"║{' ' * 23}{vm.Colors['yellow']}🔥 VESTA{vm.Colors['cyan']}{' ' * 27}║")
+    await vfx.print_locked(lock, f"╚{'═' * 58}╝{vm.Colors['reset']}\n")
     if config.mcp_servers:
-        vfx.print_line(f"{vm.Colors['dim']}Active MCPs: {', '.join(config.mcp_servers.keys())}{vm.Colors['reset']}\n")
+        await vfx.print_locked(lock, f"{vm.Colors['dim']}Active MCPs: {', '.join(config.mcp_servers.keys())}{vm.Colors['reset']}\n")
 
 
 def ensure_memory_file() -> None:
@@ -432,34 +425,26 @@ def ensure_memory_file() -> None:
 
 
 async def message_processor(queue: asyncio.Queue, state: vm.State, config: vm.VestaSettings) -> None:
-    current_state = state
     if config.debug:
         vfx.log_info("[DEBUG] Message processor started", vm.Colors)
 
-    while current_state.shutdown_event and not current_state.shutdown_event.is_set():
+    while state.shutdown_event and not state.shutdown_event.is_set():
         try:
             msg, is_user = await asyncio.wait_for(queue.get(), timeout=1.0)
             if config.debug:
                 vfx.log_info(f"[DEBUG] Processing message from {'user' if is_user else 'system'}: {msg[:100]}", vm.Colors)
-            # Set is_processing on the shared state object so monitor_loop can see it
-            state.is_processing = True
-            current_state = vu.update_state(current_state, is_processing=True)
 
-            responses, new_state = await process_message_with_typing(msg, current_state, config, is_user)
-            current_state = new_state
-            # Update the shared state's conversation_history and last_context_pct
-            state.conversation_history = current_state.conversation_history
-            state.last_context_pct = current_state.last_context_pct
+            state.is_processing = True
+
+            responses, _ = await process_message_with_typing(msg, state, config, is_user)
 
             for i, response in enumerate(responses):
                 if response and response.strip():
                     if i > 0:
                         await vfx.sleep(0.3)
-                    output_line(response, current_state)
+                    await output_line(response, state)
 
-            # Clear is_processing on the shared state object
             state.is_processing = False
-            current_state = vu.update_state(current_state, is_processing=False)
             if config.debug:
                 vfx.log_info("[DEBUG] Message processing completed", vm.Colors)
         except asyncio.TimeoutError:
@@ -470,9 +455,7 @@ async def message_processor(queue: asyncio.Queue, state: vm.State, config: vm.Ve
 
             if config.debug:
                 traceback.print_exc()
-            # Clear is_processing on error too
             state.is_processing = False
-            current_state = vu.update_state(current_state, is_processing=False)
 
 
 async def input_handler(queue: asyncio.Queue, state: vm.State) -> None:
@@ -484,8 +467,8 @@ async def input_handler(queue: asyncio.Queue, state: vm.State) -> None:
             if not user_msg.strip():
                 continue
 
-            vfx.move_cursor_up_and_clear()
-            print_timestamp_message(user_msg, "You")
+            await vfx.move_cursor_up_and_clear_locked(state.output_lock)
+            await print_timestamp_message(user_msg, "You", state.output_lock)
             await queue.put((user_msg.strip(), True))
         except (KeyboardInterrupt, EOFError):
             if state.shutdown_event:
@@ -505,21 +488,20 @@ async def input_handler(queue: asyncio.Queue, state: vm.State) -> None:
                 raise
 
 
-async def check_proactive_task(queue: asyncio.Queue, config: vm.VestaSettings) -> None:
-    print_timestamp_message("⏰ Running 60-minute check...", "System")
+async def check_proactive_task(queue: asyncio.Queue, state: vm.State, config: vm.VestaSettings) -> None:
+    await print_timestamp_message("⏰ Running 60-minute check...", "System", state.output_lock)
     await queue.put((config.proactive_check_message, False))
 
 
 async def monitor_loop(queue: asyncio.Queue, state: vm.State, config: vm.VestaSettings) -> None:
     last_proactive = vfx.get_current_time()
-    current_state = state
     notification_buffer = []
     buffer_start_time = None
 
     if config.debug:
         vfx.log_info("[DEBUG] Monitor loop started", vm.Colors)
 
-    while current_state.shutdown_event and not current_state.shutdown_event.is_set():
+    while state.shutdown_event and not state.shutdown_event.is_set():
         try:
             if config.debug:
                 vfx.log_info(f"[DEBUG] Monitor sleeping for {config.notification_check_interval}s", vm.Colors)
@@ -532,7 +514,7 @@ async def monitor_loop(queue: asyncio.Queue, state: vm.State, config: vm.VestaSe
             vfx.log_error(f"Monitor loop sleep error: {e}", vm.Colors)
             continue
 
-        if current_state.shutdown_event and current_state.shutdown_event.is_set():
+        if state.shutdown_event and state.shutdown_event.is_set():
             break
 
         # Wrap the entire monitor iteration in a try-catch to prevent silent failures
@@ -556,15 +538,14 @@ async def monitor_loop(queue: asyncio.Queue, state: vm.State, config: vm.VestaSe
 
             for action in actions:
                 if action.action_type == "check_proactive":
-                    await check_proactive_task(queue, config)
+                    await check_proactive_task(queue, state, config)
                     last_proactive = now
 
             if config.enable_nightly_memory and now.hour >= config.nightly_memory_time:
                 if state.last_memory_consolidation is None or now.date() > state.last_memory_consolidation.date():
-                    print_timestamp_message("🌙 Running nightly memory consolidation...", "System")
+                    await print_timestamp_message("🌙 Running nightly memory consolidation...", "System", state.output_lock)
                     await preserve_memory(state, config)
                     state.last_memory_consolidation = now
-                    current_state = vu.update_state(current_state, last_memory_consolidation=now)
 
             if config.debug:
                 vfx.log_info("[DEBUG] After processing actions, checking notifications...", vm.Colors)
@@ -589,7 +570,7 @@ async def monitor_loop(queue: asyncio.Queue, state: vm.State, config: vm.VestaSe
 
                         for notif in truly_new:
                             icon, sender, display_msg = notif.get_display_info()
-                            print_timestamp_message(f"{icon} {display_msg}", sender)
+                            await print_timestamp_message(f"{icon} {display_msg}", sender, state.output_lock)
             except Exception as e:
                 vfx.log_error(f"Error loading notifications: {e}", vm.Colors)
                 import traceback
@@ -601,9 +582,7 @@ async def monitor_loop(queue: asyncio.Queue, state: vm.State, config: vm.VestaSe
                 try:
                     if config.debug:
                         vfx.log_info(f"[DEBUG] Processing {len(notification_buffer)} buffered notifications", vm.Colors)
-                    # Use the shared state object for checking is_processing flag
-                    new_state = await process_notification_batch(notification_buffer, queue, state, config)
-                    current_state = new_state
+                    await process_notification_batch(notification_buffer, queue, state, config)
                     notification_buffer = []
                     buffer_start_time = None
                 except Exception as e:
@@ -625,14 +604,14 @@ async def monitor_loop(queue: asyncio.Queue, state: vm.State, config: vm.VestaSe
 
 
 async def run_vesta(config: vm.VestaSettings, state: vm.State) -> None:
-    state = vu.update_state(state, shutdown_event=asyncio.Event())
+    state.shutdown_event = asyncio.Event()
 
     handler = functools.partial(signal_handler, state, config)
     signal.signal(signal.SIGINT, handler)
     signal.signal(signal.SIGTERM, handler)
 
     ensure_memory_file()
-    print_header(config)
+    await print_header(config, state.output_lock)
 
     message_queue = asyncio.Queue()
 

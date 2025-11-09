@@ -46,6 +46,7 @@ class State:
     sub_agent_context: str | None = None
     last_context_pct: float = 0.0
     last_memory_consolidation: dt.datetime | None = None
+    output_lock: asyncio.Lock = dc.field(default_factory=asyncio.Lock)
 
 
 def _get_default_mcp_servers() -> dict[str, McpServer]:

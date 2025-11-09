@@ -135,3 +135,34 @@ async def sleep(seconds: float) -> None:
     import asyncio
 
     await asyncio.sleep(seconds)
+
+
+async def print_locked(lock: "asyncio.Lock", text: str, flush: bool = False) -> None:
+    """Print with lock to prevent concurrent writes to terminal."""
+    async with lock:
+        print(text, flush=flush)
+
+
+async def print_inline_locked(lock: "asyncio.Lock", text: str) -> None:
+    """Print inline with lock to prevent concurrent writes to terminal."""
+    async with lock:
+        print(text, end="", flush=True)
+
+
+async def clear_line_locked(lock: "asyncio.Lock") -> None:
+    """Clear line with lock to prevent concurrent writes to terminal."""
+    async with lock:
+        print("\r\033[K", end="", flush=True)
+
+
+async def move_cursor_up_and_clear_locked(lock: "asyncio.Lock") -> None:
+    """Move cursor up and clear line with lock to prevent concurrent writes to terminal."""
+    async with lock:
+        print("\033[1A\033[K", end="")
+
+
+async def render_messages_locked(lock: "asyncio.Lock", lines: list[str]) -> None:
+    """Render messages with lock to prevent concurrent writes to terminal."""
+    async with lock:
+        for line in lines:
+            print(line, flush=False)
