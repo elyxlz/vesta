@@ -8,6 +8,21 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+func defaultLimit(limit int) int {
+	if limit == 0 {
+		return 50
+	}
+	return limit
+}
+
+func textResult(format string, args ...interface{}) *mcp.CallToolResult {
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: fmt.Sprintf(format, args...)},
+		},
+	}
+}
+
 func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 	// authenticate_whatsapp
 	mcp.AddTool(s, &mcp.Tool{
@@ -48,19 +63,11 @@ func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 		Name:        "search_contacts",
 		Description: "Search WhatsApp contacts by name or phone number. Returns contacts excluding groups.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input SearchContactsInput) (*mcp.CallToolResult, SearchContactsOutput, error) {
-		limit := input.Limit
-		if limit == 0 {
-			limit = 50
-		}
-		contacts, err := wac.store.SearchContacts(input.Query, limit)
+		contacts, err := wac.store.SearchContacts(input.Query, defaultLimit(input.Limit))
 		if err != nil {
 			return nil, SearchContactsOutput{}, err
 		}
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{
-				&mcp.TextContent{Text: fmt.Sprintf("Found %d contacts", len(contacts))},
-			},
-		}, SearchContactsOutput{Contacts: contacts}, nil
+		return textResult("Found %d contacts", len(contacts)), SearchContactsOutput{Contacts: contacts}, nil
 	})
 
 	// list_messages
@@ -78,11 +85,6 @@ func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 			before = &t
 		}
 
-		limit := input.Limit
-		if limit == 0 {
-			limit = 50
-		}
-
 		// Resolve 'to' parameter to JID if provided
 		var chatJID string
 		if input.To != "" {
@@ -93,6 +95,7 @@ func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 			chatJID = jid.String()
 		}
 
+		limit := defaultLimit(input.Limit)
 		messages, err := wac.store.ListMessages(
 			after, before,
 			input.SenderPhone, chatJID, input.Query,
@@ -111,11 +114,7 @@ func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 		Name:        "list_chats",
 		Description: "List WhatsApp chats with optional sorting. Use 'sort_by' with 'last_active' (default) or 'name'.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input ListChatsInput) (*mcp.CallToolResult, ListChatsOutput, error) {
-		limit := input.Limit
-		if limit == 0 {
-			limit = 50
-		}
-
+		limit := defaultLimit(input.Limit)
 		chats, err := wac.store.ListChats(
 			input.Query,
 			limit, input.Page*limit,
@@ -190,11 +189,7 @@ func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "list_groups",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input ListGroupsInput) (*mcp.CallToolResult, ListGroupsOutput, error) {
-		limit := input.Limit
-		if limit == 0 {
-			limit = 50
-		}
-
+		limit := defaultLimit(input.Limit)
 		groups, err := wac.store.ListGroups(limit, input.Page*limit)
 		if err != nil {
 			return nil, ListGroupsOutput{}, err

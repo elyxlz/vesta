@@ -116,7 +116,7 @@ func (ms *MessageStore) SearchContacts(query string, limit int) ([]Contact, erro
 	if limit == 0 {
 		limit = 50
 	}
-	searchPattern := "%" + query + "%"
+
 	rows, err := ms.db.Query(`
 		SELECT DISTINCT jid, name
 		FROM chats
@@ -124,13 +124,13 @@ func (ms *MessageStore) SearchContacts(query string, limit int) ([]Contact, erro
 		AND jid NOT LIKE '%@g.us'
 		ORDER BY name
 		LIMIT ?
-	`, searchPattern, searchPattern, limit)
+	`, "%"+query+"%", "%"+query+"%", limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var contacts []Contact
+	contacts := make([]Contact, 0, limit)
 	for rows.Next() {
 		var c Contact
 		var name sql.NullString
@@ -138,7 +138,6 @@ func (ms *MessageStore) SearchContacts(query string, limit int) ([]Contact, erro
 			continue
 		}
 		c.Name = name.String
-		// Extract phone number from JID
 		if idx := strings.Index(c.JID, "@"); idx > 0 {
 			c.PhoneNumber = c.JID[:idx]
 		}

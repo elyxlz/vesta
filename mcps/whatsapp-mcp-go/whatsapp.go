@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -595,32 +596,18 @@ func (wac *WhatsAppClient) CreateGroup(name string, participants []string) (bool
 		return false, "", "Group name and participants are required"
 	}
 
-	// Parse participant JIDs
-	var jids []types.JID
-	for _, p := range participants {
-		var jid types.JID
-		if strings.Contains(p, "@") {
-			parsed, err := types.ParseJID(p)
-			if err != nil {
-				return false, "", fmt.Sprintf("Invalid participant: %s", p)
-			}
-			jid = parsed
-		} else {
-			jid = types.NewJID(p, types.DefaultUserServer)
-		}
-		jids = append(jids, jid)
+	jids, err := parseParticipantJIDs(participants)
+	if err != nil {
+		return false, "", err.Error()
 	}
 
-	// Create group
-	req := whatsmeow.ReqCreateGroup{
+	resp, err := wac.client.CreateGroup(context.Background(), whatsmeow.ReqCreateGroup{
 		Name:         name,
 		Participants: jids,
-	}
-	resp, err := wac.client.CreateGroup(context.Background(), req)
+	})
 	if err != nil {
 		return false, "", fmt.Sprintf("Failed to create group: %v", err)
 	}
-
 	return true, resp.JID.String(), fmt.Sprintf("Group '%s' created successfully", name)
 }
 
@@ -748,12 +735,26 @@ func (wac *WhatsAppClient) ResolveRecipient(identifier string) (types.JID, error
 }
 
 func isNumeric(s string) bool {
-	for _, c := range s {
-		if c < '0' || c > '9' {
-			return false
+	_, err := strconv.ParseUint(s, 10, 64)
+	return err == nil && len(s) > 0
+}
+
+func parseParticipantJIDs(participants []string) ([]types.JID, error) {
+	jids := make([]types.JID, 0, len(participants))
+	for _, p := range participants {
+		var jid types.JID
+		var err error
+		if strings.Contains(p, "@") {
+			jid, err = types.ParseJID(p)
+		} else {
+			jid = types.NewJID(p, types.DefaultUserServer)
 		}
+		if err != nil {
+			return nil, fmt.Errorf("invalid participant: %s", p)
+		}
+		jids = append(jids, jid)
 	}
-	return len(s) > 0
+	return jids, nil
 }
 
 func (wac *WhatsAppClient) UpdateGroupParticipants(groupJID, action string, participants []string) (bool, string) {
@@ -762,34 +763,24 @@ func (wac *WhatsAppClient) UpdateGroupParticipants(groupJID, action string, part
 		return false, fmt.Sprintf("Invalid group JID: %v", err)
 	}
 
-	// Parse participant JIDs
-	var jids []types.JID
-	for _, p := range participants {
-		var participantJID types.JID
-		if strings.Contains(p, "@") {
-			parsed, err := types.ParseJID(p)
-			if err != nil {
-				return false, fmt.Sprintf("Invalid participant: %s", p)
-			}
-			participantJID = parsed
-		} else {
-			participantJID = types.NewJID(p, types.DefaultUserServer)
-		}
-		jids = append(jids, participantJID)
+	participantJIDs, err := parseParticipantJIDs(participants)
+	if err != nil {
+		return false, err.Error()
 	}
 
-	// Perform action
-	if action == "add" {
-		_, err = wac.client.UpdateGroupParticipants(jid, jids, whatsmeow.ParticipantChangeAdd)
-	} else if action == "remove" {
-		_, err = wac.client.UpdateGroupParticipants(jid, jids, whatsmeow.ParticipantChangeRemove)
-	} else {
+	changeType := map[string]whatsmeow.ParticipantChange{
+		"add":    whatsmeow.ParticipantChangeAdd,
+		"remove": whatsmeow.ParticipantChangeRemove,
+	}[action]
+
+	if changeType == 0 {
 		return false, "Invalid action: must be 'add' or 'remove'"
 	}
+
+	_, err = wac.client.UpdateGroupParticipants(jid, participantJIDs, changeType)
 	if err != nil {
 		return false, fmt.Sprintf("Failed to update participants: %v", err)
 	}
-
 	return true, fmt.Sprintf("Successfully %sed participants", action)
 }
 
