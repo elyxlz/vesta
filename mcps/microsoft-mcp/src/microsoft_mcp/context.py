@@ -15,3 +15,7 @@ class MicrosoftContext:
     monitor_log_file: Path
     monitor_logger: logging.Logger
     monitor_stop_event: threading.Event
+    scopes: list[str]
+    base_url: str
+    upload_chunk_size: int
+    folders: dict[str, str]

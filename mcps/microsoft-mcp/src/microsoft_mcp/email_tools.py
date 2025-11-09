@@ -8,18 +8,6 @@ from . import graph
 from .auth_tools import mcp  # Use the shared MCP instance
 from .context import MicrosoftContext
 
-FOLDERS = {
-    k.casefold(): v
-    for k, v in {
-        "inbox": "inbox",
-        "sent": "sentitems",
-        "drafts": "drafts",
-        "deleted": "deleteditems",
-        "junk": "junkemail",
-        "archive": "archive",
-    }.items()
-}
-
 
 @mcp.tool()
 def list_emails(
@@ -32,7 +20,7 @@ def list_emails(
     """folder: 'inbox', 'sent', 'drafts', 'deleted', 'junk', 'archive' (case-insensitive)"""
     context: MicrosoftContext = ctx.request_context.lifespan_context
 
-    folder_path = FOLDERS.get(folder.casefold(), folder)
+    folder_path = context.folders.get(folder.casefold(), folder)
 
     if include_body:
         select_fields = "id,subject,from,toRecipients,ccRecipients,receivedDateTime,hasAttachments,body,conversationId,isRead"
@@ -49,6 +37,8 @@ def list_emails(
         graph.request_paginated(
             context.http_client,
             context.cache_file,
+            context.scopes,
+            context.base_url,
             f"/me/mailFolders/{folder_path}/messages",
             account_id,
             params=params,
@@ -73,7 +63,7 @@ def get_email(
     if include_attachments:
         params["$expand"] = "attachments($select=id,name,size,contentType)"
 
-    result = graph.request(context.http_client, context.cache_file, "GET", f"/me/messages/{email_id}", account_id, params=params)
+    result = graph.request(context.http_client, context.cache_file, context.scopes, context.base_url, "GET", f"/me/messages/{email_id}", account_id, params=params)
     if not result:
         raise ValueError(f"Email with ID {email_id} not found")
 
@@ -174,7 +164,7 @@ def create_email_draft(
     if small_attachments:
         message["attachments"] = small_attachments
 
-    result = graph.request(context.http_client, context.cache_file, "POST", "/me/messages", account_id, json=message)
+    result = graph.request(context.http_client, context.cache_file, context.scopes, context.base_url, "POST", "/me/messages", account_id, json=message)
     if not result:
         raise ValueError("Failed to create email draft")
 
@@ -184,6 +174,9 @@ def create_email_draft(
         graph.upload_large_mail_attachment(
             context.http_client,
             context.cache_file,
+            context.scopes,
+            context.base_url,
+            context.upload_chunk_size,
             message_id,
             att["name"],
             att["content_bytes"],
@@ -253,7 +246,7 @@ def send_email(
             }
             for att in processed_attachments
         ]
-        graph.request(context.http_client, context.cache_file, "POST", "/me/sendMail", account_id, json={"message": message})
+        graph.request(context.http_client, context.cache_file, context.scopes, context.base_url, "POST", "/me/sendMail", account_id, json={"message": message})
         return {"status": "sent"}
     elif has_large_attachments:
         # Create draft first, then add large attachments, then send
@@ -268,7 +261,7 @@ def send_email(
             cc_list = [cc] if isinstance(cc, str) else cc
             message["ccRecipients"] = [{"emailAddress": {"address": addr}} for addr in cc_list]
 
-        result = graph.request(context.http_client, context.cache_file, "POST", "/me/messages", account_id, json=message)
+        result = graph.request(context.http_client, context.cache_file, context.scopes, context.base_url, "POST", "/me/messages", account_id, json=message)
         if not result:
             raise ValueError("Failed to create email draft")
 
@@ -279,6 +272,9 @@ def send_email(
                 graph.upload_large_mail_attachment(
                     context.http_client,
                     context.cache_file,
+                    context.scopes,
+                    context.base_url,
+                    context.upload_chunk_size,
                     message_id,
                     att["name"],
                     att["content_bytes"],
@@ -294,16 +290,18 @@ def send_email(
                 graph.request(
                     context.http_client,
                     context.cache_file,
+                    context.scopes,
+                    context.base_url,
                     "POST",
                     f"/me/messages/{message_id}/attachments",
                     account_id,
                     json=small_att,
                 )
 
-        graph.request(context.http_client, context.cache_file, "POST", f"/me/messages/{message_id}/send", account_id)
+        graph.request(context.http_client, context.cache_file, context.scopes, context.base_url, "POST", f"/me/messages/{message_id}/send", account_id)
         return {"status": "sent"}
     else:
-        graph.request(context.http_client, context.cache_file, "POST", "/me/sendMail", account_id, json={"message": message})
+        graph.request(context.http_client, context.cache_file, context.scopes, context.base_url, "POST", "/me/sendMail", account_id, json={"message": message})
         return {"status": "sent"}
 
 
@@ -315,7 +313,7 @@ def reply_to_email(ctx: Context, account_id: str, email_id: str, body: str, atta
     reply_endpoint = "replyAll" if reply_all else "reply"
 
     if attachments:
-        draft = graph.request(context.http_client, context.cache_file, "POST", f"/me/messages/{email_id}/{create_endpoint}", account_id)
+        draft = graph.request(context.http_client, context.cache_file, context.scopes, context.base_url, "POST", f"/me/messages/{email_id}/{create_endpoint}", account_id)
         if not draft or "id" not in draft:
             raise ValueError("Failed to create reply draft")
 
@@ -324,6 +322,8 @@ def reply_to_email(ctx: Context, account_id: str, email_id: str, body: str, atta
         graph.request(
             context.http_client,
             context.cache_file,
+            context.scopes,
+            context.base_url,
             "PATCH",
             f"/me/messages/{draft_id}",
             account_id,
@@ -346,6 +346,8 @@ def reply_to_email(ctx: Context, account_id: str, email_id: str, body: str, atta
                 graph.request(
                     context.http_client,
                     context.cache_file,
+                    context.scopes,
+                    context.base_url,
                     "POST",
                     f"/me/messages/{draft_id}/attachments",
                     account_id,
@@ -355,6 +357,9 @@ def reply_to_email(ctx: Context, account_id: str, email_id: str, body: str, atta
                 graph.upload_large_mail_attachment(
                     context.http_client,
                     context.cache_file,
+                    context.scopes,
+                    context.base_url,
+                    context.upload_chunk_size,
                     draft_id,
                     att_name,
                     content_bytes,
@@ -362,19 +367,19 @@ def reply_to_email(ctx: Context, account_id: str, email_id: str, body: str, atta
                     "application/octet-stream",
                 )
 
-        graph.request(context.http_client, context.cache_file, "POST", f"/me/messages/{draft_id}/send", account_id)
+        graph.request(context.http_client, context.cache_file, context.scopes, context.base_url, "POST", f"/me/messages/{draft_id}/send", account_id)
         return {"status": "sent"}
     else:
         endpoint = f"/me/messages/{email_id}/{reply_endpoint}"
         payload = {"message": {"body": {"contentType": "Text", "content": body}}}
-        graph.request(context.http_client, context.cache_file, "POST", endpoint, account_id, json=payload)
+        graph.request(context.http_client, context.cache_file, context.scopes, context.base_url, "POST", endpoint, account_id, json=payload)
         return {"status": "sent"}
 
 
 @mcp.tool()
 def get_attachment(ctx: Context, email_id: str, attachment_id: str, save_path: str, account_id: str) -> dict[str, Any]:
     context: MicrosoftContext = ctx.request_context.lifespan_context
-    result = graph.request(context.http_client, context.cache_file, "GET", f"/me/messages/{email_id}/attachments/{attachment_id}", account_id)
+    result = graph.request(context.http_client, context.cache_file, context.scopes, context.base_url, "GET", f"/me/messages/{email_id}/attachments/{attachment_id}", account_id)
 
     if not result:
         raise ValueError("Attachment not found")
@@ -407,7 +412,7 @@ def search_emails(
     context: MicrosoftContext = ctx.request_context.lifespan_context
     if folder:
         # For folder-specific search, use the traditional endpoint
-        folder_path = FOLDERS.get(folder.casefold(), folder)
+        folder_path = context.folders.get(folder.casefold(), folder)
         endpoint = f"/me/mailFolders/{folder_path}/messages"
 
         params = {
@@ -416,6 +421,6 @@ def search_emails(
             "$select": "id,subject,from,toRecipients,receivedDateTime,hasAttachments,body,conversationId,isRead",
         }
 
-        return list(graph.request_paginated(context.http_client, context.cache_file, endpoint, account_id, params=params, limit=limit))
+        return list(graph.request_paginated(context.http_client, context.cache_file, context.scopes, context.base_url, endpoint, account_id, params=params, limit=limit))
 
-    return list(graph.search_query(context.http_client, context.cache_file, query, ["message"], account_id, limit))
+    return list(graph.search_query(context.http_client, context.cache_file, context.scopes, context.base_url, query, ["message"], account_id, limit))

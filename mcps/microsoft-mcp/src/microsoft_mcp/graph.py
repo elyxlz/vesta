@@ -5,14 +5,12 @@ from typing import Any
 from collections.abc import Iterator
 from .auth import get_token
 
-BASE_URL = "https://graph.microsoft.com/v1.0"
-# 15 x 320 KiB = 4,915,200 bytes
-UPLOAD_CHUNK_SIZE = 15 * 320 * 1024
-
 
 def request(
     client: httpx.Client,
     cache_file: pl.Path,
+    scopes: list[str],
+    base_url: str,
     method: str,
     path: str,
     account_id: str | None = None,
@@ -22,7 +20,7 @@ def request(
     max_retries: int = 3,
 ) -> dict[str, Any] | None:
     headers = {
-        "Authorization": f"Bearer {get_token(cache_file, account_id)}",
+        "Authorization": f"Bearer {get_token(cache_file, scopes, account_id)}",
     }
 
     if method == "GET":
@@ -42,7 +40,7 @@ def request(
         try:
             response = client.request(
                 method=method,
-                url=f"{BASE_URL}{path}",
+                url=f"{base_url}{path}",
                 headers=headers,
                 params=params,
                 json=json,
@@ -82,6 +80,8 @@ def request(
 def request_paginated(
     client: httpx.Client,
     cache_file: pl.Path,
+    scopes: list[str],
+    base_url: str,
     path: str,
     account_id: str | None = None,
     params: dict[str, Any] | None = None,
@@ -93,9 +93,9 @@ def request_paginated(
 
     while True:
         if next_link:
-            result = request(client, cache_file, "GET", next_link.replace(BASE_URL, ""), account_id)
+            result = request(client, cache_file, scopes, base_url, "GET", next_link.replace(base_url, ""), account_id)
         else:
-            result = request(client, cache_file, "GET", path, account_id, params=params)
+            result = request(client, cache_file, scopes, base_url, "GET", path, account_id, params=params)
 
         if not result:
             break
@@ -112,13 +112,13 @@ def request_paginated(
             break
 
 
-def download_raw(client: httpx.Client, cache_file: pl.Path, path: str, account_id: str | None = None, max_retries: int = 3) -> bytes:
-    headers = {"Authorization": f"Bearer {get_token(cache_file, account_id)}"}
+def download_raw(client: httpx.Client, cache_file: pl.Path, scopes: list[str], base_url: str, path: str, account_id: str | None = None, max_retries: int = 3) -> bytes:
+    headers = {"Authorization": f"Bearer {get_token(cache_file, scopes, account_id)}"}
 
     retry_count = 0
     while retry_count <= max_retries:
         try:
-            response = client.get(f"{BASE_URL}{path}", headers=headers)
+            response = client.get(f"{base_url}{path}", headers=headers)
 
             if response.status_code == 429:
                 retry_after = int(response.headers.get("Retry-After", "5"))
@@ -152,13 +152,14 @@ def _do_chunked_upload(
     upload_url: str,
     data: bytes,
     headers: dict[str, str],
+    upload_chunk_size: int,
 ) -> dict[str, Any]:
     """Internal helper for chunked uploads"""
     file_size = len(data)
 
-    for i in range(0, file_size, UPLOAD_CHUNK_SIZE):
+    for i in range(0, file_size, upload_chunk_size):
         chunk_start = i
-        chunk_end = min(i + UPLOAD_CHUNK_SIZE, file_size)
+        chunk_end = min(i + upload_chunk_size, file_size)
         chunk = data[chunk_start:chunk_end]
 
         chunk_headers = headers.copy()
@@ -196,13 +197,15 @@ def _do_chunked_upload(
 def create_upload_session(
     client: httpx.Client,
     cache_file: pl.Path,
+    scopes: list[str],
+    base_url: str,
     path: str,
     account_id: str | None = None,
     item_properties: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Create an upload session for large files"""
     payload = {"item": item_properties or {}}
-    result = request(client, cache_file, "POST", f"{path}/createUploadSession", account_id, json=payload)
+    result = request(client, cache_file, scopes, base_url, "POST", f"{path}/createUploadSession", account_id, json=payload)
     if not result:
         raise ValueError("Failed to create upload session")
     return result
@@ -211,6 +214,9 @@ def create_upload_session(
 def upload_large_file(
     client: httpx.Client,
     cache_file: pl.Path,
+    scopes: list[str],
+    base_url: str,
+    upload_chunk_size: int,
     path: str,
     data: bytes,
     account_id: str | None = None,
@@ -219,22 +225,24 @@ def upload_large_file(
     """Upload a large file using upload sessions"""
     file_size = len(data)
 
-    if file_size <= UPLOAD_CHUNK_SIZE:
-        result = request(client, cache_file, "PUT", f"{path}/content", account_id, data=data)
+    if file_size <= upload_chunk_size:
+        result = request(client, cache_file, scopes, base_url, "PUT", f"{path}/content", account_id, data=data)
         if not result:
             raise ValueError("Failed to upload file")
         return result
 
-    session = create_upload_session(client, cache_file, path, account_id, item_properties)
+    session = create_upload_session(client, cache_file, scopes, base_url, path, account_id, item_properties)
     upload_url = session["uploadUrl"]
 
-    headers = {"Authorization": f"Bearer {get_token(cache_file, account_id)}"}
-    return _do_chunked_upload(client, upload_url, data, headers)
+    headers = {"Authorization": f"Bearer {get_token(cache_file, scopes, account_id)}"}
+    return _do_chunked_upload(client, upload_url, data, headers, upload_chunk_size)
 
 
 def create_mail_upload_session(
     client: httpx.Client,
     cache_file: pl.Path,
+    scopes: list[str],
+    base_url: str,
     message_id: str,
     attachment_item: dict[str, Any],
     account_id: str | None = None,
@@ -243,6 +251,8 @@ def create_mail_upload_session(
     result = request(
         client,
         cache_file,
+        scopes,
+        base_url,
         "POST",
         f"/me/messages/{message_id}/attachments/createUploadSession",
         account_id,
@@ -256,6 +266,9 @@ def create_mail_upload_session(
 def upload_large_mail_attachment(
     client: httpx.Client,
     cache_file: pl.Path,
+    scopes: list[str],
+    base_url: str,
+    upload_chunk_size: int,
     message_id: str,
     name: str,
     data: bytes,
@@ -272,16 +285,18 @@ def upload_large_mail_attachment(
         "contentType": content_type,
     }
 
-    session = create_mail_upload_session(client, cache_file, message_id, attachment_item, account_id)
+    session = create_mail_upload_session(client, cache_file, scopes, base_url, message_id, attachment_item, account_id)
     upload_url = session["uploadUrl"]
 
-    headers = {"Authorization": f"Bearer {get_token(cache_file, account_id)}"}
-    return _do_chunked_upload(client, upload_url, data, headers)
+    headers = {"Authorization": f"Bearer {get_token(cache_file, scopes, account_id)}"}
+    return _do_chunked_upload(client, upload_url, data, headers, upload_chunk_size)
 
 
 def search_query(
     client: httpx.Client,
     cache_file: pl.Path,
+    scopes: list[str],
+    base_url: str,
     query: str,
     entity_types: list[str],
     account_id: str | None = None,
@@ -306,7 +321,7 @@ def search_query(
     items_returned = 0
 
     while True:
-        result = request(client, cache_file, "POST", "/search/query", account_id, json=payload)
+        result = request(client, cache_file, scopes, base_url, "POST", "/search/query", account_id, json=payload)
 
         if not result or "value" not in result:
             break

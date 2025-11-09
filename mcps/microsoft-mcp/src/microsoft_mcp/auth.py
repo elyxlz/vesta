@@ -2,12 +2,6 @@ import os
 import msal
 import pathlib as pl
 from typing import NamedTuple
-from dotenv import load_dotenv, find_dotenv
-
-SCOPES = ["https://graph.microsoft.com/.default"]
-
-# Initialize dotenv at module import time (no side effects, just env vars)
-load_dotenv(find_dotenv())
 
 
 class Account(NamedTuple):
@@ -45,7 +39,7 @@ def get_app(cache_file: pl.Path) -> msal.PublicClientApplication:
     return app
 
 
-def get_token(cache_file: pl.Path, account_id: str | None = None) -> str:
+def get_token(cache_file: pl.Path, scopes: list[str], account_id: str | None = None) -> str:
     app = get_app(cache_file)
 
     accounts = app.get_accounts()
@@ -56,10 +50,10 @@ def get_token(cache_file: pl.Path, account_id: str | None = None) -> str:
     elif accounts:
         account = accounts[0]
 
-    result = app.acquire_token_silent(SCOPES, account=account)
+    result = app.acquire_token_silent(scopes, account=account)
 
     if not result:
-        flow = app.initiate_device_flow(scopes=SCOPES)
+        flow = app.initiate_device_flow(scopes=scopes)
         if "user_code" not in flow:
             raise Exception(f"Failed to get device code: {flow.get('error_description', 'Unknown error')}")
         verification_uri = flow.get(
@@ -91,11 +85,11 @@ def list_accounts(cache_file: pl.Path) -> list[Account]:
     return accounts
 
 
-def authenticate_new_account(cache_file: pl.Path) -> Account | None:
+def authenticate_new_account(cache_file: pl.Path, scopes: list[str]) -> Account | None:
     """Authenticate a new account interactively"""
     app = get_app(cache_file)
 
-    flow = app.initiate_device_flow(scopes=SCOPES)
+    flow = app.initiate_device_flow(scopes=scopes)
     if "user_code" not in flow:
         raise Exception(f"Failed to get device code: {flow.get('error_description', 'Unknown error')}")
 

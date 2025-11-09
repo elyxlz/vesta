@@ -7,6 +7,7 @@ import threading
 from pathlib import Path
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
+from dotenv import load_dotenv, find_dotenv
 from mcp.server.fastmcp import FastMCP, Context
 from . import auth, monitor
 from .context import MicrosoftContext
@@ -15,6 +16,8 @@ from .context import MicrosoftContext
 @asynccontextmanager
 async def microsoft_lifespan(server: FastMCP) -> AsyncIterator[MicrosoftContext]:
     """Manage Microsoft MCP lifecycle"""
+    load_dotenv(find_dotenv())
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", type=str, required=True)
     parser.add_argument("--notifications-dir", type=str, required=True)
@@ -43,6 +46,22 @@ async def microsoft_lifespan(server: FastMCP) -> AsyncIterator[MicrosoftContext]
 
     monitor_stop_event = threading.Event()
 
+    # Initialize constants
+    scopes = ["https://graph.microsoft.com/.default"]
+    base_url = "https://graph.microsoft.com/v1.0"
+    upload_chunk_size = 15 * 320 * 1024
+    folders = {
+        k.casefold(): v
+        for k, v in {
+            "inbox": "inbox",
+            "sent": "sentitems",
+            "drafts": "drafts",
+            "deleted": "deleteditems",
+            "junk": "junkemail",
+            "archive": "archive",
+        }.items()
+    }
+
     ctx = MicrosoftContext(
         cache_file=cache_file,
         http_client=http_client,
@@ -52,6 +71,10 @@ async def microsoft_lifespan(server: FastMCP) -> AsyncIterator[MicrosoftContext]
         monitor_log_file=monitor_log_file,
         monitor_logger=monitor_logger,
         monitor_stop_event=monitor_stop_event,
+        scopes=scopes,
+        base_url=base_url,
+        upload_chunk_size=upload_chunk_size,
+        folders=folders,
     )
 
     # Start monitor thread
@@ -79,7 +102,7 @@ def list_accounts(ctx: Context) -> list[dict[str, str]]:
 def authenticate_account(ctx: Context) -> dict[str, str]:
     context: MicrosoftContext = ctx.request_context.lifespan_context
     app = auth.get_app(context.cache_file)
-    flow = app.initiate_device_flow(scopes=auth.SCOPES)
+    flow = app.initiate_device_flow(scopes=context.scopes)
 
     if "user_code" not in flow:
         error_msg = flow.get("error_description", "Unknown error")

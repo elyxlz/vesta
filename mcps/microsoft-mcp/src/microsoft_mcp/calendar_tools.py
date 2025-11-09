@@ -34,7 +34,7 @@ def list_events(
         params["$select"] = "id,subject,start,end,location,organizer,seriesMasterId"
 
     # Use calendarView to get recurring event instances
-    events = list(graph.request_paginated(context.http_client, context.cache_file, "/me/calendarView", account_id, params=params))
+    events = list(graph.request_paginated(context.http_client, context.cache_file, context.scopes, context.base_url, "/me/calendarView", account_id, params=params))
 
     return events
 
@@ -72,7 +72,7 @@ def create_event(
             attendees_list = [addr.strip() for addr in attendees.split(",") if addr.strip()] if "," in attendees else [attendees]
         event["attendees"] = [{"emailAddress": {"address": a}, "type": "required"} for a in attendees_list]
 
-    result = graph.request(context.http_client, context.cache_file, "POST", "/me/events", account_id, json=event)
+    result = graph.request(context.http_client, context.cache_file, context.scopes, context.base_url, "POST", "/me/events", account_id, json=event)
     if not result:
         raise ValueError("Failed to create event")
     return result
@@ -101,7 +101,7 @@ def update_event(ctx: Context, event_id: str, updates: dict[str, Any], account_i
     if "body" in updates:
         formatted_updates["body"] = {"contentType": "Text", "content": updates["body"]}
 
-    result = graph.request(context.http_client, context.cache_file, "PATCH", f"/me/events/{event_id}", account_id, json=formatted_updates)
+    result = graph.request(context.http_client, context.cache_file, context.scopes, context.base_url, "PATCH", f"/me/events/{event_id}", account_id, json=formatted_updates)
     return result or {"status": "updated"}
 
 
@@ -111,9 +111,9 @@ def delete_event(ctx: Context, account_id: str, event_id: str, send_cancellation
     context: MicrosoftContext = ctx.request_context.lifespan_context
 
     if send_cancellation:
-        graph.request(context.http_client, context.cache_file, "POST", f"/me/events/{event_id}/cancel", account_id, json={})
+        graph.request(context.http_client, context.cache_file, context.scopes, context.base_url, "POST", f"/me/events/{event_id}/cancel", account_id, json={})
     else:
-        graph.request(context.http_client, context.cache_file, "DELETE", f"/me/events/{event_id}", account_id)
+        graph.request(context.http_client, context.cache_file, context.scopes, context.base_url, "DELETE", f"/me/events/{event_id}", account_id)
     return {"status": "deleted"}
 
 
@@ -131,5 +131,5 @@ def respond_event(
     if message:
         payload["comment"] = message
 
-    graph.request(context.http_client, context.cache_file, "POST", f"/me/events/{event_id}/{response}", account_id, json=payload)
+    graph.request(context.http_client, context.cache_file, context.scopes, context.base_url, "POST", f"/me/events/{event_id}/{response}", account_id, json=payload)
     return {"status": response}
