@@ -47,6 +47,8 @@ type WhatsAppClient struct {
 	authStatus       AuthStatus
 	authMutex        sync.RWMutex
 	qrPath           string
+	presenceActive   bool
+	presenceMutex    sync.RWMutex
 }
 
 func NewWhatsAppClient(dataDir, notificationsDir string, logger waLog.Logger) (*WhatsAppClient, error) {
@@ -124,6 +126,11 @@ func (wac *WhatsAppClient) Connect() error {
 			if wac.client.IsConnected() {
 				wac.setAuthStatus(AuthStatusAuthenticated)
 				wac.logger.Infof("Connected to WhatsApp after %d seconds", i+1)
+
+				// Set online status
+				if err := wac.EnsureOnline(); err != nil {
+					wac.logger.Warnf("Failed to set online status: %v", err)
+				}
 				break
 			}
 		}
@@ -163,6 +170,11 @@ func (wac *WhatsAppClient) handleQRAuthentication() {
 		} else if evt.Event == "success" {
 			wac.setAuthStatus(AuthStatusAuthenticated)
 			wac.logger.Infof("Successfully authenticated!")
+
+			// Set online status
+			if err := wac.EnsureOnline(); err != nil {
+				wac.logger.Warnf("Failed to set online status: %v", err)
+			}
 
 			// Remove QR code file
 			wac.authMutex.Lock()
@@ -264,6 +276,49 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 			mediaType,
 			isForwarded,
 		)
+	}
+
+	// Send read receipt if not from me
+	if !info.IsFromMe && wac.client.IsConnected() {
+		go wac.sendReadReceiptDelayed(evt, content)
+	}
+}
+
+func (wac *WhatsAppClient) sendReadReceiptDelayed(evt *events.Message, content string) {
+	info := evt.Info
+
+	// Calculate reading delay based on content length
+	// Base: 2 seconds, +50ms per character, cap at 10 seconds
+	readDelay := time.Duration(2000+len(content)*50) * time.Millisecond
+	if readDelay > 10*time.Second {
+		readDelay = 10 * time.Second
+	}
+
+	// Add random variance (±20%)
+	variance := int(float64(readDelay.Milliseconds()) * 0.2)
+	readDelay += time.Duration(rand.Intn(variance*2)-variance) * time.Millisecond
+
+	time.Sleep(readDelay)
+
+	// Ensure we're online before sending receipt
+	if err := wac.EnsureOnline(); err != nil {
+		wac.logger.Warnf("Failed to set online status for read receipt: %v", err)
+		return
+	}
+
+	// Mark as read
+	err := wac.client.MarkRead(
+		[]types.MessageID{info.ID},
+		time.Now(),
+		info.Chat,
+		info.Sender,
+		types.ReceiptTypeRead,
+	)
+
+	if err != nil {
+		wac.logger.Warnf("Failed to send read receipt: %v", err)
+	} else {
+		wac.logger.Debugf("Sent read receipt for message %s after %v delay", info.ID, readDelay)
 	}
 }
 
@@ -399,6 +454,76 @@ func (wac *WhatsAppClient) getChatNameFromConversation(jid types.JID, conversati
 	return wac.getChatName(jid, "")
 }
 
+func (wac *WhatsAppClient) SendMessageWithPresence(recipient, message string) (bool, string) {
+	if recipient == "" || message == "" {
+		return false, "Recipient and message are required. Provide recipient (contact name, phone number, or JID) and message text"
+	}
+
+	// Check if connected
+	if !wac.client.IsConnected() {
+		return false, "WhatsApp is not connected. Ensure WhatsApp is authenticated and connected"
+	}
+
+	// Resolve recipient to JID
+	jid, err := wac.ResolveRecipient(recipient)
+	if err != nil {
+		return false, err.Error()
+	}
+
+	// Ensure we're online
+	if err := wac.EnsureOnline(); err != nil {
+		wac.logger.Warnf("Failed to set online status: %v", err)
+	}
+
+	// Human reaction delay (0.5-1s)
+	reactionDelay := time.Duration(500+rand.Intn(500)) * time.Millisecond
+	time.Sleep(reactionDelay)
+
+	// Start typing indicator
+	err = wac.client.SendChatPresence(
+		jid,
+		types.ChatPresenceComposing,
+		types.ChatPresenceMediaText,
+	)
+	if err != nil {
+		wac.logger.Warnf("Failed to send typing indicator: %v", err)
+	}
+
+	// Calculate typing duration (30ms per character, min 2s, max 8s)
+	typingDuration := time.Duration(2000+len(message)*30) * time.Millisecond
+	if typingDuration > 8*time.Second {
+		typingDuration = 8 * time.Second
+	}
+	// Add randomness (±20%)
+	variance := int(float64(typingDuration.Milliseconds()) * 0.2)
+	typingDuration += time.Duration(rand.Intn(variance*2)-variance) * time.Millisecond
+
+	time.Sleep(typingDuration)
+
+	// Stop typing
+	wac.client.SendChatPresence(
+		jid,
+		types.ChatPresencePaused,
+		types.ChatPresenceMediaText,
+	)
+
+	// Small delay before sending (0.3-0.5s)
+	sendDelay := time.Duration(300+rand.Intn(200)) * time.Millisecond
+	time.Sleep(sendDelay)
+
+	// Actually send the message
+	msg := &waProto.Message{
+		Conversation: proto.String(message),
+	}
+
+	resp, err := wac.client.SendMessage(context.Background(), jid, msg)
+	if err != nil {
+		return false, fmt.Sprintf("Failed to send message: %v", err)
+	}
+
+	return true, fmt.Sprintf("Message sent successfully (ID: %s)", resp.ID)
+}
+
 func (wac *WhatsAppClient) SendMessage(recipient, message string) (bool, string) {
 	if recipient == "" || message == "" {
 		return false, "Recipient and message are required. Provide recipient (contact name, phone number, or JID) and message text"
@@ -524,6 +649,117 @@ func (wac *WhatsAppClient) SendFile(recipient, filePath, caption string) (bool, 
 	}
 
 	return true, fmt.Sprintf("File sent successfully (ID: %s)", resp.ID)
+}
+
+func (wac *WhatsAppClient) SendAudioMessageWithPresence(recipient, filePath string) (bool, string) {
+	if recipient == "" || filePath == "" {
+		return false, "Recipient and file path are required. Provide recipient (contact name, phone number, or JID) and audio file path"
+	}
+
+	// Validate file path for security
+	if err := validateFilePath(filePath); err != nil {
+		return false, fmt.Sprintf("Invalid file path: %v", err)
+	}
+
+	// Resolve recipient to JID
+	jid, err := wac.ResolveRecipient(recipient)
+	if err != nil {
+		return false, err.Error()
+	}
+
+	// Ensure we're online
+	if err := wac.EnsureOnline(); err != nil {
+		wac.logger.Warnf("Failed to set online status: %v", err)
+	}
+
+	// Human reaction delay (0.5-1s)
+	reactionDelay := time.Duration(500+rand.Intn(500)) * time.Millisecond
+	time.Sleep(reactionDelay)
+
+	// Start recording indicator
+	err = wac.client.SendChatPresence(
+		jid,
+		types.ChatPresenceComposing,
+		types.ChatPresenceMediaAudio,
+	)
+	if err != nil {
+		wac.logger.Warnf("Failed to send recording indicator: %v", err)
+	}
+
+	// Convert to opus if needed (happens during "recording" indicator)
+	if !strings.HasSuffix(filePath, ".ogg") {
+		converted, err := ConvertToOpusOggTemp(filePath, "32k", 24000)
+		if err != nil {
+			// Stop recording indicator on error
+			wac.client.SendChatPresence(jid, types.ChatPresencePaused, types.ChatPresenceMediaAudio)
+			return false, fmt.Sprintf("Failed to convert audio: %v", err)
+		}
+		filePath = converted
+		defer os.Remove(converted)
+	}
+
+	// Check file size
+	fileInfo, err := os.Stat(filePath)
+	if err != nil {
+		wac.client.SendChatPresence(jid, types.ChatPresencePaused, types.ChatPresenceMediaAudio)
+		return false, fmt.Sprintf("Audio file not found: %v", err)
+	}
+	if fileInfo.Size() > MaxAudioSizeBytes {
+		wac.client.SendChatPresence(jid, types.ChatPresencePaused, types.ChatPresenceMediaAudio)
+		return false, fmt.Sprintf("Audio file too large: %d MB (max %d MB)",
+			fileInfo.Size()/(1024*1024), MaxAudioSizeBytes/(1024*1024))
+	}
+
+	// Read file
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		wac.client.SendChatPresence(jid, types.ChatPresencePaused, types.ChatPresenceMediaAudio)
+		return false, fmt.Sprintf("Failed to read audio file: %v", err)
+	}
+
+	// Calculate duration and waveform
+	duration, waveform := analyzeOpusOgg(data)
+
+	// Upload audio (still "recording")
+	uploaded, err := wac.client.Upload(context.Background(), data, whatsmeow.MediaAudio)
+	if err != nil {
+		wac.client.SendChatPresence(jid, types.ChatPresencePaused, types.ChatPresenceMediaAudio)
+		return false, fmt.Sprintf("Failed to upload audio: %v", err)
+	}
+
+	// Stop recording indicator
+	wac.client.SendChatPresence(
+		jid,
+		types.ChatPresencePaused,
+		types.ChatPresenceMediaAudio,
+	)
+
+	// Small delay before sending (0.3-0.5s)
+	sendDelay := time.Duration(300+rand.Intn(200)) * time.Millisecond
+	time.Sleep(sendDelay)
+
+	// Create audio message
+	msg := &waProto.Message{
+		AudioMessage: &waProto.AudioMessage{
+			URL:           proto.String(uploaded.URL),
+			DirectPath:    proto.String(uploaded.DirectPath),
+			MediaKey:      uploaded.MediaKey,
+			FileEncSHA256: uploaded.FileEncSHA256,
+			FileSHA256:    uploaded.FileSHA256,
+			FileLength:    proto.Uint64(uploaded.FileLength),
+			Mimetype:      proto.String("audio/ogg; codecs=opus"),
+			Seconds:       proto.Uint32(duration),
+			PTT:           proto.Bool(true),
+			Waveform:      waveform,
+		},
+	}
+
+	resp, err := wac.client.SendMessage(context.Background(), jid, msg)
+	if err != nil {
+		return false, fmt.Sprintf("Failed to send audio message: %v", err)
+	}
+
+	return true, fmt.Sprintf("Audio message sent successfully (ID: %s)", resp.ID)
 }
 
 func (wac *WhatsAppClient) SendAudioMessage(recipient, filePath string) (bool, string) {
@@ -848,6 +1084,21 @@ func (wac *WhatsAppClient) GetGroupInviteLink(groupJID string) (bool, string, st
 	}
 
 	return true, link, "Invite link retrieved successfully"
+}
+
+func (wac *WhatsAppClient) EnsureOnline() error {
+	wac.presenceMutex.Lock()
+	defer wac.presenceMutex.Unlock()
+
+	if !wac.presenceActive {
+		err := wac.client.SendPresence(types.PresenceAvailable)
+		if err != nil {
+			return fmt.Errorf("failed to set online status: %v", err)
+		}
+		wac.presenceActive = true
+		wac.logger.Debugf("Set online status")
+	}
+	return nil
 }
 
 func (wac *WhatsAppClient) ResolveRecipient(identifier string) (types.JID, error) {

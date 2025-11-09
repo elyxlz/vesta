@@ -132,7 +132,7 @@ func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 		Name:        "send_message",
 		Description: "Send a WhatsApp message. 'to' accepts contact name, phone number (+1234567890), group name, or JID.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input SendMessageInput) (*mcp.CallToolResult, SendMessageOutput, error) {
-		success, message := wac.SendMessage(input.To, input.Message)
+		success, message := wac.SendMessageWithPresence(input.To, input.Message)
 		return nil, SendMessageOutput{Success: success, Message: message}, nil
 	})
 
