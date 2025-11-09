@@ -77,6 +77,16 @@ def list_accounts(cache_file: pl.Path) -> list[Account]:
     return accounts
 
 
+def get_account_id_by_email(email: str, cache_file: pl.Path) -> str:
+    """Map email address to account_id. Raises ValueError if email not found."""
+    accounts = list_accounts(cache_file)
+    email_lower = email.lower()
+    for account in accounts:
+        if account.username.lower() == email_lower:
+            return account.account_id
+    raise ValueError(f"No account found with email: {email}")
+
+
 def authenticate_new_account(cache_file: pl.Path, scopes: list[str]) -> Account | None:
     """Authenticate a new account interactively"""
     app = get_app(cache_file)

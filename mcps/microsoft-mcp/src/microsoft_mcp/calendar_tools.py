@@ -4,7 +4,7 @@ import datetime as dt
 from typing import Any
 from mcp.server.fastmcp import Context
 from .auth_tools import mcp  # Use the shared MCP instance
-from . import graph
+from . import graph, auth
 from .context import MicrosoftContext
 from .email_tools import _parse_comma_separated
 
@@ -12,12 +12,13 @@ from .email_tools import _parse_comma_separated
 @mcp.tool()
 def list_events(
     ctx: Context,
-    account_id: str,
+    account_email: str,
     days_ahead: int = 7,
     days_back: int = 0,
     include_details: bool = True,
 ) -> list[dict[str, Any]]:
     context: MicrosoftContext = ctx.request_context.lifespan_context
+    account_id = auth.get_account_id_by_email(account_email, context.cache_file)
     now = dt.datetime.now(dt.timezone.utc)
     start = (now - dt.timedelta(days=days_back)).isoformat()
     end = (now + dt.timedelta(days=days_ahead)).isoformat()
@@ -47,7 +48,7 @@ def list_events(
 @mcp.tool()
 def create_event(
     ctx: Context,
-    account_id: str,
+    account_email: str,
     subject: str,
     start: str,
     end: str,
@@ -58,6 +59,7 @@ def create_event(
 ) -> dict[str, Any]:
     """start/end: ISO-8601 datetime (e.g. '2024-01-15T14:00:00'). attendees: comma-separated emails or list"""
     context: MicrosoftContext = ctx.request_context.lifespan_context
+    account_id = auth.get_account_id_by_email(account_email, context.cache_file)
     event = {
         "subject": subject,
         "start": {"dateTime": start, "timeZone": timezone},
@@ -83,9 +85,10 @@ def create_event(
 
 
 @mcp.tool()
-def update_event(ctx: Context, event_id: str, updates: dict[str, Any], account_id: str) -> dict[str, Any]:
+def update_event(ctx: Context, event_id: str, updates: dict[str, Any], account_email: str) -> dict[str, Any]:
     """updates keys: 'subject', 'start' (ISO-8601), 'end' (ISO-8601), 'location', 'body', 'timezone'"""
     context: MicrosoftContext = ctx.request_context.lifespan_context
+    account_id = auth.get_account_id_by_email(account_email, context.cache_file)
     formatted_updates = {}
 
     if "subject" in updates:
@@ -119,9 +122,10 @@ def update_event(ctx: Context, event_id: str, updates: dict[str, Any], account_i
 
 
 @mcp.tool()
-def delete_event(ctx: Context, account_id: str, event_id: str, send_cancellation: bool = True) -> dict[str, str]:
+def delete_event(ctx: Context, account_email: str, event_id: str, send_cancellation: bool = True) -> dict[str, str]:
     """Delete or cancel a calendar event"""
     context: MicrosoftContext = ctx.request_context.lifespan_context
+    account_id = auth.get_account_id_by_email(account_email, context.cache_file)
 
     if send_cancellation:
         graph.request(
@@ -142,13 +146,14 @@ def delete_event(ctx: Context, account_id: str, event_id: str, send_cancellation
 @mcp.tool()
 def respond_event(
     ctx: Context,
-    account_id: str,
+    account_email: str,
     event_id: str,
     response: str = "accept",
     message: str | None = None,
 ) -> dict[str, str]:
     """Respond to event invitation (accept, decline, tentativelyAccept)"""
     context: MicrosoftContext = ctx.request_context.lifespan_context
+    account_id = auth.get_account_id_by_email(account_email, context.cache_file)
     payload: dict[str, Any] = {"sendResponse": True}
     if message:
         payload["comment"] = message

@@ -92,7 +92,7 @@ mcp = FastMCP("microsoft-mcp", lifespan=microsoft_lifespan)
 @mcp.tool()
 def list_accounts(ctx: Context) -> list[dict[str, str]]:
     context: MicrosoftContext = ctx.request_context.lifespan_context
-    return [{"username": acc.username, "account_id": acc.account_id} for acc in auth.list_accounts(context.cache_file)]
+    return [{"email": acc.username, "account_id": acc.account_id} for acc in auth.list_accounts(context.cache_file)]
 
 
 @mcp.tool()

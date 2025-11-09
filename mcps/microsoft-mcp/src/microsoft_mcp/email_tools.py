@@ -4,7 +4,7 @@ import base64
 import pathlib as pl
 from typing import Any
 from mcp.server.fastmcp import Context
-from . import graph
+from . import graph, auth
 from .auth_tools import mcp  # Use the shared MCP instance
 from .context import MicrosoftContext
 
@@ -25,13 +25,14 @@ def _remove_attachment_bytes(result: dict[str, Any]) -> None:
 @mcp.tool()
 def list_emails(
     ctx: Context,
-    account_id: str,
+    account_email: str,
     folder: str = "inbox",
     limit: int = 10,
     include_body: bool = True,
 ) -> list[dict[str, Any]]:
     """folder: 'inbox', 'sent', 'drafts', 'deleted', 'junk', 'archive' (case-insensitive)"""
     context: MicrosoftContext = ctx.request_context.lifespan_context
+    account_id = auth.get_account_id_by_email(account_email, context.cache_file)
 
     folder_path = context.folders.get(folder.casefold(), folder)
 
@@ -66,12 +67,13 @@ def list_emails(
 def get_email(
     ctx: Context,
     email_id: str,
-    account_id: str,
+    account_email: str,
     include_body: bool = True,
     include_attachments: bool = True,
     save_to_file: str | None = None,
 ) -> dict[str, Any]:
     context: MicrosoftContext = ctx.request_context.lifespan_context
+    account_id = auth.get_account_id_by_email(account_email, context.cache_file)
     params = {}
     if include_attachments:
         params["$expand"] = "attachments($select=id,name,size,contentType)"
@@ -121,7 +123,7 @@ def get_email(
 @mcp.tool()
 def create_email_draft(
     ctx: Context,
-    account_id: str,
+    account_email: str,
     to: str,
     subject: str,
     body: str,
@@ -130,6 +132,7 @@ def create_email_draft(
 ) -> dict[str, Any]:
     """to/cc: comma-separated emails. attachments: comma-separated file paths"""
     context: MicrosoftContext = ctx.request_context.lifespan_context
+    account_id = auth.get_account_id_by_email(account_email, context.cache_file)
     to_list = _parse_comma_separated(to)
 
     message = {
@@ -200,7 +203,7 @@ def create_email_draft(
 @mcp.tool()
 def send_email(
     ctx: Context,
-    account_id: str,
+    account_email: str,
     to: str,
     subject: str,
     body: str,
@@ -209,6 +212,7 @@ def send_email(
 ) -> dict[str, str]:
     """to/cc: comma-separated emails. attachments: comma-separated file paths"""
     context: MicrosoftContext = ctx.request_context.lifespan_context
+    account_id = auth.get_account_id_by_email(account_email, context.cache_file)
     to_list = _parse_comma_separated(to)
 
     message = {
@@ -332,10 +336,11 @@ def send_email(
 
 @mcp.tool()
 def reply_to_email(
-    ctx: Context, account_id: str, email_id: str, body: str, attachments: str | None = None, reply_all: bool = False
+    ctx: Context, account_email: str, email_id: str, body: str, attachments: str | None = None, reply_all: bool = False
 ) -> dict[str, str]:
     """attachments: comma-separated file paths"""
     context: MicrosoftContext = ctx.request_context.lifespan_context
+    account_id = auth.get_account_id_by_email(account_email, context.cache_file)
     create_endpoint = "createReplyAll" if reply_all else "createReply"
     reply_endpoint = "replyAll" if reply_all else "reply"
 
@@ -414,8 +419,9 @@ def reply_to_email(
 
 
 @mcp.tool()
-def get_attachment(ctx: Context, email_id: str, attachment_id: str, save_path: str, account_id: str) -> dict[str, Any]:
+def get_attachment(ctx: Context, email_id: str, attachment_id: str, save_path: str, account_email: str) -> dict[str, Any]:
     context: MicrosoftContext = ctx.request_context.lifespan_context
+    account_id = auth.get_account_id_by_email(account_email, context.cache_file)
     result = graph.request(
         context.http_client,
         context.cache_file,
@@ -450,11 +456,12 @@ def get_attachment(ctx: Context, email_id: str, attachment_id: str, save_path: s
 def search_emails(
     ctx: Context,
     query: str,
-    account_id: str,
+    account_email: str,
     limit: int = 50,
     folder: str | None = None,
 ) -> list[dict[str, Any]]:
     context: MicrosoftContext = ctx.request_context.lifespan_context
+    account_id = auth.get_account_id_by_email(account_email, context.cache_file)
     if folder:
         # For folder-specific search, use the traditional endpoint
         folder_path = context.folders.get(folder.casefold(), folder)
