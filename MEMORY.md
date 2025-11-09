@@ -610,6 +610,10 @@ When booking any meeting:
   - **Reason**: He can see terminal activity and finds it annoying
   - **Exception**: ONLY respond in terminal if message comes from terminal
   - **Channel Response Rule**: Always respond through same channel message came from
+- **November 2025 - WhatsApp contact names in tools**:
+  - **send_message `to` field**: Accepts contact names, group names, phone numbers, or JIDs — no need to paste numbers if the name is saved
+  - **Best practice**: Prefer contact names (e.g., "Maddy", "Gina Spoon") for clarity and to avoid copying raw numbers
+  - **Prep step**: Use `add_contact` / `list_contacts` if you need to save or check a contact before messaging
 
 - **October 6-7, 2025 - Date/day checking critical issue**:
   - **Major frustration point**: When I get days of week wrong for dates

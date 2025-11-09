@@ -81,7 +81,10 @@ async def load_notifications(*, config: vm.VestaSettings) -> list[vm.Notificatio
                 data = vu.parse_notification_file_content(content)
                 notif = vm.Notification(**data)
                 notif.file_path = str(file)
-                notifications.append(notif)
+                if notif.message and notif.message.strip():
+                    notifications.append(notif)
+                else:
+                    vfx.log_error(f"Warning: skipping notification {file.name} (no textual content).", colors=Colors)
             except Exception as e:
                 vfx.log_error(f"Failed to read notification {file.name}: {e}", colors=Colors)
 
