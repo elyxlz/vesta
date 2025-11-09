@@ -9,7 +9,7 @@ from pathlib import Path
 from mcp.server.fastmcp import FastMCP, Context
 
 
-def _validate_directory(path_str: str | None, param_name: str) -> Path:
+def _validate_directory(path_str: str | None, *, param_name: str) -> Path:
     """Validate and prepare a directory parameter"""
     if not path_str:
         raise ValueError(f"Error: --{param_name} is required")
@@ -41,8 +41,8 @@ async def task_lifespan(server: FastMCP) -> AsyncIterator[TaskContext]:
     parser.add_argument("--log-dir", type=str, required=True)
     args, _ = parser.parse_known_args()
 
-    data_dir = _validate_directory(args.data_dir, "data-dir")
-    log_dir = _validate_directory(args.log_dir, "log-dir")
+    data_dir = _validate_directory(args.data_dir, param_name="data-dir")
+    log_dir = _validate_directory(args.log_dir, param_name="log-dir")
 
     ctx = TaskContext(data_dir, log_dir)
     init_db(ctx)
@@ -114,7 +114,7 @@ def normalize_priority(priority: int | str) -> int:
 
 
 @mcp.tool()
-def add_task(ctx: Context, title: str, due: str | None = None, priority: int | str = 2, metadata: str | None = None) -> dict:
+def add_task(ctx: Context, *, title: str, due: str | None = None, priority: int | str = 2, metadata: str | None = None) -> dict:
     """priority: 1-3 or 'low'/'normal'/'high'. due: 'today', 'tomorrow', or YYYY-MM-DD"""
     context: TaskContext = ctx.request_context.lifespan_context
     priority = normalize_priority(priority)

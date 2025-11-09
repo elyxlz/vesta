@@ -83,13 +83,13 @@ async def output_line(text: str, state: vm.State, *, is_tool: bool = False) -> N
     if not text or not text.strip():
         return
 
-    line_type = vu.classify_output_line(text, state.sub_agent_context, is_tool=is_tool)
+    line_type = vu.classify_output_line(text, sub_agent_context=state.sub_agent_context, is_tool=is_tool)
 
     if line_type == "message":
         sender = f"Vesta[{state.sub_agent_context}]" if state.sub_agent_context else "Vesta"
         await print_timestamp_message(text, sender, lock=state.output_lock)
     else:
-        formatted = vu.format_output_line(text, line_type, state.sub_agent_context, colors=Colors)
+        formatted = vu.format_output_line(text, line_type=line_type, sub_agent_context=state.sub_agent_context, colors=Colors)
         await vfx.print_locked(state.output_lock, formatted, flush=True)
 
 
@@ -110,7 +110,7 @@ async def send_query(client: ccsdk.ClaudeSDKClient, prompt: str, state: vm.State
 
 
 async def collect_responses(
-    client: ccsdk.ClaudeSDKClient, state: vm.State, config: vm.VestaSettings, *, show_output: bool = True
+    client: ccsdk.ClaudeSDKClient, *, state: vm.State, config: vm.VestaSettings, show_output: bool = True
 ) -> tuple[list[str], vm.State]:
     responses = []
     message_count = 0
@@ -147,7 +147,7 @@ async def collect_responses(
 
 
 async def send_and_receive_message(
-    prompt: str, state: vm.State, config: vm.VestaSettings, *, show_in_chat: bool = True
+    prompt: str, *, state: vm.State, config: vm.VestaSettings, show_in_chat: bool = True
 ) -> tuple[list[str], vm.State]:
     if not state.client:
         raise RuntimeError("Client not initialized")
@@ -161,7 +161,7 @@ async def send_and_receive_message(
         state.conversation_history = vu.add_to_conversation_history(state.conversation_history, "assistant", content=error_msg)
         return [error_msg], state
 
-    responses, _ = await collect_responses(state.client, state, config, show_output=show_in_chat)
+    responses, _ = await collect_responses(state.client, state=state, config=config, show_output=show_in_chat)
 
     if responses:
         state.conversation_history = vu.add_to_conversation_history(state.conversation_history, "assistant", content=" ".join(responses))
@@ -189,7 +189,7 @@ async def process_message_with_typing(msg: str, state: vm.State, config: vm.Vest
 
     typing_task = asyncio.create_task(show_typing_indicator(config, lock=state.output_lock))
     try:
-        responses, new_state = await send_and_receive_message(msg, state, config, show_in_chat=is_user)
+        responses, new_state = await send_and_receive_message(msg, state=state, config=config, show_in_chat=is_user)
     except Exception as e:
         responses = [f"something went wrong: {str(e)[:50]}"]
         vfx.log_error(f"Message processing error: {str(e)[:100]}", colors=Colors)
@@ -229,7 +229,7 @@ async def process_notification_batch(
         return
 
     try:
-        decision = vu.decide_notification_action(notifications, state.is_processing, has_client=state.client is not None)
+        decision = vu.decide_notification_action(notifications, is_processing=state.is_processing, has_client=state.client is not None)
 
         if decision == "interrupt" and state.client:
             await handle_notifications_interrupt(notifications, state.client, queue, config, lock=state.output_lock)
@@ -367,7 +367,7 @@ async def process_nightly_memory(state: vm.State, *, config: vm.VestaSettings) -
 
 
 async def load_and_display_new_notifications(
-    notification_buffer: list[vm.Notification], buffer_start_time: dt.datetime | None, state: vm.State, *, config: vm.VestaSettings
+    notification_buffer: list[vm.Notification], *, buffer_start_time: dt.datetime | None, state: vm.State, config: vm.VestaSettings
 ) -> tuple[list[vm.Notification], dt.datetime | None]:
     try:
         new_notifs = await load_notifications(config=config)
@@ -427,7 +427,7 @@ async def monitor_loop(queue: asyncio.Queue, state: vm.State, *, config: vm.Vest
             await process_nightly_memory(state, config=config)
 
             notification_buffer, buffer_start_time = await load_and_display_new_notifications(
-                notification_buffer, buffer_start_time, state, config=config
+                notification_buffer, buffer_start_time=buffer_start_time, state=state, config=config
             )
 
             if vu.should_process_notification_buffer(

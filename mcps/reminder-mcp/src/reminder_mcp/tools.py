@@ -92,7 +92,7 @@ def init_db(ctx: ReminderContext):
         conn.commit()
 
 
-def send_reminder_job(reminder_id: str, message: str, data_dir: Path, *, notif_dir: Path):
+def send_reminder_job(reminder_id: str, *, message: str, data_dir: Path, notif_dir: Path):
     write_notification(notif_dir, reminder_id, message)
     conn = sqlite3.connect(data_dir / "reminders.db")
     conn.row_factory = sqlite3.Row
@@ -135,6 +135,7 @@ def parse_time(time_str: str) -> tuple[int, int]:
 @mcp.tool()
 def set_reminder(
     ctx: Context,
+    *,
     message: str,
     scheduled_datetime: str | None = None,
     seconds: float | None = None,
@@ -187,7 +188,8 @@ def set_reminder(
     context.scheduler.add_job(
         func=send_reminder_job,
         trigger=trigger,
-        args=[reminder_id, message, context.data_dir, context.notif_dir],
+        args=[reminder_id],
+        kwargs={"message": message, "data_dir": context.data_dir, "notif_dir": context.notif_dir},
         id=reminder_id,
         replace_existing=True,
     )
@@ -261,7 +263,7 @@ def update_reminder(ctx: Context, reminder_id: str, *, message: str) -> dict:
         conn.execute("UPDATE reminders SET message = ? WHERE id = ?", (message, reminder_id))
         conn.commit()
 
-    job.modify(args=[reminder_id, message, context.data_dir, context.notif_dir])
+    job.modify(args=[reminder_id], kwargs={"message": message, "data_dir": context.data_dir, "notif_dir": context.notif_dir})
 
     return {
         "id": reminder_id,

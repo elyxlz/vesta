@@ -63,9 +63,6 @@ class VestaSettings(pyd_settings.BaseSettings):
     enable_nightly_memory: bool = True
     nightly_memory_time: int = 4
 
-    # Claude CLI path
-    claude_cli_path: str | None = None
-
     # Microsoft MCP secrets
     microsoft_mcp_client_id: str | None = None
     microsoft_mcp_tenant_id: str = "common"
@@ -74,6 +71,7 @@ class VestaSettings(pyd_settings.BaseSettings):
     onedrive_token: str | None = None
     onedrive_client_id: str | None = None
     onedrive_client_secret: str | None = None
+    onedrive_drive_id: str | None = None
     onedrive_remote_name: str = "onedrive"
     onedrive_remote_path: str = "/"
 

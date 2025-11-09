@@ -60,9 +60,14 @@ type = onedrive
 client_secret = {config.onedrive_client_secret}
 """
 
-    rclone_config += f"""region = global
-token = {config.onedrive_token}
-drive_type = personal
+    rclone_config += f"""token = {config.onedrive_token}
+"""
+
+    if config.onedrive_drive_id:
+        rclone_config += f"""drive_id = {config.onedrive_drive_id}
+"""
+
+    rclone_config += """drive_type = personal
 """
 
     # Write config file

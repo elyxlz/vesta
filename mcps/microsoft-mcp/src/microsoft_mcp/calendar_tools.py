@@ -11,6 +11,7 @@ from .context import MicrosoftContext
 @mcp.tool()
 def list_events(
     ctx: Context,
+    *,
     account_email: str,
     days_ahead: int = 7,
     days_back: int = 0,
@@ -52,7 +53,7 @@ def list_events(
 
 
 @mcp.tool()
-def get_event(ctx: Context, event_id: str, account_email: str) -> dict[str, Any]:
+def get_event(ctx: Context, *, event_id: str, account_email: str) -> dict[str, Any]:
     """Get a single calendar event by ID"""
     context: MicrosoftContext = ctx.request_context.lifespan_context
     account_id = auth.get_account_id_by_email(account_email, context.cache_file, settings=context.settings)
@@ -68,6 +69,7 @@ def get_event(ctx: Context, event_id: str, account_email: str) -> dict[str, Any]
 @mcp.tool()
 def create_event(
     ctx: Context,
+    *,
     account_email: str,
     subject: str,
     start: str,
@@ -112,7 +114,7 @@ def create_event(
 
 
 @mcp.tool()
-def update_event(ctx: Context, event_id: str, updates: dict[str, Any], account_email: str) -> dict[str, Any]:
+def update_event(ctx: Context, *, event_id: str, updates: dict[str, Any], account_email: str) -> dict[str, Any]:
     """updates keys: 'subject', 'start' (ISO-8601), 'end' (ISO-8601), 'location', 'body', 'timezone'"""
     context: MicrosoftContext = ctx.request_context.lifespan_context
     account_id = auth.get_account_id_by_email(account_email, context.cache_file, settings=context.settings)

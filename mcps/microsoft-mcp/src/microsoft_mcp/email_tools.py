@@ -20,6 +20,7 @@ def _remove_attachment_bytes(result: dict[str, Any]) -> None:
 @mcp.tool()
 def list_emails(
     ctx: Context,
+    *,
     account_email: str,
     folder: str = "inbox",
     limit: int = 10,
@@ -62,6 +63,7 @@ def list_emails(
 @mcp.tool()
 def get_email(
     ctx: Context,
+    *,
     email_id: str,
     account_email: str,
     include_body: bool = True,
@@ -127,6 +129,7 @@ def get_email(
 @mcp.tool()
 def create_email_draft(
     ctx: Context,
+    *,
     account_email: str,
     to: list[str],
     subject: str,

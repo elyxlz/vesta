@@ -25,7 +25,7 @@ def format_timestamp_message(text: str, sender: str, timestamp: dt.datetime, *, 
         return [f"{colors['dim']}[{timestamp_str}]{colors['reset']} {colors['yellow']}{text}{colors['reset']}"]
 
 
-def format_tool_call(name: str, input_data: tp.Any, sub_agent_context: str | None, *, service_icons: dict[str, str]) -> tuple[str, str | None]:
+def format_tool_call(name: str, *, input_data: tp.Any, sub_agent_context: str | None, service_icons: dict[str, str]) -> tuple[str, str | None]:
     input_str = json.dumps(input_data) if isinstance(input_data, dict) else str(input_data)
     input_preview = (input_str[:150] + "...") if len(input_str) > 150 else input_str
 
@@ -81,7 +81,9 @@ def parse_assistant_message(
                 has_task_result = True
             texts.append(text)
         elif isinstance(block, ccsdk_types.ToolUseBlock):
-            formatted, new_context = format_tool_call(block.name, block.input, current_context, service_icons=service_icons)
+            formatted, new_context = format_tool_call(
+                block.name, input_data=block.input, sub_agent_context=current_context, service_icons=service_icons
+            )
             texts.append(formatted)
             if new_context:
                 current_context = new_context
@@ -156,7 +158,7 @@ def should_process_notification_buffer(
 
 
 def classify_output_line(
-    text: str, sub_agent_context: str | None, *, is_tool: bool
+    text: str, *, sub_agent_context: str | None, is_tool: bool
 ) -> tp.Literal["agent_task", "agent_tool", "tool", "message"]:
     if not text or not text.strip():
         return "message"
@@ -172,7 +174,7 @@ def classify_output_line(
 
 
 def format_output_line(
-    text: str, line_type: tp.Literal["agent_task", "agent_tool", "tool", "message"], sub_agent_context: str | None, *, colors: dict[str, str]
+    text: str, *, line_type: tp.Literal["agent_task", "agent_tool", "tool", "message"], sub_agent_context: str | None, colors: dict[str, str]
 ) -> str:
     if line_type == "agent_task":
         return f"{colors['cyan']}>>{text}{colors['reset']}"
@@ -212,7 +214,7 @@ def parse_notification_file_content(content: str) -> dict[str, tp.Any]:
 
 
 def decide_notification_action(
-    notifications: list[vm.Notification], is_processing: bool, *, has_client: bool
+    notifications: list[vm.Notification], *, is_processing: bool, has_client: bool
 ) -> tp.Literal["interrupt", "queue", "skip"]:
     if not notifications:
         return "skip"
