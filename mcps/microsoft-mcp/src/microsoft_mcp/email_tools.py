@@ -27,7 +27,7 @@ def list_emails(
 ) -> list[dict[str, Any]]:
     """folder: 'inbox', 'sent', 'drafts', 'deleted', 'junk', 'archive' (case-insensitive)"""
     context: MicrosoftContext = ctx.request_context.lifespan_context
-    account_id = auth.get_account_id_by_email(account_email, context.cache_file)
+    account_id = auth.get_account_id_by_email(account_email, context.cache_file, context.settings)
 
     folder_path = context.folders.get(folder.casefold(), folder)
 
@@ -68,7 +68,7 @@ def get_email(
     save_to_file: str | None = None,
 ) -> dict[str, Any]:
     context: MicrosoftContext = ctx.request_context.lifespan_context
-    account_id = auth.get_account_id_by_email(account_email, context.cache_file)
+    account_id = auth.get_account_id_by_email(account_email, context.cache_file, context.settings)
     params = {}
     if include_attachments:
         params["$expand"] = "attachments($select=id,name,size,contentType)"
@@ -127,7 +127,7 @@ def create_email_draft(
 ) -> dict[str, Any]:
     """to/cc: list of email addresses. attachments: list of file paths"""
     context: MicrosoftContext = ctx.request_context.lifespan_context
-    account_id = auth.get_account_id_by_email(account_email, context.cache_file)
+    account_id = auth.get_account_id_by_email(account_email, context.cache_file, context.settings)
 
     message = {
         "subject": subject,
@@ -206,7 +206,7 @@ def send_email(
 ) -> dict[str, str]:
     """to/cc: list of email addresses. attachments: list of file paths"""
     context: MicrosoftContext = ctx.request_context.lifespan_context
-    account_id = auth.get_account_id_by_email(account_email, context.cache_file)
+    account_id = auth.get_account_id_by_email(account_email, context.cache_file, context.settings)
 
     message = {
         "subject": subject,
@@ -332,7 +332,7 @@ def reply_to_email(
 ) -> dict[str, str]:
     """attachments: list of file paths"""
     context: MicrosoftContext = ctx.request_context.lifespan_context
-    account_id = auth.get_account_id_by_email(account_email, context.cache_file)
+    account_id = auth.get_account_id_by_email(account_email, context.cache_file, context.settings)
     create_endpoint = "createReplyAll" if reply_all else "createReply"
     reply_endpoint = "replyAll" if reply_all else "reply"
 
@@ -412,7 +412,7 @@ def reply_to_email(
 @mcp.tool()
 def get_attachment(ctx: Context, email_id: str, attachment_id: str, save_path: str, account_email: str) -> dict[str, Any]:
     context: MicrosoftContext = ctx.request_context.lifespan_context
-    account_id = auth.get_account_id_by_email(account_email, context.cache_file)
+    account_id = auth.get_account_id_by_email(account_email, context.cache_file, context.settings)
     result = graph.request(
         context.http_client,
         context.cache_file,
@@ -452,7 +452,7 @@ def search_emails(
     folder: str | None = None,
 ) -> list[dict[str, Any]]:
     context: MicrosoftContext = ctx.request_context.lifespan_context
-    account_id = auth.get_account_id_by_email(account_email, context.cache_file)
+    account_id = auth.get_account_id_by_email(account_email, context.cache_file, context.settings)
     if folder:
         # For folder-specific search, use the traditional endpoint
         folder_path = context.folders.get(folder.casefold(), folder)
@@ -481,7 +481,7 @@ def update_email(
 ) -> dict[str, Any]:
     """Mark email as read/unread or add categories"""
     context: MicrosoftContext = ctx.request_context.lifespan_context
-    account_id = auth.get_account_id_by_email(account_email, context.cache_file)
+    account_id = auth.get_account_id_by_email(account_email, context.cache_file, context.settings)
 
     updates = {}
     if is_read is not None:

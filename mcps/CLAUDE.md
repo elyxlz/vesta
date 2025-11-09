@@ -44,6 +44,7 @@ mcp-name/
 │   └── mcp_name/           # Use underscore in package name
 │       ├── __init__.py
 │       ├── server.py        # Just calls mcp.run() - 10 lines max
+│       ├── settings.py      # Pydantic settings for env vars
 │       ├── context.py       # Context dataclass with all shared resources
 │       ├── tools.py         # FastMCP instance with lifespan + tools (400 lines max)
 │       ├── [domain]_tools.py # Split large tools into domain files
@@ -53,9 +54,10 @@ mcp-name/
 │   └── test_e2e.py
 ├── pyproject.toml           # Standardized metadata
 ├── README.md
-├── .env.example             # Required env vars documentation
 └── authenticate.py          # Helper script if needed
 ```
+
+**Note**: No `.env.example` files in MCPs - all env vars centralized in vesta root `.env`
 
 ### File Size Limits
 - **tools.py**: Maximum 400 lines. Split into domain-specific files if larger:
@@ -65,6 +67,74 @@ mcp-name/
 - **context.py**: Keep under 50 lines (just dataclass definition)
 
 ## Development Patterns
+
+### Settings Pattern (Configuration Management)
+
+**REQUIRED**: All MCPs MUST use pydantic-settings for configuration. Never use `os.getenv()` or `os.environ`.
+
+#### Why Pydantic Settings?
+- **Type Safety**: Automatic type validation and conversion
+- **Centralized Config**: All env vars loaded from vesta root `.env`
+- **No os.getenv**: Eliminates manual environment variable access
+- **Validation**: Built-in validation with clear error messages
+- **Defaults**: Type-safe defaults with proper fallbacks
+
+#### Basic Structure
+
+```python
+# settings.py
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+class MySettings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    # Define env vars with types
+    my_api_key: str
+    my_api_endpoint: str = "https://api.example.com"
+```
+
+#### Usage in Lifespan
+
+```python
+# tools.py or auth_tools.py
+from .settings import MySettings
+
+@asynccontextmanager
+async def my_lifespan(server: FastMCP) -> AsyncIterator[MyContext]:
+    # 1. Load settings from .env
+    settings = MySettings()
+
+    # 2. Parse CLI arguments
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data-dir", type=str, required=True)
+    args, _ = parser.parse_known_args()
+
+    # 3. Pass settings to context
+    ctx = MyContext(data_dir=data_dir, settings=settings)
+
+    try:
+        yield ctx
+    finally:
+        pass
+```
+
+#### Usage in Functions
+
+```python
+# Pass settings as parameter, never use os.getenv()
+def get_app(cache_file: Path, settings: MySettings) -> App:
+    return App(api_key=settings.my_api_key)
+
+# In tools, extract from context
+@mcp.tool()
+def my_tool(ctx: Context) -> dict:
+    context: MyContext = ctx.request_context.lifespan_context
+    return use_api(context.settings.my_api_key)
+```
 
 ### Lifespan Pattern (Resource Management)
 

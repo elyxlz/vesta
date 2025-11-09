@@ -4,7 +4,6 @@ Authenticate Microsoft accounts for use with Microsoft MCP.
 Run this script to sign in to one or more Microsoft accounts.
 """
 
-import os
 import sys
 import argparse
 from pathlib import Path
@@ -14,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from dotenv import load_dotenv, find_dotenv
 from microsoft_mcp import auth
+from microsoft_mcp.settings import MicrosoftSettings
 
 load_dotenv(find_dotenv())
 
@@ -25,18 +25,20 @@ def main():
 
     data_dir = Path(args.data_dir).resolve()
     data_dir.mkdir(parents=True, exist_ok=True)
-    auth.init_auth(data_dir / "token_cache.json")
-    if not os.getenv("MICROSOFT_MCP_CLIENT_ID"):
-        print("Error: MICROSOFT_MCP_CLIENT_ID environment variable is required")
-        print("\nPlease set it in your .env file or environment:")
-        print("export MICROSOFT_MCP_CLIENT_ID='your-app-id'")
+    cache_file = data_dir / "auth_cache.bin"
+
+    try:
+        settings = MicrosoftSettings()
+    except Exception as e:
+        print(f"Error loading settings: {e}")
+        print("\nPlease set MICROSOFT_MCP_CLIENT_ID in your .env file")
         sys.exit(1)
 
     print("Microsoft MCP Authentication")
     print("============================\n")
 
     # List current accounts
-    accounts = auth.list_accounts()
+    accounts = auth.list_accounts(cache_file, settings)
     if accounts:
         print("Currently authenticated accounts:")
         for i, account in enumerate(accounts, 1):
@@ -53,7 +55,7 @@ def main():
         elif choice == "y":
             try:
                 # Use the new authentication function
-                new_account = auth.authenticate_new_account()
+                new_account = auth.authenticate_new_account(cache_file, ["https://graph.microsoft.com/.default"], settings)
 
                 if new_account:
                     print("\n✓ Authentication successful!")
@@ -70,7 +72,7 @@ def main():
             print("Please enter 'y' or 'n'")
 
     # Final account summary
-    accounts = auth.list_accounts()
+    accounts = auth.list_accounts(cache_file, settings)
     if accounts:
         print("\nAuthenticated accounts summary:")
         print("==============================")

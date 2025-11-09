@@ -17,7 +17,7 @@ def list_events(
     include_details: bool = True,
 ) -> list[dict[str, Any]]:
     context: MicrosoftContext = ctx.request_context.lifespan_context
-    account_id = auth.get_account_id_by_email(account_email, context.cache_file)
+    account_id = auth.get_account_id_by_email(account_email, context.cache_file, context.settings)
     now = dt.datetime.now(dt.timezone.utc)
     start = (now - dt.timedelta(days=days_back)).isoformat()
     end = (now + dt.timedelta(days=days_ahead)).isoformat()
@@ -48,7 +48,7 @@ def list_events(
 def get_event(ctx: Context, event_id: str, account_email: str) -> dict[str, Any]:
     """Get a single calendar event by ID"""
     context: MicrosoftContext = ctx.request_context.lifespan_context
-    account_id = auth.get_account_id_by_email(account_email, context.cache_file)
+    account_id = auth.get_account_id_by_email(account_email, context.cache_file, context.settings)
 
     result = graph.request(
         context.http_client, context.cache_file, context.scopes, context.base_url, "GET", f"/me/events/{event_id}", account_id
@@ -72,7 +72,7 @@ def create_event(
 ) -> dict[str, Any]:
     """start/end: ISO-8601 datetime (e.g. '2024-01-15T14:00:00'). attendees: list of email addresses"""
     context: MicrosoftContext = ctx.request_context.lifespan_context
-    account_id = auth.get_account_id_by_email(account_email, context.cache_file)
+    account_id = auth.get_account_id_by_email(account_email, context.cache_file, context.settings)
     event = {
         "subject": subject,
         "start": {"dateTime": start, "timeZone": timezone},
@@ -100,7 +100,7 @@ def create_event(
 def update_event(ctx: Context, event_id: str, updates: dict[str, Any], account_email: str) -> dict[str, Any]:
     """updates keys: 'subject', 'start' (ISO-8601), 'end' (ISO-8601), 'location', 'body', 'timezone'"""
     context: MicrosoftContext = ctx.request_context.lifespan_context
-    account_id = auth.get_account_id_by_email(account_email, context.cache_file)
+    account_id = auth.get_account_id_by_email(account_email, context.cache_file, context.settings)
     formatted_updates = {}
 
     if "subject" in updates:
@@ -137,7 +137,7 @@ def update_event(ctx: Context, event_id: str, updates: dict[str, Any], account_e
 def delete_event(ctx: Context, account_email: str, event_id: str, send_cancellation: bool = True) -> dict[str, str]:
     """Delete or cancel a calendar event"""
     context: MicrosoftContext = ctx.request_context.lifespan_context
-    account_id = auth.get_account_id_by_email(account_email, context.cache_file)
+    account_id = auth.get_account_id_by_email(account_email, context.cache_file, context.settings)
 
     if send_cancellation:
         graph.request(
@@ -165,7 +165,7 @@ def respond_event(
 ) -> dict[str, str]:
     """Respond to event invitation"""
     context: MicrosoftContext = ctx.request_context.lifespan_context
-    account_id = auth.get_account_id_by_email(account_email, context.cache_file)
+    account_id = auth.get_account_id_by_email(account_email, context.cache_file, context.settings)
     payload: dict[str, Any] = {"sendResponse": True}
     if message:
         payload["comment"] = message

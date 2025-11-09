@@ -7,10 +7,10 @@ import threading
 from pathlib import Path
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
-from dotenv import load_dotenv, find_dotenv
 from mcp.server.fastmcp import FastMCP, Context
 from . import auth, monitor
 from .context import MicrosoftContext
+from .settings import MicrosoftSettings
 
 
 def _validate_directory(path_str: str | None, param_name: str) -> Path:
@@ -35,7 +35,7 @@ def _validate_directory(path_str: str | None, param_name: str) -> Path:
 @asynccontextmanager
 async def microsoft_lifespan(server: FastMCP) -> AsyncIterator[MicrosoftContext]:
     """Manage Microsoft MCP lifecycle"""
-    load_dotenv(find_dotenv())
+    settings = MicrosoftSettings()
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", type=str, required=True)
@@ -92,6 +92,7 @@ async def microsoft_lifespan(server: FastMCP) -> AsyncIterator[MicrosoftContext]
         base_url=base_url,
         upload_chunk_size=upload_chunk_size,
         folders=folders,
+        settings=settings,
     )
 
     # Start monitor thread
@@ -112,13 +113,13 @@ mcp = FastMCP("microsoft-mcp", lifespan=microsoft_lifespan)
 @mcp.tool()
 def list_accounts(ctx: Context) -> list[dict[str, str]]:
     context: MicrosoftContext = ctx.request_context.lifespan_context
-    return [{"email": acc.username, "account_id": acc.account_id} for acc in auth.list_accounts(context.cache_file)]
+    return [{"email": acc.username, "account_id": acc.account_id} for acc in auth.list_accounts(context.cache_file, context.settings)]
 
 
 @mcp.tool()
 def authenticate_account(ctx: Context) -> dict[str, str]:
     context: MicrosoftContext = ctx.request_context.lifespan_context
-    app = auth.get_app(context.cache_file)
+    app = auth.get_app(context.cache_file, context.settings)
     flow = app.initiate_device_flow(scopes=context.scopes)
 
     if "user_code" not in flow:
@@ -156,7 +157,7 @@ def complete_authentication(ctx: Context, flow_cache: str) -> dict[str, str]:
     except (ValueError, SyntaxError):
         raise ValueError("Invalid flow cache data")
 
-    app = auth.get_app(context.cache_file)
+    app = auth.get_app(context.cache_file, context.settings)
     result = app.acquire_token_by_device_flow(flow)
 
     if "error" in result:

@@ -3,6 +3,7 @@ import logging
 import threading
 from pathlib import Path
 from dataclasses import dataclass
+from .settings import MicrosoftSettings
 
 
 @dataclass
@@ -20,3 +21,4 @@ class MicrosoftContext:
     base_url: str
     upload_chunk_size: int
     folders: dict[str, str]
+    settings: MicrosoftSettings

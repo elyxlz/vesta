@@ -2,7 +2,6 @@ import asyncio
 import datetime as dt
 import errno
 import functools
-import os
 import shutil
 import signal
 import threading
@@ -25,21 +24,6 @@ def load_system_prompt(config: vm.VestaSettings) -> str:
     if not config.memory_file.exists():
         raise FileNotFoundError(f"MEMORY.md not found at {config.memory_file}")
     return config.memory_file.read_text()
-
-
-async def init_client(state: vm.State, config: vm.VestaSettings) -> tuple[ccsdk.ClaudeSDKClient, vm.State]:
-    # Client is always initialized in init_state now
-    if not state.client:
-        raise RuntimeError("Client not initialized - this should not happen!")
-
-    return state.client, state
-
-
-def format_tool_call(name: str, input_data: tp.Any, state: vm.State) -> tuple[str, vm.State]:
-    formatted, new_context = vu.format_tool_call(name, input_data, state.sub_agent_context, vm.SERVICE_ICONS)
-    if new_context != state.sub_agent_context:
-        state.sub_agent_context = new_context
-    return formatted, state
 
 
 def parse_assistant_message(msg: tp.Any, state: vm.State) -> tuple[str | None, vm.State, dict[str, tp.Any] | None]:
@@ -138,21 +122,6 @@ async def collect_responses(
                 message_count += 1
                 text, _, usage_data = parse_assistant_message(msg, state)
 
-                # Show context usage
-                if usage_data:
-                    total_tokens = (
-                        usage_data.get("input_tokens", 0)
-                        + usage_data.get("cache_read_input_tokens", 0)
-                        + usage_data.get("cache_creation_input_tokens", 0)
-                        + usage_data.get("output_tokens", 0)
-                    )
-                    context_pct = (total_tokens / config.max_context_tokens) * 100
-
-                    await vfx.print_locked(
-                        state.output_lock, f"{Colors['yellow']}📊 {context_pct:.1f}% context ({total_tokens:,} tokens){Colors['reset']}"
-                    )
-                    state.last_context_pct = context_pct
-
                 if text:
                     if show_output:
                         for line in text.split("\n"):
@@ -180,10 +149,11 @@ async def collect_responses(
 async def send_and_receive_message(
     prompt: str, state: vm.State, config: vm.VestaSettings, show_in_chat: bool = True
 ) -> tuple[list[str], vm.State]:
-    client, _ = await init_client(state, config)
+    if not state.client:
+        raise RuntimeError("Client not initialized")
 
     try:
-        await send_query(client, prompt, state, config)
+        await send_query(state.client, prompt, state, config)
     except Exception as e:
         error_msg = f"failed to send message: {str(e)[:100]}"
         vfx.log_error(error_msg, Colors)
@@ -191,7 +161,7 @@ async def send_and_receive_message(
         state.conversation_history = vu.add_to_conversation_history(state.conversation_history, "assistant", error_msg)
         return [error_msg], state
 
-    responses, _ = await collect_responses(client, state, config, show_in_chat)
+    responses, _ = await collect_responses(state.client, state, config, show_in_chat)
 
     if responses:
         state.conversation_history = vu.add_to_conversation_history(state.conversation_history, "assistant", " ".join(responses))
@@ -558,7 +528,6 @@ async def init_state(config: vm.VestaSettings) -> vm.State:
 async def async_main() -> None:
     # Initialize configuration
     config = vm.VestaSettings()
-    os.environ["MAX_MCP_OUTPUT_TOKENS"] = str(config.max_mcp_output_tokens)
 
     # Set up OneDrive mount if configured
     if config.onedrive_token:
