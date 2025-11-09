@@ -1,4 +1,4 @@
-"""Scheduler MCP server entry point"""
+"""Reminder MCP server entry point"""
 
 from .tools import mcp
 

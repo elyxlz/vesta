@@ -1,7 +1,7 @@
 [project]
-name = "scheduler-mcp"
+name = "reminder-mcp"
 version = "0.1.0"
-description = "Scheduler MCP for setting reminders and timed notifications"
+description = "Reminder MCP for setting time-based notifications and recurring reminders"
 requires-python = ">=3.11"
 dependencies = [
     "mcp[cli]>=1.6.0",
@@ -10,7 +10,7 @@ dependencies = [
 ]
 
 [project.scripts]
-scheduler-mcp = "scheduler_mcp.server:main"
+reminder-mcp = "reminder_mcp.server:main"
 
 [dependency-groups]
 dev = [

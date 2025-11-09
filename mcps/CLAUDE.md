@@ -131,18 +131,18 @@ def my_tool(ctx: Context, param: str) -> dict:
 5. **Extract Context**: `context: MyContext = ctx.request_context.lifespan_context`
 6. **Simplified server.py**: Just call `mcp.run()`, no initialization code
 
-#### Complete Example (Scheduler-MCP)
+#### Complete Example (Reminder-MCP)
 
 ```python
 # tools.py
 @dataclass
-class SchedulerContext:
+class ReminderContext:
     scheduler: BackgroundScheduler
     data_dir: Path
     notif_dir: Path
 
 @asynccontextmanager
-async def scheduler_lifespan(server: FastMCP) -> AsyncIterator[SchedulerContext]:
+async def reminder_lifespan(server: FastMCP) -> AsyncIterator[ReminderContext]:
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", type=str, required=True)
     parser.add_argument("--notifications-dir", type=str, required=True)
@@ -157,7 +157,7 @@ async def scheduler_lifespan(server: FastMCP) -> AsyncIterator[SchedulerContext]
     scheduler = scheduler_module.create_scheduler(data_dir)
     scheduler.start()
 
-    ctx = SchedulerContext(scheduler, data_dir, notif_dir)
+    ctx = ReminderContext(scheduler, data_dir, notif_dir)
     init_db(ctx)
     check_missed_reminders(ctx)
 
@@ -166,11 +166,11 @@ async def scheduler_lifespan(server: FastMCP) -> AsyncIterator[SchedulerContext]
     finally:
         scheduler.shutdown(wait=True)
 
-mcp = FastMCP("scheduler-mcp", lifespan=scheduler_lifespan)
+mcp = FastMCP("reminder-mcp", lifespan=reminder_lifespan)
 
 @mcp.tool()
 def set_reminder(ctx: Context, message: str, minutes: float | None = None) -> dict:
-    context: SchedulerContext = ctx.request_context.lifespan_context
+    context: ReminderContext = ctx.request_context.lifespan_context
     # Use context.scheduler, context.data_dir, etc.
     return {"id": "...", "status": "scheduled"}
 

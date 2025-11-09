@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 async def get_session():
     """Create MCP client session for testing"""
     # Create temporary directories for data and notifications
-    test_dir = Path(tempfile.mkdtemp(prefix="scheduler_mcp_test_"))
+    test_dir = Path(tempfile.mkdtemp(prefix="reminder_mcp_test_"))
     data_dir = test_dir / "data"
     notif_dir = test_dir / "notifications"
     data_dir.mkdir(parents=True)
@@ -22,7 +22,7 @@ async def get_session():
 
     server_params = StdioServerParameters(
         command="uv",
-        args=["run", "scheduler-mcp", "--data-dir", str(data_dir), "--notifications-dir", str(notif_dir)],
+        args=["run", "reminder-mcp", "--data-dir", str(data_dir), "--notifications-dir", str(notif_dir)],
         cwd=str(Path(__file__).parent.parent),
     )
 
