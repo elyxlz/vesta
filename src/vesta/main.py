@@ -91,6 +91,22 @@ async def load_notifications(*, config: vm.VestaSettings) -> list[vm.Notificatio
     return notifications
 
 
+async def maybe_enqueue_whatsapp_greeting(queue: asyncio.Queue, *, config: vm.VestaSettings) -> None:
+    if not config.enable_whatsapp_greeting:
+        return
+
+    servers = config.mcp_servers
+    if "whatsapp" not in servers:
+        return
+
+    prompt = (config.whatsapp_greeting_prompt or "").strip()
+    if not prompt:
+        return
+
+    await queue.put((prompt, False))
+    vfx.log_info("Queued WhatsApp greeting task", colors=Colors)
+
+
 async def delete_notification_files(notifications: list[vm.Notification]) -> None:
     paths = vu.extract_paths_to_delete(notifications)
     results = vfx.delete_files(paths)
@@ -109,9 +125,29 @@ async def preserve_memory(state: vm.State, *, config: vm.VestaSettings) -> None:
         vfx.log_info("No conversation history to preserve", colors=Colors)
         return
 
-    vfx.log_info(f"Preserving {len(state.conversation_history)} messages...", colors=Colors)
+    vfx.log_info(
+        f"Preserving {len(state.conversation_history)} messages (timeout {config.memory_agent_timeout}s)...",
+        colors=Colors,
+    )
+
+    def log_progress(message: str) -> None:
+        vfx.log_info(f"Memory agent: {message}", colors=Colors)
+
+    start_time = dt.datetime.now()
+
+    async def heartbeat() -> None:
+        try:
+            while True:
+                await asyncio.sleep(30)
+                elapsed = int((dt.datetime.now() - start_time).total_seconds())
+                vfx.log_info(f"Memory agent still running... {elapsed}s elapsed", colors=Colors)
+        except asyncio.CancelledError:
+            pass
+
+    heartbeat_task = asyncio.create_task(heartbeat())
+
     try:
-        diff = await vma.preserve_conversation_memory(state.conversation_history, config=config)
+        diff = await vma.preserve_conversation_memory(state.conversation_history, config=config, progress_callback=log_progress)
         if diff:
             vfx.print_line(f"\n{Colors['cyan']}{Messages.MEMORY_UPDATED}{Colors['reset']}")
             vfx.print_line(diff)
@@ -119,6 +155,10 @@ async def preserve_memory(state: vm.State, *, config: vm.VestaSettings) -> None:
             vfx.log_info("Memory agent found no significant updates", colors=Colors)
     except Exception as e:
         vfx.log_error(f"Memory preservation failed: {e}", colors=Colors)
+    finally:
+        heartbeat_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await heartbeat_task
 
 
 async def output_line(text: str, state: vm.State, *, is_tool: bool = False) -> None:
@@ -517,6 +557,8 @@ async def run_vesta(config: vm.VestaSettings, *, state: vm.State) -> None:
         asyncio.create_task(message_processor(message_queue, state, config=config)),
         asyncio.create_task(monitor_loop(message_queue, state, config=config)),
     ]
+
+    await maybe_enqueue_whatsapp_greeting(message_queue, config=config)
 
     try:
         if state.shutdown_event:

@@ -136,12 +136,18 @@ async def preserve_conversation_memory(
     conversation_history: list[dict[str, tp.Any]],
     *,
     config: vm.VestaSettings,
+    progress_callback: tp.Callable[[str], None] | None = None,
 ) -> str:
     if not conversation_history:
         return ""
 
+    progress = progress_callback or (lambda _message: None)
+    progress("Loading MEMORY.md and system prompt...")
+
     before = config.memory_file.read_text() if config.memory_file.exists() else ""
     system_prompt = config.system_prompt_file.read_text() if config.system_prompt_file.exists() else ""
+
+    progress(f"Building update prompt from {len(conversation_history)} messages...")
 
     prompt = f"""System context (first 2000 chars):
 {system_prompt[:2000]}...
@@ -151,23 +157,31 @@ Recent conversation to process:
 
 Check MEMORY.md and update it with any new important information from this conversation."""
 
+    progress("Connecting to Claude memory agent...")
+
     client = ccsdk.ClaudeSDKClient(
         ccsdk.ClaudeCodeOptions(system_prompt=MEMORY_PROMPT, mcp_servers={}, permission_mode="bypassPermissions", model="sonnet")
     )
 
     try:
         await client.__aenter__()
+        progress("Sending conversation to memory agent (this can take a bit)...")
         await client.query(prompt)
+        progress("Waiting for memory agent response...")
         async for _ in client.receive_response():
             pass
     except Exception as e:
+        progress(f"Memory agent failed: {e}")
         print(f"⚠️ Memory preservation failed: {e}")
         return ""
     finally:
         await client.__aexit__(None, None, None)
 
+    progress("Computing diff vs MEMORY.md...")
+
     after = config.memory_file.read_text() if config.memory_file.exists() else ""
     if before == after:
+        progress("No changes detected")
         return ""
 
     colors = {"+": "\033[92m", "-": "\033[91m", "@": "\033[96m"}

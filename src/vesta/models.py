@@ -63,6 +63,12 @@ class VestaSettings(pyd_settings.BaseSettings):
     enable_nightly_memory: bool = True
     nightly_memory_time: int = 4
     interrupt_timeout: float = 5.0
+    enable_whatsapp_greeting: bool = True
+    whatsapp_greeting_prompt: str = (
+        "Check whether the WhatsApp MCP is authenticated by calling the `authenticate_whatsapp` tool. "
+        "If it is authenticated, send a short WhatsApp message to the user letting them know Vesta just came online and is ready to help. "
+        "If it is not authenticated, log that status and do not attempt to send a message."
+    )
 
     # Microsoft MCP secrets
     microsoft_mcp_client_id: str | None = None
