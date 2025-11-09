@@ -5,13 +5,16 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 )
 
 func WriteNotification(
-	notifDir, messageID, chatJID, chatName, contactName, contactPhone, sender, content, mediaType string, isForwarded bool,
+	notifDir, messageID, chatJID, chatName, contactName, contactPhone string,
+	contactSaved, isDirectChat bool,
+	sender, content, mediaType string, isForwarded bool,
 ) error {
 	if notifDir == "" {
 		return nil // Notifications disabled
@@ -31,6 +34,10 @@ func WriteNotification(
 	if contactPhone != "" {
 		metadata["contact_phone"] = contactPhone
 	}
+	metadata["contact_saved"] = contactSaved
+	if !contactSaved && isDirectChat {
+		metadata["needs_contact_confirmation"] = true
+	}
 
 	if mediaType != "" {
 		metadata["media_type"] = mediaType
@@ -38,6 +45,8 @@ func WriteNotification(
 	if isForwarded {
 		metadata["is_forwarded"] = isForwarded
 	}
+	replyInstruction := "Reply to this chat using the send_message tool."
+	metadata["reply_instruction"] = replyInstruction
 
 	notification := map[string]interface{}{
 		"timestamp": time.Now().Format(time.RFC3339),
@@ -46,6 +55,13 @@ func WriteNotification(
 		"message":   content,
 		"sender":    sender,
 		"metadata":  metadata,
+	}
+	noteParts := []string{replyInstruction}
+	if !contactSaved && isDirectChat {
+		noteParts = append(noteParts, "Ask the user who this is. Be careful and add them as a contact once you know.")
+	}
+	if len(noteParts) > 0 {
+		notification["note"] = strings.Join(noteParts, " ")
 	}
 
 	data, err := json.MarshalIndent(notification, "", "  ")
@@ -61,7 +77,9 @@ func WriteNotification(
 }
 
 func WriteReactionNotification(
-	notifDir, targetMessageID, chatJID, chatName, contactName, contactPhone, sender, emoji string, isRemoved bool,
+	notifDir, targetMessageID, chatJID, chatName, contactName, contactPhone string,
+	contactSaved, isDirectChat bool,
+	sender, emoji string, isRemoved bool,
 ) error {
 	if notifDir == "" {
 		return nil // Notifications disabled
@@ -80,6 +98,10 @@ func WriteReactionNotification(
 	}
 	if contactPhone != "" {
 		metadata["contact_phone"] = contactPhone
+	}
+	metadata["contact_saved"] = contactSaved
+	if !contactSaved && isDirectChat {
+		metadata["needs_contact_confirmation"] = true
 	}
 	if emoji != "" {
 		metadata["emoji"] = emoji

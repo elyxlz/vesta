@@ -274,7 +274,7 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 
 	// Write notification
 	if wac.notificationsDir != "" && !info.IsFromMe {
-		contactName, contactPhone := wac.notificationContactInfo(info.Chat, chatName)
+		contactName, contactPhone, contactSaved := wac.notificationContactInfo(info.Chat, chatName)
 		WriteNotification(
 			wac.notificationsDir,
 			info.ID,
@@ -282,6 +282,8 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 			chatName,
 			contactName,
 			contactPhone,
+			contactSaved,
+			info.Chat.Server == types.DefaultUserServer,
 			info.Sender.String(),
 			content,
 			mediaType,
@@ -353,7 +355,7 @@ func (wac *WhatsAppClient) handleReaction(evt *events.Message) {
 
 	// Write notification
 	if wac.notificationsDir != "" {
-		contactName, contactPhone := wac.notificationContactInfo(evt.Info.Chat, chatName)
+		contactName, contactPhone, contactSaved := wac.notificationContactInfo(evt.Info.Chat, chatName)
 		WriteReactionNotification(
 			wac.notificationsDir,
 			targetID,
@@ -361,6 +363,8 @@ func (wac *WhatsAppClient) handleReaction(evt *events.Message) {
 			chatName,
 			contactName,
 			contactPhone,
+			contactSaved,
+			evt.Info.Chat.Server == types.DefaultUserServer,
 			evt.Info.Sender.String(),
 			emoji,
 			isRemoved,
@@ -477,9 +481,9 @@ func (wac *WhatsAppClient) getChatNameFromConversation(jid types.JID, conversati
 	return wac.getChatName(jid, "")
 }
 
-func (wac *WhatsAppClient) notificationContactInfo(jid types.JID, chatName string) (string, string) {
+func (wac *WhatsAppClient) notificationContactInfo(jid types.JID, chatName string) (string, string, bool) {
 	if jid.Server != types.DefaultUserServer {
-		return "", ""
+		return "", "", false
 	}
 
 	contactName := chatName
@@ -495,9 +499,10 @@ func (wac *WhatsAppClient) notificationContactInfo(jid types.JID, chatName strin
 		if contact.PhoneNumber != "" {
 			contactPhone = contact.PhoneNumber
 		}
+		return contactName, contactPhone, true
 	}
 
-	return contactName, contactPhone
+	return contactName, contactPhone, false
 }
 
 func (wac *WhatsAppClient) SendMessageWithPresence(recipient, message string) (bool, string) {
@@ -513,6 +518,10 @@ func (wac *WhatsAppClient) SendMessageWithPresence(recipient, message string) (b
 	// Resolve recipient to JID
 	jid, err := wac.ResolveRecipient(recipient)
 	if err != nil {
+		return false, err.Error()
+	}
+
+	if err := wac.requireManualContact(jid); err != nil {
 		return false, err.Error()
 	}
 
@@ -603,6 +612,10 @@ func (wac *WhatsAppClient) SendMessage(recipient, message string) (bool, string)
 	// Resolve recipient to JID
 	jid, err := wac.ResolveRecipient(recipient)
 	if err != nil {
+		return false, err.Error()
+	}
+
+	if err := wac.requireManualContact(jid); err != nil {
 		return false, err.Error()
 	}
 
@@ -1182,6 +1195,32 @@ func (wac *WhatsAppClient) EnsureOnline() error {
 
 func (wac *WhatsAppClient) AddContact(name, phone string) (Contact, error) {
 	return wac.store.SaveManualContact(name, phone)
+}
+
+func (wac *WhatsAppClient) requireManualContact(jid types.JID) error {
+	if jid.Server != types.DefaultUserServer {
+		return nil
+	}
+
+	contact, err := wac.store.GetManualContact(jid.String())
+	if err != nil {
+		return fmt.Errorf("failed to verify saved contacts: %v", err)
+	}
+
+	if contact == nil {
+		phone := jid.User
+		if phone != "" {
+			phone = "+" + phone
+		} else {
+			phone = "this contact"
+		}
+		return fmt.Errorf(
+			"No saved contact found for %s. Ask the user who this is and run add_contact before sending messages.",
+			phone,
+		)
+	}
+
+	return nil
 }
 
 func (wac *WhatsAppClient) ResolveRecipient(identifier string) (types.JID, error) {
