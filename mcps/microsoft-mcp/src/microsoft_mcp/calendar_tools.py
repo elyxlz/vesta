@@ -1,12 +1,11 @@
 """Calendar-related tools for Microsoft MCP"""
 
 import datetime as dt
-from typing import Any
+from typing import Any, Literal
 from mcp.server.fastmcp import Context
 from .auth_tools import mcp  # Use the shared MCP instance
 from . import graph, auth
 from .context import MicrosoftContext
-from .email_tools import _parse_comma_separated
 
 
 @mcp.tool()
@@ -46,6 +45,20 @@ def list_events(
 
 
 @mcp.tool()
+def get_event(ctx: Context, event_id: str, account_email: str) -> dict[str, Any]:
+    """Get a single calendar event by ID"""
+    context: MicrosoftContext = ctx.request_context.lifespan_context
+    account_id = auth.get_account_id_by_email(account_email, context.cache_file)
+
+    result = graph.request(
+        context.http_client, context.cache_file, context.scopes, context.base_url, "GET", f"/me/events/{event_id}", account_id
+    )
+    if not result:
+        raise ValueError(f"Event '{event_id}' not found")
+    return result
+
+
+@mcp.tool()
 def create_event(
     ctx: Context,
     account_email: str,
@@ -54,10 +67,10 @@ def create_event(
     end: str,
     location: str | None = None,
     body: str | None = None,
-    attendees: str | list[str] | None = None,
+    attendees: list[str] | None = None,
     timezone: str = "UTC",
 ) -> dict[str, Any]:
-    """start/end: ISO-8601 datetime (e.g. '2024-01-15T14:00:00'). attendees: comma-separated emails or list"""
+    """start/end: ISO-8601 datetime (e.g. '2024-01-15T14:00:00'). attendees: list of email addresses"""
     context: MicrosoftContext = ctx.request_context.lifespan_context
     account_id = auth.get_account_id_by_email(account_email, context.cache_file)
     event = {
@@ -73,8 +86,7 @@ def create_event(
         event["body"] = {"contentType": "Text", "content": body}
 
     if attendees:
-        attendees_list = attendees if isinstance(attendees, list) else _parse_comma_separated(attendees)
-        event["attendees"] = [{"emailAddress": {"address": a}, "type": "required"} for a in attendees_list]
+        event["attendees"] = [{"emailAddress": {"address": a}, "type": "required"} for a in attendees]
 
     result = graph.request(
         context.http_client, context.cache_file, context.scopes, context.base_url, "POST", "/me/events", account_id, json=event
@@ -140,7 +152,7 @@ def delete_event(ctx: Context, account_email: str, event_id: str, send_cancellat
         )
     else:
         graph.request(context.http_client, context.cache_file, context.scopes, context.base_url, "DELETE", f"/me/events/{event_id}", account_id)
-    return {"status": "deleted"}
+    return {"status": "deleted", "event_id": event_id}
 
 
 @mcp.tool()
@@ -148,10 +160,10 @@ def respond_event(
     ctx: Context,
     account_email: str,
     event_id: str,
-    response: str = "accept",
+    response: Literal["accept", "decline", "tentativelyAccept"] = "accept",
     message: str | None = None,
 ) -> dict[str, str]:
-    """Respond to event invitation (accept, decline, tentativelyAccept)"""
+    """Respond to event invitation"""
     context: MicrosoftContext = ctx.request_context.lifespan_context
     account_id = auth.get_account_id_by_email(account_email, context.cache_file)
     payload: dict[str, Any] = {"sendResponse": True}

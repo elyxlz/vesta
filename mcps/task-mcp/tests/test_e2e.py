@@ -86,7 +86,7 @@ async def test_update_task():
         # Update to done
         update_result = await session.call_tool(
             "update_task",
-            {"id": task_id, "status": "done"},
+            {"task_id": task_id, "status": "done"},
         )
 
         assert not update_result.isError

@@ -78,12 +78,25 @@ def parse_relative_date(date_str: str) -> str | None:
     return date_str
 
 
+def normalize_priority(priority: int | str) -> int:
+    """Convert priority string to int. Accepts 1/2/3 or 'low'/'normal'/'high'."""
+    if isinstance(priority, int):
+        if priority not in (1, 2, 3):
+            raise ValueError(f"Priority must be 1-3 or 'low'/'normal'/'high', got {priority}")
+        return priority
+
+    priority_map = {"low": 1, "normal": 2, "high": 3}
+    normalized = priority_map.get(priority.lower())
+    if normalized is None:
+        raise ValueError(f"Priority must be 1-3 or 'low'/'normal'/'high', got '{priority}'")
+    return normalized
+
+
 @mcp.tool()
-def add_task(ctx: Context, title: str, due: str | None = None, priority: int = 2, metadata: str | None = None) -> dict:
-    """priority: 1 (low), 2 (normal), 3 (high). due: 'today', 'tomorrow', or YYYY-MM-DD"""
+def add_task(ctx: Context, title: str, due: str | None = None, priority: int | str = 2, metadata: str | None = None) -> dict:
+    """priority: 1-3 or 'low'/'normal'/'high'. due: 'today', 'tomorrow', or YYYY-MM-DD"""
     context: TaskContext = ctx.request_context.lifespan_context
-    if priority not in (1, 2, 3):
-        raise ValueError(f"Priority must be 1 (low), 2 (normal), or 3 (high), got {priority}")
+    priority = normalize_priority(priority)
 
     task_id = str(uuid.uuid4())[:8]
     due_date = parse_relative_date(due) if due else None
@@ -122,20 +135,20 @@ def list_tasks(ctx: Context, show_completed: bool = False) -> list[dict]:
 
 @mcp.tool()
 def update_task(
-    ctx: Context, id: str, status: str | None = None, title: str | None = None, metadata: str | None = None, priority: int | None = None
+    ctx: Context, task_id: str, status: str | None = None, title: str | None = None, metadata: str | None = None, priority: int | str | None = None
 ) -> dict:
-    """priority: 1 (low), 2 (normal), 3 (high). status: 'pending' or 'done'"""
+    """priority: 1-3 or 'low'/'normal'/'high'. status: 'pending' or 'done'"""
     context: TaskContext = ctx.request_context.lifespan_context
     if status and status not in ("pending", "done"):
         raise ValueError(f"Status must be pending or done, got {status}")
-    if priority is not None and priority not in (1, 2, 3):
-        raise ValueError(f"Priority must be 1 (low), 2 (normal), or 3 (high), got {priority}")
+    if priority is not None:
+        priority = normalize_priority(priority)
 
     with closing(get_db(context)) as conn:
-        cursor = conn.execute("SELECT * FROM tasks WHERE id = ?", (id,))
+        cursor = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
         result = cursor.fetchone()
         if not result:
-            raise ValueError(f"Task {id} not found")
+            raise ValueError(f"Task '{task_id}' not found. Use list_tasks() to see available tasks.")
 
         updates = []
         params = []
@@ -155,12 +168,52 @@ def update_task(
                 params.append(value)
 
         if updates:
-            params.append(id)
+            params.append(task_id)
             query = f"UPDATE tasks SET {', '.join(updates)} WHERE id = ?"
             conn.execute(query, params)
             conn.commit()
 
-        cursor = conn.execute("SELECT * FROM tasks WHERE id = ?", (id,))
+        cursor = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
         task = dict(cursor.fetchone())
 
     return task
+
+
+@mcp.tool()
+def get_task(ctx: Context, task_id: str) -> dict:
+    """Get a single task by ID"""
+    context: TaskContext = ctx.request_context.lifespan_context
+    with closing(get_db(context)) as conn:
+        cursor = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
+        result = cursor.fetchone()
+        if not result:
+            raise ValueError(f"Task '{task_id}' not found. Use list_tasks() to see available tasks.")
+        return dict(result)
+
+
+@mcp.tool()
+def delete_task(ctx: Context, task_id: str) -> dict:
+    """Delete a task permanently"""
+    context: TaskContext = ctx.request_context.lifespan_context
+    with closing(get_db(context)) as conn:
+        cursor = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
+        if not cursor.fetchone():
+            raise ValueError(f"Task '{task_id}' not found. Use list_tasks() to see available tasks.")
+        conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+        conn.commit()
+    return {"status": "deleted", "task_id": task_id}
+
+
+@mcp.tool()
+def search_tasks(ctx: Context, query: str, show_completed: bool = False) -> list[dict]:
+    """Search tasks by title. Returns tasks matching the query string."""
+    context: TaskContext = ctx.request_context.lifespan_context
+    with closing(get_db(context)) as conn:
+        sql = "SELECT * FROM tasks WHERE title LIKE ?"
+        if not show_completed:
+            sql += " AND status != 'done'"
+        sql += " ORDER BY priority DESC, due_date ASC NULLS LAST, created_at DESC"
+
+        cursor = conn.execute(sql, (f"%{query}%",))
+        tasks = [dict(row) for row in cursor]
+    return tasks

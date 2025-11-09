@@ -113,7 +113,7 @@ def parse_time(time_str: str) -> tuple[int, int]:
 def set_reminder(
     ctx: Context,
     message: str,
-    datetime: str | None = None,
+    scheduled_datetime: str | None = None,
     seconds: float | None = None,
     minutes: float | None = None,
     hours: float | None = None,
@@ -122,7 +122,15 @@ def set_reminder(
     day_of_week: str | None = None,
     time: str | None = None,
 ) -> dict:
-    """datetime: ISO-8601 format. time: HH:MM format. recurring: 'daily', 'hourly', or 'weekly'"""
+    """Set a reminder with flexible scheduling options.
+
+    Examples:
+    - One-time (specific): scheduled_datetime="2024-01-15T14:00:00"
+    - One-time (relative): minutes=30 OR hours=2 OR days=1
+    - Daily: recurring="daily", time="09:00" (24-hour format, defaults to 09:00)
+    - Weekly: recurring="weekly", day_of_week="Monday", time="09:00"
+    - Hourly: recurring="hourly"
+    """
     context: ReminderContext = ctx.request_context.lifespan_context
 
     reminder_id = str(uuid.uuid4())[:8]
@@ -138,9 +146,9 @@ def set_reminder(
         h, m = parse_time(time) if time else (9, 0)
         trigger = CronTrigger(day_of_week=day_of_week[:3].lower(), hour=h, minute=m)
         schedule_info = f"weekly on {day_of_week}" + (f" at {time}" if time else "")
-    elif datetime:
-        trigger = DateTrigger(run_date=dt.fromisoformat(datetime))
-        schedule_info = f"once at {datetime}"
+    elif scheduled_datetime:
+        trigger = DateTrigger(run_date=dt.fromisoformat(scheduled_datetime))
+        schedule_info = f"once at {scheduled_datetime}"
     else:
         offset = timedelta(seconds=seconds or 0, minutes=minutes or 0, hours=hours or 0, days=days or 0)
 
@@ -174,44 +182,83 @@ def set_reminder(
             ),
         )
         conn.commit()
+
+        cursor = conn.execute("SELECT created_at FROM reminders WHERE id = ?", (reminder_id,))
+        created_at = cursor.fetchone()["created_at"]
+
     return {
         "id": reminder_id,
         "message": message,
         "schedule": schedule_info,
         "next_run": next_run.isoformat() if next_run else None,
+        "created_at": created_at,
         "status": "scheduled",
     }
 
 
 @mcp.tool()
-def list_reminders(ctx: Context) -> list[dict]:
+def list_reminders(ctx: Context, limit: int = 50) -> list[dict]:
+    """List scheduled reminders (limit: max number to return, default 50)"""
     context: ReminderContext = ctx.request_context.lifespan_context
     with closing(get_db(context)) as conn:
         cursor = conn.execute("SELECT * FROM reminders")
         reminder_data = {row["id"]: dict(row) for row in cursor}
 
-    return [
+    reminders = [
         {
             "id": job.id,
             "message": reminder_data[job.id]["message"],
             "schedule": reminder_data[job.id]["schedule_type"],
             "next_run": (job.next_run_time.isoformat() if job.next_run_time else None),
+            "created_at": reminder_data[job.id]["created_at"],
             "status": "active" if job.next_run_time else "paused",
         }
         for job in context.scheduler.get_jobs()
         if job.id in reminder_data
     ]
 
+    return reminders[:limit]
+
+
+@mcp.tool()
+def update_reminder(ctx: Context, reminder_id: str, message: str) -> dict:
+    """Update a reminder's message"""
+    context: ReminderContext = ctx.request_context.lifespan_context
+
+    job = context.scheduler.get_job(reminder_id)
+    if not job:
+        raise ValueError(f"Reminder '{reminder_id}' not found. Use list_reminders() to see active reminders.")
+
+    with closing(get_db(context)) as conn:
+        cursor = conn.execute("SELECT * FROM reminders WHERE id = ?", (reminder_id,))
+        reminder = cursor.fetchone()
+        if not reminder:
+            raise ValueError(f"Reminder '{reminder_id}' not found in database")
+
+        conn.execute("UPDATE reminders SET message = ? WHERE id = ?", (message, reminder_id))
+        conn.commit()
+
+    job.modify(args=[reminder_id, message, context.data_dir, context.notif_dir])
+
+    return {
+        "id": reminder_id,
+        "message": message,
+        "schedule": reminder["schedule_type"],
+        "next_run": job.next_run_time.isoformat() if job.next_run_time else None,
+        "status": "updated",
+    }
+
 
 @mcp.tool()
 def cancel_reminder(ctx: Context, reminder_id: str) -> dict:
+    """Cancel a scheduled reminder"""
     context: ReminderContext = ctx.request_context.lifespan_context
     from apscheduler.jobstores.base import JobLookupError
 
     try:
         context.scheduler.remove_job(reminder_id)
     except JobLookupError:
-        raise ValueError(f"Reminder {reminder_id} not found in scheduler")
+        raise ValueError(f"Reminder '{reminder_id}' not found. Use list_reminders() to see active reminders.")
 
     with closing(get_db(context)) as conn:
         conn.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))

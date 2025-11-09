@@ -9,11 +9,6 @@ from .auth_tools import mcp  # Use the shared MCP instance
 from .context import MicrosoftContext
 
 
-def _parse_comma_separated(value: str) -> list[str]:
-    """Parse comma-separated string into list of stripped non-empty values"""
-    return [x.strip() for x in value.split(",") if x.strip()]
-
-
 def _remove_attachment_bytes(result: dict[str, Any]) -> None:
     """Remove contentBytes from attachments to reduce response size"""
     if "attachments" in result and result["attachments"]:
@@ -124,31 +119,30 @@ def get_email(
 def create_email_draft(
     ctx: Context,
     account_email: str,
-    to: str,
+    to: list[str],
     subject: str,
     body: str,
-    cc: str | None = None,
-    attachments: str | None = None,
+    cc: list[str] | None = None,
+    attachments: list[str] | None = None,
 ) -> dict[str, Any]:
-    """to/cc: comma-separated emails. attachments: comma-separated file paths"""
+    """to/cc: list of email addresses. attachments: list of file paths"""
     context: MicrosoftContext = ctx.request_context.lifespan_context
     account_id = auth.get_account_id_by_email(account_email, context.cache_file)
-    to_list = _parse_comma_separated(to)
 
     message = {
         "subject": subject,
         "body": {"contentType": "Text", "content": body},
-        "toRecipients": [{"emailAddress": {"address": addr}} for addr in to_list],
+        "toRecipients": [{"emailAddress": {"address": addr}} for addr in to],
     }
 
     if cc:
-        message["ccRecipients"] = [{"emailAddress": {"address": addr}} for addr in _parse_comma_separated(cc)]
+        message["ccRecipients"] = [{"emailAddress": {"address": addr}} for addr in cc]
 
     small_attachments = []
     large_attachments = []
 
     if attachments:
-        attachment_paths = _parse_comma_separated(attachments)
+        attachment_paths = attachments
         for file_path in attachment_paths:
             path = pl.Path(file_path).expanduser().resolve()
             content_bytes = path.read_bytes()
@@ -204,31 +198,30 @@ def create_email_draft(
 def send_email(
     ctx: Context,
     account_email: str,
-    to: str,
+    to: list[str],
     subject: str,
     body: str,
-    cc: str | None = None,
-    attachments: str | None = None,
+    cc: list[str] | None = None,
+    attachments: list[str] | None = None,
 ) -> dict[str, str]:
-    """to/cc: comma-separated emails. attachments: comma-separated file paths"""
+    """to/cc: list of email addresses. attachments: list of file paths"""
     context: MicrosoftContext = ctx.request_context.lifespan_context
     account_id = auth.get_account_id_by_email(account_email, context.cache_file)
-    to_list = _parse_comma_separated(to)
 
     message = {
         "subject": subject,
         "body": {"contentType": "Text", "content": body},
-        "toRecipients": [{"emailAddress": {"address": addr}} for addr in to_list],
+        "toRecipients": [{"emailAddress": {"address": addr}} for addr in to],
     }
 
     if cc:
-        message["ccRecipients"] = [{"emailAddress": {"address": addr}} for addr in _parse_comma_separated(cc)]
+        message["ccRecipients"] = [{"emailAddress": {"address": addr}} for addr in cc]
 
     has_large_attachments = False
     processed_attachments = []
 
     if attachments:
-        attachment_paths = _parse_comma_separated(attachments)
+        attachment_paths = attachments
         for file_path in attachment_paths:
             path = pl.Path(file_path).expanduser().resolve()
             content_bytes = path.read_bytes()
@@ -268,14 +261,13 @@ def send_email(
         )
         return {"status": "sent"}
     elif has_large_attachments:
-        to_list = _parse_comma_separated(to)
         message = {
             "subject": subject,
             "body": {"contentType": "Text", "content": body},
-            "toRecipients": [{"emailAddress": {"address": addr}} for addr in to_list],
+            "toRecipients": [{"emailAddress": {"address": addr}} for addr in to],
         }
         if cc:
-            message["ccRecipients"] = [{"emailAddress": {"address": addr}} for addr in _parse_comma_separated(cc)]
+            message["ccRecipients"] = [{"emailAddress": {"address": addr}} for addr in cc]
 
         result = graph.request(
             context.http_client, context.cache_file, context.scopes, context.base_url, "POST", "/me/messages", account_id, json=message
@@ -336,9 +328,9 @@ def send_email(
 
 @mcp.tool()
 def reply_to_email(
-    ctx: Context, account_email: str, email_id: str, body: str, attachments: str | None = None, reply_all: bool = False
+    ctx: Context, account_email: str, email_id: str, body: str, attachments: list[str] | None = None, reply_all: bool = False
 ) -> dict[str, str]:
-    """attachments: comma-separated file paths"""
+    """attachments: list of file paths"""
     context: MicrosoftContext = ctx.request_context.lifespan_context
     account_id = auth.get_account_id_by_email(account_email, context.cache_file)
     create_endpoint = "createReplyAll" if reply_all else "createReply"
@@ -370,8 +362,7 @@ def reply_to_email(
             json={"body": {"contentType": "Text", "content": body}},
         )
 
-        attachment_paths = _parse_comma_separated(attachments)
-        for file_path in attachment_paths:
+        for file_path in attachments:
             path = pl.Path(file_path).expanduser().resolve()
             content_bytes = path.read_bytes()
             att_size = len(content_bytes)
@@ -482,3 +473,26 @@ def search_emails(
     return list(
         graph.search_query(context.http_client, context.cache_file, context.scopes, context.base_url, query, ["message"], account_id, limit)
     )
+
+
+@mcp.tool()
+def update_email(
+    ctx: Context, email_id: str, account_email: str, is_read: bool | None = None, categories: list[str] | None = None
+) -> dict[str, Any]:
+    """Mark email as read/unread or add categories"""
+    context: MicrosoftContext = ctx.request_context.lifespan_context
+    account_id = auth.get_account_id_by_email(account_email, context.cache_file)
+
+    updates = {}
+    if is_read is not None:
+        updates["isRead"] = is_read
+    if categories is not None:
+        updates["categories"] = categories
+
+    if not updates:
+        raise ValueError("Must specify at least one field to update (is_read or categories)")
+
+    result = graph.request(
+        context.http_client, context.cache_file, context.scopes, context.base_url, "PATCH", f"/me/messages/{email_id}", account_id, json=updates
+    )
+    return result or {"status": "updated", "email_id": email_id}

@@ -66,7 +66,7 @@ async def test_set_and_list_reminder():
             "set_reminder",
             {
                 "message": "Test reminder",
-                "datetime": future_time.isoformat(),
+                "scheduled_datetime": future_time.isoformat(),
             },
         )
 
@@ -92,7 +92,7 @@ async def test_cancel_reminder():
             "set_reminder",
             {
                 "message": "To be cancelled",
-                "datetime": future_time.isoformat(),
+                "scheduled_datetime": future_time.isoformat(),
             },
         )
 

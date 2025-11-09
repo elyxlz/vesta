@@ -84,7 +84,12 @@ def get_account_id_by_email(email: str, cache_file: pl.Path) -> str:
     for account in accounts:
         if account.username.lower() == email_lower:
             return account.account_id
-    raise ValueError(f"No account found with email: {email}")
+
+    if accounts:
+        available = ", ".join([f"'{acc.username}'" for acc in accounts])
+        raise ValueError(f"No account found with email '{email}'. Available accounts: {available}. Use list_accounts() to see all.")
+    else:
+        raise ValueError(f"No account found with email '{email}'. No accounts are authenticated. Use authenticate_account() to add an account.")
 
 
 def authenticate_new_account(cache_file: pl.Path, scopes: list[str]) -> Account | None:
