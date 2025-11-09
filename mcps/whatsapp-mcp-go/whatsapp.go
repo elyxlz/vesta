@@ -724,7 +724,9 @@ func (wac *WhatsAppClient) SendAudioMessageWithPresence(recipient, filePath stri
 		converted, err := ConvertToOpusOggTemp(filePath, "32k", 24000)
 		if err != nil {
 			// Stop recording indicator on error
-			wac.client.SendChatPresence(jid, types.ChatPresencePaused, types.ChatPresenceMediaAudio)
+			if stopErr := wac.client.SendChatPresence(jid, types.ChatPresencePaused, types.ChatPresenceMediaAudio); stopErr != nil {
+				wac.logger.Debugf("Failed to stop recording indicator: %v", stopErr)
+			}
 			return false, fmt.Sprintf("Failed to convert audio: %v", err)
 		}
 		filePath = converted
@@ -734,11 +736,15 @@ func (wac *WhatsAppClient) SendAudioMessageWithPresence(recipient, filePath stri
 	// Check file size
 	fileInfo, err := os.Stat(filePath)
 	if err != nil {
-		wac.client.SendChatPresence(jid, types.ChatPresencePaused, types.ChatPresenceMediaAudio)
+		if stopErr := wac.client.SendChatPresence(jid, types.ChatPresencePaused, types.ChatPresenceMediaAudio); stopErr != nil {
+			wac.logger.Debugf("Failed to stop recording indicator: %v", stopErr)
+		}
 		return false, fmt.Sprintf("Audio file not found: %v", err)
 	}
 	if fileInfo.Size() > MaxAudioSizeBytes {
-		wac.client.SendChatPresence(jid, types.ChatPresencePaused, types.ChatPresenceMediaAudio)
+		if stopErr := wac.client.SendChatPresence(jid, types.ChatPresencePaused, types.ChatPresenceMediaAudio); stopErr != nil {
+			wac.logger.Debugf("Failed to stop recording indicator: %v", stopErr)
+		}
 		return false, fmt.Sprintf("Audio file too large: %d MB (max %d MB)",
 			fileInfo.Size()/(1024*1024), MaxAudioSizeBytes/(1024*1024))
 	}
@@ -746,7 +752,9 @@ func (wac *WhatsAppClient) SendAudioMessageWithPresence(recipient, filePath stri
 	// Read file
 	data, err := os.ReadFile(filePath)
 	if err != nil {
-		wac.client.SendChatPresence(jid, types.ChatPresencePaused, types.ChatPresenceMediaAudio)
+		if stopErr := wac.client.SendChatPresence(jid, types.ChatPresencePaused, types.ChatPresenceMediaAudio); stopErr != nil {
+			wac.logger.Debugf("Failed to stop recording indicator: %v", stopErr)
+		}
 		return false, fmt.Sprintf("Failed to read audio file: %v", err)
 	}
 
@@ -756,7 +764,9 @@ func (wac *WhatsAppClient) SendAudioMessageWithPresence(recipient, filePath stri
 	// Upload audio (still "recording")
 	uploaded, err := wac.client.Upload(context.Background(), data, whatsmeow.MediaAudio)
 	if err != nil {
-		wac.client.SendChatPresence(jid, types.ChatPresencePaused, types.ChatPresenceMediaAudio)
+		if stopErr := wac.client.SendChatPresence(jid, types.ChatPresencePaused, types.ChatPresenceMediaAudio); stopErr != nil {
+			wac.logger.Debugf("Failed to stop recording indicator: %v", stopErr)
+		}
 		return false, fmt.Sprintf("Failed to upload audio: %v", err)
 	}
 
