@@ -48,7 +48,7 @@ claude
 
 ### Email Tools
 - **`list_emails`** - List emails with optional body content
-- **`get_email`** - Get specific email with attachments
+- **`get_email`** - Get specific email with attachments (response body truncated; use `save_to_file` for full content)
 - **`create_email_draft`** - Create email draft with attachments support
 - **`send_email`** - Send email immediately with CC/BCC and attachments
 - **`reply_to_email`** - Reply maintaining thread context

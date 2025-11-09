@@ -70,6 +70,7 @@ def get_email(
     include_attachments: bool = True,
     save_to_file: str | None = None,
 ) -> dict[str, Any]:
+    """Get email details (body truncated to 25k chars; use save_to_file for full content)"""
     context: MicrosoftContext = ctx.request_context.lifespan_context
     account_id = auth.get_account_id_by_email(account_email, context.cache_file, settings=context.settings)
     params = {}
@@ -91,8 +92,10 @@ def get_email(
         raise ValueError(f"Email with ID {email_id} not found")
 
     body_max_length = 25000
+    full_body_content: str | None = None
     if include_body and "body" in result and "content" in result["body"]:
-        content = result["body"]["content"]
+        content = result["body"]["content"] or ""
+        full_body_content = content
         if len(content) > body_max_length:
             result["body"]["content"] = content[:body_max_length] + f"\n\n[Content truncated - {len(content)} total characters]"
             result["body"]["truncated"] = True
@@ -117,7 +120,8 @@ def get_email(
         if result.get("ccRecipients"):
             content_lines.append(f"Cc: {', '.join([r.get('emailAddress', {}).get('address', '') for r in result.get('ccRecipients', [])])}")
 
-        content_lines.extend(["", "=" * 80, "", result.get("body", {}).get("content", "No content")])
+        body_content_for_file = full_body_content if full_body_content is not None else result.get("body", {}).get("content", "No content")
+        content_lines.extend(["", "=" * 80, "", body_content_for_file or "No content"])
 
         path.write_text("\n".join(content_lines))
         result["saved_to"] = str(path)
