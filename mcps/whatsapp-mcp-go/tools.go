@@ -26,7 +26,7 @@ func textResult(format string, args ...interface{}) *mcp.CallToolResult {
 func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 	// authenticate_whatsapp
 	mcp.AddTool(s, &mcp.Tool{
-		Name:        "authenticate_whatsapp",
+		Name: "authenticate_whatsapp",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input struct{}) (*mcp.CallToolResult, struct {
 		Status string `json:"status"`
 		QRPath string `json:"qr_path,omitempty"`
@@ -46,16 +46,16 @@ func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 		}
 
 		return &mcp.CallToolResult{
-			Content: []mcp.Content{
-				&mcp.TextContent{Text: message},
-			},
-		}, struct {
-			Status string `json:"status"`
-			QRPath string `json:"qr_path,omitempty"`
-		}{
-			Status: string(status),
-			QRPath: qrPath,
-		}, nil
+				Content: []mcp.Content{
+					&mcp.TextContent{Text: message},
+				},
+			}, struct {
+				Status string `json:"status"`
+				QRPath string `json:"qr_path,omitempty"`
+			}{
+				Status: string(status),
+				QRPath: qrPath,
+			}, nil
 	})
 
 	// search_contacts
@@ -68,6 +68,22 @@ func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 			return nil, SearchContactsOutput{}, err
 		}
 		return textResult("Found %d contacts", len(contacts)), SearchContactsOutput{Contacts: contacts}, nil
+	})
+
+	// add_contact
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "add_contact",
+		Description: "Store a contact name and phone number so you can reference them by name before chatting.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input AddContactInput) (*mcp.CallToolResult, AddContactOutput, error) {
+		contact, err := wac.AddContact(input.Name, input.PhoneNumber)
+		if err != nil {
+			return nil, AddContactOutput{}, err
+		}
+		displayName := contact.Name
+		if displayName == "" {
+			displayName = contact.PhoneNumber
+		}
+		return textResult("Saved contact %s (%s)", displayName, contact.PhoneNumber), AddContactOutput{Contact: contact}, nil
 	})
 
 	// list_messages
@@ -179,7 +195,7 @@ func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 
 	// leave_group
 	mcp.AddTool(s, &mcp.Tool{
-		Name:        "leave_group",
+		Name: "leave_group",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input LeaveGroupInput) (*mcp.CallToolResult, LeaveGroupOutput, error) {
 		success, message := wac.LeaveGroup(input.GroupJID)
 		return nil, LeaveGroupOutput{Success: success, Message: message}, nil
@@ -187,7 +203,7 @@ func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 
 	// list_groups
 	mcp.AddTool(s, &mcp.Tool{
-		Name:        "list_groups",
+		Name: "list_groups",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input ListGroupsInput) (*mcp.CallToolResult, ListGroupsOutput, error) {
 		limit := defaultLimit(input.Limit)
 		groups, err := wac.store.ListGroups(limit, input.Page*limit)

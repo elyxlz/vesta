@@ -31,6 +31,7 @@ type Contact struct {
 	PhoneNumber string `json:"phone_number"`
 	Name        string `json:"name,omitempty"`
 	JID         string `json:"jid"`
+	IsManual    bool   `json:"is_manual,omitempty"`
 }
 
 type MessageContext struct {
@@ -60,6 +61,15 @@ type SearchContactsInput struct {
 
 type SearchContactsOutput struct {
 	Contacts []Contact `json:"contacts"`
+}
+
+type AddContactInput struct {
+	Name        string `json:"name" jsonschema:"Display name for the contact"`
+	PhoneNumber string `json:"phone_number" jsonschema:"Phone number in E.164 format (+1234567890)"`
+}
+
+type AddContactOutput struct {
+	Contact Contact `json:"contact"`
 }
 
 type ListMessagesInput struct {

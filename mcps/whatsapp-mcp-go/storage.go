@@ -10,6 +10,7 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
+	"go.mau.fi/whatsmeow/types"
 )
 
 type MessageStore struct {
@@ -56,9 +57,19 @@ func NewMessageStore(dataDir string) (*MessageStore, error) {
 			FOREIGN KEY (chat_jid) REFERENCES chats(jid)
 		);
 
+		CREATE TABLE IF NOT EXISTS contacts (
+			jid TEXT PRIMARY KEY,
+			phone_number TEXT NOT NULL,
+			name TEXT,
+			added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		);
+
 		CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
 		CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender);
 		CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_jid);
+		CREATE INDEX IF NOT EXISTS idx_contacts_phone ON contacts(phone_number);
+		CREATE INDEX IF NOT EXISTS idx_contacts_name ON contacts(name);
 	`)
 	if err != nil {
 		db.Close()
@@ -116,37 +127,184 @@ func (ms *MessageStore) GetChatName(jid string) (string, error) {
 }
 
 func (ms *MessageStore) SearchContacts(query string, limit int) ([]Contact, error) {
-	if limit == 0 {
+	if limit <= 0 {
 		limit = 50
 	}
 
-	rows, err := ms.db.Query(`
-		SELECT DISTINCT jid, name
-		FROM chats
-		WHERE (name LIKE ? OR jid LIKE ?)
-		AND jid NOT LIKE '%@g.us'
-		ORDER BY name
+	contacts := make([]Contact, 0, limit)
+	seen := make(map[string]struct{})
+
+	lowerQuery := strings.ToLower(query)
+	likeName := "%" + lowerQuery + "%"
+	jidLike := "%" + lowerQuery + "%"
+	rawDigits := digitsOnly(query)
+	digitsLike := "%"
+	if rawDigits != "" {
+		digitsLike = "%" + rawDigits + "%"
+	}
+
+	manualRows, err := ms.db.Query(`
+		SELECT jid, name, phone_number
+		FROM contacts
+		WHERE (LOWER(COALESCE(name, '')) LIKE ?
+			OR phone_number LIKE ?
+			OR REPLACE(phone_number, '+', '') LIKE ?
+			OR LOWER(jid) LIKE ?)
+		ORDER BY LOWER(COALESCE(name, phone_number))
 		LIMIT ?
-	`, "%"+query+"%", "%"+query+"%", limit)
+	`, likeName, jidLike, digitsLike, jidLike, limit)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer manualRows.Close()
 
-	contacts := make([]Contact, 0, limit)
-	for rows.Next() {
+	for manualRows.Next() {
+		if len(contacts) >= limit {
+			break
+		}
 		var c Contact
 		var name sql.NullString
-		if err := rows.Scan(&c.JID, &name); err != nil {
+		if err := manualRows.Scan(&c.JID, &name, &c.PhoneNumber); err != nil {
 			continue
 		}
 		c.Name = name.String
-		if idx := strings.Index(c.JID, "@"); idx > 0 {
-			c.PhoneNumber = c.JID[:idx]
+		c.IsManual = true
+		contacts = append(contacts, c)
+		seen[c.JID] = struct{}{}
+	}
+
+	if len(contacts) >= limit {
+		return contacts, nil
+	}
+
+	remaining := limit - len(contacts)
+	chatRows, err := ms.db.Query(`
+		SELECT jid, name
+		FROM chats
+		WHERE jid LIKE '%@s.whatsapp.net'
+		AND (LOWER(COALESCE(name, '')) LIKE ?
+			OR LOWER(jid) LIKE ?
+			OR SUBSTR(jid, 1, INSTR(jid, '@') - 1) LIKE ?)
+		ORDER BY LOWER(COALESCE(name, jid))
+		LIMIT ?
+	`, likeName, jidLike, digitsLike, remaining*2)
+	if err != nil {
+		return contacts, err
+	}
+	defer chatRows.Close()
+
+	for chatRows.Next() {
+		if len(contacts) >= limit {
+			break
+		}
+		var jid string
+		var name sql.NullString
+		if err := chatRows.Scan(&jid, &name); err != nil {
+			continue
+		}
+		if _, exists := seen[jid]; exists {
+			continue
+		}
+		c := Contact{
+			JID:         jid,
+			Name:        name.String,
+			PhoneNumber: jidToPhone(jid),
 		}
 		contacts = append(contacts, c)
+		seen[jid] = struct{}{}
 	}
+
 	return contacts, nil
+}
+
+func (ms *MessageStore) SaveManualContact(name, phone string) (Contact, error) {
+	normalizedDigits, displayNumber, err := normalizePhoneInput(phone)
+	trimmedName := strings.TrimSpace(name)
+	if err != nil {
+		return Contact{}, err
+	}
+	if trimmedName == "" {
+		return Contact{}, fmt.Errorf("contact name cannot be empty")
+	}
+	jid := fmt.Sprintf("%s@%s", normalizedDigits, types.DefaultUserServer)
+	_, err = ms.db.Exec(`
+		INSERT INTO contacts (jid, phone_number, name, added_at, updated_at)
+		VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		ON CONFLICT(jid) DO UPDATE SET
+			name = excluded.name,
+			phone_number = excluded.phone_number,
+			updated_at = CURRENT_TIMESTAMP
+	`, jid, displayNumber, trimmedName)
+	if err != nil {
+		return Contact{}, fmt.Errorf("failed to save contact: %v", err)
+	}
+
+	return Contact{
+		JID:         jid,
+		Name:        trimmedName,
+		PhoneNumber: displayNumber,
+		IsManual:    true,
+	}, nil
+}
+
+func (ms *MessageStore) GetManualContact(jid string) (*Contact, error) {
+	var name sql.NullString
+	var phone string
+	err := ms.db.QueryRow(`
+		SELECT name, phone_number
+		FROM contacts
+		WHERE jid = ?
+	`, jid).Scan(&name, &phone)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return &Contact{
+		JID:         jid,
+		Name:        name.String,
+		PhoneNumber: phone,
+		IsManual:    true,
+	}, nil
+}
+
+func digitsOnly(input string) string {
+	var b strings.Builder
+	for _, r := range input {
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func jidToPhone(jid string) string {
+	if idx := strings.Index(jid, "@"); idx > 0 {
+		digits := digitsOnly(jid[:idx])
+		if digits != "" {
+			return "+" + digits
+		}
+		return digits
+	}
+	return ""
+}
+
+func normalizePhoneInput(input string) (string, string, error) {
+	clean := strings.TrimSpace(input)
+	if clean == "" {
+		return "", "", fmt.Errorf("phone number cannot be empty")
+	}
+	if at := strings.Index(clean, "@"); at > 0 {
+		clean = clean[:at]
+	}
+	clean = strings.TrimPrefix(clean, "+")
+	digits := digitsOnly(clean)
+	if digits == "" {
+		return "", "", fmt.Errorf("phone number must contain digits")
+	}
+	return digits, "+" + digits, nil
 }
 
 func (ms *MessageStore) ListMessages(

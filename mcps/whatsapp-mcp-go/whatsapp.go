@@ -274,11 +274,14 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 
 	// Write notification
 	if wac.notificationsDir != "" && !info.IsFromMe {
+		contactName, contactPhone := wac.notificationContactInfo(info.Chat, chatName)
 		WriteNotification(
 			wac.notificationsDir,
 			info.ID,
 			info.Chat.String(),
 			chatName,
+			contactName,
+			contactPhone,
 			info.Sender.String(),
 			content,
 			mediaType,
@@ -350,11 +353,14 @@ func (wac *WhatsAppClient) handleReaction(evt *events.Message) {
 
 	// Write notification
 	if wac.notificationsDir != "" {
+		contactName, contactPhone := wac.notificationContactInfo(evt.Info.Chat, chatName)
 		WriteReactionNotification(
 			wac.notificationsDir,
 			targetID,
 			evt.Info.Chat.String(),
 			chatName,
+			contactName,
+			contactPhone,
 			evt.Info.Sender.String(),
 			emoji,
 			isRemoved,
@@ -439,6 +445,10 @@ func (wac *WhatsAppClient) handleHistorySync(evt *events.HistorySync) {
 }
 
 func (wac *WhatsAppClient) getChatName(jid types.JID, sender string) string {
+	if contact, err := wac.store.GetManualContact(jid.String()); err == nil && contact != nil && contact.Name != "" {
+		return contact.Name
+	}
+
 	// Try database first
 	if name, err := wac.store.GetChatName(jid.String()); err == nil && name != "" {
 		return name
@@ -465,6 +475,29 @@ func (wac *WhatsAppClient) getChatNameFromConversation(jid types.JID, conversati
 	// Implementation would extract name from conversation object
 	// For now, use getChatName
 	return wac.getChatName(jid, "")
+}
+
+func (wac *WhatsAppClient) notificationContactInfo(jid types.JID, chatName string) (string, string) {
+	if jid.Server != types.DefaultUserServer {
+		return "", ""
+	}
+
+	contactName := chatName
+	contactPhone := ""
+	if jid.User != "" {
+		contactPhone = "+" + jid.User
+	}
+
+	if contact, err := wac.store.GetManualContact(jid.String()); err == nil && contact != nil {
+		if contact.Name != "" {
+			contactName = contact.Name
+		}
+		if contact.PhoneNumber != "" {
+			contactPhone = contact.PhoneNumber
+		}
+	}
+
+	return contactName, contactPhone
 }
 
 func (wac *WhatsAppClient) SendMessageWithPresence(recipient, message string) (bool, string) {
@@ -1145,6 +1178,10 @@ func (wac *WhatsAppClient) EnsureOnline() error {
 		wac.logger.Debugf("Set online status")
 	}
 	return nil
+}
+
+func (wac *WhatsAppClient) AddContact(name, phone string) (Contact, error) {
+	return wac.store.SaveManualContact(name, phone)
 }
 
 func (wac *WhatsAppClient) ResolveRecipient(identifier string) (types.JID, error) {

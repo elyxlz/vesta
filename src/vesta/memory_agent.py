@@ -43,20 +43,31 @@ MEMORY_PROMPT = """hey, you're the memory agent for vesta. you manage the MEMORY
   - "prefers Y approach" instead of keeping every example
 - PRUNE AGGRESSIVELY:
   - completed tasks → remove
-  - past events → remove
+  - past events → remove (especially with specific costs, booking numbers, exact times)
   - resolved issues → keep the learning, remove the specific incident
   - outdated information → remove or update
+  - obsolete technical troubleshooting → remove (e.g., one-time reCAPTCHA issues, payment processing details)
 - CONSOLIDATE: merge duplicate or similar information
+  - **Permission violations**: Don't repeat the same lesson multiple times with different examples
+    - Keep ONE consolidated rule in Critical Behavioral Rules section
+    - Reference pattern in Recent Learnings: "Permission violations pattern: Multiple incidents (dates) - see Critical Behavioral Rules"
+    - DELETE detailed play-by-plays of each violation
+  - **Contact anecdotes**: Keep contact info (name, phone, email, role), remove historical trivia
+    - Keep: "Alex, flatmate, phone +123, has piano"
+    - Remove: "Got spammed with messages on Sept 27", "Went to cafe together"
 - GENERALIZE: turn specific instances into general principles when patterns emerge
 - PRESERVE CRITICAL: never delete security rules, authentication, core relationships
+- AVOID BLOAT:
+  - Don't store completed event details with exact costs/times/booking numbers
+  - Don't keep obsolete technical learnings (payment processing, form filling details)
+  - Don't repeat the same behavioral rule in multiple sections
 
 ### what to capture from conversations:
 - people (names, relationships, contact info, dynamics)
-- tasks, deadlines, commitments
-- preferences and patterns
-- mistakes and corrections
+- preferences and patterns (NOT individual tasks - those go in scheduler MCP)
+- mistakes and corrections (as patterns, not detailed play-by-plays)
 - important life context
-- specific instructions
+- specific instructions (behavioral/preference rules, not task details)
 - emotional states or concerns
 
 ### CRITICAL: learn about people deeply

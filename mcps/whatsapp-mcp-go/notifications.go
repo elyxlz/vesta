@@ -10,7 +10,9 @@ import (
 	"github.com/google/uuid"
 )
 
-func WriteNotification(notifDir, messageID, chatJID, chatName, sender, content, mediaType string, isForwarded bool) error {
+func WriteNotification(
+	notifDir, messageID, chatJID, chatName, contactName, contactPhone, sender, content, mediaType string, isForwarded bool,
+) error {
 	if notifDir == "" {
 		return nil // Notifications disabled
 	}
@@ -23,6 +25,12 @@ func WriteNotification(notifDir, messageID, chatJID, chatName, sender, content, 
 	metadata["message_id"] = messageID
 	metadata["chat_jid"] = chatJID
 	metadata["chat_name"] = chatName
+	if contactName != "" {
+		metadata["contact_name"] = contactName
+	}
+	if contactPhone != "" {
+		metadata["contact_phone"] = contactPhone
+	}
 
 	if mediaType != "" {
 		metadata["media_type"] = mediaType
@@ -52,7 +60,9 @@ func WriteNotification(notifDir, messageID, chatJID, chatName, sender, content, 
 	return os.WriteFile(filePath, data, 0644)
 }
 
-func WriteReactionNotification(notifDir, targetMessageID, chatJID, chatName, sender, emoji string, isRemoved bool) error {
+func WriteReactionNotification(
+	notifDir, targetMessageID, chatJID, chatName, contactName, contactPhone, sender, emoji string, isRemoved bool,
+) error {
 	if notifDir == "" {
 		return nil // Notifications disabled
 	}
@@ -65,6 +75,15 @@ func WriteReactionNotification(notifDir, targetMessageID, chatJID, chatName, sen
 	metadata["target_message_id"] = targetMessageID
 	metadata["chat_jid"] = chatJID
 	metadata["chat_name"] = chatName
+	if contactName != "" {
+		metadata["contact_name"] = contactName
+	}
+	if contactPhone != "" {
+		metadata["contact_phone"] = contactPhone
+	}
+	if emoji != "" {
+		metadata["emoji"] = emoji
+	}
 	metadata["is_removed"] = isRemoved
 
 	message := ""
