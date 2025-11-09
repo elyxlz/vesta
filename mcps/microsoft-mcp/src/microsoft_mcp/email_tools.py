@@ -2,11 +2,15 @@
 
 import base64
 import pathlib as pl
+from datetime import datetime
 from typing import Any
 from mcp.server.fastmcp import Context
 from . import graph, auth
 from .auth_tools import mcp  # Use the shared MCP instance
 from .context import MicrosoftContext
+
+EMAIL_SAVE_SUBDIR = "emails"
+LONG_EMAIL_WARNING_THRESHOLD = 5000
 
 
 def _remove_attachment_bytes(result: dict[str, Any]) -> None:
@@ -17,6 +21,44 @@ def _remove_attachment_bytes(result: dict[str, Any]) -> None:
                 del attachment["contentBytes"]
 
 
+def _sanitize_filename(value: str) -> str:
+    """Return a filesystem-safe fragment"""
+    sanitized = "".join(char if char.isalnum() else "_" for char in value or "")
+    sanitized = sanitized.strip("_")
+    return sanitized or "email"
+
+
+def _prepare_email_output_path(
+    context: MicrosoftContext,
+    email_id: str,
+    subject: str | None,
+    override_path: str | None,
+) -> pl.Path:
+    """Determine where to persist the email content"""
+    if override_path:
+        path = pl.Path(override_path).expanduser().resolve()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
+    base_dir = context.cache_file.parent / EMAIL_SAVE_SUBDIR
+    base_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
+    subject_fragment = _sanitize_filename(subject or "")
+    id_fragment = _sanitize_filename(email_id)[:32]
+    filename = f"{timestamp}_{subject_fragment[:40]}_{id_fragment}.txt".strip("_")
+
+    return base_dir / filename
+
+
+def _scrub_email_snapshot(record: dict[str, Any]) -> None:
+    """Ensure email summaries never leak body content"""
+    if "body" in record:
+        del record["body"]
+    if "bodyPreview" in record:
+        record.setdefault("preview", record.pop("bodyPreview"))
+
+
 @mcp.tool()
 def list_emails(
     ctx: Context,
@@ -24,18 +66,27 @@ def list_emails(
     account_email: str,
     folder: str = "inbox",
     limit: int = 10,
-    include_body: bool = True,
 ) -> list[dict[str, Any]]:
-    """folder: 'inbox', 'sent', 'drafts', 'deleted', 'junk', 'archive' (case-insensitive)"""
+    """List email metadata. Bodies are never returned."""
     context: MicrosoftContext = ctx.request_context.lifespan_context
     account_id = auth.get_account_id_by_email(account_email, context.cache_file, settings=context.settings)
 
     folder_path = context.folders.get(folder.casefold(), folder)
 
-    if include_body:
-        select_fields = "id,subject,from,toRecipients,ccRecipients,receivedDateTime,hasAttachments,body,conversationId,isRead"
-    else:
-        select_fields = "id,subject,from,toRecipients,receivedDateTime,hasAttachments,conversationId,isRead"
+    select_fields = ",".join(
+        [
+            "id",
+            "subject",
+            "from",
+            "toRecipients",
+            "ccRecipients",
+            "receivedDateTime",
+            "hasAttachments",
+            "conversationId",
+            "isRead",
+            "bodyPreview",
+        ]
+    )
 
     params = {
         "$top": min(limit, 100),
@@ -57,6 +108,9 @@ def list_emails(
         )
     )
 
+    for email in emails:
+        _scrub_email_snapshot(email)
+
     return emails
 
 
@@ -66,14 +120,15 @@ def get_email(
     *,
     email_id: str,
     account_email: str,
-    include_body: bool = True,
     include_attachments: bool = True,
     save_to_file: str | None = None,
 ) -> dict[str, Any]:
-    """Get email details (body truncated to 25k chars; use save_to_file for full content)"""
+    """Get email metadata. Body content is always saved to disk and never returned."""
     context: MicrosoftContext = ctx.request_context.lifespan_context
     account_id = auth.get_account_id_by_email(account_email, context.cache_file, settings=context.settings)
-    params = {}
+    params: dict[str, Any] = {
+        "$select": "id,subject,from,toRecipients,ccRecipients,receivedDateTime,hasAttachments,conversationId,isRead,body,bodyPreview",
+    }
     if include_attachments:
         params["$expand"] = "attachments($select=id,name,size,contentType)"
 
@@ -91,41 +146,41 @@ def get_email(
     if not result:
         raise ValueError(f"Email with ID {email_id} not found")
 
-    body_max_length = 25000
-    full_body_content: str | None = None
-    if include_body and "body" in result and "content" in result["body"]:
-        content = result["body"]["content"] or ""
-        full_body_content = content
-        if len(content) > body_max_length:
-            result["body"]["content"] = content[:body_max_length] + f"\n\n[Content truncated - {len(content)} total characters]"
-            result["body"]["truncated"] = True
-            result["body"]["total_length"] = len(content)
-    elif not include_body and "body" in result:
-        del result["body"]
-
+    full_body_content = (result.get("body") or {}).get("content") or ""
     _remove_attachment_bytes(result)
 
-    if save_to_file is not None:
-        file_path = save_to_file if save_to_file else f"/tmp/email_{email_id[:8]}.txt"
-        path = pl.Path(file_path).expanduser().resolve()
-        path.parent.mkdir(parents=True, exist_ok=True)
+    save_path = _prepare_email_output_path(context, email_id, result.get("subject"), save_to_file)
+    content_lines = [
+        f"From: {result.get('from', {}).get('emailAddress', {}).get('address', 'unknown')}",
+        f"Subject: {result.get('subject', 'No subject')}",
+        f"Date: {result.get('receivedDateTime', 'unknown')}",
+        f"To: {', '.join([r.get('emailAddress', {}).get('address', '') for r in result.get('toRecipients', [])])}",
+    ]
 
-        content_lines = [
-            f"From: {result.get('from', {}).get('emailAddress', {}).get('address', 'unknown')}",
-            f"Subject: {result.get('subject', 'No subject')}",
-            f"Date: {result.get('receivedDateTime', 'unknown')}",
-            f"To: {', '.join([r.get('emailAddress', {}).get('address', '') for r in result.get('toRecipients', [])])}",
-        ]
+    if result.get("ccRecipients"):
+        content_lines.append(f"Cc: {', '.join([r.get('emailAddress', {}).get('address', '') for r in result.get('ccRecipients', [])])}")
 
-        if result.get("ccRecipients"):
-            content_lines.append(f"Cc: {', '.join([r.get('emailAddress', {}).get('address', '') for r in result.get('ccRecipients', [])])}")
+    content_lines.extend(["", "=" * 80, "", full_body_content])
 
-        body_content_for_file = full_body_content if full_body_content is not None else result.get("body", {}).get("content", "No content")
-        content_lines.extend(["", "=" * 80, "", body_content_for_file or "No content"])
+    save_path.write_text("\n".join(content_lines), encoding="utf-8")
+    saved_size = save_path.stat().st_size
 
-        path.write_text("\n".join(content_lines))
-        result["saved_to"] = str(path)
-        result["saved_size"] = path.stat().st_size
+    if "body" in result:
+        del result["body"]
+
+    result["body_saved_to"] = str(save_path)
+    result["body_saved_size"] = saved_size
+    result["body_length"] = len(full_body_content)
+
+    if "bodyPreview" in result:
+        result["preview"] = result.pop("bodyPreview")
+
+    if result["body_length"] > LONG_EMAIL_WARNING_THRESHOLD:
+        warning = (
+            f"Email body is {result['body_length']} characters; inspect {result['body_saved_to']} "
+            "and grep/crop/filter before pasting snippets to avoid overflowing context."
+        )
+        result.setdefault("warnings", []).append(warning)
 
     return result
 
@@ -524,13 +579,25 @@ def search_emails(
         folder_path = context.folders.get(folder.casefold(), folder)
         endpoint = f"/me/mailFolders/{folder_path}/messages"
 
+        select_fields = [
+            "id",
+            "subject",
+            "from",
+            "toRecipients",
+            "receivedDateTime",
+            "hasAttachments",
+            "conversationId",
+            "isRead",
+            "bodyPreview",
+        ]
+
         params = {
             "$search": f'"{query}"',
             "$top": min(limit, 100),
-            "$select": "id,subject,from,toRecipients,receivedDateTime,hasAttachments,body,conversationId,isRead",
+            "$select": ",".join(select_fields),
         }
 
-        return list(
+        emails = list(
             graph.request_paginated(
                 context.http_client,
                 context.cache_file,
@@ -543,12 +610,41 @@ def search_emails(
                 limit=limit,
             )
         )
+        for email in emails:
+            _scrub_email_snapshot(email)
+        return emails
 
-    return list(
+    fields = [
+        "id",
+        "subject",
+        "from",
+        "toRecipients",
+        "receivedDateTime",
+        "hasAttachments",
+        "conversationId",
+        "isRead",
+        "bodyPreview",
+    ]
+
+    results = list(
         graph.search_query(
-            context.http_client, context.cache_file, context.scopes, context.settings, context.base_url, query, ["message"], account_id, limit
+            context.http_client,
+            context.cache_file,
+            context.scopes,
+            context.settings,
+            context.base_url,
+            query,
+            ["message"],
+            account_id,
+            limit,
+            fields=fields,
         )
     )
+
+    for email in results:
+        _scrub_email_snapshot(email)
+
+    return results
 
 
 @mcp.tool()
