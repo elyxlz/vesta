@@ -30,7 +30,6 @@ class McpServer(tp.TypedDict):
 @dc.dataclass
 class State:
     client: ccsdk.ClaudeSDKClient | None = None
-    conversation_history: list[dict[str, tp.Any]] = dc.field(default_factory=list)
     shutdown_event: asyncio.Event | None = None
     shutdown_lock: threading.Lock = dc.field(default_factory=threading.Lock)
     shutdown_count: int = 0
@@ -39,6 +38,8 @@ class State:
     last_context_pct: float = 0.0
     last_memory_consolidation: dt.datetime | None = None
     output_lock: asyncio.Lock = dc.field(default_factory=asyncio.Lock)
+    restart_lock: asyncio.Lock = dc.field(default_factory=asyncio.Lock)
+    processing_lock: asyncio.Lock = dc.field(default_factory=asyncio.Lock)
 
 
 class VestaSettings(pyd_settings.BaseSettings):
@@ -54,6 +55,7 @@ class VestaSettings(pyd_settings.BaseSettings):
     whatsapp_bridge_check_interval: int = 30
     response_timeout: int = 180
     memory_agent_timeout: int = 1200
+    restart_timeout: int = 30
     typing_animation_delay: float = 0.5
     pre_typing_delay: float = 0.8
     response_spacing_delay: float = 0.3

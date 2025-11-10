@@ -3,6 +3,7 @@ import contextlib
 import datetime as dt
 import errno
 import functools
+import os
 import shutil
 import signal
 import threading
@@ -236,16 +237,17 @@ async def collect_responses(
         await settle_collect_task(collect_task, timeout=config.interrupt_timeout)
 
     if should_restart_client:
-        try:
-            await asyncio.wait_for(restart_claude_session(state, config=config), timeout=15.0)
-        except asyncio.TimeoutError:
-            state.client = None
-            responses.append("[Error: Client restart timed out - please restart vesta]")
-            vfx.log_error("Client restart timed out after 15 seconds", colors=Colors)
-        except Exception as e:
-            state.client = None
-            responses.append(f"[Error: Client restart failed - {str(e)[:50]}]")
-            vfx.log_error(f"Client restart failed: {e}", colors=Colors)
+        async with state.restart_lock:
+            try:
+                await asyncio.wait_for(restart_claude_session(state, config=config), timeout=config.restart_timeout)
+            except asyncio.TimeoutError:
+                state.client = None
+                responses.append(f"[Error: Client restart timed out after {config.restart_timeout}s - please restart vesta]")
+                vfx.log_error(f"Client restart timed out after {config.restart_timeout} seconds", colors=Colors)
+            except Exception as e:
+                state.client = None
+                responses.append(f"[Error: Client restart failed - {str(e)[:50]}]")
+                vfx.log_error(f"Client restart failed: {e}", colors=Colors)
 
     return responses, state
 
@@ -256,22 +258,23 @@ async def send_and_receive_message(
     if not state.client:
         # Attempt automatic recovery
         vfx.log_info("Client not initialized, attempting automatic recovery...", colors=Colors)
-        try:
-            await asyncio.wait_for(restart_claude_session(state, config=config), timeout=15.0)
-        except asyncio.TimeoutError:
-            error_msg = "[Error: Cannot recover client - restart timed out. Please restart vesta manually]"
-            vfx.log_error("Client recovery timed out", colors=Colors)
-            return [error_msg], state
-        except Exception as e:
-            error_msg = f"[Error: Cannot recover client - {str(e)[:50]}. Please restart vesta manually]"
-            vfx.log_error(f"Client recovery failed: {e}", colors=Colors)
-            return [error_msg], state
+        async with state.restart_lock:
+            try:
+                await asyncio.wait_for(restart_claude_session(state, config=config), timeout=config.restart_timeout)
+            except asyncio.TimeoutError:
+                error_msg = f"[Error: Cannot recover client - restart timed out after {config.restart_timeout}s. Please restart vesta manually]"
+                vfx.log_error("Client recovery timed out", colors=Colors)
+                return [error_msg], state
+            except Exception as e:
+                error_msg = f"[Error: Cannot recover client - {str(e)[:50]}. Please restart vesta manually]"
+                vfx.log_error(f"Client recovery failed: {e}", colors=Colors)
+                return [error_msg], state
 
-        if not state.client:
-            error_msg = "[Error: Client recovery failed. Please restart vesta manually]"
-            return [error_msg], state
+            if not state.client:
+                error_msg = "[Error: Client recovery failed. Please restart vesta manually]"
+                return [error_msg], state
 
-        vfx.log_success("Client recovered successfully", colors=Colors)
+            vfx.log_success("Client recovered successfully", colors=Colors)
 
     try:
         await send_query(state.client, prompt, state, config=config)
@@ -426,7 +429,8 @@ async def message_processor(queue: asyncio.Queue, state: vm.State, *, config: vm
         try:
             msg, is_user = await asyncio.wait_for(queue.get(), timeout=1.0)
 
-            state.is_processing = True
+            async with state.processing_lock:
+                state.is_processing = True
             try:
                 responses, _ = await process_message_with_typing(msg, state, config, is_user=is_user)
 
@@ -436,14 +440,16 @@ async def message_processor(queue: asyncio.Queue, state: vm.State, *, config: vm
                             await vfx.sleep(config.response_spacing_delay)
                         await output_line(response, state)
             finally:
-                state.is_processing = False
+                async with state.processing_lock:
+                    state.is_processing = False
 
         except asyncio.TimeoutError:
             continue
         except Exception as e:
             vfx.log_error(f"Queue error: {str(e)[:100]}", colors=Colors)
             traceback.print_exc()
-            state.is_processing = False
+            async with state.processing_lock:
+                state.is_processing = False
 
 
 async def input_handler(queue: asyncio.Queue, *, state: vm.State) -> None:
@@ -637,7 +643,6 @@ async def create_claude_client(config: vm.VestaSettings) -> ccsdk.ClaudeSDKClien
             hooks={},
             permission_mode="bypassPermissions",
             model="sonnet",
-            continue_conversation=True,
         )
     )
     await client.__aenter__()
@@ -646,9 +651,34 @@ async def create_claude_client(config: vm.VestaSettings) -> ccsdk.ClaudeSDKClien
 
 async def restart_claude_session(state: vm.State, *, config: vm.VestaSettings) -> None:
     """Recreate the Claude client so a bad tool run doesn't brick Vesta."""
+    # Check if shutdown is in progress
+    if state.shutdown_event and state.shutdown_event.is_set():
+        vfx.log_info("Skipping restart - shutdown in progress", colors=Colors)
+        return
+
+    old_process_pid = None
     if state.client:
+        # Capture subprocess PID before losing reference
+        try:
+            if hasattr(state.client, "_transport") and state.client._transport:
+                if hasattr(state.client._transport, "_process") and state.client._transport._process:
+                    old_process_pid = state.client._transport._process.pid
+        except Exception:
+            pass  # Best effort
+
         try:
             await asyncio.wait_for(state.client.__aexit__(None, None, None), timeout=config.interrupt_timeout)
+        except asyncio.TimeoutError:
+            vfx.log_error(f"Client exit timed out after {config.interrupt_timeout}s", colors=Colors)
+            # Force kill the subprocess if we have its PID
+            if old_process_pid:
+                try:
+                    os.kill(old_process_pid, signal.SIGKILL)
+                    vfx.log_info(f"Force killed subprocess {old_process_pid}", colors=Colors)
+                except ProcessLookupError:
+                    pass  # Process already dead
+                except Exception as e:
+                    vfx.log_error(f"Failed to kill subprocess: {e}", colors=Colors)
         except Exception as e:
             vfx.log_error(f"Error while closing Claude client: {e}", colors=Colors)
         finally:
@@ -657,7 +687,6 @@ async def restart_claude_session(state: vm.State, *, config: vm.VestaSettings) -
     try:
         state.client = await create_claude_client(config)
         state.sub_agent_context = None
-        state.is_processing = False
     except Exception as e:
         vfx.log_error(f"Failed to recreate Claude client: {e}", colors=Colors)
 
@@ -671,7 +700,6 @@ async def init_state(*, config: vm.VestaSettings) -> vm.State:
     now = vfx.get_current_time()
     return vm.State(
         client=client,
-        conversation_history=[],
         shutdown_event=None,
         shutdown_lock=threading.Lock(),
         shutdown_count=0,

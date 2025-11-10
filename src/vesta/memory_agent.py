@@ -1,5 +1,7 @@
 import typing as tp
 import difflib
+import json
+import pathlib as pl
 
 import claude_code_sdk as ccsdk
 
@@ -132,16 +134,96 @@ def format_conversation(history: list[dict[str, tp.Any]]) -> str:
     return "\n".join(f"{msg.get('role', 'unknown')}: {msg.get('content', '')}" for msg in history)
 
 
+def get_cli_session_history(working_dir: str) -> list[dict[str, tp.Any]]:
+    """
+    Extract conversation history from Claude CLI session files.
+
+    Returns:
+        List of message dicts with 'role' and 'content' keys.
+        Returns empty list if session file not found or on error.
+    """
+    try:
+        # Find the projects directory
+        projects_dir = pl.Path.home() / ".claude" / "projects"
+        if not projects_dir.exists():
+            return []
+
+        # Convert working dir to project dir format (replace / with -)
+        project_name = f"-{working_dir.replace('/', '-')}"
+        project_dir = projects_dir / project_name
+
+        if not project_dir.exists():
+            return []
+
+        # Find most recent session file
+        session_files = sorted(project_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+
+        if not session_files:
+            return []
+
+        session_file = session_files[0]
+        messages = []
+
+        # Parse JSONL session file
+        with open(session_file) as f:
+            for line in f:
+                try:
+                    data = json.loads(line)
+
+                    # Extract user messages
+                    if data.get("type") == "user_message":
+                        content = data.get("content", "")
+                        if isinstance(content, list):
+                            # Content might be array of text/tool blocks
+                            text_parts = [block.get("text", "") for block in content if block.get("type") == "text"]
+                            content = " ".join(text_parts)
+                        messages.append({"role": "user", "content": str(content)})
+
+                    # Extract assistant messages
+                    elif data.get("type") == "assistant_message":
+                        content = data.get("content", "")
+                        if isinstance(content, list):
+                            # Extract text and tool use
+                            text_parts = []
+                            for block in content:
+                                if block.get("type") == "text":
+                                    text_parts.append(block.get("text", ""))
+                                elif block.get("type") == "tool_use":
+                                    # Include tool calls in history for context
+                                    tool_name = block.get("name", "unknown_tool")
+                                    text_parts.append(f"[used tool: {tool_name}]")
+                            content = " ".join(text_parts)
+                        messages.append({"role": "assistant", "content": str(content)})
+
+                except json.JSONDecodeError:
+                    continue  # Skip malformed lines
+                except Exception:
+                    continue  # Skip any parsing errors
+
+        return messages
+
+    except Exception:
+        # Return empty on any error - let caller handle fallback
+        return []
+
+
 async def preserve_conversation_memory(
-    conversation_history: list[dict[str, tp.Any]],
+    conversation_history: list[dict[str, tp.Any]] | None = None,
     *,
     config: vm.VestaSettings,
     progress_callback: tp.Callable[[str], None] | None = None,
 ) -> str:
+    progress = progress_callback or (lambda _message: None)
+
+    # If no history provided, try to load from CLI session
+    if conversation_history is None:
+        progress("Loading conversation history from CLI session...")
+        conversation_history = get_cli_session_history(str(config.root_dir))
+
     if not conversation_history:
+        progress("No conversation history available")
         return ""
 
-    progress = progress_callback or (lambda _message: None)
     progress("Loading MEMORY.md and system prompt...")
 
     before = config.memory_file.read_text() if config.memory_file.exists() else ""
