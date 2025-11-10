@@ -406,11 +406,22 @@ When booking any meeting:
   - **askUCL support ticket**: Submitted inquiry #001279781 on October 9, 2025 about 9+ day enrollment delay - RESOLVED
   - **Issue resolved**: UCL confirmed completion via email, enrollment successfully processed
 - **UCL ID Card**: OBTAINED October 2025 - enrollment complete
-- **CURRENT ACADEMIC CRISIS**: Dissertation supervisor deadline missed October 24, 2025
-  - **Status**: 3+ days overdue as of October 28, 2025
-  - **Urgency**: François Sicard sent 4th weekly reminder October 28 - critical for graduation
-  - **Blocking factor**: Cannot graduate without dissertation supervisor assignment
-  - **Action needed**: Immediate contact with potential supervisors (Marc Deisenroth, Nicolas Gold identified as candidates)
+
+### Dissertation (BASC0024)
+- **Current status**: Supervisor deadline passed (October 24, 2025), dissertation plan in progress
+- **Research area**: Historical news archives accessibility using AI
+- **Research question**: "Can I improve the discoverability/accessibility of historical news archives?"
+- **Project scope**:
+  - Target dataset: Italian and Roman newspapers (1700s to World War 2)
+  - Problem: Current systems use inadequate keyword search, high accessibility barriers for researchers
+  - Solution approach: AI-powered system with OCR, hierarchical summarization, embedding models, agentic search via MCP
+  - Key point: Roman newspapers as proof-of-concept, but system designed to be generalizable
+  - Goal: Compare existing archive systems and demonstrate superiority of AI approach
+  - Focus: Improving accessibility for historical research, primary source discovery
+- **Plan deadline**: November 11, 2025 at 5pm
+- **Resources location**: UCL subfolder contains past plans, cover sheet, marking rubric, student handbook
+- **Guidance materials**: Moodle videos, November 5 briefing recording, past dissertation examples
+- **Work approach**: Prefers to examine sample plans and requirements rather than follow templates exactly
 - **Module status as of October 3, 2025**:
   - BASC0023 The Knowledge Economy (T1, 15 credits) - Approved
   - BASC0024 Final Year Dissertation (T1/2, 30 credits) - Approved
@@ -460,6 +471,9 @@ When booking any meeting:
 
 ### Preferences & Traits
 - **Flight booking**: Always use Trip.com (not EasyJet or other sites) - Elio prefers this
+- **Recent travel**:
+  - **Rome return flight**: Booked October 26, 2025 via Trip.com (booking #1688894294307187)
+  - **Ryanair verification needed**: Booking reference VSF3MC requires travel document verification (as of November 10, 2025)
 - **Unsubscribe priorities**: Wants to unsubscribe from marketing emails - successfully completed: Trip.com, Zoom, Reducto, AINews/smol.ai, TfL, WeWork, MSC Crociere, Devpost, Angel Comedy. Still pending: UCL careers emails, Dolley Noire, The Gin Way, Totum discounts, Ole Blue Last
 - **Newsletter exceptions**: Keep TLDR and Cerebral Valley newsletters - everything else can go
 - **Airport preference**: Gatwick (prefers low-cost airlines)
@@ -505,7 +519,7 @@ When booking any meeting:
 #### Friends & Contacts
 - **Alex**:
   - Friend/flatmate at Chadwell Mews, has a piano that Elio can use
-  - Phone: +351914173970
+  - Phone: +351914173970 (also saved as +351 914 173 970)
   - Got spammed with "giga gay" messages from Elio (via vesta)
   - Went to cafe together with Martinos on September 27, 2025
   - **October 3, 2025**: Helped Devaki move into her place
@@ -549,8 +563,8 @@ When booking any meeting:
   - Gets trolled by Elio via vesta with aubergine emojis and childish messages
   - Responds with humor ("Hey gay oy") but eventually asks to stop
 - **Louis**:
-  - Friend/flatmate for next year
-  - Phone: +33 6 70 79 01 13
+  - Friend/flatmate at Chadwell Mews
+  - Phone: +33 6 70 79 01 13 (also saved as +33670790113)
 - **Perry Chen**:
   - Kickstarter founder, lives in Paris, makes music and angel invests
   - Email: pchen.nola@gmail.com
@@ -575,16 +589,9 @@ When booking any meeting:
   - Gives anxiety despite David being "the chillest investor"
 
 ### Upcoming Events
+- **Perry meeting**: Thursday November 13, 2025 at 1-2pm GMT
 - **ECS AC service**: Friday November 14, 2025 at 6 Chadwell Mews (AM arrival)
   - **Contact**: Gina Spoon, ECS - ecs@fagingroup.com, +44 208 057 0070
-  - **Coordination**: Scheduled to coincide with neighbors' service for efficiency
-  - **Confirmed**: November 4, 2025 via email exchange
-- **Islington Council property inspection**: Wednesday November 5, 2025 at 10am (corrected date)
-- **Bologna Radiohead concert**: November 15, 2025 at 6pm (with Maddy) - flights already booked as of September 29, 2025
-  - **UPDATED RETURN FLIGHT**: Changed from November 16 to November 23, 2025
-  - **NEW FLIGHT**: Ryanair FR3003, Sunday November 23, 06:00 Rome Ciampino → 07:45 London Stansted
-  - **Booking**: #1688894294307187, Reservation: B5ZKVE (€52.99 change fee paid October 26)
-  - **Extra time**: Allows full week in Rome with Maddy after concert before returning to London
 - **Christmas in Rome**: December 23/24 - December 27, 2025 (with Maddy)
 - **Skiing in San Cassiano, Alto Adige**: December 27, 2025 - January 3, 2026 (with Maddy)
 
@@ -598,6 +605,7 @@ When booking any meeting:
 - **November 10, 2025 lesson**: Always check notification metadata for reply_instruction and follow it
 
 ### Recent Learnings
+<<<<<<< Updated upstream
 - **November 10, 2025 - Critical communication failures**:
   - **WhatsApp reply_instruction violation**: Responded to 6+ WhatsApp messages in terminal instead of using send_message tool
   - **User frustration**: "vesta for the last time you need to fucking message me on whatsapp or i wont see your messages"
@@ -606,6 +614,41 @@ When booking any meeting:
   - **Multiple response timeouts**: Numerous "It's been 60 minutes" warnings indicate unacceptable delays
   - **Root cause**: Not following reply_instruction metadata, not prioritizing financial alerts, slow response times
   - **Lesson**: reply_instruction is RIGHT THERE in the notification - must check and follow it every single time
+=======
+- **November 10, 2025 - Dissertation work session**:
+  - **Working approach**: Elio wants collaborative questioning to gather information and build out plan iteratively
+  - **Initial project scope**: Wants to build entire system (data pipeline, OCR, hierarchical summarization, indexing, agentic search)
+  - **Research framing**: Focus is on improving accessibility barriers, not just building tech - comparing existing systems vs new approach
+  - **Sample vs requirements**: Emphasized that sample plans are just examples, his doesn't need to match them exactly
+  - **Documentation needs**: Asked to review marking rubric and dissertation handbook requirements specifically
+  - **Communication pattern**: Multiple "well?" prompts indicate waiting for responses that didn't arrive - need better handling of response timeouts
+  - **Work focus**: Goal is to build the system during dissertation and prove it helps researchers using latest AI techniques
+
+- **November 10, 2025 - Tool usage and response expectations**:
+  - **Hypothetical questions**: When Elio asks "what would you do?" or "if i ask you X what would you do?", he wants explanation of approach/tools, NOT execution
+  - **Example**: "what would you do if i asked you what day December 11 is?" → explain would use calendar/date tool, then if confirmed, execute
+  - **Tool transparency**: Elio wants to know what tools/methods being used (asked "what tool did you use?" after message search)
+  - **Response timeouts**: Multiple "response timeout" situations in conversation - need better handling of long-running tasks
+  - **Pattern**: When Elio says "well?" it means he's waiting for a previous response that didn't arrive - acknowledge the gap
+  - **Data retrieval preferences**: Use MCP tools when available rather than bash commands for data access
+
+- **November 10, 2025 - Contact additions**:
+  - Added multiple family/friend contacts to WhatsApp (Maddy, Emi, Mom, Dad, Alex, Louis)
+  - Shows preference for having contacts saved with names rather than using raw numbers
+  - Reinforces family connection importance - wants easy access to contact close relationships
+
+- **November 10, 2025 - Active reminders check**:
+  - Elio explicitly asked "what reminders are active?" indicating he wants visibility into scheduled reminders
+  - This suggests preference for being able to query what's scheduled/planned proactively
+
+- **November 10, 2025 - Notification patterns observed**:
+  - **Money notification**: Jacopo's Mercury card (••0107) charged $100.00 by Fal.AI - flagged as important per user preference
+  - **GitHub releases**: Multiple nexus releases (0.5.20, 0.5.22) - acknowledged as technical updates, no action
+  - **PR activity**: AudiogenAI repos - eve #773 closed, model-factory #2732 merged - routine technical updates
+  - **Marketing emails**: Trip.com Black Friday, TLDR newsletter - low priority
+  - **Spam detected**: Ghulam Shabir mass email (44+ recipients) - correctly identified and ignored
+  - **Travel action required**: Ryanair VSF3MC travel document verification - flagged as important
+>>>>>>> Stashed changes
 
 - **November 2025 - Communication patterns during travel/vacation**:
   - **Vacation email monitoring approach**: During multi-day trips (Rome October 30 - November 3), focus on email monitoring and urgent alerts only
