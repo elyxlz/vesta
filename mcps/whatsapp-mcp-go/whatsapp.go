@@ -290,7 +290,6 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 		WriteNotification(
 			wac.notificationsDir,
 			info.ID,
-			info.Chat.String(),
 			chatName,
 			contactName,
 			contactPhone,
@@ -379,7 +378,6 @@ func (wac *WhatsAppClient) handleReaction(evt *events.Message) {
 		WriteReactionNotification(
 			wac.notificationsDir,
 			targetID,
-			evt.Info.Chat.String(),
 			chatName,
 			contactName,
 			contactPhone,
@@ -527,7 +525,7 @@ func (wac *WhatsAppClient) notificationContactInfo(jid types.JID, chatName strin
 
 func (wac *WhatsAppClient) SendMessageWithPresence(recipient, message string) (bool, string) {
 	if recipient == "" || message == "" {
-		return false, "Recipient and message are required. Provide recipient (contact name, phone number, or JID) and message text"
+		return false, "Recipient and message are required. Provide a contact name, phone number, or group name plus the message text"
 	}
 
 	// Check if connected
@@ -621,7 +619,7 @@ func (wac *WhatsAppClient) SendMessageWithPresence(recipient, message string) (b
 
 func (wac *WhatsAppClient) SendMessage(recipient, message string) (bool, string) {
 	if recipient == "" || message == "" {
-		return false, "Recipient and message are required. Provide recipient (contact name, phone number, or JID) and message text"
+		return false, "Recipient and message are required. Provide a contact name, phone number, or group name plus the message text"
 	}
 
 	// Check if connected
@@ -654,7 +652,7 @@ func (wac *WhatsAppClient) SendMessage(recipient, message string) (bool, string)
 
 func (wac *WhatsAppClient) SendFile(recipient, filePath, caption string) (bool, string) {
 	if recipient == "" || filePath == "" {
-		return false, "Recipient and file path are required. Provide recipient (contact name, phone number, or JID) and file path"
+		return false, "Recipient and file path are required. Provide a contact name, phone number, or group name and the file path"
 	}
 
 	// Validate file path for security
@@ -752,7 +750,7 @@ func (wac *WhatsAppClient) SendFile(recipient, filePath, caption string) (bool, 
 
 func (wac *WhatsAppClient) SendAudioMessageWithPresence(recipient, filePath string) (bool, string) {
 	if recipient == "" || filePath == "" {
-		return false, "Recipient and file path are required. Provide recipient (contact name, phone number, or JID) and audio file path"
+		return false, "Recipient and file path are required. Provide a contact name, phone number, or group name and the audio file path"
 	}
 
 	// Validate file path for security
@@ -876,7 +874,7 @@ func (wac *WhatsAppClient) SendAudioMessageWithPresence(recipient, filePath stri
 
 func (wac *WhatsAppClient) SendAudioMessage(recipient, filePath string) (bool, string) {
 	if recipient == "" || filePath == "" {
-		return false, "Recipient and file path are required. Provide recipient (contact name, phone number, or JID) and audio file path"
+		return false, "Recipient and file path are required. Provide a contact name, phone number, or group name and the audio file path"
 	}
 
 	// Validate file path for security
@@ -1126,7 +1124,7 @@ func (wac *WhatsAppClient) SendReaction(messageID, emoji, chatIdentifier string)
 		if storedSender != "" {
 			senderJID, err = types.ParseJID(storedSender)
 			if err != nil {
-				return false, fmt.Sprintf("Invalid sender JID: %v", err)
+				return false, fmt.Sprintf("Could not resolve the original sender for this message: %v", err)
 			}
 		} else {
 			return false, "Message sender not found for group reaction"
@@ -1150,14 +1148,14 @@ func (wac *WhatsAppClient) SendReaction(messageID, emoji, chatIdentifier string)
 	return true, fmt.Sprintf("Reaction %s successfully", action)
 }
 
-func (wac *WhatsAppClient) CreateGroup(name string, participants []string) (bool, string, string) {
+func (wac *WhatsAppClient) CreateGroup(name string, participants []string) (bool, string) {
 	if name == "" || len(participants) == 0 {
-		return false, "", "Group name and participants are required"
+		return false, "Group name and participants are required"
 	}
 
 	jids, err := parseParticipantJIDs(participants)
 	if err != nil {
-		return false, "", err.Error()
+		return false, err.Error()
 	}
 
 	resp, err := wac.client.CreateGroup(context.Background(), whatsmeow.ReqCreateGroup{
@@ -1165,15 +1163,25 @@ func (wac *WhatsAppClient) CreateGroup(name string, participants []string) (bool
 		Participants: jids,
 	})
 	if err != nil {
-		return false, "", fmt.Sprintf("Failed to create group: %v", err)
+		return false, fmt.Sprintf("Failed to create group: %v", err)
 	}
-	return true, resp.JID.String(), fmt.Sprintf("Group '%s' created successfully", name)
+	if resp.JID.String() != "" {
+		wac.store.StoreChat(resp.JID.String(), name, time.Now())
+	}
+	return true, fmt.Sprintf("Group '%s' created successfully", name)
 }
 
-func (wac *WhatsAppClient) LeaveGroup(groupJID string) (bool, string) {
-	jid, err := types.ParseJID(groupJID)
+func (wac *WhatsAppClient) LeaveGroup(groupIdentifier string) (bool, string) {
+	if groupIdentifier == "" {
+		return false, "Group name is required"
+	}
+
+	jid, err := wac.ResolveRecipient(groupIdentifier)
 	if err != nil {
-		return false, fmt.Sprintf("Invalid group JID: %v", err)
+		return false, fmt.Sprintf("Failed to resolve group: %v", err)
+	}
+	if jid.Server != types.GroupServer {
+		return false, "The specified identifier is not a WhatsApp group"
 	}
 
 	err = wac.client.LeaveGroup(jid)
@@ -1184,10 +1192,13 @@ func (wac *WhatsAppClient) LeaveGroup(groupJID string) (bool, string) {
 	return true, "Successfully left the group"
 }
 
-func (wac *WhatsAppClient) GetGroupInviteLink(groupJID string) (bool, string, string) {
-	jid, err := types.ParseJID(groupJID)
+func (wac *WhatsAppClient) GetGroupInviteLink(groupIdentifier string) (bool, string, string) {
+	jid, err := wac.ResolveRecipient(groupIdentifier)
 	if err != nil {
-		return false, "", fmt.Sprintf("Invalid group JID: %v", err)
+		return false, "", fmt.Sprintf("Failed to resolve group: %v", err)
+	}
+	if jid.Server != types.GroupServer {
+		return false, "", "The specified identifier is not a WhatsApp group"
 	}
 
 	link, err := wac.client.GetGroupInviteLink(jid, false)
@@ -1252,7 +1263,7 @@ func (wac *WhatsAppClient) ResolveRecipient(identifier string) (types.JID, error
 	if strings.Contains(identifier, "@") {
 		jid, err := types.ParseJID(identifier)
 		if err != nil {
-			return types.JID{}, fmt.Errorf("invalid JID format '%s': %v. Use phone (+1234567890), contact name, or valid JID", identifier, err)
+			return types.JID{}, fmt.Errorf("invalid WhatsApp address '%s': %v. Use a phone number (+1234567890) or saved contact/group name instead", identifier, err)
 		}
 		return jid, nil
 	}
@@ -1303,7 +1314,7 @@ func resolveFromContacts(contacts []Contact, identifier string) (types.JID, erro
 	if len(contacts) == 1 {
 		jid, err := types.ParseJID(contacts[0].JID)
 		if err != nil {
-			return types.JID{}, fmt.Errorf("invalid contact JID: %v", err)
+			return types.JID{}, fmt.Errorf("could not read the saved contact identifier: %v", err)
 		}
 		return jid, nil
 	}
@@ -1339,7 +1350,7 @@ func preferExactContactMatch(contacts []Contact, identifier string) (types.JID, 
 	}
 
 	if len(matches) > 1 {
-		return types.JID{}, true, fmt.Errorf("multiple contacts share the exact name '%s'. Please disambiguate with a phone number or JID", identifier)
+		return types.JID{}, true, fmt.Errorf("multiple contacts share the exact name '%s'. Please disambiguate with the precise phone number (+1234567890)", identifier)
 	}
 
 	if len(matches) == 1 {
@@ -1356,7 +1367,7 @@ func preferExactContactMatch(contacts []Contact, identifier string) (types.JID, 
 	for i := range contacts {
 		if digitsOnly(contacts[i].PhoneNumber) == digits {
 			if phoneMatch != nil {
-				return types.JID{}, true, fmt.Errorf("multiple contacts share that phone number. Please use a specific JID (phone@s.whatsapp.net)")
+				return types.JID{}, true, fmt.Errorf("multiple contacts share that phone number. Please specify the exact contact name instead")
 			}
 			phoneMatch = &contacts[i]
 		}
@@ -1387,7 +1398,7 @@ func resolveFromGroups(groups []Chat, identifier string) (types.JID, error) {
 	if len(matches) == 1 {
 		jid, err := types.ParseJID(matches[0].JID)
 		if err != nil {
-			return types.JID{}, fmt.Errorf("invalid group JID: %v", err)
+			return types.JID{}, fmt.Errorf("could not read the saved group identifier: %v", err)
 		}
 		return jid, nil
 	}
@@ -1401,7 +1412,7 @@ func resolveFromGroups(groups []Chat, identifier string) (types.JID, error) {
 		}
 		names = append(names, g.Name)
 	}
-	return types.JID{}, fmt.Errorf("multiple groups match '%s': %s. Please use full group name or JID",
+	return types.JID{}, fmt.Errorf("multiple groups match '%s': %s. Please provide the full group name",
 		identifier, strings.Join(names, ", "))
 }
 
@@ -1450,10 +1461,17 @@ func parseParticipantJIDs(participants []string) ([]types.JID, error) {
 	return jids, nil
 }
 
-func (wac *WhatsAppClient) UpdateGroupParticipants(groupJID, action string, participants []string) (bool, string) {
-	jid, err := types.ParseJID(groupJID)
+func (wac *WhatsAppClient) UpdateGroupParticipants(groupIdentifier, action string, participants []string) (bool, string) {
+	if groupIdentifier == "" {
+		return false, "group is required"
+	}
+
+	jid, err := wac.ResolveRecipient(groupIdentifier)
 	if err != nil {
-		return false, fmt.Sprintf("Invalid group JID: %v", err)
+		return false, fmt.Sprintf("Failed to resolve group: %v", err)
+	}
+	if jid.Server != types.GroupServer {
+		return false, "The specified identifier is not a WhatsApp group"
 	}
 
 	participantJIDs, err := parseParticipantJIDs(participants)

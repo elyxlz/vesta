@@ -6,7 +6,7 @@ import (
 
 type Message struct {
 	ID          string    `json:"id"`
-	ChatJID     string    `json:"chat_jid"`
+	ChatJID     string    `json:"-"`
 	ChatName    string    `json:"chat_name,omitempty"`
 	Sender      string    `json:"sender"`
 	Content     string    `json:"content"`
@@ -18,7 +18,7 @@ type Message struct {
 }
 
 type Chat struct {
-	JID             string    `json:"jid"`
+	JID             string    `json:"-"`
 	Name            string    `json:"name,omitempty"`
 	LastMessageTime time.Time `json:"last_message_time,omitempty"`
 	LastMessage     string    `json:"last_message,omitempty"`
@@ -30,7 +30,7 @@ type Chat struct {
 type Contact struct {
 	PhoneNumber string `json:"phone_number"`
 	Name        string `json:"name,omitempty"`
-	JID         string `json:"jid"`
+	JID         string `json:"-"`
 	IsManual    bool   `json:"is_manual,omitempty"`
 }
 
@@ -85,7 +85,7 @@ type ListMessagesInput struct {
 	After          string `json:"after,omitempty" jsonschema:"ISO-8601 datetime to filter messages after"`
 	Before         string `json:"before,omitempty" jsonschema:"ISO-8601 datetime to filter messages before"`
 	SenderPhone    string `json:"sender_phone_number,omitempty" jsonschema:"Filter by sender phone number"`
-	To             string `json:"to,omitempty" jsonschema:"Filter by chat - accepts contact name, phone number, group name, or JID"`
+	To             string `json:"to,omitempty" jsonschema:"Filter by chat - accepts contact name, phone number, or group name"`
 	Query          string `json:"query,omitempty" jsonschema:"Search query for message content"`
 	Limit          int    `json:"limit,omitempty" jsonschema:"Maximum number of messages to return"`
 	Page           int    `json:"page,omitempty" jsonschema:"Page number for pagination"`
@@ -111,7 +111,7 @@ type ListChatsOutput struct {
 }
 
 type SendMessageInput struct {
-	To      string `json:"to" jsonschema:"Recipient - accepts contact name, phone number (+1234567890), group name, or JID (phone@s.whatsapp.net)"`
+	To      string `json:"to" jsonschema:"Recipient - accepts contact name, phone number (+1234567890), or group name"`
 	Message string `json:"message" jsonschema:"Text message to send"`
 }
 
@@ -121,7 +121,7 @@ type SendMessageOutput struct {
 }
 
 type SendFileInput struct {
-	To       string `json:"to" jsonschema:"Recipient - accepts contact name, phone number (+1234567890), group name, or JID"`
+	To       string `json:"to" jsonschema:"Recipient - accepts contact name, phone number (+1234567890), or group name"`
 	FilePath string `json:"file_path" jsonschema:"Path to file to send"`
 	Caption  string `json:"caption,omitempty" jsonschema:"Optional caption for the file"`
 }
@@ -134,7 +134,7 @@ type SendFileOutput struct {
 type DownloadMediaInput struct {
 	MessageID    string `json:"message_id" jsonschema:"Message ID containing media"`
 	DownloadPath string `json:"download_path,omitempty" jsonschema:"Optional path to save media"`
-	To           string `json:"to,omitempty" jsonschema:"Chat - accepts contact name, phone number, group name, or JID"`
+	To           string `json:"to,omitempty" jsonschema:"Chat - accepts contact name, phone number, or group name"`
 }
 
 type DownloadMediaOutput struct {
@@ -146,7 +146,7 @@ type DownloadMediaOutput struct {
 type SendReactionInput struct {
 	MessageID string `json:"message_id" jsonschema:"Message ID to react to"`
 	Emoji     string `json:"emoji" jsonschema:"Emoji reaction"`
-	To        string `json:"to" jsonschema:"Chat - accepts contact name, phone number, group name, or JID"`
+	To        string `json:"to" jsonschema:"Chat - accepts contact name, phone number, or group name"`
 }
 
 type SendReactionOutput struct {
@@ -160,13 +160,13 @@ type CreateGroupInput struct {
 }
 
 type CreateGroupOutput struct {
-	Success  bool   `json:"success"`
-	GroupJID string `json:"group_jid,omitempty"`
-	Message  string `json:"message"`
+	Success   bool   `json:"success"`
+	GroupName string `json:"group_name"`
+	Message   string `json:"message"`
 }
 
 type LeaveGroupInput struct {
-	GroupJID string `json:"group_jid" jsonschema:"Group JID to leave"`
+	Group string `json:"group" jsonschema:"Group name (use list_groups to find it)"`
 }
 
 type LeaveGroupOutput struct {
@@ -184,7 +184,7 @@ type ListGroupsOutput struct {
 }
 
 type UpdateGroupParticipantsInput struct {
-	GroupJID     string   `json:"group_jid" jsonschema:"Group JID"`
+	Group        string   `json:"group" jsonschema:"Group name (use list_groups to find it)"`
 	Action       string   `json:"action" jsonschema:"Action to perform (add or remove)"`
 	Participants []string `json:"participants" jsonschema:"List of phone numbers"`
 }

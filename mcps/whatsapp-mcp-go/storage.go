@@ -516,7 +516,7 @@ func (ms *MessageStore) GetMessageMediaInfo(messageID, chatJID string) (*MediaIn
 
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("message not found: %s in chat %s", messageID, chatJID)
+			return nil, fmt.Errorf("message %s not found in this chat", messageID)
 		}
 		return nil, fmt.Errorf("failed to query media info: %v", err)
 	}

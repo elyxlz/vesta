@@ -3,6 +3,8 @@ from contextlib import closing, asynccontextmanager
 from dataclasses import dataclass
 from collections.abc import AsyncIterator
 import argparse
+import json
+import re
 import sqlite3
 import uuid
 from pathlib import Path
@@ -60,6 +62,7 @@ async def reminder_lifespan(server: FastMCP) -> AsyncIterator[ReminderContext]:
 
     ctx = ReminderContext(scheduler, data_dir, log_dir, notif_dir)
     init_db(ctx)
+    restore_all_jobs(ctx)
     check_missed_reminders(ctx)
 
     try:
@@ -77,6 +80,41 @@ def get_db(ctx: ReminderContext):
     return conn
 
 
+def migrate_existing_reminders(conn: sqlite3.Connection):
+    """Migrate existing reminders to add trigger_data from schedule_type"""
+    cursor = conn.execute("SELECT id, schedule_type FROM reminders WHERE trigger_data IS NULL AND fired = 0")
+    for row in cursor:
+        schedule_type = row["schedule_type"]
+        if not schedule_type:
+            continue
+
+        trigger_data = None
+
+        if "daily" in schedule_type:
+            match = re.search(r"at (\d{1,2}):(\d{2})", schedule_type)
+            h, m = (int(match.group(1)), int(match.group(2))) if match else (9, 0)
+            trigger_data = {"type": "cron", "hour": h, "minute": m}
+
+        elif "weekly" in schedule_type:
+            days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+            day = next((d for d in days if d in schedule_type.lower()), None)
+            if day:
+                match = re.search(r"at (\d{1,2}):(\d{2})", schedule_type)
+                h, m = (int(match.group(1)), int(match.group(2))) if match else (9, 0)
+                trigger_data = {"type": "cron", "day_of_week": day[:3], "hour": h, "minute": m}
+
+        elif "hourly" in schedule_type:
+            trigger_data = {"type": "interval", "hours": 1}
+
+        elif "once" in schedule_type:
+            continue
+
+        if trigger_data:
+            conn.execute("UPDATE reminders SET trigger_data = ? WHERE id = ?", (json.dumps(trigger_data), row["id"]))
+
+    conn.commit()
+
+
 def init_db(ctx: ReminderContext):
     with closing(get_db(ctx)) as conn:
         conn.execute("""
@@ -86,10 +124,19 @@ def init_db(ctx: ReminderContext):
                 schedule_type TEXT,
                 scheduled_time TEXT,
                 fired INTEGER DEFAULT 0,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                trigger_data TEXT
             )
         """)
         conn.commit()
+
+        cursor = conn.execute("PRAGMA table_info(reminders)")
+        columns = {row[1] for row in cursor.fetchall()}
+        if "trigger_data" not in columns:
+            conn.execute("ALTER TABLE reminders ADD COLUMN trigger_data TEXT")
+            conn.commit()
+
+        migrate_existing_reminders(conn)
 
 
 def send_reminder_job(reminder_id: str, *, message: str, data_dir: Path, notif_dir: Path):
@@ -120,6 +167,39 @@ def check_missed_reminders(ctx: ReminderContext):
             )
             conn.execute("UPDATE reminders SET fired = 1 WHERE id = ?", (row["id"],))
         conn.commit()
+
+
+def restore_all_jobs(ctx: ReminderContext):
+    """Restore all unfired reminders from database to scheduler"""
+    with closing(get_db(ctx)) as conn:
+        cursor = conn.execute("SELECT id, message, trigger_data FROM reminders WHERE fired = 0 AND trigger_data IS NOT NULL")
+
+        for row in cursor:
+            try:
+                trigger_data = json.loads(row["trigger_data"])
+                trigger_type = trigger_data.get("type")
+
+                if trigger_type == "cron":
+                    trigger = CronTrigger(
+                        day_of_week=trigger_data.get("day_of_week"),
+                        hour=trigger_data.get("hour"),
+                        minute=trigger_data.get("minute"),
+                    )
+                elif trigger_type == "interval":
+                    trigger = IntervalTrigger(hours=trigger_data.get("hours", 1))
+                else:
+                    continue
+
+                ctx.scheduler.add_job(
+                    func=send_reminder_job,
+                    trigger=trigger,
+                    args=[row["id"]],
+                    kwargs={"message": row["message"], "data_dir": ctx.data_dir, "notif_dir": ctx.notif_dir},
+                    id=row["id"],
+                    replace_existing=True,
+                )
+            except (json.JSONDecodeError, KeyError, ValueError):
+                pass
 
 
 def parse_time(time_str: str) -> tuple[int, int]:
@@ -158,18 +238,22 @@ def set_reminder(
     context: ReminderContext = ctx.request_context.lifespan_context
 
     reminder_id = str(uuid.uuid4())[:8]
+    trigger_data = None
 
     if recurring == "daily":
         h, m = parse_time(time) if time else (9, 0)
         trigger = CronTrigger(hour=h, minute=m)
         schedule_info = "daily" + (f" at {time}" if time else "")
+        trigger_data = {"type": "cron", "hour": h, "minute": m}
     elif recurring == "hourly":
         trigger = IntervalTrigger(hours=1)
         schedule_info = "hourly"
+        trigger_data = {"type": "interval", "hours": 1}
     elif recurring == "weekly" and day_of_week:
         h, m = parse_time(time) if time else (9, 0)
         trigger = CronTrigger(day_of_week=day_of_week[:3].lower(), hour=h, minute=m)
         schedule_info = f"weekly on {day_of_week}" + (f" at {time}" if time else "")
+        trigger_data = {"type": "cron", "day_of_week": day_of_week[:3].lower(), "hour": h, "minute": m}
     elif scheduled_datetime:
         trigger = DateTrigger(run_date=dt.fromisoformat(scheduled_datetime))
         schedule_info = f"once at {scheduled_datetime}"
@@ -198,12 +282,13 @@ def set_reminder(
 
     with closing(get_db(context)) as conn:
         conn.execute(
-            "INSERT OR REPLACE INTO reminders (id, message, schedule_type, scheduled_time, fired) VALUES (?, ?, ?, ?, 0)",
+            "INSERT OR REPLACE INTO reminders (id, message, schedule_type, scheduled_time, fired, trigger_data) VALUES (?, ?, ?, ?, 0, ?)",
             (
                 reminder_id,
                 message,
                 schedule_info,
                 next_run.isoformat() if next_run else None,
+                json.dumps(trigger_data) if trigger_data else None,
             ),
         )
         conn.commit()
@@ -225,24 +310,27 @@ def set_reminder(
 def list_reminders(ctx: Context, limit: int = 50) -> list[dict]:
     """List scheduled reminders (limit: max number to return, default 50)"""
     context: ReminderContext = ctx.request_context.lifespan_context
+
+    jobs_map = {job.id: job for job in context.scheduler.get_jobs()}
+
     with closing(get_db(context)) as conn:
-        cursor = conn.execute("SELECT * FROM reminders")
-        reminder_data = {row["id"]: dict(row) for row in cursor}
+        cursor = conn.execute("SELECT * FROM reminders WHERE fired = 0 ORDER BY created_at DESC LIMIT ?", (limit,))
 
-    reminders = [
-        {
-            "id": job.id,
-            "message": reminder_data[job.id]["message"],
-            "schedule": reminder_data[job.id]["schedule_type"],
-            "next_run": (job.next_run_time.isoformat() if job.next_run_time else None),
-            "created_at": reminder_data[job.id]["created_at"],
-            "status": "active" if job.next_run_time else "paused",
-        }
-        for job in context.scheduler.get_jobs()
-        if job.id in reminder_data
-    ]
+        reminders = []
+        for row in cursor:
+            job = jobs_map.get(row["id"])
+            reminders.append(
+                {
+                    "id": row["id"],
+                    "message": row["message"],
+                    "schedule": row["schedule_type"],
+                    "next_run": job.next_run_time.isoformat() if job and job.next_run_time else None,
+                    "created_at": row["created_at"],
+                    "status": "active" if job and job.next_run_time else "pending",
+                }
+            )
 
-    return reminders[:limit]
+    return reminders
 
 
 @mcp.tool()
@@ -250,26 +338,24 @@ def update_reminder(ctx: Context, reminder_id: str, *, message: str) -> dict:
     """Update a reminder's message"""
     context: ReminderContext = ctx.request_context.lifespan_context
 
-    job = context.scheduler.get_job(reminder_id)
-    if not job:
-        raise ValueError(f"Reminder '{reminder_id}' not found. Use list_reminders() to see active reminders.")
-
     with closing(get_db(context)) as conn:
-        cursor = conn.execute("SELECT * FROM reminders WHERE id = ?", (reminder_id,))
+        cursor = conn.execute("SELECT * FROM reminders WHERE id = ? AND fired = 0", (reminder_id,))
         reminder = cursor.fetchone()
         if not reminder:
-            raise ValueError(f"Reminder '{reminder_id}' not found in database")
+            raise ValueError(f"Reminder '{reminder_id}' not found. Use list_reminders() to see active reminders.")
 
         conn.execute("UPDATE reminders SET message = ? WHERE id = ?", (message, reminder_id))
         conn.commit()
 
-    job.modify(args=[reminder_id], kwargs={"message": message, "data_dir": context.data_dir, "notif_dir": context.notif_dir})
+    job = context.scheduler.get_job(reminder_id)
+    if job:
+        job.modify(args=[reminder_id], kwargs={"message": message, "data_dir": context.data_dir, "notif_dir": context.notif_dir})
 
     return {
         "id": reminder_id,
         "message": message,
         "schedule": reminder["schedule_type"],
-        "next_run": job.next_run_time.isoformat() if job.next_run_time else None,
+        "next_run": job.next_run_time.isoformat() if job and job.next_run_time else None,
         "status": "updated",
     }
 
@@ -280,13 +366,17 @@ def cancel_reminder(ctx: Context, reminder_id: str) -> dict:
     context: ReminderContext = ctx.request_context.lifespan_context
     from apscheduler.jobstores.base import JobLookupError
 
+    with closing(get_db(context)) as conn:
+        cursor = conn.execute("SELECT * FROM reminders WHERE id = ? AND fired = 0", (reminder_id,))
+        if not cursor.fetchone():
+            raise ValueError(f"Reminder '{reminder_id}' not found. Use list_reminders() to see active reminders.")
+
+        conn.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))
+        conn.commit()
+
     try:
         context.scheduler.remove_job(reminder_id)
     except JobLookupError:
-        raise ValueError(f"Reminder '{reminder_id}' not found. Use list_reminders() to see active reminders.")
-
-    with closing(get_db(context)) as conn:
-        conn.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))
-        conn.commit()
+        pass
 
     return {"status": "cancelled", "id": reminder_id}

@@ -12,7 +12,7 @@ import (
 )
 
 func WriteNotification(
-	notifDir, messageID, chatJID, chatName, contactName, contactPhone string,
+	notifDir, messageID, chatName, contactName, contactPhone string,
 	contactSaved, isDirectChat bool,
 	sender, content, mediaType string, isForwarded bool,
 ) error {
@@ -27,7 +27,7 @@ func WriteNotification(
 	replyInstruction := "WARNING: Reply to this chat using the send_message tool so the user can see it; messages typed elsewhere never reach their WhatsApp."
 
 	metadata := map[string]interface{}{
-		"contact_saved":    contactSaved,
+		"contact_saved":     contactSaved,
 		"reply_instruction": replyInstruction,
 	}
 	if contactName != "" {
@@ -81,7 +81,7 @@ func WriteNotification(
 }
 
 func WriteReactionNotification(
-	notifDir, targetMessageID, chatJID, chatName, contactName, contactPhone string,
+	notifDir, targetMessageID, chatName, contactName, contactPhone string,
 	contactSaved, isDirectChat bool,
 	sender, emoji string, isRemoved bool,
 ) error {
@@ -94,9 +94,9 @@ func WriteReactionNotification(
 	}
 
 	metadata := map[string]interface{}{
-		"contact_saved":      contactSaved,
-		"target_message_id":  targetMessageID,
-		"is_removed":         isRemoved,
+		"contact_saved":     contactSaved,
+		"target_message_id": targetMessageID,
+		"is_removed":        isRemoved,
 	}
 	if contactName != "" {
 		metadata["contact_name"] = contactName
