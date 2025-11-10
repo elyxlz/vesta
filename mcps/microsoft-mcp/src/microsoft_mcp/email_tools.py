@@ -11,6 +11,19 @@ from .context import MicrosoftContext
 
 EMAIL_SAVE_SUBDIR = "emails"
 LONG_EMAIL_WARNING_THRESHOLD = 5000
+EMAIL_SNAPSHOT_FIELDS = [
+    "id",
+    "subject",
+    "from",
+    "toRecipients",
+    "ccRecipients",
+    "receivedDateTime",
+    "hasAttachments",
+    "conversationId",
+    "isRead",
+    "bodyPreview",
+]
+EMAIL_SNAPSHOT_SELECT = ",".join(EMAIL_SNAPSHOT_FIELDS)
 
 
 def _remove_attachment_bytes(result: dict[str, Any]) -> None:
@@ -59,6 +72,45 @@ def _scrub_email_snapshot(record: dict[str, Any]) -> None:
         record.setdefault("preview", record.pop("bodyPreview"))
 
 
+def _resolve_mail_endpoint(context: MicrosoftContext, folder: str | None) -> str:
+    """Return the correct Graph endpoint for mailbox or folder scopes"""
+    if folder:
+        folder_path = context.folders.get(folder.casefold(), folder)
+        return f"/me/mailFolders/{folder_path}/messages"
+    return "/me/messages"
+
+
+def _search_mailbox_messages(
+    context: MicrosoftContext,
+    account_id: str,
+    endpoint: str,
+    query: str,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Execute a mailbox search using the Graph messages endpoint"""
+    params = {
+        "$search": f'"{query}"',
+        "$top": min(limit, 100),
+        "$select": EMAIL_SNAPSHOT_SELECT,
+    }
+    emails = list(
+        graph.request_paginated(
+            context.http_client,
+            context.cache_file,
+            context.scopes,
+            context.settings,
+            context.base_url,
+            endpoint,
+            account_id,
+            params=params,
+            limit=limit,
+        )
+    )
+    for email in emails:
+        _scrub_email_snapshot(email)
+    return emails
+
+
 @mcp.tool()
 def list_emails(
     ctx: Context,
@@ -73,24 +125,9 @@ def list_emails(
 
     folder_path = context.folders.get(folder.casefold(), folder)
 
-    select_fields = ",".join(
-        [
-            "id",
-            "subject",
-            "from",
-            "toRecipients",
-            "ccRecipients",
-            "receivedDateTime",
-            "hasAttachments",
-            "conversationId",
-            "isRead",
-            "bodyPreview",
-        ]
-    )
-
     params = {
         "$top": min(limit, 100),
-        "$select": select_fields,
+        "$select": EMAIL_SNAPSHOT_SELECT,
         "$orderby": "receivedDateTime desc",
     }
 
@@ -574,77 +611,8 @@ def search_emails(
 ) -> list[dict[str, Any]]:
     context: MicrosoftContext = ctx.request_context.lifespan_context
     account_id = auth.get_account_id_by_email(account_email, context.cache_file, settings=context.settings)
-    if folder:
-        # For folder-specific search, use the traditional endpoint
-        folder_path = context.folders.get(folder.casefold(), folder)
-        endpoint = f"/me/mailFolders/{folder_path}/messages"
-
-        select_fields = [
-            "id",
-            "subject",
-            "from",
-            "toRecipients",
-            "receivedDateTime",
-            "hasAttachments",
-            "conversationId",
-            "isRead",
-            "bodyPreview",
-        ]
-
-        params = {
-            "$search": f'"{query}"',
-            "$top": min(limit, 100),
-            "$select": ",".join(select_fields),
-        }
-
-        emails = list(
-            graph.request_paginated(
-                context.http_client,
-                context.cache_file,
-                context.scopes,
-                context.settings,
-                context.base_url,
-                endpoint,
-                account_id,
-                params=params,
-                limit=limit,
-            )
-        )
-        for email in emails:
-            _scrub_email_snapshot(email)
-        return emails
-
-    fields = [
-        "id",
-        "subject",
-        "from",
-        "toRecipients",
-        "receivedDateTime",
-        "hasAttachments",
-        "conversationId",
-        "isRead",
-        "bodyPreview",
-    ]
-
-    results = list(
-        graph.search_query(
-            context.http_client,
-            context.cache_file,
-            context.scopes,
-            context.settings,
-            context.base_url,
-            query,
-            ["message"],
-            account_id,
-            limit,
-            fields=fields,
-        )
-    )
-
-    for email in results:
-        _scrub_email_snapshot(email)
-
-    return results
+    endpoint = _resolve_mail_endpoint(context, folder)
+    return _search_mailbox_messages(context, account_id, endpoint, query, limit)
 
 
 @mcp.tool()
