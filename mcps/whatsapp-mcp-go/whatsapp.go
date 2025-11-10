@@ -63,15 +63,14 @@ func NewWhatsAppClient(dataDir, notificationsDir string, logger waLog.Logger) (*
 	dbLog := waLog.Stdout("Database", "INFO", true)
 	whatsappDBPath := filepath.Join(dataDir, "whatsapp.db")
 
-	ctx := context.Background()
-	container, err := sqlstore.New(ctx, "sqlite3", fmt.Sprintf("file:%s?_foreign_keys=on", whatsappDBPath), dbLog)
+	container, err := sqlstore.New("sqlite3", fmt.Sprintf("file:%s?_foreign_keys=on", whatsappDBPath), dbLog)
 	if err != nil {
 		store.Close()
 		return nil, fmt.Errorf("failed to connect to whatsapp database: %v", err)
 	}
 
 	// Get or create device
-	deviceStore, err := container.GetFirstDevice(ctx)
+	deviceStore, err := container.GetFirstDevice()
 	if err != nil {
 		if err == sql.ErrNoRows {
 			deviceStore = container.NewDevice()
@@ -485,8 +484,7 @@ func (wac *WhatsAppClient) getChatName(jid types.JID, sender string) string {
 	}
 
 	// For contacts
-	ctx := context.Background()
-	if contact, err := wac.client.Store.Contacts.GetContact(ctx, jid); err == nil && contact.FullName != "" {
+	if contact, err := wac.client.Store.Contacts.GetContact(jid); err == nil && contact.FullName != "" {
 		return contact.FullName
 	}
 
@@ -1130,7 +1128,7 @@ func (wac *WhatsAppClient) DownloadMedia(messageID, chatIdentifier, downloadPath
 	}
 
 	// Download media from WhatsApp servers
-	data, err := wac.client.Download(context.Background(), downloadable)
+	data, err := wac.client.Download(downloadable)
 	if err != nil {
 		return "", fmt.Errorf("failed to download media: %v", err)
 	}
@@ -1284,7 +1282,7 @@ func (wac *WhatsAppClient) CreateGroup(name string, participants []string) (bool
 		return false, err.Error()
 	}
 
-	resp, err := wac.client.CreateGroup(context.Background(), whatsmeow.ReqCreateGroup{
+	resp, err := wac.client.CreateGroup(whatsmeow.ReqCreateGroup{
 		Name:         name,
 		Participants: jids,
 	})

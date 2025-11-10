@@ -236,7 +236,16 @@ async def collect_responses(
         await settle_collect_task(collect_task, timeout=config.interrupt_timeout)
 
     if should_restart_client:
-        await restart_claude_session(state, config=config)
+        try:
+            await asyncio.wait_for(restart_claude_session(state, config=config), timeout=15.0)
+        except asyncio.TimeoutError:
+            state.client = None
+            responses.append("[Error: Client restart timed out - please restart vesta]")
+            vfx.log_error("Client restart timed out after 15 seconds", colors=Colors)
+        except Exception as e:
+            state.client = None
+            responses.append(f"[Error: Client restart failed - {str(e)[:50]}]")
+            vfx.log_error(f"Client restart failed: {e}", colors=Colors)
 
     return responses, state
 
@@ -401,16 +410,17 @@ async def message_processor(queue: asyncio.Queue, state: vm.State, *, config: vm
             msg, is_user = await asyncio.wait_for(queue.get(), timeout=1.0)
 
             state.is_processing = True
+            try:
+                responses, _ = await process_message_with_typing(msg, state, config, is_user=is_user)
 
-            responses, _ = await process_message_with_typing(msg, state, config, is_user=is_user)
+                for i, response in enumerate(responses):
+                    if response and response.strip():
+                        if i > 0:
+                            await vfx.sleep(config.response_spacing_delay)
+                        await output_line(response, state)
+            finally:
+                state.is_processing = False
 
-            for i, response in enumerate(responses):
-                if response and response.strip():
-                    if i > 0:
-                        await vfx.sleep(config.response_spacing_delay)
-                    await output_line(response, state)
-
-            state.is_processing = False
         except asyncio.TimeoutError:
             continue
         except Exception as e:
@@ -610,6 +620,7 @@ async def create_claude_client(config: vm.VestaSettings) -> ccsdk.ClaudeSDKClien
             hooks={},
             permission_mode="bypassPermissions",
             model="sonnet",
+            continue_conversation=True,
         )
     )
     await client.__aenter__()
