@@ -1,0 +1,97 @@
+From: help@learncodethehardway.com
+Subject: Learn Go THW Module 3 is Almost Done
+Date: 2025-11-08T18:50:56Z
+To: elio@pascarelli.com
+
+================================================================================
+
+An important message from Learn Code the Hard Way.
+Learn Code the Hard Way
+View Your Account <https://learncodethehardway.com/client/#/login/>
+I don't hide my unsubscribe! If you don't want to receive marketing emails then just click the following button and they'll be disabled. You'll only receive password resets and very rare planned outages. You can also reply to this email and I'll actually respond. I'm always open to any feedback, suggestions, or advice.
+Unsubscribe from Marketing Emails <https://learncodethehardway.com/client/#/email/unsubscribe/14e3bbf7589c7758168a388b8096c134/>
+Learn Go the Hard Way, Module 3 Almost Done
+
+You can read this email at https://learncodethehardway.com/emails/22-learn-go-the-hard-way-module-3-almost-done/
+
+Hello once again. I'm sending out this quick email to let you know that Learn Go the Hard Way, Module 3 is almost done. It was done, but then I decided to add one more important feature to the module (and the course) that I think will make it even better. Read on for what's being added next week, and what's in Module 3 now.
+
+You can read Learn Go the Hard Way for free at:
+
+https://learncodethehardway.com/courses/learn-go-the-hard-way/
+
+What's Done
+
+Module 3 is where you implement a selection of tools from the GNU coreutils project to learn about the basics of systems programming in Go, the Go standard library, and how to create your own projects. The module is structured as a "challenge mode" where you're given a short purposefully vague description of the tool, a link to its docs, and then have to implement it in Go.
+
+But, if you get stuck you have resources to help you figure it out:
+
+  1.  First you can click a new "spoilers" button that will unhide a possible solution to the problem.
+  2.  Then you can get a clue by seeing the list of Go packages I used in my implementation. This can help you at least get an idea about what you might need to use.
+  3.  Then you can get a hint about the code before viewing my solution.
+  4.  Then you finally can view my first attempt at the solution, but my solution is purposefully minimal. It's just enough to get a semi-working version of the tool, get you unstuck, and allow you to carry on with your own implementation.
+
+I've also incorporated more of the Remake It process I'm using within the first two modules. If you need to view my version of the code, then I tell you to write up a description of what I did in your words. Once you have your description, you delete your code and try again from your description.
+
+I'm hoping this process of "Cheat, Explain, Remake," helps people transition into turning their own ideas into working software.
+
+Testing: The Missing Feature
+
+The whole time I was working on Module 3 I felt it was a little thin. As if something important is missing that would make it much better. At first I thought I needed a possible 4th module, but then I tried a little experiment:
+
+What does it take to test these little command line tools using Go's extensive built-in testing functionality.
+
+A quick couple of attempts this morning confirmed that simply trying to create a test for these tools is a great way to improve someone's understanding Go as a systems management language.
+
+Take a tool like cat<https://learncodethehardway.com/courses/learn-go-the-hard-way/3-advanced-topics/31-cat/> and then think about how you would write an automated test for it?
+
+  1.  Do you write it like an integration test? That means you have to get into forking processes, possibly channels, reading and writing another process's I/O.
+  2.  Do you try to automate through the os.Args directly? Now you have to dive into how flag actually works and realize that flag can only be run once.
+  3.  Well now you have to think about whether changing your argument processing to use FlagSet instead just for testing is a good idea. Do you consider this important instrumentation, or do you think testing shouldn't impose on the target code?
+  4.  Finally, maybe you check out a mocking library, but is that really needed just to test cat?
+
+Based on this experiment, I'm going to make the videos for Module 3 demonstrate how to test the code for each of the tools. I'll also be adding a new section (which is currently stubbed out) that includes the demonstration and similar discussions above to teach basic automated testing.
+
+Module 3 Outline
+
+  *   31: cat
+  *   32: od
+  *   33: wc
+  *   34: tr
+  *   35: date
+  *   36: numfmt
+  *   37: sha2sum
+  *   38: stat Then du
+  *   39: head, tail, and split
+  *   40: sort, and uniq
+  *   41: cut
+  *   42: nohup
+  *   43: ls
+  *   44: curl or wget
+  *   45: grep
+  *   46: find
+  *   47: Conclusion
+
+Bugs and Videos on Monday
+
+Many of you sent me bugs and typos I have to fix, so that's the next piece of work. I also have the videos for the first module mostly done but need to re-record 3 as I feel they're not very high quality.
+
+I'll be posting all your bug fixes and the videos for Module 1 on Monday, then working on the testing content for Module 3 the rest of the week (and this weekend).
+
+Feedback Welcome
+
+As usual, if you find flaws, errors, mistakes, or things that don't work, then let me know. Just hit reply and I'll get it fixed. I also appreciate all the bug reports so far.
+
+Thank you so much,
+
+Zed
+
+Follow me on Twitter @lzsthw<https://twitter.com/lzsthw>
+Shavian Publishing, LLC
+1521 Alton Rd Box 576
+Miami Beach, FL
+33139
+
+Copyright (C) Zed A. Shaw. All rights reserved.
+
+Unsubscribe from emails.<https://learncodethehardway.com/client/#/email/unsubscribe/14e3bbf7589c7758168a388b8096c134/>
