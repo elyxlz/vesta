@@ -196,6 +196,7 @@ async def collect_responses(
 ) -> tuple[list[str], vm.State]:
     responses = []
     message_count = 0
+    should_restart_client = False
 
     async def collect():
         nonlocal message_count
@@ -223,14 +224,19 @@ async def collect_responses(
         responses.append("[Response timeout]")
         state.sub_agent_context = None
         await attempt_interrupt(state, config=config, reason="Response timeout")
+        should_restart_client = True
     except asyncio.CancelledError:
         state.sub_agent_context = None
         collect_task.cancel()
     except Exception:
         state.sub_agent_context = None
         await attempt_interrupt(state, config=config, reason="Response stream error")
+        should_restart_client = True
     finally:
         await settle_collect_task(collect_task, timeout=config.interrupt_timeout)
+
+    if should_restart_client:
+        await restart_claude_session(state, config=config)
 
     return responses, state
 
@@ -595,9 +601,8 @@ def check_dependencies() -> None:
         raise RuntimeError("rclone is not found in PATH. Please install rclone: https://rclone.org/install/")
 
 
-async def init_state(*, config: vm.VestaSettings) -> vm.State:
-    """Initialize a fresh Vesta state with all required fields, including the client."""
-    # Create the Claude SDK client
+async def create_claude_client(config: vm.VestaSettings) -> ccsdk.ClaudeSDKClient:
+    """Create and enter a Claude SDK client session."""
     client = ccsdk.ClaudeSDKClient(
         options=ccsdk.ClaudeCodeOptions(
             system_prompt=load_system_prompt(config),
@@ -608,6 +613,33 @@ async def init_state(*, config: vm.VestaSettings) -> vm.State:
         )
     )
     await client.__aenter__()
+    return client
+
+
+async def restart_claude_session(state: vm.State, *, config: vm.VestaSettings) -> None:
+    """Restart the existing Claude client so a bad tool run doesn't brick Vesta."""
+    if not state.client:
+        state.client = await create_claude_client(config)
+        return
+
+    try:
+        await asyncio.wait_for(state.client.disconnect(), timeout=config.interrupt_timeout)
+    except Exception as e:
+        vfx.log_error(f"Error while disconnecting Claude client: {e}", colors=Colors)
+
+    try:
+        await asyncio.wait_for(state.client.connect(), timeout=config.interrupt_timeout)
+        state.sub_agent_context = None
+        state.is_processing = False
+    except Exception as e:
+        vfx.log_error(f"Failed to restart Claude client: {e}", colors=Colors)
+        state.client = None
+
+
+async def init_state(*, config: vm.VestaSettings) -> vm.State:
+    """Initialize a fresh Vesta state with all required fields, including the client."""
+    # Create the Claude SDK client
+    client = await create_claude_client(config)
 
     # Initialize state with the client
     now = vfx.get_current_time()
