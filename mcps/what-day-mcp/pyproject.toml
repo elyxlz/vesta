@@ -1,0 +1,25 @@
+[project]
+name = "what-day-mcp"
+version = "0.1.0"
+description = "Date to day-of-week conversion - ALWAYS use this to avoid mistakes about which day a date falls on"
+readme = "README.md"
+authors = [
+    { name = "elyx", email = "elio@pascarelli.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "mcp[cli]>=1.6.0",
+]
+
+[project.scripts]
+what-day-mcp = "what_day_mcp.server:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.0",
+    "pytest-asyncio>=1.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

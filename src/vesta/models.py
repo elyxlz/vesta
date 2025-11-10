@@ -14,24 +14,17 @@ import claude_code_sdk as ccsdk
 SERVICE_ICONS = {
     "playwright": "🌐",
     "whatsapp": "📱",
-    "scheduler": "⏰",
+    "reminder": "⏰",
+    "task": "✅",
     "microsoft": "📧",
-}
-
-
-Colors = {
-    "dim": "\033[2m",
-    "cyan": "\033[96m",
-    "magenta": "\033[95m",
-    "yellow": "\033[93m",
-    "green": "\033[92m",
-    "reset": "\033[0m",
+    "what-day": "📅",
 }
 
 
 class McpServer(tp.TypedDict):
     command: str
     args: list[str]
+    env: tp.NotRequired[dict[str, str]]
 
 
 @dc.dataclass
@@ -45,64 +38,12 @@ class State:
     sub_agent_context: str | None = None
     last_context_pct: float = 0.0
     last_memory_consolidation: dt.datetime | None = None
-
-
-def _get_default_mcp_servers() -> dict[str, McpServer]:
-    root = pl.Path(__file__).parent.parent.parent.absolute()
-    return {
-        "microsoft": {
-            "command": "uv",
-            "args": [
-                "run",
-                "--directory",
-                "mcps/microsoft-mcp",
-                "microsoft-mcp",
-                "--data-dir",
-                str(root / "data/microsoft-mcp"),
-                "--notifications-dir",
-                str(root / "notifications"),
-            ],
-        },
-        "whatsapp": {
-            "command": "sh",
-            "args": [
-                "-c",
-                f"cd {root}/mcps/whatsapp-mcp-go && go build -o whatsapp-mcp . && ./whatsapp-mcp --data-dir {root}/data/whatsapp-mcp --notifications-dir {root}/notifications",
-            ],
-        },
-        "scheduler": {
-            "command": "uv",
-            "args": [
-                "run",
-                "--directory",
-                "mcps/scheduler-mcp",
-                "scheduler-mcp",
-                "--data-dir",
-                str(root / "data/scheduler-mcp"),
-                "--notifications-dir",
-                str(root / "notifications"),
-            ],
-        },
-        "playwright": {
-            "command": "npx",
-            "args": [
-                "--prefix",
-                "mcps/playwright-mcp",
-                "mcp-server-playwright",
-                "--browser",
-                "chromium",
-                "--blocked-origins",
-                "googleads.g.doubleclick.net;googlesyndication.com",
-                "--output-dir",
-                str(root / "data/playwright-mcp/screenshots"),
-                "--image-responses",
-                "omit",
-            ],
-        },
-    }
+    output_lock: asyncio.Lock = dc.field(default_factory=asyncio.Lock)
 
 
 class VestaSettings(pyd_settings.BaseSettings):
+    model_config = pyd_settings.SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
     ephemeral: bool = False
     debug: bool = False
     max_mcp_output_tokens: int = 200000
@@ -114,12 +55,175 @@ class VestaSettings(pyd_settings.BaseSettings):
     response_timeout: int = 180
     memory_agent_timeout: int = 1200
     typing_animation_delay: float = 0.5
+    pre_typing_delay: float = 0.8
+    response_spacing_delay: float = 0.3
     shutdown_timeout: int = 310
     task_gather_timeout: int = 2
     max_context_tokens: int = 150000
     enable_nightly_memory: bool = True
     nightly_memory_time: int = 4
-    mcp_servers: dict[str, McpServer] = pyd.Field(default_factory=_get_default_mcp_servers)
+    interrupt_timeout: float = 5.0
+    enable_whatsapp_greeting: bool = True
+    whatsapp_greeting_prompt: str = (
+        "Check whether the WhatsApp MCP is authenticated by calling the `authenticate_whatsapp` tool. "
+        "If it is authenticated, send a short WhatsApp message to the user letting them know Vesta just came online and is ready to help. "
+        "If it is not authenticated, log that status and do not attempt to send a message."
+    )
+
+    # Microsoft MCP secrets
+    microsoft_mcp_client_id: str | None = None
+    microsoft_mcp_tenant_id: str = "common"
+
+    # OneDrive configuration
+    onedrive_token: str | None = None
+    onedrive_client_id: str | None = None
+    onedrive_client_secret: str | None = None
+    onedrive_drive_id: str | None = None
+    onedrive_remote_name: str = "onedrive"
+    onedrive_remote_path: str = "/"
+
+    @property
+    def root_dir(self) -> pl.Path:
+        return pl.Path(__file__).parent.parent.parent.absolute()
+
+    @property
+    def memory_file(self) -> pl.Path:
+        return self.root_dir / "MEMORY.md"
+
+    @property
+    def memory_template(self) -> pl.Path:
+        return self.root_dir / "MEMORY.md.tmp"
+
+    @property
+    def system_prompt_file(self) -> pl.Path:
+        return self.root_dir / "SYSTEM_PROMPT.md"
+
+    @property
+    def notifications_dir(self) -> pl.Path:
+        return self.root_dir / "notifications"
+
+    @property
+    def data_dir(self) -> pl.Path:
+        return self.root_dir / "data"
+
+    @property
+    def logs_dir(self) -> pl.Path:
+        return self.root_dir / "logs"
+
+    @property
+    def onedrive_dir(self) -> pl.Path:
+        return self.root_dir / "onedrive"
+
+    @property
+    def rclone_config_file(self) -> pl.Path:
+        return self.data_dir / "rclone.conf"
+
+    def get_mcp_data_dir(self, mcp_name: str) -> pl.Path:
+        return self.data_dir / f"{mcp_name}-mcp"
+
+    @property
+    def playwright_screenshots_dir(self) -> pl.Path:
+        return self.get_mcp_data_dir("playwright") / "screenshots"
+
+    @property
+    def whatsapp_build_dir(self) -> pl.Path:
+        return self.root_dir / "mcps" / "whatsapp-mcp-go"
+
+    @property
+    def mcp_servers(self) -> dict[str, McpServer]:
+        base_env = {"MAX_MCP_OUTPUT_TOKENS": str(self.max_mcp_output_tokens)}
+        servers: dict[str, McpServer] = {
+            "microsoft": {
+                "command": "uv",
+                "args": [
+                    "run",
+                    "--directory",
+                    "mcps/microsoft-mcp",
+                    "microsoft-mcp",
+                    "--data-dir",
+                    str(self.data_dir / "microsoft-mcp"),
+                    "--log-dir",
+                    str(self.logs_dir / "microsoft-mcp"),
+                    "--notifications-dir",
+                    str(self.notifications_dir),
+                ],
+                "env": {
+                    **base_env,
+                    "MICROSOFT_MCP_CLIENT_ID": self.microsoft_mcp_client_id or "",
+                    "MICROSOFT_MCP_TENANT_ID": self.microsoft_mcp_tenant_id,
+                },
+            },
+            "whatsapp": {
+                "command": "sh",
+                "args": [
+                    "-c",
+                    f"cd {self.whatsapp_build_dir} && go build -o whatsapp-mcp . && ./whatsapp-mcp --data-dir {self.data_dir / 'whatsapp-mcp'} --log-dir {self.logs_dir / 'whatsapp-mcp'} --notifications-dir {self.notifications_dir}",
+                ],
+                "env": base_env,
+            },
+            "reminder": {
+                "command": "uv",
+                "args": [
+                    "run",
+                    "--directory",
+                    "mcps/reminder-mcp",
+                    "reminder-mcp",
+                    "--data-dir",
+                    str(self.data_dir / "reminder-mcp"),
+                    "--log-dir",
+                    str(self.logs_dir / "reminder-mcp"),
+                    "--notifications-dir",
+                    str(self.notifications_dir),
+                ],
+                "env": base_env,
+            },
+            "task": {
+                "command": "uv",
+                "args": [
+                    "run",
+                    "--directory",
+                    "mcps/task-mcp",
+                    "task-mcp",
+                    "--data-dir",
+                    str(self.data_dir / "task-mcp"),
+                    "--log-dir",
+                    str(self.logs_dir / "task-mcp"),
+                ],
+                "env": base_env,
+            },
+            "playwright": {
+                "command": "npx",
+                "args": [
+                    "--prefix",
+                    "mcps/playwright-mcp",
+                    "mcp-server-playwright",
+                    "--browser",
+                    "chromium",
+                    "--blocked-origins",
+                    "googleads.g.doubleclick.net;googlesyndication.com",
+                    "--output-dir",
+                    str(self.playwright_screenshots_dir),
+                    "--image-responses",
+                    "omit",
+                ],
+                "env": base_env,
+            },
+            "what-day": {
+                "command": "uv",
+                "args": [
+                    "run",
+                    "--directory",
+                    "mcps/what-day-mcp",
+                    "what-day-mcp",
+                    "--data-dir",
+                    str(self.data_dir / "what-day-mcp"),
+                    "--log-dir",
+                    str(self.logs_dir / "what-day-mcp"),
+                ],
+                "env": base_env,
+            },
+        }
+        return servers
 
 
 class Notification(pyd.BaseModel):

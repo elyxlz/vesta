@@ -2,38 +2,91 @@
 
 import base64
 import pathlib as pl
+from datetime import datetime
 from typing import Any
-from . import graph
+from mcp.server.fastmcp import Context
+from . import graph, auth
 from .auth_tools import mcp  # Use the shared MCP instance
+from .context import MicrosoftContext
 
-FOLDERS = {
-    k.casefold(): v
-    for k, v in {
-        "inbox": "inbox",
-        "sent": "sentitems",
-        "drafts": "drafts",
-        "deleted": "deleteditems",
-        "junk": "junkemail",
-        "archive": "archive",
-    }.items()
-}
+EMAIL_SAVE_SUBDIR = "emails"
+LONG_EMAIL_WARNING_THRESHOLD = 5000
+
+
+def _remove_attachment_bytes(result: dict[str, Any]) -> None:
+    """Remove contentBytes from attachments to reduce response size"""
+    if "attachments" in result and result["attachments"]:
+        for attachment in result["attachments"]:
+            if "contentBytes" in attachment:
+                del attachment["contentBytes"]
+
+
+def _sanitize_filename(value: str) -> str:
+    """Return a filesystem-safe fragment"""
+    sanitized = "".join(char if char.isalnum() else "_" for char in value or "")
+    sanitized = sanitized.strip("_")
+    return sanitized or "email"
+
+
+def _prepare_email_output_path(
+    context: MicrosoftContext,
+    email_id: str,
+    subject: str | None,
+    override_path: str | None,
+) -> pl.Path:
+    """Determine where to persist the email content"""
+    if override_path:
+        path = pl.Path(override_path).expanduser().resolve()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
+    base_dir = context.cache_file.parent / EMAIL_SAVE_SUBDIR
+    base_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
+    subject_fragment = _sanitize_filename(subject or "")
+    id_fragment = _sanitize_filename(email_id)[:32]
+    filename = f"{timestamp}_{subject_fragment[:40]}_{id_fragment}.txt".strip("_")
+
+    return base_dir / filename
+
+
+def _scrub_email_snapshot(record: dict[str, Any]) -> None:
+    """Ensure email summaries never leak body content"""
+    if "body" in record:
+        del record["body"]
+    if "bodyPreview" in record:
+        record.setdefault("preview", record.pop("bodyPreview"))
 
 
 @mcp.tool()
 def list_emails(
-    account_id: str,
+    ctx: Context,
+    *,
+    account_email: str,
     folder: str = "inbox",
     limit: int = 10,
-    include_body: bool = True,
 ) -> list[dict[str, Any]]:
-    """folder: 'inbox', 'sent', 'drafts', 'deleted', 'junk', 'archive' (case-insensitive)"""
+    """List email metadata. Bodies are never returned."""
+    context: MicrosoftContext = ctx.request_context.lifespan_context
+    account_id = auth.get_account_id_by_email(account_email, context.cache_file, settings=context.settings)
 
-    folder_path = FOLDERS.get(folder.casefold(), folder)
+    folder_path = context.folders.get(folder.casefold(), folder)
 
-    if include_body:
-        select_fields = "id,subject,from,toRecipients,ccRecipients,receivedDateTime,hasAttachments,body,conversationId,isRead"
-    else:
-        select_fields = "id,subject,from,toRecipients,receivedDateTime,hasAttachments,conversationId,isRead"
+    select_fields = ",".join(
+        [
+            "id",
+            "subject",
+            "from",
+            "toRecipients",
+            "ccRecipients",
+            "receivedDateTime",
+            "hasAttachments",
+            "conversationId",
+            "isRead",
+            "bodyPreview",
+        ]
+    )
 
     params = {
         "$top": min(limit, 100),
@@ -43,6 +96,11 @@ def list_emails(
 
     emails = list(
         graph.request_paginated(
+            context.http_client,
+            context.cache_file,
+            context.scopes,
+            context.settings,
+            context.base_url,
             f"/me/mailFolders/{folder_path}/messages",
             account_id,
             params=params,
@@ -50,94 +108,112 @@ def list_emails(
         )
     )
 
+    for email in emails:
+        _scrub_email_snapshot(email)
+
     return emails
 
 
 @mcp.tool()
 def get_email(
+    ctx: Context,
+    *,
     email_id: str,
-    account_id: str,
-    include_body: bool = True,
+    account_email: str,
     include_attachments: bool = True,
     save_to_file: str | None = None,
 ) -> dict[str, Any]:
-    params = {}
+    """Get email metadata. Body content is always saved to disk and never returned."""
+    context: MicrosoftContext = ctx.request_context.lifespan_context
+    account_id = auth.get_account_id_by_email(account_email, context.cache_file, settings=context.settings)
+    params: dict[str, Any] = {
+        "$select": "id,subject,from,toRecipients,ccRecipients,receivedDateTime,hasAttachments,conversationId,isRead,body,bodyPreview",
+    }
     if include_attachments:
         params["$expand"] = "attachments($select=id,name,size,contentType)"
 
-    result = graph.request("GET", f"/me/messages/{email_id}", account_id, params=params)
+    result = graph.request(
+        context.http_client,
+        context.cache_file,
+        context.scopes,
+        context.settings,
+        context.base_url,
+        "GET",
+        f"/me/messages/{email_id}",
+        account_id,
+        params=params,
+    )
     if not result:
         raise ValueError(f"Email with ID {email_id} not found")
 
-    body_max_length = 25000
-    if include_body and "body" in result and "content" in result["body"]:
-        content = result["body"]["content"]
-        if len(content) > body_max_length:
-            result["body"]["content"] = content[:body_max_length] + f"\n\n[Content truncated - {len(content)} total characters]"
-            result["body"]["truncated"] = True
-            result["body"]["total_length"] = len(content)
-    elif not include_body and "body" in result:
+    full_body_content = (result.get("body") or {}).get("content") or ""
+    _remove_attachment_bytes(result)
+
+    save_path = _prepare_email_output_path(context, email_id, result.get("subject"), save_to_file)
+    content_lines = [
+        f"From: {result.get('from', {}).get('emailAddress', {}).get('address', 'unknown')}",
+        f"Subject: {result.get('subject', 'No subject')}",
+        f"Date: {result.get('receivedDateTime', 'unknown')}",
+        f"To: {', '.join([r.get('emailAddress', {}).get('address', '') for r in result.get('toRecipients', [])])}",
+    ]
+
+    if result.get("ccRecipients"):
+        content_lines.append(f"Cc: {', '.join([r.get('emailAddress', {}).get('address', '') for r in result.get('ccRecipients', [])])}")
+
+    content_lines.extend(["", "=" * 80, "", full_body_content])
+
+    save_path.write_text("\n".join(content_lines), encoding="utf-8")
+    saved_size = save_path.stat().st_size
+
+    if "body" in result:
         del result["body"]
 
-    # Remove attachment content bytes to reduce size
-    if "attachments" in result and result["attachments"]:
-        for attachment in result["attachments"]:
-            if "contentBytes" in attachment:
-                del attachment["contentBytes"]
+    result["body_saved_to"] = str(save_path)
+    result["body_saved_size"] = saved_size
+    result["body_length"] = len(full_body_content)
 
-    if save_to_file is not None:
-        file_path = save_to_file if save_to_file else f"/tmp/email_{email_id[:8]}.txt"
-        path = pl.Path(file_path).expanduser().resolve()
-        path.parent.mkdir(parents=True, exist_ok=True)
+    if "bodyPreview" in result:
+        result["preview"] = result.pop("bodyPreview")
 
-        content_lines = [
-            f"From: {result.get('from', {}).get('emailAddress', {}).get('address', 'unknown')}",
-            f"Subject: {result.get('subject', 'No subject')}",
-            f"Date: {result.get('receivedDateTime', 'unknown')}",
-            f"To: {', '.join([r.get('emailAddress', {}).get('address', '') for r in result.get('toRecipients', [])])}",
-        ]
-
-        if result.get('ccRecipients'):
-            content_lines.append(f"Cc: {', '.join([r.get('emailAddress', {}).get('address', '') for r in result.get('ccRecipients', [])])}")
-
-        content_lines.extend(["", "=" * 80, "", result.get('body', {}).get('content', 'No content')])
-
-        path.write_text("\n".join(content_lines))
-        result["saved_to"] = str(path)
-        result["saved_size"] = path.stat().st_size
+    if result["body_length"] > LONG_EMAIL_WARNING_THRESHOLD:
+        warning = (
+            f"Email body is {result['body_length']} characters; inspect {result['body_saved_to']} "
+            "and grep/crop/filter before pasting snippets to avoid overflowing context."
+        )
+        result.setdefault("warnings", []).append(warning)
 
     return result
 
 
 @mcp.tool()
 def create_email_draft(
-    account_id: str,
-    to: str,
+    ctx: Context,
+    *,
+    account_email: str,
+    to: list[str],
     subject: str,
     body: str,
-    cc: str | None = None,
-    attachments: str | None = None,
+    cc: list[str] | None = None,
+    attachments: list[str] | None = None,
 ) -> dict[str, Any]:
-    """to/cc: comma-separated emails. attachments: comma-separated file paths"""
-    # Handle both single and comma-separated email addresses
-    to_list = [addr.strip() for addr in to.split(",") if addr.strip()] if "," in to else [to]
+    """to/cc: list of email addresses. attachments: list of file paths"""
+    context: MicrosoftContext = ctx.request_context.lifespan_context
+    account_id = auth.get_account_id_by_email(account_email, context.cache_file, settings=context.settings)
 
     message = {
         "subject": subject,
         "body": {"contentType": "Text", "content": body},
-        "toRecipients": [{"emailAddress": {"address": addr}} for addr in to_list],
+        "toRecipients": [{"emailAddress": {"address": addr}} for addr in to],
     }
 
     if cc:
-        cc_list = [addr.strip() for addr in cc.split(",") if addr.strip()] if "," in cc else [cc]
-        message["ccRecipients"] = [{"emailAddress": {"address": addr}} for addr in cc_list]
+        message["ccRecipients"] = [{"emailAddress": {"address": addr}} for addr in cc]
 
     small_attachments = []
     large_attachments = []
 
     if attachments:
-        # Handle both single and comma-separated paths
-        attachment_paths = [path.strip() for path in attachments.split(",") if path.strip()] if "," in attachments else [attachments]
+        attachment_paths = attachments
         for file_path in attachment_paths:
             path = pl.Path(file_path).expanduser().resolve()
             content_bytes = path.read_bytes()
@@ -164,7 +240,17 @@ def create_email_draft(
     if small_attachments:
         message["attachments"] = small_attachments
 
-    result = graph.request("POST", "/me/messages", account_id, json=message)
+    result = graph.request(
+        context.http_client,
+        context.cache_file,
+        context.scopes,
+        context.settings,
+        context.base_url,
+        "POST",
+        "/me/messages",
+        account_id,
+        json=message,
+    )
     if not result:
         raise ValueError("Failed to create email draft")
 
@@ -172,6 +258,12 @@ def create_email_draft(
 
     for att in large_attachments:
         graph.upload_large_mail_attachment(
+            context.http_client,
+            context.cache_file,
+            context.scopes,
+            context.settings,
+            context.base_url,
+            context.upload_chunk_size,
             message_id,
             att["name"],
             att["content_bytes"],
@@ -184,34 +276,32 @@ def create_email_draft(
 
 @mcp.tool()
 def send_email(
-    account_id: str,
-    to: str,
+    ctx: Context,
+    account_email: str,
+    to: list[str],
     subject: str,
     body: str,
-    cc: str | None = None,
-    attachments: str | None = None,
+    cc: list[str] | None = None,
+    attachments: list[str] | None = None,
 ) -> dict[str, str]:
-    """to/cc: comma-separated emails. attachments: comma-separated file paths"""
-    # Handle both single and comma-separated email addresses
-    to_list = [addr.strip() for addr in to.split(",") if addr.strip()] if "," in to else [to]
+    """to/cc: list of email addresses. attachments: list of file paths"""
+    context: MicrosoftContext = ctx.request_context.lifespan_context
+    account_id = auth.get_account_id_by_email(account_email, context.cache_file, settings=context.settings)
 
     message = {
         "subject": subject,
         "body": {"contentType": "Text", "content": body},
-        "toRecipients": [{"emailAddress": {"address": addr}} for addr in to_list],
+        "toRecipients": [{"emailAddress": {"address": addr}} for addr in to],
     }
 
     if cc:
-        cc_list = [addr.strip() for addr in cc.split(",") if addr.strip()] if "," in cc else [cc]
-        message["ccRecipients"] = [{"emailAddress": {"address": addr}} for addr in cc_list]
+        message["ccRecipients"] = [{"emailAddress": {"address": addr}} for addr in cc]
 
-    # Check if we have large attachments
     has_large_attachments = False
     processed_attachments = []
 
     if attachments:
-        # Handle both single and comma-separated paths
-        attachment_paths = [path.strip() for path in attachments.split(",") if path.strip()] if "," in attachments else [attachments]
+        attachment_paths = attachments
         for file_path in attachment_paths:
             path = pl.Path(file_path).expanduser().resolve()
             content_bytes = path.read_bytes()
@@ -239,22 +329,38 @@ def send_email(
             }
             for att in processed_attachments
         ]
-        graph.request("POST", "/me/sendMail", account_id, json={"message": message})
+        graph.request(
+            context.http_client,
+            context.cache_file,
+            context.scopes,
+            context.settings,
+            context.base_url,
+            "POST",
+            "/me/sendMail",
+            account_id,
+            json={"message": message},
+        )
         return {"status": "sent"}
     elif has_large_attachments:
-        # Create draft first, then add large attachments, then send
-        # We need to handle large attachments manually here
-        to_list = [addr.strip() for addr in to.split(",") if addr.strip()] if "," in to else [to]
         message = {
             "subject": subject,
             "body": {"contentType": "Text", "content": body},
-            "toRecipients": [{"emailAddress": {"address": addr}} for addr in to_list],
+            "toRecipients": [{"emailAddress": {"address": addr}} for addr in to],
         }
         if cc:
-            cc_list = [cc] if isinstance(cc, str) else cc
-            message["ccRecipients"] = [{"emailAddress": {"address": addr}} for addr in cc_list]
+            message["ccRecipients"] = [{"emailAddress": {"address": addr}} for addr in cc]
 
-        result = graph.request("POST", "/me/messages", account_id, json=message)
+        result = graph.request(
+            context.http_client,
+            context.cache_file,
+            context.scopes,
+            context.settings,
+            context.base_url,
+            "POST",
+            "/me/messages",
+            account_id,
+            json=message,
+        )
         if not result:
             raise ValueError("Failed to create email draft")
 
@@ -263,6 +369,12 @@ def send_email(
         for att in processed_attachments:
             if att["size"] >= 3 * 1024 * 1024:
                 graph.upload_large_mail_attachment(
+                    context.http_client,
+                    context.cache_file,
+                    context.scopes,
+                    context.settings,
+                    context.base_url,
+                    context.upload_chunk_size,
                     message_id,
                     att["name"],
                     att["content_bytes"],
@@ -276,41 +388,82 @@ def send_email(
                     "contentBytes": base64.b64encode(att["content_bytes"]).decode("utf-8"),
                 }
                 graph.request(
+                    context.http_client,
+                    context.cache_file,
+                    context.scopes,
+                    context.settings,
+                    context.base_url,
                     "POST",
                     f"/me/messages/{message_id}/attachments",
                     account_id,
                     json=small_att,
                 )
 
-        graph.request("POST", f"/me/messages/{message_id}/send", account_id)
+        graph.request(
+            context.http_client,
+            context.cache_file,
+            context.scopes,
+            context.settings,
+            context.base_url,
+            "POST",
+            f"/me/messages/{message_id}/send",
+            account_id,
+        )
         return {"status": "sent"}
     else:
-        graph.request("POST", "/me/sendMail", account_id, json={"message": message})
+        graph.request(
+            context.http_client,
+            context.cache_file,
+            context.scopes,
+            context.settings,
+            context.base_url,
+            "POST",
+            "/me/sendMail",
+            account_id,
+            json={"message": message},
+        )
         return {"status": "sent"}
 
 
 @mcp.tool()
-def reply_to_email(account_id: str, email_id: str, body: str, attachments: str | None = None, reply_all: bool = False) -> dict[str, str]:
-    """attachments: comma-separated file paths"""
+def reply_to_email(
+    ctx: Context, account_email: str, email_id: str, body: str, attachments: list[str] | None = None, reply_all: bool = False
+) -> dict[str, str]:
+    """attachments: list of file paths"""
+    context: MicrosoftContext = ctx.request_context.lifespan_context
+    account_id = auth.get_account_id_by_email(account_email, context.cache_file, settings=context.settings)
     create_endpoint = "createReplyAll" if reply_all else "createReply"
     reply_endpoint = "replyAll" if reply_all else "reply"
 
     if attachments:
-        draft = graph.request("POST", f"/me/messages/{email_id}/{create_endpoint}", account_id)
+        draft = graph.request(
+            context.http_client,
+            context.cache_file,
+            context.scopes,
+            context.settings,
+            context.base_url,
+            "POST",
+            f"/me/messages/{email_id}/{create_endpoint}",
+            account_id,
+        )
         if not draft or "id" not in draft:
             raise ValueError("Failed to create reply draft")
 
         draft_id = draft["id"]
 
         graph.request(
+            context.http_client,
+            context.cache_file,
+            context.scopes,
+            context.settings,
+            context.base_url,
             "PATCH",
             f"/me/messages/{draft_id}",
             account_id,
             json={"body": {"contentType": "Text", "content": body}},
         )
 
-        attachment_paths = [path.strip() for path in attachments.split(",") if path.strip()] if "," in attachments else [attachments]
-        for file_path in attachment_paths:
+        for file_path in attachments:
             path = pl.Path(file_path).expanduser().resolve()
             content_bytes = path.read_bytes()
             att_size = len(content_bytes)
@@ -323,6 +476,11 @@ def reply_to_email(account_id: str, email_id: str, body: str, attachments: str |
                     "contentBytes": base64.b64encode(content_bytes).decode("utf-8"),
                 }
                 graph.request(
+                    context.http_client,
+                    context.cache_file,
+                    context.scopes,
+                    context.settings,
+                    context.base_url,
                     "POST",
                     f"/me/messages/{draft_id}/attachments",
                     account_id,
@@ -330,6 +488,12 @@ def reply_to_email(account_id: str, email_id: str, body: str, attachments: str |
                 )
             else:
                 graph.upload_large_mail_attachment(
+                    context.http_client,
+                    context.cache_file,
+                    context.scopes,
+                    context.settings,
+                    context.base_url,
+                    context.upload_chunk_size,
                     draft_id,
                     att_name,
                     content_bytes,
@@ -337,18 +501,48 @@ def reply_to_email(account_id: str, email_id: str, body: str, attachments: str |
                     "application/octet-stream",
                 )
 
-        graph.request("POST", f"/me/messages/{draft_id}/send", account_id)
+        graph.request(
+            context.http_client,
+            context.cache_file,
+            context.scopes,
+            context.settings,
+            context.base_url,
+            "POST",
+            f"/me/messages/{draft_id}/send",
+            account_id,
+        )
         return {"status": "sent"}
     else:
         endpoint = f"/me/messages/{email_id}/{reply_endpoint}"
         payload = {"message": {"body": {"contentType": "Text", "content": body}}}
-        graph.request("POST", endpoint, account_id, json=payload)
+        graph.request(
+            context.http_client,
+            context.cache_file,
+            context.scopes,
+            context.settings,
+            context.base_url,
+            "POST",
+            endpoint,
+            account_id,
+            json=payload,
+        )
         return {"status": "sent"}
 
 
 @mcp.tool()
-def get_attachment(email_id: str, attachment_id: str, save_path: str, account_id: str) -> dict[str, Any]:
-    result = graph.request("GET", f"/me/messages/{email_id}/attachments/{attachment_id}", account_id)
+def get_attachment(ctx: Context, email_id: str, attachment_id: str, save_path: str, account_email: str) -> dict[str, Any]:
+    context: MicrosoftContext = ctx.request_context.lifespan_context
+    account_id = auth.get_account_id_by_email(account_email, context.cache_file, settings=context.settings)
+    result = graph.request(
+        context.http_client,
+        context.cache_file,
+        context.scopes,
+        context.settings,
+        context.base_url,
+        "GET",
+        f"/me/messages/{email_id}/attachments/{attachment_id}",
+        account_id,
+    )
 
     if not result:
         raise ValueError("Attachment not found")
@@ -372,22 +566,113 @@ def get_attachment(email_id: str, attachment_id: str, save_path: str, account_id
 
 @mcp.tool()
 def search_emails(
+    ctx: Context,
     query: str,
-    account_id: str,
+    account_email: str,
     limit: int = 50,
     folder: str | None = None,
 ) -> list[dict[str, Any]]:
+    context: MicrosoftContext = ctx.request_context.lifespan_context
+    account_id = auth.get_account_id_by_email(account_email, context.cache_file, settings=context.settings)
     if folder:
         # For folder-specific search, use the traditional endpoint
-        folder_path = FOLDERS.get(folder.casefold(), folder)
+        folder_path = context.folders.get(folder.casefold(), folder)
         endpoint = f"/me/mailFolders/{folder_path}/messages"
+
+        select_fields = [
+            "id",
+            "subject",
+            "from",
+            "toRecipients",
+            "receivedDateTime",
+            "hasAttachments",
+            "conversationId",
+            "isRead",
+            "bodyPreview",
+        ]
 
         params = {
             "$search": f'"{query}"',
             "$top": min(limit, 100),
-            "$select": "id,subject,from,toRecipients,receivedDateTime,hasAttachments,body,conversationId,isRead",
+            "$select": ",".join(select_fields),
         }
 
-        return list(graph.request_paginated(endpoint, account_id, params=params, limit=limit))
+        emails = list(
+            graph.request_paginated(
+                context.http_client,
+                context.cache_file,
+                context.scopes,
+                context.settings,
+                context.base_url,
+                endpoint,
+                account_id,
+                params=params,
+                limit=limit,
+            )
+        )
+        for email in emails:
+            _scrub_email_snapshot(email)
+        return emails
 
-    return list(graph.search_query(query, ["message"], account_id, limit))
+    fields = [
+        "id",
+        "subject",
+        "from",
+        "toRecipients",
+        "receivedDateTime",
+        "hasAttachments",
+        "conversationId",
+        "isRead",
+        "bodyPreview",
+    ]
+
+    results = list(
+        graph.search_query(
+            context.http_client,
+            context.cache_file,
+            context.scopes,
+            context.settings,
+            context.base_url,
+            query,
+            ["message"],
+            account_id,
+            limit,
+            fields=fields,
+        )
+    )
+
+    for email in results:
+        _scrub_email_snapshot(email)
+
+    return results
+
+
+@mcp.tool()
+def update_email(
+    ctx: Context, email_id: str, account_email: str, is_read: bool | None = None, categories: list[str] | None = None
+) -> dict[str, Any]:
+    """Mark email as read/unread or add categories"""
+    context: MicrosoftContext = ctx.request_context.lifespan_context
+    account_id = auth.get_account_id_by_email(account_email, context.cache_file, settings=context.settings)
+
+    updates = {}
+    if is_read is not None:
+        updates["isRead"] = is_read
+    if categories is not None:
+        updates["categories"] = categories
+
+    if not updates:
+        raise ValueError("Must specify at least one field to update (is_read or categories)")
+
+    result = graph.request(
+        context.http_client,
+        context.cache_file,
+        context.scopes,
+        context.settings,
+        context.base_url,
+        "PATCH",
+        f"/me/messages/{email_id}",
+        account_id,
+        json=updates,
+    )
+    return result or {"status": "updated", "email_id": email_id}

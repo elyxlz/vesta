@@ -1,20 +1,126 @@
 """Authentication-related tools for Microsoft MCP"""
 
-from mcp.server.fastmcp import FastMCP
-from . import auth
+import argparse
+import httpx
+import logging
+import threading
+from pathlib import Path
+from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator
+from mcp.server.fastmcp import FastMCP, Context
+from . import auth, monitor
+from .context import MicrosoftContext
+from .settings import MicrosoftSettings
 
-mcp = FastMCP("microsoft-mcp")
+
+def _validate_directory(path_str: str | None, param_name: str) -> Path:
+    """Validate and prepare a directory parameter"""
+    if not path_str:
+        raise ValueError(f"Error: --{param_name} is required")
+
+    path = Path(path_str).resolve()
+    path.mkdir(parents=True, exist_ok=True)
+
+    # Test writability
+    test_file = path / ".write_test"
+    try:
+        test_file.touch()
+        test_file.unlink()
+    except Exception as e:
+        raise RuntimeError(f"Error: --{param_name} directory is not writable: {path} ({e})")
+
+    return path
+
+
+@asynccontextmanager
+async def microsoft_lifespan(server: FastMCP) -> AsyncIterator[MicrosoftContext]:
+    """Manage Microsoft MCP lifecycle"""
+    settings = MicrosoftSettings()
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data-dir", type=str, required=True)
+    parser.add_argument("--log-dir", type=str, required=True)
+    parser.add_argument("--notifications-dir", type=str, required=True)
+    args, _ = parser.parse_known_args()
+
+    data_dir = _validate_directory(args.data_dir, "data-dir")
+    log_dir = _validate_directory(args.log_dir, "log-dir")
+    notif_dir = _validate_directory(args.notifications_dir, "notifications-dir")
+
+    cache_file = data_dir / "auth_cache.bin"
+    http_client = httpx.Client(timeout=30.0, follow_redirects=True)
+
+    # Setup monitor
+    monitor_base_dir = data_dir / "monitor"
+    monitor_base_dir.mkdir(parents=True, exist_ok=True)
+    monitor_state_file = monitor_base_dir / "state.txt"
+    monitor_log_file = log_dir / "monitor.log"
+
+    monitor_logger = logging.getLogger("microsoft_mcp.monitor")
+    monitor_logger.setLevel(logging.INFO)
+    if not monitor_logger.handlers:
+        file_handler = logging.FileHandler(monitor_log_file)
+        file_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+        monitor_logger.addHandler(file_handler)
+
+    monitor_stop_event = threading.Event()
+
+    # Initialize constants
+    scopes = ["https://graph.microsoft.com/.default"]
+    base_url = "https://graph.microsoft.com/v1.0"
+    upload_chunk_size = 15 * 320 * 1024
+    folders = {
+        "inbox": "inbox",
+        "sent": "sentitems",
+        "drafts": "drafts",
+        "deleted": "deleteditems",
+        "junk": "junkemail",
+        "archive": "archive",
+    }
+
+    ctx = MicrosoftContext(
+        cache_file=cache_file,
+        http_client=http_client,
+        log_dir=log_dir,
+        notif_dir=notif_dir,
+        monitor_base_dir=monitor_base_dir,
+        monitor_state_file=monitor_state_file,
+        monitor_log_file=monitor_log_file,
+        monitor_logger=monitor_logger,
+        monitor_stop_event=monitor_stop_event,
+        scopes=scopes,
+        base_url=base_url,
+        upload_chunk_size=upload_chunk_size,
+        folders=folders,
+        settings=settings,
+    )
+
+    # Start monitor thread
+    monitor_thread = threading.Thread(target=monitor.run, args=(ctx,), daemon=True)
+    monitor_thread.start()
+
+    try:
+        yield ctx
+    finally:
+        monitor_stop_event.set()
+        monitor_thread.join(timeout=5)
+        http_client.close()
+
+
+mcp = FastMCP("microsoft-mcp", lifespan=microsoft_lifespan)
 
 
 @mcp.tool()
-def list_accounts() -> list[dict[str, str]]:
-    return [{"username": acc.username, "account_id": acc.account_id} for acc in auth.list_accounts()]
+def list_accounts(ctx: Context) -> list[dict[str, str]]:
+    context: MicrosoftContext = ctx.request_context.lifespan_context
+    return [{"email": acc.username, "account_id": acc.account_id} for acc in auth.list_accounts(context.cache_file, settings=context.settings)]
 
 
 @mcp.tool()
-def authenticate_account() -> dict[str, str]:
-    app = auth.get_app()
-    flow = app.initiate_device_flow(scopes=auth.SCOPES)
+def authenticate_account(ctx: Context) -> dict[str, str]:
+    context: MicrosoftContext = ctx.request_context.lifespan_context
+    app = auth.get_app(context.cache_file, settings=context.settings)
+    flow = app.initiate_device_flow(scopes=context.scopes)
 
     if "user_code" not in flow:
         error_msg = flow.get("error_description", "Unknown error")
@@ -40,16 +146,18 @@ def authenticate_account() -> dict[str, str]:
 
 
 @mcp.tool()
-def complete_authentication(flow_cache: str) -> dict[str, str]:
+def complete_authentication(ctx: Context, flow_cache: str) -> dict[str, str]:
     """flow_cache: use _flow_cache value from authenticate_account response"""
     import ast
+
+    context: MicrosoftContext = ctx.request_context.lifespan_context
 
     try:
         flow = ast.literal_eval(flow_cache)
     except (ValueError, SyntaxError):
         raise ValueError("Invalid flow cache data")
 
-    app = auth.get_app()
+    app = auth.get_app(context.cache_file, settings=context.settings)
     result = app.acquire_token_by_device_flow(flow)
 
     if "error" in result:
@@ -65,7 +173,7 @@ def complete_authentication(flow_cache: str) -> dict[str, str]:
     # Save the token cache
     cache = app.token_cache
     if isinstance(cache, auth.msal.SerializableTokenCache) and cache.has_state_changed:
-        auth._write_cache(cache.serialize())
+        auth._write_cache(context.cache_file, content=cache.serialize())
 
     # Get the newly added account
     accounts = app.get_accounts()

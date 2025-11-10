@@ -79,6 +79,7 @@ Add to `~/.cursor/mcp.json`:
 ## MCP Tools Available
 
 ### Contact Management
+- `add_contact` - Save contact name + phone so you can reference chats before any messages
 - `search_contacts` - Search contacts by name or phone number
 - `get_contact` - Get contact information by JID
 - `update_contact` - Update contact name

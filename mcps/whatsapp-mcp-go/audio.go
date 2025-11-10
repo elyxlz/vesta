@@ -8,6 +8,11 @@ import (
 )
 
 func ConvertToOpusOgg(inputFile, outputFile string, bitrate string, sampleRate int) (string, error) {
+	// Validate input file path for security
+	if err := validateFilePath(inputFile); err != nil {
+		return "", fmt.Errorf("invalid input file path: %v", err)
+	}
+
 	if _, err := os.Stat(inputFile); err != nil {
 		return "", fmt.Errorf("input file not found: %s", inputFile)
 	}
@@ -15,6 +20,11 @@ func ConvertToOpusOgg(inputFile, outputFile string, bitrate string, sampleRate i
 	if outputFile == "" {
 		ext := filepath.Ext(inputFile)
 		outputFile = inputFile[:len(inputFile)-len(ext)] + ".ogg"
+	} else {
+		// Validate output file path if provided
+		if err := validateFilePath(outputFile); err != nil {
+			return "", fmt.Errorf("invalid output file path: %v", err)
+		}
 	}
 
 	outputDir := filepath.Dir(outputFile)

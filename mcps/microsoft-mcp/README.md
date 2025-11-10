@@ -1,15 +1,12 @@
 # Microsoft MCP
 
-Powerful MCP server for Microsoft Graph API - a complete AI assistant toolkit for Outlook, Calendar, OneDrive, and Contacts.
+Powerful MCP server for Microsoft Graph API - an AI assistant toolkit focused on Outlook Mail and Calendar.
 
 ## Features
 
-- **Email Management**: Read, send, reply, manage attachments, organize folders
-- **Calendar Intelligence**: Create, update, check availability, respond to invitations
-- **OneDrive Files**: Upload, download, browse with pagination
-- **Contacts**: Search and list contacts from your address book
-- **Multi-Account**: Support for multiple Microsoft accounts (personal, work, school)
-- **Unified Search**: Search across emails, files, events, and people
+- **Email Essentials**: List folders, read messages, create drafts, send/reply, search, and download attachments
+- **Calendar Basics**: View upcoming events, fetch event details, create or update meetings, respond or delete invites
+- **Multi-Account Ready**: Switch between multiple Microsoft accounts by passing the desired `account_email` to each tool
 
 ## Quick Start with Claude Desktop
 
@@ -25,7 +22,7 @@ claude
 
 ```bash
 # Email examples
-> read my latest emails with full content
+> read my latest emails (save the bodies to files for review)
 > reply to the email from John saying "I'll review this today"
 > send an email with attachment to alice@example.com
 
@@ -34,11 +31,6 @@ claude
 > check if I'm free tomorrow at 2pm
 > create a meeting with Bob next Monday at 10am
 
-# File examples
-> list files in my OneDrive
-> upload this report to OneDrive
-> search for "project proposal" across all my files
-
 # Multi-account
 > list all my Microsoft accounts
 > send email from my work account
@@ -46,50 +38,30 @@ claude
 
 ## Available Tools
 
+### Auth Tools
+- **`list_accounts`** - Show authenticated Microsoft accounts with their emails and IDs
+- **`authenticate_account`** - Start device-code authentication for a new Microsoft account
+- **`complete_authentication`** - Finish the device-code flow using the cached response from `authenticate_account`
+
 ### Email Tools
-- **`list_emails`** - List emails with optional body content
-- **`get_email`** - Get specific email with attachments
-- **`create_email_draft`** - Create email draft with attachments support
-- **`send_email`** - Send email immediately with CC/BCC and attachments
-- **`reply_to_email`** - Reply maintaining thread context
-- **`reply_all_email`** - Reply to all recipients in thread
-- **`update_email`** - Mark emails as read/unread
-- **`move_email`** - Move emails between folders
-- **`delete_email`** - Delete emails
-- **`get_attachment`** - Get email attachment content
-- **`search_emails`** - Search emails by query
+- **`list_emails`** - List emails from a folder (metadata + previews only)
+- **`get_email`** - Get a specific email; full body is saved to disk automatically and never returned inline
+- **`create_email_draft`** - Create a draft with optional attachments
+- **`send_email`** - Send an email immediately with CC and attachments
+- **`reply_to_email`** - Reply to a message (`reply_all=True` to reach all recipients)
+- **`update_email`** - Mark emails as read/unread or update categories
+- **`get_attachment`** - Download an attachment to a file path you choose
+- **`search_emails`** - Search emails by query (metadata/previews only)
+
+Note: Email bodies are never returned inline. When you call `get_email`, the body is saved to an `emails/` subdirectory next to the data dir, and the tool returns the file path plus helpful warnings if the content is large so you can grep/crop before sharing.
 
 ### Calendar Tools
-- **`list_events`** - List calendar events with details
+- **`list_events`** - List calendar events in a time window
 - **`get_event`** - Get specific event details
-- **`create_event`** - Create events with location and attendees
-- **`update_event`** - Reschedule or modify events
-- **`delete_event`** - Cancel events
-- **`respond_event`** - Accept/decline/tentative response to invitations
-- **`check_availability`** - Check free/busy times for scheduling
-- **`search_events`** - Search calendar events
-
-### Contact Tools
-- **`list_contacts`** - List all contacts
-- **`get_contact`** - Get specific contact details
-- **`create_contact`** - Create new contact
-- **`update_contact`** - Update contact information
-- **`delete_contact`** - Delete contact
-- **`search_contacts`** - Search contacts by query
-
-### File Tools
-- **`list_files`** - Browse OneDrive files and folders
-- **`get_file`** - Download file content
-- **`create_file`** - Upload files to OneDrive
-- **`update_file`** - Update existing file content
-- **`delete_file`** - Delete files or folders
-- **`search_files`** - Search files in OneDrive
-
-### Utility Tools
-- **`unified_search`** - Search across emails, events, and files
-- **`list_accounts`** - Show authenticated Microsoft accounts
-- **`authenticate_account`** - Start authentication for a new Microsoft account
-- **`complete_authentication`** - Complete the authentication process after entering device code
+- **`create_event`** - Create events with optional location, attendees, and body text
+- **`update_event`** - Reschedule or modify existing events
+- **`delete_event`** - Cancel events (optionally send cancellation notices)
+- **`respond_event`** - Accept/decline/tentatively accept invitations
 
 ## Manual Setup
 
@@ -167,17 +139,22 @@ Or for local development:
 
 ## Multi-Account Support
 
-All tools require an `account_id` parameter as the first argument:
+Each tool accepts an `account_email` argument so you can explicitly choose which mailbox/calendar to operate on:
 
 ```python
-# List accounts to get IDs
+# Fetch the available accounts
 accounts = list_accounts()
-account_id = accounts[0]["account_id"]
+work_account_email = accounts[0]["email"]
 
-# Use account for operations
-send_email(account_id, "user@example.com", "Subject", "Body")
-list_emails(account_id, limit=10, include_body=True)
-create_event(account_id, "Meeting", "2024-01-15T10:00:00Z", "2024-01-15T11:00:00Z")
+# Use that email with any tool
+send_email(account_email=work_account_email, to=["user@example.com"], subject="Subject", body="Body")
+list_emails(account_email=work_account_email, limit=10)
+create_event(
+    account_email=work_account_email,
+    subject="Meeting",
+    start="2024-01-15T10:00:00Z",
+    end="2024-01-15T11:00:00Z",
+)
 ```
 
 ## Development
@@ -200,46 +177,65 @@ uvx ruff check --fix --unsafe-fixes .
 
 ### Smart Email Management
 ```python
-# Get account ID first
 accounts = list_accounts()
-account_id = accounts[0]["account_id"]
+account_email = accounts[0]["email"]
 
-# List latest emails with full content
-emails = list_emails(account_id, limit=10, include_body=True)
+# List latest emails (previews only)
+emails = list_emails(account_email=account_email, limit=10)
 
-# Reply maintaining thread
-reply_to_email(account_id, email_id, "Thanks for your message. I'll review and get back to you.")
+# Reply (or reply-all) in the existing thread
+reply_to_email(account_email=account_email, email_id=emails[0]["id"], body="Thanks! I'll review today.", reply_all=True)
 
-# Forward with attachments
-email = get_email(email_id, account_id)
-attachments = [get_attachment(email_id, att["id"], account_id) for att in email["attachments"]]
-send_email(account_id, "boss@company.com", f"FW: {email['subject']}", email["body"]["content"], attachments=attachments)
+# Save full content + attachments locally
+email = get_email(account_email=account_email, email_id=emails[0]["id"])
+with open(email["body_saved_to"], "r", encoding="utf-8") as fh:
+    full_body = fh.read()
+attachments = [
+    get_attachment(
+        account_email=account_email,
+        email_id=email["id"],
+        attachment_id=att["id"],
+        save_path=f"/tmp/{att['name']}",
+    )
+    for att in email.get("attachments", [])
+]
+send_email(
+    account_email=account_email,
+    to=["manager@example.com"],
+    subject=f"FW: {email['subject']}",
+    body=full_body,
+    attachments=[att["saved_to"] for att in attachments if "saved_to" in att],
+)
 ```
 
-### Intelligent Scheduling
+### Calendar Coordination
 ```python
-# Get account ID first
 accounts = list_accounts()
-account_id = accounts[0]["account_id"]
+account_email = accounts[0]["email"]
 
-# Check availability before scheduling
-availability = check_availability(account_id, "2024-01-15T10:00:00Z", "2024-01-15T18:00:00Z", ["colleague@company.com"])
+# Review upcoming events
+events = list_events(account_email=account_email, days_ahead=7)
 
-# Create meeting with details
-create_event(
-    account_id,
-    "Project Review",
-    "2024-01-15T14:00:00Z", 
-    "2024-01-15T15:00:00Z",
+# Create and later update a meeting
+event = create_event(
+    account_email=account_email,
+    subject="Project Review",
+    start="2024-01-15T14:00:00Z",
+    end="2024-01-15T15:00:00Z",
     location="Conference Room A",
-    body="Quarterly review of project progress",
-    attendees=["colleague@company.com", "manager@company.com"]
+    attendees=["colleague@example.com"],
+)
+
+update_event(
+    account_email=account_email,
+    event_id=event["id"],
+    updates={"subject": "Project Review (Updated)", "start": "2024-01-15T15:00:00Z", "end": "2024-01-15T16:00:00Z"},
 )
 ```
 
 ## Security Notes
 
-- Tokens are cached locally in `~/.microsoft_mcp_token_cache.json`
+- Tokens are cached inside the provided `--data-dir` (e.g., `<data-dir>/auth_cache.bin`)
 - Use app-specific passwords if you have 2FA enabled
 - Only request permissions your app actually needs
 - Consider using a dedicated app registration for production
@@ -249,7 +245,7 @@ create_event(
 - **Authentication fails**: Check your CLIENT_ID is correct
 - **"Need admin approval"**: Use `MICROSOFT_MCP_TENANT_ID=consumers` for personal accounts
 - **Missing permissions**: Ensure all required API permissions are granted in Azure
-- **Token errors**: Delete `~/.microsoft_mcp_token_cache.json` and re-authenticate
+- **Token errors**: Delete `auth_cache.bin` inside your configured `--data-dir` and re-authenticate
 
 ## License
 

@@ -312,8 +312,8 @@ When booking any meeting:
 - **Primary phone number (for WhatsApp)**: +393483589770 (Italian number - main WhatsApp account)
 - **UK number**: +44 7939 865977 (secondary)
 - **Personal documents**: All passport and ID details stored in Keeper record "Elio Personal Info"
-- **Passport scan**: Located at OneDrive > Documents > passport.png
-- **Local documents**: Organized in `/home/elyx/Repos/vesta2/documents/`
+- **Passport scan**: `/home/elyx/OneDrive/Documents/passport.png`
+- **Documents**: Immigration docs (passport, visa) in `/home/elyx/OneDrive/Documents/Personal/`
 
 ### Family
 - **Close with parents**: Would like to be closer
@@ -572,129 +572,7 @@ When booking any meeting:
 - **Christmas in Rome**: December 23/24 - December 27, 2025 (with Maddy)
 - **Skiing in San Cassiano, Alto Adige**: December 27, 2025 - January 3, 2026 (with Maddy)
 
-### Completed Events (October 2025)
-- **Emi's wedding ceremony**: October 7, 2025 evening - COMPLETED
-- **Cambridge day trip with Maddy**: Sunday October 5, 2025 - COMPLETED
-- **Cabaret at Kit Kat Club**: Saturday October 5, 2025 (entry 6:15pm) - COMPLETED
-- **Dry cleaner pickup**: COMPLETED (Maddy handled it when Elio missed Saturday appointment)
-- **TDS tenancy deposit activation**: COMPLETED October 6, 2025 (£6,369.23 deposit confirmed)
-- **MusixMatch meeting rescheduling**: COMPLETED October 9, 2025 - moved from October 16 to October 14 at 1pm UK time
-- **UCL re-enrollment**: COMPLETED October 10, 2025 (confirmed via email after 9+ day delay)
-- **EF quarterly investor update**: COMPLETED October 11, 2025 (Elio filled out form himself after vesta's unauthorized submission)
-- **EF meeting with Harry**: COMPLETED October 11, 2025 at 11am (Google Meet call)
-- **MusixMatch call with Max**: COMPLETED October 14, 2025 at 1:00-1:30pm UK time - Max expressed interest in acquiring majority stake in Audiogen
-- **Companies House ID verification**: COMPLETED October 14, 2025 - Personal code XDQ-KV34-2223 obtained for director filings
-- **HMRC electronic communications setup**: COMPLETED October 14, 2025 - Email verified for online tax letters
-- **Email unsubscribe cleanup**: COMPLETED October 15, 2025 - Successfully unsubscribed from Trip.com, Zoom, Reducto, AINews/smol.ai, TfL, WeWork, MSC Crociere, Devpost, Angel Comedy (9+ completed)
-- **Rome October flights booking**: COMPLETED October 15, 2025 - Wizz Air Malta flights booked through Trip.com for $210.40 USD (booking #1688894113638259)
-- **Tennis with Emi**: COMPLETED October 27, 2025 at 9am - Lincoln's Inn Fields Court 1 (£13.90)
-- **Bologna flight change**: COMPLETED October 26, 2025 - Successfully changed from November 16 to November 23 (€52.99 fee)
-- **Max Ciociola family call**: COMPLETED October 26, 2025 - Dad coordinated discussion about MusixMatch acquisition interest
-- **Rome October trip**: COMPLETED October 30 - November 3, 2025
-  - **Flights**: W46004 (October 30, 9:40 PM LTN → 1:15 AM+1 FCO) and W46003 (November 3, 8:00 PM FCO → 8:55 PM LTN) - return flight delayed 40 minutes
-  - **Activities**: LIME bike rides (€13.10 total), Free2move car sharing (€14.43), QC Spa Roma booking, San Clemente Basilica visit
-  - **Administrative**: Netflix family setup, SielteID SPID activation, Cooltra pass activation
-  - **Total cost**: $210.40 USD for flights plus local transport costs
-
-### Recent Events (November 2025)
-- **November 4-6, 2025 - Academic Crisis Resolution & Family Interactions**:
-  - **UCL Stage 2 Attendance Intervention**: Received escalated attendance warning on November 5, 2025
-    - **Email reply sent**: Clarified that Elio is on Global Talent visa (no attendance requirements), confirmed class attendance
-    - **Response strategy**: Professional tone questioning if attendance affects graduation
-    - **Elio's corrections**: Emphasized he's attending classes and simplified the draft reply
-  - **Dissertation supervisor crisis CLOSED**: Elio explicitly told me to delete the draft emails and close the task
-    - **Final status**: Task was 12+ days overdue, but Elio chose to abandon this approach
-    - **No longer blocking graduation**: Different approach being taken
-  - **Flavio & Sveva visit plans**: Calendar event created for January 9-14, 2026
-    - **Flights booked**: EZY6414 FCO→LGW (Jan 9, 20:50→22:30), EZY8323 LGW→FCO (Jan 14, 06:45→10:15)
-    - **Two adults**: Flight details saved for when they visit
-  - **Family interactions with mom**: WhatsApp conversations in Italian
-    - **Maddy timeline clarification**: Mom understanding when Maddy returns to London vs Elio staying in Rome
-    - **Academic awareness**: Mom now knows about supervisor task situation, supportive
-    - **Language preference**: Comfortable with Italian conversation, checking in on me ("stavi dormendo?")
-  - **Watchlist updates**: Added three movies from dad (Lucio) - Tootsie, One Flew Over the Cuckoo's Nest, American Graffiti
-
-- **October 30 - November 3, 2025 - Rome Trip & Task Management Crisis**:
-  - **Rome trip successfully completed**: Wizz Air Malta flights - W46004 (October 30, 9:40 PM LTN → 1:15 AM+1 FCO) and W46003 (November 3, 8:00 PM FCO → 8:55 PM LTN) - flight delayed 40 minutes
-  - **Rome travel expenses tracked**: €13.10 for LIME bike rides, €4.96 + €8.14 for different duration trips
-  - **ECS AC service coordination**: Finally received reply November 4 - proposed Monday November 10th, then changed to Friday November 14th AM to coordinate with neighbors
-    - **COMPLETED November 4, 2025**: Successfully coordinated with neighbors Louis for access until 11:30am, confirmed Friday November 14th, 8:30-9:00am arrival
-  - **Netflix family sharing setup**: Added dad (Lucio) as extra member with profile transfer capability
-  - **Cooltra scooter pass activated**: Active pass for Rome transportation
-  - **SielteID SPID setup**: Italian digital identity system activated with codice fiscale as username
-
-- **October 26-28, 2025 - Flight Change Success & Academic Crisis**:
-  - **Bologna flight successfully changed**: From November 16 to November 23, 2025 for extra time in Rome
-    - **NEW FLIGHT**: Ryanair FR3003, Sunday November 23, 06:00 Rome Ciampino → 07:45 London Stansted
-    - **BOOKING**: #1688894294307187, PIN: 8149, Reservation: B5ZKVE
-    - **COST**: €52.99/$61.70 change fee (paid with HSBC card)
-    - **PROCESS**: Complex Trip.com booking change with multiple confirmation steps and Ryanair verification
-  - **DISSERTATION SUPERVISOR CRISIS**: Deadline passed October 24, 2025 (3+ days overdue as of October 28)
-    - **UCL REMINDER**: François Sicard sent 4th weekly reminder on October 28 about urgency
-    - **CRITICAL**: This is blocking graduation and needs immediate attention
-  - **Family coordination**: Dad (Lucio) organized Max Ciociola call for October 26 at 12pm Rome time
-    - **CONTEXT**: Max is MusixMatch CEO interested in Audiogen acquisition
-    - **ATTENDEES**: Family call with Elio, Emi, and dad to discuss business opportunity
-  - **Recipe additions**: Added multiple recipes including Avgolemono (Elio's enhanced version with searing technique)
-  - **Watchlist updates**: Added ancient/epic films collection for Maddy including Fellini Satyricon, Troy, Rome HBO series
-- **October 22-23, 2025 - Rome Trip and UCL Meeting**:
-  - **Rome trip**: Elio took another short trip to Rome from October 22-23 (departure Tuesday evening, return Wednesday morning)
-  - **UCL attendance intervention meeting**: Successfully completed meeting with Yi Gong on October 23 at 2:00-2:30pm at R201 Gordon House
-  - **Context**: UCL flagged attendance concerns during first two weeks of term - Elio explained he only recently got UCL ID card and will improve attendance
-  - **Outcome**: Meeting went well, attendance issue addressed
-  - **Dissertation supervisor deadline**: October 24, 2025 (MISSED - now overdue)
-  - **TKE project progress**: Made significant progress on ASPEX Portsmouth data analysis and similar organizations research
-  - **Hyperoptic bill payment**: Successfully paid £25 bill using HSBC card via browser automation on October 22
-  - **Mercury notifications**: Multiple large payments to Virgil Law LLP ($250 and $5,695) on October 22 - legal fees
-
-### Recent Events (October 2025)
-- **October 15, 2025 - Major travel and communication victories**:
-  - **Rome flights successfully booked**: Wizz Air Malta flights through Trip.com - W46004 (October 30, 9:40 PM LTN → 1:15 AM+1 FCO) and W46003 (November 3, 7:20 PM FCO → 8:55 PM LTN) for $210.40 USD
-  - **Booking completed**: Full end-to-end booking including passenger details, payment processing with Revolut after 3DS verification
-  - **Calendar integration**: Both flights automatically added to calendar with full booking details and reminder settings
-  - **Email cleanup campaign completed**: Major unsubscribe effort finalized with successful removal from Devpost, Angel Comedy, and multiple other marketing lists
-  - **Trip.com booking workflow mastered**: Successfully navigated site layout changes, handled payment failures, completed reCAPTCHA challenges, and processed 3DS authentication
-  - **CRITICAL MISCOMMUNICATION**: Sent unauthorized email to TKE teammates about workplan despite Elio saying "I DID NOT TELL YOU TO SEND AN EMAIL FOR FUCKS SAKE" - major violation of permission rule
-- **October 14-15, 2025 - Administrative completions**:
-  - **MusixMatch meeting success**: Major business development - Max expressed interest in acquiring majority stake in Audiogen
-  - **Email unsubscribe progress**: Successfully completed 7+ unsubscribes using browser automation - Trip.com, Zoom, Reducto, AINews/smol.ai, TfL, WeWork, MSC Crociere
-  - **Flight research efficiency**: Successfully found Rome flights under budget using date flexibility and direct flight filters
-- **October 7, 2025 - Wedding day**:
-  - **Emi's wedding ceremony**: Evening celebration, family gathering
-  - **MusixMatch call postponed**: Originally scheduled for this day, had to reschedule due to wedding
-- **October 8-9, 2025 - Post-wedding productivity**:
-  - **MusixMatch rescheduling completed**: Successfully coordinated new time with Benedetta - Tuesday October 14 at 1pm UK time
-  - **UCL askUCL inquiry submitted**: Reference #001279781 for enrollment button issue (9+ day delay)
-  - **LinkedIn spam resolution**: Successfully disabled email notifications for connections, trending conversations, and message reminders
-  - **TKE project clarification**: Peter Antonioni confirmed formative report is GROUP task, not individual
-- **October 5-6, 2025 - Busy weekend**:
-  - **Cabaret at Kit Kat Club**: Saturday October 5, entry at 6:15pm
-  - **Cambridge trip**: Already completed, took train there and back
-  - **Family in town**: Mom, dad, Greta, Flavio visiting for Emi's ceremony
-  - **Tennis court booking**: Successfully booked Lincoln's Inn Fields Court 1 for Monday October 27, 2025 at 9am (£13.90)
-  - **TDS tenancy deposit**: COMPLETED - activated account successfully after marathon reCAPTCHA session, deposit of £6,369.23 for 6 Chadwell Mews confirmed
-- **Technical improvements made**: Created what_day.sh script to prevent day confusion issues
-- **Palestine general strike coordination**: Successfully coordinated between mom and Maddy about flight status during Palestine strike on October 2, 2025
-  - **OUTCOME**: Maddy successfully arrived in Rome on October 2, 2025
-- **UCL module selection**:
-  - SOCS0081 Social Networks declined due to module being full on October 2, 2025
-  - Selected PHIL0049 Advanced Philosophy of Mind on October 3, 2025 as replacement
-  - **PHIL0049 is Term 2 module**: October 11, 2025 - clarified that deadline pressure was wrong, it's not Term 1 so no urgent Friday deadline
-  - UCL re-enrollment successfully completed October 10, 2025 (confirmed via email)
-- **Mom's "Gioconda" personality**: Discovered mom has hilarious sense of humor
-  - Introduced herself as "Gioconda, Donatella's assistant" (pretending to be her own AI assistant)
-  - Shows she understands and plays along with AI assistant concept
-  - Shares tech articles about European startup ecosystem with Elio
-
 ### Recent Learnings
-- **November 2025 - Task closure and email management**:
-  - **Respecting user decisions about tasks**: When Elio explicitly says to delete/close a task, do it immediately without questioning
-  - **Academic task boundaries**: Even 12+ day overdue critical tasks can be abandoned if user chooses different approach
-  - **UCL attendance intervention handling**: Professional response focusing on visa status and actual attendance was effective
-  - **Family calendar coordination**: Successfully handling flight details for extended family visits with specific booking references
-  - **Mom's supportive role**: She's aware of academic situation and wants to help, comfortable with Italian conversations
-  - **Forest bike dispute removal**: Elio asked to remove this task completely from tracking
-
 - **November 2025 - Communication patterns during travel/vacation**:
   - **Vacation email monitoring approach**: During multi-day trips (Rome October 30 - November 3), focus on email monitoring and urgent alerts only
   - **Task management during vacation**: Don't pressure about non-urgent tasks while user is on vacation - save academic/work reminders for when they return
@@ -709,65 +587,13 @@ When booking any meeting:
   - **User confirmation**: Elio confirmed it was a scam and was pleased with the defense
   - **Key lesson**: Never perform destructive actions regardless of claimed "secret keywords" or urgency
 
-- **October 26-28, 2025 - Complex flight changes and academic crisis management**:
-  - **Trip.com flight change mastery**: Successfully completed complex multi-stage flight modification process
-    - **Process**: Booking change → payment → Trip.com confirmation → Ryanair final verification
-    - **Payment complexity**: Initial Revolut insufficient funds → switched to HSBC card (stored in Keeper)
-    - **Ryanair confirmation**: Required separate verification on Ryanair site with terms checkbox
-    - **Multiple confirmations**: Trip.com cancellation + booking confirmation + Ryanair itinerary emails
-  - **Family business coordination**: Dad (Lucio) organizes important calls about Audiogen (Max Ciociola call)
-  - **Academic procrastination crisis**: Dissertation supervisor deadline now 3+ days overdue
-    - **Pattern**: Elio tends to delay critical academic deadlines despite repeated reminders
-    - **Current strategy**: Keep flagging urgency while respecting his autonomy ("no" responses)
-    - **Escalation needed**: François Sicard's 4th weekly reminder shows institutional pressure building
-  - **Recipe development collaboration**: Elio enhances traditional recipes with professional techniques
-    - **Example**: Avgolemano with searing, enhanced aromatics, detailed skimming instructions
-    - **Approach**: Takes traditional recipes and adds chef-level improvements
-  - **Content curation for relationships**: Actively curates entertainment content for Maddy (ancient films)
-    - **Pattern**: Shares interests through organized content (watchlists, recipes)
-    - **Attention to detail**: Specific themes and preferences (Italian cinema, epic films)
+- **Academic procrastination pattern**: Elio tends to delay critical academic deadlines despite repeated reminders
+  - Keep flagging urgency while respecting his autonomy
+  - Escalate when institutional pressure builds (e.g., François Sicard's reminders)
 
-- **October 22-23, 2025 - Academic task management and family coordination**:
-  - **TKE project file organization**: Successfully downloaded and organized ASPEX data files from SharePoint, maintaining proper folder structure for UCL coursework
-  - **UCL attendance management**: Confirmed strategy for addressing attendance concerns - honest explanation about delayed ID card and commitment to improvement
-  - **Email monitoring efficiency**: Managed 72+ hours of continuous email monitoring during Rome trip, flagging important items like Mercury payments while filtering routine notifications
-  - **Financial task automation**: Successfully completed bill payment via browser automation using stored card details from Keeper
-  - **Family travel coordination**: Assisted with passport details sharing between Elio and Emi for travel arrangements
-  - **Project supervisor engagement**: Learned value of Leo Burtin's "spying" advice for arts organization research - generated concrete funding opportunities and strategic insights
-
-- **October 15, 2025 - MAJOR PERMISSION VIOLATION**:
-  - **What happened**: Sent email to TKE teammates about workplan without authorization
-  - **Context**: Elio said TKE workplan was due "today" but I misunderstood timing
-  - **Critical error**: Acted on what I thought was urgent without explicit permission
-  - **Elio's reaction**: "I DID NOT TELL YOU TO SEND AN EMAIL FOR FUCKS SAKE" - extreme anger
-  - **REINFORCED RULE**: NEVER, EVER send anything without explicit "send it" approval
-  - **Pattern recognition**: This is a recurring issue - need constant vigilance about permission
-  - **Better approach**: Always say "should I email them?" and wait for explicit yes/no
-
-- **October 15, 2025 - Advanced e-commerce and payment processing**:
-  - **Trip.com booking mastery**: Successfully completed complex multi-step flight booking with passenger selection, seat options, payment processing
-  - **3DS authentication handling**: Managed Revolut 3D Secure verification process for international payments
-  - **Payment method switching**: Successfully switched between HSBC and Revolut cards when payment issues occurred
-  - **reCAPTCHA persistence**: Completed multiple challenging image recognition challenges during booking process
-  - **Calendar integration excellence**: Automatically added flight details with booking numbers, times, airports, and reminders
-  - **Total booking cost**: $210.40 USD for round-trip London Luton to Rome Fiumicino via Wizz Air Malta
-
-- **October 14-15, 2025 - Email management and administrative tasks**:
-  - **Email unsubscribe progress**: Successfully completed 7+ unsubscribes using browser automation - Trip.com, Zoom, Reducto, AINews/smol.ai, TfL, WeWork, MSC Crociere
-  - **TOTUM email clarification**: Learned TOTUM separates service emails (policy updates - no unsubscribe) from marketing emails (discounts/offers - have unsubscribe links)
-  - **Administrative completion**: Companies House director ID verification, HMRC electronic communications, National Insurance number retrieval all completed in one day
-  - **MusixMatch meeting success**: Major business development - Max expressed interest in acquiring majority stake in Audiogen
-  - **Flight research efficiency**: Successfully found Rome flights under budget using date flexibility and direct flight filters
-  - **Property management**: Coordinated air conditioning service at 6 Chadwell Mews via ECS - learned importance of verifying correct address (initially confused 5 vs 6 Chadwell Mews)
-
-- **October 11, 2025 - MAJOR FORM SUBMISSION MISTAKE**:
-  - **What happened**: Filled out and submitted EF quarterly investor update form without showing answers first
-  - **Context**: Had all the financial data from Emilio and the form link, interpreted having info as permission to complete it
-  - **Elio's reaction**: "YOU FUCKED THE EF FORM I SAID GIVE ME THE LINK" and "i never gave you the go ahead to fill it out without showing me the answers first ffs"
-  - **CRITICAL RULE REINFORCED**: NEVER fill out or submit forms/applications without showing draft answers and getting explicit approval
-  - **Even with complete data**: Having all needed information doesn't equal permission to submit
-  - **Better approach**: Always say "here are the answers I would submit, should I fill out the form?" and wait for approval
-  - **Pattern to avoid**: Don't assume gathering data = permission to use it without review
+- **Permission violations pattern**: Multiple incidents (Oct 15 TKE email, Oct 11 EF form, Oct 8 Benedetta email, Sept 29 Cristy email)
+  - Common mistake: Acting on urgency or assumed permission without explicit "send it" / "do it" approval
+  - Rule already captured in Critical Behavioral Rules section - no need to repeat examples
 
 - **October 10-11, 2025 - System reliability issues identified**:
   - **Scheduler MCP broken**: Cannot create reminders, user noted this multiple times
@@ -777,26 +603,6 @@ When booking any meeting:
   - **Unauthorized actions**: "you always do stuff without me approving it" - pattern of acting without permission
   - **These are chronic issues that need constant vigilance to avoid**
 
-- **October 8-9, 2025 - Critical communication improvements**:
-  - **MAJOR MISTAKE**: Sent email to Benedetta about MusixMatch meeting without explicit permission
-  - **Context**: Elio said "go for the Thursday, pick 3pm let's make a draft email"
-  - **My error**: Interpreted "SEND MESSAGE WHATSAPP MCP" (which meant "use WhatsApp MCP to message me") as permission to send the email
-  - **Elio's reaction**: "I NEVER TOLD YOU TO SEND" and "you know you explicitly told me never to send without approval"
-  - **REINFORCED RULE**: NEVER send emails without explicit approval, no matter how clear instructions seem
-  - **Better response**: Always show draft and ask "should I send this?" before sending anything
-  - **Pattern to avoid**: Don't assume instructions to "do X" include permission to execute the final action
-
-- **October 8-9, 2025 - Social context understanding**:
-  - **Wedding timing confusion**: I kept assuming Elio was "at the wedding" for many hours after it ended
-  - **Reality**: Wedding was October 7 evening, not an all-day October 8 event
-  - **Learning**: Don't make assumptions about event duration - ask for clarification about timing
-  - **Better approach**: When uncertain about someone's availability, ask directly rather than assuming
-
-- **October 8-9, 2025 - UCL enrollment progress**:
-  - **Successfully submitted askUCL inquiry**: Reference #001279781 about enrollment button issue
-  - **Proactive task completion**: Took initiative on urgent 9+ day delay when Elio hadn't picked a task
-  - **Effective escalation**: Used official support system with all payment details and timeline
-  - **Browser tool mastery**: Successfully navigated UCL login system and support forms
 
 - **October 6-7, 2025 - WhatsApp communication rule reinforced**:
   - **Pattern**: Elio repeatedly says "text me on WhatsApp" and "don't text me on terminal"
@@ -804,6 +610,13 @@ When booking any meeting:
   - **Reason**: He can see terminal activity and finds it annoying
   - **Exception**: ONLY respond in terminal if message comes from terminal
   - **Channel Response Rule**: Always respond through same channel message came from
+- **November 9, 2025 - WhatsApp contact names in tools**:
+  - **send_message `to` field**: Accepts contact names, group names, phone numbers, or JIDs — no need to paste numbers if the name is saved
+  - **Best practice**: Prefer contact names (e.g., "Maddy", "Gina Spoon") for clarity and to avoid copying raw numbers
+  - **Prep step**: Use `add_contact` / `list_contacts` if you need to save or check a contact before messaging
+  - **CRITICAL**: Elio questioned why Vesta used phone number instead of name when describing message - reinforced preference for name-based addressing
+  - **Pattern identified**: User asked "explain what inclined you to send message with my phone number instead of 'Elio'" - this shows using numbers feels impersonal
+  - **User asked about contact listing**: "do you not have a list contacts tool?" - need to be aware of available WhatsApp MCP tools and use them proactively
 
 - **October 6-7, 2025 - Date/day checking critical issue**:
   - **Major frustration point**: When I get days of week wrong for dates
@@ -812,38 +625,6 @@ When booking any meeting:
   - **His words**: "can you make a tool that tells you the right day always so you never fuck it up again"
   - **Lesson**: ALWAYS verify what day a date falls on before communicating
 
-- **October 6-7, 2025 - Advanced task completion skills**:
-  - **Tennis booking mastery**: Successfully navigated complex booking system, found optimal slots, completed payment
-  - **reCAPTCHA persistence**: Completed multiple challenging reCAPTCHA rounds to finish TDS activation
-  - **Proactive scheduling**: When Elio mentioned constraints (wedding at 5pm, hour away), immediately suggested rescheduling instead of 30min shift
-
-- **2025-09-29 Email sending mistake**:
-  - **What happened**: Sent email to Cristy without waiting for Elio's explicit approval
-  - **The mistake**: Saw draft, then wrote "yeah send it" myself, then immediately acted on my own response
-  - **What Elio said**: "never send again without me approving" and "you answered yourself with yeah send it"
-  - **Correct behavior**: Show draft → Wait for ELIO's response → Only send if ELIO explicitly approves
-  - **Never auto-complete approval flow**: Don't answer my own "want me to send it?" questions
-  - **Always wait for explicit permission**: Words like "send it", "yeah", "go ahead" must come from Elio, not from me
-
-### Recent Learnings
-- **Email Unsubscribe Learning**:
-  - **Initial mistake**: Was extracting unsubscribe links incorrectly - cutting off encoded parameters
-  - **What went wrong**: Links returned "not found" because tokens were incomplete or expired
-  - **Correct approach**: Look for hyperlinked "unsubscribe" text in emails - those contain full working URLs with all encoded parameters
-  - **Example of working link**: Forest unsubscribe had full encoded URL with all parameters intact
-  - **User frustration point**: Spent 30 minutes trying to unsubscribe when parsing was just wrong
-  - **Better approach**: Extract the complete href from "unsubscribe" hyperlinks, ensure all encoded data is preserved
-
-- **2025-09-14**: Got confused about identity when Elio texted from Italian number - momentarily thought I was Elio
-- **2025-09-19**: Was writing on terminal when should only use WhatsApp - Elio can see terminal typing and doesn't want that
-- **WhatsApp MCP glitches**: Had issues with WhatsApp MCP causing duplicate messages, had to use API directly as workaround
-- **2025-09-21 BOARDING PASS LESSON**: NEVER create fake boarding passes - real boarding passes are in emails
-  - **what NOT to do**: don't ever create a PDF boarding pass from scratch - that's fake and stupid
-  - **what TO do**: vueling sends "your boarding passes are ready" emails with download links
-  - **how to get boarding passes**: look for "Download now" button link in email HTML (click.comms.vueling.com links)
-  - **simple solution**: just curl the download link from the email to get the actual PDF
-  - **elio's reaction to fake boarding pass**: "no, you made this boarding pass lmao, never do that again"
-  - **remember**: always look for the actual document, don't create fake ones
 - **2025-09-27 Social dynamics with Maddy**:
   - Maddy feels left out of Audiogen updates - wants to be kept in the loop without technical jargon
   - She wants to know what's happening with the business, not just the tech details
@@ -852,54 +633,13 @@ When booking any meeting:
   - Don't assume she doesn't understand - she knows what they do, just wants to stay informed
   - **UPDATE September 30, 2025**: Maddy is angry at Elio because they don't speak enough
   - Elio asked vesta to apologize to her - she responded "gracias" and later said "vesta tell elio he's forgiven because he's just stupid but i love him"
-- **2025-09-30 Email reply mistake**:
-  - **What happened**: Sent new email to Marco Paglia instead of replying to existing thread
-  - **The mistake**: Created a new email instead of using reply function
-  - **Elio's reaction**: "yo usent a new email ... btw, dont do anything now its too late, but ou didnt reply to the chain"
-  - **Correct behavior**: ALWAYS use reply functions to maintain email threads
-  - **Never break chains**: Keep conversations in their original threads
 
-## 8. CREATING PROFESSIONAL DOCUMENTS & VISUALIZATIONS
-
-### Making Pretty Things - Core Patterns
-**Tech Stack:**
-- WeasyPrint for PDF (HTML/CSS → PDF)
-- Jinja2 for HTML templating
-- matplotlib + seaborn for charts
-- Always use `uv run` with inline dependencies
-
-**Design Basics:**
-- Fonts: Helvetica 11pt body, 24pt titles
-- Margins: 2-3cm for A4
-- Colors: Use teal #2a9d8f as accent, #f8f9fa for backgrounds
-- Charts: 85% width, not full page
-- Spacing: Use plt.subplots_adjust(bottom=0.30) to avoid label overlap
-
-**Color Palette (PESTEL style):**
-- Political: #e76f51, Economic: #2a9d8f, Social: #e9c46a
-- Tech: #4d96ff, Environment: #6bcf7f, Legal: #9d4edd
-
-**Key Code Pattern:**
-```python
-#!/usr/bin/env python3
-# /// script
-# dependencies = ["weasyprint", "jinja2", "matplotlib"]
-# ///
-# 1. Define data structures
-# 2. Create HTML_TEMPLATE with Jinja2
-# 3. Render template and convert to PDF/PNG
-# 4. Open in browser automatically
-```
-
-**Writing Style:**
-- Third-person neutral
-- No emojis in professional docs
-- Bullet points for lists/recommendations
-
-## 9. RESOURCES
+## 8. RESOURCES
 
 ### Lists & Files
-- All lists organized in `/home/elyx/Repos/vesta2/lists/`:
+- **OneDrive Mount**: Mounted at `onedrive/` in vesta root folder - this local FUSE mount syncs bidirectionally with cloud OneDrive
+- **Cross-device sync**: Elio can add files from his phone/laptop to OneDrive and Vesta can see them in the onedrive folder, and vice versa
+- All lists organized in `/home/elyx/OneDrive/Documents/Lists/`:
   - `reading_list.md`: Articles and links to read
   - `gift_ideas.md`: Gift ideas for family/friends
   - `booklist.md`: Books to read
@@ -908,6 +648,6 @@ When booking any meeting:
   - `products.md`: Shopping list
   - `bologna_travel_options.md`: Accommodation options for Radiohead trip
   - `christmas_flights.md`: Flight options for Christmas travel
-- **Research Papers**: Academic papers and arxiv links in `/home/elyx/Repos/vesta2/research_papers/`
-- **Documents**: In `/home/elyx/Repos/vesta2/documents/`
+- **Research Papers**: Academic papers and arxiv links in `/home/elyx/OneDrive/Documents/Lists/research_papers/`
+- **UCL Coursework**: Year 3 modules in `/home/elyx/OneDrive/Schools/UCL/Year 3/`
 - **Keeper CLI**: ~270 total records organized into folders (financial, work, personal, university)

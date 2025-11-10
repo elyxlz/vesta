@@ -13,41 +13,87 @@ import (
 	waLog "go.mau.fi/whatsmeow/util/log"
 )
 
+func validateDirectory(path, paramName string) error {
+	if path == "" {
+		return fmt.Errorf("Error: --%s is required", paramName)
+	}
+	return nil
+}
+
 func main() {
 	// Parse command line flags
 	var dataDir string
+	var logDir string
 	var notificationsDir string
 
 	flag.StringVar(&dataDir, "data-dir", "", "Directory for storing persistent data (required)")
+	flag.StringVar(&logDir, "log-dir", "", "Directory for storing logs (required)")
 	flag.StringVar(&notificationsDir, "notifications-dir", "", "Directory for writing notifications (optional)")
 	flag.Parse()
 
-	if dataDir == "" {
-		fmt.Fprintln(os.Stderr, "Error: --data-dir is required")
+	// Validate required parameters
+	if err := validateDirectory(dataDir, "data-dir"); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		flag.Usage()
+		os.Exit(1)
+	}
+
+	if err := validateDirectory(logDir, "log-dir"); err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		flag.Usage()
 		os.Exit(1)
 	}
 
 	// Resolve paths
-	dataDir, err := filepath.Abs(dataDir)
+	absDataDir, err := filepath.Abs(dataDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error resolving data directory: %v\n", err)
 		os.Exit(1)
 	}
+	dataDir = absDataDir
+
+	absLogDir, err := filepath.Abs(logDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error resolving log directory: %v\n", err)
+		os.Exit(1)
+	}
+	logDir = absLogDir
 
 	if notificationsDir != "" {
-		notificationsDir, err = filepath.Abs(notificationsDir)
+		absNotifDir, err := filepath.Abs(notificationsDir)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error resolving notifications directory: %v\n", err)
 			os.Exit(1)
 		}
+		notificationsDir = absNotifDir
 	}
 
-	// Create directories if they don't exist
+	// Create and validate directories
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating data directory: %v\n", err)
 		os.Exit(1)
 	}
+
+	// Test data-dir writability
+	testFile := filepath.Join(dataDir, ".write_test")
+	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: --data-dir directory is not writable: %s (%v)\n", dataDir, err)
+		os.Exit(1)
+	}
+	os.Remove(testFile)
+
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating log directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Test log-dir writability
+	testFile = filepath.Join(logDir, ".write_test")
+	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: --log-dir directory is not writable: %s (%v)\n", logDir, err)
+		os.Exit(1)
+	}
+	os.Remove(testFile)
 
 	if notificationsDir != "" {
 		if err := os.MkdirAll(notificationsDir, 0755); err != nil {

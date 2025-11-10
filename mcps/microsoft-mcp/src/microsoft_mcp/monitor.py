@@ -1,43 +1,19 @@
-import time
-import logging
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from . import graph, auth, notifications
-
-_base_dir: Path | None = None
-_state_file: Path | None = None
-_log_file: Path | None = None
-logger: logging.Logger | None = None
+from .context import MicrosoftContext
 
 
-def init_monitor(base_dir: Path, state_file: Path, log_file: Path):
-    global _base_dir, _state_file, _log_file, logger
-    _base_dir = base_dir
-    _state_file = state_file
-    _log_file = log_file
-
-    _base_dir.mkdir(parents=True, exist_ok=True)
-
-    logger = logging.getLogger("microsoft_mcp.monitor")
-    logger.setLevel(logging.INFO)
-
-    if not logger.handlers:
-        file_handler = logging.FileHandler(_log_file)
-        file_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
-        logger.addHandler(file_handler)
-
-
-def run():
-    assert _state_file and logger
+def run(ctx: MicrosoftContext):
+    logger = ctx.monitor_logger
     logger.info("Monitor thread started")
     first_run = True
     catching_up = False
 
-    while True:
+    while not ctx.monitor_stop_event.is_set():
         try:
             # On first run, check if we were offline and need to catch up
-            if first_run and _state_file.exists():
-                last_check_str = _state_file.read_text().strip()
+            if first_run and ctx.monitor_state_file.exists():
+                last_check_str = ctx.monitor_state_file.read_text().strip()
                 last_check_dt = datetime.fromisoformat(last_check_str.replace("Z", "+00:00"))
                 gap_seconds = (datetime.now(timezone.utc) - last_check_dt).total_seconds()
 
@@ -51,7 +27,9 @@ def run():
                 first_run = False
             else:
                 last_check = (
-                    _state_file.read_text().strip() if _state_file.exists() else (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+                    ctx.monitor_state_file.read_text().strip()
+                    if ctx.monitor_state_file.exists()
+                    else (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
                 )
                 catching_up = False
 
@@ -59,11 +37,16 @@ def run():
 
             new_check_time = datetime.now(timezone.utc)
 
-            for acc in auth.list_accounts():
+            for acc in auth.list_accounts(ctx.cache_file, settings=ctx.settings):
                 logger.info(f"Checking account: {acc.username}")
 
                 try:
                     result = graph.request(
+                        ctx.http_client,
+                        ctx.cache_file,
+                        ctx.scopes,
+                        ctx.settings,
+                        ctx.base_url,
                         "GET",
                         "/me/mailFolders/inbox/messages",
                         acc.account_id,
@@ -91,6 +74,7 @@ def run():
                         if catching_up:
                             metadata["missed"] = True
                         notifications.write_notification(
+                            ctx.notif_dir,
                             "email",
                             f"New email from {sender.get('name') or sender.get('address', 'Unknown')}: {email.get('subject', '(No subject)')}",
                             metadata,
@@ -107,6 +91,11 @@ def run():
                         start_time = now
 
                     cal_result = graph.request(
+                        ctx.http_client,
+                        ctx.cache_file,
+                        ctx.scopes,
+                        ctx.settings,
+                        ctx.base_url,
                         "GET",
                         "/me/calendarView",
                         acc.account_id,
@@ -149,6 +138,7 @@ def run():
                             metadata["missed"] = True
 
                         notifications.write_notification(
+                            ctx.notif_dir,
                             "calendar",
                             f"Calendar event {time_desc}: {event.get('subject', '(No title)')}" + (f" at {loc}" if loc else ""),
                             metadata,
@@ -156,9 +146,13 @@ def run():
                 except Exception as e:
                     logger.error(f"Error fetching calendar for {acc.username}: {e}")
 
-            _state_file.write_text(new_check_time.isoformat())
+            ctx.monitor_state_file.write_text(new_check_time.isoformat())
             logger.info("Completed check cycle, sleeping for 60 seconds")
-            time.sleep(60)
+            if ctx.monitor_stop_event.wait(60):
+                break
         except Exception as e:
             logger.error(f"Error in monitor loop: {e}", exc_info=True)
-            time.sleep(60)
+            if ctx.monitor_stop_event.wait(60):
+                break
+
+    logger.info("Monitor thread stopped")

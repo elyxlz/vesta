@@ -5,10 +5,17 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
-func WriteNotification(notifDir, messageID, chatJID, chatName, sender, content, mediaType string, isForwarded bool) error {
+func WriteNotification(
+	notifDir, messageID, chatJID, chatName, contactName, contactPhone string,
+	contactSaved, isDirectChat bool,
+	sender, content, mediaType string, isForwarded bool,
+) error {
 	if notifDir == "" {
 		return nil // Notifications disabled
 	}
@@ -21,6 +28,16 @@ func WriteNotification(notifDir, messageID, chatJID, chatName, sender, content, 
 	metadata["message_id"] = messageID
 	metadata["chat_jid"] = chatJID
 	metadata["chat_name"] = chatName
+	if contactName != "" {
+		metadata["contact_name"] = contactName
+	}
+	if contactPhone != "" {
+		metadata["contact_phone"] = contactPhone
+	}
+	metadata["contact_saved"] = contactSaved
+	if !contactSaved && isDirectChat {
+		metadata["needs_contact_confirmation"] = true
+	}
 
 	if mediaType != "" {
 		metadata["media_type"] = mediaType
@@ -28,6 +45,8 @@ func WriteNotification(notifDir, messageID, chatJID, chatName, sender, content, 
 	if isForwarded {
 		metadata["is_forwarded"] = isForwarded
 	}
+	replyInstruction := "Reply to this chat using the send_message tool."
+	metadata["reply_instruction"] = replyInstruction
 
 	notification := map[string]interface{}{
 		"timestamp": time.Now().Format(time.RFC3339),
@@ -37,19 +56,31 @@ func WriteNotification(notifDir, messageID, chatJID, chatName, sender, content, 
 		"sender":    sender,
 		"metadata":  metadata,
 	}
+	noteParts := []string{replyInstruction}
+	if !contactSaved && isDirectChat {
+		noteParts = append(noteParts, "Ask the user who this is. Be careful and add them as a contact once you know.")
+	}
+	if len(noteParts) > 0 {
+		notification["note"] = strings.Join(noteParts, " ")
+	}
 
 	data, err := json.MarshalIndent(notification, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal notification: %v", err)
 	}
 
-	filename := fmt.Sprintf("%d-whatsapp-message.json", time.Now().UnixNano())
+	// Use UUID to prevent race conditions in concurrent notifications
+	filename := fmt.Sprintf("%s-whatsapp-message.json", uuid.New().String())
 	filePath := filepath.Join(notifDir, filename)
 
 	return os.WriteFile(filePath, data, 0644)
 }
 
-func WriteReactionNotification(notifDir, targetMessageID, chatJID, chatName, sender, emoji string, isRemoved bool) error {
+func WriteReactionNotification(
+	notifDir, targetMessageID, chatJID, chatName, contactName, contactPhone string,
+	contactSaved, isDirectChat bool,
+	sender, emoji string, isRemoved bool,
+) error {
 	if notifDir == "" {
 		return nil // Notifications disabled
 	}
@@ -62,6 +93,19 @@ func WriteReactionNotification(notifDir, targetMessageID, chatJID, chatName, sen
 	metadata["target_message_id"] = targetMessageID
 	metadata["chat_jid"] = chatJID
 	metadata["chat_name"] = chatName
+	if contactName != "" {
+		metadata["contact_name"] = contactName
+	}
+	if contactPhone != "" {
+		metadata["contact_phone"] = contactPhone
+	}
+	metadata["contact_saved"] = contactSaved
+	if !contactSaved && isDirectChat {
+		metadata["needs_contact_confirmation"] = true
+	}
+	if emoji != "" {
+		metadata["emoji"] = emoji
+	}
 	metadata["is_removed"] = isRemoved
 
 	message := ""
@@ -85,7 +129,8 @@ func WriteReactionNotification(notifDir, targetMessageID, chatJID, chatName, sen
 		return fmt.Errorf("failed to marshal reaction notification: %v", err)
 	}
 
-	filename := fmt.Sprintf("%d-whatsapp-reaction.json", time.Now().UnixNano())
+	// Use UUID to prevent race conditions in concurrent notifications
+	filename := fmt.Sprintf("%s-whatsapp-reaction.json", uuid.New().String())
 	filePath := filepath.Join(notifDir, filename)
 
 	return os.WriteFile(filePath, data, 0644)

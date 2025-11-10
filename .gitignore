@@ -1,4 +1,6 @@
 # Personal data
+logs/
+notifications/
 
 # Python
 __pycache__/
@@ -30,6 +32,9 @@ build/
 *.orig
 tmp/
 
+# OneDrive mount
+onedrive/
+
 # Test artifacts
 .coverage
 htmlcov/
@@ -52,3 +57,4 @@ mcps/whatsapp-mcp-go/whatsapp-mcp
 
 # Old vesta folder (if still present)
 old_vesta/
+.cache

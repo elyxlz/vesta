@@ -3,12 +3,14 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
+	"go.mau.fi/whatsmeow/types"
 )
 
 type MessageStore struct {
@@ -22,7 +24,9 @@ func NewMessageStore(dataDir string) (*MessageStore, error) {
 		return nil, fmt.Errorf("failed to create data directory: %v", err)
 	}
 
-	db, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?_foreign_keys=on", dbPath))
+	// Use url.PathEscape to prevent SQL injection via file path
+	escapedPath := url.PathEscape(dbPath)
+	db, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?_foreign_keys=on", escapedPath))
 	if err != nil {
 		return nil, fmt.Errorf("failed to open message database: %v", err)
 	}
@@ -53,9 +57,19 @@ func NewMessageStore(dataDir string) (*MessageStore, error) {
 			FOREIGN KEY (chat_jid) REFERENCES chats(jid)
 		);
 
+		CREATE TABLE IF NOT EXISTS contacts (
+			jid TEXT PRIMARY KEY,
+			phone_number TEXT NOT NULL,
+			name TEXT,
+			added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		);
+
 		CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
 		CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender);
 		CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_jid);
+		CREATE INDEX IF NOT EXISTS idx_contacts_phone ON contacts(phone_number);
+		CREATE INDEX IF NOT EXISTS idx_contacts_name ON contacts(name);
 	`)
 	if err != nil {
 		db.Close()
@@ -112,36 +126,185 @@ func (ms *MessageStore) GetChatName(jid string) (string, error) {
 	return name.String, nil
 }
 
-func (ms *MessageStore) SearchContacts(query string) ([]Contact, error) {
-	searchPattern := "%" + query + "%"
-	rows, err := ms.db.Query(`
-		SELECT DISTINCT jid, name
-		FROM chats
-		WHERE (name LIKE ? OR jid LIKE ?)
-		AND jid NOT LIKE '%@g.us'
-		ORDER BY name
-		LIMIT 50
-	`, searchPattern, searchPattern)
+func (ms *MessageStore) SearchContacts(query string, limit int) ([]Contact, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+
+	contacts := make([]Contact, 0, limit)
+	seen := make(map[string]struct{})
+
+	lowerQuery := strings.ToLower(query)
+	likeName := "%" + lowerQuery + "%"
+	jidLike := "%" + lowerQuery + "%"
+	rawDigits := digitsOnly(query)
+	digitsLike := "%"
+	if rawDigits != "" {
+		digitsLike = "%" + rawDigits + "%"
+	}
+
+	manualRows, err := ms.db.Query(`
+		SELECT jid, name, phone_number
+		FROM contacts
+		WHERE (LOWER(COALESCE(name, '')) LIKE ?
+			OR phone_number LIKE ?
+			OR REPLACE(phone_number, '+', '') LIKE ?
+			OR LOWER(jid) LIKE ?)
+		ORDER BY LOWER(COALESCE(name, phone_number))
+		LIMIT ?
+	`, likeName, jidLike, digitsLike, jidLike, limit)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer manualRows.Close()
 
-	var contacts []Contact
-	for rows.Next() {
+	for manualRows.Next() {
+		if len(contacts) >= limit {
+			break
+		}
 		var c Contact
 		var name sql.NullString
-		if err := rows.Scan(&c.JID, &name); err != nil {
+		if err := manualRows.Scan(&c.JID, &name, &c.PhoneNumber); err != nil {
 			continue
 		}
 		c.Name = name.String
-		// Extract phone number from JID
-		if idx := strings.Index(c.JID, "@"); idx > 0 {
-			c.PhoneNumber = c.JID[:idx]
+		c.IsManual = true
+		contacts = append(contacts, c)
+		seen[c.JID] = struct{}{}
+	}
+
+	if len(contacts) >= limit {
+		return contacts, nil
+	}
+
+	remaining := limit - len(contacts)
+	chatRows, err := ms.db.Query(`
+		SELECT jid, name
+		FROM chats
+		WHERE jid LIKE '%@s.whatsapp.net'
+		AND (LOWER(COALESCE(name, '')) LIKE ?
+			OR LOWER(jid) LIKE ?
+			OR SUBSTR(jid, 1, INSTR(jid, '@') - 1) LIKE ?)
+		ORDER BY LOWER(COALESCE(name, jid))
+		LIMIT ?
+	`, likeName, jidLike, digitsLike, remaining*2)
+	if err != nil {
+		return contacts, err
+	}
+	defer chatRows.Close()
+
+	for chatRows.Next() {
+		if len(contacts) >= limit {
+			break
+		}
+		var jid string
+		var name sql.NullString
+		if err := chatRows.Scan(&jid, &name); err != nil {
+			continue
+		}
+		if _, exists := seen[jid]; exists {
+			continue
+		}
+		c := Contact{
+			JID:         jid,
+			Name:        name.String,
+			PhoneNumber: jidToPhone(jid),
 		}
 		contacts = append(contacts, c)
+		seen[jid] = struct{}{}
 	}
+
 	return contacts, nil
+}
+
+func (ms *MessageStore) SaveManualContact(name, phone string) (Contact, error) {
+	normalizedDigits, displayNumber, err := normalizePhoneInput(phone)
+	trimmedName := strings.TrimSpace(name)
+	if err != nil {
+		return Contact{}, err
+	}
+	if trimmedName == "" {
+		return Contact{}, fmt.Errorf("contact name cannot be empty")
+	}
+	jid := fmt.Sprintf("%s@%s", normalizedDigits, types.DefaultUserServer)
+	_, err = ms.db.Exec(`
+		INSERT INTO contacts (jid, phone_number, name, added_at, updated_at)
+		VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		ON CONFLICT(jid) DO UPDATE SET
+			name = excluded.name,
+			phone_number = excluded.phone_number,
+			updated_at = CURRENT_TIMESTAMP
+	`, jid, displayNumber, trimmedName)
+	if err != nil {
+		return Contact{}, fmt.Errorf("failed to save contact: %v", err)
+	}
+
+	return Contact{
+		JID:         jid,
+		Name:        trimmedName,
+		PhoneNumber: displayNumber,
+		IsManual:    true,
+	}, nil
+}
+
+func (ms *MessageStore) GetManualContact(jid string) (*Contact, error) {
+	var name sql.NullString
+	var phone string
+	err := ms.db.QueryRow(`
+		SELECT name, phone_number
+		FROM contacts
+		WHERE jid = ?
+	`, jid).Scan(&name, &phone)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return &Contact{
+		JID:         jid,
+		Name:        name.String,
+		PhoneNumber: phone,
+		IsManual:    true,
+	}, nil
+}
+
+func digitsOnly(input string) string {
+	var b strings.Builder
+	for _, r := range input {
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func jidToPhone(jid string) string {
+	if idx := strings.Index(jid, "@"); idx > 0 {
+		digits := digitsOnly(jid[:idx])
+		if digits != "" {
+			return "+" + digits
+		}
+		return digits
+	}
+	return ""
+}
+
+func normalizePhoneInput(input string) (string, string, error) {
+	clean := strings.TrimSpace(input)
+	if clean == "" {
+		return "", "", fmt.Errorf("phone number cannot be empty")
+	}
+	if at := strings.Index(clean, "@"); at > 0 {
+		clean = clean[:at]
+	}
+	clean = strings.TrimPrefix(clean, "+")
+	digits := digitsOnly(clean)
+	if digits == "" {
+		return "", "", fmt.Errorf("phone number must contain digits")
+	}
+	return digits, "+" + digits, nil
 }
 
 func (ms *MessageStore) ListMessages(
@@ -289,186 +452,6 @@ func (ms *MessageStore) ListChats(
 	return chats, nil
 }
 
-func (ms *MessageStore) GetChat(chatJID string, includeLastMessage bool) (*Chat, error) {
-	var c Chat
-	var name, lastMsg, lastSender sql.NullString
-	var lastTime sql.NullTime
-	var lastIsFromMe sql.NullBool
-
-	query := `
-		SELECT
-			c.jid, c.name, c.last_message_time
-	`
-	if includeLastMessage {
-		query += `,
-			m.content, m.sender, m.is_from_me
-		FROM chats c
-		LEFT JOIN messages m ON c.jid = m.chat_jid
-			AND c.last_message_time = m.timestamp
-		WHERE c.jid = ?`
-	} else {
-		query += `,
-			NULL, NULL, NULL
-		FROM chats c
-		WHERE c.jid = ?`
-	}
-
-	err := ms.db.QueryRow(query, chatJID).Scan(
-		&c.JID, &name, &lastTime,
-		&lastMsg, &lastSender, &lastIsFromMe,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	c.Name = name.String
-	if lastTime.Valid {
-		c.LastMessageTime = lastTime.Time
-	}
-	c.LastMessage = lastMsg.String
-	c.LastSender = lastSender.String
-	c.LastIsFromMe = lastIsFromMe.Bool
-	c.IsGroup = strings.HasSuffix(c.JID, "@g.us")
-
-	return &c, nil
-}
-
-func (ms *MessageStore) GetDirectChatByContact(phoneNumber string) (*Chat, error) {
-	pattern := "%" + phoneNumber + "%"
-	var c Chat
-	var name, lastMsg, lastSender sql.NullString
-	var lastTime sql.NullTime
-	var lastIsFromMe sql.NullBool
-
-	err := ms.db.QueryRow(`
-		SELECT
-			c.jid, c.name, c.last_message_time,
-			m.content, m.sender, m.is_from_me
-		FROM chats c
-		LEFT JOIN messages m ON c.jid = m.chat_jid
-			AND c.last_message_time = m.timestamp
-		WHERE c.jid LIKE ? AND c.jid NOT LIKE '%@g.us'
-		LIMIT 1
-	`, pattern).Scan(
-		&c.JID, &name, &lastTime,
-		&lastMsg, &lastSender, &lastIsFromMe,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	c.Name = name.String
-	if lastTime.Valid {
-		c.LastMessageTime = lastTime.Time
-	}
-	c.LastMessage = lastMsg.String
-	c.LastSender = lastSender.String
-	c.LastIsFromMe = lastIsFromMe.Bool
-
-	return &c, nil
-}
-
-func (ms *MessageStore) GetMessageContext(chatJID, messageID string, before, after int) ([]Message, error) {
-	// First get the target message timestamp
-	var targetTime time.Time
-	err := ms.db.QueryRow(`
-		SELECT timestamp FROM messages
-		WHERE chat_jid = ? AND id = ?
-	`, chatJID, messageID).Scan(&targetTime)
-	if err != nil {
-		return nil, err
-	}
-
-	// Get messages before
-	beforeMessages := []Message{}
-	if before > 0 {
-		rows, err := ms.db.Query(`
-			SELECT
-				m.id, m.chat_jid, c.name, m.sender, m.content,
-				m.timestamp, m.is_from_me, m.is_forwarded, m.media_type, m.filename
-			FROM messages m
-			JOIN chats c ON m.chat_jid = c.jid
-			WHERE m.chat_jid = ? AND m.timestamp < ?
-			ORDER BY m.timestamp DESC
-			LIMIT ?
-		`, chatJID, targetTime, before)
-		if err == nil {
-			defer rows.Close()
-			for rows.Next() {
-				var m Message
-				var chatName, mediaType, filename sql.NullString
-				if err := rows.Scan(
-					&m.ID, &m.ChatJID, &chatName, &m.Sender, &m.Content,
-					&m.Timestamp, &m.IsFromMe, &m.IsForwarded, &mediaType, &filename,
-				); err == nil {
-					m.ChatName = chatName.String
-					m.MediaType = mediaType.String
-					m.Filename = filename.String
-					beforeMessages = append([]Message{m}, beforeMessages...)
-				}
-			}
-		}
-	}
-
-	// Get the target message
-	var targetMessage Message
-	var chatName, mediaType, filename sql.NullString
-	err = ms.db.QueryRow(`
-		SELECT
-			m.id, m.chat_jid, c.name, m.sender, m.content,
-			m.timestamp, m.is_from_me, m.is_forwarded, m.media_type, m.filename
-		FROM messages m
-		JOIN chats c ON m.chat_jid = c.jid
-		WHERE m.chat_jid = ? AND m.id = ?
-	`, chatJID, messageID).Scan(
-		&targetMessage.ID, &targetMessage.ChatJID, &chatName, &targetMessage.Sender, &targetMessage.Content,
-		&targetMessage.Timestamp, &targetMessage.IsFromMe, &targetMessage.IsForwarded, &mediaType, &filename,
-	)
-	if err != nil {
-		return nil, err
-	}
-	targetMessage.ChatName = chatName.String
-	targetMessage.MediaType = mediaType.String
-	targetMessage.Filename = filename.String
-
-	// Get messages after
-	afterMessages := []Message{}
-	if after > 0 {
-		rows, err := ms.db.Query(`
-			SELECT
-				m.id, m.chat_jid, c.name, m.sender, m.content,
-				m.timestamp, m.is_from_me, m.is_forwarded, m.media_type, m.filename
-			FROM messages m
-			JOIN chats c ON m.chat_jid = c.jid
-			WHERE m.chat_jid = ? AND m.timestamp > ?
-			ORDER BY m.timestamp ASC
-			LIMIT ?
-		`, chatJID, targetTime, after)
-		if err == nil {
-			defer rows.Close()
-			for rows.Next() {
-				var m Message
-				var chatName, mediaType, filename sql.NullString
-				if err := rows.Scan(
-					&m.ID, &m.ChatJID, &chatName, &m.Sender, &m.Content,
-					&m.Timestamp, &m.IsFromMe, &m.IsForwarded, &mediaType, &filename,
-				); err == nil {
-					m.ChatName = chatName.String
-					m.MediaType = mediaType.String
-					m.Filename = filename.String
-					afterMessages = append(afterMessages, m)
-				}
-			}
-		}
-	}
-
-	// Combine all messages
-	result := append(beforeMessages, targetMessage)
-	result = append(result, afterMessages...)
-
-	return result, nil
-}
-
 func (ms *MessageStore) ListGroups(limit, offset int) ([]Chat, error) {
 	rows, err := ms.db.Query(`
 		SELECT
@@ -515,97 +498,42 @@ func (ms *MessageStore) ListGroups(limit, offset int) ([]Chat, error) {
 	return groups, nil
 }
 
-func (ms *MessageStore) GetLastInteraction(jid string) (string, error) {
-	var m Message
-	var chatName, mediaType, filename sql.NullString
+func (ms *MessageStore) GetMessageMediaInfo(messageID, chatJID string) (*MediaInfo, error) {
+	var info MediaInfo
+	var mediaType, filename, url sql.NullString
+	var mediaKey, fileSHA256, fileEncSHA256 []byte
+	var fileLength sql.NullInt64
 
 	err := ms.db.QueryRow(`
-		SELECT
-			m.id, m.chat_jid, c.name, m.sender, m.content,
-			m.timestamp, m.is_from_me, m.is_forwarded, m.media_type, m.filename
-		FROM messages m
-		JOIN chats c ON m.chat_jid = c.jid
-		WHERE m.sender = ? OR c.jid = ?
-		ORDER BY m.timestamp DESC
-		LIMIT 1
-	`, jid, jid).Scan(
-		&m.ID, &m.ChatJID, &chatName, &m.Sender, &m.Content,
-		&m.Timestamp, &m.IsFromMe, &m.IsForwarded, &mediaType, &filename,
-	)
-	if err != nil {
-		return "", err
-	}
-
-	m.ChatName = chatName.String
-	m.MediaType = mediaType.String
-	m.Filename = filename.String
-
-	// Format the interaction message
-	sender := m.Sender
-	if m.IsFromMe {
-		sender = "You"
-	}
-
-	interaction := fmt.Sprintf("[%s] %s: %s",
-		m.Timestamp.Format("2006-01-02 15:04"),
-		sender,
-		m.Content,
+		SELECT id, chat_jid, media_type, filename, url,
+			media_key, file_sha256, file_enc_sha256, file_length
+		FROM messages
+		WHERE id = ? AND chat_jid = ?
+	`, messageID, chatJID).Scan(
+		&info.MessageID, &info.ChatJID, &mediaType, &filename, &url,
+		&mediaKey, &fileSHA256, &fileEncSHA256, &fileLength,
 	)
 
-	if m.MediaType != "" {
-		interaction = fmt.Sprintf("[%s] %s: [%s]",
-			m.Timestamp.Format("2006-01-02 15:04"),
-			sender,
-			m.MediaType,
-		)
-	}
-
-	return interaction, nil
-}
-
-func (ms *MessageStore) GetContactChats(jid string, limit, offset int) ([]Chat, error) {
-	rows, err := ms.db.Query(`
-		SELECT DISTINCT
-			c.jid, c.name, c.last_message_time,
-			m.content, m.sender, m.is_from_me
-		FROM messages msg
-		JOIN chats c ON msg.chat_jid = c.jid
-		LEFT JOIN messages m ON c.jid = m.chat_jid
-			AND c.last_message_time = m.timestamp
-		WHERE msg.sender = ? OR msg.chat_jid = ?
-		ORDER BY c.last_message_time DESC
-		LIMIT ? OFFSET ?
-	`, jid, jid, limit, offset)
 	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var chats []Chat
-	for rows.Next() {
-		var c Chat
-		var name, lastMsg, lastSender sql.NullString
-		var lastTime sql.NullTime
-		var lastIsFromMe sql.NullBool
-
-		if err := rows.Scan(
-			&c.JID, &name, &lastTime,
-			&lastMsg, &lastSender, &lastIsFromMe,
-		); err != nil {
-			continue
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("message not found: %s in chat %s", messageID, chatJID)
 		}
-
-		c.Name = name.String
-		if lastTime.Valid {
-			c.LastMessageTime = lastTime.Time
-		}
-		c.LastMessage = lastMsg.String
-		c.LastSender = lastSender.String
-		c.LastIsFromMe = lastIsFromMe.Bool
-		c.IsGroup = strings.HasSuffix(c.JID, "@g.us")
-
-		chats = append(chats, c)
+		return nil, fmt.Errorf("failed to query media info: %v", err)
 	}
 
-	return chats, nil
+	info.MediaType = mediaType.String
+	info.Filename = filename.String
+	info.URL = url.String
+	info.MediaKey = mediaKey
+	info.FileSHA256 = fileSHA256
+	info.FileEncSHA256 = fileEncSHA256
+	if fileLength.Valid {
+		info.FileLength = uint64(fileLength.Int64)
+	}
+
+	if info.MediaType == "" || info.URL == "" {
+		return nil, fmt.Errorf("message %s has no media", messageID)
+	}
+
+	return &info, nil
 }

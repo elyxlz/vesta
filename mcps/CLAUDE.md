@@ -13,12 +13,12 @@
 - **Comments only when necessary**: Complex algorithms or non-obvious business logic
 - **No redundant comments**: Don't describe what the code clearly shows
 - **FUNCTIONAL**: Use functional programming patterns, no OOP/classes
-- **NO GLOBAL STATE**: Avoid global variables and mutable module-level state
+- **NO GLOBAL STATE**: Use lifespan pattern for resource management (see Development Patterns section)
 
 ### Initialization Principle
 - **LAZY INITIALIZATION**: Never initialize resources at import time
-- **EXPLICIT SETUP**: All initialization happens in main() after parsing args
-- **PASS DEPENDENCIES**: Pass initialized resources to functions that need them
+- **LIFESPAN PATTERN**: All initialization happens in the lifespan async context manager
+- **DEPENDENCY INJECTION**: Resources passed via context, not as function parameters
 - **NO IMPORT SIDE EFFECTS**: Importing a module should never create connections, files, or start services
 
 ### Independence Principle
@@ -43,39 +43,305 @@ mcp-name/
 ├── src/
 │   └── mcp_name/           # Use underscore in package name
 │       ├── __init__.py
-│       ├── server.py        # Entry point with argparse for --data-dir and --notifications-dir
-│       ├── tools.py         # FastMCP tool definitions (keep under 400 lines)
+│       ├── server.py        # Just calls mcp.run() - 10 lines max
+│       ├── settings.py      # Pydantic settings for env vars
+│       ├── context.py       # Context dataclass with all shared resources
+│       ├── tools.py         # FastMCP instance with lifespan + tools (400 lines max)
 │       ├── [domain]_tools.py # Split large tools into domain files
 │       └── [api].py         # API/service integration modules
 ├── tests/
 │   ├── __init__.py
-│   └── test_integration.py
+│   └── test_e2e.py
 ├── pyproject.toml           # Standardized metadata
 ├── README.md
-├── .env.example             # Required env vars documentation
 └── authenticate.py          # Helper script if needed
 ```
+
+**Note**: No `.env.example` files in MCPs - all env vars centralized in vesta root `.env`
 
 ### File Size Limits
 - **tools.py**: Maximum 400 lines. Split into domain-specific files if larger:
   - `email_tools.py`, `calendar_tools.py`, `file_tools.py` etc.
 - **Each domain file**: Maximum 500 lines
-- **server.py**: Maximum 100 lines (just initialization and argument parsing)
+- **server.py**: Maximum 10 lines (just imports mcp and calls mcp.run())
+- **context.py**: Keep under 50 lines (just dataclass definition)
 
 ## Development Patterns
 
-### Tool Definition (using FastMCP from mcp.server)
+### Settings Pattern (Configuration Management)
+
+**REQUIRED**: All MCPs MUST use pydantic-settings for configuration. Never use `os.getenv()` or `os.environ`.
+
+#### Why Pydantic Settings?
+- **Type Safety**: Automatic type validation and conversion
+- **Centralized Config**: All env vars loaded from vesta root `.env`
+- **No os.getenv**: Eliminates manual environment variable access
+- **Validation**: Built-in validation with clear error messages
+- **Defaults**: Type-safe defaults with proper fallbacks
+
+#### Basic Structure
+
 ```python
-from mcp.server.fastmcp import FastMCP
+# settings.py
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-mcp = FastMCP("mcp-name")
+class MySettings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
-@mcp.tool()  # Note the parentheses
-def tool_name(param: str) -> dict:
-    """Tool description for LLM"""
-    # Implementation
-    return result
+    # Define env vars with types
+    my_api_key: str
+    my_api_endpoint: str = "https://api.example.com"
 ```
+
+#### Usage in Lifespan
+
+```python
+# tools.py or auth_tools.py
+from .settings import MySettings
+
+@asynccontextmanager
+async def my_lifespan(server: FastMCP) -> AsyncIterator[MyContext]:
+    # 1. Load settings from .env
+    settings = MySettings()
+
+    # 2. Parse CLI arguments
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data-dir", type=str, required=True)
+    args, _ = parser.parse_known_args()
+
+    # 3. Pass settings to context
+    ctx = MyContext(data_dir=data_dir, settings=settings)
+
+    try:
+        yield ctx
+    finally:
+        pass
+```
+
+#### Usage in Functions
+
+```python
+# Pass settings as parameter, never use os.getenv()
+def get_app(cache_file: Path, settings: MySettings) -> App:
+    return App(api_key=settings.my_api_key)
+
+# In tools, extract from context
+@mcp.tool()
+def my_tool(ctx: Context) -> dict:
+    context: MyContext = ctx.request_context.lifespan_context
+    return use_api(context.settings.my_api_key)
+```
+
+### Lifespan Pattern (Resource Management)
+
+**REQUIRED**: All MCPs MUST use the lifespan pattern for resource management. Never use global variables.
+
+#### Why Lifespan?
+- **Zero Globals**: All resources managed via context, no module-level state
+- **Proper Lifecycle**: Resources created on startup, cleaned up on shutdown
+- **Type Safety**: Full type checking with dataclasses
+- **Dependency Injection**: FastMCP auto-injects context into tools
+- **Easier Testing**: Mock contexts without changing global state
+
+#### Basic Structure
+
+```python
+from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from pathlib import Path
+from mcp.server.fastmcp import FastMCP, Context
+
+@dataclass
+class MyContext:
+    data_dir: Path
+    # Add all shared resources here
+
+@asynccontextmanager
+async def my_lifespan(server: FastMCP) -> AsyncIterator[MyContext]:
+    """Manage MCP lifecycle"""
+    # 1. Parse CLI arguments
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data-dir", type=str, required=True)
+    args, _ = parser.parse_known_args()
+
+    # 2. Initialize resources
+    data_dir = Path(args.data_dir).resolve()
+    data_dir.mkdir(parents=True, exist_ok=True)
+    ctx = MyContext(data_dir=data_dir)
+
+    # 3. Yield context (MCP runs here)
+    try:
+        yield ctx
+    finally:
+        # 4. Cleanup resources
+        pass
+
+mcp = FastMCP("my-mcp", lifespan=my_lifespan)
+
+@mcp.tool()
+def my_tool(ctx: Context, param: str) -> dict:
+    """FastMCP auto-injects ctx, excludes it from tool schema"""
+    context: MyContext = ctx.request_context.lifespan_context
+    # Use context.data_dir, etc.
+    return {"result": "ok"}
+```
+
+#### Key Rules
+
+1. **Context Dataclass**: Define all shared resources in a dataclass
+2. **Async Context Manager**: Use `@asynccontextmanager` for lifespan
+3. **CLI Args in Lifespan**: Parse args in lifespan, NOT in `main()`
+4. **Context Injection**: Add `ctx: Context` as first param to ALL tool functions
+5. **Extract Context**: `context: MyContext = ctx.request_context.lifespan_context`
+6. **Simplified server.py**: Just call `mcp.run()`, no initialization code
+
+#### Complete Example (Reminder-MCP)
+
+```python
+# tools.py
+@dataclass
+class ReminderContext:
+    scheduler: BackgroundScheduler
+    data_dir: Path
+    notif_dir: Path
+
+@asynccontextmanager
+async def reminder_lifespan(server: FastMCP) -> AsyncIterator[ReminderContext]:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data-dir", type=str, required=True)
+    parser.add_argument("--notifications-dir", type=str, required=True)
+    args, _ = parser.parse_known_args()
+
+    data_dir = Path(args.data_dir).resolve()
+    data_dir.mkdir(parents=True, exist_ok=True)
+    notif_dir = Path(args.notifications_dir).resolve()
+    notif_dir.mkdir(parents=True, exist_ok=True)
+
+    from . import scheduler as scheduler_module
+    scheduler = scheduler_module.create_scheduler(data_dir)
+    scheduler.start()
+
+    ctx = ReminderContext(scheduler, data_dir, notif_dir)
+    init_db(ctx)
+    check_missed_reminders(ctx)
+
+    try:
+        yield ctx
+    finally:
+        scheduler.shutdown(wait=True)
+
+mcp = FastMCP("reminder-mcp", lifespan=reminder_lifespan)
+
+@mcp.tool()
+def set_reminder(ctx: Context, message: str, minutes: float | None = None) -> dict:
+    context: ReminderContext = ctx.request_context.lifespan_context
+    # Use context.scheduler, context.data_dir, etc.
+    return {"id": "...", "status": "scheduled"}
+
+# server.py
+from .tools import mcp
+
+def main():
+    mcp.run()  # That's it!
+```
+
+#### Advanced: HTTP Clients & Background Threads
+
+```python
+@dataclass
+class MicrosoftContext:
+    cache_file: Path
+    http_client: httpx.Client
+    notif_dir: Path
+    monitor_stop_event: threading.Event
+    monitor_logger: logging.Logger
+
+@asynccontextmanager
+async def microsoft_lifespan(server: FastMCP) -> AsyncIterator[MicrosoftContext]:
+    # Parse args
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data-dir", type=str, required=True)
+    args, _ = parser.parse_known_args()
+
+    # Setup resources
+    http_client = httpx.Client(timeout=30.0, follow_redirects=True)
+    monitor_stop_event = threading.Event()
+
+    ctx = MicrosoftContext(
+        cache_file=data_dir / "cache.bin",
+        http_client=http_client,
+        notif_dir=notif_dir,
+        monitor_stop_event=monitor_stop_event,
+        monitor_logger=logger,
+    )
+
+    # Start background thread
+    monitor_thread = threading.Thread(target=monitor.run, args=(ctx,), daemon=True)
+    monitor_thread.start()
+
+    try:
+        yield ctx
+    finally:
+        # Graceful shutdown
+        monitor_stop_event.set()
+        monitor_thread.join(timeout=5)
+        http_client.close()
+```
+
+#### Passing Context to Non-Tool Functions
+
+For helper functions that can't accept `Context` (e.g., APScheduler jobs, monitor threads):
+- Pass individual resources as function parameters
+- For APScheduler: Pass paths/IDs as args, not context objects (can't serialize)
+- For threads: Pass entire context object
+
+```python
+# APScheduler jobs - pass individual params
+def job_function(reminder_id: str, message: str, data_dir: Path, notif_dir: Path):
+    # Can't receive Context because APScheduler serializes job args
+    pass
+
+# Background threads - pass context
+def monitor_thread(ctx: MicrosoftContext):
+    while not ctx.monitor_stop_event.is_set():
+        # Use ctx.http_client, ctx.cache_file, etc.
+        pass
+```
+
+### Tool Docstrings
+
+**Rule**: Only write docstrings for tools when the tool name + parameter types don't make the intent clear.
+
+```python
+# Good - no docstring needed, name + types are clear
+@mcp.tool()
+def list_emails(ctx: Context, account_id: str, limit: int = 10) -> list[dict]:
+    ...
+
+# Good - docstring adds value for constraints
+@mcp.tool()
+def create_event(ctx: Context, account_id: str, start: str, end: str) -> dict:
+    """start/end: ISO-8601 datetime (e.g. '2024-01-15T14:00:00')"""
+    ...
+
+# Bad - docstring just repeats the function signature
+@mcp.tool()
+def send_email(ctx: Context, to: str, subject: str, body: str) -> dict:
+    """Send an email with to, subject, and body"""  # Redundant!
+    ...
+```
+
+Keep docstrings minimal:
+- Document format constraints (ISO-8601, E.164, etc.)
+- Document enum values
+- Document special parameter formats (comma-separated, etc.)
+- **Don't** repeat what's obvious from name + types
 
 ### Authentication
 - Store credentials in environment variables
@@ -83,33 +349,12 @@ def tool_name(param: str) -> dict:
 - Check for required env vars at startup
 - Provide clear error messages if missing
 
-### Testing
-```python
-# Integration tests using MCP client
-async def get_session():
-    server_params = StdioServerParameters(
-        command="uv",
-        args=["run", "mcp-name"],
-        env={"REQUIRED_VAR": os.getenv("REQUIRED_VAR")}
-    )
-    async with stdio_client(server_params) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            yield session
-
-@pytest.mark.asyncio
-async def test_tool():
-    async for session in get_session():
-        result = await session.call_tool("tool_name", {"param": "value"})
-        assert not result.isError
-```
-
 ## Creating a New MCP
 
 1. Copy structure from existing MCP (e.g., microsoft-mcp)
 2. Update `pyproject.toml` with new name and dependencies
 3. Implement tools in `src/mcp_name/tools.py`
-4. Add integration tests
+4. Add e2e tests
 5. Document tool usage in README.md
 
 ## Project Metadata Standards
@@ -164,14 +409,6 @@ MCP_NAME_API_KEY=your-api-key-here
 MCP_NAME_ENDPOINT=https://api.example.com
 ```
 
-## Notification Support
-
-For MCPs that need to send notifications to Vesta:
-1. Write to shared `notifications.json` file
-2. Use file locking for concurrent access
-3. Include timestamp, source, type, and data fields
-4. Vesta will process and clear notifications on each run
-
 ## Error Handling
 
 - Return clear error messages that help Vesta understand what went wrong
@@ -196,33 +433,13 @@ For MCPs that need to send notifications to Vesta:
       ...
   ```
 
-## Required Refactoring Status
-
-### ✅ WhatsApp MCP (COMPLETED)
-- ✅ Moved from `whatsapp-mcp-server/` to `src/whatsapp_mcp/`
-- ✅ Split main.py into server.py and tools.py
-- ✅ Updated pyproject.toml with proper metadata
-- ✅ Added .env.example file
-
-### ✅ Microsoft MCP (COMPLETED)
-- ✅ Split 1155-line tools.py into domain modules:
-  - email_tools.py - Email operations
-  - calendar_tools.py - Calendar operations
-  - file_tools.py - OneDrive operations
-  - auth_tools.py - Authentication
-  - search_tools.py - Search operations
-- ✅ Added .env.example file
-
-### ✅ Scheduler MCP (ALREADY COMPLIANT)
-- Structure already follows standards
-- ✅ Added .env.example file
-
 ## Enforcement Rules
 
 1. **File Size Limits**: Enforce during code review
    - tools.py: max 400 lines
    - Domain modules: max 500 lines
-   - server.py: max 100 lines
+   - server.py: max 10 lines
+   - context.py: max 50 lines
 
 2. **Structure Validation**: Check before commits
    - Must have src/mcp_name/ structure

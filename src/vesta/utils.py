@@ -6,11 +6,12 @@ import typing as tp
 
 import claude_code_sdk.types as ccsdk_types
 import vesta.models as vm
+from vesta.constants import Emoji, Senders, Formats
 
 
-def format_timestamp_message(text: str, sender: str, timestamp: dt.datetime, colors: dict[str, str]) -> list[str]:
-    timestamp_str = timestamp.strftime("%I:%M %p")
-    color_map = {"You": "cyan", "Vesta": "magenta", "System": "yellow"}
+def format_timestamp_message(text: str, sender: str, timestamp: dt.datetime, *, colors: dict[str, str]) -> list[str]:
+    timestamp_str = timestamp.strftime(Formats.TIMESTAMP)
+    color_map = {Senders.USER: "cyan", Senders.ASSISTANT: "magenta", Senders.SYSTEM: "yellow"}
     base_sender = sender.split("[")[0] if "[" in sender else sender
 
     if base_sender in color_map:
@@ -24,14 +25,14 @@ def format_timestamp_message(text: str, sender: str, timestamp: dt.datetime, col
         return [f"{colors['dim']}[{timestamp_str}]{colors['reset']} {colors['yellow']}{text}{colors['reset']}"]
 
 
-def format_tool_call(name: str, input_data: tp.Any, sub_agent_context: str | None, service_icons: dict[str, str]) -> tuple[str, str | None]:
+def format_tool_call(name: str, *, input_data: tp.Any, sub_agent_context: str | None, service_icons: dict[str, str]) -> tuple[str, str | None]:
     input_str = json.dumps(input_data) if isinstance(input_data, dict) else str(input_data)
     input_preview = (input_str[:150] + "...") if len(input_str) > 150 else input_str
 
     if name == "Task":
         agent_type = input_data.get("subagent_type", "unknown") if isinstance(input_data, dict) else "unknown"
         description = input_data.get("description", "") if isinstance(input_data, dict) else ""
-        return f"🤖 Task [{agent_type}]: {description or input_preview}", agent_type
+        return f"{Emoji.ROBOT} Task [{agent_type}]: {description or input_preview}", agent_type
 
     prefix = f"[{sub_agent_context}] " if sub_agent_context else ""
 
@@ -39,10 +40,10 @@ def format_tool_call(name: str, input_data: tp.Any, sub_agent_context: str | Non
         parts = name.replace("mcp__", "").split("__")
         service = parts[0] if parts else "unknown"
         action = ".".join(parts[1:]) if len(parts) > 1 else "action"
-        icon = service_icons.get(service, "🔧")
-        return f"🔧 {prefix}{icon} [{service}] {action}: {input_preview}", sub_agent_context
+        icon = service_icons.get(service, Emoji.TOOL)
+        return f"{Emoji.TOOL} {prefix}{icon} [{service}] {action}: {input_preview}", sub_agent_context
 
-    return f"🔧 {prefix}{name}: {input_preview}", sub_agent_context
+    return f"{Emoji.TOOL} {prefix}{name}: {input_preview}", sub_agent_context
 
 
 def extract_usage_from_result(msg: ccsdk_types.ResultMessage) -> dict[str, tp.Any] | None:
@@ -60,7 +61,7 @@ def extract_usage_from_result(msg: ccsdk_types.ResultMessage) -> dict[str, tp.An
 
 
 def parse_assistant_message(
-    msg: tp.Any, sub_agent_context: str | None, service_icons: dict[str, str]
+    msg: tp.Any, sub_agent_context: str | None, *, service_icons: dict[str, str]
 ) -> tuple[list[str], str | None, dict[str, tp.Any] | None]:
     # Handle ResultMessage
     if isinstance(msg, ccsdk_types.ResultMessage):
@@ -80,7 +81,9 @@ def parse_assistant_message(
                 has_task_result = True
             texts.append(text)
         elif isinstance(block, ccsdk_types.ToolUseBlock):
-            formatted, new_context = format_tool_call(block.name, block.input, current_context, service_icons)
+            formatted, new_context = format_tool_call(
+                block.name, input_data=block.input, sub_agent_context=current_context, service_icons=service_icons
+            )
             texts.append(formatted)
             if new_context:
                 current_context = new_context
@@ -95,7 +98,7 @@ def update_state(state: vm.State, **updates) -> vm.State:
     return dc.replace(state, **updates)
 
 
-def add_to_conversation_history(history: list[dict[str, tp.Any]], role: str, content: str) -> list[dict[str, tp.Any]]:
+def add_to_conversation_history(history: list[dict[str, tp.Any]], role: str, *, content: str) -> list[dict[str, tp.Any]]:
     return history + [{"role": role, "content": content}]
 
 
@@ -103,13 +106,13 @@ def calculate_token_count(history: list[dict[str, tp.Any]]) -> int:
     return sum(len(str(msg)) // 4 for msg in history)
 
 
-def should_preserve_memory(history: list[dict[str, tp.Any]], max_tokens: int, ephemeral: bool) -> bool:
+def should_preserve_memory(history: list[dict[str, tp.Any]], max_tokens: int, *, ephemeral: bool) -> bool:
     if ephemeral or not history:
         return False
     return calculate_token_count(history) >= max_tokens
 
 
-def filter_new_notifications(all_notifications: list[vm.Notification], existing_paths: set[str]) -> list[vm.Notification]:
+def filter_new_notifications(all_notifications: list[vm.Notification], *, existing_paths: set[str]) -> list[vm.Notification]:
     return [n for n in all_notifications if n.file_path not in existing_paths]
 
 
@@ -121,7 +124,7 @@ def format_notification_batch(notifications: list[vm.Notification]) -> str:
     return "[NOTIFICATIONS]\n" + "\n".join(prompts)
 
 
-def build_query_with_timestamp(prompt: str, timestamp: dt.datetime) -> str:
+def build_query_with_timestamp(prompt: str, *, timestamp: dt.datetime) -> str:
     timestamp_str = timestamp.strftime("%A, %B %d, %Y at %I:%M:%S %p %Z")
     return f"[Current time: {timestamp_str}]\n{prompt}"
 
@@ -135,6 +138,7 @@ class MonitoringAction:
 def calculate_monitoring_actions(
     current_time: dt.datetime,
     last_proactive: dt.datetime,
+    *,
     config: vm.VestaSettings,
 ) -> list[MonitoringAction]:
     actions = []
@@ -146,14 +150,16 @@ def calculate_monitoring_actions(
 
 
 def should_process_notification_buffer(
-    buffer: list[vm.Notification], buffer_start_time: dt.datetime | None, current_time: dt.datetime, buffer_delay: int
+    buffer: list[vm.Notification], buffer_start_time: dt.datetime | None, current_time: dt.datetime, *, buffer_delay: int
 ) -> bool:
     if not buffer or not buffer_start_time:
         return False
     return (current_time - buffer_start_time).total_seconds() >= buffer_delay
 
 
-def classify_output_line(text: str, sub_agent_context: str | None, is_tool: bool) -> tp.Literal["agent_task", "agent_tool", "tool", "message"]:
+def classify_output_line(
+    text: str, *, sub_agent_context: str | None, is_tool: bool
+) -> tp.Literal["agent_task", "agent_tool", "tool", "message"]:
     if not text or not text.strip():
         return "message"
 
@@ -168,7 +174,7 @@ def classify_output_line(text: str, sub_agent_context: str | None, is_tool: bool
 
 
 def format_output_line(
-    text: str, line_type: tp.Literal["agent_task", "agent_tool", "tool", "message"], sub_agent_context: str | None, colors: dict[str, str]
+    text: str, *, line_type: tp.Literal["agent_task", "agent_tool", "tool", "message"], sub_agent_context: str | None, colors: dict[str, str]
 ) -> str:
     if line_type == "agent_task":
         return f"{colors['cyan']}>>{text}{colors['reset']}"
@@ -208,7 +214,7 @@ def parse_notification_file_content(content: str) -> dict[str, tp.Any]:
 
 
 def decide_notification_action(
-    notifications: list[vm.Notification], is_processing: bool, has_client: bool
+    notifications: list[vm.Notification], *, is_processing: bool, has_client: bool
 ) -> tp.Literal["interrupt", "queue", "skip"]:
     if not notifications:
         return "skip"

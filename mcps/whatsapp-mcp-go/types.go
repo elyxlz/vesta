@@ -31,6 +31,7 @@ type Contact struct {
 	PhoneNumber string `json:"phone_number"`
 	Name        string `json:"name,omitempty"`
 	JID         string `json:"jid"`
+	IsManual    bool   `json:"is_manual,omitempty"`
 }
 
 type MessageContext struct {
@@ -39,21 +40,52 @@ type MessageContext struct {
 	After   []Message `json:"after"`
 }
 
+type MediaInfo struct {
+	MessageID     string
+	ChatJID       string
+	MediaType     string
+	Filename      string
+	URL           string
+	MediaKey      []byte
+	FileSHA256    []byte
+	FileEncSHA256 []byte
+	FileLength    uint64
+}
+
 // Tool Input/Output types for MCP
 
 type SearchContactsInput struct {
 	Query string `json:"query" jsonschema:"Search query for contact name or phone number"`
+	Limit int    `json:"limit,omitempty" jsonschema:"Maximum number of contacts to return (default 50)"`
 }
 
 type SearchContactsOutput struct {
 	Contacts []Contact `json:"contacts"`
 }
 
+type ListContactsInput struct {
+	Query string `json:"query,omitempty" jsonschema:"Optional search query for contact name or phone number"`
+	Limit int    `json:"limit,omitempty" jsonschema:"Maximum number of contacts to return (default 50)"`
+}
+
+type ListContactsOutput struct {
+	Contacts []Contact `json:"contacts"`
+}
+
+type AddContactInput struct {
+	Name        string `json:"name" jsonschema:"Display name for the contact"`
+	PhoneNumber string `json:"phone_number" jsonschema:"Phone number in E.164 format (+1234567890)"`
+}
+
+type AddContactOutput struct {
+	Contact Contact `json:"contact"`
+}
+
 type ListMessagesInput struct {
 	After          string `json:"after,omitempty" jsonschema:"ISO-8601 datetime to filter messages after"`
 	Before         string `json:"before,omitempty" jsonschema:"ISO-8601 datetime to filter messages before"`
 	SenderPhone    string `json:"sender_phone_number,omitempty" jsonschema:"Filter by sender phone number"`
-	ChatJID        string `json:"chat_jid,omitempty" jsonschema:"Filter by chat JID"`
+	To             string `json:"to,omitempty" jsonschema:"Filter by chat - accepts contact name, phone number, group name, or JID"`
 	Query          string `json:"query,omitempty" jsonschema:"Search query for message content"`
 	Limit          int    `json:"limit,omitempty" jsonschema:"Maximum number of messages to return"`
 	Page           int    `json:"page,omitempty" jsonschema:"Page number for pagination"`
@@ -79,8 +111,8 @@ type ListChatsOutput struct {
 }
 
 type SendMessageInput struct {
-	Recipient string `json:"recipient" jsonschema:"Phone number or group JID"`
-	Message   string `json:"message" jsonschema:"Text message to send"`
+	To      string `json:"to" jsonschema:"Recipient - accepts contact name, phone number (+1234567890), group name, or JID (phone@s.whatsapp.net)"`
+	Message string `json:"message" jsonschema:"Text message to send"`
 }
 
 type SendMessageOutput struct {
@@ -89,9 +121,9 @@ type SendMessageOutput struct {
 }
 
 type SendFileInput struct {
-	Recipient string `json:"recipient" jsonschema:"Phone number or group JID"`
-	FilePath  string `json:"file_path" jsonschema:"Path to file to send"`
-	Caption   string `json:"caption,omitempty" jsonschema:"Optional caption for the file"`
+	To       string `json:"to" jsonschema:"Recipient - accepts contact name, phone number (+1234567890), group name, or JID"`
+	FilePath string `json:"file_path" jsonschema:"Path to file to send"`
+	Caption  string `json:"caption,omitempty" jsonschema:"Optional caption for the file"`
 }
 
 type SendFileOutput struct {
@@ -102,7 +134,7 @@ type SendFileOutput struct {
 type DownloadMediaInput struct {
 	MessageID    string `json:"message_id" jsonschema:"Message ID containing media"`
 	DownloadPath string `json:"download_path,omitempty" jsonschema:"Optional path to save media"`
-	JID          string `json:"jid,omitempty" jsonschema:"Chat JID"`
+	To           string `json:"to,omitempty" jsonschema:"Chat - accepts contact name, phone number, group name, or JID"`
 }
 
 type DownloadMediaOutput struct {
@@ -114,7 +146,7 @@ type DownloadMediaOutput struct {
 type SendReactionInput struct {
 	MessageID string `json:"message_id" jsonschema:"Message ID to react to"`
 	Emoji     string `json:"emoji" jsonschema:"Emoji reaction"`
-	JID       string `json:"jid" jsonschema:"Chat JID"`
+	To        string `json:"to" jsonschema:"Chat - accepts contact name, phone number, group name, or JID"`
 }
 
 type SendReactionOutput struct {
