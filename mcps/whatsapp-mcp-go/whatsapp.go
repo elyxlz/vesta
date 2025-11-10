@@ -50,6 +50,7 @@ type WhatsAppClient struct {
 	presenceActive    bool
 	presenceMutex     sync.RWMutex
 	lastMessageSentAt time.Time
+	connectMutex      sync.Mutex
 }
 
 func NewWhatsAppClient(dataDir, notificationsDir string, logger waLog.Logger) (*WhatsAppClient, error) {
@@ -63,14 +64,14 @@ func NewWhatsAppClient(dataDir, notificationsDir string, logger waLog.Logger) (*
 	dbLog := waLog.Stdout("Database", "INFO", true)
 	whatsappDBPath := filepath.Join(dataDir, "whatsapp.db")
 
-	container, err := sqlstore.New("sqlite3", fmt.Sprintf("file:%s?_foreign_keys=on", whatsappDBPath), dbLog)
+	container, err := sqlstore.New(context.Background(), "sqlite3", fmt.Sprintf("file:%s?_foreign_keys=on", whatsappDBPath), dbLog)
 	if err != nil {
 		store.Close()
 		return nil, fmt.Errorf("failed to connect to whatsapp database: %v", err)
 	}
 
 	// Get or create device
-	deviceStore, err := container.GetFirstDevice()
+	deviceStore, err := container.GetFirstDevice(context.Background())
 	if err != nil {
 		if err == sql.ErrNoRows {
 			deviceStore = container.NewDevice()
@@ -336,6 +337,7 @@ func (wac *WhatsAppClient) sendReadReceiptDelayed(msgID string, chatJID, senderJ
 
 	// Mark as read
 	err := wac.client.MarkRead(
+		context.Background(),
 		[]types.MessageID{msgID},
 		time.Now(),
 		chatJID,
@@ -477,14 +479,14 @@ func (wac *WhatsAppClient) getChatName(jid types.JID, sender string) string {
 
 	// For groups
 	if jid.Server == types.GroupServer {
-		if groupInfo, err := wac.client.GetGroupInfo(jid); err == nil {
+		if groupInfo, err := wac.client.GetGroupInfo(context.Background(), jid); err == nil {
 			return groupInfo.Name
 		}
 		return fmt.Sprintf("Group %s", jid.User)
 	}
 
 	// For contacts
-	if contact, err := wac.client.Store.Contacts.GetContact(jid); err == nil && contact.FullName != "" {
+	if contact, err := wac.client.Store.Contacts.GetContact(context.Background(), jid); err == nil && contact.FullName != "" {
 		return contact.FullName
 	}
 
@@ -526,9 +528,8 @@ func (wac *WhatsAppClient) SendMessageWithPresence(recipient, message string) (b
 		return false, "Recipient and message are required. Provide a contact name, phone number, or group name plus the message text"
 	}
 
-	// Check if connected
-	if !wac.client.IsConnected() {
-		return false, "WhatsApp is not connected. Ensure WhatsApp is authenticated and connected"
+	if err := wac.EnsureConnected(); err != nil {
+		return false, err.Error()
 	}
 
 	// Resolve recipient to JID
@@ -538,6 +539,10 @@ func (wac *WhatsAppClient) SendMessageWithPresence(recipient, message string) (b
 	}
 
 	if err := wac.requireManualContact(jid); err != nil {
+		return false, err.Error()
+	}
+
+	if err := wac.EnsureConnected(); err != nil {
 		return false, err.Error()
 	}
 
@@ -560,7 +565,7 @@ func (wac *WhatsAppClient) SendMessageWithPresence(recipient, message string) (b
 		time.Sleep(reactionDelay)
 
 		// Start typing indicator
-		err = wac.client.SendChatPresence(
+		err = wac.client.SendChatPresence(context.Background(),
 			jid,
 			types.ChatPresenceComposing,
 			types.ChatPresenceMediaText,
@@ -583,7 +588,7 @@ func (wac *WhatsAppClient) SendMessageWithPresence(recipient, message string) (b
 		time.Sleep(typingDuration)
 
 		// Stop typing
-		err = wac.client.SendChatPresence(
+		err = wac.client.SendChatPresence(context.Background(),
 			jid,
 			types.ChatPresencePaused,
 			types.ChatPresenceMediaText,
@@ -622,9 +627,8 @@ func (wac *WhatsAppClient) SendMessage(recipient, message string) (bool, string)
 		return false, "Recipient and message are required. Provide a contact name, phone number, or group name plus the message text"
 	}
 
-	// Check if connected
-	if !wac.client.IsConnected() {
-		return false, "WhatsApp is not connected. Ensure WhatsApp is authenticated and connected"
+	if err := wac.EnsureConnected(); err != nil {
+		return false, err.Error()
 	}
 
 	// Resolve recipient to JID
@@ -681,6 +685,10 @@ func (wac *WhatsAppClient) SendFile(recipient, filePath, caption string) (bool, 
 	}
 
 	if err := wac.requireManualContact(jid); err != nil {
+		return false, err.Error()
+	}
+
+	if err := wac.EnsureConnected(); err != nil {
 		return false, err.Error()
 	}
 
@@ -792,6 +800,10 @@ func (wac *WhatsAppClient) SendAudioMessageWithPresence(recipient, filePath stri
 		return false, err.Error()
 	}
 
+	if err := wac.EnsureConnected(); err != nil {
+		return false, err.Error()
+	}
+
 	// Ensure we're online
 	if err := wac.EnsureOnline(); err != nil {
 		wac.logger.Warnf("Failed to set online status: %v", err)
@@ -802,7 +814,7 @@ func (wac *WhatsAppClient) SendAudioMessageWithPresence(recipient, filePath stri
 	time.Sleep(reactionDelay)
 
 	// Start recording indicator
-	err = wac.client.SendChatPresence(
+	err = wac.client.SendChatPresence(context.Background(),
 		jid,
 		types.ChatPresenceComposing,
 		types.ChatPresenceMediaAudio,
@@ -816,7 +828,7 @@ func (wac *WhatsAppClient) SendAudioMessageWithPresence(recipient, filePath stri
 		converted, err := ConvertToOpusOggTemp(filePath, "32k", 24000)
 		if err != nil {
 			// Stop recording indicator on error
-			if stopErr := wac.client.SendChatPresence(jid, types.ChatPresencePaused, types.ChatPresenceMediaAudio); stopErr != nil {
+			if stopErr := wac.client.SendChatPresence(context.Background(), jid, types.ChatPresencePaused, types.ChatPresenceMediaAudio); stopErr != nil {
 				wac.logger.Debugf("Failed to stop recording indicator: %v", stopErr)
 			}
 			return false, fmt.Sprintf("Failed to convert audio: %v", err)
@@ -828,13 +840,13 @@ func (wac *WhatsAppClient) SendAudioMessageWithPresence(recipient, filePath stri
 	// Check file size
 	fileInfo, err := os.Stat(filePath)
 	if err != nil {
-		if stopErr := wac.client.SendChatPresence(jid, types.ChatPresencePaused, types.ChatPresenceMediaAudio); stopErr != nil {
+		if stopErr := wac.client.SendChatPresence(context.Background(), jid, types.ChatPresencePaused, types.ChatPresenceMediaAudio); stopErr != nil {
 			wac.logger.Debugf("Failed to stop recording indicator: %v", stopErr)
 		}
 		return false, fmt.Sprintf("Audio file not found: %v", err)
 	}
 	if fileInfo.Size() > MaxAudioSizeBytes {
-		if stopErr := wac.client.SendChatPresence(jid, types.ChatPresencePaused, types.ChatPresenceMediaAudio); stopErr != nil {
+		if stopErr := wac.client.SendChatPresence(context.Background(), jid, types.ChatPresencePaused, types.ChatPresenceMediaAudio); stopErr != nil {
 			wac.logger.Debugf("Failed to stop recording indicator: %v", stopErr)
 		}
 		return false, fmt.Sprintf("Audio file too large: %d MB (max %d MB)",
@@ -844,7 +856,7 @@ func (wac *WhatsAppClient) SendAudioMessageWithPresence(recipient, filePath stri
 	// Read file
 	data, err := os.ReadFile(filePath)
 	if err != nil {
-		if stopErr := wac.client.SendChatPresence(jid, types.ChatPresencePaused, types.ChatPresenceMediaAudio); stopErr != nil {
+		if stopErr := wac.client.SendChatPresence(context.Background(), jid, types.ChatPresencePaused, types.ChatPresenceMediaAudio); stopErr != nil {
 			wac.logger.Debugf("Failed to stop recording indicator: %v", stopErr)
 		}
 		return false, fmt.Sprintf("Failed to read audio file: %v", err)
@@ -856,14 +868,14 @@ func (wac *WhatsAppClient) SendAudioMessageWithPresence(recipient, filePath stri
 	// Upload audio (still "recording")
 	uploaded, err := wac.client.Upload(context.Background(), data, whatsmeow.MediaAudio)
 	if err != nil {
-		if stopErr := wac.client.SendChatPresence(jid, types.ChatPresencePaused, types.ChatPresenceMediaAudio); stopErr != nil {
+		if stopErr := wac.client.SendChatPresence(context.Background(), jid, types.ChatPresencePaused, types.ChatPresenceMediaAudio); stopErr != nil {
 			wac.logger.Debugf("Failed to stop recording indicator: %v", stopErr)
 		}
 		return false, fmt.Sprintf("Failed to upload audio: %v", err)
 	}
 
 	// Stop recording indicator
-	err = wac.client.SendChatPresence(
+	err = wac.client.SendChatPresence(context.Background(),
 		jid,
 		types.ChatPresencePaused,
 		types.ChatPresenceMediaAudio,
@@ -930,6 +942,10 @@ func (wac *WhatsAppClient) SendAudioMessage(recipient, filePath string) (bool, s
 	}
 
 	if err := wac.requireManualContact(jid); err != nil {
+		return false, err.Error()
+	}
+
+	if err := wac.EnsureConnected(); err != nil {
 		return false, err.Error()
 	}
 
@@ -1128,7 +1144,7 @@ func (wac *WhatsAppClient) DownloadMedia(messageID, chatIdentifier, downloadPath
 	}
 
 	// Download media from WhatsApp servers
-	data, err := wac.client.Download(downloadable)
+	data, err := wac.client.Download(context.Background(), downloadable)
 	if err != nil {
 		return "", fmt.Errorf("failed to download media: %v", err)
 	}
@@ -1282,7 +1298,7 @@ func (wac *WhatsAppClient) CreateGroup(name string, participants []string) (bool
 		return false, err.Error()
 	}
 
-	resp, err := wac.client.CreateGroup(whatsmeow.ReqCreateGroup{
+	resp, err := wac.client.CreateGroup(context.Background(), whatsmeow.ReqCreateGroup{
 		Name:         name,
 		Participants: jids,
 	})
@@ -1308,7 +1324,7 @@ func (wac *WhatsAppClient) LeaveGroup(groupIdentifier string) (bool, string) {
 		return false, "The specified identifier is not a WhatsApp group"
 	}
 
-	err = wac.client.LeaveGroup(jid)
+	err = wac.client.LeaveGroup(context.Background(), jid)
 	if err != nil {
 		return false, fmt.Sprintf("Failed to leave group: %v", err)
 	}
@@ -1325,7 +1341,7 @@ func (wac *WhatsAppClient) GetGroupInviteLink(groupIdentifier string) (bool, str
 		return false, "", "The specified identifier is not a WhatsApp group"
 	}
 
-	link, err := wac.client.GetGroupInviteLink(jid, false)
+	link, err := wac.client.GetGroupInviteLink(context.Background(), jid, false)
 	if err != nil {
 		return false, "", fmt.Sprintf("Failed to get invite link: %v", err)
 	}
@@ -1333,12 +1349,45 @@ func (wac *WhatsAppClient) GetGroupInviteLink(groupIdentifier string) (bool, str
 	return true, link, "Invite link retrieved successfully"
 }
 
+func (wac *WhatsAppClient) EnsureConnected() error {
+	if wac.client.IsConnected() {
+		return nil
+	}
+
+	wac.connectMutex.Lock()
+	defer wac.connectMutex.Unlock()
+
+	if wac.client.IsConnected() {
+		return nil
+	}
+
+	if wac.client.Store.ID == nil {
+		wac.setAuthStatus(AuthStatusNotAuthenticated)
+		return fmt.Errorf("WhatsApp is not authenticated. Run authenticate_whatsapp to pair the device")
+	}
+
+	wac.logger.Warnf("WhatsApp is not connected. Attempting to reconnect...")
+	if err := wac.client.Connect(); err != nil {
+		return fmt.Errorf("failed to reconnect to WhatsApp: %v", err)
+	}
+
+	for i := 0; i < 10; i++ {
+		if wac.client.IsConnected() {
+			wac.setAuthStatus(AuthStatusAuthenticated)
+			return nil
+		}
+		time.Sleep(1 * time.Second)
+	}
+
+	return fmt.Errorf("WhatsApp is not connected. Ensure WhatsApp is authenticated and connected")
+}
+
 func (wac *WhatsAppClient) EnsureOnline() error {
 	wac.presenceMutex.Lock()
 	defer wac.presenceMutex.Unlock()
 
 	if !wac.presenceActive {
-		err := wac.client.SendPresence(types.PresenceAvailable)
+		err := wac.client.SendPresence(context.Background(), types.PresenceAvailable)
 		if err != nil {
 			return fmt.Errorf("failed to set online status: %v", err)
 		}
@@ -1612,7 +1661,7 @@ func (wac *WhatsAppClient) UpdateGroupParticipants(groupIdentifier, action strin
 		return false, "Invalid action: must be 'add' or 'remove'"
 	}
 
-	_, err = wac.client.UpdateGroupParticipants(jid, participantJIDs, changeType)
+	_, err = wac.client.UpdateGroupParticipants(context.Background(), jid, participantJIDs, changeType)
 	if err != nil {
 		return false, fmt.Sprintf("Failed to update participants: %v", err)
 	}
