@@ -617,23 +617,21 @@ async def create_claude_client(config: vm.VestaSettings) -> ccsdk.ClaudeSDKClien
 
 
 async def restart_claude_session(state: vm.State, *, config: vm.VestaSettings) -> None:
-    """Restart the existing Claude client so a bad tool run doesn't brick Vesta."""
-    if not state.client:
+    """Recreate the Claude client so a bad tool run doesn't brick Vesta."""
+    if state.client:
+        try:
+            await asyncio.wait_for(state.client.__aexit__(None, None, None), timeout=config.interrupt_timeout)
+        except Exception as e:
+            vfx.log_error(f"Error while closing Claude client: {e}", colors=Colors)
+        finally:
+            state.client = None
+
+    try:
         state.client = await create_claude_client(config)
-        return
-
-    try:
-        await asyncio.wait_for(state.client.disconnect(), timeout=config.interrupt_timeout)
-    except Exception as e:
-        vfx.log_error(f"Error while disconnecting Claude client: {e}", colors=Colors)
-
-    try:
-        await asyncio.wait_for(state.client.connect(), timeout=config.interrupt_timeout)
         state.sub_agent_context = None
         state.is_processing = False
     except Exception as e:
-        vfx.log_error(f"Failed to restart Claude client: {e}", colors=Colors)
-        state.client = None
+        vfx.log_error(f"Failed to recreate Claude client: {e}", colors=Colors)
 
 
 async def init_state(*, config: vm.VestaSettings) -> vm.State:
