@@ -678,6 +678,10 @@ func (wac *WhatsAppClient) SendFile(recipient, filePath, caption string) (bool, 
 		return false, err.Error()
 	}
 
+	if err := wac.requireManualContact(jid); err != nil {
+		return false, err.Error()
+	}
+
 	// Read file
 	data, err := os.ReadFile(filePath)
 	if err != nil {
@@ -761,6 +765,10 @@ func (wac *WhatsAppClient) SendAudioMessageWithPresence(recipient, filePath stri
 	// Resolve recipient to JID
 	jid, err := wac.ResolveRecipient(recipient)
 	if err != nil {
+		return false, err.Error()
+	}
+
+	if err := wac.requireManualContact(jid); err != nil {
 		return false, err.Error()
 	}
 
@@ -885,6 +893,10 @@ func (wac *WhatsAppClient) SendAudioMessage(recipient, filePath string) (bool, s
 	// Resolve recipient to JID
 	jid, err := wac.ResolveRecipient(recipient)
 	if err != nil {
+		return false, err.Error()
+	}
+
+	if err := wac.requireManualContact(jid); err != nil {
 		return false, err.Error()
 	}
 
