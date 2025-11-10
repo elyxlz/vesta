@@ -609,6 +609,8 @@ func (wac *WhatsAppClient) SendMessageWithPresence(recipient, message string) (b
 		return false, fmt.Sprintf("Failed to send message: %v", err)
 	}
 
+	wac.recordOutgoingMessage(jid, resp.ID, message, "", "", "", nil, nil, nil, 0)
+
 	// Update last message sent time
 	wac.presenceMutex.Lock()
 	wac.lastMessageSentAt = time.Now()
@@ -646,6 +648,8 @@ func (wac *WhatsAppClient) SendMessage(recipient, message string) (bool, string)
 	if err != nil {
 		return false, fmt.Sprintf("Failed to send message: %v", err)
 	}
+
+	wac.recordOutgoingMessage(jid, resp.ID, message, "", "", "", nil, nil, nil, 0)
 
 	return true, fmt.Sprintf("Message sent successfully (ID: %s)", resp.ID)
 }
@@ -748,6 +752,24 @@ func (wac *WhatsAppClient) SendFile(recipient, filePath, caption string) (bool, 
 	if err != nil {
 		return false, fmt.Sprintf("Failed to send file: %v", err)
 	}
+
+	var filename string
+	if msg.DocumentMessage != nil && msg.DocumentMessage.FileName != nil {
+		filename = msg.DocumentMessage.GetFileName()
+	}
+
+	wac.recordOutgoingMessage(
+		jid,
+		resp.ID,
+		caption,
+		mediaTypeToString(mediaType),
+		filename,
+		uploaded.URL,
+		uploaded.MediaKey,
+		uploaded.FileSHA256,
+		uploaded.FileEncSHA256,
+		uploaded.FileLength,
+	)
 
 	return true, fmt.Sprintf("File sent successfully (ID: %s)", resp.ID)
 }
@@ -877,6 +899,19 @@ func (wac *WhatsAppClient) SendAudioMessageWithPresence(recipient, filePath stri
 		return false, fmt.Sprintf("Failed to send audio message: %v", err)
 	}
 
+	wac.recordOutgoingMessage(
+		jid,
+		resp.ID,
+		"",
+		"audio",
+		"",
+		uploaded.URL,
+		uploaded.MediaKey,
+		uploaded.FileSHA256,
+		uploaded.FileEncSHA256,
+		uploaded.FileLength,
+	)
+
 	return true, fmt.Sprintf("Audio message sent successfully (ID: %s)", resp.ID)
 }
 
@@ -956,7 +991,86 @@ func (wac *WhatsAppClient) SendAudioMessage(recipient, filePath string) (bool, s
 		return false, fmt.Sprintf("Failed to send audio message: %v", err)
 	}
 
+	wac.recordOutgoingMessage(
+		jid,
+		resp.ID,
+		"",
+		"audio",
+		"",
+		uploaded.URL,
+		uploaded.MediaKey,
+		uploaded.FileSHA256,
+		uploaded.FileEncSHA256,
+		uploaded.FileLength,
+	)
+
 	return true, fmt.Sprintf("Audio message sent successfully (ID: %s)", resp.ID)
+}
+
+func mediaTypeToString(mt whatsmeow.MediaType) string {
+	switch mt {
+	case whatsmeow.MediaImage:
+		return "image"
+	case whatsmeow.MediaVideo:
+		return "video"
+	case whatsmeow.MediaAudio:
+		return "audio"
+	case whatsmeow.MediaDocument:
+		return "document"
+	default:
+		return ""
+	}
+}
+
+func (wac *WhatsAppClient) recordOutgoingMessage(
+	jid types.JID,
+	messageID string,
+	content string,
+	mediaType string,
+	filename string,
+	url string,
+	mediaKey []byte,
+	fileSHA256 []byte,
+	fileEncSHA256 []byte,
+	fileLength uint64,
+) {
+	if wac.store == nil || (jid.User == "" && jid.Server == "") {
+		return
+	}
+
+	if messageID == "" {
+		messageID = fmt.Sprintf("local-%d", time.Now().UnixNano())
+	}
+
+	timestamp := time.Now()
+
+	if err := wac.store.StoreChat(jid.String(), wac.getChatName(jid, ""), timestamp); err != nil {
+		wac.logger.Warnf("Failed to store outgoing chat metadata: %v", err)
+	}
+
+	sender := ""
+	if wac.client != nil && wac.client.Store != nil && wac.client.Store.ID != nil {
+		sender = wac.client.Store.ID.String()
+	}
+
+	if err := wac.store.StoreMessage(
+		messageID,
+		jid.String(),
+		sender,
+		content,
+		timestamp,
+		true,
+		false,
+		mediaType,
+		filename,
+		url,
+		mediaKey,
+		fileSHA256,
+		fileEncSHA256,
+		fileLength,
+	); err != nil {
+		wac.logger.Warnf("Failed to record outgoing message: %v", err)
+	}
 }
 
 func (wac *WhatsAppClient) DownloadMedia(messageID, chatIdentifier, downloadPath string) (string, error) {
