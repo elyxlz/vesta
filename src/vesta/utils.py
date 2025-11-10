@@ -98,20 +98,6 @@ def update_state(state: vm.State, **updates) -> vm.State:
     return dc.replace(state, **updates)
 
 
-def add_to_conversation_history(history: list[dict[str, tp.Any]], role: str, *, content: str) -> list[dict[str, tp.Any]]:
-    return history + [{"role": role, "content": content}]
-
-
-def calculate_token_count(history: list[dict[str, tp.Any]]) -> int:
-    return sum(len(str(msg)) // 4 for msg in history)
-
-
-def should_preserve_memory(history: list[dict[str, tp.Any]], max_tokens: int, *, ephemeral: bool) -> bool:
-    if ephemeral or not history:
-        return False
-    return calculate_token_count(history) >= max_tokens
-
-
 def filter_new_notifications(all_notifications: list[vm.Notification], *, existing_paths: set[str]) -> list[vm.Notification]:
     return [n for n in all_notifications if n.file_path not in existing_paths]
 

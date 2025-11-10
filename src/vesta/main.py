@@ -122,14 +122,7 @@ async def preserve_memory(state: vm.State, *, config: vm.VestaSettings) -> None:
         vfx.log_info("Skipping memory preservation (ephemeral mode)", colors=Colors)
         return
 
-    if not state.conversation_history:
-        vfx.log_info("No conversation history to preserve", colors=Colors)
-        return
-
-    vfx.log_info(
-        f"Preserving {len(state.conversation_history)} messages (timeout {config.memory_agent_timeout}s)...",
-        colors=Colors,
-    )
+    vfx.log_info(f"Preserving memory (timeout {config.memory_agent_timeout}s)...", colors=Colors)
 
     def log_progress(message: str) -> None:
         vfx.log_info(f"Memory agent: {message}", colors=Colors)
@@ -148,7 +141,8 @@ async def preserve_memory(state: vm.State, *, config: vm.VestaSettings) -> None:
     heartbeat_task = asyncio.create_task(heartbeat())
 
     try:
-        diff = await vma.preserve_conversation_memory(state.conversation_history, config=config, progress_callback=log_progress)
+        # Pass None to load conversation history from CLI session files
+        diff = await vma.preserve_conversation_memory(None, config=config, progress_callback=log_progress)
         if diff:
             vfx.print_line(f"\n{Colors['cyan']}{Messages.MEMORY_UPDATED}{Colors['reset']}")
             vfx.print_line(diff)
@@ -185,7 +179,6 @@ async def print_timestamp_message(text: str, sender: str, *, lock: "asyncio.Lock
 async def send_query(client: ccsdk.ClaudeSDKClient, prompt: str, state: vm.State, *, config: vm.VestaSettings) -> vm.State:
     timestamp = vfx.get_current_time()
     query_with_context = vu.build_query_with_timestamp(prompt, timestamp=timestamp)
-    state.conversation_history = vu.add_to_conversation_history(state.conversation_history, "user", content=prompt)
 
     await client.query(query_with_context)
 
@@ -196,14 +189,11 @@ async def collect_responses(
     client: ccsdk.ClaudeSDKClient, *, state: vm.State, config: vm.VestaSettings, show_output: bool = True
 ) -> tuple[list[str], vm.State]:
     responses = []
-    message_count = 0
     should_restart_client = False
 
     async def collect():
-        nonlocal message_count
         try:
             async for msg in client.receive_response():
-                message_count += 1
                 text, _, usage_data = parse_assistant_message(msg, state=state)
 
                 if text:
@@ -282,13 +272,9 @@ async def send_and_receive_message(
         error_msg = f"failed to send message: {str(e)[:100]}"
         vfx.log_error(error_msg, colors=Colors)
         traceback.print_exc()
-        state.conversation_history = vu.add_to_conversation_history(state.conversation_history, "assistant", content=error_msg)
         return [error_msg], state
 
     responses, _ = await collect_responses(state.client, state=state, config=config, show_output=show_in_chat)
-
-    if responses:
-        state.conversation_history = vu.add_to_conversation_history(state.conversation_history, "assistant", content=" ".join(responses))
 
     return responses, state
 
