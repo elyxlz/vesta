@@ -24,29 +24,33 @@ func WriteNotification(
 		return fmt.Errorf("failed to create notifications dir: %v", err)
 	}
 
-	metadata := make(map[string]interface{})
-	metadata["message_id"] = messageID
-	metadata["chat_jid"] = chatJID
-	metadata["chat_name"] = chatName
+	replyInstruction := "WARNING: Reply to this chat using the send_message tool so the user can see it; messages typed elsewhere never reach their WhatsApp."
+
+	metadata := map[string]interface{}{
+		"contact_saved":    contactSaved,
+		"reply_instruction": replyInstruction,
+	}
 	if contactName != "" {
 		metadata["contact_name"] = contactName
 	}
 	if contactPhone != "" {
 		metadata["contact_phone"] = contactPhone
 	}
-	metadata["contact_saved"] = contactSaved
-	if !contactSaved && isDirectChat {
-		metadata["needs_contact_confirmation"] = true
+	if chatName != "" {
+		metadata["chat_name"] = chatName
 	}
-
+	if messageID != "" {
+		metadata["message_id"] = messageID
+	}
 	if mediaType != "" {
 		metadata["media_type"] = mediaType
 	}
 	if isForwarded {
-		metadata["is_forwarded"] = isForwarded
+		metadata["is_forwarded"] = true
 	}
-	replyInstruction := "Reply to this chat using the send_message tool."
-	metadata["reply_instruction"] = replyInstruction
+	if !contactSaved && isDirectChat {
+		metadata["needs_contact_confirmation"] = true
+	}
 
 	notification := map[string]interface{}{
 		"timestamp": time.Now().Format(time.RFC3339),
@@ -89,24 +93,26 @@ func WriteReactionNotification(
 		return fmt.Errorf("failed to create notifications dir: %v", err)
 	}
 
-	metadata := make(map[string]interface{})
-	metadata["target_message_id"] = targetMessageID
-	metadata["chat_jid"] = chatJID
-	metadata["chat_name"] = chatName
+	metadata := map[string]interface{}{
+		"contact_saved":      contactSaved,
+		"target_message_id":  targetMessageID,
+		"is_removed":         isRemoved,
+	}
 	if contactName != "" {
 		metadata["contact_name"] = contactName
 	}
 	if contactPhone != "" {
 		metadata["contact_phone"] = contactPhone
 	}
-	metadata["contact_saved"] = contactSaved
-	if !contactSaved && isDirectChat {
-		metadata["needs_contact_confirmation"] = true
+	if chatName != "" {
+		metadata["chat_name"] = chatName
 	}
 	if emoji != "" {
 		metadata["emoji"] = emoji
 	}
-	metadata["is_removed"] = isRemoved
+	if !contactSaved && isDirectChat {
+		metadata["needs_contact_confirmation"] = true
+	}
 
 	message := ""
 	if isRemoved {
