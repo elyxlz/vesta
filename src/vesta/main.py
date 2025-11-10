@@ -254,7 +254,24 @@ async def send_and_receive_message(
     prompt: str, *, state: vm.State, config: vm.VestaSettings, show_in_chat: bool = True
 ) -> tuple[list[str], vm.State]:
     if not state.client:
-        raise RuntimeError("Client not initialized")
+        # Attempt automatic recovery
+        vfx.log_info("Client not initialized, attempting automatic recovery...", colors=Colors)
+        try:
+            await asyncio.wait_for(restart_claude_session(state, config=config), timeout=15.0)
+        except asyncio.TimeoutError:
+            error_msg = "[Error: Cannot recover client - restart timed out. Please restart vesta manually]"
+            vfx.log_error("Client recovery timed out", colors=Colors)
+            return [error_msg], state
+        except Exception as e:
+            error_msg = f"[Error: Cannot recover client - {str(e)[:50]}. Please restart vesta manually]"
+            vfx.log_error(f"Client recovery failed: {e}", colors=Colors)
+            return [error_msg], state
+
+        if not state.client:
+            error_msg = "[Error: Client recovery failed. Please restart vesta manually]"
+            return [error_msg], state
+
+        vfx.log_success("Client recovered successfully", colors=Colors)
 
     try:
         await send_query(state.client, prompt, state, config=config)

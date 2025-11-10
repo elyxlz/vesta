@@ -1,6 +1,8 @@
 pdf reader tool
 https://github.com/sylphxltd/pdf-reader-mcp
 
+read docx tool
+
 google docs tool
 whatsapp recent messages bugged
 
