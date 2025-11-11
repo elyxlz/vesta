@@ -1,4 +1,5 @@
 // File utilities for saving PDF content to disk
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -21,8 +22,7 @@ export const generateTimestamp = (): string => {
   return now
     .toISOString()
     .replace(/[-:]/g, '')
-    .replace(/\.\d{3}Z$/, '')
-    .replace('T', 'T');
+    .replace(/\.\d{3}Z$/, '');
 };
 
 /**
@@ -45,7 +45,12 @@ export const preparePdfOutputPath = (
 
   const timestamp = generateTimestamp();
   const sanitizedSource = sanitizeFilename(sourceDescription);
-  const filename = `${timestamp}_${sanitizedSource.slice(0, 40)}.txt`;
+
+  // Add hash-based ID fragment for uniqueness (similar to microsoft-mcp's email_id)
+  const hash = crypto.createHash('sha256').update(sourceDescription).digest('hex');
+  const idFragment = hash.slice(0, 8);
+
+  const filename = `${timestamp}_${sanitizedSource.slice(0, 40)}_${idFragment}.txt`;
 
   return path.join(baseDir, filename);
 };
@@ -62,8 +67,20 @@ export const saveContentToFile = (
   content_length: number;
   warnings?: string[];
 } => {
-  fs.writeFileSync(filePath, content, 'utf-8');
-  const stats = fs.statSync(filePath);
+  try {
+    fs.writeFileSync(filePath, content, 'utf-8');
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to save PDF content to ${filePath}: ${errorMsg}`);
+  }
+
+  let stats;
+  try {
+    stats = fs.statSync(filePath);
+  } catch (error) {
+    // File was written but can't stat it - use content length as fallback
+    stats = { size: Buffer.byteLength(content, 'utf-8') };
+  }
 
   const result = {
     content_saved_to: filePath,

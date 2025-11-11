@@ -22,6 +22,9 @@ export interface PdfReaderContext {
 }
 
 // Module-level context (initialized in main)
+// Note: This is the Node.js/TypeScript equivalent of Python FastMCP's lifespan pattern.
+// Since the MCP SDK for TypeScript doesn't have a built-in context injection mechanism,
+// we use module-level state initialized once during server startup.
 let serverContext: PdfReaderContext | null = null;
 
 export const getServerContext = (): PdfReaderContext => {

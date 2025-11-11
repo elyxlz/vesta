@@ -99,8 +99,13 @@ async def settle_collect_task(task: "asyncio.Task[tp.Any]", *, timeout: float, c
 
     if task.done():
         debug_log("🔍 [SETTLE] Task already done", config=config)
-        with contextlib.suppress(Exception):
-            task.result()
+        try:
+            debug_log("🔍 [SETTLE] Getting task result", config=config)
+            result = task.result()
+            debug_log("🔍 [SETTLE] Got task result successfully", config=config)
+        except Exception as e:
+            debug_log(f"🔍 [SETTLE] Task result raised {type(e).__name__}: {str(e)[:100]}", config=config)
+        debug_log("🔍 [SETTLE] Returning after done check", config=config)
         return
 
     try:

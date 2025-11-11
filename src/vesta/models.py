@@ -228,12 +228,9 @@ class VestaSettings(pyd_settings.BaseSettings):
                 "env": base_env,
             },
             "pdf-reader": {
-                "command": "pnpm",
+                "command": "node",
                 "args": [
-                    "run",
-                    "--dir",
-                    "mcps/pdf-reader-mcp",
-                    "start",
+                    "mcps/pdf-reader-mcp/dist/index.js",
                     "--data-dir",
                     str(self.data_dir / "pdf-reader-mcp"),
                     "--log-dir",
