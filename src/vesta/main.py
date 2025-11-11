@@ -145,6 +145,8 @@ async def ensure_client_ready(state: vm.State, *, config: vm.VestaSettings, cont
                     await asyncio.wait_for(restart_claude_session(state, config=config), timeout=config.restart_timeout)
                     if state.client:
                         debug_log(f"🔍 [{context.upper()}] Client restarted successfully", config=config)
+                        # Set message to inform Vesta she was restarted
+                        state.pending_system_message = "System: You timed out and were restarted. You may continue with the user's request."
                         return True, None
                     else:
                         return False, "[Error: Client restart failed - client is None after restart]"
@@ -276,6 +278,12 @@ async def send_query(client: ccsdk.ClaudeSDKClient, prompt: str, state: vm.State
     debug_log("🔍 [QUERY] Starting send_query", config=config)
     debug_log(f"🔍 [QUERY] Client exists: {client is not None}", config=config)
     debug_log(f"🔍 [QUERY] State.client exists: {state.client is not None}", config=config)
+
+    # Check if there's a pending system message to inject
+    if state.pending_system_message:
+        debug_log(f"🔍 [QUERY] Injecting pending system message", config=config)
+        prompt = f"{state.pending_system_message}\n\n{prompt}"
+        state.pending_system_message = None  # Clear after using
 
     timestamp = vfx.get_current_time()
     query_with_context = vu.build_query_with_timestamp(prompt, timestamp=timestamp)
@@ -820,6 +828,7 @@ async def init_state(*, config: vm.VestaSettings) -> vm.State:
         is_processing=False,
         sub_agent_context=None,
         session_id=None,
+        pending_system_message=None,
         last_memory_consolidation=now,
     )
 
