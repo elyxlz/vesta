@@ -34,6 +34,7 @@ class State:
     shutdown_lock: threading.Lock = dc.field(default_factory=threading.Lock)
     shutdown_count: int = 0
     is_processing: bool = False
+    is_restarting: bool = False
     sub_agent_context: str | None = None
     session_id: str | None = None
     last_context_pct: float = 0.0

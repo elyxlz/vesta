@@ -298,17 +298,26 @@ async def collect_responses(
         await settle_collect_task(collect_task, timeout=config.interrupt_timeout)
 
     if should_restart_client:
-        async with state.restart_lock:
+        # Check if restart is already in progress to prevent cascading restarts
+        if state.is_restarting:
+            debug_log("🔍 [COLLECT] Restart already in progress, skipping", config=config)
+            responses.append("[Waiting for restart to complete...]")
+        else:
+            state.is_restarting = True
             try:
-                await asyncio.wait_for(restart_claude_session(state, config=config), timeout=config.restart_timeout)
-            except asyncio.TimeoutError:
-                state.client = None
-                responses.append(f"[Error: Client restart timed out after {config.restart_timeout}s - please restart vesta]")
-                vfx.log_error(f"Client restart timed out after {config.restart_timeout} seconds", colors=Colors)
-            except Exception as e:
-                state.client = None
-                responses.append(f"[Error: Client restart failed - {str(e)[:50]}]")
-                vfx.log_error(f"Client restart failed: {e}", colors=Colors)
+                async with state.restart_lock:
+                    try:
+                        await asyncio.wait_for(restart_claude_session(state, config=config), timeout=config.restart_timeout)
+                    except asyncio.TimeoutError:
+                        state.client = None
+                        responses.append(f"[Error: Client restart timed out after {config.restart_timeout}s - please restart vesta]")
+                        vfx.log_error(f"Client restart timed out after {config.restart_timeout} seconds", colors=Colors)
+                    except Exception as e:
+                        state.client = None
+                        responses.append(f"[Error: Client restart failed - {str(e)[:50]}]")
+                        vfx.log_error(f"Client restart failed: {e}", colors=Colors)
+            finally:
+                state.is_restarting = False
 
     return responses, state
 
@@ -322,23 +331,36 @@ async def send_and_receive_message(
     if not state.client:
         # Attempt automatic recovery
         debug_log("🔍 [SEND-RECV] Client is None, attempting automatic recovery...", config=config)
-        async with state.restart_lock:
-            try:
-                await asyncio.wait_for(restart_claude_session(state, config=config), timeout=config.restart_timeout)
-            except asyncio.TimeoutError:
-                error_msg = f"[Error: Cannot recover client - restart timed out after {config.restart_timeout}s. Please restart vesta manually]"
-                vfx.log_error("Client recovery timed out", colors=Colors)
-                return [error_msg], state
-            except Exception as e:
-                error_msg = f"[Error: Cannot recover client - {str(e)[:50]}. Please restart vesta manually]"
-                vfx.log_error(f"Client recovery failed: {e}", colors=Colors)
-                return [error_msg], state
 
+        # Check if restart is already in progress
+        if state.is_restarting:
+            debug_log("🔍 [SEND-RECV] Restart already in progress, waiting...", config=config)
+            # Wait briefly for restart to complete
+            await asyncio.sleep(1.0)
             if not state.client:
-                error_msg = "[Error: Client recovery failed. Please restart vesta manually]"
-                return [error_msg], state
+                return ["[Waiting for restart to complete...]"], state
+        else:
+            state.is_restarting = True
+            try:
+                async with state.restart_lock:
+                    try:
+                        await asyncio.wait_for(restart_claude_session(state, config=config), timeout=config.restart_timeout)
+                    except asyncio.TimeoutError:
+                        error_msg = f"[Error: Cannot recover client - restart timed out after {config.restart_timeout}s. Please restart vesta manually]"
+                        vfx.log_error("Client recovery timed out", colors=Colors)
+                        return [error_msg], state
+                    except Exception as e:
+                        error_msg = f"[Error: Cannot recover client - {str(e)[:50]}. Please restart vesta manually]"
+                        vfx.log_error(f"Client recovery failed: {e}", colors=Colors)
+                        return [error_msg], state
 
-            vfx.log_success("✅ 🔍 [SEND-RECV] Client recovered successfully", colors=Colors)
+                    if not state.client:
+                        error_msg = "[Error: Client recovery failed. Please restart vesta manually]"
+                        return [error_msg], state
+
+                    vfx.log_success("✅ 🔍 [SEND-RECV] Client recovered successfully", colors=Colors)
+            finally:
+                state.is_restarting = False
 
     debug_log("🔍 [SEND-RECV] Calling send_query", config=config)
     try:
@@ -726,7 +748,8 @@ async def create_claude_client(config: vm.VestaSettings, resume_session_id: str 
             resume=resume_session_id,
         )
     )
-    await client.__aenter__()
+    # Add timeout to prevent infinite hang during client initialization
+    await asyncio.wait_for(client.__aenter__(), timeout=config.restart_timeout)
     return client
 
 
