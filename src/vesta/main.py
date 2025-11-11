@@ -70,9 +70,7 @@ async def attempt_interrupt(state: vm.State, *, config: vm.VestaSettings, reason
                 pass  # Already dead
             except Exception as e:
                 try:
-                    await asyncio.wait_for(
-                        asyncio.to_thread(vfx.log_error, f"Failed to kill subprocess: {e}", colors=Colors), timeout=1.0
-                    )
+                    await asyncio.wait_for(asyncio.to_thread(vfx.log_error, f"Failed to kill subprocess: {e}", colors=Colors), timeout=1.0)
                 except asyncio.TimeoutError:
                     pass
         else:
