@@ -65,21 +65,10 @@ async def attempt_interrupt(state: vm.State, *, config: vm.VestaSettings, reason
         await asyncio.wait_for(state.client.interrupt(), timeout=config.interrupt_timeout)
         vfx.log_info("🔍 [INTERRUPT] state.client.interrupt() returned successfully", colors=Colors)
 
-        # Check if subprocess died during interrupt
-        subprocess_alive = True
-        try:
-            if hasattr(state.client, "_transport") and state.client._transport:
-                if hasattr(state.client._transport, "_process") and state.client._transport._process:
-                    poll_result = state.client._transport._process.poll()
-                    if poll_result is not None:
-                        vfx.log_info(f"🔍 [INTERRUPT] Subprocess died during interrupt (exit code: {poll_result}), nulling client", colors=Colors)
-                        state.client = None
-                        subprocess_alive = False
-        except Exception as e:
-            vfx.log_error(f"🔍 [INTERRUPT] Error checking subprocess state: {e}", colors=Colors)
-
-        if subprocess_alive:
-            vfx.log_info("🔍 [INTERRUPT] Subprocess still alive after interrupt", colors=Colors)
+        # After successful interrupt, null client to force restart on next message
+        # The subprocess enters a broken state after interrupt - accepts queries but never responds
+        vfx.log_info("🔍 [INTERRUPT] Marking client for restart (subprocess in broken state after interrupt)", colors=Colors)
+        state.client = None
 
         # Use timeout for logging to prevent deadlock with typing indicator
         try:
