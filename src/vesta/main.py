@@ -60,12 +60,9 @@ async def attempt_interrupt(state: vm.State, *, config: vm.VestaSettings, reason
         await asyncio.wait_for(state.client.interrupt(), timeout=config.interrupt_timeout)
         debug_log("🔍 [INTERRUPT] state.client.interrupt() returned successfully", config=config)
 
-        # Conditionally restart client based on config
-        if config.restart_client_after_interrupt:
-            debug_log("🔍 [INTERRUPT] Nulling client to force restart (config.restart_client_after_interrupt=True)", config=config)
-            state.client = None
-        else:
-            debug_log("🔍 [INTERRUPT] Keeping client alive - testing if it works after interrupt completes (config.restart_client_after_interrupt=False)", config=config)
+        # Client is broken after interrupt - must restart with session resumption
+        debug_log("🔍 [INTERRUPT] Nulling client to force restart (client broken after interrupt)", config=config)
+        state.client = None
 
         try:
             await asyncio.wait_for(asyncio.to_thread(vfx.log_info, f"{reason}: interrupt sent", colors=Colors), timeout=1.0)
