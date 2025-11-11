@@ -637,7 +637,6 @@ async def create_claude_client(config: vm.VestaSettings) -> ccsdk.ClaudeSDKClien
             hooks={},
             permission_mode="bypassPermissions",
             model="sonnet",
-            continue_conversation=True,
         )
     )
     await client.__aenter__()
