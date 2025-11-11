@@ -66,6 +66,7 @@ class VestaSettings(pyd_settings.BaseSettings):
     enable_nightly_memory: bool = True
     nightly_memory_time: int = 4
     interrupt_timeout: float = 5.0
+    restart_client_after_interrupt: bool = False
     enable_whatsapp_greeting: bool = True
     whatsapp_greeting_prompt: str = (
         "Check whether the WhatsApp MCP is authenticated by calling the `authenticate_whatsapp` tool. "

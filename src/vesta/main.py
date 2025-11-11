@@ -54,10 +54,12 @@ async def attempt_interrupt(state: vm.State, *, config: vm.VestaSettings, reason
         await asyncio.wait_for(state.client.interrupt(), timeout=config.interrupt_timeout)
         vfx.log_info("🔍 [INTERRUPT] state.client.interrupt() returned successfully", colors=Colors)
 
-        # Force restart: The subprocess enters a broken state after interrupt.
-        # It accepts queries but never sends responses back. Must restart before next message.
-        vfx.log_info("🔍 [INTERRUPT] Nulling client to force restart (subprocess broken after interrupt)", colors=Colors)
-        state.client = None
+        # Conditionally restart client based on config
+        if config.restart_client_after_interrupt:
+            vfx.log_info("🔍 [INTERRUPT] Nulling client to force restart (config.restart_client_after_interrupt=True)", colors=Colors)
+            state.client = None
+        else:
+            vfx.log_info("🔍 [INTERRUPT] Keeping client alive - testing if it works after interrupt completes (config.restart_client_after_interrupt=False)", colors=Colors)
 
         try:
             await asyncio.wait_for(asyncio.to_thread(vfx.log_info, f"{reason}: interrupt sent", colors=Colors), timeout=1.0)
