@@ -29,9 +29,18 @@ def load_system_prompt(config: vm.VestaSettings) -> str:
 
 
 async def attempt_interrupt(state: vm.State, *, config: vm.VestaSettings, reason: str) -> bool:
-    """Best-effort interrupt with a short timeout so we don't hang indefinitely."""
+    """Best-effort interrupt with subprocess killing if needed."""
     if not state.client:
         return False
+
+    # Capture subprocess PID before interrupt attempt
+    subprocess_pid = None
+    try:
+        if hasattr(state.client, "_transport") and state.client._transport:
+            if hasattr(state.client._transport, "_process") and state.client._transport._process:
+                subprocess_pid = state.client._transport._process.pid
+    except Exception:
+        pass
 
     try:
         await asyncio.wait_for(state.client.interrupt(), timeout=config.interrupt_timeout)
@@ -42,17 +51,42 @@ async def attempt_interrupt(state: vm.State, *, config: vm.VestaSettings, reason
             pass  # Abandon log if blocked
         return True
     except asyncio.TimeoutError:
-        try:
-            await asyncio.wait_for(
-                asyncio.to_thread(
-                    vfx.log_error,
-                    f"{reason}: interrupt timed out after {config.interrupt_timeout} seconds (tool may still be running)",
-                    colors=Colors,
-                ),
-                timeout=1.0,
-            )
-        except asyncio.TimeoutError:
-            pass  # Abandon log if blocked
+        # Force kill subprocess if interrupt times out
+        if subprocess_pid:
+            try:
+                os.kill(subprocess_pid, signal.SIGKILL)
+                try:
+                    await asyncio.wait_for(
+                        asyncio.to_thread(
+                            vfx.log_info,
+                            f"{reason}: force-killed stuck subprocess {subprocess_pid}",
+                            colors=Colors,
+                        ),
+                        timeout=1.0,
+                    )
+                except asyncio.TimeoutError:
+                    pass
+            except ProcessLookupError:
+                pass  # Already dead
+            except Exception as e:
+                try:
+                    await asyncio.wait_for(
+                        asyncio.to_thread(vfx.log_error, f"Failed to kill subprocess: {e}", colors=Colors), timeout=1.0
+                    )
+                except asyncio.TimeoutError:
+                    pass
+        else:
+            try:
+                await asyncio.wait_for(
+                    asyncio.to_thread(
+                        vfx.log_error,
+                        f"{reason}: interrupt timed out after {config.interrupt_timeout} seconds (tool may still be running)",
+                        colors=Colors,
+                    ),
+                    timeout=1.0,
+                )
+            except asyncio.TimeoutError:
+                pass  # Abandon log if blocked
     except Exception as e:
         try:
             await asyncio.wait_for(asyncio.to_thread(vfx.log_error, f"{reason}: interrupt failed ({str(e)[:120]})", colors=Colors), timeout=1.0)
@@ -73,7 +107,7 @@ async def settle_collect_task(task: "asyncio.Task[tp.Any]", *, timeout: float) -
         return
 
     try:
-        await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+        await asyncio.wait_for(task, timeout=timeout)
     except asyncio.TimeoutError:
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -227,10 +261,11 @@ async def collect_responses(
     collect_task = asyncio.create_task(collect())
 
     try:
-        await asyncio.wait_for(asyncio.shield(collect_task), timeout=config.response_timeout)
+        await asyncio.wait_for(collect_task, timeout=config.response_timeout)
     except asyncio.TimeoutError:
         responses.append("[Response timeout]")
         state.sub_agent_context = None
+        collect_task.cancel()
         await attempt_interrupt(state, config=config, reason="Response timeout")
         should_restart_client = True
     except asyncio.CancelledError:
