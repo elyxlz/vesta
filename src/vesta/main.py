@@ -819,6 +819,7 @@ async def init_state(*, config: vm.VestaSettings) -> vm.State:
         shutdown_count=0,
         is_processing=False,
         sub_agent_context=None,
+        session_id=None,
         last_memory_consolidation=now,
     )
 
