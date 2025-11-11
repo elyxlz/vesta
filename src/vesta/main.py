@@ -28,17 +28,23 @@ def load_system_prompt(config: vm.VestaSettings) -> str:
     return config.memory_file.read_text()
 
 
+def debug_log(msg: str, *, config: vm.VestaSettings) -> None:
+    """Log debug messages only when debug mode is enabled."""
+    if config.debug:
+        vfx.log_info(msg, colors=Colors)
+
+
 async def attempt_interrupt(state: vm.State, *, config: vm.VestaSettings, reason: str) -> bool:
     """Send interrupt signal and let receive_response() complete naturally per SDK design."""
-    vfx.log_info(f"🔍 [INTERRUPT] Starting interrupt attempt: {reason}", colors=Colors)
+    debug_log(f"🔍 [INTERRUPT] Starting interrupt attempt: {reason}", config=config)
 
     if not state.client:
-        vfx.log_info("🔍 [INTERRUPT] No client, aborting", colors=Colors)
+        debug_log("🔍 [INTERRUPT] No client, aborting", config=config)
         return False
 
     # DO NOT cancel the current processing task!
     # The SDK's receive_response() will complete naturally when it receives ResultMessage
-    vfx.log_info("🔍 [INTERRUPT] Sending interrupt to client (receive_response will complete naturally)", colors=Colors)
+    debug_log("🔍 [INTERRUPT] Sending interrupt to client (receive_response will complete naturally)", config=config)
 
     # Capture subprocess PID for timeout handling only
     subprocess_pid = None
@@ -50,16 +56,16 @@ async def attempt_interrupt(state: vm.State, *, config: vm.VestaSettings, reason
         pass
 
     try:
-        vfx.log_info("🔍 [INTERRUPT] Calling state.client.interrupt()", colors=Colors)
+        debug_log("🔍 [INTERRUPT] Calling state.client.interrupt()", config=config)
         await asyncio.wait_for(state.client.interrupt(), timeout=config.interrupt_timeout)
-        vfx.log_info("🔍 [INTERRUPT] state.client.interrupt() returned successfully", colors=Colors)
+        debug_log("🔍 [INTERRUPT] state.client.interrupt() returned successfully", config=config)
 
         # Conditionally restart client based on config
         if config.restart_client_after_interrupt:
-            vfx.log_info("🔍 [INTERRUPT] Nulling client to force restart (config.restart_client_after_interrupt=True)", colors=Colors)
+            debug_log("🔍 [INTERRUPT] Nulling client to force restart (config.restart_client_after_interrupt=True)", config=config)
             state.client = None
         else:
-            vfx.log_info("🔍 [INTERRUPT] Keeping client alive - testing if it works after interrupt completes (config.restart_client_after_interrupt=False)", colors=Colors)
+            debug_log("🔍 [INTERRUPT] Keeping client alive - testing if it works after interrupt completes (config.restart_client_after_interrupt=False)", config=config)
 
         try:
             await asyncio.wait_for(asyncio.to_thread(vfx.log_info, f"{reason}: interrupt sent", colors=Colors), timeout=1.0)
@@ -70,13 +76,13 @@ async def attempt_interrupt(state: vm.State, *, config: vm.VestaSettings, reason
 
     except asyncio.TimeoutError:
         # Only if interrupt itself times out, force restart
-        vfx.log_info("🔍 [INTERRUPT] Interrupt timed out, forcing client restart", colors=Colors)
+        debug_log("🔍 [INTERRUPT] Interrupt timed out, forcing client restart", config=config)
 
         # Force kill subprocess if interrupt times out
         if subprocess_pid:
             try:
                 os.kill(subprocess_pid, signal.SIGKILL)
-                vfx.log_info(f"🔍 [INTERRUPT] Force-killed subprocess {subprocess_pid}", colors=Colors)
+                debug_log(f"🔍 [INTERRUPT] Force-killed subprocess {subprocess_pid}", config=config)
             except (ProcessLookupError, Exception):
                 pass
 
@@ -84,8 +90,9 @@ async def attempt_interrupt(state: vm.State, *, config: vm.VestaSettings, reason
         return False
 
     except Exception as e:
-        vfx.log_error(f"🔍 [INTERRUPT] Interrupt failed: {str(e)[:120]}", colors=Colors)
-        traceback.print_exc()
+        if config.debug:
+            vfx.log_error(f"🔍 [INTERRUPT] Interrupt failed: {str(e)[:120]}", colors=Colors)
+            traceback.print_exc()
         return False
 
 
@@ -107,12 +114,12 @@ async def settle_collect_task(task: "asyncio.Task[tp.Any]", *, timeout: float) -
         pass
 
 
-def parse_assistant_message(msg: tp.Any, *, state: vm.State) -> tuple[str | None, vm.State, dict[str, tp.Any] | None]:
+def parse_assistant_message(msg: tp.Any, *, state: vm.State, config: vm.VestaSettings) -> tuple[str | None, vm.State, dict[str, tp.Any] | None]:
     texts, new_context, usage_data, session_id = vu.parse_assistant_message(msg, state.sub_agent_context, service_icons=vm.SERVICE_ICONS)
     state.sub_agent_context = new_context
     if session_id:
         state.session_id = session_id
-        vfx.log_info(f"🔍 [SESSION] Captured session_id: {session_id[:16]}...", colors=Colors)
+        debug_log(f"🔍 [SESSION] Captured session_id: {session_id[:16]}...", config=config)
     return "\n".join(texts) if texts else None, state, usage_data
 
 
@@ -221,16 +228,16 @@ async def print_timestamp_message(text: str, sender: str, *, lock: "asyncio.Lock
 
 
 async def send_query(client: ccsdk.ClaudeSDKClient, prompt: str, state: vm.State, *, config: vm.VestaSettings) -> vm.State:
-    vfx.log_info("🔍 [QUERY] Starting send_query", colors=Colors)
-    vfx.log_info(f"🔍 [QUERY] Client exists: {client is not None}", colors=Colors)
-    vfx.log_info(f"🔍 [QUERY] State.client exists: {state.client is not None}", colors=Colors)
+    debug_log("🔍 [QUERY] Starting send_query", config=config)
+    debug_log(f"🔍 [QUERY] Client exists: {client is not None}", config=config)
+    debug_log(f"🔍 [QUERY] State.client exists: {state.client is not None}", config=config)
 
     timestamp = vfx.get_current_time()
     query_with_context = vu.build_query_with_timestamp(prompt, timestamp=timestamp)
 
-    vfx.log_info(f"🔍 [QUERY] Calling client.query() with {len(query_with_context)} chars", colors=Colors)
+    debug_log(f"🔍 [QUERY] Calling client.query() with {len(query_with_context)} chars", config=config)
     await client.query(query_with_context)
-    vfx.log_info("🔍 [QUERY] client.query() returned successfully", colors=Colors)
+    debug_log("🔍 [QUERY] client.query() returned successfully", config=config)
 
     return state
 
@@ -238,16 +245,16 @@ async def send_query(client: ccsdk.ClaudeSDKClient, prompt: str, state: vm.State
 async def collect_responses(
     client: ccsdk.ClaudeSDKClient, *, state: vm.State, config: vm.VestaSettings, show_output: bool = True
 ) -> tuple[list[str], vm.State]:
-    vfx.log_info("🔍 [COLLECT] Starting collect_responses", colors=Colors)
+    debug_log("🔍 [COLLECT] Starting collect_responses", config=config)
     responses = []
     should_restart_client = False
 
     async def collect():
-        vfx.log_info("🔍 [COLLECT] Starting receive_response loop", colors=Colors)
+        debug_log("🔍 [COLLECT] Starting receive_response loop", config=config)
         try:
             async for msg in client.receive_response():
-                vfx.log_info(f"🔍 [COLLECT] Received message: {type(msg).__name__}", colors=Colors)
-                text, _, usage_data = parse_assistant_message(msg, state=state)
+                debug_log(f"🔍 [COLLECT] Received message: {type(msg).__name__}", config=config)
+                text, _, usage_data = parse_assistant_message(msg, state=state, config=config)
 
                 if text:
                     if show_output:
@@ -257,23 +264,24 @@ async def collect_responses(
                                     await output_line(line, state, is_tool=True)
                                 else:
                                     responses.append(line)
-            vfx.log_info("🔍 [COLLECT] receive_response loop completed normally", colors=Colors)
+            debug_log("🔍 [COLLECT] receive_response loop completed normally", config=config)
         except asyncio.CancelledError:
-            vfx.log_info("🔍 [COLLECT] receive_response loop caught CancelledError", colors=Colors)
+            debug_log("🔍 [COLLECT] receive_response loop caught CancelledError", config=config)
             raise
         except Exception as e:
-            vfx.log_error(f"🔍 [COLLECT] receive_response loop error: {type(e).__name__}: {e}", colors=Colors)
+            if config.debug:
+                vfx.log_error(f"🔍 [COLLECT] receive_response loop error: {type(e).__name__}: {e}", colors=Colors)
             raise
 
-    vfx.log_info("🔍 [COLLECT] Creating collect task", colors=Colors)
+    debug_log("🔍 [COLLECT] Creating collect task", config=config)
     collect_task = asyncio.create_task(collect())
 
     try:
-        vfx.log_info("🔍 [COLLECT] Waiting for collect task", colors=Colors)
+        debug_log("🔍 [COLLECT] Waiting for collect task", config=config)
         await asyncio.wait_for(collect_task, timeout=config.response_timeout)
-        vfx.log_info("🔍 [COLLECT] collect task completed successfully", colors=Colors)
+        debug_log("🔍 [COLLECT] collect task completed successfully", config=config)
     except asyncio.TimeoutError:
-        vfx.log_info("🔍 [COLLECT] collect task timed out", colors=Colors)
+        debug_log("🔍 [COLLECT] collect task timed out", config=config)
         responses.append("[Response timeout]")
         state.sub_agent_context = None
         collect_task.cancel()
@@ -305,12 +313,12 @@ async def collect_responses(
 async def send_and_receive_message(
     prompt: str, *, state: vm.State, config: vm.VestaSettings, show_in_chat: bool = True
 ) -> tuple[list[str], vm.State]:
-    vfx.log_info("🔍 [SEND-RECV] Starting send_and_receive_message", colors=Colors)
-    vfx.log_info(f"🔍 [SEND-RECV] Client state: {state.client is not None}", colors=Colors)
+    debug_log("🔍 [SEND-RECV] Starting send_and_receive_message", config=config)
+    debug_log(f"🔍 [SEND-RECV] Client state: {state.client is not None}", config=config)
 
     if not state.client:
         # Attempt automatic recovery
-        vfx.log_info("🔍 [SEND-RECV] Client is None, attempting automatic recovery...", colors=Colors)
+        debug_log("🔍 [SEND-RECV] Client is None, attempting automatic recovery...", config=config)
         async with state.restart_lock:
             try:
                 await asyncio.wait_for(restart_claude_session(state, config=config), timeout=config.restart_timeout)
@@ -327,21 +335,22 @@ async def send_and_receive_message(
                 error_msg = "[Error: Client recovery failed. Please restart vesta manually]"
                 return [error_msg], state
 
-            vfx.log_success("🔍 [SEND-RECV] Client recovered successfully", colors=Colors)
+            vfx.log_success("✅ 🔍 [SEND-RECV] Client recovered successfully", colors=Colors)
 
-    vfx.log_info("🔍 [SEND-RECV] Calling send_query", colors=Colors)
+    debug_log("🔍 [SEND-RECV] Calling send_query", config=config)
     try:
         await send_query(state.client, prompt, state, config=config)
-        vfx.log_info("🔍 [SEND-RECV] send_query completed successfully", colors=Colors)
+        debug_log("🔍 [SEND-RECV] send_query completed successfully", config=config)
     except Exception as e:
         error_msg = f"failed to send message: {str(e)[:100]}"
-        vfx.log_error(f"🔍 [SEND-RECV] send_query failed: {error_msg}", colors=Colors)
-        traceback.print_exc()
+        if config.debug:
+            vfx.log_error(f"🔍 [SEND-RECV] send_query failed: {error_msg}", colors=Colors)
+            traceback.print_exc()
         return [error_msg], state
 
-    vfx.log_info("🔍 [SEND-RECV] Calling collect_responses", colors=Colors)
+    debug_log("🔍 [SEND-RECV] Calling collect_responses", config=config)
     responses, _ = await collect_responses(state.client, state=state, config=config, show_output=show_in_chat)
-    vfx.log_info(f"🔍 [SEND-RECV] collect_responses returned {len(responses)} responses", colors=Colors)
+    debug_log(f"🔍 [SEND-RECV] collect_responses returned {len(responses)} responses", config=config)
 
     return responses, state
 
@@ -361,16 +370,16 @@ async def show_typing_indicator(config: vm.VestaSettings, *, lock: "asyncio.Lock
 
 
 async def process_message_with_typing(msg: str, state: vm.State, config: vm.VestaSettings, *, is_user: bool) -> tuple[list[str], vm.State]:
-    vfx.log_info(f"🔍 [TYPING] Starting process_message_with_typing", colors=Colors)
+    debug_log(f"🔍 [TYPING] Starting process_message_with_typing", config=config)
     now = vfx.get_current_time()
     await vfx.sleep(config.pre_typing_delay + now.microsecond / 3000000)
 
-    vfx.log_info("🔍 [TYPING] Starting typing indicator", colors=Colors)
+    debug_log("🔍 [TYPING] Starting typing indicator", config=config)
     typing_task = asyncio.create_task(show_typing_indicator(config, lock=state.output_lock))
     try:
-        vfx.log_info("🔍 [TYPING] Calling send_and_receive_message", colors=Colors)
+        debug_log("🔍 [TYPING] Calling send_and_receive_message", config=config)
         responses, new_state = await send_and_receive_message(msg, state=state, config=config, show_in_chat=is_user)
-        vfx.log_info(f"🔍 [TYPING] send_and_receive_message returned {len(responses)} responses", colors=Colors)
+        debug_log(f"🔍 [TYPING] send_and_receive_message returned {len(responses)} responses", config=config)
     except Exception as e:
         responses = [f"something went wrong: {str(e)[:50]}"]
         vfx.log_error(f"Message processing error: {str(e)[:100]}", colors=Colors)
@@ -390,26 +399,26 @@ async def process_message_with_typing(msg: str, state: vm.State, config: vm.Vest
 async def handle_notifications_interrupt(
     notifications: list[vm.Notification], queue: asyncio.Queue, state: vm.State, config: vm.VestaSettings, *, lock: "asyncio.Lock"
 ) -> None:
-    vfx.log_info(f"🔍 [NOTIF-INT] Entering handle_notifications_interrupt with {len(notifications)} notifications", colors=Colors)
+    debug_log(f"🔍 [NOTIF-INT] Entering handle_notifications_interrupt with {len(notifications)} notifications", config=config)
     await vfx.print_locked(lock, f"\n{Colors['yellow']}{Messages.INTERRUPTING_TASK}{Colors['reset']}", flush=False)
 
     prompt = vu.format_notification_batch(notifications)
     success = await attempt_interrupt(state, config=config, reason="Notification interrupt")
 
     if not success:
-        vfx.log_info("🔍 [NOTIF-INT] Interrupt failed", colors=Colors)
+        debug_log("🔍 [NOTIF-INT] Interrupt failed", config=config)
         await vfx.print_locked(
             lock,
             f"{Colors['yellow']}⚠️ Could not interrupt current task; queued notification for later.{Colors['reset']}",
             flush=False,
         )
     else:
-        vfx.log_info("🔍 [NOTIF-INT] Interrupt succeeded", colors=Colors)
+        debug_log("🔍 [NOTIF-INT] Interrupt succeeded", config=config)
 
     # Queue the notification — even if interrupt failed we'll process it later
-    vfx.log_info(f"🔍 [NOTIF-INT] Queuing notification prompt (length: {len(prompt)} chars)", colors=Colors)
+    debug_log(f"🔍 [NOTIF-INT] Queuing notification prompt (length: {len(prompt)} chars)", config=config)
     await queue.put((prompt, True))
-    vfx.log_info("🔍 [NOTIF-INT] Notification queued, exiting handle_notifications_interrupt", colors=Colors)
+    debug_log("🔍 [NOTIF-INT] Notification queued, exiting handle_notifications_interrupt", config=config)
 
 
 async def process_notification_batch(
@@ -492,15 +501,15 @@ async def message_processor(queue: asyncio.Queue, state: vm.State, *, config: vm
     while state.shutdown_event and not state.shutdown_event.is_set():
         try:
             msg, is_user = await asyncio.wait_for(queue.get(), timeout=1.0)
-            vfx.log_info(f"🔍 [PROCESSOR] Picked up message from queue (is_user={is_user}, length={len(msg)} chars)", colors=Colors)
+            debug_log(f"🔍 [PROCESSOR] Picked up message from queue (is_user={is_user}, length={len(msg)} chars)", config=config)
 
             async with state.processing_lock:
                 state.is_processing = True
 
             try:
-                vfx.log_info("🔍 [PROCESSOR] Processing message", colors=Colors)
+                debug_log("🔍 [PROCESSOR] Processing message", config=config)
                 responses, _ = await process_message_with_typing(msg, state, config, is_user=is_user)
-                vfx.log_info(f"🔍 [PROCESSOR] Processing completed with {len(responses)} responses", colors=Colors)
+                debug_log(f"🔍 [PROCESSOR] Processing completed with {len(responses)} responses", config=config)
 
                 for i, response in enumerate(responses):
                     if response and response.strip():
