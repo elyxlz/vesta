@@ -62,13 +62,15 @@ def extract_usage_from_result(msg: ccsdk_types.ResultMessage) -> dict[str, tp.An
 
 def parse_assistant_message(
     msg: tp.Any, sub_agent_context: str | None, *, service_icons: dict[str, str]
-) -> tuple[list[str], str | None, dict[str, tp.Any] | None]:
-    # Handle ResultMessage
+) -> tuple[list[str], str | None, dict[str, tp.Any] | None, str | None]:
+    # Handle ResultMessage - also capture session_id
     if isinstance(msg, ccsdk_types.ResultMessage):
-        return ([], sub_agent_context, extract_usage_from_result(msg))
+        usage_data = extract_usage_from_result(msg)
+        session_id = msg.session_id if hasattr(msg, "session_id") else None
+        return ([], sub_agent_context, usage_data, session_id)
 
     if not isinstance(msg, ccsdk_types.AssistantMessage):
-        return ([msg] if isinstance(msg, str) else [], sub_agent_context, None)
+        return ([msg] if isinstance(msg, str) else [], sub_agent_context, None, None)
 
     texts = []
     has_task_result = False
@@ -91,7 +93,7 @@ def parse_assistant_message(
     if has_task_result and current_context:
         current_context = None
 
-    return texts, current_context, None
+    return texts, current_context, None, None
 
 
 def update_state(state: vm.State, **updates) -> vm.State:

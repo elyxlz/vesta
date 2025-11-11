@@ -54,8 +54,10 @@ async def attempt_interrupt(state: vm.State, *, config: vm.VestaSettings, reason
         await asyncio.wait_for(state.client.interrupt(), timeout=config.interrupt_timeout)
         vfx.log_info("🔍 [INTERRUPT] state.client.interrupt() returned successfully", colors=Colors)
 
-        # DO NOT null state.client! The client is still healthy.
-        # The receive_response() loop will naturally complete when it gets ResultMessage.
+        # Force restart: The subprocess enters a broken state after interrupt.
+        # It accepts queries but never sends responses back. Must restart before next message.
+        vfx.log_info("🔍 [INTERRUPT] Nulling client to force restart (subprocess broken after interrupt)", colors=Colors)
+        state.client = None
 
         try:
             await asyncio.wait_for(asyncio.to_thread(vfx.log_info, f"{reason}: interrupt sent", colors=Colors), timeout=1.0)
@@ -104,8 +106,11 @@ async def settle_collect_task(task: "asyncio.Task[tp.Any]", *, timeout: float) -
 
 
 def parse_assistant_message(msg: tp.Any, *, state: vm.State) -> tuple[str | None, vm.State, dict[str, tp.Any] | None]:
-    texts, new_context, usage_data = vu.parse_assistant_message(msg, state.sub_agent_context, service_icons=vm.SERVICE_ICONS)
+    texts, new_context, usage_data, session_id = vu.parse_assistant_message(msg, state.sub_agent_context, service_icons=vm.SERVICE_ICONS)
     state.sub_agent_context = new_context
+    if session_id:
+        state.session_id = session_id
+        vfx.log_info(f"🔍 [SESSION] Captured session_id: {session_id[:16]}...", colors=Colors)
     return "\n".join(texts) if texts else None, state, usage_data
 
 
@@ -695,8 +700,8 @@ def check_dependencies() -> None:
         raise RuntimeError("rclone is not found in PATH. Please install rclone: https://rclone.org/install/")
 
 
-async def create_claude_client(config: vm.VestaSettings) -> ccsdk.ClaudeSDKClient:
-    """Create and enter a Claude SDK client session."""
+async def create_claude_client(config: vm.VestaSettings, resume_session_id: str | None = None) -> ccsdk.ClaudeSDKClient:
+    """Create and enter a Claude SDK client session, optionally resuming a previous session."""
     client = ccsdk.ClaudeSDKClient(
         options=ccsdk.ClaudeCodeOptions(
             system_prompt=load_system_prompt(config),
@@ -704,6 +709,7 @@ async def create_claude_client(config: vm.VestaSettings) -> ccsdk.ClaudeSDKClien
             hooks={},
             permission_mode="bypassPermissions",
             model="sonnet",
+            resume=resume_session_id,
         )
     )
     await client.__aenter__()
@@ -746,8 +752,10 @@ async def restart_claude_session(state: vm.State, *, config: vm.VestaSettings) -
             state.client = None
 
     try:
-        state.client = await create_claude_client(config)
+        # Resume the previous session to preserve conversation context
+        state.client = await create_claude_client(config, resume_session_id=state.session_id)
         state.sub_agent_context = None
+        vfx.log_info(f"Restarted client{' (resuming session ' + state.session_id + ')' if state.session_id else ''}", colors=Colors)
     except Exception as e:
         vfx.log_error(f"Failed to recreate Claude client: {e}", colors=Colors)
 

@@ -35,6 +35,7 @@ class State:
     shutdown_count: int = 0
     is_processing: bool = False
     sub_agent_context: str | None = None
+    session_id: str | None = None
     last_context_pct: float = 0.0
     last_memory_consolidation: dt.datetime | None = None
     output_lock: asyncio.Lock = dc.field(default_factory=asyncio.Lock)
