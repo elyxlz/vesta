@@ -29,29 +29,18 @@ def load_system_prompt(config: vm.VestaSettings) -> str:
 
 
 async def attempt_interrupt(state: vm.State, *, config: vm.VestaSettings, reason: str) -> bool:
-    """Best-effort interrupt with task cancellation and subprocess killing if needed."""
+    """Send interrupt signal and let receive_response() complete naturally per SDK design."""
     vfx.log_info(f"🔍 [INTERRUPT] Starting interrupt attempt: {reason}", colors=Colors)
 
     if not state.client:
         vfx.log_info("🔍 [INTERRUPT] No client, aborting", colors=Colors)
         return False
 
-    # Cancel the current processing task FIRST (before SDK interrupt)
-    if state.current_processing_task and not state.current_processing_task.done():
-        vfx.log_info("🔍 [INTERRUPT] Cancelling current processing task", colors=Colors)
-        state.current_processing_task.cancel()
-        try:
-            await asyncio.wait_for(state.current_processing_task, timeout=1.0)
-            vfx.log_info("🔍 [INTERRUPT] Processing task cancelled successfully", colors=Colors)
-        except (asyncio.CancelledError, asyncio.TimeoutError):
-            vfx.log_info("🔍 [INTERRUPT] Processing task cancellation completed (expected)", colors=Colors)
-    else:
-        vfx.log_info("🔍 [INTERRUPT] No active processing task to cancel", colors=Colors)
+    # DO NOT cancel the current processing task!
+    # The SDK's receive_response() will complete naturally when it receives ResultMessage
+    vfx.log_info("🔍 [INTERRUPT] Sending interrupt to client (receive_response will complete naturally)", colors=Colors)
 
-    # Log client state after cancellation
-    vfx.log_info(f"🔍 [INTERRUPT] Client state after cancellation: exists={state.client is not None}", colors=Colors)
-
-    # Capture subprocess PID before interrupt attempt
+    # Capture subprocess PID for timeout handling only
     subprocess_pid = None
     try:
         if hasattr(state.client, "_transport") and state.client._transport:
@@ -65,62 +54,35 @@ async def attempt_interrupt(state: vm.State, *, config: vm.VestaSettings, reason
         await asyncio.wait_for(state.client.interrupt(), timeout=config.interrupt_timeout)
         vfx.log_info("🔍 [INTERRUPT] state.client.interrupt() returned successfully", colors=Colors)
 
-        # After successful interrupt, null client to force restart on next message
-        # The subprocess enters a broken state after interrupt - accepts queries but never responds
-        vfx.log_info("🔍 [INTERRUPT] Marking client for restart (subprocess in broken state after interrupt)", colors=Colors)
-        state.client = None
+        # DO NOT null state.client! The client is still healthy.
+        # The receive_response() loop will naturally complete when it gets ResultMessage.
 
-        # Use timeout for logging to prevent deadlock with typing indicator
         try:
             await asyncio.wait_for(asyncio.to_thread(vfx.log_info, f"{reason}: interrupt sent", colors=Colors), timeout=1.0)
         except asyncio.TimeoutError:
-            pass  # Abandon log if blocked
+            pass
+
         return True
+
     except asyncio.TimeoutError:
+        # Only if interrupt itself times out, force restart
+        vfx.log_info("🔍 [INTERRUPT] Interrupt timed out, forcing client restart", colors=Colors)
+
         # Force kill subprocess if interrupt times out
         if subprocess_pid:
             try:
                 os.kill(subprocess_pid, signal.SIGKILL)
-                try:
-                    await asyncio.wait_for(
-                        asyncio.to_thread(
-                            vfx.log_info,
-                            f"{reason}: force-killed stuck subprocess {subprocess_pid}",
-                            colors=Colors,
-                        ),
-                        timeout=1.0,
-                    )
-                except asyncio.TimeoutError:
-                    pass
-            except ProcessLookupError:
-                pass  # Already dead
-            except Exception as e:
-                try:
-                    await asyncio.wait_for(asyncio.to_thread(vfx.log_error, f"Failed to kill subprocess: {e}", colors=Colors), timeout=1.0)
-                except asyncio.TimeoutError:
-                    pass
-        else:
-            try:
-                await asyncio.wait_for(
-                    asyncio.to_thread(
-                        vfx.log_error,
-                        f"{reason}: interrupt timed out after {config.interrupt_timeout} seconds (tool may still be running)",
-                        colors=Colors,
-                    ),
-                    timeout=1.0,
-                )
-            except asyncio.TimeoutError:
-                pass  # Abandon log if blocked
+                vfx.log_info(f"🔍 [INTERRUPT] Force-killed subprocess {subprocess_pid}", colors=Colors)
+            except (ProcessLookupError, Exception):
+                pass
+
+        state.client = None  # Only null client on timeout
+        return False
+
     except Exception as e:
-        try:
-            await asyncio.wait_for(asyncio.to_thread(vfx.log_error, f"{reason}: interrupt failed ({str(e)[:120]})", colors=Colors), timeout=1.0)
-        except asyncio.TimeoutError:
-            pass  # Abandon log if blocked
-        try:
-            await asyncio.wait_for(asyncio.to_thread(traceback.print_exc), timeout=1.0)
-        except asyncio.TimeoutError:
-            pass  # Abandon traceback if blocked
-    return False
+        vfx.log_error(f"🔍 [INTERRUPT] Interrupt failed: {str(e)[:120]}", colors=Colors)
+        traceback.print_exc()
+        return False
 
 
 async def settle_collect_task(task: "asyncio.Task[tp.Any]", *, timeout: float) -> None:
@@ -310,15 +272,6 @@ async def collect_responses(
         collect_task.cancel()
         await attempt_interrupt(state, config=config, reason="Response timeout")
         should_restart_client = True
-    except asyncio.CancelledError:
-        # Handle interrupt cancellation
-        vfx.log_info("🔍 [COLLECT] Caught CancelledError in collect_responses", colors=Colors)
-        responses.append("[Interrupted]")
-        state.sub_agent_context = None
-        collect_task.cancel()
-        await settle_collect_task(collect_task, timeout=config.interrupt_timeout)
-        vfx.log_info("🔍 [COLLECT] Re-raising CancelledError", colors=Colors)
-        raise  # Re-raise to propagate cancellation
     except Exception:
         state.sub_agent_context = None
         await attempt_interrupt(state, config=config, reason="Response stream error")
@@ -411,12 +364,6 @@ async def process_message_with_typing(msg: str, state: vm.State, config: vm.Vest
         vfx.log_info("🔍 [TYPING] Calling send_and_receive_message", colors=Colors)
         responses, new_state = await send_and_receive_message(msg, state=state, config=config, show_in_chat=is_user)
         vfx.log_info(f"🔍 [TYPING] send_and_receive_message returned {len(responses)} responses", colors=Colors)
-    except asyncio.CancelledError:
-        # Handle interrupt cancellation
-        vfx.log_info("🔍 [TYPING] Caught CancelledError in process_message_with_typing", colors=Colors)
-        responses = ["[Interrupted]"]
-        new_state = state
-        raise  # Re-raise to propagate cancellation
     except Exception as e:
         responses = [f"something went wrong: {str(e)[:50]}"]
         vfx.log_error(f"Message processing error: {str(e)[:100]}", colors=Colors)
@@ -543,28 +490,17 @@ async def message_processor(queue: asyncio.Queue, state: vm.State, *, config: vm
             async with state.processing_lock:
                 state.is_processing = True
 
-            # Create and track the processing task
-            vfx.log_info("🔍 [PROCESSOR] Creating processing task", colors=Colors)
-            processing_task = asyncio.create_task(process_message_with_typing(msg, state, config, is_user=is_user))
-            state.current_processing_task = processing_task
-
             try:
-                vfx.log_info("🔍 [PROCESSOR] Awaiting processing task", colors=Colors)
-                responses, _ = await processing_task
-                vfx.log_info(f"🔍 [PROCESSOR] Processing task completed with {len(responses)} responses", colors=Colors)
+                vfx.log_info("🔍 [PROCESSOR] Processing message", colors=Colors)
+                responses, _ = await process_message_with_typing(msg, state, config, is_user=is_user)
+                vfx.log_info(f"🔍 [PROCESSOR] Processing completed with {len(responses)} responses", colors=Colors)
 
                 for i, response in enumerate(responses):
                     if response and response.strip():
                         if i > 0:
                             await vfx.sleep(config.response_spacing_delay)
                         await output_line(response, state)
-            except asyncio.CancelledError:
-                # Task was cancelled by interrupt - show interruption message
-                vfx.log_info("🔍 [PROCESSOR] Processing task was cancelled", colors=Colors)
-                await output_line("[Interrupted]", state)
             finally:
-                state.current_processing_task = None
-                vfx.log_info("🔍 [PROCESSOR] Cleared current_processing_task", colors=Colors)
                 async with state.processing_lock:
                     state.is_processing = False
 
