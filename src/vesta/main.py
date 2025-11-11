@@ -104,8 +104,13 @@ async def settle_collect_task(task: "asyncio.Task[tp.Any]", *, timeout: float) -
         await asyncio.wait_for(task, timeout=timeout)
     except asyncio.TimeoutError:
         task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+        with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
+            # Add timeout to prevent infinite wait if task doesn't respond to cancellation
+            try:
+                await asyncio.wait_for(task, timeout=timeout)
+            except asyncio.TimeoutError:
+                # Task didn't respond to cancellation - abandon it
+                pass
     except Exception:
         # Any parse errors are already logged upstream; swallow here.
         pass
@@ -281,8 +286,9 @@ async def collect_responses(
         debug_log("🔍 [COLLECT] collect task timed out", config=config)
         responses.append("[Response timeout]")
         state.sub_agent_context = None
-        collect_task.cancel()
+        # Interrupt first to follow SDK pattern, then cancel
         await attempt_interrupt(state, config=config, reason="Response timeout")
+        collect_task.cancel()
         should_restart_client = True
     except Exception:
         state.sub_agent_context = None
