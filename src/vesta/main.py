@@ -35,16 +35,33 @@ async def attempt_interrupt(state: vm.State, *, config: vm.VestaSettings, reason
 
     try:
         await asyncio.wait_for(state.client.interrupt(), timeout=config.interrupt_timeout)
-        vfx.log_info(f"{reason}: interrupt sent", colors=Colors)
+        # Use timeout for logging to prevent deadlock with typing indicator
+        try:
+            await asyncio.wait_for(asyncio.to_thread(vfx.log_info, f"{reason}: interrupt sent", colors=Colors), timeout=1.0)
+        except asyncio.TimeoutError:
+            pass  # Abandon log if blocked
         return True
     except asyncio.TimeoutError:
-        vfx.log_error(
-            f"{reason}: interrupt timed out after {config.interrupt_timeout} seconds (tool may still be running)",
-            colors=Colors,
-        )
+        try:
+            await asyncio.wait_for(
+                asyncio.to_thread(
+                    vfx.log_error,
+                    f"{reason}: interrupt timed out after {config.interrupt_timeout} seconds (tool may still be running)",
+                    colors=Colors,
+                ),
+                timeout=1.0,
+            )
+        except asyncio.TimeoutError:
+            pass  # Abandon log if blocked
     except Exception as e:
-        vfx.log_error(f"{reason}: interrupt failed ({str(e)[:120]})", colors=Colors)
-        traceback.print_exc()
+        try:
+            await asyncio.wait_for(asyncio.to_thread(vfx.log_error, f"{reason}: interrupt failed ({str(e)[:120]})", colors=Colors), timeout=1.0)
+        except asyncio.TimeoutError:
+            pass  # Abandon log if blocked
+        try:
+            await asyncio.wait_for(asyncio.to_thread(traceback.print_exc), timeout=1.0)
+        except asyncio.TimeoutError:
+            pass  # Abandon traceback if blocked
     return False
 
 
