@@ -307,9 +307,10 @@ async def process_message_with_typing(msg: str, state: vm.State, config: vm.Vest
     finally:
         typing_task.cancel()
         try:
-            await typing_task
-        except asyncio.CancelledError:
-            pass
+            # Don't wait indefinitely for typing task to cancel - add timeout to prevent deadlock
+            await asyncio.wait_for(typing_task, timeout=2.0)
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            pass  # Task cancelled or abandoned
         await vfx.clear_line_locked(state.output_lock)
 
     return responses, new_state
