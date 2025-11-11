@@ -98,40 +98,65 @@ async def settle_collect_task(task: "asyncio.Task[tp.Any]", *, timeout: float, c
     debug_log(f"🔍 [SETTLE] Starting (task.done()={task.done()})", config=config)
 
     if task.done():
-        debug_log("🔍 [SETTLE] Task already done", config=config)
-        try:
-            debug_log("🔍 [SETTLE] Getting task result", config=config)
-            result = task.result()
-            debug_log("🔍 [SETTLE] Got task result successfully", config=config)
-        except Exception as e:
-            debug_log(f"🔍 [SETTLE] Task result raised {type(e).__name__}: {str(e)[:100]}", config=config)
-        debug_log("🔍 [SETTLE] Returning after done check", config=config)
+        debug_log("🔍 [SETTLE] Task already done, returning", config=config)
         return
 
+    # Task not done - wait for it with timeout
     try:
-        debug_log("🔍 [SETTLE] First wait_for starting", config=config)
+        debug_log("🔍 [SETTLE] Waiting for task to complete", config=config)
         await asyncio.wait_for(task, timeout=timeout)
-        debug_log("🔍 [SETTLE] First wait_for completed", config=config)
+        debug_log("🔍 [SETTLE] Task completed successfully", config=config)
     except asyncio.TimeoutError:
-        debug_log("🔍 [SETTLE] First timeout, cancelling task", config=config)
+        debug_log("🔍 [SETTLE] Task timed out, cancelling", config=config)
         task.cancel()
+        # Give it a moment to respond to cancellation
         with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
-            # Add timeout to prevent infinite wait if task doesn't respond to cancellation
-            try:
-                debug_log("🔍 [SETTLE] Second wait_for starting", config=config)
-                await asyncio.wait_for(task, timeout=timeout)
-                debug_log("🔍 [SETTLE] Second wait_for completed", config=config)
-            except asyncio.TimeoutError:
-                # Task didn't respond to cancellation - abandon it
-                debug_log("🔍 [SETTLE] Task abandoned after second timeout", config=config)
-                pass
-    except Exception as e:
-        # Any parse errors are already logged upstream; swallow here.
-        if config.debug:
-            debug_log(f"🔍 [SETTLE] Exception: {type(e).__name__}: {str(e)[:100]}", config=config)
-        pass
+            await asyncio.wait_for(task, timeout=timeout)
+        debug_log("🔍 [SETTLE] Task cancelled or abandoned", config=config)
+    except BaseException as e:
+        # Catch everything including CancelledError, KeyboardInterrupt, etc.
+        debug_log(f"🔍 [SETTLE] Exception: {type(e).__name__}", config=config)
 
     debug_log("🔍 [SETTLE] Completed", config=config)
+
+
+async def ensure_client_ready(state: vm.State, *, config: vm.VestaSettings, context: str = "restart") -> tuple[bool, str | None]:
+    """Ensure the client is ready, restarting if necessary.
+
+    Returns:
+        (success, error_message) - success is True if client is ready, error_message if there was a problem
+    """
+    # Check if restart is already in progress (using lock state directly)
+    if state.restart_lock.locked():
+        debug_log(f"🔍 [{context.upper()}] Restart already in progress (lock held)", config=config)
+        # Wait briefly for restart to complete
+        await asyncio.sleep(1.0)
+        if not state.client:
+            return False, "[Waiting for restart to complete...]"
+        return True, None
+
+    # Acquire restart lock and perform restart
+    debug_log(f"🔍 [{context.upper()}] Attempting to acquire restart_lock", config=config)
+    try:
+        async with asyncio.timeout(config.restart_timeout + 5):
+            async with state.restart_lock:
+                debug_log(f"🔍 [{context.upper()}] restart_lock acquired", config=config)
+                try:
+                    await asyncio.wait_for(restart_claude_session(state, config=config), timeout=config.restart_timeout)
+                    if state.client:
+                        debug_log(f"🔍 [{context.upper()}] Client restarted successfully", config=config)
+                        return True, None
+                    else:
+                        return False, "[Error: Client restart failed - client is None after restart]"
+                except asyncio.TimeoutError:
+                    state.client = None
+                    return False, f"[Error: Client restart timed out after {config.restart_timeout}s]"
+                except Exception as e:
+                    state.client = None
+                    return False, f"[Error: Client restart failed - {str(e)[:50]}]"
+    except asyncio.TimeoutError:
+        state.client = None
+        return False, "[Error: Failed to acquire restart lock - deadlock detected]"
 
 
 def parse_assistant_message(msg: tp.Any, *, state: vm.State, config: vm.VestaSettings) -> tuple[str | None, vm.State, dict[str, tp.Any] | None]:
@@ -318,29 +343,12 @@ async def collect_responses(
         debug_log("🔍 [COLLECT] settle_collect_task returned", config=config)
 
     if should_restart_client:
-        # Check if restart is already in progress to prevent cascading restarts
-        debug_log(f"🔍 [COLLECT] should_restart_client=True, is_restarting={state.is_restarting}", config=config)
-        if state.is_restarting:
-            debug_log("🔍 [COLLECT] Restart already in progress, skipping", config=config)
-            responses.append("[Waiting for restart to complete...]")
-        else:
-            state.is_restarting = True
-            try:
-                debug_log("🔍 [COLLECT] Attempting to acquire restart_lock", config=config)
-                async with state.restart_lock:
-                    debug_log("🔍 [COLLECT] restart_lock acquired", config=config)
-                    try:
-                        await asyncio.wait_for(restart_claude_session(state, config=config), timeout=config.restart_timeout)
-                    except asyncio.TimeoutError:
-                        state.client = None
-                        responses.append(f"[Error: Client restart timed out after {config.restart_timeout}s - please restart vesta]")
-                        vfx.log_error(f"Client restart timed out after {config.restart_timeout} seconds", colors=Colors)
-                    except Exception as e:
-                        state.client = None
-                        responses.append(f"[Error: Client restart failed - {str(e)[:50]}]")
-                        vfx.log_error(f"Client restart failed: {e}", colors=Colors)
-            finally:
-                state.is_restarting = False
+        debug_log(f"🔍 [COLLECT] Client needs restart", config=config)
+        success, error_msg = await ensure_client_ready(state, config=config, context="collect")
+        if not success and error_msg:
+            responses.append(error_msg)
+            if "timed out" in error_msg or "deadlock" in error_msg:
+                vfx.log_error(error_msg.strip("[]"), colors=Colors)
 
     return responses, state
 
@@ -354,38 +362,13 @@ async def send_and_receive_message(
     if not state.client:
         # Attempt automatic recovery
         debug_log("🔍 [SEND-RECV] Client is None, attempting automatic recovery...", config=config)
-
-        # Check if restart is already in progress
-        if state.is_restarting:
-            debug_log("🔍 [SEND-RECV] Restart already in progress, waiting...", config=config)
-            # Wait briefly for restart to complete
-            await asyncio.sleep(1.0)
-            if not state.client:
-                return ["[Waiting for restart to complete...]"], state
-        else:
-            state.is_restarting = True
-            try:
-                debug_log("🔍 [SEND-RECV] Attempting to acquire restart_lock", config=config)
-                async with state.restart_lock:
-                    debug_log("🔍 [SEND-RECV] restart_lock acquired", config=config)
-                    try:
-                        await asyncio.wait_for(restart_claude_session(state, config=config), timeout=config.restart_timeout)
-                    except asyncio.TimeoutError:
-                        error_msg = f"[Error: Cannot recover client - restart timed out after {config.restart_timeout}s. Please restart vesta manually]"
-                        vfx.log_error("Client recovery timed out", colors=Colors)
-                        return [error_msg], state
-                    except Exception as e:
-                        error_msg = f"[Error: Cannot recover client - {str(e)[:50]}. Please restart vesta manually]"
-                        vfx.log_error(f"Client recovery failed: {e}", colors=Colors)
-                        return [error_msg], state
-
-                    if not state.client:
-                        error_msg = "[Error: Client recovery failed. Please restart vesta manually]"
-                        return [error_msg], state
-
-                    vfx.log_success("✅ 🔍 [SEND-RECV] Client recovered successfully", colors=Colors)
-            finally:
-                state.is_restarting = False
+        success, error_msg = await ensure_client_ready(state, config=config, context="send-recv")
+        if not success:
+            if error_msg:
+                vfx.log_error(error_msg.strip("[]"), colors=Colors)
+                return [error_msg], state
+            return ["[Error: Client recovery failed]"], state
+        vfx.log_success("✅ Client recovered successfully", colors=Colors)
 
     debug_log("🔍 [SEND-RECV] Calling send_query", config=config)
     try:
