@@ -48,6 +48,9 @@ async def attempt_interrupt(state: vm.State, *, config: vm.VestaSettings, reason
     else:
         vfx.log_info("🔍 [INTERRUPT] No active processing task to cancel", colors=Colors)
 
+    # Log client state after cancellation
+    vfx.log_info(f"🔍 [INTERRUPT] Client state after cancellation: exists={state.client is not None}", colors=Colors)
+
     # Capture subprocess PID before interrupt attempt
     subprocess_pid = None
     try:
@@ -58,7 +61,26 @@ async def attempt_interrupt(state: vm.State, *, config: vm.VestaSettings, reason
         pass
 
     try:
+        vfx.log_info("🔍 [INTERRUPT] Calling state.client.interrupt()", colors=Colors)
         await asyncio.wait_for(state.client.interrupt(), timeout=config.interrupt_timeout)
+        vfx.log_info("🔍 [INTERRUPT] state.client.interrupt() returned successfully", colors=Colors)
+
+        # Check if subprocess died during interrupt
+        subprocess_alive = True
+        try:
+            if hasattr(state.client, "_transport") and state.client._transport:
+                if hasattr(state.client._transport, "_process") and state.client._transport._process:
+                    poll_result = state.client._transport._process.poll()
+                    if poll_result is not None:
+                        vfx.log_info(f"🔍 [INTERRUPT] Subprocess died during interrupt (exit code: {poll_result}), nulling client", colors=Colors)
+                        state.client = None
+                        subprocess_alive = False
+        except Exception as e:
+            vfx.log_error(f"🔍 [INTERRUPT] Error checking subprocess state: {e}", colors=Colors)
+
+        if subprocess_alive:
+            vfx.log_info("🔍 [INTERRUPT] Subprocess still alive after interrupt", colors=Colors)
+
         # Use timeout for logging to prevent deadlock with typing indicator
         try:
             await asyncio.wait_for(asyncio.to_thread(vfx.log_info, f"{reason}: interrupt sent", colors=Colors), timeout=1.0)
@@ -241,10 +263,16 @@ async def print_timestamp_message(text: str, sender: str, *, lock: "asyncio.Lock
 
 
 async def send_query(client: ccsdk.ClaudeSDKClient, prompt: str, state: vm.State, *, config: vm.VestaSettings) -> vm.State:
+    vfx.log_info("🔍 [QUERY] Starting send_query", colors=Colors)
+    vfx.log_info(f"🔍 [QUERY] Client exists: {client is not None}", colors=Colors)
+    vfx.log_info(f"🔍 [QUERY] State.client exists: {state.client is not None}", colors=Colors)
+
     timestamp = vfx.get_current_time()
     query_with_context = vu.build_query_with_timestamp(prompt, timestamp=timestamp)
 
+    vfx.log_info(f"🔍 [QUERY] Calling client.query() with {len(query_with_context)} chars", colors=Colors)
     await client.query(query_with_context)
+    vfx.log_info("🔍 [QUERY] client.query() returned successfully", colors=Colors)
 
     return state
 
@@ -328,9 +356,12 @@ async def collect_responses(
 async def send_and_receive_message(
     prompt: str, *, state: vm.State, config: vm.VestaSettings, show_in_chat: bool = True
 ) -> tuple[list[str], vm.State]:
+    vfx.log_info("🔍 [SEND-RECV] Starting send_and_receive_message", colors=Colors)
+    vfx.log_info(f"🔍 [SEND-RECV] Client state: {state.client is not None}", colors=Colors)
+
     if not state.client:
         # Attempt automatic recovery
-        vfx.log_info("Client not initialized, attempting automatic recovery...", colors=Colors)
+        vfx.log_info("🔍 [SEND-RECV] Client is None, attempting automatic recovery...", colors=Colors)
         async with state.restart_lock:
             try:
                 await asyncio.wait_for(restart_claude_session(state, config=config), timeout=config.restart_timeout)
@@ -347,17 +378,21 @@ async def send_and_receive_message(
                 error_msg = "[Error: Client recovery failed. Please restart vesta manually]"
                 return [error_msg], state
 
-            vfx.log_success("Client recovered successfully", colors=Colors)
+            vfx.log_success("🔍 [SEND-RECV] Client recovered successfully", colors=Colors)
 
+    vfx.log_info("🔍 [SEND-RECV] Calling send_query", colors=Colors)
     try:
         await send_query(state.client, prompt, state, config=config)
+        vfx.log_info("🔍 [SEND-RECV] send_query completed successfully", colors=Colors)
     except Exception as e:
         error_msg = f"failed to send message: {str(e)[:100]}"
-        vfx.log_error(error_msg, colors=Colors)
+        vfx.log_error(f"🔍 [SEND-RECV] send_query failed: {error_msg}", colors=Colors)
         traceback.print_exc()
         return [error_msg], state
 
+    vfx.log_info("🔍 [SEND-RECV] Calling collect_responses", colors=Colors)
     responses, _ = await collect_responses(state.client, state=state, config=config, show_output=show_in_chat)
+    vfx.log_info(f"🔍 [SEND-RECV] collect_responses returned {len(responses)} responses", colors=Colors)
 
     return responses, state
 
