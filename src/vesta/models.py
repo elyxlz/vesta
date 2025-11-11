@@ -40,6 +40,7 @@ class State:
     output_lock: asyncio.Lock = dc.field(default_factory=asyncio.Lock)
     restart_lock: asyncio.Lock = dc.field(default_factory=asyncio.Lock)
     processing_lock: asyncio.Lock = dc.field(default_factory=asyncio.Lock)
+    current_processing_task: asyncio.Task[tp.Any] | None = None
 
 
 class VestaSettings(pyd_settings.BaseSettings):

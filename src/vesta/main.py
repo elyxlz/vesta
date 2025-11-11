@@ -29,9 +29,17 @@ def load_system_prompt(config: vm.VestaSettings) -> str:
 
 
 async def attempt_interrupt(state: vm.State, *, config: vm.VestaSettings, reason: str) -> bool:
-    """Best-effort interrupt with subprocess killing if needed."""
+    """Best-effort interrupt with task cancellation and subprocess killing if needed."""
     if not state.client:
         return False
+
+    # Cancel the current processing task FIRST (before SDK interrupt)
+    if state.current_processing_task and not state.current_processing_task.done():
+        state.current_processing_task.cancel()
+        try:
+            await asyncio.wait_for(state.current_processing_task, timeout=1.0)
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            pass  # Expected - task was cancelled or took too long
 
     # Capture subprocess PID before interrupt attempt
     subprocess_pid = None
@@ -267,8 +275,12 @@ async def collect_responses(
         await attempt_interrupt(state, config=config, reason="Response timeout")
         should_restart_client = True
     except asyncio.CancelledError:
+        # Handle interrupt cancellation
+        responses.append("[Interrupted]")
         state.sub_agent_context = None
         collect_task.cancel()
+        await settle_collect_task(collect_task, timeout=config.interrupt_timeout)
+        raise  # Re-raise to propagate cancellation
     except Exception:
         state.sub_agent_context = None
         await attempt_interrupt(state, config=config, reason="Response stream error")
@@ -350,6 +362,11 @@ async def process_message_with_typing(msg: str, state: vm.State, config: vm.Vest
     typing_task = asyncio.create_task(show_typing_indicator(config, lock=state.output_lock))
     try:
         responses, new_state = await send_and_receive_message(msg, state=state, config=config, show_in_chat=is_user)
+    except asyncio.CancelledError:
+        # Handle interrupt cancellation
+        responses = ["[Interrupted]"]
+        new_state = state
+        raise  # Re-raise to propagate cancellation
     except Exception as e:
         responses = [f"something went wrong: {str(e)[:50]}"]
         vfx.log_error(f"Message processing error: {str(e)[:100]}", colors=Colors)
@@ -468,15 +485,24 @@ async def message_processor(queue: asyncio.Queue, state: vm.State, *, config: vm
 
             async with state.processing_lock:
                 state.is_processing = True
+
+            # Create and track the processing task
+            processing_task = asyncio.create_task(process_message_with_typing(msg, state, config, is_user=is_user))
+            state.current_processing_task = processing_task
+
             try:
-                responses, _ = await process_message_with_typing(msg, state, config, is_user=is_user)
+                responses, _ = await processing_task
 
                 for i, response in enumerate(responses):
                     if response and response.strip():
                         if i > 0:
                             await vfx.sleep(config.response_spacing_delay)
                         await output_line(response, state)
+            except asyncio.CancelledError:
+                # Task was cancelled by interrupt - show interruption message
+                await output_line("[Interrupted]", state)
             finally:
+                state.current_processing_task = None
                 async with state.processing_lock:
                     state.is_processing = False
 
