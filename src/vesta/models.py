@@ -18,6 +18,7 @@ SERVICE_ICONS = {
     "task": "✅",
     "microsoft": "📧",
     "what-day": "📅",
+    "pdf-reader": "📄",
 }
 
 
@@ -223,6 +224,20 @@ class VestaSettings(pyd_settings.BaseSettings):
                     str(self.data_dir / "what-day-mcp"),
                     "--log-dir",
                     str(self.logs_dir / "what-day-mcp"),
+                ],
+                "env": base_env,
+            },
+            "pdf-reader": {
+                "command": "pnpm",
+                "args": [
+                    "run",
+                    "--dir",
+                    "mcps/pdf-reader-mcp",
+                    "start",
+                    "--data-dir",
+                    str(self.data_dir / "pdf-reader-mcp"),
+                    "--log-dir",
+                    str(self.logs_dir / "pdf-reader-mcp"),
                 ],
                 "env": base_env,
             },

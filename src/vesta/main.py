@@ -93,27 +93,40 @@ async def attempt_interrupt(state: vm.State, *, config: vm.VestaSettings, reason
         return False
 
 
-async def settle_collect_task(task: "asyncio.Task[tp.Any]", *, timeout: float) -> None:
+async def settle_collect_task(task: "asyncio.Task[tp.Any]", *, timeout: float, config: vm.VestaSettings) -> None:
     """Ensure the response collection task finishes cleanly without leaking."""
+    debug_log(f"🔍 [SETTLE] Starting (task.done()={task.done()})", config=config)
+
     if task.done():
+        debug_log("🔍 [SETTLE] Task already done", config=config)
         with contextlib.suppress(Exception):
             task.result()
         return
 
     try:
+        debug_log("🔍 [SETTLE] First wait_for starting", config=config)
         await asyncio.wait_for(task, timeout=timeout)
+        debug_log("🔍 [SETTLE] First wait_for completed", config=config)
     except asyncio.TimeoutError:
+        debug_log("🔍 [SETTLE] First timeout, cancelling task", config=config)
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
             # Add timeout to prevent infinite wait if task doesn't respond to cancellation
             try:
+                debug_log("🔍 [SETTLE] Second wait_for starting", config=config)
                 await asyncio.wait_for(task, timeout=timeout)
+                debug_log("🔍 [SETTLE] Second wait_for completed", config=config)
             except asyncio.TimeoutError:
                 # Task didn't respond to cancellation - abandon it
+                debug_log("🔍 [SETTLE] Task abandoned after second timeout", config=config)
                 pass
-    except Exception:
+    except Exception as e:
         # Any parse errors are already logged upstream; swallow here.
+        if config.debug:
+            debug_log(f"🔍 [SETTLE] Exception: {type(e).__name__}: {str(e)[:100]}", config=config)
         pass
+
+    debug_log("🔍 [SETTLE] Completed", config=config)
 
 
 def parse_assistant_message(msg: tp.Any, *, state: vm.State, config: vm.VestaSettings) -> tuple[str | None, vm.State, dict[str, tp.Any] | None]:
@@ -295,17 +308,22 @@ async def collect_responses(
         await attempt_interrupt(state, config=config, reason="Response stream error")
         should_restart_client = True
     finally:
-        await settle_collect_task(collect_task, timeout=config.interrupt_timeout)
+        debug_log("🔍 [COLLECT] Entering finally block", config=config)
+        await settle_collect_task(collect_task, timeout=config.interrupt_timeout, config=config)
+        debug_log("🔍 [COLLECT] settle_collect_task returned", config=config)
 
     if should_restart_client:
         # Check if restart is already in progress to prevent cascading restarts
+        debug_log(f"🔍 [COLLECT] should_restart_client=True, is_restarting={state.is_restarting}", config=config)
         if state.is_restarting:
             debug_log("🔍 [COLLECT] Restart already in progress, skipping", config=config)
             responses.append("[Waiting for restart to complete...]")
         else:
             state.is_restarting = True
             try:
+                debug_log("🔍 [COLLECT] Attempting to acquire restart_lock", config=config)
                 async with state.restart_lock:
+                    debug_log("🔍 [COLLECT] restart_lock acquired", config=config)
                     try:
                         await asyncio.wait_for(restart_claude_session(state, config=config), timeout=config.restart_timeout)
                     except asyncio.TimeoutError:
@@ -342,7 +360,9 @@ async def send_and_receive_message(
         else:
             state.is_restarting = True
             try:
+                debug_log("🔍 [SEND-RECV] Attempting to acquire restart_lock", config=config)
                 async with state.restart_lock:
+                    debug_log("🔍 [SEND-RECV] restart_lock acquired", config=config)
                     try:
                         await asyncio.wait_for(restart_claude_session(state, config=config), timeout=config.restart_timeout)
                     except asyncio.TimeoutError:
