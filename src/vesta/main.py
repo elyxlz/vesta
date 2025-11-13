@@ -281,7 +281,7 @@ async def send_query(client: ccsdk.ClaudeSDKClient, prompt: str, state: vm.State
 
     # Check if there's a pending system message to inject
     if state.pending_system_message:
-        debug_log(f"🔍 [QUERY] Injecting pending system message", config=config)
+        debug_log("🔍 [QUERY] Injecting pending system message", config=config)
         prompt = f"{state.pending_system_message}\n\n{prompt}"
         state.pending_system_message = None  # Clear after using
 
@@ -351,7 +351,7 @@ async def collect_responses(
         debug_log("🔍 [COLLECT] settle_collect_task returned", config=config)
 
     if should_restart_client:
-        debug_log(f"🔍 [COLLECT] Client needs restart", config=config)
+        debug_log("🔍 [COLLECT] Client needs restart", config=config)
         success, error_msg = await ensure_client_ready(state, config=config, context="collect")
         if not success and error_msg:
             responses.append(error_msg)
@@ -411,7 +411,7 @@ async def show_typing_indicator(config: vm.VestaSettings, *, lock: "asyncio.Lock
 
 
 async def process_message_with_typing(msg: str, state: vm.State, config: vm.VestaSettings, *, is_user: bool) -> tuple[list[str], vm.State]:
-    debug_log(f"🔍 [TYPING] Starting process_message_with_typing", config=config)
+    debug_log("🔍 [TYPING] Starting process_message_with_typing", config=config)
     now = vfx.get_current_time()
     await vfx.sleep(config.pre_typing_delay + now.microsecond / 3000000)
 

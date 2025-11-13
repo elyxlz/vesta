@@ -76,7 +76,7 @@ class VestaSettings(pyd_settings.BaseSettings):
     )
 
     # Microsoft MCP secrets
-    microsoft_mcp_client_id: str | None = None
+    microsoft_mcp_client_id: str = pyd.Field()
     microsoft_mcp_tenant_id: str = "common"
 
     # OneDrive configuration
@@ -154,7 +154,7 @@ class VestaSettings(pyd_settings.BaseSettings):
                 ],
                 "env": {
                     **base_env,
-                    "MICROSOFT_MCP_CLIENT_ID": self.microsoft_mcp_client_id or "",
+                    "MICROSOFT_MCP_CLIENT_ID": self.microsoft_mcp_client_id,
                     "MICROSOFT_MCP_TENANT_ID": self.microsoft_mcp_tenant_id,
                 },
             },
