@@ -1,10 +1,13 @@
 import httpx
 import time
+import logging
 import pathlib as pl
 from typing import Any
 from collections.abc import Iterator
 from .auth import get_token
 from .settings import MicrosoftSettings
+
+logger = logging.getLogger(__name__)
 
 
 def _retry_http_call(call_func, max_retries: int = 3):
@@ -71,10 +74,13 @@ def request(
         headers["ConsistencyLevel"] = "eventual"
         params.setdefault("$count", "true")
 
+    url = f"{base_url}{path}"
+    logger.debug(f"Graph API {method} {url} params={params}")
+
     response = _retry_http_call(
         lambda: client.request(
             method=method,
-            url=f"{base_url}{path}",
+            url=url,
             headers=headers,
             params=params,
             json=json,
@@ -84,7 +90,11 @@ def request(
     )
 
     if response and response.content:
-        return response.json()
+        result = response.json()
+        logger.debug(f"Graph API {method} {url} returned {response.status_code}")
+        return result
+
+    logger.warning(f"Graph API {method} {url} returned empty response")
     return None
 
 
@@ -102,26 +112,42 @@ def request_paginated(
     """Make paginated requests following @odata.nextLink"""
     items_returned = 0
     next_link = None
+    page_num = 1
+
+    logger.debug(f"Starting paginated request for {path} with params {params}")
 
     while True:
         if next_link:
+            logger.debug(f"Fetching page {page_num} via nextLink")
             result = request(client, cache_file, scopes, settings, base_url, "GET", next_link.replace(base_url, ""), account_id)
         else:
+            logger.debug(f"Fetching page {page_num} for {path}")
             result = request(client, cache_file, scopes, settings, base_url, "GET", path, account_id, params=params)
 
         if not result:
-            break
+            logger.error(f"API request failed for path '{path}' with params {params}")
+            raise ValueError(f"API request failed for path '{path}' with params {params}")
 
-        if "value" in result:
-            for item in result["value"]:
-                if limit and items_returned >= limit:
-                    return
-                yield item
-                items_returned += 1
+        if "value" not in result:
+            logger.error(f"Invalid API response for path '{path}': missing 'value' field. Response keys: {list(result.keys())}")
+            raise ValueError(f"Invalid API response for path '{path}': missing 'value' field. Response: {result}")
+
+        page_size = len(result["value"])
+        logger.debug(f"Page {page_num} returned {page_size} items")
+
+        for item in result["value"]:
+            if limit and items_returned >= limit:
+                logger.debug(f"Reached limit of {limit} items")
+                return
+            yield item
+            items_returned += 1
 
         next_link = result.get("@odata.nextLink")
         if not next_link:
+            logger.debug(f"Pagination complete: {items_returned} total items across {page_num} pages")
             break
+
+        page_num += 1
 
 
 def download_raw(
