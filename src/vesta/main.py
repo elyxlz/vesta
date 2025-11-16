@@ -484,14 +484,15 @@ async def process_notification_batch(
 
 
 def signal_handler(state: vm.State, config: vm.VestaSettings, signum: int, frame: tp.Any) -> None:
+    # IMPORTANT: Signal handlers must avoid I/O operations (print can raise BlockingIOError)
+    # Only set flags/events here - let the main loop handle output
     with state.shutdown_lock:
         state.shutdown_count += 1
         if state.shutdown_count == 1:
-            vfx.print_line(f"\n{Colors['dim']}{Messages.SHUTDOWN_INITIATED}{Colors['reset']}")
             if state.shutdown_event:
                 state.shutdown_event.set()
         elif state.shutdown_count > 2:
-            vfx.print_line(f"\n{Colors['yellow']}{Messages.FORCE_SHUTDOWN}{Colors['reset']}")
+            # Force exit without I/O (third Ctrl+C)
             vfx.exit_process(0)
 
 
@@ -723,6 +724,9 @@ async def run_vesta(config: vm.VestaSettings, *, state: vm.State) -> None:
     except (KeyboardInterrupt, asyncio.CancelledError):
         if state.shutdown_event:
             state.shutdown_event.set()
+
+    # Print shutdown message from main loop (not signal handler, to avoid BlockingIOError)
+    vfx.print_line(f"\n{Colors['dim']}{Messages.SHUTDOWN_INITIATED}{Colors['reset']}")
 
     for task in tasks:
         task.cancel()

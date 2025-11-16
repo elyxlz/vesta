@@ -77,11 +77,18 @@ def get_timestamp_string(*, format: str = Formats.TIMESTAMP) -> str:
 
 
 def print_line(text: str, *, flush: bool = False) -> None:
-    print(text, flush=flush)
+    try:
+        print(text, flush=flush)
+    except BlockingIOError:
+        # Stdout buffer full or not ready (common in signal handlers), skip this message
+        pass
 
 
 def print_inline(text: str) -> None:
-    print(text, end="", flush=True)
+    try:
+        print(text, end="", flush=True)
+    except BlockingIOError:
+        pass
 
 
 def clear_line() -> None:
