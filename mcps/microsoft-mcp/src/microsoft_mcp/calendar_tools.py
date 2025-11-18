@@ -18,38 +18,50 @@ def list_events(
     include_details: bool = True,
 ) -> list[dict[str, Any]]:
     context: MicrosoftContext = ctx.request_context.lifespan_context
-    account_id = auth.get_account_id_by_email(account_email, context.cache_file, settings=context.settings)
-    now = dt.datetime.now(dt.timezone.utc)
-    start = (now - dt.timedelta(days=days_back)).isoformat()
-    end = (now + dt.timedelta(days=days_ahead)).isoformat()
 
-    params = {
-        "startDateTime": start,
-        "endDateTime": end,
-        "$orderby": "start/dateTime",
-        "$top": 100,
-    }
+    try:
+        account_id = auth.get_account_id_by_email(account_email, context.cache_file, settings=context.settings)
+        context.monitor_logger.info(f"list_events: account_email={account_email}, account_id={account_id}")
 
-    if include_details:
-        params["$select"] = "id,subject,start,end,location,body,attendees,organizer,isAllDay,recurrence,onlineMeeting,seriesMasterId"
-    else:
-        params["$select"] = "id,subject,start,end,location,organizer,seriesMasterId"
+        # Remove microseconds from datetime to match Microsoft's recommended format
+        now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
+        start = (now - dt.timedelta(days=days_back)).isoformat()
+        end = (now + dt.timedelta(days=days_ahead)).isoformat()
 
-    # Use calendarView to get recurring event instances
-    events = list(
-        graph.request_paginated(
-            context.http_client,
-            context.cache_file,
-            context.scopes,
-            context.settings,
-            context.base_url,
-            "/me/calendarView",
-            account_id,
-            params=params,
+        params = {
+            "startDateTime": start,
+            "endDateTime": end,
+            "$orderby": "start/dateTime",
+            "$top": 100,
+        }
+
+        if include_details:
+            params["$select"] = "id,subject,start,end,location,body,attendees,organizer,isAllDay,recurrence,onlineMeeting,seriesMasterId"
+        else:
+            params["$select"] = "id,subject,start,end,location,organizer,seriesMasterId"
+
+        context.monitor_logger.info(f"list_events: Querying calendarView with params: {params}")
+
+        # Use calendarView to get recurring event instances
+        events = list(
+            graph.request_paginated(
+                context.http_client,
+                context.cache_file,
+                context.scopes,
+                context.settings,
+                context.base_url,
+                "/me/calendarView",
+                account_id,
+                params=params,
+            )
         )
-    )
 
-    return events
+        context.monitor_logger.info(f"list_events: Retrieved {len(events)} events for account {account_email}")
+        return events
+
+    except Exception as e:
+        context.monitor_logger.error(f"list_events failed for {account_email}: {type(e).__name__}: {e}")
+        raise ValueError(f"Failed to list calendar events for {account_email}: {e}") from e
 
 
 @mcp.tool()

@@ -327,8 +327,8 @@ When booking any meeting:
 - **Primary phone number (for WhatsApp)**: +393483589770 (Italian number - main WhatsApp account)
 - **UK number**: +44 7939 865977 (secondary)
 - **Personal documents**: All passport and ID details stored in Keeper record "Elio Personal Info"
-- **Passport scan**: `/home/elyx/OneDrive/Documents/passport.png`
-- **Documents**: Immigration docs (passport, visa) in `/home/elyx/OneDrive/Documents/Personal/`
+- **Passport scan**: `onedrive/Documents/passport.png`
+- **Documents**: Immigration docs (passport, visa) in `onedrive/Documents/Personal/`
 
 ### Family
 - **Close with parents**: Would like to be closer
@@ -716,7 +716,7 @@ When booking any meeting:
 ### Lists & Files
 - **OneDrive Mount**: Mounted at `onedrive/` in vesta root folder - this local FUSE mount syncs bidirectionally with cloud OneDrive
 - **Cross-device sync**: Elio can add files from his phone/laptop to OneDrive and Vesta can see them in the onedrive folder, and vice versa
-- All lists organized in `/home/elyx/OneDrive/Documents/Lists/`:
+- All lists organized in `onedrive/Documents/Lists/`:
   - `reading_list.md`: Articles and links to read
   - `gift_ideas.md`: Gift ideas for family/friends
   - `booklist.md`: Books to read
@@ -725,6 +725,6 @@ When booking any meeting:
   - `products.md`: Shopping list
   - `bologna_travel_options.md`: Accommodation options for Radiohead trip
   - `christmas_flights.md`: Flight options for Christmas travel
-- **Research Papers**: Academic papers and arxiv links in `/home/elyx/OneDrive/Documents/Lists/research_papers/`
-- **UCL Coursework**: Year 3 modules in `/home/elyx/OneDrive/Schools/UCL/Year 3/`
+- **Research Papers**: Academic papers and arxiv links in `onedrive/Documents/Lists/research_papers/`
+- **UCL Coursework**: Year 3 modules in `onedrive/Schools/UCL/Year 3/`
 - **Keeper CLI**: ~270 total records organized into folders (financial, work, personal, university)

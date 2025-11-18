@@ -1,0 +1,56 @@
+From: elio@audiogen.co
+Subject: Re: Would love your feedback on Audiogen!
+Date: 2025-11-12T00:25:02Z
+To: benjamindavid9@hotmail.com
+
+================================================================================
+
+Hi Ben,
+
+Thanks for the feedback, it means a lot :)
+Our end goal is to make something more fun and personal than Suno, and there is still a lot of work to do. We hope to achieve that by provide more modular control as you put it.
+
+About your nitpick, I think it would be a good idea to persist across generations, I'll talk to my team about that.
+
+For song structures, we are working on improving that!
+
+Best,
+Elio
+
+Get Outlook for Android<https://aka.ms/AAb9ysg>
+________________________________
+From: Ben Freeney <benjamindavid9@hotmail.com>
+Sent: Wednesday, November 12, 2025 12:13:25 AM
+To: Elio Pascarelli <elio@audiogen.co>
+Subject: Re: Would love your feedback on Audiogen!
+
+Hi,
+
+To compare it to suno, it seems more abstract, it's better at certain tasks while not being quite as good in other areas. But for something so new, it's fun to play with.
+
+It is already far better than suno at individual sounds, e.g. asking for "solo drums" seems to actually provide solo drums (although it did lean towards a song composition after some time and brought in bass), whereas suno consistently struggles with this.
+
+It doesn't seem quite as good at song structures, suno seems to find a chord/musical "idea" and sticks to it, whereas this seems a bit more loose. I think this could lead to some really cool unique sounds, and if that kind of modular design is the goal (as in, being able to add sounds which are less tied to a core structure), that could be pretty cool.
+
+Other minor thing: should prompt and weirdness settings stick rather than reset for each new prompt? I did find it frustrating as I kept forgetting to change the settings, but maybe that's just me!
+
+Maybe everything I listed is actually intended, so I apologise if I didn't quite understand the core goals.
+
+Thanks
+
+________________________________
+From: Elio <elio@audiogen.co>
+Sent: 11 November 2025 13:26
+To: freeneyben00@gmail.com <freeneyben00@gmail.com>
+Cc: emilio@audiogen.co <emilio@audiogen.co>
+Subject: Would love your feedback on Audiogen!
+
+Hey!
+
+I see you've had access to Audiogen for a few days now. Would love to hear your thoughts about how it's going and what we could improve.
+
+Happy to hop on a call if that's easier than email!
+
+Let me know,
+Elio Pascarelli
+Co-Founder @ AUDIOGEN

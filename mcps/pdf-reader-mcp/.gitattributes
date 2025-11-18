@@ -1,0 +1,19 @@
+# Auto detect text files and perform LF normalization
+* text=auto eol=lf
+
+# Explicitly declare text files we want to always normalize to LF
+*.cjs text eol=lf
+*.js text eol=lf
+*.ts text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+
+# Lockfiles should always use LF
+package-lock.json text eol=lf
+pnpm-lock.yaml text eol=lf
+
+# Ensure specific files are treated as binary (if needed)
+# *.png binary
+# *.jpg binary

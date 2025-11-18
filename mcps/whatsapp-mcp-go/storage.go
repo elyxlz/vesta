@@ -143,16 +143,26 @@ func (ms *MessageStore) SearchContacts(query string, limit int) ([]Contact, erro
 		digitsLike = "%" + rawDigits + "%"
 	}
 
-	manualRows, err := ms.db.Query(`
+	manualConditions := []string{
+		"LOWER(COALESCE(name, '')) LIKE ?",
+		"phone_number LIKE ?",
+		"LOWER(jid) LIKE ?",
+	}
+	manualArgs := []interface{}{likeName, jidLike, jidLike}
+	if rawDigits != "" {
+		manualConditions = append(manualConditions, "REPLACE(phone_number, '+', '') LIKE ?")
+		manualArgs = append(manualArgs, digitsLike)
+	}
+	manualQuery := fmt.Sprintf(`
 		SELECT jid, name, phone_number
 		FROM contacts
-		WHERE (LOWER(COALESCE(name, '')) LIKE ?
-			OR phone_number LIKE ?
-			OR REPLACE(phone_number, '+', '') LIKE ?
-			OR LOWER(jid) LIKE ?)
+		WHERE (%s)
 		ORDER BY LOWER(COALESCE(name, phone_number))
 		LIMIT ?
-	`, likeName, jidLike, digitsLike, jidLike, limit)
+	`, strings.Join(manualConditions, " OR "))
+	manualArgs = append(manualArgs, limit)
+
+	manualRows, err := ms.db.Query(manualQuery, manualArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -178,16 +188,26 @@ func (ms *MessageStore) SearchContacts(query string, limit int) ([]Contact, erro
 	}
 
 	remaining := limit - len(contacts)
-	chatRows, err := ms.db.Query(`
+	chatConditions := []string{
+		"LOWER(COALESCE(name, '')) LIKE ?",
+		"LOWER(jid) LIKE ?",
+	}
+	chatArgs := []interface{}{likeName, jidLike}
+	if rawDigits != "" {
+		chatConditions = append(chatConditions, "SUBSTR(jid, 1, INSTR(jid, '@') - 1) LIKE ?")
+		chatArgs = append(chatArgs, digitsLike)
+	}
+	chatQuery := fmt.Sprintf(`
 		SELECT jid, name
 		FROM chats
-		WHERE jid LIKE '%@s.whatsapp.net'
-		AND (LOWER(COALESCE(name, '')) LIKE ?
-			OR LOWER(jid) LIKE ?
-			OR SUBSTR(jid, 1, INSTR(jid, '@') - 1) LIKE ?)
+		WHERE jid LIKE '%%@s.whatsapp.net'
+		AND (%s)
 		ORDER BY LOWER(COALESCE(name, jid))
 		LIMIT ?
-	`, likeName, jidLike, digitsLike, remaining*2)
+	`, strings.Join(chatConditions, " OR "))
+	chatArgs = append(chatArgs, remaining*2)
+
+	chatRows, err := ms.db.Query(chatQuery, chatArgs...)
 	if err != nil {
 		return contacts, err
 	}

@@ -1,0 +1,38 @@
+From: yi-gong@ucl.ac.uk
+Subject: Re: Dissertation Supervision Request - AI Retrieval for Historical Archives
+Date: 2025-11-13T09:38:47Z
+To: elio.pascarelli.21@ucl.ac.uk
+
+================================================================================
+
+Hi Elio
+
+do you have extension for this? I signed the form but would like to meet on this soon to hear more about your dissertation plan.
+
+
+Best wishes
+
+Yi
+
+
+
+
+
+On 12 Nov 2025, at 06:59, Pascarelli, Elio <elio.pascarelli.21@ucl.ac.uk> wrote:
+
+Dear Yi Gong,
+
+It would be great to have you as my dissertation supervisor! My dissertation tests whether AI retrieval technique​​s can improve access to historical newspaper archives.
+
+The system processes Italian newspapers from the 1700s to WWII through segmentation, vision language model OCR, LLM rewriting, semantic search with embeddings, and agentic search. This creates an AI librarian over a large historical archive. The goal is to measure whether this outperforms keyword-only search.
+​​
+Since you are a lecturer in Interdisciplinary Quantitative Thinking I think you could be a good fit.
+
+Best regards,
+Elio Pascarelli
+Final Year Arts and Sciences Student
+UCL Student ID: 21095254
+uclqep0@ucl.ac.uk<mailto:uclqep0@ucl.ac.uk>
+
+<YI_GONG_Dissertation_Supervision.docx>
+

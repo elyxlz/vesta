@@ -1,4 +1,3 @@
-import json
 import datetime as dt
 import pathlib as pl
 import typing as tp
@@ -11,16 +10,6 @@ import pydantic_settings as pyd_settings
 import claude_code_sdk as ccsdk
 
 
-SERVICE_ICONS = {
-    "playwright": "🌐",
-    "whatsapp": "📱",
-    "reminder": "⏰",
-    "task": "✅",
-    "microsoft": "📧",
-    "what-day": "📅",
-}
-
-
 class McpServer(tp.TypedDict):
     command: str
     args: list[str]
@@ -30,15 +19,16 @@ class McpServer(tp.TypedDict):
 @dc.dataclass
 class State:
     client: ccsdk.ClaudeSDKClient | None = None
-    conversation_history: list[dict[str, tp.Any]] = dc.field(default_factory=list)
     shutdown_event: asyncio.Event | None = None
     shutdown_lock: threading.Lock = dc.field(default_factory=threading.Lock)
     shutdown_count: int = 0
     is_processing: bool = False
     sub_agent_context: str | None = None
-    last_context_pct: float = 0.0
+    session_id: str | None = None
+    pending_system_message: str | None = None
     last_memory_consolidation: dt.datetime | None = None
-    output_lock: asyncio.Lock = dc.field(default_factory=asyncio.Lock)
+    restart_lock: asyncio.Lock = dc.field(default_factory=asyncio.Lock)
+    processing_lock: asyncio.Lock = dc.field(default_factory=asyncio.Lock)
 
 
 class VestaSettings(pyd_settings.BaseSettings):
@@ -51,15 +41,11 @@ class VestaSettings(pyd_settings.BaseSettings):
     notification_buffer_delay: int = 3
     proactive_check_interval: int = 60
     proactive_check_message: str = "It's been 60 minutes. Is there anything useful you could do right now?"
-    whatsapp_bridge_check_interval: int = 30
     response_timeout: int = 180
     memory_agent_timeout: int = 1200
-    typing_animation_delay: float = 0.5
-    pre_typing_delay: float = 0.8
-    response_spacing_delay: float = 0.3
+    restart_timeout: int = 30
     shutdown_timeout: int = 310
     task_gather_timeout: int = 2
-    max_context_tokens: int = 150000
     enable_nightly_memory: bool = True
     nightly_memory_time: int = 4
     interrupt_timeout: float = 5.0
@@ -71,7 +57,7 @@ class VestaSettings(pyd_settings.BaseSettings):
     )
 
     # Microsoft MCP secrets
-    microsoft_mcp_client_id: str | None = None
+    microsoft_mcp_client_id: str = pyd.Field()
     microsoft_mcp_tenant_id: str = "common"
 
     # OneDrive configuration
@@ -149,7 +135,7 @@ class VestaSettings(pyd_settings.BaseSettings):
                 ],
                 "env": {
                     **base_env,
-                    "MICROSOFT_MCP_CLIENT_ID": self.microsoft_mcp_client_id or "",
+                    "MICROSOFT_MCP_CLIENT_ID": self.microsoft_mcp_client_id,
                     "MICROSOFT_MCP_TENANT_ID": self.microsoft_mcp_tenant_id,
                 },
             },
@@ -222,6 +208,17 @@ class VestaSettings(pyd_settings.BaseSettings):
                 ],
                 "env": base_env,
             },
+            "pdf-reader": {
+                "command": "node",
+                "args": [
+                    "mcps/pdf-reader-mcp/dist/index.js",
+                    "--data-dir",
+                    str(self.data_dir / "pdf-reader-mcp"),
+                    "--log-dir",
+                    str(self.logs_dir / "pdf-reader-mcp"),
+                ],
+                "env": base_env,
+            },
         }
         return servers
 
@@ -235,18 +232,6 @@ class Notification(pyd.BaseModel):
     metadata: dict[str, tp.Any] = pyd.Field(default_factory=dict)
     file_path: str | None = pyd.Field(default=None, exclude=True)
 
-    @classmethod
-    def from_file(cls, path: pl.Path) -> "Notification":
-        try:
-            data = json.loads(path.read_text())
-            notif = cls(**data)
-            notif.file_path = str(path)
-            return notif
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON in {path}: {e}")
-        except Exception as e:
-            raise ValueError(f"Failed to parse notification from {path}: {e}")
-
     def format_for_display(self) -> str:
         meta_str = ""
         if self.metadata:
@@ -255,14 +240,3 @@ class Notification(pyd.BaseModel):
 
         from_str = self.sender if self.sender else self.source
         return f"[{self.type} from {from_str}]{meta_str}: {self.message}"
-
-    def get_display_info(self) -> tuple[str, str, str]:
-        display_sender = self.sender or self.source
-        icon = SERVICE_ICONS.get(self.source, "🔔")
-        display_msg = self.message[:200] + "..." if len(self.message) > 200 else self.message
-        return icon, display_sender, display_msg
-
-    def __repr__(self) -> str:
-        display_sender = self.sender or self.source
-        msg_preview = self.message[:100] + "..." if len(self.message) > 100 else self.message
-        return f"<Notification from {display_sender}: {msg_preview}>"

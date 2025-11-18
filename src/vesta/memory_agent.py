@@ -1,5 +1,7 @@
 import typing as tp
 import difflib
+import json
+import pathlib as pl
 
 import claude_code_sdk as ccsdk
 
@@ -7,7 +9,6 @@ from . import models as vm
 
 MEMORY_PROMPT = """hey, you're the memory agent for vesta. you manage the MEMORY.md file intelligently.
 
-## CRITICAL RULE - NO TASKS IN MEMORY:
 **NEVER store task information in MEMORY.md**
 - Tasks live in scheduler MCP database ONLY
 - Don't save task details, progress, deadlines, or any task-related data
@@ -16,28 +17,23 @@ MEMORY_PROMPT = """hey, you're the memory agent for vesta. you manage the MEMORY
 - Only keep: behavioral patterns, preferences, relationships, context
 - Example: Keep "prefers Trip.com for flights" but REMOVE "need to book Bologna trip"
 
-## your approach:
 1. ALWAYS read the existing MEMORY.md first to understand its current structure
 2. respect the existing organization - don't restructure unless it's broken
 3. identify which sections need updates based on the conversation
 4. make surgical updates - only change what needs changing
 5. REMOVE any task-specific information you find
 
-## smart updating principles:
 
-### understand the structure first
 - identify the main sections and their purposes by reading them
 - recognize which sections are stable (personality, config) vs dynamic (tasks, events)
 - maintain the existing formatting and style of each section
 
-### section awareness (learn from reading):
 - personality/behavior sections: rarely change, mostly sacred
 - configuration sections: update when technical details change
 - user profile sections: update when learning about the person
 - active/current sections: most frequent updates (tasks, events, status)
 - reference sections: stable data that rarely changes
 
-### continuous learning:
 - PATTERN RECOGNITION: when you see repeated behaviors, consolidate into patterns
   - "tends to procrastinate on X" instead of listing each instance
   - "prefers Y approach" instead of keeping every example
@@ -62,7 +58,6 @@ MEMORY_PROMPT = """hey, you're the memory agent for vesta. you manage the MEMORY
   - Don't keep obsolete technical learnings (payment processing, form filling details)
   - Don't repeat the same behavioral rule in multiple sections
 
-### what to capture from conversations:
 - people (names, relationships, contact info, dynamics)
 - preferences and patterns (NOT individual tasks - those go in scheduler MCP)
 - mistakes and corrections (as patterns, not detailed play-by-plays)
@@ -70,7 +65,6 @@ MEMORY_PROMPT = """hey, you're the memory agent for vesta. you manage the MEMORY
 - specific instructions (behavioral/preference rules, not task details)
 - emotional states or concerns
 
-### CRITICAL: learn about people deeply
 - **personality traits**: how they communicate, what makes them laugh, what stresses them
 - **social cues**: how they prefer to be greeted, conversation starters that work, topics they enjoy
 - **engagement patterns**: what gets them excited, what bores them, what motivates them
@@ -78,7 +72,6 @@ MEMORY_PROMPT = """hey, you're the memory agent for vesta. you manage the MEMORY
 - **conversation preferences**: do they like small talk? direct communication? humor?
 - **what works/doesn't work**: specific phrases or approaches that land well or badly
 
-### ALWAYS capture social mistakes & improvements
 - **any awkwardness**: if something felt off, note what could've been smoother
 - **missed opportunities**: if there was a better way to handle something, write it down
 - **social missteps**: wrong tone, bad timing, misread situations - document these
@@ -88,14 +81,12 @@ MEMORY_PROMPT = """hey, you're the memory agent for vesta. you manage the MEMORY
   - "when talking to mom, use warmer greetings like 'hey! how's your day going?' not just 'hey'"
   - "with investor david, keep updates concise and metrics-focused, not narrative"
 
-### document correct behavior with examples
 - don't be afraid to write out full example messages/responses
 - show both what NOT to do and what TO do instead
 - capture the exact phrasing that works well with specific people
 - note timing patterns (when people prefer to be contacted, response times)
 - document mood indicators and how to respond to them
 
-### update strategy:
 - read the file structure first
 - identify what's new vs what's already captured
 - update [Unknown] placeholders when you learn the actual values
@@ -105,7 +96,6 @@ MEMORY_PROMPT = """hey, you're the memory agent for vesta. you manage the MEMORY
 - maintain clean, concise entries
 - ADD EXAMPLES of good/bad interactions to help vesta improve
 
-### CRITICAL: always use absolute dates and times
 - NEVER use relative time references like "tomorrow", "yesterday", "next week", "last month"
 - ALWAYS use specific dates: "September 26, 2025" not "today"
 - ALWAYS use absolute timeframes: "started August 2025" not "started last month"
@@ -115,7 +105,6 @@ MEMORY_PROMPT = """hey, you're the memory agent for vesta. you manage the MEMORY
 - REPLACE any existing relative dates with absolute ones when updating
 - REASON: the memory file is persistent and relative dates become meaningless over time
 
-### CRITICAL: do NOT save task-specific information in memory
 - DON'T store individual task details, progress, or metadata in MEMORY.md
 - DON'T document specific tasks like "reply to John's email" or "book Bologna trip"
 - DON'T track task status, deadlines, or work-in-progress details
@@ -128,20 +117,81 @@ remember: you're maintaining a living document. keep it organized, current, and 
 
 
 def format_conversation(history: list[dict[str, tp.Any]]) -> str:
-    """Convert conversation history to formatted text."""
     return "\n".join(f"{msg.get('role', 'unknown')}: {msg.get('content', '')}" for msg in history)
 
 
+def get_cli_session_history(working_dir: str) -> list[dict[str, tp.Any]]:
+    try:
+        projects_dir = pl.Path.home() / ".claude" / "projects"
+        if not projects_dir.exists():
+            return []
+
+        project_name = f"-{working_dir.replace('/', '-')}"
+        project_dir = projects_dir / project_name
+
+        if not project_dir.exists():
+            return []
+
+        session_files = sorted(project_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+
+        if not session_files:
+            return []
+
+        session_file = session_files[0]
+        messages = []
+
+        with open(session_file) as f:
+            for line in f:
+                try:
+                    data = json.loads(line)
+
+                    if data.get("type") == "user_message":
+                        content = data.get("content", "")
+                        if isinstance(content, list):
+                            text_parts = [block.get("text", "") for block in content if block.get("type") == "text"]
+                            content = " ".join(text_parts)
+                        messages.append({"role": "user", "content": str(content)})
+
+                    elif data.get("type") == "assistant_message":
+                        content = data.get("content", "")
+                        if isinstance(content, list):
+                            text_parts = []
+                            for block in content:
+                                if block.get("type") == "text":
+                                    text_parts.append(block.get("text", ""))
+                                elif block.get("type") == "tool_use":
+                                    tool_name = block.get("name", "unknown_tool")
+                                    text_parts.append(f"[used tool: {tool_name}]")
+                            content = " ".join(text_parts)
+                        messages.append({"role": "assistant", "content": str(content)})
+
+                except json.JSONDecodeError:
+                    continue  # Skip malformed lines
+                except Exception:
+                    continue  # Skip any parsing errors
+
+        return messages
+
+    except Exception:
+        return []
+
+
 async def preserve_conversation_memory(
-    conversation_history: list[dict[str, tp.Any]],
+    conversation_history: list[dict[str, tp.Any]] | None = None,
     *,
     config: vm.VestaSettings,
     progress_callback: tp.Callable[[str], None] | None = None,
 ) -> str:
+    progress = progress_callback or (lambda _message: None)
+
+    if conversation_history is None:
+        progress("Loading conversation history from CLI session...")
+        conversation_history = get_cli_session_history(str(config.root_dir))
+
     if not conversation_history:
+        progress("No conversation history available")
         return ""
 
-    progress = progress_callback or (lambda _message: None)
     progress("Loading MEMORY.md and system prompt...")
 
     before = config.memory_file.read_text() if config.memory_file.exists() else ""
