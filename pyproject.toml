@@ -9,7 +9,7 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "aioconsole>=0.8.1",
-    "claude-code-sdk>=0.0.25",
+    "claude-agent-sdk>=0.1.5",
     "pillow>=11.3.0",
     "pydantic>=2.10.4",
     "pydantic-settings>=2.7.0",
@@ -23,11 +23,16 @@ vesta = "vesta.main:main"
 dev = [
     "pyright>=1.1.390",
     "ruff>=0.8.4",
+    "pytest>=8.3.4",
 ]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+python_files = ["e2e.py", "test_*.py", "*_test.py"]
+testpaths = ["tests"]
 
 
 [tool.ruff]

@@ -6,8 +6,9 @@ import threading
 import dataclasses as dc
 
 import pydantic as pyd
+from pydantic import field_validator
 import pydantic_settings as pyd_settings
-import claude_code_sdk as ccsdk
+from claude_agent_sdk import ClaudeSDKClient
 
 
 class McpServer(tp.TypedDict):
@@ -18,16 +19,14 @@ class McpServer(tp.TypedDict):
 
 @dc.dataclass
 class State:
-    client: ccsdk.ClaudeSDKClient | None = None
+    client: ClaudeSDKClient | None = None
     shutdown_event: asyncio.Event | None = None
     shutdown_lock: threading.Lock = dc.field(default_factory=threading.Lock)
     shutdown_count: int = 0
     is_processing: bool = False
     sub_agent_context: str | None = None
     session_id: str | None = None
-    pending_system_message: str | None = None
     last_memory_consolidation: dt.datetime | None = None
-    restart_lock: asyncio.Lock = dc.field(default_factory=asyncio.Lock)
     processing_lock: asyncio.Lock = dc.field(default_factory=asyncio.Lock)
 
 
@@ -69,36 +68,49 @@ class VestaSettings(pyd_settings.BaseSettings):
     onedrive_remote_path: str = "/"
 
     @property
-    def root_dir(self) -> pl.Path:
+    def install_root(self) -> pl.Path:
         return pl.Path(__file__).parent.parent.parent.absolute()
+
+    state_dir: pl.Path = pyd.Field(default_factory=lambda: pl.Path.home() / ".vesta")
+
+    @field_validator("state_dir", mode="before")
+    @classmethod
+    def _normalize_state_dir(cls, value: pl.Path | str | None) -> pl.Path:
+        if value is None or value == "":
+            return pl.Path.home() / ".vesta"
+        return pl.Path(value).expanduser().resolve()
+
+    @property
+    def root_dir(self) -> pl.Path:
+        return self.state_dir
 
     @property
     def memory_file(self) -> pl.Path:
-        return self.root_dir / "MEMORY.md"
+        return self.state_dir / "MEMORY.md"
 
     @property
     def memory_template(self) -> pl.Path:
-        return self.root_dir / "MEMORY.md.tmp"
+        return self.install_root / "MEMORY.md.tmp"
 
     @property
     def system_prompt_file(self) -> pl.Path:
-        return self.root_dir / "SYSTEM_PROMPT.md"
+        return self.install_root / "SYSTEM_PROMPT.md"
 
     @property
     def notifications_dir(self) -> pl.Path:
-        return self.root_dir / "notifications"
+        return self.state_dir / "notifications"
 
     @property
     def data_dir(self) -> pl.Path:
-        return self.root_dir / "data"
+        return self.state_dir / "data"
 
     @property
     def logs_dir(self) -> pl.Path:
-        return self.root_dir / "logs"
+        return self.state_dir / "logs"
 
     @property
     def onedrive_dir(self) -> pl.Path:
-        return self.root_dir / "onedrive"
+        return self.state_dir / "onedrive"
 
     @property
     def rclone_config_file(self) -> pl.Path:
@@ -113,18 +125,19 @@ class VestaSettings(pyd_settings.BaseSettings):
 
     @property
     def whatsapp_build_dir(self) -> pl.Path:
-        return self.root_dir / "mcps" / "whatsapp-mcp-go"
+        return self.install_root / "mcps" / "whatsapp-mcp-go"
 
     @property
     def mcp_servers(self) -> dict[str, McpServer]:
         base_env = {"MAX_MCP_OUTPUT_TOKENS": str(self.max_mcp_output_tokens)}
+        mcps_root = self.install_root / "mcps"
         servers: dict[str, McpServer] = {
             "microsoft": {
                 "command": "uv",
                 "args": [
                     "run",
                     "--directory",
-                    "mcps/microsoft-mcp",
+                    str(mcps_root / "microsoft-mcp"),
                     "microsoft-mcp",
                     "--data-dir",
                     str(self.data_dir / "microsoft-mcp"),
@@ -152,7 +165,7 @@ class VestaSettings(pyd_settings.BaseSettings):
                 "args": [
                     "run",
                     "--directory",
-                    "mcps/reminder-mcp",
+                    str(mcps_root / "reminder-mcp"),
                     "reminder-mcp",
                     "--data-dir",
                     str(self.data_dir / "reminder-mcp"),
@@ -168,7 +181,7 @@ class VestaSettings(pyd_settings.BaseSettings):
                 "args": [
                     "run",
                     "--directory",
-                    "mcps/task-mcp",
+                    str(mcps_root / "task-mcp"),
                     "task-mcp",
                     "--data-dir",
                     str(self.data_dir / "task-mcp"),
@@ -181,7 +194,7 @@ class VestaSettings(pyd_settings.BaseSettings):
                 "command": "npx",
                 "args": [
                     "--prefix",
-                    "mcps/playwright-mcp",
+                    str(mcps_root / "playwright-mcp"),
                     "mcp-server-playwright",
                     "--browser",
                     "chromium",
@@ -199,7 +212,7 @@ class VestaSettings(pyd_settings.BaseSettings):
                 "args": [
                     "run",
                     "--directory",
-                    "mcps/what-day-mcp",
+                    str(mcps_root / "what-day-mcp"),
                     "what-day-mcp",
                     "--data-dir",
                     str(self.data_dir / "what-day-mcp"),

@@ -2,20 +2,16 @@
 """Minimal reproduction of Claude Code SDK broken state after interrupt."""
 
 import asyncio
-import claude_code_sdk as ccsdk
+from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
 
 
 async def main():
-    options = ccsdk.ClaudeCodeOptions(
+    options = ClaudeAgentOptions(
         system_prompt="You are helpful.",
         permission_mode="bypassPermissions",
         model="sonnet",
     )
-    # Workaround for SDK bug - missing attribute
-    if not hasattr(options, "continue_conversation"):
-        object.__setattr__(options, "continue_conversation", False)
-
-    client = ccsdk.ClaudeSDKClient(options=options)
+    client = ClaudeSDKClient(options=options)
 
     async with client:
         print("1. Sending long-running query...")

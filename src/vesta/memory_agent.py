@@ -3,7 +3,7 @@ import difflib
 import json
 import pathlib as pl
 
-import claude_code_sdk as ccsdk
+from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
 
 from . import models as vm
 
@@ -209,9 +209,7 @@ Check MEMORY.md and update it with any new important information from this conve
 
     progress("Connecting to Claude memory agent...")
 
-    client = ccsdk.ClaudeSDKClient(
-        ccsdk.ClaudeCodeOptions(system_prompt=MEMORY_PROMPT, mcp_servers={}, permission_mode="bypassPermissions", model="sonnet")
-    )
+    client = ClaudeSDKClient(options=ClaudeAgentOptions(system_prompt=MEMORY_PROMPT, permission_mode="bypassPermissions", model="sonnet"))
 
     try:
         await client.__aenter__()

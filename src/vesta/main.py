@@ -3,7 +3,6 @@ import contextlib
 import datetime as dt
 import errno
 import functools
-import os
 import shutil
 import signal
 import threading
@@ -11,8 +10,7 @@ import traceback
 import typing as tp
 
 import aioconsole
-import claude_code_sdk as ccsdk
-import claude_code_sdk.types as ccsdk_types
+from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions, HookMatcher, HookContext
 
 import vesta.memory_agent as vma
 import vesta.models as vm
@@ -23,6 +21,41 @@ import vesta.logging_setup as vlog
 from vesta.constants import Messages
 
 logger = vfx.get_logger()
+
+
+async def log_tool_start(input_data: dict[str, tp.Any], tool_use_id: str | None, context: HookContext) -> dict[str, tp.Any]:
+    tool = input_data.get("tool_name", "unknown")
+    logger.info(f"TOOL start: {tool}")
+    return {}
+
+
+async def log_tool_finish(input_data: dict[str, tp.Any], tool_use_id: str | None, context: HookContext) -> dict[str, tp.Any]:
+    tool = input_data.get("tool_name", "unknown")
+    logger.info(f"TOOL done: {tool}")
+    return {}
+
+
+def build_hooks() -> dict[str, list[HookMatcher]]:
+    return {
+        "PreToolUse": [HookMatcher(hooks=[log_tool_start])],
+        "PostToolUse": [HookMatcher(hooks=[log_tool_finish])],
+    }
+
+
+@contextlib.asynccontextmanager
+async def heartbeat_logger(message_fn: tp.Callable[[], str], interval: float) -> tp.AsyncIterator[None]:
+    async def pulse() -> None:
+        while True:
+            await asyncio.sleep(interval)
+            logger.info(message_fn())
+
+    task = asyncio.create_task(pulse())
+    try:
+        yield
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
 
 
 def load_system_prompt(config: vm.VestaSettings) -> str:
@@ -40,37 +73,17 @@ async def attempt_interrupt(state: vm.State, *, config: vm.VestaSettings, reason
 
     logger.debug("[INTERRUPT] Sending interrupt to client (receive_response will complete naturally)")
 
-    subprocess_pid = None
-    try:
-        if hasattr(state.client, "_transport") and state.client._transport:
-            if hasattr(state.client._transport, "_process") and state.client._transport._process:
-                subprocess_pid = state.client._transport._process.pid
-    except Exception:
-        pass
-
     try:
         logger.debug("[INTERRUPT] Calling state.client.interrupt()")
         await asyncio.wait_for(state.client.interrupt(), timeout=config.interrupt_timeout)
         logger.debug("[INTERRUPT] state.client.interrupt() returned successfully")
-
-        logger.debug("[INTERRUPT] Nulling client to force restart (client broken after interrupt)")
-        state.client = None
 
         logger.info(f"{reason}: interrupt sent")
 
         return True
 
     except asyncio.TimeoutError:
-        logger.debug("[INTERRUPT] Interrupt timed out, forcing client restart")
-
-        if subprocess_pid:
-            try:
-                os.kill(subprocess_pid, signal.SIGKILL)
-                logger.debug(f"[INTERRUPT] Force-killed subprocess {subprocess_pid}")
-            except (ProcessLookupError, Exception):
-                pass
-
-        state.client = None  # Only null client on timeout
+        logger.debug("[INTERRUPT] Interrupt timed out; client likely still running")
         return False
 
     except Exception as e:
@@ -78,61 +91,6 @@ async def attempt_interrupt(state: vm.State, *, config: vm.VestaSettings, reason
             logger.error(f"[INTERRUPT] Interrupt failed: {str(e)[:120]}")
             logger.debug(traceback.format_exc())
         return False
-
-
-async def settle_collect_task(task: "asyncio.Task[tp.Any]", *, timeout: float, config: vm.VestaSettings) -> None:
-    logger.debug(f"[SETTLE] Starting (task.done()={task.done()})")
-
-    if task.done():
-        logger.debug("[SETTLE] Task already done, returning")
-        return
-
-    try:
-        logger.debug("[SETTLE] Waiting for task to complete")
-        await asyncio.wait_for(task, timeout=timeout)
-        logger.debug("[SETTLE] Task completed successfully")
-    except asyncio.TimeoutError:
-        logger.debug("[SETTLE] Task timed out, cancelling")
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
-            await asyncio.wait_for(task, timeout=timeout)
-        logger.debug("[SETTLE] Task cancelled or abandoned")
-    except BaseException as e:
-        logger.debug(f"[SETTLE] Exception: {type(e).__name__}")
-
-    logger.debug("[SETTLE] Completed")
-
-
-async def ensure_client_ready(state: vm.State, *, config: vm.VestaSettings, context: str = "restart") -> tuple[bool, str | None]:
-    if state.restart_lock.locked():
-        logger.debug(f"[{context.upper()}] Restart already in progress (lock held)")
-        await asyncio.sleep(1.0)
-        if not state.client:
-            return False, "[Waiting for restart to complete...]"
-        return True, None
-
-    logger.debug(f"[{context.upper()}] Attempting to acquire restart_lock")
-    try:
-        async with asyncio.timeout(config.restart_timeout + 5):
-            async with state.restart_lock:
-                logger.debug(f"[{context.upper()}] restart_lock acquired")
-                try:
-                    await asyncio.wait_for(restart_claude_session(state, config=config), timeout=config.restart_timeout)
-                    if state.client:
-                        logger.debug(f"[{context.upper()}] Client restarted successfully")
-                        state.pending_system_message = "System: You timed out and were restarted. You may continue with the user's request."
-                        return True, None
-                    else:
-                        return False, "[Error: Client restart failed - client is None after restart]"
-                except asyncio.TimeoutError:
-                    state.client = None
-                    return False, f"[Error: Client restart timed out after {config.restart_timeout}s]"
-                except Exception as e:
-                    state.client = None
-                    return False, f"[Error: Client restart failed - {str(e)[:50]}]"
-    except asyncio.TimeoutError:
-        state.client = None
-        return False, "[Error: Failed to acquire restart lock - deadlock detected]"
 
 
 def parse_assistant_message(msg: tp.Any, *, state: vm.State, config: vm.VestaSettings) -> tuple[str | None, vm.State]:
@@ -202,30 +160,20 @@ async def preserve_memory(state: vm.State, *, config: vm.VestaSettings) -> None:
 
     start_time = dt.datetime.now()
 
-    async def heartbeat() -> None:
+    def heartbeat_message() -> str:
+        elapsed = int((dt.datetime.now() - start_time).total_seconds())
+        return f"Memory agent still running... {elapsed}s elapsed"
+
+    async with heartbeat_logger(heartbeat_message, 30):
         try:
-            while True:
-                await asyncio.sleep(30)
-                elapsed = int((dt.datetime.now() - start_time).total_seconds())
-                logger.info(f"Memory agent still running... {elapsed}s elapsed")
-        except asyncio.CancelledError:
-            pass
-
-    heartbeat_task = asyncio.create_task(heartbeat())
-
-    try:
-        diff = await vma.preserve_conversation_memory(None, config=config, progress_callback=log_progress)
-        if diff:
-            logger.info(Messages.MEMORY_UPDATED)
-            logger.info(diff)
-        else:
-            logger.info("Memory agent found no significant updates")
-    except Exception as e:
-        logger.error(f"Memory preservation failed: {e}")
-    finally:
-        heartbeat_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await heartbeat_task
+            diff = await vma.preserve_conversation_memory(None, config=config, progress_callback=log_progress)
+            if diff:
+                logger.info(Messages.MEMORY_UPDATED)
+                logger.info(diff)
+            else:
+                logger.info("Memory agent found no significant updates")
+        except Exception as e:
+            logger.error(f"Memory preservation failed: {e}")
 
 
 async def output_line(text: str, state: vm.State, *, is_tool: bool = False) -> None:
@@ -237,130 +185,50 @@ async def output_line(text: str, state: vm.State, *, is_tool: bool = False) -> N
         logger.info(f"OUTPUT: {text}")
 
 
-async def send_query(client: ccsdk.ClaudeSDKClient, prompt: str, state: vm.State, *, config: vm.VestaSettings) -> vm.State:
-    logger.debug("[QUERY] Starting send_query")
-    logger.debug(f"[QUERY] Client exists: {client is not None}")
-    logger.debug(f"[QUERY] State.client exists: {state.client is not None}")
-
-    if state.pending_system_message:
-        logger.debug("[QUERY] Injecting pending system message")
-        prompt = f"{state.pending_system_message}\n\n{prompt}"
-        state.pending_system_message = None  # Clear after using
+async def converse(prompt: str, *, state: vm.State, config: vm.VestaSettings, show_output: bool) -> list[str]:
+    assert state.client is not None
 
     timestamp = vfx.get_current_time()
     query_with_context = vu.build_query_with_timestamp(prompt, timestamp=timestamp)
+    logger.debug(f"[CONVERSE] Sending query ({len(query_with_context)} chars)")
+    await state.client.query(query_with_context)
 
-    logger.debug(f"[QUERY] Calling client.query() with {len(query_with_context)} chars")
-    await client.query(query_with_context)
-    logger.debug("[QUERY] client.query() returned successfully")
+    responses: list[str] = []
 
-    return state
-
-
-async def collect_responses(
-    client: ccsdk.ClaudeSDKClient, *, state: vm.State, config: vm.VestaSettings, show_output: bool = True
-) -> tuple[list[str], vm.State]:
-    logger.debug("[COLLECT] Starting collect_responses")
-    responses = []
-    should_restart_client = False
-
-    async def collect():
-        logger.debug("[COLLECT] Starting receive_response loop")
-        try:
-            async for msg in client.receive_response():
-                logger.debug(f"[COLLECT] Received message: {type(msg).__name__}")
-                text, _ = parse_assistant_message(msg, state=state, config=config)
-
-                if text:
-                    if show_output:
-                        for line in text.split("\n"):
-                            if line.strip():
-                                if line.startswith("[TOOL]") or line.startswith("[TASK]"):
-                                    await output_line(line, state, is_tool=True)
-                                else:
-                                    responses.append(line)
-            logger.debug("[COLLECT] receive_response loop completed normally")
-        except asyncio.CancelledError:
-            logger.debug("[COLLECT] receive_response loop caught CancelledError")
-            raise
-        except Exception as e:
-            if config.debug:
-                logger.error(f"[COLLECT] receive_response loop error: {type(e).__name__}: {e}")
-            raise
-
-    logger.debug("[COLLECT] Creating collect task")
-    collect_task = asyncio.create_task(collect())
+    async def collect() -> None:
+        async for msg in state.client.receive_response():
+            text, _ = parse_assistant_message(msg, state=state, config=config)
+            if not text:
+                continue
+            lines = [line for line in text.split("\n") if line.strip()]
+            if not show_output:
+                responses.extend(lines)
+                continue
+            for line in lines:
+                if line.startswith("[TOOL]") or line.startswith("[TASK]"):
+                    await output_line(line, state, is_tool=True)
+                else:
+                    responses.append(line)
 
     try:
-        logger.debug("[COLLECT] Waiting for collect task")
-        await asyncio.wait_for(collect_task, timeout=config.response_timeout)
-        logger.debug("[COLLECT] collect task completed successfully")
+        await asyncio.wait_for(collect(), timeout=config.response_timeout)
     except asyncio.TimeoutError:
-        logger.debug("[COLLECT] collect task timed out")
         responses.append("[Response timeout]")
         state.sub_agent_context = None
         await attempt_interrupt(state, config=config, reason="Response timeout")
-        collect_task.cancel()
-        should_restart_client = True
     except Exception:
         state.sub_agent_context = None
         await attempt_interrupt(state, config=config, reason="Response stream error")
-        should_restart_client = True
-    finally:
-        logger.debug("[COLLECT] Entering finally block")
-        await settle_collect_task(collect_task, timeout=config.interrupt_timeout, config=config)
-        logger.debug("[COLLECT] settle_collect_task returned")
 
-    if should_restart_client:
-        logger.debug("[COLLECT] Client needs restart")
-        success, error_msg = await ensure_client_ready(state, config=config, context="collect")
-        if not success and error_msg:
-            responses.append(error_msg)
-            if "timed out" in error_msg or "deadlock" in error_msg:
-                logger.error(error_msg.strip("[]"))
-
-    return responses, state
-
-
-async def send_and_receive_message(
-    prompt: str, *, state: vm.State, config: vm.VestaSettings, show_in_chat: bool = True
-) -> tuple[list[str], vm.State]:
-    logger.debug("[SEND-RECV] Starting send_and_receive_message")
-    logger.debug(f"[SEND-RECV] Client state: {state.client is not None}")
-
-    if not state.client:
-        logger.debug("[SEND-RECV] Client is None, attempting automatic recovery...")
-        success, error_msg = await ensure_client_ready(state, config=config, context="send-recv")
-        if not success:
-            if error_msg:
-                logger.error(error_msg.strip("[]"))
-                return [error_msg], state
-            return ["[Error: Client recovery failed]"], state
-        logger.info("Client recovered successfully")
-
-    logger.debug("[SEND-RECV] Calling send_query")
-    try:
-        await send_query(state.client, prompt, state, config=config)
-        logger.debug("[SEND-RECV] send_query completed successfully")
-    except Exception as e:
-        error_msg = f"failed to send message: {str(e)[:100]}"
-        if config.debug:
-            logger.error(f"[SEND-RECV] send_query failed: {error_msg}")
-            logger.debug(traceback.format_exc())
-        return [error_msg], state
-
-    logger.debug("[SEND-RECV] Calling collect_responses")
-    responses, _ = await collect_responses(state.client, state=state, config=config, show_output=show_in_chat)
-    logger.debug(f"[SEND-RECV] collect_responses returned {len(responses)} responses")
-
-    return responses, state
+    return responses
 
 
 async def process_message(msg: str, state: vm.State, config: vm.VestaSettings, *, is_user: bool) -> tuple[list[str], vm.State]:
     logger.debug(f"Processing message (is_user={is_user})")
 
     try:
-        responses, new_state = await send_and_receive_message(msg, state=state, config=config, show_in_chat=is_user)
+        responses = await converse(msg, state=state, config=config, show_output=is_user)
+        new_state = state
         logger.debug(f"Got {len(responses)} responses")
     except Exception as e:
         responses = [f"Error: {str(e)[:100]}"]
@@ -368,24 +236,6 @@ async def process_message(msg: str, state: vm.State, config: vm.VestaSettings, *
         new_state = state
 
     return responses, new_state
-
-
-async def handle_notifications_interrupt(
-    notifications: list[vm.Notification], queue: asyncio.Queue, state: vm.State, config: vm.VestaSettings
-) -> None:
-    logger.info(f"Interrupting task for {len(notifications)} notifications")
-
-    prompt = vu.format_notification_batch(notifications)
-    success = await attempt_interrupt(state, config=config, reason="Notification interrupt")
-
-    if not success:
-        logger.warning("Could not interrupt current task; queued notification for later")
-    else:
-        logger.info("Interrupt succeeded")
-
-    logger.debug(f"[NOTIF-INT] Queuing notification prompt (length: {len(prompt)} chars)")
-    await queue.put((prompt, True))
-    logger.debug("[NOTIF-INT] Notification queued, exiting handle_notifications_interrupt")
 
 
 async def process_notification_batch(
@@ -396,11 +246,14 @@ async def process_notification_batch(
 
     try:
         decision = vu.decide_notification_action(notifications, is_processing=state.is_processing, has_client=state.client is not None)
+        prompt = vu.format_notification_batch(notifications)
 
         if decision == "interrupt" and state.client:
-            await handle_notifications_interrupt(notifications, queue, state, config)
-        elif decision == "queue":
-            prompt = vu.format_notification_batch(notifications)
+            logger.info(f"Interrupting task for {len(notifications)} notifications")
+            success = await attempt_interrupt(state, config=config, reason="Notification interrupt")
+            if not success:
+                logger.warning("Could not interrupt current task; queued notification for later")
+        if decision in {"queue", "interrupt"}:
             await queue.put((prompt, True))
 
         await delete_notification_files(notifications)
@@ -659,58 +512,18 @@ def check_dependencies() -> None:
         raise RuntimeError("rclone is not found in PATH. Please install rclone: https://rclone.org/install/")
 
 
-async def create_claude_client(config: vm.VestaSettings, resume_session_id: str | None = None) -> ccsdk.ClaudeSDKClient:
-    client = ccsdk.ClaudeSDKClient(
-        options=ccsdk.ClaudeCodeOptions(
-            system_prompt=load_system_prompt(config),
-            mcp_servers=tp.cast(dict[str, ccsdk_types.McpServerConfig], config.mcp_servers),
-            hooks={},
-            permission_mode="bypassPermissions",
-            model="sonnet",
-            resume=resume_session_id,
-        )
+async def create_claude_client(config: vm.VestaSettings, resume_session_id: str | None = None) -> ClaudeSDKClient:
+    options = ClaudeAgentOptions(
+        system_prompt=load_system_prompt(config),
+        mcp_servers=config.mcp_servers,
+        hooks=build_hooks(),
+        permission_mode="bypassPermissions",
+        model="sonnet",
+        resume=resume_session_id,
     )
+    client = ClaudeSDKClient(options=options)
     await asyncio.wait_for(client.__aenter__(), timeout=config.restart_timeout)
     return client
-
-
-async def restart_claude_session(state: vm.State, *, config: vm.VestaSettings) -> None:
-    if state.shutdown_event and state.shutdown_event.is_set():
-        logger.info("Skipping restart - shutdown in progress")
-        return
-
-    old_process_pid = None
-    if state.client:
-        try:
-            if hasattr(state.client, "_transport") and state.client._transport:
-                if hasattr(state.client._transport, "_process") and state.client._transport._process:
-                    old_process_pid = state.client._transport._process.pid
-        except Exception:
-            pass  # Best effort
-
-        try:
-            await asyncio.wait_for(state.client.__aexit__(None, None, None), timeout=config.interrupt_timeout)
-        except asyncio.TimeoutError:
-            logger.error(f"Client exit timed out after {config.interrupt_timeout}s")
-            if old_process_pid:
-                try:
-                    os.kill(old_process_pid, signal.SIGKILL)
-                    logger.info(f"Force killed subprocess {old_process_pid}")
-                except ProcessLookupError:
-                    pass  # Process already dead
-                except Exception as e:
-                    logger.error(f"Failed to kill subprocess: {e}")
-        except Exception as e:
-            logger.error(f"Error while closing Claude client: {e}")
-        finally:
-            state.client = None
-
-    try:
-        state.client = await create_claude_client(config, resume_session_id=state.session_id)
-        state.sub_agent_context = None
-        logger.info(f"Restarted client{' (resuming session ' + state.session_id + ')' if state.session_id else ''}")
-    except Exception as e:
-        logger.error(f"Failed to recreate Claude client: {e}")
 
 
 async def init_state(*, config: vm.VestaSettings) -> vm.State:
@@ -725,13 +538,15 @@ async def init_state(*, config: vm.VestaSettings) -> vm.State:
         is_processing=False,
         sub_agent_context=None,
         session_id=None,
-        pending_system_message=None,
         last_memory_consolidation=now,
     )
 
 
 async def async_main() -> None:
     config = vm.VestaSettings()
+
+    for path in [config.state_dir, config.notifications_dir, config.logs_dir, config.data_dir, config.onedrive_dir]:
+        path.mkdir(parents=True, exist_ok=True)
 
     vlog.setup_logging(config.logs_dir, debug=config.debug)
     logger.info("=== Vesta starting ===")

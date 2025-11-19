@@ -1,6 +1,4 @@
 # Personal data
-logs/
-notifications/
 
 # Python
 __pycache__/
@@ -25,7 +23,6 @@ build/
 .DS_Store
 
 # Local development
-.env.local
 
 # Temporary files
 *.bak
@@ -33,7 +30,6 @@ build/
 tmp/
 
 # OneDrive mount
-onedrive/
 
 # Test artifacts
 .coverage
@@ -42,7 +38,6 @@ htmlcov/
 .tox/
 
 # MCP data
-mcps/*/notifications/
 
 # WhatsApp session
 mcps/whatsapp-mcp/whatsapp-bridge/session/

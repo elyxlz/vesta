@@ -2,7 +2,7 @@ import json
 import datetime as dt
 import typing as tp
 
-import claude_code_sdk.types as ccsdk_types
+from claude_agent_sdk import AssistantMessage, TextBlock, ToolUseBlock, ResultMessage
 import vesta.models as vm
 
 
@@ -27,11 +27,11 @@ def format_tool_call(name: str, *, input_data: tp.Any, sub_agent_context: str | 
 
 
 def parse_assistant_message(msg: tp.Any, sub_agent_context: str | None) -> tuple[list[str], str | None, str | None]:
-    if isinstance(msg, ccsdk_types.ResultMessage):
+    if isinstance(msg, ResultMessage):
         session_id = msg.session_id if hasattr(msg, "session_id") else None
         return ([], sub_agent_context, session_id)
 
-    if not isinstance(msg, ccsdk_types.AssistantMessage):
+    if not isinstance(msg, AssistantMessage):
         return ([msg] if isinstance(msg, str) else [], sub_agent_context, None)
 
     texts = []
@@ -39,12 +39,12 @@ def parse_assistant_message(msg: tp.Any, sub_agent_context: str | None) -> tuple
     current_context = sub_agent_context
 
     for block in msg.content:
-        if isinstance(block, ccsdk_types.TextBlock):
+        if isinstance(block, TextBlock):
             text = block.text
             if current_context and "completed" in text.lower():
                 has_task_result = True
             texts.append(text)
-        elif isinstance(block, ccsdk_types.ToolUseBlock):
+        elif isinstance(block, ToolUseBlock):
             formatted, new_context = format_tool_call(block.name, input_data=block.input, sub_agent_context=current_context)
             texts.append(formatted)
             if new_context:
