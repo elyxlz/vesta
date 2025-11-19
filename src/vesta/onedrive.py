@@ -8,32 +8,19 @@ import time
 from .models import VestaSettings
 
 logger = logging.getLogger(__name__)
-
 _mount_process: subprocess.Popen | None = None
 
 
 def check_rclone_installed() -> bool:
     try:
-        result = subprocess.run(
-            ["rclone", "version"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        return result.returncode == 0
+        return subprocess.run(["rclone", "version"], capture_output=True, text=True, timeout=5).returncode == 0
     except (subprocess.SubprocessError, FileNotFoundError):
         return False
 
 
 def check_fusermount_installed() -> bool:
     try:
-        result = subprocess.run(
-            ["fusermount3", "--version"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        return result.returncode == 0
+        return subprocess.run(["fusermount3", "--version"], capture_output=True, text=True, timeout=5).returncode == 0
     except (subprocess.SubprocessError, FileNotFoundError):
         return False
 
@@ -71,22 +58,11 @@ client_secret = {config.onedrive_client_secret}
     logger.info(f"Created rclone config at {config_path}")
 
 
-async def mount_onedrive(
-    config: VestaSettings,
-    mount_dir: pl.Path,
-    config_path: pl.Path,
-    *,
-    timeout: int = 30,
-) -> subprocess.Popen:
+async def mount_onedrive(config: VestaSettings, mount_dir: pl.Path, config_path: pl.Path, *, timeout: int = 30) -> subprocess.Popen:
     global _mount_process
 
     if not check_fusermount_installed():
-        raise RuntimeError(
-            "fusermount3 is not installed. OneDrive mounting requires FUSE support.\n"
-            "Install it with: sudo pacman -S fuse3  (Arch/Endeavour)\n"
-            "               or: sudo apt install fuse3  (Debian/Ubuntu)\n"
-            "               or: sudo dnf install fuse3  (Fedora/RHEL)"
-        )
+        raise RuntimeError("fusermount3 is required for OneDrive mounts")
 
     mount_dir.mkdir(parents=True, exist_ok=True)
 
@@ -99,42 +75,47 @@ async def mount_onedrive(
         "--config",
         str(config_path),
         "--vfs-cache-mode",
-        "writes",
+        "full",
+        "--vfs-cache-max-age",
+        "24h",
+        "--vfs-cache-max-size",
+        "2G",
+        "--buffer-size",
+        "64M",
+        "--dir-cache-time",
+        "5m",
+        "--poll-interval",
+        "30s",
+        "--fast-list",
         "--daemon",
     ]
 
     logger.info(f"Mounting OneDrive at {mount_dir}")
 
+    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    _mount_process = process
+
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        try:
+            list(mount_dir.iterdir())
+            with open("/proc/mounts") as f:
+                if str(mount_dir) in f.read():
+                    logger.info(f"OneDrive mounted at {mount_dir}")
+                    return process
+        except (OSError, PermissionError, FileNotFoundError):
+            await asyncio.sleep(0.5)
+
+    process.terminate()
+    _mount_process = None
+    raise RuntimeError("OneDrive mount timed out")
+
+
+def _kill_mount_users(mount_dir: pl.Path) -> None:
     try:
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        _mount_process = process
-
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            try:
-                list(mount_dir.iterdir())
-                with open("/proc/mounts") as f:
-                    if str(mount_dir) in f.read():
-                        logger.info(f"OneDrive successfully mounted at {mount_dir}")
-                        return process
-            except (OSError, PermissionError, FileNotFoundError):
-                await asyncio.sleep(0.5)
-
-        raise RuntimeError(
-            f"OneDrive mount failed after {timeout}s. Check: ps aux | grep rclone\n"
-            f"If you see '<defunct>' processes, fusermount3 may be missing or crashed."
-        )
-
-    except Exception as e:
-        if _mount_process:
-            _mount_process.terminate()
-            _mount_process = None
-        raise RuntimeError(f"Failed to mount OneDrive: {e}") from e
+        subprocess.run(["fuser", "-km", str(mount_dir)], capture_output=True, text=True, timeout=5)
+    except Exception:
+        logger.warning("Failed to kill processes using mount")
 
 
 def unmount_onedrive(mount_dir: pl.Path, *, timeout: int = 10) -> None:
@@ -142,24 +123,24 @@ def unmount_onedrive(mount_dir: pl.Path, *, timeout: int = 10) -> None:
 
     logger.info(f"Unmounting OneDrive from {mount_dir}")
 
-    try:
-        result = subprocess.run(
-            ["fusermount", "-u", str(mount_dir)],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
+    commands = [
+        ["fusermount", "-uz", str(mount_dir)],
+        ["fusermount", "-u", str(mount_dir)],
+        ["umount", str(mount_dir)],
+    ]
 
-        if result.returncode != 0:
-            logger.warning(f"fusermount returned {result.returncode}: {result.stderr}")
-            subprocess.run(
-                ["umount", str(mount_dir)],
-                capture_output=True,
-                timeout=timeout,
-            )
-
-    except (subprocess.SubprocessError, FileNotFoundError) as e:
-        logger.error(f"Failed to unmount OneDrive: {e}")
+    for cmd in commands:
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+            if result.returncode == 0:
+                break
+            logger.warning(f"Command {' '.join(cmd)} failed: {result.stderr.strip()}")
+        except (subprocess.SubprocessError, FileNotFoundError):
+            continue
+    else:
+        logger.warning("Normal unmount failed; killing processes")
+        _kill_mount_users(mount_dir)
+        subprocess.run(["fusermount", "-u", str(mount_dir)], capture_output=True, text=True, timeout=timeout)
 
     if _mount_process:
         try:
