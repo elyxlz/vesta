@@ -26,11 +26,12 @@ def check_fusermount_installed() -> bool:
 
 
 def setup_rclone_config(config: VestaSettings, *, config_path: pl.Path) -> None:
-    if not config.onedrive_token:
-        raise ValueError("ONEDRIVE_TOKEN environment variable is required")
+    token = config.get_secret(config.onedrive_token)
+    if not token:
+        raise ValueError("ONEDRIVE_TOKEN is required for OneDrive sync")
 
     try:
-        json.loads(config.onedrive_token)
+        json.loads(token)
     except json.JSONDecodeError as e:
         raise ValueError(f"ONEDRIVE_TOKEN must be valid JSON: {e}")
 
@@ -38,12 +39,14 @@ def setup_rclone_config(config: VestaSettings, *, config_path: pl.Path) -> None:
 type = onedrive
 """
 
-    if config.onedrive_client_id and config.onedrive_client_secret:
-        rclone_config += f"""client_id = {config.onedrive_client_id}
-client_secret = {config.onedrive_client_secret}
+    client_id = config.get_secret(config.onedrive_client_id)
+    client_secret = config.get_secret(config.onedrive_client_secret)
+    if client_id and client_secret:
+        rclone_config += f"""client_id = {client_id}
+client_secret = {client_secret}
 """
 
-    rclone_config += f"""token = {config.onedrive_token}
+    rclone_config += f"""token = {token}
 """
 
     if config.onedrive_drive_id:
@@ -87,6 +90,7 @@ async def mount_onedrive(config: VestaSettings, mount_dir: pl.Path, config_path:
         "--poll-interval",
         "30s",
         "--fast-list",
+        # "--allow-other",
         "--daemon",
     ]
 
@@ -118,8 +122,19 @@ def _kill_mount_users(mount_dir: pl.Path) -> None:
         logger.warning("Failed to kill processes using mount")
 
 
+def is_mounted(mount_dir: pl.Path) -> bool:
+    try:
+        with open("/proc/mounts") as mounts:
+            return str(mount_dir) in mounts.read()
+    except FileNotFoundError:
+        return mount_dir.is_mount()
+
+
 def unmount_onedrive(mount_dir: pl.Path, *, timeout: int = 10) -> None:
     global _mount_process
+
+    if not is_mounted(mount_dir):
+        return
 
     logger.info(f"Unmounting OneDrive from {mount_dir}")
 
@@ -152,3 +167,14 @@ def unmount_onedrive(mount_dir: pl.Path, *, timeout: int = 10) -> None:
             _mount_process = None
 
     logger.info("OneDrive unmounted")
+    try:
+        if mount_dir.exists():
+            for child in mount_dir.iterdir():
+                if child.is_file():
+                    child.unlink(missing_ok=True)
+                elif child.is_dir():
+                    child.rmdir()
+            mount_dir.rmdir()
+            logger.info(f"Removed mount directory {mount_dir}")
+    except Exception as e:
+        logger.warning(f"Failed to clean up mount dir {mount_dir}: {e}")

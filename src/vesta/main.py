@@ -11,6 +11,9 @@ import typing as tp
 
 import aioconsole
 from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions, HookMatcher, HookContext
+from claude_agent_sdk.types import AgentDefinition
+
+from vesta.playwright_tools import PLAYWRIGHT_TOOL_IDS
 
 import vesta.memory_agent as vma
 import vesta.models as vm
@@ -26,6 +29,10 @@ logger = vfx.get_logger()
 async def log_tool_start(input_data: dict[str, tp.Any], tool_use_id: str | None, context: HookContext) -> dict[str, tp.Any]:
     tool = input_data.get("tool_name", "unknown")
     logger.info(f"TOOL start: {tool}")
+    if tool == "Task":
+        subagent = input_data.get("tool_input", {}).get("subagent_type")
+        if subagent:
+            logger.info(f"SUBAGENT spawn: {subagent}")
     return {}
 
 
@@ -166,10 +173,12 @@ async def preserve_memory(state: vm.State, *, config: vm.VestaSettings) -> None:
 
     async with heartbeat_logger(heartbeat_message, 30):
         try:
-            diff = await vma.preserve_conversation_memory(None, config=config, progress_callback=log_progress)
+            history = state.conversation_history if state.conversation_history else None
+            diff = await vma.preserve_conversation_memory(history, config=config, progress_callback=log_progress)
             if diff:
                 logger.info(Messages.MEMORY_UPDATED)
                 logger.info(diff)
+                state.conversation_history.clear()
             else:
                 logger.info("Memory agent found no significant updates")
         except Exception as e:
@@ -187,16 +196,17 @@ async def output_line(text: str, state: vm.State, *, is_tool: bool = False) -> N
 
 async def converse(prompt: str, *, state: vm.State, config: vm.VestaSettings, show_output: bool) -> list[str]:
     assert state.client is not None
+    client = state.client
 
     timestamp = vfx.get_current_time()
     query_with_context = vu.build_query_with_timestamp(prompt, timestamp=timestamp)
     logger.debug(f"[CONVERSE] Sending query ({len(query_with_context)} chars)")
-    await state.client.query(query_with_context)
+    await client.query(query_with_context)
 
     responses: list[str] = []
 
     async def collect() -> None:
-        async for msg in state.client.receive_response():
+        async for msg in client.receive_response():
             text, _ = parse_assistant_message(msg, state=state, config=config)
             if not text:
                 continue
@@ -226,15 +236,23 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaSettings, sh
 async def process_message(msg: str, state: vm.State, config: vm.VestaSettings, *, is_user: bool) -> tuple[list[str], vm.State]:
     logger.debug(f"Processing message (is_user={is_user})")
 
+    def record(role: str, content: str) -> None:
+        content = content.strip()
+        if content:
+            state.conversation_history.append({"role": role, "content": content})
+
+    record("user", msg)
+
     try:
         responses = await converse(msg, state=state, config=config, show_output=is_user)
         new_state = state
         logger.debug(f"Got {len(responses)} responses")
+        if responses:
+            record("assistant", "\n".join(responses))
     except Exception as e:
         responses = [f"Error: {str(e)[:100]}"]
         logger.error(f"Message processing error: {e}")
         new_state = state
-
     return responses, new_state
 
 
@@ -462,7 +480,6 @@ async def run_vesta(config: vm.VestaSettings, *, state: vm.State) -> None:
     signal.signal(signal.SIGINT, handler)
     signal.signal(signal.SIGTERM, handler)
 
-    ensure_memory_file(config)
     await log_startup_info(config)
 
     message_queue = asyncio.Queue()
@@ -520,9 +537,20 @@ async def create_claude_client(config: vm.VestaSettings, resume_session_id: str 
         permission_mode="bypassPermissions",
         model="sonnet",
         resume=resume_session_id,
+        cwd=config.state_dir,
+        add_dirs=[config.state_dir],
+        disallowed_tools=PLAYWRIGHT_TOOL_IDS,
+        agents={
+            "browser": AgentDefinition(
+                description="Use this agent when you need to browse the web with Playwright for screenshots or scraping.",
+                prompt="You are a browser specialist. Only use the Playwright MCP tools. Do not use other tools.",
+                tools=PLAYWRIGHT_TOOL_IDS,
+                model="haiku",
+            )
+        },
     )
     client = ClaudeSDKClient(options=options)
-    await asyncio.wait_for(client.__aenter__(), timeout=config.restart_timeout)
+    await client.__aenter__()
     return client
 
 
@@ -544,21 +572,22 @@ async def init_state(*, config: vm.VestaSettings) -> vm.State:
 
 async def async_main() -> None:
     config = vm.VestaSettings()
+    logger.info(f"Config: {config.model_dump()}")
 
     for path in [config.state_dir, config.notifications_dir, config.logs_dir, config.data_dir, config.onedrive_dir]:
         path.mkdir(parents=True, exist_ok=True)
+
+    ensure_memory_file(config)
 
     vlog.setup_logging(config.logs_dir, debug=config.debug)
     logger.info("=== Vesta starting ===")
 
     if config.onedrive_token:
-        try:
-            logger.info("Setting up OneDrive mount...")
-            vod.setup_rclone_config(config, config_path=config.rclone_config_file)
-            await vod.mount_onedrive(config, config.onedrive_dir, config.rclone_config_file)
-            logger.info(f"OneDrive mounted at {config.onedrive_dir}")
-        except Exception as e:
-            raise RuntimeError(f"Failed to mount OneDrive: {e}") from e
+        logger.info("Setting up OneDrive mount...")
+        vod.unmount_onedrive(config.onedrive_dir)
+        vod.setup_rclone_config(config, config_path=config.rclone_config_file)
+        await vod.mount_onedrive(config, config.onedrive_dir, config.rclone_config_file)
+        logger.info(f"OneDrive mounted at {config.onedrive_dir}")
 
     initial_state = await init_state(config=config)
 
@@ -572,9 +601,8 @@ def main() -> None:
         asyncio.run(async_main())
     except KeyboardInterrupt:
         pass
-    except Exception as e:
-        logger.critical(f"Fatal error: {e}")
-        logger.debug(traceback.format_exc())
+    except Exception:
+        logger.critical("Fatal error", exc_info=True)
 
 
 if __name__ == "__main__":

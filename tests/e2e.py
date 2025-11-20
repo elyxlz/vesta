@@ -59,7 +59,8 @@ async def _assert_missing(path: Path, duration: float = 30.0) -> None:
 
 async def _start_vesta(state_dir: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[vm.State, asyncio.Task]:
     config = vm.VestaSettings(
-        state_dir=str(state_dir),
+        state_dir=state_dir,
+        microsoft_mcp_client_id="test-client",
         enable_whatsapp_greeting=False,
         enable_nightly_memory=False,
         notification_check_interval=1,

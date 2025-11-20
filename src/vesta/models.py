@@ -6,8 +6,8 @@ import threading
 import dataclasses as dc
 
 import pydantic as pyd
-from pydantic import field_validator
 import pydantic_settings as pyd_settings
+from pydantic import SecretStr, field_validator
 from claude_agent_sdk import ClaudeSDKClient
 
 
@@ -28,10 +28,11 @@ class State:
     session_id: str | None = None
     last_memory_consolidation: dt.datetime | None = None
     processing_lock: asyncio.Lock = dc.field(default_factory=asyncio.Lock)
+    conversation_history: list[dict[str, str]] = dc.field(default_factory=list)
 
 
 class VestaSettings(pyd_settings.BaseSettings):
-    model_config = pyd_settings.SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = pyd_settings.SettingsConfigDict(extra="ignore")
 
     ephemeral: bool = False
     debug: bool = False
@@ -42,7 +43,6 @@ class VestaSettings(pyd_settings.BaseSettings):
     proactive_check_message: str = "It's been 60 minutes. Is there anything useful you could do right now?"
     response_timeout: int = 180
     memory_agent_timeout: int = 1200
-    restart_timeout: int = 30
     shutdown_timeout: int = 310
     task_gather_timeout: int = 2
     enable_nightly_memory: bool = True
@@ -56,20 +56,16 @@ class VestaSettings(pyd_settings.BaseSettings):
     )
 
     # Microsoft MCP secrets
-    microsoft_mcp_client_id: str = pyd.Field()
+    microsoft_mcp_client_id: SecretStr = pyd.Field()
     microsoft_mcp_tenant_id: str = "common"
 
     # OneDrive configuration
-    onedrive_token: str | None = None
-    onedrive_client_id: str | None = None
-    onedrive_client_secret: str | None = None
+    onedrive_token: SecretStr | None = None
+    onedrive_client_id: SecretStr | None = None
+    onedrive_client_secret: SecretStr | None = None
     onedrive_drive_id: str | None = None
     onedrive_remote_name: str = "onedrive"
     onedrive_remote_path: str = "/"
-
-    @property
-    def install_root(self) -> pl.Path:
-        return pl.Path(__file__).parent.parent.parent.absolute()
 
     state_dir: pl.Path = pyd.Field(default_factory=lambda: pl.Path.home() / ".vesta")
 
@@ -79,6 +75,10 @@ class VestaSettings(pyd_settings.BaseSettings):
         if value is None or value == "":
             return pl.Path.home() / ".vesta"
         return pl.Path(value).expanduser().resolve()
+
+    @property
+    def install_root(self) -> pl.Path:
+        return pl.Path(__file__).parent.parent.parent.absolute()
 
     @property
     def root_dir(self) -> pl.Path:
@@ -148,7 +148,7 @@ class VestaSettings(pyd_settings.BaseSettings):
                 ],
                 "env": {
                     **base_env,
-                    "MICROSOFT_MCP_CLIENT_ID": self.microsoft_mcp_client_id,
+                    "MICROSOFT_MCP_CLIENT_ID": self.microsoft_mcp_client_id.get_secret_value(),
                     "MICROSOFT_MCP_TENANT_ID": self.microsoft_mcp_tenant_id,
                 },
             },
@@ -224,7 +224,7 @@ class VestaSettings(pyd_settings.BaseSettings):
             "pdf-reader": {
                 "command": "node",
                 "args": [
-                    "mcps/pdf-reader-mcp/dist/index.js",
+                    str(mcps_root / "pdf-reader-mcp" / "dist" / "index.js"),
                     "--data-dir",
                     str(self.data_dir / "pdf-reader-mcp"),
                     "--log-dir",
@@ -234,6 +234,10 @@ class VestaSettings(pyd_settings.BaseSettings):
             },
         }
         return servers
+
+    @staticmethod
+    def get_secret(value: SecretStr | None) -> str | None:
+        return value.get_secret_value() if value else None
 
 
 class Notification(pyd.BaseModel):
