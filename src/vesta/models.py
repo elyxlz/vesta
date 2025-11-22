@@ -56,7 +56,7 @@ class VestaSettings(pyd_settings.BaseSettings):
     )
 
     # Microsoft MCP secrets
-    microsoft_mcp_client_id: SecretStr = pyd.Field()
+    microsoft_mcp_client_id: SecretStr = pyd.Field(default=SecretStr(""))
     microsoft_mcp_tenant_id: str = "common"
 
     # OneDrive configuration
