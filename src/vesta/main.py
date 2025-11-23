@@ -534,7 +534,7 @@ def check_dependencies() -> None:
 async def create_claude_client(config: vm.VestaSettings, resume_session_id: str | None = None) -> ClaudeSDKClient:
     options = ClaudeAgentOptions(
         system_prompt=load_system_prompt(config),
-        mcp_servers=tp.cast(tp.Any, config.mcp_servers),  # type: ignore
+        mcp_servers=config.mcp_servers,  # type: ignore
         hooks=build_hooks(),
         permission_mode="bypassPermissions",
         model="sonnet",
