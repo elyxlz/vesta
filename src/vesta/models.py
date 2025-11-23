@@ -13,7 +13,7 @@ from claude_agent_sdk import ClaudeSDKClient
 
 class McpServer(tp.TypedDict):
     command: str
-    args: list[str]
+    args: tp.NotRequired[list[str]]
     env: tp.NotRequired[dict[str, str]]
 
 

@@ -11,7 +11,7 @@ import typing as tp
 
 import aioconsole
 from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions, HookMatcher, HookContext
-from claude_agent_sdk.types import AgentDefinition
+from claude_agent_sdk.types import AgentDefinition, HookInput, HookJSONOutput, HookEvent
 
 from vesta.playwright_tools import PLAYWRIGHT_TOOL_IDS
 
@@ -26,26 +26,26 @@ from vesta.constants import Messages
 logger = vfx.get_logger()
 
 
-async def log_tool_start(input_data: dict[str, tp.Any], tool_use_id: str | None, context: HookContext) -> dict[str, tp.Any]:
-    tool = input_data.get("tool_name", "unknown")
+async def log_tool_start(input_data: HookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
+    tool = input_data.get("tool_name", "unknown")  # type: ignore
     logger.info(f"TOOL start: {tool}")
     if tool == "Task":
-        subagent = input_data.get("tool_input", {}).get("subagent_type")
+        subagent = input_data.get("tool_input", {}).get("subagent_type")  # type: ignore
         if subagent:
             logger.info(f"SUBAGENT spawn: {subagent}")
     return {}
 
 
-async def log_tool_finish(input_data: dict[str, tp.Any], tool_use_id: str | None, context: HookContext) -> dict[str, tp.Any]:
-    tool = input_data.get("tool_name", "unknown")
+async def log_tool_finish(input_data: HookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
+    tool = input_data.get("tool_name", "unknown")  # type: ignore
     logger.info(f"TOOL done: {tool}")
     return {}
 
 
-def build_hooks() -> dict[str, list[HookMatcher]]:
+def build_hooks() -> dict[HookEvent, list[HookMatcher]]:
     return {
-        "PreToolUse": [HookMatcher(hooks=[log_tool_start])],
-        "PostToolUse": [HookMatcher(hooks=[log_tool_finish])],
+        "PreToolUse": [HookMatcher(hooks=[log_tool_start])],  # type: ignore
+        "PostToolUse": [HookMatcher(hooks=[log_tool_finish])],  # type: ignore
     }
 
 
@@ -534,7 +534,7 @@ def check_dependencies() -> None:
 async def create_claude_client(config: vm.VestaSettings, resume_session_id: str | None = None) -> ClaudeSDKClient:
     options = ClaudeAgentOptions(
         system_prompt=load_system_prompt(config),
-        mcp_servers=config.mcp_servers,
+        mcp_servers=tp.cast(tp.Any, config.mcp_servers),  # type: ignore
         hooks=build_hooks(),
         permission_mode="bypassPermissions",
         model="sonnet",
