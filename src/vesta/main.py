@@ -390,11 +390,13 @@ async def check_proactive_task(queue: asyncio.Queue, state: vm.State, *, config:
 
 async def process_nightly_memory(state: vm.State, *, config: vm.VestaSettings) -> None:
     now = vfx.get_current_time()
-    if config.enable_nightly_memory and now.hour >= config.nightly_memory_time:
+    # Only run during the nightly window (e.g., 4 AM hour)
+    if config.enable_nightly_memory and now.hour == config.nightly_memory_time:
         if state.last_memory_consolidation is None or now.date() > state.last_memory_consolidation.date():
             logger.info(Messages.NIGHTLY_MEMORY)
             await preserve_memory(state, config=config)
             state.last_memory_consolidation = now
+            logger.info("[MEMORY] Nightly memory consolidation completed successfully")
 
 
 async def load_and_display_new_notifications(
