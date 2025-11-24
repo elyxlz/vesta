@@ -155,6 +155,18 @@ async def delete_notification_files(notifications: list[vm.Notification]) -> Non
             logger.error(f"Failed to delete notification: {path}")
 
 
+def backup_memory_file(config: vm.VestaSettings) -> None:
+    if not config.memory_file.exists():
+        return
+
+    config.memory_backups_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = vfx.get_current_time().strftime("%Y-%m-%d_%H-%M-%S")
+    backup_path = config.memory_backups_dir / f"MEMORY_{timestamp}.md"
+
+    shutil.copy2(config.memory_file, backup_path)
+    logger.debug(f"[MEMORY] Backed up to {backup_path.name}")
+
+
 async def preserve_memory(state: vm.State, *, config: vm.VestaSettings) -> None:
     if config.ephemeral:
         logger.info("Skipping memory preservation (ephemeral mode)")
@@ -173,6 +185,8 @@ async def preserve_memory(state: vm.State, *, config: vm.VestaSettings) -> None:
 
     async with heartbeat_logger(heartbeat_message, 30):
         try:
+            backup_memory_file(config)
+
             async with state.conversation_history_lock:
                 history = state.conversation_history.copy() if state.conversation_history else None
 

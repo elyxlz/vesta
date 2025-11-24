@@ -94,6 +94,10 @@ class VestaSettings(pyd_settings.BaseSettings):
         return self.install_root / "MEMORY.md.tmp"
 
     @property
+    def memory_backups_dir(self) -> pl.Path:
+        return self.state_dir / "memory_backups"
+
+    @property
     def system_prompt_file(self) -> pl.Path:
         return self.install_root / "SYSTEM_PROMPT.md"
 
