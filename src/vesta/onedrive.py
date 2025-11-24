@@ -105,7 +105,21 @@ async def mount_onedrive(config: VestaSettings, mount_dir: pl.Path, config_path:
         "INFO",
     ]
 
-    logger.info(f"Mounting OneDrive at {mount_dir}")
+    # Test if we can list files before mounting
+    test_result = subprocess.run(
+        ["rclone", "lsf", remote_path, "--config", str(config_path), "--max-depth", "1"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if test_result.returncode != 0:
+        raise RuntimeError(f"Cannot list OneDrive files: {test_result.stderr[:200]}")
+
+    file_count = len([line for line in test_result.stdout.strip().split("\n") if line])
+    if file_count == 0:
+        raise RuntimeError(f"OneDrive at {remote_path} is empty - check drive_id/remote_path configuration")
+
+    logger.info(f"Verified {file_count} items in OneDrive, mounting at {mount_dir}")
 
     process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     _mount_process = process
