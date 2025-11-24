@@ -132,8 +132,9 @@ async def mount_onedrive(config: VestaSettings, mount_dir: pl.Path, config_path:
     try:
         contents = list(mount_dir.iterdir())
         if not contents:
-            logger.warning(f"OneDrive mounted but directory is empty - check configuration")
-            return process
+            process.terminate()
+            _mount_process = None
+            raise RuntimeError(f"OneDrive mounted but directory is empty at {mount_dir} - check token/drive_id/remote_path")
     except (OSError, PermissionError):
         pass
 
