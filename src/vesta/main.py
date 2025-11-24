@@ -338,6 +338,7 @@ async def send_and_receive_message(
             return ["[Error: Client recovery failed]"], state
         logger.info("Client recovered successfully")
 
+    assert state.client is not None  # Guaranteed by recovery above
     logger.debug("[SEND-RECV] Calling send_query")
     try:
         await send_query(state.client, prompt, state, config=config)

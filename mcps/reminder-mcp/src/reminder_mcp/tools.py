@@ -307,10 +307,12 @@ def set_reminder(
 
 
 @mcp.tool()
-def list_reminders(ctx: Context, limit: int = 50) -> list[dict]:
-    """List scheduled reminders (limit: max number to return, default 50)"""
+def list_reminders(ctx: Context, limit: int = 50, include_past: bool = False) -> list[dict]:
+    """List scheduled reminders (limit: max number to return, default 50; include_past: show reminders that already passed their time, default False)"""
     context: ReminderContext = ctx.request_context.lifespan_context
+    from datetime import datetime, timezone
 
+    now = datetime.now(timezone.utc)
     jobs_map = {job.id: job for job in context.scheduler.get_jobs()}
 
     with closing(get_db(context)) as conn:
@@ -319,6 +321,18 @@ def list_reminders(ctx: Context, limit: int = 50) -> list[dict]:
         reminders = []
         for row in cursor:
             job = jobs_map.get(row["id"])
+            scheduled_time_str = row["scheduled_time"]
+
+            # Filter out past one-time reminders unless include_past=True
+            if not include_past and scheduled_time_str:
+                try:
+                    scheduled_time = datetime.fromisoformat(scheduled_time_str)
+                    # Only filter if it's a one-time reminder (no job means it won't recur)
+                    if not job and scheduled_time < now:
+                        continue
+                except (ValueError, TypeError):
+                    pass
+
             reminders.append(
                 {
                     "id": row["id"],
