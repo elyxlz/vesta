@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 import pathlib as pl
 import subprocess
 import time
@@ -58,7 +59,11 @@ client_secret = {client_secret}
 
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(rclone_config)
-    logger.info(f"Created rclone config at {config_path}")
+
+    # Set restrictive permissions (only owner can read/write)
+    os.chmod(config_path, 0o600)
+    logger.info(f"Created rclone config at {config_path} with secure permissions (0600)")
+    logger.warning(f"OneDrive credentials stored in {config_path} - keep this file secure")
 
 
 async def mount_onedrive(config: VestaSettings, mount_dir: pl.Path, config_path: pl.Path, *, timeout: int = 30) -> subprocess.Popen:

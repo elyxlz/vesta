@@ -2,7 +2,6 @@ import datetime as dt
 import pathlib as pl
 import typing as tp
 import asyncio
-import threading
 import dataclasses as dc
 
 import pydantic as pyd
@@ -21,7 +20,6 @@ class McpServer(tp.TypedDict):
 class State:
     client: ClaudeSDKClient | None = None
     shutdown_event: asyncio.Event | None = None
-    shutdown_lock: threading.Lock = dc.field(default_factory=threading.Lock)
     shutdown_count: int = 0
     is_processing: bool = False
     sub_agent_context: str | None = None
@@ -29,6 +27,7 @@ class State:
     last_memory_consolidation: dt.datetime | None = None
     processing_lock: asyncio.Lock = dc.field(default_factory=asyncio.Lock)
     conversation_history: list[dict[str, str]] = dc.field(default_factory=list)
+    conversation_history_lock: asyncio.Lock = dc.field(default_factory=asyncio.Lock)
 
 
 class VestaSettings(pyd_settings.BaseSettings):

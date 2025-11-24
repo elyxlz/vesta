@@ -173,12 +173,16 @@ async def preserve_memory(state: vm.State, *, config: vm.VestaSettings) -> None:
 
     async with heartbeat_logger(heartbeat_message, 30):
         try:
-            history = state.conversation_history if state.conversation_history else None
+            async with state.conversation_history_lock:
+                history = state.conversation_history.copy() if state.conversation_history else None
+
             diff = await vma.preserve_conversation_memory(history, config=config, progress_callback=log_progress)
+
             if diff:
                 logger.info(Messages.MEMORY_UPDATED)
                 logger.info(diff)
-                state.conversation_history.clear()
+                async with state.conversation_history_lock:
+                    state.conversation_history.clear()
             else:
                 logger.info("Memory agent found no significant updates")
         except Exception as e:
@@ -226,7 +230,10 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaSettings, sh
         responses.append("[Response timeout]")
         state.sub_agent_context = None
         await attempt_interrupt(state, config=config, reason="Response timeout")
-    except Exception:
+    except Exception as e:
+        logger.error(f"Response stream error: {type(e).__name__}: {str(e)[:200]}")
+        if config.debug:
+            logger.debug(traceback.format_exc())
         state.sub_agent_context = None
         await attempt_interrupt(state, config=config, reason="Response stream error")
 
@@ -236,22 +243,25 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaSettings, sh
 async def process_message(msg: str, state: vm.State, config: vm.VestaSettings, *, is_user: bool) -> tuple[list[str], vm.State]:
     logger.debug(f"Processing message (is_user={is_user})")
 
-    def record(role: str, content: str) -> None:
+    async def record(role: str, content: str) -> None:
         content = content.strip()
         if content:
-            state.conversation_history.append({"role": role, "content": content})
+            async with state.conversation_history_lock:
+                state.conversation_history.append({"role": role, "content": content})
 
-    record("user", msg)
+    await record("user", msg)
 
     try:
         responses = await converse(msg, state=state, config=config, show_output=is_user)
         new_state = state
         logger.debug(f"Got {len(responses)} responses")
         if responses:
-            record("assistant", "\n".join(responses))
+            await record("assistant", "\n".join(responses))
     except Exception as e:
         responses = [f"Error: {str(e)[:100]}"]
         logger.error(f"Message processing error: {e}")
+        if config.debug:
+            logger.debug(traceback.format_exc())
         new_state = state
     return responses, new_state
 
@@ -281,13 +291,13 @@ async def process_notification_batch(
 
 
 def signal_handler(state: vm.State, config: vm.VestaSettings, signum: int, frame: tp.Any) -> None:
-    with state.shutdown_lock:
-        state.shutdown_count += 1
-        if state.shutdown_count == 1:
-            if state.shutdown_event:
-                state.shutdown_event.set()
-        elif state.shutdown_count > 2:
-            vfx.exit_process(0)
+    # Integer operations are atomic in CPython (GIL), no lock needed
+    state.shutdown_count += 1
+    if state.shutdown_count == 1:
+        if state.shutdown_event:
+            state.shutdown_event.set()
+    elif state.shutdown_count > 2:
+        vfx.exit_process(0)
 
 
 async def graceful_shutdown(state: vm.State, *, config: vm.VestaSettings) -> None:
@@ -303,8 +313,10 @@ async def graceful_shutdown(state: vm.State, *, config: vm.VestaSettings) -> Non
     if state.client:
         try:
             await state.client.__aexit__(None, None, None)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Error during client cleanup: {type(e).__name__}: {str(e)[:100]}")
+            if config.debug:
+                logger.debug(traceback.format_exc())
 
     if config.onedrive_dir.exists() and config.onedrive_token:
         try:
@@ -524,8 +536,14 @@ def check_dependencies() -> None:
     if shutil.which("npm") is None:
         raise RuntimeError("npm is not found in PATH. Please install Node.js and npm: https://nodejs.org/")
 
+    if shutil.which("node") is None:
+        raise RuntimeError("node is not found in PATH. Please install Node.js: https://nodejs.org/")
+
     if shutil.which("uv") is None:
         raise RuntimeError("uv is not found in PATH. Please install uv: https://docs.astral.sh/uv/getting-started/installation/")
+
+    if shutil.which("go") is None:
+        raise RuntimeError("go is not found in PATH. Please install Go: https://go.dev/doc/install")
 
     if not vod.check_rclone_installed():
         raise RuntimeError("rclone is not found in PATH. Please install rclone: https://rclone.org/install/")
