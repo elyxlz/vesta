@@ -122,17 +122,23 @@ async def mount_onedrive(config: VestaSettings, mount_dir: pl.Path, config_path:
             pass
         await asyncio.sleep(0.5)
 
-    process.terminate()
-    _mount_process = None
+    if process.poll() is not None:
+        stdout, stderr = process.communicate()
+        logger.error(f"rclone mount exited: stdout={stdout[:500]}, stderr={stderr[:500]}")
+        process.terminate()
+        _mount_process = None
+        raise RuntimeError(f"OneDrive mount failed: {stderr[:200]}")
 
     try:
         contents = list(mount_dir.iterdir())
         if not contents:
-            raise RuntimeError(f"OneDrive mounted but directory is empty at {mount_dir}")
+            logger.warning(f"OneDrive mounted but directory is empty - check configuration")
+            return process
     except (OSError, PermissionError):
         pass
 
-    raise RuntimeError("OneDrive mount timed out")
+    logger.info(f"OneDrive mounted at {mount_dir}")
+    return process
 
 
 def _kill_mount_users(mount_dir: pl.Path) -> None:
