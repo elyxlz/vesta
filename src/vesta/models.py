@@ -46,6 +46,10 @@ class VestaSettings(pyd_settings.BaseSettings):
     task_gather_timeout: int = 2
     enable_nightly_memory: bool = True
     nightly_memory_time: int = 4
+    nightly_memory_completion_message: str = (
+        "I just completed the nightly memory consolidation. "
+        "Let me know if you'd like a summary of what was updated in your memory."
+    )
     interrupt_timeout: float = 5.0
     enable_whatsapp_greeting: bool = True
     whatsapp_greeting_prompt: str = (

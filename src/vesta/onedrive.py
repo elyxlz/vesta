@@ -59,8 +59,6 @@ client_secret = {client_secret}
 
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(rclone_config)
-
-    # Set restrictive permissions (only owner can read/write)
     os.chmod(config_path, 0o600)
     logger.info(f"Created rclone config at {config_path} with secure permissions (0600)")
     logger.warning(f"OneDrive credentials stored in {config_path} - keep this file secure")

@@ -291,7 +291,6 @@ async def process_notification_batch(
 
 
 def signal_handler(state: vm.State, config: vm.VestaSettings, signum: int, frame: tp.Any) -> None:
-    # Integer operations are atomic in CPython (GIL), no lock needed
     state.shutdown_count += 1
     if state.shutdown_count == 1:
         if state.shutdown_event:
@@ -400,15 +399,16 @@ async def check_proactive_task(queue: asyncio.Queue, state: vm.State, *, config:
     await queue.put((config.proactive_check_message, False))
 
 
-async def process_nightly_memory(state: vm.State, *, config: vm.VestaSettings) -> None:
+async def process_nightly_memory(queue: asyncio.Queue, state: vm.State, *, config: vm.VestaSettings) -> None:
     now = vfx.get_current_time()
-    # Only run during the nightly window (e.g., 4 AM hour)
     if config.enable_nightly_memory and now.hour == config.nightly_memory_time:
         if state.last_memory_consolidation is None or now.date() > state.last_memory_consolidation.date():
             logger.info(Messages.NIGHTLY_MEMORY)
             await preserve_memory(state, config=config)
             state.last_memory_consolidation = now
             logger.info("[MEMORY] Nightly memory consolidation completed successfully")
+            if config.nightly_memory_completion_message:
+                await queue.put((config.nightly_memory_completion_message, False))
 
 
 async def load_and_display_new_notifications(
@@ -462,7 +462,7 @@ async def monitor_loop(queue: asyncio.Queue, state: vm.State, *, config: vm.Vest
                 await check_proactive_task(queue, state, config=config)
                 last_proactive = now
 
-            await process_nightly_memory(state, config=config)
+            await process_nightly_memory(queue, state, config=config)
 
             notification_buffer, buffer_start_time = await load_and_display_new_notifications(
                 notification_buffer, buffer_start_time=buffer_start_time, config=config
