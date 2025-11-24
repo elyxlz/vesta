@@ -70,23 +70,8 @@ async def mount_onedrive(config: VestaSettings, mount_dir: pl.Path, config_path:
     if not check_fusermount_installed():
         raise RuntimeError("fusermount3 is required for OneDrive mounts")
 
-    # Clean up any stale mount point
-    if is_mounted(mount_dir):
-        logger.info(f"Unmounting existing OneDrive mount at {mount_dir}")
-        unmount_onedrive(mount_dir)
-
-    # Force remove directory if it exists (may be in bad state from failed mount)
-    if mount_dir.exists():
-        try:
-            subprocess.run(["fusermount", "-uz", str(mount_dir)], capture_output=True, timeout=5)
-        except Exception:
-            pass
-        try:
-            subprocess.run(["rm", "-rf", str(mount_dir)], capture_output=True, timeout=5, check=True)
-            logger.debug(f"Removed stale mount directory {mount_dir}")
-        except subprocess.CalledProcessError as e:
-            logger.warning(f"Failed to remove stale mount directory: {e}")
-
+    unmount_onedrive(mount_dir)
+    subprocess.run(["rm", "-rf", str(mount_dir)], capture_output=True)
     mount_dir.mkdir(parents=True, exist_ok=True)
 
     remote_path = f"{config.onedrive_remote_name}:{config.onedrive_remote_path}"
