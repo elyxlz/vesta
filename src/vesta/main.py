@@ -202,6 +202,11 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaSettings, sh
     assert state.client is not None
     client = state.client
 
+    if state.pending_system_message:
+        logger.debug("[CONVERSE] Injecting pending system message")
+        prompt = f"{state.pending_system_message}\n\n{prompt}"
+        state.pending_system_message = None
+
     timestamp = vfx.get_current_time()
     query_with_context = vu.build_query_with_timestamp(prompt, timestamp=timestamp)
     logger.debug(f"[CONVERSE] Sending query ({len(query_with_context)} chars)")
@@ -399,7 +404,7 @@ async def check_proactive_task(queue: asyncio.Queue, state: vm.State, *, config:
     await queue.put((config.proactive_check_message, False))
 
 
-async def process_nightly_memory(queue: asyncio.Queue, state: vm.State, *, config: vm.VestaSettings) -> None:
+async def process_nightly_memory(state: vm.State, *, config: vm.VestaSettings) -> None:
     now = vfx.get_current_time()
     if config.enable_nightly_memory and now.hour == config.nightly_memory_time:
         if state.last_memory_consolidation is None or now.date() > state.last_memory_consolidation.date():
@@ -408,7 +413,7 @@ async def process_nightly_memory(queue: asyncio.Queue, state: vm.State, *, confi
             state.last_memory_consolidation = now
             logger.info("[MEMORY] Nightly memory consolidation completed successfully")
             if config.nightly_memory_completion_message:
-                await queue.put((config.nightly_memory_completion_message, False))
+                state.pending_system_message = config.nightly_memory_completion_message
 
 
 async def load_and_display_new_notifications(
@@ -462,7 +467,7 @@ async def monitor_loop(queue: asyncio.Queue, state: vm.State, *, config: vm.Vest
                 await check_proactive_task(queue, state, config=config)
                 last_proactive = now
 
-            await process_nightly_memory(queue, state, config=config)
+            await process_nightly_memory(state, config=config)
 
             notification_buffer, buffer_start_time = await load_and_display_new_notifications(
                 notification_buffer, buffer_start_time=buffer_start_time, config=config
