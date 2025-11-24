@@ -97,8 +97,6 @@ async def mount_onedrive(config: VestaSettings, mount_dir: pl.Path, config_path:
         "--poll-interval",
         "30s",
         "--fast-list",
-        "--allow-other",
-        "--default-permissions",
         "--log-file",
         str(config.logs_dir / "onedrive-mount.log"),
         "--log-level",
