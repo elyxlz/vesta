@@ -5,7 +5,6 @@ import errno
 import functools
 import shutil
 import signal
-import threading
 import traceback
 import typing as tp
 
@@ -600,11 +599,11 @@ async def init_state(*, config: vm.VestaSettings) -> vm.State:
     return vm.State(
         client=client,
         shutdown_event=None,
-        shutdown_lock=threading.Lock(),
         shutdown_count=0,
         is_processing=False,
         sub_agent_context=None,
         session_id=None,
+        pending_system_message=None,
         last_memory_consolidation=now,
     )
 
