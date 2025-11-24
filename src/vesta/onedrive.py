@@ -111,10 +111,12 @@ async def mount_onedrive(config: VestaSettings, mount_dir: pl.Path, config_path:
     start_time = time.time()
     while time.time() - start_time < timeout:
         try:
-            list(mount_dir.iterdir())
+            contents = list(mount_dir.iterdir())
             with open("/proc/mounts") as f:
                 if str(mount_dir) in f.read():
-                    logger.info(f"OneDrive mounted at {mount_dir}")
+                    if not contents:
+                        raise RuntimeError(f"OneDrive mounted but directory is empty at {mount_dir}")
+                    logger.info(f"OneDrive mounted at {mount_dir} with {len(contents)} items")
                     return process
         except (OSError, PermissionError, FileNotFoundError):
             await asyncio.sleep(0.5)
