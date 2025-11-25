@@ -293,7 +293,7 @@ async def process_notification_batch(
 
     try:
         decision = vu.decide_notification_action(notifications, is_processing=state.is_processing, has_client=state.client is not None)
-        prompt = vu.format_notification_batch(notifications)
+        prompt = vu.format_notification_batch(notifications, suffix=config.notification_suffix)
 
         if decision == "interrupt" and state.client:
             logger.info(f"Interrupting task for {len(notifications)} notifications")

@@ -55,6 +55,7 @@ class VestaSettings(pyd_settings.BaseSettings):
         "If it is authenticated, send a short WhatsApp message to the user letting them know Vesta just came online and is ready to help. "
         "If it is not authenticated, log that status and do not attempt to send a message."
     )
+    notification_suffix: str = "If this is important or requires the user's attention, consider sending them a WhatsApp message."
 
     # Microsoft MCP secrets
     microsoft_mcp_client_id: SecretStr = pyd.Field(default=SecretStr(""))

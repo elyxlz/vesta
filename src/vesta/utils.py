@@ -60,12 +60,13 @@ def filter_new_notifications(all_notifications: list[vm.Notification], *, existi
     return [n for n in all_notifications if n.file_path not in existing_paths]
 
 
-def format_notification_batch(notifications: list[vm.Notification]) -> str:
+def format_notification_batch(notifications: list[vm.Notification], *, suffix: str = "") -> str:
+    suffix_str = f"\n\n{suffix}" if suffix else ""
     if len(notifications) == 1:
-        return notifications[0].format_for_display()
+        return notifications[0].format_for_display() + suffix_str
 
     prompts = [n.format_for_display() for n in notifications]
-    return "[NOTIFICATIONS]\n" + "\n".join(prompts)
+    return "[NOTIFICATIONS]\n" + "\n".join(prompts) + suffix_str
 
 
 def build_query_with_timestamp(prompt: str, *, timestamp: dt.datetime) -> str:
