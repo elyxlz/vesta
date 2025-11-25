@@ -50,12 +50,12 @@ def build_all_agents(config: VestaSettings) -> dict[str, AgentDefinition]:
             tools=PLAYWRIGHT_TOOL_IDS,
             model="haiku",
         ),
-        "email-calendar": AgentDefinition(
+        "email_calendar": AgentDefinition(
             description="Use for email and calendar operations (Microsoft Outlook).",
             prompt=build_agent_prompt(config, "email_calendar"),
             tools=MICROSOFT_ALL_TOOL_IDS,
         ),
-        "report-writer": AgentDefinition(
+        "report_writer": AgentDefinition(
             description="Use for creating reports, documents, and professional materials.",
             prompt=build_agent_prompt(config, "report_writer"),
             tools=PDF_READER_TOOL_IDS,
