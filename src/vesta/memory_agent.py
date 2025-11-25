@@ -7,9 +7,7 @@ from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
 
 from . import models as vm
 from .agents import (
-    AGENT_NAMES,
     load_agent_memory,
-    save_agent_memory,
     backup_agent_memory,
     get_agent_memory_path,
 )
@@ -285,7 +283,7 @@ async def preserve_subagent_memory(
 
     progress(f"Loading {agent_name} agent memory...")
 
-    memory_path = get_agent_memory_path(config, agent_name)
+    get_agent_memory_path(config, agent_name)
     before = load_agent_memory(config, agent_name)
 
     # Format conversations for the prompt
@@ -342,12 +340,7 @@ Update the MEMORY.md for this agent with any relevant patterns or preferences.""
         n=1,
     )
 
-    return "\n".join(
-        f"{colors.get(line[0], '')}{line.rstrip()}\033[0m"
-        if line[0] in colors
-        else line.rstrip()
-        for line in list(diff)[2:]
-    )
+    return "\n".join(f"{colors.get(line[0], '')}{line.rstrip()}\033[0m" if line[0] in colors else line.rstrip() for line in list(diff)[2:])
 
 
 async def consolidate_all_memories(
