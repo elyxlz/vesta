@@ -574,7 +574,6 @@ async def create_claude_client(config: vm.VestaSettings, resume_session_id: str 
         mcp_servers=config.mcp_servers,  # type: ignore
         hooks=build_hooks(),
         permission_mode="bypassPermissions",
-        model="sonnet",
         resume=resume_session_id,
         cwd=config.state_dir,
         add_dirs=[config.state_dir],
