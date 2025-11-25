@@ -1,17 +1,51 @@
-import typing as tp
+import asyncio
+import collections.abc as cab
 import difflib
 import json
 import pathlib as pl
+import time
 
 from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
 
 from . import models as vm
+from .effects import logger
 from .agents import (
     load_memory,
-    backup_memory,
+    get_memory_path,
+    get_memory_dir,
 )
+from .models import ConversationMessage
 
-MEMORY_PROMPT = """hey, you're the memory agent for vesta. you manage the MEMORY.md file intelligently.
+ProgressCallback = cab.Callable[[str], object] | None
+
+
+def _format_diff(before: str, after: str) -> str:
+    """Format a unified diff with ANSI colors."""
+    colors = {"+": "\033[92m", "-": "\033[91m", "@": "\033[96m"}
+    diff = difflib.unified_diff(before.splitlines(keepends=True), after.splitlines(keepends=True), n=1)
+    return "\n".join(f"{colors.get(line[0], '')}{line.rstrip()}\033[0m" if line[0] in colors else line.rstrip() for line in list(diff)[2:])
+
+
+def _validate_memory_path(path: pl.Path, *, config: vm.VestaSettings) -> None:
+    """Ensure memory path is within memory directory."""
+    memory_dir = get_memory_dir(config)
+    try:
+        path.resolve().relative_to(memory_dir.resolve())
+    except ValueError:
+        raise ValueError(f"Memory path {path} outside memory directory {memory_dir}")
+
+
+async def _call_progress(callback: ProgressCallback, message: str) -> None:
+    """Call progress callback, handling both sync and async functions."""
+    if callback:
+        result = callback(message)
+        if asyncio.iscoroutine(result):
+            await result
+
+
+MEMORY_PROMPT_TEMPLATE = """hey, you're the memory agent for vesta. you manage the MEMORY.md file intelligently.
+
+**Memory file path**: {memory_path}
 
 **NEVER store task information in MEMORY.md**
 - Tasks live in scheduler MCP database ONLY
@@ -117,133 +151,137 @@ MEMORY_PROMPT = """hey, you're the memory agent for vesta. you manage the MEMORY
 - EXAMPLE: "prefers Trip.com for flight booking" NOT "found 3 flight options for Bologna trip"
 - FOCUS: save behavioral patterns, not individual task instances
 
-remember: you're maintaining a living document. keep it organized, current, and useful by understanding its structure rather than imposing one. be especially vigilant about social dynamics and always document what could be done better."""
+remember: you're maintaining a living document. keep it organized, current, and useful by understanding its structure rather than imposing one. be especially vigilant about social dynamics and always document what could be done better.
+
+Write all updates to {memory_path}."""
 
 
-def format_conversation(history: list[dict[str, tp.Any]]) -> str:
-    return "\n".join(f"{msg.get('role', 'unknown')}: {msg.get('content', '')}" for msg in history)
+def format_conversation(history: list[ConversationMessage]) -> str:
+    return "\n".join(f"{msg['role']}: {msg['content']}" for msg in history)
 
 
-def get_cli_session_history(working_dir: str) -> list[dict[str, tp.Any]]:
-    try:
-        projects_dir = pl.Path.home() / ".claude" / "projects"
-        if not projects_dir.exists():
-            return []
-
-        project_name = f"-{working_dir.replace('/', '-')}"
-        project_dir = projects_dir / project_name
-
-        if not project_dir.exists():
-            return []
-
-        session_files = sorted(project_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
-
-        if not session_files:
-            return []
-
-        session_file = session_files[0]
-        messages = []
-
-        with open(session_file) as f:
-            for line in f:
-                try:
-                    data = json.loads(line)
-
-                    if data.get("type") == "user_message":
-                        content = data.get("content", "")
-                        if isinstance(content, list):
-                            text_parts = [block.get("text", "") for block in content if block.get("type") == "text"]
-                            content = " ".join(text_parts)
-                        messages.append({"role": "user", "content": str(content)})
-
-                    elif data.get("type") == "assistant_message":
-                        content = data.get("content", "")
-                        if isinstance(content, list):
-                            text_parts = []
-                            for block in content:
-                                if block.get("type") == "text":
-                                    text_parts.append(block.get("text", ""))
-                                elif block.get("type") == "tool_use":
-                                    tool_name = block.get("name", "unknown_tool")
-                                    text_parts.append(f"[used tool: {tool_name}]")
-                            content = " ".join(text_parts)
-                        messages.append({"role": "assistant", "content": str(content)})
-
-                except json.JSONDecodeError:
-                    continue  # Skip malformed lines
-                except Exception:
-                    continue  # Skip any parsing errors
-
-        return messages
-
-    except Exception:
+def get_cli_session_history(working_dir: str) -> list[ConversationMessage]:
+    projects_dir = pl.Path.home() / ".claude" / "projects"
+    if not projects_dir.exists():
         return []
+
+    project_name = f"-{working_dir.replace('/', '-')}"
+    project_dir = projects_dir / project_name
+
+    if not project_dir.exists():
+        return []
+
+    session_files = sorted(project_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+
+    if not session_files:
+        return []
+
+    session_file = session_files[0]
+    messages = []
+
+    with open(session_file) as f:
+        for line in f:
+            data = json.loads(line)
+
+            if data.get("type") == "user_message":
+                content = data.get("content", "")
+                if isinstance(content, list):
+                    text_parts = [block.get("text", "") for block in content if block.get("type") == "text"]
+                    content = " ".join(text_parts)
+                messages.append({"role": "user", "content": str(content)})
+
+            elif data.get("type") == "assistant_message":
+                content = data.get("content", "")
+                if isinstance(content, list):
+                    text_parts = []
+                    for block in content:
+                        if block.get("type") == "text":
+                            text_parts.append(block.get("text", ""))
+                        elif block.get("type") == "tool_use":
+                            tool_name = block.get("name", "unknown_tool")
+                            text_parts.append(f"[used tool: {tool_name}]")
+                    content = " ".join(text_parts)
+                messages.append({"role": "assistant", "content": str(content)})
+
+    return messages
 
 
 async def preserve_conversation_memory(
-    conversation_history: list[dict[str, tp.Any]] | None = None,
+    conversation_history: list[ConversationMessage] | None = None,
     *,
     config: vm.VestaSettings,
-    progress_callback: tp.Callable[[str], None] | None = None,
+    progress_callback: ProgressCallback = None,
 ) -> str:
-    progress = progress_callback or (lambda _message: None)
+    start_time = time.monotonic()
 
     if conversation_history is None:
-        progress("Loading conversation history from CLI session...")
+        await _call_progress(progress_callback, "Loading conversation history from CLI session...")
         conversation_history = get_cli_session_history(str(config.root_dir))
 
     if not conversation_history:
-        progress("No conversation history available")
+        await _call_progress(progress_callback, "No conversation history available")
+        logger.debug("[MEMORY] No conversation history to preserve")
         return ""
 
-    progress("Loading MEMORY.md...")
+    logger.info(f"[MEMORY] Preserving main memory from {len(conversation_history)} messages")
+    await _call_progress(progress_callback, "Loading MEMORY.md...")
 
-    before = config.memory_file.read_text() if config.memory_file.exists() else ""
+    memory_path = get_memory_path(config, agent_name="main")
+    _validate_memory_path(memory_path, config=config)
+    before = memory_path.read_text() if memory_path.exists() else ""
+    before_size = len(before)
+    logger.debug(f"[MEMORY] Current main memory: {before_size} chars")
 
-    progress(f"Building update prompt from {len(conversation_history)} messages...")
+    await _call_progress(progress_callback, f"Building update prompt from {len(conversation_history)} messages...")
 
-    prompt = f"""Current MEMORY.md (first 3000 chars):
-{before[:3000]}...
+    prompt = f"""Current MEMORY.md:
+{before}
 
 Recent conversation to process:
 {format_conversation(conversation_history)}
 
 Check MEMORY.md and update it with any new important information from this conversation."""
 
-    progress("Connecting to Claude memory agent...")
+    await _call_progress(progress_callback, "Connecting to Claude memory agent...")
+    logger.debug("[MEMORY] Spawning main memory agent")
 
-    client = ClaudeSDKClient(options=ClaudeAgentOptions(system_prompt=MEMORY_PROMPT, permission_mode="bypassPermissions", model="sonnet"))
+    memory_prompt = MEMORY_PROMPT_TEMPLATE.format(memory_path=memory_path)
 
-    try:
-        await client.__aenter__()
-        progress("Sending conversation to memory agent (this can take a bit)...")
+    async with ClaudeSDKClient(
+        options=ClaudeAgentOptions(
+            system_prompt=memory_prompt,
+            permission_mode="bypassPermissions",
+            model="sonnet",
+            cwd=config.state_dir,
+            add_dirs=[config.state_dir],
+        )
+    ) as client:
+        await _call_progress(progress_callback, "Sending conversation to memory agent (this can take a bit)...")
         await client.query(prompt)
-        progress("Waiting for memory agent response...")
+        await _call_progress(progress_callback, "Waiting for memory agent response...")
         async for _ in client.receive_response():
             pass
-    except Exception as e:
-        progress(f"Memory agent failed: {e}")
-        print(f"⚠️ Memory preservation failed: {e}")
-        return ""
-    finally:
-        await client.__aexit__(None, None, None)
 
-    progress("Computing diff vs MEMORY.md...")
+    elapsed = time.monotonic() - start_time
+    await _call_progress(progress_callback, "Computing diff vs MEMORY.md...")
 
-    after = config.memory_file.read_text() if config.memory_file.exists() else ""
+    after = memory_path.read_text() if memory_path.exists() else ""
+    after_size = len(after)
+
     if before == after:
-        progress("No changes detected")
+        await _call_progress(progress_callback, "No changes detected")
+        logger.info(f"[MEMORY] Main memory unchanged after {elapsed:.1f}s")
         return ""
 
-    colors = {"+": "\033[92m", "-": "\033[91m", "@": "\033[96m"}
-    diff = difflib.unified_diff(before.splitlines(keepends=True), after.splitlines(keepends=True), n=1)
+    logger.info(f"[MEMORY] Main memory updated: {before_size} -> {after_size} chars ({elapsed:.1f}s)")
 
-    return "\n".join(f"{colors.get(line[0], '')}{line.rstrip()}\033[0m" if line[0] in colors else line.rstrip() for line in list(diff)[2:])
+    return _format_diff(before, after)
 
 
 SUBAGENT_MEMORY_PROMPT = """You are updating memory for a specialized Vesta sub-agent.
 
 **Agent type**: {agent_name}
+**Memory file path**: {memory_path}
 
 **Agent responsibilities**:
 - browser: Web browsing patterns, screenshot preferences, site-specific behaviors
@@ -251,9 +289,9 @@ SUBAGENT_MEMORY_PROMPT = """You are updating memory for a specialized Vesta sub-
 - report_writer: Document formatting preferences, writing style, template preferences
 
 **Your task**:
-1. Read the current MEMORY.md for this agent
+1. Review the current MEMORY.md content provided below
 2. Review the recent interactions/outputs from this agent
-3. Update MEMORY.md with patterns, preferences, and learnings relevant to this agent's domain
+3. Write the updated MEMORY.md to {memory_path}
 4. ONLY update information relevant to this specific agent type
 
 **Guidelines**:
@@ -267,24 +305,29 @@ SUBAGENT_MEMORY_PROMPT = """You are updating memory for a specialized Vesta sub-
 
 async def preserve_subagent_memory(
     agent_name: str,
-    conversations: list[str],
     *,
+    conversations: list[str],
     config: vm.VestaSettings,
-    progress_callback: tp.Callable[[str], None] | None = None,
+    progress_callback: ProgressCallback = None,
 ) -> str:
     """Update memory for a specific sub-agent based on its interactions."""
-    progress = progress_callback or (lambda _message: None)
+    start_time = time.monotonic()
 
     if not conversations:
-        progress(f"No conversations for {agent_name}")
+        await _call_progress(progress_callback, f"No conversations for {agent_name}")
+        logger.debug(f"[MEMORY] No conversations to preserve for {agent_name}")
         return ""
 
-    progress(f"Loading {agent_name} agent memory...")
+    logger.info(f"[MEMORY] Preserving {agent_name} memory from {len(conversations)} conversations")
+    await _call_progress(progress_callback, f"Loading {agent_name} agent memory...")
 
-    before = load_memory(config, agent_name)
+    memory_path = get_memory_path(config, agent_name=agent_name)
+    _validate_memory_path(memory_path, config=config)
+    before = load_memory(config, agent_name=agent_name)
+    before_size = len(before)
+    logger.debug(f"[MEMORY] Current {agent_name} memory: {before_size} chars")
 
-    # Format conversations for the prompt
-    conversations_text = "\n---\n".join(conversations[:10])  # Limit to 10 most recent
+    conversations_text = "\n---\n".join(conversations)
 
     prompt = f"""Current {agent_name} MEMORY.md:
 {before if before else "(empty)"}
@@ -294,10 +337,12 @@ Recent {agent_name} agent interactions:
 
 Update the MEMORY.md for this agent with any relevant patterns or preferences."""
 
-    progress(f"Connecting to memory agent for {agent_name}...")
+    await _call_progress(progress_callback, f"Connecting to memory agent for {agent_name}...")
+    logger.debug(f"[MEMORY] Spawning {agent_name} memory agent")
 
-    agent_prompt = SUBAGENT_MEMORY_PROMPT.format(agent_name=agent_name)
-    client = ClaudeSDKClient(
+    agent_prompt = SUBAGENT_MEMORY_PROMPT.format(agent_name=agent_name, memory_path=memory_path)
+
+    async with ClaudeSDKClient(
         options=ClaudeAgentOptions(
             system_prompt=agent_prompt,
             permission_mode="bypassPermissions",
@@ -305,59 +350,53 @@ Update the MEMORY.md for this agent with any relevant patterns or preferences.""
             cwd=config.state_dir,
             add_dirs=[config.state_dir],
         )
-    )
-
-    try:
-        await client.__aenter__()
-        progress(f"Sending {agent_name} conversations to memory agent...")
+    ) as client:
+        await _call_progress(progress_callback, f"Sending {agent_name} conversations to memory agent...")
         await client.query(prompt)
-        progress(f"Waiting for {agent_name} memory agent response...")
+        await _call_progress(progress_callback, f"Waiting for {agent_name} memory agent response...")
         async for _ in client.receive_response():
             pass
-    except Exception as e:
-        progress(f"Memory agent failed for {agent_name}: {e}")
-        return ""
-    finally:
-        await client.__aexit__(None, None, None)
 
-    progress(f"Computing diff for {agent_name} MEMORY.md...")
+    elapsed = time.monotonic() - start_time
+    await _call_progress(progress_callback, f"Computing diff for {agent_name} MEMORY.md...")
 
-    after = load_memory(config, agent_name)
+    after = load_memory(config, agent_name=agent_name)
+    after_size = len(after)
+
     if before == after:
-        progress(f"No changes for {agent_name}")
+        await _call_progress(progress_callback, f"No changes for {agent_name}")
+        logger.info(f"[MEMORY] {agent_name} memory unchanged after {elapsed:.1f}s")
         return ""
 
-    # Backup before saving
-    backup_memory(config, agent_name)
+    logger.info(f"[MEMORY] {agent_name} memory updated: {before_size} -> {after_size} chars ({elapsed:.1f}s)")
 
-    colors = {"+": "\033[92m", "-": "\033[91m", "@": "\033[96m"}
-    diff = difflib.unified_diff(
-        before.splitlines(keepends=True),
-        after.splitlines(keepends=True),
-        n=1,
-    )
-
-    return "\n".join(f"{colors.get(line[0], '')}{line.rstrip()}\033[0m" if line[0] in colors else line.rstrip() for line in list(diff)[2:])
+    return _format_diff(before, after)
 
 
 async def consolidate_all_memories(
-    main_conversation_history: list[dict[str, tp.Any]] | None,
-    subagent_conversations: dict[str, list[str]],
+    main_conversation_history: list[ConversationMessage] | None,
     *,
+    subagent_conversations: dict[str, list[str]],
     config: vm.VestaSettings,
-    progress_callback: tp.Callable[[str], None] | None = None,
+    progress_callback: ProgressCallback = None,
 ) -> dict[str, str]:
     """Consolidate memories for main agent and all sub-agents with conversations."""
-    progress = progress_callback or (lambda _message: None)
     results: dict[str, str] = {}
+    start_time = time.monotonic()
+
+    agents_to_process = []
+    if main_conversation_history:
+        agents_to_process.append("main")
+    agents_to_process.extend(name for name, convs in subagent_conversations.items() if convs)
+    logger.info(f"[MEMORY] Starting consolidation for {len(agents_to_process)} agents: {agents_to_process}")
 
     # Main agent memory
     if main_conversation_history:
-        progress("Consolidating main agent memory...")
+        await _call_progress(progress_callback, "Consolidating main agent memory...")
         main_diff = await preserve_conversation_memory(
             main_conversation_history,
             config=config,
-            progress_callback=progress,
+            progress_callback=progress_callback,
         )
         if main_diff:
             results["main"] = main_diff
@@ -365,14 +404,21 @@ async def consolidate_all_memories(
     # Sub-agent memories
     for agent_name, conversations in subagent_conversations.items():
         if conversations:
-            progress(f"Consolidating {agent_name} agent memory...")
+            await _call_progress(progress_callback, f"Consolidating {agent_name} agent memory...")
             diff = await preserve_subagent_memory(
                 agent_name,
-                conversations,
+                conversations=conversations,
                 config=config,
-                progress_callback=progress,
+                progress_callback=progress_callback,
             )
             if diff:
                 results[agent_name] = diff
+
+    elapsed = time.monotonic() - start_time
+    updated_agents = list(results.keys())
+    if updated_agents:
+        logger.info(f"[MEMORY] Consolidation complete: {len(updated_agents)} agents updated ({', '.join(updated_agents)}) in {elapsed:.1f}s")
+    else:
+        logger.info(f"[MEMORY] Consolidation complete: no changes in {elapsed:.1f}s")
 
     return results

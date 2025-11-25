@@ -6,7 +6,7 @@ import pathlib as pl
 import subprocess
 import time
 
-from .models import VestaSettings
+from .config import VestaSettings
 
 logger = logging.getLogger(__name__)
 _mount_process: subprocess.Popen | None = None
@@ -64,7 +64,7 @@ client_secret = {client_secret}
     logger.warning(f"OneDrive credentials stored in {config_path} - keep this file secure")
 
 
-async def mount_onedrive(config: VestaSettings, mount_dir: pl.Path, config_path: pl.Path, *, timeout: int = 30) -> subprocess.Popen:
+async def mount_onedrive(config: VestaSettings, *, mount_dir: pl.Path, config_path: pl.Path, timeout: int = 30) -> subprocess.Popen:
     global _mount_process
 
     if not check_fusermount_installed():
@@ -121,7 +121,7 @@ async def mount_onedrive(config: VestaSettings, mount_dir: pl.Path, config_path:
 
     logger.info(f"Verified {file_count} items in OneDrive, mounting at {mount_dir}")
 
-    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     _mount_process = process
 
     start_time = time.time()
@@ -137,11 +137,9 @@ async def mount_onedrive(config: VestaSettings, mount_dir: pl.Path, config_path:
         await asyncio.sleep(0.5)
 
     if process.poll() is not None:
-        stdout, stderr = process.communicate()
-        logger.error(f"rclone mount exited: stdout={stdout[:500]}, stderr={stderr[:500]}")
-        process.terminate()
+        logger.error(f"rclone mount exited with code {process.returncode} - check {config.logs_dir / 'onedrive-mount.log'}")
         _mount_process = None
-        raise RuntimeError(f"OneDrive mount failed: {stderr[:200]}")
+        raise RuntimeError(f"OneDrive mount failed with code {process.returncode}")
 
     try:
         contents = list(mount_dir.iterdir())
@@ -157,10 +155,7 @@ async def mount_onedrive(config: VestaSettings, mount_dir: pl.Path, config_path:
 
 
 def _kill_mount_users(mount_dir: pl.Path) -> None:
-    try:
-        subprocess.run(["fuser", "-km", str(mount_dir)], capture_output=True, text=True, timeout=5)
-    except Exception:
-        logger.warning("Failed to kill processes using mount")
+    subprocess.run(["fuser", "-km", str(mount_dir)], capture_output=True, text=True, timeout=5)
 
 
 def is_mounted(mount_dir: pl.Path) -> bool:
@@ -208,14 +203,11 @@ def unmount_onedrive(mount_dir: pl.Path, *, timeout: int = 10) -> None:
             _mount_process = None
 
     logger.info("OneDrive unmounted")
-    try:
-        if mount_dir.exists():
-            for child in mount_dir.iterdir():
-                if child.is_file():
-                    child.unlink(missing_ok=True)
-                elif child.is_dir():
-                    child.rmdir()
-            mount_dir.rmdir()
-            logger.info(f"Removed mount directory {mount_dir}")
-    except Exception as e:
-        logger.warning(f"Failed to clean up mount dir {mount_dir}: {e}")
+    if mount_dir.exists():
+        for child in mount_dir.iterdir():
+            if child.is_file():
+                child.unlink(missing_ok=True)
+            elif child.is_dir():
+                child.rmdir()
+        mount_dir.rmdir()
+        logger.info(f"Removed mount directory {mount_dir}")

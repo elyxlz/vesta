@@ -2,11 +2,11 @@ import json
 import datetime as dt
 import typing as tp
 
-from claude_agent_sdk import AssistantMessage, TextBlock, ToolUseBlock, ResultMessage
+from claude_agent_sdk import AssistantMessage, TextBlock, ToolUseBlock, ResultMessage, Message
 import vesta.models as vm
 
 
-def format_tool_call(name: str, *, input_data: tp.Any, sub_agent_context: str | None) -> tuple[str, str | None]:
+def format_tool_call(name: str, *, input_data: object, sub_agent_context: str | None) -> tuple[str, str | None]:
     input_str = json.dumps(input_data) if isinstance(input_data, dict) else str(input_data)
     input_preview = (input_str[:150] + "...") if len(input_str) > 150 else input_str
 
@@ -26,7 +26,7 @@ def format_tool_call(name: str, *, input_data: tp.Any, sub_agent_context: str | 
     return f"[TOOL] {prefix}{name}: {input_preview}", sub_agent_context
 
 
-def parse_assistant_message(msg: tp.Any, sub_agent_context: str | None) -> tuple[list[str], str | None, str | None]:
+def parse_assistant_message(msg: Message, *, sub_agent_context: str | None) -> tuple[list[str], str | None, str | None]:
     if isinstance(msg, ResultMessage):
         session_id = msg.session_id if hasattr(msg, "session_id") else None
         return ([], sub_agent_context, session_id)
@@ -75,7 +75,7 @@ def build_query_with_timestamp(prompt: str, *, timestamp: dt.datetime) -> str:
 
 
 def should_process_notification_buffer(
-    buffer: list[vm.Notification], buffer_start_time: dt.datetime | None, current_time: dt.datetime, *, buffer_delay: int
+    buffer: list[vm.Notification], *, buffer_start_time: dt.datetime | None, current_time: dt.datetime, buffer_delay: int
 ) -> bool:
     if not buffer or not buffer_start_time:
         return False
@@ -83,6 +83,7 @@ def should_process_notification_buffer(
 
 
 def parse_notification_file_content(content: str) -> dict[str, tp.Any]:
+    """Parse JSON notification content. Returns Any because pydantic needs it."""
     return json.loads(content)
 
 

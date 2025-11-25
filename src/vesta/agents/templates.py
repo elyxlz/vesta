@@ -286,17 +286,15 @@ REPORT_WRITER_MEMORY_TEMPLATE = """\
 ## How to Write Documents
 
 ### Core Workflow
-1. **Read sources first** - Gather all materials before writing
+1. **Read sources first** - Use PDF reader to gather materials
 2. **Outline structure** - Plan document organization
 3. **Write content** - Clear, professional prose
-4. **Save to file** - Write to appropriate location
+4. **Return content** - Return the document as your response (main agent handles file saving)
 
 ### Available Tools
-- `Read` - Read source files
-- `Write` - Create document files
-- `Glob` - Find files by pattern
-- `Grep` - Search content in files
-- `mcp__pdf-reader__read_pdf` - Read PDFs
+- `mcp__pdf-reader__read_pdf` - Read PDF files
+
+**Note**: This agent specializes in drafting content. Return the complete document as your response - the main agent will handle saving to files.
 
 ### Document Structures
 
@@ -359,16 +357,12 @@ REPORT_WRITER_MEMORY_TEMPLATE = """\
 - Active voice preferred
 - Specific data over vague statements
 
-### File Naming
-Format: `{type}_{topic}_{YYYYMMDD}.md`
-- `report_quarterly_review_20241115.md`
-- `summary_meeting_notes_20241115.md`
-
 ### Best Practices
-1. Read source materials before writing
+1. Read source PDFs before writing
 2. Cite all data and quotes
 3. Use consistent formatting
 4. Match document type to purpose
+5. Return complete, ready-to-save content
 
 ## Learned Patterns
 

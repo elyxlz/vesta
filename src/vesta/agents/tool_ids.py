@@ -1,8 +1,3 @@
-"""Tool routing constants for Vesta sub-agents."""
-
-# =============================================================================
-# Playwright Tools (Browser Agent)
-# =============================================================================
 PLAYWRIGHT_TOOL_SUFFIXES = [
     "browser_click",
     "browser_close",
@@ -34,9 +29,6 @@ PLAYWRIGHT_TOOL_SUFFIXES = [
 ]
 PLAYWRIGHT_TOOL_IDS = [f"mcp__playwright__{suffix}" for suffix in PLAYWRIGHT_TOOL_SUFFIXES]
 
-# =============================================================================
-# Microsoft Tools (Email/Calendar Agent)
-# =============================================================================
 MICROSOFT_AUTH_TOOL_SUFFIXES = [
     "list_accounts",
     "authenticate_account",
@@ -68,12 +60,6 @@ MICROSOFT_EMAIL_TOOL_IDS = [f"mcp__microsoft__{s}" for s in MICROSOFT_EMAIL_TOOL
 MICROSOFT_CALENDAR_TOOL_IDS = [f"mcp__microsoft__{s}" for s in MICROSOFT_CALENDAR_TOOL_SUFFIXES]
 MICROSOFT_ALL_TOOL_IDS = MICROSOFT_AUTH_TOOL_IDS + MICROSOFT_EMAIL_TOOL_IDS + MICROSOFT_CALENDAR_TOOL_IDS
 
-# =============================================================================
-# PDF Reader Tools (Report Writer Agent)
-# =============================================================================
 PDF_READER_TOOL_IDS = ["mcp__pdf-reader__read_pdf"]
 
-# =============================================================================
-# Main Agent Disallowed Tools
-# =============================================================================
 MAIN_AGENT_DISALLOWED_TOOLS = PLAYWRIGHT_TOOL_IDS + MICROSOFT_ALL_TOOL_IDS

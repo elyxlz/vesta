@@ -17,6 +17,8 @@ def setup_logging(logs_dir: pl.Path, *, debug: bool = False, console: bool = Tru
     logger = logging.getLogger("vesta")
     logger.setLevel(logging.DEBUG if debug else logging.INFO)
 
+    for handler in logger.handlers:
+        handler.close()
     logger.handlers.clear()
 
     formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
