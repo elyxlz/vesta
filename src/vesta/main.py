@@ -578,6 +578,7 @@ async def create_claude_client(config: vm.VestaSettings, resume_session_id: str 
         cwd=config.state_dir,
         add_dirs=[config.state_dir],
         disallowed_tools=PLAYWRIGHT_TOOL_IDS,
+        max_thinking_tokens=config.max_thinking_tokens,
         agents={
             "browser": AgentDefinition(
                 description="Use this agent when you need to browse the web with Playwright for screenshots or scraping.",
