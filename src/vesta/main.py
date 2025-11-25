@@ -5,7 +5,6 @@ import errno
 import functools
 import shutil
 import signal
-import threading
 import traceback
 import typing as tp
 
@@ -600,11 +599,11 @@ async def init_state(*, config: vm.VestaSettings) -> vm.State:
     return vm.State(
         client=client,
         shutdown_event=None,
-        shutdown_lock=threading.Lock(),
         shutdown_count=0,
         is_processing=False,
         sub_agent_context=None,
         session_id=None,
+        pending_system_message=None,
         last_memory_consolidation=now,
     )
 
@@ -613,7 +612,7 @@ async def async_main() -> None:
     config = vm.VestaSettings()
     logger.info(f"Config: {config.model_dump()}")
 
-    for path in [config.state_dir, config.notifications_dir, config.logs_dir, config.data_dir, config.onedrive_dir]:
+    for path in [config.state_dir, config.notifications_dir, config.logs_dir, config.data_dir]:
         path.mkdir(parents=True, exist_ok=True)
 
     ensure_memory_file(config)
