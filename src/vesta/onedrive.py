@@ -70,6 +70,8 @@ async def mount_onedrive(config: VestaSettings, mount_dir: pl.Path, config_path:
     if not check_fusermount_installed():
         raise RuntimeError("fusermount3 is required for OneDrive mounts")
 
+    unmount_onedrive(mount_dir)
+    subprocess.run(["rm", "-rf", str(mount_dir)], capture_output=True)
     mount_dir.mkdir(parents=True, exist_ok=True)
 
     remote_path = f"{config.onedrive_remote_name}:{config.onedrive_remote_path}"
@@ -87,17 +89,37 @@ async def mount_onedrive(config: VestaSettings, mount_dir: pl.Path, config_path:
         "--vfs-cache-max-size",
         "2G",
         "--buffer-size",
-        "64M",
+        "128M",
+        "--vfs-read-ahead",
+        "1G",
+        "--onedrive-chunk-size",
+        "120M",
         "--dir-cache-time",
         "5m",
         "--poll-interval",
         "30s",
         "--fast-list",
-        # "--allow-other",
-        "--daemon",
+        "--log-file",
+        str(config.logs_dir / "onedrive-mount.log"),
+        "--log-level",
+        "INFO",
     ]
 
-    logger.info(f"Mounting OneDrive at {mount_dir}")
+    # Test if we can list files before mounting
+    test_result = subprocess.run(
+        ["rclone", "lsf", remote_path, "--config", str(config_path), "--max-depth", "1"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if test_result.returncode != 0:
+        raise RuntimeError(f"Cannot list OneDrive files: {test_result.stderr[:200]}")
+
+    file_count = len([line for line in test_result.stdout.strip().split("\n") if line])
+    if file_count == 0:
+        raise RuntimeError(f"OneDrive at {remote_path} is empty - check drive_id/remote_path configuration")
+
+    logger.info(f"Verified {file_count} items in OneDrive, mounting at {mount_dir}")
 
     process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     _mount_process = process
@@ -105,17 +127,33 @@ async def mount_onedrive(config: VestaSettings, mount_dir: pl.Path, config_path:
     start_time = time.time()
     while time.time() - start_time < timeout:
         try:
-            list(mount_dir.iterdir())
+            contents = list(mount_dir.iterdir())
             with open("/proc/mounts") as f:
-                if str(mount_dir) in f.read():
-                    logger.info(f"OneDrive mounted at {mount_dir}")
+                if str(mount_dir) in f.read() and contents:
+                    logger.info(f"OneDrive mounted at {mount_dir} with {len(contents)} items")
                     return process
         except (OSError, PermissionError, FileNotFoundError):
-            await asyncio.sleep(0.5)
+            pass
+        await asyncio.sleep(0.5)
 
-    process.terminate()
-    _mount_process = None
-    raise RuntimeError("OneDrive mount timed out")
+    if process.poll() is not None:
+        stdout, stderr = process.communicate()
+        logger.error(f"rclone mount exited: stdout={stdout[:500]}, stderr={stderr[:500]}")
+        process.terminate()
+        _mount_process = None
+        raise RuntimeError(f"OneDrive mount failed: {stderr[:200]}")
+
+    try:
+        contents = list(mount_dir.iterdir())
+        if not contents:
+            process.terminate()
+            _mount_process = None
+            raise RuntimeError(f"OneDrive mounted but directory is empty at {mount_dir} - check token/drive_id/remote_path")
+    except (OSError, PermissionError):
+        pass
+
+    logger.info(f"OneDrive mounted at {mount_dir}")
+    return process
 
 
 def _kill_mount_users(mount_dir: pl.Path) -> None:
