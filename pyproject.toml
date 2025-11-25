@@ -1,6 +1,6 @@
 [project]
 name = "vesta"
-version = "0.1.12"
+version = "0.1.13"
 description = "Personal assistant agent that works autonomously on your behalf"
 readme = "README.md"
 authors = [
@@ -9,7 +9,7 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "aioconsole>=0.8.1",
-    "claude-agent-sdk>=0.1.5",
+    "claude-agent-sdk>=0.1.9",
     "pillow>=11.3.0",
     "pydantic>=2.10.4",
     "pydantic-settings>=2.7.0",

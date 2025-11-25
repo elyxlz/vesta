@@ -292,7 +292,7 @@ async def process_notification_batch(
 
     try:
         decision = vu.decide_notification_action(notifications, is_processing=state.is_processing, has_client=state.client is not None)
-        prompt = vu.format_notification_batch(notifications)
+        prompt = vu.format_notification_batch(notifications, suffix=config.notification_suffix)
 
         if decision == "interrupt" and state.client:
             logger.info(f"Interrupting task for {len(notifications)} notifications")
@@ -573,11 +573,11 @@ async def create_claude_client(config: vm.VestaSettings, resume_session_id: str 
         mcp_servers=config.mcp_servers,  # type: ignore
         hooks=build_hooks(),
         permission_mode="bypassPermissions",
-        model="sonnet",
         resume=resume_session_id,
         cwd=config.state_dir,
         add_dirs=[config.state_dir],
         disallowed_tools=PLAYWRIGHT_TOOL_IDS,
+        max_thinking_tokens=config.max_thinking_tokens,
         agents={
             "browser": AgentDefinition(
                 description="Use this agent when you need to browse the web with Playwright for screenshots or scraping.",
