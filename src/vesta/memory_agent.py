@@ -6,6 +6,13 @@ import pathlib as pl
 from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
 
 from . import models as vm
+from .agents import (
+    AGENT_NAMES,
+    load_agent_memory,
+    save_agent_memory,
+    backup_agent_memory,
+    get_agent_memory_path,
+)
 
 MEMORY_PROMPT = """hey, you're the memory agent for vesta. you manage the MEMORY.md file intelligently.
 
@@ -236,3 +243,146 @@ Check MEMORY.md and update it with any new important information from this conve
     diff = difflib.unified_diff(before.splitlines(keepends=True), after.splitlines(keepends=True), n=1)
 
     return "\n".join(f"{colors.get(line[0], '')}{line.rstrip()}\033[0m" if line[0] in colors else line.rstrip() for line in list(diff)[2:])
+
+
+SUBAGENT_MEMORY_PROMPT = """You are updating memory for a specialized Vesta sub-agent.
+
+**Agent type**: {agent_name}
+
+**Agent responsibilities**:
+- browser: Web browsing patterns, screenshot preferences, site-specific behaviors
+- email_calendar: Email style preferences, calendar scheduling patterns, contact communication styles
+- report_writer: Document formatting preferences, writing style, template preferences
+
+**Your task**:
+1. Read the current MEMORY.md for this agent
+2. Review the recent interactions/outputs from this agent
+3. Update MEMORY.md with patterns, preferences, and learnings relevant to this agent's domain
+4. ONLY update information relevant to this specific agent type
+
+**Guidelines**:
+- Keep updates focused on the agent's specific domain
+- Document patterns that improve future performance
+- Note any preferences or corrections the user made
+- Remove outdated or irrelevant information
+- Be concise and actionable
+"""
+
+
+async def preserve_subagent_memory(
+    agent_name: str,
+    conversations: list[str],
+    *,
+    config: vm.VestaSettings,
+    progress_callback: tp.Callable[[str], None] | None = None,
+) -> str:
+    """Update memory for a specific sub-agent based on its interactions."""
+    progress = progress_callback or (lambda _message: None)
+
+    if not conversations:
+        progress(f"No conversations for {agent_name}")
+        return ""
+
+    progress(f"Loading {agent_name} agent memory...")
+
+    memory_path = get_agent_memory_path(config, agent_name)
+    before = load_agent_memory(config, agent_name)
+
+    # Format conversations for the prompt
+    conversations_text = "\n---\n".join(conversations[:10])  # Limit to 10 most recent
+
+    prompt = f"""Current {agent_name} MEMORY.md:
+{before if before else "(empty)"}
+
+Recent {agent_name} agent interactions:
+{conversations_text}
+
+Update the MEMORY.md for this agent with any relevant patterns or preferences."""
+
+    progress(f"Connecting to memory agent for {agent_name}...")
+
+    agent_prompt = SUBAGENT_MEMORY_PROMPT.format(agent_name=agent_name)
+    client = ClaudeSDKClient(
+        options=ClaudeAgentOptions(
+            system_prompt=agent_prompt,
+            permission_mode="bypassPermissions",
+            model="sonnet",
+            cwd=config.state_dir,
+            add_dirs=[config.state_dir],
+        )
+    )
+
+    try:
+        await client.__aenter__()
+        progress(f"Sending {agent_name} conversations to memory agent...")
+        await client.query(prompt)
+        progress(f"Waiting for {agent_name} memory agent response...")
+        async for _ in client.receive_response():
+            pass
+    except Exception as e:
+        progress(f"Memory agent failed for {agent_name}: {e}")
+        return ""
+    finally:
+        await client.__aexit__(None, None, None)
+
+    progress(f"Computing diff for {agent_name} MEMORY.md...")
+
+    after = load_agent_memory(config, agent_name)
+    if before == after:
+        progress(f"No changes for {agent_name}")
+        return ""
+
+    # Backup before saving
+    backup_agent_memory(config, agent_name)
+
+    colors = {"+": "\033[92m", "-": "\033[91m", "@": "\033[96m"}
+    diff = difflib.unified_diff(
+        before.splitlines(keepends=True),
+        after.splitlines(keepends=True),
+        n=1,
+    )
+
+    return "\n".join(
+        f"{colors.get(line[0], '')}{line.rstrip()}\033[0m"
+        if line[0] in colors
+        else line.rstrip()
+        for line in list(diff)[2:]
+    )
+
+
+async def consolidate_all_memories(
+    main_conversation_history: list[dict[str, tp.Any]] | None,
+    subagent_conversations: dict[str, list[str]],
+    *,
+    config: vm.VestaSettings,
+    progress_callback: tp.Callable[[str], None] | None = None,
+) -> dict[str, str]:
+    """Consolidate memories for main agent and all sub-agents with conversations."""
+    progress = progress_callback or (lambda _message: None)
+    results: dict[str, str] = {}
+
+    # Main agent memory
+    if main_conversation_history:
+        progress("Consolidating main agent memory...")
+        main_diff = await preserve_conversation_memory(
+            main_conversation_history,
+            config=config,
+            progress_callback=progress,
+        )
+        if main_diff:
+            results["main"] = main_diff
+
+    # Sub-agent memories
+    for agent_name, conversations in subagent_conversations.items():
+        if conversations:
+            progress(f"Consolidating {agent_name} agent memory...")
+            diff = await preserve_subagent_memory(
+                agent_name,
+                conversations,
+                config=config,
+                progress_callback=progress,
+            )
+            if diff:
+                results[agent_name] = diff
+
+    return results

@@ -10,9 +10,9 @@ import typing as tp
 
 import aioconsole
 from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions, HookMatcher, HookContext
-from claude_agent_sdk.types import AgentDefinition, HookInput, HookJSONOutput, HookEvent
+from claude_agent_sdk.types import HookInput, HookJSONOutput, HookEvent
 
-from vesta.playwright_tools import PLAYWRIGHT_TOOL_IDS
+from vesta.agents import build_all_agents, MAIN_AGENT_DISALLOWED_TOOLS
 
 import vesta.memory_agent as vma
 import vesta.models as vm
@@ -23,6 +23,10 @@ import vesta.logging_setup as vlog
 from vesta.constants import Messages
 
 logger = vfx.get_logger()
+
+# Module-level container for subagent conversation tracking
+# Will be transferred to state during memory consolidation
+_subagent_conversations: dict[str, list[str]] = {}
 
 
 async def log_tool_start(input_data: HookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
@@ -38,6 +42,20 @@ async def log_tool_start(input_data: HookInput, tool_use_id: str | None, context
 async def log_tool_finish(input_data: HookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
     tool = input_data.get("tool_name", "unknown")  # type: ignore
     logger.info(f"TOOL done: {tool}")
+
+    # Capture subagent responses for memory consolidation
+    if tool == "Task":
+        tool_input = input_data.get("tool_input", {})  # type: ignore
+        subagent_type = tool_input.get("subagent_type") if tool_input else None
+        tool_response = input_data.get("tool_response", "")  # type: ignore
+        if subagent_type and tool_response:
+            if subagent_type not in _subagent_conversations:
+                _subagent_conversations[subagent_type] = []
+            # Truncate very long responses to avoid memory issues
+            response_str = str(tool_response)[:5000] if tool_response else ""
+            _subagent_conversations[subagent_type].append(response_str)
+            logger.info(f"SUBAGENT response captured: {subagent_type} ({len(response_str)} chars)")
+
     return {}
 
 
@@ -46,6 +64,14 @@ def build_hooks() -> dict[HookEvent, list[HookMatcher]]:
         "PreToolUse": [HookMatcher(hooks=[log_tool_start])],  # type: ignore
         "PostToolUse": [HookMatcher(hooks=[log_tool_finish])],  # type: ignore
     }
+
+
+def get_subagent_conversations() -> dict[str, list[str]]:
+    """Get captured subagent conversations and clear the buffer."""
+    global _subagent_conversations
+    conversations = _subagent_conversations.copy()
+    _subagent_conversations = {}
+    return conversations
 
 
 @contextlib.asynccontextmanager
@@ -189,11 +215,22 @@ async def preserve_memory(state: vm.State, *, config: vm.VestaSettings) -> None:
             async with state.conversation_history_lock:
                 history = state.conversation_history.copy() if state.conversation_history else None
 
-            diff = await vma.preserve_conversation_memory(history, config=config, progress_callback=log_progress)
+            # Get subagent conversations and clear buffer
+            subagent_convos = get_subagent_conversations()
 
-            if diff:
+            # Consolidate all memories (main + sub-agents)
+            results = await vma.consolidate_all_memories(
+                history,
+                subagent_convos,
+                config=config,
+                progress_callback=log_progress,
+            )
+
+            if results:
                 logger.info(Messages.MEMORY_UPDATED)
-                logger.info(diff)
+                for agent_name, diff in results.items():
+                    logger.info(f"--- {agent_name} memory ---")
+                    logger.info(diff)
                 async with state.conversation_history_lock:
                     state.conversation_history.clear()
             else:
@@ -576,16 +613,9 @@ async def create_claude_client(config: vm.VestaSettings, resume_session_id: str 
         resume=resume_session_id,
         cwd=config.state_dir,
         add_dirs=[config.state_dir],
-        disallowed_tools=PLAYWRIGHT_TOOL_IDS,
+        disallowed_tools=MAIN_AGENT_DISALLOWED_TOOLS,
         max_thinking_tokens=config.max_thinking_tokens,
-        agents={
-            "browser": AgentDefinition(
-                description="Use this agent when you need to browse the web with Playwright for screenshots or scraping.",
-                prompt="You are a browser specialist. Only use the Playwright MCP tools. Do not use other tools.",
-                tools=PLAYWRIGHT_TOOL_IDS,
-                model="haiku",
-            )
-        },
+        agents=build_all_agents(config),
     )
     client = ClaudeSDKClient(options=options)
     await client.__aenter__()

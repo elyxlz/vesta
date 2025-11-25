@@ -29,6 +29,7 @@ class State:
     processing_lock: asyncio.Lock = dc.field(default_factory=asyncio.Lock)
     conversation_history: list[dict[str, str]] = dc.field(default_factory=list)
     conversation_history_lock: asyncio.Lock = dc.field(default_factory=asyncio.Lock)
+    subagent_conversations: dict[str, list[str]] = dc.field(default_factory=dict)
 
 
 class VestaSettings(pyd_settings.BaseSettings):
