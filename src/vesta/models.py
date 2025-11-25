@@ -89,20 +89,16 @@ class VestaSettings(pyd_settings.BaseSettings):
         return self.state_dir
 
     @property
-    def memory_file(self) -> pl.Path:
-        return self.state_dir / "MEMORY.md"
+    def memory_dir(self) -> pl.Path:
+        return self.state_dir / "memory"
 
     @property
-    def memory_template(self) -> pl.Path:
-        return self.install_root / "MEMORY.md.tmp"
+    def memory_file(self) -> pl.Path:
+        return self.memory_dir / "MEMORY.md"
 
     @property
     def memory_backups_dir(self) -> pl.Path:
-        return self.state_dir / "memory_backups"
-
-    @property
-    def system_prompt_file(self) -> pl.Path:
-        return self.install_root / "SYSTEM_PROMPT.md"
+        return self.memory_dir / "backups"
 
     @property
     def notifications_dir(self) -> pl.Path:

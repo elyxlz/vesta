@@ -12,7 +12,7 @@ import aioconsole
 from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions, HookMatcher, HookContext
 from claude_agent_sdk.types import HookInput, HookJSONOutput, HookEvent
 
-from vesta.agents import build_all_agents, MAIN_AGENT_DISALLOWED_TOOLS
+from vesta.agents import build_all_agents, MAIN_AGENT_DISALLOWED_TOOLS, init_all_memories, load_memory, backup_memory
 
 import vesta.memory_agent as vma
 import vesta.models as vm
@@ -91,9 +91,8 @@ async def heartbeat_logger(message_fn: tp.Callable[[], str], interval: float) ->
 
 
 def load_system_prompt(config: vm.VestaSettings) -> str:
-    if not config.memory_file.exists():
-        raise FileNotFoundError(f"MEMORY.md not found at {config.memory_file}")
-    return config.memory_file.read_text()
+    """Load main agent's memory as system prompt."""
+    return load_memory(config, "main")
 
 
 async def attempt_interrupt(state: vm.State, *, config: vm.VestaSettings, reason: str) -> bool:
@@ -181,15 +180,10 @@ async def delete_notification_files(notifications: list[vm.Notification]) -> Non
 
 
 def backup_memory_file(config: vm.VestaSettings) -> None:
-    if not config.memory_file.exists():
-        return
-
-    config.memory_backups_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = vfx.get_current_time().strftime("%Y-%m-%d_%H-%M-%S")
-    backup_path = config.memory_backups_dir / f"MEMORY_{timestamp}.md"
-
-    shutil.copy2(config.memory_file, backup_path)
-    logger.debug(f"[MEMORY] Backed up to {backup_path.name}")
+    """Backup main agent's memory file."""
+    result = backup_memory(config, "main")
+    if result:
+        logger.debug(f"[MEMORY] Backed up to {result.name}")
 
 
 async def preserve_memory(state: vm.State, *, config: vm.VestaSettings) -> None:
@@ -387,10 +381,10 @@ async def log_startup_info(config: vm.VestaSettings) -> None:
         logger.info(f"Active MCPs: {', '.join(config.mcp_servers.keys())}")
 
 
-def ensure_memory_file(config: vm.VestaSettings) -> None:
-    if not config.memory_file.exists() and config.memory_template.exists():
-        shutil.copy(config.memory_template, config.memory_file)
-        logger.info("Created MEMORY.md from template")
+def ensure_memory_files(config: vm.VestaSettings) -> None:
+    """Initialize all memory files from templates if they don't exist."""
+    init_all_memories(config)
+    logger.debug("[MEMORY] All memory files initialized")
 
 
 async def message_processor(queue: asyncio.Queue, state: vm.State, *, config: vm.VestaSettings) -> None:
@@ -645,7 +639,7 @@ async def async_main() -> None:
     for path in [config.state_dir, config.notifications_dir, config.logs_dir, config.data_dir]:
         path.mkdir(parents=True, exist_ok=True)
 
-    ensure_memory_file(config)
+    ensure_memory_files(config)
 
     vlog.setup_logging(config.logs_dir, debug=config.debug)
     logger.info("=== Vesta starting ===")

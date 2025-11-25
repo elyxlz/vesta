@@ -3,11 +3,13 @@
 from .definitions import build_all_agents
 from .memory import (
     AGENT_NAMES,
-    init_agent_memories,
-    load_agent_memory,
-    save_agent_memory,
-    backup_agent_memory,
-    get_agent_memory_path,
+    init_all_memories,
+    load_memory,
+    save_memory,
+    backup_memory,
+    get_memory_path,
+    get_memory_dir,
+    get_memory_backup_dir,
 )
 from .tool_ids import (
     PLAYWRIGHT_TOOL_IDS,
@@ -20,16 +22,15 @@ from .tool_ids import (
 )
 
 __all__ = [
-    # Definitions
     "build_all_agents",
-    # Memory
     "AGENT_NAMES",
-    "init_agent_memories",
-    "load_agent_memory",
-    "save_agent_memory",
-    "backup_agent_memory",
-    "get_agent_memory_path",
-    # Tool IDs
+    "init_all_memories",
+    "load_memory",
+    "save_memory",
+    "backup_memory",
+    "get_memory_path",
+    "get_memory_dir",
+    "get_memory_backup_dir",
     "PLAYWRIGHT_TOOL_IDS",
     "MICROSOFT_ALL_TOOL_IDS",
     "MICROSOFT_AUTH_TOOL_IDS",

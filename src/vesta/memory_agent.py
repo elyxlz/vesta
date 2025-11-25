@@ -7,9 +7,8 @@ from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
 
 from . import models as vm
 from .agents import (
-    load_agent_memory,
-    backup_agent_memory,
-    get_agent_memory_path,
+    load_memory,
+    backup_memory,
 )
 
 MEMORY_PROMPT = """hey, you're the memory agent for vesta. you manage the MEMORY.md file intelligently.
@@ -197,15 +196,14 @@ async def preserve_conversation_memory(
         progress("No conversation history available")
         return ""
 
-    progress("Loading MEMORY.md and system prompt...")
+    progress("Loading MEMORY.md...")
 
     before = config.memory_file.read_text() if config.memory_file.exists() else ""
-    system_prompt = config.system_prompt_file.read_text() if config.system_prompt_file.exists() else ""
 
     progress(f"Building update prompt from {len(conversation_history)} messages...")
 
-    prompt = f"""System context (first 2000 chars):
-{system_prompt[:2000]}...
+    prompt = f"""Current MEMORY.md (first 3000 chars):
+{before[:3000]}...
 
 Recent conversation to process:
 {format_conversation(conversation_history)}
@@ -283,8 +281,7 @@ async def preserve_subagent_memory(
 
     progress(f"Loading {agent_name} agent memory...")
 
-    get_agent_memory_path(config, agent_name)
-    before = load_agent_memory(config, agent_name)
+    before = load_memory(config, agent_name)
 
     # Format conversations for the prompt
     conversations_text = "\n---\n".join(conversations[:10])  # Limit to 10 most recent
@@ -325,13 +322,13 @@ Update the MEMORY.md for this agent with any relevant patterns or preferences.""
 
     progress(f"Computing diff for {agent_name} MEMORY.md...")
 
-    after = load_agent_memory(config, agent_name)
+    after = load_memory(config, agent_name)
     if before == after:
         progress(f"No changes for {agent_name}")
         return ""
 
     # Backup before saving
-    backup_agent_memory(config, agent_name)
+    backup_memory(config, agent_name)
 
     colors = {"+": "\033[92m", "-": "\033[91m", "@": "\033[96m"}
     diff = difflib.unified_diff(
