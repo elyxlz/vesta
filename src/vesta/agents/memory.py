@@ -6,8 +6,6 @@ from ..config import VestaSettings
 from .templates import MEMORY_TEMPLATES
 from ..effects import logger
 
-AGENT_NAMES = ["browser", "email_calendar", "report_writer"]
-
 
 def get_memory_dir(config: VestaSettings) -> Path:
     return config.state_dir / "memory"

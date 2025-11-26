@@ -2,10 +2,42 @@
 
 import datetime as dt
 from typing import Any, Literal
+from zoneinfo import ZoneInfo
+
 from mcp.server.fastmcp import Context
 from .auth_tools import mcp  # Use the shared MCP instance
 from . import graph, auth
 from .context import MicrosoftContext
+
+
+def _get_calendar_day_range(
+    days_ahead: int,
+    days_back: int,
+    user_timezone: str | None = None,
+) -> tuple[str, str]:
+    """Calculate calendar day boundaries for event queries."""
+    try:
+        tz = ZoneInfo(user_timezone) if user_timezone else dt.timezone.utc
+    except Exception:
+        tz = dt.timezone.utc
+
+    now_local = dt.datetime.now(tz)
+    start_of_today = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    # Start: beginning of (today - days_back)
+    start_datetime = start_of_today - dt.timedelta(days=days_back)
+
+    # End: beginning of the day AFTER the target range (Graph API uses exclusive end)
+    end_datetime = start_of_today + dt.timedelta(days=days_ahead + 1)
+
+    # Convert to UTC and use Z format (consistent with monitor.py)
+    start_utc = start_datetime.astimezone(dt.timezone.utc).replace(microsecond=0)
+    end_utc = end_datetime.astimezone(dt.timezone.utc).replace(microsecond=0)
+
+    return (
+        start_utc.isoformat().replace("+00:00", "Z"),
+        end_utc.isoformat().replace("+00:00", "Z"),
+    )
 
 
 @mcp.tool()
@@ -16,17 +48,16 @@ def list_events(
     days_ahead: int = 7,
     days_back: int = 0,
     include_details: bool = True,
+    user_timezone: str | None = None,
 ) -> list[dict[str, Any]]:
+    """user_timezone: IANA timezone (e.g. 'Asia/Singapore'). Determines calendar day boundaries."""
     context: MicrosoftContext = ctx.request_context.lifespan_context
 
     try:
         account_id = auth.get_account_id_by_email(account_email, context.cache_file, settings=context.settings)
         context.monitor_logger.info(f"list_events: account_email={account_email}, account_id={account_id}")
 
-        # Remove microseconds from datetime to match Microsoft's recommended format
-        now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
-        start = (now - dt.timedelta(days=days_back)).isoformat()
-        end = (now + dt.timedelta(days=days_ahead)).isoformat()
+        start, end = _get_calendar_day_range(days_ahead, days_back, user_timezone)
 
         params = {
             "startDateTime": start,
