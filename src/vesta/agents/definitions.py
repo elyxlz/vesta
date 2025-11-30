@@ -19,7 +19,7 @@ class AgentConfig:
     name: str
     description: str
     tools: list[str]
-    model: ModelType | None = None
+    model: ModelType = "inherit"
 
 
 AGENT_CONFIGS: list[AgentConfig] = [
