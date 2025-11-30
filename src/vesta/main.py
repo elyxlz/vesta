@@ -4,9 +4,9 @@ import signal
 
 from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions, Message
 
-from vesta.agents import build_all_agents, MAIN_AGENT_DISALLOWED_TOOLS, load_memory
+from vesta.registry import build_all_agents, generate_delegation_prompt, build_mcp_servers
+from vesta.memory import load_memory, preserve_memory
 from vesta.hooks import build_hooks
-from vesta.memory_ops import preserve_memory
 import vesta.models as vm
 import vesta.utils as vu
 import vesta.effects as vfx
@@ -24,8 +24,9 @@ from vesta.notifications import (
 
 
 def load_system_prompt(config: vm.VestaSettings) -> str:
-    """Load main agent's memory as system prompt."""
-    return load_memory(config, agent_name="main")
+    """Load main agent's memory as system prompt with delegation instructions."""
+    memory = load_memory(config, agent_name="main")
+    return f"{memory}\n\n{generate_delegation_prompt()}"
 
 
 async def attempt_interrupt(state: vm.State, *, config: vm.VestaSettings, reason: str) -> bool:
@@ -158,8 +159,9 @@ async def graceful_shutdown(state: vm.State, *, config: vm.VestaSettings) -> Non
 
 async def log_startup_info(config: vm.VestaSettings) -> None:
     logger.info("VESTA started")
-    if config.mcp_servers:
-        logger.info(f"Active MCPs: {', '.join(config.mcp_servers.keys())}")
+    mcps = build_mcp_servers(config)
+    if mcps:
+        logger.info(f"Active MCPs: {', '.join(mcps.keys())}")
 
 
 async def message_processor(queue: asyncio.Queue, *, state: vm.State, config: vm.VestaSettings) -> None:
@@ -303,13 +305,12 @@ def check_dependencies() -> None:
 async def create_claude_client(config: vm.VestaSettings, *, state: vm.State, resume_session_id: str | None = None) -> ClaudeSDKClient:
     options = ClaudeAgentOptions(
         system_prompt=load_system_prompt(config),
-        mcp_servers=config.mcp_servers,  # type: ignore[arg-type]
+        mcp_servers=build_mcp_servers(config),  # type: ignore[arg-type]
         hooks=build_hooks(state),
         permission_mode="bypassPermissions",
         resume=resume_session_id,
         cwd=config.state_dir,
         add_dirs=[config.state_dir],
-        disallowed_tools=MAIN_AGENT_DISALLOWED_TOOLS,
         max_thinking_tokens=config.max_thinking_tokens,
         agents=build_all_agents(config),
     )

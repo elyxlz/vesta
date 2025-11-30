@@ -7,51 +7,65 @@ from pathlib import Path
 
 
 import vesta.models as vm
-from vesta.agents import AGENT_NAMES, AGENT_CONFIGS, build_all_agents
-from vesta.agents.templates import MEMORY_TEMPLATES
+from vesta.registry import (
+    build_all_agents,
+    get_agent_names,
+    get_memory_templates,
+    AGENT_REGISTRY,
+    MCP_REGISTRY,
+)
 
 
 def _make_config(tmp_path: Path) -> vm.VestaSettings:
     return vm.VestaSettings(state_dir=tmp_path, microsoft_mcp_client_id="test")
 
 
-# Agent consistency tests - prevent drift between configs and templates
+# Agent consistency tests - prevent drift between registry and templates
 
 
-def test_agent_names_derived_from_configs():
-    """AGENT_NAMES must be derived from AGENT_CONFIGS (single source of truth)."""
-    assert AGENT_NAMES == [c.name for c in AGENT_CONFIGS]
+def test_agent_names_derived_from_registry():
+    """get_agent_names must return names from AGENT_REGISTRY."""
+    assert get_agent_names() == list(AGENT_REGISTRY.keys())
 
 
 def test_all_agents_have_memory_templates():
-    """Every agent in AGENT_CONFIGS must have a corresponding memory template."""
-    for config in AGENT_CONFIGS:
-        assert config.name in MEMORY_TEMPLATES, f"Missing template for {config.name}"
+    """Every agent in AGENT_REGISTRY must have a corresponding memory template."""
+    templates = get_memory_templates()
+    for name in AGENT_REGISTRY:
+        assert name in templates, f"Missing template for {name}"
 
 
 def test_no_orphan_templates():
     """All templates (except 'main') must correspond to an agent."""
-    agent_names_set = set(AGENT_NAMES) | {"main"}
-    assert set(MEMORY_TEMPLATES.keys()) == agent_names_set
+    agent_names_set = set(AGENT_REGISTRY.keys()) | {"main"}
+    templates = get_memory_templates()
+    assert set(templates.keys()) == agent_names_set
 
 
-def test_agent_configs_are_valid():
-    """Each agent config must have required fields with valid values."""
-    for config in AGENT_CONFIGS:
-        assert config.name
-        assert config.description
-        assert len(config.tools) > 0
-        assert all(t.startswith("mcp__") for t in config.tools)
+def test_agent_definitions_are_valid():
+    """Each agent definition must have required fields with valid values."""
+    for name, agent in AGENT_REGISTRY.items():
+        assert agent.name == name
+        assert agent.description
+        assert agent.mcp in MCP_REGISTRY  # MCP must exist in registry
+
+
+def test_mcp_definitions_have_tools():
+    """Each MCP definition must have tool suffixes."""
+    for name, mcp in MCP_REGISTRY.items():
+        assert mcp.name == name
+        assert len(mcp.tool_suffixes) > 0
+        assert all(mcp.tool_ids)  # tool_ids property should work
 
 
 # Build agents tests
 
 
 def test_builds_all_configured_agents(tmp_path):
-    """build_all_agents returns one agent per config."""
+    """build_all_agents returns one agent per registry entry."""
     config = _make_config(tmp_path)
     agents = build_all_agents(config)
-    assert set(agents.keys()) == set(AGENT_NAMES)
+    assert set(agents.keys()) == set(AGENT_REGISTRY.keys())
 
 
 def test_agents_have_prompts_and_tools(tmp_path):

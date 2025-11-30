@@ -1,17 +1,10 @@
-"""Vesta configuration - foundation layer with zero internal dependencies."""
+"""Vesta configuration - runtime settings only."""
 
 import pathlib as pl
-import typing as tp
 
 import pydantic as pyd
 import pydantic_settings as pyd_settings
 from pydantic import SecretStr, field_validator
-
-
-class McpServer(tp.TypedDict):
-    command: str
-    args: tp.NotRequired[list[str]]
-    env: tp.NotRequired[dict[str, str]]
 
 
 class VestaSettings(pyd_settings.BaseSettings):
@@ -100,115 +93,3 @@ class VestaSettings(pyd_settings.BaseSettings):
     @property
     def whatsapp_build_dir(self) -> pl.Path:
         return self.install_root / "mcps" / "whatsapp-mcp-go"
-
-    @property
-    def mcp_servers(self) -> dict[str, McpServer]:
-        base_env = {"MAX_MCP_OUTPUT_TOKENS": str(self.max_mcp_output_tokens)}
-        mcps_root = self.install_root / "mcps"
-        servers: dict[str, McpServer] = {
-            "microsoft": {
-                "command": "uv",
-                "args": [
-                    "run",
-                    "--directory",
-                    str(mcps_root / "microsoft-mcp"),
-                    "microsoft-mcp",
-                    "--data-dir",
-                    str(self.data_dir / "microsoft-mcp"),
-                    "--log-dir",
-                    str(self.logs_dir / "microsoft-mcp"),
-                    "--notifications-dir",
-                    str(self.notifications_dir),
-                ],
-                "env": {
-                    **base_env,
-                    "MICROSOFT_MCP_CLIENT_ID": self.microsoft_mcp_client_id.get_secret_value(),
-                    "MICROSOFT_MCP_TENANT_ID": self.microsoft_mcp_tenant_id,
-                },
-            },
-            "whatsapp": {
-                "command": "sh",
-                "args": [
-                    "-c",
-                    f"cd {self.whatsapp_build_dir} && go build -o whatsapp-mcp . && ./whatsapp-mcp --data-dir {self.data_dir / 'whatsapp-mcp'} --log-dir {self.logs_dir / 'whatsapp-mcp'} --notifications-dir {self.notifications_dir}",
-                ],
-                "env": base_env,
-            },
-            "reminder": {
-                "command": "uv",
-                "args": [
-                    "run",
-                    "--directory",
-                    str(mcps_root / "reminder-mcp"),
-                    "reminder-mcp",
-                    "--data-dir",
-                    str(self.data_dir / "reminder-mcp"),
-                    "--log-dir",
-                    str(self.logs_dir / "reminder-mcp"),
-                    "--notifications-dir",
-                    str(self.notifications_dir),
-                ],
-                "env": base_env,
-            },
-            "task": {
-                "command": "uv",
-                "args": [
-                    "run",
-                    "--directory",
-                    str(mcps_root / "task-mcp"),
-                    "task-mcp",
-                    "--data-dir",
-                    str(self.data_dir / "task-mcp"),
-                    "--log-dir",
-                    str(self.logs_dir / "task-mcp"),
-                ],
-                "env": base_env,
-            },
-            "playwright": {
-                "command": "npx",
-                "args": [
-                    "--prefix",
-                    str(mcps_root / "playwright-mcp"),
-                    "mcp-server-playwright",
-                    "--browser",
-                    "chromium",
-                    "--blocked-origins",
-                    "googleads.g.doubleclick.net;googlesyndication.com",
-                    "--output-dir",
-                    str(self.playwright_screenshots_dir),
-                    "--image-responses",
-                    "omit",
-                ],
-                "env": base_env,
-            },
-            "what-day": {
-                "command": "uv",
-                "args": [
-                    "run",
-                    "--directory",
-                    str(mcps_root / "what-day-mcp"),
-                    "what-day-mcp",
-                    "--data-dir",
-                    str(self.data_dir / "what-day-mcp"),
-                    "--log-dir",
-                    str(self.logs_dir / "what-day-mcp"),
-                ],
-                "env": base_env,
-            },
-            "pdf-reader": {
-                "command": "node",
-                "args": [
-                    str(mcps_root / "pdf-reader-mcp" / "dist" / "index.js"),
-                    "--data-dir",
-                    str(self.data_dir / "pdf-reader-mcp"),
-                    "--log-dir",
-                    str(self.logs_dir / "pdf-reader-mcp"),
-                ],
-                "env": base_env,
-            },
-        }
-        return servers
-
-    @staticmethod
-    def get_secret(value: SecretStr | None) -> str | None:
-        return value.get_secret_value() if value else None

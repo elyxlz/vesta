@@ -1,33 +1,94 @@
+"""Memory operations and memory agent for Vesta."""
+
 import asyncio
 import collections.abc as cab
+import contextlib
+import datetime as dt
 import difflib
 import json
 import pathlib as pl
+import shutil
 import time
 
 from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
 
 from . import models as vm
+from .constants import Messages
 from .effects import logger
-from .agents import (
-    load_memory,
-    get_memory_path,
-    get_memory_dir,
-)
 from .models import ConversationMessage
 
 ProgressCallback = cab.Callable[[str], object] | None
 
 
+def get_memory_dir(config: vm.VestaSettings) -> pl.Path:
+    return config.state_dir / "memory"
+
+
+def get_memory_path(config: vm.VestaSettings, *, agent_name: str = "main") -> pl.Path:
+    memory_dir = get_memory_dir(config)
+    if agent_name == "main":
+        return memory_dir / "MEMORY.md"
+    return memory_dir / agent_name / "MEMORY.md"
+
+
+def get_memory_backup_dir(config: vm.VestaSettings) -> pl.Path:
+    return config.state_dir / "memory_backups"
+
+
+def _get_memory_templates() -> dict[str, str]:
+    from .registry import get_memory_templates
+
+    return get_memory_templates()
+
+
+def init_all_memories(config: vm.VestaSettings) -> None:
+    for agent_name, template in _get_memory_templates().items():
+        memory_path = get_memory_path(config, agent_name=agent_name)
+        if not memory_path.exists():
+            memory_path.parent.mkdir(parents=True, exist_ok=True)
+            memory_path.write_text(template)
+            logger.info(f"[MEMORY] Initialized {agent_name} memory from template ({len(template)} chars)")
+
+
+def load_memory(config: vm.VestaSettings, *, agent_name: str = "main") -> str:
+    memory_path = get_memory_path(config, agent_name=agent_name)
+    if memory_path.exists():
+        content = memory_path.read_text()
+        logger.debug(f"[MEMORY] Loaded {agent_name} memory ({len(content)} chars)")
+        return content
+    logger.debug(f"[MEMORY] Using template for {agent_name} (file not found)")
+    return _get_memory_templates()[agent_name]
+
+
+def _get_dir_size(path: pl.Path) -> int:
+    return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+
+
+def backup_all_memories(config: vm.VestaSettings) -> pl.Path | None:
+    memory_dir = get_memory_dir(config)
+    if not memory_dir.exists():
+        logger.debug("[MEMORY] No memory folder to backup")
+        return None
+
+    backup_base = get_memory_backup_dir(config)
+    backup_base.mkdir(parents=True, exist_ok=True)
+
+    timestamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_path = backup_base / timestamp
+    shutil.copytree(memory_dir, backup_path)
+
+    size_kb = _get_dir_size(backup_path) / 1024
+    logger.info(f"[MEMORY] Backup created: {backup_path.name} ({size_kb:.1f} KB)")
+    return backup_path
+
+
 def _format_diff(before: str, after: str) -> str:
-    """Format a unified diff with ANSI colors."""
     colors = {"+": "\033[92m", "-": "\033[91m", "@": "\033[96m"}
     diff = difflib.unified_diff(before.splitlines(keepends=True), after.splitlines(keepends=True), n=1)
     return "\n".join(f"{colors.get(line[0], '')}{line.rstrip()}\033[0m" if line[0] in colors else line.rstrip() for line in list(diff)[2:])
 
 
 def _validate_memory_path(path: pl.Path, *, config: vm.VestaSettings) -> None:
-    """Ensure memory path is within memory directory."""
     memory_dir = get_memory_dir(config)
     try:
         path.resolve().relative_to(memory_dir.resolve())
@@ -36,16 +97,16 @@ def _validate_memory_path(path: pl.Path, *, config: vm.VestaSettings) -> None:
 
 
 async def _call_progress(callback: ProgressCallback, message: str) -> None:
-    """Call progress callback, handling both sync and async functions."""
     if callback:
         result = callback(message)
         if asyncio.iscoroutine(result):
             await result
 
 
-MEMORY_PROMPT_TEMPLATE = """hey, you're the memory agent for vesta. you manage the MEMORY.md file intelligently.
+MEMORY_PROMPT_TEMPLATE = """hey, you're the memory agent for vesta. you manage memory files intelligently.
 
-**Memory file path**: {memory_path}
+**Memory files you can write to**:
+{memory_files}
 
 **NEVER store task information in MEMORY.md**
 - Tasks live in scheduler MCP database ONLY
@@ -153,7 +214,108 @@ MEMORY_PROMPT_TEMPLATE = """hey, you're the memory agent for vesta. you manage t
 
 remember: you're maintaining a living document. keep it organized, current, and useful by understanding its structure rather than imposing one. be especially vigilant about social dynamics and always document what could be done better.
 
-Write all updates to {memory_path}."""
+## MEMORY CLEANUP GUIDELINES
+
+When cleaning up memory, systematically identify and handle these issues:
+
+### Step 1: Identify Problems
+
+**Contradictions**:
+- Information that conflicts with other information (e.g., two different degree programs listed)
+- Multiple versions of the same fact that don't match
+
+**Outdated Information**:
+- Past events still listed as "upcoming"
+- Specific dates that have already passed
+- Completed tasks or processes (e.g., "payment sent September 30")
+- Old booking references, ticket numbers, confirmation codes
+
+**Overly Specific/Useless Details**:
+- Exact timestamps of past actions
+- Temporary reference numbers (support tickets, applications)
+- Specific progress updates from months ago ("October 22: completed X")
+- Verbose dated entries that could be condensed into patterns
+
+### Step 2: Remove or Update
+
+- **Contradictions**: Verify correct information, remove incorrect version
+- **Past events**: Remove completely UNLESS they're recurring events
+- **Upcoming events**: Move to the appropriate sub-agent memory (see routing guidelines)
+- **Overly specific details**: Remove or condense into general patterns
+- **Dated learnings**: Convert verbose dated entries into timeless behavioral patterns
+
+### Step 3: Reorganize to Appropriate Sub-Agent Memory
+
+Route information to the sub-agent whose domain it belongs to:
+
+{agent_domains}
+
+**Main memory** keeps: Core personality, user profile, security rules, relationships, general patterns
+
+### Step 4: Condense Patterns
+
+Instead of verbose dated entries like:
+  "November 10, 2025 - Critical communication failures:
+    - WhatsApp reply_instruction violation: Responded to 6+ messages in terminal
+    - User frustration: 'vesta for the last time...'
+    - Root cause: Not following reply_instruction metadata"
+
+Write concise rules:
+  "**WhatsApp reply_instruction**: MUST follow reply_instruction metadata - use send_message tool when specified"
+
+### Step 5: Keep Essential Context
+
+Always preserve:
+- Contact information with meaningful details (relationships, roles, communication styles)
+- Core behavioral patterns (even if learned from dated incidents)
+- User preferences and traits
+- Important recurring information
+- Security lessons
+
+### Example Cleanups
+
+❌ Remove: "Rome return flight: Booked October 26, 2025 via Trip.com (booking #1688894294307187)"
+✅ Keep: "Flight booking: Always use Trip.com (not EasyJet or other sites)"
+
+❌ Remove: "Hosted dinner for 9-10 friends with risotto ai funghi (October 23, 2025)"
+✅ Keep: "Cooking: Enjoys hosting dinner parties and developing recipes"
+
+❌ Remove: "Perry Chen meeting: Thursday November 13, 2025 at 1pm" (if past)
+✅ Keep in calendar sub-agent if future: "Winter Dinner: Wednesday December 3, 2025 at 6:30pm"
+
+### Final Check
+
+- No contradictions remain
+- No past events listed as upcoming
+- Specific booking numbers/references removed
+- Dated learnings condensed into patterns
+- All upcoming events in appropriate sub-agent memory
+- Important dates in appropriate sub-agent memory
+- Essential contact details preserved
+- Behavioral patterns preserved without verbose dates
+
+Write updates to the appropriate memory files listed above. Route information to the correct sub-agent memory based on the guidelines."""
+
+
+SUBAGENT_MEMORY_PROMPT = """You are updating memory for a specialized Vesta sub-agent.
+
+**Agent type**: {agent_name}
+**Memory file path**: {memory_path}
+**Agent focus**: {agent_description}
+
+**Your task**:
+1. Review the current MEMORY.md content provided below
+2. Review the recent interactions/outputs from this agent
+3. Write the updated MEMORY.md to {memory_path}
+4. ONLY update information relevant to this specific agent type
+
+**Guidelines**:
+- Keep updates focused on the agent's specific domain
+- Document patterns that improve future performance
+- Note any preferences or corrections the user made
+- Remove outdated or irrelevant information
+- Be concise and actionable
+"""
 
 
 def format_conversation(history: list[ConversationMessage]) -> str:
@@ -212,6 +374,8 @@ async def preserve_conversation_memory(
     config: vm.VestaSettings,
     progress_callback: ProgressCallback = None,
 ) -> str:
+    from .registry import AGENT_REGISTRY, get_agent_names
+
     start_time = time.monotonic()
 
     if conversation_history is None:
@@ -245,7 +409,18 @@ Check MEMORY.md and update it with any new important information from this conve
     await _call_progress(progress_callback, "Connecting to Claude memory agent...")
     logger.debug("[MEMORY] Spawning main memory agent")
 
-    memory_prompt = MEMORY_PROMPT_TEMPLATE.format(memory_path=memory_path)
+    memory_files_list = [f"- Main: {memory_path}"]
+    for name in get_agent_names():
+        agent_path = get_memory_path(config, agent_name=name)
+        memory_files_list.append(f"- {name}: {agent_path}")
+    memory_files = "\n".join(memory_files_list)
+
+    agent_domains = "\n".join(f"**{a.name}**: {a.description}" for a in AGENT_REGISTRY.values())
+
+    memory_prompt = MEMORY_PROMPT_TEMPLATE.format(
+        memory_files=memory_files,
+        agent_domains=agent_domains,
+    )
 
     async with ClaudeSDKClient(
         options=ClaudeAgentOptions(
@@ -256,7 +431,7 @@ Check MEMORY.md and update it with any new important information from this conve
             add_dirs=[config.state_dir],
         )
     ) as client:
-        await _call_progress(progress_callback, "Sending conversation to memory agent (this can take a bit)...")
+        await _call_progress(progress_callback, f"Sending {len(conversation_history)} messages to memory agent...")
         await client.query(prompt)
         await _call_progress(progress_callback, "Waiting for memory agent response...")
         async for _ in client.receive_response():
@@ -278,31 +453,6 @@ Check MEMORY.md and update it with any new important information from this conve
     return _format_diff(before, after)
 
 
-SUBAGENT_MEMORY_PROMPT = """You are updating memory for a specialized Vesta sub-agent.
-
-**Agent type**: {agent_name}
-**Memory file path**: {memory_path}
-
-**Agent responsibilities**:
-- browser: Web browsing patterns, screenshot preferences, site-specific behaviors
-- email_calendar: Email style preferences, calendar scheduling patterns, contact communication styles
-- report_writer: Document formatting preferences, writing style, template preferences
-
-**Your task**:
-1. Review the current MEMORY.md content provided below
-2. Review the recent interactions/outputs from this agent
-3. Write the updated MEMORY.md to {memory_path}
-4. ONLY update information relevant to this specific agent type
-
-**Guidelines**:
-- Keep updates focused on the agent's specific domain
-- Document patterns that improve future performance
-- Note any preferences or corrections the user made
-- Remove outdated or irrelevant information
-- Be concise and actionable
-"""
-
-
 async def preserve_subagent_memory(
     agent_name: str,
     *,
@@ -310,7 +460,8 @@ async def preserve_subagent_memory(
     config: vm.VestaSettings,
     progress_callback: ProgressCallback = None,
 ) -> str:
-    """Update memory for a specific sub-agent based on its interactions."""
+    from .registry import AGENT_REGISTRY
+
     start_time = time.monotonic()
 
     if not conversations:
@@ -340,7 +491,12 @@ Update the MEMORY.md for this agent with any relevant patterns or preferences.""
     await _call_progress(progress_callback, f"Connecting to memory agent for {agent_name}...")
     logger.debug(f"[MEMORY] Spawning {agent_name} memory agent")
 
-    agent_prompt = SUBAGENT_MEMORY_PROMPT.format(agent_name=agent_name, memory_path=memory_path)
+    agent_description = AGENT_REGISTRY[agent_name].description if agent_name in AGENT_REGISTRY else ""
+    agent_prompt = SUBAGENT_MEMORY_PROMPT.format(
+        agent_name=agent_name,
+        memory_path=memory_path,
+        agent_description=agent_description,
+    )
 
     async with ClaudeSDKClient(
         options=ClaudeAgentOptions(
@@ -380,7 +536,6 @@ async def consolidate_all_memories(
     config: vm.VestaSettings,
     progress_callback: ProgressCallback = None,
 ) -> dict[str, str]:
-    """Consolidate memories for main agent and all sub-agents with conversations."""
     results: dict[str, str] = {}
     start_time = time.monotonic()
 
@@ -390,7 +545,6 @@ async def consolidate_all_memories(
     agents_to_process.extend(name for name, convs in subagent_conversations.items() if convs)
     logger.info(f"[MEMORY] Starting consolidation for {len(agents_to_process)} agents: {agents_to_process}")
 
-    # Main agent memory
     if main_conversation_history:
         await _call_progress(progress_callback, "Consolidating main agent memory...")
         main_diff = await preserve_conversation_memory(
@@ -401,7 +555,6 @@ async def consolidate_all_memories(
         if main_diff:
             results["main"] = main_diff
 
-    # Sub-agent memories
     for agent_name, conversations in subagent_conversations.items():
         if conversations:
             await _call_progress(progress_callback, f"Consolidating {agent_name} agent memory...")
@@ -422,3 +575,80 @@ async def consolidate_all_memories(
         logger.info(f"[MEMORY] Consolidation complete: no changes in {elapsed:.1f}s")
 
     return results
+
+
+# Memory preservation orchestration (merged from memory_ops.py)
+
+
+async def _get_and_clear_subagent_conversations(state: vm.State) -> dict[str, list[str]]:
+    async with state.subagent_conversations_lock:
+        conversations = state.subagent_conversations.copy()
+        state.subagent_conversations.clear()
+        return conversations
+
+
+async def _get_and_clear_conversation_history(state: vm.State) -> list[ConversationMessage]:
+    async with state.conversation_history_lock:
+        history = state.conversation_history.copy()
+        state.conversation_history.clear()
+        return history
+
+
+@contextlib.asynccontextmanager
+async def _heartbeat_logger(message_fn: cab.Callable[[], str], *, interval: float) -> cab.AsyncIterator[None]:
+    async def pulse() -> None:
+        while True:
+            await asyncio.sleep(interval)
+            logger.info(message_fn())
+
+    task = asyncio.create_task(pulse())
+    try:
+        yield
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+
+async def preserve_memory(state: vm.State, *, config: vm.VestaSettings) -> bool:
+    """Preserve memory to disk. Returns True if memory was updated."""
+    if config.ephemeral:
+        logger.info("Skipping memory preservation (ephemeral mode)")
+        return False
+
+    logger.info(f"Preserving memory (timeout {config.memory_agent_timeout}s)...")
+
+    def log_progress(message: str) -> None:
+        logger.info(f"Memory agent: {message}")
+
+    start_time = dt.datetime.now()
+
+    def heartbeat_message() -> str:
+        elapsed = int((dt.datetime.now() - start_time).total_seconds())
+        return f"Memory agent still running... {elapsed}s elapsed"
+
+    async with _heartbeat_logger(heartbeat_message, interval=30):
+        subagent_convos = await _get_and_clear_subagent_conversations(state)
+        history = await _get_and_clear_conversation_history(state)
+
+        backup_all_memories(config)
+
+        results = await consolidate_all_memories(
+            history if history else None,
+            subagent_conversations=subagent_convos,
+            config=config,
+            progress_callback=log_progress,
+        )
+
+        elapsed = (dt.datetime.now() - start_time).total_seconds()
+
+        if results:
+            logger.info(Messages.MEMORY_UPDATED)
+            for agent_name, diff in results.items():
+                logger.info(f"--- {agent_name} memory ---")
+                logger.info(diff)
+            logger.info(f"[MEMORY] Total preservation time: {elapsed:.1f}s ({len(results)} agents updated)")
+            return True
+        else:
+            logger.info(f"[MEMORY] No significant updates ({elapsed:.1f}s)")
+            return False

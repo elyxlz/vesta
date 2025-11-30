@@ -5,6 +5,7 @@ import vesta.effects as vfx
 import vesta.models as vm
 import vesta.utils as vu
 from vesta.effects import logger
+from vesta.registry import CORE_MCPS
 
 
 async def load_notifications(*, config: vm.VestaSettings) -> list[vm.Notification]:
@@ -12,14 +13,17 @@ async def load_notifications(*, config: vm.VestaSettings) -> list[vm.Notificatio
 
     notifications = []
     for file, content in file_contents:
-        data = vu.parse_notification_file_content(content)
-        notif = vm.Notification(**data)
-        notif.file_path = str(file)
-        if notif.message and notif.message.strip():
-            notifications.append(notif)
-        else:
-            logger.info(f"Skipping media notification: {file.name}")
-            vfx.delete_file(file)
+        try:
+            data = vu.parse_notification_file_content(content)
+            notif = vm.Notification(**data)
+            notif.file_path = str(file)
+            if notif.message and notif.message.strip():
+                notifications.append(notif)
+            else:
+                logger.info(f"Skipping media notification: {file.name}")
+                vfx.delete_file(file)
+        except Exception as e:
+            logger.error(f"Failed to parse notification {file.name}: {e}")
 
     return notifications
 
@@ -28,8 +32,7 @@ async def maybe_enqueue_whatsapp_greeting(queue: asyncio.Queue, *, config: vm.Ve
     if not config.enable_whatsapp_greeting:
         return
 
-    servers = config.mcp_servers
-    if "whatsapp" not in servers:
+    if "whatsapp" not in CORE_MCPS:
         return
 
     prompt = (config.whatsapp_greeting_prompt or "").strip()

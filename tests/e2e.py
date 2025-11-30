@@ -14,9 +14,8 @@ from pathlib import Path
 import vesta.main as vmain
 import vesta.models as vm
 import vesta.logging_setup as vlog
-from vesta.agents import AGENT_NAMES, get_memory_path
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+from vesta.registry import get_agent_names
+from vesta.memory import get_memory_path
 
 
 # =============================================================================
@@ -25,12 +24,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _prepare_state_dir(state_dir: Path) -> None:
-    """Create required directories and memory file for test."""
-    for folder in ("notifications", "logs", "data", "onedrive", "workspace"):
+    """Create required directories for test. Memory is initialized by Vesta from templates."""
+    for folder in ("notifications", "logs", "data", "onedrive", "workspace", "memory"):
         (state_dir / folder).mkdir(parents=True, exist_ok=True)
-    memory_src = PROJECT_ROOT / "MEMORY.md"
-    memory_target = state_dir / "MEMORY.md"
-    memory_target.write_text(memory_src.read_text() if memory_src.exists() else "Temporary memory for e2e tests.\n")
 
 
 def _write_notification(notif_dir: Path, message: str, *, sender: str = "pytest") -> Path:
@@ -229,7 +225,7 @@ def test_subagents_available_on_startup(tmp_path):
     async def test_fn(state: vm.State, config: vm.VestaSettings):
         assert state.client is not None
 
-        for agent_name in AGENT_NAMES:
+        for agent_name in get_agent_names():
             memory_path = get_memory_path(config, agent_name=agent_name)
             assert memory_path.exists(), f"Memory for {agent_name} should be initialized"
 
@@ -243,12 +239,12 @@ def test_memory_initialized_from_templates(tmp_path):
     config = _make_config(state_dir)
 
     # Verify no memory files exist before startup
-    for agent_name in AGENT_NAMES:
+    for agent_name in get_agent_names():
         memory_path = get_memory_path(config, agent_name=agent_name)
         assert not memory_path.exists()
 
     async def test_fn(state: vm.State, config: vm.VestaSettings):
-        for agent_name in AGENT_NAMES:
+        for agent_name in get_agent_names():
             memory_path = get_memory_path(config, agent_name=agent_name)
             assert memory_path.exists(), f"Memory for {agent_name} should exist"
             content = memory_path.read_text()

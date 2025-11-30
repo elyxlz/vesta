@@ -27,7 +27,7 @@ def check_fusermount_installed() -> bool:
 
 
 def setup_rclone_config(config: VestaSettings, *, config_path: pl.Path) -> None:
-    token = config.get_secret(config.onedrive_token)
+    token = config.onedrive_token.get_secret_value() if config.onedrive_token else None
     if not token:
         raise ValueError("ONEDRIVE_TOKEN is required for OneDrive sync")
 
@@ -40,8 +40,8 @@ def setup_rclone_config(config: VestaSettings, *, config_path: pl.Path) -> None:
 type = onedrive
 """
 
-    client_id = config.get_secret(config.onedrive_client_id)
-    client_secret = config.get_secret(config.onedrive_client_secret)
+    client_id = config.onedrive_client_id.get_secret_value() if config.onedrive_client_id else None
+    client_secret = config.onedrive_client_secret.get_secret_value() if config.onedrive_client_secret else None
     if client_id and client_secret:
         rclone_config += f"""client_id = {client_id}
 client_secret = {client_secret}
@@ -98,6 +98,10 @@ async def mount_onedrive(config: VestaSettings, *, mount_dir: pl.Path, config_pa
         "5m",
         "--poll-interval",
         "30s",
+        "--vfs-write-back",
+        "5s",
+        "--transfers",
+        "4",
         "--fast-list",
         "--log-file",
         str(config.logs_dir / "onedrive-mount.log"),

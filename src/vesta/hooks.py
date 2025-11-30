@@ -3,12 +3,12 @@ import typing as tp
 from claude_agent_sdk import HookMatcher, HookContext
 from claude_agent_sdk.types import HookInput, HookJSONOutput, HookEvent, HookCallback
 
-from vesta.agents import AGENT_NAMES
+from vesta.registry import AGENT_REGISTRY
 import vesta.models as vm
 from vesta.effects import logger
 
 
-async def log_tool_start(input_data: HookInput, *, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
+async def log_tool_start(input_data: HookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
     tool = input_data.get("tool_name", "unknown")
     logger.info(f"TOOL start: {tool}")
     if tool == "Task":
@@ -21,7 +21,10 @@ async def log_tool_start(input_data: HookInput, *, tool_use_id: str | None, cont
 
 
 def build_hooks(state: vm.State) -> dict[HookEvent, list[HookMatcher]]:
-    async def log_tool_finish(input_data: HookInput, *, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
+    # Derive from registry - set for O(1) lookup
+    agent_names = set(AGENT_REGISTRY.keys())
+
+    async def log_tool_finish(input_data: HookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
         tool = input_data.get("tool_name", "unknown")
         logger.info(f"TOOL done: {tool}")
 
@@ -30,7 +33,7 @@ def build_hooks(state: vm.State) -> dict[HookEvent, list[HookMatcher]]:
             tool_response = input_data.get("tool_response", "")
             if isinstance(tool_input, dict):
                 subagent_type = tool_input.get("subagent_type")
-                if subagent_type and subagent_type in AGENT_NAMES and tool_response:
+                if subagent_type and subagent_type in agent_names and tool_response:
                     async with state.subagent_conversations_lock:
                         if subagent_type not in state.subagent_conversations:
                             state.subagent_conversations[subagent_type] = []
