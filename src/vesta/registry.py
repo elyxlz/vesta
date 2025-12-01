@@ -114,7 +114,7 @@ def _build_pdf_reader_mcp(config: VestaSettings) -> McpServer:
 MCP_BUILDERS: dict[McpName, tp.Callable[[VestaSettings], McpServer]] = {
     "whatsapp": _build_whatsapp_mcp,
     "reminder": lambda c: _build_uv_mcp(c, "reminder", notifications=True),
-    "task": lambda c: _build_uv_mcp(c, "task"),
+    "task": lambda c: _build_uv_mcp(c, "task", notifications=True),
     "what-day": lambda c: _build_uv_mcp(c, "what-day"),
     "playwright": _build_playwright_mcp,
     "microsoft": lambda c: _build_uv_mcp(

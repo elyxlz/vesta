@@ -9,7 +9,6 @@ from pathlib import Path
 import vesta.models as vm
 from vesta.registry import (
     build_all_agents,
-    get_active_agents,
     get_memory_templates,
     ALL_AGENTS,
     MCP_REGISTRY,

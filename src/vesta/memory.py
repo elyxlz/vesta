@@ -374,7 +374,7 @@ async def preserve_conversation_memory(
     config: vm.VestaSettings,
     progress_callback: ProgressCallback = None,
 ) -> str:
-    from .registry import ALL_AGENTS, get_active_agents
+    from .registry import get_active_agents
 
     start_time = time.monotonic()
 

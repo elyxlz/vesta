@@ -3,21 +3,26 @@ from contextlib import closing, asynccontextmanager
 from dataclasses import dataclass
 from collections.abc import AsyncIterator
 import argparse
+import logging
+import re
 import sqlite3
+import threading
 import uuid
 from pathlib import Path
 from mcp.server.fastmcp import FastMCP, Context
 
+from . import monitor
 
-def _validate_directory(path_str: str | None, *, param_name: str) -> Path:
-    """Validate and prepare a directory parameter"""
+
+def _validate_directory(path_str: str | None, *, param_name: str, required: bool = True) -> Path | None:
     if not path_str:
-        raise ValueError(f"Error: --{param_name} is required")
+        if required:
+            raise ValueError(f"Error: --{param_name} is required")
+        return None
 
     path = Path(path_str).resolve()
     path.mkdir(parents=True, exist_ok=True)
 
-    # Test writability
     test_file = path / ".write_test"
     try:
         test_file.touch()
@@ -28,10 +33,22 @@ def _validate_directory(path_str: str | None, *, param_name: str) -> Path:
     return path
 
 
+def _setup_logger(log_dir: Path) -> logging.Logger:
+    logger = logging.getLogger("task-mcp-monitor")
+    logger.setLevel(logging.INFO)
+    handler = logging.FileHandler(log_dir / "monitor.log")
+    handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+    logger.addHandler(handler)
+    return logger
+
+
 @dataclass
 class TaskContext:
     data_dir: Path
     log_dir: Path
+    notif_dir: Path | None
+    monitor_stop_event: threading.Event | None
+    monitor_thread: threading.Thread | None
 
 
 @asynccontextmanager
@@ -39,18 +56,41 @@ async def task_lifespan(server: FastMCP) -> AsyncIterator[TaskContext]:
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", type=str, required=True)
     parser.add_argument("--log-dir", type=str, required=True)
+    parser.add_argument("--notifications-dir", type=str, required=False)
+    parser.add_argument("--monitor-interval", type=int, default=60)
     args, _ = parser.parse_known_args()
 
     data_dir = _validate_directory(args.data_dir, param_name="data-dir")
+    assert data_dir is not None
     log_dir = _validate_directory(args.log_dir, param_name="log-dir")
+    assert log_dir is not None
+    notif_dir = _validate_directory(args.notifications_dir, param_name="notifications-dir", required=False)
 
-    ctx = TaskContext(data_dir, log_dir)
+    monitor_stop_event = None
+    monitor_thread = None
+
+    if notif_dir:
+        monitor_stop_event = threading.Event()
+        logger = _setup_logger(log_dir)
+        monitor_thread = threading.Thread(
+            target=monitor.run,
+            args=(data_dir / "tasks.db", notif_dir, monitor_stop_event, logger, args.monitor_interval),
+            daemon=True,
+        )
+
+    ctx = TaskContext(data_dir, log_dir, notif_dir, monitor_stop_event, monitor_thread)
     init_db(ctx)
+
+    if monitor_thread:
+        monitor_thread.start()
 
     try:
         yield ctx
     finally:
-        pass
+        if monitor_stop_event:
+            monitor_stop_event.set()
+        if monitor_thread:
+            monitor_thread.join(timeout=5)
 
 
 mcp = FastMCP("task-mcp", lifespan=task_lifespan)
@@ -73,30 +113,71 @@ def init_db(ctx: TaskContext):
                 due_date TEXT,
                 metadata TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                completed_at TEXT
+                completed_at TEXT,
+                notified_thresholds TEXT
             )
         """)
+        # Add column if it doesn't exist (for existing databases)
+        try:
+            conn.execute("ALTER TABLE tasks ADD COLUMN notified_thresholds TEXT")
+        except sqlite3.OperationalError:
+            pass
         conn.commit()
 
 
-def parse_relative_date(date_str: str) -> str | None:
+def parse_due_datetime(date_str: str) -> str | None:
+    """Parse due date/time. Supports:
+    - 'today', 'today 3pm', 'today 15:00'
+    - 'tomorrow', 'tomorrow 9am'
+    - 'in N days'
+    - 'YYYY-MM-DD' or 'YYYY-MM-DDTHH:MM'
+    If no time specified, defaults to 09:00 local time.
+    Returns ISO datetime string.
+    """
     if not date_str:
         return None
 
-    date_str = date_str.lower().strip()
+    date_str = date_str.strip()
     now = dt.now()
 
-    if date_str == "today":
-        return now.date().isoformat()
-    elif date_str == "tomorrow":
-        return (now + timedelta(days=1)).date().isoformat()
-    elif date_str.startswith("in ") and date_str.endswith(" days"):
-        try:
-            return (now + timedelta(days=int(date_str[3:-5]))).date().isoformat()
-        except ValueError:
-            pass
+    # Check if it's already a full ISO datetime (YYYY-MM-DDTHH:MM) - return as-is
+    if re.match(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}", date_str):
+        return date_str
 
-    return date_str
+    # Extract time if present (e.g., "today 3pm", "tomorrow 15:00")
+    time_match = re.search(r"(\d{1,2})(?::(\d{2}))?(?:\s*)?(am|pm)?$", date_str, re.IGNORECASE)
+    hour, minute = 9, 0  # default to 9am
+
+    if time_match:
+        hour = int(time_match.group(1))
+        minute = int(time_match.group(2) or 0)
+        am_pm = time_match.group(3)
+        if am_pm:
+            if am_pm.lower() == "pm" and hour < 12:
+                hour += 12
+            elif am_pm.lower() == "am" and hour == 12:
+                hour = 0
+        date_str = date_str[: time_match.start()].strip()
+
+    date_lower = date_str.lower()
+
+    if date_lower == "today" or date_lower == "":
+        base_date = now.date()
+    elif date_lower == "tomorrow":
+        base_date = (now + timedelta(days=1)).date()
+    elif date_lower.startswith("in ") and "day" in date_lower:
+        days_match = re.search(r"in\s+(\d+)\s+days?", date_lower)
+        if days_match:
+            base_date = (now + timedelta(days=int(days_match.group(1)))).date()
+        else:
+            return date_str
+    elif re.match(r"\d{4}-\d{2}-\d{2}", date_str):
+        # ISO date without time - add default time
+        base_date = dt.fromisoformat(date_str).date()
+    else:
+        return date_str  # Return as-is if unparseable
+
+    return dt(base_date.year, base_date.month, base_date.day, hour, minute).isoformat()
 
 
 def normalize_priority(priority: int | str) -> int:
@@ -115,12 +196,12 @@ def normalize_priority(priority: int | str) -> int:
 
 @mcp.tool()
 def add_task(ctx: Context, *, title: str, due: str | None = None, priority: int | str = 2, metadata: str | None = None) -> dict:
-    """priority: 1-3 or 'low'/'normal'/'high'. due: 'today', 'tomorrow', or YYYY-MM-DD"""
+    """priority: 1-3 or 'low'/'normal'/'high'. due: 'today', 'today 3pm', 'tomorrow 9am', 'in 3 days', 'YYYY-MM-DD', 'YYYY-MM-DDTHH:MM'. Defaults to 9am if no time given."""
     context: TaskContext = ctx.request_context.lifespan_context
     priority = normalize_priority(priority)
 
     task_id = str(uuid.uuid4())[:8]
-    due_date = parse_relative_date(due) if due else None
+    due_date = parse_due_datetime(due) if due else None
 
     with closing(get_db(context)) as conn:
         conn.execute(

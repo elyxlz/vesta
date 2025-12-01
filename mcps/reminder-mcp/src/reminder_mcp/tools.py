@@ -334,14 +334,16 @@ def list_reminders(ctx: Context, limit: int = 50, include_past: bool = False) ->
                 conn.execute("UPDATE reminders SET fired = 1 WHERE id = ?", (row["id"],))
                 continue
 
-            reminders.append({
-                "id": row["id"],
-                "message": row["message"],
-                "schedule": row["schedule_type"],
-                "next_run": job.next_run_time.isoformat() if job and job.next_run_time else None,
-                "created_at": row["created_at"],
-                "status": "active" if job else "stale" if is_stale else "pending",
-            })
+            reminders.append(
+                {
+                    "id": row["id"],
+                    "message": row["message"],
+                    "schedule": row["schedule_type"],
+                    "next_run": job.next_run_time.isoformat() if job and job.next_run_time else None,
+                    "created_at": row["created_at"],
+                    "status": "active" if job else "stale" if is_stale else "pending",
+                }
+            )
 
         conn.commit()
     return reminders
