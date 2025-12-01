@@ -34,6 +34,10 @@ class VestaSettings(pyd_settings.BaseSettings):
     notification_suffix: str = "If this is important or requires the user's attention, consider sending them a WhatsApp message."
     max_thinking_tokens: int | None = 10000
 
+    # MCP and agent configuration
+    core_mcps: list[str] = ["whatsapp", "reminder", "task", "what-day"]
+    active_agents: list[str] = ["email_calendar", "report_writer"]
+
     # Microsoft MCP secrets
     microsoft_mcp_client_id: SecretStr = pyd.Field(default=SecretStr(""))
     microsoft_mcp_tenant_id: str = "common"

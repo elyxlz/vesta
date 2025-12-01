@@ -35,14 +35,14 @@ def get_memory_backup_dir(config: vm.VestaSettings) -> pl.Path:
     return config.state_dir / "memory_backups"
 
 
-def _get_memory_templates() -> dict[str, str]:
+def _get_memory_templates(config: vm.VestaSettings) -> dict[str, str]:
     from .registry import get_memory_templates
 
-    return get_memory_templates()
+    return get_memory_templates(config)
 
 
 def init_all_memories(config: vm.VestaSettings) -> None:
-    for agent_name, template in _get_memory_templates().items():
+    for agent_name, template in _get_memory_templates(config).items():
         memory_path = get_memory_path(config, agent_name=agent_name)
         if not memory_path.exists():
             memory_path.parent.mkdir(parents=True, exist_ok=True)
@@ -57,7 +57,7 @@ def load_memory(config: vm.VestaSettings, *, agent_name: str = "main") -> str:
         logger.debug(f"[MEMORY] Loaded {agent_name} memory ({len(content)} chars)")
         return content
     logger.debug(f"[MEMORY] Using template for {agent_name} (file not found)")
-    return _get_memory_templates()[agent_name]
+    return _get_memory_templates(config)[agent_name]
 
 
 def _get_dir_size(path: pl.Path) -> int:
@@ -374,7 +374,7 @@ async def preserve_conversation_memory(
     config: vm.VestaSettings,
     progress_callback: ProgressCallback = None,
 ) -> str:
-    from .registry import AGENT_REGISTRY, get_agent_names
+    from .registry import ALL_AGENTS, get_active_agents
 
     start_time = time.monotonic()
 
@@ -410,12 +410,13 @@ Check MEMORY.md and update it with any new important information from this conve
     logger.debug("[MEMORY] Spawning main memory agent")
 
     memory_files_list = [f"- Main: {memory_path}"]
-    for name in get_agent_names():
+    for name in config.active_agents:
         agent_path = get_memory_path(config, agent_name=name)
         memory_files_list.append(f"- {name}: {agent_path}")
     memory_files = "\n".join(memory_files_list)
 
-    agent_domains = "\n".join(f"**{a.name}**: {a.description}" for a in AGENT_REGISTRY.values())
+    active_agents = get_active_agents(config)
+    agent_domains = "\n".join(f"**{a.name}**: {a.description}" for a in active_agents.values())
 
     memory_prompt = MEMORY_PROMPT_TEMPLATE.format(
         memory_files=memory_files,
@@ -460,7 +461,8 @@ async def preserve_subagent_memory(
     config: vm.VestaSettings,
     progress_callback: ProgressCallback = None,
 ) -> str:
-    from .registry import AGENT_REGISTRY
+    from .registry import ALL_AGENTS, AgentName
+    import typing as tp
 
     start_time = time.monotonic()
 
@@ -491,7 +493,7 @@ Update the MEMORY.md for this agent with any relevant patterns or preferences.""
     await _call_progress(progress_callback, f"Connecting to memory agent for {agent_name}...")
     logger.debug(f"[MEMORY] Spawning {agent_name} memory agent")
 
-    agent_description = AGENT_REGISTRY[agent_name].description if agent_name in AGENT_REGISTRY else ""
+    agent_description = ALL_AGENTS[tp.cast(AgentName, agent_name)].description if agent_name in ALL_AGENTS else ""
     agent_prompt = SUBAGENT_MEMORY_PROMPT.format(
         agent_name=agent_name,
         memory_path=memory_path,

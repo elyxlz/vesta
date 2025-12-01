@@ -5,7 +5,6 @@ import vesta.effects as vfx
 import vesta.models as vm
 import vesta.utils as vu
 from vesta.effects import logger
-from vesta.registry import CORE_MCPS
 
 
 async def load_notifications(*, config: vm.VestaSettings) -> list[vm.Notification]:
@@ -32,7 +31,7 @@ async def maybe_enqueue_whatsapp_greeting(queue: asyncio.Queue, *, config: vm.Ve
     if not config.enable_whatsapp_greeting:
         return
 
-    if "whatsapp" not in CORE_MCPS:
+    if "whatsapp" not in config.core_mcps:
         return
 
     prompt = (config.whatsapp_greeting_prompt or "").strip()

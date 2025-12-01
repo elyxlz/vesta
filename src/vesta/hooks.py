@@ -3,7 +3,7 @@ import typing as tp
 from claude_agent_sdk import HookMatcher, HookContext
 from claude_agent_sdk.types import HookInput, HookJSONOutput, HookEvent, HookCallback
 
-from vesta.registry import AGENT_REGISTRY
+from vesta.registry import ALL_AGENTS
 import vesta.models as vm
 from vesta.effects import logger
 
@@ -21,8 +21,7 @@ async def log_tool_start(input_data: HookInput, tool_use_id: str | None, context
 
 
 def build_hooks(state: vm.State) -> dict[HookEvent, list[HookMatcher]]:
-    # Derive from registry - set for O(1) lookup
-    agent_names = set(AGENT_REGISTRY.keys())
+    agent_names = set(ALL_AGENTS.keys())
 
     async def log_tool_finish(input_data: HookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
         tool = input_data.get("tool_name", "unknown")

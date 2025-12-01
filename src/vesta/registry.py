@@ -8,8 +8,7 @@ from pathlib import Path
 
 from claude_agent_sdk.types import AgentDefinition as SDKAgentDefinition
 
-if tp.TYPE_CHECKING:
-    from .config import VestaSettings
+from .config import VestaSettings
 
 
 class McpServer(tp.TypedDict):
@@ -19,13 +18,13 @@ class McpServer(tp.TypedDict):
 
 
 ModelType = tp.Literal["sonnet", "opus", "haiku", "inherit"]
-McpName = tp.Literal["playwright", "microsoft", "pdf-reader"]
-AllMcpName = tp.Literal["whatsapp", "reminder", "task", "what-day", "playwright", "microsoft", "pdf-reader"]
+McpName = tp.Literal["whatsapp", "reminder", "task", "what-day", "playwright", "microsoft", "pdf-reader"]
+AgentName = tp.Literal["browser", "email_calendar", "report_writer"]
 
 
 @dataclass(frozen=True)
 class McpDefinition:
-    name: McpName
+    name: str
     tool_suffixes: tuple[str, ...]
 
     @property
@@ -112,7 +111,7 @@ def _build_pdf_reader_mcp(config: VestaSettings) -> McpServer:
     }
 
 
-MCP_BUILDERS: dict[AllMcpName, tp.Callable[[VestaSettings], McpServer]] = {
+MCP_BUILDERS: dict[McpName, tp.Callable[[VestaSettings], McpServer]] = {
     "whatsapp": _build_whatsapp_mcp,
     "reminder": lambda c: _build_uv_mcp(c, "reminder", notifications=True),
     "task": lambda c: _build_uv_mcp(c, "task"),
@@ -130,18 +129,17 @@ MCP_BUILDERS: dict[AllMcpName, tp.Callable[[VestaSettings], McpServer]] = {
     "pdf-reader": _build_pdf_reader_mcp,
 }
 
-CORE_MCPS: set[AllMcpName] = {"whatsapp", "reminder", "task", "what-day"}
-
 
 def build_mcp_servers(config: VestaSettings) -> dict[str, McpServer]:
     """Build MCP server configs for core MCPs + agent MCPs."""
-    enabled = CORE_MCPS | get_agent_mcps()
-    return {name: MCP_BUILDERS[name](config) for name in enabled}
+    agent_mcps = {ALL_AGENTS[tp.cast(AgentName, name)].mcp for name in config.active_agents}
+    enabled = set(config.core_mcps) | set(agent_mcps)
+    return {name: MCP_BUILDERS[tp.cast(McpName, name)](config) for name in enabled}
 
 
 @dataclass(frozen=True)
 class AgentDefinition:
-    name: str
+    name: AgentName
     description: str
     mcp: McpName
     model: ModelType = "inherit"
@@ -214,43 +212,36 @@ MCP_REGISTRY: dict[McpName, McpDefinition] = {
     "pdf-reader": PDF_READER_MCP,
 }
 
-BROWSER_AGENT = AgentDefinition(
-    name="browser",
-    description="Web browsing, screenshots, site navigation patterns, scraping with Playwright",
-    mcp="playwright",
-    model="haiku",
-)
-
-EMAIL_CALENDAR_AGENT = AgentDefinition(
-    name="email_calendar",
-    description="Email operations, calendar events, scheduling preferences, contact communication styles",
-    mcp="microsoft",
-)
-
-REPORT_WRITER_AGENT = AgentDefinition(
-    name="report_writer",
-    description="Document creation, report writing, formatting preferences, writing styles",
-    mcp="pdf-reader",
-)
-
-# Active agents (BROWSER_AGENT temporarily disabled)
-AGENT_REGISTRY: dict[str, AgentDefinition] = {a.name: a for a in [EMAIL_CALENDAR_AGENT, REPORT_WRITER_AGENT]}
+ALL_AGENTS: dict[AgentName, AgentDefinition] = {
+    "browser": AgentDefinition(
+        name="browser",
+        description="Web browsing, screenshots, site navigation patterns, scraping with Playwright",
+        mcp="playwright",
+        model="haiku",
+    ),
+    "email_calendar": AgentDefinition(
+        name="email_calendar",
+        description="Email operations, calendar events, scheduling preferences, contact communication styles",
+        mcp="microsoft",
+    ),
+    "report_writer": AgentDefinition(
+        name="report_writer",
+        description="Document creation, report writing, formatting preferences, writing styles",
+        mcp="pdf-reader",
+    ),
+}
 
 
-def get_agent_names() -> list[str]:
-    return list(AGENT_REGISTRY.keys())
+def get_active_agents(config: VestaSettings) -> dict[str, AgentDefinition]:
+    return {name: ALL_AGENTS[tp.cast(AgentName, name)] for name in config.active_agents}
 
 
-def get_agent_tool_ids(agent_name: str) -> list[str]:
-    return MCP_REGISTRY[AGENT_REGISTRY[agent_name].mcp].tool_ids
+def get_agent_tool_ids(agent_name: AgentName) -> list[str]:
+    return MCP_REGISTRY[ALL_AGENTS[agent_name].mcp].tool_ids
 
 
-def get_all_agent_tool_ids() -> list[str]:
-    return [t for a in AGENT_REGISTRY.values() for t in MCP_REGISTRY[a.mcp].tool_ids]
-
-
-def get_agent_mcps() -> set[McpName]:
-    return {a.mcp for a in AGENT_REGISTRY.values()}
+def get_all_agent_tool_ids(config: VestaSettings) -> list[str]:
+    return [t for name in config.active_agents for t in MCP_REGISTRY[ALL_AGENTS[tp.cast(AgentName, name)].mcp].tool_ids]
 
 
 def load_memory_template(name: str) -> str:
@@ -260,20 +251,21 @@ def load_memory_template(name: str) -> str:
     return path.read_text()
 
 
-def get_memory_templates() -> dict[str, str]:
+def get_memory_templates(config: VestaSettings) -> dict[str, str]:
     templates = {"main": load_memory_template("main")}
-    templates.update({name: load_memory_template(name) for name in AGENT_REGISTRY})
+    templates.update({name: load_memory_template(name) for name in config.active_agents})
     return templates
 
 
-def generate_delegation_prompt() -> str:
+def generate_delegation_prompt(config: VestaSettings) -> str:
     lines = [
         "## Sub-Agent Delegation",
         "",
         "You have specialized sub-agents. **Always delegate to these agents instead of calling their tools directly:**",
         "",
     ]
-    for agent in AGENT_REGISTRY.values():
+    for name in config.active_agents:
+        agent = ALL_AGENTS[tp.cast(AgentName, name)]
         mcp = MCP_REGISTRY[agent.mcp]
         lines.append(f"- **{agent.name}**: {agent.description}")
         lines.append(f'  - Delegate via: `Task(subagent_type="{agent.name}", ...)`')
@@ -286,12 +278,13 @@ def build_all_agents(config: VestaSettings) -> dict[str, SDKAgentDefinition]:
     from .memory import init_all_memories, load_memory
 
     init_all_memories(config)
+    active = get_active_agents(config)
     return {
         name: SDKAgentDefinition(
             description=agent.description,
             prompt=load_memory(config, agent_name=name),
-            tools=get_agent_tool_ids(name),
+            tools=get_agent_tool_ids(tp.cast(AgentName, name)),
             model=agent.model,
         )
-        for name, agent in AGENT_REGISTRY.items()
+        for name, agent in active.items()
     }

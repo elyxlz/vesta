@@ -1,4 +1,4 @@
-from datetime import datetime as dt, timedelta
+from datetime import datetime as dt, timedelta, timezone
 from contextlib import closing, asynccontextmanager
 from dataclasses import dataclass
 from collections.abc import AsyncIterator
@@ -13,7 +13,18 @@ from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.jobstores.base import JobLookupError
 from .scheduler import write_notification
+
+
+def _now_utc() -> dt:
+    return dt.now(timezone.utc)
+
+
+def _parse_datetime(dt_str: str) -> dt:
+    """Parse datetime string to timezone-aware datetime (assumes UTC if naive)."""
+    parsed = dt.fromisoformat(dt_str.replace("Z", "+00:00"))
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
 def _validate_directory(path_str: str | None, *, param_name: str) -> Path:
@@ -149,23 +160,13 @@ def send_reminder_job(reminder_id: str, *, message: str, data_dir: Path, notif_d
 
 
 def check_missed_reminders(ctx: ReminderContext):
-    from datetime import datetime, timezone
-
-    now = datetime.now(timezone.utc).isoformat()
-
+    now = _now_utc()
     with closing(get_db(ctx)) as conn:
-        cursor = conn.execute(
-            "SELECT id, message, scheduled_time FROM reminders WHERE fired = 0 AND scheduled_time < ?",
-            (now,),
-        )
+        cursor = conn.execute("SELECT id, message, scheduled_time FROM reminders WHERE fired = 0 AND scheduled_time IS NOT NULL")
         for row in cursor:
-            write_notification(
-                ctx.notif_dir,
-                row["id"],
-                row["message"],
-                data={"missed": True, "scheduled_time": row["scheduled_time"]},
-            )
-            conn.execute("UPDATE reminders SET fired = 1 WHERE id = ?", (row["id"],))
+            if _parse_datetime(row["scheduled_time"]) < now:
+                write_notification(ctx.notif_dir, row["id"], row["message"], data={"missed": True})
+                conn.execute("UPDATE reminders SET fired = 1 WHERE id = ?", (row["id"],))
         conn.commit()
 
 
@@ -278,7 +279,8 @@ def set_reminder(
         replace_existing=True,
     )
 
-    next_run = context.scheduler.get_job(reminder_id).next_run_time
+    job = context.scheduler.get_job(reminder_id)
+    next_run = job.next_run_time if job else None
 
     with closing(get_db(context)) as conn:
         conn.execute(
@@ -306,44 +308,42 @@ def set_reminder(
     }
 
 
+def _is_stale(scheduled_time_str: str | None, has_job: bool, now: dt) -> bool:
+    """One-time reminder is stale if past due with no active job."""
+    if has_job or not scheduled_time_str:
+        return False
+    return _parse_datetime(scheduled_time_str) < now
+
+
 @mcp.tool()
 def list_reminders(ctx: Context, limit: int = 50, include_past: bool = False) -> list[dict]:
-    """List scheduled reminders (limit: max number to return, default 50; include_past: show reminders that already passed their time, default False)"""
+    """List scheduled reminders."""
     context: ReminderContext = ctx.request_context.lifespan_context
-    from datetime import datetime, timezone
-
-    now = datetime.now(timezone.utc)
-    jobs_map = {job.id: job for job in context.scheduler.get_jobs()}
+    now = _now_utc()
+    jobs = {job.id: job for job in context.scheduler.get_jobs()}
 
     with closing(get_db(context)) as conn:
         cursor = conn.execute("SELECT * FROM reminders WHERE fired = 0 ORDER BY created_at DESC LIMIT ?", (limit,))
-
         reminders = []
+
         for row in cursor:
-            job = jobs_map.get(row["id"])
-            scheduled_time_str = row["scheduled_time"]
+            job = jobs.get(row["id"])
+            is_stale = _is_stale(row["scheduled_time"], job is not None, now)
 
-            # Filter out past one-time reminders unless include_past=True
-            if not include_past and scheduled_time_str:
-                try:
-                    scheduled_time = datetime.fromisoformat(scheduled_time_str)
-                    # Only filter if it's a one-time reminder (no job means it won't recur)
-                    if not job and scheduled_time < now:
-                        continue
-                except (ValueError, TypeError):
-                    pass
+            if is_stale and not include_past:
+                conn.execute("UPDATE reminders SET fired = 1 WHERE id = ?", (row["id"],))
+                continue
 
-            reminders.append(
-                {
-                    "id": row["id"],
-                    "message": row["message"],
-                    "schedule": row["schedule_type"],
-                    "next_run": job.next_run_time.isoformat() if job and job.next_run_time else None,
-                    "created_at": row["created_at"],
-                    "status": "active" if job and job.next_run_time else "pending",
-                }
-            )
+            reminders.append({
+                "id": row["id"],
+                "message": row["message"],
+                "schedule": row["schedule_type"],
+                "next_run": job.next_run_time.isoformat() if job and job.next_run_time else None,
+                "created_at": row["created_at"],
+                "status": "active" if job else "stale" if is_stale else "pending",
+            })
 
+        conn.commit()
     return reminders
 
 
@@ -376,14 +376,13 @@ def update_reminder(ctx: Context, reminder_id: str, *, message: str) -> dict:
 
 @mcp.tool()
 def cancel_reminder(ctx: Context, reminder_id: str) -> dict:
-    """Cancel a scheduled reminder"""
+    """Cancel a scheduled reminder."""
     context: ReminderContext = ctx.request_context.lifespan_context
-    from apscheduler.jobstores.base import JobLookupError
 
     with closing(get_db(context)) as conn:
-        cursor = conn.execute("SELECT * FROM reminders WHERE id = ? AND fired = 0", (reminder_id,))
+        cursor = conn.execute("SELECT 1 FROM reminders WHERE id = ? AND fired = 0", (reminder_id,))
         if not cursor.fetchone():
-            raise ValueError(f"Reminder '{reminder_id}' not found. Use list_reminders() to see active reminders.")
+            raise ValueError(f"Reminder '{reminder_id}' not found")
 
         conn.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))
         conn.commit()

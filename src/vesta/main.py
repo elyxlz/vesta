@@ -26,7 +26,7 @@ from vesta.notifications import (
 def load_system_prompt(config: vm.VestaSettings) -> str:
     """Load main agent's memory as system prompt with delegation instructions."""
     memory = load_memory(config, agent_name="main")
-    return f"{memory}\n\n{generate_delegation_prompt()}"
+    return f"{memory}\n\n{generate_delegation_prompt(config)}"
 
 
 async def attempt_interrupt(state: vm.State, *, config: vm.VestaSettings, reason: str) -> bool:

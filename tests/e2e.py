@@ -14,7 +14,6 @@ from pathlib import Path
 import vesta.main as vmain
 import vesta.models as vm
 import vesta.logging_setup as vlog
-from vesta.registry import get_agent_names
 from vesta.memory import get_memory_path
 
 
@@ -225,7 +224,7 @@ def test_subagents_available_on_startup(tmp_path):
     async def test_fn(state: vm.State, config: vm.VestaSettings):
         assert state.client is not None
 
-        for agent_name in get_agent_names():
+        for agent_name in config.active_agents:
             memory_path = get_memory_path(config, agent_name=agent_name)
             assert memory_path.exists(), f"Memory for {agent_name} should be initialized"
 
@@ -239,12 +238,12 @@ def test_memory_initialized_from_templates(tmp_path):
     config = _make_config(state_dir)
 
     # Verify no memory files exist before startup
-    for agent_name in get_agent_names():
+    for agent_name in config.active_agents:
         memory_path = get_memory_path(config, agent_name=agent_name)
         assert not memory_path.exists()
 
     async def test_fn(state: vm.State, config: vm.VestaSettings):
-        for agent_name in get_agent_names():
+        for agent_name in config.active_agents:
             memory_path = get_memory_path(config, agent_name=agent_name)
             assert memory_path.exists(), f"Memory for {agent_name} should exist"
             content = memory_path.read_text()
