@@ -194,7 +194,7 @@ async def check_proactive_task(queue: asyncio.Queue, *, config: vm.VestaSettings
 
 async def process_nightly_memory(state: vm.State, *, config: vm.VestaSettings) -> None:
     now = vfx.get_current_time()
-    if config.enable_nightly_memory and now.hour == config.nightly_memory_time:
+    if config.nightly_memory_hour is not None and now.hour == config.nightly_memory_hour:
         if state.last_memory_consolidation is None or now.date() > state.last_memory_consolidation.date():
             logger.info(Messages.NIGHTLY_MEMORY)
             updated = await preserve_memory(state, config=config)

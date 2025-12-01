@@ -28,9 +28,6 @@ async def load_notifications(*, config: vm.VestaSettings) -> list[vm.Notificatio
 
 
 async def maybe_enqueue_whatsapp_greeting(queue: asyncio.Queue, *, config: vm.VestaSettings) -> None:
-    if not config.enable_whatsapp_greeting:
-        return
-
     if "whatsapp" not in config.core_mcps:
         return
 
