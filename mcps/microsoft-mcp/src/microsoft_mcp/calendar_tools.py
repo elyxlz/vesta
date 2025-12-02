@@ -175,7 +175,7 @@ def create_event(
     location: str | None = None,
     body: str | None = None,
     attendees: list[str] | None = None,
-    timezone: str = "UTC",
+    timezone: str,
     calendar_name: str | None = None,
     is_all_day: bool = False,
     recurrence: Literal["daily", "weekly", "monthly", "yearly"] | None = None,
@@ -276,9 +276,12 @@ def update_event(
     end: str | None = None,
     location: str | None = None,
     body: str | None = None,
-    timezone: str = "UTC",
+    timezone: str | None = None,
 ) -> dict[str, Any]:
-    """start/end: ISO-8601 datetime"""
+    """start/end: ISO-8601 datetime. timezone: required when updating start or end."""
+    if (start is not None or end is not None) and timezone is None:
+        raise ValueError("timezone is required when updating start or end")
+
     context: MicrosoftContext = ctx.request_context.lifespan_context
     account_id = auth.get_account_id_by_email(account_email, context.cache_file, settings=context.settings)
     formatted_updates: dict[str, Any] = {}

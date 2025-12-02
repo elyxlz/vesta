@@ -14,7 +14,10 @@ def write_notification(
 ):
     notif_dir.mkdir(exist_ok=True)
 
-    priority_label = {1: "low", 2: "normal", 3: "high"}.get(priority, "normal")
+    PRIORITY_LABELS = {1: "low", 2: "normal", 3: "high"}
+    if priority not in PRIORITY_LABELS:
+        raise ValueError(f"Invalid priority {priority}, must be 1, 2, or 3")
+    priority_label = PRIORITY_LABELS[priority]
 
     notif = {
         "timestamp": datetime.now(timezone.utc).isoformat(),

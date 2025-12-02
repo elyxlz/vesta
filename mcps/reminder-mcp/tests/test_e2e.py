@@ -72,7 +72,7 @@ async def test_set_and_list_reminder():
 
         result = await session.call_tool(
             "set_reminder",
-            {"message": "Test reminder", "scheduled_datetime": future_time.isoformat()},
+            {"message": "Test reminder", "scheduled_datetime": future_time.isoformat(), "tz": "UTC"},
         )
 
         assert not result.isError
@@ -95,7 +95,7 @@ async def test_cancel_reminder():
         future_time = datetime.now() + timedelta(hours=2)
         set_result = await session.call_tool(
             "set_reminder",
-            {"message": "To be cancelled", "scheduled_datetime": future_time.isoformat()},
+            {"message": "To be cancelled", "scheduled_datetime": future_time.isoformat(), "tz": "UTC"},
         )
 
         response = parse_result(set_result)
@@ -113,30 +113,33 @@ async def test_cancel_reminder():
 
 @pytest.mark.asyncio
 async def test_weekly_recurring_reminder():
-    """Test setting a weekly recurring reminder"""
+    """Test setting a weekly recurring reminder - uses datetime to extract day/time"""
     async for session, _ in get_session():
+        # Use a Monday at 09:00 UTC as reference
+        monday_9am = datetime(2024, 12, 2, 9, 0, 0)  # This is a Monday
         set_result = await session.call_tool(
             "set_reminder",
-            {"message": "Weekly meeting", "recurring": "weekly", "day_of_week": "monday", "time": "09:00"},
+            {"message": "Weekly meeting", "recurring": "weekly", "scheduled_datetime": monday_9am.isoformat(), "tz": "UTC"},
         )
 
         assert not set_result.isError
         response = parse_result(set_result)
 
         assert response["status"] == "scheduled"
-        assert "monday" in response["schedule"].lower()
-        assert "09:00" in response["schedule"]
+        assert "weekly" in response["schedule"].lower()
 
         await session.call_tool("cancel_reminder", {"reminder_id": response["id"]})
 
 
 @pytest.mark.asyncio
 async def test_daily_recurring_reminder():
-    """Test setting a daily recurring reminder"""
+    """Test setting a daily recurring reminder - uses datetime to extract time"""
     async for session, _ in get_session():
+        # Use 10:30 UTC as reference time
+        ref_time = datetime(2024, 12, 2, 10, 30, 0)
         set_result = await session.call_tool(
             "set_reminder",
-            {"message": "Daily standup", "recurring": "daily", "time": "10:30"},
+            {"message": "Daily standup", "recurring": "daily", "scheduled_datetime": ref_time.isoformat(), "tz": "UTC"},
         )
 
         assert not set_result.isError
@@ -144,7 +147,6 @@ async def test_daily_recurring_reminder():
 
         assert response["status"] == "scheduled"
         assert "daily" in response["schedule"]
-        assert "10:30" in response["schedule"]
 
         await session.call_tool("cancel_reminder", {"reminder_id": response["id"]})
 
@@ -171,7 +173,7 @@ async def test_hourly_recurring_reminder():
 async def test_one_time_reminder_minutes():
     """Test setting a one-time reminder with minutes"""
     async for session, _ in get_session():
-        set_result = await session.call_tool("set_reminder", {"message": "Take a break", "minutes": 15})
+        set_result = await session.call_tool("set_reminder", {"message": "Take a break", "in_minutes": 15})
 
         assert not set_result.isError
         response = parse_result(set_result)
@@ -184,17 +186,17 @@ async def test_one_time_reminder_minutes():
 
 
 @pytest.mark.asyncio
-async def test_one_time_reminder_seconds():
-    """Test setting a one-time reminder with seconds"""
+async def test_one_time_reminder_minutes():
+    """Test setting a one-time reminder with minutes"""
     async for session, _ in get_session():
-        set_result = await session.call_tool("set_reminder", {"message": "Quick check", "seconds": 30})
+        set_result = await session.call_tool("set_reminder", {"message": "Quick check", "in_minutes": 1})
 
         assert not set_result.isError
         response = parse_result(set_result)
 
         assert response["status"] == "scheduled"
         assert "once" in response["schedule"]
-        assert "second" in response["schedule"]
+        assert "minute" in response["schedule"]
 
         await session.call_tool("cancel_reminder", {"reminder_id": response["id"]})
 
@@ -203,7 +205,7 @@ async def test_one_time_reminder_seconds():
 async def test_one_time_reminder_hours():
     """Test setting a one-time reminder with hours"""
     async for session, _ in get_session():
-        set_result = await session.call_tool("set_reminder", {"message": "Lunch time", "hours": 2})
+        set_result = await session.call_tool("set_reminder", {"message": "Lunch time", "in_hours": 2})
 
         assert not set_result.isError
         response = parse_result(set_result)
@@ -219,7 +221,7 @@ async def test_one_time_reminder_hours():
 async def test_one_time_reminder_days():
     """Test setting a one-time reminder with days"""
     async for session, _ in get_session():
-        set_result = await session.call_tool("set_reminder", {"message": "Weekly review", "days": 7})
+        set_result = await session.call_tool("set_reminder", {"message": "Weekly review", "in_days": 7})
 
         assert not set_result.isError
         response = parse_result(set_result)
@@ -237,7 +239,7 @@ async def test_one_time_reminder_combined_units():
     async for session, _ in get_session():
         set_result = await session.call_tool(
             "set_reminder",
-            {"message": "Meeting", "hours": 1, "minutes": 30},
+            {"message": "Meeting", "in_hours": 1, "in_minutes": 30},
         )
 
         assert not set_result.isError
@@ -274,32 +276,37 @@ async def test_invalid_time_format():
 
 
 @pytest.mark.asyncio
-async def test_weekly_without_time_defaults_to_9am():
-    """Test weekly reminder without time defaults to 09:00"""
+async def test_weekly_extracts_day_from_datetime():
+    """Test weekly reminder extracts day-of-week from scheduled_datetime"""
     async for session, _ in get_session():
+        # Friday at 17:00 UTC
+        friday_5pm = datetime(2024, 12, 6, 17, 0, 0)
         result = await session.call_tool(
             "set_reminder",
-            {"message": "Test", "recurring": "weekly", "day_of_week": "monday"},
+            {"message": "Test", "recurring": "weekly", "scheduled_datetime": friday_5pm.isoformat(), "tz": "UTC"},
         )
         assert not result.isError
         response = parse_result(result)
-        # Schedule should mention the day but not a specific time (uses default)
-        assert "monday" in response["schedule"].lower()
+        assert "weekly" in response["schedule"].lower()
+        assert "fri" in response["schedule"].lower()
 
         await session.call_tool("cancel_reminder", {"reminder_id": response["id"]})
 
 
 @pytest.mark.asyncio
-async def test_daily_without_time_defaults_to_9am():
-    """Test daily reminder without time defaults to 09:00"""
+async def test_daily_extracts_time_from_datetime():
+    """Test daily reminder extracts time from scheduled_datetime"""
     async for session, _ in get_session():
+        # 14:30 UTC
+        ref_time = datetime(2024, 12, 2, 14, 30, 0)
         result = await session.call_tool(
             "set_reminder",
-            {"message": "Daily check", "recurring": "daily"},
+            {"message": "Daily check", "recurring": "daily", "scheduled_datetime": ref_time.isoformat(), "tz": "UTC"},
         )
         assert not result.isError
         response = parse_result(result)
         assert "daily" in response["schedule"]
+        assert "14:30" in response["schedule"]
 
         await session.call_tool("cancel_reminder", {"reminder_id": response["id"]})
 
@@ -308,7 +315,7 @@ async def test_daily_without_time_defaults_to_9am():
 async def test_update_reminder():
     """Test updating a reminder message"""
     async for session, _ in get_session():
-        set_result = await session.call_tool("set_reminder", {"message": "Original message", "minutes": 60})
+        set_result = await session.call_tool("set_reminder", {"message": "Original message", "in_minutes": 60})
         response = parse_result(set_result)
         reminder_id = response["id"]
 
@@ -350,7 +357,7 @@ async def test_list_reminders_limit():
         # Create 5 reminders
         reminder_ids = []
         for i in range(5):
-            result = await session.call_tool("set_reminder", {"message": f"Reminder {i}", "minutes": 60 + i})
+            result = await session.call_tool("set_reminder", {"message": f"Reminder {i}", "in_minutes": 60 + i})
             reminder_ids.append(parse_result(result)["id"])
 
         # List with limit=3 - should return at most 3
@@ -368,17 +375,18 @@ async def test_list_reminders_limit():
 async def test_notification_fires():
     """Test that notification file is created when reminder fires"""
     async for session, notif_dir in get_session():
-        # Set reminder to fire in 1 second
+        # Set reminder to fire in 2 seconds using scheduled_datetime
+        fire_time = (datetime.now() + timedelta(seconds=2)).isoformat()
         set_result = await session.call_tool(
             "set_reminder",
-            {"message": "Quick reminder", "seconds": 1},
+            {"message": "Quick reminder", "scheduled_datetime": fire_time, "tz": "UTC"},
         )
         assert not set_result.isError
         response = parse_result(set_result)
         reminder_id = response["id"]
 
         # Wait for reminder to fire
-        time.sleep(2)
+        time.sleep(4)
 
         # Check notification was created
         notif_files = list(notif_dir.glob("*-scheduler-reminder.json"))
@@ -396,15 +404,17 @@ async def test_notification_fires():
 async def test_fired_reminder_removed_from_list():
     """Test that fired one-time reminders are marked as fired"""
     async for session, _ in get_session():
+        # Fire in 2 seconds
+        fire_time = (datetime.now() + timedelta(seconds=2)).isoformat()
         set_result = await session.call_tool(
             "set_reminder",
-            {"message": "Fire soon", "seconds": 1},
+            {"message": "Fire soon", "scheduled_datetime": fire_time, "tz": "UTC"},
         )
         response = parse_result(set_result)
         reminder_id = response["id"]
 
         # Wait for reminder to fire
-        time.sleep(2)
+        time.sleep(4)
 
         # List should not include the fired reminder
         list_result = await session.call_tool("list_reminders", {})
@@ -433,11 +443,13 @@ async def test_recurring_reminder_stays_in_list():
 
 @pytest.mark.asyncio
 async def test_time_format_24hour():
-    """Test 24-hour time format works"""
+    """Test 24-hour time format works via scheduled_datetime"""
     async for session, _ in get_session():
+        # 22:30 UTC
+        ref_time = datetime(2024, 12, 2, 22, 30, 0)
         result = await session.call_tool(
             "set_reminder",
-            {"message": "Evening reminder", "recurring": "daily", "time": "22:30"},
+            {"message": "Evening reminder", "recurring": "daily", "scheduled_datetime": ref_time.isoformat(), "tz": "UTC"},
         )
         assert not result.isError
         response = parse_result(result)
@@ -453,7 +465,7 @@ async def test_scheduled_datetime_iso_format():
         future_time = (datetime.now() + timedelta(hours=2)).isoformat()
         result = await session.call_tool(
             "set_reminder",
-            {"message": "ISO datetime test", "scheduled_datetime": future_time},
+            {"message": "ISO datetime test", "scheduled_datetime": future_time, "tz": "UTC"},
         )
         assert not result.isError
         response = parse_result(result)
@@ -467,19 +479,21 @@ async def test_multiple_reminders_different_types():
     """Test creating multiple reminders of different types"""
     async for session, _ in get_session():
         # One-time
-        r1 = await session.call_tool("set_reminder", {"message": "One-time", "minutes": 60})
+        r1 = await session.call_tool("set_reminder", {"message": "One-time", "in_minutes": 60})
         assert not r1.isError
         id1 = parse_result(r1)["id"]
 
-        # Daily
-        r2 = await session.call_tool("set_reminder", {"message": "Daily", "recurring": "daily", "time": "08:00"})
+        # Daily at 08:00 UTC
+        daily_time = datetime(2024, 12, 2, 8, 0, 0)
+        r2 = await session.call_tool("set_reminder", {"message": "Daily", "recurring": "daily", "scheduled_datetime": daily_time.isoformat(), "tz": "UTC"})
         assert not r2.isError
         id2 = parse_result(r2)["id"]
 
-        # Weekly
+        # Weekly on Friday at 17:00 UTC
+        friday_5pm = datetime(2024, 12, 6, 17, 0, 0)
         r3 = await session.call_tool(
             "set_reminder",
-            {"message": "Weekly", "recurring": "weekly", "day_of_week": "friday", "time": "17:00"},
+            {"message": "Weekly", "recurring": "weekly", "scheduled_datetime": friday_5pm.isoformat(), "tz": "UTC"},
         )
         assert not r3.isError
         id3 = parse_result(r3)["id"]
@@ -501,7 +515,7 @@ async def test_multiple_reminders_different_types():
 async def test_reminder_has_next_run_time():
     """Test that reminders include next_run time"""
     async for session, _ in get_session():
-        result = await session.call_tool("set_reminder", {"message": "Has next run", "minutes": 30})
+        result = await session.call_tool("set_reminder", {"message": "Has next run", "in_minutes": 30})
         response = parse_result(result)
 
         assert response["next_run"] is not None

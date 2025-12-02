@@ -53,7 +53,7 @@ async def test_add_and_list_task():
     async for session, _ in get_session():
         result = await session.call_tool(
             "add_task",
-            {"title": "Test task", "priority": 3, "due": "tomorrow"},
+            {"title": "Test task", "priority": 3, "due_in_days": 1},
         )
 
         assert not result.isError
@@ -105,31 +105,29 @@ async def test_task_priority_sorting():
 
 
 @pytest.mark.asyncio
-async def test_due_datetime_with_time():
+async def test_due_datetime_with_timezone():
     async for session, _ in get_session():
         result = await session.call_tool(
             "add_task",
-            {"title": "Task with time", "due": "tomorrow 3pm"},
+            {"title": "Task with datetime", "due_datetime": "2025-12-15T15:00:00", "timezone": "UTC"},
         )
 
         assert not result.isError
         response = parse_result(result)
         assert response["due_date"] is not None
-        assert "T15:00" in response["due_date"]
+        assert "2025-12-15" in response["due_date"]
 
 
 @pytest.mark.asyncio
-async def test_due_datetime_defaults_to_9am():
+async def test_due_datetime_requires_timezone():
     async for session, _ in get_session():
         result = await session.call_tool(
             "add_task",
-            {"title": "Task without time", "due": "tomorrow"},
+            {"title": "Task missing timezone", "due_datetime": "2025-12-15T15:00:00"},
         )
 
-        assert not result.isError
-        response = parse_result(result)
-        assert response["due_date"] is not None
-        assert "T09:00" in response["due_date"]
+        assert result.isError
+        # Should error because timezone is required with due_datetime
 
 
 @pytest.mark.asyncio
@@ -169,10 +167,9 @@ async def test_monitor_sends_notifications():
 
     async for session, notif_dir in get_session(with_notifications=True, monitor_interval=1):
         # Create a task due in 30 minutes (within 1 hour threshold)
-        due_time = datetime.now() + timedelta(minutes=30)
         result = await session.call_tool(
             "add_task",
-            {"title": "Urgent task", "due": due_time.strftime("%Y-%m-%dT%H:%M")},
+            {"title": "Urgent task", "due_in_minutes": 30},
         )
         assert not result.isError
 
@@ -202,10 +199,9 @@ async def test_monitor_no_notification_for_far_future_task():
 
     async for session, notif_dir in get_session(with_notifications=True, monitor_interval=1):
         # Task due in 2 weeks (beyond 1 week threshold)
-        due_time = datetime.now() + timedelta(weeks=2)
         result = await session.call_tool(
             "add_task",
-            {"title": "Far future task", "due": due_time.strftime("%Y-%m-%dT%H:%M")},
+            {"title": "Far future task", "due_in_days": 14},
         )
         assert not result.isError
 
@@ -221,11 +217,12 @@ async def test_monitor_no_notification_for_past_due_task():
     from datetime import timedelta
 
     async for session, notif_dir in get_session(with_notifications=True, monitor_interval=1):
-        # Task due 1 hour ago (already past)
-        due_time = datetime.now() - timedelta(hours=1)
+        # Task due 1 hour ago (already past) - use datetime with timezone
+        from datetime import timezone as tz
+        past_time = (datetime.now(tz.utc) - timedelta(hours=1)).isoformat()
         result = await session.call_tool(
             "add_task",
-            {"title": "Past due task", "due": due_time.strftime("%Y-%m-%dT%H:%M")},
+            {"title": "Past due task", "due_datetime": past_time.split("+")[0], "timezone": "UTC"},
         )
         assert not result.isError
 
@@ -241,10 +238,9 @@ async def test_monitor_notification_deduplication():
     from datetime import timedelta
 
     async for session, notif_dir in get_session(with_notifications=True, monitor_interval=1):
-        due_time = datetime.now() + timedelta(minutes=30)
         result = await session.call_tool(
             "add_task",
-            {"title": "Dedup task", "due": due_time.strftime("%Y-%m-%dT%H:%M")},
+            {"title": "Dedup task", "due_in_minutes": 30},
         )
         assert not result.isError
 
@@ -260,38 +256,38 @@ async def test_monitor_notification_deduplication():
 
 
 @pytest.mark.asyncio
-async def test_due_datetime_today_with_various_times():
-    """Test various time formats with 'today'."""
+async def test_due_relative_time_options():
+    """Test relative time options (due_in_minutes, due_in_hours, due_in_days)."""
     async for session, _ in get_session():
-        # 12-hour format with pm
-        result = await session.call_tool("add_task", {"title": "Task 1", "due": "today 3pm"})
-        assert "T15:00" in parse_result(result)["due_date"]
+        # due_in_minutes
+        result = await session.call_tool("add_task", {"title": "Task 1", "due_in_minutes": 30})
+        assert not result.isError
+        assert parse_result(result)["due_date"] is not None
 
-        # 24-hour format
-        result = await session.call_tool("add_task", {"title": "Task 2", "due": "today 14:30"})
-        assert "T14:30" in parse_result(result)["due_date"]
+        # due_in_hours
+        result = await session.call_tool("add_task", {"title": "Task 2", "due_in_hours": 2})
+        assert not result.isError
+        assert parse_result(result)["due_date"] is not None
 
-        # 12am edge case (midnight)
-        result = await session.call_tool("add_task", {"title": "Task 3", "due": "today 12am"})
-        assert "T00:00" in parse_result(result)["due_date"]
-
-        # 12pm edge case (noon)
-        result = await session.call_tool("add_task", {"title": "Task 4", "due": "today 12pm"})
-        assert "T12:00" in parse_result(result)["due_date"]
+        # due_in_days
+        result = await session.call_tool("add_task", {"title": "Task 3", "due_in_days": 3})
+        assert not result.isError
+        assert parse_result(result)["due_date"] is not None
 
 
 @pytest.mark.asyncio
-async def test_due_datetime_in_n_days():
-    """Test 'in N days' format."""
-    from datetime import timedelta
+async def test_due_in_days_calculates_correctly():
+    """Test that due_in_days calculates the correct date."""
+    from datetime import timedelta, timezone as tz
 
     async for session, _ in get_session():
-        result = await session.call_tool("add_task", {"title": "Task", "due": "in 3 days"})
+        result = await session.call_tool("add_task", {"title": "Task", "due_in_days": 3})
         response = parse_result(result)
-        due_date = datetime.fromisoformat(response["due_date"])
-        expected_date = (datetime.now() + timedelta(days=3)).date()
-        assert due_date.date() == expected_date
-        assert "T09:00" in response["due_date"]  # default time
+        due_date = datetime.fromisoformat(response["due_date"].replace("Z", "+00:00"))
+        # Should be approximately 3 days from now (in UTC)
+        now = datetime.now(tz.utc)
+        diff = due_date - now
+        assert 2.9 < diff.days + diff.seconds / 86400 < 3.1
 
 
 @pytest.mark.asyncio
@@ -437,10 +433,9 @@ async def test_notification_includes_priority():
     from datetime import timedelta
 
     async for session, notif_dir in get_session(with_notifications=True, monitor_interval=1):
-        due_time = datetime.now() + timedelta(minutes=30)
         await session.call_tool(
             "add_task",
-            {"title": "High priority task", "due": due_time.strftime("%Y-%m-%dT%H:%M"), "priority": 3},
+            {"title": "High priority task", "due_in_minutes": 30, "priority": 3},
         )
 
         time.sleep(2)
@@ -458,10 +453,9 @@ async def test_completed_task_no_notifications():
     from datetime import timedelta
 
     async for session, notif_dir in get_session(with_notifications=True, monitor_interval=1):
-        due_time = datetime.now() + timedelta(minutes=30)
         add_result = await session.call_tool(
             "add_task",
-            {"title": "Completed task", "due": due_time.strftime("%Y-%m-%dT%H:%M")},
+            {"title": "Completed task", "due_in_minutes": 30},
         )
         task_id = parse_result(add_result)["id"]
 

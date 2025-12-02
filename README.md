@@ -1,8 +1,8 @@
 read docx tool
 google docs tool
 
-sub agents context rot
-multiple accounts on whatsapp mcp
+specific tools per subagent
+in process mcps?
 need solution for captchas
 dbify microsoft?
 dockerize

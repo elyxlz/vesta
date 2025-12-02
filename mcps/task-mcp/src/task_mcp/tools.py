@@ -2,9 +2,9 @@ from datetime import datetime as dt, timedelta
 from contextlib import closing, asynccontextmanager
 from dataclasses import dataclass
 from collections.abc import AsyncIterator
+from typing import TypedDict
 import argparse
 import logging
-import re
 import sqlite3
 import threading
 import uuid
@@ -12,6 +12,18 @@ from pathlib import Path
 from mcp.server.fastmcp import FastMCP, Context
 
 from . import monitor
+
+
+class Task(TypedDict, total=False):
+    id: str
+    title: str
+    status: str
+    priority: int
+    due_date: str | None
+    metadata: str | None
+    created_at: str
+    completed_at: str | None
+    notified_thresholds: str | None
 
 
 def _validate_directory(path_str: str | None, *, param_name: str, required: bool = True) -> Path | None:
@@ -125,59 +137,50 @@ def init_db(ctx: TaskContext):
         conn.commit()
 
 
-def parse_due_datetime(date_str: str) -> str | None:
-    """Parse due date/time. Supports:
-    - 'today', 'today 3pm', 'today 15:00'
-    - 'tomorrow', 'tomorrow 9am'
-    - 'in N days'
-    - 'YYYY-MM-DD' or 'YYYY-MM-DDTHH:MM'
-    If no time specified, defaults to 09:00 local time.
-    Returns ISO datetime string.
-    """
-    if not date_str:
-        return None
+def _to_utc(datetime_str: str, timezone_str: str) -> str:
+    """Convert datetime string with timezone to UTC ISO-8601 string."""
+    from datetime import timezone as tz
+    from zoneinfo import ZoneInfo
 
-    date_str = date_str.strip()
-    now = dt.now()
+    # Parse the datetime
+    naive_dt = dt.fromisoformat(datetime_str.replace("Z", "+00:00"))
 
-    # Check if it's already a full ISO datetime (YYYY-MM-DDTHH:MM) - return as-is
-    if re.match(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}", date_str):
-        return date_str
+    # If already has timezone info, convert to UTC
+    if naive_dt.tzinfo is not None:
+        return naive_dt.astimezone(tz.utc).isoformat()
 
-    # Extract time if present (e.g., "today 3pm", "tomorrow 15:00")
-    time_match = re.search(r"(\d{1,2})(?::(\d{2}))?(?:\s*)?(am|pm)?$", date_str, re.IGNORECASE)
-    hour, minute = 9, 0  # default to 9am
+    # Apply the provided timezone and convert to UTC
+    local_tz = ZoneInfo(timezone_str)
+    local_dt = naive_dt.replace(tzinfo=local_tz)
+    return local_dt.astimezone(tz.utc).isoformat()
 
-    if time_match:
-        hour = int(time_match.group(1))
-        minute = int(time_match.group(2) or 0)
-        am_pm = time_match.group(3)
-        if am_pm:
-            if am_pm.lower() == "pm" and hour < 12:
-                hour += 12
-            elif am_pm.lower() == "am" and hour == 12:
-                hour = 0
-        date_str = date_str[: time_match.start()].strip()
 
-    date_lower = date_str.lower()
+def _compute_due_date(
+    due_datetime: str | None,
+    timezone_str: str | None,
+    due_in_minutes: int | None,
+    due_in_hours: int | None,
+    due_in_days: int | None,
+) -> str | None:
+    """Compute due date from various input modes. Returns UTC ISO-8601 string."""
+    from datetime import timezone as tz
 
-    if date_lower == "today" or date_lower == "":
-        base_date = now.date()
-    elif date_lower == "tomorrow":
-        base_date = (now + timedelta(days=1)).date()
-    elif date_lower.startswith("in ") and "day" in date_lower:
-        days_match = re.search(r"in\s+(\d+)\s+days?", date_lower)
-        if days_match:
-            base_date = (now + timedelta(days=int(days_match.group(1)))).date()
-        else:
-            return date_str
-    elif re.match(r"\d{4}-\d{2}-\d{2}", date_str):
-        # ISO date without time - add default time
-        base_date = dt.fromisoformat(date_str).date()
-    else:
-        return date_str  # Return as-is if unparseable
+    # Mode 1: Absolute datetime with timezone
+    if due_datetime is not None:
+        if timezone_str is None:
+            raise ValueError("timezone is required when due_datetime is provided")
+        return _to_utc(due_datetime, timezone_str)
 
-    return dt(base_date.year, base_date.month, base_date.day, hour, minute).isoformat()
+    # Mode 2: Relative offset
+    offset = timedelta(
+        minutes=due_in_minutes or 0,
+        hours=due_in_hours or 0,
+        days=due_in_days or 0,
+    )
+    if offset.total_seconds() > 0:
+        return (dt.now(tz.utc) + offset).isoformat()
+
+    return None
 
 
 def normalize_priority(priority: int | str) -> int:
@@ -195,13 +198,24 @@ def normalize_priority(priority: int | str) -> int:
 
 
 @mcp.tool()
-def add_task(ctx: Context, *, title: str, due: str | None = None, priority: int | str = 2, metadata: str | None = None) -> dict:
-    """priority: 1-3 or 'low'/'normal'/'high'. due: 'today', 'today 3pm', 'tomorrow 9am', 'in 3 days', 'YYYY-MM-DD', 'YYYY-MM-DDTHH:MM'. Defaults to 9am if no time given."""
+def add_task(
+    ctx: Context,
+    *,
+    title: str,
+    due_datetime: str | None = None,
+    timezone: str | None = None,
+    due_in_minutes: int | None = None,
+    due_in_hours: int | None = None,
+    due_in_days: int | None = None,
+    priority: int | str = 2,
+    metadata: str | None = None,
+) -> dict:
+    """due_datetime: ISO-8601 (requires timezone). due_in_*: relative offset from now (UTC). priority: 1-3 or 'low'/'normal'/'high'."""
     context: TaskContext = ctx.request_context.lifespan_context
     priority = normalize_priority(priority)
 
     task_id = str(uuid.uuid4())[:8]
-    due_date = parse_due_datetime(due) if due else None
+    due_date = _compute_due_date(due_datetime, timezone, due_in_minutes, due_in_hours, due_in_days)
 
     with closing(get_db(context)) as conn:
         conn.execute(
