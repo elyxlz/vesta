@@ -22,7 +22,7 @@ def parse_result(result, tool_name: str | None = None):
         if text == "[]":
             return []
         data = json.loads(text)
-        list_tools = {"list_accounts", "list_emails", "list_events"}
+        list_tools = {"list_accounts", "list_emails", "list_events", "list_calendars", "search_emails"}
         if tool_name in list_tools and isinstance(data, dict):
             return [data]
         return data
@@ -30,14 +30,12 @@ def parse_result(result, tool_name: str | None = None):
 
 
 async def get_session():
-    """Yield an initialized MCP session backed by temporary data/log dirs."""
-    test_dir = Path(tempfile.mkdtemp(prefix="microsoft_mcp_test_"))
-    data_dir = test_dir / "data"
-    log_dir = test_dir / "logs"
-    notif_dir = test_dir / "notifications"
-    data_dir.mkdir(parents=True)
-    log_dir.mkdir(parents=True)
-    notif_dir.mkdir(parents=True)
+    """Yield an initialized MCP session backed by local data dir (for auth) and temp dirs for logs/notifications."""
+    # Use local data dir for auth cache, temp dirs for logs/notifications
+    data_dir = Path(__file__).parent.parent / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    log_dir = Path(tempfile.mkdtemp(prefix="microsoft_mcp_test_logs_"))
+    notif_dir = Path(tempfile.mkdtemp(prefix="microsoft_mcp_test_notif_"))
 
     server_params = StdioServerParameters(
         command="uv",
@@ -253,7 +251,7 @@ async def test_search_emails_metadata_only():
         account = await get_account_context(session)
         result = await session.call_tool("search_emails", {"account_email": account["email"], "query": "test", "limit": 5})
         assert not result.isError
-        results = parse_result(result)
+        results = parse_result(result, "search_emails")
         assert isinstance(results, list)
         if results:
             assert "body" not in results[0]
@@ -340,3 +338,112 @@ async def test_respond_event_if_invite_available():
         assert not result.isError
         response = parse_result(result)
         assert response and response.get("status") == "tentativelyAccept"
+
+
+@pytest.mark.asyncio
+async def test_list_calendars():
+    async for session in get_session():
+        account = await get_account_context(session)
+        result = await session.call_tool("list_calendars", {"account_email": account["email"]})
+        assert not result.isError
+        calendars = parse_result(result, "list_calendars")
+        assert isinstance(calendars, list)
+        assert len(calendars) > 0
+        # Should have at least the default calendar
+        assert any(c.get("isDefaultCalendar") for c in calendars)
+        # Each calendar should have id and name
+        for cal in calendars:
+            assert "id" in cal
+            assert "name" in cal
+
+
+@pytest.mark.asyncio
+async def test_create_all_day_event():
+    async for session in get_session():
+        account = await get_account_context(session)
+        event_date = (datetime.now(timezone.utc) + timedelta(days=10)).strftime("%Y-%m-%d")
+
+        create_result = await session.call_tool(
+            "create_event",
+            {
+                "account_email": account["email"],
+                "subject": "MCP Test All-Day Event",
+                "start": event_date,
+                "is_all_day": True,
+                "body": "Integration test all-day event",
+            },
+        )
+        assert not create_result.isError
+        event = parse_result(create_result)
+        event_id = event["id"]
+        assert event.get("isAllDay") is True
+
+        # Cleanup
+        delete_result = await session.call_tool(
+            "delete_event",
+            {"account_email": account["email"], "event_id": event_id, "send_cancellation": False},
+        )
+        assert not delete_result.isError
+
+
+@pytest.mark.asyncio
+async def test_create_yearly_recurring_event():
+    async for session in get_session():
+        account = await get_account_context(session)
+        event_date = (datetime.now(timezone.utc) + timedelta(days=15)).strftime("%Y-%m-%d")
+
+        create_result = await session.call_tool(
+            "create_event",
+            {
+                "account_email": account["email"],
+                "subject": "MCP Test Birthday (Yearly)",
+                "start": event_date,
+                "is_all_day": True,
+                "recurrence": "yearly",
+                "body": "Integration test yearly recurring event",
+            },
+        )
+        assert not create_result.isError
+        event = parse_result(create_result)
+        event_id = event["id"]
+        assert event.get("recurrence") is not None
+        assert event["recurrence"]["pattern"]["type"] == "absoluteYearly"
+
+        # Cleanup - delete the series master
+        delete_result = await session.call_tool(
+            "delete_event",
+            {"account_email": account["email"], "event_id": event_id, "send_cancellation": False},
+        )
+        assert not delete_result.isError
+
+
+@pytest.mark.asyncio
+async def test_create_event_on_specific_calendar():
+    async for session in get_session():
+        account = await get_account_context(session)
+
+        start_time = datetime.now(timezone.utc) + timedelta(days=7)
+        end_time = start_time + timedelta(hours=1)
+
+        # Use calendar_name instead of calendar_id - uses default "Calendar"
+        create_result = await session.call_tool(
+            "create_event",
+            {
+                "account_email": account["email"],
+                "subject": "MCP Test Event on Specific Calendar",
+                "start": start_time.isoformat(),
+                "end": end_time.isoformat(),
+                "calendar_name": "Calendar",
+                "body": "Integration test event on specific calendar",
+            },
+        )
+        assert not create_result.isError
+        event = parse_result(create_result)
+        event_id = event["id"]
+
+        # Cleanup
+        delete_result = await session.call_tool(
+            "delete_event",
+            {"account_email": account["email"], "event_id": event_id, "send_cancellation": False},
+        )
+        assert not delete_result.isError

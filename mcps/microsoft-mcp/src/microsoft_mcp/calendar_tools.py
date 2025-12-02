@@ -96,6 +96,27 @@ def list_events(
 
 
 @mcp.tool()
+def list_calendars(ctx: Context, *, account_email: str) -> list[dict[str, Any]]:
+    """List all calendars for an account (to find calendar IDs for Birthday, etc.)"""
+    context: MicrosoftContext = ctx.request_context.lifespan_context
+    account_id = auth.get_account_id_by_email(account_email, context.cache_file, settings=context.settings)
+
+    calendars = list(
+        graph.request_paginated(
+            context.http_client,
+            context.cache_file,
+            context.scopes,
+            context.settings,
+            context.base_url,
+            "/me/calendars",
+            account_id,
+            params={"$select": "id,name,color,isDefaultCalendar"},
+        )
+    )
+    return calendars
+
+
+@mcp.tool()
 def get_event(ctx: Context, *, event_id: str, account_email: str) -> dict[str, Any]:
     """Get a single calendar event by ID"""
     context: MicrosoftContext = ctx.request_context.lifespan_context
@@ -109,6 +130,32 @@ def get_event(ctx: Context, *, event_id: str, account_email: str) -> dict[str, A
     return result
 
 
+def _get_calendar_id_by_name(
+    context: MicrosoftContext,
+    account_id: str,
+    calendar_name: str,
+) -> str:
+    """Look up calendar ID by name (case-insensitive)."""
+    calendars = list(
+        graph.request_paginated(
+            context.http_client,
+            context.cache_file,
+            context.scopes,
+            context.settings,
+            context.base_url,
+            "/me/calendars",
+            account_id,
+            params={"$select": "id,name"},
+        )
+    )
+    name_lower = calendar_name.lower()
+    for cal in calendars:
+        if cal["name"].lower() == name_lower:
+            return cal["id"]
+    available = ", ".join(f"'{c['name']}'" for c in calendars)
+    raise ValueError(f"Calendar '{calendar_name}' not found. Available: {available}")
+
+
 @mcp.tool()
 def create_event(
     ctx: Context,
@@ -116,20 +163,46 @@ def create_event(
     account_email: str,
     subject: str,
     start: str,
-    end: str,
+    end: str | None = None,
     location: str | None = None,
     body: str | None = None,
     attendees: list[str] | None = None,
     timezone: str = "UTC",
+    calendar_name: str | None = None,
+    is_all_day: bool = False,
+    recurrence: Literal["daily", "weekly", "monthly", "yearly"] | None = None,
+    recurrence_end_date: str | None = None,
 ) -> dict[str, Any]:
-    """start/end: ISO-8601 datetime (e.g. '2024-01-15T14:00:00'). attendees: list of email addresses"""
+    """start/end: ISO-8601 datetime or date. For all-day: just date (2024-01-15). calendar_name: e.g. 'Birthdays' (default calendar if not specified)."""
     context: MicrosoftContext = ctx.request_context.lifespan_context
     account_id = auth.get_account_id_by_email(account_email, context.cache_file, settings=context.settings)
-    event = {
-        "subject": subject,
-        "start": {"dateTime": start, "timeZone": timezone},
-        "end": {"dateTime": end, "timeZone": timezone},
-    }
+
+    calendar_id = _get_calendar_id_by_name(context, account_id, calendar_name) if calendar_name else None
+
+    # Parse start_date once for both is_all_day and recurrence
+    start_date = start.split("T")[0] if "T" in start else start
+
+    if is_all_day:
+        # All-day events use date-only format
+        end_date = end.split("T")[0] if end and "T" in end else (end or start_date)
+        # End date must be day after for all-day events
+        if end_date == start_date:
+            end_dt = dt.date.fromisoformat(start_date) + dt.timedelta(days=1)
+            end_date = end_dt.isoformat()
+        event: dict[str, Any] = {
+            "subject": subject,
+            "isAllDay": True,
+            "start": {"dateTime": start_date, "timeZone": timezone},
+            "end": {"dateTime": end_date, "timeZone": timezone},
+        }
+    else:
+        if not end:
+            raise ValueError("end is required for non-all-day events")
+        event = {
+            "subject": subject,
+            "start": {"dateTime": start, "timeZone": timezone},
+            "end": {"dateTime": end, "timeZone": timezone},
+        }
 
     if location:
         event["location"] = {"displayName": location}
@@ -140,6 +213,34 @@ def create_event(
     if attendees:
         event["attendees"] = [{"emailAddress": {"address": a}, "type": "required"} for a in attendees]
 
+    if recurrence:
+        parsed_date = dt.date.fromisoformat(start_date)
+
+        pattern: dict[str, Any] = {"interval": 1}
+        if recurrence == "daily":
+            pattern["type"] = "daily"
+        elif recurrence == "weekly":
+            pattern["type"] = "weekly"
+            pattern["daysOfWeek"] = [parsed_date.strftime("%A").lower()]
+        elif recurrence == "monthly":
+            pattern["type"] = "absoluteMonthly"
+            pattern["dayOfMonth"] = parsed_date.day
+        elif recurrence == "yearly":
+            pattern["type"] = "absoluteYearly"
+            pattern["dayOfMonth"] = parsed_date.day
+            pattern["month"] = parsed_date.month
+
+        recurrence_range: dict[str, Any] = {"startDate": start_date}
+        if recurrence_end_date:
+            recurrence_range["type"] = "endDate"
+            recurrence_range["endDate"] = recurrence_end_date
+        else:
+            recurrence_range["type"] = "noEnd"
+
+        event["recurrence"] = {"pattern": pattern, "range": recurrence_range}
+
+    endpoint = f"/me/calendars/{calendar_id}/events" if calendar_id else "/me/events"
+
     result = graph.request(
         context.http_client,
         context.cache_file,
@@ -147,7 +248,7 @@ def create_event(
         context.settings,
         context.base_url,
         "POST",
-        "/me/events",
+        endpoint,
         account_id,
         json=event,
     )
