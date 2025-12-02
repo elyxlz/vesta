@@ -192,6 +192,7 @@ MICROSOFT_MCP = McpDefinition(
         "get_attachment",
         "search_emails",
         "update_email",
+        "list_calendars",
         "list_events",
         "get_event",
         "create_event",
@@ -221,7 +222,7 @@ ALL_AGENTS: dict[AgentName, AgentDefinition] = {
     ),
     "email_calendar": AgentDefinition(
         name="email_calendar",
-        description="Email operations, calendar events, scheduling preferences, contact communication styles",
+        description="Email operations, calendar events, scheduling, time-based knowledge. Always notify this agent when learning about deadlines, appointments, or time-sensitive events.",
         mcp="microsoft",
     ),
     "report_writer": AgentDefinition(

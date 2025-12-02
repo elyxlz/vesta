@@ -116,6 +116,25 @@ MEMORY_PROMPT_TEMPLATE = """hey, you're the memory agent for vesta. you manage m
 - Only keep: behavioral patterns, preferences, relationships, context
 - Example: Keep "prefers Trip.com for flights" but REMOVE "need to book Bologna trip"
 
+**AVOID DUPLICATING INFORMATION STORED ELSEWHERE**
+- If information already exists in files (OneDrive, state dir, etc.), DON'T copy it into memory
+- Instead, reference WHERE the information is: "Grant research saved to onedrive/Documents/Lists/grants/"
+- Memory should be an INDEX, not a COPY of detailed information
+- Examples:
+  - ❌ Don't store: Full list of 100+ grants with details
+  - ✅ Do store: "Grant research completed December 1, 2025 - results in onedrive/Documents/Lists/grants/"
+  - ❌ Don't store: Complete meeting notes or email contents
+  - ✅ Do store: "Meeting notes with Perry in onedrive/Documents/Notes/perry_meeting.md"
+- If a file reference already exists in memory, don't add it again
+
+**KEEP MEMORY CLEAN AND COMPACT**
+- Memory should be scannable, not a wall of text
+- Remove stale information aggressively - if it's no longer relevant, delete it
+- Remove high-frequency details that change often (exact times, specific prices, booking numbers)
+- Consolidate repetitive patterns into single rules
+- Ask: "Will this information still be useful in 2 weeks?" - if not, don't store it
+- Ask: "Is this stored somewhere else already?" - if yes, just reference the location
+
 1. ALWAYS read the existing MEMORY.md first to understand its current structure
 2. respect the existing organization - don't restructure unless it's broken
 3. identify which sections need updates based on the conversation
@@ -235,6 +254,12 @@ When cleaning up memory, systematically identify and handle these issues:
 - Temporary reference numbers (support tickets, applications)
 - Specific progress updates from months ago ("October 22: completed X")
 - Verbose dated entries that could be condensed into patterns
+- High-frequency details that change constantly (prices, availability, exact times)
+
+**Duplicated Information**:
+- Detailed data that's already saved in files elsewhere
+- Full lists/research that should just be a file reference
+- Content that exists in OneDrive, state dir, or other storage
 
 ### Step 2: Remove or Update
 
@@ -243,6 +268,8 @@ When cleaning up memory, systematically identify and handle these issues:
 - **Upcoming events**: Move to the appropriate sub-agent memory (see routing guidelines)
 - **Overly specific details**: Remove or condense into general patterns
 - **Dated learnings**: Convert verbose dated entries into timeless behavioral patterns
+- **Duplicated content**: Replace with file reference (e.g., "See onedrive/path/to/file.md")
+- **Stale information**: Delete anything no longer relevant or useful
 
 ### Step 3: Reorganize to Appropriate Sub-Agent Memory
 
@@ -283,6 +310,9 @@ Always preserve:
 ❌ Remove: "Perry Chen meeting: Thursday November 13, 2025 at 1pm" (if past)
 ✅ Keep in calendar sub-agent if future: "Winter Dinner: Wednesday December 3, 2025 at 6:30pm"
 
+❌ Remove: "[Full list of 100 grants with details, eligibility, deadlines...]"
+✅ Keep: "Grant research for ASPEX project completed Dec 1 - see onedrive/Documents/Lists/grants/"
+
 ### Final Check
 
 - No contradictions remain
@@ -293,6 +323,9 @@ Always preserve:
 - Important dates in appropriate sub-agent memory
 - Essential contact details preserved
 - Behavioral patterns preserved without verbose dates
+- No duplicated content - detailed info replaced with file references
+- Stale/irrelevant information removed
+- Memory is compact and scannable
 
 Write updates to the appropriate memory files listed above. Route information to the correct sub-agent memory based on the guidelines."""
 
@@ -633,7 +666,7 @@ async def preserve_memory(state: vm.State, *, config: vm.VestaSettings) -> bool:
         subagent_convos = await _get_and_clear_subagent_conversations(state)
         history = await _get_and_clear_conversation_history(state)
 
-        backup_all_memories(config)
+        backup_path = backup_all_memories(config)
 
         results = await consolidate_all_memories(
             history if history else None,
@@ -649,6 +682,13 @@ async def preserve_memory(state: vm.State, *, config: vm.VestaSettings) -> bool:
             for agent_name, diff in results.items():
                 logger.info(f"--- {agent_name} memory ---")
                 logger.info(diff)
+            if backup_path:
+                diff_file = backup_path / "DIFF.txt"
+                with diff_file.open("w") as f:
+                    for agent_name, diff in results.items():
+                        f.write(f"=== {agent_name} ===\n")
+                        f.write(diff)
+                        f.write("\n\n")
             logger.info(f"[MEMORY] Total preservation time: {elapsed:.1f}s ({len(results)} agents updated)")
             return True
         else:

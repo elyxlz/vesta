@@ -214,30 +214,30 @@ async def monitor_loop(queue: asyncio.Queue, *, state: vm.State, config: vm.Vest
     while state.shutdown_event and not state.shutdown_event.is_set():
         try:
             await asyncio.sleep(config.notification_check_interval)
+
+            if state.shutdown_event and state.shutdown_event.is_set():
+                break
+
+            now = vfx.get_current_time()
+
+            if (now - last_proactive).total_seconds() >= config.proactive_check_interval * 60:
+                await check_proactive_task(queue, config=config)
+                last_proactive = now
+
+            await process_nightly_memory(state, config=config)
+
+            notification_buffer, buffer_start_time = await load_and_display_new_notifications(
+                notification_buffer, buffer_start_time=buffer_start_time, config=config
+            )
+
+            if vu.should_process_notification_buffer(
+                notification_buffer, buffer_start_time=buffer_start_time, current_time=now, buffer_delay=config.notification_buffer_delay
+            ):
+                await process_notification_batch(notification_buffer, queue=queue, state=state, config=config)
+                notification_buffer = []
+                buffer_start_time = None
         except asyncio.CancelledError:
             break
-
-        if state.shutdown_event and state.shutdown_event.is_set():
-            break
-
-        now = vfx.get_current_time()
-
-        if (now - last_proactive).total_seconds() >= config.proactive_check_interval * 60:
-            await check_proactive_task(queue, config=config)
-            last_proactive = now
-
-        await process_nightly_memory(state, config=config)
-
-        notification_buffer, buffer_start_time = await load_and_display_new_notifications(
-            notification_buffer, buffer_start_time=buffer_start_time, config=config
-        )
-
-        if vu.should_process_notification_buffer(
-            notification_buffer, buffer_start_time=buffer_start_time, current_time=now, buffer_delay=config.notification_buffer_delay
-        ):
-            await process_notification_batch(notification_buffer, queue=queue, state=state, config=config)
-            notification_buffer = []
-            buffer_start_time = None
 
 
 async def run_vesta(config: vm.VestaSettings, *, state: vm.State) -> None:
