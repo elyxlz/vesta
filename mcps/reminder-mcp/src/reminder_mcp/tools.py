@@ -316,7 +316,7 @@ def _is_stale(scheduled_time_str: str | None, has_job: bool, now: dt) -> bool:
 
 
 @mcp.tool()
-def list_reminders(ctx: Context, limit: int = 50, include_past: bool = False) -> list[dict]:
+def list_reminders(ctx: Context, *, limit: int = 50, include_past: bool = False) -> list[dict]:
     """List scheduled reminders."""
     context: ReminderContext = ctx.request_context.lifespan_context
     now = _now_utc()
@@ -350,7 +350,7 @@ def list_reminders(ctx: Context, limit: int = 50, include_past: bool = False) ->
 
 
 @mcp.tool()
-def update_reminder(ctx: Context, reminder_id: str, *, message: str) -> dict:
+def update_reminder(ctx: Context, *, reminder_id: str, message: str) -> dict:
     """Update a reminder's message"""
     context: ReminderContext = ctx.request_context.lifespan_context
 
@@ -377,7 +377,7 @@ def update_reminder(ctx: Context, reminder_id: str, *, message: str) -> dict:
 
 
 @mcp.tool()
-def cancel_reminder(ctx: Context, reminder_id: str) -> dict:
+def cancel_reminder(ctx: Context, *, reminder_id: str) -> dict:
     """Cancel a scheduled reminder."""
     context: ReminderContext = ctx.request_context.lifespan_context
 

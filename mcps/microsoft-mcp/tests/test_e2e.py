@@ -301,7 +301,9 @@ async def test_calendar_crud_flow():
             {
                 "account_email": account["email"],
                 "event_id": event_id,
-                "updates": {"subject": "MCP Test Event (Updated)", "start": new_start.isoformat(), "end": new_end.isoformat()},
+                "subject": "MCP Test Event (Updated)",
+                "start": new_start.isoformat(),
+                "end": new_end.isoformat(),
             },
         )
         assert not update_result.isError

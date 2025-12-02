@@ -221,7 +221,7 @@ def add_task(ctx: Context, *, title: str, due: str | None = None, priority: int 
 
 
 @mcp.tool()
-def list_tasks(ctx: Context, show_completed: bool = False) -> list[dict]:
+def list_tasks(ctx: Context, *, show_completed: bool = False) -> list[dict]:
     context: TaskContext = ctx.request_context.lifespan_context
     with closing(get_db(context)) as conn:
         query = "SELECT * FROM tasks"
@@ -238,6 +238,7 @@ def list_tasks(ctx: Context, show_completed: bool = False) -> list[dict]:
 @mcp.tool()
 def update_task(
     ctx: Context,
+    *,
     task_id: str,
     status: str | None = None,
     title: str | None = None,
@@ -294,7 +295,7 @@ def update_task(
 
 
 @mcp.tool()
-def get_task(ctx: Context, task_id: str) -> dict:
+def get_task(ctx: Context, *, task_id: str) -> dict:
     """Get a single task by ID"""
     context: TaskContext = ctx.request_context.lifespan_context
     with closing(get_db(context)) as conn:
@@ -306,7 +307,7 @@ def get_task(ctx: Context, task_id: str) -> dict:
 
 
 @mcp.tool()
-def delete_task(ctx: Context, task_id: str) -> dict:
+def delete_task(ctx: Context, *, task_id: str) -> dict:
     """Delete a task permanently"""
     context: TaskContext = ctx.request_context.lifespan_context
     with closing(get_db(context)) as conn:
@@ -319,7 +320,7 @@ def delete_task(ctx: Context, task_id: str) -> dict:
 
 
 @mcp.tool()
-def search_tasks(ctx: Context, query: str, show_completed: bool = False) -> list[dict]:
+def search_tasks(ctx: Context, *, query: str, show_completed: bool = False) -> list[dict]:
     """Search tasks by title. Returns tasks matching the query string."""
     context: TaskContext = ctx.request_context.lifespan_context
     with closing(get_db(context)) as conn:

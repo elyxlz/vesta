@@ -155,8 +155,8 @@ def list_emails(
 def get_email(
     ctx: Context,
     *,
-    email_id: str,
     account_email: str,
+    email_id: str,
     include_attachments: bool = True,
     save_to_file: str | None = None,
 ) -> dict[str, Any]:
@@ -314,6 +314,7 @@ def create_email_draft(
 @mcp.tool()
 def send_email(
     ctx: Context,
+    *,
     account_email: str,
     to: list[str],
     subject: str,
@@ -464,7 +465,13 @@ def send_email(
 
 @mcp.tool()
 def reply_to_email(
-    ctx: Context, account_email: str, email_id: str, body: str, attachments: list[str] | None = None, reply_all: bool = False
+    ctx: Context,
+    *,
+    account_email: str,
+    email_id: str,
+    body: str,
+    attachments: list[str] | None = None,
+    reply_all: bool = False,
 ) -> dict[str, str]:
     """attachments: list of file paths"""
     context: MicrosoftContext = ctx.request_context.lifespan_context
@@ -567,7 +574,14 @@ def reply_to_email(
 
 
 @mcp.tool()
-def get_attachment(ctx: Context, email_id: str, attachment_id: str, save_path: str, account_email: str) -> dict[str, Any]:
+def get_attachment(
+    ctx: Context,
+    *,
+    account_email: str,
+    email_id: str,
+    attachment_id: str,
+    save_path: str,
+) -> dict[str, Any]:
     context: MicrosoftContext = ctx.request_context.lifespan_context
     account_id = auth.get_account_id_by_email(account_email, context.cache_file, settings=context.settings)
     result = graph.request(
@@ -604,9 +618,10 @@ def get_attachment(ctx: Context, email_id: str, attachment_id: str, save_path: s
 @mcp.tool()
 def search_emails(
     ctx: Context,
-    query: str,
+    *,
     account_email: str,
-    limit: int = 50,
+    query: str,
+    limit: int = 10,
     folder: str | None = None,
 ) -> list[dict[str, Any]]:
     context: MicrosoftContext = ctx.request_context.lifespan_context
@@ -617,7 +632,12 @@ def search_emails(
 
 @mcp.tool()
 def update_email(
-    ctx: Context, email_id: str, account_email: str, is_read: bool | None = None, categories: list[str] | None = None
+    ctx: Context,
+    *,
+    account_email: str,
+    email_id: str,
+    is_read: bool | None = None,
+    categories: list[str] | None = None,
 ) -> dict[str, Any]:
     """Mark email as read/unread or add categories"""
     context: MicrosoftContext = ctx.request_context.lifespan_context

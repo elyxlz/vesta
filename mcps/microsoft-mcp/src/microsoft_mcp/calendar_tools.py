@@ -45,35 +45,43 @@ def list_events(
     ctx: Context,
     *,
     account_email: str,
+    calendar_name: str | None = None,
     days_ahead: int = 7,
     days_back: int = 0,
     include_details: bool = True,
     user_timezone: str | None = None,
 ) -> list[dict[str, Any]]:
-    """user_timezone: IANA timezone (e.g. 'Asia/Singapore'). Determines calendar day boundaries."""
+    """calendar_name: Query specific calendar (e.g. 'Birthdays') - returns ALL events. Without it, uses date range."""
     context: MicrosoftContext = ctx.request_context.lifespan_context
 
     try:
         account_id = auth.get_account_id_by_email(account_email, context.cache_file, settings=context.settings)
         context.monitor_logger.info(f"list_events: account_email={account_email}, account_id={account_id}")
 
-        start, end = _get_calendar_day_range(days_ahead, days_back, user_timezone)
-
-        params = {
-            "startDateTime": start,
-            "endDateTime": end,
-            "$orderby": "start/dateTime",
-            "$top": 100,
-        }
-
         if include_details:
-            params["$select"] = "id,subject,start,end,location,body,attendees,organizer,isAllDay,recurrence,onlineMeeting,seriesMasterId"
+            select = "id,subject,start,end,location,body,attendees,organizer,isAllDay,recurrence,onlineMeeting,seriesMasterId"
         else:
-            params["$select"] = "id,subject,start,end,location,organizer,seriesMasterId"
+            select = "id,subject,start,end,location,organizer,seriesMasterId"
 
-        context.monitor_logger.info(f"list_events: Querying calendarView with params: {params}")
+        if calendar_name:
+            # Query specific calendar - returns all events (no date filter)
+            calendar_id = _get_calendar_id_by_name(context, account_id, calendar_name)
+            params = {"$select": select, "$top": 100, "$orderby": "start/dateTime"}
+            endpoint = f"/me/calendars/{calendar_id}/events"
+            context.monitor_logger.info(f"list_events: Querying calendar '{calendar_name}' events")
+        else:
+            # Use calendarView with date range
+            start, end = _get_calendar_day_range(days_ahead, days_back, user_timezone)
+            params = {
+                "startDateTime": start,
+                "endDateTime": end,
+                "$orderby": "start/dateTime",
+                "$top": 100,
+                "$select": select,
+            }
+            endpoint = "/me/calendarView"
+            context.monitor_logger.info(f"list_events: Querying calendarView with params: {params}")
 
-        # Use calendarView to get recurring event instances
         events = list(
             graph.request_paginated(
                 context.http_client,
@@ -81,7 +89,7 @@ def list_events(
                 context.scopes,
                 context.settings,
                 context.base_url,
-                "/me/calendarView",
+                endpoint,
                 account_id,
                 params=params,
             )
@@ -117,7 +125,7 @@ def list_calendars(ctx: Context, *, account_email: str) -> list[dict[str, Any]]:
 
 
 @mcp.tool()
-def get_event(ctx: Context, *, event_id: str, account_email: str) -> dict[str, Any]:
+def get_event(ctx: Context, *, account_email: str, event_id: str) -> dict[str, Any]:
     """Get a single calendar event by ID"""
     context: MicrosoftContext = ctx.request_context.lifespan_context
     account_id = auth.get_account_id_by_email(account_email, context.cache_file, settings=context.settings)
@@ -258,28 +266,36 @@ def create_event(
 
 
 @mcp.tool()
-def update_event(ctx: Context, *, event_id: str, updates: dict[str, Any], account_email: str) -> dict[str, Any]:
-    """updates keys: 'subject', 'start' (ISO-8601), 'end' (ISO-8601), 'location', 'body', 'timezone'"""
+def update_event(
+    ctx: Context,
+    *,
+    account_email: str,
+    event_id: str,
+    subject: str | None = None,
+    start: str | None = None,
+    end: str | None = None,
+    location: str | None = None,
+    body: str | None = None,
+    timezone: str = "UTC",
+) -> dict[str, Any]:
+    """start/end: ISO-8601 datetime"""
     context: MicrosoftContext = ctx.request_context.lifespan_context
     account_id = auth.get_account_id_by_email(account_email, context.cache_file, settings=context.settings)
-    formatted_updates = {}
+    formatted_updates: dict[str, Any] = {}
 
-    if "subject" in updates:
-        formatted_updates["subject"] = updates["subject"]
-    if "start" in updates:
-        formatted_updates["start"] = {
-            "dateTime": updates["start"],
-            "timeZone": updates.get("timezone", "UTC"),
-        }
-    if "end" in updates:
-        formatted_updates["end"] = {
-            "dateTime": updates["end"],
-            "timeZone": updates.get("timezone", "UTC"),
-        }
-    if "location" in updates:
-        formatted_updates["location"] = {"displayName": updates["location"]}
-    if "body" in updates:
-        formatted_updates["body"] = {"contentType": "Text", "content": updates["body"]}
+    if subject is not None:
+        formatted_updates["subject"] = subject
+    if start is not None:
+        formatted_updates["start"] = {"dateTime": start, "timeZone": timezone}
+    if end is not None:
+        formatted_updates["end"] = {"dateTime": end, "timeZone": timezone}
+    if location is not None:
+        formatted_updates["location"] = {"displayName": location}
+    if body is not None:
+        formatted_updates["body"] = {"contentType": "Text", "content": body}
+
+    if not formatted_updates:
+        raise ValueError("Must specify at least one field to update")
 
     result = graph.request(
         context.http_client,
@@ -296,7 +312,13 @@ def update_event(ctx: Context, *, event_id: str, updates: dict[str, Any], accoun
 
 
 @mcp.tool()
-def delete_event(ctx: Context, account_email: str, event_id: str, send_cancellation: bool = True) -> dict[str, str]:
+def delete_event(
+    ctx: Context,
+    *,
+    account_email: str,
+    event_id: str,
+    send_cancellation: bool = True,
+) -> dict[str, str]:
     """Delete or cancel a calendar event"""
     context: MicrosoftContext = ctx.request_context.lifespan_context
     account_id = auth.get_account_id_by_email(account_email, context.cache_file, settings=context.settings)
@@ -330,6 +352,7 @@ def delete_event(ctx: Context, account_email: str, event_id: str, send_cancellat
 @mcp.tool()
 def respond_event(
     ctx: Context,
+    *,
     account_email: str,
     event_id: str,
     response: Literal["accept", "decline", "tentativelyAccept"] = "accept",
