@@ -186,8 +186,8 @@ async def test_one_time_reminder_minutes():
 
 
 @pytest.mark.asyncio
-async def test_one_time_reminder_minutes():
-    """Test setting a one-time reminder with minutes"""
+async def test_one_time_reminder_minutes_short():
+    """Test setting a one-time reminder with short duration (1 minute)"""
     async for session, _ in get_session():
         set_result = await session.call_tool("set_reminder", {"message": "Quick check", "in_minutes": 1})
 
@@ -485,7 +485,9 @@ async def test_multiple_reminders_different_types():
 
         # Daily at 08:00 UTC
         daily_time = datetime(2024, 12, 2, 8, 0, 0)
-        r2 = await session.call_tool("set_reminder", {"message": "Daily", "recurring": "daily", "scheduled_datetime": daily_time.isoformat(), "tz": "UTC"})
+        r2 = await session.call_tool(
+            "set_reminder", {"message": "Daily", "recurring": "daily", "scheduled_datetime": daily_time.isoformat(), "tz": "UTC"}
+        )
         assert not r2.isError
         id2 = parse_result(r2)["id"]
 

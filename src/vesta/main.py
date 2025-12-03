@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import shutil
 import signal
 
@@ -323,8 +324,30 @@ async def reset_client_context(state: vm.State, *, config: vm.VestaSettings) -> 
     """Close current client and create a new one with fresh memory."""
     logger.info("[CLIENT] Resetting client with updated memory...")
 
-    if state.client:
-        await state.client.__aexit__(None, None, None)
+    old_client = state.client
+    state.client = None  # Clear reference first
+
+    # Close old client in a separate task to avoid cancel scope propagation
+    # (Claude SDK uses anyio internally; closing the client cancels scopes
+    # that would otherwise propagate CancelledError to the caller)
+    if old_client:
+
+        async def close_old_client() -> None:
+            try:
+                await old_client.__aexit__(None, None, None)
+            except asyncio.CancelledError:
+                logger.debug("[CLIENT] Old client close cancelled (expected)")
+            except Exception as e:
+                logger.warning(f"[CLIENT] Error closing old client: {e}")
+
+        close_task = asyncio.create_task(close_old_client())
+        try:
+            await asyncio.wait_for(close_task, timeout=10.0)
+        except asyncio.TimeoutError:
+            logger.warning("[CLIENT] Old client close timed out")
+            close_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await close_task
 
     state.client = await create_claude_client(config, state=state)
     state.sub_agent_context = None

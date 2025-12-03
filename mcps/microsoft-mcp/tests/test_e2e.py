@@ -41,10 +41,14 @@ async def get_session(calendar_notify_thresholds: str | None = None, notif_dir_o
         notif_dir_out.append(notif_dir)
 
     args = [
-        "run", "microsoft-mcp",
-        "--data-dir", str(data_dir),
-        "--log-dir", str(log_dir),
-        "--notifications-dir", str(notif_dir),
+        "run",
+        "microsoft-mcp",
+        "--data-dir",
+        str(data_dir),
+        "--log-dir",
+        str(log_dir),
+        "--notifications-dir",
+        str(notif_dir),
     ]
     if calendar_notify_thresholds:
         args.extend(["--calendar-notify-thresholds", calendar_notify_thresholds])

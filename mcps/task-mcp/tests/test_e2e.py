@@ -163,7 +163,6 @@ async def test_search_tasks():
 @pytest.mark.asyncio
 async def test_monitor_sends_notifications():
     """Test that monitor thread sends notifications for tasks due soon."""
-    from datetime import timedelta
 
     async for session, notif_dir in get_session(with_notifications=True, monitor_interval=1):
         # Create a task due in 30 minutes (within 1 hour threshold)
@@ -195,7 +194,6 @@ async def test_monitor_sends_notifications():
 @pytest.mark.asyncio
 async def test_monitor_no_notification_for_far_future_task():
     """Task due far in the future should not trigger notifications yet."""
-    from datetime import timedelta
 
     async for session, notif_dir in get_session(with_notifications=True, monitor_interval=1):
         # Task due in 2 weeks (beyond 1 week threshold)
@@ -219,6 +217,7 @@ async def test_monitor_no_notification_for_past_due_task():
     async for session, notif_dir in get_session(with_notifications=True, monitor_interval=1):
         # Task due 1 hour ago (already past) - use datetime with timezone
         from datetime import timezone as tz
+
         past_time = (datetime.now(tz.utc) - timedelta(hours=1)).isoformat()
         result = await session.call_tool(
             "add_task",
@@ -235,7 +234,6 @@ async def test_monitor_no_notification_for_past_due_task():
 @pytest.mark.asyncio
 async def test_monitor_notification_deduplication():
     """Same threshold should not fire twice for the same task."""
-    from datetime import timedelta
 
     async for session, notif_dir in get_session(with_notifications=True, monitor_interval=1):
         result = await session.call_tool(
@@ -278,7 +276,7 @@ async def test_due_relative_time_options():
 @pytest.mark.asyncio
 async def test_due_in_days_calculates_correctly():
     """Test that due_in_days calculates the correct date."""
-    from datetime import timedelta, timezone as tz
+    from datetime import timezone as tz
 
     async for session, _ in get_session():
         result = await session.call_tool("add_task", {"title": "Task", "due_in_days": 3})
@@ -430,7 +428,6 @@ async def test_search_tasks_show_completed():
 @pytest.mark.asyncio
 async def test_notification_includes_priority():
     """Test notification message includes correct priority label."""
-    from datetime import timedelta
 
     async for session, notif_dir in get_session(with_notifications=True, monitor_interval=1):
         await session.call_tool(
@@ -450,7 +447,6 @@ async def test_notification_includes_priority():
 @pytest.mark.asyncio
 async def test_completed_task_no_notifications():
     """Completed tasks should not trigger notifications."""
-    from datetime import timedelta
 
     async for session, notif_dir in get_session(with_notifications=True, monitor_interval=1):
         add_result = await session.call_tool(

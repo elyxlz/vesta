@@ -18,7 +18,7 @@ class McpServer(tp.TypedDict):
 
 
 ModelType = tp.Literal["sonnet", "opus", "haiku", "inherit"]
-McpName = tp.Literal["whatsapp", "reminder", "task", "what-day", "playwright", "microsoft", "pdf-reader"]
+McpName = tp.Literal["whatsapp", "reminder", "task", "what-day", "playwright", "microsoft"]
 AgentName = tp.Literal["browser", "email_calendar", "report_writer"]
 
 
@@ -96,21 +96,6 @@ def _build_playwright_mcp(config: VestaSettings) -> McpServer:
     }
 
 
-def _build_pdf_reader_mcp(config: VestaSettings) -> McpServer:
-    mcps_root = config.install_root / "mcps"
-    return {
-        "command": "node",
-        "args": [
-            str(mcps_root / "pdf-reader-mcp" / "dist" / "index.js"),
-            "--data-dir",
-            str(config.data_dir / "pdf-reader-mcp"),
-            "--log-dir",
-            str(config.logs_dir / "pdf-reader-mcp"),
-        ],
-        "env": {"MAX_MCP_OUTPUT_TOKENS": str(config.max_mcp_output_tokens)},
-    }
-
-
 MCP_BUILDERS: dict[McpName, tp.Callable[[VestaSettings], McpServer]] = {
     "whatsapp": _build_whatsapp_mcp,
     "reminder": lambda c: _build_uv_mcp(c, "reminder", notifications=True),
@@ -126,7 +111,6 @@ MCP_BUILDERS: dict[McpName, tp.Callable[[VestaSettings], McpServer]] = {
             "MICROSOFT_MCP_TENANT_ID": c.microsoft_mcp_tenant_id,
         },
     ),
-    "pdf-reader": _build_pdf_reader_mcp,
 }
 
 
@@ -202,15 +186,10 @@ MICROSOFT_MCP = McpDefinition(
     ),
 )
 
-PDF_READER_MCP = McpDefinition(
-    name="pdf-reader",
-    tool_suffixes=("read_pdf",),
-)
 
 MCP_REGISTRY: dict[McpName, McpDefinition] = {
     "playwright": PLAYWRIGHT_MCP,
     "microsoft": MICROSOFT_MCP,
-    "pdf-reader": PDF_READER_MCP,
 }
 
 ALL_AGENTS: dict[AgentName, AgentDefinition] = {
@@ -228,7 +207,6 @@ ALL_AGENTS: dict[AgentName, AgentDefinition] = {
     "report_writer": AgentDefinition(
         name="report_writer",
         description="Document creation, report writing, formatting preferences, writing styles",
-        mcp="pdf-reader",
     ),
 }
 

@@ -171,8 +171,14 @@ def run(ctx: MicrosoftContext):
                     max_threshold = max(ctx.get_calendar_notify_thresholds())
                     window_end = new_check_time + timedelta(minutes=max_threshold + 60)
                     cal_result = graph.request(
-                        ctx.http_client, ctx.cache_file, ctx.scopes, ctx.settings, ctx.base_url,
-                        "GET", "/me/calendarView", acc.account_id,
+                        ctx.http_client,
+                        ctx.cache_file,
+                        ctx.scopes,
+                        ctx.settings,
+                        ctx.base_url,
+                        "GET",
+                        "/me/calendarView",
+                        acc.account_id,
                         params={
                             "startDateTime": last_dt.isoformat().replace("+00:00", "Z"),
                             "endDateTime": window_end.isoformat().replace("+00:00", "Z"),
@@ -219,14 +225,19 @@ def run(ctx: MicrosoftContext):
                                 time_desc = f"in {label}"
 
                             metadata = {
-                                "account": acc.username, "subject": subject, "start_time": start_dt,
-                                "location": loc, "minutes_until": mins_until, "reminder_window": label,
+                                "account": acc.username,
+                                "subject": subject,
+                                "start_time": start_dt,
+                                "location": loc,
+                                "minutes_until": mins_until,
+                                "reminder_window": label,
                             }
                             if catching_up and event_time < new_check_time:
                                 metadata["missed"] = True
 
                             notifications.write_notification(
-                                ctx.notif_dir, "calendar",
+                                ctx.notif_dir,
+                                "calendar",
                                 f"Calendar event {time_desc}: {subject}" + (f" at {loc}" if loc else ""),
                                 metadata,
                             )

@@ -16,11 +16,7 @@ async def load_notifications(*, config: vm.VestaSettings) -> list[vm.Notificatio
             data = vu.parse_notification_file_content(content)
             notif = vm.Notification(**data)
             notif.file_path = str(file)
-            if notif.message and notif.message.strip():
-                notifications.append(notif)
-            else:
-                logger.info(f"Skipping media notification: {file.name}")
-                vfx.delete_file(file)
+            notifications.append(notif)
         except Exception as e:
             logger.error(f"Failed to parse notification {file.name}: {e}")
 

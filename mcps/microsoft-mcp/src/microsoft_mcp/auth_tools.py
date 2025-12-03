@@ -41,8 +41,12 @@ async def microsoft_lifespan(server: FastMCP) -> AsyncIterator[MicrosoftContext]
     parser.add_argument("--data-dir", type=str, required=True)
     parser.add_argument("--log-dir", type=str, required=True)
     parser.add_argument("--notifications-dir", type=str, required=True)
-    parser.add_argument("--calendar-notify-thresholds", type=str, default=None,
-                        help="Comma-separated minutes before event (default: 10080,60,15 = 1 week, 1 hour, 15 mins)")
+    parser.add_argument(
+        "--calendar-notify-thresholds",
+        type=str,
+        default=None,
+        help="Comma-separated minutes before event (default: 10080,60,15 = 1 week, 1 hour, 15 mins)",
+    )
     args, _ = parser.parse_known_args()
 
     # Parse thresholds
