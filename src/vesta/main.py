@@ -1,11 +1,10 @@
 import asyncio
-import contextlib
 import shutil
 import signal
 
 from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions, Message
 
-from vesta.registry import build_all_agents, generate_delegation_prompt, build_mcp_servers
+from vesta.registry import build_all_agents, build_mcp_servers
 from vesta.memory import load_memory, preserve_memory
 from vesta.hooks import build_hooks
 import vesta.models as vm
@@ -25,9 +24,8 @@ from vesta.notifications import (
 
 
 def load_system_prompt(config: vm.VestaSettings) -> str:
-    """Load main agent's memory as system prompt with delegation instructions."""
-    memory = load_memory(config, agent_name="main")
-    return f"{memory}\n\n{generate_delegation_prompt(config)}"
+    """Load main agent's memory as system prompt."""
+    return load_memory(config, agent_name="main")
 
 
 async def attempt_interrupt(state: vm.State, *, config: vm.VestaSettings, reason: str) -> bool:
@@ -324,30 +322,10 @@ async def reset_client_context(state: vm.State, *, config: vm.VestaSettings) -> 
     """Close current client and create a new one with fresh memory."""
     logger.info("[CLIENT] Resetting client with updated memory...")
 
-    old_client = state.client
-    state.client = None  # Clear reference first
-
-    # Close old client in a separate task to avoid cancel scope propagation
-    # (Claude SDK uses anyio internally; closing the client cancels scopes
-    # that would otherwise propagate CancelledError to the caller)
-    if old_client:
-
-        async def close_old_client() -> None:
-            try:
-                await old_client.__aexit__(None, None, None)
-            except asyncio.CancelledError:
-                logger.debug("[CLIENT] Old client close cancelled (expected)")
-            except Exception as e:
-                logger.warning(f"[CLIENT] Error closing old client: {e}")
-
-        close_task = asyncio.create_task(close_old_client())
-        try:
-            await asyncio.wait_for(close_task, timeout=10.0)
-        except asyncio.TimeoutError:
-            logger.warning("[CLIENT] Old client close timed out")
-            close_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await close_task
+    # Don't try to close the old client - it causes cancel scope issues
+    # with anyio (can't exit cancel scope from different task than it was
+    # entered in). Just let it garbage collect.
+    state.client = None
 
     state.client = await create_claude_client(config, state=state)
     state.sub_agent_context = None

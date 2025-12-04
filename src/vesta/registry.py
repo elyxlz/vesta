@@ -116,8 +116,8 @@ MCP_BUILDERS: dict[McpName, tp.Callable[[VestaSettings], McpServer]] = {
 
 def build_mcp_servers(config: VestaSettings) -> dict[str, McpServer]:
     """Build MCP server configs for core MCPs + agent MCPs."""
-    agent_mcps = {ALL_AGENTS[tp.cast(AgentName, name)].mcp for name in config.active_agents}
-    enabled = set(config.core_mcps) | set(agent_mcps)
+    agent_mcps = {m for name in config.active_agents if (m := ALL_AGENTS[tp.cast(AgentName, name)].mcp)}
+    enabled = set(config.core_mcps) | agent_mcps
     return {name: MCP_BUILDERS[tp.cast(McpName, name)](config) for name in enabled}
 
 
@@ -125,7 +125,7 @@ def build_mcp_servers(config: VestaSettings) -> dict[str, McpServer]:
 class AgentDefinition:
     name: AgentName
     description: str
-    mcp: McpName
+    mcp: McpName | None = None
     model: ModelType = "inherit"
 
 
@@ -216,11 +216,17 @@ def get_active_agents(config: VestaSettings) -> dict[str, AgentDefinition]:
 
 
 def get_agent_tool_ids(agent_name: AgentName) -> list[str]:
-    return MCP_REGISTRY[ALL_AGENTS[agent_name].mcp].tool_ids
+    mcp = ALL_AGENTS[agent_name].mcp
+    return MCP_REGISTRY[mcp].tool_ids if mcp else []
 
 
 def get_all_agent_tool_ids(config: VestaSettings) -> list[str]:
-    return [t for name in config.active_agents for t in MCP_REGISTRY[ALL_AGENTS[tp.cast(AgentName, name)].mcp].tool_ids]
+    result = []
+    for name in config.active_agents:
+        mcp = ALL_AGENTS[tp.cast(AgentName, name)].mcp
+        if mcp:
+            result.extend(MCP_REGISTRY[mcp].tool_ids)
+    return result
 
 
 def load_memory_template(name: str) -> str:
@@ -234,23 +240,6 @@ def get_memory_templates(config: VestaSettings) -> dict[str, str]:
     templates = {"main": load_memory_template("main")}
     templates.update({name: load_memory_template(name) for name in config.active_agents})
     return templates
-
-
-def generate_delegation_prompt(config: VestaSettings) -> str:
-    lines = [
-        "## Sub-Agent Delegation",
-        "",
-        "You have specialized sub-agents. **Always delegate to these agents instead of calling their tools directly:**",
-        "",
-    ]
-    for name in config.active_agents:
-        agent = ALL_AGENTS[tp.cast(AgentName, name)]
-        mcp = MCP_REGISTRY[agent.mcp]
-        lines.append(f"- **{agent.name}**: {agent.description}")
-        lines.append(f'  - Delegate via: `Task(subagent_type="{agent.name}", ...)`')
-        lines.append(f"  - Do NOT call `mcp__{mcp.name}__*` tools directly")
-        lines.append("")
-    return "\n".join(lines)
 
 
 def build_all_agents(config: VestaSettings) -> dict[str, SDKAgentDefinition]:

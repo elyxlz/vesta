@@ -8,9 +8,6 @@
 3. **Write content** - Clear, professional prose
 4. **Return content** - Return the document as your response (main agent handles file saving)
 
-### Available Tools
-- `mcp__pdf-reader__read_pdf` - Read PDF files
-
 **Note**: This agent specializes in drafting content. Return the complete document as your response - the main agent will handle saving to files.
 
 ### Document Structures
