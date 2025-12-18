@@ -1,5 +1,5 @@
-import pathlib as pl
 import datetime as dt
+import pathlib as pl
 
 
 def read_file(path: pl.Path) -> str:

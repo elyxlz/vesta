@@ -2,7 +2,7 @@ import pathlib as pl
 
 import pydantic as pyd
 import pydantic_settings as pyd_settings
-from pydantic import SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator
 
 
 class Messages:
@@ -18,16 +18,16 @@ class VestaConfig(pyd_settings.BaseSettings):
 
     ephemeral: bool = False
     debug: bool = False
-    max_mcp_output_tokens: int = 200000
-    notification_check_interval: int = 2
-    notification_buffer_delay: int = 3
-    proactive_check_interval: int = 60
+    max_mcp_output_tokens: int = Field(default=200000, ge=1)
+    notification_check_interval: int = Field(default=2, ge=1)
+    notification_buffer_delay: int = Field(default=3, ge=0)
+    proactive_check_interval: int = Field(default=60, ge=1)
     proactive_check_message: str = "It's been 60 minutes. Is there anything useful you could do right now?"
-    response_timeout: int = 180
-    shutdown_timeout: int = 310
-    nightly_memory_hour: int | None = 4  # None = disabled, int = hour (0-23) to run
+    response_timeout: int = Field(default=180, ge=1)
+    shutdown_timeout: int = Field(default=310, ge=1)
+    nightly_memory_hour: int | None = 4
     nightly_memory_completion_message: str = "Good morning vesta, your memory consolidation has just completed."
-    interrupt_timeout: float = 5.0
+    interrupt_timeout: float = Field(default=5.0, gt=0)
     whatsapp_greeting_prompt: str | None = (  # None/empty = disabled
         "Check whether the WhatsApp MCP is authenticated by calling the `authenticate_whatsapp` tool. "
         "If it is authenticated, send a short WhatsApp message to the user letting them know Vesta just came online and is ready to help. "
@@ -51,6 +51,19 @@ class VestaConfig(pyd_settings.BaseSettings):
     onedrive_remote_name: str = "onedrive"
     onedrive_remote_path: str = "/"
 
+    # rclone mount options
+    rclone_vfs_cache_mode: str = "full"
+    rclone_vfs_cache_max_age: str = "24h"
+    rclone_vfs_cache_max_size: str = "2G"
+    rclone_buffer_size: str = "128M"
+    rclone_vfs_read_ahead: str = "1G"
+    rclone_chunk_size: str = "120M"
+    rclone_dir_cache_time: str = "5m"
+    rclone_poll_interval: str = "30s"
+    rclone_vfs_write_back: str = "5s"
+    rclone_transfers: int = Field(default=4, ge=1)
+    rclone_fast_list: bool = True
+
     state_dir: pl.Path = pyd.Field(default_factory=lambda: pl.Path.home() / ".vesta")
 
     @field_validator("state_dir", mode="before")
@@ -59,6 +72,13 @@ class VestaConfig(pyd_settings.BaseSettings):
         if value is None or value == "":
             return pl.Path.home() / ".vesta"
         return pl.Path(value).expanduser().resolve()
+
+    @field_validator("nightly_memory_hour", mode="after")
+    @classmethod
+    def _validate_nightly_memory_hour(cls, value: int | None) -> int | None:
+        if value is not None and not (0 <= value <= 23):
+            raise ValueError("nightly_memory_hour must be between 0 and 23")
+        return value
 
     @property
     def install_root(self) -> pl.Path:

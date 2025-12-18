@@ -85,7 +85,7 @@ async def _call_progress(callback: ProgressCallback, message: str) -> None:
             await result
 
 
-def format_conversation(history: list[ConversationMessage]) -> str:
+def _format_conversation(history: list[ConversationMessage]) -> str:
     return "\n".join(f"{msg['role']}: {msg['content']}" for msg in history)
 
 
@@ -167,7 +167,7 @@ async def preserve_conversation_memory(
 {before}
 
 Recent conversation to process:
-{format_conversation(conversation_history)}
+{_format_conversation(conversation_history)}
 
 Check MEMORY.md and update it with any new important information from this conversation."""
 
@@ -197,16 +197,19 @@ Check MEMORY.md and update it with any new important information from this conve
         await client.query(prompt)
         await _call_progress(progress_callback, "Dreamer is dreaming...")
         async for msg in client.receive_response():
-            # Log dreamer's actions
-            if hasattr(msg, "content") and msg.content:
-                for block in msg.content:  # type: ignore[union-attr]
-                    if hasattr(block, "type"):
-                        if block.type == "text" and hasattr(block, "text") and block.text:
-                            for line in block.text.strip().split("\n"):
-                                if line.strip():
-                                    logger.info(f"[DREAMER] {line.strip()}")
-                        elif block.type == "tool_use" and hasattr(block, "name"):
-                            logger.info(f"[DREAMER] Using tool: {block.name}")
+            content = getattr(msg, "content", None)
+            if not content:
+                continue
+            for block in content:
+                block_type = getattr(block, "type", None)
+                if block_type == "text":
+                    text = getattr(block, "text", "")
+                    for line in text.strip().split("\n"):
+                        if line.strip():
+                            logger.info(f"[DREAMER] {line.strip()}")
+                elif block_type == "tool_use":
+                    tool_name = getattr(block, "name", "unknown")
+                    logger.info(f"[DREAMER] Using tool: {tool_name}")
 
     elapsed = time.monotonic() - start_time
     await _call_progress(progress_callback, "Computing diff vs MEMORY.md...")

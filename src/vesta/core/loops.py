@@ -46,15 +46,13 @@ async def message_processor(queue: asyncio.Queue, *, state: vm.State, config: vm
 
         async with state.processing_lock:
             state.is_processing = True
+            try:
+                responses, _ = await process_message(msg, state=state, config=config, is_user=is_user)
 
-        try:
-            responses, _ = await process_message(msg, state=state, config=config, is_user=is_user)
-
-            for response in responses:
-                if response and response.strip():
-                    logger.info(f"ASSISTANT: {response}")
-        finally:
-            async with state.processing_lock:
+                for response in responses:
+                    if response and response.strip():
+                        logger.info(f"ASSISTANT: {response}")
+            finally:
                 state.is_processing = False
 
 

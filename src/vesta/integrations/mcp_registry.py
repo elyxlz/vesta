@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shlex
 import typing as tp
 from dataclasses import dataclass
 
@@ -60,14 +61,16 @@ def _build_uv_mcp(
 
 
 def _build_whatsapp_mcp(config: VestaConfig) -> McpServer:
+    build_dir = shlex.quote(str(config.whatsapp_build_dir))
+    data_dir = shlex.quote(str(config.data_dir / "whatsapp-mcp"))
+    log_dir = shlex.quote(str(config.logs_dir / "whatsapp-mcp"))
+    notif_dir = shlex.quote(str(config.notifications_dir))
     return {
         "command": "sh",
         "args": [
             "-c",
-            f"cd {config.whatsapp_build_dir} && go build -o whatsapp-mcp . && "
-            f"./whatsapp-mcp --data-dir {config.data_dir / 'whatsapp-mcp'} "
-            f"--log-dir {config.logs_dir / 'whatsapp-mcp'} "
-            f"--notifications-dir {config.notifications_dir}",
+            f"cd {build_dir} && go build -o whatsapp-mcp . && "
+            f"./whatsapp-mcp --data-dir {data_dir} --log-dir {log_dir} --notifications-dir {notif_dir}",
         ],
         "env": {"MAX_MCP_OUTPUT_TOKENS": str(config.max_mcp_output_tokens)},
     }
@@ -75,17 +78,17 @@ def _build_whatsapp_mcp(config: VestaConfig) -> McpServer:
 
 def _build_playwright_mcp(config: VestaConfig) -> McpServer:
     mcps_root = config.install_root / "mcps"
+    playwright_dir = shlex.quote(str(mcps_root / "playwright-mcp"))
+    output_dir = shlex.quote(str(config.playwright_screenshots_dir))
+    log_dir = shlex.quote(str(config.logs_dir / "playwright-mcp"))
     return {
         "command": "sh",
         "args": [
             "-c",
-            f"cd {mcps_root / 'playwright-mcp'} && npm install --silent && "
-            f"npx mcp-server-playwright "
-            f"--browser chromium "
+            f"cd {playwright_dir} && npm install --silent && "
+            f"npx mcp-server-playwright --browser chromium "
             f"--blocked-origins 'googleads.g.doubleclick.net;googlesyndication.com' "
-            f"--output-dir {config.playwright_screenshots_dir} "
-            f"--image-responses omit "
-            f"--log-dir {config.logs_dir / 'playwright-mcp'}",
+            f"--output-dir {output_dir} --image-responses omit --log-dir {log_dir}",
         ],
         "env": {"MAX_MCP_OUTPUT_TOKENS": str(config.max_mcp_output_tokens)},
     }
