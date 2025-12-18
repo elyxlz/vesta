@@ -1,5 +1,3 @@
-"""Vesta domain models - depends on config layer."""
-
 import asyncio
 import dataclasses as dc
 import datetime as dt
@@ -8,10 +6,9 @@ import typing as tp
 import pydantic as pyd
 from claude_agent_sdk import ClaudeSDKClient
 
-# Re-export from config for backward compatibility
-from .config import VestaSettings
+from .config import VestaConfig
 
-__all__ = ["State", "Notification", "VestaSettings", "ConversationMessage"]
+__all__ = ["State", "Notification", "VestaConfig", "ConversationMessage"]
 
 
 class ConversationMessage(tp.TypedDict):

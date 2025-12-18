@@ -1,5 +1,3 @@
-"""Vesta configuration - runtime settings only."""
-
 import pathlib as pl
 
 import pydantic as pyd
@@ -7,7 +5,15 @@ import pydantic_settings as pyd_settings
 from pydantic import SecretStr, field_validator
 
 
-class VestaSettings(pyd_settings.BaseSettings):
+class Messages:
+    SHUTDOWN_INITIATED = "[SHUTDOWN] vesta is tired, dreamer agent taking over..."
+    SHUTDOWN_COMPLETE = "sweet dreams!"
+    PROACTIVE_CHECK = "[PROACTIVE] Running 60-minute check..."
+    NIGHTLY_DREAMER = "[DREAMER] Nightly consolidation starting..."
+    DREAMER_UPDATED = "[DREAMER] Memories consolidated:"
+
+
+class VestaConfig(pyd_settings.BaseSettings):
     model_config = pyd_settings.SettingsConfigDict(extra="ignore")
 
     ephemeral: bool = False
@@ -18,9 +24,7 @@ class VestaSettings(pyd_settings.BaseSettings):
     proactive_check_interval: int = 60
     proactive_check_message: str = "It's been 60 minutes. Is there anything useful you could do right now?"
     response_timeout: int = 180
-    memory_agent_timeout: int = 1200
     shutdown_timeout: int = 310
-    task_gather_timeout: int = 2
     nightly_memory_hour: int | None = 4  # None = disabled, int = hour (0-23) to run
     nightly_memory_completion_message: str = "Good morning vesta, your memory consolidation has just completed."
     interrupt_timeout: float = 5.0
@@ -32,9 +36,8 @@ class VestaSettings(pyd_settings.BaseSettings):
     notification_suffix: str = "If this is important or requires the user's attention, consider sending them a WhatsApp message."
     max_thinking_tokens: int | None = 10000
 
-    # MCP and agent configuration
-    core_mcps: list[str] = ["whatsapp", "reminder", "task", "what-day"]
-    active_agents: list[str] = ["email_calendar", "report_writer"]
+    # MCP configuration
+    mcps: list[str] = ["whatsapp", "reminder", "task", "playwright", "microsoft"]
 
     # Microsoft MCP secrets
     microsoft_mcp_client_id: SecretStr = pyd.Field(default=SecretStr(""))
@@ -95,3 +98,11 @@ class VestaSettings(pyd_settings.BaseSettings):
     @property
     def whatsapp_build_dir(self) -> pl.Path:
         return self.install_root / "mcps" / "whatsapp-mcp-go"
+
+    @property
+    def memory_dir(self) -> pl.Path:
+        return self.state_dir / "memory"
+
+    @property
+    def skills_dir(self) -> pl.Path:
+        return self.memory_dir / "skills"

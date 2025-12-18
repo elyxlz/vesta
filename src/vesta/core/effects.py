@@ -1,8 +1,5 @@
 import pathlib as pl
 import datetime as dt
-import logging
-
-logger = logging.getLogger("vesta")
 
 
 def read_file(path: pl.Path) -> str:

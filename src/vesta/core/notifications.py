@@ -1,13 +1,13 @@
 import asyncio
 import datetime as dt
 
-import vesta.effects as vfx
+import vesta.core.effects as vfx
 import vesta.models as vm
 import vesta.utils as vu
-from vesta.effects import logger
+from vesta import logger
 
 
-async def load_notifications(*, config: vm.VestaSettings) -> list[vm.Notification]:
+async def load_notifications(*, config: vm.VestaConfig) -> list[vm.Notification]:
     file_contents = vfx.load_notification_files(config.notifications_dir)
 
     notifications = []
@@ -23,8 +23,8 @@ async def load_notifications(*, config: vm.VestaSettings) -> list[vm.Notificatio
     return notifications
 
 
-async def maybe_enqueue_whatsapp_greeting(queue: asyncio.Queue, *, config: vm.VestaSettings) -> None:
-    if "whatsapp" not in config.core_mcps:
+async def maybe_enqueue_whatsapp_greeting(queue: asyncio.Queue, *, config: vm.VestaConfig) -> None:
+    if "whatsapp" not in config.mcps:
         return
 
     prompt = (config.whatsapp_greeting_prompt or "").strip()
@@ -41,7 +41,7 @@ async def delete_notification_files(notifications: list[vm.Notification]) -> Non
 
 
 async def load_and_display_new_notifications(
-    notification_buffer: list[vm.Notification], *, buffer_start_time: dt.datetime | None, config: vm.VestaSettings
+    notification_buffer: list[vm.Notification], *, buffer_start_time: dt.datetime | None, config: vm.VestaConfig
 ) -> tuple[list[vm.Notification], dt.datetime | None]:
     new_notifs = await load_notifications(config=config)
 

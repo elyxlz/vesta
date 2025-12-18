@@ -6,7 +6,7 @@ import pathlib as pl
 import subprocess
 import time
 
-from .config import VestaSettings
+from vesta.config import VestaConfig
 
 logger = logging.getLogger(__name__)
 _mount_process: subprocess.Popen | None = None
@@ -26,7 +26,7 @@ def check_fusermount_installed() -> bool:
         return False
 
 
-def setup_rclone_config(config: VestaSettings, *, config_path: pl.Path) -> None:
+def setup_rclone_config(config: VestaConfig, *, config_path: pl.Path) -> None:
     token = config.onedrive_token.get_secret_value() if config.onedrive_token else None
     if not token:
         raise ValueError("ONEDRIVE_TOKEN is required for OneDrive sync")
@@ -64,7 +64,7 @@ client_secret = {client_secret}
     logger.warning(f"OneDrive credentials stored in {config_path} - keep this file secure")
 
 
-async def mount_onedrive(config: VestaSettings, *, mount_dir: pl.Path, config_path: pl.Path, timeout: int = 30) -> subprocess.Popen:
+async def mount_onedrive(config: VestaConfig, *, mount_dir: pl.Path, config_path: pl.Path, timeout: int = 30) -> subprocess.Popen:
     global _mount_process
 
     if not check_fusermount_installed():
