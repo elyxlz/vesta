@@ -82,7 +82,7 @@ class VestaConfig(pyd_settings.BaseSettings):
 
     @property
     def onedrive_dir(self) -> pl.Path:
-        return self.state_dir / "onedrive"
+        return pl.Path("/tmp/vesta-onedrive")
 
     @property
     def rclone_config_file(self) -> pl.Path:
@@ -106,3 +106,7 @@ class VestaConfig(pyd_settings.BaseSettings):
     @property
     def skills_dir(self) -> pl.Path:
         return self.memory_dir / "skills"
+
+    @property
+    def backups_dir(self) -> pl.Path:
+        return self.state_dir / "backups"

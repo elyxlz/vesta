@@ -17,9 +17,9 @@ def _get_calendar_day_range(
 ) -> tuple[str, str]:
     """Calculate calendar day boundaries for event queries."""
     try:
-        tz = ZoneInfo(user_timezone) if user_timezone else dt.timezone.utc
+        tz = ZoneInfo(user_timezone) if user_timezone else dt.UTC
     except Exception:
-        tz = dt.timezone.utc
+        tz = dt.UTC
 
     now_local = dt.datetime.now(tz)
     start_of_today = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -31,8 +31,8 @@ def _get_calendar_day_range(
     end_datetime = start_of_today + dt.timedelta(days=days_ahead + 1)
 
     # Convert to UTC and use Z format (consistent with monitor.py)
-    start_utc = start_datetime.astimezone(dt.timezone.utc).replace(microsecond=0)
-    end_utc = end_datetime.astimezone(dt.timezone.utc).replace(microsecond=0)
+    start_utc = start_datetime.astimezone(dt.UTC).replace(microsecond=0)
+    end_utc = end_datetime.astimezone(dt.UTC).replace(microsecond=0)
 
     return (
         start_utc.isoformat().replace("+00:00", "Z"),

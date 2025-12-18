@@ -74,7 +74,7 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State) -> None:
 
     try:
         await asyncio.wait_for(graceful_shutdown(state, config=config), timeout=config.shutdown_timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.error("Shutdown timeout")
 
 

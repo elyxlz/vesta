@@ -2,7 +2,7 @@
 
 import base64
 import pathlib as pl
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Any
 from mcp.server.fastmcp import Context
 from . import graph, auth
@@ -56,7 +56,7 @@ def _prepare_email_output_path(
     base_dir = context.cache_file.parent / EMAIL_SAVE_SUBDIR
     base_dir.mkdir(parents=True, exist_ok=True)
 
-    timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
+    timestamp = datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%S")
     subject_fragment = _sanitize_filename(subject or "")
     id_fragment = _sanitize_filename(email_id)[:32]
     filename = f"{timestamp}_{subject_fragment[:40]}_{id_fragment}.txt".strip("_")

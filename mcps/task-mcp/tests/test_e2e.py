@@ -3,7 +3,7 @@ import pytest
 import json
 import tempfile
 import time
-from datetime import datetime
+from datetime import datetime, UTC
 from pathlib import Path
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -216,9 +216,8 @@ async def test_monitor_no_notification_for_past_due_task():
 
     async for session, notif_dir in get_session(with_notifications=True, monitor_interval=1):
         # Task due 1 hour ago (already past) - use datetime with timezone
-        from datetime import timezone as tz
 
-        past_time = (datetime.now(tz.utc) - timedelta(hours=1)).isoformat()
+        past_time = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
         result = await session.call_tool(
             "add_task",
             {"title": "Past due task", "due_datetime": past_time.split("+")[0], "timezone": "UTC"},
@@ -276,14 +275,13 @@ async def test_due_relative_time_options():
 @pytest.mark.asyncio
 async def test_due_in_days_calculates_correctly():
     """Test that due_in_days calculates the correct date."""
-    from datetime import timezone as tz
 
     async for session, _ in get_session():
         result = await session.call_tool("add_task", {"title": "Task", "due_in_days": 3})
         response = parse_result(result)
         due_date = datetime.fromisoformat(response["due_date"].replace("Z", "+00:00"))
         # Should be approximately 3 days from now (in UTC)
-        now = datetime.now(tz.utc)
+        now = datetime.now(UTC)
         diff = due_date - now
         assert 2.9 < diff.days + diff.seconds / 86400 < 3.1
 

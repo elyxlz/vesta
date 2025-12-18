@@ -7,8 +7,8 @@ import datetime as dt
 import difflib
 import json
 import pathlib as pl
-import shutil
 import time
+import zipfile
 
 from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
 
@@ -19,7 +19,7 @@ from vesta.models import ConversationMessage
 from vesta.core.init import (
     get_memory_dir,
     get_memory_path,
-    get_memory_backup_dir,
+    get_backups_dir,
     get_skills_dir,
     get_dreamer_prompt_path,
     load_memory_template,
@@ -39,26 +39,29 @@ def load_memory(config: vm.VestaConfig) -> str:
     return load_memory_template("main")
 
 
-def _get_dir_size(path: pl.Path) -> int:
-    return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
-
-
-def backup_all_memories(config: vm.VestaConfig) -> pl.Path | None:
-    memory_dir = get_memory_dir(config)
-    if not memory_dir.exists():
-        logger.debug("[DREAMER] No memory folder to backup")
-        return None
-
-    backup_base = get_memory_backup_dir(config)
-    backup_base.mkdir(parents=True, exist_ok=True)
+def backup_state(config: vm.VestaConfig) -> pl.Path | None:
+    """Backup entire state_dir as timestamped zip, excluding logs/notifications/backups."""
+    backup_dir = get_backups_dir(config)
+    backup_dir.mkdir(parents=True, exist_ok=True)
 
     timestamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup_path = backup_base / timestamp
-    shutil.copytree(memory_dir, backup_path)
+    zip_path = backup_dir / f"vesta-{timestamp}.zip"
+    exclude = {"logs", "notifications", "backups"}
 
-    size_kb = _get_dir_size(backup_path) / 1024
-    logger.info(f"[DREAMER] Backup created: {backup_path.name} ({size_kb:.1f} KB)")
-    return backup_path
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for item in config.state_dir.iterdir():
+            if item.name in exclude:
+                continue
+            if item.is_file():
+                zf.write(item, item.name)
+            elif item.is_dir():
+                for file in item.rglob("*"):
+                    if file.is_file():
+                        zf.write(file, file.relative_to(config.state_dir))
+
+    size_kb = zip_path.stat().st_size / 1024
+    logger.info(f"[DREAMER] Backup created: {zip_path.name} ({size_kb:.1f} KB)")
+    return zip_path
 
 
 def _format_diff(before: str, after: str) -> str:
@@ -196,7 +199,7 @@ Check MEMORY.md and update it with any new important information from this conve
         async for msg in client.receive_response():
             # Log dreamer's actions
             if hasattr(msg, "content") and msg.content:
-                for block in msg.content:
+                for block in msg.content:  # type: ignore[union-attr]
                     if hasattr(block, "type"):
                         if block.type == "text" and hasattr(block, "text") and block.text:
                             for line in block.text.strip().split("\n"):
@@ -291,7 +294,7 @@ async def preserve_memory(state: vm.State, *, config: vm.VestaConfig) -> bool:
             logger.info("[DREAMER] No conversation history to preserve")
             return False
 
-        backup_path = backup_all_memories(config)
+        backup_state(config)
 
         diff = await preserve_conversation_memory(
             history,
@@ -305,12 +308,6 @@ async def preserve_memory(state: vm.State, *, config: vm.VestaConfig) -> bool:
             logger.info(Messages.DREAMER_UPDATED)
             logger.info("--- main memory ---")
             logger.info(diff)
-            if backup_path:
-                diff_file = backup_path / "DIFF.txt"
-                with diff_file.open("w") as f:
-                    f.write("=== main ===\n")
-                    f.write(diff)
-                    f.write("\n\n")
             logger.info(f"[DREAMER] Total preservation time: {elapsed:.1f}s")
             return True
         else:

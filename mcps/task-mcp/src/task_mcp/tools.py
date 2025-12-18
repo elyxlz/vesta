@@ -1,4 +1,4 @@
-from datetime import datetime as dt, timedelta
+from datetime import datetime as dt, timedelta, UTC
 from contextlib import closing, asynccontextmanager
 from dataclasses import dataclass
 from collections.abc import AsyncIterator
@@ -139,7 +139,6 @@ def init_db(ctx: TaskContext):
 
 def _to_utc(datetime_str: str, timezone_str: str) -> str:
     """Convert datetime string with timezone to UTC ISO-8601 string."""
-    from datetime import timezone as tz
     from zoneinfo import ZoneInfo
 
     # Parse the datetime
@@ -147,12 +146,12 @@ def _to_utc(datetime_str: str, timezone_str: str) -> str:
 
     # If already has timezone info, convert to UTC
     if naive_dt.tzinfo is not None:
-        return naive_dt.astimezone(tz.utc).isoformat()
+        return naive_dt.astimezone(UTC).isoformat()
 
     # Apply the provided timezone and convert to UTC
     local_tz = ZoneInfo(timezone_str)
     local_dt = naive_dt.replace(tzinfo=local_tz)
-    return local_dt.astimezone(tz.utc).isoformat()
+    return local_dt.astimezone(UTC).isoformat()
 
 
 def _compute_due_date(
@@ -163,7 +162,6 @@ def _compute_due_date(
     due_in_days: int | None,
 ) -> str | None:
     """Compute due date from various input modes. Returns UTC ISO-8601 string."""
-    from datetime import timezone as tz
 
     # Mode 1: Absolute datetime with timezone
     if due_datetime is not None:
@@ -178,7 +176,7 @@ def _compute_due_date(
         days=due_in_days or 0,
     )
     if offset.total_seconds() > 0:
-        return (dt.now(tz.utc) + offset).isoformat()
+        return (dt.now(UTC) + offset).isoformat()
 
     return None
 

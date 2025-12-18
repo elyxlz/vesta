@@ -38,7 +38,7 @@ async def attempt_interrupt(state: vm.State, *, config: vm.VestaConfig, reason: 
 
         return True
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.debug("[INTERRUPT] Interrupt timed out; client likely still running")
         return False
 
@@ -85,7 +85,7 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
 
     try:
         await asyncio.wait_for(collect(), timeout=config.response_timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         responses.append("[Response timeout]")
         state.sub_agent_context = None
         await attempt_interrupt(state, config=config, reason="Response timeout")
@@ -122,7 +122,7 @@ async def create_claude_client(config: vm.VestaConfig, *, state: vm.State, resum
         permission_mode="bypassPermissions",
         resume=resume_session_id,
         cwd=config.state_dir,
-        add_dirs=[str(config.state_dir), str(config.skills_dir)],
+        add_dirs=[str(config.state_dir), str(config.skills_dir), str(config.onedrive_dir)],
         max_thinking_tokens=config.max_thinking_tokens,
     )
     client = ClaudeSDKClient(options=options)

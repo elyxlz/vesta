@@ -1,14 +1,13 @@
 """Startup initialization and template loading."""
 
 import pathlib as pl
-import typing as tp
 
 import vesta.models as vm
 from vesta import logger
 from vesta.templates.main import MEMORY_TEMPLATE as MAIN_MEMORY_TEMPLATE
 from vesta.templates.skills import browser, calendar, email, report_writer, what_day
 
-SkillTemplate: tp.TypeAlias = dict[str, str | dict[str, str]]
+type SkillTemplate = dict[str, str | dict[str, str]]
 
 
 def get_memory_dir(config: vm.VestaConfig) -> pl.Path:
@@ -19,8 +18,8 @@ def get_memory_path(config: vm.VestaConfig) -> pl.Path:
     return get_memory_dir(config) / "MEMORY.md"
 
 
-def get_memory_backup_dir(config: vm.VestaConfig) -> pl.Path:
-    return config.state_dir / "memory_backups"
+def get_backups_dir(config: vm.VestaConfig) -> pl.Path:
+    return config.backups_dir
 
 
 def get_skills_dir(config: vm.VestaConfig) -> pl.Path:

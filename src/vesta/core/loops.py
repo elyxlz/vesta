@@ -39,7 +39,7 @@ async def message_processor(queue: asyncio.Queue, *, state: vm.State, config: vm
     while state.shutdown_event and not state.shutdown_event.is_set():
         try:
             msg, is_user = await asyncio.wait_for(queue.get(), timeout=1.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             continue
 
         logger.debug(f"Processing message (is_user={is_user}, length={len(msg)})")

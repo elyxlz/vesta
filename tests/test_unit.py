@@ -1,80 +1,125 @@
-"""Unit tests for Vesta agents module.
+"""Unit tests for Vesta core modules.
 
-These tests verify the consistency of agent configuration and memory templates.
+These tests verify configuration, utilities, and core functionality.
 """
 
+import datetime as dt
 from pathlib import Path
 
+from pydantic import SecretStr
 
 import vesta.models as vm
-from vesta.registry import (
-    build_all_agents,
-    get_memory_templates,
-    ALL_AGENTS,
-    MCP_REGISTRY,
+import vesta.utils as vu
+from vesta.core.init import (
+    get_memory_dir,
+    get_memory_path,
+    get_skills_dir,
+    get_dreamer_prompt_path,
+    get_backups_dir,
 )
 
 
-def _make_config(tmp_path: Path) -> vm.VestaSettings:
-    return vm.VestaSettings(state_dir=tmp_path, microsoft_mcp_client_id="test")
+def _make_config(tmp_path: Path) -> vm.VestaConfig:
+    return vm.VestaConfig(state_dir=tmp_path, microsoft_mcp_client_id=SecretStr("test"))
 
 
-# Agent consistency tests - prevent drift between registry and templates
+# Config tests
 
 
-def test_agent_names_derived_from_configs(tmp_path):
-    """config.active_agents must return names from ALL_AGENTS."""
+def test_config_paths_under_state_dir(tmp_path):
+    """All config paths should be under state_dir."""
     config = _make_config(tmp_path)
-    for name in config.active_agents:
-        assert name in ALL_AGENTS, f"Active agent {name} not in ALL_AGENTS"
+    assert config.notifications_dir.is_relative_to(tmp_path)
+    assert config.data_dir.is_relative_to(tmp_path)
+    assert config.logs_dir.is_relative_to(tmp_path)
+    assert config.memory_dir.is_relative_to(tmp_path)
+    assert config.skills_dir.is_relative_to(tmp_path)
+    assert config.backups_dir.is_relative_to(tmp_path)
 
 
-def test_all_agents_have_memory_templates(tmp_path):
-    """Every active agent must have a corresponding memory template."""
+def test_config_onedrive_in_tmp():
+    """OneDrive mount should be in /tmp."""
+    config = vm.VestaConfig(microsoft_mcp_client_id=SecretStr("test"))
+    assert str(config.onedrive_dir).startswith("/tmp")
+
+
+def test_config_default_values():
+    """Config should have sensible defaults."""
+    config = vm.VestaConfig(microsoft_mcp_client_id=SecretStr("test"))
+    assert config.notification_check_interval > 0
+    assert config.response_timeout > 0
+    assert config.shutdown_timeout > 0
+
+
+# Init module tests
+
+
+def test_memory_paths(tmp_path):
+    """Memory path functions should return correct paths."""
     config = _make_config(tmp_path)
-    templates = get_memory_templates(config)
-    for name in config.active_agents:
-        assert name in templates, f"Missing template for {name}"
+    assert get_memory_dir(config) == tmp_path / "memory"
+    assert get_memory_path(config) == tmp_path / "memory" / "MEMORY.md"
+    assert get_skills_dir(config) == tmp_path / "memory" / "skills"
+    assert get_dreamer_prompt_path(config) == tmp_path / "memory" / "DREAMER_PROMPT.md"
+    assert get_backups_dir(config) == tmp_path / "backups"
 
 
-def test_no_orphan_templates(tmp_path):
-    """All templates (except 'main') must correspond to an active agent."""
-    config = _make_config(tmp_path)
-    agent_names_set = set(config.active_agents) | {"main"}
-    templates = get_memory_templates(config)
-    assert set(templates.keys()) == agent_names_set
+# Utils tests
 
 
-def test_agent_configs_are_valid():
-    """Each agent definition must have required fields with valid values."""
-    for name, agent in ALL_AGENTS.items():
-        assert agent.name == name
-        assert agent.description
-        assert agent.mcp in MCP_REGISTRY  # MCP must exist in registry
+def test_format_tool_call_task():
+    """Task tool calls should be formatted with agent type."""
+    formatted, context = vu.format_tool_call(
+        "Task",
+        input_data={"subagent_type": "test-agent", "description": "do something"},
+        sub_agent_context=None,
+    )
+    assert "[TASK]" in formatted
+    assert "test-agent" in formatted
+    assert context == "test-agent"
 
 
-def test_mcp_definitions_have_tools():
-    """Each MCP definition must have tool suffixes."""
-    for name, mcp in MCP_REGISTRY.items():
-        assert mcp.name == name
-        assert len(mcp.tool_suffixes) > 0
-        assert all(mcp.tool_ids)  # tool_ids property should work
+def test_format_tool_call_mcp():
+    """MCP tool calls should show service and action."""
+    formatted, context = vu.format_tool_call(
+        "mcp__whatsapp__send_message",
+        input_data={"to": "user", "message": "hello"},
+        sub_agent_context=None,
+    )
+    assert "[TOOL]" in formatted
+    assert "whatsapp" in formatted
 
 
-# Build agents tests
+def test_format_notification_batch_single():
+    """Single notification should not have batch header."""
+    notif = vm.Notification(
+        timestamp=dt.datetime(2025, 1, 1, 0, 0, 0),
+        source="test",
+        type="message",
+    )
+    formatted = vu.format_notification_batch([notif])
+    assert "[NOTIFICATIONS]" not in formatted
 
 
-def test_builds_all_configured_agents(tmp_path):
-    """build_all_agents returns one agent per active agent."""
-    config = _make_config(tmp_path)
-    agents = build_all_agents(config)
-    assert set(agents.keys()) == set(config.active_agents)
+def test_format_notification_batch_multiple():
+    """Multiple notifications should have batch header."""
+    notifs = [
+        vm.Notification(timestamp=dt.datetime(2025, 1, 1, 0, 0, 0), source="test", type="message"),
+        vm.Notification(timestamp=dt.datetime(2025, 1, 1, 0, 0, 1), source="test", type="message"),
+    ]
+    formatted = vu.format_notification_batch(notifs)
+    assert "[NOTIFICATIONS]" in formatted
 
 
-def test_agents_have_prompts_and_tools(tmp_path):
-    """Each built agent has a prompt (from memory) and tools."""
-    config = _make_config(tmp_path)
-    agents = build_all_agents(config)
-    for name, agent in agents.items():
-        assert agent.prompt, f"{name} missing prompt"
-        assert agent.tools, f"{name} missing tools"
+def test_decide_notification_action():
+    """Notification action should depend on processing state."""
+    notif = vm.Notification(timestamp=dt.datetime(2025, 1, 1, 0, 0, 0), source="test", type="message")
+
+    # No notifications = skip
+    assert vu.decide_notification_action([], is_processing=False, has_client=True) == "skip"
+
+    # Processing with client = interrupt
+    assert vu.decide_notification_action([notif], is_processing=True, has_client=True) == "interrupt"
+
+    # Not processing = queue
+    assert vu.decide_notification_action([notif], is_processing=False, has_client=True) == "queue"

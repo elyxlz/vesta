@@ -11,10 +11,12 @@ import uuid
 from pathlib import Path
 
 
+from pydantic import SecretStr
+
 import vesta.main as vmain
 import vesta.models as vm
-import vesta.logging_setup as vlog
-from vesta.memory import get_memory_path
+from vesta import logger
+from vesta.core.init import get_memory_path
 
 
 # =============================================================================
@@ -67,20 +69,18 @@ async def _assert_missing(path: Path, duration: float = 30.0) -> None:
         await asyncio.sleep(1.0)
 
 
-def _make_config(state_dir: Path, **overrides) -> vm.VestaSettings:
+def _make_config(state_dir: Path, **overrides: object) -> vm.VestaConfig:
     """Create a test config with sensible defaults."""
-    defaults = {
-        "state_dir": state_dir,
-        "microsoft_mcp_client_id": "test-client",
-        "enable_whatsapp_greeting": False,
-        "enable_nightly_memory": False,
-        "notification_check_interval": 1,
-        "notification_buffer_delay": 0,
-        "proactive_check_interval": 100000,
-        "ephemeral": True,
-    }
-    defaults.update(overrides)
-    return vm.VestaSettings(**defaults)
+    return vm.VestaConfig(
+        state_dir=overrides.get("state_dir", state_dir),  # type: ignore[arg-type]
+        microsoft_mcp_client_id=SecretStr(str(overrides.get("microsoft_mcp_client_id", "test-client"))),
+        whatsapp_greeting_prompt=overrides.get("whatsapp_greeting_prompt"),  # type: ignore[arg-type]
+        nightly_memory_hour=overrides.get("nightly_memory_hour"),  # type: ignore[arg-type]
+        notification_check_interval=int(overrides.get("notification_check_interval", 1)),  # type: ignore[arg-type]
+        notification_buffer_delay=int(overrides.get("notification_buffer_delay", 0)),  # type: ignore[arg-type]
+        proactive_check_interval=int(overrides.get("proactive_check_interval", 100000)),  # type: ignore[arg-type]
+        ephemeral=bool(overrides.get("ephemeral", True)),
+    )
 
 
 async def _noop_input_handler(queue: asyncio.Queue, *, state: vm.State) -> None:
@@ -92,10 +92,13 @@ async def _noop_input_handler(queue: asyncio.Queue, *, state: vm.State) -> None:
 async def _run_test_scenario(state_dir: Path, test_fn, **config_overrides):
     """Run a test scenario with full Vesta lifecycle in same task context."""
     config = _make_config(state_dir, **config_overrides)
-    vlog.setup_logging(config.logs_dir, debug=True)
+    logger.setup(config.logs_dir, debug=True)
 
-    original_input_handler = vmain.input_handler
-    vmain.input_handler = _noop_input_handler
+    # Import here to avoid circular imports
+    from vesta.core import io as vio
+
+    original_input_handler = vio.input_handler
+    vio.input_handler = _noop_input_handler  # type: ignore[assignment]
 
     try:
         state = await vmain.init_state(config=config)
@@ -116,7 +119,7 @@ async def _run_test_scenario(state_dir: Path, test_fn, **config_overrides):
         except asyncio.CancelledError:
             pass  # Expected during shutdown
     finally:
-        vmain.input_handler = original_input_handler
+        vio.input_handler = original_input_handler
 
 
 # =============================================================================
@@ -129,7 +132,7 @@ def test_notification_creates_file(tmp_path):
     state_dir = tmp_path / "state"
     _prepare_state_dir(state_dir)
 
-    async def test_fn(state: vm.State, config: vm.VestaSettings):
+    async def test_fn(state: vm.State, config: vm.VestaConfig):
         workspace = config.state_dir / "workspace"
         notif_dir = config.notifications_dir
         target = workspace / f"single-{uuid.uuid4().hex}.txt"
@@ -152,7 +155,7 @@ def test_sequential_and_interrupt_flow(tmp_path):
     state_dir = tmp_path / "state"
     _prepare_state_dir(state_dir)
 
-    async def test_fn(state: vm.State, config: vm.VestaSettings):
+    async def test_fn(state: vm.State, config: vm.VestaConfig):
         workspace = config.state_dir / "workspace"
         notif_dir = config.notifications_dir
 
@@ -197,7 +200,7 @@ def test_notification_batching(tmp_path):
     state_dir = tmp_path / "state"
     _prepare_state_dir(state_dir)
 
-    async def test_fn(state: vm.State, config: vm.VestaSettings):
+    async def test_fn(state: vm.State, config: vm.VestaConfig):
         workspace = config.state_dir / "workspace"
         notif_dir = config.notifications_dir
 
@@ -216,38 +219,34 @@ def test_notification_batching(tmp_path):
     _run(_run_test_scenario(state_dir, test_fn, notification_buffer_delay=3))
 
 
-def test_subagents_available_on_startup(tmp_path):
-    """Sub-agents should be configured and available when Vesta starts."""
+def test_client_available_on_startup(tmp_path):
+    """Claude client should be available when Vesta starts."""
     state_dir = tmp_path / "state"
     _prepare_state_dir(state_dir)
 
-    async def test_fn(state: vm.State, config: vm.VestaSettings):
+    async def test_fn(state: vm.State, config: vm.VestaConfig):
         assert state.client is not None
-
-        for agent_name in config.active_agents:
-            memory_path = get_memory_path(config, agent_name=agent_name)
-            assert memory_path.exists(), f"Memory for {agent_name} should be initialized"
+        memory_path = get_memory_path(config)
+        assert memory_path.exists(), "Memory should be initialized"
 
     _run(_run_test_scenario(state_dir, test_fn))
 
 
 def test_memory_initialized_from_templates(tmp_path):
-    """Memory files should be initialized from templates on first run."""
+    """Memory file should be initialized from template on first run."""
     state_dir = tmp_path / "state"
     _prepare_state_dir(state_dir)
     config = _make_config(state_dir)
 
-    # Verify no memory files exist before startup
-    for agent_name in config.active_agents:
-        memory_path = get_memory_path(config, agent_name=agent_name)
-        assert not memory_path.exists()
+    # Verify no memory file exists before startup
+    memory_path = get_memory_path(config)
+    assert not memory_path.exists()
 
-    async def test_fn(state: vm.State, config: vm.VestaSettings):
-        for agent_name in config.active_agents:
-            memory_path = get_memory_path(config, agent_name=agent_name)
-            assert memory_path.exists(), f"Memory for {agent_name} should exist"
-            content = memory_path.read_text()
-            assert len(content) > 100, f"Memory for {agent_name} should have content"
+    async def test_fn(state: vm.State, config: vm.VestaConfig):
+        memory_path = get_memory_path(config)
+        assert memory_path.exists(), "Memory should exist"
+        content = memory_path.read_text()
+        assert len(content) > 100, "Memory should have content from template"
 
     _run(_run_test_scenario(state_dir, test_fn))
 
@@ -257,7 +256,7 @@ def test_graceful_shutdown(tmp_path):
     state_dir = tmp_path / "state"
     _prepare_state_dir(state_dir)
 
-    async def test_fn(state: vm.State, config: vm.VestaSettings):
+    async def test_fn(state: vm.State, config: vm.VestaConfig):
         # Just verify startup succeeded, then let shutdown happen
         assert state.client is not None
         log_file = config.logs_dir / "vesta.log"
@@ -271,7 +270,7 @@ def test_multiple_files_single_request(tmp_path):
     state_dir = tmp_path / "state"
     _prepare_state_dir(state_dir)
 
-    async def test_fn(state: vm.State, config: vm.VestaSettings):
+    async def test_fn(state: vm.State, config: vm.VestaConfig):
         workspace = config.state_dir / "workspace"
         notif_dir = config.notifications_dir
 
@@ -306,7 +305,7 @@ def test_file_modification(tmp_path):
     state_dir = tmp_path / "state"
     _prepare_state_dir(state_dir)
 
-    async def test_fn(state: vm.State, config: vm.VestaSettings):
+    async def test_fn(state: vm.State, config: vm.VestaConfig):
         workspace = config.state_dir / "workspace"
         notif_dir = config.notifications_dir
 

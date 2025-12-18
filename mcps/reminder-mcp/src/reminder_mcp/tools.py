@@ -1,4 +1,4 @@
-from datetime import datetime as dt, timedelta, timezone
+from datetime import datetime as dt, timedelta, UTC
 from contextlib import closing, asynccontextmanager
 from dataclasses import dataclass
 from collections.abc import AsyncIterator
@@ -35,13 +35,13 @@ class TriggerData(TypedDict, total=False):
 
 
 def _now_utc() -> dt:
-    return dt.now(timezone.utc)
+    return dt.now(UTC)
 
 
 def _parse_datetime(dt_str: str) -> dt:
     """Parse datetime string to timezone-aware datetime (assumes UTC if naive)."""
     parsed = dt.fromisoformat(dt_str.replace("Z", "+00:00"))
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
 def _validate_directory(path_str: str | None, *, param_name: str) -> Path:
@@ -242,12 +242,12 @@ def _to_utc(datetime_str: str, timezone_str: str) -> dt:
 
     # If already has timezone info, convert to UTC
     if naive_dt.tzinfo is not None:
-        return naive_dt.astimezone(timezone.utc)
+        return naive_dt.astimezone(UTC)
 
     # Apply the provided timezone and convert to UTC
     local_tz = ZoneInfo(timezone_str)
     local_dt = naive_dt.replace(tzinfo=local_tz)
-    return local_dt.astimezone(timezone.utc)
+    return local_dt.astimezone(UTC)
 
 
 @mcp.tool()

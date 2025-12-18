@@ -5,7 +5,7 @@ import logging
 import sqlite3
 import threading
 from contextlib import closing
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from pathlib import Path
 
 from . import notifications
@@ -30,7 +30,7 @@ def _parse_datetime(dt_str: str) -> datetime:
     if parsed.tzinfo:
         return parsed
     # Treat naive datetime as local time, then convert to UTC for comparison
-    return parsed.astimezone(timezone.utc)
+    return parsed.astimezone(UTC)
 
 
 def run(
@@ -44,7 +44,7 @@ def run(
 
     while not stop_event.is_set():
         try:
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             logger.info(f"Monitor check at {now.isoformat()}")
 
             with closing(_get_db(db_path)) as conn:

@@ -11,8 +11,13 @@ def format_tool_call(name: str, *, input_data: object, sub_agent_context: str | 
     input_preview = (input_str[:150] + "...") if len(input_str) > 150 else input_str
 
     if name == "Task":
-        agent_type = input_data.get("subagent_type", "unknown") if isinstance(input_data, dict) else "unknown"
-        description = input_data.get("description", "") if isinstance(input_data, dict) else ""
+        if isinstance(input_data, dict):
+            data = tp.cast(dict[str, tp.Any], input_data)
+            agent_type = data.get("subagent_type", "unknown")
+            description = data.get("description", "")
+        else:
+            agent_type = "unknown"
+            description = ""
         return f"[TASK] [{agent_type}]: {description or input_preview}", agent_type
 
     prefix = f"[{sub_agent_context}] " if sub_agent_context else ""

@@ -1,6 +1,6 @@
 import json
 import time
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 
 
@@ -19,7 +19,7 @@ def write_notification(
         raise ValueError(f"Invalid priority {priority}, must be 1, 2, or 3")
 
     notif = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "source": "task",
         "type": "task_due",
         "task_id": task_id,

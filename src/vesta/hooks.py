@@ -16,7 +16,7 @@ async def log_tool_start(input_data: HookInput, tool_use_id: str | None, context
             subagent = tool_input.get("subagent_type")
             if subagent:
                 logger.info(f"SUBAGENT spawn: {subagent}")
-    return {}
+    return tp.cast(HookJSONOutput, {})
 
 
 def build_hooks(state: vm.State) -> dict[HookEvent, list[HookMatcher]]:
@@ -36,7 +36,7 @@ def build_hooks(state: vm.State) -> dict[HookEvent, list[HookMatcher]]:
                         state.subagent_conversations[subagent_type].append(str(tool_response))
                     logger.info(f"SUBAGENT response captured: {subagent_type}")
 
-        return {}
+        return tp.cast(HookJSONOutput, {})
 
     return {
         "PreToolUse": [HookMatcher(hooks=[tp.cast(HookCallback, log_tool_start)])],
