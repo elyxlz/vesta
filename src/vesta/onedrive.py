@@ -6,7 +6,7 @@ import pathlib as pl
 import subprocess
 import time
 
-from .models import VestaSettings
+from .config import VestaSettings
 
 logger = logging.getLogger(__name__)
 _mount_process: subprocess.Popen | None = None
@@ -27,7 +27,7 @@ def check_fusermount_installed() -> bool:
 
 
 def setup_rclone_config(config: VestaSettings, *, config_path: pl.Path) -> None:
-    token = config.get_secret(config.onedrive_token)
+    token = config.onedrive_token.get_secret_value() if config.onedrive_token else None
     if not token:
         raise ValueError("ONEDRIVE_TOKEN is required for OneDrive sync")
 
@@ -40,8 +40,8 @@ def setup_rclone_config(config: VestaSettings, *, config_path: pl.Path) -> None:
 type = onedrive
 """
 
-    client_id = config.get_secret(config.onedrive_client_id)
-    client_secret = config.get_secret(config.onedrive_client_secret)
+    client_id = config.onedrive_client_id.get_secret_value() if config.onedrive_client_id else None
+    client_secret = config.onedrive_client_secret.get_secret_value() if config.onedrive_client_secret else None
     if client_id and client_secret:
         rclone_config += f"""client_id = {client_id}
 client_secret = {client_secret}
@@ -64,7 +64,7 @@ client_secret = {client_secret}
     logger.warning(f"OneDrive credentials stored in {config_path} - keep this file secure")
 
 
-async def mount_onedrive(config: VestaSettings, mount_dir: pl.Path, config_path: pl.Path, *, timeout: int = 30) -> subprocess.Popen:
+async def mount_onedrive(config: VestaSettings, *, mount_dir: pl.Path, config_path: pl.Path, timeout: int = 30) -> subprocess.Popen:
     global _mount_process
 
     if not check_fusermount_installed():
@@ -98,6 +98,10 @@ async def mount_onedrive(config: VestaSettings, mount_dir: pl.Path, config_path:
         "5m",
         "--poll-interval",
         "30s",
+        "--vfs-write-back",
+        "5s",
+        "--transfers",
+        "4",
         "--fast-list",
         "--log-file",
         str(config.logs_dir / "onedrive-mount.log"),
@@ -121,7 +125,7 @@ async def mount_onedrive(config: VestaSettings, mount_dir: pl.Path, config_path:
 
     logger.info(f"Verified {file_count} items in OneDrive, mounting at {mount_dir}")
 
-    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     _mount_process = process
 
     start_time = time.time()
@@ -137,11 +141,9 @@ async def mount_onedrive(config: VestaSettings, mount_dir: pl.Path, config_path:
         await asyncio.sleep(0.5)
 
     if process.poll() is not None:
-        stdout, stderr = process.communicate()
-        logger.error(f"rclone mount exited: stdout={stdout[:500]}, stderr={stderr[:500]}")
-        process.terminate()
+        logger.error(f"rclone mount exited with code {process.returncode} - check {config.logs_dir / 'onedrive-mount.log'}")
         _mount_process = None
-        raise RuntimeError(f"OneDrive mount failed: {stderr[:200]}")
+        raise RuntimeError(f"OneDrive mount failed with code {process.returncode}")
 
     try:
         contents = list(mount_dir.iterdir())
@@ -157,10 +159,7 @@ async def mount_onedrive(config: VestaSettings, mount_dir: pl.Path, config_path:
 
 
 def _kill_mount_users(mount_dir: pl.Path) -> None:
-    try:
-        subprocess.run(["fuser", "-km", str(mount_dir)], capture_output=True, text=True, timeout=5)
-    except Exception:
-        logger.warning("Failed to kill processes using mount")
+    subprocess.run(["fuser", "-km", str(mount_dir)], capture_output=True, text=True, timeout=5)
 
 
 def is_mounted(mount_dir: pl.Path) -> bool:
@@ -208,14 +207,11 @@ def unmount_onedrive(mount_dir: pl.Path, *, timeout: int = 10) -> None:
             _mount_process = None
 
     logger.info("OneDrive unmounted")
-    try:
-        if mount_dir.exists():
-            for child in mount_dir.iterdir():
-                if child.is_file():
-                    child.unlink(missing_ok=True)
-                elif child.is_dir():
-                    child.rmdir()
-            mount_dir.rmdir()
-            logger.info(f"Removed mount directory {mount_dir}")
-    except Exception as e:
-        logger.warning(f"Failed to clean up mount dir {mount_dir}: {e}")
+    if mount_dir.exists():
+        for child in mount_dir.iterdir():
+            if child.is_file():
+                child.unlink(missing_ok=True)
+            elif child.is_dir():
+                child.rmdir()
+        mount_dir.rmdir()
+        logger.info(f"Removed mount directory {mount_dir}")

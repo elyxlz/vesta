@@ -1,6 +1,77 @@
 from datetime import datetime, timedelta, timezone
+from typing import TypedDict, NotRequired
+from zoneinfo import ZoneInfo
 from . import graph, auth, notifications
 from .context import MicrosoftContext
+
+
+class EmailAddress(TypedDict):
+    name: NotRequired[str]
+    address: str
+
+
+class EmailFrom(TypedDict):
+    emailAddress: EmailAddress
+
+
+class Email(TypedDict):
+    id: str
+    subject: NotRequired[str]
+    from_: NotRequired[EmailFrom]  # 'from' is reserved
+    bodyPreview: NotRequired[str]
+    receivedDateTime: NotRequired[str]
+
+
+class EventTime(TypedDict):
+    dateTime: str
+    timeZone: NotRequired[str]
+
+
+class EventLocation(TypedDict):
+    displayName: NotRequired[str]
+
+
+class CalendarEvent(TypedDict):
+    id: str
+    subject: NotRequired[str]
+    start: EventTime
+    location: NotRequired[EventLocation]
+
+
+def _parse_event_time(event: CalendarEvent) -> datetime:
+    """Parse event start time to UTC-aware datetime. Raises ValueError on failure."""
+    start = event["start"]
+    start_dt = start["dateTime"]
+    start_tz = start.get("timeZone")
+
+    # Check for timezone info: Z, +HH:MM, or -HH:MM
+    has_tz = start_dt.endswith("Z") or "+" in start_dt or (start_dt.count("-") > 2)
+    if has_tz:
+        return datetime.fromisoformat(start_dt.replace("Z", "+00:00"))
+
+    # Local time without timezone - use the event's timeZone field
+    if not start_tz:
+        raise ValueError(f"Event has dateTime without timezone info: {start_dt}")
+    try:
+        naive_time = datetime.fromisoformat(start_dt)
+        local_tz = ZoneInfo(start_tz)
+        return naive_time.replace(tzinfo=local_tz).astimezone(timezone.utc)
+    except Exception as e:
+        raise ValueError(f"Failed to parse event time {start_dt} with tz {start_tz}: {e}")
+
+
+def _format_threshold_label(minutes: int) -> str:
+    """Convert minutes to human-readable label like '1 week', '2 hours'."""
+    if minutes >= 10080:
+        n = minutes // 10080
+        return f"{n} week" + ("s" if n > 1 else "")
+    if minutes >= 1440:
+        n = minutes // 1440
+        return f"{n} day" + ("s" if n > 1 else "")
+    if minutes >= 60:
+        n = minutes // 60
+        return f"{n} hour" + ("s" if n > 1 else "")
+    return f"{minutes} minute" + ("s" if minutes != 1 else "")
 
 
 def run(ctx: MicrosoftContext):
@@ -24,7 +95,6 @@ def run(ctx: MicrosoftContext):
                     catching_up = True
                 else:
                     last_check = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
-                first_run = False
             else:
                 last_check = (
                     ctx.monitor_state_file.read_text().strip()
@@ -32,6 +102,7 @@ def run(ctx: MicrosoftContext):
                     else (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
                 )
                 catching_up = False
+            first_run = False
 
             logger.info(f"Checking for updates since {last_check}")
             last_dt = datetime.fromisoformat(last_check.replace("Z", "+00:00"))
@@ -58,36 +129,42 @@ def run(ctx: MicrosoftContext):
                         },
                     )
 
-                    emails = (result or {}).get("value", [])
+                    if not result or "value" not in result:
+                        logger.warning(f"Unexpected email API response: {result}")
+                        continue
+                    emails = result["value"]
                     logger.info(f"Found {len(emails)} new emails for {acc.username}")
 
                     for email in emails:
-                        sender = email.get("from", {}).get("emailAddress", {})
-                        logger.info(f"Writing notification for email from {sender.get('address')}")
-                        metadata = {
-                            "account": acc.username,
-                            "subject": email.get("subject"),
-                            "sender_name": sender.get("name"),
-                            "sender_address": sender.get("address"),
-                            "preview": email.get("bodyPreview", "")[:200],
-                            "received_at": email.get("receivedDateTime"),
-                        }
-                        if catching_up:
-                            metadata["missed"] = True
+                        email_from = email.get("from")
+                        if not email_from or "emailAddress" not in email_from:
+                            logger.warning(f"Email missing sender info: {email.get('id')}")
+                            continue
+                        sender = email_from["emailAddress"]
+                        sender_name = sender.get("name")
+                        sender_addr = sender.get("address")
+                        if not sender_addr:
+                            logger.warning(f"Email sender missing address: {email.get('id')}")
+                            continue
+
+                        logger.info(f"Writing notification for email from {sender_addr}")
                         notifications.write_notification(
                             ctx.notif_dir,
                             "email",
-                            f"New email from {sender.get('name') or sender.get('address', 'Unknown')}: {email.get('subject', '(No subject)')}",
-                            metadata,
+                            sender=sender_name or sender_addr,
+                            sender_address=sender_addr,
+                            account=acc.username,
+                            subject=email.get("subject"),
+                            preview=(email.get("bodyPreview") or "")[:200],
+                            received_at=email.get("receivedDateTime"),
+                            missed=catching_up or None,
                         )
                 except Exception as e:
                     logger.error(f"Error fetching emails for {acc.username}: {e}")
 
                 try:
-                    now = datetime.now(timezone.utc)
-                    window_start = last_dt
-                    window_end = now + timedelta(days=7)
-
+                    max_threshold = max(ctx.get_calendar_notify_thresholds())
+                    window_end = new_check_time + timedelta(minutes=max_threshold + 60)
                     cal_result = graph.request(
                         ctx.http_client,
                         ctx.cache_file,
@@ -98,79 +175,61 @@ def run(ctx: MicrosoftContext):
                         "/me/calendarView",
                         acc.account_id,
                         params={
-                            "startDateTime": window_start.isoformat().replace("+00:00", "Z"),
+                            "startDateTime": last_dt.isoformat().replace("+00:00", "Z"),
                             "endDateTime": window_end.isoformat().replace("+00:00", "Z"),
                             "$select": "subject,start,location,id",
                         },
                     )
 
-                    events = (cal_result or {}).get("value", [])
+                    if not cal_result or "value" not in cal_result:
+                        logger.warning(f"Unexpected calendar API response: {cal_result}")
+                        continue
+                    events = cal_result["value"]
                     logger.info(f"Found {len(events)} upcoming calendar events for {acc.username}")
 
                     for event in events:
-                        start = event.get("start", {}).get("dateTime")
-                        event_time = datetime.fromisoformat(start.replace("Z", "+00:00")) if start else None
-                        if not event_time:
+                        try:
+                            event_time = _parse_event_time(event)
+                        except (KeyError, ValueError) as e:
+                            logger.warning(f"Skipping event {event.get('id', '?')}: {e}")
                             continue
 
-                        loc = event.get("location", {}).get("displayName")
-                        subject = event.get("subject", "(No title)")
+                        start_dt = event["start"]["dateTime"]
+                        location = event.get("location")
+                        loc = location.get("displayName") if location else None
+                        subject = event.get("subject") or "(No title)"
+                        mins_until = int((event_time - new_check_time).total_seconds() / 60)
 
-                        mins = int((event_time - now).total_seconds() / 60)
+                        for threshold_mins in ctx.get_calendar_notify_thresholds():
+                            trigger_time = event_time - timedelta(minutes=threshold_mins)
+                            if not (last_dt <= trigger_time < new_check_time):
+                                continue
 
-                        soon_trigger = event_time - timedelta(minutes=15)
-                        if last_dt <= soon_trigger < new_check_time:
-                            logger.info(f"Writing near-term notification for calendar event: {subject}")
-                            if mins < -5:
-                                time_desc = f"occurred {-mins} minutes ago"
-                            elif mins < 0:
-                                time_desc = "just occurred"
-                            elif mins == 0:
-                                time_desc = "now"
+                            label = _format_threshold_label(threshold_mins)
+                            logger.info(f"Writing {label} reminder for calendar event: {subject}")
+
+                            if mins_until < -5:
+                                pass
+                            elif mins_until < 0:
+                                pass
+                            elif mins_until == 0:
+                                pass
+                            elif threshold_mins <= 60:
+                                pass
                             else:
-                                time_desc = f"in {mins} minutes"
-
-                            metadata = {
-                                "account": acc.username,
-                                "subject": subject,
-                                "start_time": start,
-                                "location": loc,
-                                "minutes_until": mins,
-                            }
-                            if catching_up and event_time < now:
-                                metadata["missed"] = True
+                                pass
 
                             notifications.write_notification(
                                 ctx.notif_dir,
                                 "calendar",
-                                f"Calendar event {time_desc}: {subject}" + (f" at {loc}" if loc else ""),
-                                metadata,
+                                account=acc.username,
+                                subject=subject,
+                                start_time=start_dt,
+                                location=loc,
+                                minutes_until=mins_until,
+                                reminder_window=label,
+                                missed=(catching_up and event_time < new_check_time) or None,
                             )
-
-                        thresholds = [
-                            ("1 week", timedelta(weeks=1)),
-                            ("1 day", timedelta(days=1)),
-                            ("1 hour", timedelta(hours=1)),
-                        ]
-                        for label, delta in thresholds:
-                            trigger_time = event_time - delta
-                            if last_dt <= trigger_time < new_check_time:
-                                logger.info(f"Writing {label} reminder for calendar event: {subject}")
-                                metadata = {
-                                    "account": acc.username,
-                                    "subject": subject,
-                                    "start_time": start,
-                                    "location": loc,
-                                    "reminder_window": label,
-                                }
-                                if catching_up and event_time < now:
-                                    metadata["missed"] = True
-                                notifications.write_notification(
-                                    ctx.notif_dir,
-                                    "calendar",
-                                    f"Calendar event in {label}: {subject}" + (f" at {loc}" if loc else ""),
-                                    metadata,
-                                )
                 except Exception as e:
                     logger.error(f"Error fetching calendar for {acc.username}: {e}")
 

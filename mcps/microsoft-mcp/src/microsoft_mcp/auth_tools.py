@@ -41,7 +41,18 @@ async def microsoft_lifespan(server: FastMCP) -> AsyncIterator[MicrosoftContext]
     parser.add_argument("--data-dir", type=str, required=True)
     parser.add_argument("--log-dir", type=str, required=True)
     parser.add_argument("--notifications-dir", type=str, required=True)
+    parser.add_argument(
+        "--calendar-notify-thresholds",
+        type=str,
+        default=None,
+        help="Comma-separated minutes before event (default: 10080,60,15 = 1 week, 1 hour, 15 mins)",
+    )
     args, _ = parser.parse_known_args()
+
+    # Parse thresholds
+    calendar_thresholds = None
+    if args.calendar_notify_thresholds:
+        calendar_thresholds = [int(x.strip()) for x in args.calendar_notify_thresholds.split(",")]
 
     data_dir = _validate_directory(args.data_dir, "data-dir")
     log_dir = _validate_directory(args.log_dir, "log-dir")
@@ -93,6 +104,7 @@ async def microsoft_lifespan(server: FastMCP) -> AsyncIterator[MicrosoftContext]
         upload_chunk_size=upload_chunk_size,
         folders=folders,
         settings=settings,
+        calendar_notify_thresholds=calendar_thresholds,
     )
 
     # Start monitor thread

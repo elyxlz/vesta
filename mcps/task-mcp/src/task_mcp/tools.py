@@ -2,22 +2,39 @@ from datetime import datetime as dt, timedelta
 from contextlib import closing, asynccontextmanager
 from dataclasses import dataclass
 from collections.abc import AsyncIterator
+from typing import TypedDict
 import argparse
+import logging
 import sqlite3
+import threading
 import uuid
 from pathlib import Path
 from mcp.server.fastmcp import FastMCP, Context
 
+from . import monitor
 
-def _validate_directory(path_str: str | None, *, param_name: str) -> Path:
-    """Validate and prepare a directory parameter"""
+
+class Task(TypedDict, total=False):
+    id: str
+    title: str
+    status: str
+    priority: int
+    due_date: str | None
+    metadata: str | None
+    created_at: str
+    completed_at: str | None
+    notified_thresholds: str | None
+
+
+def _validate_directory(path_str: str | None, *, param_name: str, required: bool = True) -> Path | None:
     if not path_str:
-        raise ValueError(f"Error: --{param_name} is required")
+        if required:
+            raise ValueError(f"Error: --{param_name} is required")
+        return None
 
     path = Path(path_str).resolve()
     path.mkdir(parents=True, exist_ok=True)
 
-    # Test writability
     test_file = path / ".write_test"
     try:
         test_file.touch()
@@ -28,10 +45,22 @@ def _validate_directory(path_str: str | None, *, param_name: str) -> Path:
     return path
 
 
+def _setup_logger(log_dir: Path) -> logging.Logger:
+    logger = logging.getLogger("task-mcp-monitor")
+    logger.setLevel(logging.INFO)
+    handler = logging.FileHandler(log_dir / "monitor.log")
+    handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+    logger.addHandler(handler)
+    return logger
+
+
 @dataclass
 class TaskContext:
     data_dir: Path
     log_dir: Path
+    notif_dir: Path | None
+    monitor_stop_event: threading.Event | None
+    monitor_thread: threading.Thread | None
 
 
 @asynccontextmanager
@@ -39,18 +68,41 @@ async def task_lifespan(server: FastMCP) -> AsyncIterator[TaskContext]:
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", type=str, required=True)
     parser.add_argument("--log-dir", type=str, required=True)
+    parser.add_argument("--notifications-dir", type=str, required=False)
+    parser.add_argument("--monitor-interval", type=int, default=60)
     args, _ = parser.parse_known_args()
 
     data_dir = _validate_directory(args.data_dir, param_name="data-dir")
+    assert data_dir is not None
     log_dir = _validate_directory(args.log_dir, param_name="log-dir")
+    assert log_dir is not None
+    notif_dir = _validate_directory(args.notifications_dir, param_name="notifications-dir", required=False)
 
-    ctx = TaskContext(data_dir, log_dir)
+    monitor_stop_event = None
+    monitor_thread = None
+
+    if notif_dir:
+        monitor_stop_event = threading.Event()
+        logger = _setup_logger(log_dir)
+        monitor_thread = threading.Thread(
+            target=monitor.run,
+            args=(data_dir / "tasks.db", notif_dir, monitor_stop_event, logger, args.monitor_interval),
+            daemon=True,
+        )
+
+    ctx = TaskContext(data_dir, log_dir, notif_dir, monitor_stop_event, monitor_thread)
     init_db(ctx)
+
+    if monitor_thread:
+        monitor_thread.start()
 
     try:
         yield ctx
     finally:
-        pass
+        if monitor_stop_event:
+            monitor_stop_event.set()
+        if monitor_thread:
+            monitor_thread.join(timeout=5)
 
 
 mcp = FastMCP("task-mcp", lifespan=task_lifespan)
@@ -73,30 +125,62 @@ def init_db(ctx: TaskContext):
                 due_date TEXT,
                 metadata TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                completed_at TEXT
+                completed_at TEXT,
+                notified_thresholds TEXT
             )
         """)
+        # Add column if it doesn't exist (for existing databases)
+        try:
+            conn.execute("ALTER TABLE tasks ADD COLUMN notified_thresholds TEXT")
+        except sqlite3.OperationalError:
+            pass
         conn.commit()
 
 
-def parse_relative_date(date_str: str) -> str | None:
-    if not date_str:
-        return None
+def _to_utc(datetime_str: str, timezone_str: str) -> str:
+    """Convert datetime string with timezone to UTC ISO-8601 string."""
+    from datetime import timezone as tz
+    from zoneinfo import ZoneInfo
 
-    date_str = date_str.lower().strip()
-    now = dt.now()
+    # Parse the datetime
+    naive_dt = dt.fromisoformat(datetime_str.replace("Z", "+00:00"))
 
-    if date_str == "today":
-        return now.date().isoformat()
-    elif date_str == "tomorrow":
-        return (now + timedelta(days=1)).date().isoformat()
-    elif date_str.startswith("in ") and date_str.endswith(" days"):
-        try:
-            return (now + timedelta(days=int(date_str[3:-5]))).date().isoformat()
-        except ValueError:
-            pass
+    # If already has timezone info, convert to UTC
+    if naive_dt.tzinfo is not None:
+        return naive_dt.astimezone(tz.utc).isoformat()
 
-    return date_str
+    # Apply the provided timezone and convert to UTC
+    local_tz = ZoneInfo(timezone_str)
+    local_dt = naive_dt.replace(tzinfo=local_tz)
+    return local_dt.astimezone(tz.utc).isoformat()
+
+
+def _compute_due_date(
+    due_datetime: str | None,
+    timezone_str: str | None,
+    due_in_minutes: int | None,
+    due_in_hours: int | None,
+    due_in_days: int | None,
+) -> str | None:
+    """Compute due date from various input modes. Returns UTC ISO-8601 string."""
+    from datetime import timezone as tz
+
+    # Mode 1: Absolute datetime with timezone
+    if due_datetime is not None:
+        if timezone_str is None:
+            raise ValueError("timezone is required when due_datetime is provided")
+        return _to_utc(due_datetime, timezone_str)
+
+    # Mode 2: Relative offset
+    offset = timedelta(
+        minutes=due_in_minutes or 0,
+        hours=due_in_hours or 0,
+        days=due_in_days or 0,
+    )
+    if offset.total_seconds() > 0:
+        return (dt.now(tz.utc) + offset).isoformat()
+
+    return None
 
 
 def normalize_priority(priority: int | str) -> int:
@@ -114,13 +198,24 @@ def normalize_priority(priority: int | str) -> int:
 
 
 @mcp.tool()
-def add_task(ctx: Context, *, title: str, due: str | None = None, priority: int | str = 2, metadata: str | None = None) -> dict:
-    """priority: 1-3 or 'low'/'normal'/'high'. due: 'today', 'tomorrow', or YYYY-MM-DD"""
+def add_task(
+    ctx: Context,
+    *,
+    title: str,
+    due_datetime: str | None = None,
+    timezone: str | None = None,
+    due_in_minutes: int | None = None,
+    due_in_hours: int | None = None,
+    due_in_days: int | None = None,
+    priority: int | str = 2,
+    metadata: str | None = None,
+) -> dict:
+    """due_datetime: ISO-8601 (requires timezone). due_in_*: relative offset from now (UTC). priority: 1-3 or 'low'/'normal'/'high'."""
     context: TaskContext = ctx.request_context.lifespan_context
     priority = normalize_priority(priority)
 
     task_id = str(uuid.uuid4())[:8]
-    due_date = parse_relative_date(due) if due else None
+    due_date = _compute_due_date(due_datetime, timezone, due_in_minutes, due_in_hours, due_in_days)
 
     with closing(get_db(context)) as conn:
         conn.execute(
@@ -140,7 +235,7 @@ def add_task(ctx: Context, *, title: str, due: str | None = None, priority: int 
 
 
 @mcp.tool()
-def list_tasks(ctx: Context, show_completed: bool = False) -> list[dict]:
+def list_tasks(ctx: Context, *, show_completed: bool = False) -> list[dict]:
     context: TaskContext = ctx.request_context.lifespan_context
     with closing(get_db(context)) as conn:
         query = "SELECT * FROM tasks"
@@ -157,6 +252,7 @@ def list_tasks(ctx: Context, show_completed: bool = False) -> list[dict]:
 @mcp.tool()
 def update_task(
     ctx: Context,
+    *,
     task_id: str,
     status: str | None = None,
     title: str | None = None,
@@ -213,7 +309,7 @@ def update_task(
 
 
 @mcp.tool()
-def get_task(ctx: Context, task_id: str) -> dict:
+def get_task(ctx: Context, *, task_id: str) -> dict:
     """Get a single task by ID"""
     context: TaskContext = ctx.request_context.lifespan_context
     with closing(get_db(context)) as conn:
@@ -225,7 +321,7 @@ def get_task(ctx: Context, task_id: str) -> dict:
 
 
 @mcp.tool()
-def delete_task(ctx: Context, task_id: str) -> dict:
+def delete_task(ctx: Context, *, task_id: str) -> dict:
     """Delete a task permanently"""
     context: TaskContext = ctx.request_context.lifespan_context
     with closing(get_db(context)) as conn:
@@ -238,7 +334,7 @@ def delete_task(ctx: Context, task_id: str) -> dict:
 
 
 @mcp.tool()
-def search_tasks(ctx: Context, query: str, show_completed: bool = False) -> list[dict]:
+def search_tasks(ctx: Context, *, query: str, show_completed: bool = False) -> list[dict]:
     """Search tasks by title. Returns tasks matching the query string."""
     context: TaskContext = ctx.request_context.lifespan_context
     with closing(get_db(context)) as conn:

@@ -20,7 +20,7 @@ load_dotenv(find_dotenv())
 
 def main():
     parser = argparse.ArgumentParser(description="Authenticate Microsoft accounts")
-    parser.add_argument("--data-dir", type=str, required=True, help="Directory for storing token cache")
+    parser.add_argument("--data-dir", type=str, default="./data", help="Directory for storing token cache")
     args = parser.parse_args()
 
     data_dir = Path(args.data_dir).resolve()
@@ -38,7 +38,7 @@ def main():
     print("============================\n")
 
     # List current accounts
-    accounts = auth.list_accounts(cache_file, settings)
+    accounts = auth.list_accounts(cache_file, settings=settings)
     if accounts:
         print("Currently authenticated accounts:")
         for i, account in enumerate(accounts, 1):
@@ -48,31 +48,21 @@ def main():
         print("No accounts currently authenticated.\n")
 
     # Authenticate new account
-    while True:
-        choice = input("Do you want to authenticate a new account? (y/n): ").lower()
-        if choice == "n":
-            break
-        elif choice == "y":
-            try:
-                # Use the new authentication function
-                new_account = auth.authenticate_new_account(cache_file, ["https://graph.microsoft.com/.default"], settings)
+    print("Starting authentication flow...\n")
+    try:
+        new_account = auth.authenticate_new_account(cache_file, ["https://graph.microsoft.com/.default"], settings=settings)
 
-                if new_account:
-                    print("\n✓ Authentication successful!")
-                    print(f"Signed in as: {new_account.username}")
-                    print(f"Account ID: {new_account.account_id}")
-                else:
-                    print("\n✗ Authentication failed: Could not retrieve account information")
-            except Exception as e:
-                print(f"\n✗ Authentication failed: {e}")
-                continue
-
-            print()
+        if new_account:
+            print("\n✓ Authentication successful!")
+            print(f"Signed in as: {new_account.username}")
+            print(f"Account ID: {new_account.account_id}")
         else:
-            print("Please enter 'y' or 'n'")
+            print("\n✗ Authentication failed: Could not retrieve account information")
+    except Exception as e:
+        print(f"\n✗ Authentication failed: {e}")
 
     # Final account summary
-    accounts = auth.list_accounts(cache_file, settings)
+    accounts = auth.list_accounts(cache_file, settings=settings)
     if accounts:
         print("\nAuthenticated accounts summary:")
         print("==============================")

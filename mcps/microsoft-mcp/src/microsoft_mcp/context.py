@@ -22,3 +22,8 @@ class MicrosoftContext:
     upload_chunk_size: int
     folders: dict[str, str]
     settings: MicrosoftSettings
+    # Calendar notification thresholds in minutes (default: 1 week, 1 hour, 15 mins)
+    calendar_notify_thresholds: list[int] | None = None
+
+    def get_calendar_notify_thresholds(self) -> list[int]:
+        return self.calendar_notify_thresholds or [10080, 60, 15]  # 1 week, 1 hour, 15 mins

@@ -21,14 +21,14 @@ def write_notification(notif_dir: Path, reminder_id: str, message: str, *, data:
 
     notif_dir.mkdir(exist_ok=True)
 
-    metadata = {"reminder_id": reminder_id, "agent_only": True, **(data or {})}
-
     notif = {
         "timestamp": datetime.now().isoformat(),
         "source": "scheduler",
         "type": "reminder",
-        "message": f"Agent reminder (delivered to you): {message}",
-        "metadata": metadata,
+        "message": message,
+        "reminder_id": reminder_id,
+        "agent_only": True,
+        **(data or {}),
     }
 
     filename = f"{int(time.time() * 1e6)}-scheduler-reminder.json"

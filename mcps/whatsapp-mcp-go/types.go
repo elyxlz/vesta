@@ -81,6 +81,15 @@ type AddContactOutput struct {
 	Contact Contact `json:"contact"`
 }
 
+type RemoveContactInput struct {
+	Identifier string `json:"identifier" jsonschema:"Contact name or phone number to remove"`
+}
+
+type RemoveContactOutput struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
 type ListMessagesInput struct {
 	After          string `json:"after,omitempty" jsonschema:"ISO-8601 datetime to filter messages after"`
 	Before         string `json:"before,omitempty" jsonschema:"ISO-8601 datetime to filter messages before"`

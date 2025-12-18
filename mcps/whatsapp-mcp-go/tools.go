@@ -98,6 +98,17 @@ func RegisterTools(s *mcp.Server, wac *WhatsAppClient) {
 		return textResult("Saved contact %s (%s)", displayName, contact.PhoneNumber), AddContactOutput{Contact: contact}, nil
 	})
 
+	// remove_contact
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "remove_contact",
+		Description: "Remove a saved contact by name or phone number.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input RemoveContactInput) (*mcp.CallToolResult, RemoveContactOutput, error) {
+		if err := wac.store.DeleteManualContact(input.Identifier); err != nil {
+			return nil, RemoveContactOutput{}, err
+		}
+		return textResult("Removed contact: %s", input.Identifier), RemoveContactOutput{Success: true, Message: "Contact removed"}, nil
+	})
+
 	// list_messages
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "list_messages",

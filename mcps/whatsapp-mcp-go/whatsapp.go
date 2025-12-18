@@ -47,6 +47,7 @@ type WhatsAppClient struct {
 	authStatus        AuthStatus
 	authMutex         sync.RWMutex
 	qrPath            string
+	reauthInProgress  bool
 	presenceActive    bool
 	presenceMutex     sync.RWMutex
 	lastMessageSentAt time.Time
@@ -109,42 +110,82 @@ func (wac *WhatsAppClient) Connect() error {
 	if wac.client.Store.ID == nil {
 		// New client, need QR code
 		wac.setAuthStatus(AuthStatusNotAuthenticated)
-
-		// Start connection in background
 		go wac.handleQRAuthentication()
 		return nil
-	} else {
-		// Already logged in
-		wac.logger.Infof("Device already authenticated, connecting...")
-		err := wac.client.Connect()
-		if err != nil {
-			return fmt.Errorf("failed to connect: %v", err)
-		}
+	}
 
-		// Wait for connection with retries
-		for i := 0; i < 10; i++ {
-			time.Sleep(1 * time.Second)
-			if wac.client.IsConnected() {
-				wac.setAuthStatus(AuthStatusAuthenticated)
-				wac.logger.Infof("Connected to WhatsApp after %d seconds", i+1)
+	// Existing session - try to connect
+	wac.logger.Infof("Device already authenticated, connecting...")
+	err := wac.client.Connect()
+	if err != nil {
+		wac.logger.Warnf("Failed to connect with existing session: %v - initiating re-auth", err)
+		return wac.initiateReauth()
+	}
 
-				// Set online status
-				if err := wac.EnsureOnline(); err != nil {
-					wac.logger.Warnf("Failed to set online status: %v", err)
-				}
-				break
+	// Wait for connection with retries
+	for i := 0; i < 10; i++ {
+		time.Sleep(1 * time.Second)
+		if wac.client.IsConnected() {
+			wac.setAuthStatus(AuthStatusAuthenticated)
+			wac.logger.Infof("Connected to WhatsApp after %d seconds", i+1)
+			if err := wac.EnsureOnline(); err != nil {
+				wac.logger.Warnf("Failed to set online status: %v", err)
 			}
-		}
-
-		if !wac.client.IsConnected() {
-			wac.logger.Warnf("WhatsApp connection not established after 10 seconds")
+			return nil
 		}
 	}
+
+	// Connection timeout - session likely invalid
+	wac.logger.Warnf("Connection timeout after 10 seconds - session may be invalid, initiating re-auth")
+	return wac.initiateReauth()
+}
+
+func (wac *WhatsAppClient) initiateReauth() error {
+	wac.logger.Infof("Initiating re-authentication...")
+
+	// Disconnect if connected
+	wac.client.Disconnect()
+
+	// Delete device store to force fresh QR authentication
+	if err := wac.client.Store.Delete(context.Background()); err != nil {
+		wac.logger.Errorf("Failed to delete device store: %v", err)
+		// Continue anyway - still want to try re-auth
+	}
+
+	// Clear auth state
+	wac.authMutex.Lock()
+	wac.qrPath = ""
+	wac.authStatus = AuthStatusNotAuthenticated
+	wac.authMutex.Unlock()
+
+	// Clear presence state
+	wac.presenceMutex.Lock()
+	wac.presenceActive = false
+	wac.presenceMutex.Unlock()
+
+	// Start QR authentication flow
+	go wac.handleQRAuthentication()
 
 	return nil
 }
 
 func (wac *WhatsAppClient) handleQRAuthentication() {
+	// Guard against concurrent runs
+	wac.authMutex.Lock()
+	if wac.reauthInProgress {
+		wac.authMutex.Unlock()
+		wac.logger.Infof("QR authentication already in progress, skipping")
+		return
+	}
+	wac.reauthInProgress = true
+	wac.authMutex.Unlock()
+
+	defer func() {
+		wac.authMutex.Lock()
+		wac.reauthInProgress = false
+		wac.authMutex.Unlock()
+	}()
+
 	qrChan, _ := wac.client.GetQRChannel(context.Background())
 	err := wac.client.Connect()
 	if err != nil {
@@ -228,10 +269,8 @@ func (wac *WhatsAppClient) eventHandler(evt interface{}) {
 	case *events.Connected:
 		wac.logger.Infof("Connected to WhatsApp")
 	case *events.LoggedOut:
-		wac.logger.Warnf("Device logged out")
-		wac.presenceMutex.Lock()
-		wac.presenceActive = false
-		wac.presenceMutex.Unlock()
+		wac.logger.Warnf("Device logged out from WhatsApp - initiating re-authentication")
+		wac.initiateReauth()
 	}
 }
 
@@ -249,20 +288,23 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 		return
 	}
 
-	// Get chat name
-	chatName := wac.getChatName(info.Chat, info.Sender.String())
+	// Prepare sender info (resolves LID to phone number, formats for display)
+	resolvedSender, senderDisplay, _, _, _, _ := wac.prepareNotificationInfo(info.MessageSource)
 
-	// Store message sender for reactions
+	// Get chat name
+	chatName := wac.getChatName(info.Chat)
+
+	// Store message sender for reactions (use resolved JID, not LID)
 	wac.sendersMutex.Lock()
-	wac.messageSenders[info.ID] = info.Sender.String()
+	wac.messageSenders[info.ID] = resolvedSender.String()
 	wac.sendersMutex.Unlock()
 
-	// Store in database
+	// Store in database (sender as contact name or +phone, never JID)
 	wac.store.StoreChat(info.Chat.String(), chatName, info.Timestamp)
 	wac.store.StoreMessage(
 		info.ID,
 		info.Chat.String(),
-		info.Sender.String(),
+		senderDisplay,
 		content,
 		info.Timestamp,
 		info.IsFromMe,
@@ -278,15 +320,7 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 
 	// Write notification
 	if wac.notificationsDir != "" && !info.IsFromMe {
-		contactName, contactPhone, contactSaved := wac.notificationContactInfo(info.Chat, chatName)
-		senderDisplay := info.Sender.String()
-		if contactSaved && contactName != "" {
-			if contactPhone != "" {
-				senderDisplay = fmt.Sprintf("%s (%s)", contactName, contactPhone)
-			} else {
-				senderDisplay = contactName
-			}
-		}
+		_, senderDisplay, contactName, contactPhone, contactSaved, isDirectChat := wac.prepareNotificationInfo(info.MessageSource)
 		WriteNotification(
 			wac.notificationsDir,
 			info.ID,
@@ -294,7 +328,7 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 			contactName,
 			contactPhone,
 			contactSaved,
-			info.Chat.Server == types.DefaultUserServer,
+			isDirectChat,
 			senderDisplay,
 			content,
 			mediaType,
@@ -363,19 +397,11 @@ func (wac *WhatsAppClient) handleReaction(evt *events.Message) {
 	isRemoved := emoji == ""
 
 	// Get chat name
-	chatName := wac.getChatName(evt.Info.Chat, evt.Info.Sender.String())
+	chatName := wac.getChatName(evt.Info.Chat)
 
 	// Write notification
 	if wac.notificationsDir != "" {
-		contactName, contactPhone, contactSaved := wac.notificationContactInfo(evt.Info.Chat, chatName)
-		senderDisplay := evt.Info.Sender.String()
-		if contactSaved && contactName != "" {
-			if contactPhone != "" {
-				senderDisplay = fmt.Sprintf("%s (%s)", contactName, contactPhone)
-			} else {
-				senderDisplay = contactName
-			}
-		}
+		_, senderDisplay, contactName, contactPhone, contactSaved, isDirectChat := wac.prepareNotificationInfo(evt.Info.MessageSource)
 		WriteReactionNotification(
 			wac.notificationsDir,
 			targetID,
@@ -383,7 +409,7 @@ func (wac *WhatsAppClient) handleReaction(evt *events.Message) {
 			contactName,
 			contactPhone,
 			contactSaved,
-			evt.Info.Chat.Server == types.DefaultUserServer,
+			isDirectChat,
 			senderDisplay,
 			emoji,
 			isRemoved,
@@ -467,7 +493,7 @@ func (wac *WhatsAppClient) handleHistorySync(evt *events.HistorySync) {
 	}
 }
 
-func (wac *WhatsAppClient) getChatName(jid types.JID, sender string) string {
+func (wac *WhatsAppClient) getChatName(jid types.JID) string {
 	if contact, err := wac.store.GetManualContact(jid.String()); err == nil && contact != nil && contact.Name != "" {
 		return contact.Name
 	}
@@ -490,37 +516,113 @@ func (wac *WhatsAppClient) getChatName(jid types.JID, sender string) string {
 		return contact.FullName
 	}
 
-	return jid.User
+	// Return formatted phone number for user JIDs
+	if jid.Server == types.DefaultUserServer && jid.User != "" {
+		return "+" + jid.User
+	}
+
+	// Last resort
+	if jid.User != "" {
+		return jid.User
+	}
+	return "Unknown"
 }
 
 func (wac *WhatsAppClient) getChatNameFromConversation(jid types.JID, conversation interface{}) string {
 	// Implementation would extract name from conversation object
 	// For now, use getChatName
-	return wac.getChatName(jid, "")
+	return wac.getChatName(jid)
 }
 
-func (wac *WhatsAppClient) notificationContactInfo(jid types.JID, chatName string) (string, string, bool) {
-	if jid.Server != types.DefaultUserServer {
-		return "", "", false
+// isLIDServer checks if a server string indicates a LID (Linked ID) server
+func isLIDServer(server string) bool {
+	return server == types.HiddenUserServer || server == types.HostedLIDServer
+}
+
+// isDirectChatJID checks if a JID represents a direct chat (not a group)
+func isDirectChatJID(jid types.JID) bool {
+	return jid.Server == types.DefaultUserServer || isLIDServer(jid.Server)
+}
+
+// resolveSenderJID resolves a LID JID to its phone number JID if possible.
+// Returns the original JID if it's already a phone number or if resolution fails.
+func (wac *WhatsAppClient) resolveSenderJID(sender, senderAlt types.JID) types.JID {
+	// If sender is not a LID, return as-is
+	if !isLIDServer(sender.Server) {
+		return sender
 	}
 
-	contactName := chatName
-	contactPhone := ""
+	// Try SenderAlt first (contains phone number when sender is LID)
+	if !senderAlt.IsEmpty() && senderAlt.Server == types.DefaultUserServer {
+		return senderAlt
+	}
+
+	// Try resolving via LID store
+	if pn, err := wac.client.Store.LIDs.GetPNForLID(context.Background(), sender); err == nil && !pn.IsEmpty() {
+		return pn
+	}
+
+	// Fallback to original sender
+	return sender
+}
+
+// formatSenderForDisplay returns a user-friendly sender display:
+// - Contact name if saved
+// - Phone number (+xxx) if not saved
+// - Never shows raw JID or LID
+func (wac *WhatsAppClient) formatSenderForDisplay(jid types.JID) string {
+	// Try manual contact lookup first
+	if contact, err := wac.store.GetManualContact(jid.String()); err == nil && contact != nil && contact.Name != "" {
+		return contact.Name
+	}
+
+	// Return formatted phone number
+	if jid.Server == types.DefaultUserServer && jid.User != "" {
+		return "+" + jid.User
+	}
+
+	// Last resort: just the user part
 	if jid.User != "" {
-		contactPhone = "+" + jid.User
+		return jid.User
 	}
 
-	if contact, err := wac.store.GetManualContact(jid.String()); err == nil && contact != nil {
-		if contact.Name != "" {
-			contactName = contact.Name
-		}
-		if contact.PhoneNumber != "" {
-			contactPhone = contact.PhoneNumber
-		}
-		return contactName, contactPhone, true
+	return "Unknown"
+}
+
+// prepareNotificationInfo prepares all the data needed for a notification.
+// Returns resolved sender, display strings, contact info, and chat type.
+func (wac *WhatsAppClient) prepareNotificationInfo(info types.MessageSource) (
+	resolvedSender types.JID,
+	senderDisplay string,
+	contactName, contactPhone string,
+	contactSaved, isDirectChat bool,
+) {
+	resolvedSender = wac.resolveSenderJID(info.Sender, info.SenderAlt)
+
+	// For DMs, resolve chat JID if it's a LID
+	resolvedChat := info.Chat
+	if isLIDServer(info.Chat.Server) {
+		resolvedChat = wac.resolveSenderJID(info.Chat, info.SenderAlt)
 	}
 
-	return contactName, contactPhone, false
+	// Get contact info from resolved chat
+	if contact, err := wac.store.GetManualContact(resolvedChat.String()); err == nil && contact != nil {
+		contactName = contact.Name
+		contactPhone = contact.PhoneNumber
+		contactSaved = true
+	}
+	if contactPhone == "" && resolvedChat.User != "" {
+		contactPhone = "+" + resolvedChat.User
+	}
+
+	if contactSaved && contactName != "" {
+		senderDisplay = contactName
+	} else {
+		senderDisplay = wac.formatSenderForDisplay(resolvedSender)
+	}
+	isDirectChat = isDirectChatJID(info.Chat)
+
+	return
 }
 
 func (wac *WhatsAppClient) SendMessageWithPresence(recipient, message string) (bool, string) {
@@ -1058,7 +1160,7 @@ func (wac *WhatsAppClient) recordOutgoingMessage(
 
 	timestamp := time.Now()
 
-	if err := wac.store.StoreChat(jid.String(), wac.getChatName(jid, ""), timestamp); err != nil {
+	if err := wac.store.StoreChat(jid.String(), wac.getChatName(jid), timestamp); err != nil {
 		wac.logger.Warnf("Failed to store outgoing chat metadata: %v", err)
 	}
 
