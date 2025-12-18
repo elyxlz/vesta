@@ -290,6 +290,32 @@ func (ms *MessageStore) GetManualContact(jid string) (*Contact, error) {
 	}, nil
 }
 
+func (ms *MessageStore) DeleteManualContact(identifier string) error {
+	// Try by name first
+	result, err := ms.db.Exec(`DELETE FROM contacts WHERE name = ?`, identifier)
+	if err != nil {
+		return err
+	}
+	if rows, _ := result.RowsAffected(); rows > 0 {
+		return nil
+	}
+
+	// Try by phone number
+	normalized, _, err := normalizePhoneInput(identifier)
+	if err == nil {
+		jid := fmt.Sprintf("%s@%s", normalized, types.DefaultUserServer)
+		result, err = ms.db.Exec(`DELETE FROM contacts WHERE jid = ?`, jid)
+		if err != nil {
+			return err
+		}
+		if rows, _ := result.RowsAffected(); rows > 0 {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("contact not found: %s", identifier)
+}
+
 func digitsOnly(input string) string {
 	var b strings.Builder
 	for _, r := range input {

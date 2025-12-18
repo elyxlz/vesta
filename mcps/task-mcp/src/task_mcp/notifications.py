@@ -17,20 +17,16 @@ def write_notification(
     PRIORITY_LABELS = {1: "low", 2: "normal", 3: "high"}
     if priority not in PRIORITY_LABELS:
         raise ValueError(f"Invalid priority {priority}, must be 1, 2, or 3")
-    priority_label = PRIORITY_LABELS[priority]
 
     notif = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "source": "task",
         "type": "task_due",
-        "message": f"Task due in {reminder_window}: {title} ({priority_label} priority)",
-        "metadata": {
-            "task_id": task_id,
-            "title": title,
-            "due_date": due_date,
-            "priority": priority,
-            "reminder_window": reminder_window,
-        },
+        "task_id": task_id,
+        "title": title,
+        "due_date": due_date,
+        "priority": PRIORITY_LABELS[priority],
+        "reminder_window": reminder_window,
     }
 
     filename = f"{int(time.time() * 1e6)}-task-due.json"

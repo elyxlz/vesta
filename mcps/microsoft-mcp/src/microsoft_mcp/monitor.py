@@ -148,21 +148,16 @@ def run(ctx: MicrosoftContext):
                             continue
 
                         logger.info(f"Writing notification for email from {sender_addr}")
-                        metadata = {
-                            "account": acc.username,
-                            "subject": email.get("subject"),
-                            "sender_name": sender_name,
-                            "sender_address": sender_addr,
-                            "preview": (email.get("bodyPreview") or "")[:200],
-                            "received_at": email.get("receivedDateTime"),
-                        }
-                        if catching_up:
-                            metadata["missed"] = True
                         notifications.write_notification(
                             ctx.notif_dir,
                             "email",
-                            f"New email from {sender_name or sender_addr}: {email.get('subject') or '(No subject)'}",
-                            metadata,
+                            sender=sender_name or sender_addr,
+                            sender_address=sender_addr,
+                            account=acc.username,
+                            subject=email.get("subject"),
+                            preview=(email.get("bodyPreview") or "")[:200],
+                            received_at=email.get("receivedDateTime"),
+                            missed=catching_up or None,
                         )
                 except Exception as e:
                     logger.error(f"Error fetching emails for {acc.username}: {e}")
@@ -214,32 +209,26 @@ def run(ctx: MicrosoftContext):
                             logger.info(f"Writing {label} reminder for calendar event: {subject}")
 
                             if mins_until < -5:
-                                time_desc = f"occurred {-mins_until} minutes ago"
+                                pass
                             elif mins_until < 0:
-                                time_desc = "just occurred"
+                                pass
                             elif mins_until == 0:
-                                time_desc = "now"
+                                pass
                             elif threshold_mins <= 60:
-                                time_desc = f"in {mins_until} minutes"
+                                pass
                             else:
-                                time_desc = f"in {label}"
-
-                            metadata = {
-                                "account": acc.username,
-                                "subject": subject,
-                                "start_time": start_dt,
-                                "location": loc,
-                                "minutes_until": mins_until,
-                                "reminder_window": label,
-                            }
-                            if catching_up and event_time < new_check_time:
-                                metadata["missed"] = True
+                                pass
 
                             notifications.write_notification(
                                 ctx.notif_dir,
                                 "calendar",
-                                f"Calendar event {time_desc}: {subject}" + (f" at {loc}" if loc else ""),
-                                metadata,
+                                account=acc.username,
+                                subject=subject,
+                                start_time=start_dt,
+                                location=loc,
+                                minutes_until=mins_until,
+                                reminder_window=label,
+                                missed=(catching_up and event_time < new_check_time) or None,
                             )
                 except Exception as e:
                     logger.error(f"Error fetching calendar for {acc.username}: {e}")

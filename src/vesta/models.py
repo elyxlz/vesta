@@ -37,19 +37,14 @@ class State:
 
 
 class Notification(pyd.BaseModel):
+    model_config = pyd.ConfigDict(extra="allow")
+
     timestamp: dt.datetime
     source: str
     type: str
-    message: str
-    sender: str | None = None
-    metadata: dict[str, tp.Any] = pyd.Field(default_factory=dict)
     file_path: str | None = pyd.Field(default=None, exclude=True)
 
     def format_for_display(self) -> str:
-        meta_str = ""
-        if self.metadata:
-            meta_items = [f"{k}={v}" for k, v in self.metadata.items() if v]
-            meta_str = f" (metadata: {', '.join(meta_items)})" if meta_items else ""
-
-        from_str = self.sender if self.sender else self.source
-        return f"[{self.type} from {from_str}]{meta_str}: {self.message}"
+        data = self.model_dump(exclude={"file_path"})
+        parts = [f"{k}={v}" for k, v in data.items() if v is not None]
+        return f"[{self.type} from {self.source}] {', '.join(parts)}"

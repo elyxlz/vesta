@@ -56,8 +56,6 @@ async def load_and_display_new_notifications(
                 buffer_start_time = now
 
             for notif in truly_new:
-                sender = notif.sender or notif.source
-                msg_preview = notif.message[:200] + "..." if len(notif.message) > 200 else notif.message
-                logger.info(f"NOTIFICATION: {sender}: {msg_preview}")
+                logger.info(f"NOTIFICATION: {notif.model_dump_json(indent=2)}")
 
     return notification_buffer, buffer_start_time

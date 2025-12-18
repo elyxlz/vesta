@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -24,48 +23,34 @@ func WriteNotification(
 		return fmt.Errorf("failed to create notifications dir: %v", err)
 	}
 
-	replyInstruction := "WARNING: Reply to this chat using the send_message tool so the user can see it; messages typed elsewhere never reach their WhatsApp."
-
-	metadata := map[string]interface{}{
-		"contact_saved":     contactSaved,
-		"reply_instruction": replyInstruction,
+	notification := map[string]interface{}{
+		"timestamp":     time.Now().Format(time.RFC3339),
+		"source":        "whatsapp",
+		"type":          "message",
+		"message":       content,
+		"sender":        sender,
+		"contact_saved": contactSaved,
 	}
 	if contactName != "" {
-		metadata["contact_name"] = contactName
+		notification["contact_name"] = contactName
 	}
 	if contactPhone != "" {
-		metadata["contact_phone"] = contactPhone
+		notification["contact_phone"] = contactPhone
 	}
 	if chatName != "" {
-		metadata["chat_name"] = chatName
+		notification["chat_name"] = chatName
 	}
 	if messageID != "" {
-		metadata["message_id"] = messageID
+		notification["message_id"] = messageID
 	}
 	if mediaType != "" {
-		metadata["media_type"] = mediaType
+		notification["media_type"] = mediaType
 	}
 	if isForwarded {
-		metadata["is_forwarded"] = true
+		notification["is_forwarded"] = true
 	}
 	if !contactSaved && isDirectChat {
-		metadata["needs_contact_confirmation"] = true
-	}
-
-	notification := map[string]interface{}{
-		"timestamp": time.Now().Format(time.RFC3339),
-		"source":    "whatsapp",
-		"type":      "message",
-		"message":   content,
-		"sender":    sender,
-		"metadata":  metadata,
-	}
-	noteParts := []string{replyInstruction}
-	if !contactSaved && isDirectChat {
-		noteParts = append(noteParts, "Ask the user who this is. Be careful and add them as a contact once you know.")
-	}
-	if len(noteParts) > 0 {
-		notification["note"] = strings.Join(noteParts, " ")
+		notification["note"] = "Unknown contact. Ask the user who this is and add them as a contact once you know."
 	}
 
 	data, err := json.MarshalIndent(notification, "", "  ")
@@ -73,7 +58,6 @@ func WriteNotification(
 		return fmt.Errorf("failed to marshal notification: %v", err)
 	}
 
-	// Use UUID to prevent race conditions in concurrent notifications
 	filename := fmt.Sprintf("%s-whatsapp-message.json", uuid.New().String())
 	filePath := filepath.Join(notifDir, filename)
 
@@ -93,41 +77,29 @@ func WriteReactionNotification(
 		return fmt.Errorf("failed to create notifications dir: %v", err)
 	}
 
-	metadata := map[string]interface{}{
+	notification := map[string]interface{}{
+		"timestamp":         time.Now().Format(time.RFC3339),
+		"source":            "whatsapp",
+		"type":              "reaction",
+		"sender":            sender,
 		"contact_saved":     contactSaved,
 		"target_message_id": targetMessageID,
 		"is_removed":        isRemoved,
 	}
+	if emoji != "" {
+		notification["emoji"] = emoji
+	}
 	if contactName != "" {
-		metadata["contact_name"] = contactName
+		notification["contact_name"] = contactName
 	}
 	if contactPhone != "" {
-		metadata["contact_phone"] = contactPhone
+		notification["contact_phone"] = contactPhone
 	}
 	if chatName != "" {
-		metadata["chat_name"] = chatName
-	}
-	if emoji != "" {
-		metadata["emoji"] = emoji
+		notification["chat_name"] = chatName
 	}
 	if !contactSaved && isDirectChat {
-		metadata["needs_contact_confirmation"] = true
-	}
-
-	message := ""
-	if isRemoved {
-		message = fmt.Sprintf("%s removed their reaction", sender)
-	} else {
-		message = fmt.Sprintf("%s reacted with %s", sender, emoji)
-	}
-
-	notification := map[string]interface{}{
-		"timestamp": time.Now().Format(time.RFC3339),
-		"source":    "whatsapp",
-		"type":      "reaction",
-		"message":   message,
-		"sender":    sender,
-		"metadata":  metadata,
+		notification["note"] = "Unknown contact. Ask the user who this is and add them as a contact once you know."
 	}
 
 	data, err := json.MarshalIndent(notification, "", "  ")
@@ -135,7 +107,6 @@ func WriteReactionNotification(
 		return fmt.Errorf("failed to marshal reaction notification: %v", err)
 	}
 
-	// Use UUID to prevent race conditions in concurrent notifications
 	filename := fmt.Sprintf("%s-whatsapp-reaction.json", uuid.New().String())
 	filePath := filepath.Join(notifDir, filename)
 
