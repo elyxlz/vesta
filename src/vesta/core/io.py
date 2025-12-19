@@ -18,21 +18,21 @@ async def output_line(text: str, *, is_tool: bool = False) -> None:
     if not text or not text.strip():
         return
     if is_tool:
-        logger.info(f"TOOL: {text}")
+        logger.tool(text)
     else:
-        logger.info(f"OUTPUT: {text}")
+        logger.output(text)
 
 
 async def input_handler(queue: asyncio.Queue, *, state: vm.State) -> None:
     while state.shutdown_event and not state.shutdown_event.is_set():
         try:
-            user_msg = await aioconsole.ainput("> ")
+            user_msg = await aioconsole.ainput("")
             if state.shutdown_event and state.shutdown_event.is_set():
                 break
             if not user_msg.strip():
                 continue
 
-            logger.info(f"USER: {user_msg.strip()}")
+            logger.user(user_msg.strip())
             await queue.put((user_msg.strip(), True))
         except (KeyboardInterrupt, EOFError):
             if state.shutdown_event:

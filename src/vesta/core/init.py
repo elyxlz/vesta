@@ -1,5 +1,6 @@
 """Startup initialization and template loading."""
 
+import os
 import pathlib as pl
 
 import vesta.models as vm
@@ -26,8 +27,8 @@ def get_skills_dir(config: vm.VestaConfig) -> pl.Path:
     return get_memory_dir(config) / "skills"
 
 
-def get_dreamer_prompt_path(config: vm.VestaConfig) -> pl.Path:
-    return get_memory_dir(config) / "DREAMER_PROMPT.md"
+def get_dreamer_memory_path(config: vm.VestaConfig) -> pl.Path:
+    return get_memory_dir(config) / "DREAMER_MEMORY.md"
 
 
 def load_memory_template(name: str) -> str:
@@ -75,7 +76,7 @@ def init_skills(config: vm.VestaConfig) -> None:
                 script_path.write_text(script_content)
                 script_path.chmod(0o755)
 
-        logger.info(f"[INIT] Initialized skill: {skill_name}")
+        logger.init(f"Initialized skill: {skill_name}")
 
 
 def init_main_memory(config: vm.VestaConfig) -> None:
@@ -85,15 +86,33 @@ def init_main_memory(config: vm.VestaConfig) -> None:
         memory_path.parent.mkdir(parents=True, exist_ok=True)
         template = load_memory_template("main")
         memory_path.write_text(template)
-        logger.info(f"[INIT] Initialized main memory ({len(template)} chars)")
+        logger.init(f"Initialized main memory ({len(template)} chars)")
 
 
-def init_dreamer_prompt(config: vm.VestaConfig) -> None:
-    """Initialize dreamer prompt from template if it doesn't exist."""
+def init_dreamer_memory(config: vm.VestaConfig) -> None:
+    """Initialize dreamer memory from template if it doesn't exist."""
     from vesta.templates.dreamer import PROMPT_TEMPLATE
 
-    prompt_path = get_dreamer_prompt_path(config)
+    prompt_path = get_dreamer_memory_path(config)
     if not prompt_path.exists():
         prompt_path.parent.mkdir(parents=True, exist_ok=True)
         prompt_path.write_text(PROMPT_TEMPLATE)
-        logger.info("[INIT] Initialized dreamer prompt")
+        logger.init("Initialized dreamer memory")
+
+
+def init_skills_symlink(config: vm.VestaConfig) -> None:
+    """Symlink skills to .claude/skills in state_dir for Claude Code discovery."""
+    target = config.state_dir / ".claude" / "skills"
+    if target.exists() and not target.is_symlink():
+        raise RuntimeError(f"{target} exists and is not a symlink")
+    if target.is_symlink():
+        target.unlink()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.symlink_to(get_skills_dir(config))
+
+
+def check_state_readable(config: vm.VestaConfig) -> None:
+    """Raise if any top-level item in state_dir is not readable."""
+    for f in config.state_dir.iterdir():
+        if not os.access(f, os.R_OK):
+            raise RuntimeError(f"Not readable: {f}")

@@ -14,7 +14,7 @@ from vesta.core.init import (
     get_memory_dir,
     get_memory_path,
     get_skills_dir,
-    get_dreamer_prompt_path,
+    get_dreamer_memory_path,
     get_backups_dir,
 )
 
@@ -60,7 +60,7 @@ def test_memory_paths(tmp_path):
     assert get_memory_dir(config) == tmp_path / "memory"
     assert get_memory_path(config) == tmp_path / "memory" / "MEMORY.md"
     assert get_skills_dir(config) == tmp_path / "memory" / "skills"
-    assert get_dreamer_prompt_path(config) == tmp_path / "memory" / "DREAMER_PROMPT.md"
+    assert get_dreamer_memory_path(config) == tmp_path / "memory" / "DREAMER_MEMORY.md"
     assert get_backups_dir(config) == tmp_path / "backups"
 
 

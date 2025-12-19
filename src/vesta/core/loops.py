@@ -6,7 +6,6 @@ import vesta.models as vm
 import vesta.utils as vu
 import vesta.core.effects as vfx
 from vesta import logger
-from vesta.config import Messages
 from vesta.core.client import process_message, attempt_interrupt, reset_client_context
 from vesta.core.dreamer import preserve_memory
 from vesta.core.notifications import load_and_display_new_notifications, delete_notification_files
@@ -25,7 +24,7 @@ async def process_notification_batch(
     prompt = vu.format_notification_batch(notifications, suffix=config.notification_suffix)
 
     if decision == "interrupt" and state.client:
-        logger.info(f"Interrupting task for {len(notifications)} notifications")
+        logger.notification(f"Interrupting task for {len(notifications)} notifications")
         success = await attempt_interrupt(state, config=config, reason="Notification interrupt")
         if not success:
             logger.warning("Could not interrupt current task; queued notification for later")
@@ -51,13 +50,13 @@ async def message_processor(queue: asyncio.Queue, *, state: vm.State, config: vm
 
                 for response in responses:
                     if response and response.strip():
-                        logger.info(f"ASSISTANT: {response}")
+                        logger.assistant(response)
             finally:
                 state.is_processing = False
 
 
 async def check_proactive_task(queue: asyncio.Queue, *, config: vm.VestaConfig) -> None:
-    logger.info(Messages.PROACTIVE_CHECK)
+    logger.proactive("Running 60-minute check...")
     await queue.put((config.proactive_check_message, False))
 
 
@@ -65,10 +64,10 @@ async def process_nightly_memory(state: vm.State, *, config: vm.VestaConfig) -> 
     now = vfx.get_current_time()
     if config.nightly_memory_hour is not None and now.hour == config.nightly_memory_hour:
         if state.last_memory_consolidation is None or now.date() > state.last_memory_consolidation.date():
-            logger.info(Messages.NIGHTLY_DREAMER)
+            logger.dreamer("Nightly consolidation starting...")
             updated = await preserve_memory(state, config=config)
             state.last_memory_consolidation = now
-            logger.info("[DREAMER] Nightly consolidation complete")
+            logger.dreamer("Nightly consolidation complete")
             if updated:
                 await reset_client_context(state, config=config)
             if config.nightly_memory_completion_message:

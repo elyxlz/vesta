@@ -21,25 +21,25 @@ def load_system_prompt(config: vm.VestaConfig) -> str:
 
 
 async def attempt_interrupt(state: vm.State, *, config: vm.VestaConfig, reason: str) -> bool:
-    logger.debug(f"[INTERRUPT] Starting interrupt attempt: {reason}")
+    logger.interrupt(f"Starting interrupt attempt: {reason}")
 
     if not state.client:
-        logger.debug("[INTERRUPT] No client, aborting")
+        logger.interrupt("No client, aborting")
         return False
 
-    logger.debug("[INTERRUPT] Sending interrupt to client (receive_response will complete naturally)")
+    logger.interrupt("Sending interrupt to client (receive_response will complete naturally)")
 
     try:
-        logger.debug("[INTERRUPT] Calling state.client.interrupt()")
+        logger.interrupt("Calling state.client.interrupt()")
         await asyncio.wait_for(state.client.interrupt(), timeout=config.interrupt_timeout)
-        logger.debug("[INTERRUPT] state.client.interrupt() returned successfully")
+        logger.interrupt("state.client.interrupt() returned successfully")
 
-        logger.info(f"{reason}: interrupt sent")
+        logger.interrupt(f"{reason}: interrupt sent")
 
         return True
 
     except TimeoutError:
-        logger.debug("[INTERRUPT] Interrupt timed out; client likely still running")
+        logger.interrupt("Interrupt timed out; client likely still running")
         return False
 
 
@@ -48,7 +48,7 @@ def parse_assistant_message(msg: Message, *, state: vm.State) -> tuple[str | Non
     state.sub_agent_context = new_context
     if session_id:
         state.session_id = session_id
-        logger.debug(f"[SESSION] Captured session_id: {session_id[:16]}...")
+        logger.debug(f"Captured session_id: {session_id[:16]}...")
     return "\n".join(texts) if texts else None, state
 
 
@@ -57,13 +57,13 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
     client = state.client
 
     if state.pending_system_message:
-        logger.debug("[CONVERSE] Injecting pending system message")
+        logger.debug("Injecting pending system message")
         prompt = f"{state.pending_system_message}\n\n{prompt}"
         state.pending_system_message = None
 
     timestamp = vfx.get_current_time()
     query_with_context = vu.build_query_with_timestamp(prompt, timestamp=timestamp)
-    logger.debug(f"[CONVERSE] Sending query ({len(query_with_context)} chars)")
+    logger.debug(f"Sending query ({len(query_with_context)} chars)")
     await client.query(query_with_context)
 
     responses: list[str] = []
@@ -122,6 +122,7 @@ async def create_claude_client(config: vm.VestaConfig, *, state: vm.State, resum
         permission_mode="bypassPermissions",
         resume=resume_session_id,
         cwd=config.state_dir,
+        setting_sources=["project"],
         add_dirs=[str(config.state_dir), str(config.skills_dir), str(config.onedrive_dir)],
         max_thinking_tokens=config.max_thinking_tokens,
     )
@@ -132,10 +133,10 @@ async def create_claude_client(config: vm.VestaConfig, *, state: vm.State, resum
 
 async def reset_client_context(state: vm.State, *, config: vm.VestaConfig) -> None:
     """Close current client and create a new one with fresh memory."""
-    logger.info("[CLIENT] Resetting client with updated memory...")
+    logger.client("Resetting client with updated memory...")
 
     state.client = None
     state.client = await create_claude_client(config, state=state)
     state.sub_agent_context = None
     state.session_id = None
-    logger.info("[CLIENT] Client reset complete with fresh memory context")
+    logger.client("Client reset complete with fresh memory context")

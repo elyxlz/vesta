@@ -10,18 +10,17 @@ import pathlib as pl
 import time
 import zipfile
 
-from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
+from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions, TextBlock, ThinkingBlock, ToolUseBlock, ToolResultBlock
 
 import vesta.models as vm
 from vesta import logger
-from vesta.config import Messages
 from vesta.models import ConversationMessage
 from vesta.core.init import (
     get_memory_dir,
     get_memory_path,
     get_backups_dir,
     get_skills_dir,
-    get_dreamer_prompt_path,
+    get_dreamer_memory_path,
     load_memory_template,
 )
 
@@ -33,9 +32,9 @@ def load_memory(config: vm.VestaConfig) -> str:
     memory_path = get_memory_path(config)
     if memory_path.exists():
         content = memory_path.read_text()
-        logger.debug(f"[DREAMER] Loaded main memory ({len(content)} chars)")
+        logger.debug(f"Loaded main memory ({len(content)} chars)")
         return content
-    logger.debug("[DREAMER] Using template for main (file not found)")
+    logger.debug("Using template for main (file not found)")
     return load_memory_template("main")
 
 
@@ -46,21 +45,27 @@ def backup_state(config: vm.VestaConfig) -> pl.Path | None:
 
     timestamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
     zip_path = backup_dir / f"vesta-{timestamp}.zip"
-    exclude = {"logs", "notifications", "backups"}
+    exclude = {"logs", "notifications", "backups", "onedrive"}
 
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for item in config.state_dir.iterdir():
             if item.name in exclude:
                 continue
-            if item.is_file():
-                zf.write(item, item.name)
-            elif item.is_dir():
-                for file in item.rglob("*"):
-                    if file.is_file():
-                        zf.write(file, file.relative_to(config.state_dir))
+            try:
+                if item.is_file():
+                    zf.write(item, item.name)
+                elif item.is_dir():
+                    for file in item.rglob("*"):
+                        try:
+                            if file.is_file():
+                                zf.write(file, file.relative_to(config.state_dir))
+                        except (PermissionError, OSError):
+                            continue
+            except (PermissionError, OSError):
+                continue
 
     size_kb = zip_path.stat().st_size / 1024
-    logger.info(f"[DREAMER] Backup created: {zip_path.name} ({size_kb:.1f} KB)")
+    logger.dreamer(f"Backup created: {zip_path.name} ({size_kb:.1f} KB)")
     return zip_path
 
 
@@ -76,6 +81,39 @@ def _validate_memory_path(path: pl.Path, *, config: vm.VestaConfig) -> None:
         path.resolve().relative_to(memory_dir.resolve())
     except ValueError:
         raise ValueError(f"Memory path {path} outside memory directory {memory_dir}")
+
+
+def _snapshot_memory_dir(config: vm.VestaConfig) -> dict[str, str]:
+    """Capture current state of all memory files."""
+    memory_dir = get_memory_dir(config)
+    snapshot: dict[str, str] = {}
+
+    if not memory_dir.exists():
+        return snapshot
+
+    for file in memory_dir.rglob("*.md"):
+        rel_path = str(file.relative_to(memory_dir))
+        try:
+            snapshot[rel_path] = file.read_text()
+        except OSError:
+            pass
+
+    return snapshot
+
+
+def _compute_all_diffs(before: dict[str, str], after: dict[str, str]) -> dict[str, str]:
+    """Compute diffs for all changed files."""
+    diffs: dict[str, str] = {}
+    all_paths = set(before.keys()) | set(after.keys())
+
+    for path in sorted(all_paths):
+        before_content = before.get(path, "")
+        after_content = after.get(path, "")
+
+        if before_content != after_content:
+            diffs[path] = _format_diff(before_content, after_content)
+
+    return diffs
 
 
 async def _call_progress(callback: ProgressCallback, message: str) -> None:
@@ -149,22 +187,23 @@ async def preserve_conversation_memory(
 
     if not conversation_history:
         await _call_progress(progress_callback, "No conversation history available")
-        logger.debug("[DREAMER] No conversation history to preserve")
+        logger.debug("No conversation history to preserve")
         return ""
 
-    logger.info(f"[DREAMER] Preserving main memory from {len(conversation_history)} messages")
-    await _call_progress(progress_callback, "Loading MEMORY.md...")
+    logger.dreamer(f"Preserving memory from {len(conversation_history)} messages")
+    await _call_progress(progress_callback, "Snapshotting memory files...")
+
+    # Capture state of ALL memory files before dreamer runs
+    before_snapshot = _snapshot_memory_dir(config)
+    logger.debug(f"Captured {len(before_snapshot)} memory files")
 
     memory_path = get_memory_path(config)
-    _validate_memory_path(memory_path, config=config)
-    before = memory_path.read_text() if memory_path.exists() else ""
-    before_size = len(before)
-    logger.debug(f"[DREAMER] Current main memory: {before_size} chars")
+    current_memory = before_snapshot.get("MEMORY.md", "")
 
     await _call_progress(progress_callback, f"Building update prompt from {len(conversation_history)} messages...")
 
     prompt = f"""Current MEMORY.md:
-{before}
+{current_memory}
 
 Recent conversation to process:
 {_format_conversation(conversation_history)}
@@ -172,17 +211,18 @@ Recent conversation to process:
 Check MEMORY.md and update it with any new important information from this conversation."""
 
     await _call_progress(progress_callback, "Dreamer Agent awakening...")
-    logger.debug("[DREAMER] Spawning Dreamer Agent")
+    logger.debug("Spawning Dreamer Agent")
 
     skills_dir = get_skills_dir(config)
-    dreamer_prompt_path = get_dreamer_prompt_path(config)
-    dreamer_prompt_template = dreamer_prompt_path.read_text()
-    memory_prompt = dreamer_prompt_template.format(
+    dreamer_memory_path = get_dreamer_memory_path(config)
+    dreamer_memory_template = dreamer_memory_path.read_text()
+    memory_prompt = dreamer_memory_template.format(
         memory_path=memory_path,
         skills_dir=skills_dir,
-        dreamer_prompt_path=dreamer_prompt_path,
+        dreamer_memory_path=dreamer_memory_path,
     )
 
+    logger.dreamer("Creating SDK client...")
     async with ClaudeSDKClient(
         options=ClaudeAgentOptions(
             system_prompt=memory_prompt,
@@ -194,54 +234,60 @@ Check MEMORY.md and update it with any new important information from this conve
         )
     ) as client:
         await _call_progress(progress_callback, f"Dreamer processing {len(conversation_history)} messages...")
+        logger.dreamer("SDK client created, sending query...")
         await client.query(prompt)
-        await _call_progress(progress_callback, "Dreamer is dreaming...")
-        async for msg in client.receive_response():
-            content = getattr(msg, "content", None)
-            if not content:
-                continue
-            for block in content:
-                block_type = getattr(block, "type", None)
-                if block_type == "text":
-                    text = getattr(block, "text", "")
-                    for line in text.strip().split("\n"):
-                        if line.strip():
-                            logger.info(f"[DREAMER] {line.strip()}")
-                elif block_type == "tool_use":
-                    tool_name = getattr(block, "name", "unknown")
-                    logger.info(f"[DREAMER] Using tool: {tool_name}")
+        logger.dreamer("Query sent, waiting for response...")
+
+        async def collect_response() -> None:
+            async for msg in client.receive_response():
+                content = getattr(msg, "content", None)
+                if not content:
+                    continue
+                for block in content:
+                    if isinstance(block, ThinkingBlock):
+                        thinking = getattr(block, "thinking", "")
+                        preview = thinking[:300] + "..." if len(thinking) > 300 else thinking
+                        logger.dreamer(f"💭 {preview}")
+                    elif isinstance(block, TextBlock):
+                        text = getattr(block, "text", "")
+                        for line in text.strip().split("\n"):
+                            if line.strip():
+                                logger.dreamer(line.strip())
+                    elif isinstance(block, ToolUseBlock):
+                        tool_name = getattr(block, "name", "unknown")
+                        tool_input = getattr(block, "input", {})
+                        input_preview = str(tool_input)[:100]
+                        logger.dreamer(f"🔧 {tool_name}: {input_preview}")
+                    elif isinstance(block, ToolResultBlock):
+                        result = getattr(block, "content", "")
+                        result_preview = str(result)[:200]
+                        logger.dreamer(f"✓ Result: {result_preview}")
+
+        try:
+            await asyncio.wait_for(collect_response(), timeout=300)  # 5 min timeout
+            logger.dreamer("Response complete")
+        except TimeoutError:
+            logger.error("Dreamer timeout - SDK hung for 5 minutes")
+            return ""
 
     elapsed = time.monotonic() - start_time
-    await _call_progress(progress_callback, "Computing diff vs MEMORY.md...")
+    await _call_progress(progress_callback, "Computing diffs for all memory files...")
 
-    after = memory_path.read_text() if memory_path.exists() else ""
-    after_size = len(after)
+    # Capture after state and compute all diffs
+    after_snapshot = _snapshot_memory_dir(config)
+    all_diffs = _compute_all_diffs(before_snapshot, after_snapshot)
 
-    if before == after:
+    if not all_diffs:
         await _call_progress(progress_callback, "No changes detected")
-        logger.info(f"[DREAMER] Main memory unchanged after {elapsed:.1f}s")
+        logger.dreamer(f"Memory unchanged after {elapsed:.1f}s")
         return ""
 
-    logger.info(f"[DREAMER] Main memory updated: {before_size} -> {after_size} chars ({elapsed:.1f}s)")
+    logger.dreamer(f"Updated {len(all_diffs)} file(s) in {elapsed:.1f}s")
 
-    return _format_diff(before, after)
+    return "\n".join(f"--- {path} ---\n{diff}" for path, diff in all_diffs.items())
 
 
 # Memory preservation orchestration
-
-
-async def _get_and_clear_subagent_conversations(state: vm.State) -> dict[str, list[str]]:
-    async with state.subagent_conversations_lock:
-        conversations = state.subagent_conversations.copy()
-        state.subagent_conversations.clear()
-        return conversations
-
-
-async def _get_and_clear_conversation_history(state: vm.State) -> list[ConversationMessage]:
-    async with state.conversation_history_lock:
-        history = state.conversation_history.copy()
-        state.conversation_history.clear()
-        return history
 
 
 @contextlib.asynccontextmanager
@@ -263,23 +309,30 @@ async def _heartbeat_logger(message_fn: cab.Callable[[], str], *, interval: floa
 async def preserve_memory(state: vm.State, *, config: vm.VestaConfig) -> bool:
     """Run Dreamer Agent to consolidate memories. Returns True if memory was updated."""
     if config.ephemeral:
-        logger.info("[DREAMER] Skipping (ephemeral mode)")
+        logger.dreamer("Skipping (ephemeral mode)")
         return False
 
-    logger.info("[DREAMER] Starting consolidation...")
+    logger.dreamer("Starting consolidation...")
 
     def log_progress(message: str) -> None:
-        logger.info(f"[DREAMER] {message}")
+        logger.dreamer(message)
 
     start_time = dt.datetime.now()
 
     def heartbeat_message() -> str:
         elapsed = int((dt.datetime.now() - start_time).total_seconds())
-        return f"[DREAMER] Still dreaming... {elapsed}s elapsed"
+        return f"Still dreaming... {elapsed}s elapsed"
 
-    async with _heartbeat_logger(heartbeat_message, interval=30):
-        history = await _get_and_clear_conversation_history(state)
-        subagent_convos = await _get_and_clear_subagent_conversations(state)
+    async with _heartbeat_logger(heartbeat_message, interval=10):
+        # Copy history WITHOUT clearing (will clear after success)
+        logger.dreamer("Copying conversation history...")
+        async with state.conversation_history_lock:
+            history = state.conversation_history.copy()
+        logger.dreamer(f"Got {len(history)} messages from conversation history")
+
+        async with state.subagent_conversations_lock:
+            subagent_convos = state.subagent_conversations.copy()
+        logger.dreamer(f"Got {len(subagent_convos)} subagent conversations")
 
         # Append subagent conversations to conversation history for memory agent
         if subagent_convos:
@@ -293,12 +346,19 @@ async def preserve_memory(state: vm.State, *, config: vm.VestaConfig) -> bool:
                         }
                     )
 
+        # Fallback to CLI session if no history
         if not history:
-            logger.info("[DREAMER] No conversation history to preserve")
+            logger.dreamer("No conversation history, trying CLI session fallback...")
+            history = get_cli_session_history(str(config.root_dir))
+
+        if not history:
+            logger.dreamer("No conversation history to preserve")
             return False
 
+        logger.dreamer("Creating backup...")
         backup_state(config)
 
+        logger.dreamer("Starting memory preservation...")
         diff = await preserve_conversation_memory(
             history,
             config=config,
@@ -307,12 +367,19 @@ async def preserve_memory(state: vm.State, *, config: vm.VestaConfig) -> bool:
 
         elapsed = (dt.datetime.now() - start_time).total_seconds()
 
+        # Only clear history AFTER successful preservation
+        async with state.conversation_history_lock:
+            state.conversation_history.clear()
+        async with state.subagent_conversations_lock:
+            state.subagent_conversations.clear()
+        logger.dreamer("Cleared conversation history after preservation")
+
         if diff:
-            logger.info(Messages.DREAMER_UPDATED)
-            logger.info("--- main memory ---")
+            logger.dreamer("Memories consolidated:")
+            logger.info("--- memory changes ---")
             logger.info(diff)
-            logger.info(f"[DREAMER] Total preservation time: {elapsed:.1f}s")
+            logger.dreamer(f"Total preservation time: {elapsed:.1f}s")
             return True
         else:
-            logger.info(f"[DREAMER] No significant updates ({elapsed:.1f}s)")
+            logger.dreamer(f"No significant updates ({elapsed:.1f}s)")
             return False

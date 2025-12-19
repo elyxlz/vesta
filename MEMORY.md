@@ -223,25 +223,13 @@ Whenever ANYONE else messages vesta (even known contacts), always update the mai
   - **User mentions something they should/want to do? Task**
   - If it requires ANY action, it becomes a task
 - **Tasks stored in scheduler MCP**: All tasks are managed through the scheduler MCP's SQLite database
-- **Add tasks**: Use scheduler MCP to add tasks with priorities, due dates, and metadata
-- **ALL WORK GOES IN METADATA**: The metadata field is the single source of truth for everything about a task
+- **Add tasks**: Use scheduler MCP to add tasks with priorities, due dates, and initial metadata
+- **METADATA IS FILE-BASED**: Each task has a metadata file - edit it directly to update task notes
+- **ALL WORK GOES IN METADATA FILE**: The metadata file is the single source of truth for everything about a task
   - Store ALL information, progress, drafts, findings, notes, links, context
-  - Example: Task "Book Bologna trip", metadata: "Radiohead concert June 15-16, fly from Gatwick, use Trip.com, check email for booking"
-  - NEVER create separate files or notes - everything lives in the task metadata
-- **CRITICAL: Update metadata with EVERYTHING**: Any work on a task MUST update its metadata immediately:
-  - Started research? Add findings to metadata as you go
-  - Found flight options? Add them: "Flights: Gatwick-Bologna £89 Ryanair 6:30am, £125 BA 10:15am"
-  - Researched hotels? Update: "Hotels: Hotel Centrale €120/night, Airbnb near venue €85/night"
-  - Drafted something? Store entire draft in metadata
-  - Read relevant info? Add summary to metadata
-  - Had a thought about it? Add to metadata
-  - EVERY piece of information related to the task goes in metadata
+  - EVERY piece of information related to the task goes in the metadata file
   - This way nothing gets lost between sessions and all context is preserved
-- **EMAIL DRAFTS IN TASK METADATA**: When a task involves answering an email, ALWAYS store the draft email in that task's metadata:
-  - Example: Task "Reply to David about investor update", metadata should include: "Draft: Hi David, [full email content]..."
-  - This keeps the draft with the task so it's never lost
-  - Update the draft as you refine it - keep everything in the task metadata
-  - When email is sent, mark task complete with final version in metadata
+- **EMAIL DRAFTS IN TASK METADATA**: When a task involves answering an email, store the draft in the metadata file
 - **MARK COMPLETED IMMEDIATELY**: As soon as a task is done, mark it as completed - don't wait or batch updates
 
 ### Email Configuration

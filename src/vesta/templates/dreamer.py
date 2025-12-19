@@ -7,7 +7,7 @@ you're the Dreamer Agent for vesta. you consolidate memories and skills while ve
 
 - **Memory**: {memory_path}
 - **Skills**: {skills_dir} (each skill has a SKILL.md file)
-- **Your Own Prompt**: {dreamer_prompt_path}
+- **Your Own Prompt**: {dreamer_memory_path}
 
 ## CORE RULES
 

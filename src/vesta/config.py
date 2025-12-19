@@ -5,19 +5,11 @@ import pydantic_settings as pyd_settings
 from pydantic import Field, SecretStr, field_validator
 
 
-class Messages:
-    SHUTDOWN_INITIATED = "[SHUTDOWN] vesta is tired, dreamer agent taking over..."
-    SHUTDOWN_COMPLETE = "sweet dreams!"
-    PROACTIVE_CHECK = "[PROACTIVE] Running 60-minute check..."
-    NIGHTLY_DREAMER = "[DREAMER] Nightly consolidation starting..."
-    DREAMER_UPDATED = "[DREAMER] Memories consolidated:"
-
-
 class VestaConfig(pyd_settings.BaseSettings):
     model_config = pyd_settings.SettingsConfigDict(extra="ignore")
 
     ephemeral: bool = False
-    debug: bool = False
+    log_level: str = "INFO"  # DEBUG, INFO, WARNING, ERROR
     max_mcp_output_tokens: int = Field(default=200000, ge=1)
     notification_check_interval: int = Field(default=2, ge=1)
     notification_buffer_delay: int = Field(default=3, ge=0)
@@ -102,7 +94,7 @@ class VestaConfig(pyd_settings.BaseSettings):
 
     @property
     def onedrive_dir(self) -> pl.Path:
-        return pl.Path("/tmp/vesta-onedrive")
+        return self.state_dir / "onedrive"
 
     @property
     def rclone_config_file(self) -> pl.Path:

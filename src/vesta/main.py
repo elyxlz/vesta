@@ -4,13 +4,14 @@ import asyncio
 import shutil
 import signal
 
+from rich import print_json
+
 import vesta.models as vm
 import vesta.core.effects as vfx
 from vesta import logger
-from vesta.config import Messages
 from vesta.integrations import onedrive as vod
 from vesta.integrations.mcp_registry import build_mcp_servers
-from vesta.core.init import init_skills, init_main_memory, init_dreamer_prompt
+from vesta.core.init import init_skills, init_main_memory, init_dreamer_memory, init_skills_symlink, check_state_readable
 from vesta.core.io import input_handler, make_signal_handler
 from vesta.core.client import create_claude_client
 from vesta.core.loops import message_processor, monitor_loop
@@ -19,7 +20,7 @@ from vesta.core.notifications import maybe_enqueue_whatsapp_greeting
 
 
 async def graceful_shutdown(state: vm.State, *, config: vm.VestaConfig) -> None:
-    logger.info("=== Vesta shutting down ===")
+    logger.shutdown("Vesta shutting down")
 
     await preserve_memory(state, config=config)
 
@@ -29,14 +30,14 @@ async def graceful_shutdown(state: vm.State, *, config: vm.VestaConfig) -> None:
     if config.onedrive_dir.exists() and config.onedrive_token:
         vod.unmount_onedrive(config.onedrive_dir)
 
-    logger.info(Messages.SHUTDOWN_COMPLETE)
+    logger.shutdown("sweet dreams!")
 
 
 async def log_startup_info(config: vm.VestaConfig) -> None:
-    logger.info("VESTA started")
+    logger.init("VESTA started")
     mcps = build_mcp_servers(config)
     if mcps:
-        logger.info(f"Active MCPs: {', '.join(mcps.keys())}")
+        logger.mcp(f"Active: {', '.join(mcps.keys())}")
 
 
 async def run_vesta(config: vm.VestaConfig, *, state: vm.State) -> None:
@@ -65,7 +66,7 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State) -> None:
         if state.shutdown_event:
             state.shutdown_event.set()
 
-    logger.info(Messages.SHUTDOWN_INITIATED)
+    logger.shutdown("vesta is tired, dreamer agent taking over...")
 
     for task in tasks:
         task.cancel()
@@ -113,27 +114,34 @@ async def init_state(*, config: vm.VestaConfig) -> vm.State:
 
 async def async_main() -> None:
     config = vm.VestaConfig()
-    logger.info(f"Config: {config.model_dump(mode='json')}")
+    logger.init("Config:")
+    print_json(data=config.model_dump(mode="json"))
 
     for path in [config.state_dir, config.notifications_dir, config.logs_dir, config.data_dir]:
         path.mkdir(parents=True, exist_ok=True)
 
-    logger.setup(config.logs_dir, debug=config.debug)
-    logger.info("=== Vesta starting ===")
-
-    init_main_memory(config)
-    init_dreamer_prompt(config)
-    init_skills(config)
+    logger.setup(config.logs_dir, log_level=config.log_level)
+    logger.init("Vesta starting")
 
     if config.onedrive_token:
-        logger.info("Setting up OneDrive mount...")
+        logger.info("Setting up OneDrive...")
         vod.unmount_onedrive(config.onedrive_dir)
         vod.setup_rclone_config(config, config_path=config.rclone_config_file)
         await vod.mount_onedrive(config, mount_dir=config.onedrive_dir, config_path=config.rclone_config_file)
-        logger.info(f"OneDrive mounted at {config.onedrive_dir}")
 
+    logger.init("Checking state directory...")
+    check_state_readable(config)
+    logger.init("Initializing memory...")
+    init_main_memory(config)
+    init_dreamer_memory(config)
+    logger.init("Initializing skills...")
+    init_skills(config)
+    init_skills_symlink(config)
+
+    logger.init("Creating Claude client...")
     initial_state = await init_state(config=config)
 
+    logger.init("Starting main loop...")
     await run_vesta(config, state=initial_state)
 
 

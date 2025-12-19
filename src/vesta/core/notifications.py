@@ -32,7 +32,7 @@ async def maybe_enqueue_whatsapp_greeting(queue: asyncio.Queue, *, config: vm.Ve
         return
 
     await queue.put((prompt, False))
-    logger.info("Queued WhatsApp greeting task")
+    logger.mcp("Queued WhatsApp greeting task")
 
 
 async def delete_notification_files(notifications: list[vm.Notification]) -> None:
@@ -56,6 +56,6 @@ async def load_and_display_new_notifications(
                 buffer_start_time = now
 
             for notif in truly_new:
-                logger.info(f"NOTIFICATION: {notif.model_dump_json(indent=2)}")
+                logger.notification(notif.model_dump_json(indent=2))
 
     return notification_buffer, buffer_start_time

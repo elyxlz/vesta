@@ -183,11 +183,11 @@ async def test_monitor_sends_notifications():
         notif = json.loads(notif_files[0].read_text())
         assert notif["source"] == "task"
         assert notif["type"] == "task_due"
-        assert "Urgent task" in notif["message"]
-        assert notif["metadata"]["reminder_window"] in ["1 week", "1 day", "1 hour", "15 minutes"]
+        assert notif["title"] == "Urgent task"
+        assert notif["reminder_window"] in ["1 week", "1 day", "1 hour", "15 minutes"]
 
         # Check that 1 hour notification exists (most specific for 30 min due time)
-        windows = [json.loads(f.read_text())["metadata"]["reminder_window"] for f in notif_files]
+        windows = [json.loads(f.read_text())["reminder_window"] for f in notif_files]
         assert "1 hour" in windows, f"Expected '1 hour' notification, found: {windows}"
 
 
@@ -246,7 +246,7 @@ async def test_monitor_notification_deduplication():
 
         notif_files = list(notif_dir.glob("*-task-due.json"))
         # Count notifications per window - each should appear exactly once
-        windows = [json.loads(f.read_text())["metadata"]["reminder_window"] for f in notif_files]
+        windows = [json.loads(f.read_text())["reminder_window"] for f in notif_files]
         for window in ["1 week", "1 day", "1 hour"]:
             count = windows.count(window)
             assert count <= 1, f"Window '{window}' fired {count} times, expected at most 1"
@@ -302,11 +302,11 @@ async def test_priority_string_inputs():
 
 @pytest.mark.asyncio
 async def test_get_task_by_id():
-    """Test get_task tool returns correct task."""
+    """Test get_task tool returns correct task with metadata."""
     async for session, _ in get_session():
         add_result = await session.call_tool(
             "add_task",
-            {"title": "Specific task", "priority": 3, "metadata": "test metadata"},
+            {"title": "Specific task", "priority": 3, "initial_metadata": "test metadata"},
         )
         task_id = parse_result(add_result)["id"]
 
@@ -316,7 +316,8 @@ async def test_get_task_by_id():
         assert task["id"] == task_id
         assert task["title"] == "Specific task"
         assert task["priority"] == 3
-        assert task["metadata"] == "test metadata"
+        assert task["metadata_content"] == "test metadata"
+        assert task["metadata_path"].endswith(f"{task_id}.md")
 
 
 @pytest.mark.asyncio
@@ -328,41 +329,66 @@ async def test_get_task_not_found():
 
 
 @pytest.mark.asyncio
-async def test_update_task_metadata_append():
-    """Test metadata appends by default."""
+async def test_task_returns_metadata_path():
+    """Test that add_task returns metadata_path."""
     async for session, _ in get_session():
-        add_result = await session.call_tool(
-            "add_task",
-            {"title": "Task", "metadata": "initial note"},
-        )
-        task_id = parse_result(add_result)["id"]
-
-        update_result = await session.call_tool(
-            "update_task",
-            {"task_id": task_id, "metadata": "appended note"},
-        )
-        task = parse_result(update_result)
-        assert "initial note" in task["metadata"]
-        assert "appended note" in task["metadata"]
+        result = await session.call_tool("add_task", {"title": "Test task"})
+        response = parse_result(result)
+        assert "metadata_path" in response
+        assert response["metadata_path"].endswith(".md")
 
 
 @pytest.mark.asyncio
-async def test_update_task_metadata_replace():
-    """Test metadata can replace instead of append."""
+async def test_list_tasks_includes_metadata_path():
+    """Test that list_tasks returns metadata_path but not content."""
+    async for session, _ in get_session():
+        await session.call_tool(
+            "add_task",
+            {"title": "Task", "initial_metadata": "Content"},
+        )
+
+        result = await session.call_tool("list_tasks", {})
+        tasks = parse_result(result, is_list_tool=True)
+        assert "metadata_path" in tasks[0]
+        assert "metadata_content" not in tasks[0]
+
+
+@pytest.mark.asyncio
+async def test_metadata_file_lazy_creation():
+    """Test that metadata file is not created until content is written."""
+    async for session, _ in get_session():
+        add_result = await session.call_tool("add_task", {"title": "No metadata"})
+        task = parse_result(add_result)
+        metadata_path = Path(task["metadata_path"])
+
+        # File should NOT exist yet
+        assert not metadata_path.exists()
+
+        # get_task should return null content
+        get_result = await session.call_tool("get_task", {"task_id": task["id"]})
+        task = parse_result(get_result)
+        assert task["metadata_content"] is None
+
+
+@pytest.mark.asyncio
+async def test_delete_task_removes_metadata_file():
+    """Test that delete_task removes the metadata file."""
     async for session, _ in get_session():
         add_result = await session.call_tool(
             "add_task",
-            {"title": "Task", "metadata": "initial note"},
+            {"title": "Task to delete", "initial_metadata": "Will be deleted"},
         )
-        task_id = parse_result(add_result)["id"]
+        task = parse_result(add_result)
+        task_id = task["id"]
+        metadata_path = Path(task["metadata_path"])
 
-        update_result = await session.call_tool(
-            "update_task",
-            {"task_id": task_id, "metadata": "replaced note", "append_metadata": False},
-        )
-        task = parse_result(update_result)
-        assert task["metadata"] == "replaced note"
-        assert "initial" not in task["metadata"]
+        # File should exist
+        assert metadata_path.exists()
+
+        await session.call_tool("delete_task", {"task_id": task_id})
+
+        # File should be gone
+        assert not metadata_path.exists()
 
 
 @pytest.mark.asyncio
@@ -438,8 +464,8 @@ async def test_notification_includes_priority():
         notif_files = list(notif_dir.glob("*-task-due.json"))
         assert len(notif_files) >= 1
         notif = json.loads(notif_files[0].read_text())
-        assert "high priority" in notif["message"]
-        assert notif["metadata"]["priority"] == 3
+        assert notif["title"] == "High priority task"
+        assert notif["priority"] == "high"
 
 
 @pytest.mark.asyncio

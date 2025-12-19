@@ -37,7 +37,7 @@ func WriteNotification(
 	if contactPhone != "" {
 		notification["contact_phone"] = contactPhone
 	}
-	if chatName != "" {
+	if chatName != "" && !isDirectChat {
 		notification["chat_name"] = chatName
 	}
 	if messageID != "" {
@@ -95,7 +95,7 @@ func WriteReactionNotification(
 	if contactPhone != "" {
 		notification["contact_phone"] = contactPhone
 	}
-	if chatName != "" {
+	if chatName != "" && !isDirectChat {
 		notification["chat_name"] = chatName
 	}
 	if !contactSaved && isDirectChat {

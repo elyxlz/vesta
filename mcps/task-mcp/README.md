@@ -9,13 +9,19 @@ Simple task management MCP for Vesta with priority tracking and due dates.
 - Mark tasks as done/pending
 - Filter completed tasks
 - Automatic sorting by priority and due date
-- Optional metadata field for extensibility
+- File-based metadata per task
 
 ## Tools
 
-- `add_task(title, due, priority, metadata)` - Create a new task
-- `list_tasks(show_completed)` - List all tasks
-- `update_task(id, status, title, metadata, priority)` - Update task properties
+- `add_task(title, due, priority, initial_metadata)` - Create a new task
+- `list_tasks(show_completed)` - List all tasks (includes `metadata_path`)
+- `get_task(task_id)` - Get task with full metadata content
+- `update_task(id, status, title, priority)` - Update task properties
+- `delete_task(task_id)` - Delete task and its metadata file
+
+## Metadata
+
+Each task has a markdown file at `metadata_path`. To update metadata, use Read/Edit tools on this file.
 
 ## Examples
 
@@ -38,8 +44,13 @@ update_task(id="abc12345", status="done")
 # Change priority
 update_task(id="abc12345", priority=3)
 
-# Add metadata
-add_task("Research topic", metadata="Keywords: AI, MCP")
+# Create task with initial metadata
+add_task("Research topic", initial_metadata="Keywords: AI, MCP")
+
+# Get task with metadata content
+task = get_task(task_id="abc12345")
+# task["metadata_path"] = path to .md file
+# task["metadata_content"] = file contents
 ```
 
 ## Priority Levels

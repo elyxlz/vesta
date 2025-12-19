@@ -1,46 +1,34 @@
-"""Vesta logger - import and use directly: logger.info(), logger.debug(), etc."""
+"""Vesta logger - import and use directly: logger.info(), logger.dreamer(), etc."""
 
-import datetime as dt
-import functools
 import logging
 import pathlib as pl
-import sys
+import re
 import typing as tp
 
-import rich.console
+from rich.console import Console
+from rich.logging import RichHandler
 
+console = Console(force_terminal=True)
 
-class ColoredFormatter(logging.Formatter):
-    COLORS = {
-        "DEBUG": "\033[94m",
-        "INFO": "\033[96m",
-        "WARNING": "\033[93m",
-        "ERROR": "\033[91m",
-        "CRITICAL": "\033[95m",
-    }
-    RESET = "\033[0m"
-    BOLD = "\033[1m"
+# Category styles: (symbol, color, prefix)
+CATEGORIES: dict[str, tuple[str, str, str]] = {
+    "init": ("*", "yellow", "INIT"),
+    "shutdown": ("*", "red", "SHUTDOWN"),
+    "client": ("*", "dim", "CLIENT"),
+    "dreamer": ("*", "magenta", "DREAMER"),
+    "interrupt": ("*", "yellow", "INTERRUPT"),
+    "proactive": ("*", "yellow", "PROACTIVE"),
+    "mcp": ("*", "dim", "MCP"),
+    "user": (">", "white", "USER"),
+    "assistant": ("<", "magenta", "ASSISTANT"),
+    "tool": ("~", "dim", "TOOL"),
+    "output": ("~", "dim", "OUTPUT"),
+    "notification": ("!", "yellow", "NOTIFICATION"),
+    "subagent": ("*", "magenta", "SUBAGENT"),
+}
 
-    def formatTime(self, record: logging.LogRecord, datefmt: str | None = None) -> str:
-        return dt.datetime.fromtimestamp(record.created).strftime("%Y-%m-%d %H:%M:%S")
-
-    def format(self, record: logging.LogRecord) -> str:
-        color = self.COLORS.get(record.levelname, "")
-        bold = self.BOLD if record.levelname in ["ERROR", "CRITICAL"] else ""
-        formatted = super().format(record)
-        return f"\r{color}{bold}{formatted}{self.RESET}\n"
-
-
-class CleanStreamHandler(logging.StreamHandler):
-    def emit(self, record: logging.LogRecord) -> None:
-        msg = self.format(record)
-        stream = self.stream or sys.stdout
-        try:
-            stream.write(msg)
-            self.flush()
-        except Exception:
-            self.handleError(record)
-
+# Regex to strip Rich markup for file logs
+_MARKUP_RE = re.compile(r"\[/?[a-z_]+\]")
 
 # Internal logger instance
 _logger = logging.getLogger("vesta")
@@ -48,32 +36,38 @@ _logger.setLevel(logging.INFO)
 _logger.handlers = []
 _logger.propagate = False
 
-# Console handler with colors
-_handler = CleanStreamHandler(sys.stdout)
-_handler.setFormatter(ColoredFormatter("%(asctime)s | %(levelname)s | %(message)s"))
-_logger.addHandler(_handler)
+# Console handler with Rich
+_console_handler = RichHandler(
+    console=console,
+    show_time=True,
+    show_path=False,
+    rich_tracebacks=True,
+    markup=True,
+    omit_repeated_times=False,
+)
+_console_handler.setFormatter(logging.Formatter("%(message)s"))
+_console_handler.setLevel(logging.INFO)
+_logger.addHandler(_console_handler)
 
 # File handler (set up later via setup())
 _file_handler: logging.Handler | None = None
 
 
-def setup(logs_dir: pl.Path, *, debug: bool = False) -> None:
+def setup(logs_dir: pl.Path, *, log_level: str = "INFO") -> None:
     """Configure logging with file output."""
     global _file_handler
 
     logs_dir.mkdir(parents=True, exist_ok=True)
     log_file = logs_dir / "vesta.log"
 
-    level = logging.DEBUG if debug else logging.INFO
+    level = getattr(logging, log_level.upper(), logging.INFO)
     _logger.setLevel(level)
-    _handler.setLevel(level)
+    _console_handler.setLevel(level)
 
-    # Remove old file handler if exists
     if _file_handler:
         _logger.removeHandler(_file_handler)
         _file_handler.close()
 
-    # Add rotating file handler
     from logging.handlers import RotatingFileHandler
 
     _file_handler = RotatingFileHandler(log_file, maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8")
@@ -82,21 +76,108 @@ def setup(logs_dir: pl.Path, *, debug: bool = False) -> None:
     _logger.addHandler(_file_handler)
 
 
-def _log(level: int, msg: tp.Any) -> None:
-    if level >= _logger.level:
-        if isinstance(msg, dict | list):
-            console = rich.console.Console()
-            console.print_json(data=msg, indent=2)
-        else:
-            _logger.log(level, str(msg))
+def _strip_markup(msg: str) -> str:
+    """Remove Rich markup and emojis for file logs."""
+    # Remove Rich markup tags
+    clean = _MARKUP_RE.sub("", msg)
+    # Remove leading emoji (first char if it's outside ASCII)
+    if clean and ord(clean[0]) > 127:
+        clean = clean.lstrip()
+        if clean and ord(clean[0]) > 127:
+            clean = clean[1:].lstrip()
+    return clean
 
 
-debug = functools.partial(_log, logging.DEBUG)
-info = functools.partial(_log, logging.INFO)
-warning = functools.partial(_log, logging.WARNING)
-error = functools.partial(_log, logging.ERROR)
-critical = functools.partial(_log, logging.CRITICAL)
+def _log(msg: str, *, level: int = logging.INFO) -> None:
+    """Log with styled console and clean file output."""
+    record = _logger.makeRecord(_logger.name, level, "", 0, msg, (), None)
+    _console_handler.emit(record)
+
+    if _file_handler:
+        clean_record = _logger.makeRecord(_logger.name, level, "", 0, _strip_markup(msg), (), None)
+        _file_handler.emit(clean_record)
+
+
+def _log_category(category: str, msg: tp.Any, *, level: int = logging.INFO) -> None:
+    """Log a categorized message with styling."""
+    emoji, color, prefix = CATEGORIES[category]
+    styled = f"{emoji} [{color}][{prefix}][/{color}] {msg}"
+    _log(styled, level=level)
+
+
+# Category functions
+def init(msg: tp.Any) -> None:
+    _log_category("init", msg)
+
+
+def shutdown(msg: tp.Any) -> None:
+    _log_category("shutdown", msg)
+
+
+def client(msg: tp.Any) -> None:
+    _log_category("client", msg)
+
+
+def dreamer(msg: tp.Any) -> None:
+    _log_category("dreamer", msg)
+
+
+def interrupt(msg: tp.Any) -> None:
+    _log_category("interrupt", msg, level=logging.DEBUG)
+
+
+def proactive(msg: tp.Any) -> None:
+    _log_category("proactive", msg)
+
+
+def mcp(msg: tp.Any) -> None:
+    _log_category("mcp", msg)
+
+
+def user(msg: tp.Any) -> None:
+    _log_category("user", msg)
+
+
+def assistant(msg: tp.Any) -> None:
+    _log_category("assistant", msg)
+
+
+def tool(msg: tp.Any) -> None:
+    _log_category("tool", msg)
+
+
+def output(msg: tp.Any) -> None:
+    _log_category("output", msg)
+
+
+def notification(msg: tp.Any) -> None:
+    _log_category("notification", msg)
+
+
+def subagent(msg: tp.Any) -> None:
+    _log_category("subagent", msg)
+
+
+# Standard logging functions
+def debug(msg: tp.Any) -> None:
+    _log(f"[dim]{msg}[/dim]", level=logging.DEBUG)
+
+
+def info(msg: tp.Any) -> None:
+    _log(str(msg))
+
+
+def warning(msg: tp.Any) -> None:
+    _log(f"[yellow]! {msg}[/yellow]", level=logging.WARNING)
+
+
+def error(msg: tp.Any) -> None:
+    _log(f"[red]x {msg}[/red]", level=logging.ERROR)
+
+
+def critical(msg: tp.Any) -> None:
+    _log(f"[bold red]X {msg}[/bold red]", level=logging.CRITICAL)
 
 
 def exception(msg: tp.Any) -> None:
-    _logger.exception(msg)
+    _logger.exception(_strip_markup(str(msg)))

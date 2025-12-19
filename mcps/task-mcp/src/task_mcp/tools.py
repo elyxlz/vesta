@@ -20,7 +20,8 @@ class Task(TypedDict, total=False):
     status: str
     priority: int
     due_date: str | None
-    metadata: str | None
+    metadata_path: str | None
+    metadata_content: str | None
     created_at: str
     completed_at: str | None
     notified_thresholds: str | None
@@ -114,8 +115,58 @@ def get_db(ctx: TaskContext):
     return conn
 
 
+def _migrate_metadata_to_files(ctx: TaskContext, conn: sqlite3.Connection):
+    """Migrate metadata from database TEXT column to individual files."""
+    metadata_dir = ctx.data_dir / "metadata"
+    metadata_dir.mkdir(exist_ok=True)
+
+    # Check if metadata column exists
+    cursor = conn.execute("PRAGMA table_info(tasks)")
+    columns = [row[1] for row in cursor]
+    if "metadata" not in columns:
+        return
+
+    # Migrate existing metadata to files
+    cursor = conn.execute("SELECT id, metadata FROM tasks WHERE metadata IS NOT NULL")
+    for row in cursor:
+        task_id, metadata = row
+        if metadata:
+            (metadata_dir / f"{task_id}.md").write_text(metadata)
+
+    # Recreate table without metadata column (SQLite doesn't support DROP COLUMN)
+    conn.execute("""
+        CREATE TABLE tasks_new (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'done')),
+            priority INTEGER DEFAULT 2 CHECK(priority IN (1, 2, 3)),
+            due_date TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            completed_at TEXT,
+            notified_thresholds TEXT
+        )
+    """)
+    conn.execute("""
+        INSERT INTO tasks_new (id, title, status, priority, due_date, created_at, completed_at, notified_thresholds)
+        SELECT id, title, status, priority, due_date, created_at, completed_at, notified_thresholds FROM tasks
+    """)
+    conn.execute("DROP TABLE tasks")
+    conn.execute("ALTER TABLE tasks_new RENAME TO tasks")
+
+
 def init_db(ctx: TaskContext):
     with closing(get_db(ctx)) as conn:
+        # Schema versioning
+        conn.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY)")
+        cursor = conn.execute("SELECT version FROM schema_version")
+        row = cursor.fetchone()
+        if not row:
+            conn.execute("INSERT INTO schema_version (version) VALUES (0)")
+            version = 0
+        else:
+            version = row[0]
+
+        # Create tasks table (new schema without metadata column)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS tasks (
                 id TEXT PRIMARY KEY,
@@ -123,17 +174,17 @@ def init_db(ctx: TaskContext):
                 status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'done')),
                 priority INTEGER DEFAULT 2 CHECK(priority IN (1, 2, 3)),
                 due_date TEXT,
-                metadata TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 completed_at TEXT,
                 notified_thresholds TEXT
             )
         """)
-        # Add column if it doesn't exist (for existing databases)
-        try:
-            conn.execute("ALTER TABLE tasks ADD COLUMN notified_thresholds TEXT")
-        except sqlite3.OperationalError:
-            pass
+
+        # Migration v0 -> v1: Move metadata to files
+        if version < 1:
+            _migrate_metadata_to_files(ctx, conn)
+            conn.execute("UPDATE schema_version SET version = 1")
+
         conn.commit()
 
 
@@ -181,6 +232,44 @@ def _compute_due_date(
     return None
 
 
+def _get_metadata_path(ctx: TaskContext, task_id: str) -> Path:
+    return ctx.data_dir / "metadata" / f"{task_id}.md"
+
+
+def _read_metadata(ctx: TaskContext, task_id: str) -> str | None:
+    path = _get_metadata_path(ctx, task_id)
+    if path.exists():
+        try:
+            return path.read_text()
+        except OSError:
+            return None
+    return None
+
+
+def _write_metadata(ctx: TaskContext, task_id: str, content: str):
+    metadata_dir = ctx.data_dir / "metadata"
+    metadata_dir.mkdir(exist_ok=True)
+    _get_metadata_path(ctx, task_id).write_text(content)
+
+
+def _delete_metadata(ctx: TaskContext, task_id: str):
+    path = _get_metadata_path(ctx, task_id)
+    if path.exists():
+        try:
+            path.unlink()
+        except OSError:
+            pass
+
+
+def _task_with_metadata(ctx: TaskContext, row: dict, include_content: bool = False) -> dict:
+    task = dict(row)
+    task_id = task["id"]
+    task["metadata_path"] = str(_get_metadata_path(ctx, task_id))
+    if include_content:
+        task["metadata_content"] = _read_metadata(ctx, task_id)
+    return task
+
+
 def normalize_priority(priority: int | str) -> int:
     """Convert priority string to int. Accepts 1/2/3 or 'low'/'normal'/'high'."""
     if isinstance(priority, int):
@@ -206,9 +295,9 @@ def add_task(
     due_in_hours: int | None = None,
     due_in_days: int | None = None,
     priority: int | str = 2,
-    metadata: str | None = None,
+    initial_metadata: str | None = None,
 ) -> dict:
-    """due_datetime: ISO-8601 (requires timezone). due_in_*: relative offset from now (UTC). priority: 1-3 or 'low'/'normal'/'high'."""
+    """due_datetime: ISO-8601 (requires timezone). due_in_*: relative offset from now (UTC). priority: 1-3 or 'low'/'normal'/'high'. Returns metadata_path for file-based metadata editing."""
     context: TaskContext = ctx.request_context.lifespan_context
     priority = normalize_priority(priority)
 
@@ -217,10 +306,13 @@ def add_task(
 
     with closing(get_db(context)) as conn:
         conn.execute(
-            "INSERT INTO tasks (id, title, priority, due_date, metadata) VALUES (?, ?, ?, ?, ?)",
-            (task_id, title, priority, due_date, metadata),
+            "INSERT INTO tasks (id, title, priority, due_date) VALUES (?, ?, ?, ?)",
+            (task_id, title, priority, due_date),
         )
         conn.commit()
+
+    if initial_metadata:
+        _write_metadata(context, task_id, initial_metadata)
 
     return {
         "id": task_id,
@@ -228,12 +320,13 @@ def add_task(
         "status": "pending",
         "priority": priority,
         "due_date": due_date,
-        "metadata": metadata,
+        "metadata_path": str(_get_metadata_path(context, task_id)),
     }
 
 
 @mcp.tool()
 def list_tasks(ctx: Context, *, show_completed: bool = False) -> list[dict]:
+    """Returns metadata_path for each task (use get_task or Read tool for content)."""
     context: TaskContext = ctx.request_context.lifespan_context
     with closing(get_db(context)) as conn:
         query = "SELECT * FROM tasks"
@@ -242,7 +335,7 @@ def list_tasks(ctx: Context, *, show_completed: bool = False) -> list[dict]:
         query += " ORDER BY priority DESC, due_date ASC NULLS LAST, created_at DESC"
 
         cursor = conn.execute(query)
-        tasks = [dict(row) for row in cursor]
+        tasks = [_task_with_metadata(context, dict(row), include_content=False) for row in cursor]
 
     return tasks
 
@@ -254,11 +347,9 @@ def update_task(
     task_id: str,
     status: str | None = None,
     title: str | None = None,
-    metadata: str | None = None,
     priority: int | str | None = None,
-    append_metadata: bool = True,
 ) -> dict:
-    """priority: 1-3 or 'low'/'normal'/'high'. status: 'pending' or 'done'. append_metadata: if True (default), appends to existing metadata; if False, replaces it"""
+    """priority: 1-3 or 'low'/'normal'/'high'. status: 'pending' or 'done'. Use Read/Edit tools on metadata_path for metadata."""
     context: TaskContext = ctx.request_context.lifespan_context
     if status and status not in ("pending", "done"):
         raise ValueError(f"Status must be pending or done, got {status}")
@@ -283,13 +374,7 @@ def update_task(
             elif status == "pending":
                 updates.append("completed_at = NULL")
 
-        final_metadata = metadata
-        if metadata is not None and append_metadata:
-            current_metadata = result["metadata"]
-            if current_metadata:
-                final_metadata = f"{current_metadata}\n{metadata}"
-
-        for field, value in [("title", title), ("metadata", final_metadata), ("priority", priority)]:
+        for field, value in [("title", title), ("priority", priority)]:
             if value is not None:
                 updates.append(f"{field} = ?")
                 params.append(value)
@@ -301,26 +386,24 @@ def update_task(
             conn.commit()
 
         cursor = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
-        task = dict(cursor.fetchone())
-
-    return task
+        return _task_with_metadata(context, dict(cursor.fetchone()), include_content=True)
 
 
 @mcp.tool()
 def get_task(ctx: Context, *, task_id: str) -> dict:
-    """Get a single task by ID"""
+    """Get a single task by ID with full metadata content."""
     context: TaskContext = ctx.request_context.lifespan_context
     with closing(get_db(context)) as conn:
         cursor = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
         result = cursor.fetchone()
         if not result:
             raise ValueError(f"Task '{task_id}' not found. Use list_tasks() to see available tasks.")
-        return dict(result)
+        return _task_with_metadata(context, dict(result), include_content=True)
 
 
 @mcp.tool()
 def delete_task(ctx: Context, *, task_id: str) -> dict:
-    """Delete a task permanently"""
+    """Delete a task permanently, including its metadata file."""
     context: TaskContext = ctx.request_context.lifespan_context
     with closing(get_db(context)) as conn:
         cursor = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
@@ -328,12 +411,13 @@ def delete_task(ctx: Context, *, task_id: str) -> dict:
             raise ValueError(f"Task '{task_id}' not found. Use list_tasks() to see available tasks.")
         conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
         conn.commit()
+    _delete_metadata(context, task_id)
     return {"status": "deleted", "task_id": task_id}
 
 
 @mcp.tool()
 def search_tasks(ctx: Context, *, query: str, show_completed: bool = False) -> list[dict]:
-    """Search tasks by title. Returns tasks matching the query string."""
+    """Search tasks by title. Returns metadata_path for each task."""
     context: TaskContext = ctx.request_context.lifespan_context
     with closing(get_db(context)) as conn:
         sql = "SELECT * FROM tasks WHERE title LIKE ?"
@@ -342,5 +426,5 @@ def search_tasks(ctx: Context, *, query: str, show_completed: bool = False) -> l
         sql += " ORDER BY priority DESC, due_date ASC NULLS LAST, created_at DESC"
 
         cursor = conn.execute(sql, (f"%{query}%",))
-        tasks = [dict(row) for row in cursor]
+        tasks = [_task_with_metadata(context, dict(row), include_content=False) for row in cursor]
     return tasks
