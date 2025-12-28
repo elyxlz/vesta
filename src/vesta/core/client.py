@@ -135,8 +135,18 @@ async def reset_client_context(state: vm.State, *, config: vm.VestaConfig) -> No
     """Close current client and create a new one with fresh memory."""
     logger.client("Resetting client with updated memory...")
 
-    state.client = None
-    state.client = await create_claude_client(config, state=state)
-    state.sub_agent_context = None
-    state.session_id = None
+    # CRITICAL: Acquire lock to ensure no message is being processed
+    async with state.processing_lock:
+        # Now we know nothing is using the client
+        if state.client:
+            try:
+                await state.client.__aexit__(None, None, None)
+            except Exception as e:
+                logger.error(f"Error closing old client: {e}")
+
+        state.client = None
+        state.client = await create_claude_client(config, state=state)
+        state.sub_agent_context = None
+        state.session_id = None
+
     logger.client("Client reset complete with fresh memory context")

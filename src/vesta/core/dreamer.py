@@ -213,26 +213,32 @@ Check MEMORY.md and update it with any new important information from this conve
     await _call_progress(progress_callback, "Dreamer Agent awakening...")
     logger.debug("Spawning Dreamer Agent")
 
+    logger.debug("Getting paths...")
     skills_dir = get_skills_dir(config)
     dreamer_memory_path = get_dreamer_memory_path(config)
+
+    logger.debug(f"Reading dreamer memory from {dreamer_memory_path}...")
     dreamer_memory_template = dreamer_memory_path.read_text()
+
+    logger.debug("Formatting prompt...")
     memory_prompt = dreamer_memory_template.format(
         memory_path=memory_path,
         skills_dir=skills_dir,
         dreamer_memory_path=dreamer_memory_path,
     )
 
-    logger.dreamer("Creating SDK client...")
+    logger.debug("Creating SDK client...")
     async with ClaudeSDKClient(
         options=ClaudeAgentOptions(
             system_prompt=memory_prompt,
             permission_mode="bypassPermissions",
             model="sonnet",
-            cwd=config.state_dir,
-            add_dirs=[str(config.state_dir), str(skills_dir)],
+            cwd=config.memory_dir,
+            add_dirs=[str(config.memory_dir), str(skills_dir)],
             max_thinking_tokens=config.max_thinking_tokens,
         )
     ) as client:
+        logger.debug("SDK client created")
         await _call_progress(progress_callback, f"Dreamer processing {len(conversation_history)} messages...")
         logger.dreamer("SDK client created, sending query...")
         await client.query(prompt)

@@ -25,7 +25,10 @@ async def graceful_shutdown(state: vm.State, *, config: vm.VestaConfig) -> None:
     await preserve_memory(state, config=config)
 
     if state.client:
-        await state.client.__aexit__(None, None, None)
+        try:
+            await state.client.__aexit__(None, None, None)
+        except Exception as e:
+            logger.error(f"Error closing client during shutdown: {e}")
 
     if config.onedrive_dir.exists() and config.onedrive_token:
         vod.unmount_onedrive(config.onedrive_dir)
