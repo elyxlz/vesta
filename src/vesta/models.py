@@ -22,6 +22,7 @@ class State:
     shutdown_event: asyncio.Event | None = None
     shutdown_count: int = 0
     is_processing: bool = False
+    reset_requested: bool = False
     sub_agent_context: str | None = None
     session_id: str | None = None
     pending_system_message: str | None = None

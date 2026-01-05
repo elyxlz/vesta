@@ -3,7 +3,7 @@
 import asyncio
 import os
 
-from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions, Message
+from claude_agent_sdk import ClaudeAgentOptions, Message
 
 import vesta.models as vm
 import vesta.utils as vu
@@ -111,42 +111,18 @@ async def process_message(msg: str, *, state: vm.State, config: vm.VestaConfig, 
     return responses, state
 
 
-async def create_claude_client(config: vm.VestaConfig, *, state: vm.State, resume_session_id: str | None = None) -> ClaudeSDKClient:
+def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgentOptions:
+    """Build options for creating a Claude SDK client."""
     # Enable experimental MCP CLI features for skill hotloading
     os.environ["ENABLE_EXPERIMENTAL_MCP_CLI"] = "1"
 
-    options = ClaudeAgentOptions(
+    return ClaudeAgentOptions(
         system_prompt=load_system_prompt(config),
         mcp_servers=build_mcp_servers(config),  # type: ignore[arg-type]
         hooks=build_hooks(state),
         permission_mode="bypassPermissions",
-        resume=resume_session_id,
         cwd=config.state_dir,
         setting_sources=["project"],
         add_dirs=[str(config.state_dir), str(config.skills_dir), str(config.onedrive_dir)],
         max_thinking_tokens=config.max_thinking_tokens,
     )
-    client = ClaudeSDKClient(options=options)
-    await client.__aenter__()
-    return client
-
-
-async def reset_client_context(state: vm.State, *, config: vm.VestaConfig) -> None:
-    """Close current client and create a new one with fresh memory."""
-    logger.client("Resetting client with updated memory...")
-
-    # CRITICAL: Acquire lock to ensure no message is being processed
-    async with state.processing_lock:
-        # Now we know nothing is using the client
-        if state.client:
-            try:
-                await state.client.__aexit__(None, None, None)
-            except Exception as e:
-                logger.error(f"Error closing old client: {e}")
-
-        state.client = None
-        state.client = await create_claude_client(config, state=state)
-        state.sub_agent_context = None
-        state.session_id = None
-
-    logger.client("Client reset complete with fresh memory context")

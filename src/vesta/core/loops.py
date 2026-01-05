@@ -2,11 +2,13 @@
 
 import asyncio
 
+from claude_agent_sdk import ClaudeSDKClient
+
 import vesta.models as vm
 import vesta.utils as vu
 import vesta.core.effects as vfx
 from vesta import logger
-from vesta.core.client import process_message, attempt_interrupt, reset_client_context
+from vesta.core.client import process_message, attempt_interrupt, build_client_options
 from vesta.core.dreamer import preserve_memory
 from vesta.core.notifications import load_and_display_new_notifications, delete_notification_files
 
@@ -35,24 +37,45 @@ async def process_notification_batch(
 
 
 async def message_processor(queue: asyncio.Queue, *, state: vm.State, config: vm.VestaConfig) -> None:
+    """Process messages in a loop, managing client lifecycle with async with."""
     while state.shutdown_event and not state.shutdown_event.is_set():
-        try:
-            msg, is_user = await asyncio.wait_for(queue.get(), timeout=1.0)
-        except TimeoutError:
-            continue
+        # Create fresh client for this session
+        logger.client("Creating new client session...")
+        options = build_client_options(config, state)
+        async with ClaudeSDKClient(options=options) as client:
+            state.client = client
+            logger.client("Client session started")
 
-        logger.debug(f"Processing message (is_user={is_user}, length={len(msg)})")
+            # Process messages until reset or shutdown
+            while not state.shutdown_event.is_set() and not state.reset_requested:
+                try:
+                    msg, is_user = await asyncio.wait_for(queue.get(), timeout=1.0)
+                except TimeoutError:
+                    continue
 
-        async with state.processing_lock:
-            state.is_processing = True
-            try:
-                responses, _ = await process_message(msg, state=state, config=config, is_user=is_user)
+                logger.debug(f"Processing message (is_user={is_user}, length={len(msg)})")
 
-                for response in responses:
-                    if response and response.strip():
-                        logger.assistant(response)
-            finally:
-                state.is_processing = False
+                async with state.processing_lock:
+                    state.is_processing = True
+                    try:
+                        responses, _ = await process_message(msg, state=state, config=config, is_user=is_user)
+
+                        for response in responses:
+                            if response and response.strip():
+                                logger.assistant(response)
+                    finally:
+                        state.is_processing = False
+
+            # Clear reset flag and context before closing client
+            if state.reset_requested:
+                logger.client("Reset requested, closing client session...")
+                state.reset_requested = False
+                state.sub_agent_context = None
+                state.session_id = None
+
+        # Client closed here (exited async with)
+        state.client = None
+        logger.client("Client session closed")
 
 
 async def check_proactive_task(queue: asyncio.Queue, *, config: vm.VestaConfig) -> None:
@@ -69,7 +92,7 @@ async def process_nightly_memory(state: vm.State, *, config: vm.VestaConfig) -> 
             state.last_memory_consolidation = now
             logger.dreamer("Nightly consolidation complete")
             if updated:
-                await reset_client_context(state, config=config)
+                state.reset_requested = True  # message_processor will handle the reset
             if config.nightly_memory_completion_message:
                 state.pending_system_message = config.nightly_memory_completion_message
 

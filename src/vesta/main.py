@@ -13,7 +13,6 @@ from vesta.integrations import onedrive as vod
 from vesta.integrations.mcp_registry import build_mcp_servers
 from vesta.core.init import init_skills, init_main_memory, init_dreamer_memory, init_skills_symlink, check_state_readable
 from vesta.core.io import input_handler, make_signal_handler
-from vesta.core.client import create_claude_client
 from vesta.core.loops import message_processor, monitor_loop
 from vesta.core.dreamer import preserve_memory
 from vesta.core.notifications import maybe_enqueue_whatsapp_greeting
@@ -24,11 +23,7 @@ async def graceful_shutdown(state: vm.State, *, config: vm.VestaConfig) -> None:
 
     await preserve_memory(state, config=config)
 
-    if state.client:
-        try:
-            await state.client.__aexit__(None, None, None)
-        except Exception as e:
-            logger.error(f"Error closing client during shutdown: {e}")
+    # Client is closed by message_processor via async with
 
     if config.onedrive_dir.exists() and config.onedrive_token:
         vod.unmount_onedrive(config.onedrive_dir)
@@ -99,10 +94,10 @@ def check_dependencies() -> None:
         raise RuntimeError("rclone is not found in PATH. Please install rclone: https://rclone.org/install/")
 
 
-async def init_state(*, config: vm.VestaConfig) -> vm.State:
+def init_state(*, config: vm.VestaConfig) -> vm.State:
     now = vfx.get_current_time()
-    state = vm.State(
-        client=None,
+    return vm.State(
+        client=None,  # Client is created by message_processor
         shutdown_event=None,
         shutdown_count=0,
         is_processing=False,
@@ -111,8 +106,6 @@ async def init_state(*, config: vm.VestaConfig) -> vm.State:
         pending_system_message=None,
         last_memory_consolidation=now,
     )
-    state.client = await create_claude_client(config, state=state)
-    return state
 
 
 async def async_main() -> None:
@@ -142,7 +135,7 @@ async def async_main() -> None:
     init_skills_symlink(config)
 
     logger.init("Creating Claude client...")
-    initial_state = await init_state(config=config)
+    initial_state = init_state(config=config)
 
     logger.init("Starting main loop...")
     await run_vesta(config, state=initial_state)

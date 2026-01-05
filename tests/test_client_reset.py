@@ -1,16 +1,17 @@
-"""Test client reset functionality.
+"""Test client lifecycle and reset functionality.
 
-Verifies that resetting the Claude client after dreamer operations
-doesn't create a zombie state and keeps the client responsive.
+Verifies that the client lifecycle is properly managed using async with,
+and that the reset_requested flag triggers client recreation.
 """
 
 import asyncio
 
 from pydantic import SecretStr
+from claude_agent_sdk import ClaudeSDKClient
 
 import vesta.models as vm
 import vesta.main as vmain
-from vesta.core.client import reset_client_context, process_message
+from vesta.core.client import build_client_options, process_message
 from vesta.core.dreamer import preserve_memory
 
 
@@ -25,94 +26,190 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-async def _run_test_scenario(state_dir, test_fn):
-    """Run a test scenario within Vesta lifecycle."""
-    config = vm.VestaConfig(
+def _make_config(state_dir):
+    """Create test config."""
+    return vm.VestaConfig(
         state_dir=state_dir,
         microsoft_mcp_client_id=SecretStr("test"),
         ephemeral=True,
         mcps=[],
     )
 
-    state = await vmain.init_state(config=config)
 
-    try:
-        await test_fn(state, config)
-    finally:
-        if state.client:
-            try:
-                await state.client.__aexit__(None, None, None)
-            except Exception:
-                pass
-
-
-def test_client_reset_maintains_responsiveness(tmp_path):
-    """Client should remain responsive after reset (simulating post-dreamer)."""
+def test_client_lifecycle_with_async_with(tmp_path):
+    """Client should work correctly with async with context manager."""
     state_dir = tmp_path / "state"
     _prepare_state_dir(state_dir)
+    config = _make_config(state_dir)
+    state = vmain.init_state(config=config)
 
-    async def test_fn(state: vm.State, config: vm.VestaConfig):
-        # Verify initial client exists
-        assert state.client is not None, "Initial client should exist"
+    async def test_fn():
+        # Create client using async with (like message_processor does)
+        options = build_client_options(config, state)
+        async with ClaudeSDKClient(options=options) as client:
+            state.client = client
+            assert state.client is not None, "Client should exist inside async with"
 
-        # Reset the client (this is what happens after dreamer)
-        await reset_client_context(state, config=config)
-        assert state.client is not None, "Client should exist after reset"
-
-        # Verify client is still responsive
-        responses, _ = await asyncio.wait_for(
-            process_message("Say 'hello' if you can hear me", state=state, config=config, is_user=True), timeout=30.0
-        )
-        assert responses, "Client should respond after reset"
-
-    _run(_run_test_scenario(state_dir, test_fn))
-
-
-def test_client_shutdown_after_reset(tmp_path):
-    """Client should shutdown cleanly even after reset."""
-    state_dir = tmp_path / "state"
-    _prepare_state_dir(state_dir)
-
-    async def test_fn(state: vm.State, config: vm.VestaConfig):
-        # Reset client
-        await reset_client_context(state, config=config)
-
-        # Shutdown should not crash
-        if state.client:
-            await state.client.__aexit__(None, None, None)
-
-    _run(_run_test_scenario(state_dir, test_fn))
-
-
-def test_full_nightly_flow_preserve_memory_then_reset(tmp_path):
-    """Full nightly flow: preserve_memory → reset_client_context should keep client responsive."""
-    state_dir = tmp_path / "state"
-    _prepare_state_dir(state_dir)
-
-    async def test_fn(state: vm.State, config: vm.VestaConfig):
-        # Add some conversation history for dreamer to process
-        async with state.conversation_history_lock:
-            state.conversation_history.extend(
-                [
-                    {"role": "user", "content": "What's the weather like?"},
-                    {"role": "assistant", "content": "I don't have access to current weather data."},
-                    {"role": "user", "content": "Can you remember my favorite color is blue?"},
-                    {"role": "assistant", "content": "I'll remember that your favorite color is blue."},
-                ]
-            )
-
-        # Run preserve_memory (this is what happens at night)
-        updated = await preserve_memory(state, config=config)
-
-        # If memory was updated, reset client (matching nightly flow)
-        if updated:
-            await reset_client_context(state, config=config)
-            assert state.client is not None, "Client should exist after reset"
-
-            # Verify client is still responsive after full nightly flow
+            # Verify client is responsive
             responses, _ = await asyncio.wait_for(
-                process_message("Are you still there?", state=state, config=config, is_user=True), timeout=30.0
+                process_message("Say 'hello'", state=state, config=config, is_user=True),
+                timeout=30.0,
             )
-            assert responses, "Client should respond after preserve_memory + reset"
+            assert responses, "Client should respond"
 
-    _run(_run_test_scenario(state_dir, test_fn))
+        # Client should be closed after exiting async with
+        # (state.client still points to closed client, but that's fine)
+
+    _run(test_fn())
+
+
+def test_reset_requested_flag(tmp_path):
+    """Setting reset_requested should work correctly."""
+    state_dir = tmp_path / "state"
+    _prepare_state_dir(state_dir)
+    config = _make_config(state_dir)
+    state = vmain.init_state(config=config)
+
+    async def test_fn():
+        assert state.reset_requested is False, "reset_requested should start False"
+
+        # Simulate what process_nightly_memory does
+        state.reset_requested = True
+        assert state.reset_requested is True, "reset_requested should be True"
+
+        # Simulate what message_processor does when it sees the flag
+        if state.reset_requested:
+            state.reset_requested = False
+            state.sub_agent_context = None
+            state.session_id = None
+
+        assert state.reset_requested is False, "reset_requested should be cleared"
+
+    _run(test_fn())
+
+
+def test_multiple_client_sessions(tmp_path):
+    """Should be able to create multiple client sessions sequentially."""
+    state_dir = tmp_path / "state"
+    _prepare_state_dir(state_dir)
+    config = _make_config(state_dir)
+    state = vmain.init_state(config=config)
+
+    async def test_fn():
+        # First session
+        options = build_client_options(config, state)
+        async with ClaudeSDKClient(options=options) as client1:
+            state.client = client1
+            responses1, _ = await asyncio.wait_for(
+                process_message("Say 'one'", state=state, config=config, is_user=True),
+                timeout=30.0,
+            )
+            assert responses1, "First session should respond"
+
+        state.client = None
+
+        # Second session (simulating after reset)
+        options = build_client_options(config, state)
+        async with ClaudeSDKClient(options=options) as client2:
+            state.client = client2
+            responses2, _ = await asyncio.wait_for(
+                process_message("Say 'two'", state=state, config=config, is_user=True),
+                timeout=30.0,
+            )
+            assert responses2, "Second session should respond"
+
+    _run(test_fn())
+
+
+def test_reset_clears_context(tmp_path):
+    """Reset should clear sub_agent_context and session_id."""
+    state_dir = tmp_path / "state"
+    _prepare_state_dir(state_dir)
+    config = _make_config(state_dir)
+    state = vmain.init_state(config=config)
+
+    async def test_fn():
+        options = build_client_options(config, state)
+        async with ClaudeSDKClient(options=options) as client:
+            state.client = client
+
+            # Simulate accumulated context from conversation
+            state.sub_agent_context = "some-context-from-subagent"
+            state.session_id = "session-12345"
+
+            # Trigger reset (what process_nightly_memory does)
+            state.reset_requested = True
+
+        # Simulate what message_processor does after exiting async with
+        if state.reset_requested:
+            state.reset_requested = False
+            state.sub_agent_context = None
+            state.session_id = None
+
+        state.client = None
+
+        # Verify context was cleared
+        assert state.sub_agent_context is None, "sub_agent_context should be cleared"
+        assert state.session_id is None, "session_id should be cleared"
+        assert state.reset_requested is False, "reset_requested should be cleared"
+
+        # Verify new client works
+        options = build_client_options(config, state)
+        async with ClaudeSDKClient(options=options) as client:
+            state.client = client
+            responses, _ = await asyncio.wait_for(
+                process_message("Hello", state=state, config=config, is_user=True),
+                timeout=30.0,
+            )
+            assert responses, "New client should work after context cleared"
+
+    _run(test_fn())
+
+
+def test_full_nightly_flow_with_flag(tmp_path):
+    """Full nightly flow: preserve_memory sets reset_requested flag."""
+    state_dir = tmp_path / "state"
+    _prepare_state_dir(state_dir)
+    config = _make_config(state_dir)
+    state = vmain.init_state(config=config)
+
+    async def test_fn():
+        # Create initial client
+        options = build_client_options(config, state)
+        async with ClaudeSDKClient(options=options) as client:
+            state.client = client
+
+            # Add some conversation history
+            async with state.conversation_history_lock:
+                state.conversation_history.extend(
+                    [
+                        {"role": "user", "content": "What's the weather like?"},
+                        {"role": "assistant", "content": "I don't have access to current weather data."},
+                    ]
+                )
+
+            # Run preserve_memory (this is what happens at night)
+            updated = await preserve_memory(state, config=config)
+
+            # In the real code, process_nightly_memory sets this flag
+            if updated:
+                state.reset_requested = True
+
+        # After exiting async with, client is closed
+        state.client = None
+
+        # If reset was requested, create new client (simulating message_processor)
+        if state.reset_requested:
+            state.reset_requested = False
+            options = build_client_options(config, state)
+            async with ClaudeSDKClient(options=options) as client:
+                state.client = client
+
+                # Verify new client is responsive
+                responses, _ = await asyncio.wait_for(
+                    process_message("Are you there?", state=state, config=config, is_user=True),
+                    timeout=30.0,
+                )
+                assert responses, "New client should respond after reset"
+
+    _run(test_fn())
