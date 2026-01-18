@@ -3,6 +3,7 @@
 import logging
 import pathlib as pl
 import re
+import sys
 import typing as tp
 
 from rich.console import Console
@@ -25,6 +26,7 @@ CATEGORIES: dict[str, tuple[str, str, str]] = {
     "output": ("~", "dim", "OUTPUT"),
     "notification": ("!", "yellow", "NOTIFICATION"),
     "subagent": ("*", "magenta", "SUBAGENT"),
+    "sdk": ("~", "dim", "SDK"),
 }
 
 # Regex to strip Rich markup for file logs
@@ -92,10 +94,12 @@ def _log(msg: str, *, level: int = logging.INFO) -> None:
     """Log with styled console and clean file output."""
     record = _logger.makeRecord(_logger.name, level, "", 0, msg, (), None)
     _console_handler.emit(record)
+    sys.stdout.flush()  # Force immediate output
 
     if _file_handler:
         clean_record = _logger.makeRecord(_logger.name, level, "", 0, _strip_markup(msg), (), None)
         _file_handler.emit(clean_record)
+        _file_handler.flush()
 
 
 def _log_category(category: str, msg: tp.Any, *, level: int = logging.INFO) -> None:
@@ -156,6 +160,10 @@ def notification(msg: tp.Any) -> None:
 
 def subagent(msg: tp.Any) -> None:
     _log_category("subagent", msg)
+
+
+def sdk(msg: tp.Any) -> None:
+    _log_category("sdk", msg, level=logging.DEBUG)
 
 
 # Standard logging functions

@@ -64,7 +64,7 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
     timestamp = vfx.get_current_time()
     query_with_context = vu.build_query_with_timestamp(prompt, timestamp=timestamp)
     logger.debug(f"Sending query ({len(query_with_context)} chars)")
-    await client.query(query_with_context)
+    await asyncio.wait_for(client.query(query_with_context), timeout=30.0)
 
     responses: list[str] = []
 
@@ -116,6 +116,10 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
     # Enable experimental MCP CLI features for skill hotloading
     os.environ["ENABLE_EXPERIMENTAL_MCP_CLI"] = "1"
 
+    def handle_stderr(line: str) -> None:
+        """Log SDK stderr output for debugging."""
+        logger.sdk(line)
+
     return ClaudeAgentOptions(
         system_prompt=load_system_prompt(config),
         mcp_servers=build_mcp_servers(config),  # type: ignore[arg-type]
@@ -125,4 +129,5 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
         setting_sources=["project"],
         add_dirs=[str(config.state_dir), str(config.skills_dir), str(config.onedrive_dir)],
         max_thinking_tokens=config.max_thinking_tokens,
+        stderr=handle_stderr,
     )

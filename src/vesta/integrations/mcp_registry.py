@@ -6,6 +6,7 @@ import shlex
 import typing as tp
 from dataclasses import dataclass
 
+from vesta import logger
 from vesta.config import VestaConfig
 
 
@@ -61,17 +62,32 @@ def _build_uv_mcp(
 
 
 def _build_whatsapp_mcp(config: VestaConfig) -> McpServer:
-    build_dir = shlex.quote(str(config.whatsapp_build_dir))
+    build_dir_path = config.whatsapp_build_dir
+    build_dir = shlex.quote(str(build_dir_path))
     data_dir = shlex.quote(str(config.data_dir / "whatsapp-mcp"))
     log_dir = shlex.quote(str(config.logs_dir / "whatsapp-mcp"))
     notif_dir = shlex.quote(str(config.notifications_dir))
+
+    # Log initialization details
+    logger.mcp(f"WhatsApp MCP build_dir: {build_dir_path}")
+    if not build_dir_path.exists():
+        logger.error(f"WhatsApp MCP build directory does not exist: {build_dir_path}")
+    elif not (build_dir_path / "go.mod").exists():
+        logger.error(f"WhatsApp MCP go.mod not found in: {build_dir_path}")
+    elif not (build_dir_path / "main.go").exists():
+        logger.error(f"WhatsApp MCP main.go not found in: {build_dir_path}")
+    else:
+        logger.mcp("WhatsApp MCP source files verified")
+
+    cmd = (
+        f"cd {build_dir} && go build -o whatsapp-mcp . && "
+        f"./whatsapp-mcp --data-dir {data_dir} --log-dir {log_dir} --notifications-dir {notif_dir}"
+    )
+    logger.debug(f"WhatsApp MCP command: {cmd}")
+
     return {
         "command": "sh",
-        "args": [
-            "-c",
-            f"cd {build_dir} && go build -o whatsapp-mcp . && "
-            f"./whatsapp-mcp --data-dir {data_dir} --log-dir {log_dir} --notifications-dir {notif_dir}",
-        ],
+        "args": ["-c", cmd],
         "env": {"MAX_MCP_OUTPUT_TOKENS": str(config.max_mcp_output_tokens)},
     }
 
@@ -113,4 +129,6 @@ MCP_BUILDERS: dict[McpName, tp.Callable[[VestaConfig], McpServer]] = {
 
 def build_mcp_servers(config: VestaConfig) -> dict[str, McpServer]:
     """Build MCP server configs for enabled MCPs."""
+    logger.mcp(f"Install root: {config.install_root}")
+    logger.mcp(f"MCPs to initialize: {', '.join(config.mcps)}")
     return {name: MCP_BUILDERS[tp.cast(McpName, name)](config) for name in config.mcps}

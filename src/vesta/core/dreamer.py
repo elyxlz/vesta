@@ -20,9 +20,9 @@ from vesta.core.init import (
     get_memory_path,
     get_backups_dir,
     get_skills_dir,
-    get_dreamer_memory_path,
     load_memory_template,
 )
+from vesta.templates.dreamer import PROMPT_TEMPLATE as DREAMER_PROMPT_TEMPLATE
 
 ProgressCallback = cab.Callable[[str], object] | None
 
@@ -215,16 +215,11 @@ Check MEMORY.md and update it with any new important information from this conve
 
     logger.debug("Getting paths...")
     skills_dir = get_skills_dir(config)
-    dreamer_memory_path = get_dreamer_memory_path(config)
-
-    logger.debug(f"Reading dreamer memory from {dreamer_memory_path}...")
-    dreamer_memory_template = dreamer_memory_path.read_text()
 
     logger.debug("Formatting prompt...")
-    memory_prompt = dreamer_memory_template.format(
+    memory_prompt = DREAMER_PROMPT_TEMPLATE.format(
         memory_path=memory_path,
         skills_dir=skills_dir,
-        dreamer_memory_path=dreamer_memory_path,
     )
 
     logger.debug("Creating SDK client...")

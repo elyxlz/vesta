@@ -45,6 +45,9 @@ async def message_processor(queue: asyncio.Queue, *, state: vm.State, config: vm
         async with ClaudeSDKClient(options=options) as client:
             state.client = client
             logger.client("Client session started")
+            if state.pending_error_context:
+                await queue.put((state.pending_error_context, False))
+                state.pending_error_context = None
 
             # Process messages until reset or shutdown
             while not state.shutdown_event.is_set() and not state.reset_requested:
@@ -57,13 +60,19 @@ async def message_processor(queue: asyncio.Queue, *, state: vm.State, config: vm
 
                 async with state.processing_lock:
                     state.is_processing = True
-                    try:
-                        responses, _ = await process_message(msg, state=state, config=config, is_user=is_user)
+                try:
+                    responses, _ = await process_message(msg, state=state, config=config, is_user=is_user)
 
-                        for response in responses:
-                            if response and response.strip():
-                                logger.assistant(response)
-                    finally:
+                    for response in responses:
+                        if response and response.strip():
+                            logger.assistant(response)
+                except Exception as e:
+                    logger.error(f"Error processing message: {e}")
+                    state.pending_error_context = f"[System: Previous request failed with error: {e}. Session was reset.]"
+                    state.reset_requested = True
+                    break
+                finally:
+                    async with state.processing_lock:
                         state.is_processing = False
 
             # Clear reset flag and context before closing client

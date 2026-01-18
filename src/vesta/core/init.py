@@ -27,10 +27,6 @@ def get_skills_dir(config: vm.VestaConfig) -> pl.Path:
     return get_memory_dir(config) / "skills"
 
 
-def get_dreamer_memory_path(config: vm.VestaConfig) -> pl.Path:
-    return get_memory_dir(config) / "DREAMER_MEMORY.md"
-
-
 def load_memory_template(name: str) -> str:
     if name == "main":
         return MAIN_MEMORY_TEMPLATE
@@ -87,17 +83,6 @@ def init_main_memory(config: vm.VestaConfig) -> None:
         template = load_memory_template("main")
         memory_path.write_text(template)
         logger.init(f"Initialized main memory ({len(template)} chars)")
-
-
-def init_dreamer_memory(config: vm.VestaConfig) -> None:
-    """Initialize dreamer memory from template if it doesn't exist."""
-    from vesta.templates.dreamer import PROMPT_TEMPLATE
-
-    prompt_path = get_dreamer_memory_path(config)
-    if not prompt_path.exists():
-        prompt_path.parent.mkdir(parents=True, exist_ok=True)
-        prompt_path.write_text(PROMPT_TEMPLATE)
-        logger.init("Initialized dreamer memory")
 
 
 def init_skills_symlink(config: vm.VestaConfig) -> None:

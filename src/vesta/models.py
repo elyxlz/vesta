@@ -26,6 +26,7 @@ class State:
     sub_agent_context: str | None = None
     session_id: str | None = None
     pending_system_message: str | None = None
+    pending_error_context: str | None = None
     last_memory_consolidation: dt.datetime | None = None
     processing_lock: asyncio.Lock = dc.field(default_factory=asyncio.Lock)
     conversation_history: list[ConversationMessage] = dc.field(default_factory=list)

@@ -11,7 +11,7 @@ import vesta.core.effects as vfx
 from vesta import logger
 from vesta.integrations import onedrive as vod
 from vesta.integrations.mcp_registry import build_mcp_servers
-from vesta.core.init import init_skills, init_main_memory, init_dreamer_memory, init_skills_symlink, check_state_readable
+from vesta.core.init import init_skills, init_main_memory, init_skills_symlink, check_state_readable
 from vesta.core.io import input_handler, make_signal_handler
 from vesta.core.loops import message_processor, monitor_loop
 from vesta.core.dreamer import preserve_memory
@@ -129,7 +129,6 @@ async def async_main() -> None:
     check_state_readable(config)
     logger.init("Initializing memory...")
     init_main_memory(config)
-    init_dreamer_memory(config)
     logger.init("Initializing skills...")
     init_skills(config)
     init_skills_symlink(config)
