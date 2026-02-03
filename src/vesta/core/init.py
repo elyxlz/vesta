@@ -11,20 +11,8 @@ from vesta.templates.skills import browser, calendar, email, report_writer, what
 type SkillTemplate = dict[str, str | dict[str, str]]
 
 
-def get_memory_dir(config: vm.VestaConfig) -> pl.Path:
-    return config.state_dir / "memory"
-
-
 def get_memory_path(config: vm.VestaConfig) -> pl.Path:
-    return get_memory_dir(config) / "MEMORY.md"
-
-
-def get_backups_dir(config: vm.VestaConfig) -> pl.Path:
-    return config.backups_dir
-
-
-def get_skills_dir(config: vm.VestaConfig) -> pl.Path:
-    return get_memory_dir(config) / "skills"
+    return config.memory_dir / "MEMORY.md"
 
 
 def load_memory_template(name: str) -> str:
@@ -45,7 +33,7 @@ def get_skill_templates() -> dict[str, SkillTemplate]:
 
 def init_skills(config: vm.VestaConfig) -> None:
     """Initialize skills from templates if they don't exist."""
-    skills_dir = get_skills_dir(config)
+    skills_dir = config.skills_dir
     skill_templates = get_skill_templates()
 
     for skill_name, skill_data in skill_templates.items():
@@ -93,7 +81,7 @@ def init_skills_symlink(config: vm.VestaConfig) -> None:
     if target.is_symlink():
         target.unlink()
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.symlink_to(get_skills_dir(config))
+    target.symlink_to(config.skills_dir)
 
 
 def check_state_readable(config: vm.VestaConfig) -> None:

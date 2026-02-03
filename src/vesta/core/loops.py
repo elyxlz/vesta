@@ -36,10 +36,33 @@ async def process_notification_batch(
     await delete_notification_files(notifications)
 
 
+async def _process_message_safely(
+    msg: str, *, is_user: bool, state: vm.State, config: vm.VestaConfig
+) -> bool:
+    """Process a single message with error handling. Returns False if session should reset."""
+    logger.debug(f"Processing message (is_user={is_user}, length={len(msg)})")
+
+    async with state.processing_lock:
+        state.is_processing = True
+    try:
+        responses, _ = await process_message(msg, state=state, config=config, is_user=is_user)
+        for response in responses:
+            if response and response.strip():
+                logger.assistant(response)
+        return True
+    except (OSError, RuntimeError, ValueError, TimeoutError) as e:
+        logger.error(f"Error processing message: {e}")
+        state.pending_error_context = f"[System: Previous request failed with error: {e}. Session was reset.]"
+        state.reset_requested = True
+        return False
+    finally:
+        async with state.processing_lock:
+            state.is_processing = False
+
+
 async def message_processor(queue: asyncio.Queue, *, state: vm.State, config: vm.VestaConfig) -> None:
     """Process messages in a loop, managing client lifecycle with async with."""
     while state.shutdown_event and not state.shutdown_event.is_set():
-        # Create fresh client for this session
         logger.client("Creating new client session...")
         options = build_client_options(config, state)
         async with ClaudeSDKClient(options=options) as client:
@@ -49,40 +72,21 @@ async def message_processor(queue: asyncio.Queue, *, state: vm.State, config: vm
                 await queue.put((state.pending_error_context, False))
                 state.pending_error_context = None
 
-            # Process messages until reset or shutdown
             while not state.shutdown_event.is_set() and not state.reset_requested:
                 try:
                     msg, is_user = await asyncio.wait_for(queue.get(), timeout=1.0)
                 except TimeoutError:
                     continue
 
-                logger.debug(f"Processing message (is_user={is_user}, length={len(msg)})")
-
-                async with state.processing_lock:
-                    state.is_processing = True
-                try:
-                    responses, _ = await process_message(msg, state=state, config=config, is_user=is_user)
-
-                    for response in responses:
-                        if response and response.strip():
-                            logger.assistant(response)
-                except Exception as e:
-                    logger.error(f"Error processing message: {e}")
-                    state.pending_error_context = f"[System: Previous request failed with error: {e}. Session was reset.]"
-                    state.reset_requested = True
+                if not await _process_message_safely(msg, is_user=is_user, state=state, config=config):
                     break
-                finally:
-                    async with state.processing_lock:
-                        state.is_processing = False
 
-            # Clear reset flag and context before closing client
             if state.reset_requested:
                 logger.client("Reset requested, closing client session...")
                 state.reset_requested = False
                 state.sub_agent_context = None
                 state.session_id = None
 
-        # Client closed here (exited async with)
         state.client = None
         logger.client("Client session closed")
 

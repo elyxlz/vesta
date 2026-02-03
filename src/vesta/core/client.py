@@ -129,5 +129,6 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
         setting_sources=["project"],
         add_dirs=[str(config.state_dir), str(config.skills_dir), str(config.onedrive_dir)],
         max_thinking_tokens=config.max_thinking_tokens,
+        max_buffer_size=10 * 1024 * 1024,  # 10MB - default 1MB causes crashes on large responses
         stderr=handle_stderr,
     )

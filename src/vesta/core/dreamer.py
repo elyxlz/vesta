@@ -15,13 +15,7 @@ from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions, TextBlock, Thi
 import vesta.models as vm
 from vesta import logger
 from vesta.models import ConversationMessage
-from vesta.core.init import (
-    get_memory_dir,
-    get_memory_path,
-    get_backups_dir,
-    get_skills_dir,
-    load_memory_template,
-)
+from vesta.core.init import get_memory_path, load_memory_template
 from vesta.templates.dreamer import PROMPT_TEMPLATE as DREAMER_PROMPT_TEMPLATE
 
 ProgressCallback = cab.Callable[[str], object] | None
@@ -38,9 +32,20 @@ def load_memory(config: vm.VestaConfig) -> str:
     return load_memory_template("main")
 
 
+def _add_tree_to_zip(zf: zipfile.ZipFile, directory: pl.Path, *, base_dir: pl.Path) -> None:
+    """Add all files in a directory tree to a zip file."""
+    for file in directory.rglob("*"):
+        if not file.is_file():
+            continue
+        try:
+            zf.write(file, file.relative_to(base_dir))
+        except (PermissionError, OSError):
+            continue
+
+
 def backup_state(config: vm.VestaConfig) -> pl.Path | None:
     """Backup entire state_dir as timestamped zip, excluding logs/notifications/backups."""
-    backup_dir = get_backups_dir(config)
+    backup_dir = config.backups_dir
     backup_dir.mkdir(parents=True, exist_ok=True)
 
     timestamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -55,12 +60,7 @@ def backup_state(config: vm.VestaConfig) -> pl.Path | None:
                 if item.is_file():
                     zf.write(item, item.name)
                 elif item.is_dir():
-                    for file in item.rglob("*"):
-                        try:
-                            if file.is_file():
-                                zf.write(file, file.relative_to(config.state_dir))
-                        except (PermissionError, OSError):
-                            continue
+                    _add_tree_to_zip(zf, item, base_dir=config.state_dir)
             except (PermissionError, OSError):
                 continue
 
@@ -70,13 +70,33 @@ def backup_state(config: vm.VestaConfig) -> pl.Path | None:
 
 
 def _format_diff(before: str, after: str) -> str:
-    colors = {"+": "\033[92m", "-": "\033[91m", "@": "\033[96m"}
-    diff = difflib.unified_diff(before.splitlines(keepends=True), after.splitlines(keepends=True), n=1)
-    return "\n".join(f"{colors.get(line[0], '')}{line.rstrip()}\033[0m" if line[0] in colors else line.rstrip() for line in list(diff)[2:])
+    """Format a unified diff with ANSI colors for terminal display."""
+    colors = {
+        "+": "\033[92m",  # green for additions
+        "-": "\033[91m",  # red for deletions
+        "@": "\033[96m",  # cyan for hunk headers
+    }
+    reset = "\033[0m"
+
+    diff_lines = list(difflib.unified_diff(
+        before.splitlines(keepends=True),
+        after.splitlines(keepends=True),
+        n=1,
+    ))
+
+    formatted = []
+    for line in diff_lines[2:]:  # Skip --- and +++ headers
+        stripped = line.rstrip()
+        if line and line[0] in colors:
+            formatted.append(f"{colors[line[0]]}{stripped}{reset}")
+        else:
+            formatted.append(stripped)
+
+    return "\n".join(formatted)
 
 
 def _validate_memory_path(path: pl.Path, *, config: vm.VestaConfig) -> None:
-    memory_dir = get_memory_dir(config)
+    memory_dir = config.memory_dir
     try:
         path.resolve().relative_to(memory_dir.resolve())
     except ValueError:
@@ -85,7 +105,7 @@ def _validate_memory_path(path: pl.Path, *, config: vm.VestaConfig) -> None:
 
 def _snapshot_memory_dir(config: vm.VestaConfig) -> dict[str, str]:
     """Capture current state of all memory files."""
-    memory_dir = get_memory_dir(config)
+    memory_dir = config.memory_dir
     snapshot: dict[str, str] = {}
 
     if not memory_dir.exists():
@@ -95,8 +115,8 @@ def _snapshot_memory_dir(config: vm.VestaConfig) -> dict[str, str]:
         rel_path = str(file.relative_to(memory_dir))
         try:
             snapshot[rel_path] = file.read_text()
-        except OSError:
-            pass
+        except OSError as e:
+            logger.debug(f"Ignored reading {rel_path}: {e}")
 
     return snapshot
 
@@ -214,7 +234,7 @@ Check MEMORY.md and update it with any new important information from this conve
     logger.debug("Spawning Dreamer Agent")
 
     logger.debug("Getting paths...")
-    skills_dir = get_skills_dir(config)
+    skills_dir = config.skills_dir
 
     logger.debug("Formatting prompt...")
     memory_prompt = DREAMER_PROMPT_TEMPLATE.format(
@@ -231,6 +251,7 @@ Check MEMORY.md and update it with any new important information from this conve
             cwd=config.memory_dir,
             add_dirs=[str(config.memory_dir), str(skills_dir)],
             max_thinking_tokens=config.max_thinking_tokens,
+            max_buffer_size=10 * 1024 * 1024,  # 10MB - default 1MB causes crashes on large responses
         )
     ) as client:
         logger.debug("SDK client created")
@@ -270,6 +291,9 @@ Check MEMORY.md and update it with any new important information from this conve
         except TimeoutError:
             logger.error("Dreamer timeout - SDK hung for 5 minutes")
             return ""
+        except (OSError, RuntimeError, ValueError) as e:
+            logger.error(f"Dreamer SDK error: {e}")
+            return ""
 
     elapsed = time.monotonic() - start_time
     await _call_progress(progress_callback, "Computing diffs for all memory files...")
@@ -307,6 +331,42 @@ async def _heartbeat_logger(message_fn: cab.Callable[[], str], *, interval: floa
             await task
 
 
+async def _prepare_history(state: vm.State, *, config: vm.VestaConfig) -> list[ConversationMessage]:
+    """Copy and merge conversation history with subagent conversations."""
+    async with state.conversation_history_lock:
+        history = state.conversation_history.copy()
+    logger.dreamer(f"Got {len(history)} messages from conversation history")
+
+    async with state.subagent_conversations_lock:
+        subagent_convos = state.subagent_conversations.copy()
+    logger.dreamer(f"Got {len(subagent_convos)} subagent conversations")
+
+    for agent_name, convos in subagent_convos.items():
+        if convos:
+            combined_text = "\n---\n".join(convos)
+            history.append(
+                {
+                    "role": "assistant",
+                    "content": f"[Subagent {agent_name} interactions]\n{combined_text}",
+                }
+            )
+
+    if not history:
+        logger.dreamer("No conversation history, trying CLI session fallback...")
+        history = get_cli_session_history(str(config.root_dir))
+
+    return history
+
+
+async def _clear_history(state: vm.State) -> None:
+    """Clear conversation history after successful preservation."""
+    async with state.conversation_history_lock:
+        state.conversation_history.clear()
+    async with state.subagent_conversations_lock:
+        state.subagent_conversations.clear()
+    logger.dreamer("Cleared conversation history after preservation")
+
+
 async def preserve_memory(state: vm.State, *, config: vm.VestaConfig) -> bool:
     """Run Dreamer Agent to consolidate memories. Returns True if memory was updated."""
     if config.ephemeral:
@@ -325,32 +385,8 @@ async def preserve_memory(state: vm.State, *, config: vm.VestaConfig) -> bool:
         return f"Still dreaming... {elapsed}s elapsed"
 
     async with _heartbeat_logger(heartbeat_message, interval=10):
-        # Copy history WITHOUT clearing (will clear after success)
         logger.dreamer("Copying conversation history...")
-        async with state.conversation_history_lock:
-            history = state.conversation_history.copy()
-        logger.dreamer(f"Got {len(history)} messages from conversation history")
-
-        async with state.subagent_conversations_lock:
-            subagent_convos = state.subagent_conversations.copy()
-        logger.dreamer(f"Got {len(subagent_convos)} subagent conversations")
-
-        # Append subagent conversations to conversation history for memory agent
-        if subagent_convos:
-            for agent_name, convos in subagent_convos.items():
-                if convos:
-                    combined_text = "\n---\n".join(convos)
-                    history.append(
-                        {
-                            "role": "assistant",
-                            "content": f"[Subagent {agent_name} interactions]\n{combined_text}",
-                        }
-                    )
-
-        # Fallback to CLI session if no history
-        if not history:
-            logger.dreamer("No conversation history, trying CLI session fallback...")
-            history = get_cli_session_history(str(config.root_dir))
+        history = await _prepare_history(state, config=config)
 
         if not history:
             logger.dreamer("No conversation history to preserve")
@@ -367,13 +403,7 @@ async def preserve_memory(state: vm.State, *, config: vm.VestaConfig) -> bool:
         )
 
         elapsed = (dt.datetime.now() - start_time).total_seconds()
-
-        # Only clear history AFTER successful preservation
-        async with state.conversation_history_lock:
-            state.conversation_history.clear()
-        async with state.subagent_conversations_lock:
-            state.subagent_conversations.clear()
-        logger.dreamer("Cleared conversation history after preservation")
+        await _clear_history(state)
 
         if diff:
             logger.dreamer("Memories consolidated:")

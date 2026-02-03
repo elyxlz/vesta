@@ -109,61 +109,19 @@ def _log_category(category: str, msg: tp.Any, *, level: int = logging.INFO) -> N
     _log(styled, level=level)
 
 
-# Category functions
-def init(msg: tp.Any) -> None:
-    _log_category("init", msg)
+# Category-specific log levels (default is INFO)
+_CATEGORY_LEVELS: dict[str, int] = {
+    "interrupt": logging.DEBUG,
+    "sdk": logging.DEBUG,
+}
 
 
-def shutdown(msg: tp.Any) -> None:
-    _log_category("shutdown", msg)
-
-
-def client(msg: tp.Any) -> None:
-    _log_category("client", msg)
-
-
-def dreamer(msg: tp.Any) -> None:
-    _log_category("dreamer", msg)
-
-
-def interrupt(msg: tp.Any) -> None:
-    _log_category("interrupt", msg, level=logging.DEBUG)
-
-
-def proactive(msg: tp.Any) -> None:
-    _log_category("proactive", msg)
-
-
-def mcp(msg: tp.Any) -> None:
-    _log_category("mcp", msg)
-
-
-def user(msg: tp.Any) -> None:
-    _log_category("user", msg)
-
-
-def assistant(msg: tp.Any) -> None:
-    _log_category("assistant", msg)
-
-
-def tool(msg: tp.Any) -> None:
-    _log_category("tool", msg)
-
-
-def output(msg: tp.Any) -> None:
-    _log_category("output", msg)
-
-
-def notification(msg: tp.Any) -> None:
-    _log_category("notification", msg)
-
-
-def subagent(msg: tp.Any) -> None:
-    _log_category("subagent", msg)
-
-
-def sdk(msg: tp.Any) -> None:
-    _log_category("sdk", msg, level=logging.DEBUG)
+def __getattr__(name: str) -> tp.Callable[[tp.Any], None]:
+    """Dynamic category logger access: logger.init(), logger.dreamer(), etc."""
+    if name in CATEGORIES:
+        level = _CATEGORY_LEVELS.get(name, logging.INFO)
+        return lambda msg: _log_category(name, msg, level=level)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 # Standard logging functions

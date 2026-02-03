@@ -1,5 +1,8 @@
 import asyncio
 import datetime as dt
+import json
+
+import pydantic
 
 import vesta.core.effects as vfx
 import vesta.models as vm
@@ -17,7 +20,7 @@ async def load_notifications(*, config: vm.VestaConfig) -> list[vm.Notification]
             notif = vm.Notification(**data)
             notif.file_path = str(file)
             notifications.append(notif)
-        except Exception as e:
+        except (json.JSONDecodeError, pydantic.ValidationError, KeyError, TypeError) as e:
             logger.error(f"Failed to parse notification {file.name}: {e}")
 
     return notifications

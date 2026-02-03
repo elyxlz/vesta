@@ -62,17 +62,26 @@ client_secret = {client_secret}
     logger.info(f"Created rclone config at {config_path}")
 
 
-async def mount_onedrive(config: VestaConfig, *, mount_dir: pl.Path, config_path: pl.Path, timeout: int = 30) -> subprocess.Popen:
-    global _mount_process
+def _verify_accessible(remote_path: str, *, config_path: pl.Path) -> int:
+    """Verify OneDrive is accessible and return file count."""
+    test_result = subprocess.run(
+        ["rclone", "lsf", remote_path, "--config", str(config_path), "--max-depth", "1"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if test_result.returncode != 0:
+        raise RuntimeError(f"Cannot list OneDrive files: {test_result.stderr[:200]}")
 
-    if not check_fusermount_installed():
-        raise RuntimeError("fusermount3 is required for OneDrive mounts")
+    file_count = len([line for line in test_result.stdout.strip().split("\n") if line])
+    if file_count == 0:
+        raise RuntimeError(f"OneDrive at {remote_path} is empty - check drive_id/remote_path configuration")
 
-    unmount_onedrive(mount_dir)
-    subprocess.run(["rm", "-rf", str(mount_dir)], capture_output=True)
-    mount_dir.mkdir(parents=True, exist_ok=True)
+    return file_count
 
-    remote_path = f"{config.onedrive_remote_name}:{config.onedrive_remote_path}"
+
+def _build_mount_cmd(config: VestaConfig, *, remote_path: str, mount_dir: pl.Path, config_path: pl.Path) -> list[str]:
+    """Build rclone mount command with all options."""
     cmd = [
         "rclone",
         "mount",
@@ -107,25 +116,14 @@ async def mount_onedrive(config: VestaConfig, *, mount_dir: pl.Path, config_path
     ]
     if config.rclone_fast_list:
         cmd.append("--fast-list")
+    return cmd
 
-    # Test if we can list files before mounting
-    test_result = subprocess.run(
-        ["rclone", "lsf", remote_path, "--config", str(config_path), "--max-depth", "1"],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    if test_result.returncode != 0:
-        raise RuntimeError(f"Cannot list OneDrive files: {test_result.stderr[:200]}")
 
-    file_count = len([line for line in test_result.stdout.strip().split("\n") if line])
-    if file_count == 0:
-        raise RuntimeError(f"OneDrive at {remote_path} is empty - check drive_id/remote_path configuration")
-
-    logger.info(f"Verified {file_count} items in OneDrive, mounting at {mount_dir}")
-
-    process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    _mount_process = process
+async def _wait_ready(
+    process: subprocess.Popen, *, mount_dir: pl.Path, config: VestaConfig, timeout: int
+) -> subprocess.Popen:
+    """Wait for mount to become ready, raise on failure."""
+    global _mount_process
 
     start_time = time.time()
     while time.time() - start_time < timeout:
@@ -150,10 +148,32 @@ async def mount_onedrive(config: VestaConfig, *, mount_dir: pl.Path, config_path
             process.terminate()
             _mount_process = None
             raise RuntimeError(f"OneDrive mounted but directory is empty at {mount_dir} - check token/drive_id/remote_path")
-    except (OSError, PermissionError):
-        pass
+    except (OSError, PermissionError) as e:
+        logger.debug(f"Ignored during mount check: {e}")
 
     return process
+
+
+async def mount_onedrive(config: VestaConfig, *, mount_dir: pl.Path, config_path: pl.Path, timeout: int = 30) -> subprocess.Popen:
+    global _mount_process
+
+    if not check_fusermount_installed():
+        raise RuntimeError("fusermount3 is required for OneDrive mounts")
+
+    unmount_onedrive(mount_dir)
+    subprocess.run(["rm", "-rf", str(mount_dir)], capture_output=True)
+    mount_dir.mkdir(parents=True, exist_ok=True)
+
+    remote_path = f"{config.onedrive_remote_name}:{config.onedrive_remote_path}"
+
+    file_count = _verify_accessible(remote_path, config_path=config_path)
+    logger.info(f"Verified {file_count} items in OneDrive, mounting at {mount_dir}")
+
+    cmd = _build_mount_cmd(config, remote_path=remote_path, mount_dir=mount_dir, config_path=config_path)
+    process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    _mount_process = process
+
+    return await _wait_ready(process, mount_dir=mount_dir, config=config, timeout=timeout)
 
 
 def _kill_mount_users(mount_dir: pl.Path) -> None:
