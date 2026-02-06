@@ -13,12 +13,7 @@ from pydantic import SecretStr
 
 import vesta.models as vm
 import vesta.utils as vu
-from vesta.core.init import (
-    get_memory_dir,
-    get_memory_path,
-    get_skills_dir,
-    get_backups_dir,
-)
+from vesta.core.init import get_memory_path
 
 
 def _make_config(tmp_path: Path) -> vm.VestaConfig:
@@ -59,10 +54,10 @@ def test_config_default_values():
 def test_memory_paths(tmp_path):
     """Memory path functions should return correct paths."""
     config = _make_config(tmp_path)
-    assert get_memory_dir(config) == tmp_path / "memory"
+    assert config.memory_dir == tmp_path / "memory"
     assert get_memory_path(config) == tmp_path / "memory" / "MEMORY.md"
-    assert get_skills_dir(config) == tmp_path / "memory" / "skills"
-    assert get_backups_dir(config) == tmp_path / "backups"
+    assert config.skills_dir == tmp_path / "memory" / "skills"
+    assert config.backups_dir == tmp_path / "backups"
 
 
 # Utils tests
@@ -208,6 +203,7 @@ async def test_message_processor_resets_and_notifies_on_error(tmp_path):
     async def run_processor():
         # Wait for error to be processed and client to restart
         await asyncio.sleep(0.15)
+        assert state.shutdown_event is not None
         state.shutdown_event.set()
 
     with (
