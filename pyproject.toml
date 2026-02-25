@@ -1,6 +1,6 @@
 [project]
 name = "vesta"
-version = "0.1.14"
+version = "0.1.15"
 description = "Personal assistant agent that works autonomously on your behalf"
 readme = "README.md"
 authors = [
@@ -13,6 +13,7 @@ dependencies = [
     "pillow>=11.3.0",
     "pydantic>=2.10.4",
     "pydantic-settings>=2.7.0",
+    "rich>=14.2.0",
     "toml>=0.10.2",
 ]
 
@@ -21,9 +22,9 @@ vesta = "vesta.main:main"
 
 [dependency-groups]
 dev = [
-    "pyright>=1.1.390",
     "ruff>=0.8.4",
     "pytest>=8.3.4",
+    "ty>=0.0.3",
 ]
 
 [build-system]
@@ -38,23 +39,9 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 144
 indent-width = 4
-target-version = "py310"
+target-version = "py312"
 
 [tool.ruff.lint]
 ignore = ["E402", "E702", "E731", "UP008", "E712"]
 extend-select = ["UP"]
 
-[tool.pyright]
-include = [
-    "src/vesta",
-    "mcps/microsoft-mcp/src",
-    "mcps/scheduler-mcp/src"
-]
-exclude = [
-    "**/tests",
-    "**/__pycache__",
-    "**/.venv"
-]
-pythonVersion = "3.12"
-typeCheckingMode = "basic"
-reportMissingImports = false

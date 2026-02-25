@@ -1,15 +1,20 @@
-import pathlib as pl
-import datetime as dt
-import logging
+"""Side-effect wrappers for testability.
 
-logger = logging.getLogger("vesta")
+These thin wrappers around stdlib functions enable dependency injection in tests.
+In production they simply delegate to the underlying calls.
+"""
+
+import datetime as dt
+import pathlib as pl
 
 
 def read_file(path: pl.Path) -> str:
+    """Read file contents. Wraps Path.read_text for test mocking."""
     return path.read_text(encoding="utf-8")
 
 
 def delete_file(path: pl.Path) -> None:
+    """Delete file if exists. Wraps Path.unlink for test mocking."""
     path.unlink(missing_ok=True)
 
 
@@ -20,6 +25,7 @@ def list_json_files(directory: pl.Path) -> list[pl.Path]:
 
 
 def get_current_time() -> dt.datetime:
+    """Get current time. Wraps datetime.now for test mocking."""
     return dt.datetime.now()
 
 

@@ -1,5 +1,3 @@
-"""Vesta domain models - depends on config layer."""
-
 import asyncio
 import dataclasses as dc
 import datetime as dt
@@ -8,10 +6,9 @@ import typing as tp
 import pydantic as pyd
 from claude_agent_sdk import ClaudeSDKClient
 
-# Re-export from config for backward compatibility
-from .config import VestaSettings
+from .config import VestaConfig
 
-__all__ = ["State", "Notification", "VestaSettings", "ConversationMessage"]
+__all__ = ["State", "Notification", "VestaConfig", "ConversationMessage"]
 
 
 class ConversationMessage(tp.TypedDict):
@@ -25,9 +22,11 @@ class State:
     shutdown_event: asyncio.Event | None = None
     shutdown_count: int = 0
     is_processing: bool = False
+    reset_requested: bool = False
     sub_agent_context: str | None = None
     session_id: str | None = None
     pending_system_message: str | None = None
+    pending_error_context: str | None = None
     last_memory_consolidation: dt.datetime | None = None
     processing_lock: asyncio.Lock = dc.field(default_factory=asyncio.Lock)
     conversation_history: list[ConversationMessage] = dc.field(default_factory=list)

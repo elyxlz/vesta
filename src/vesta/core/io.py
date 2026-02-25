@@ -1,31 +1,38 @@
+"""Terminal I/O and signal handling."""
+
 import asyncio
 import errno
+import types
+import typing as tp
 
 import aioconsole
 
 import vesta.models as vm
-from vesta.effects import logger
+import vesta.core.effects as vfx
+from vesta import logger
+
+SignalHandler = tp.Callable[[int, types.FrameType | None], None]
 
 
 async def output_line(text: str, *, is_tool: bool = False) -> None:
     if not text or not text.strip():
         return
     if is_tool:
-        logger.info(f"TOOL: {text}")
+        logger.tool(text)
     else:
-        logger.info(f"OUTPUT: {text}")
+        logger.output(text)
 
 
 async def input_handler(queue: asyncio.Queue, *, state: vm.State) -> None:
     while state.shutdown_event and not state.shutdown_event.is_set():
         try:
-            user_msg = await aioconsole.ainput("> ")
+            user_msg = await aioconsole.ainput("")
             if state.shutdown_event and state.shutdown_event.is_set():
                 break
             if not user_msg.strip():
                 continue
 
-            logger.info(f"USER: {user_msg.strip()}")
+            logger.user(user_msg.strip())
             await queue.put((user_msg.strip(), True))
         except (KeyboardInterrupt, EOFError):
             if state.shutdown_event:
@@ -42,3 +49,15 @@ async def input_handler(queue: asyncio.Queue, *, state: vm.State) -> None:
                 continue
             else:
                 raise
+
+
+def make_signal_handler(state: vm.State) -> SignalHandler:
+    def handler(signum: int, frame: types.FrameType | None) -> None:
+        state.shutdown_count += 1
+        if state.shutdown_count == 1:
+            if state.shutdown_event:
+                state.shutdown_event.set()
+        elif state.shutdown_count > 2:
+            vfx.exit_process(0)
+
+    return handler

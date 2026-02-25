@@ -1,6 +1,6 @@
 import json
 import time
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 
 
@@ -8,7 +8,7 @@ def write_notification(notif_dir: Path, type: str, **fields):
     notif_dir.mkdir(exist_ok=True)
 
     notif = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "source": "microsoft",
         "type": type,
         **{k: v for k, v in fields.items() if v is not None},

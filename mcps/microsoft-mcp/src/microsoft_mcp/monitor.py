@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from typing import TypedDict, NotRequired
 from zoneinfo import ZoneInfo
 from . import graph, auth, notifications
@@ -55,7 +55,7 @@ def _parse_event_time(event: CalendarEvent) -> datetime:
     try:
         naive_time = datetime.fromisoformat(start_dt)
         local_tz = ZoneInfo(start_tz)
-        return naive_time.replace(tzinfo=local_tz).astimezone(timezone.utc)
+        return naive_time.replace(tzinfo=local_tz).astimezone(UTC)
     except Exception as e:
         raise ValueError(f"Failed to parse event time {start_dt} with tz {start_tz}: {e}")
 
@@ -86,7 +86,7 @@ def run(ctx: MicrosoftContext):
             if first_run and ctx.monitor_state_file.exists():
                 last_check_str = ctx.monitor_state_file.read_text().strip()
                 last_check_dt = datetime.fromisoformat(last_check_str.replace("Z", "+00:00"))
-                gap_seconds = (datetime.now(timezone.utc) - last_check_dt).total_seconds()
+                gap_seconds = (datetime.now(UTC) - last_check_dt).total_seconds()
 
                 # If gap > 120s (normal is 60s), we were offline - use old timestamp to catch up
                 if gap_seconds > 120:
@@ -94,12 +94,12 @@ def run(ctx: MicrosoftContext):
                     last_check = last_check_str
                     catching_up = True
                 else:
-                    last_check = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+                    last_check = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
             else:
                 last_check = (
                     ctx.monitor_state_file.read_text().strip()
                     if ctx.monitor_state_file.exists()
-                    else (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+                    else (datetime.now(UTC) - timedelta(hours=1)).isoformat()
                 )
                 catching_up = False
             first_run = False
@@ -107,7 +107,7 @@ def run(ctx: MicrosoftContext):
             logger.info(f"Checking for updates since {last_check}")
             last_dt = datetime.fromisoformat(last_check.replace("Z", "+00:00"))
 
-            new_check_time = datetime.now(timezone.utc)
+            new_check_time = datetime.now(UTC)
 
             for acc in auth.list_accounts(ctx.cache_file, settings=ctx.settings):
                 logger.info(f"Checking account: {acc.username}")

@@ -1,14 +1,13 @@
 import asyncio
 import json
-import logging
 import os
 import pathlib as pl
 import subprocess
 import time
 
-from .config import VestaSettings
+from vesta.config import VestaConfig
+from vesta import logger
 
-logger = logging.getLogger(__name__)
 _mount_process: subprocess.Popen | None = None
 
 
@@ -26,7 +25,7 @@ def check_fusermount_installed() -> bool:
         return False
 
 
-def setup_rclone_config(config: VestaSettings, *, config_path: pl.Path) -> None:
+def setup_rclone_config(config: VestaConfig, *, config_path: pl.Path) -> None:
     token = config.onedrive_token.get_secret_value() if config.onedrive_token else None
     if not token:
         raise ValueError("ONEDRIVE_TOKEN is required for OneDrive sync")
@@ -60,56 +59,11 @@ client_secret = {client_secret}
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(rclone_config)
     os.chmod(config_path, 0o600)
-    logger.info(f"Created rclone config at {config_path} with secure permissions (0600)")
-    logger.warning(f"OneDrive credentials stored in {config_path} - keep this file secure")
+    logger.info(f"Created rclone config at {config_path}")
 
 
-async def mount_onedrive(config: VestaSettings, *, mount_dir: pl.Path, config_path: pl.Path, timeout: int = 30) -> subprocess.Popen:
-    global _mount_process
-
-    if not check_fusermount_installed():
-        raise RuntimeError("fusermount3 is required for OneDrive mounts")
-
-    unmount_onedrive(mount_dir)
-    subprocess.run(["rm", "-rf", str(mount_dir)], capture_output=True)
-    mount_dir.mkdir(parents=True, exist_ok=True)
-
-    remote_path = f"{config.onedrive_remote_name}:{config.onedrive_remote_path}"
-    cmd = [
-        "rclone",
-        "mount",
-        remote_path,
-        str(mount_dir),
-        "--config",
-        str(config_path),
-        "--vfs-cache-mode",
-        "full",
-        "--vfs-cache-max-age",
-        "24h",
-        "--vfs-cache-max-size",
-        "2G",
-        "--buffer-size",
-        "128M",
-        "--vfs-read-ahead",
-        "1G",
-        "--onedrive-chunk-size",
-        "120M",
-        "--dir-cache-time",
-        "5m",
-        "--poll-interval",
-        "30s",
-        "--vfs-write-back",
-        "5s",
-        "--transfers",
-        "4",
-        "--fast-list",
-        "--log-file",
-        str(config.logs_dir / "onedrive-mount.log"),
-        "--log-level",
-        "INFO",
-    ]
-
-    # Test if we can list files before mounting
+def _verify_accessible(remote_path: str, *, config_path: pl.Path) -> int:
+    """Verify OneDrive is accessible and return file count."""
     test_result = subprocess.run(
         ["rclone", "lsf", remote_path, "--config", str(config_path), "--max-depth", "1"],
         capture_output=True,
@@ -123,10 +77,53 @@ async def mount_onedrive(config: VestaSettings, *, mount_dir: pl.Path, config_pa
     if file_count == 0:
         raise RuntimeError(f"OneDrive at {remote_path} is empty - check drive_id/remote_path configuration")
 
-    logger.info(f"Verified {file_count} items in OneDrive, mounting at {mount_dir}")
+    return file_count
 
-    process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    _mount_process = process
+
+def _build_mount_cmd(config: VestaConfig, *, remote_path: str, mount_dir: pl.Path, config_path: pl.Path) -> list[str]:
+    """Build rclone mount command with all options."""
+    cmd = [
+        "rclone",
+        "mount",
+        remote_path,
+        str(mount_dir),
+        "--config",
+        str(config_path),
+        "--vfs-cache-mode",
+        config.rclone_vfs_cache_mode,
+        "--vfs-cache-max-age",
+        config.rclone_vfs_cache_max_age,
+        "--vfs-cache-max-size",
+        config.rclone_vfs_cache_max_size,
+        "--buffer-size",
+        config.rclone_buffer_size,
+        "--vfs-read-ahead",
+        config.rclone_vfs_read_ahead,
+        "--onedrive-chunk-size",
+        config.rclone_chunk_size,
+        "--dir-cache-time",
+        config.rclone_dir_cache_time,
+        "--poll-interval",
+        config.rclone_poll_interval,
+        "--vfs-write-back",
+        config.rclone_vfs_write_back,
+        "--transfers",
+        str(config.rclone_transfers),
+        "--log-file",
+        str(config.logs_dir / "onedrive-mount.log"),
+        "--log-level",
+        "INFO",
+    ]
+    if config.rclone_fast_list:
+        cmd.append("--fast-list")
+    return cmd
+
+
+async def _wait_ready(
+    process: subprocess.Popen, *, mount_dir: pl.Path, config: VestaConfig, timeout: int
+) -> subprocess.Popen:
+    """Wait for mount to become ready, raise on failure."""
+    global _mount_process
 
     start_time = time.time()
     while time.time() - start_time < timeout:
@@ -151,11 +148,32 @@ async def mount_onedrive(config: VestaSettings, *, mount_dir: pl.Path, config_pa
             process.terminate()
             _mount_process = None
             raise RuntimeError(f"OneDrive mounted but directory is empty at {mount_dir} - check token/drive_id/remote_path")
-    except (OSError, PermissionError):
-        pass
+    except (OSError, PermissionError) as e:
+        logger.debug(f"Ignored during mount check: {e}")
 
-    logger.info(f"OneDrive mounted at {mount_dir}")
     return process
+
+
+async def mount_onedrive(config: VestaConfig, *, mount_dir: pl.Path, config_path: pl.Path, timeout: int = 30) -> subprocess.Popen:
+    global _mount_process
+
+    if not check_fusermount_installed():
+        raise RuntimeError("fusermount3 is required for OneDrive mounts")
+
+    unmount_onedrive(mount_dir)
+    subprocess.run(["rm", "-rf", str(mount_dir)], capture_output=True)
+    mount_dir.mkdir(parents=True, exist_ok=True)
+
+    remote_path = f"{config.onedrive_remote_name}:{config.onedrive_remote_path}"
+
+    file_count = _verify_accessible(remote_path, config_path=config_path)
+    logger.info(f"Verified {file_count} items in OneDrive, mounting at {mount_dir}")
+
+    cmd = _build_mount_cmd(config, remote_path=remote_path, mount_dir=mount_dir, config_path=config_path)
+    process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    _mount_process = process
+
+    return await _wait_ready(process, mount_dir=mount_dir, config=config, timeout=timeout)
 
 
 def _kill_mount_users(mount_dir: pl.Path) -> None:

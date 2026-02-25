@@ -2,7 +2,7 @@ import os
 import json
 import tempfile
 from pathlib import Path
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 
 import pytest
 from dotenv import load_dotenv, find_dotenv
@@ -172,7 +172,7 @@ async def test_send_email():
             {
                 "account_email": account["email"],
                 "to": [account["email"]],
-                "subject": f"MCP Test Send Email {datetime.now(timezone.utc).isoformat()}",
+                "subject": f"MCP Test Send Email {datetime.now(UTC).isoformat()}",
                 "body": "This is a test email sent via send_email tool",
             },
         )
@@ -287,7 +287,7 @@ async def test_list_events():
 async def test_calendar_crud_flow():
     async for session in get_session():
         account = await get_account_context(session)
-        start_time = datetime.now(timezone.utc) + timedelta(days=5)
+        start_time = datetime.now(UTC) + timedelta(days=5)
         end_time = start_time + timedelta(hours=1)
 
         create_result = await session.call_tool(
@@ -345,6 +345,7 @@ async def test_respond_event_if_invite_available():
         invite_event = next((e for e in events if e.get("attendees")), None)
         if not invite_event:
             pytest.skip("No events with attendees to respond to")
+        assert invite_event is not None  # for type narrowing
 
         result = await session.call_tool(
             "respond_event",
@@ -381,7 +382,7 @@ async def test_list_calendars():
 async def test_create_all_day_event():
     async for session in get_session():
         account = await get_account_context(session)
-        event_date = (datetime.now(timezone.utc) + timedelta(days=10)).strftime("%Y-%m-%d")
+        event_date = (datetime.now(UTC) + timedelta(days=10)).strftime("%Y-%m-%d")
 
         create_result = await session.call_tool(
             "create_event",
@@ -411,7 +412,7 @@ async def test_create_all_day_event():
 async def test_create_yearly_recurring_event():
     async for session in get_session():
         account = await get_account_context(session)
-        event_date = (datetime.now(timezone.utc) + timedelta(days=15)).strftime("%Y-%m-%d")
+        event_date = (datetime.now(UTC) + timedelta(days=15)).strftime("%Y-%m-%d")
 
         create_result = await session.call_tool(
             "create_event",
@@ -444,7 +445,7 @@ async def test_create_event_on_specific_calendar():
     async for session in get_session():
         account = await get_account_context(session)
 
-        start_time = datetime.now(timezone.utc) + timedelta(days=7)
+        start_time = datetime.now(UTC) + timedelta(days=7)
         end_time = start_time + timedelta(hours=1)
 
         # Use calendar_name instead of calendar_id - uses default "Calendar"
@@ -490,7 +491,7 @@ async def test_calendar_notification_triggered():
 
         # Create event 3 minutes from now (trigger_time = T+3-2 = T+1, in future)
         # After 60s monitor cycle, trigger_time T+1 will be in past check window
-        start_time = datetime.now(timezone.utc) + timedelta(minutes=3)
+        start_time = datetime.now(UTC) + timedelta(minutes=3)
         end_time = start_time + timedelta(hours=1)
 
         create_result = await session.call_tool(

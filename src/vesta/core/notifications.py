@@ -1,13 +1,16 @@
 import asyncio
 import datetime as dt
+import json
 
-import vesta.effects as vfx
+import pydantic
+
+import vesta.core.effects as vfx
 import vesta.models as vm
 import vesta.utils as vu
-from vesta.effects import logger
+from vesta import logger
 
 
-async def load_notifications(*, config: vm.VestaSettings) -> list[vm.Notification]:
+async def load_notifications(*, config: vm.VestaConfig) -> list[vm.Notification]:
     file_contents = vfx.load_notification_files(config.notifications_dir)
 
     notifications = []
@@ -17,14 +20,14 @@ async def load_notifications(*, config: vm.VestaSettings) -> list[vm.Notificatio
             notif = vm.Notification(**data)
             notif.file_path = str(file)
             notifications.append(notif)
-        except Exception as e:
+        except (json.JSONDecodeError, pydantic.ValidationError, KeyError, TypeError) as e:
             logger.error(f"Failed to parse notification {file.name}: {e}")
 
     return notifications
 
 
-async def maybe_enqueue_whatsapp_greeting(queue: asyncio.Queue, *, config: vm.VestaSettings) -> None:
-    if "whatsapp" not in config.core_mcps:
+async def maybe_enqueue_whatsapp_greeting(queue: asyncio.Queue, *, config: vm.VestaConfig) -> None:
+    if "whatsapp" not in config.mcps:
         return
 
     prompt = (config.whatsapp_greeting_prompt or "").strip()
@@ -32,7 +35,7 @@ async def maybe_enqueue_whatsapp_greeting(queue: asyncio.Queue, *, config: vm.Ve
         return
 
     await queue.put((prompt, False))
-    logger.info("Queued WhatsApp greeting task")
+    logger.mcp("Queued WhatsApp greeting task")
 
 
 async def delete_notification_files(notifications: list[vm.Notification]) -> None:
@@ -41,7 +44,7 @@ async def delete_notification_files(notifications: list[vm.Notification]) -> Non
 
 
 async def load_and_display_new_notifications(
-    notification_buffer: list[vm.Notification], *, buffer_start_time: dt.datetime | None, config: vm.VestaSettings
+    notification_buffer: list[vm.Notification], *, buffer_start_time: dt.datetime | None, config: vm.VestaConfig
 ) -> tuple[list[vm.Notification], dt.datetime | None]:
     new_notifs = await load_notifications(config=config)
 
@@ -56,6 +59,6 @@ async def load_and_display_new_notifications(
                 buffer_start_time = now
 
             for notif in truly_new:
-                logger.info(f"NOTIFICATION: {notif.model_dump_json(indent=2)}")
+                logger.notification(notif.model_dump_json(indent=2))
 
     return notification_buffer, buffer_start_time

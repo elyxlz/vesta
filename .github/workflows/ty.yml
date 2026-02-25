@@ -1,4 +1,4 @@
-name: Pyright
+name: ty
 
 on:
   push:
@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  pyright:
+  ty:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,5 +19,10 @@ jobs:
       - name: Set up uv
         run: curl -LsSf https://astral.sh/uv/install.sh | sh
 
-      - name: Run Pyright
-        run: uv run pyright --threads 4
+      - name: Install dependencies
+        run: |
+          uv sync
+          uv pip install -e mcps/microsoft-mcp -e mcps/reminder-mcp -e mcps/task-mcp -e mcps/what-day-mcp
+
+      - name: Run ty
+        run: uv run ty check
