@@ -11,34 +11,13 @@ from rich.logging import RichHandler
 
 console = Console(force_terminal=True)
 
-# Category styles: (symbol, color, prefix)
-CATEGORIES: dict[str, tuple[str, str, str]] = {
-    "init": ("*", "yellow", "INIT"),
-    "shutdown": ("*", "red", "SHUTDOWN"),
-    "client": ("*", "dim", "CLIENT"),
-    "dreamer": ("*", "magenta", "DREAMER"),
-    "interrupt": ("*", "yellow", "INTERRUPT"),
-    "proactive": ("*", "yellow", "PROACTIVE"),
-    "mcp": ("*", "dim", "MCP"),
-    "user": (">", "white", "USER"),
-    "assistant": ("<", "magenta", "ASSISTANT"),
-    "tool": ("~", "dim", "TOOL"),
-    "output": ("~", "dim", "OUTPUT"),
-    "notification": ("!", "yellow", "NOTIFICATION"),
-    "subagent": ("*", "magenta", "SUBAGENT"),
-    "sdk": ("~", "dim", "SDK"),
-}
-
-# Regex to strip Rich markup for file logs
 _MARKUP_RE = re.compile(r"\[/?[a-z_]+\]")
 
-# Internal logger instance
 _logger = logging.getLogger("vesta")
 _logger.setLevel(logging.INFO)
 _logger.handlers = []
 _logger.propagate = False
 
-# Console handler with Rich
 _console_handler = RichHandler(
     console=console,
     show_time=True,
@@ -51,18 +30,17 @@ _console_handler.setFormatter(logging.Formatter("%(message)s"))
 _console_handler.setLevel(logging.INFO)
 _logger.addHandler(_console_handler)
 
-# File handler (set up later via setup())
 _file_handler: logging.Handler | None = None
 
 
 def setup(logs_dir: pl.Path, *, log_level: str = "INFO") -> None:
-    """Configure logging with file output."""
     global _file_handler
 
     logs_dir.mkdir(parents=True, exist_ok=True)
     log_file = logs_dir / "vesta.log"
 
-    level = getattr(logging, log_level.upper(), logging.INFO)
+    levels = {"DEBUG": logging.DEBUG, "INFO": logging.INFO, "WARNING": logging.WARNING, "ERROR": logging.ERROR, "CRITICAL": logging.CRITICAL}
+    level = levels[log_level.upper()] if log_level.upper() in levels else logging.INFO
     _logger.setLevel(level)
     _console_handler.setLevel(level)
 
@@ -79,10 +57,7 @@ def setup(logs_dir: pl.Path, *, log_level: str = "INFO") -> None:
 
 
 def _strip_markup(msg: str) -> str:
-    """Remove Rich markup and emojis for file logs."""
-    # Remove Rich markup tags
     clean = _MARKUP_RE.sub("", msg)
-    # Remove leading emoji (first char if it's outside ASCII)
     if clean and ord(clean[0]) > 127:
         clean = clean.lstrip()
         if clean and ord(clean[0]) > 127:
@@ -91,10 +66,9 @@ def _strip_markup(msg: str) -> str:
 
 
 def _log(msg: str, *, level: int = logging.INFO) -> None:
-    """Log with styled console and clean file output."""
     record = _logger.makeRecord(_logger.name, level, "", 0, msg, (), None)
     _console_handler.emit(record)
-    sys.stdout.flush()  # Force immediate output
+    sys.stdout.flush()
 
     if _file_handler:
         clean_record = _logger.makeRecord(_logger.name, level, "", 0, _strip_markup(msg), (), None)
@@ -102,29 +76,68 @@ def _log(msg: str, *, level: int = logging.INFO) -> None:
         _file_handler.flush()
 
 
-def _log_category(category: str, msg: tp.Any, *, level: int = logging.INFO) -> None:
-    """Log a categorized message with styling."""
-    emoji, color, prefix = CATEGORIES[category]
-    styled = f"{emoji} [{color}][{prefix}][/{color}] {msg}"
-    _log(styled, level=level)
+def _cat(symbol: str, color: str, prefix: str, msg: tp.Any, *, level: int = logging.INFO) -> None:
+    _log(f"{symbol} [{color}][{prefix}][/{color}] {msg}", level=level)
 
 
-# Category-specific log levels (default is INFO)
-_CATEGORY_LEVELS: dict[str, int] = {
-    "interrupt": logging.DEBUG,
-    "sdk": logging.DEBUG,
-}
+# Category loggers
+def init(msg: tp.Any) -> None:
+    _cat("*", "yellow", "INIT", msg)
 
 
-def __getattr__(name: str) -> tp.Callable[[tp.Any], None]:
-    """Dynamic category logger access: logger.init(), logger.dreamer(), etc."""
-    if name in CATEGORIES:
-        level = _CATEGORY_LEVELS.get(name, logging.INFO)
-        return lambda msg: _log_category(name, msg, level=level)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+def shutdown(msg: tp.Any) -> None:
+    _cat("*", "red", "SHUTDOWN", msg)
 
 
-# Standard logging functions
+def client(msg: tp.Any) -> None:
+    _cat("*", "dim", "CLIENT", msg)
+
+
+def dreamer(msg: tp.Any) -> None:
+    _cat("*", "magenta", "DREAMER", msg)
+
+
+def interrupt(msg: tp.Any) -> None:
+    _cat("*", "yellow", "INTERRUPT", msg, level=logging.DEBUG)
+
+
+def proactive(msg: tp.Any) -> None:
+    _cat("*", "yellow", "PROACTIVE", msg)
+
+
+def startup(msg: tp.Any) -> None:
+    _cat("*", "dim", "STARTUP", msg)
+
+
+def user(msg: tp.Any) -> None:
+    _cat(">", "white", "USER", msg)
+
+
+def assistant(msg: tp.Any) -> None:
+    _cat("<", "magenta", "ASSISTANT", msg)
+
+
+def tool(msg: tp.Any) -> None:
+    _cat("~", "dim", "TOOL", msg)
+
+
+def output(msg: tp.Any) -> None:
+    _cat("~", "dim", "OUTPUT", msg)
+
+
+def notification(msg: tp.Any) -> None:
+    _cat("!", "yellow", "NOTIFICATION", msg)
+
+
+def subagent(msg: tp.Any) -> None:
+    _cat("*", "magenta", "SUBAGENT", msg)
+
+
+def sdk(msg: tp.Any) -> None:
+    _cat("~", "dim", "SDK", msg, level=logging.DEBUG)
+
+
+# Standard loggers
 def debug(msg: tp.Any) -> None:
     _log(f"[dim]{msg}[/dim]", level=logging.DEBUG)
 

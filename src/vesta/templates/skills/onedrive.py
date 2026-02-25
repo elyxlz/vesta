@@ -22,13 +22,13 @@ apt-get install -y fuse3
 
 ## Setup Script
 
-The setup script is at `scripts/onedrive_setup.py`. Run it with Python:
+The setup script is at `memory/skills/onedrive/scripts/onedrive_setup.py`. Run it with Python:
 
 ```bash
-python scripts/onedrive_setup.py setup    # Write rclone.conf
-python scripts/onedrive_setup.py mount    # Mount OneDrive as FUSE filesystem
-python scripts/onedrive_setup.py unmount  # Unmount
-python scripts/onedrive_setup.py status   # Check mount status
+python memory/skills/onedrive/scripts/onedrive_setup.py setup    # Write rclone.conf
+python memory/skills/onedrive/scripts/onedrive_setup.py mount    # Mount OneDrive as FUSE filesystem
+python memory/skills/onedrive/scripts/onedrive_setup.py unmount  # Unmount
+python memory/skills/onedrive/scripts/onedrive_setup.py status   # Check mount status
 ```
 
 ## Environment Variables

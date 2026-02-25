@@ -40,6 +40,7 @@ def _parse_datetime(dt_str: str) -> dt:
 
 def _to_utc(datetime_str: str, timezone_str: str) -> dt:
     from zoneinfo import ZoneInfo
+
     naive_dt = dt.fromisoformat(datetime_str.replace("Z", "+00:00"))
     if naive_dt.tzinfo is not None:
         return naive_dt.astimezone(UTC)
@@ -51,6 +52,7 @@ def _to_utc(datetime_str: str, timezone_str: str) -> dt:
 def send_reminder_job(reminder_id: str, *, message: str, data_dir, notif_dir):
     # Convert to Path if needed (APScheduler may serialize as str)
     from pathlib import Path
+
     data_dir = Path(data_dir)
     notif_dir = Path(notif_dir)
 
@@ -59,6 +61,7 @@ def send_reminder_job(reminder_id: str, *, message: str, data_dir, notif_dir):
     write_notification(notif_dir, reminder_id, message)
 
     import sqlite3
+
     conn = sqlite3.connect(data_dir / "reminders.db")
     conn.row_factory = sqlite3.Row
     with closing(conn):
@@ -203,7 +206,13 @@ def set_reminder(
     with closing(db.get_db(config.data_dir)) as conn:
         conn.execute(
             "INSERT OR REPLACE INTO reminders (id, message, schedule_type, scheduled_time, completed, trigger_data) VALUES (?, ?, ?, ?, 0, ?)",
-            (reminder_id, message, schedule_info, next_run.isoformat() if next_run else None, json.dumps(trigger_data) if trigger_data else None),
+            (
+                reminder_id,
+                message,
+                schedule_info,
+                next_run.isoformat() if next_run else None,
+                json.dumps(trigger_data) if trigger_data else None,
+            ),
         )
         conn.commit()
         cursor = conn.execute("SELECT created_at FROM reminders WHERE id = ?", (reminder_id,))
@@ -226,14 +235,16 @@ def list_reminders(config: Config, scheduler: BackgroundScheduler, *, limit: int
         reminders = []
         for row in cursor:
             job = jobs.get(row["id"])
-            reminders.append({
-                "id": row["id"],
-                "message": row["message"],
-                "schedule": row["schedule_type"],
-                "next_run": job.next_run_time.isoformat() if job and job.next_run_time else None,
-                "created_at": row["created_at"],
-                "status": "active" if job else "pending",
-            })
+            reminders.append(
+                {
+                    "id": row["id"],
+                    "message": row["message"],
+                    "schedule": row["schedule_type"],
+                    "next_run": job.next_run_time.isoformat() if job and job.next_run_time else None,
+                    "created_at": row["created_at"],
+                    "status": "active" if job else "pending",
+                }
+            )
     return reminders
 
 

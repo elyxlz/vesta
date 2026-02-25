@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Authenticate Microsoft accounts for use with Microsoft MCP.
+Authenticate Microsoft accounts for use with the Microsoft CLI.
 Run this script to sign in to one or more Microsoft accounts.
 """
 
@@ -12,8 +12,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from dotenv import load_dotenv, find_dotenv
-from microsoft_mcp import auth
-from microsoft_mcp.settings import MicrosoftSettings
+from microsoft_cli import auth
+from microsoft_cli.settings import MicrosoftSettings
 
 load_dotenv(find_dotenv())
 
@@ -34,7 +34,7 @@ def main():
         print("\nPlease set MICROSOFT_MCP_CLIENT_ID in your .env file")
         sys.exit(1)
 
-    print("Microsoft MCP Authentication")
+    print("Microsoft Authentication")
     print("============================\n")
 
     # List current accounts
@@ -70,7 +70,7 @@ def main():
             print(f"• {account.username}")
             print(f"  Account ID: {account.account_id}")
 
-        print("\nYou can use these account IDs with any MCP tool by passing account_id parameter.")
+        print("\nYou can use these account IDs with any CLI command by passing the --account parameter.")
         print("Example: send_email(..., account_id='<account-id>')")
     else:
         print("\nNo accounts authenticated.")

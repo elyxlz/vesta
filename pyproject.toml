@@ -10,11 +10,9 @@ requires-python = ">=3.12"
 dependencies = [
     "aioconsole>=0.8.1",
     "claude-agent-sdk>=0.1.9",
-    "pillow>=11.3.0",
     "pydantic>=2.10.4",
     "pydantic-settings>=2.7.0",
     "rich>=14.2.0",
-    "toml>=0.10.2",
 ]
 
 [project.scripts]

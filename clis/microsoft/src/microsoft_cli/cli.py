@@ -16,7 +16,7 @@ from .settings import MicrosoftSettings
 
 def build_config(args) -> Config:
     config = Config()
-    if hasattr(args, 'state_dir') and args.state_dir:
+    if "state_dir" in vars(args) and args.state_dir:
         base = Path(args.state_dir)
         config.data_dir = base / "data" / "microsoft"
         config.log_dir = base / "logs" / "microsoft"
@@ -177,33 +177,109 @@ def _dispatch(args, config, client):
     if args.command == "list-emails":
         return email.list_emails(config, client, account_email=args.account, folder=args.folder, limit=args.limit)
     elif args.command == "get-email":
-        return email.get_email(config, client, account_email=args.account, email_id=args.email_id, include_attachments=not args.no_attachments, save_to_file=args.save_to)
+        return email.get_email(
+            config,
+            client,
+            account_email=args.account,
+            email_id=args.email_id,
+            include_attachments=not args.no_attachments,
+            save_to_file=args.save_to,
+        )
     elif args.command == "send-email":
-        return email.send_email(config, client, account_email=args.account, to=args.to, subject=args.subject, body=args.body, cc=args.cc, attachments=args.attachments)
+        return email.send_email(
+            config,
+            client,
+            account_email=args.account,
+            to=args.to,
+            subject=args.subject,
+            body=args.body,
+            cc=args.cc,
+            attachments=args.attachments,
+        )
     elif args.command == "create-draft":
-        return email.create_email_draft(config, client, account_email=args.account, to=args.to, subject=args.subject, body=args.body, cc=args.cc, attachments=args.attachments)
+        return email.create_email_draft(
+            config,
+            client,
+            account_email=args.account,
+            to=args.to,
+            subject=args.subject,
+            body=args.body,
+            cc=args.cc,
+            attachments=args.attachments,
+        )
     elif args.command == "reply-to-email":
-        return email.reply_to_email(config, client, account_email=args.account, email_id=args.email_id, body=args.body, attachments=args.attachments, reply_all=args.reply_all)
+        return email.reply_to_email(
+            config,
+            client,
+            account_email=args.account,
+            email_id=args.email_id,
+            body=args.body,
+            attachments=args.attachments,
+            reply_all=args.reply_all,
+        )
     elif args.command == "get-attachment":
-        return email.get_attachment(config, client, account_email=args.account, email_id=args.email_id, attachment_id=args.attachment_id, save_path=args.save_path)
+        return email.get_attachment(
+            config, client, account_email=args.account, email_id=args.email_id, attachment_id=args.attachment_id, save_path=args.save_path
+        )
     elif args.command == "search-emails":
         return email.search_emails(config, client, account_email=args.account, query=args.query, limit=args.limit, folder=args.folder)
     elif args.command == "update-email":
-        return email.update_email(config, client, account_email=args.account, email_id=args.email_id, is_read=args.is_read, categories=args.categories)
+        return email.update_email(
+            config, client, account_email=args.account, email_id=args.email_id, is_read=args.is_read, categories=args.categories
+        )
     elif args.command == "list-events":
-        return calendar.list_events(config, client, account_email=args.account, calendar_name=args.calendar_name, days_ahead=args.days_ahead, days_back=args.days_back, include_details=not args.no_details, user_timezone=args.user_timezone)
+        return calendar.list_events(
+            config,
+            client,
+            account_email=args.account,
+            calendar_name=args.calendar_name,
+            days_ahead=args.days_ahead,
+            days_back=args.days_back,
+            include_details=not args.no_details,
+            user_timezone=args.user_timezone,
+        )
     elif args.command == "list-calendars":
         return calendar.list_calendars(config, client, account_email=args.account)
     elif args.command == "get-event":
         return calendar.get_event(config, client, account_email=args.account, event_id=args.event_id)
     elif args.command == "create-event":
-        return calendar.create_event(config, client, account_email=args.account, subject=args.subject, start=args.start, end=args.end, location=args.location, body=args.body, attendees=args.attendees, timezone=args.timezone, calendar_name=args.calendar_name, is_all_day=args.all_day, recurrence=args.recurrence, recurrence_end_date=args.recurrence_end_date)
+        return calendar.create_event(
+            config,
+            client,
+            account_email=args.account,
+            subject=args.subject,
+            start=args.start,
+            end=args.end,
+            location=args.location,
+            body=args.body,
+            attendees=args.attendees,
+            timezone=args.timezone,
+            calendar_name=args.calendar_name,
+            is_all_day=args.all_day,
+            recurrence=args.recurrence,
+            recurrence_end_date=args.recurrence_end_date,
+        )
     elif args.command == "update-event":
-        return calendar.update_event(config, client, account_email=args.account, event_id=args.event_id, subject=args.subject, start=args.start, end=args.end, location=args.location, body=args.body, timezone=args.timezone)
+        return calendar.update_event(
+            config,
+            client,
+            account_email=args.account,
+            event_id=args.event_id,
+            subject=args.subject,
+            start=args.start,
+            end=args.end,
+            location=args.location,
+            body=args.body,
+            timezone=args.timezone,
+        )
     elif args.command == "delete-event":
-        return calendar.delete_event(config, client, account_email=args.account, event_id=args.event_id, send_cancellation=not args.no_cancellation)
+        return calendar.delete_event(
+            config, client, account_email=args.account, event_id=args.event_id, send_cancellation=not args.no_cancellation
+        )
     elif args.command == "respond-event":
-        return calendar.respond_event(config, client, account_email=args.account, event_id=args.event_id, response=args.response, message=args.message)
+        return calendar.respond_event(
+            config, client, account_email=args.account, event_id=args.event_id, response=args.response, message=args.message
+        )
 
 
 def _run_serve(config: Config):

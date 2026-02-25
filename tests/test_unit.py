@@ -36,7 +36,6 @@ def test_config_default_values():
     config = vm.VestaConfig()
     assert config.notification_check_interval > 0
     assert config.response_timeout > 0
-    assert config.shutdown_timeout > 0
 
 
 # Init module tests
@@ -86,20 +85,6 @@ def test_format_notification_batch_multiple():
     assert "[NOTIFICATIONS]" in formatted
 
 
-def test_decide_notification_action():
-    """Notification action should depend on processing state."""
-    notif = vm.Notification(timestamp=dt.datetime(2025, 1, 1, 0, 0, 0), source="test", type="message")
-
-    # No notifications = skip
-    assert vu.decide_notification_action([], is_processing=False, has_client=True) == "skip"
-
-    # Processing with client = interrupt
-    assert vu.decide_notification_action([notif], is_processing=True, has_client=True) == "interrupt"
-
-    # Not processing = queue
-    assert vu.decide_notification_action([notif], is_processing=False, has_client=True) == "queue"
-
-
 # Deployment validation tests
 
 
@@ -143,7 +128,7 @@ def test_python_clis_exist():
 
 
 @pytest.mark.anyio
-async def test_message_processor_resets_and_notifies_on_error(tmp_path):
+async def test_message_processor_resets_on_error(tmp_path):
     """Message processor should reset client on error and notify about what happened."""
     from vesta.core.loops import message_processor
 
@@ -152,7 +137,6 @@ async def test_message_processor_resets_and_notifies_on_error(tmp_path):
     state.shutdown_event = asyncio.Event()
     queue: asyncio.Queue = asyncio.Queue()
 
-    # Track how many times process_message is called and client sessions created
     call_count = 0
     session_count = 0
     processed_messages = []
@@ -165,10 +149,8 @@ async def test_message_processor_resets_and_notifies_on_error(tmp_path):
             raise RuntimeError("Simulated SDK buffer overflow")
         return (["OK"], None)
 
-    # Queue a message that will fail
     await queue.put(("first message - will fail", True))
 
-    # Mock the SDK client
     mock_client = MagicMock()
 
     async def mock_enter(self):
@@ -180,7 +162,6 @@ async def test_message_processor_resets_and_notifies_on_error(tmp_path):
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
     async def run_processor():
-        # Wait for error to be processed and client to restart
         await asyncio.sleep(0.15)
         assert state.shutdown_event is not None
         state.shutdown_event.set()
@@ -195,11 +176,62 @@ async def test_message_processor_resets_and_notifies_on_error(tmp_path):
             run_processor(),
         )
 
-    # First message should have been attempted
-    assert call_count >= 1, f"Expected at least 1 call, got {call_count}"
-    # Client should have been reset (new session created)
+    assert call_count >= 1
     assert session_count >= 2, f"Expected at least 2 sessions (initial + reset), got {session_count}"
-    # Error context should have been queued and processed
-    assert any("Previous request failed" in msg for msg in processed_messages), (
-        f"Expected error context in processed messages, got: {processed_messages}"
-    )
+    assert state.session_id is None, "session_id should be cleared on error reset"
+    assert any("Previous request failed" in msg for msg in processed_messages)
+
+
+@pytest.mark.anyio
+async def test_message_processor_restart_preserves_session(tmp_path):
+    """Restart (via pending_context) should preserve session_id."""
+    from vesta.core.loops import message_processor
+
+    config = _make_config(tmp_path)
+    state = vm.State()
+    state.shutdown_event = asyncio.Event()
+    queue: asyncio.Queue = asyncio.Queue()
+
+    call_count = 0
+    session_count = 0
+    processed_messages = []
+
+    async def mock_process_message(msg, *, state, config, is_user):
+        nonlocal call_count
+        call_count += 1
+        processed_messages.append(msg)
+        if call_count == 1:
+            state.session_id = "test-session-123"
+            state.pending_context = "[System: Vesta restarted.]"
+        return (["OK"], None)
+
+    await queue.put(("edit some config", True))
+
+    mock_client = MagicMock()
+
+    async def mock_enter(self):
+        nonlocal session_count
+        session_count += 1
+        return mock_client
+
+    mock_client.__aenter__ = mock_enter
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def run_processor():
+        await asyncio.sleep(0.15)
+        assert state.shutdown_event is not None
+        state.shutdown_event.set()
+
+    with (
+        patch("vesta.core.loops.ClaudeSDKClient", return_value=mock_client),
+        patch("vesta.core.loops.process_message", side_effect=mock_process_message),
+        patch("vesta.core.loops.build_client_options", return_value=MagicMock()),
+    ):
+        await asyncio.gather(
+            message_processor(queue, state=state, config=config),
+            run_processor(),
+        )
+
+    assert state.session_id == "test-session-123", "session_id should be preserved across restart"
+    assert session_count >= 2, f"Expected at least 2 sessions (initial + restart), got {session_count}"
+    assert any("restarted" in msg.lower() for msg in processed_messages)

@@ -156,9 +156,7 @@ def get_event(
     settings = _get_settings()
     account_id = auth.get_account_id_by_email(account_email, config.cache_file, settings=settings)
 
-    result = graph.request(
-        client, config.cache_file, config.scopes, settings, config.base_url, "GET", f"/me/events/{event_id}", account_id
-    )
+    result = graph.request(client, config.cache_file, config.scopes, settings, config.base_url, "GET", f"/me/events/{event_id}", account_id)
     if not result:
         raise ValueError(f"Event '{event_id}' not found")
     return result

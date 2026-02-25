@@ -11,6 +11,7 @@ def get_db(data_dir: Path):
 
 def init_db(data_dir: Path):
     import logging
+
     logger = logging.getLogger(__name__)
 
     with closing(get_db(data_dir)) as conn:

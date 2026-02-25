@@ -94,15 +94,15 @@ async def _assert_missing(path: Path, duration: float = 30.0) -> None:
 
 def _make_config(state_dir: Path, **overrides: object) -> vm.VestaConfig:
     """Create a test config with sensible defaults."""
-    return vm.VestaConfig(
-        state_dir=overrides.get("state_dir", state_dir),  # type: ignore[arg-type]
-        whatsapp_greeting_prompt=overrides.get("whatsapp_greeting_prompt"),  # type: ignore[arg-type]
-        nightly_memory_hour=overrides.get("nightly_memory_hour"),  # type: ignore[arg-type]
-        notification_check_interval=int(overrides.get("notification_check_interval", 1)),  # type: ignore[arg-type]
-        notification_buffer_delay=int(overrides.get("notification_buffer_delay", 0)),  # type: ignore[arg-type]
-        proactive_check_interval=int(overrides.get("proactive_check_interval", 100000)),  # type: ignore[arg-type]
-        ephemeral=bool(overrides.get("ephemeral", True)),
-    )
+    defaults: dict[str, object] = {
+        "state_dir": state_dir,
+        "notification_check_interval": 1,
+        "notification_buffer_delay": 0,
+        "proactive_check_interval": 100000,
+        "ephemeral": True,
+    }
+    defaults.update(overrides)
+    return vm.VestaConfig(**defaults)  # type: ignore[arg-type]
 
 
 async def _noop_input_handler(queue: asyncio.Queue, *, state: vm.State) -> None:

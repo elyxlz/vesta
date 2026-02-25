@@ -80,15 +80,3 @@ def should_process_notification_buffer(
     if not buffer or not buffer_start_time:
         return False
     return (current_time - buffer_start_time).total_seconds() >= buffer_delay
-
-
-def decide_notification_action(
-    notifications: list[vm.Notification], *, is_processing: bool, has_client: bool
-) -> tp.Literal["interrupt", "queue", "skip"]:
-    if not notifications:
-        return "skip"
-
-    if has_client and is_processing:
-        return "interrupt"
-    else:
-        return "queue"

@@ -12,7 +12,7 @@ from . import commands, db, monitor
 
 def build_config(args) -> Config:
     config = Config()
-    if hasattr(args, 'state_dir') and args.state_dir:
+    if "state_dir" in vars(args) and args.state_dir:
         base = Path(args.state_dir)
         config.data_dir = base / "data" / "task"
         config.log_dir = base / "logs" / "task"
@@ -22,11 +22,11 @@ def build_config(args) -> Config:
 
 def main():
     parser = argparse.ArgumentParser(prog="task")
-    parser.add_argument("--state-dir", type=str, help="Override state directory (default: ~/.vesta)")
+    parser.add_argument("--state-dir", type=str, help="Override state directory (default: ~)")
     sub = parser.add_subparsers(dest="command", required=True)
 
     # serve
-    p_serve = sub.add_parser("serve", help="Run background monitor daemon")
+    sub.add_parser("serve", help="Run background monitor daemon")
 
     # add
     p_add = sub.add_parser("add", help="Add a new task")

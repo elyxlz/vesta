@@ -38,7 +38,7 @@ async def maybe_enqueue_whatsapp_greeting(queue: asyncio.Queue, *, config: vm.Ve
         return
 
     await queue.put((prompt, False))
-    logger.mcp("Queued WhatsApp greeting task")
+    logger.startup("Queued WhatsApp greeting task")
 
 
 async def delete_notification_files(notifications: list[vm.Notification]) -> None:

@@ -1,4 +1,3 @@
-import os
 import pathlib as pl
 
 import vesta.models as vm
@@ -80,9 +79,3 @@ def init_skills_symlink(config: vm.VestaConfig) -> None:
         target.unlink()
     target.parent.mkdir(parents=True, exist_ok=True)
     target.symlink_to(config.skills_dir)
-
-
-def check_state_readable(config: vm.VestaConfig) -> None:
-    for f in config.state_dir.iterdir():
-        if not os.access(f, os.R_OK):
-            raise RuntimeError(f"Not readable: {f}")

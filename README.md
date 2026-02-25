@@ -18,8 +18,7 @@ Vesta runs in the background and:
 ## Prerequisites
 
 - Docker
-- A Claude Max subscription (for `claude login`)
-- (Optional) Azure app credentials for Microsoft integrations
+- A Claude subscription (for `claude login`)
 
 ---
 
@@ -70,8 +69,6 @@ Vesta has 9 built-in skills it activates on demand:
 | onedrive | Browse and manage OneDrive files |
 | what-day | Resolve dates to weekdays (prevents scheduling mistakes) |
 | report-writer | Generate structured reports |
-
-> **Microsoft skills** (email, calendar, onedrive) require `MICROSOFT_MCP_CLIENT_ID` and optionally `MICROSOFT_MCP_TENANT_ID` set in the container environment.
 
 ---
 

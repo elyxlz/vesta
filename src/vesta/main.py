@@ -8,15 +8,10 @@ from rich import print_json
 import vesta.models as vm
 import vesta.core.effects as vfx
 from vesta import logger
-from vesta.core.init import init_skills, init_main_memory, init_skills_symlink, check_state_readable
+from vesta.core.init import init_skills, init_main_memory, init_skills_symlink
 from vesta.core.io import input_handler, make_signal_handler
 from vesta.core.loops import message_processor, monitor_loop
 from vesta.core.notifications import maybe_enqueue_whatsapp_greeting
-
-
-async def graceful_shutdown(state: vm.State, *, config: vm.VestaConfig) -> None:
-    logger.shutdown("Vesta shutting down")
-    logger.shutdown("sweet dreams!")
 
 
 async def run_vesta(config: vm.VestaConfig, *, state: vm.State) -> None:
@@ -39,11 +34,9 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State) -> None:
     await maybe_enqueue_whatsapp_greeting(message_queue, config=config)
 
     try:
-        if state.shutdown_event:
-            await state.shutdown_event.wait()
+        await state.shutdown_event.wait()
     except (KeyboardInterrupt, asyncio.CancelledError):
-        if state.shutdown_event:
-            state.shutdown_event.set()
+        state.shutdown_event.set()
 
     logger.shutdown("Shutting down...")
 
@@ -51,24 +44,11 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State) -> None:
         task.cancel()
 
     await asyncio.gather(*tasks, return_exceptions=True)
-
-    try:
-        await asyncio.wait_for(graceful_shutdown(state, config=config), timeout=config.shutdown_timeout)
-    except TimeoutError:
-        logger.error("Shutdown timeout")
+    logger.shutdown("sweet dreams!")
 
 
 def init_state(*, config: vm.VestaConfig) -> vm.State:
-    now = vfx.get_current_time()
-    return vm.State(
-        client=None,  # Client is created by message_processor
-        shutdown_event=None,
-        shutdown_count=0,
-        is_processing=False,
-        sub_agent_context=None,
-        session_id=None,
-        last_memory_consolidation=now,
-    )
+    return vm.State(last_memory_consolidation=vfx.get_current_time())
 
 
 async def async_main() -> None:
@@ -82,17 +62,13 @@ async def async_main() -> None:
     logger.setup(config.logs_dir, log_level=config.log_level)
     logger.init("Vesta starting")
 
-    logger.init("Checking state directory...")
-    check_state_readable(config)
     logger.init("Initializing memory...")
     init_main_memory(config)
     logger.init("Initializing skills...")
     init_skills(config)
     init_skills_symlink(config)
 
-    logger.init("Creating Claude client...")
     initial_state = init_state(config=config)
-
     logger.init("Starting main loop...")
     await run_vesta(config, state=initial_state)
 

@@ -15,13 +15,9 @@ class State:
     client: ClaudeSDKClient | None = None
     shutdown_event: asyncio.Event | None = None
     shutdown_count: int = 0
-    is_processing: bool = False
-    reset_requested: bool = False
-    sub_agent_context: str | None = None
     session_id: str | None = None
-    pending_error_context: str | None = None
+    pending_context: str | None = None
     last_memory_consolidation: dt.datetime | None = None
-    processing_lock: asyncio.Lock = dc.field(default_factory=asyncio.Lock)
 
 
 class Notification(pyd.BaseModel):

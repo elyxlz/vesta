@@ -9,6 +9,7 @@ from .settings import MicrosoftSettings
 @dataclass
 class MicrosoftContext:
     """Context for the monitor thread (needs httpx client)."""
+
     cache_file: Path
     http_client: httpx.Client
     log_dir: Path

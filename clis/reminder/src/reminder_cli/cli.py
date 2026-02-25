@@ -13,7 +13,7 @@ from .scheduler import create_scheduler
 
 def build_config(args) -> Config:
     config = Config()
-    if hasattr(args, 'state_dir') and args.state_dir:
+    if "state_dir" in vars(args) and args.state_dir:
         base = Path(args.state_dir)
         config.data_dir = base / "data" / "reminder"
         config.log_dir = base / "logs" / "reminder"
@@ -31,7 +31,7 @@ def _init_scheduler(config: Config):
 
 def main():
     parser = argparse.ArgumentParser(prog="reminder")
-    parser.add_argument("--state-dir", type=str, help="Override state directory (default: ~/.vesta)")
+    parser.add_argument("--state-dir", type=str, help="Override state directory (default: ~)")
     sub = parser.add_subparsers(dest="command", required=True)
 
     # serve
@@ -85,7 +85,8 @@ def main():
 def _dispatch(args, config: Config, scheduler):
     if args.command == "set":
         return commands.set_reminder(
-            config, scheduler,
+            config,
+            scheduler,
             message=args.message,
             scheduled_datetime=args.scheduled_datetime,
             tz=args.tz,

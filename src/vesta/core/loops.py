@@ -2,7 +2,7 @@
 
 import asyncio
 
-from claude_agent_sdk import ClaudeSDKClient
+from claude_agent_sdk import ClaudeSDKClient, ClaudeSDKError
 
 import vesta.models as vm
 import vesta.utils as vu
@@ -19,43 +19,28 @@ async def process_notification_batch(
     if not notifications:
         return
 
-    async with state.processing_lock:
-        is_processing = state.is_processing
-        has_client = state.client is not None
-    decision = vu.decide_notification_action(notifications, is_processing=is_processing, has_client=has_client)
     prompt = vu.format_notification_batch(notifications, suffix=config.notification_suffix)
 
-    if decision == "interrupt" and state.client:
-        logger.notification(f"Interrupting task for {len(notifications)} notifications")
-        success = await attempt_interrupt(state, config=config, reason="Notification interrupt")
-        if not success:
-            logger.warning("Could not interrupt current task; queued notification for later")
-    if decision in {"queue", "interrupt"}:
-        await queue.put((prompt, True))
+    if state.client:
+        await attempt_interrupt(state, config=config, reason="Notification interrupt")
 
+    await queue.put((prompt, True))
     await delete_notification_files(notifications)
 
 
 async def _process_message_safely(msg: str, *, is_user: bool, state: vm.State, config: vm.VestaConfig) -> bool:
     """Process a single message with error handling. Returns False if session should reset."""
-    logger.debug(f"Processing message (is_user={is_user}, length={len(msg)})")
-
-    async with state.processing_lock:
-        state.is_processing = True
     try:
         responses, _ = await process_message(msg, state=state, config=config, is_user=is_user)
         for response in responses:
             if response and response.strip():
                 logger.assistant(response)
         return True
-    except (OSError, RuntimeError, ValueError, TimeoutError) as e:
+    except (ClaudeSDKError, OSError, RuntimeError, ValueError, TimeoutError) as e:
         logger.error(f"Error processing message: {e}")
-        state.pending_error_context = f"[System: Previous request failed with error: {e}. Session was reset.]"
-        state.reset_requested = True
+        state.pending_context = f"[System: Previous request failed with error: {e}. Session was reset.]"
+        state.session_id = None
         return False
-    finally:
-        async with state.processing_lock:
-            state.is_processing = False
 
 
 async def message_processor(queue: asyncio.Queue, *, state: vm.State, config: vm.VestaConfig) -> None:
@@ -66,11 +51,12 @@ async def message_processor(queue: asyncio.Queue, *, state: vm.State, config: vm
         async with ClaudeSDKClient(options=options) as client:
             state.client = client
             logger.client("Client session started")
-            if state.pending_error_context:
-                await queue.put((state.pending_error_context, False))
-                state.pending_error_context = None
 
-            while not state.shutdown_event.is_set() and not state.reset_requested:
+            if state.pending_context:
+                await queue.put((state.pending_context, False))
+                state.pending_context = None
+
+            while not state.shutdown_event.is_set() and state.pending_context is None:
                 try:
                     msg, is_user = await asyncio.wait_for(queue.get(), timeout=1.0)
                 except TimeoutError:
@@ -78,12 +64,6 @@ async def message_processor(queue: asyncio.Queue, *, state: vm.State, config: vm
 
                 if not await _process_message_safely(msg, is_user=is_user, state=state, config=config):
                     break
-
-            if state.reset_requested:
-                logger.client("Reset requested, closing client session...")
-                state.reset_requested = False
-                state.sub_agent_context = None
-                state.session_id = None
 
         state.client = None
         logger.client("Client session closed")

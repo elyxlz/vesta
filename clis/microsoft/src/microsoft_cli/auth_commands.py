@@ -7,10 +7,7 @@ from .settings import MicrosoftSettings
 
 def list_accounts(config: Config) -> list[dict[str, str]]:
     settings = MicrosoftSettings()
-    return [
-        {"email": acc.username, "account_id": acc.account_id}
-        for acc in auth.list_accounts(config.cache_file, settings=settings)
-    ]
+    return [{"email": acc.username, "account_id": acc.account_id} for acc in auth.list_accounts(config.cache_file, settings=settings)]
 
 
 def authenticate_account(config: Config) -> dict[str, str]:
@@ -43,6 +40,7 @@ def authenticate_account(config: Config) -> dict[str, str]:
 
 def complete_authentication(config: Config, *, flow_cache: str) -> dict[str, str]:
     import ast
+
     settings = MicrosoftSettings()
 
     try:

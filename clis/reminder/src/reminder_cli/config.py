@@ -3,6 +3,7 @@ from pathlib import Path
 
 VESTA_DIR = Path.home()
 
+
 @dataclass
 class Config:
     data_dir: Path = VESTA_DIR / "data" / "reminder"

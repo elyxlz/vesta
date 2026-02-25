@@ -14,14 +14,12 @@ class VestaConfig(pyd_settings.BaseSettings):
     notification_buffer_delay: int = Field(default=3, ge=0)
     proactive_check_interval: int = Field(default=60, ge=1)
     proactive_check_message: str = "It's been 60 minutes. Is there anything useful you could do right now?"
+    query_timeout: int = Field(default=120, ge=1)
     response_timeout: int = Field(default=180, ge=1)
-    shutdown_timeout: int = Field(default=310, ge=1)
     nightly_memory_hour: int | None = 4
     interrupt_timeout: float = Field(default=5.0, gt=0)
     whatsapp_greeting_prompt: str | None = (  # None/empty = disabled
-        "Check whether WhatsApp is authenticated by running `~/whatsapp authenticate`. "
-        "If it is authenticated, send a short WhatsApp message to the user letting them know Vesta just came online and is ready to help. "
-        "If it is not authenticated, log that status and do not attempt to send a message."
+        "Send a short WhatsApp message to the user letting them know Vesta just came online and is ready to help. "
     )
     notification_suffix: str = "If this is important or requires the user's attention, consider sending them a WhatsApp message."
     max_thinking_tokens: int | None = 10000
@@ -47,10 +45,6 @@ class VestaConfig(pyd_settings.BaseSettings):
         return pl.Path(__file__).parent.parent.parent.absolute()
 
     @property
-    def root_dir(self) -> pl.Path:
-        return self.state_dir
-
-    @property
     def notifications_dir(self) -> pl.Path:
         return self.state_dir / "notifications"
 
@@ -73,4 +67,3 @@ class VestaConfig(pyd_settings.BaseSettings):
     @property
     def skills_dir(self) -> pl.Path:
         return self.memory_dir / "skills"
-
