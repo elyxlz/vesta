@@ -36,6 +36,9 @@ python_files = ["e2e.py", "test_*.py", "*_test.py"]
 testpaths = ["tests"]
 
 
+[tool.ty.src]
+include = ["src", "tests"]
+
 [tool.ruff]
 line-length = 144
 indent-width = 4
