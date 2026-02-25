@@ -12,12 +12,17 @@ description: This skill should be used when working with ANY date to determine w
 
 CRITICAL: Use this skill when working with ANY date to avoid mistakes about which day of the week it falls on. This prevents scheduling errors and date-related planning mistakes.
 
+## Setup
+
+Install the CLI tool (if not already installed):
+```bash
+uv tool install {install_root}/clis/what-day
+```
+
 ## How to Determine Day of Week
 
-Run the script to get day-of-week information:
-
 ```bash
-uv run scripts/what_day.py 2025-11-14
+what-day check 2025-11-14
 ```
 
 Output:
@@ -54,39 +59,4 @@ Output:
 [Preferred date formats, timezone considerations]
 """
 
-SCRIPTS: dict[str, str] = {
-    "what_day.py": '''\
-#!/usr/bin/env python3
-"""Get day of week for a given date."""
-
-import json
-import sys
-from datetime import datetime
-
-
-def what_day(date: str) -> dict[str, str]:
-    """Return day-of-week info for a date in YYYY-MM-DD format."""
-    parsed = datetime.strptime(date, "%Y-%m-%d")
-    day_name = parsed.strftime("%A")
-    formatted = parsed.strftime("%B %d, %Y")
-    today = datetime.now()
-    today_str = today.strftime("%B %d, %Y (%A)")
-
-    return {
-        "date": date,
-        "day_of_week": day_name,
-        "formatted": formatted,
-        "full_description": f"{formatted} is a {day_name}",
-        "today": today_str,
-    }
-
-
-if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("Usage: what_day.py YYYY-MM-DD", file=sys.stderr)
-        sys.exit(1)
-
-    result = what_day(sys.argv[1])
-    print(json.dumps(result, indent=2))
-''',
-}
+SCRIPTS: dict[str, str] = {}

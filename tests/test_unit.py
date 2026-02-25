@@ -9,15 +9,13 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from pydantic import SecretStr
-
 import vesta.models as vm
 import vesta.utils as vu
 from vesta.core.init import get_memory_path
 
 
 def _make_config(tmp_path: Path) -> vm.VestaConfig:
-    return vm.VestaConfig(state_dir=tmp_path, microsoft_mcp_client_id=SecretStr("test"))
+    return vm.VestaConfig(state_dir=tmp_path)
 
 
 # Config tests
@@ -31,18 +29,11 @@ def test_config_paths_under_state_dir(tmp_path):
     assert config.logs_dir.is_relative_to(tmp_path)
     assert config.memory_dir.is_relative_to(tmp_path)
     assert config.skills_dir.is_relative_to(tmp_path)
-    assert config.backups_dir.is_relative_to(tmp_path)
-
-
-def test_config_onedrive_under_state_dir():
-    """OneDrive mount should be under state_dir."""
-    config = vm.VestaConfig(microsoft_mcp_client_id=SecretStr("test"))
-    assert config.onedrive_dir.is_relative_to(config.state_dir)
 
 
 def test_config_default_values():
     """Config should have sensible defaults."""
-    config = vm.VestaConfig(microsoft_mcp_client_id=SecretStr("test"))
+    config = vm.VestaConfig()
     assert config.notification_check_interval > 0
     assert config.response_timeout > 0
     assert config.shutdown_timeout > 0
@@ -57,7 +48,6 @@ def test_memory_paths(tmp_path):
     assert config.memory_dir == tmp_path / "memory"
     assert get_memory_path(config) == tmp_path / "memory" / "MEMORY.md"
     assert config.skills_dir == tmp_path / "memory" / "skills"
-    assert config.backups_dir == tmp_path / "backups"
 
 
 # Utils tests
@@ -73,17 +63,6 @@ def test_format_tool_call_task():
     assert "[TASK]" in formatted
     assert "test-agent" in formatted
     assert context == "test-agent"
-
-
-def test_format_tool_call_mcp():
-    """MCP tool calls should show service and action."""
-    formatted, context = vu.format_tool_call(
-        "mcp__whatsapp__send_message",
-        input_data={"to": "user", "message": "hello"},
-        sub_agent_context=None,
-    )
-    assert "[TOOL]" in formatted
-    assert "whatsapp" in formatted
 
 
 def test_format_notification_batch_single():
@@ -126,38 +105,38 @@ def test_decide_notification_action():
 
 def test_install_root_exists():
     """Install root should exist and contain expected directories."""
-    config = vm.VestaConfig(microsoft_mcp_client_id=SecretStr("test"))
+    config = vm.VestaConfig()
     assert config.install_root.exists(), f"Install root does not exist: {config.install_root}"
     assert config.install_root.is_dir(), f"Install root is not a directory: {config.install_root}"
 
 
-def test_mcps_directory_exists():
-    """MCPs directory should exist under install root."""
-    config = vm.VestaConfig(microsoft_mcp_client_id=SecretStr("test"))
-    mcps_dir = config.install_root / "mcps"
-    assert mcps_dir.exists(), f"MCPs directory does not exist: {mcps_dir}"
-    assert mcps_dir.is_dir(), f"MCPs path is not a directory: {mcps_dir}"
+def test_clis_directory_exists():
+    """CLIs directory should exist under install root."""
+    config = vm.VestaConfig()
+    clis_dir = config.install_root / "clis"
+    assert clis_dir.exists(), f"CLIs directory does not exist: {clis_dir}"
+    assert clis_dir.is_dir(), f"CLIs path is not a directory: {clis_dir}"
 
 
-def test_whatsapp_mcp_source_exists():
-    """WhatsApp MCP source directory should exist with required files."""
-    config = vm.VestaConfig(microsoft_mcp_client_id=SecretStr("test"))
-    whatsapp_dir = config.whatsapp_build_dir
-    assert whatsapp_dir.exists(), f"WhatsApp MCP dir does not exist: {whatsapp_dir}"
+def test_whatsapp_cli_source_exists():
+    """WhatsApp CLI source directory should exist with required files."""
+    config = vm.VestaConfig()
+    whatsapp_dir = config.install_root / "clis" / "whatsapp"
+    assert whatsapp_dir.exists(), f"WhatsApp CLI dir does not exist: {whatsapp_dir}"
     assert (whatsapp_dir / "go.mod").exists(), f"go.mod missing in {whatsapp_dir}"
     assert (whatsapp_dir / "main.go").exists(), f"main.go missing in {whatsapp_dir}"
 
 
-def test_python_mcps_exist():
-    """Python MCP directories should exist with pyproject.toml."""
-    config = vm.VestaConfig(microsoft_mcp_client_id=SecretStr("test"))
-    mcps_dir = config.install_root / "mcps"
+def test_python_clis_exist():
+    """Python CLI directories should exist with pyproject.toml."""
+    config = vm.VestaConfig()
+    clis_dir = config.install_root / "clis"
 
-    python_mcps = ["reminder-mcp", "task-mcp", "microsoft-mcp"]
-    for mcp_name in python_mcps:
-        mcp_dir = mcps_dir / mcp_name
-        assert mcp_dir.exists(), f"MCP directory does not exist: {mcp_dir}"
-        assert (mcp_dir / "pyproject.toml").exists(), f"pyproject.toml missing in {mcp_dir}"
+    python_clis = ["microsoft", "reminder", "task"]
+    for cli_name in python_clis:
+        cli_dir = clis_dir / cli_name
+        assert cli_dir.exists(), f"CLI directory does not exist: {cli_dir}"
+        assert (cli_dir / "pyproject.toml").exists(), f"pyproject.toml missing in {cli_dir}"
 
 
 # Message processor tests
@@ -183,7 +162,7 @@ async def test_message_processor_resets_and_notifies_on_error(tmp_path):
         call_count += 1
         processed_messages.append(msg)
         if call_count == 1:
-            raise Exception("Simulated SDK buffer overflow")
+            raise RuntimeError("Simulated SDK buffer overflow")
         return (["OK"], None)
 
     # Queue a message that will fail

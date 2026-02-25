@@ -3,12 +3,50 @@
 SKILL_MD = """\
 ---
 name: browser
-description: This skill should be used when the user asks to "browse", "open a website", "navigate to", "click", "fill form", "take screenshot", "scrape", or needs to interact with web pages, automate browser actions, or extract information from websites.
+description: Use for "browse", "open a website", "navigate to", "click", "fill form",
+  "take screenshot", "scrape", or any web page interaction.
 ---
 
 # Browser & Web
 
-You have access to browser automation tools through MCP. Use them to interact with web pages on behalf of the user.
+Use Playwright to automate browser interactions via bash scripts.
+
+## Setup
+
+Install dependencies (first time only):
+```bash
+cd {install_root}/clis/playwright-mcp && npm install
+npx playwright install --with-deps chromium
+```
+
+## Taking Screenshots
+
+```bash
+cd {install_root}/clis/playwright-mcp && \\
+  npx playwright screenshot --browser chromium "https://example.com" ~/screenshot.png
+```
+
+## Automation Scripts
+
+For clicks, forms, and multi-step flows, write a script to `/tmp/browser_task.js`:
+
+```javascript
+const { chromium } = require('playwright');
+(async () => {
+  const browser = await chromium.launch();
+  const page = await browser.newPage();
+  await page.goto('https://example.com');
+  // await page.click('#btn');
+  // await page.fill('#input', 'value');
+  await page.screenshot({ path: '/tmp/result.png' });
+  await browser.close();
+})();
+```
+
+Run it:
+```bash
+cd {install_root}/clis/playwright-mcp && node /tmp/browser_task.js
+```
 
 ## Best Practices
 
@@ -24,9 +62,6 @@ You have access to browser automation tools through MCP. Use them to interact wi
 
 ### Login Patterns
 [How to handle authentication for different sites]
-
-### Screenshot Preferences
-[User's preferred formats and locations]
 """
 
 SCRIPTS: dict[str, str] = {}

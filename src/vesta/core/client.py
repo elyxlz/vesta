@@ -1,7 +1,4 @@
-"""Claude SDK client management."""
-
 import asyncio
-import os
 
 from claude_agent_sdk import ClaudeAgentOptions, Message
 
@@ -10,13 +7,11 @@ import vesta.utils as vu
 import vesta.core.effects as vfx
 from vesta import logger
 from vesta.hooks import build_hooks
-from vesta.integrations.mcp_registry import build_mcp_servers
 from vesta.core.dreamer import load_memory
 from vesta.core.io import output_line
 
 
 def load_system_prompt(config: vm.VestaConfig) -> str:
-    """Load main agent's memory as system prompt."""
     return load_memory(config)
 
 
@@ -56,11 +51,6 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
     assert state.client is not None
     client = state.client
 
-    if state.pending_system_message:
-        logger.debug("Injecting pending system message")
-        prompt = f"{state.pending_system_message}\n\n{prompt}"
-        state.pending_system_message = None
-
     timestamp = vfx.get_current_time()
     query_with_context = vu.build_query_with_timestamp(prompt, timestamp=timestamp)
     logger.debug(f"Sending query ({len(query_with_context)} chars)")
@@ -95,40 +85,23 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
 
 async def process_message(msg: str, *, state: vm.State, config: vm.VestaConfig, is_user: bool) -> tuple[list[str], vm.State]:
     logger.debug(f"Processing message (is_user={is_user})")
-
-    async def record(role: str, *, content: str) -> None:
-        content = content.strip()
-        if content:
-            async with state.conversation_history_lock:
-                state.conversation_history.append({"role": role, "content": content})
-
-    await record("user", content=msg)
-
     responses = await converse(msg, state=state, config=config, show_output=is_user)
     logger.debug(f"Got {len(responses)} responses")
-    if responses:
-        await record("assistant", content="\n".join(responses))
     return responses, state
 
 
 def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgentOptions:
-    """Build options for creating a Claude SDK client."""
-    # Enable experimental MCP CLI features for skill hotloading
-    os.environ["ENABLE_EXPERIMENTAL_MCP_CLI"] = "1"
-
     def handle_stderr(line: str) -> None:
-        """Log SDK stderr output for debugging."""
         logger.sdk(line)
 
     return ClaudeAgentOptions(
         system_prompt=load_system_prompt(config),
-        mcp_servers=build_mcp_servers(config),  # type: ignore[arg-type]
         hooks=build_hooks(state),
         permission_mode="bypassPermissions",
         cwd=config.state_dir,
         setting_sources=["project"],
-        add_dirs=[str(config.state_dir), str(config.skills_dir), str(config.onedrive_dir)],
+        add_dirs=[str(config.state_dir), str(config.skills_dir)],
         max_thinking_tokens=config.max_thinking_tokens,
-        max_buffer_size=10 * 1024 * 1024,  # 10MB - default 1MB causes crashes on large responses
+        max_buffer_size=10 * 1024 * 1024,
         stderr=handle_stderr,
     )

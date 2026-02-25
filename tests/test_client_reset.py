@@ -6,13 +6,11 @@ and that the reset_requested flag triggers client recreation.
 
 import asyncio
 
-from pydantic import SecretStr
 from claude_agent_sdk import ClaudeSDKClient
 
 import vesta.models as vm
 import vesta.main as vmain
 from vesta.core.client import build_client_options, process_message
-from vesta.core.dreamer import preserve_memory
 
 
 def _prepare_state_dir(state_dir):
@@ -30,9 +28,7 @@ def _make_config(state_dir):
     """Create test config."""
     return vm.VestaConfig(
         state_dir=state_dir,
-        microsoft_mcp_client_id=SecretStr("test"),
         ephemeral=True,
-        mcps=[],
     )
 
 
@@ -167,7 +163,7 @@ def test_reset_clears_context(tmp_path):
 
 
 def test_full_nightly_flow_with_flag(tmp_path):
-    """Full nightly flow: preserve_memory sets reset_requested flag."""
+    """Full nightly flow: reset_requested flag triggers client recreation."""
     state_dir = tmp_path / "state"
     _prepare_state_dir(state_dir)
     config = _make_config(state_dir)
@@ -179,21 +175,8 @@ def test_full_nightly_flow_with_flag(tmp_path):
         async with ClaudeSDKClient(options=options) as client:
             state.client = client
 
-            # Add some conversation history
-            async with state.conversation_history_lock:
-                state.conversation_history.extend(
-                    [
-                        {"role": "user", "content": "What's the weather like?"},
-                        {"role": "assistant", "content": "I don't have access to current weather data."},
-                    ]
-                )
-
-            # Run preserve_memory (this is what happens at night)
-            updated = await preserve_memory(state, config=config)
-
-            # In the real code, process_nightly_memory sets this flag
-            if updated:
-                state.reset_requested = True
+            # Simulate nightly memory consolidation setting the flag
+            state.reset_requested = True
 
         # After exiting async with, client is closed
         state.client = None

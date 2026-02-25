@@ -9,7 +9,7 @@ import vesta.utils as vu
 import vesta.core.effects as vfx
 from vesta import logger
 from vesta.core.client import process_message, attempt_interrupt, build_client_options
-from vesta.core.dreamer import preserve_memory
+from vesta.core.dreamer import build_memory_consolidation_prompt
 from vesta.core.notifications import load_and_display_new_notifications, delete_notification_files
 
 
@@ -36,9 +36,7 @@ async def process_notification_batch(
     await delete_notification_files(notifications)
 
 
-async def _process_message_safely(
-    msg: str, *, is_user: bool, state: vm.State, config: vm.VestaConfig
-) -> bool:
+async def _process_message_safely(msg: str, *, is_user: bool, state: vm.State, config: vm.VestaConfig) -> bool:
     """Process a single message with error handling. Returns False if session should reset."""
     logger.debug(f"Processing message (is_user={is_user}, length={len(msg)})")
 
@@ -96,18 +94,18 @@ async def check_proactive_task(queue: asyncio.Queue, *, config: vm.VestaConfig) 
     await queue.put((config.proactive_check_message, False))
 
 
-async def process_nightly_memory(state: vm.State, *, config: vm.VestaConfig) -> None:
+async def process_nightly_memory(queue: asyncio.Queue, *, state: vm.State, config: vm.VestaConfig) -> None:
+    if config.ephemeral:
+        return
+
     now = vfx.get_current_time()
     if config.nightly_memory_hour is not None and now.hour == config.nightly_memory_hour:
         if state.last_memory_consolidation is None or now.date() > state.last_memory_consolidation.date():
-            logger.dreamer("Nightly consolidation starting...")
-            updated = await preserve_memory(state, config=config)
+            logger.dreamer("Nightly memory consolidation...")
+            prompt = build_memory_consolidation_prompt(config)
+            await queue.put((prompt, False))
             state.last_memory_consolidation = now
-            logger.dreamer("Nightly consolidation complete")
-            if updated:
-                state.reset_requested = True  # message_processor will handle the reset
-            if config.nightly_memory_completion_message:
-                state.pending_system_message = config.nightly_memory_completion_message
+            logger.dreamer("Memory consolidation prompt queued")
 
 
 async def monitor_loop(queue: asyncio.Queue, *, state: vm.State, config: vm.VestaConfig) -> None:
@@ -128,7 +126,7 @@ async def monitor_loop(queue: asyncio.Queue, *, state: vm.State, config: vm.Vest
                 await check_proactive_task(queue, config=config)
                 last_proactive = now
 
-            await process_nightly_memory(state, config=config)
+            await process_nightly_memory(queue, state=state, config=config)
 
             notification_buffer, buffer_start_time = await load_and_display_new_notifications(
                 notification_buffer, buffer_start_time=buffer_start_time, config=config

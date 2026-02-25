@@ -11,8 +11,6 @@ import uuid
 from pathlib import Path
 
 
-from pydantic import SecretStr
-
 import vesta.main as vmain
 import vesta.models as vm
 from vesta import logger
@@ -98,7 +96,6 @@ def _make_config(state_dir: Path, **overrides: object) -> vm.VestaConfig:
     """Create a test config with sensible defaults."""
     return vm.VestaConfig(
         state_dir=overrides.get("state_dir", state_dir),  # type: ignore[arg-type]
-        microsoft_mcp_client_id=SecretStr(str(overrides.get("microsoft_mcp_client_id", "test-client"))),
         whatsapp_greeting_prompt=overrides.get("whatsapp_greeting_prompt"),  # type: ignore[arg-type]
         nightly_memory_hour=overrides.get("nightly_memory_hour"),  # type: ignore[arg-type]
         notification_check_interval=int(overrides.get("notification_check_interval", 1)),  # type: ignore[arg-type]

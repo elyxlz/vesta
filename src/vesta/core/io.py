@@ -1,14 +1,12 @@
-"""Terminal I/O and signal handling."""
-
 import asyncio
 import errno
+import os
 import types
 import typing as tp
 
 import aioconsole
 
 import vesta.models as vm
-import vesta.core.effects as vfx
 from vesta import logger
 
 SignalHandler = tp.Callable[[int, types.FrameType | None], None]
@@ -58,6 +56,6 @@ def make_signal_handler(state: vm.State) -> SignalHandler:
             if state.shutdown_event:
                 state.shutdown_event.set()
         elif state.shutdown_count > 2:
-            vfx.exit_process(0)
+            os._exit(0)
 
     return handler

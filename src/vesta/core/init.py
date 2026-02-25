@@ -1,12 +1,10 @@
-"""Startup initialization and template loading."""
-
 import os
 import pathlib as pl
 
 import vesta.models as vm
 from vesta import logger
 from vesta.templates.main import MEMORY_TEMPLATE as MAIN_MEMORY_TEMPLATE
-from vesta.templates.skills import browser, calendar, email, report_writer, what_day
+from vesta.templates.skills import browser, calendar, email, onedrive, reminders, report_writer, tasks, what_day, whatsapp
 
 type SkillTemplate = dict[str, str | dict[str, str]]
 
@@ -23,16 +21,19 @@ def load_memory_template(name: str) -> str:
 
 def get_skill_templates() -> dict[str, SkillTemplate]:
     return {
-        "email": {"skill_md": email.SKILL_MD, "scripts": getattr(email, "SCRIPTS", {})},
-        "calendar": {"skill_md": calendar.SKILL_MD, "scripts": getattr(calendar, "SCRIPTS", {})},
-        "browser": {"skill_md": browser.SKILL_MD, "scripts": getattr(browser, "SCRIPTS", {})},
-        "report-writer": {"skill_md": report_writer.SKILL_MD, "scripts": getattr(report_writer, "SCRIPTS", {})},
-        "what-day": {"skill_md": what_day.SKILL_MD, "scripts": getattr(what_day, "SCRIPTS", {})},
+        "email": {"skill_md": email.SKILL_MD, "scripts": email.SCRIPTS},
+        "calendar": {"skill_md": calendar.SKILL_MD, "scripts": calendar.SCRIPTS},
+        "browser": {"skill_md": browser.SKILL_MD, "scripts": browser.SCRIPTS},
+        "report-writer": {"skill_md": report_writer.SKILL_MD, "scripts": report_writer.SCRIPTS},
+        "what-day": {"skill_md": what_day.SKILL_MD, "scripts": what_day.SCRIPTS},
+        "whatsapp": {"skill_md": whatsapp.SKILL_MD, "scripts": whatsapp.SCRIPTS},
+        "reminders": {"skill_md": reminders.SKILL_MD, "scripts": reminders.SCRIPTS},
+        "tasks": {"skill_md": tasks.SKILL_MD, "scripts": tasks.SCRIPTS},
+        "onedrive": {"skill_md": onedrive.SKILL_MD, "scripts": onedrive.SCRIPTS},
     }
 
 
 def init_skills(config: vm.VestaConfig) -> None:
-    """Initialize skills from templates if they don't exist."""
     skills_dir = config.skills_dir
     skill_templates = get_skill_templates()
 
@@ -45,13 +46,12 @@ def init_skills(config: vm.VestaConfig) -> None:
 
         skill_dir.mkdir(parents=True, exist_ok=True)
 
-        # Write SKILL.md
-        skill_md_content = skill_data.get("skill_md", "")
+        skill_md_content = skill_data["skill_md"]
         if isinstance(skill_md_content, str):
+            skill_md_content = skill_md_content.replace("{install_root}", str(config.install_root))
             skill_md_path.write_text(skill_md_content)
 
-        # Write scripts if present
-        scripts = skill_data.get("scripts", {})
+        scripts = skill_data["scripts"]
         if isinstance(scripts, dict) and scripts:
             scripts_dir = skill_dir / "scripts"
             scripts_dir.mkdir(parents=True, exist_ok=True)
@@ -64,7 +64,6 @@ def init_skills(config: vm.VestaConfig) -> None:
 
 
 def init_main_memory(config: vm.VestaConfig) -> None:
-    """Initialize main memory from template if it doesn't exist."""
     memory_path = get_memory_path(config)
     if not memory_path.exists():
         memory_path.parent.mkdir(parents=True, exist_ok=True)
@@ -74,7 +73,6 @@ def init_main_memory(config: vm.VestaConfig) -> None:
 
 
 def init_skills_symlink(config: vm.VestaConfig) -> None:
-    """Symlink skills to .claude/skills in state_dir for Claude Code discovery."""
     target = config.state_dir / ".claude" / "skills"
     if target.exists() and not target.is_symlink():
         raise RuntimeError(f"{target} exists and is not a symlink")
@@ -85,7 +83,6 @@ def init_skills_symlink(config: vm.VestaConfig) -> None:
 
 
 def check_state_readable(config: vm.VestaConfig) -> None:
-    """Raise if any top-level item in state_dir is not readable."""
     for f in config.state_dir.iterdir():
         if not os.access(f, os.R_OK):
             raise RuntimeError(f"Not readable: {f}")

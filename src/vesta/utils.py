@@ -14,8 +14,8 @@ def format_tool_call(name: str, *, input_data: object, sub_agent_context: str | 
     if name == "Task":
         if isinstance(input_data, dict):
             data = tp.cast(dict[str, tp.Any], input_data)
-            agent_type = data.get("subagent_type", "unknown")
-            description = data.get("description", "")
+            agent_type = data["subagent_type"] if "subagent_type" in data else "unknown"
+            description = data["description"] if "description" in data else ""
         else:
             agent_type = "unknown"
             description = ""
@@ -23,18 +23,16 @@ def format_tool_call(name: str, *, input_data: object, sub_agent_context: str | 
 
     prefix = f"[{sub_agent_context}] " if sub_agent_context else ""
 
-    if name.startswith("mcp__"):
-        parts = name.replace("mcp__", "").split("__")
-        service = parts[0] if parts else "unknown"
-        action = ".".join(parts[1:]) if len(parts) > 1 else "action"
-        return f"[TOOL] {prefix}[{service}] {action}: {input_preview}", sub_agent_context
-
     return f"[TOOL] {prefix}{name}: {input_preview}", sub_agent_context
 
 
 def parse_assistant_message(msg: Message, *, sub_agent_context: str | None) -> tuple[list[str], str | None, str | None]:
     if isinstance(msg, ResultMessage):
-        session_id = msg.session_id if hasattr(msg, "session_id") else None
+        session_id: str | None = None
+        try:
+            session_id = msg.session_id
+        except AttributeError:
+            pass
         return ([], sub_agent_context, session_id)
 
     if not isinstance(msg, AssistantMessage):
@@ -62,10 +60,6 @@ def parse_assistant_message(msg: Message, *, sub_agent_context: str | None) -> t
     return texts, current_context, None
 
 
-def filter_new_notifications(all_notifications: list[vm.Notification], *, existing_paths: set[str]) -> list[vm.Notification]:
-    return [n for n in all_notifications if n.file_path not in existing_paths]
-
-
 def format_notification_batch(notifications: list[vm.Notification], *, suffix: str = "") -> str:
     suffix_str = f"\n\n{suffix}" if suffix else ""
     if len(notifications) == 1:
@@ -88,11 +82,6 @@ def should_process_notification_buffer(
     return (current_time - buffer_start_time).total_seconds() >= buffer_delay
 
 
-def parse_notification_file_content(content: str) -> dict[str, tp.Any]:
-    """Parse JSON notification content. Returns Any because pydantic needs it."""
-    return json.loads(content)
-
-
 def decide_notification_action(
     notifications: list[vm.Notification], *, is_processing: bool, has_client: bool
 ) -> tp.Literal["interrupt", "queue", "skip"]:
@@ -103,7 +92,3 @@ def decide_notification_action(
         return "interrupt"
     else:
         return "queue"
-
-
-def extract_paths_to_delete(notifications: list[vm.Notification]) -> set[str]:
-    return {n.file_path for n in notifications if n.file_path}

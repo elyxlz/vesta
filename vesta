@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -e
+CONTAINER=vesta
+IMAGE=vesta
+
+case "${1:-}" in
+  setup)
+    docker build -t $IMAGE .
+    docker rm -f $CONTAINER 2>/dev/null || true
+    docker create --name $CONTAINER -it \
+      --restart unless-stopped \
+      --device /dev/fuse \
+      $IMAGE
+    docker start $CONTAINER
+    echo "Authenticating Claude Agent SDK (Max subscription)..."
+    docker exec -it $CONTAINER claude login
+    echo "Attaching to Vesta (detach: ctrl-q)..."
+    docker attach --detach-keys='ctrl-q' $CONTAINER
+    ;;
+  start)
+    if docker ps -q -f name=$CONTAINER | grep -q .; then
+      echo "Vesta is already running"
+    elif docker ps -aq -f name=$CONTAINER | grep -q .; then
+      docker start $CONTAINER
+    else
+      echo "Container not found. Run: vesta setup"
+      exit 1
+    fi
+    ;;
+  stop)    docker stop -t 30 $CONTAINER ;;
+  attach)  docker attach --detach-keys='ctrl-q' $CONTAINER ;;
+  logs)    docker logs -f $CONTAINER ;;
+  backup)
+    TS=$(date +%Y%m%d_%H%M%S)
+    docker commit $CONTAINER vesta-backup:$TS
+    echo "Backup created: vesta-backup:$TS"
+    ;;
+  shell)   docker exec -it $CONTAINER bash ;;
+  status)  docker inspect $CONTAINER ;;
+  destroy)
+    read -rp "Destroy container (all state lost)? [y/N] " yn
+    [[ $yn == y ]] && docker rm -f $CONTAINER
+    ;;
+  *)
+    echo "Usage: vesta {setup|start|stop|attach|logs|backup|shell|status|destroy}"
+    exit 1
+    ;;
+esac
