@@ -90,6 +90,10 @@ async def process_message(msg: str, *, state: vm.State, config: vm.VestaConfig, 
 def build_vesta_tools_server(state: vm.State):
     @tool("restart_vesta", "Restart Vesta to reload system prompt, skills, and memory files. Current conversation is preserved.", {})
     async def restart_vesta(args):
+        if state.graceful_shutdown and state.graceful_shutdown.is_set():
+            if state.shutdown_event:
+                state.shutdown_event.set()
+            return {"content": [{"type": "text", "text": "Shutdown complete. Sweet dreams."}]}
         state.pending_context = "[System: Vesta restarted. Configuration and system prompt refreshed. Previous conversation resumed.]"
         return {"content": [{"type": "text", "text": "Restart initiated. Session will resume with refreshed configuration."}]}
 

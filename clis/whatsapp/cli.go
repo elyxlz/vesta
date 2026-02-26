@@ -14,11 +14,20 @@ import (
 	waLog "go.mau.fi/whatsmeow/util/log"
 )
 
-func parseStateDir() (dataDir, logDir, notifDir string) {
-	var stateDir string
-	flag.StringVar(&stateDir, "state-dir", defaultStateDir, "State directory (default: ~/.vesta)")
-	flag.Parse()
+func extractStateDir() string {
+	for i, arg := range os.Args {
+		if arg == "--state-dir" && i+1 < len(os.Args) {
+			return os.Args[i+1]
+		}
+		if strings.HasPrefix(arg, "--state-dir=") {
+			return strings.TrimPrefix(arg, "--state-dir=")
+		}
+	}
+	return defaultStateDir
+}
 
+func parseStateDir() (dataDir, logDir, notifDir string) {
+	stateDir := extractStateDir()
 	dataDir = filepath.Join(stateDir, "data", "whatsapp")
 	logDir = filepath.Join(stateDir, "logs", "whatsapp")
 	notifDir = filepath.Join(stateDir, "notifications")
@@ -26,55 +35,7 @@ func parseStateDir() (dataDir, logDir, notifDir string) {
 }
 
 func getSocketPath() string {
-	stateDir := defaultStateDir
-	for i, arg := range os.Args {
-		if arg == "--state-dir" && i+1 < len(os.Args) {
-			stateDir = os.Args[i+1]
-			break
-		}
-		if strings.HasPrefix(arg, "--state-dir=") {
-			stateDir = strings.TrimPrefix(arg, "--state-dir=")
-			break
-		}
-	}
-	return filepath.Join(stateDir, "data", "whatsapp", "whatsapp.sock")
-}
-
-func initClient(logger waLog.Logger) (*WhatsAppClient, string, string, string) {
-	dataDir, logDir, notifDir := parseStateDir()
-
-	var err error
-	dataDir, err = resolveDir(dataDir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-	logDir, err = resolveDir(logDir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-	notifDir, err = resolveDir(notifDir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	wac, err := NewWhatsAppClient(dataDir, notifDir, logger)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to initialize WhatsApp client: %v\n", err)
-		os.Exit(1)
-	}
-
-	if err := wac.Connect(); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to connect: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Wait briefly for authentication to settle
-	time.Sleep(2 * time.Second)
-
-	return wac, dataDir, logDir, notifDir
+	return filepath.Join(extractStateDir(), "data", "whatsapp", "whatsapp.sock")
 }
 
 func printJSON(v interface{}) {
@@ -184,24 +145,15 @@ func runServe(logger waLog.Logger) {
 	wac.Disconnect()
 }
 
-func runOneShot(command string, logger waLog.Logger) {
+func runOneShot(command string) {
 	sockPath := getSocketPath()
-	if output, exitCode, connected := trySocketCommand(sockPath, command, os.Args[1:]); connected {
-		fmt.Println(string(output))
-		os.Exit(exitCode)
-	}
-
-	wac, _, _, _ := initClient(logger)
-	defer wac.Disconnect()
-
-	result, err := executeCommand(command, os.Args[1:], wac)
-	if err != nil {
-		printJSON(map[string]interface{}{"error": err.Error()})
+	output, exitCode, connected := trySocketCommand(sockPath, command, os.Args[1:])
+	if !connected {
+		printJSON(map[string]interface{}{"error": "daemon not running — start with: ~/whatsapp serve &"})
 		os.Exit(1)
 	}
-	if result != nil {
-		printJSON(result)
-	}
+	fmt.Println(string(output))
+	os.Exit(exitCode)
 }
 
 func executeCommand(command string, args []string, wac *WhatsAppClient) (interface{}, error) {

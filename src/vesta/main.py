@@ -9,18 +9,19 @@ import vesta.models as vm
 import vesta.core.effects as vfx
 from vesta import logger
 from vesta.core.init import init_skills, init_main_memory, init_prompts, init_skills_symlink, is_first_start
-from vesta.core.io import input_handler, make_signal_handler
-from vesta.core.loops import message_processor, monitor_loop
+from vesta.core.io import input_handler, make_sigint_handler, make_sigterm_handler
+from vesta.core.loops import message_processor, monitor_loop, archive_conversation
+from vesta.core.dreamer import build_dreamer_prompt
 from vesta.core.notifications import queue_greeting
 
 
 async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: bool = False) -> None:
     state.shutdown_event = asyncio.Event()
+    state.graceful_shutdown = asyncio.Event()
 
-    handler = make_signal_handler(state)
     signal.signal(signal.SIGHUP, signal.SIG_IGN)
-    signal.signal(signal.SIGINT, handler)
-    signal.signal(signal.SIGTERM, handler)
+    signal.signal(signal.SIGINT, make_sigint_handler(state))
+    signal.signal(signal.SIGTERM, make_sigterm_handler(state))
 
     logger.init("VESTA started")
 
@@ -35,8 +36,17 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
     await queue_greeting(message_queue, config=config, first_start=first_start)
 
     try:
-        await state.shutdown_event.wait()
+        await state.graceful_shutdown.wait()
     except (KeyboardInterrupt, asyncio.CancelledError):
+        state.shutdown_event.set()
+
+    if not state.shutdown_event.is_set() and not config.ephemeral:
+        logger.shutdown("Running dreamer before shutdown...")
+        archive_conversation(state, config)
+        prompt = build_dreamer_prompt(config)
+        await message_queue.put((prompt, False))
+        await state.shutdown_event.wait()
+    elif not state.shutdown_event.is_set():
         state.shutdown_event.set()
 
     logger.shutdown("Shutting down...")

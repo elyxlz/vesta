@@ -94,6 +94,6 @@ func main() {
 	case "authenticate":
 		runAuthenticate()
 	default:
-		runOneShot(command, logger)
+		runOneShot(command)
 	}
 }

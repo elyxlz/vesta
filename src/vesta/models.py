@@ -14,6 +14,7 @@ __all__ = ["State", "Notification", "VestaConfig"]
 class State:
     client: ClaudeSDKClient | None = None
     shutdown_event: asyncio.Event | None = None
+    graceful_shutdown: asyncio.Event | None = None
     shutdown_count: int = 0
     session_id: str | None = None
     pending_context: str | None = None

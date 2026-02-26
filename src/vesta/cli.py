@@ -39,7 +39,7 @@ def cmd_rebuild() -> None:
         print("No container found. Run: vesta setup")
         sys.exit(1)
     if _ps():
-        subprocess.run(["docker", "stop", "-t", "30", CONTAINER], check=True)
+        subprocess.run(["docker", "stop", "-t", "300", CONTAINER], check=True)
     r = subprocess.run(["docker", "cp", f"{CONTAINER}:/root/.claude", "/tmp/.claude-vesta"], capture_output=True, text=True)
     if r.returncode != 0:
         print(f"Warning: failed to copy auth credentials: {r.stderr.strip()}", file=sys.stderr)
@@ -69,7 +69,7 @@ def cmd_start() -> None:
 
 def cmd_stop() -> None:
     """Stop the running container."""
-    subprocess.run(["docker", "stop", "-t", "30", CONTAINER], check=True)
+    subprocess.run(["docker", "stop", "-t", "300", CONTAINER], check=True)
 
 
 def cmd_attach() -> None:
