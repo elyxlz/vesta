@@ -3,7 +3,6 @@
 import vesta.models as vm
 from vesta import logger
 from vesta.core.init import get_memory_path, load_memory_template
-from vesta.templates.dreamer import MEMORY_CONSOLIDATION_PROMPT
 
 
 def load_memory(config: vm.VestaConfig) -> str:
@@ -18,8 +17,8 @@ def load_memory(config: vm.VestaConfig) -> str:
 
 
 def build_memory_consolidation_prompt(config: vm.VestaConfig) -> str:
-    """Build the memory consolidation prompt for vesta to process herself."""
-    return MEMORY_CONSOLIDATION_PROMPT.format(
+    return config.dreamer_prompt.format(
         memory_path=get_memory_path(config),
         skills_dir=config.skills_dir,
+        conversations_dir=config.conversations_dir,
     )

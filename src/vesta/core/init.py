@@ -3,7 +3,20 @@ import pathlib as pl
 import vesta.models as vm
 from vesta import logger
 from vesta.templates.main import MEMORY_TEMPLATE as MAIN_MEMORY_TEMPLATE
-from vesta.templates.skills import browser, calendar, email, onedrive, reminders, report_writer, tasks, what_day, whatsapp
+from vesta.templates.skills import (
+    browser,
+    calendar,
+    email,
+    gmail,
+    google_calendar,
+    onedrive,
+    reminders,
+    report_writer,
+    tasks,
+    telegram,
+    what_day,
+    whatsapp,
+)
 
 type SkillTemplate = dict[str, str | dict[str, str]]
 
@@ -29,6 +42,9 @@ def get_skill_templates() -> dict[str, SkillTemplate]:
         "reminders": {"skill_md": reminders.SKILL_MD, "scripts": reminders.SCRIPTS},
         "tasks": {"skill_md": tasks.SKILL_MD, "scripts": tasks.SCRIPTS},
         "onedrive": {"skill_md": onedrive.SKILL_MD, "scripts": onedrive.SCRIPTS},
+        "telegram": {"skill_md": telegram.SKILL_MD, "scripts": telegram.SCRIPTS},
+        "gmail": {"skill_md": gmail.SKILL_MD, "scripts": gmail.SCRIPTS},
+        "google-calendar": {"skill_md": google_calendar.SKILL_MD, "scripts": google_calendar.SCRIPTS},
     }
 
 
@@ -62,11 +78,15 @@ def init_skills(config: vm.VestaConfig) -> None:
         logger.init(f"Initialized skill: {skill_name}")
 
 
+def is_first_start(config: vm.VestaConfig) -> bool:
+    return not get_memory_path(config).exists()
+
+
 def init_main_memory(config: vm.VestaConfig) -> None:
     memory_path = get_memory_path(config)
     if not memory_path.exists():
         memory_path.parent.mkdir(parents=True, exist_ok=True)
-        template = load_memory_template("main")
+        template = load_memory_template("main").replace("{install_root}", str(config.install_root))
         memory_path.write_text(template)
         logger.init(f"Initialized main memory ({len(template)} chars)")
 

@@ -8,7 +8,6 @@ import vesta.core.effects as vfx
 from vesta import logger
 from vesta.hooks import build_hooks
 from vesta.core.dreamer import load_memory
-from vesta.core.io import output_line
 
 
 def load_system_prompt(config: vm.VestaConfig) -> str:
@@ -56,15 +55,17 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
             text, sub_agent_context = parse_assistant_message(msg, state=state, sub_agent_context=sub_agent_context)
             if not text:
                 continue
-            lines = [line for line in text.split("\n") if line.strip()]
             if not show_output:
-                responses.extend(lines)
+                responses.append(text)
                 continue
-            for line in lines:
-                if line.startswith("[TOOL]") or line.startswith("[TASK]"):
-                    await output_line(line, is_tool=True)
+            for line in text.split("\n"):
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                if stripped.startswith("[TOOL]") or stripped.startswith("[TASK]"):
+                    logger.tool(stripped)
                 else:
-                    responses.append(line)
+                    logger.assistant(stripped)
 
     try:
         await asyncio.wait_for(collect(), timeout=config.response_timeout)

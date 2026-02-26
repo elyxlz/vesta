@@ -48,7 +48,6 @@ type WhatsAppClient struct {
 	authStatus        AuthStatus
 	authMutex         sync.RWMutex
 	qrPath            string
-	qrTerminal        string
 	reauthInProgress  bool
 	presenceActive    bool
 	presenceMutex     sync.RWMutex
@@ -205,14 +204,8 @@ func (wac *WhatsAppClient) handleQRAuthentication() {
 				continue
 			}
 
-			// Save QR code as terminal ASCII art
-			qrObj, qrErr := qrcode.New(evt.Code, qrcode.Medium)
 			wac.authMutex.Lock()
 			wac.qrPath = qrPath
-			if qrErr == nil {
-				wac.qrTerminal = qrObj.ToString(false)
-				os.WriteFile(filepath.Join(wac.dataDir, "qr-code.txt"), []byte(wac.qrTerminal), 0644)
-			}
 			wac.authStatus = AuthStatusQRReady
 			wac.authMutex.Unlock()
 
@@ -227,13 +220,11 @@ func (wac *WhatsAppClient) handleQRAuthentication() {
 				wac.logger.Warnf("Failed to set online status: %v", err)
 			}
 
-			// Remove QR code file, write authenticated status
 			wac.authMutex.Lock()
 			if wac.qrPath != "" {
 				os.Remove(wac.qrPath)
 				wac.qrPath = ""
 			}
-			os.Remove(filepath.Join(wac.dataDir, "qr-code.txt"))
 			wac.authMutex.Unlock()
 
 			wac.writeAuthStatusFile(map[string]string{"status": string(AuthStatusAuthenticated)})

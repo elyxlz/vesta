@@ -15,15 +15,14 @@ Use Playwright to automate browser interactions via bash scripts.
 
 Install dependencies (first time only):
 ```bash
-cd {install_root}/clis/playwright-mcp && npm install
+npm install -g playwright
 npx playwright install --with-deps chromium
 ```
 
 ## Taking Screenshots
 
 ```bash
-cd {install_root}/clis/playwright-mcp && \\
-  npx playwright screenshot --browser chromium "https://example.com" ~/screenshot.png
+npx playwright screenshot --browser chromium "https://example.com" ~/screenshot.png
 ```
 
 ## Automation Scripts
@@ -45,7 +44,7 @@ const { chromium } = require('playwright');
 
 Run it:
 ```bash
-cd {install_root}/clis/playwright-mcp && node /tmp/browser_task.js
+node /tmp/browser_task.js
 ```
 
 ## Best Practices

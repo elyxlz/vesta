@@ -39,7 +39,8 @@ def main():
 
     # set
     p_set = sub.add_parser("set", help="Set a reminder")
-    p_set.add_argument("--message", required=True)
+    p_set.add_argument("message_pos", nargs="?", default=None, metavar="message")
+    p_set.add_argument("--message", default=None)
     p_set.add_argument("--scheduled-datetime", default=None)
     p_set.add_argument("--tz", default=None)
     p_set.add_argument("--in-minutes", type=int, default=None)
@@ -53,12 +54,14 @@ def main():
 
     # update
     p_update = sub.add_parser("update", help="Update a reminder message")
-    p_update.add_argument("--id", required=True, dest="reminder_id")
+    p_update.add_argument("id_pos", nargs="?", default=None, metavar="id")
+    p_update.add_argument("--id", default=None, dest="reminder_id")
     p_update.add_argument("--message", required=True)
 
     # cancel
     p_cancel = sub.add_parser("cancel", help="Cancel a reminder")
-    p_cancel.add_argument("--id", required=True, dest="reminder_id")
+    p_cancel.add_argument("id_pos", nargs="?", default=None, metavar="id")
+    p_cancel.add_argument("--id", default=None, dest="reminder_id")
 
     args = parser.parse_args()
     config = build_config(args)
@@ -84,10 +87,13 @@ def main():
 
 def _dispatch(args, config: Config, scheduler):
     if args.command == "set":
+        message = args.message_pos or args.message
+        if not message:
+            raise ValueError('message is required: reminder set "message" or reminder set --message "message"')
         return commands.set_reminder(
             config,
             scheduler,
-            message=args.message,
+            message=message,
             scheduled_datetime=args.scheduled_datetime,
             tz=args.tz,
             in_minutes=args.in_minutes,
@@ -98,9 +104,15 @@ def _dispatch(args, config: Config, scheduler):
     elif args.command == "list":
         return commands.list_reminders(config, scheduler, limit=args.limit)
     elif args.command == "update":
-        return commands.update_reminder(config, scheduler, reminder_id=args.reminder_id, message=args.message)
+        reminder_id = args.id_pos or args.reminder_id
+        if not reminder_id:
+            raise ValueError("id is required: reminder update <id> or reminder update --id <id>")
+        return commands.update_reminder(config, scheduler, reminder_id=reminder_id, message=args.message)
     elif args.command == "cancel":
-        return commands.cancel_reminder(config, scheduler, reminder_id=args.reminder_id)
+        reminder_id = args.id_pos or args.reminder_id
+        if not reminder_id:
+            raise ValueError("id is required: reminder cancel <id> or reminder cancel --id <id>")
+        return commands.cancel_reminder(config, scheduler, reminder_id=reminder_id)
 
 
 def _run_serve(config: Config):

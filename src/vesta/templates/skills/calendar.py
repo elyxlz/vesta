@@ -6,78 +6,37 @@ name: calendar
 description: This skill should be used when the user asks about "calendar", "schedule", "scheduling", "meetings", "appointments", "events", or needs to manage calendar events, respond to invitations, or handle time-based tasks.
 ---
 
-# Calendar
+# Calendar — CLI: microsoft
 
-You have access to calendar tools via the `microsoft` CLI. Use them to help the user manage their schedule.
-
-## Setup
-
-Install the CLI tool (if not already installed):
+## Quick Reference
 ```bash
-uv tool install {install_root}/clis/microsoft
-```
-
-## Commands
-
-```bash
-# List upcoming events (next 7 days)
 microsoft list-events --account user@example.com
-
-# List events with custom range
-microsoft list-events --account user@example.com --days-ahead 14 --days-back 3
-
-# List events from a specific calendar
-microsoft list-events --account user@example.com --calendar-name "Work"
-
-# List available calendars
-microsoft list-calendars --account user@example.com
-
-# Get event details
-microsoft get-event --account user@example.com --id <event_id>
-
-# Create an event
-microsoft create-event --account user@example.com --subject "Team Standup" --start "2025-11-15T10:00:00" --end "2025-11-15T10:30:00" --timezone "Europe/London"
-
-# Create with attendees and location
-microsoft create-event --account user@example.com --subject "Lunch" --start "2025-11-15T12:00:00" --end "2025-11-15T13:00:00" --timezone "Europe/London" --location "Cafe" --attendees alice@example.com bob@example.com
-
-# Create all-day event
-microsoft create-event --account user@example.com --subject "Holiday" --start "2025-12-25" --timezone "Europe/London" --all-day
-
-# Create recurring event
-microsoft create-event --account user@example.com --subject "Weekly Sync" --start "2025-11-15T09:00:00" --end "2025-11-15T09:30:00" --timezone "Europe/London" --recurrence weekly --recurrence-end-date "2026-03-01"
-
-# Update an event
-microsoft update-event --account user@example.com --id <event_id> --subject "New Title" --start "2025-11-15T11:00:00" --timezone "Europe/London"
-
-# Delete an event (sends cancellation to attendees)
-microsoft delete-event --account user@example.com --id <event_id>
-
-# Delete without sending cancellation
-microsoft delete-event --account user@example.com --id <event_id> --no-cancellation
-
-# Respond to an event invitation
+microsoft create-event --account user@example.com --subject "Standup" --start "2025-11-15T10:00:00" --end "2025-11-15T10:30:00" --timezone "Europe/London"
 microsoft respond-event --account user@example.com --id <event_id> --response accept
-microsoft respond-event --account user@example.com --id <event_id> --response decline --message "Can't make it"
-microsoft respond-event --account user@example.com --id <event_id> --response tentativelyAccept
-
-# List authenticated accounts
-microsoft list-accounts
 ```
 
-## Background Monitoring
-
-Start the monitor to get notifications for upcoming events:
+## Other Commands
 ```bash
-microsoft serve &
+microsoft list-events --account user@example.com --days-ahead 14 --days-back 3
+microsoft list-events --account user@example.com --calendar-name "Work"
+microsoft list-calendars --account user@example.com
+microsoft get-event --account user@example.com --id <event_id>
+microsoft create-event --account user@example.com --subject "Lunch" --start "2025-11-15T12:00:00" --end "2025-11-15T13:00:00" --timezone "Europe/London" --location "Cafe" --attendees alice@example.com bob@example.com
+microsoft create-event --account user@example.com --subject "Holiday" --start "2025-12-25" --timezone "Europe/London" --all-day
+microsoft create-event --account user@example.com --subject "Weekly Sync" --start "2025-11-15T09:00:00" --end "2025-11-15T09:30:00" --timezone "Europe/London" --recurrence weekly --recurrence-end-date "2026-03-01"
+microsoft update-event --account user@example.com --id <event_id> --subject "New Title" --start "2025-11-15T11:00:00" --timezone "Europe/London"
+microsoft delete-event --account user@example.com --id <event_id>
+microsoft respond-event --account user@example.com --id <event_id> --response decline --message "Can't make it"
 ```
 
-## Best Practices
+## Notes
+- `--timezone` required for create/update (IANA names like "Europe/London")
+- `--response` choices: accept / decline / tentativelyAccept
+- `--account` required for all commands (find with: `microsoft list-accounts`)
+- `--no-cancellation` on delete skips notifying attendees
 
-- Always check for conflicts before scheduling
-- Include relevant details (location, attendees, agenda) when creating events
-- Respect user's working hours and preferences
-- Provide clear summaries of upcoming events
+## Setup: `uv tool install {install_root}/clis/microsoft`
+## Background: `microsoft serve &`
 
 ### Scheduling Preferences
 [User's preferred meeting times, durations, buffer time]

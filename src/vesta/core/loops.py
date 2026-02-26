@@ -1,6 +1,8 @@
 """Background processing loops."""
 
 import asyncio
+import pathlib as pl
+import shutil
 
 from claude_agent_sdk import ClaudeSDKClient, ClaudeSDKError
 
@@ -74,6 +76,29 @@ async def check_proactive_task(queue: asyncio.Queue, *, config: vm.VestaConfig) 
     await queue.put((config.proactive_check_message, False))
 
 
+def _session_jsonl_path(state: vm.State, config: vm.VestaConfig) -> pl.Path | None:
+    if not state.session_id:
+        return None
+    slug = str(config.state_dir).replace("/", "-")
+    path = pl.Path.home() / ".claude" / "projects" / slug / f"{state.session_id}.jsonl"
+    if path.exists():
+        return path
+    return None
+
+
+def archive_conversation(state: vm.State, config: vm.VestaConfig) -> None:
+    src = _session_jsonl_path(state, config)
+    if not src:
+        logger.dreamer("No session transcript to archive")
+        return
+
+    config.conversations_dir.mkdir(parents=True, exist_ok=True)
+    now = vfx.get_current_time()
+    dest = config.conversations_dir / f"{now.strftime('%Y-%m-%d_%H%M%S')}.jsonl"
+    shutil.copy2(src, dest)
+    logger.dreamer(f"Archived conversation to {dest}")
+
+
 async def process_nightly_memory(queue: asyncio.Queue, *, state: vm.State, config: vm.VestaConfig) -> None:
     if config.ephemeral:
         return
@@ -82,6 +107,7 @@ async def process_nightly_memory(queue: asyncio.Queue, *, state: vm.State, confi
     if config.nightly_memory_hour is not None and now.hour == config.nightly_memory_hour:
         if state.last_memory_consolidation is None or now.date() > state.last_memory_consolidation.date():
             logger.dreamer("Nightly memory consolidation...")
+            archive_conversation(state, config)
             prompt = build_memory_consolidation_prompt(config)
             await queue.put((prompt, False))
             state.last_memory_consolidation = now

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -22,6 +23,21 @@ func parseStateDir() (dataDir, logDir, notifDir string) {
 	logDir = filepath.Join(stateDir, "logs", "whatsapp")
 	notifDir = filepath.Join(stateDir, "notifications")
 	return
+}
+
+func getSocketPath() string {
+	stateDir := defaultStateDir
+	for i, arg := range os.Args {
+		if arg == "--state-dir" && i+1 < len(os.Args) {
+			stateDir = os.Args[i+1]
+			break
+		}
+		if strings.HasPrefix(arg, "--state-dir=") {
+			stateDir = strings.TrimPrefix(arg, "--state-dir=")
+			break
+		}
+	}
+	return filepath.Join(stateDir, "data", "whatsapp", "whatsapp.sock")
 }
 
 func initClient(logger waLog.Logger) (*WhatsAppClient, string, string, string) {
@@ -81,10 +97,7 @@ func readAuthStatus(dataDir string) map[string]string {
 		return map[string]string{"status": "not_started"}
 	}
 	if status["status"] == string(AuthStatusQRReady) {
-		qrText, err := os.ReadFile(filepath.Join(dataDir, "qr-code.txt"))
-		if err == nil {
-			status["qr_terminal"] = string(qrText)
-		}
+		status["qr_image"] = filepath.Join(dataDir, "qr-code.png")
 	}
 	return status
 }
@@ -126,6 +139,12 @@ func runServe(logger waLog.Logger) {
 		os.Exit(1)
 	}
 
+	sockPath := filepath.Join(dataDir, "whatsapp.sock")
+	listener, err := startSocketServer(sockPath, wac)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to start socket server: %v\n", err)
+	}
+
 	fmt.Fprintf(os.Stderr, "WhatsApp client initialized. Data: %s\n", dataDir)
 	fmt.Fprintf(os.Stderr, "Notifications: %s\n", notifDir)
 
@@ -140,82 +159,101 @@ func runServe(logger waLog.Logger) {
 	<-sigChan
 
 	fmt.Fprintln(os.Stderr, "Shutting down...")
+	if listener != nil {
+		stopSocketServer(listener, sockPath)
+	}
 	wac.Disconnect()
 }
 
 func runOneShot(command string, logger waLog.Logger) {
+	sockPath := getSocketPath()
+	if output, exitCode, connected := trySocketCommand(sockPath, command, os.Args[1:]); connected {
+		fmt.Println(string(output))
+		os.Exit(exitCode)
+	}
+
 	wac, _, _, _ := initClient(logger)
 	defer wac.Disconnect()
 
-	var result interface{}
-	var err error
+	result, err := executeCommand(command, os.Args[1:], wac)
+	if err != nil {
+		printJSON(map[string]interface{}{"error": err.Error()})
+		os.Exit(1)
+	}
+	if result != nil {
+		printJSON(result)
+	}
+}
 
+func executeCommand(command string, args []string, wac *WhatsAppClient) (interface{}, error) {
 	switch command {
 	case "search-contacts":
 		var query string
 		var limit int
-		fs := flag.NewFlagSet("search-contacts", flag.ExitOnError)
+		fs := flag.NewFlagSet("search-contacts", flag.ContinueOnError)
 		fs.StringVar(&query, "query", "", "Search query")
 		fs.IntVar(&limit, "limit", 50, "Max results")
-		fs.Parse(os.Args[1:])
-		contacts, e := wac.store.SearchContacts(query, limit)
-		if e != nil {
-			err = e
-		} else {
-			result = map[string]interface{}{"contacts": contacts}
+		if err := fs.Parse(args); err != nil {
+			return nil, err
 		}
+		contacts, err := wac.store.SearchContacts(query, limit)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{"contacts": contacts}, nil
 
 	case "list-contacts":
 		var query string
 		var limit int
-		fs := flag.NewFlagSet("list-contacts", flag.ExitOnError)
+		fs := flag.NewFlagSet("list-contacts", flag.ContinueOnError)
 		fs.StringVar(&query, "query", "", "Optional search query")
 		fs.IntVar(&limit, "limit", 50, "Max results")
-		fs.Parse(os.Args[1:])
-		contacts, e := wac.store.SearchContacts(query, limit)
-		if e != nil {
-			err = e
-		} else {
-			result = map[string]interface{}{"contacts": contacts}
+		if err := fs.Parse(args); err != nil {
+			return nil, err
 		}
+		contacts, err := wac.store.SearchContacts(query, limit)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{"contacts": contacts}, nil
 
 	case "add-contact":
 		var name, phone string
-		fs := flag.NewFlagSet("add-contact", flag.ExitOnError)
+		fs := flag.NewFlagSet("add-contact", flag.ContinueOnError)
 		fs.StringVar(&name, "name", "", "Contact name")
 		fs.StringVar(&phone, "phone", "", "Phone number (E.164)")
-		fs.Parse(os.Args[1:])
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
 		if name == "" || phone == "" {
-			fmt.Fprintln(os.Stderr, "Error: --name and --phone are required")
-			os.Exit(1)
+			return nil, fmt.Errorf("--name and --phone are required")
 		}
-		contact, e := wac.AddContact(name, phone)
-		if e != nil {
-			err = e
-		} else {
-			result = map[string]interface{}{"contact": contact}
+		contact, err := wac.AddContact(name, phone)
+		if err != nil {
+			return nil, err
 		}
+		return map[string]interface{}{"contact": contact}, nil
 
 	case "remove-contact":
 		var identifier string
-		fs := flag.NewFlagSet("remove-contact", flag.ExitOnError)
+		fs := flag.NewFlagSet("remove-contact", flag.ContinueOnError)
 		fs.StringVar(&identifier, "identifier", "", "Contact name or phone")
-		fs.Parse(os.Args[1:])
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
 		if identifier == "" {
-			fmt.Fprintln(os.Stderr, "Error: --identifier is required")
-			os.Exit(1)
+			return nil, fmt.Errorf("--identifier is required")
 		}
-		if e := wac.store.DeleteManualContact(identifier); e != nil {
-			err = e
-		} else {
-			result = map[string]interface{}{"success": true, "message": "Contact removed"}
+		if err := wac.store.DeleteManualContact(identifier); err != nil {
+			return nil, err
 		}
+		return map[string]interface{}{"success": true, "message": "Contact removed"}, nil
 
 	case "list-messages":
 		var to, after, before, senderPhone, query, sortBy string
 		var limit, page, contextBefore, contextAfter int
 		var includeContext bool
-		fs := flag.NewFlagSet("list-messages", flag.ExitOnError)
+		fs := flag.NewFlagSet("list-messages", flag.ContinueOnError)
 		fs.StringVar(&to, "to", "", "Chat filter (contact name, phone, or group)")
 		fs.StringVar(&after, "after", "", "ISO-8601 datetime")
 		fs.StringVar(&before, "before", "", "ISO-8601 datetime")
@@ -227,7 +265,9 @@ func runOneShot(command string, logger waLog.Logger) {
 		fs.IntVar(&contextBefore, "context-before", 0, "Messages before")
 		fs.IntVar(&contextAfter, "context-after", 0, "Messages after")
 		_ = sortBy
-		fs.Parse(os.Args[1:])
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
 
 		var afterTime, beforeTime *time.Time
 		if after != "" {
@@ -241,168 +281,163 @@ func runOneShot(command string, logger waLog.Logger) {
 
 		var chatJID string
 		if to != "" {
-			jid, e := wac.ResolveRecipient(to)
-			if e != nil {
-				err = fmt.Errorf("failed to resolve chat: %v", e)
-				break
+			jid, err := wac.ResolveRecipient(to)
+			if err != nil {
+				return nil, fmt.Errorf("failed to resolve chat: %v", err)
 			}
 			chatJID = jid.String()
 		}
 
-		messages, e := wac.store.ListMessages(
+		messages, err := wac.store.ListMessages(
 			afterTime, beforeTime,
 			senderPhone, chatJID, query,
 			limit, page*limit,
 			includeContext,
 			contextBefore, contextAfter,
 		)
-		if e != nil {
-			err = e
-		} else {
-			result = map[string]interface{}{"messages": messages}
+		if err != nil {
+			return nil, err
 		}
+		return map[string]interface{}{"messages": messages}, nil
 
 	case "list-chats":
 		var query, sortBy string
 		var limit, page int
 		var includeLastMessage bool
-		fs := flag.NewFlagSet("list-chats", flag.ExitOnError)
+		fs := flag.NewFlagSet("list-chats", flag.ContinueOnError)
 		fs.StringVar(&query, "query", "", "Search query")
 		fs.IntVar(&limit, "limit", 50, "Max results")
 		fs.IntVar(&page, "page", 0, "Page number")
 		fs.BoolVar(&includeLastMessage, "include-last-message", false, "Include last message")
 		fs.StringVar(&sortBy, "sort-by", "last_active", "Sort by (last_active or name)")
-		fs.Parse(os.Args[1:])
-
-		chats, e := wac.store.ListChats(query, limit, page*limit, includeLastMessage, sortBy)
-		if e != nil {
-			err = e
-		} else {
-			result = map[string]interface{}{"chats": chats}
+		if err := fs.Parse(args); err != nil {
+			return nil, err
 		}
+		chats, err := wac.store.ListChats(query, limit, page*limit, includeLastMessage, sortBy)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{"chats": chats}, nil
 
 	case "send-message":
 		var to, message string
-		fs := flag.NewFlagSet("send-message", flag.ExitOnError)
+		fs := flag.NewFlagSet("send-message", flag.ContinueOnError)
 		fs.StringVar(&to, "to", "", "Recipient (name, phone, or group)")
 		fs.StringVar(&message, "message", "", "Message text")
-		fs.Parse(os.Args[1:])
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
 		if to == "" || message == "" {
-			fmt.Fprintln(os.Stderr, "Error: --to and --message are required")
-			os.Exit(1)
+			return nil, fmt.Errorf("--to and --message are required")
 		}
 		success, msg := wac.SendMessageWithPresence(to, message)
-		result = map[string]interface{}{"success": success, "message": msg}
+		return map[string]interface{}{"success": success, "message": msg}, nil
 
 	case "send-file":
 		var to, filePath, caption string
-		fs := flag.NewFlagSet("send-file", flag.ExitOnError)
+		fs := flag.NewFlagSet("send-file", flag.ContinueOnError)
 		fs.StringVar(&to, "to", "", "Recipient")
 		fs.StringVar(&filePath, "file-path", "", "Path to file")
 		fs.StringVar(&caption, "caption", "", "Optional caption")
-		fs.Parse(os.Args[1:])
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
 		if to == "" || filePath == "" {
-			fmt.Fprintln(os.Stderr, "Error: --to and --file-path are required")
-			os.Exit(1)
+			return nil, fmt.Errorf("--to and --file-path are required")
 		}
 		success, msg := wac.SendFile(to, filePath, caption)
-		result = map[string]interface{}{"success": success, "message": msg}
+		return map[string]interface{}{"success": success, "message": msg}, nil
 
 	case "download-media":
 		var messageID, to, downloadPath string
-		fs := flag.NewFlagSet("download-media", flag.ExitOnError)
+		fs := flag.NewFlagSet("download-media", flag.ContinueOnError)
 		fs.StringVar(&messageID, "message-id", "", "Message ID")
 		fs.StringVar(&to, "to", "", "Chat")
 		fs.StringVar(&downloadPath, "download-path", "", "Save path")
-		fs.Parse(os.Args[1:])
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
 		if messageID == "" {
-			fmt.Fprintln(os.Stderr, "Error: --message-id is required")
-			os.Exit(1)
+			return nil, fmt.Errorf("--message-id is required")
 		}
-		path, e := wac.DownloadMedia(messageID, to, downloadPath)
-		if e != nil {
-			result = map[string]interface{}{"success": false, "message": e.Error()}
-		} else {
-			result = map[string]interface{}{"success": true, "file_path": path, "message": "Media downloaded"}
+		path, err := wac.DownloadMedia(messageID, to, downloadPath)
+		if err != nil {
+			return map[string]interface{}{"success": false, "message": err.Error()}, nil
 		}
+		return map[string]interface{}{"success": true, "file_path": path, "message": "Media downloaded"}, nil
 
 	case "send-reaction":
 		var messageID, emoji, to string
-		fs := flag.NewFlagSet("send-reaction", flag.ExitOnError)
+		fs := flag.NewFlagSet("send-reaction", flag.ContinueOnError)
 		fs.StringVar(&messageID, "message-id", "", "Message ID")
 		fs.StringVar(&emoji, "emoji", "", "Emoji")
 		fs.StringVar(&to, "to", "", "Chat")
-		fs.Parse(os.Args[1:])
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
 		if messageID == "" || emoji == "" || to == "" {
-			fmt.Fprintln(os.Stderr, "Error: --message-id, --emoji, and --to are required")
-			os.Exit(1)
+			return nil, fmt.Errorf("--message-id, --emoji, and --to are required")
 		}
 		success, msg := wac.SendReaction(messageID, emoji, to)
-		result = map[string]interface{}{"success": success, "message": msg}
+		return map[string]interface{}{"success": success, "message": msg}, nil
 
 	case "create-group":
 		var groupName string
-		fs := flag.NewFlagSet("create-group", flag.ExitOnError)
+		fs := flag.NewFlagSet("create-group", flag.ContinueOnError)
 		fs.StringVar(&groupName, "name", "", "Group name")
-		fs.Parse(os.Args[1:])
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
 		participants := fs.Args()
 		if groupName == "" || len(participants) == 0 {
-			fmt.Fprintln(os.Stderr, "Error: --name and participant phone numbers are required")
-			os.Exit(1)
+			return nil, fmt.Errorf("--name and participant phone numbers are required")
 		}
 		success, msg := wac.CreateGroup(groupName, participants)
-		result = map[string]interface{}{"success": success, "group_name": groupName, "message": msg}
+		return map[string]interface{}{"success": success, "group_name": groupName, "message": msg}, nil
 
 	case "leave-group":
 		var group string
-		fs := flag.NewFlagSet("leave-group", flag.ExitOnError)
+		fs := flag.NewFlagSet("leave-group", flag.ContinueOnError)
 		fs.StringVar(&group, "group", "", "Group name")
-		fs.Parse(os.Args[1:])
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
 		if group == "" {
-			fmt.Fprintln(os.Stderr, "Error: --group is required")
-			os.Exit(1)
+			return nil, fmt.Errorf("--group is required")
 		}
 		success, msg := wac.LeaveGroup(group)
-		result = map[string]interface{}{"success": success, "message": msg}
+		return map[string]interface{}{"success": success, "message": msg}, nil
 
 	case "list-groups":
 		var limit, page int
-		fs := flag.NewFlagSet("list-groups", flag.ExitOnError)
+		fs := flag.NewFlagSet("list-groups", flag.ContinueOnError)
 		fs.IntVar(&limit, "limit", 50, "Max results")
 		fs.IntVar(&page, "page", 0, "Page number")
-		fs.Parse(os.Args[1:])
-		groups, e := wac.store.ListGroups(limit, page*limit)
-		if e != nil {
-			err = e
-		} else {
-			result = map[string]interface{}{"groups": groups}
+		if err := fs.Parse(args); err != nil {
+			return nil, err
 		}
+		groups, err := wac.store.ListGroups(limit, page*limit)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{"groups": groups}, nil
 
 	case "update-group-participants":
 		var group, action string
-		fs := flag.NewFlagSet("update-group-participants", flag.ExitOnError)
+		fs := flag.NewFlagSet("update-group-participants", flag.ContinueOnError)
 		fs.StringVar(&group, "group", "", "Group name")
 		fs.StringVar(&action, "action", "", "add or remove")
-		fs.Parse(os.Args[1:])
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
 		participants := fs.Args()
 		if group == "" || action == "" || len(participants) == 0 {
-			fmt.Fprintln(os.Stderr, "Error: --group, --action, and participant phone numbers are required")
-			os.Exit(1)
+			return nil, fmt.Errorf("--group, --action, and participant phone numbers are required")
 		}
 		success, msg := wac.UpdateGroupParticipants(group, action, participants)
-		result = map[string]interface{}{"success": success, "message": msg}
+		return map[string]interface{}{"success": success, "message": msg}, nil
 
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", command)
-		os.Exit(1)
-	}
-
-	if err != nil {
-		printJSON(map[string]interface{}{"error": err.Error()})
-		os.Exit(1)
-	}
-
-	if result != nil {
-		printJSON(result)
+		return nil, fmt.Errorf("unknown command: %s", command)
 	}
 }

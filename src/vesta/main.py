@@ -8,13 +8,13 @@ from rich import print_json
 import vesta.models as vm
 import vesta.core.effects as vfx
 from vesta import logger
-from vesta.core.init import init_skills, init_main_memory, init_skills_symlink
+from vesta.core.init import init_skills, init_main_memory, init_skills_symlink, is_first_start
 from vesta.core.io import input_handler, make_signal_handler
 from vesta.core.loops import message_processor, monitor_loop
-from vesta.core.notifications import maybe_enqueue_whatsapp_greeting
+from vesta.core.notifications import queue_greeting
 
 
-async def run_vesta(config: vm.VestaConfig, *, state: vm.State) -> None:
+async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: bool = False) -> None:
     state.shutdown_event = asyncio.Event()
 
     handler = make_signal_handler(state)
@@ -31,7 +31,7 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State) -> None:
         asyncio.create_task(monitor_loop(message_queue, state=state, config=config)),
     ]
 
-    await maybe_enqueue_whatsapp_greeting(message_queue, config=config)
+    await queue_greeting(message_queue, config=config, first_start=first_start)
 
     try:
         await state.shutdown_event.wait()
@@ -62,6 +62,7 @@ async def async_main() -> None:
     logger.setup(config.logs_dir, log_level=config.log_level)
     logger.init("Vesta starting")
 
+    first_start = is_first_start(config)
     logger.init("Initializing memory...")
     init_main_memory(config)
     logger.init("Initializing skills...")
@@ -70,7 +71,7 @@ async def async_main() -> None:
 
     initial_state = init_state(config=config)
     logger.init("Starting main loop...")
-    await run_vesta(config, state=initial_state)
+    await run_vesta(config, state=initial_state, first_start=first_start)
 
 
 def main() -> None:

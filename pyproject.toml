@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.scripts]
-vesta = "vesta.main:main"
+vesta = "vesta.cli:main"
 
 [dependency-groups]
 dev = [

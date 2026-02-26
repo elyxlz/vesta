@@ -32,13 +32,13 @@ async def load_notifications(*, config: vm.VestaConfig) -> list[vm.Notification]
     return notifications
 
 
-async def maybe_enqueue_whatsapp_greeting(queue: asyncio.Queue, *, config: vm.VestaConfig) -> None:
-    prompt = (config.whatsapp_greeting_prompt or "").strip()
-    if not prompt:
+async def queue_greeting(queue: asyncio.Queue, *, config: vm.VestaConfig, first_start: bool) -> None:
+    prompt = config.first_start_prompt if first_start else config.returning_start_prompt
+    if not prompt or not prompt.strip():
         return
 
-    await queue.put((prompt, False))
-    logger.startup("Queued WhatsApp greeting task")
+    await queue.put((prompt.strip(), False))
+    logger.startup(f"Queued {'first start' if first_start else 'returning'} greeting")
 
 
 async def delete_notification_files(notifications: list[vm.Notification]) -> None:

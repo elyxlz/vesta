@@ -18,10 +18,57 @@ class VestaConfig(pyd_settings.BaseSettings):
     response_timeout: int = Field(default=180, ge=1)
     nightly_memory_hour: int | None = 4
     interrupt_timeout: float = Field(default=5.0, gt=0)
-    whatsapp_greeting_prompt: str | None = (  # None/empty = disabled
-        "Send a short WhatsApp message to the user letting them know Vesta just came online and is ready to help. "
+    first_start_prompt: str | None = (
+        "You've just been born! Introduce yourself to the user and get to know them — their name, time zone, what they do."
+        " First, set up the task and reminder CLIs (install and run `task serve &` and `reminder serve &`) so those are ready."
+        " Then the priority is setting up a communication channel (e.g. WhatsApp, Telegram) so you can reach them outside the terminal."
+        " Then ask what they want from you: do they want email and calendar integration? Recurring reminders? Task management?"
+        " A daily briefing? Help browsing the web? Let them guide the setup."
+        " Once you know what the user wants, update the `returning_start_prompt` in your config file"
+        " so that on future boots you start the right services (e.g. `microsoft serve &`, `~/whatsapp serve &`)."
     )
-    notification_suffix: str = "If this is important or requires the user's attention, consider sending them a WhatsApp message."
+    returning_start_prompt: str | None = (
+        "Send a short message via the user's favourite channel letting them know Vesta just came online and is ready to help."
+    )
+    dreamer_prompt: str = (
+        "Time for memory consolidation. Review your recent interactions and update your memory files."
+        " You may also grep and query {conversations_dir} (raw JSONL transcripts, dated — grep these to recall specific past details)\n\n"
+        "## Files to update\n\n"
+        "- **Memory**: {memory_path}\n"
+        "- **Skills**: {skills_dir} (each skill has a SKILL.md file)\n\n"
+        "## Rules\n\n"
+        "### No Tasks in Memory\n"
+        "Remove any task-specific content. Keep patterns and preferences only.\n"
+        '- REMOVE: "need to book Bologna trip", "reply to John\'s email"\n'
+        '- KEEP: "prefers Trip.com for flights"\n\n'
+        "### Memory is an Index, Not Storage\n"
+        "Don't copy data that lives elsewhere - just reference locations.\n"
+        "- REMOVE: Full document contents, email bodies, meeting transcripts\n"
+        '- KEEP: "Grant research in onedrive/Documents/Lists/grants/"\n\n'
+        "### Absolute Dates Only\n"
+        '- REMOVE: "tomorrow", "next week", "last month"\n'
+        '- KEEP: "December 18, 2025", "started August 2025"\n\n'
+        "### Prune Aggressively\n"
+        'Ask: "Will this be useful in 2 weeks?" If no, delete it.\n'
+        "- REMOVE: booking numbers, exact timestamps, one-time technical fixes\n"
+        "- KEEP: patterns, preferences, relationships, security rules\n\n"
+        "## What to Capture\n\n"
+        "- Contact info (name, relationship, phone, communication style)\n"
+        "- User preferences and behavioral patterns\n"
+        "- Security rules and authentication details\n"
+        "- Social dynamics and what works/doesn't work with different people\n"
+        "- Lessons learned (as concise rules, not detailed incidents)\n"
+        "- Move domain-specific patterns to relevant skill SKILL.md files\n\n"
+        "## Cleanup Checklist\n\n"
+        "- Contradictions (conflicting info)\n"
+        "- Past events still listed as upcoming\n"
+        "- Booking numbers, ticket refs, confirmation codes\n"
+        "- Verbose dated entries that could be patterns\n"
+        "- Content duplicated from files elsewhere"
+    )
+    notification_suffix: str = (
+        "If this is important or requires the user's attention, consider messaging them via the default communication channel."
+    )
     max_thinking_tokens: int | None = 10000
 
     state_dir: pl.Path = pyd.Field(default_factory=lambda: pl.Path.home())
@@ -67,3 +114,7 @@ class VestaConfig(pyd_settings.BaseSettings):
     @property
     def skills_dir(self) -> pl.Path:
         return self.memory_dir / "skills"
+
+    @property
+    def conversations_dir(self) -> pl.Path:
+        return self.memory_dir / "conversations"
