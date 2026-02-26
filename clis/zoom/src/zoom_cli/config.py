@@ -21,6 +21,4 @@ class Config:
         try:
             return json.loads(self.credentials_file.read_text())
         except FileNotFoundError:
-            raise RuntimeError(
-                f"Credentials not found at {self.credentials_file}. Run 'zoom setup' first."
-            )
+            raise RuntimeError(f"Credentials not found at {self.credentials_file}. Run 'zoom setup' first.")

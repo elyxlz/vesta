@@ -31,9 +31,7 @@ def get_token(config: Config) -> str:
     token = data["access_token"]
     expires_at = time.time() + data["expires_in"] - 60
 
-    config.token_cache_file.write_text(
-        json.dumps({"access_token": token, "expires_at": expires_at})
-    )
+    config.token_cache_file.write_text(json.dumps({"access_token": token, "expires_at": expires_at}))
     return token
 
 

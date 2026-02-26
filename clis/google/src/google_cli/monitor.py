@@ -95,7 +95,12 @@ def run(ctx: GoogleContext):
 
                 for msg_ref in messages:
                     try:
-                        msg = gmail.users().messages().get(userId="me", id=msg_ref["id"], format="metadata", metadataHeaders=["Subject", "From", "Date"]).execute()
+                        msg = (
+                            gmail.users()
+                            .messages()
+                            .get(userId="me", id=msg_ref["id"], format="metadata", metadataHeaders=["Subject", "From", "Date"])
+                            .execute()
+                        )
                         headers = msg.get("payload", {}).get("headers", [])
                         sender = _get_header(headers, "From")
                         subject = _get_header(headers, "Subject")
@@ -123,14 +128,18 @@ def run(ctx: GoogleContext):
                 max_threshold = max(config.get_calendar_notify_thresholds())
                 window_end = new_check_time + timedelta(minutes=max_threshold + 60)
 
-                events_result = cal.events().list(
-                    calendarId="primary",
-                    timeMin=last_check_dt.isoformat(),
-                    timeMax=window_end.isoformat(),
-                    singleEvents=True,
-                    orderBy="startTime",
-                    maxResults=50,
-                ).execute()
+                events_result = (
+                    cal.events()
+                    .list(
+                        calendarId="primary",
+                        timeMin=last_check_dt.isoformat(),
+                        timeMax=window_end.isoformat(),
+                        singleEvents=True,
+                        orderBy="startTime",
+                        maxResults=50,
+                    )
+                    .execute()
+                )
 
                 events = events_result.get("items", [])
                 logger.info(f"Found {len(events)} upcoming calendar events")

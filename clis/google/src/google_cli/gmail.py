@@ -76,12 +76,14 @@ def _get_attachments_info(payload: dict) -> list[dict]:
     attachments = []
     for part in payload.get("parts", []):
         if part.get("filename") and part.get("body", {}).get("attachmentId"):
-            attachments.append({
-                "id": part["body"]["attachmentId"],
-                "name": part["filename"],
-                "size": part.get("body", {}).get("size", 0),
-                "mimeType": part.get("mimeType", "application/octet-stream"),
-            })
+            attachments.append(
+                {
+                    "id": part["body"]["attachmentId"],
+                    "name": part["filename"],
+                    "size": part.get("body", {}).get("size", 0),
+                    "mimeType": part.get("mimeType", "application/octet-stream"),
+                }
+            )
         if part.get("parts"):
             attachments.extend(_get_attachments_info(part))
     return attachments
@@ -118,7 +120,14 @@ def list_emails(config: Config, *, label: str = "INBOX", limit: int = 10) -> lis
 
     output = []
     for msg_ref in messages[:limit]:
-        msg = api.retry(lambda mid=msg_ref["id"]: service.users().messages().get(userId="me", id=mid, format="metadata", metadataHeaders=["Subject", "From", "To", "Date"]).execute())
+        msg = api.retry(
+            lambda mid=msg_ref["id"]: (
+                service.users()
+                .messages()
+                .get(userId="me", id=mid, format="metadata", metadataHeaders=["Subject", "From", "To", "Date"])
+                .execute()
+            )
+        )
         output.append(_parse_message_snapshot(msg))
     return output
 
@@ -172,23 +181,41 @@ def get_email(config: Config, *, message_id: str, include_attachments: bool = Tr
     return result
 
 
-def send_email(config: Config, *, to: list[str], subject: str, body: str, cc: list[str] | None = None, attachments: list[str] | None = None) -> dict[str, str]:
+def send_email(
+    config: Config, *, to: list[str], subject: str, body: str, cc: list[str] | None = None, attachments: list[str] | None = None
+) -> dict[str, str]:
     service = api.gmail_service(config)
     raw = _build_mime_message(to, subject, body, cc=cc, attachments=attachments)
     result = api.retry(lambda: service.users().messages().send(userId="me", body={"raw": raw}).execute())
     return {"status": "sent", "id": result.get("id", "")}
 
 
-def create_draft(config: Config, *, to: list[str], subject: str, body: str, cc: list[str] | None = None, attachments: list[str] | None = None) -> dict[str, Any]:
+def create_draft(
+    config: Config, *, to: list[str], subject: str, body: str, cc: list[str] | None = None, attachments: list[str] | None = None
+) -> dict[str, Any]:
     service = api.gmail_service(config)
     raw = _build_mime_message(to, subject, body, cc=cc, attachments=attachments)
     result = api.retry(lambda: service.users().drafts().create(userId="me", body={"message": {"raw": raw}}).execute())
     return {"status": "draft_created", "id": result.get("id", ""), "message_id": result.get("message", {}).get("id", "")}
 
 
-def reply_to_email(config: Config, *, message_id: str, body: str, attachments: list[str] | None = None, reply_all: bool = False) -> dict[str, str]:
+def reply_to_email(
+    config: Config, *, message_id: str, body: str, attachments: list[str] | None = None, reply_all: bool = False
+) -> dict[str, str]:
     service = api.gmail_service(config)
-    original = api.retry(lambda: service.users().messages().get(userId="me", id=message_id, format="metadata", metadataHeaders=["Subject", "From", "To", "Cc", "Message-ID", "References", "In-Reply-To"]).execute())
+    original = api.retry(
+        lambda: (
+            service.users()
+            .messages()
+            .get(
+                userId="me",
+                id=message_id,
+                format="metadata",
+                metadataHeaders=["Subject", "From", "To", "Cc", "Message-ID", "References", "In-Reply-To"],
+            )
+            .execute()
+        )
+    )
     headers = original.get("payload", {}).get("headers", [])
     thread_id = original.get("threadId")
 
@@ -251,12 +278,21 @@ def search_emails(config: Config, *, query: str, limit: int = 10, label: str | N
 
     output = []
     for msg_ref in messages[:limit]:
-        msg = api.retry(lambda mid=msg_ref["id"]: service.users().messages().get(userId="me", id=mid, format="metadata", metadataHeaders=["Subject", "From", "To", "Date"]).execute())
+        msg = api.retry(
+            lambda mid=msg_ref["id"]: (
+                service.users()
+                .messages()
+                .get(userId="me", id=mid, format="metadata", metadataHeaders=["Subject", "From", "To", "Date"])
+                .execute()
+            )
+        )
         output.append(_parse_message_snapshot(msg))
     return output
 
 
-def update_email(config: Config, *, message_id: str, add_labels: list[str] | None = None, remove_labels: list[str] | None = None) -> dict[str, Any]:
+def update_email(
+    config: Config, *, message_id: str, add_labels: list[str] | None = None, remove_labels: list[str] | None = None
+) -> dict[str, Any]:
     if not add_labels and not remove_labels:
         raise ValueError("Must specify at least --add-labels or --remove-labels")
 

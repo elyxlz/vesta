@@ -13,6 +13,7 @@ def _validate_timezone(timezone: str) -> None:
     except (ZoneInfoNotFoundError, KeyError):
         raise ValueError(f"Invalid timezone: '{timezone}'. Use IANA names like 'Europe/London' or 'America/New_York'.")
 
+
 RECURRENCE_MAP = {
     "daily": "DAILY",
     "weekly": "WEEKLY",
@@ -57,16 +58,18 @@ def list_events(
     time_min, time_max = _get_time_range(days_ahead, days_back, user_timezone)
 
     events_result = api.retry(
-        lambda: service.events()
-        .list(
-            calendarId=calendar_id,
-            timeMin=time_min,
-            timeMax=time_max,
-            singleEvents=True,
-            orderBy="startTime",
-            maxResults=250,
+        lambda: (
+            service.events()
+            .list(
+                calendarId=calendar_id,
+                timeMin=time_min,
+                timeMax=time_max,
+                singleEvents=True,
+                orderBy="startTime",
+                maxResults=250,
+            )
+            .execute()
         )
-        .execute()
     )
 
     events = events_result.get("items", [])

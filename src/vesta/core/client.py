@@ -7,11 +7,17 @@ import vesta.utils as vu
 import vesta.core.effects as vfx
 from vesta import logger
 from vesta.hooks import build_hooks
-from vesta.core.dreamer import load_memory
+from vesta.core.init import get_memory_path, load_memory_template
 
 
 def load_system_prompt(config: vm.VestaConfig) -> str:
-    return load_memory(config)
+    memory_path = get_memory_path(config)
+    if memory_path.exists():
+        content = memory_path.read_text()
+        logger.debug(f"Loaded system prompt ({len(content)} chars)")
+        return content
+    logger.debug("Using template for system prompt (file not found)")
+    return load_memory_template("main")
 
 
 async def attempt_interrupt(state: vm.State, *, config: vm.VestaConfig, reason: str) -> bool:

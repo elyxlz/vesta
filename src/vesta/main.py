@@ -48,7 +48,7 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
 
 
 def init_state(*, config: vm.VestaConfig) -> vm.State:
-    return vm.State(last_memory_consolidation=vfx.get_current_time())
+    return vm.State(last_dreamer_run=vfx.get_current_time())
 
 
 async def async_main() -> None:

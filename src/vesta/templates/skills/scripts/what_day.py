@@ -19,10 +19,15 @@ formatted = parsed_date.strftime("%B %d, %Y")
 today = datetime.now()
 today_str = today.strftime("%B %d, %Y (%A)")
 
-print(json.dumps({
-    "date": date,
-    "day_of_week": day_name,
-    "formatted": formatted,
-    "full_description": f"{formatted} is a {day_name}",
-    "today": today_str,
-}, indent=2))
+print(
+    json.dumps(
+        {
+            "date": date,
+            "day_of_week": day_name,
+            "formatted": formatted,
+            "full_description": f"{formatted} is a {day_name}",
+            "today": today_str,
+        },
+        indent=2,
+    )
+)

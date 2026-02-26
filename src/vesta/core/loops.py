@@ -11,7 +11,7 @@ import vesta.utils as vu
 import vesta.core.effects as vfx
 from vesta import logger
 from vesta.core.client import process_message, attempt_interrupt, build_client_options
-from vesta.core.dreamer import build_memory_consolidation_prompt
+from vesta.core.dreamer import build_dreamer_prompt
 from vesta.core.init import load_prompt
 from vesta.core.notifications import load_and_display_new_notifications, delete_notification_files
 
@@ -77,7 +77,8 @@ async def check_proactive_task(queue: asyncio.Queue, *, config: vm.VestaConfig) 
     prompt = load_prompt("proactive_check", config)
     if not prompt:
         return
-    logger.proactive("Running 60-minute check...")
+    prompt = prompt.replace("{proactive_check_interval}", str(config.proactive_check_interval))
+    logger.proactive(f"Running {config.proactive_check_interval}-minute check...")
     await queue.put((prompt, False))
 
 
@@ -110,13 +111,13 @@ async def process_nightly_memory(queue: asyncio.Queue, *, state: vm.State, confi
 
     now = vfx.get_current_time()
     if config.nightly_memory_hour is not None and now.hour == config.nightly_memory_hour:
-        if state.last_memory_consolidation is None or now.date() > state.last_memory_consolidation.date():
-            logger.dreamer("Nightly memory consolidation...")
+        if state.last_dreamer_run is None or now.date() > state.last_dreamer_run.date():
+            logger.dreamer("Nightly dreamer starting...")
             archive_conversation(state, config)
-            prompt = build_memory_consolidation_prompt(config)
+            prompt = build_dreamer_prompt(config)
             await queue.put((prompt, False))
-            state.last_memory_consolidation = now
-            logger.dreamer("Memory consolidation prompt queued")
+            state.last_dreamer_run = now
+            logger.dreamer("Dreamer prompt queued")
 
 
 async def monitor_loop(queue: asyncio.Queue, *, state: vm.State, config: vm.VestaConfig) -> None:

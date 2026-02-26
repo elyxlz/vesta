@@ -235,3 +235,55 @@ async def test_message_processor_restart_preserves_session(tmp_path):
     assert state.session_id == "test-session-123", "session_id should be preserved across restart"
     assert session_count >= 2, f"Expected at least 2 sessions (initial + restart), got {session_count}"
     assert any("restarted" in msg.lower() for msg in processed_messages)
+
+
+@pytest.mark.anyio
+async def test_dreamer_queues_prompt_and_archives(tmp_path):
+    """Dreamer should archive conversation, queue prompt, and update last_dreamer_run."""
+    from vesta.core.loops import process_nightly_memory
+
+    state = vm.State()
+    state.last_dreamer_run = None
+    queue: asyncio.Queue = asyncio.Queue()
+
+    dreamer_hour = 4
+    config = vm.VestaConfig(state_dir=tmp_path, nightly_memory_hour=dreamer_hour)
+    fake_now = dt.datetime(2025, 6, 15, dreamer_hour, 0, 0)
+
+    with (
+        patch("vesta.core.loops.vfx.get_current_time", return_value=fake_now),
+        patch("vesta.core.loops.archive_conversation") as mock_archive,
+        patch("vesta.core.loops.build_dreamer_prompt", return_value="dreamer prompt"),
+    ):
+        await process_nightly_memory(queue, state=state, config=config)
+
+    assert not queue.empty(), "Dreamer prompt should be queued"
+    msg, is_user = await queue.get()
+    assert msg == "dreamer prompt"
+    assert is_user is False
+    assert state.last_dreamer_run == fake_now
+    mock_archive.assert_called_once()
+
+
+@pytest.mark.anyio
+async def test_dreamer_skips_when_already_run_today(tmp_path):
+    """Dreamer should not run twice on the same day."""
+    from vesta.core.loops import process_nightly_memory
+
+    dreamer_hour = 4
+    config = vm.VestaConfig(state_dir=tmp_path, nightly_memory_hour=dreamer_hour)
+    fake_now = dt.datetime(2025, 6, 15, dreamer_hour, 0, 0)
+
+    state = vm.State()
+    state.last_dreamer_run = fake_now
+    queue: asyncio.Queue = asyncio.Queue()
+
+    with (
+        patch("vesta.core.loops.vfx.get_current_time", return_value=fake_now),
+        patch("vesta.core.loops.archive_conversation") as mock_archive,
+        patch("vesta.core.loops.build_dreamer_prompt", return_value="dreamer prompt"),
+    ):
+        await process_nightly_memory(queue, state=state, config=config)
+
+    assert queue.empty(), "Dreamer should not run again on the same day"
+    mock_archive.assert_not_called()

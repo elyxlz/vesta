@@ -122,7 +122,7 @@ def main():
     p_list_events.add_argument("--no-details", action="store_true")
     p_list_events.add_argument("--user-timezone", default=None)
 
-    p_list_cals = cal_sub.add_parser("calendars")
+    cal_sub.add_parser("calendars")
 
     p_get_event = cal_sub.add_parser("get")
     p_get_event.add_argument("--id", required=True, dest="event_id")

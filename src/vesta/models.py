@@ -17,7 +17,7 @@ class State:
     shutdown_count: int = 0
     session_id: str | None = None
     pending_context: str | None = None
-    last_memory_consolidation: dt.datetime | None = None
+    last_dreamer_run: dt.datetime | None = None
 
 
 class Notification(pyd.BaseModel):
