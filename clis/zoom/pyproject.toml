@@ -1,0 +1,26 @@
+[project]
+name = "zoom"
+version = "0.1.0"
+description = "Zoom CLI for meeting management"
+authors = [
+    { name = "elyxlz" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.28.1",
+]
+
+[project.scripts]
+zoom = "zoom_cli.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/zoom_cli"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.0",
+]
