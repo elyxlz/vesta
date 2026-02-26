@@ -5,6 +5,8 @@ import os
 import signal
 import sys
 import threading
+import time
+from datetime import datetime, UTC
 from pathlib import Path
 
 import httpx
@@ -24,6 +26,13 @@ def _remove_pid(config):
         (config.data_dir / "serve.pid").unlink()
     except FileNotFoundError:
         pass
+
+
+def _write_death_notification(config, reason):
+    config.notif_dir.mkdir(exist_ok=True)
+    notif = {"timestamp": datetime.now(UTC).isoformat(), "source": "microsoft", "type": "daemon_died", "reason": reason}
+    filename = f"{int(time.time() * 1e6)}-microsoft-daemon_died.json"
+    (config.notif_dir / filename).write_text(json.dumps(notif))
 
 
 def _require_daemon(config):
@@ -363,9 +372,14 @@ def _run_serve(config: Config):
         calendar_notify_thresholds=config.calendar_notify_thresholds,
     )
 
+    shutdown_reason = "unknown"
+
     def handle_signal(signum, frame):
+        nonlocal shutdown_reason
+        shutdown_reason = signal.Signals(signum).name
         monitor_stop_event.set()
 
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
 
@@ -376,5 +390,6 @@ def _run_serve(config: Config):
     try:
         monitor.run(ctx)
     finally:
+        _write_death_notification(config, shutdown_reason)
         _remove_pid(config)
         http_client.close()

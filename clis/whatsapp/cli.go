@@ -86,6 +86,22 @@ func printJSON(v interface{}) {
 	fmt.Println(string(data))
 }
 
+func writeDeathNotification(notifDir string, sig string) {
+	notif := map[string]string{
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+		"source":    "whatsapp",
+		"type":      "daemon_died",
+		"signal":    sig,
+	}
+	data, err := json.Marshal(notif)
+	if err != nil {
+		return
+	}
+	filename := fmt.Sprintf("%d-whatsapp-daemon_died.json", time.Now().UnixMicro())
+	os.MkdirAll(notifDir, 0755)
+	os.WriteFile(filepath.Join(notifDir, filename), data, 0644)
+}
+
 func readAuthStatus(dataDir string) map[string]string {
 	statusPath := filepath.Join(dataDir, "auth-status.json")
 	data, err := os.ReadFile(statusPath)
@@ -154,11 +170,14 @@ func runServe(logger waLog.Logger) {
 
 	printJSON(map[string]string{"status": "serving"})
 
+	signal.Ignore(syscall.SIGHUP)
+
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	<-sigChan
+	sig := <-sigChan
 
-	fmt.Fprintln(os.Stderr, "Shutting down...")
+	fmt.Fprintf(os.Stderr, "Shutting down (signal: %v)...\n", sig)
+	writeDeathNotification(notifDir, sig.String())
 	if listener != nil {
 		stopSocketServer(listener, sockPath)
 	}

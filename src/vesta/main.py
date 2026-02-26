@@ -18,6 +18,7 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
     state.shutdown_event = asyncio.Event()
 
     handler = make_signal_handler(state)
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)
     signal.signal(signal.SIGINT, handler)
     signal.signal(signal.SIGTERM, handler)
 

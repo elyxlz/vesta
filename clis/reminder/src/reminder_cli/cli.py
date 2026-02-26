@@ -5,6 +5,7 @@ import os
 import signal
 import sys
 import time
+from datetime import datetime, UTC
 from pathlib import Path
 
 from .config import Config
@@ -21,6 +22,13 @@ def _remove_pid(config):
         (config.data_dir / "serve.pid").unlink()
     except FileNotFoundError:
         pass
+
+
+def _write_death_notification(config, reason):
+    config.notif_dir.mkdir(exist_ok=True)
+    notif = {"timestamp": datetime.now(UTC).isoformat(), "source": "reminder", "type": "daemon_died", "reason": reason}
+    filename = f"{int(time.time() * 1e6)}-reminder-daemon_died.json"
+    (config.notif_dir / filename).write_text(json.dumps(notif))
 
 
 def _require_daemon(config):
@@ -155,11 +163,14 @@ def _run_serve(config: Config):
 
     scheduler = _init_scheduler(config)
     stop = False
+    shutdown_reason = "unknown"
 
     def handle_signal(signum, frame):
-        nonlocal stop
+        nonlocal stop, shutdown_reason
+        shutdown_reason = signal.Signals(signum).name
         stop = True
 
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
 
@@ -171,5 +182,6 @@ def _run_serve(config: Config):
         while not stop:
             time.sleep(1)
     finally:
+        _write_death_notification(config, shutdown_reason)
         _remove_pid(config)
         scheduler.shutdown(wait=True)
