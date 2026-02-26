@@ -40,12 +40,16 @@ def cmd_rebuild() -> None:
         sys.exit(1)
     if _ps():
         subprocess.run(["docker", "stop", "-t", "30", CONTAINER], check=True)
-    subprocess.run(["docker", "cp", f"{CONTAINER}:/root/.claude", "/tmp/.claude-vesta"], capture_output=True)
+    r = subprocess.run(["docker", "cp", f"{CONTAINER}:/root/.claude", "/tmp/.claude-vesta"], capture_output=True, text=True)
+    if r.returncode != 0:
+        print(f"Warning: failed to copy auth credentials: {r.stderr.strip()}", file=sys.stderr)
     subprocess.run(["docker", "rm", "-f", CONTAINER], capture_output=True)
     subprocess.run(["docker", "build", "-t", IMAGE, INSTALL_ROOT], check=True)
     subprocess.run(CREATE_ARGS, check=True)
     subprocess.run(["rm", "-rf", "/tmp/.claude-vesta/backups", "/tmp/.claude-vesta/.claude.json"], capture_output=True)
-    subprocess.run(["docker", "cp", "/tmp/.claude-vesta", f"{CONTAINER}:/root/.claude"], capture_output=True)
+    r = subprocess.run(["docker", "cp", "/tmp/.claude-vesta", f"{CONTAINER}:/root/.claude"], capture_output=True, text=True)
+    if r.returncode != 0:
+        print(f"Warning: failed to restore auth credentials: {r.stderr.strip()}", file=sys.stderr)
     subprocess.run(["rm", "-rf", "/tmp/.claude-vesta"], capture_output=True)
     subprocess.run(["docker", "start", CONTAINER], check=True)
     print("Rebuilt. Auth preserved. Attaching (detach: ctrl-q)...")

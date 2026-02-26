@@ -12,6 +12,7 @@ import vesta.core.effects as vfx
 from vesta import logger
 from vesta.core.client import process_message, attempt_interrupt, build_client_options
 from vesta.core.dreamer import build_memory_consolidation_prompt
+from vesta.core.init import load_prompt
 from vesta.core.notifications import load_and_display_new_notifications, delete_notification_files
 
 
@@ -21,7 +22,8 @@ async def process_notification_batch(
     if not notifications:
         return
 
-    prompt = vu.format_notification_batch(notifications, suffix=config.notification_suffix)
+    suffix = load_prompt("notification_suffix", config) or ""
+    prompt = vu.format_notification_batch(notifications, suffix=suffix)
 
     if state.client:
         await attempt_interrupt(state, config=config, reason="Notification interrupt")
@@ -72,8 +74,11 @@ async def message_processor(queue: asyncio.Queue, *, state: vm.State, config: vm
 
 
 async def check_proactive_task(queue: asyncio.Queue, *, config: vm.VestaConfig) -> None:
+    prompt = load_prompt("proactive_check", config)
+    if not prompt:
+        return
     logger.proactive("Running 60-minute check...")
-    await queue.put((config.proactive_check_message, False))
+    await queue.put((prompt, False))
 
 
 def _session_jsonl_path(state: vm.State, config: vm.VestaConfig) -> pl.Path | None:

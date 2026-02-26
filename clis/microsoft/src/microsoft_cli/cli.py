@@ -27,30 +27,35 @@ def build_config(args) -> Config:
 def main():
     parser = argparse.ArgumentParser(prog="microsoft")
     parser.add_argument("--state-dir", type=str)
-    sub = parser.add_subparsers(dest="command", required=True)
+    group = parser.add_subparsers(dest="group", required=True)
 
     # serve
-    sub.add_parser("serve")
+    group.add_parser("serve")
 
-    # Auth commands
-    sub.add_parser("list-accounts")
-    sub.add_parser("authenticate")
-    p_complete = sub.add_parser("complete-auth")
+    # auth
+    auth_parser = group.add_parser("auth")
+    auth_sub = auth_parser.add_subparsers(dest="command", required=True)
+    auth_sub.add_parser("login")
+    p_complete = auth_sub.add_parser("complete")
     p_complete.add_argument("--flow-cache", required=True)
+    auth_sub.add_parser("list")
 
-    # Email commands
-    p_list_emails = sub.add_parser("list-emails")
+    # email
+    email_parser = group.add_parser("email")
+    email_sub = email_parser.add_subparsers(dest="command", required=True)
+
+    p_list_emails = email_sub.add_parser("list")
     p_list_emails.add_argument("--account", required=True)
     p_list_emails.add_argument("--folder", default="inbox")
     p_list_emails.add_argument("--limit", type=int, default=10)
 
-    p_get_email = sub.add_parser("get-email")
+    p_get_email = email_sub.add_parser("get")
     p_get_email.add_argument("--account", required=True)
     p_get_email.add_argument("--id", required=True, dest="email_id")
     p_get_email.add_argument("--no-attachments", action="store_true")
     p_get_email.add_argument("--save-to", default=None)
 
-    p_send = sub.add_parser("send-email")
+    p_send = email_sub.add_parser("send")
     p_send.add_argument("--account", required=True)
     p_send.add_argument("--to", required=True, nargs="+")
     p_send.add_argument("--subject", required=True)
@@ -58,7 +63,7 @@ def main():
     p_send.add_argument("--cc", nargs="+", default=None)
     p_send.add_argument("--attachments", nargs="+", default=None)
 
-    p_draft = sub.add_parser("create-draft")
+    p_draft = email_sub.add_parser("draft")
     p_draft.add_argument("--account", required=True)
     p_draft.add_argument("--to", required=True, nargs="+")
     p_draft.add_argument("--subject", required=True)
@@ -66,33 +71,36 @@ def main():
     p_draft.add_argument("--cc", nargs="+", default=None)
     p_draft.add_argument("--attachments", nargs="+", default=None)
 
-    p_reply = sub.add_parser("reply-to-email")
+    p_reply = email_sub.add_parser("reply")
     p_reply.add_argument("--account", required=True)
     p_reply.add_argument("--id", required=True, dest="email_id")
     p_reply.add_argument("--body", required=True)
     p_reply.add_argument("--attachments", nargs="+", default=None)
     p_reply.add_argument("--reply-all", action="store_true")
 
-    p_attachment = sub.add_parser("get-attachment")
+    p_attachment = email_sub.add_parser("attachment")
     p_attachment.add_argument("--account", required=True)
     p_attachment.add_argument("--email-id", required=True)
     p_attachment.add_argument("--attachment-id", required=True)
     p_attachment.add_argument("--save-path", required=True)
 
-    p_search_emails = sub.add_parser("search-emails")
-    p_search_emails.add_argument("--account", required=True)
-    p_search_emails.add_argument("--query", required=True)
-    p_search_emails.add_argument("--limit", type=int, default=10)
-    p_search_emails.add_argument("--folder", default=None)
+    p_search = email_sub.add_parser("search")
+    p_search.add_argument("--account", required=True)
+    p_search.add_argument("--query", required=True)
+    p_search.add_argument("--limit", type=int, default=10)
+    p_search.add_argument("--folder", default=None)
 
-    p_update_email = sub.add_parser("update-email")
-    p_update_email.add_argument("--account", required=True)
-    p_update_email.add_argument("--id", required=True, dest="email_id")
-    p_update_email.add_argument("--is-read", type=lambda x: x.lower() == "true", default=None)
-    p_update_email.add_argument("--categories", nargs="+", default=None)
+    p_update = email_sub.add_parser("update")
+    p_update.add_argument("--account", required=True)
+    p_update.add_argument("--id", required=True, dest="email_id")
+    p_update.add_argument("--is-read", type=lambda x: x.lower() == "true", default=None)
+    p_update.add_argument("--categories", nargs="+", default=None)
 
-    # Calendar commands
-    p_list_events = sub.add_parser("list-events")
+    # calendar
+    cal_parser = group.add_parser("calendar")
+    cal_sub = cal_parser.add_subparsers(dest="command", required=True)
+
+    p_list_events = cal_sub.add_parser("list")
     p_list_events.add_argument("--account", required=True)
     p_list_events.add_argument("--calendar-name", default=None)
     p_list_events.add_argument("--days-ahead", type=int, default=7)
@@ -100,14 +108,14 @@ def main():
     p_list_events.add_argument("--no-details", action="store_true")
     p_list_events.add_argument("--user-timezone", default=None)
 
-    p_list_cals = sub.add_parser("list-calendars")
+    p_list_cals = cal_sub.add_parser("calendars")
     p_list_cals.add_argument("--account", required=True)
 
-    p_get_event = sub.add_parser("get-event")
+    p_get_event = cal_sub.add_parser("get")
     p_get_event.add_argument("--account", required=True)
     p_get_event.add_argument("--id", required=True, dest="event_id")
 
-    p_create_event = sub.add_parser("create-event")
+    p_create_event = cal_sub.add_parser("create")
     p_create_event.add_argument("--account", required=True)
     p_create_event.add_argument("--subject", required=True)
     p_create_event.add_argument("--start", required=True)
@@ -121,7 +129,7 @@ def main():
     p_create_event.add_argument("--recurrence", choices=["daily", "weekly", "monthly", "yearly"], default=None)
     p_create_event.add_argument("--recurrence-end-date", default=None)
 
-    p_update_event = sub.add_parser("update-event")
+    p_update_event = cal_sub.add_parser("update")
     p_update_event.add_argument("--account", required=True)
     p_update_event.add_argument("--id", required=True, dest="event_id")
     p_update_event.add_argument("--subject", default=None)
@@ -131,12 +139,12 @@ def main():
     p_update_event.add_argument("--body", default=None)
     p_update_event.add_argument("--timezone", default=None)
 
-    p_delete_event = sub.add_parser("delete-event")
+    p_delete_event = cal_sub.add_parser("delete")
     p_delete_event.add_argument("--account", required=True)
     p_delete_event.add_argument("--id", required=True, dest="event_id")
     p_delete_event.add_argument("--no-cancellation", action="store_true")
 
-    p_respond = sub.add_parser("respond-event")
+    p_respond = cal_sub.add_parser("respond")
     p_respond.add_argument("--account", required=True)
     p_respond.add_argument("--id", required=True, dest="event_id")
     p_respond.add_argument("--response", choices=["accept", "decline", "tentativelyAccept"], default="accept")
@@ -150,33 +158,36 @@ def main():
     config.notif_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        if args.command == "serve":
+        if args.group == "serve":
             _run_serve(config)
-        elif args.command in ("list-accounts", "authenticate", "complete-auth"):
+        elif args.group == "auth":
             result = _dispatch_auth(args, config)
             print(json.dumps(result, indent=2))
-        else:
+        elif args.group in ("email", "calendar"):
             with httpx.Client(timeout=30.0, follow_redirects=True) as client:
-                result = _dispatch(args, config, client)
+                if args.group == "email":
+                    result = _dispatch_email(args, config, client)
+                else:
+                    result = _dispatch_calendar(args, config, client)
                 print(json.dumps(result, indent=2))
-    except (ValueError, Exception) as e:
+    except Exception as e:
         print(json.dumps({"error": str(e)}), file=sys.stderr)
         sys.exit(1)
 
 
 def _dispatch_auth(args, config):
-    if args.command == "list-accounts":
+    if args.command == "list":
         return auth_commands.list_accounts(config)
-    elif args.command == "authenticate":
+    elif args.command == "login":
         return auth_commands.authenticate_account(config)
-    elif args.command == "complete-auth":
+    elif args.command == "complete":
         return auth_commands.complete_authentication(config, flow_cache=args.flow_cache)
 
 
-def _dispatch(args, config, client):
-    if args.command == "list-emails":
+def _dispatch_email(args, config, client):
+    if args.command == "list":
         return email.list_emails(config, client, account_email=args.account, folder=args.folder, limit=args.limit)
-    elif args.command == "get-email":
+    elif args.command == "get":
         return email.get_email(
             config,
             client,
@@ -185,7 +196,7 @@ def _dispatch(args, config, client):
             include_attachments=not args.no_attachments,
             save_to_file=args.save_to,
         )
-    elif args.command == "send-email":
+    elif args.command == "send":
         return email.send_email(
             config,
             client,
@@ -196,7 +207,7 @@ def _dispatch(args, config, client):
             cc=args.cc,
             attachments=args.attachments,
         )
-    elif args.command == "create-draft":
+    elif args.command == "draft":
         return email.create_email_draft(
             config,
             client,
@@ -207,7 +218,7 @@ def _dispatch(args, config, client):
             cc=args.cc,
             attachments=args.attachments,
         )
-    elif args.command == "reply-to-email":
+    elif args.command == "reply":
         return email.reply_to_email(
             config,
             client,
@@ -217,17 +228,20 @@ def _dispatch(args, config, client):
             attachments=args.attachments,
             reply_all=args.reply_all,
         )
-    elif args.command == "get-attachment":
+    elif args.command == "attachment":
         return email.get_attachment(
             config, client, account_email=args.account, email_id=args.email_id, attachment_id=args.attachment_id, save_path=args.save_path
         )
-    elif args.command == "search-emails":
+    elif args.command == "search":
         return email.search_emails(config, client, account_email=args.account, query=args.query, limit=args.limit, folder=args.folder)
-    elif args.command == "update-email":
+    elif args.command == "update":
         return email.update_email(
             config, client, account_email=args.account, email_id=args.email_id, is_read=args.is_read, categories=args.categories
         )
-    elif args.command == "list-events":
+
+
+def _dispatch_calendar(args, config, client):
+    if args.command == "list":
         return calendar.list_events(
             config,
             client,
@@ -238,11 +252,11 @@ def _dispatch(args, config, client):
             include_details=not args.no_details,
             user_timezone=args.user_timezone,
         )
-    elif args.command == "list-calendars":
+    elif args.command == "calendars":
         return calendar.list_calendars(config, client, account_email=args.account)
-    elif args.command == "get-event":
+    elif args.command == "get":
         return calendar.get_event(config, client, account_email=args.account, event_id=args.event_id)
-    elif args.command == "create-event":
+    elif args.command == "create":
         return calendar.create_event(
             config,
             client,
@@ -259,7 +273,7 @@ def _dispatch(args, config, client):
             recurrence=args.recurrence,
             recurrence_end_date=args.recurrence_end_date,
         )
-    elif args.command == "update-event":
+    elif args.command == "update":
         return calendar.update_event(
             config,
             client,
@@ -272,11 +286,11 @@ def _dispatch(args, config, client):
             body=args.body,
             timezone=args.timezone,
         )
-    elif args.command == "delete-event":
+    elif args.command == "delete":
         return calendar.delete_event(
             config, client, account_email=args.account, event_id=args.event_id, send_cancellation=not args.no_cancellation
         )
-    elif args.command == "respond-event":
+    elif args.command == "respond":
         return calendar.respond_event(
             config, client, account_email=args.account, event_id=args.event_id, response=args.response, message=args.message
         )

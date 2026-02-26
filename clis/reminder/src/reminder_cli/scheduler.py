@@ -1,6 +1,6 @@
 import json
 import time
-from datetime import datetime
+from datetime import datetime, UTC
 from pathlib import Path
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -22,7 +22,7 @@ def write_notification(notif_dir: Path, reminder_id: str, message: str, *, data:
     notif_dir.mkdir(exist_ok=True)
 
     notif = {
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "source": "scheduler",
         "type": "reminder",
         "message": message,

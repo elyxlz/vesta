@@ -41,4 +41,7 @@ def init_db(data_dir: Path):
             conn.commit()
             logger.info("Migrated 'fired' column to 'completed'")
 
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_reminders_completed ON reminders(completed)")
+        conn.commit()
+
         conn.execute("DROP TABLE IF EXISTS apscheduler_jobs")

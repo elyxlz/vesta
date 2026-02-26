@@ -1,0 +1,28 @@
+[project]
+name = "google"
+version = "0.1.0"
+description = "Google CLI for Gmail and Google Calendar"
+authors = [
+    { name = "elyx", email = "elio@pascarelli.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "google-api-python-client>=2.0",
+    "google-auth-httplib2>=0.2",
+    "google-auth-oauthlib>=1.0",
+]
+
+[project.scripts]
+google = "google_cli.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/google_cli"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.0",
+]

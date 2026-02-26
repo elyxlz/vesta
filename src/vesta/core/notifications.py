@@ -8,6 +8,7 @@ import pydantic
 import vesta.core.effects as vfx
 import vesta.models as vm
 from vesta import logger
+from vesta.core.init import load_prompt
 
 
 def _load_notification_files(directory: pl.Path) -> list[tuple[pl.Path, str]]:
@@ -33,7 +34,8 @@ async def load_notifications(*, config: vm.VestaConfig) -> list[vm.Notification]
 
 
 async def queue_greeting(queue: asyncio.Queue, *, config: vm.VestaConfig, first_start: bool) -> None:
-    prompt = config.first_start_prompt if first_start else config.returning_start_prompt
+    name = "first_start" if first_start else "returning_start"
+    prompt = load_prompt(name, config)
     if not prompt or not prompt.strip():
         return
 

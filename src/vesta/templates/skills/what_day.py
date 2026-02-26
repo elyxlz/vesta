@@ -1,5 +1,9 @@
 """What Day skill template."""
 
+from pathlib import Path
+
+_SCRIPTS_DIR = Path(__file__).parent / "scripts"
+
 SKILL_MD = """\
 ---
 name: what-day
@@ -12,17 +16,10 @@ description: This skill should be used when working with ANY date to determine w
 
 CRITICAL: Use this skill when working with ANY date to avoid mistakes about which day of the week it falls on. This prevents scheduling errors and date-related planning mistakes.
 
-## Setup
-
-Install the CLI tool (if not already installed):
-```bash
-uv tool install {install_root}/clis/what-day
-```
-
 ## How to Determine Day of Week
 
 ```bash
-what-day check 2025-11-14
+uv run memory/skills/what-day/scripts/what_day.py 2025-11-14
 ```
 
 Output:
@@ -59,4 +56,6 @@ Output:
 [Preferred date formats, timezone considerations]
 """
 
-SCRIPTS: dict[str, str] = {}
+SCRIPTS = {
+    "what_day.py": (_SCRIPTS_DIR / "what_day.py").read_text(),
+}

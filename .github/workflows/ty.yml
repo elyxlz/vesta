@@ -22,7 +22,7 @@ jobs:
       - name: Install dependencies
         run: |
           uv sync
-          uv pip install -e mcps/microsoft-mcp -e mcps/reminder-mcp -e mcps/task-mcp -e mcps/what-day-mcp
+          uv pip install -e clis/microsoft -e clis/reminder -e clis/todo
 
       - name: Run ty
         run: uv run ty check

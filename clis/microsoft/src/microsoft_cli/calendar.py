@@ -2,13 +2,20 @@
 
 import datetime as dt
 from typing import Any
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 
 from . import graph, auth
 from .config import Config
 from .settings import MicrosoftSettings
+
+
+def _validate_timezone(timezone: str) -> None:
+    try:
+        ZoneInfo(timezone)
+    except (ZoneInfoNotFoundError, KeyError):
+        raise ValueError(f"Invalid timezone: '{timezone}'. Use IANA names like 'Europe/London' or 'America/New_York'.")
 
 
 def _get_settings() -> MicrosoftSettings:
@@ -179,6 +186,7 @@ def create_event(
     recurrence: str | None = None,
     recurrence_end_date: str | None = None,
 ) -> dict[str, Any]:
+    _validate_timezone(timezone)
     settings = _get_settings()
     account_id = auth.get_account_id_by_email(account_email, config.cache_file, settings=settings)
 
@@ -274,6 +282,8 @@ def update_event(
 ) -> dict[str, Any]:
     if (start is not None or end is not None) and timezone is None:
         raise ValueError("timezone is required when updating start or end")
+    if timezone is not None:
+        _validate_timezone(timezone)
 
     settings = _get_settings()
     account_id = auth.get_account_id_by_email(account_email, config.cache_file, settings=settings)

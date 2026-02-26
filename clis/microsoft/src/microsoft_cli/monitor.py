@@ -88,8 +88,8 @@ def run(ctx: MicrosoftContext):
                 last_check_dt = datetime.fromisoformat(last_check_str.replace("Z", "+00:00"))
                 gap_seconds = (datetime.now(UTC) - last_check_dt).total_seconds()
 
-                # If gap > 120s (normal is 60s), we were offline - use old timestamp to catch up
-                if gap_seconds > 120:
+                # If gap > 90s (normal is 45s), we were offline - use old timestamp to catch up
+                if gap_seconds > 90:
                     logger.info(f"Detected offline period of {gap_seconds:.0f}s, catching up from {last_check_str}")
                     last_check = last_check_str
                     catching_up = True
@@ -208,17 +208,6 @@ def run(ctx: MicrosoftContext):
                             label = _format_threshold_label(threshold_mins)
                             logger.info(f"Writing {label} reminder for calendar event: {subject}")
 
-                            if mins_until < -5:
-                                pass
-                            elif mins_until < 0:
-                                pass
-                            elif mins_until == 0:
-                                pass
-                            elif threshold_mins <= 60:
-                                pass
-                            else:
-                                pass
-
                             notifications.write_notification(
                                 ctx.notif_dir,
                                 "calendar",
@@ -233,13 +222,15 @@ def run(ctx: MicrosoftContext):
                 except Exception as e:
                     logger.error(f"Error fetching calendar for {acc.username}: {e}")
 
-            ctx.monitor_state_file.write_text(new_check_time.isoformat())
-            logger.info("Completed check cycle, sleeping for 60 seconds")
-            if ctx.monitor_stop_event.wait(60):
+            tmp = ctx.monitor_state_file.with_suffix(".tmp")
+            tmp.write_text(new_check_time.isoformat())
+            tmp.rename(ctx.monitor_state_file)
+            logger.info("Completed check cycle, sleeping for 45 seconds")
+            if ctx.monitor_stop_event.wait(45):
                 break
         except Exception as e:
             logger.error(f"Error in monitor loop: {e}", exc_info=True)
-            if ctx.monitor_stop_event.wait(60):
+            if ctx.monitor_stop_event.wait(45):
                 break
 
     logger.info("Monitor thread stopped")

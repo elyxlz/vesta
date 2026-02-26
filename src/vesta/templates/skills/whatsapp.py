@@ -13,18 +13,27 @@ description: This skill should be used when the user asks about "WhatsApp", "mes
 ~/whatsapp send "Mom" "On my way!"
 ~/whatsapp messages "Mom"
 ~/whatsapp messages "Mom" --limit 20 --after "2025-11-01T00:00:00Z"
+~/whatsapp messages --query "dinner" --limit 10
 ~/whatsapp chats
 ~/whatsapp contacts
 ~/whatsapp groups
 ~/whatsapp file "Mom" /path/to/photo.jpg --caption "Check this out"
+~/whatsapp backfill "Mom" --count 50
 ```
+
+Note: `--query` on `messages` uses full-text search (FTS5) for fast results.
 
 ## Other Commands
 ```bash
-~/whatsapp messages --query "dinner" --limit 10
+~/whatsapp file "Mom" /path/to/report.pdf --display-name "Q4 Report.pdf"
+~/whatsapp contacts --query "John" --limit 20
+~/whatsapp messages "Mom" --before "2025-12-01T00:00:00Z" --sender-phone "+44123456789" --page 2
+~/whatsapp chats --query "family" --limit 20 --include-last-message --sort-by name
+~/whatsapp groups --limit 20 --page 2
+~/whatsapp rename "Old Group Name" "New Group Name"
 ~/whatsapp add-contact "John Smith" "+44123456789"
 ~/whatsapp remove-contact "John Smith"
-~/whatsapp download-media --message-id <id> --to "Mom"
+~/whatsapp download-media --message-id <id> --to "Mom" --download-path /tmp/media
 ~/whatsapp react "Mom" <message_id> "👍"
 ~/whatsapp create-group --name "Trip" +44111111111 +44222222222
 ~/whatsapp leave-group "Old Group"
@@ -34,7 +43,7 @@ description: This skill should be used when the user asks about "WhatsApp", "mes
 ## Setup (first time)
 ```bash
 apt-get install -y golang
-cd {install_root}/clis/whatsapp && go build -o ~/whatsapp .
+cd {install_root}/clis/whatsapp && go build -tags sqlite_fts5 -o ~/whatsapp .
 ```
 
 ## Authentication

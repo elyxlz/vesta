@@ -117,7 +117,7 @@ def test_python_clis_exist():
     config = vm.VestaConfig()
     clis_dir = config.install_root / "clis"
 
-    python_clis = ["microsoft", "reminder", "task"]
+    python_clis = ["microsoft", "reminder", "todo"]
     for cli_name in python_clis:
         cli_dir = clis_dir / cli_name
         assert cli_dir.exists(), f"CLI directory does not exist: {cli_dir}"

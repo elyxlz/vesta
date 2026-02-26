@@ -14,7 +14,7 @@ reminder set "Call the dentist" --in-minutes 30
 reminder set "Submit report" --in-hours 2
 reminder set "Meeting" --scheduled-datetime "2025-11-15T10:00:00" --tz "Europe/London"
 reminder set "Take meds" --in-hours 1 --recurring daily
-reminder list
+reminder list --limit 20
 reminder cancel <id>
 reminder update <id> --message "Updated"
 ```

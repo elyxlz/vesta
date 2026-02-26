@@ -1,4 +1,4 @@
-from datetime import datetime as dt, timedelta, UTC
+from datetime import datetime, timedelta, UTC
 from contextlib import closing
 from typing import TypedDict
 import json
@@ -29,24 +29,27 @@ class TriggerData(TypedDict, total=False):
     hours: int
 
 
-def _now_utc() -> dt:
-    return dt.now(UTC)
+def _now_utc() -> datetime:
+    return datetime.now(UTC)
 
 
-def _parse_datetime(dt_str: str) -> dt:
-    parsed = dt.fromisoformat(dt_str.replace("Z", "+00:00"))
+def _parse_datetime(s: str) -> datetime:
+    parsed = datetime.fromisoformat(s.replace("Z", "+00:00"))
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
-def _to_utc(datetime_str: str, timezone_str: str) -> dt:
-    from zoneinfo import ZoneInfo
+def _to_utc(datetime_str: str, timezone_str: str) -> datetime:
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-    naive_dt = dt.fromisoformat(datetime_str.replace("Z", "+00:00"))
-    if naive_dt.tzinfo is not None:
-        return naive_dt.astimezone(UTC)
-    local_tz = ZoneInfo(timezone_str)
-    local_dt = naive_dt.replace(tzinfo=local_tz)
-    return local_dt.astimezone(UTC)
+    try:
+        local_tz = ZoneInfo(timezone_str)
+    except (ZoneInfoNotFoundError, KeyError):
+        raise ValueError(f"Invalid timezone: '{timezone_str}'. Use IANA names like 'Europe/London' or 'America/New_York'.")
+
+    naive = datetime.fromisoformat(datetime_str.replace("Z", "+00:00"))
+    if naive.tzinfo is not None:
+        return naive.astimezone(UTC)
+    return naive.replace(tzinfo=local_tz).astimezone(UTC)
 
 
 def send_reminder_job(reminder_id: str, *, message: str, data_dir, notif_dir):

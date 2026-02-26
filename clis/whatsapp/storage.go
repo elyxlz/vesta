@@ -70,17 +70,85 @@ func NewMessageStore(dataDir string) (*MessageStore, error) {
 		CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_jid);
 		CREATE INDEX IF NOT EXISTS idx_contacts_phone ON contacts(phone_number);
 		CREATE INDEX IF NOT EXISTS idx_contacts_name ON contacts(name);
+
+		CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+			content, chat_name, sender,
+			content='messages', content_rowid='rowid'
+		);
+
+		CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
+			INSERT INTO messages_fts(rowid, content, chat_name, sender)
+			VALUES (new.rowid, new.content,
+				(SELECT name FROM chats WHERE jid = new.chat_jid),
+				new.sender);
+		END;
+
+		CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
+			INSERT INTO messages_fts(messages_fts, rowid, content, chat_name, sender)
+			VALUES('delete', old.rowid, old.content,
+				(SELECT name FROM chats WHERE jid = old.chat_jid),
+				old.sender);
+		END;
 	`)
 	if err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to create tables: %v", err)
 	}
 
-	return &MessageStore{db: db}, nil
+	ms := &MessageStore{db: db}
+	if err := ms.rebuildFTS(); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return ms, nil
 }
 
 func (ms *MessageStore) Close() error {
 	return ms.db.Close()
+}
+
+func (ms *MessageStore) rebuildFTS() error {
+	var count int
+	if err := ms.db.QueryRow("SELECT COUNT(*) FROM messages_fts").Scan(&count); err != nil {
+		return fmt.Errorf("failed to check FTS index: %v", err)
+	}
+	if count > 0 {
+		return nil
+	}
+	var msgCount int
+	if err := ms.db.QueryRow("SELECT COUNT(*) FROM messages").Scan(&msgCount); err != nil {
+		return fmt.Errorf("failed to count messages: %v", err)
+	}
+	if msgCount == 0 {
+		return nil
+	}
+	_, err := ms.db.Exec(`
+		INSERT INTO messages_fts(rowid, content, chat_name, sender)
+		SELECT m.rowid, m.content,
+			(SELECT name FROM chats WHERE jid = m.chat_jid),
+			m.sender
+		FROM messages m
+		WHERE m.content IS NOT NULL AND m.content != ''
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to rebuild FTS index: %v", err)
+	}
+	return nil
+}
+
+func (ms *MessageStore) GetOldestMessage(chatJID string) (string, string, bool, time.Time, error) {
+	var id, sender string
+	var isFromMe bool
+	var ts time.Time
+	err := ms.db.QueryRow(`
+		SELECT id, sender, is_from_me, timestamp
+		FROM messages WHERE chat_jid = ?
+		ORDER BY timestamp ASC LIMIT 1
+	`, chatJID).Scan(&id, &sender, &isFromMe, &ts)
+	if err != nil {
+		return "", "", false, time.Time{}, err
+	}
+	return id, sender, isFromMe, ts, nil
 }
 
 func (ms *MessageStore) StoreChat(jid, name string, lastMessageTime time.Time) error {
@@ -296,7 +364,11 @@ func (ms *MessageStore) DeleteManualContact(identifier string) error {
 	if err != nil {
 		return err
 	}
-	if rows, _ := result.RowsAffected(); rows > 0 {
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check delete result: %v", err)
+	}
+	if rows > 0 {
 		return nil
 	}
 
@@ -308,7 +380,11 @@ func (ms *MessageStore) DeleteManualContact(identifier string) error {
 		if err != nil {
 			return err
 		}
-		if rows, _ := result.RowsAffected(); rows > 0 {
+		rows, err = result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("failed to check delete result: %v", err)
+		}
+		if rows > 0 {
 			return nil
 		}
 	}
@@ -357,11 +433,64 @@ func (ms *MessageStore) ListMessages(
 	after, before *time.Time,
 	senderPhone, chatJID, query string,
 	limit, offset int,
-	includeContext bool,
-	contextBefore, contextAfter int,
 ) ([]Message, error) {
-	queryBuilder := strings.Builder{}
-	queryBuilder.WriteString(`
+	if query != "" {
+		messages, err := ms.listMessagesFTS(after, before, senderPhone, chatJID, query, limit, offset)
+		if err == nil {
+			return messages, nil
+		}
+	}
+
+	return ms.listMessagesLike(after, before, senderPhone, chatJID, query, limit, offset)
+}
+
+func (ms *MessageStore) listMessagesFTS(
+	after, before *time.Time,
+	senderPhone, chatJID, query string,
+	limit, offset int,
+) ([]Message, error) {
+	qb := strings.Builder{}
+	qb.WriteString(`
+		SELECT
+			m.id, m.chat_jid, c.name, m.sender, m.content,
+			m.timestamp, m.is_from_me, m.is_forwarded, m.media_type, m.filename
+		FROM messages m
+		JOIN chats c ON m.chat_jid = c.jid
+		JOIN messages_fts ON messages_fts.rowid = m.rowid
+		WHERE messages_fts MATCH ?
+	`)
+	args := []interface{}{query}
+
+	if after != nil {
+		qb.WriteString(" AND m.timestamp >= ?")
+		args = append(args, *after)
+	}
+	if before != nil {
+		qb.WriteString(" AND m.timestamp <= ?")
+		args = append(args, *before)
+	}
+	if senderPhone != "" {
+		qb.WriteString(" AND m.sender LIKE ?")
+		args = append(args, "%"+senderPhone+"%")
+	}
+	if chatJID != "" {
+		qb.WriteString(" AND m.chat_jid = ?")
+		args = append(args, chatJID)
+	}
+
+	qb.WriteString(" ORDER BY m.timestamp DESC LIMIT ? OFFSET ?")
+	args = append(args, limit, offset)
+
+	return ms.scanMessages(ms.db.Query(qb.String(), args...))
+}
+
+func (ms *MessageStore) listMessagesLike(
+	after, before *time.Time,
+	senderPhone, chatJID, query string,
+	limit, offset int,
+) ([]Message, error) {
+	qb := strings.Builder{}
+	qb.WriteString(`
 		SELECT
 			m.id, m.chat_jid, c.name, m.sender, m.content,
 			m.timestamp, m.is_from_me, m.is_forwarded, m.media_type, m.filename
@@ -369,35 +498,36 @@ func (ms *MessageStore) ListMessages(
 		JOIN chats c ON m.chat_jid = c.jid
 		WHERE 1=1
 	`)
-
 	args := []interface{}{}
 
 	if after != nil {
-		queryBuilder.WriteString(" AND m.timestamp >= ?")
+		qb.WriteString(" AND m.timestamp >= ?")
 		args = append(args, *after)
 	}
 	if before != nil {
-		queryBuilder.WriteString(" AND m.timestamp <= ?")
+		qb.WriteString(" AND m.timestamp <= ?")
 		args = append(args, *before)
 	}
 	if senderPhone != "" {
-		queryBuilder.WriteString(" AND m.sender LIKE ?")
+		qb.WriteString(" AND m.sender LIKE ?")
 		args = append(args, "%"+senderPhone+"%")
 	}
 	if chatJID != "" {
-		queryBuilder.WriteString(" AND m.chat_jid = ?")
+		qb.WriteString(" AND m.chat_jid = ?")
 		args = append(args, chatJID)
 	}
 	if query != "" {
-		queryBuilder.WriteString(" AND m.content LIKE ?")
+		qb.WriteString(" AND m.content LIKE ?")
 		args = append(args, "%"+query+"%")
 	}
 
-	queryBuilder.WriteString(" ORDER BY m.timestamp DESC")
-	queryBuilder.WriteString(" LIMIT ? OFFSET ?")
+	qb.WriteString(" ORDER BY m.timestamp DESC LIMIT ? OFFSET ?")
 	args = append(args, limit, offset)
 
-	rows, err := ms.db.Query(queryBuilder.String(), args...)
+	return ms.scanMessages(ms.db.Query(qb.String(), args...))
+}
+
+func (ms *MessageStore) scanMessages(rows *sql.Rows, err error) ([]Message, error) {
 	if err != nil {
 		return nil, err
 	}
@@ -418,7 +548,6 @@ func (ms *MessageStore) ListMessages(
 		m.Filename = filename.String
 		messages = append(messages, m)
 	}
-
 	return messages, nil
 }
 

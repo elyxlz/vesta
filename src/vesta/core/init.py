@@ -3,17 +3,16 @@ import pathlib as pl
 import vesta.models as vm
 from vesta import logger
 from vesta.templates.main import MEMORY_TEMPLATE as MAIN_MEMORY_TEMPLATE
+from vesta.templates.prompts import ALL as PROMPT_TEMPLATES
 from vesta.templates.skills import (
     browser,
-    calendar,
-    email,
-    gmail,
-    google_calendar,
+    google as google_skill,
+    keeper,
+    microsoft,
     onedrive,
     reminders,
     report_writer,
-    tasks,
-    telegram,
+    todos,
     what_day,
     whatsapp,
 )
@@ -33,18 +32,16 @@ def load_memory_template(name: str) -> str:
 
 def get_skill_templates() -> dict[str, SkillTemplate]:
     return {
-        "email": {"skill_md": email.SKILL_MD, "scripts": email.SCRIPTS},
-        "calendar": {"skill_md": calendar.SKILL_MD, "scripts": calendar.SCRIPTS},
+        "microsoft": {"skill_md": microsoft.SKILL_MD, "scripts": microsoft.SCRIPTS},
+        "google": {"skill_md": google_skill.SKILL_MD, "scripts": google_skill.SCRIPTS},
         "browser": {"skill_md": browser.SKILL_MD, "scripts": browser.SCRIPTS},
         "report-writer": {"skill_md": report_writer.SKILL_MD, "scripts": report_writer.SCRIPTS},
         "what-day": {"skill_md": what_day.SKILL_MD, "scripts": what_day.SCRIPTS},
         "whatsapp": {"skill_md": whatsapp.SKILL_MD, "scripts": whatsapp.SCRIPTS},
         "reminders": {"skill_md": reminders.SKILL_MD, "scripts": reminders.SCRIPTS},
-        "tasks": {"skill_md": tasks.SKILL_MD, "scripts": tasks.SCRIPTS},
+        "todos": {"skill_md": todos.SKILL_MD, "scripts": todos.SCRIPTS},
         "onedrive": {"skill_md": onedrive.SKILL_MD, "scripts": onedrive.SCRIPTS},
-        "telegram": {"skill_md": telegram.SKILL_MD, "scripts": telegram.SCRIPTS},
-        "gmail": {"skill_md": gmail.SKILL_MD, "scripts": gmail.SCRIPTS},
-        "google-calendar": {"skill_md": google_calendar.SKILL_MD, "scripts": google_calendar.SCRIPTS},
+        "keeper": {"skill_md": keeper.SKILL_MD, "scripts": keeper.SCRIPTS},
     }
 
 
@@ -89,6 +86,23 @@ def init_main_memory(config: vm.VestaConfig) -> None:
         template = load_memory_template("main").replace("{install_root}", str(config.install_root))
         memory_path.write_text(template)
         logger.init(f"Initialized main memory ({len(template)} chars)")
+
+
+def init_prompts(config: vm.VestaConfig) -> None:
+    prompts_dir = config.prompts_dir
+    prompts_dir.mkdir(parents=True, exist_ok=True)
+    for name, content in PROMPT_TEMPLATES.items():
+        path = prompts_dir / f"{name}.md"
+        if not path.exists():
+            path.write_text(content)
+            logger.init(f"Initialized prompt: {name}")
+
+
+def load_prompt(name: str, config: vm.VestaConfig) -> str | None:
+    path = config.prompts_dir / f"{name}.md"
+    if path.exists():
+        return path.read_text()
+    return None
 
 
 def init_skills_symlink(config: vm.VestaConfig) -> None:

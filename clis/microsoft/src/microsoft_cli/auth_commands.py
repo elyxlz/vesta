@@ -1,5 +1,7 @@
 """Authentication commands for Microsoft CLI."""
 
+import json
+
 from . import auth
 from .config import Config
 from .settings import MicrosoftSettings
@@ -30,22 +32,20 @@ def authenticate_account(config: Config) -> dict[str, str]:
         "step1": f"Visit: {verification_url}",
         "step2": f"Enter code: {flow['user_code']}",
         "step3": "Sign in with the Microsoft account you want to add",
-        "step4": "After authenticating, use 'microsoft complete-auth' to finish",
+        "step4": "After authenticating, use 'microsoft auth complete' to finish",
         "device_code": flow["user_code"],
         "verification_url": verification_url,
         "expires_in": flow.get("expires_in", 900),
-        "_flow_cache": str(flow),
+        "_flow_cache": json.dumps(flow),
     }
 
 
 def complete_authentication(config: Config, *, flow_cache: str) -> dict[str, str]:
-    import ast
-
     settings = MicrosoftSettings()
 
     try:
-        flow = ast.literal_eval(flow_cache)
-    except (ValueError, SyntaxError):
+        flow = json.loads(flow_cache)
+    except (json.JSONDecodeError, TypeError):
         raise ValueError("Invalid flow cache data")
 
     app = auth.get_app(config.cache_file, settings=settings)

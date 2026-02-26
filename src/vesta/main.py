@@ -8,7 +8,7 @@ from rich import print_json
 import vesta.models as vm
 import vesta.core.effects as vfx
 from vesta import logger
-from vesta.core.init import init_skills, init_main_memory, init_skills_symlink, is_first_start
+from vesta.core.init import init_skills, init_main_memory, init_prompts, init_skills_symlink, is_first_start
 from vesta.core.io import input_handler, make_signal_handler
 from vesta.core.loops import message_processor, monitor_loop
 from vesta.core.notifications import queue_greeting
@@ -65,6 +65,7 @@ async def async_main() -> None:
     first_start = is_first_start(config)
     logger.init("Initializing memory...")
     init_main_memory(config)
+    init_prompts(config)
     logger.init("Initializing skills...")
     init_skills(config)
     init_skills_symlink(config)

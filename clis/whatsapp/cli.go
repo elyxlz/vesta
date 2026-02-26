@@ -97,7 +97,7 @@ func readAuthStatus(dataDir string) map[string]string {
 		return map[string]string{"status": "not_started"}
 	}
 	if status["status"] == string(AuthStatusQRReady) {
-		status["qr_image"] = filepath.Join(dataDir, "qr-code.png")
+		status["qr_image"] = "file://" + filepath.Join(dataDir, "qr-code.png")
 	}
 	return status
 }
@@ -187,21 +187,6 @@ func runOneShot(command string, logger waLog.Logger) {
 
 func executeCommand(command string, args []string, wac *WhatsAppClient) (interface{}, error) {
 	switch command {
-	case "search-contacts":
-		var query string
-		var limit int
-		fs := flag.NewFlagSet("search-contacts", flag.ContinueOnError)
-		fs.StringVar(&query, "query", "", "Search query")
-		fs.IntVar(&limit, "limit", 50, "Max results")
-		if err := fs.Parse(args); err != nil {
-			return nil, err
-		}
-		contacts, err := wac.store.SearchContacts(query, limit)
-		if err != nil {
-			return nil, err
-		}
-		return map[string]interface{}{"contacts": contacts}, nil
-
 	case "list-contacts":
 		var query string
 		var limit int
@@ -250,9 +235,8 @@ func executeCommand(command string, args []string, wac *WhatsAppClient) (interfa
 		return map[string]interface{}{"success": true, "message": "Contact removed"}, nil
 
 	case "list-messages":
-		var to, after, before, senderPhone, query, sortBy string
-		var limit, page, contextBefore, contextAfter int
-		var includeContext bool
+		var to, after, before, senderPhone, query string
+		var limit, page int
 		fs := flag.NewFlagSet("list-messages", flag.ContinueOnError)
 		fs.StringVar(&to, "to", "", "Chat filter (contact name, phone, or group)")
 		fs.StringVar(&after, "after", "", "ISO-8601 datetime")
@@ -261,21 +245,23 @@ func executeCommand(command string, args []string, wac *WhatsAppClient) (interfa
 		fs.StringVar(&query, "query", "", "Search query")
 		fs.IntVar(&limit, "limit", 50, "Max results")
 		fs.IntVar(&page, "page", 0, "Page number")
-		fs.BoolVar(&includeContext, "include-context", false, "Include surrounding messages")
-		fs.IntVar(&contextBefore, "context-before", 0, "Messages before")
-		fs.IntVar(&contextAfter, "context-after", 0, "Messages after")
-		_ = sortBy
 		if err := fs.Parse(args); err != nil {
 			return nil, err
 		}
 
 		var afterTime, beforeTime *time.Time
 		if after != "" {
-			t, _ := time.Parse(time.RFC3339, after)
+			t, err := time.Parse(time.RFC3339, after)
+			if err != nil {
+				return nil, fmt.Errorf("invalid --after timestamp (expected RFC3339): %v", err)
+			}
 			afterTime = &t
 		}
 		if before != "" {
-			t, _ := time.Parse(time.RFC3339, before)
+			t, err := time.Parse(time.RFC3339, before)
+			if err != nil {
+				return nil, fmt.Errorf("invalid --before timestamp (expected RFC3339): %v", err)
+			}
 			beforeTime = &t
 		}
 
@@ -292,8 +278,6 @@ func executeCommand(command string, args []string, wac *WhatsAppClient) (interfa
 			afterTime, beforeTime,
 			senderPhone, chatJID, query,
 			limit, page*limit,
-			includeContext,
-			contextBefore, contextAfter,
 		)
 		if err != nil {
 			return nil, err
@@ -334,18 +318,19 @@ func executeCommand(command string, args []string, wac *WhatsAppClient) (interfa
 		return map[string]interface{}{"success": success, "message": msg}, nil
 
 	case "send-file":
-		var to, filePath, caption string
+		var to, filePath, caption, displayName string
 		fs := flag.NewFlagSet("send-file", flag.ContinueOnError)
 		fs.StringVar(&to, "to", "", "Recipient")
 		fs.StringVar(&filePath, "file-path", "", "Path to file")
 		fs.StringVar(&caption, "caption", "", "Optional caption")
+		fs.StringVar(&displayName, "display-name", "", "Override filename shown to recipient")
 		if err := fs.Parse(args); err != nil {
 			return nil, err
 		}
 		if to == "" || filePath == "" {
 			return nil, fmt.Errorf("--to and --file-path are required")
 		}
-		success, msg := wac.SendFile(to, filePath, caption)
+		success, msg := wac.SendFile(to, filePath, caption, displayName)
 		return map[string]interface{}{"success": success, "message": msg}, nil
 
 	case "download-media":
@@ -435,6 +420,35 @@ func executeCommand(command string, args []string, wac *WhatsAppClient) (interfa
 			return nil, fmt.Errorf("--group, --action, and participant phone numbers are required")
 		}
 		success, msg := wac.UpdateGroupParticipants(group, action, participants)
+		return map[string]interface{}{"success": success, "message": msg}, nil
+
+	case "backfill":
+		var to string
+		var count int
+		fs := flag.NewFlagSet("backfill", flag.ContinueOnError)
+		fs.StringVar(&to, "to", "", "Chat to backfill")
+		fs.IntVar(&count, "count", 50, "Number of messages to request")
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		if to == "" {
+			return nil, fmt.Errorf("--to is required")
+		}
+		success, msg := wac.RequestBackfill(to, count)
+		return map[string]interface{}{"success": success, "message": msg}, nil
+
+	case "rename-group":
+		var group, name string
+		fs := flag.NewFlagSet("rename-group", flag.ContinueOnError)
+		fs.StringVar(&group, "group", "", "Group name or JID")
+		fs.StringVar(&name, "name", "", "New group name")
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		if group == "" || name == "" {
+			return nil, fmt.Errorf("--group and --name are required")
+		}
+		success, msg := wac.RenameGroup(group, name)
 		return map[string]interface{}{"success": success, "message": msg}, nil
 
 	default:

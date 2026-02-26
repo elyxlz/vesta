@@ -187,8 +187,12 @@ func (wac *WhatsAppClient) handleQRAuthentication() {
 		wac.authMutex.Unlock()
 	}()
 
-	qrChan, _ := wac.client.GetQRChannel(context.Background())
-	err := wac.client.Connect()
+	qrChan, err := wac.client.GetQRChannel(context.Background())
+	if err != nil {
+		wac.logger.Errorf("Failed to get QR channel: %v", err)
+		return
+	}
+	err = wac.client.Connect()
 	if err != nil {
 		wac.logger.Errorf("Failed to connect for QR: %v", err)
 		return
@@ -251,8 +255,14 @@ func (wac *WhatsAppClient) IsAuthenticated() bool {
 }
 
 func (wac *WhatsAppClient) writeAuthStatusFile(data map[string]string) {
-	b, _ := json.Marshal(data)
-	os.WriteFile(filepath.Join(wac.dataDir, "auth-status.json"), b, 0644)
+	b, err := json.Marshal(data)
+	if err != nil {
+		wac.logger.Warnf("Failed to marshal auth status: %v", err)
+		return
+	}
+	if err := os.WriteFile(filepath.Join(wac.dataDir, "auth-status.json"), b, 0644); err != nil {
+		wac.logger.Warnf("Failed to write auth status file: %v", err)
+	}
 }
 
 func (wac *WhatsAppClient) Disconnect() {
@@ -308,8 +318,10 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 	wac.sendersMutex.Unlock()
 
 	// Store in database (sender as contact name or +phone, never JID)
-	wac.store.StoreChat(info.Chat.String(), chatName, info.Timestamp)
-	wac.store.StoreMessage(
+	if err := wac.store.StoreChat(info.Chat.String(), chatName, info.Timestamp); err != nil {
+		wac.logger.Warnf("Failed to store chat: %v", err)
+	}
+	if err := wac.store.StoreMessage(
 		info.ID,
 		info.Chat.String(),
 		senderDisplay,
@@ -324,7 +336,9 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 		fileSHA256,
 		fileEncSHA256,
 		fileLength,
-	)
+	); err != nil {
+		wac.logger.Warnf("Failed to store message: %v", err)
+	}
 
 	// Write notification
 	if wac.notificationsDir != "" && !info.IsFromMe {
@@ -357,10 +371,10 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 func (wac *WhatsAppClient) sendReadReceiptDelayed(msgID string, chatJID, senderJID types.JID, content string) {
 
 	// Calculate reading delay based on content length
-	// Base: 2 seconds, +50ms per character, cap at 10 seconds
-	readDelay := time.Duration(2000+len(content)*50) * time.Millisecond
-	if readDelay > 10*time.Second {
-		readDelay = 10 * time.Second
+	// Base: 1.5 seconds, +40ms per character, cap at 8 seconds
+	readDelay := time.Duration(1500+len(content)*40) * time.Millisecond
+	if readDelay > 8*time.Second {
+		readDelay = 8 * time.Second
 	}
 
 	// Add random variance (±20%)
@@ -482,12 +496,14 @@ func (wac *WhatsAppClient) handleHistorySync(evt *events.HistorySync) {
 				msgID = *msg.Message.Key.ID
 			}
 
-			wac.store.StoreMessage(
+			if err := wac.store.StoreMessage(
 				msgID, chatJID, sender, content,
 				timestamp, isFromMe, isForwarded,
 				mediaType, filename, url,
 				mediaKey, fileSHA256, fileEncSHA256, fileLength,
-			)
+			); err != nil {
+				wac.logger.Warnf("Failed to store history message: %v", err)
+			}
 		}
 
 		// Update chat
@@ -495,10 +511,57 @@ func (wac *WhatsAppClient) handleHistorySync(evt *events.HistorySync) {
 			latestMsg := conversation.Messages[0]
 			if latestMsg != nil && latestMsg.Message != nil {
 				timestamp := time.Unix(int64(latestMsg.Message.GetMessageTimestamp()), 0)
-				wac.store.StoreChat(chatJID, name, timestamp)
+				if err := wac.store.StoreChat(chatJID, name, timestamp); err != nil {
+					wac.logger.Warnf("Failed to store history chat: %v", err)
+				}
 			}
 		}
 	}
+}
+
+func (wac *WhatsAppClient) RequestBackfill(chatIdentifier string, count int) (bool, string) {
+	if chatIdentifier == "" {
+		return false, "Chat identifier is required"
+	}
+	if count <= 0 {
+		count = 50
+	}
+
+	jid, err := wac.ResolveRecipient(chatIdentifier)
+	if err != nil {
+		return false, fmt.Sprintf("Failed to resolve chat: %v", err)
+	}
+
+	if err := wac.EnsureConnected(); err != nil {
+		return false, err.Error()
+	}
+
+	msgID, senderJID, isFromMe, ts, err := wac.store.GetOldestMessage(jid.String())
+	if err != nil {
+		return false, fmt.Sprintf("No messages found for this chat to anchor backfill: %v", err)
+	}
+
+	senderParsed, err := types.ParseJID(senderJID)
+	if err != nil {
+		return false, fmt.Sprintf("Failed to parse sender JID: %v", err)
+	}
+	msgInfo := &types.MessageInfo{
+		MessageSource: types.MessageSource{
+			Chat:     jid,
+			Sender:   senderParsed,
+			IsFromMe: isFromMe,
+		},
+		ID:        msgID,
+		Timestamp: ts,
+	}
+
+	histMsg := wac.client.BuildHistorySyncRequest(msgInfo, count)
+	_, err = wac.client.SendPeerMessage(context.Background(), histMsg)
+	if err != nil {
+		return false, fmt.Sprintf("Failed to request backfill: %v", err)
+	}
+
+	return true, fmt.Sprintf("Backfill requested for %d messages before %s. Messages will arrive asynchronously.", count, ts.Format(time.RFC3339))
 }
 
 func (wac *WhatsAppClient) getChatName(jid types.JID) string {
@@ -670,8 +733,8 @@ func (wac *WhatsAppClient) SendMessageWithPresence(recipient, message string) (b
 
 	// Skip all delays for rapid messages
 	if !isRapidMessage {
-		// Human reaction delay (0.5-1s)
-		reactionDelay := time.Duration(500+rand.IntN(500)) * time.Millisecond
+		// Human reaction delay (0.4-0.7s)
+		reactionDelay := time.Duration(400+rand.IntN(300)) * time.Millisecond
 		time.Sleep(reactionDelay)
 
 		// Start typing indicator
@@ -684,10 +747,10 @@ func (wac *WhatsAppClient) SendMessageWithPresence(recipient, message string) (b
 			wac.logger.Warnf("Failed to send typing indicator: %v", err)
 		}
 
-		// Calculate typing duration (30ms per character, min 2s, max 8s)
-		typingDuration := time.Duration(2000+len(message)*30) * time.Millisecond
-		if typingDuration > 8*time.Second {
-			typingDuration = 8 * time.Second
+		// Calculate typing duration (25ms per character, min 1.5s, max 6s)
+		typingDuration := time.Duration(1500+len(message)*25) * time.Millisecond
+		if typingDuration > 6*time.Second {
+			typingDuration = 6 * time.Second
 		}
 		// Add randomness (±20%)
 		variance := int(float64(typingDuration.Milliseconds()) * 0.2)
@@ -707,8 +770,8 @@ func (wac *WhatsAppClient) SendMessageWithPresence(recipient, message string) (b
 			wac.logger.Debugf("Failed to stop typing indicator: %v", err)
 		}
 
-		// Small delay before sending (0.3-0.5s)
-		sendDelay := time.Duration(300+rand.IntN(200)) * time.Millisecond
+		// Small delay before sending (0.25-0.4s)
+		sendDelay := time.Duration(250+rand.IntN(150)) * time.Millisecond
 		time.Sleep(sendDelay)
 	}
 
@@ -766,7 +829,7 @@ func (wac *WhatsAppClient) SendMessage(recipient, message string) (bool, string)
 	return true, fmt.Sprintf("Message sent successfully (ID: %s)", resp.ID)
 }
 
-func (wac *WhatsAppClient) SendFile(recipient, filePath, caption string) (bool, string) {
+func (wac *WhatsAppClient) SendFile(recipient, filePath, caption, displayName string) (bool, string) {
 	if recipient == "" || filePath == "" {
 		return false, "Recipient and file path are required. Provide a contact name, phone number, or group name and the file path"
 	}
@@ -849,6 +912,10 @@ func (wac *WhatsAppClient) SendFile(recipient, filePath, caption string) (bool, 
 		}
 
 	default: // MediaDocument
+		docName := filepath.Base(filePath)
+		if displayName != "" {
+			docName = displayName
+		}
 		msg.DocumentMessage = &waProto.DocumentMessage{
 			URL:           proto.String(uploaded.URL),
 			DirectPath:    proto.String(uploaded.DirectPath),
@@ -856,7 +923,7 @@ func (wac *WhatsAppClient) SendFile(recipient, filePath, caption string) (bool, 
 			FileEncSHA256: uploaded.FileEncSHA256,
 			FileSHA256:    uploaded.FileSHA256,
 			FileLength:    proto.Uint64(uploaded.FileLength),
-			FileName:      proto.String(filepath.Base(filePath)),
+			FileName:      proto.String(docName),
 			Mimetype:      proto.String(mimeType),
 		}
 		if caption != "" {
@@ -1440,6 +1507,33 @@ func (wac *WhatsAppClient) LeaveGroup(groupIdentifier string) (bool, string) {
 	}
 
 	return true, "Successfully left the group"
+}
+
+func (wac *WhatsAppClient) RenameGroup(groupIdentifier, newName string) (bool, string) {
+	if groupIdentifier == "" || newName == "" {
+		return false, "Group identifier and new name are required"
+	}
+
+	jid, err := wac.ResolveRecipient(groupIdentifier)
+	if err != nil {
+		return false, fmt.Sprintf("Failed to resolve group: %v", err)
+	}
+	if jid.Server != types.GroupServer {
+		return false, "The specified identifier is not a WhatsApp group"
+	}
+
+	if err := wac.EnsureConnected(); err != nil {
+		return false, err.Error()
+	}
+
+	if err := wac.client.SetGroupName(context.Background(), jid, newName); err != nil {
+		return false, fmt.Sprintf("Failed to rename group: %v", err)
+	}
+
+	if err := wac.store.StoreChat(jid.String(), newName, time.Now()); err != nil {
+		return false, fmt.Sprintf("Group renamed on WhatsApp but failed to update local store: %v", err)
+	}
+	return true, fmt.Sprintf("Group renamed to '%s'", newName)
 }
 
 func (wac *WhatsAppClient) GetGroupInviteLink(groupIdentifier string) (bool, string, string) {
