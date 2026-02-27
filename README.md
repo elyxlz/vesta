@@ -19,14 +19,7 @@ Vesta runs in the background and:
 ## Getting started
 
 ```bash
-# First-time setup: builds image, creates container, authenticates Claude
 vesta setup
-
-# Start
-vesta start
-
-# Attach to watch it run (detach with Ctrl-Q)
-vesta attach
 ```
 
 ## Management
@@ -46,20 +39,7 @@ vesta destroy    Remove the container
 
 ## Skills
 
-Vesta has 10 built-in skills it activates on demand:
-
-| Skill | What it does |
-|-------|-------------|
-| microsoft | Read, send, search Outlook email and manage calendar events |
-| google | Read, send, search Gmail and manage Google Calendar events |
-| browser | Web automation via accessibility-tree snapshots and ref-based actions |
-| whatsapp | Send and receive WhatsApp messages |
-| reminders | Set one-time or recurring reminders |
-| todos | Create and track tasks with priorities and due dates |
-| onedrive | Browse and manage OneDrive files |
-| what-day | Resolve dates to weekdays (prevents scheduling mistakes) |
-| report-writer | Generate structured reports |
-| keeper | Manage Keeper password vault entries |
+Skill templates live in `src/vesta/templates/skills/`. Each skill has a `SKILL.md` with setup instructions, CLI usage, and memory sections. Vesta activates skills on demand based on what you ask for.
 
 ## How it works
 

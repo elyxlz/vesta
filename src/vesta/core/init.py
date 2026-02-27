@@ -15,6 +15,7 @@ from vesta.templates.skills import (
     todos,
     what_day,
     whatsapp,
+    whisper,
 )
 
 type SkillTemplate = dict[str, str | dict[str, str]]
@@ -42,6 +43,7 @@ def get_skill_templates() -> dict[str, SkillTemplate]:
         "todos": {"skill_md": todos.SKILL_MD, "scripts": todos.SCRIPTS},
         "onedrive": {"skill_md": onedrive.SKILL_MD, "scripts": onedrive.SCRIPTS},
         "keeper": {"skill_md": keeper.SKILL_MD, "scripts": keeper.SCRIPTS},
+        "whisper": {"skill_md": whisper.SKILL_MD, "scripts": whisper.SCRIPTS},
     }
 
 

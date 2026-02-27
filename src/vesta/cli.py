@@ -1,6 +1,7 @@
 """Vesta management CLI — runs on the host to manage the Docker container."""
 
 import os
+import shutil
 import subprocess
 import sys
 
@@ -46,7 +47,7 @@ def cmd_rebuild() -> None:
     subprocess.run(["docker", "rm", "-f", CONTAINER], capture_output=True)
     subprocess.run(["docker", "build", "-t", IMAGE, INSTALL_ROOT], check=True)
     subprocess.run(CREATE_ARGS, check=True)
-    subprocess.run(["rm", "-rf", "/tmp/.claude-vesta/backups", "/tmp/.claude-vesta/.claude.json"], capture_output=True)
+    subprocess.run(["rm", "-rf", "/tmp/.claude-vesta/.claude.json"], capture_output=True)
     r = subprocess.run(["docker", "cp", "/tmp/.claude-vesta", f"{CONTAINER}:/root/.claude"], capture_output=True, text=True)
     if r.returncode != 0:
         print(f"Warning: failed to restore auth credentials: {r.stderr.strip()}", file=sys.stderr)
@@ -126,6 +127,10 @@ COMMANDS = {
 def main() -> None:
     if os.path.exists("/.dockerenv"):
         print("Error: 'vesta' CLI manages Docker from the host. Use 'python -m vesta.main' to run the agent directly.", file=sys.stderr)
+        sys.exit(1)
+
+    if not shutil.which("docker"):
+        print("Error: docker is not installed. Install it from https://docs.docker.com/get-docker/", file=sys.stderr)
         sys.exit(1)
 
     if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
