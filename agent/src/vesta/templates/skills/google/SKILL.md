@@ -27,7 +27,6 @@ google auth list                    # Show authenticated account
 
 ## Email (Gmail)
 
-### Quick Reference
 ```bash
 google email list
 google email get --id <message_id>
@@ -36,52 +35,21 @@ google email reply --id <message_id> --body "Thanks!"
 google email search --query "project update"
 ```
 
-### Other Commands
-```bash
-google email list --label INBOX --limit 20
-google email get --id <message_id> --no-attachments --save-to /tmp/email.json
-google email send --to bob@example.com --cc alice@example.com --subject "Report" --body "See attached" --attachments /path/to/file.pdf
-google email reply --id <message_id> --body "Noted" --reply-all
-google email draft --to bob@example.com --subject "Draft" --body "WIP"
-google email attachment --email-id <message_id> --attachment-id <att_id> --save-path /tmp/file.pdf
-google email search --query "report" --label SENT --limit 20
-google email update --id <message_id> --add-labels IMPORTANT --remove-labels UNREAD
-```
-
 ## Calendar (Google Calendar)
 
-### Quick Reference
 ```bash
 google calendar list
 google calendar create --subject "Standup" --start "2025-11-15T10:00:00" --end "2025-11-15T10:30:00" --timezone "Europe/London"
 google calendar respond --id <event_id> --response accept
 ```
 
-### Other Commands
-```bash
-google calendar list --days-ahead 14 --days-back 3
-google calendar list --calendar "Work" --no-details --user-timezone "America/New_York"
-google calendar calendars
-google calendar get --id <event_id> --calendar "Work"
-google calendar create --subject "Lunch" --start "2025-11-15T12:00:00" --end "2025-11-15T13:00:00" --timezone "Europe/London" --location "Cafe" --body "Discuss project" --attendees alice@example.com bob@example.com
-google calendar create --subject "Holiday" --start "2025-12-25" --timezone "Europe/London" --all-day
-google calendar create --subject "Weekly Sync" --start "2025-11-15T09:00:00" --end "2025-11-15T09:30:00" --timezone "Europe/London" --recurrence weekly --recurrence-end-date "2026-03-01"
-google calendar create --subject "Video Call" --start "2025-11-15T14:00:00" --timezone "Europe/London" --meet-link
-google calendar update --id <event_id> --calendar "Work" --subject "New Title" --start "2025-11-15T11:00:00" --timezone "Europe/London"
-google calendar delete --id <event_id> --no-notification
-google calendar respond --id <event_id> --calendar "Work" --response decline --message "Can't make it"
-```
-
 ## Meet (Google Meet)
 
-### Quick Reference
 ```bash
 google meet create                  # Create a standalone Meet link (no calendar event)
 ```
 
-### Notes
-- `google meet create` returns a meeting URI and code — useful for ad-hoc calls
-- To create a calendar event with a Meet link, use `--meet-link` on calendar create instead
+Use `--meet-link` on calendar create to attach a Meet link to an event instead.
 
 ## Notes
 - No `--account` needed — Google CLI uses a single authenticated account

@@ -64,6 +64,7 @@ def shared_env(tmp_path_factory):
 
 # --- Add ---
 
+
 class TestAddTask:
     def test_add_basic(self, shared_env):
         state_dir, _ = shared_env
@@ -154,6 +155,7 @@ class TestAddTask:
 
 # --- List ---
 
+
 class TestListTasks:
     def test_list_returns_tasks(self, shared_env):
         state_dir, _ = shared_env
@@ -174,6 +176,7 @@ class TestListTasks:
 
 
 # --- Get ---
+
 
 class TestGetTask:
     def test_get_by_id(self, shared_env):
@@ -201,6 +204,7 @@ class TestGetTask:
 
 
 # --- Update ---
+
 
 class TestUpdateTask:
     def test_update_status_done(self, shared_env):
@@ -255,6 +259,7 @@ class TestUpdateTask:
 
 # --- Delete ---
 
+
 class TestDeleteTask:
     def test_delete(self, shared_env):
         state_dir, _ = shared_env
@@ -296,6 +301,7 @@ class TestDeleteTask:
 
 # --- Search ---
 
+
 class TestSearchTasks:
     def test_search_finds_match(self, shared_env):
         state_dir, _ = shared_env
@@ -334,6 +340,7 @@ class TestSearchTasks:
 
 # --- Completed filtering ---
 
+
 class TestCompletedFiltering:
     def test_list_excludes_completed(self, shared_env):
         state_dir, _ = shared_env
@@ -349,6 +356,7 @@ class TestCompletedFiltering:
 
 
 # --- Monitor / Notifications ---
+
 
 class TestMonitorNotifications:
     def test_due_soon_notification(self, tmp_path):
@@ -435,6 +443,7 @@ class TestMonitorNotifications:
 
 
 # --- Daemon lifecycle ---
+
 
 class TestDaemonLifecycle:
     def test_requires_daemon(self, tmp_path):

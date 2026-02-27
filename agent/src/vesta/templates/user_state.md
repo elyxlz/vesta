@@ -1,21 +1,21 @@
 # User State
 
-This file is maintained nightly by the dreamer. It's a rolling snapshot — replace, don't append.
+Maintained by the dreamer. Rolling snapshot — replace, don't append.
 
-## Current Focus
-[What the user is working on right now — projects, deadlines, goals]
+## Focus
+[What they're working on — projects, deadlines, goals]
 
-## How Things Are Going
-[What's going well, what's not — read between the lines]
+## How It's Going
+[The honest version. What's working, what isn't]
 
 ## Coming Up
-[Upcoming things they might need help with]
+[What they might need help with soon]
 
 ## Vibe
-[One word for how the day went]
+[One word]
 
 ## Open Threads
-[Things that came up but didn't get finished or decided]
+[Unfinished conversations, unmade decisions]
 
 ## Psych Sketch
-[A few lines. What drives them, what they avoid, shadow patterns, how they handle stress/conflict/praise. Update slowly — don't overfit to one day.]
+[What drives them. What they avoid. Blind spots. How they handle stress, conflict, praise. Evolves slowly.]

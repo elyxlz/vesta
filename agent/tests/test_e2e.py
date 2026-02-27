@@ -109,10 +109,8 @@ async def _run_test_scenario(state_dir: Path, test_fn, **config_overrides):
     config = _make_config(state_dir, **config_overrides)
     logger.setup(config.logs_dir, log_level="DEBUG")
 
-    from vesta.core import io as vio
-
-    original_input_handler = vio.input_handler
-    vio.input_handler = _noop_input_handler  # type: ignore[assignment]
+    original_input_handler = vmain.input_handler
+    vmain.input_handler = _noop_input_handler  # type: ignore[assignment]
 
     try:
         state = vmain.init_state(config=config)
@@ -135,7 +133,7 @@ async def _run_test_scenario(state_dir: Path, test_fn, **config_overrides):
         except asyncio.CancelledError:
             pass
     finally:
-        vio.input_handler = original_input_handler
+        vmain.input_handler = original_input_handler
 
 
 # =============================================================================

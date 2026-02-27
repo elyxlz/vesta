@@ -15,7 +15,7 @@ from claude_agent_sdk import (
     tool,
     create_sdk_mcp_server,
 )
-from claude_agent_sdk.types import PreToolUseHookInput, PostToolUseHookInput, HookJSONOutput, HookEvent, HookCallback
+from claude_agent_sdk.types import PreToolUseHookInput, PostToolUseHookInput, HookJSONOutput, HookCallback
 
 import vesta.models as vm
 from vesta import logger
@@ -80,9 +80,13 @@ def _parse_sdk_message(msg: Message, *, sub_agent_context: str | None) -> tuple[
 
 
 _TOOL_KEYS: dict[str, str] = {
-    "Bash": "command", "Skill": "skill",
-    "Read": "file_path", "Write": "file_path", "Edit": "file_path",
-    "Glob": "pattern", "Grep": "pattern",
+    "Bash": "command",
+    "Skill": "skill",
+    "Read": "file_path",
+    "Write": "file_path",
+    "Edit": "file_path",
+    "Glob": "pattern",
+    "Grep": "pattern",
 }
 
 

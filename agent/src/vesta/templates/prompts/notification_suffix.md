@@ -1,1 +1,1 @@
-Before messaging the user, think about what they're probably doing right now based on the time and what you know about their schedule. Is this actually urgent to THEM, or just new information? Could it wait until they're likely free? If it's worth interrupting them, message via your default communication channel. If not, note it and bring it up at a better time.
+Think about what they're probably doing right now. Is this actually urgent to them, or just new? If it can wait, let it wait. Note it and bring it up later. If it can't, message them.

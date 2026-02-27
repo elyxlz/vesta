@@ -32,7 +32,6 @@ microsoft auth list                           # List authenticated accounts
 
 ## Email
 
-### Quick Reference
 ```bash
 microsoft email list --account user@example.com
 microsoft email get --account user@example.com --id <email_id>
@@ -41,40 +40,12 @@ microsoft email reply --account user@example.com --id <email_id> --body "Thanks!
 microsoft email search --account user@example.com --query "project update"
 ```
 
-### Other Commands
-```bash
-microsoft email list --account user@example.com --folder "Sent Items" --limit 20
-microsoft email get --account user@example.com --id <email_id> --no-attachments --save-to /tmp/email.json
-microsoft email send --account user@example.com --to bob@example.com --cc alice@example.com --subject "Report" --body "See attached" --attachments /path/to/file.pdf
-microsoft email reply --account user@example.com --id <email_id> --body "Noted" --reply-all
-microsoft email draft --account user@example.com --to bob@example.com --subject "Draft" --body "WIP"
-microsoft email attachment --account user@example.com --email-id <email_id> --attachment-id <att_id> --save-path /tmp/file.pdf
-microsoft email search --account user@example.com --query "report" --folder "Sent Items" --limit 20
-microsoft email update --account user@example.com --id <email_id> --is-read true
-microsoft email update --account user@example.com --id <email_id> --categories "Important" "Follow Up"
-```
-
 ## Calendar
 
-### Quick Reference
 ```bash
 microsoft calendar list --account user@example.com
 microsoft calendar create --account user@example.com --subject "Standup" --start "2025-11-15T10:00:00" --end "2025-11-15T10:30:00" --timezone "Europe/London"
 microsoft calendar respond --account user@example.com --id <event_id> --response accept
-```
-
-### Other Commands
-```bash
-microsoft calendar list --account user@example.com --days-ahead 14 --days-back 3
-microsoft calendar list --account user@example.com --calendar-name "Work" --no-details --user-timezone "America/New_York"
-microsoft calendar calendars --account user@example.com
-microsoft calendar get --account user@example.com --id <event_id>
-microsoft calendar create --account user@example.com --subject "Lunch" --start "2025-11-15T12:00:00" --end "2025-11-15T13:00:00" --timezone "Europe/London" --location "Cafe" --body "Discuss project" --attendees alice@example.com bob@example.com
-microsoft calendar create --account user@example.com --subject "Holiday" --start "2025-12-25" --timezone "Europe/London" --all-day
-microsoft calendar create --account user@example.com --subject "Weekly Sync" --start "2025-11-15T09:00:00" --end "2025-11-15T09:30:00" --timezone "Europe/London" --recurrence weekly --recurrence-end-date "2026-03-01"
-microsoft calendar update --account user@example.com --id <event_id> --subject "New Title" --start "2025-11-15T11:00:00" --timezone "Europe/London"
-microsoft calendar delete --account user@example.com --id <event_id>
-microsoft calendar respond --account user@example.com --id <event_id> --response decline --message "Can't make it"
 ```
 
 ## Notes

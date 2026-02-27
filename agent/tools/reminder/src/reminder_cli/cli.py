@@ -154,6 +154,7 @@ def _dispatch(args, config: Config, scheduler):
 def _sync_jobs(config: Config, scheduler):
     scheduled_ids = {job.id for job in scheduler.get_jobs()}
     from contextlib import closing
+
     with closing(db.get_db(config.data_dir)) as conn:
         cursor = conn.execute("SELECT id FROM reminders WHERE completed = 0 AND trigger_data IS NOT NULL")
         db_ids = {row["id"] for row in cursor}

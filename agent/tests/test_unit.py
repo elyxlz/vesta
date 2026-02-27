@@ -92,7 +92,20 @@ def test_skill_templates_discovered():
     from vesta.core.init import _discover_skill_templates
 
     templates = _discover_skill_templates()
-    expected = {"browser", "google", "keeper", "microsoft", "onedrive", "reminders", "report-writer", "tasks", "what-day", "whatsapp", "whisper", "zoom"}
+    expected = {
+        "browser",
+        "google",
+        "keeper",
+        "microsoft",
+        "onedrive",
+        "reminders",
+        "report-writer",
+        "tasks",
+        "what-day",
+        "whatsapp",
+        "whisper",
+        "zoom",
+    }
     assert set(templates.keys()) == expected
 
     for name, path in templates.items():
@@ -118,7 +131,7 @@ async def _run_processor_test(
     state.shutdown_event = asyncio.Event()
     queue: asyncio.Queue = asyncio.Queue()
 
-    for item in (initial_queue or []):
+    for item in initial_queue or []:
         await queue.put(item)
 
     session_count = 0
@@ -131,6 +144,7 @@ async def _run_processor_test(
         return await original_side_effect(msg, state=state, config=config, is_user=is_user)
 
     mock_client = MagicMock()
+    mock_client.return_value = mock_client
 
     async def mock_enter(self):
         nonlocal session_count
@@ -155,6 +169,7 @@ async def _run_processor_test(
     ctx_managers = [patch(k, v if not callable(v) or isinstance(v, MagicMock) else v) for k, v in patches.items()]
     # Use ExitStack to apply all patches
     import contextlib
+
     with contextlib.ExitStack() as stack:
         for cm in ctx_managers:
             stack.enter_context(cm)
@@ -323,7 +338,7 @@ async def test_dreamer_triggers_automatic_restart(tmp_path):
         message_side_effect=side_effect,
         pre_state=pre_state,
         initial_queue=[("dreamer prompt content", False)],
-        extra_patches={"vesta.core.loops._now": fake_now},
+        extra_patches={"vesta.core.loops._now": lambda: fake_now},
     )
     assert state.session_id is None
     assert state.dreamer_active is False

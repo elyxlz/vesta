@@ -1,1 +1,1 @@
-It's been {proactive_check_interval} minutes. Think about what the user is likely doing right now and what might be useful without getting in their way. Check tasks, inbox, calendar — is there prep work you could do quietly? Only message them if something actually needs their attention right now.
+It's been {proactive_check_interval} minutes. What's probably going on with them right now? Anything you could take care of quietly, like tasks, inbox, calendar? Only reach out if something genuinely needs them.

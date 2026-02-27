@@ -129,27 +129,6 @@ keeper "generate -c 16 -u 3 -d 3 -s 3"  # 16 chars, 3 upper, 3 digits, 3 special
 keeper "generate -dr 6"                  # diceware passphrase (6 words)
 ```
 
-## Import / Export
-
-```bash
-keeper "import records.csv --format csv"
-keeper "import vault.kdbx --format keepass"
-keeper "export my-vault.json --format json"
-```
-
-Supported formats: `json`, `csv`, `keepass`, `lastpass`, `1password`, `bitwarden`, `nordpass`, `dashlane`, `proton`, `myki`
-
-## Other Commands
-
-```bash
-keeper "whoami"                          # current user info
-keeper "sync-down"                       # sync vault from server
-keeper "record-history <UID>"            # list revisions
-keeper "password-report"                 # password strength analysis
-keeper "upload-attachment <UID> --file /path/to/file"
-keeper "download-attachment <UID> --out-dir /tmp"
-```
-
 ## Notes
 - All record commands accept UIDs or folder-path/record-name
 - Use `--format json` on most commands for machine-readable output

@@ -1,4 +1,5 @@
 import pathlib as pl
+import typing as tp
 
 import pydantic as pyd
 import pydantic_settings as pyd_settings
@@ -8,7 +9,7 @@ class VestaConfig(pyd_settings.BaseSettings):
     model_config = pyd_settings.SettingsConfigDict(extra="ignore")
 
     ephemeral: bool = False
-    log_level: str = "INFO"  # DEBUG, INFO, WARNING, ERROR
+    log_level: tp.Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     notification_check_interval: int = pyd.Field(default=2, ge=1)
     notification_buffer_delay: int = pyd.Field(default=3, ge=0)
     proactive_check_interval: int = pyd.Field(default=60, ge=1)
