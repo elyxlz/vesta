@@ -1,0 +1,45 @@
+[project]
+name = "vesta"
+version = "0.1.15"
+description = "Personal assistant agent that works autonomously on your behalf"
+readme = "../README.md"
+authors = [
+    { name = "elyxlz" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "aioconsole>=0.8.1",
+    "claude-agent-sdk>=0.1.9",
+    "pydantic>=2.10.4",
+    "pydantic-settings>=2.7.0",
+    "rich>=14.2.0",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.8.4",
+    "pytest>=8.3.4",
+    "ty>=0.0.3",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+python_files = ["e2e.py", "test_*.py", "*_test.py"]
+testpaths = ["tests"]
+
+
+[tool.ty.src]
+include = ["src", "tests"]
+
+[tool.ruff]
+line-length = 144
+indent-width = 4
+target-version = "py312"
+
+[tool.ruff.lint]
+ignore = ["E402", "E702", "E731", "UP008", "E712"]
+extend-select = ["UP"]
+

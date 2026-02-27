@@ -53,3 +53,13 @@ mcps/whatsapp-mcp-go/whatsapp-mcp
 # Old vesta folder (if still present)
 old_vesta/
 .cache
+
+# CLI build artifacts
+cli/target/
+cli/wsl/vesta-wsl-rootfs.tar.gz
+cli/wsl/vesta
+
+# Tauri build artifacts
+app/src-tauri/target/
+app/src-tauri/binaries/vesta-*
+app/src-tauri/resources/*.tar.gz

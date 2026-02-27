@@ -20,9 +20,11 @@ jobs:
         run: curl -LsSf https://astral.sh/uv/install.sh | sh
 
       - name: Install dependencies
+        working-directory: agent
         run: |
           uv sync
-          uv pip install -e clis/microsoft -e clis/reminder -e clis/todo
+          uv pip install -e tools/microsoft -e tools/reminder -e tools/todo
 
       - name: Run ty
+        working-directory: agent
         run: uv run ty check

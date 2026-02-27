@@ -1,0 +1,1 @@
+It's been {proactive_check_interval} minutes. Is there anything useful you could do right now?

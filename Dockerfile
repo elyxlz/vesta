@@ -9,15 +9,15 @@ ENV PATH="/root/.local/bin:${PATH}"
 WORKDIR /root/vesta
 
 # Dependencies (cached unless lockfile changes)
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-install-project
+COPY agent/pyproject.toml agent/uv.lock agent/
+RUN cd agent && uv sync --frozen --no-install-project
 
 # Claude binary (from cached deps layer — won't change unless deps change)
-RUN ln -s $(find /root/vesta/.venv -name claude -path "*/claude_agent_sdk/_bundled/*" -type f) /usr/local/bin/claude
+RUN ln -s $(find /root/vesta/agent/.venv -name claude -path "*/claude_agent_sdk/_bundled/*" -type f) /usr/local/bin/claude
 
 # Source (changes often, but deps are cached above)
 COPY . .
-RUN uv sync --frozen
+RUN cd agent && uv sync --frozen
 
 # State dirs
 WORKDIR /root
@@ -25,4 +25,4 @@ RUN mkdir -p /root/memory/skills /root/notifications /root/logs /root/data
 
 ENV HOME=/root
 ENV IS_SANDBOX=1
-ENTRYPOINT ["uv", "run", "--project", "/root/vesta", "python", "-m", "vesta.main"]
+ENTRYPOINT ["uv", "run", "--project", "/root/vesta/agent", "python", "-m", "vesta.main"]

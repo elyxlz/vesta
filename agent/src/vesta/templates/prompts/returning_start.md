@@ -1,0 +1,1 @@
+Send a short message via the user's favourite channel letting them know Vesta just came online and is ready to help.

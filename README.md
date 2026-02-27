@@ -13,8 +13,17 @@ Vesta runs in the background and:
 
 ## Prerequisites
 
-- Docker
-- A Claude subscription (for `claude login`)
+### Linux
+- Docker ([install](https://docs.docker.com/engine/install/))
+- Claude subscription (for Claude Agent SDK)
+
+### macOS
+- macOS 13+ (Ventura or later)
+- Claude subscription (for Claude Agent SDK)
+
+### Windows
+- WSL2 enabled
+- Claude subscription (for Claude Agent SDK)
 
 ## Getting started
 
@@ -25,21 +34,25 @@ vesta setup
 ## Management
 
 ```
-vesta setup      Build image, create container, authenticate Claude
-vesta rebuild    Rebuild image and recreate container, preserving auth
-vesta start      Start the container
-vesta stop       Stop the container
-vesta attach     Show recent logs then attach to console
-vesta logs       Tail container logs
-vesta shell      Open a shell inside the container
-vesta backup     Snapshot container state (docker commit)
-vesta status     Show container status
-vesta destroy    Remove the container
+vesta setup      Create agent, start it, authenticate Claude
+vesta rebuild    Snapshot, destroy, recreate from backup
+vesta start      Start the agent
+vesta stop       Stop the agent
+vesta attach     Attach to agent console
+vesta logs       Tail agent logs
+vesta shell      Open a shell inside the agent
+vesta backup     Snapshot agent state (docker commit)
+vesta status     Show agent status
+vesta destroy    Remove the agent
 ```
+
+## Architecture
+
+Vesta runs in a Docker container. On Linux, the CLI talks to Docker directly. On macOS, a lightweight Linux VM (via [vfkit](https://github.com/crc-org/vfkit)) hosts Docker. On Windows, a WSL2 distro hosts Docker. The container image is the same across all platforms.
 
 ## Skills
 
-Skill templates live in `src/vesta/templates/skills/`. Each skill has a `SKILL.md` with setup instructions, CLI usage, and memory sections. Vesta activates skills on demand based on what you ask for.
+Skill templates live in `agent/src/vesta/templates/skills/`. Each skill has a `SKILL.md` with setup instructions, CLI usage, and memory sections. Vesta activates skills on demand based on what you ask for.
 
 ## How it works
 
