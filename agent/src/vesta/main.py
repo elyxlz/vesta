@@ -13,7 +13,7 @@ from rich import print_json
 
 import vesta.models as vm
 from vesta import logger
-from vesta.core.init import init_skills, init_main_memory, init_user_state, init_prompts, init_skills_symlink, is_first_start
+from vesta.core.init import init_skills, init_main_memory, init_prompts, init_skills_symlink, is_first_start
 from vesta.core.loops import message_processor, monitor_loop, queue_greeting
 
 SignalHandler = tp.Callable[[int, types.FrameType | None], None]
@@ -71,6 +71,7 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
     signal.signal(signal.SIGTERM, _make_signal_handler(state))
 
     logger.init("VESTA started")
+    (config.data_dir / "run_marker").touch()
 
     message_queue: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()
 
@@ -96,7 +97,24 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
         task.cancel()
 
     await asyncio.gather(*tasks, return_exceptions=True)
+    (config.data_dir / "run_marker").unlink(missing_ok=True)
     logger.shutdown("sweet dreams!")
+
+
+def _detect_crash(config: vm.VestaConfig) -> str | None:
+    crash_reason = config.data_dir / "crash_reason"
+    run_marker = config.data_dir / "run_marker"
+
+    context = None
+    if crash_reason.exists():
+        reason = crash_reason.read_text().strip()
+        crash_reason.unlink(missing_ok=True)
+        context = f"[System: Vesta restarted after forced exit. Reason: {reason}]"
+    elif run_marker.exists():
+        context = "[System: Vesta restarted after unexpected crash.]"
+
+    run_marker.unlink(missing_ok=True)
+    return context
 
 
 def init_state(*, config: vm.VestaConfig) -> vm.State:
@@ -107,9 +125,13 @@ def init_state(*, config: vm.VestaConfig) -> vm.State:
     except (OSError, UnicodeDecodeError):
         logger.warning("Could not read session file, starting fresh")
 
+    pending_context = _detect_crash(config)
+    if pending_context:
+        logger.init(f"Crash detected: {pending_context}")
+
     if session_id:
         logger.init(f"Resuming session {session_id[:16]}...")
-    return vm.State(last_dreamer_run=dt.datetime.now(), session_id=session_id)
+    return vm.State(last_dreamer_run=dt.datetime.now(), session_id=session_id, pending_context=pending_context)
 
 
 async def async_main() -> None:
@@ -126,7 +148,6 @@ async def async_main() -> None:
     first_start = is_first_start(config)
     logger.init("Initializing memory...")
     init_main_memory(config)
-    init_user_state(config)
     init_prompts(config)
     logger.init("Initializing skills...")
     init_skills(config)

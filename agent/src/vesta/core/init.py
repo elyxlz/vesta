@@ -57,14 +57,6 @@ def init_main_memory(config: vm.VestaConfig) -> None:
         logger.init(f"Initialized main memory ({len(template)} chars)")
 
 
-def init_user_state(config: vm.VestaConfig) -> None:
-    path = config.memory_dir / "user_state.md"
-    if not path.exists():
-        template = (_TEMPLATES_DIR / "user_state.md").read_text()
-        path.write_text(template)
-        logger.init("Initialized user state")
-
-
 def init_prompts(config: vm.VestaConfig) -> None:
     prompts_dir = config.prompts_dir
     prompts_dir.mkdir(parents=True, exist_ok=True)

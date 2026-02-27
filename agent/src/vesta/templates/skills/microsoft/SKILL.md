@@ -13,11 +13,10 @@ description: This skill should be used when the user asks about "email", "emails
    - Redirect URI: leave blank (device flow doesn't need one)
    - Under "API permissions", add: `Mail.ReadWrite`, `Mail.Send`, `Calendars.ReadWrite`
    - Under "Authentication", enable "Allow public client flows"
-2. Copy the **Application (client) ID** and optionally the **Directory (tenant) ID**
-3. Set environment variables:
+2. Copy the **Application (client) ID**
+3. Set environment variable:
    ```
    MICROSOFT_MCP_CLIENT_ID=<your-client-id>
-   MICROSOFT_MCP_TENANT_ID=<your-tenant-id>  # optional, defaults to "common"
    ```
 4. Install: `uv tool install {install_root}/tools/microsoft`
 5. Start background daemon: `microsoft serve &`

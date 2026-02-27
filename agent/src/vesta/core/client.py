@@ -1,6 +1,7 @@
 import asyncio
 import datetime as dt
 import json
+import os
 import typing as tp
 
 from claude_agent_sdk import (
@@ -126,8 +127,12 @@ async def attempt_interrupt(state: vm.State, *, config: vm.VestaConfig, reason: 
         logger.interrupt(f"{reason}: interrupt sent")
         return True
     except TimeoutError:
-        logger.interrupt("Interrupt timed out")
-        return False
+        logger.error("SDK unresponsive, forcing exit for Docker restart")
+        try:
+            (config.data_dir / "crash_reason").write_text("SDK became unresponsive (interrupt timed out)")
+        except OSError:
+            pass
+        os._exit(1)
 
 
 async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show_output: bool) -> list[str]:
@@ -135,7 +140,11 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
     client = state.client
 
     query = _build_query(prompt, timestamp=dt.datetime.now())
-    await asyncio.wait_for(client.query(query), timeout=config.query_timeout)
+    try:
+        await asyncio.wait_for(client.query(query), timeout=config.query_timeout)
+    except TimeoutError:
+        await attempt_interrupt(state, config=config, reason="Query timeout")
+        raise
 
     responses: list[str] = []
     sub_agent_context: str | None = None

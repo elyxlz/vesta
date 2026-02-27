@@ -16,16 +16,25 @@ Access OneDrive files via rclone. FUSE mounting works if the container was creat
    ```
    **unzip must be installed before rclone or the installer fails.**
 
-2. Configure rclone with device code auth (NOT `rclone authorize` — that needs a browser redirect which doesn't work in the container):
+2. Create an Azure App Registration at https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade
+   - Name: anything (e.g. "Vesta")
+   - Supported account types: "Accounts in any organizational directory and personal Microsoft accounts"
+   - Redirect URI: leave blank (device flow doesn't need one)
+   - Under "API permissions", add: `Files.ReadWrite.All`
+   - Under "Authentication", enable "Allow public client flows"
+   - Copy the **Application (client) ID**
+
+3. Configure rclone with device code auth (NOT `rclone authorize` — that needs a browser redirect which doesn't work in the container):
    ```bash
    rclone config
    ```
    - Type: `onedrive`
+   - Set `client_id` to the Application (client) ID from step 2
    - **Use tenant `common`** for personal Microsoft accounts (@outlook.com etc) — org tenant gives a cryptic identity provider error
-   - Auth: choose **device code flow** (the `https://microsoft.com/devicelogin` method) — same as Microsoft email auth
-   - You must manually set `client_id` and query `drive_id` from the Graph API or rclone fails with a useless error
+   - Auth: choose **device code flow** — you get a code and a URL (`https://microsoft.com/devicelogin`), sign in there to authorize
+   - You must also query `drive_id` from the Graph API or rclone fails with a useless error
 
-3. Get the drive ID after auth:
+4. Get the drive ID after auth:
    ```bash
    rclone lsd onedrive:
    ```

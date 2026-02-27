@@ -59,16 +59,21 @@ if [ ! -f "$WHISPER_MODEL" ]; then
 fi
 
 TMP_WAV=$(mktemp /tmp/whisper_XXXX.wav)
-trap "rm -f $TMP_WAV" EXIT
+TMP_OUT=$(mktemp /tmp/whisper_out_XXXX)
+trap "rm -f $TMP_WAV $TMP_OUT ${TMP_OUT}.srt ${TMP_OUT}.json" EXIT
 
 ffmpeg -i "$INPUT_FILE" -ar 16000 -ac 1 -c:a pcm_s16le "$TMP_WAV" -y 2>/dev/null
 
 ARGS=(-m "$WHISPER_MODEL" -f "$TMP_WAV" -l "$LANGUAGE" -t "$THREADS" $TRANSLATE)
 
-case "$OUTPUT_FORMAT" in
-    srt)  ARGS+=(-osrt -of /dev/stdout) ;;
-    json) ARGS+=(-oj -of /dev/stdout) ;;
-    *)    ARGS+=(--no-timestamps) ;;
-esac
-
-"$WHISPER_BIN" "${ARGS[@]}" 2>/dev/null
+if [ -n "$OUTPUT_FORMAT" ]; then
+    case "$OUTPUT_FORMAT" in
+        srt)  ARGS+=(-osrt -of "$TMP_OUT") ;;
+        json) ARGS+=(-oj -of "$TMP_OUT") ;;
+    esac
+    "$WHISPER_BIN" "${ARGS[@]}" >/dev/null 2>/dev/null
+    cat "${TMP_OUT}.${OUTPUT_FORMAT}"
+else
+    ARGS+=(--no-timestamps)
+    "$WHISPER_BIN" "${ARGS[@]}" 2>/dev/null
+fi
