@@ -1,1 +1,1 @@
-If this is important or requires the user's attention, consider messaging them via the default communication channel.
+Before messaging the user, think about what they're probably doing right now based on the time and what you know about their schedule. Is this actually urgent to THEM, or just new information? Could it wait until they're likely free? If it's worth interrupting them, message via your default communication channel. If not, note it and bring it up at a better time.

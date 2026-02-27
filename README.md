@@ -53,9 +53,3 @@ Vesta runs in a Docker container. On Linux, the CLI talks to Docker directly. On
 ## Skills
 
 Skill templates live in `agent/src/vesta/templates/skills/`. Each skill has a `SKILL.md` with setup instructions, CLI usage, and memory sections. Vesta activates skills on demand based on what you ask for.
-
-## How it works
-
-Vesta uses Claude as its reasoning engine. On startup it initializes skill templates and memory into `~/memory/skills/` inside the container. A monitor loop checks for new notifications and triggers proactive responses. Messages from stdin or WhatsApp are processed through Claude with access to all installed skills.
-
-Memory lives in `~/memory/` inside the container. Use `vesta backup` to snapshot container state before major changes.

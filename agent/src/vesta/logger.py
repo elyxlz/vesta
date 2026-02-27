@@ -121,10 +121,6 @@ def tool(msg: tp.Any) -> None:
     _cat("~", "dim", "TOOL", msg)
 
 
-def output(msg: tp.Any) -> None:
-    _cat("~", "dim", "OUTPUT", msg)
-
-
 def notification(msg: tp.Any) -> None:
     _cat("!", "yellow", "NOTIFICATION", msg)
 
@@ -133,21 +129,12 @@ def system(msg: tp.Any) -> None:
     _cat(">", "cyan", "SYSTEM", msg)
 
 
-def subagent(msg: tp.Any) -> None:
-    _cat("*", "magenta", "SUBAGENT", msg)
-
-
 def sdk(msg: tp.Any) -> None:
     _cat("~", "dim", "SDK", msg, level=logging.DEBUG)
 
 
-# Standard loggers
 def debug(msg: tp.Any) -> None:
     _log(f"[dim]{msg}[/dim]", level=logging.DEBUG)
-
-
-def info(msg: tp.Any) -> None:
-    _log(str(msg))
 
 
 def warning(msg: tp.Any) -> None:
@@ -156,10 +143,6 @@ def warning(msg: tp.Any) -> None:
 
 def error(msg: tp.Any) -> None:
     _log(f"[red]x {msg}[/red]", level=logging.ERROR)
-
-
-def critical(msg: tp.Any) -> None:
-    _log(f"[bold red]X {msg}[/bold red]", level=logging.CRITICAL)
 
 
 def exception(msg: tp.Any) -> None:

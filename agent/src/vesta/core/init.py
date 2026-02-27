@@ -13,7 +13,7 @@ def get_memory_path(config: vm.VestaConfig) -> pl.Path:
 
 
 def load_memory_template() -> str:
-    return (_TEMPLATES_DIR / "prompts" / "MEMORY.md").read_text()
+    return (_TEMPLATES_DIR / "MEMORY.md").read_text()
 
 
 def _discover_skill_templates() -> dict[str, pl.Path]:
@@ -55,6 +55,14 @@ def init_main_memory(config: vm.VestaConfig) -> None:
         template = load_memory_template().replace("{install_root}", str(config.install_root))
         memory_path.write_text(template)
         logger.init(f"Initialized main memory ({len(template)} chars)")
+
+
+def init_user_state(config: vm.VestaConfig) -> None:
+    path = config.memory_dir / "user_state.md"
+    if not path.exists():
+        template = (_TEMPLATES_DIR / "user_state.md").read_text()
+        path.write_text(template)
+        logger.init("Initialized user state")
 
 
 def init_prompts(config: vm.VestaConfig) -> None:

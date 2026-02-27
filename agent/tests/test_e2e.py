@@ -1,6 +1,7 @@
 """End-to-end tests for Vesta.
 
 These tests spin up the full Vesta system and test real integration scenarios.
+They require a valid Claude API key.
 """
 
 import asyncio
@@ -10,15 +11,17 @@ import time
 import uuid
 from pathlib import Path
 
-
 import vesta.main as vmain
 import vesta.models as vm
 from vesta import logger
+from vesta.core.client import build_client_options, process_message
 from vesta.core.init import get_memory_path
+
+from claude_agent_sdk import ClaudeSDKClient
 
 
 # =============================================================================
-# Test Helpers
+# Helpers
 # =============================================================================
 
 
@@ -44,17 +47,13 @@ You are Vesta running in automated test mode.
 
 
 def _prepare_state_dir(state_dir: Path) -> None:
-    """Create required directories and test memory for test."""
     for folder in ("notifications", "logs", "data", "onedrive", "workspace", "memory"):
         (state_dir / folder).mkdir(parents=True, exist_ok=True)
-
-    # Write test-specific memory that allows immediate action
     memory_path = state_dir / "memory" / "MEMORY.md"
     memory_path.write_text(TEST_MEMORY)
 
 
 def _write_notification(notif_dir: Path, message: str, *, sender: str = "pytest") -> Path:
-    """Write a notification JSON file."""
     payload = {
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "source": "pytest",
@@ -69,12 +68,10 @@ def _write_notification(notif_dir: Path, message: str, *, sender: str = "pytest"
 
 
 def _run(coro):
-    """Run an async test scenario."""
     asyncio.run(coro)
 
 
 async def _wait_for_file(path: Path, timeout: float = 120.0) -> str:
-    """Wait for a file to exist and return its contents."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         if path.exists():
@@ -84,7 +81,6 @@ async def _wait_for_file(path: Path, timeout: float = 120.0) -> str:
 
 
 async def _assert_missing(path: Path, duration: float = 30.0) -> None:
-    """Assert that a file does NOT get created within duration."""
     deadline = time.time() + duration
     while time.time() < deadline:
         if path.exists():
@@ -93,7 +89,6 @@ async def _assert_missing(path: Path, duration: float = 30.0) -> None:
 
 
 def _make_config(state_dir: Path, **overrides: object) -> vm.VestaConfig:
-    """Create a test config with sensible defaults."""
     defaults: dict[str, object] = {
         "state_dir": state_dir,
         "notification_check_interval": 1,
@@ -106,17 +101,14 @@ def _make_config(state_dir: Path, **overrides: object) -> vm.VestaConfig:
 
 
 async def _noop_input_handler(queue: asyncio.Queue, *, state: vm.State) -> None:
-    """Replacement input handler that just waits for shutdown."""
     if state.shutdown_event:
         await state.shutdown_event.wait()
 
 
 async def _run_test_scenario(state_dir: Path, test_fn, **config_overrides):
-    """Run a test scenario with full Vesta lifecycle in same task context."""
     config = _make_config(state_dir, **config_overrides)
     logger.setup(config.logs_dir, log_level="DEBUG")
 
-    # Import here to avoid circular imports
     from vesta.core import io as vio
 
     original_input_handler = vio.input_handler
@@ -141,13 +133,120 @@ async def _run_test_scenario(state_dir: Path, test_fn, **config_overrides):
                 run_test(),
             )
         except asyncio.CancelledError:
-            pass  # Expected during shutdown
+            pass
     finally:
         vio.input_handler = original_input_handler
 
 
 # =============================================================================
-# E2E Tests
+# Client lifecycle tests
+# =============================================================================
+
+
+def test_client_lifecycle_with_async_with(tmp_path):
+    """Client should work correctly with async with context manager."""
+    state_dir = tmp_path / "state"
+    _prepare_state_dir(state_dir)
+    config = _make_config(state_dir)
+    state = vmain.init_state(config=config)
+
+    async def test_fn():
+        options = build_client_options(config, state)
+        async with ClaudeSDKClient(options=options) as client:
+            state.client = client
+            assert state.client is not None
+            responses, _ = await asyncio.wait_for(
+                process_message("Say 'hello'", state=state, config=config, is_user=False),
+                timeout=30.0,
+            )
+            assert responses
+
+    _run(test_fn())
+
+
+def test_pending_context_flag(tmp_path):
+    """Setting pending_context should work correctly."""
+    state_dir = tmp_path / "state"
+    _prepare_state_dir(state_dir)
+    config = _make_config(state_dir)
+    state = vmain.init_state(config=config)
+
+    async def test_fn():
+        assert state.pending_context is None
+        state.pending_context = "[System: test reset]"
+        state.session_id = None
+        assert state.pending_context is not None
+        state.pending_context = None
+        assert state.pending_context is None
+
+    _run(test_fn())
+
+
+def test_multiple_client_sessions(tmp_path):
+    """Should be able to create multiple client sessions sequentially."""
+    state_dir = tmp_path / "state"
+    _prepare_state_dir(state_dir)
+    config = _make_config(state_dir)
+    state = vmain.init_state(config=config)
+
+    async def test_fn():
+        options = build_client_options(config, state)
+        async with ClaudeSDKClient(options=options) as client1:
+            state.client = client1
+            responses1, _ = await asyncio.wait_for(
+                process_message("Say 'one'", state=state, config=config, is_user=False),
+                timeout=30.0,
+            )
+            assert responses1
+
+        state.client = None
+        state.session_id = None
+
+        options = build_client_options(config, state)
+        async with ClaudeSDKClient(options=options) as client2:
+            state.client = client2
+            responses2, _ = await asyncio.wait_for(
+                process_message("Say 'two'", state=state, config=config, is_user=False),
+                timeout=30.0,
+            )
+            assert responses2
+
+    _run(test_fn())
+
+
+def test_full_reset_flow(tmp_path):
+    """Full flow: pending_context triggers client recreation."""
+    state_dir = tmp_path / "state"
+    _prepare_state_dir(state_dir)
+    config = _make_config(state_dir)
+    state = vmain.init_state(config=config)
+
+    async def test_fn():
+        options = build_client_options(config, state)
+        async with ClaudeSDKClient(options=options) as client:
+            state.client = client
+
+        state.client = None
+        state.pending_context = "[System: Reset needed]"
+
+        context = state.pending_context
+        state.pending_context = None
+        assert context is not None
+
+        options = build_client_options(config, state)
+        async with ClaudeSDKClient(options=options) as client:
+            state.client = client
+            responses, _ = await asyncio.wait_for(
+                process_message("Are you there?", state=state, config=config, is_user=False),
+                timeout=30.0,
+            )
+            assert responses
+
+    _run(test_fn())
+
+
+# =============================================================================
+# Notification & lifecycle E2E tests
 # =============================================================================
 
 
@@ -249,38 +348,31 @@ def test_client_created_on_notification(tmp_path):
     _prepare_state_dir(state_dir)
 
     async def test_fn(state: vm.State, config: vm.VestaConfig):
-        # Client is lazy - starts as None
-        # Send a notification to trigger client creation
         notif_dir = config.notifications_dir
         workspace = config.state_dir / "workspace"
         target = workspace / f"client-test-{uuid.uuid4().hex}.txt"
         _write_notification(notif_dir, f'Create file "{target}" with content "client test"')
         await _wait_for_file(target)
-
-        # Now client should exist
         assert state.client is not None
         memory_path = get_memory_path(config)
-        assert memory_path.exists(), "Memory should be initialized"
+        assert memory_path.exists()
 
     _run(_run_test_scenario(state_dir, test_fn))
 
 
 def test_memory_exists_on_startup(tmp_path):
-    """Memory file should exist when Vesta starts (created by test setup)."""
+    """Memory file should exist when Vesta starts."""
     state_dir = tmp_path / "state"
     _prepare_state_dir(state_dir)
     config = _make_config(state_dir)
-
-    # Verify test memory was created by _prepare_state_dir
     memory_path = get_memory_path(config)
-    assert memory_path.exists(), "Test memory should be created by _prepare_state_dir"
+    assert memory_path.exists()
     assert "TEST MODE" in memory_path.read_text()
 
     async def test_fn(state: vm.State, config: vm.VestaConfig):
         memory_path = get_memory_path(config)
-        assert memory_path.exists(), "Memory should exist"
-        content = memory_path.read_text()
-        assert len(content) > 100, "Memory should have content"
+        assert memory_path.exists()
+        assert len(memory_path.read_text()) > 100
 
     _run(_run_test_scenario(state_dir, test_fn))
 
@@ -291,10 +383,8 @@ def test_graceful_shutdown(tmp_path):
     _prepare_state_dir(state_dir)
 
     async def test_fn(state: vm.State, config: vm.VestaConfig):
-        # Just verify startup succeeded (log file exists), then let shutdown happen
-        # Client may be None if no notifications were processed yet (lazy initialization)
         log_file = config.logs_dir / "vesta.log"
-        assert log_file.exists(), "Log file should exist after startup"
+        assert log_file.exists()
 
     _run(_run_test_scenario(state_dir, test_fn))
 

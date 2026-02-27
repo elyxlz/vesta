@@ -18,20 +18,13 @@ from claude_agent_sdk import (
 from claude_agent_sdk.types import PreToolUseHookInput, PostToolUseHookInput, HookJSONOutput, HookEvent, HookCallback
 
 import vesta.models as vm
-import vesta.core.effects as vfx
 from vesta import logger
 from vesta.core.init import get_memory_path, load_memory_template
-
-
-# --- Query building ---
 
 
 def _build_query(prompt: str, *, timestamp: dt.datetime) -> str:
     timestamp_str = timestamp.strftime("%A, %B %d, %Y at %I:%M:%S %p %Z")
     return f"[Current time: {timestamp_str}]\n{prompt}"
-
-
-# --- Message parsing ---
 
 
 def _format_tool_call(name: str, *, input_data: object, sub_agent_context: str | None) -> tuple[str, str | None]:
@@ -86,17 +79,6 @@ def _parse_sdk_message(msg: Message, *, sub_agent_context: str | None) -> tuple[
     return texts, current_context, None
 
 
-def _parse_assistant_message(msg: Message, *, state: vm.State, sub_agent_context: str | None) -> tuple[str | None, str | None]:
-    texts, new_context, session_id = _parse_sdk_message(msg, sub_agent_context=sub_agent_context)
-    if session_id:
-        state.session_id = session_id
-        logger.debug(f"Captured session_id: {session_id[:16]}...")
-    return "\n".join(texts) if texts else None, new_context
-
-
-# --- Hooks ---
-
-
 _TOOL_KEYS: dict[str, str] = {
     "Bash": "command", "Skill": "skill",
     "Read": "file_path", "Write": "file_path", "Edit": "file_path",
@@ -128,29 +110,6 @@ async def _log_tool_finish(input_data: PostToolUseHookInput, tool_use_id: str | 
     return tp.cast(HookJSONOutput, {})
 
 
-def _build_hooks() -> dict[HookEvent, list[HookMatcher]]:
-    return {
-        "PreToolUse": [HookMatcher(hooks=[tp.cast(HookCallback, _log_tool_start)])],
-        "PostToolUse": [HookMatcher(hooks=[tp.cast(HookCallback, _log_tool_finish)])],
-    }
-
-
-# --- System prompt ---
-
-
-def _load_system_prompt(config: vm.VestaConfig) -> str:
-    memory_path = get_memory_path(config)
-    if memory_path.exists():
-        content = memory_path.read_text()
-        logger.debug(f"Loaded system prompt ({len(content)} chars)")
-        return content
-    logger.debug("Using template for system prompt (file not found)")
-    return load_memory_template()
-
-
-# --- Client interaction ---
-
-
 async def attempt_interrupt(state: vm.State, *, config: vm.VestaConfig, reason: str) -> bool:
     logger.interrupt(f"Starting interrupt attempt: {reason}")
 
@@ -171,7 +130,7 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
     assert state.client is not None
     client = state.client
 
-    query = _build_query(prompt, timestamp=vfx.get_current_time())
+    query = _build_query(prompt, timestamp=dt.datetime.now())
     await asyncio.wait_for(client.query(query), timeout=config.query_timeout)
 
     responses: list[str] = []
@@ -180,7 +139,11 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
     async def collect() -> None:
         nonlocal sub_agent_context
         async for msg in client.receive_response():
-            text, sub_agent_context = _parse_assistant_message(msg, state=state, sub_agent_context=sub_agent_context)
+            texts, sub_agent_context, session_id = _parse_sdk_message(msg, sub_agent_context=sub_agent_context)
+            if session_id:
+                state.session_id = session_id
+                logger.debug(f"Captured session_id: {session_id[:16]}...")
+            text = "\n".join(texts) if texts else None
             if not text:
                 continue
             if not show_output:
@@ -207,29 +170,29 @@ async def process_message(msg: str, *, state: vm.State, config: vm.VestaConfig, 
     return responses, state
 
 
-# --- Vesta tools MCP server ---
-
-
 def _build_vesta_tools_server(state: vm.State):
-    @tool("restart_vesta", "Restart Vesta to reload system prompt, skills, and memory files. Current conversation is preserved.", {})
+    @tool("restart_vesta", "Restart Vesta to reload memory, skills, and prompts. Current conversation is preserved.", {})
     async def restart_vesta(args):
         if state.graceful_shutdown and state.graceful_shutdown.is_set():
             if state.shutdown_event:
                 state.shutdown_event.set()
             return {"content": [{"type": "text", "text": "Shutdown complete. Sweet dreams."}]}
-        state.pending_context = "[System: Vesta restarted. Configuration and system prompt refreshed. Previous conversation resumed.]"
+        state.pending_context = "[System: Vesta restarted. Memory, skills, and prompts refreshed. Previous conversation resumed.]"
         return {"content": [{"type": "text", "text": "Restart initiated. Session will resume with refreshed configuration."}]}
 
     return create_sdk_mcp_server("vesta-tools", tools=[restart_vesta])
 
 
-# --- Client options ---
-
-
 def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgentOptions:
+    memory_path = get_memory_path(config)
+    system_prompt = memory_path.read_text() if memory_path.exists() else load_memory_template()
+
     return ClaudeAgentOptions(
-        system_prompt=_load_system_prompt(config),
-        hooks=_build_hooks(),
+        system_prompt=system_prompt,
+        hooks={
+            "PreToolUse": [HookMatcher(hooks=[tp.cast(HookCallback, _log_tool_start)])],
+            "PostToolUse": [HookMatcher(hooks=[tp.cast(HookCallback, _log_tool_finish)])],
+        },
         permission_mode="bypassPermissions",
         cwd=config.state_dir,
         setting_sources=["project"],
