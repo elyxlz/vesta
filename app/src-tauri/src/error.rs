@@ -1,12 +1,7 @@
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
-#[allow(dead_code)]
 pub enum ErrorCode {
-    RuntimeError,
-    AgentNotFound,
-    AgentAlreadyExists,
-    AgentNotRunning,
     AttachFailed,
     ExecFailed,
     Internal,

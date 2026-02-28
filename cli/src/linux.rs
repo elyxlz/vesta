@@ -6,12 +6,22 @@ const CONTAINER_NAME: &str = "vesta";
 const VESTA_IMAGE: &str = "ghcr.io/elyxlz/vesta:latest";
 const LOCAL_IMAGE_TAG: &str = "vesta:local";
 const AGENT_PORT: u16 = 7865;
+const MAX_DOCKERFILE_SEARCH_DEPTH: usize = 5;
+const TOKEN_PATH: &str = "/root/.claude_token";
+
+#[derive(PartialEq)]
+enum ContainerStatus {
+    Running,
+    Stopped,
+    NotFound,
+}
 
 #[derive(Serialize)]
 struct StatusJson {
     status: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     id: Option<String>,
+    authenticated: bool,
 }
 
 fn docker(args: &[&str]) -> process::ExitStatus {
@@ -48,6 +58,19 @@ fn docker_quiet(args: &[&str]) -> bool {
         .unwrap_or(false)
 }
 
+fn docker_interactive(args: &[&str]) {
+    let status = process::Command::new("docker")
+        .args(args)
+        .stdin(process::Stdio::inherit())
+        .stdout(process::Stdio::inherit())
+        .stderr(process::Stdio::inherit())
+        .status()
+        .unwrap_or_else(|e| die(&format!("docker failed: {}", e)));
+    if !status.success() {
+        process::exit(status.code().unwrap_or(1));
+    }
+}
+
 fn ensure_docker() {
     if !docker_quiet(&["--version"]) {
         die("docker is not installed.\ninstall: https://docs.docker.com/get-docker/");
@@ -57,115 +80,160 @@ fn ensure_docker() {
     }
 }
 
-fn container_status() -> &'static str {
+fn container_status() -> ContainerStatus {
     match docker_output(&["inspect", "--format", "{{.State.Status}}", CONTAINER_NAME]) {
         Some(s) => match s.as_str() {
-            "running" => "running",
-            "exited" | "created" | "dead" | "paused" => "stopped",
-            _ => "unknown",
+            "running" => ContainerStatus::Running,
+            _ => ContainerStatus::Stopped,
         },
-        None => "not_found",
+        None => ContainerStatus::NotFound,
     }
 }
 
-fn container_id() -> Option<String> {
-    docker_output(&["inspect", "--format", "{{.Id}}", CONTAINER_NAME])
-        .map(|id| id.chars().take(12).collect())
+fn is_authenticated() -> bool {
+    docker_quiet(&["exec", CONTAINER_NAME, "test", "-f", TOKEN_PATH])
 }
 
 fn ensure_exists() {
-    if container_status() == "not_found" {
+    if container_status() == ContainerStatus::NotFound {
         die("agent not found. run: vesta setup");
     }
 }
 
 fn ensure_running() {
     ensure_exists();
-    if container_status() != "running" {
+    if container_status() != ContainerStatus::Running {
         die("agent is not running. run: vesta start");
     }
 }
 
+fn confirm(prompt: &str) -> bool {
+    eprint!("{}", prompt);
+    io::stderr().flush().ok();
+    let mut input = String::new();
+    io::stdin().read_line(&mut input).ok();
+    input.trim() == "y"
+}
+
 fn find_dockerfile() -> std::path::PathBuf {
-    let exe =
-        std::env::current_exe().unwrap_or_else(|_| die("cannot determine executable path"));
-    let mut dir = exe.parent().map(std::path::Path::to_path_buf);
-    while let Some(d) = dir {
-        if d.join("Dockerfile").exists() {
-            return d;
-        }
-        dir = d.parent().map(std::path::Path::to_path_buf);
-    }
     let cwd =
         std::env::current_dir().unwrap_or_else(|_| die("cannot determine working directory"));
     if cwd.join("Dockerfile").exists() {
         return cwd;
     }
+
+    let exe =
+        std::env::current_exe().unwrap_or_else(|_| die("cannot determine executable path"));
+    let mut dir = exe.parent().map(std::path::Path::to_path_buf);
+    let mut depth = 0;
+    while let Some(d) = dir {
+        if depth >= MAX_DOCKERFILE_SEARCH_DEPTH {
+            break;
+        }
+        if d.join("Dockerfile").exists() {
+            return d;
+        }
+        dir = d.parent().map(std::path::Path::to_path_buf);
+        depth += 1;
+    }
     die("Dockerfile not found. run vesta setup --build from the repo root.");
 }
 
-fn copy_auth_from_container(container: &str) -> Option<std::path::PathBuf> {
-    let tmp = std::env::temp_dir().join("vesta-auth-backup");
-    std::fs::create_dir_all(&tmp).ok()?;
-
-    let creds = tmp.join("credentials.json");
-    let claude_json = tmp.join("claude.json");
-
-    let ok1 = docker_quiet(&[
-        "cp",
-        &format!("{}:/root/.claude/.credentials.json", container),
-        creds.to_str().unwrap(),
-    ]);
-    let ok2 = docker_quiet(&[
-        "cp",
-        &format!("{}:/root/.claude.json", container),
-        claude_json.to_str().unwrap(),
-    ]);
-
-    if ok1 || ok2 {
-        Some(tmp)
+fn resolve_image(build: bool) -> &'static str {
+    if build {
+        let context = find_dockerfile();
+        println!("building image from {}...", context.display());
+        let status = process::Command::new("docker")
+            .args(["build", "-t", LOCAL_IMAGE_TAG, "."])
+            .current_dir(&context)
+            .status()
+            .unwrap_or_else(|e| die(&format!("docker build failed: {}", e)));
+        if !status.success() {
+            die("image build failed");
+        }
+        LOCAL_IMAGE_TAG
     } else {
-        std::fs::remove_dir_all(&tmp).ok();
-        None
+        println!("pulling image...");
+        if !docker_ok(&["pull", VESTA_IMAGE]) {
+            die("failed to pull image. check your internet connection.");
+        }
+        VESTA_IMAGE
     }
 }
 
-fn restore_auth_to_container(container: &str, auth_dir: &std::path::Path) {
-    let creds = auth_dir.join("credentials.json");
-    let claude_json = auth_dir.join("claude.json");
-
-    if creds.exists() {
-        let claude_dir = auth_dir.join(".claude");
-        std::fs::create_dir_all(&claude_dir).ok();
-        std::fs::rename(&creds, claude_dir.join(".credentials.json")).ok();
-        docker_quiet(&[
-            "cp",
-            claude_dir.to_str().unwrap(),
-            &format!("{}:/root/.claude", container),
-        ]);
+fn create_container(image: &str) {
+    if !docker_ok(&[
+        "create",
+        "--name",
+        CONTAINER_NAME,
+        "-it",
+        "--privileged",
+        "-p",
+        &format!("{}:{}", AGENT_PORT, AGENT_PORT),
+        "--restart",
+        "unless-stopped",
+        image,
+    ]) {
+        die("failed to create container");
     }
-    if claude_json.exists() {
-        docker_quiet(&[
-            "cp",
-            claude_json.to_str().unwrap(),
-            &format!("{}:/root/.claude.json", container),
-        ]);
-    }
-
-    std::fs::remove_dir_all(auth_dir).ok();
 }
 
-fn docker_exec(args: &[&str]) {
-    let status = process::Command::new("docker")
-        .args(args)
+fn obtain_token() -> String {
+    println!("authenticating claude...");
+    println!("a browser window will open. sign in, then come back here.\n");
+
+    let status = process::Command::new("claude")
+        .args(["setup-token"])
         .stdin(process::Stdio::inherit())
         .stdout(process::Stdio::inherit())
         .stderr(process::Stdio::inherit())
         .status()
-        .unwrap_or_else(|e| die(&format!("docker exec failed: {}", e)));
+        .unwrap_or_else(|_| die("failed to run 'claude setup-token'.\ninstall claude code: npm install -g @anthropic-ai/claude-code"));
+
     if !status.success() {
-        process::exit(status.code().unwrap_or(1));
+        die("claude setup-token failed");
     }
+
+    let creds_path = dirs::home_dir()
+        .unwrap_or_else(|| die("cannot determine home directory"))
+        .join(".claude")
+        .join(".credentials.json");
+
+    let content = std::fs::read_to_string(&creds_path)
+        .unwrap_or_else(|_| die("could not read ~/.claude/.credentials.json after setup-token"));
+
+    let parsed: serde_json::Value = serde_json::from_str(&content)
+        .unwrap_or_else(|_| die("could not parse credentials file"));
+
+    let oauth = parsed.get("claudeAiOauth")
+        .unwrap_or_else(|| die("no claudeAiOauth entry in credentials"));
+
+    let token = oauth.get("accessToken")
+        .and_then(|v| v.as_str())
+        .unwrap_or_else(|| die("no accessToken in credentials"));
+
+    if !token.starts_with("sk-ant-") {
+        die("unexpected token format in credentials");
+    }
+
+    token.to_string()
+}
+
+fn docker_cp_content(container: &str, content: &str, dest: &str) {
+    let tmp = std::env::temp_dir().join(format!("vesta_{}", std::process::id()));
+    std::fs::write(&tmp, content)
+        .unwrap_or_else(|e| die(&format!("failed to write temp file: {}", e)));
+    let target = format!("{}:{}", container, dest);
+    let ok = docker_ok(&["cp", tmp.to_str().unwrap(), &target]);
+    std::fs::remove_file(&tmp).ok();
+    if !ok {
+        die(&format!("failed to copy to {}", dest));
+    }
+}
+
+fn inject_token(container: &str, token: &str) {
+    docker_cp_content(container, token, TOKEN_PATH);
+    docker_cp_content(container, "{\"hasCompletedOnboarding\":true}", "/root/.claude.json");
 }
 
 pub fn run(command: Command) {
@@ -173,132 +241,46 @@ pub fn run(command: Command) {
 
     match command {
         Command::Setup { build } => {
-            let mut saved_auth = if container_status() != "not_found" {
-                eprint!("agent already exists. destroy and recreate? [y/N] ");
-                io::stdout().flush().ok();
-                let mut confirm = String::new();
-                io::stdin().read_line(&mut confirm).ok();
-                if confirm.trim() != "y" {
+            if container_status() != ContainerStatus::NotFound {
+                if !confirm("agent already exists. destroy and recreate? [y/N] ") {
                     println!("aborted");
                     return;
                 }
-                println!("saving auth...");
-                let auth = copy_auth_from_container(CONTAINER_NAME);
                 docker_ok(&["rm", "-f", CONTAINER_NAME]);
-                auth
-            } else {
-                None
-            };
+            }
 
-            let image = if build {
-                let context = find_dockerfile();
-                println!("building image from {}...", context.display());
-                let status = process::Command::new("docker")
-                    .args(["build", "-t", LOCAL_IMAGE_TAG, "."])
-                    .current_dir(&context)
-                    .status()
-                    .unwrap_or_else(|e| die(&format!("docker build failed: {}", e)));
-                if !status.success() {
-                    die("image build failed");
-                }
-                LOCAL_IMAGE_TAG
-            } else {
-                println!("pulling image...");
-                if !docker_ok(&["pull", VESTA_IMAGE]) {
-                    die("failed to pull image. check your internet connection.");
-                }
-                VESTA_IMAGE
-            };
+            let image = resolve_image(build);
+
+            let token = obtain_token();
 
             println!("creating agent...");
-            if !docker_ok(&[
-                "create",
-                "--name",
-                CONTAINER_NAME,
-                "-it",
-                "--privileged",
-                "-p",
-                &format!("{}:{}", AGENT_PORT, AGENT_PORT),
-                "--restart",
-                "unless-stopped",
-                image,
-            ]) {
-                die("failed to create container");
-            }
+            create_container(image);
+            inject_token(CONTAINER_NAME, &token);
 
-            if saved_auth.is_none() {
-                println!("authenticating claude (copy the url and open in your browser)...");
-                let auth_container = "vesta-auth";
-                docker_quiet(&["rm", "-f", auth_container]);
-                docker_exec(&["run", "-it", "--name", auth_container, "--entrypoint", "claude", image]);
-                let fresh_auth = copy_auth_from_container(auth_container);
-                docker_quiet(&["rm", "-f", auth_container]);
-                if fresh_auth.is_none() {
-                    die("auth failed — no credentials found");
-                }
-                saved_auth = fresh_auth;
-            }
-
-            if let Some(auth_dir) = saved_auth {
-                println!("restoring auth...");
-                restore_auth_to_container(CONTAINER_NAME, &auth_dir);
-            }
-
-            println!("starting...");
             if !docker_ok(&["start", CONTAINER_NAME]) {
                 die("failed to start container");
             }
 
+            println!("agent is ready.");
             println!("attaching (ctrl-q to detach)...");
-            docker_exec(&["attach", "--detach-keys=ctrl-q", CONTAINER_NAME]);
+            docker_interactive(&["attach", "--detach-keys=ctrl-q", CONTAINER_NAME]);
         }
 
         Command::Create { build } => {
-            if container_status() != "not_found" {
+            if container_status() != ContainerStatus::NotFound {
                 die("agent already exists. run: vesta destroy first");
             }
 
-            let image = if build {
-                let context = find_dockerfile();
-                println!("building image from {}...", context.display());
-                let status = process::Command::new("docker")
-                    .args(["build", "-t", LOCAL_IMAGE_TAG, "."])
-                    .current_dir(&context)
-                    .status()
-                    .unwrap_or_else(|e| die(&format!("docker build failed: {}", e)));
-                if !status.success() {
-                    die("image build failed");
-                }
-                LOCAL_IMAGE_TAG
-            } else {
-                println!("pulling image...");
-                if !docker_ok(&["pull", VESTA_IMAGE]) {
-                    die("failed to pull image. check your internet connection.");
-                }
-                VESTA_IMAGE
-            };
+            let image = resolve_image(build);
 
             println!("creating agent...");
-            if !docker_ok(&[
-                "create",
-                "--name",
-                CONTAINER_NAME,
-                "-it",
-                "--privileged",
-                "-p",
-                &format!("{}:{}", AGENT_PORT, AGENT_PORT),
-                "--restart",
-                "unless-stopped",
-                image,
-            ]) {
-                die("failed to create container");
-            }
-            println!("created");
+            create_container(image);
+            println!("created (run 'vesta auth' to authenticate, then 'vesta start')");
         }
 
         Command::Start => {
             ensure_exists();
-            if container_status() == "running" {
+            if container_status() == ContainerStatus::Running {
                 println!("already running");
                 return;
             }
@@ -340,13 +322,19 @@ pub fn run(command: Command) {
                 .stderr(process::Stdio::null())
                 .status();
             println!("\nattaching (ctrl-q to detach)...");
-            docker_exec(&["attach", "--detach-keys=ctrl-q", CONTAINER_NAME]);
+            docker_interactive(&["attach", "--detach-keys=ctrl-q", CONTAINER_NAME]);
         }
 
-        Command::Auth => {
-            ensure_running();
-            println!("authenticating claude (copy the url and open in your browser)...");
-            docker_exec(&["exec", "-it", CONTAINER_NAME, "claude"]);
+        Command::Auth { token } => {
+            ensure_exists();
+            let token = token.unwrap_or_else(|| obtain_token());
+            inject_token(CONTAINER_NAME, &token);
+            if container_status() == ContainerStatus::Running {
+                docker_ok(&["restart", CONTAINER_NAME]);
+            } else if !docker_ok(&["start", CONTAINER_NAME]) {
+                die("failed to start container");
+            }
+            println!("authenticated");
         }
 
         Command::Logs => {
@@ -373,24 +361,35 @@ pub fn run(command: Command) {
 
         Command::Shell => {
             ensure_running();
-            docker_exec(&["exec", "-it", "--detach-keys=ctrl-q", CONTAINER_NAME, "bash"]);
+            docker_interactive(&["exec", "-it", "--detach-keys=ctrl-q", CONTAINER_NAME, "bash"]);
         }
 
         Command::Status { json } => {
-            let status = container_status();
+            let (status_str, id, running) = match docker_output(&[
+                "inspect", "--format", "{{.State.Status}} {{.Id}}", CONTAINER_NAME,
+            ]) {
+                Some(raw) => {
+                    let mut parts = raw.splitn(2, ' ');
+                    let s = parts.next().unwrap_or("");
+                    let id = parts.next().unwrap_or("").chars().take(12).collect::<String>();
+                    let running = s == "running";
+                    let label = if running { "running" } else { "stopped" };
+                    (label, Some(id), running)
+                }
+                None => ("not_found", None, false),
+            };
+            let authed = running && is_authenticated();
             if json {
-                let s = StatusJson {
-                    status,
-                    id: container_id(),
-                };
+                let s = StatusJson { status: status_str, id, authenticated: authed };
                 println!("{}", serde_json::to_string(&s).unwrap());
-            } else if status == "not_found" {
+            } else if status_str == "not_found" {
                 println!("no agent. run: vesta setup");
             } else {
-                println!("status: {}", status);
-                if let Some(id) = container_id() {
+                println!("status: {}", status_str);
+                if let Some(id) = &id {
                     println!("id:     {}", id);
                 }
+                println!("auth:   {}", if authed { "yes" } else { "no" });
             }
         }
 
@@ -410,15 +409,9 @@ pub fn run(command: Command) {
 
         Command::Destroy { yes } => {
             ensure_exists();
-            if !yes {
-                eprint!("destroy agent (all state lost)? [y/N] ");
-                io::stdout().flush().ok();
-                let mut confirm = String::new();
-                io::stdin().read_line(&mut confirm).ok();
-                if confirm.trim() != "y" {
-                    println!("aborted");
-                    return;
-                }
+            if !yes && !confirm("destroy agent (all state lost)? [y/N] ") {
+                println!("aborted");
+                return;
             }
             if !docker_ok(&["rm", "-f", CONTAINER_NAME]) {
                 die("failed to destroy");
@@ -443,20 +436,7 @@ pub fn run(command: Command) {
             docker_ok(&["rm", "-f", CONTAINER_NAME]);
 
             println!("recreating from backup...");
-            if !docker_ok(&[
-                "create",
-                "--name",
-                CONTAINER_NAME,
-                "-it",
-                "--privileged",
-                "-p",
-                &format!("{}:{}", AGENT_PORT, AGENT_PORT),
-                "--restart",
-                "unless-stopped",
-                &backup_tag,
-            ]) {
-                die("failed to recreate");
-            }
+            create_container(&backup_tag);
 
             if !docker_ok(&["start", CONTAINER_NAME]) {
                 die("failed to start");

@@ -2,4 +2,16 @@ import { writable } from "svelte/store";
 import type { AgentInfo } from "./types";
 
 export const agent = writable<AgentInfo | null>(null);
-export const agentName = writable<string>("vesta");
+
+const AGENT_NAME_KEY = "vesta:agent-name";
+const storedName = typeof localStorage !== "undefined"
+  ? localStorage.getItem(AGENT_NAME_KEY) ?? "vesta"
+  : "vesta";
+
+export const agentName = writable<string>(storedName);
+
+agentName.subscribe((name) => {
+  if (typeof localStorage !== "undefined") {
+    localStorage.setItem(AGENT_NAME_KEY, name);
+  }
+});

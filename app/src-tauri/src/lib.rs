@@ -12,6 +12,32 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(app_state)
+        .setup(|_app| {
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            {
+                use tauri::Manager;
+                if let Some(window) = _app.get_webview_window("main") {
+                    #[cfg(target_os = "macos")]
+                    {
+                        use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial};
+                        let _ = apply_vibrancy(
+                            &window,
+                            NSVisualEffectMaterial::HudWindow,
+                            None,
+                            None,
+                        );
+                    }
+                    #[cfg(target_os = "windows")]
+                    {
+                        use window_vibrancy::apply_mica;
+                        if apply_mica(&window, None).is_err() {
+                            let _ = window_vibrancy::apply_acrylic(&window, Some((0, 0, 0, 20)));
+                        }
+                    }
+                }
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::agents::agent_exists,
             commands::agents::agent_status,
@@ -24,7 +50,7 @@ pub fn run() {
             commands::chat::detach_chat,
             commands::logs::stream_logs,
             commands::logs::stop_logs,
-            commands::auth::start_auth,
+            commands::auth::authenticate,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

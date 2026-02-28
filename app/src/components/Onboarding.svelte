@@ -1,62 +1,68 @@
 <script lang="ts">
-  import { open } from "@tauri-apps/plugin-shell";
-  import { createAgent, startAgent, startAuth, agentStatus } from "../lib/api";
+  import { createAgent, agentStatus, authenticate } from "../lib/api";
   import { agent } from "../lib/stores";
   import ProgressBar from "./ProgressBar.svelte";
-  import type { AuthEvent } from "../lib/types";
 
   let { onComplete }: { onComplete: (name: string) => void } = $props();
 
   let step = $state<"name" | "creating" | "auth" | "done">("name");
   let agentName = $state("");
-  let authOutput = $state("");
   let error = $state("");
   let transitioning = $state(false);
+  let busy = $state(false);
   let createMsg = $state("");
+
+  function normalizeName(raw: string): string {
+    return raw.trim().toLowerCase().replace(/\s+/g, "-");
+  }
 
   async function goTo(next: typeof step) {
     transitioning = true;
-    await new Promise((r) => setTimeout(r, 200));
+    await new Promise((r) => setTimeout(r, 150));
     step = next;
     error = "";
     transitioning = false;
   }
 
   async function handleCreate() {
-    const name = agentName.trim().toLowerCase().replace(/\s+/g, "-");
-    if (!name) return;
+    const name = normalizeName(agentName);
+    if (!name || busy) return;
+    busy = true;
     error = "";
     createMsg = "creating agent...";
-    goTo("creating");
+    await goTo("creating");
     try {
       await createAgent();
-      createMsg = "starting...";
-      await startAgent();
-      const info = await agentStatus();
-      agent.set(info);
-      goTo("auth");
+      await goTo("auth");
       runAuth();
     } catch (e: any) {
       error = e?.message ?? "couldn't create agent";
-      goTo("name");
+      await goTo("name");
+    } finally {
+      busy = false;
     }
   }
 
-  function runAuth() {
-    authOutput = "";
-    startAuth((ev: AuthEvent) => {
-      if (ev.kind === "Output") authOutput += ev.text;
-      if (ev.kind === "UrlDetected") open(ev.url);
-      if (ev.kind === "Complete") goTo("done");
-      if (ev.kind === "Error") error = ev.message;
-    });
+  async function runAuth() {
+    busy = true;
+    error = "";
+    try {
+      await authenticate();
+      const info = await agentStatus();
+      agent.set(info);
+      busy = false;
+      await goTo("done");
+    } catch (e: any) {
+      busy = false;
+      error = e?.message ?? "authentication failed";
+    }
   }
 </script>
 
 <div class="onboarding" class:transitioning>
   <div class="card">
     {#if step === "name"}
-      <div class="step" style="animation: fadeSlideIn 0.5s cubic-bezier(0.16, 1, 0.3, 1)">
+      <div class="step step-anim">
         <h1>welcome to vesta</h1>
         <p class="sub">your personal ai assistant.<br/>give it a name to get started.</p>
         <form onsubmit={(e) => { e.preventDefault(); handleCreate(); }}>
@@ -67,34 +73,34 @@
             bind:value={agentName}
           />
           {#if error}<p class="error">{error}</p>{/if}
-          <button class="btn primary full" type="submit" disabled={!agentName.trim()}>create</button>
+          <button class="btn primary full" type="submit" disabled={!agentName.trim() || busy}>create</button>
         </form>
       </div>
 
     {:else if step === "creating"}
-      <div class="step" style="animation: fadeSlideIn 0.5s cubic-bezier(0.16, 1, 0.3, 1)">
+      <div class="step step-anim">
         <h1>setting up</h1>
         <p class="sub">pulling image and starting your agent.<br/>this takes a moment the first time.</p>
         <ProgressBar message={createMsg} />
         {#if error}
           <p class="error">{error}</p>
-          <button class="btn primary" onclick={() => goTo("welcome")}>try again</button>
+          <button class="btn primary" onclick={() => goTo("name")}>try again</button>
         {/if}
       </div>
 
     {:else if step === "auth"}
-      <div class="step" style="animation: fadeSlideIn 0.5s cubic-bezier(0.16, 1, 0.3, 1)">
+      <div class="step step-anim">
         <h1>sign in to claude</h1>
-        <p class="sub">a browser window should open.<br/>sign in, then come back.</p>
-        {#if authOutput}
-          <div class="auth-box">{authOutput}</div>
-        {/if}
-        {#if error}<p class="error">{error}</p>{/if}
+        <p class="sub">a browser window should open.<br/>sign in with your anthropic account.</p>
         <ProgressBar message="waiting for sign in..." />
+        {#if error}
+          <p class="error">{error}</p>
+          <button class="btn primary" onclick={runAuth}>retry</button>
+        {/if}
       </div>
 
     {:else if step === "done"}
-      <div class="step" style="animation: fadeSlideIn 0.5s cubic-bezier(0.16, 1, 0.3, 1)">
+      <div class="step step-anim">
         <div class="done-icon">
           <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
             <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
@@ -103,7 +109,7 @@
         </div>
         <h1>you're all set</h1>
         <p class="sub">your agent is ready.</p>
-        <button class="btn primary" onclick={() => onComplete(agentName.trim().toLowerCase().replace(/\s+/g, "-"))}>continue</button>
+        <button class="btn primary" onclick={() => onComplete(normalizeName(agentName))}>continue</button>
       </div>
     {/if}
   </div>
@@ -121,7 +127,11 @@
   }
 
   .onboarding.transitioning {
-    opacity: 0.3;
+    opacity: 0.7;
+  }
+
+  .step-anim {
+    animation: fadeSlideIn 0.5s var(--spring);
   }
 
   @keyframes fadeSlideIn {
@@ -151,7 +161,7 @@
 
   .sub {
     font-size: 13px;
-    color: #a09890;
+    color: #7a726a;
     margin-bottom: 28px;
     line-height: 1.6;
     font-weight: 400;
@@ -172,14 +182,15 @@
   }
 
   .btn {
-    padding: 9px 22px;
-    border-radius: 9px;
+    padding: 8px 24px;
+    border-radius: 8px;
+    corner-shape: squircle;
     font-size: 13px;
     font-weight: 500;
     font-family: inherit;
     cursor: pointer;
     border: none;
-    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    transition: all 0.2s var(--spring-bouncy);
     letter-spacing: 0.01em;
   }
 
@@ -195,7 +206,7 @@
   }
 
   .btn.primary:active {
-    transform: translateY(0);
+    transform: scale(0.97);
     box-shadow: none;
   }
 
@@ -206,6 +217,17 @@
     box-shadow: none;
   }
 
+  .btn.secondary {
+    background: transparent;
+    color: #7a726a;
+    margin-bottom: 8px;
+  }
+
+  .btn.secondary:hover {
+    color: #1a1816;
+    background: rgba(0, 0, 0, 0.04);
+  }
+
   .btn.full {
     width: 100%;
   }
@@ -214,14 +236,15 @@
     width: 100%;
     padding: 12px 16px;
     border: 1px solid rgba(0, 0, 0, 0.08);
-    border-radius: 9px;
+    border-radius: 8px;
+    corner-shape: squircle;
     font-size: 14px;
     font-family: inherit;
     background: white;
     color: #1a1816;
     margin-bottom: 12px;
     outline: none;
-    transition: all 0.2s ease;
+    transition: all 0.2s var(--spring);
     text-align: center;
     letter-spacing: 0.01em;
   }
@@ -229,6 +252,13 @@
   .name-input:focus {
     border-color: rgba(0, 0, 0, 0.2);
     box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.03);
+    outline: none;
+  }
+
+  .name-input:focus-visible {
+    border-color: rgba(0, 0, 0, 0.2);
+    box-shadow: 0 0 0 3px rgba(139, 126, 116, 0.2);
+    outline: none;
   }
 
   .name-input::placeholder {
@@ -242,32 +272,66 @@
     width: 100%;
   }
 
-  .auth-box {
-    background: rgba(0, 0, 0, 0.03);
-    border-radius: 9px;
-    padding: 12px 14px;
-    font-family: "SF Mono", "Fira Code", "JetBrains Mono", "Consolas", monospace;
-    font-size: 11px;
-    text-align: left;
-    max-height: 140px;
-    overflow-y: auto;
-    white-space: pre-wrap;
-    word-break: break-all;
-    color: #8b7e74;
-    margin-bottom: 18px;
-    width: 100%;
-    line-height: 1.5;
-    border: 1px solid rgba(0, 0, 0, 0.04);
-  }
-
   .done-icon {
     color: #66bb6a;
     margin-bottom: 14px;
-    animation: popIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    animation: popIn 0.4s var(--spring-bouncy);
   }
 
   @keyframes popIn {
     from { opacity: 0; transform: scale(0.5); }
     to { opacity: 1; transform: scale(1); }
+  }
+
+  @media (prefers-color-scheme: dark) {
+    h1 {
+      color: #e8e0d8;
+    }
+
+    .sub {
+      color: #8a8078;
+    }
+
+    .name-input {
+      background: rgba(255, 255, 255, 0.06);
+      border-color: rgba(255, 255, 255, 0.08);
+      color: #e8e0d8;
+    }
+
+    .name-input::placeholder {
+      color: #5a5450;
+    }
+
+    .name-input:focus {
+      border-color: rgba(255, 255, 255, 0.15);
+      box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.04);
+    }
+
+    .name-input:focus-visible {
+      box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.1);
+    }
+
+    .btn.primary {
+      background: #e8e0d8;
+      color: #1c1b1a;
+    }
+
+    .btn.primary:hover {
+      background: #f0ece7;
+      box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+    }
+
+    .btn.secondary {
+      color: #8a8078;
+    }
+
+    .btn.secondary:hover {
+      color: #e8e0d8;
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    .error {
+      color: #e07070;
+    }
   }
 </style>

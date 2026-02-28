@@ -6,22 +6,38 @@
 
   let { name, onBack }: { name: string; onBack: () => void } = $props();
 
-  let lines = $state<string[]>([]);
+  type Line = { id: number; text: string };
+  let lines = $state<Line[]>([]);
+  let nextId = 0;
   let input = $state("");
   let attached = $state(false);
+  let connectFailed = $state(false);
   let outputEl: HTMLDivElement;
   let inputEl: HTMLInputElement;
 
+  let wasNearBottom = true;
+
+  function checkNearBottom() {
+    if (!outputEl) return;
+    wasNearBottom = outputEl.scrollHeight - outputEl.scrollTop - outputEl.clientHeight < 40;
+  }
+
   function scrollToBottom() {
     tick().then(() => {
-      if (outputEl) outputEl.scrollTo({ top: outputEl.scrollHeight, behavior: "smooth" });
+      if (outputEl && wasNearBottom) {
+        outputEl.scrollTop = outputEl.scrollHeight;
+      }
     });
   }
+
+  const MAX_LINES = 500;
 
   function addLine(text: string) {
     const cleaned = stripAnsi(text).trimEnd();
     if (cleaned) {
-      lines = [...lines, cleaned];
+      const entry: Line = { id: nextId++, text: cleaned };
+      const updated = [...lines, entry];
+      lines = updated.length > MAX_LINES ? updated.slice(-MAX_LINES) : updated;
       scrollToBottom();
     }
   }
@@ -32,19 +48,22 @@
         if (ev.kind === "Line") addLine(ev.text);
         if (ev.kind === "Error") addLine(`error: ${ev.message}`);
       });
-    } catch {}
+    } catch (e) { console.error("streamLogs failed:", e); }
 
     try {
       await attachChat((ev: ChatEvent) => {
         if (ev.kind === "Attached") {
           attached = true;
+          connectFailed = false;
           tick().then(() => inputEl?.focus());
         }
         if (ev.kind === "Output") addLine(ev.text);
-        if (ev.kind === "Detached") attached = false;
-        if (ev.kind === "Error") addLine(`error: ${ev.message}`);
+        if (ev.kind === "Detached") { attached = false; connectFailed = true; }
       });
-    } catch {}
+    } catch (e) {
+      console.error("attachChat failed:", e);
+      connectFailed = true;
+    }
   });
 
   onDestroy(async () => {
@@ -78,9 +97,9 @@
     </div>
   </div>
 
-  <div class="output" bind:this={outputEl}>
-    {#each lines as line, i (i)}
-      <div class="line">{line}</div>
+  <div class="output" bind:this={outputEl} onscroll={checkNearBottom}>
+    {#each lines as line (line.id)}
+      <div class="line">{line.text}</div>
     {/each}
     {#if lines.length === 0}
       <div class="empty-state">
@@ -93,7 +112,7 @@
     <span class="prompt-char">&gt;</span>
     <input
       type="text"
-      placeholder={attached ? "send a message..." : "connecting..."}
+      placeholder={attached ? "send a message..." : connectFailed ? "disconnected" : "connecting..."}
       bind:value={input}
       bind:this={inputEl}
       disabled={!attached}
@@ -107,7 +126,7 @@
     flex-direction: column;
     width: 100%;
     height: 100%;
-    animation: consoleIn 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+    animation: consoleIn 0.35s var(--spring);
   }
 
   @keyframes consoleIn {
@@ -132,10 +151,11 @@
     color: rgba(255, 255, 255, 0.25);
     cursor: pointer;
     border-radius: 8px;
+    corner-shape: squircle;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.15s ease;
+    transition: all 0.15s var(--spring-bouncy);
   }
 
   .back-btn:hover {
@@ -152,7 +172,7 @@
   .title {
     font-size: 13px;
     font-weight: 500;
-    color: rgba(255, 255, 255, 0.4);
+    color: rgba(255, 255, 255, 0.55);
     letter-spacing: 0.01em;
   }
 
@@ -161,7 +181,7 @@
     height: 6px;
     border-radius: 50%;
     background: rgba(255, 255, 255, 0.15);
-    transition: all 0.4s ease;
+    transition: all 0.4s var(--spring);
   }
 
   .dot.connected {
@@ -176,7 +196,6 @@
     font-family: "SF Mono", "Fira Code", "JetBrains Mono", "Consolas", monospace;
     font-size: 12px;
     line-height: 1.75;
-    scroll-behavior: smooth;
     min-height: 0;
   }
 
@@ -199,8 +218,14 @@
 
   .line {
     white-space: pre-wrap;
-    word-break: break-all;
-    color: rgba(255, 255, 255, 0.5);
+    overflow-wrap: break-word;
+    color: rgba(255, 255, 255, 0.7);
+    animation: lineIn 0.15s ease-out;
+  }
+
+  @keyframes lineIn {
+    from { opacity: 0; transform: translateY(2px); }
+    to { opacity: 1; transform: translateY(0); }
   }
 
   .empty-state {
@@ -212,7 +237,7 @@
 
   .empty-dots {
     display: flex;
-    gap: 5px;
+    gap: 4px;
   }
 
   .empty-dots span {
@@ -235,14 +260,14 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 14px 20px;
+    padding: 12px 20px;
     border-top: 1px solid rgba(255, 255, 255, 0.05);
     flex-shrink: 0;
     background: rgba(255, 255, 255, 0.02);
   }
 
   .prompt-char {
-    color: rgba(255, 255, 255, 0.2);
+    color: rgba(255, 255, 255, 0.35);
     font-family: "SF Mono", "Fira Code", "JetBrains Mono", "Consolas", monospace;
     font-size: 13px;
     font-weight: 500;
@@ -262,7 +287,7 @@
   }
 
   .input-bar input::placeholder {
-    color: rgba(255, 255, 255, 0.12);
+    color: rgba(255, 255, 255, 0.35);
   }
 
   .input-bar input:disabled {

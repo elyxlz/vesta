@@ -158,7 +158,18 @@ async def async_main() -> None:
     await run_vesta(config, state=initial_state, first_start=first_start)
 
 
+def _load_token() -> None:
+    try:
+        with open("/root/.claude_token") as f:
+            token = f.read().strip()
+        if token:
+            os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = token
+    except FileNotFoundError:
+        logger.warning("No token file found, running without auth")
+
+
 def main() -> None:
+    _load_token()
     try:
         asyncio.run(async_main())
     except KeyboardInterrupt:

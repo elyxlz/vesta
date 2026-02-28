@@ -7,7 +7,7 @@ const VFKIT_BIN: &str = "vfkit";
 const AGENT_PORT: u16 = 7865;
 const VM_CPUS: u32 = 2;
 const VM_MEMORY_MIB: u32 = 4096;
-const VM_MAC: &str = "52:54:00:ve:57:a1";
+const VM_MAC: &str = "52:54:00:fe:57:a1";
 
 #[derive(Serialize)]
 struct StatusJson {
@@ -127,7 +127,6 @@ fn discover_vm_ip() -> Option<String> {
         }
         if trimmed.starts_with("hw_address=") {
             if let Some(hw) = trimmed.strip_prefix("hw_address=") {
-                // Format is "1,xx:xx:xx:xx:xx:xx"
                 let hw_mac = hw.split(',').nth(1).unwrap_or("").to_lowercase();
                 if hw_mac == mac_lower {
                     ip = current_ip.clone();
@@ -140,7 +139,7 @@ fn discover_vm_ip() -> Option<String> {
 }
 
 fn get_vm_ip() -> String {
-    if let Some(ip) = std::fs::read_to_string(vm_ip_path()).ok() {
+    if let Ok(ip) = std::fs::read_to_string(vm_ip_path()) {
         let ip = ip.trim().to_string();
         if !ip.is_empty() {
             return ip;
@@ -154,7 +153,11 @@ fn get_vm_ip() -> String {
 }
 
 fn ssh_available() -> bool {
-    let ip = match discover_vm_ip().or_else(|| std::fs::read_to_string(vm_ip_path()).ok().map(|s| s.trim().to_string())) {
+    let ip = match discover_vm_ip().or_else(|| {
+        std::fs::read_to_string(vm_ip_path())
+            .ok()
+            .map(|s| s.trim().to_string())
+    }) {
         Some(ip) if !ip.is_empty() => ip,
         _ => return false,
     };
@@ -242,7 +245,6 @@ fn wait_for_ssh() {
     print!("waiting for VM...");
     io::stdout().flush().ok();
     for i in 0..60 {
-        // VM needs time to get DHCP lease, check after a few seconds
         if i > 3 {
             if let Some(ip) = discover_vm_ip() {
                 std::fs::write(vm_ip_path(), &ip).ok();
@@ -260,7 +262,17 @@ fn wait_for_ssh() {
     die("VM did not become reachable via SSH within 60s");
 }
 
+fn kill_port_tunnel() {
+    let _ = process::Command::new("pkill")
+        .args(["-f", &format!("ssh.*-L.*{}:localhost:{}", AGENT_PORT, AGENT_PORT)])
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .status();
+}
+
 fn start_port_tunnel() {
+    kill_port_tunnel();
+
     let ip = get_vm_ip();
     process::Command::new("ssh")
         .args([
@@ -337,6 +349,8 @@ fn ssh_exec_tty(cmd_args: &[&str]) -> process::ExitStatus {
 }
 
 fn stop_vm() {
+    kill_port_tunnel();
+
     if let Some(pid) = read_pid() {
         process::Command::new("kill")
             .arg(pid.to_string())
@@ -410,7 +424,7 @@ fn download_vm_image() {
     std::fs::remove_file(dir.join(&asset)).ok();
 }
 
-pub async fn run(command: Command) {
+pub fn run(command: Command) {
     match command {
         Command::Setup { build } => {
             if !vm_image_ready() {

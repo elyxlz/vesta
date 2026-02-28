@@ -3,19 +3,18 @@
   "version": "0.1.0",
   "identifier": "com.vesta.app",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "cargo build --manifest-path ../cli/Cargo.toml && npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "cargo build --release --manifest-path ../cli/Cargo.toml && npm run build",
     "frontendDist": "../dist"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "title": "Vesta",
         "width": 380,
         "height": 380,
-        "minWidth": 380,
-        "minHeight": 380,
         "decorations": false,
         "resizable": false,
         "transparent": true

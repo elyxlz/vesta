@@ -6,6 +6,10 @@ use tokio_util::sync::CancellationToken;
 
 use crate::error::{ErrorCode, VestaError};
 
+fn is_valid_binary(path: &std::path::Path) -> bool {
+    path.exists() && std::fs::metadata(path).map(|m| m.len() > 0).unwrap_or(false)
+}
+
 fn cli_path() -> PathBuf {
     let exe = std::env::current_exe().expect("cannot determine executable path");
     let dir = exe.parent().unwrap();
@@ -15,58 +19,94 @@ fn cli_path() -> PathBuf {
     #[cfg(not(target_os = "windows"))]
     let name = "vesta";
 
+    let cli_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("cli")
+        .join("target");
+
+    if cfg!(debug_assertions) {
+        let debug = cli_dir.join("debug").join(name);
+        if is_valid_binary(&debug) {
+            return debug;
+        }
+    }
+
     let candidate = dir.join(name);
-    if candidate.exists() {
+    if is_valid_binary(&candidate) {
         return candidate;
     }
 
-    // Tauri puts sidecars in the same dir as the app binary on all platforms.
-    // In dev, fall back to cargo build output.
-    let dev_candidate = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("cli")
-        .join("target")
-        .join("release")
-        .join(name);
-    if dev_candidate.exists() {
-        return dev_candidate;
-    }
-
-    let debug_candidate = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("cli")
-        .join("target")
-        .join("debug")
-        .join(name);
-    if debug_candidate.exists() {
-        return debug_candidate;
+    let release = cli_dir.join("release").join(name);
+    if is_valid_binary(&release) {
+        return release;
     }
 
     candidate
 }
 
 async fn run(args: &[&str]) -> Result<String, VestaError> {
-    let output = Command::new(cli_path())
-        .args(args)
-        .output()
-        .await
-        .map_err(|e| VestaError::new(ErrorCode::Internal, format!("failed to run cli: {}", e)))?;
+    let path = cli_path();
+    eprintln!("[vesta] exec: {} {}", path.display(), args.join(" "));
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let msg = stderr.trim().strip_prefix("error: ").unwrap_or(stderr.trim());
+    let mut child = Command::new(&path)
+        .args(args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| {
+            eprintln!("[vesta] spawn failed: {} (path: {})", e, path.display());
+            VestaError::new(ErrorCode::Internal, format!("failed to run cli: {}", e))
+        })?;
+
+    let stdout = child.stdout.take().unwrap();
+    let stderr = child.stderr.take().unwrap();
+
+    let stdout_task = tokio::spawn(async move {
+        let mut lines = BufReader::new(stdout).lines();
+        let mut buf = String::new();
+        while let Ok(Some(line)) = lines.next_line().await {
+            eprintln!("[vesta] {}", line);
+            if !buf.is_empty() {
+                buf.push('\n');
+            }
+            buf.push_str(&line);
+        }
+        buf
+    });
+
+    let stderr_task = tokio::spawn(async move {
+        let mut lines = BufReader::new(stderr).lines();
+        let mut buf = String::new();
+        while let Ok(Some(line)) = lines.next_line().await {
+            eprintln!("[vesta] {}", line);
+            if !buf.is_empty() {
+                buf.push('\n');
+            }
+            buf.push_str(&line);
+        }
+        buf
+    });
+
+    let status = child.wait().await.map_err(|e| {
+        VestaError::new(ErrorCode::Internal, format!("failed to run cli: {}", e))
+    })?;
+    let stdout_str = stdout_task.await.unwrap_or_default();
+    let stderr_str = stderr_task.await.unwrap_or_default();
+
+    if !status.success() {
+        let msg = stderr_str.trim().strip_prefix("error: ").unwrap_or(stderr_str.trim());
         return Err(VestaError::new(ErrorCode::Internal, msg.to_string()));
     }
 
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    eprintln!("[vesta] ok: {}", args.join(" "));
+    Ok(stdout_str)
 }
 
 async fn run_json<T: serde::de::DeserializeOwned>(args: &[&str]) -> Result<T, VestaError> {
     let stdout = run(args).await?;
     serde_json::from_str(&stdout)
-        .map_err(|e| VestaError::new(ErrorCode::Internal, format!("failed to parse cli output: {}", e)))
+        .map_err(|e| VestaError::new(ErrorCode::Internal, format!("failed to parse cli output: {} (got: {:?})", e, stdout)))
 }
 
 // ── Agent operations ────────────────────────────────────────────
@@ -77,12 +117,14 @@ use serde::Deserialize;
 pub struct StatusInfo {
     pub status: String,
     pub id: Option<String>,
+    pub authenticated: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct AgentInfo {
     pub status: AgentStatus,
     pub id: String,
+    pub authenticated: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize, PartialEq)]
@@ -104,6 +146,7 @@ pub async fn agent_status() -> Result<AgentInfo, VestaError> {
     Ok(AgentInfo {
         status,
         id: info.id.unwrap_or_default(),
+        authenticated: info.authenticated,
     })
 }
 
@@ -113,7 +156,11 @@ pub async fn agent_exists() -> Result<bool, VestaError> {
 }
 
 pub async fn create_agent() -> Result<(), VestaError> {
-    run(&["create"]).await?;
+    if cfg!(debug_assertions) {
+        run(&["create", "--build"]).await?;
+    } else {
+        run(&["create"]).await?;
+    }
     Ok(())
 }
 
@@ -132,6 +179,60 @@ pub async fn delete_agent() -> Result<(), VestaError> {
     Ok(())
 }
 
+// ── Auth operations ────────────────────────────────────────────
+
+pub async fn obtain_and_inject_token() -> Result<(), VestaError> {
+    let token = run_setup_token().await?;
+    run(&["auth", "--token", &token]).await?;
+    Ok(())
+}
+
+async fn run_setup_token() -> Result<String, VestaError> {
+    eprintln!("[vesta] exec: claude setup-token");
+    let status = Command::new("claude")
+        .args(["setup-token"])
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .status()
+        .await
+        .map_err(|e| {
+            VestaError::new(
+                ErrorCode::Internal,
+                format!("failed to run 'claude setup-token'. is claude code installed?\n{}", e),
+            )
+        })?;
+
+    if !status.success() {
+        return Err(VestaError::new(ErrorCode::Internal, "claude setup-token failed"));
+    }
+
+    read_token_from_credentials().await
+}
+
+async fn read_token_from_credentials() -> Result<String, VestaError> {
+    let creds_path = dirs::home_dir()
+        .ok_or_else(|| VestaError::new(ErrorCode::Internal, "cannot determine home directory"))?
+        .join(".claude")
+        .join(".credentials.json");
+
+    let content = tokio::fs::read_to_string(&creds_path).await.map_err(|e| {
+        VestaError::new(ErrorCode::Internal, format!("could not read credentials file: {}", e))
+    })?;
+
+    let parsed: serde_json::Value = serde_json::from_str(&content).map_err(|e| {
+        VestaError::new(ErrorCode::Internal, format!("could not parse credentials: {}", e))
+    })?;
+
+    let token = parsed
+        .get("claudeAiOauth")
+        .and_then(|o| o.get("accessToken"))
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| VestaError::new(ErrorCode::Internal, "no accessToken in credentials"))?
+        .to_string();
+
+    Ok(token)
+}
+
 // ── Streaming operations ────────────────────────────────────────
 
 use tauri::ipc::Channel;
@@ -142,7 +243,6 @@ pub enum ChatEvent {
     Attached,
     Output { text: String },
     Detached,
-    Error { message: String },
 }
 
 pub struct AttachHandle {
@@ -153,13 +253,18 @@ pub struct AttachHandle {
 pub async fn attach_to_agent(
     channel: Channel<ChatEvent>,
 ) -> Result<AttachHandle, VestaError> {
-    let mut child = Command::new(cli_path())
+    let path = cli_path();
+    eprintln!("[vesta] spawn: {} attach", path.display());
+    let mut child = Command::new(&path)
         .arg("attach")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .spawn()
-        .map_err(|e| VestaError::new(ErrorCode::AttachFailed, format!("failed to spawn cli: {}", e)))?;
+        .map_err(|e| {
+            eprintln!("[vesta] attach spawn failed: {}", e);
+            VestaError::new(ErrorCode::AttachFailed, format!("failed to spawn cli: {}", e))
+        })?;
 
     let stdout = child.stdout.take()
         .ok_or_else(|| VestaError::new(ErrorCode::AttachFailed, "no stdout"))?;
@@ -169,13 +274,12 @@ pub async fn attach_to_agent(
     let cancel = CancellationToken::new();
     let (stdin_tx, mut stdin_rx) = mpsc::channel::<String>(64);
 
-    let _ = channel.send(ChatEvent::Attached);
-
     let cancel_read = cancel.clone();
     let ch = channel.clone();
     tokio::spawn(async move {
         let reader = BufReader::new(stdout);
         let mut lines = reader.lines();
+        let _ = ch.send(ChatEvent::Attached);
         loop {
             tokio::select! {
                 _ = cancel_read.cancelled() => break,
@@ -220,83 +324,11 @@ pub async fn attach_to_agent(
     tokio::spawn(async move {
         tokio::select! {
             _ = cancel_wait.cancelled() => { let _ = child.kill().await; }
-            _ = child.wait() => {}
+            _ = child.wait() => { cancel_wait.cancel(); }
         }
     });
 
     Ok(AttachHandle { stdin_tx, cancel })
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(tag = "kind")]
-pub enum AuthEvent {
-    Output { text: String },
-    UrlDetected { url: String },
-    Complete,
-    Error { message: String },
-}
-
-fn extract_auth_url(text: &str) -> Option<String> {
-    let re = regex::Regex::new(r"https://[^\s]+(?:claude\.ai|anthropic\.com)[^\s]*").ok()?;
-    re.find(text).map(|m| m.as_str().to_string())
-}
-
-pub async fn run_claude_auth(
-    channel: Channel<AuthEvent>,
-    cancel: CancellationToken,
-) -> Result<(), VestaError> {
-    let mut child = Command::new(cli_path())
-        .arg("auth")
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| VestaError::new(ErrorCode::ExecFailed, format!("failed to spawn cli: {}", e)))?;
-
-    let stdout = match child.stdout.take() {
-        Some(s) => s,
-        None => {
-            let _ = channel.send(AuthEvent::Error { message: "no stdout".to_string() });
-            return Ok(());
-        }
-    };
-
-    let ch = channel.clone();
-    let cancel_read = cancel.clone();
-    tokio::spawn(async move {
-        let reader = BufReader::new(stdout);
-        let mut lines = reader.lines();
-        loop {
-            tokio::select! {
-                _ = cancel_read.cancelled() => {
-                    let _ = ch.send(AuthEvent::Error { message: "auth cancelled".to_string() });
-                    break;
-                }
-                line = lines.next_line() => {
-                    match line {
-                        Ok(Some(text)) if !text.is_empty() => {
-                            if let Some(url) = extract_auth_url(&text) {
-                                let _ = ch.send(AuthEvent::UrlDetected { url });
-                            }
-                            let _ = ch.send(AuthEvent::Output { text });
-                        }
-                        Ok(None) | Err(_) => break,
-                        _ => {}
-                    }
-                }
-            }
-        }
-        let _ = ch.send(AuthEvent::Complete);
-    });
-
-    let cancel_wait = cancel.clone();
-    tokio::spawn(async move {
-        tokio::select! {
-            _ = cancel_wait.cancelled() => { let _ = child.kill().await; }
-            _ = child.wait() => {}
-        }
-    });
-
-    Ok(())
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -311,12 +343,17 @@ pub async fn stream_agent_logs(
     channel: Channel<LogEvent>,
     cancel: CancellationToken,
 ) -> Result<(), VestaError> {
-    let mut child = Command::new(cli_path())
+    let path = cli_path();
+    eprintln!("[vesta] spawn: {} logs", path.display());
+    let mut child = Command::new(&path)
         .arg("logs")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .spawn()
-        .map_err(|e| VestaError::new(ErrorCode::ExecFailed, format!("failed to spawn cli: {}", e)))?;
+        .map_err(|e| {
+            eprintln!("[vesta] logs spawn failed: {}", e);
+            VestaError::new(ErrorCode::ExecFailed, format!("failed to spawn cli: {}", e))
+        })?;
 
     let stdout = match child.stdout.take() {
         Some(s) => s,
@@ -352,7 +389,7 @@ pub async fn stream_agent_logs(
     tokio::spawn(async move {
         tokio::select! {
             _ = cancel_wait.cancelled() => { let _ = child.kill().await; }
-            _ = child.wait() => {}
+            _ = child.wait() => { cancel_wait.cancel(); }
         }
     });
 

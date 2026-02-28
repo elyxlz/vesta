@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tokio_util::sync::CancellationToken;
 
@@ -11,15 +12,15 @@ pub struct LogStream {
 }
 
 pub struct AppState {
-    pub chat_session: RwLock<Option<ChatSession>>,
-    pub log_stream: RwLock<Option<LogStream>>,
+    pub chat_session: Arc<RwLock<Option<ChatSession>>>,
+    pub log_stream: Arc<RwLock<Option<LogStream>>>,
 }
 
 impl AppState {
     pub fn new() -> Self {
         Self {
-            chat_session: RwLock::new(None),
-            log_stream: RwLock::new(None),
+            chat_session: Arc::new(RwLock::new(None)),
+            log_stream: Arc::new(RwLock::new(None)),
         }
     }
 }

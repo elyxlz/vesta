@@ -28,7 +28,9 @@ def _write_death_notification(config, reason):
     config.notif_dir.mkdir(exist_ok=True)
     notif = {"timestamp": datetime.now(UTC).isoformat(), "source": "reminder", "type": "daemon_died", "reason": reason}
     filename = f"{int(time.time() * 1e6)}-reminder-daemon_died.json"
-    (config.notif_dir / filename).write_text(json.dumps(notif))
+    tmp = config.notif_dir / f"{filename}.tmp"
+    tmp.write_text(json.dumps(notif))
+    os.replace(tmp, config.notif_dir / filename)
 
 
 def _require_daemon(config):

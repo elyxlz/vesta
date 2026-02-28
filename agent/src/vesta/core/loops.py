@@ -40,6 +40,7 @@ async def load_notifications(*, config: vm.VestaConfig) -> list[vm.Notification]
             notifications.append(notif)
         except (json.JSONDecodeError, pydantic.ValidationError, KeyError, TypeError) as e:
             logger.error(f"Failed to parse notification {file.name}: {e}")
+            file.unlink(missing_ok=True)
 
     return notifications
 

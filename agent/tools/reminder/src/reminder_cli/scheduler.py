@@ -1,4 +1,5 @@
 import json
+import os
 import time
 from datetime import datetime, UTC
 from pathlib import Path
@@ -32,4 +33,6 @@ def write_notification(notif_dir: Path, reminder_id: str, message: str, *, data:
     }
 
     filename = f"{int(time.time() * 1e6)}-scheduler-reminder.json"
-    (notif_dir / filename).write_text(json.dumps(notif, indent=2))
+    tmp = notif_dir / f"{filename}.tmp"
+    tmp.write_text(json.dumps(notif, indent=2))
+    os.replace(tmp, notif_dir / filename)

@@ -7,7 +7,7 @@ fn die(msg: &str) -> ! {
 }
 
 #[derive(Parser)]
-#[command(name = "vesta", about = "manage your vesta agent")]
+#[command(name = "vesta", version, about = "manage your vesta agent")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -35,8 +35,12 @@ enum Command {
     Restart,
     /// Attach to the agent's main process
     Attach,
-    /// Authenticate Claude interactively
-    Auth,
+    /// Authenticate Claude
+    Auth {
+        /// Provide a token directly (skip interactive flow)
+        #[arg(long)]
+        token: Option<String>,
+    },
     /// Tail agent logs
     Logs,
     /// Open a shell inside the agent
@@ -75,10 +79,9 @@ fn main() {
 }
 
 #[cfg(target_os = "macos")]
-#[tokio::main]
-async fn main() {
+fn main() {
     let cli = Cli::parse();
-    macos::run(cli.command).await;
+    macos::run(cli.command);
 }
 
 #[cfg(target_os = "windows")]

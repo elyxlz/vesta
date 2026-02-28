@@ -10,21 +10,28 @@ pub async fn attach_chat(
     on_event: Channel<ChatEvent>,
 ) -> Result<(), VestaError> {
     {
-        let session = state.chat_session.read().await;
-        if session.is_some() {
-            return Err(VestaError::new(
-                ErrorCode::AttachFailed,
-                "already attached",
-            ));
+        let mut session = state.chat_session.write().await;
+        if let Some(old) = session.take() {
+            old.cancel.cancel();
         }
     }
 
     let handle = attach_to_agent(on_event).await?;
+    let cancel = handle.cancel.clone();
 
-    let mut session = state.chat_session.write().await;
-    *session = Some(ChatSession {
-        stdin_tx: handle.stdin_tx,
-        cancel: handle.cancel,
+    {
+        let mut session = state.chat_session.write().await;
+        *session = Some(ChatSession {
+            stdin_tx: handle.stdin_tx,
+            cancel: handle.cancel,
+        });
+    }
+
+    let chat_session = state.chat_session.clone();
+    tokio::spawn(async move {
+        cancel.cancelled().await;
+        let mut session = chat_session.write().await;
+        *session = None;
     });
 
     Ok(())
@@ -35,13 +42,15 @@ pub async fn send_message(
     state: State<'_, AppState>,
     message: String,
 ) -> Result<(), VestaError> {
-    let session = state.chat_session.read().await;
-    let s = session.as_ref().ok_or_else(|| {
-        VestaError::new(ErrorCode::AttachFailed, "not attached")
-    })?;
+    let tx = {
+        let session = state.chat_session.read().await;
+        session.as_ref()
+            .ok_or_else(|| VestaError::new(ErrorCode::AttachFailed, "not attached"))?
+            .stdin_tx
+            .clone()
+    };
 
-    s.stdin_tx
-        .send(format!("{}\n", message))
+    tx.send(format!("{}\n", message))
         .await
         .map_err(|e| VestaError::new(ErrorCode::AttachFailed, e.to_string()))
 }

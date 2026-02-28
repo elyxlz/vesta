@@ -40,8 +40,22 @@
   .msg {
     margin-top: 12px;
     font-size: 11px;
-    color: #b5aba1;
+    color: #807870;
     text-align: center;
     letter-spacing: 0.02em;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .track {
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    .fill {
+      background: #a09080;
+    }
+
+    .msg {
+      color: #8a8078;
+    }
   }
 </style>

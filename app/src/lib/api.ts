@@ -1,5 +1,5 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
-import type { AgentInfo, ChatEvent, LogEvent, AuthEvent } from "./types";
+import type { AgentInfo, ChatEvent, LogEvent } from "./types";
 
 export async function agentExists(): Promise<boolean> {
   return invoke("agent_exists");
@@ -53,10 +53,6 @@ export async function stopLogs(): Promise<void> {
   return invoke("stop_logs");
 }
 
-export function startAuth(
-  onEvent: (event: AuthEvent) => void,
-): Promise<void> {
-  const channel = new Channel<AuthEvent>();
-  channel.onmessage = onEvent;
-  return invoke("start_auth", { onEvent: channel });
+export async function authenticate(): Promise<void> {
+  return invoke("authenticate");
 }
