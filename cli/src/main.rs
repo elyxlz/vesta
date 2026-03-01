@@ -20,6 +20,9 @@ enum Command {
         /// Build the image locally instead of pulling
         #[arg(long)]
         build: bool,
+        /// Skip confirmation prompts
+        #[arg(long, short)]
+        yes: bool,
     },
     /// Create the agent container (without starting or authenticating)
     Create {

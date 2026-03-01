@@ -1,4 +1,5 @@
 use super::*;
+use std::io::{self, Write};
 use std::path::PathBuf;
 
 const WSL_DISTRO: &str = "vesta-wsl";
@@ -34,6 +35,37 @@ fn distro_registered() -> bool {
     text.lines().any(|line| line.trim() == WSL_DISTRO)
 }
 
+fn distro_healthy() -> bool {
+    process::Command::new("wsl.exe")
+        .args(["-d", WSL_DISTRO, "--exec", "/bin/true"])
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+fn unregister_distro() {
+    println!("removing broken vesta-wsl distro...");
+    let _ = process::Command::new("wsl.exe")
+        .args(["--unregister", WSL_DISTRO])
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .status();
+}
+
+fn install_dir() -> PathBuf {
+    let local_app_data =
+        std::env::var("LOCALAPPDATA").unwrap_or_else(|_| die("LOCALAPPDATA not set"));
+    PathBuf::from(&local_app_data).join(WSL_DISTRO)
+}
+
+fn clean_install_dir() {
+    if let Ok(v) = std::env::var("LOCALAPPDATA") {
+        std::fs::remove_dir_all(PathBuf::from(&v).join(WSL_DISTRO)).ok();
+    }
+}
+
 fn find_rootfs() -> PathBuf {
     let exe_dir = std::env::current_exe()
         .unwrap_or_else(|_| die("cannot determine executable path"))
@@ -44,6 +76,8 @@ fn find_rootfs() -> PathBuf {
     let candidates = [
         exe_dir.join("vesta-wsl-rootfs.tar.gz"),
         exe_dir.join("rootfs").join("vesta-wsl-rootfs.tar.gz"),
+        // Tauri app bundles rootfs in resources/ next to binaries/
+        exe_dir.join("..").join("resources").join("vesta-wsl-rootfs.tar.gz"),
     ];
 
     for c in &candidates {
@@ -56,9 +90,8 @@ fn find_rootfs() -> PathBuf {
 }
 
 fn bootstrap_distro() {
-    let local_app_data =
-        std::env::var("LOCALAPPDATA").unwrap_or_else(|_| die("LOCALAPPDATA not set"));
-    let install_dir = PathBuf::from(&local_app_data).join(WSL_DISTRO);
+    clean_install_dir();
+    let install_dir = install_dir();
     std::fs::create_dir_all(&install_dir)
         .unwrap_or_else(|_| die("failed to create install directory"));
 
@@ -84,14 +117,55 @@ fn bootstrap_distro() {
     println!("vesta-wsl distro ready.");
 }
 
+fn docker_ready() -> bool {
+    process::Command::new("wsl.exe")
+        .args(["-d", WSL_DISTRO, "--exec", "test", "-S", "/var/run/docker.sock"])
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+fn ensure_services() {
+    if docker_ready() {
+        return;
+    }
+
+    // On Windows 10, [boot] command in wsl.conf is not supported,
+    // so the entrypoint never runs. Start it manually (only if not already running).
+    // The sleep 1 prevents the background process from dying when the
+    // wsl.exe shell exits before nohup fully detaches.
+    let _ = process::Command::new("wsl.exe")
+        .args(["-d", WSL_DISTRO, "--", "sh", "-c",
+               "pgrep -f entrypoint.sh >/dev/null 2>&1 || nohup /entrypoint.sh >/dev/null 2>&1 & sleep 1"])
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .status();
+
+    print!("waiting for services...");
+    io::stdout().flush().ok();
+    for _ in 0..30 {
+        if docker_ready() {
+            println!(" ready");
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        print!(".");
+        io::stdout().flush().ok();
+    }
+    println!();
+    die("docker did not start within 30s");
+}
+
 fn command_args(command: &Command) -> Vec<&str> {
     match command {
-        Command::Setup { build } => {
+        Command::Setup { build, .. } => {
+            let mut args = vec!["setup", "-y"];
             if *build {
-                vec!["setup", "--build"]
-            } else {
-                vec!["setup"]
+                args.push("--build");
             }
+            args
         }
         Command::Create { build } => {
             if *build {
@@ -147,6 +221,8 @@ pub fn run(command: Command) -> ! {
         bootstrap_distro();
     }
 
+    ensure_services();
+
     let mut args = vec!["-d", WSL_DISTRO, "--exec", VESTA_LINUX_BIN];
     args.extend(command_args(&command));
 
@@ -157,6 +233,23 @@ pub fn run(command: Command) -> ! {
         .stderr(process::Stdio::inherit())
         .status()
         .unwrap_or_else(|_| die("failed to execute wsl.exe"));
+
+    if !status.success() && !distro_healthy() {
+        unregister_distro();
+        println!("reinstalling vesta WSL2 environment...");
+        bootstrap_distro();
+        ensure_services();
+
+        let status = process::Command::new("wsl.exe")
+            .args(&args)
+            .stdin(process::Stdio::inherit())
+            .stdout(process::Stdio::inherit())
+            .stderr(process::Stdio::inherit())
+            .status()
+            .unwrap_or_else(|_| die("failed to execute wsl.exe"));
+
+        process::exit(status.code().unwrap_or(1));
+    }
 
     process::exit(status.code().unwrap_or(1));
 }

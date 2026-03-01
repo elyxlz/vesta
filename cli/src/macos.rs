@@ -13,6 +13,7 @@ struct StatusJson {
     status: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     id: Option<String>,
+    authenticated: bool,
 }
 
 fn data_dir() -> PathBuf {
@@ -30,6 +31,8 @@ fn find_vfkit() -> PathBuf {
     let candidates = [
         exe_dir.join(VFKIT_BIN),
         exe_dir.join("binaries").join(VFKIT_BIN),
+        // Tauri .app bundle: Contents/MacOS/ (exe) -> Contents/Resources/ (resources)
+        exe_dir.join("..").join("Resources").join(VFKIT_BIN),
     ];
 
     for c in &candidates {
@@ -112,7 +115,7 @@ fn vm_running() -> bool {
     }
 }
 
-fn discover_vm_ip() -> Option<String> {
+fn discover_vm_ip_from_leases() -> Option<String> {
     let content = std::fs::read_to_string("/var/db/dhcpd_leases").ok()?;
     let mac_lower = VM_MAC.to_lowercase();
 
@@ -137,6 +140,32 @@ fn discover_vm_ip() -> Option<String> {
     ip
 }
 
+fn discover_vm_ip_from_arp() -> Option<String> {
+    let output = process::Command::new("arp")
+        .arg("-an")
+        .stdout(process::Stdio::piped())
+        .stderr(process::Stdio::null())
+        .output()
+        .ok()?;
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mac_lower = VM_MAC.to_lowercase();
+
+    // arp -an output: ? (192.168.64.5) at 52:54:00:fe:57:a1 on bridge100 ...
+    for line in text.lines() {
+        if line.to_lowercase().contains(&mac_lower) {
+            let start = line.find('(')? + 1;
+            let end = line.find(')')?;
+            return Some(line[start..end].to_string());
+        }
+    }
+    None
+}
+
+fn discover_vm_ip() -> Option<String> {
+    discover_vm_ip_from_leases().or_else(discover_vm_ip_from_arp)
+}
+
 fn get_vm_ip() -> String {
     if let Ok(ip) = std::fs::read_to_string(vm_ip_path()) {
         let ip = ip.trim().to_string();
@@ -151,16 +180,15 @@ fn get_vm_ip() -> String {
     die("cannot determine VM IP address. try: vesta stop && vesta start");
 }
 
-fn ssh_available() -> bool {
-    let ip = match discover_vm_ip().or_else(|| {
-        std::fs::read_to_string(vm_ip_path())
-            .ok()
-            .map(|s| s.trim().to_string())
-    }) {
-        Some(ip) if !ip.is_empty() => ip,
-        _ => return false,
-    };
+fn resolve_vm_ip() -> Option<String> {
+    std::fs::read_to_string(vm_ip_path())
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .or_else(discover_vm_ip)
+}
 
+fn ssh_reachable(ip: &str) -> bool {
     process::Command::new("ssh")
         .args([
             "-i",
@@ -185,15 +213,19 @@ fn ssh_available() -> bool {
         .unwrap_or(false)
 }
 
+fn ssh_available() -> bool {
+    match resolve_vm_ip() {
+        Some(ip) => ssh_reachable(&ip),
+        None => false,
+    }
+}
+
 fn boot_vm() {
     if vm_running() {
         return;
     }
 
-    if pid_path().exists() {
-        std::fs::remove_file(pid_path()).ok();
-    }
-    std::fs::remove_file(vm_ip_path()).ok();
+    stop_vm();
 
     if !vm_image_ready() {
         die("VM image not found. run: vesta setup");
@@ -240,28 +272,60 @@ fn boot_vm() {
     std::fs::write(pid_path(), child.id().to_string()).ok();
 }
 
-fn wait_for_ssh() {
+fn wait_for_ssh_ok() -> bool {
     print!("waiting for VM...");
     io::stdout().flush().ok();
     for i in 0..60 {
-        if i > 3 {
-            if let Some(ip) = discover_vm_ip() {
-                std::fs::write(vm_ip_path(), &ip).ok();
+        if let Some(ip) = if i > 3 { discover_vm_ip() } else { resolve_vm_ip() } {
+            std::fs::write(vm_ip_path(), &ip).ok();
+            if ssh_reachable(&ip) {
+                println!(" ready");
+                return true;
             }
-        }
-        if ssh_available() {
-            println!(" ready");
-            return;
         }
         std::thread::sleep(std::time::Duration::from_secs(1));
         print!(".");
         io::stdout().flush().ok();
     }
     println!();
-    die("VM did not become reachable via SSH within 60s");
+    false
+}
+
+fn wait_for_ssh() {
+    if !wait_for_ssh_ok() {
+        die("VM did not become reachable via SSH within 60s");
+    }
+}
+
+fn stop_vm() {
+    if let Some(pid) = read_pid() {
+        let _ = process::Command::new("kill")
+            .args([&pid.to_string()])
+            .stdout(process::Stdio::null())
+            .stderr(process::Stdio::null())
+            .status();
+    }
+    // Kill any orphaned vfkit processes (e.g. from a crash)
+    let _ = process::Command::new("pkill")
+        .arg("vfkit")
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .status();
+    std::fs::remove_file(pid_path()).ok();
+    std::fs::remove_file(vm_ip_path()).ok();
+}
+
+fn clean_vm_image() {
+    std::fs::remove_file(vm_disk_path()).ok();
+    std::fs::remove_file(vm_kernel_path()).ok();
+    std::fs::remove_file(vm_initrd_path()).ok();
 }
 
 fn ensure_vm() {
+    if !vm_image_ready() {
+        download_vm_image();
+    }
+    generate_ssh_key();
     if !vm_running() {
         boot_vm();
         wait_for_ssh();
@@ -322,6 +386,7 @@ fn download_vm_image() {
 
     let repo = "elyxlz/vesta";
     let asset = format!("vesta-vm-{}.tar.gz", arch);
+    let tmp_path = dir.join(format!("{}.tmp", &asset));
 
     println!("downloading VM image ({})...", arch);
 
@@ -329,7 +394,7 @@ fn download_vm_image() {
         .args([
             "-fsSL",
             "-o",
-            dir.join(&asset).to_str().unwrap(),
+            tmp_path.to_str().unwrap(),
             &format!(
                 "https://github.com/{}/releases/latest/download/{}",
                 repo, asset
@@ -339,31 +404,40 @@ fn download_vm_image() {
         .unwrap_or_else(|_| die("failed to download VM image"));
 
     if !status.success() {
+        std::fs::remove_file(&tmp_path).ok();
         die("failed to download VM image. check your internet connection.");
     }
 
     println!("extracting VM image...");
     let status = process::Command::new("tar")
-        .args(["-xzf", dir.join(&asset).to_str().unwrap(), "-C", dir.to_str().unwrap()])
+        .args(["-xzf", tmp_path.to_str().unwrap(), "-C", dir.to_str().unwrap()])
         .status()
         .unwrap_or_else(|_| die("failed to extract VM image"));
+
+    std::fs::remove_file(&tmp_path).ok();
 
     if !status.success() {
         die("failed to extract VM image");
     }
-
-    std::fs::remove_file(dir.join(&asset)).ok();
 }
 
 pub fn run(command: Command) {
     match command {
-        Command::Setup { build } => {
+        Command::Setup { build, .. } => {
             if !vm_image_ready() {
                 download_vm_image();
             }
             generate_ssh_key();
             boot_vm();
-            wait_for_ssh();
+
+            if !wait_for_ssh_ok() {
+                println!("VM failed to start. re-downloading image...");
+                stop_vm();
+                clean_vm_image();
+                download_vm_image();
+                boot_vm();
+                wait_for_ssh();
+            }
 
             let pubkey = std::fs::read_to_string(ssh_key_path().with_extension("pub"))
                 .unwrap_or_else(|_| die("cannot read SSH public key"));
@@ -371,16 +445,16 @@ pub fn run(command: Command) {
                 "sh",
                 "-c",
                 &format!(
-                    "mkdir -p /root/.ssh && echo '{}' >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys",
+                    "mkdir -p /root/.ssh && printf '%s\\n' '{}' > /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys",
                     pubkey.trim()
                 ),
             ]);
 
+            let mut args = vec!["vesta", "setup", "-y"];
             if build {
-                ssh_exec_tty(&["vesta", "setup", "--build"]);
-            } else {
-                ssh_exec_tty(&["vesta", "setup"]);
+                args.push("--build");
             }
+            ssh_exec_tty(&args);
         }
 
         Command::Attach => {
@@ -412,6 +486,7 @@ pub fn run(command: Command) {
                     let s = StatusJson {
                         status: "not_found",
                         id: None,
+                        authenticated: false,
                     };
                     println!("{}", serde_json::to_string(&s).unwrap());
                 } else {

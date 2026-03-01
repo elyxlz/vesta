@@ -117,6 +117,7 @@ pub struct AgentInfo {
     pub status: AgentStatus,
     #[serde(default)]
     pub id: String,
+    #[serde(default)]
     pub authenticated: bool,
 }
 

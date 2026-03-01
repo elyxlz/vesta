@@ -317,9 +317,9 @@ jobs:
           tar -xzf ${{ matrix.cli-artifact }}.tar.gz -C /tmp/cli-extract
           mv /tmp/cli-extract/vesta app/src-tauri/binaries/vesta-${{ matrix.target }}
           chmod +x app/src-tauri/binaries/vesta-${{ matrix.target }}
-          # Copy vfkit for macOS
+          # Copy vfkit for macOS (into resources/ so Tauri bundles it)
           if [ -f /tmp/cli-extract/vfkit ]; then
-            cp /tmp/cli-extract/vfkit app/src-tauri/binaries/
+            cp /tmp/cli-extract/vfkit app/src-tauri/resources/
           fi
 
       - name: Install frontend deps

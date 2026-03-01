@@ -75,9 +75,13 @@ fn ensure_docker() {
     if !docker_quiet(&["--version"]) {
         die("docker is not installed.\ninstall: https://docs.docker.com/get-docker/");
     }
-    if !docker_quiet(&["info"]) {
-        die("docker daemon is not running.\nstart it: sudo systemctl start docker");
+    for _ in 0..10 {
+        if docker_quiet(&["info"]) {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
     }
+    die("docker daemon is not running.\nstart it: sudo systemctl start docker");
 }
 
 fn container_status() -> ContainerStatus {
@@ -227,12 +231,13 @@ pub fn run(command: Command) {
     ensure_docker();
 
     match command {
-        Command::Setup { build } => {
+        Command::Setup { build, yes } => {
             if container_status() != ContainerStatus::NotFound {
-                if !confirm("agent already exists. destroy and recreate? [y/N] ") {
+                if !yes && !confirm("agent already exists. destroy and recreate? [y/N] ") {
                     println!("aborted");
                     return;
                 }
+                println!("replacing existing agent...");
                 docker_ok(&["rm", "-f", CONTAINER_NAME]);
             }
 

@@ -79,6 +79,7 @@
   function onDocClick(e: MouseEvent) {
     if (menuOpen && !(e.target as Element)?.closest?.(".menu-wrapper")) {
       menuOpen = false;
+      confirming = false;
     }
   }
 
@@ -108,8 +109,8 @@
         await startAgent();
       }
       await refresh();
-    } catch {
-      showError(stopping ? "failed to stop" : "failed to start");
+    } catch (e: any) {
+      showError(e?.message || (stopping ? "failed to stop" : "failed to start"));
     } finally {
       stopping = false;
       starting = false;
@@ -127,10 +128,11 @@
       await stopAgent().catch(() => {});
       await deleteAgent();
       onDestroyed();
-    } catch {
-      showError("failed to delete");
+    } catch (e: any) {
+      showError(e?.message || "failed to delete");
     } finally {
       deleting = false;
+      confirming = false;
     }
   }
 
@@ -144,8 +146,8 @@
     try {
       await authenticate();
       await refresh();
-    } catch (e) {
-      showError("sign in failed");
+    } catch (e: any) {
+      showError(e?.message || "sign in failed");
     } finally {
       authenticating = false;
     }
