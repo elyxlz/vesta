@@ -463,4 +463,4 @@ jobs:
           tag_name: ${{ steps.tag.outputs.name }}
           files: release/*
           generate_release_notes: true
-          draft: ${{ github.event_name == 'workflow_dispatch' }}
+          draft: false
