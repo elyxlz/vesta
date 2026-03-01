@@ -178,13 +178,13 @@ jobs:
           INITRD="$MOUNT_DIR/boot/initramfs-virt"
 
           # ARM64 requires uncompressed kernel for Virtualization.framework
-          if [ "${{ matrix.arch }}" = "arm64" ] && file "$VMLINUZ" | grep -q gzip; then
-            cp "$VMLINUZ" /tmp/vm-kernel.gz
-            gunzip /tmp/vm-kernel.gz
+          if [ "${{ matrix.arch }}" = "arm64" ] && sudo file "$VMLINUZ" | grep -q gzip; then
+            sudo cp "$VMLINUZ" /tmp/vm-kernel.gz
+            sudo gunzip /tmp/vm-kernel.gz
           else
-            cp "$VMLINUZ" /tmp/vm-kernel
+            sudo cp "$VMLINUZ" /tmp/vm-kernel
           fi
-          cp "$INITRD" /tmp/vm-initrd
+          sudo cp "$INITRD" /tmp/vm-initrd
 
           sudo umount "$MOUNT_DIR"
           rmdir "$MOUNT_DIR"
