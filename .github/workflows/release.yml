@@ -448,9 +448,19 @@ jobs:
           \) -exec cp {} release/ \;
           ls -lh release/
 
+      - name: Determine tag
+        id: tag
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=dev-${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.tag.outputs.name }}
           files: release/*
           generate_release_notes: true
           draft: ${{ github.event_name == 'workflow_dispatch' }}
