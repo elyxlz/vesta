@@ -34,11 +34,11 @@ jobs:
           - target: aarch64-apple-darwin
             os: macos-latest
             artifact: vesta-aarch64-apple-darwin
-            vfkit-arch: arm64
+            vfkit: true
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-latest
             artifact: vesta-x86_64-apple-darwin
-            vfkit-arch: amd64
+            vfkit: true
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -67,19 +67,18 @@ jobs:
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Download vfkit
-        if: matrix.vfkit-arch
+        if: matrix.vfkit
         run: |
-          curl -fsSL -o /tmp/vfkit.tar.gz \
-            "https://github.com/crc-org/vfkit/releases/download/v${VFKIT_VERSION}/vfkit-v${VFKIT_VERSION}-darwin-${{ matrix.vfkit-arch }}.tar.gz"
-          mkdir -p /tmp/vfkit-extract
-          tar -xzf /tmp/vfkit.tar.gz -C /tmp/vfkit-extract
+          curl -fsSL -o /tmp/vfkit \
+            "https://github.com/crc-org/vfkit/releases/download/v${VFKIT_VERSION}/vfkit"
+          chmod +x /tmp/vfkit
 
       - name: Package
         run: |
           mkdir staging
           cp cli/target/${{ matrix.target }}/release/vesta staging/
-          if [ -d /tmp/vfkit-extract ]; then
-            cp /tmp/vfkit-extract/vfkit staging/ 2>/dev/null || true
+          if [ -f /tmp/vfkit ]; then
+            cp /tmp/vfkit staging/
           fi
           tar -czf ${{ matrix.artifact }}.tar.gz -C staging .
 
@@ -107,7 +106,11 @@ jobs:
       - name: Extract version tag
         id: meta
         run: |
-          VERSION="${GITHUB_REF#refs/tags/}"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/}"
+          else
+            VERSION="${GITHUB_SHA::8}"
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Build and push
@@ -271,7 +274,7 @@ jobs:
             os: macos-latest
             cli-artifact: vesta-aarch64-apple-darwin
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-latest
             cli-artifact: vesta-x86_64-apple-darwin
     runs-on: ${{ matrix.os }}
     steps:
