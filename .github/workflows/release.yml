@@ -420,10 +420,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download all artifacts
+      - name: Download CLI artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          pattern: vesta-*
+
+      - name: Download VM images
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: vm-image-*
+
+      - name: Download Tauri artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: tauri-*
 
       - name: Collect release assets
         run: |
