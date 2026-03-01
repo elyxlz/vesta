@@ -19,7 +19,7 @@ def normalize_priority(priority: int | str) -> int:
         return normalize_priority(int(priority))
 
     priority_map = {"low": 1, "normal": 2, "high": 3}
-    normalized = priority_map.get(priority.lower())
+    normalized = priority_map[priority.lower()] if priority.lower() in priority_map else None
     if normalized is None:
         raise ValueError(f"Priority must be 1-3 or 'low'/'normal'/'high', got '{priority}'")
     return normalized

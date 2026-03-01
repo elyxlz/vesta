@@ -21,15 +21,15 @@ def _format_threshold_label(minutes: int) -> str:
 
 
 def _parse_event_time(event: dict) -> datetime:
-    start = event.get("start", {})
-    date_str = start.get("dateTime")
+    start = event["start"] if "start" in event else {}
+    date_str = start["dateTime"] if "dateTime" in start else None
     if not date_str:
-        date_only = start.get("date")
+        date_only = start["date"] if "date" in start else None
         if date_only:
             return datetime.fromisoformat(date_only).replace(tzinfo=UTC)
-        raise ValueError(f"Event has no start time: {event.get('id')}")
+        raise ValueError(f"Event has no start time: {event['id'] if 'id' in event else '?'}")
 
-    tz_name = start.get("timeZone")
+    tz_name = start["timeZone"] if "timeZone" in start else None
     has_tz = date_str.endswith("Z") or "+" in date_str or (date_str.count("-") > 2)
 
     if has_tz:
@@ -47,8 +47,8 @@ def _parse_event_time(event: dict) -> datetime:
 
 def _get_header(headers: list[dict], name: str) -> str:
     for h in headers:
-        if h.get("name", "").lower() == name.lower():
-            return h.get("value", "")
+        if (h["name"] if "name" in h else "").lower() == name.lower():
+            return h["value"] if "value" in h else ""
     return ""
 
 
@@ -90,7 +90,7 @@ def run(ctx: GoogleContext):
                 epoch_seconds = int(last_check_dt.timestamp())
                 query = f"after:{epoch_seconds}"
                 results = gmail.users().messages().list(userId="me", q=query, labelIds=["INBOX"], maxResults=50).execute()
-                messages = results.get("messages", [])
+                messages = results["messages"] if "messages" in results else []
                 logger.info(f"Found {len(messages)} new emails")
 
                 for msg_ref in messages:
@@ -101,11 +101,12 @@ def run(ctx: GoogleContext):
                             .get(userId="me", id=msg_ref["id"], format="metadata", metadataHeaders=["Subject", "From", "Date"])
                             .execute()
                         )
-                        headers = msg.get("payload", {}).get("headers", [])
+                        msg_payload = msg["payload"] if "payload" in msg else {}
+                        headers = msg_payload["headers"] if "headers" in msg_payload else []
                         sender = _get_header(headers, "From")
                         subject = _get_header(headers, "Subject")
                         date = _get_header(headers, "Date")
-                        snippet = msg.get("snippet", "")
+                        snippet = msg["snippet"] if "snippet" in msg else ""
 
                         notifications.write_notification(
                             config.notif_dir,
@@ -117,7 +118,7 @@ def run(ctx: GoogleContext):
                             missed=catching_up or None,
                         )
                     except HttpError as e:
-                        logger.error(f"Error processing email {msg_ref.get('id')}: {e}")
+                        logger.error(f"Error processing email {msg_ref['id'] if 'id' in msg_ref else '?'}: {e}")
 
             except HttpError as e:
                 logger.error(f"Error fetching Gmail: {e}")
@@ -141,18 +142,18 @@ def run(ctx: GoogleContext):
                     .execute()
                 )
 
-                events = events_result.get("items", [])
+                events = events_result["items"] if "items" in events_result else []
                 logger.info(f"Found {len(events)} upcoming calendar events")
 
                 for event in events:
                     try:
                         event_time = _parse_event_time(event)
                     except (KeyError, ValueError) as e:
-                        logger.warning(f"Skipping event {event.get('id', '?')}: {e}")
+                        logger.warning(f"Skipping event {event['id'] if 'id' in event else '?'}: {e}")
                         continue
 
-                    subject = event.get("summary") or "(No title)"
-                    location = event.get("location")
+                    subject = event["summary"] if "summary" in event else "(No title)"
+                    location = event["location"] if "location" in event else None
                     mins_until = int((event_time - new_check_time).total_seconds() / 60)
 
                     for threshold_mins in config.get_calendar_notify_thresholds():
@@ -163,17 +164,17 @@ def run(ctx: GoogleContext):
                         label = _format_threshold_label(threshold_mins)
                         logger.info(f"Writing {label} reminder for: {subject}")
 
-                        start_info = event.get("start", {})
-                        start_str = start_info.get("dateTime") or start_info.get("date", "")
+                        start_info = event["start"] if "start" in event else {}
+                        start_str = (start_info["dateTime"] if "dateTime" in start_info else None) or (start_info["date"] if "date" in start_info else "")
 
                         notifications.write_notification(
                             config.notif_dir,
                             "calendar",
                             subject=subject,
                             start_time=start_str,
-                            location=location,
                             minutes_until=mins_until,
                             reminder_window=label,
+                            location=location,
                             missed=(catching_up and event_time < new_check_time) or None,
                         )
 

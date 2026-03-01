@@ -4,7 +4,6 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 
 const VFKIT_BIN: &str = "vfkit";
-const AGENT_PORT: u16 = 7865;
 const VM_CPUS: u32 = 2;
 const VM_MEMORY_MIB: u32 = 4096;
 const VM_MAC: &str = "52:54:00:fe:57:a1";
@@ -262,49 +261,12 @@ fn wait_for_ssh() {
     die("VM did not become reachable via SSH within 60s");
 }
 
-fn kill_port_tunnel() {
-    let _ = process::Command::new("pkill")
-        .args(["-f", &format!("ssh.*-L.*{}:localhost:{}", AGENT_PORT, AGENT_PORT)])
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .status();
-}
-
-fn start_port_tunnel() {
-    kill_port_tunnel();
-
-    let ip = get_vm_ip();
-    process::Command::new("ssh")
-        .args([
-            "-fNT",
-            "-i",
-            ssh_key_path().to_str().unwrap(),
-            "-o",
-            "StrictHostKeyChecking=no",
-            "-o",
-            "UserKnownHostsFile=/dev/null",
-            "-o",
-            "LogLevel=ERROR",
-            "-o",
-            "ExitOnForwardFailure=yes",
-            "-L",
-            &format!("{}:localhost:{}", AGENT_PORT, AGENT_PORT),
-            &format!("root@{}", ip),
-        ])
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .status()
-        .ok();
-}
-
 fn ensure_vm() {
     if !vm_running() {
         boot_vm();
         wait_for_ssh();
-        start_port_tunnel();
     } else if !ssh_available() {
         wait_for_ssh();
-        start_port_tunnel();
     }
 }
 
@@ -346,37 +308,6 @@ fn ssh_exec_tty(cmd_args: &[&str]) -> process::ExitStatus {
         .stderr(process::Stdio::inherit())
         .status()
         .unwrap_or_else(|_| die("ssh failed"))
-}
-
-fn stop_vm() {
-    kill_port_tunnel();
-
-    if let Some(pid) = read_pid() {
-        process::Command::new("kill")
-            .arg(pid.to_string())
-            .stdout(process::Stdio::null())
-            .stderr(process::Stdio::null())
-            .status()
-            .ok();
-
-        for _ in 0..10 {
-            if !vm_running() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_secs(1));
-        }
-
-        if vm_running() {
-            process::Command::new("kill")
-                .args(["-9", &pid.to_string()])
-                .stdout(process::Stdio::null())
-                .stderr(process::Stdio::null())
-                .status()
-                .ok();
-        }
-    }
-    std::fs::remove_file(pid_path()).ok();
-    std::fs::remove_file(vm_ip_path()).ok();
 }
 
 fn download_vm_image() {
@@ -445,8 +376,6 @@ pub fn run(command: Command) {
                 ),
             ]);
 
-            start_port_tunnel();
-
             if build {
                 ssh_exec_tty(&["vesta", "setup", "--build"]);
             } else {
@@ -459,9 +388,12 @@ pub fn run(command: Command) {
             ssh_exec_tty(&["vesta", "attach"]);
         }
 
-        Command::Auth => {
+        Command::Auth { token } => {
             ensure_vm();
-            ssh_exec_tty(&["vesta", "auth"]);
+            match token {
+                Some(t) => { ssh_exec(&["vesta", "auth", "--token", &t]); }
+                None => { ssh_exec_tty(&["vesta", "auth"]); }
+            }
         }
 
         Command::Shell => {

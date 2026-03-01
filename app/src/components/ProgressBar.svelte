@@ -7,7 +7,9 @@
     <div class="fill"></div>
   </div>
   {#if message}
-    <p class="msg">{message}</p>
+    {#key message}
+      <p class="msg">{message}</p>
+    {/key}
   {/if}
 </div>
 
@@ -43,6 +45,12 @@
     color: #807870;
     text-align: center;
     letter-spacing: 0.02em;
+    animation: msgIn 0.4s ease;
+  }
+
+  @keyframes msgIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
   }
 
   @media (prefers-color-scheme: dark) {

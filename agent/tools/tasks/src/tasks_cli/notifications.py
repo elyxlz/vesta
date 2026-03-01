@@ -20,14 +20,14 @@ def write_notification(
         raise ValueError(f"Invalid priority {priority}, must be 1, 2, or 3")
 
     notif = {
-        "timestamp": datetime.now(UTC).isoformat(),
         "source": "tasks",
         "type": "task_due",
-        "task_id": task_id,
         "title": title,
         "due_date": due_date,
         "priority": PRIORITY_LABELS[priority],
         "reminder_window": reminder_window,
+        "task_id": task_id,
+        "timestamp": datetime.now(UTC).isoformat(),
     }
 
     filename = f"{int(time.time() * 1e6)}-tasks-due.json"

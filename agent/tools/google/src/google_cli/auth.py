@@ -74,9 +74,9 @@ def _load_token(token_file: Path, scopes: list[str]) -> Credentials:
     data = json.loads(token_file.read_text())
     return Credentials(
         token=data["token"],
-        refresh_token=data.get("refresh_token"),
-        token_uri=data.get("token_uri", "https://oauth2.googleapis.com/token"),
-        client_id=data.get("client_id"),
-        client_secret=data.get("client_secret"),
+        refresh_token=data["refresh_token"] if "refresh_token" in data else None,
+        token_uri=data["token_uri"] if "token_uri" in data else "https://oauth2.googleapis.com/token",
+        client_id=data["client_id"] if "client_id" in data else None,
+        client_secret=data["client_secret"] if "client_secret" in data else None,
         scopes=scopes,
     )

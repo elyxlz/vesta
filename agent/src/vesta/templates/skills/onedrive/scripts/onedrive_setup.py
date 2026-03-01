@@ -9,11 +9,11 @@ import sys
 
 
 def _env(name: str, default: str | None = None) -> str | None:
-    return os.environ.get(name, default)
+    return os.environ[name] if name in os.environ else default
 
 
 def _require_env(name: str) -> str:
-    val = os.environ.get(name)
+    val = os.environ[name] if name in os.environ else None
     if not val:
         print(f"Error: {name} environment variable is required", file=sys.stderr)
         sys.exit(1)
@@ -21,9 +21,9 @@ def _require_env(name: str) -> str:
 
 
 def _paths() -> tuple[pl.Path, pl.Path, pl.Path]:
-    data_dir = pl.Path(os.environ.get("ONEDRIVE_DATA_DIR", str(pl.Path.home() / "data")))
-    mount_dir = pl.Path(os.environ.get("ONEDRIVE_MOUNT_DIR", str(pl.Path.home() / "onedrive")))
-    logs_dir = pl.Path(os.environ.get("ONEDRIVE_LOGS_DIR", str(pl.Path.home() / "logs")))
+    data_dir = pl.Path(os.environ["ONEDRIVE_DATA_DIR"] if "ONEDRIVE_DATA_DIR" in os.environ else str(pl.Path.home() / "data"))
+    mount_dir = pl.Path(os.environ["ONEDRIVE_MOUNT_DIR"] if "ONEDRIVE_MOUNT_DIR" in os.environ else str(pl.Path.home() / "onedrive"))
+    logs_dir = pl.Path(os.environ["ONEDRIVE_LOGS_DIR"] if "ONEDRIVE_LOGS_DIR" in os.environ else str(pl.Path.home() / "logs"))
     return data_dir, mount_dir, logs_dir
 
 

@@ -1,25 +1,66 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
-  import { agent, agentName } from "../lib/stores";
-  import { agentStatus, startAgent, stopAgent, deleteAgent } from "../lib/api";
+  import { agent, agentName, agentState } from "../lib/stores";
+  import { agentStatus, startAgent, stopAgent, deleteAgent, authenticate } from "../lib/api";
+  import { connect, disconnect } from "../lib/ws";
   import type { AgentStatus } from "../lib/types";
 
   let {
+    onChat,
     onConsole,
     onDestroyed,
   }: {
+    onChat: () => void;
     onConsole: () => void;
     onDestroyed: () => void;
   } = $props();
 
-  let displayName = $derived($agentName);
-
-  let status = $state<AgentStatus>("Unknown");
-  let authenticated = $state(false);
-  let hovered = $state(false);
+  let status = $state<AgentStatus>($agent?.status ?? "Unknown");
+  let authenticated = $state($agent?.authenticated ?? false);
   let confirming = $state(false);
-  let busy = $state(false);
+  let menuOpen = $state(false);
+  let hovered = $state(false);
+  let stopping = $state(false);
+  let starting = $state(false);
+  let authenticating = $state(false);
+  let deleting = $state(false);
+  let errorMsg = $state("");
+  let errorTimer: ReturnType<typeof setTimeout> | null = null;
   let poll: ReturnType<typeof setInterval>;
+  let creatureEl: HTMLDivElement;
+  let leaveTimer: ReturnType<typeof setTimeout> | null = null;
+  let cachedRect: DOMRect | null = null;
+
+  function onOrbEnter() {
+    if (leaveTimer) { clearTimeout(leaveTimer); leaveTimer = null; }
+    hovered = true;
+    cachedRect = creatureEl?.getBoundingClientRect() ?? null;
+  }
+
+  function onOrbMove(e: PointerEvent) {
+    if (!alive || !cachedRect) return;
+    const dx = (e.clientX - cachedRect.left - cachedRect.width / 2) / (cachedRect.width / 2);
+    const dy = (e.clientY - cachedRect.top - cachedRect.height / 2) / (cachedRect.height / 2);
+    creatureEl.style.setProperty("--ox", `${dx * 14}px`);
+    creatureEl.style.setProperty("--oy", `${dy * 14}px`);
+  }
+
+  function onOrbLeave() {
+    leaveTimer = setTimeout(() => {
+      hovered = false;
+      if (creatureEl) {
+        creatureEl.style.setProperty("--ox", "0px");
+        creatureEl.style.setProperty("--oy", "0px");
+      }
+    }, 150);
+  }
+
+
+  function showError(msg: string) {
+    errorMsg = msg;
+    if (errorTimer) clearTimeout(errorTimer);
+    errorTimer = setTimeout(() => { errorMsg = ""; }, 4000);
+  }
 
   async function refresh() {
     try {
@@ -35,25 +76,43 @@
     }
   }
 
+  function onDocClick(e: MouseEvent) {
+    if (menuOpen && !(e.target as Element)?.closest?.(".menu-wrapper")) {
+      menuOpen = false;
+    }
+  }
+
   onMount(() => {
     refresh();
     poll = setInterval(refresh, 5000);
+    connect();
+    document.addEventListener("click", onDocClick);
   });
 
-  onDestroy(() => clearInterval(poll));
+  onDestroy(() => {
+    clearInterval(poll);
+    if (errorTimer) clearTimeout(errorTimer);
+    if (leaveTimer) clearTimeout(leaveTimer);
+    disconnect();
+    document.removeEventListener("click", onDocClick);
+  });
 
   async function toggleRun() {
     if (busy) return;
-    busy = true;
+    if (running) stopping = true;
+    else starting = true;
     try {
-      if (running) {
+      if (stopping) {
         await stopAgent();
       } else {
         await startAgent();
       }
       await refresh();
-    } catch (e) { console.error("toggleRun failed:", e); } finally {
-      busy = false;
+    } catch {
+      showError(stopping ? "failed to stop" : "failed to start");
+    } finally {
+      stopping = false;
+      starting = false;
     }
   }
 
@@ -63,13 +122,15 @@
       return;
     }
     if (busy) return;
-    busy = true;
+    deleting = true;
     try {
       await stopAgent().catch(() => {});
       await deleteAgent();
       onDestroyed();
-    } catch (e) { console.error("destroy failed:", e); } finally {
-      busy = false;
+    } catch {
+      showError("failed to delete");
+    } finally {
+      deleting = false;
     }
   }
 
@@ -77,26 +138,40 @@
     confirming = false;
   }
 
+  async function handleAuth() {
+    if (busy) return;
+    authenticating = true;
+    try {
+      await authenticate();
+      await refresh();
+    } catch (e) {
+      showError("sign in failed");
+    } finally {
+      authenticating = false;
+    }
+  }
+
+  let busy = $derived(stopping || starting || authenticating || deleting);
   let running = $derived(status === "Running");
   let alive = $derived(running && authenticated);
+  let showActions = $derived(hovered || !alive || confirming || menuOpen);
+
 </script>
 
 <div
   class="agent-view"
   role="group"
-  aria-label="Agent controls"
-  onmouseenter={() => (hovered = true)}
-  onmouseleave={() => { hovered = false; confirming = false; }}
-  onfocusin={() => (hovered = true)}
-  onfocusout={(e) => {
-    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
-      hovered = false;
-      confirming = false;
-    }
-  }}
+  aria-label="Controls"
 >
-  <div class="creature-area">
-    <div class="orb-container" class:alive class:dead={!alive}>
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    class="creature-area"
+    bind:this={creatureEl}
+    onpointerenter={onOrbEnter}
+    onpointerleave={onOrbLeave}
+    onpointermove={onOrbMove}
+  >
+    <div class="orb-container" class:alive={alive && !deleting && !stopping} class:dead={(!alive && !starting && !authenticating) || deleting} class:stopping class:starting class:authenticating class:deleting class:thinking={alive && !deleting && !stopping && $agentState === 'thinking'} class:tool-use={alive && !deleting && !stopping && $agentState === 'tool_use'}>
       <div class="orb-glow"></div>
       <div class="orb-body">
         <div class="orb-highlight"></div>
@@ -106,27 +181,47 @@
     </div>
 
     <div class="label">
-      <span class="name">{displayName}</span>
-      <span class="status" class:alive>
-        {alive ? "alive" : running ? "not signed in" : "stopped"}
+      <span class="name">{$agentName}</span>
+      <span class="status" class:alive={alive && !deleting && !stopping} class:error={!!errorMsg}>
+        {errorMsg ? errorMsg : deleting ? "deleting..." : stopping ? "stopping..." : starting ? "starting..." : authenticating ? "signing in..." : alive ? "alive" : running ? "not signed in" : "stopped"}
       </span>
     </div>
 
-    <div class="actions" class:visible={hovered || !alive}>
+    <div class="actions" class:visible={showActions && !deleting && !stopping && !starting && !authenticating}>
       {#if confirming}
         <button class="action-btn danger" disabled={busy} onclick={destroy}>confirm</button>
         <button class="action-btn muted" disabled={busy} onclick={cancelDestroy}>cancel</button>
       {:else}
-        <button class="action-btn" disabled={busy} onclick={toggleRun}>
+        {#if alive}
+          <button class="action-btn primary" onclick={onChat} data-tip="open chat">chat</button>
+        {:else if running && !authenticated}
+          <button class="action-btn primary" disabled={busy} onclick={handleAuth} data-tip="sign in to claude">sign in</button>
+        {/if}
+        <button class="action-btn" disabled={busy} onclick={toggleRun} data-tip={running ? "stop" : "start"}>
           {running ? "stop" : "start"}
         </button>
-        {#if alive}
-          <button class="action-btn primary" onclick={onConsole}>console</button>
-        {/if}
-        <button class="action-btn danger" disabled={busy} onclick={destroy}>destroy</button>
+        <div class="menu-wrapper">
+          <button class="action-btn menu-trigger" onclick={() => (menuOpen = !menuOpen)} aria-label="more options">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+              <circle cx="8" cy="3" r="1.5"/>
+              <circle cx="8" cy="8" r="1.5"/>
+              <circle cx="8" cy="13" r="1.5"/>
+            </svg>
+          </button>
+          {#if menuOpen}
+            <div class="menu-dropdown">
+              {#if alive}
+                <button class="menu-item" onclick={() => { menuOpen = false; onConsole(); }} data-tip="view raw logs">console</button>
+              {/if}
+              <button class="menu-item danger" disabled={busy} onclick={() => { menuOpen = false; destroy(); }} data-tip="permanently delete">delete</button>
+            </div>
+          {/if}
+        </div>
       {/if}
     </div>
   </div>
+
+
 </div>
 
 <style>
@@ -149,6 +244,7 @@
     flex-direction: column;
     align-items: center;
     gap: 20px;
+    padding: 120px 180px;
   }
 
   /* --- Orb --- */
@@ -156,7 +252,8 @@
     position: relative;
     width: 140px;
     height: 140px;
-    transition: filter 0.8s var(--spring);
+    translate: var(--ox, 0px) var(--oy, 0px);
+    transition: translate 0.8s ease-out, filter 0.8s var(--spring);
   }
 
   .orb-body {
@@ -235,6 +332,111 @@
     50% { transform: scale(1.03); }
   }
 
+  /* Thinking state — faster, brighter pulse */
+  .orb-container.thinking {
+    animation: float 2s ease-in-out infinite;
+  }
+
+  .orb-container.thinking .orb-glow {
+    animation: glow-pulse 1.2s ease-in-out infinite;
+  }
+
+  .orb-container.thinking .orb-body {
+    animation: orb-breathe 1.2s ease-in-out infinite;
+    background: radial-gradient(circle at 38% 32%, #d0e8c4, #8ab880 50%, #6a9e5a);
+  }
+
+  /* Tool use state — amber */
+  .orb-container.tool-use {
+    animation: float 2.5s ease-in-out infinite;
+  }
+
+  .orb-container.tool-use .orb-body {
+    background: radial-gradient(circle at 38% 32%, #e8d0a0, #c4a060 50%, #a08040);
+    animation: orb-breathe 1.5s ease-in-out infinite;
+  }
+
+  .orb-container.tool-use .orb-glow {
+    background: radial-gradient(circle, rgba(200, 170, 100, 0.4), transparent 70%);
+    animation: glow-pulse 1.5s ease-in-out infinite;
+  }
+
+  .orb-container.tool-use .orb-ambient {
+    background: radial-gradient(circle, rgba(200, 170, 100, 0.12), transparent 70%);
+  }
+
+  /* Stopping state */
+  .orb-container.stopping .orb-body {
+    animation: orb-wind-down 0.8s var(--spring) forwards;
+  }
+
+  .orb-container.stopping .orb-glow {
+    animation: fade-out 0.5s ease forwards;
+  }
+
+  .orb-container.stopping .orb-ring {
+    animation: fade-out 0.5s ease forwards;
+  }
+
+  @keyframes orb-wind-down {
+    to { transform: scale(0.92); background: radial-gradient(circle at 38% 32%, #c4bdb5, #a09890 50%, #8b7e74); }
+  }
+
+  /* Starting state */
+  .orb-container.starting .orb-body {
+    animation: orb-wake-up 0.8s var(--spring) forwards;
+  }
+
+  .orb-container.starting .orb-glow {
+    animation: glow-swell 0.8s ease-in-out infinite;
+  }
+
+  @keyframes orb-wake-up {
+    from { transform: scale(0.92); }
+    to { transform: scale(1.03); }
+  }
+
+  @keyframes glow-swell {
+    0%, 100% { opacity: 0.4; transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.12); }
+  }
+
+  /* Authenticating state — slow pulse, waiting on user */
+  .orb-container.authenticating .orb-body {
+    background: radial-gradient(circle at 38% 32%, #c0d0e8, #80a0c4 50%, #6080a4);
+    animation: orb-breathe 2s ease-in-out infinite;
+  }
+
+  .orb-container.authenticating .orb-glow {
+    background: radial-gradient(circle, rgba(100, 150, 200, 0.35), transparent 70%);
+    animation: glow-pulse 2s ease-in-out infinite;
+  }
+
+  .orb-container.authenticating .orb-ambient {
+    background: radial-gradient(circle, rgba(100, 150, 200, 0.1), transparent 70%);
+  }
+
+  .orb-container.authenticating {
+    animation: float 3s ease-in-out infinite;
+  }
+
+  /* Deleting state */
+  .orb-container.deleting {
+    animation: shrink-away 0.6s var(--spring) forwards;
+  }
+
+  .orb-container.deleting .orb-glow {
+    animation: fade-out 0.4s ease forwards;
+  }
+
+  @keyframes shrink-away {
+    to { transform: scale(0.7); opacity: 0.3; }
+  }
+
+  @keyframes fade-out {
+    to { opacity: 0; }
+  }
+
   /* Dead state */
   .orb-container.dead .orb-body {
     background: radial-gradient(circle at 38% 32%, #c4bdb5, #a09890 50%, #8b7e74);
@@ -286,6 +488,17 @@
 
   .status.alive {
     color: #7a9e70;
+  }
+
+  .status.error {
+    color: #c45450;
+    animation: shake 0.3s ease;
+  }
+
+  @keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-3px); }
+    75% { transform: translateX(3px); }
   }
 
   /* --- Actions --- */
@@ -360,8 +573,70 @@
   }
 
   .action-btn:disabled {
-    opacity: 0.4;
-    pointer-events: none;
+    opacity: 0.25;
+    cursor: not-allowed;
+  }
+
+  .menu-wrapper {
+    position: relative;
+  }
+
+  .menu-trigger {
+    padding: 8px 10px;
+  }
+
+  .menu-dropdown {
+    position: absolute;
+    bottom: calc(100% + 6px);
+    right: 0;
+    display: flex;
+    flex-direction: column;
+    min-width: 120px;
+    background: rgba(255, 255, 255, 0.85);
+    backdrop-filter: blur(16px);
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    border-radius: 10px;
+    corner-shape: squircle;
+    padding: 4px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+    animation: menuIn 0.15s var(--spring);
+  }
+
+  @keyframes menuIn {
+    from { opacity: 0; transform: translateY(4px) scale(0.96); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+
+  .menu-item {
+    padding: 8px 12px;
+    border: none;
+    background: transparent;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    color: #5a5450;
+    cursor: pointer;
+    border-radius: 6px;
+    corner-shape: squircle;
+    text-align: left;
+    transition: background 0.12s ease;
+  }
+
+  .menu-item:hover {
+    background: rgba(0, 0, 0, 0.05);
+  }
+
+  .menu-item.danger {
+    color: #c45450;
+  }
+
+  .menu-item.danger:hover {
+    background: rgba(196, 84, 80, 0.08);
+  }
+
+  .menu-item:disabled {
+    opacity: 0.25;
+    cursor: not-allowed;
   }
 
   @media (prefers-color-scheme: dark) {
@@ -375,6 +650,10 @@
 
     .status.alive {
       color: #8aae80;
+    }
+
+    .status.error {
+      color: #e07070;
     }
 
     .action-btn {
@@ -414,6 +693,30 @@
 
     .action-btn.muted {
       color: #8a8078;
+    }
+
+    .menu-dropdown {
+      background: rgba(40, 38, 36, 0.9);
+      border-color: rgba(255, 255, 255, 0.08);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    }
+
+    .menu-item {
+      color: #b0a8a0;
+    }
+
+    .menu-item:hover {
+      background: rgba(255, 255, 255, 0.08);
+      color: #e8e0d8;
+    }
+
+    .menu-item.danger {
+      color: #e07070;
+    }
+
+    .menu-item.danger:hover {
+      background: rgba(224, 112, 112, 0.1);
+      color: #f08080;
     }
   }
 </style>

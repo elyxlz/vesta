@@ -39,15 +39,12 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            commands::agents::agent_exists,
             commands::agents::agent_status,
             commands::agents::create_agent,
             commands::agents::start_agent,
             commands::agents::stop_agent,
             commands::agents::delete_agent,
-            commands::chat::attach_chat,
-            commands::chat::send_message,
-            commands::chat::detach_chat,
+            commands::agents::agent_host,
             commands::logs::stream_logs,
             commands::logs::stop_logs,
             commands::auth::authenticate,

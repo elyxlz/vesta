@@ -2,11 +2,6 @@ use crate::error::VestaError;
 use crate::runtime::cli::{self, AgentInfo};
 
 #[tauri::command]
-pub async fn agent_exists() -> Result<bool, VestaError> {
-    cli::agent_exists().await
-}
-
-#[tauri::command]
 pub async fn agent_status() -> Result<AgentInfo, VestaError> {
     cli::agent_status().await
 }
@@ -29,4 +24,9 @@ pub async fn stop_agent() -> Result<(), VestaError> {
 #[tauri::command]
 pub async fn delete_agent() -> Result<(), VestaError> {
     cli::delete_agent().await
+}
+
+#[tauri::command]
+pub async fn agent_host() -> String {
+    cli::agent_host().await
 }

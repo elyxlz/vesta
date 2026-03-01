@@ -104,7 +104,13 @@ fn command_args(command: &Command) -> Vec<&str> {
         Command::Stop => vec!["stop"],
         Command::Restart => vec!["restart"],
         Command::Attach => vec!["attach"],
-        Command::Auth => vec!["auth"],
+        Command::Auth { ref token } => {
+            if let Some(t) = token {
+                vec!["auth", "--token", t]
+            } else {
+                vec!["auth"]
+            }
+        }
         Command::Logs => vec!["logs"],
         Command::Shell => vec!["shell"],
         Command::Status { json } => {

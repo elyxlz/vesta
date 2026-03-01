@@ -47,20 +47,28 @@ def _format_tool_call(name: str, *, input_data: object, sub_agent_context: str |
     return f"[TOOL] {prefix}{name}: {input_preview}", sub_agent_context
 
 
-def _parse_sdk_message(msg: Message, *, sub_agent_context: str | None) -> tuple[list[str], str | None, str | None]:
+def filter_tool_lines(text: str) -> str:
+    return "\n".join(
+        s for line in text.split("\n")
+        if (s := line.strip()) and not s.startswith("[TOOL]") and not s.startswith("[TASK]")
+    )
+
+
+def _parse_sdk_message(msg: Message, *, sub_agent_context: str | None) -> tuple[list[str], str | None, str | None, bool]:
     if isinstance(msg, ResultMessage):
         session_id: str | None = None
         try:
             session_id = msg.session_id
         except AttributeError:
             pass
-        return ([], sub_agent_context, session_id)
+        return ([], sub_agent_context, session_id, False)
 
     if not isinstance(msg, AssistantMessage):
-        return ([msg] if isinstance(msg, str) else [], sub_agent_context, None)
+        return ([msg] if isinstance(msg, str) else [], sub_agent_context, None, False)
 
     texts = []
     has_task_result = False
+    has_tool_use = False
     current_context = sub_agent_context
 
     for block in msg.content:
@@ -70,6 +78,7 @@ def _parse_sdk_message(msg: Message, *, sub_agent_context: str | None) -> tuple[
                 has_task_result = True
             texts.append(text)
         elif isinstance(block, ToolUseBlock):
+            has_tool_use = True
             formatted, new_context = _format_tool_call(block.name, input_data=block.input, sub_agent_context=current_context)
             texts.append(formatted)
             if new_context:
@@ -78,7 +87,7 @@ def _parse_sdk_message(msg: Message, *, sub_agent_context: str | None) -> tuple[
     if has_task_result and current_context:
         current_context = None
 
-    return texts, current_context, None
+    return texts, current_context, None, has_tool_use
 
 
 _TOOL_KEYS: dict[str, str] = {
@@ -106,25 +115,35 @@ def _tool_summary(name: str, tool_input: dict[str, tp.Any]) -> str:
     return f"{name}: {preview}"
 
 
-async def _log_tool_start(input_data: PreToolUseHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
-    logger.tool(_tool_summary(input_data["tool_name"], input_data["tool_input"]))
-    return tp.cast(HookJSONOutput, {})
+def _make_tool_hooks(state: vm.State) -> tuple[HookCallback, HookCallback]:
+    async def log_tool_start(input_data: PreToolUseHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
+        name = input_data["tool_name"]
+        summary = _tool_summary(name, input_data["tool_input"])
+        logger.tool(summary)
+        state.event_bus.set_state("tool_use")
+        state.event_bus.emit({"type": "tool_start", "tool": name, "input": summary})
+        return tp.cast(HookJSONOutput, {})
 
+    async def log_tool_finish(input_data: PostToolUseHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
+        name = input_data["tool_name"]
+        logger.tool(f"done: {name}")
+        state.event_bus.emit({"type": "tool_end", "tool": name})
+        state.event_bus.set_state("thinking")
+        return tp.cast(HookJSONOutput, {})
 
-async def _log_tool_finish(input_data: PostToolUseHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
-    logger.tool(f"done: {input_data['tool_name']}")
-    return tp.cast(HookJSONOutput, {})
+    return tp.cast(HookCallback, log_tool_start), tp.cast(HookCallback, log_tool_finish)
 
 
 async def attempt_interrupt(state: vm.State, *, config: vm.VestaConfig, reason: str) -> bool:
     logger.interrupt(f"Starting interrupt attempt: {reason}")
 
-    if not state.client:
+    client = state.client
+    if not client:
         logger.interrupt("No client, aborting")
         return False
 
     try:
-        await asyncio.wait_for(state.client.interrupt(), timeout=config.interrupt_timeout)
+        await asyncio.wait_for(client.interrupt(), timeout=config.interrupt_timeout)
         logger.interrupt(f"{reason}: interrupt sent")
         return True
     except TimeoutError:
@@ -136,6 +155,9 @@ async def attempt_interrupt(state: vm.State, *, config: vm.VestaConfig, reason: 
         os.kill(os.getpid(), signal.SIGTERM)
         await asyncio.sleep(10)
         os._exit(1)
+    except (OSError, RuntimeError) as e:
+        logger.error(f"Interrupt failed: {e}")
+        return False
 
 
 async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show_output: bool) -> list[str]:
@@ -151,44 +173,45 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
 
     responses: list[str] = []
     sub_agent_context: str | None = None
+    response_iter = client.receive_response().__aiter__()
 
-    async def collect() -> None:
-        nonlocal sub_agent_context
-        async for msg in client.receive_response():
-            texts, sub_agent_context, session_id = _parse_sdk_message(msg, sub_agent_context=sub_agent_context)
-            if session_id:
-                state.session_id = session_id
-                logger.debug(f"Captured session_id: {session_id[:16]}...")
-            text = "\n".join(texts) if texts else None
-            if not text:
-                continue
-            if not show_output:
-                responses.append(text)
-                continue
-            for line in text.split("\n"):
-                stripped = line.strip()
-                if stripped and not stripped.startswith("[TOOL]") and not stripped.startswith("[TASK]"):
-                    logger.assistant(stripped)
+    while True:
+        try:
+            msg = await asyncio.wait_for(response_iter.__anext__(), timeout=config.response_timeout)
+        except StopAsyncIteration:
+            break
+        except TimeoutError:
+            await attempt_interrupt(state, config=config, reason="Response timeout")
+            raise
 
-    try:
-        await asyncio.wait_for(collect(), timeout=config.response_timeout)
-    except TimeoutError:
-        await attempt_interrupt(state, config=config, reason="Response timeout")
-        raise
+        texts, sub_agent_context, session_id, has_tool_use = _parse_sdk_message(msg, sub_agent_context=sub_agent_context)
+        if session_id and session_id != state.session_id:
+            state.session_id = session_id
+            config.session_file.parent.mkdir(parents=True, exist_ok=True)
+            config.session_file.write_text(session_id)
+            logger.debug(f"Captured session_id: {session_id[:16]}...")
+        text = "\n".join(texts) if texts else None
+        if not text:
+            continue
+        if not show_output:
+            responses.append(text)
+            continue
+        filtered = filter_tool_lines(text)
+        if filtered and not has_tool_use:
+            logger.assistant(filtered)
+            state.event_bus.emit({"type": "assistant", "text": filtered})
 
     return responses
 
 
 async def process_message(msg: str, *, state: vm.State, config: vm.VestaConfig, is_user: bool) -> tuple[list[str], vm.State]:
     responses = await converse(msg, state=state, config=config, show_output=is_user)
-    if state.session_id:
-        config.session_file.write_text(state.session_id)
     return responses, state
 
 
-def _build_vesta_tools_server(state: vm.State):
+def _build_vesta_tools_server(state: vm.State) -> tp.Any:
     @tool("restart_vesta", "Restart Vesta to reload memory, skills, and prompts. Current conversation is preserved.", {})
-    async def restart_vesta(args):
+    async def restart_vesta(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
         if state.graceful_shutdown and state.graceful_shutdown.is_set():
             if state.shutdown_event:
                 state.shutdown_event.set()
@@ -201,13 +224,18 @@ def _build_vesta_tools_server(state: vm.State):
 
 def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgentOptions:
     memory_path = get_memory_path(config)
-    system_prompt = memory_path.read_text() if memory_path.exists() else load_memory_template()
+    try:
+        system_prompt = memory_path.read_text()
+    except FileNotFoundError:
+        system_prompt = load_memory_template()
+
+    pre_hook, post_hook = _make_tool_hooks(state)
 
     return ClaudeAgentOptions(
         system_prompt=system_prompt,
         hooks={
-            "PreToolUse": [HookMatcher(hooks=[tp.cast(HookCallback, _log_tool_start)])],
-            "PostToolUse": [HookMatcher(hooks=[tp.cast(HookCallback, _log_tool_finish)])],
+            "PreToolUse": [HookMatcher(hooks=[pre_hook])],
+            "PostToolUse": [HookMatcher(hooks=[post_hook])],
         },
         permission_mode="bypassPermissions",
         cwd=config.state_dir,

@@ -13,13 +13,14 @@ from rich import print_json
 
 import vesta.models as vm
 from vesta import logger
+from vesta.api import start_ws_server
 from vesta.core.init import init_skills, init_main_memory, init_prompts, init_skills_symlink, is_first_start
 from vesta.core.loops import message_processor, monitor_loop, queue_greeting
 
 SignalHandler = tp.Callable[[int, types.FrameType | None], None]
 
 
-async def input_handler(queue: asyncio.Queue, *, state: vm.State) -> None:
+async def input_handler(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State) -> None:
     while state.shutdown_event and not state.shutdown_event.is_set():
         try:
             user_msg = await aioconsole.ainput("")
@@ -75,6 +76,9 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
 
     message_queue: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()
 
+    ws_runner = await start_ws_server(state.event_bus, message_queue, state, config)
+    logger.init("WebSocket server started on port 7865")
+
     tasks = [
         asyncio.create_task(input_handler(message_queue, state=state)),
         asyncio.create_task(message_processor(message_queue, state=state, config=config)),
@@ -97,6 +101,7 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
         task.cancel()
 
     await asyncio.gather(*tasks, return_exceptions=True)
+    await ws_runner.cleanup()
     (config.data_dir / "run_marker").unlink(missing_ok=True)
     logger.shutdown("sweet dreams!")
 
@@ -158,18 +163,7 @@ async def async_main() -> None:
     await run_vesta(config, state=initial_state, first_start=first_start)
 
 
-def _load_token() -> None:
-    try:
-        with open("/root/.claude_token") as f:
-            token = f.read().strip()
-        if token:
-            os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = token
-    except FileNotFoundError:
-        logger.warning("No token file found, running without auth")
-
-
 def main() -> None:
-    _load_token()
     try:
         asyncio.run(async_main())
     except KeyboardInterrupt:

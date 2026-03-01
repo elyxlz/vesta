@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from "svelte";
   import { createAgent, agentStatus, authenticate } from "../lib/api";
   import { agent } from "../lib/stores";
   import ProgressBar from "./ProgressBar.svelte";
@@ -11,6 +12,28 @@
   let transitioning = $state(false);
   let busy = $state(false);
   let createMsg = $state("");
+  let msgTimer: ReturnType<typeof setInterval> | null = null;
+
+  const CREATE_MESSAGES = [
+    "setting things up...",
+    "building your workspace...",
+    "preparing skills...",
+    "stocking the toolbox...",
+    "almost there...",
+  ];
+
+  function startMessages() {
+    let i = 0;
+    createMsg = CREATE_MESSAGES[0];
+    msgTimer = setInterval(() => {
+      i = (i + 1) % CREATE_MESSAGES.length;
+      createMsg = CREATE_MESSAGES[i];
+    }, 3000);
+  }
+
+  function stopMessages() {
+    if (msgTimer) { clearInterval(msgTimer); msgTimer = null; }
+  }
 
   function normalizeName(raw: string): string {
     return raw.trim().toLowerCase().replace(/\s+/g, "-");
@@ -29,14 +52,16 @@
     if (!name || busy) return;
     busy = true;
     error = "";
-    createMsg = "creating agent...";
+    startMessages();
     await goTo("creating");
     try {
       await createAgent();
+      stopMessages();
       await goTo("auth");
       runAuth();
-    } catch (e: any) {
-      error = e?.message ?? "couldn't create agent";
+    } catch (e: unknown) {
+      stopMessages();
+      error = e instanceof Error ? e.message : "something went wrong";
       await goTo("name");
     } finally {
       busy = false;
@@ -52,11 +77,13 @@
       agent.set(info);
       busy = false;
       await goTo("done");
-    } catch (e: any) {
+    } catch (e: unknown) {
       busy = false;
-      error = e?.message ?? "authentication failed";
+      error = e instanceof Error ? e.message : "authentication failed";
     }
   }
+
+  onDestroy(() => { stopMessages(); });
 </script>
 
 <div class="onboarding" class:transitioning>
@@ -64,7 +91,7 @@
     {#if step === "name"}
       <div class="step step-anim">
         <h1>welcome to vesta</h1>
-        <p class="sub">your personal ai assistant.<br/>give it a name to get started.</p>
+        <p class="sub">give it a name to get started.</p>
         <form onsubmit={(e) => { e.preventDefault(); handleCreate(); }}>
           <input
             type="text"
@@ -80,7 +107,7 @@
     {:else if step === "creating"}
       <div class="step step-anim">
         <h1>setting up</h1>
-        <p class="sub">pulling image and starting your agent.<br/>this takes a moment the first time.</p>
+        <p class="sub">this may take a couple of mins.</p>
         <ProgressBar message={createMsg} />
         {#if error}
           <p class="error">{error}</p>
@@ -91,7 +118,7 @@
     {:else if step === "auth"}
       <div class="step step-anim">
         <h1>sign in to claude</h1>
-        <p class="sub">a browser window should open.<br/>sign in with your anthropic account.</p>
+        <p class="sub">switch to the browser window that opened<br/>and sign in with your anthropic account.</p>
         <ProgressBar message="waiting for sign in..." />
         {#if error}
           <p class="error">{error}</p>
@@ -108,7 +135,7 @@
           </svg>
         </div>
         <h1>you're all set</h1>
-        <p class="sub">your agent is ready.</p>
+        <p class="sub">say hi.</p>
         <button class="btn primary" onclick={() => onComplete(normalizeName(agentName))}>continue</button>
       </div>
     {/if}
@@ -217,17 +244,6 @@
     box-shadow: none;
   }
 
-  .btn.secondary {
-    background: transparent;
-    color: #7a726a;
-    margin-bottom: 8px;
-  }
-
-  .btn.secondary:hover {
-    color: #1a1816;
-    background: rgba(0, 0, 0, 0.04);
-  }
-
   .btn.full {
     width: 100%;
   }
@@ -319,15 +335,6 @@
     .btn.primary:hover {
       background: #f0ece7;
       box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
-    }
-
-    .btn.secondary {
-      color: #8a8078;
-    }
-
-    .btn.secondary:hover {
-      color: #e8e0d8;
-      background: rgba(255, 255, 255, 0.06);
     }
 
     .error {

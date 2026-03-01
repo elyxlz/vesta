@@ -200,7 +200,7 @@ def _run_serve(config: Config):
     print(json.dumps({"status": "serving", "monitor_interval": config.monitor_interval}))
     sys.stdout.flush()
 
-    interval = int(os.environ.get("TASKS_MONITOR_INTERVAL", str(config.monitor_interval)))
+    interval = int(os.environ["TASKS_MONITOR_INTERVAL"] if "TASKS_MONITOR_INTERVAL" in os.environ else str(config.monitor_interval))
 
     _write_pid(config)
     try:

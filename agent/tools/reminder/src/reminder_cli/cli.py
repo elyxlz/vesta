@@ -26,7 +26,7 @@ def _remove_pid(config):
 
 def _write_death_notification(config, reason):
     config.notif_dir.mkdir(exist_ok=True)
-    notif = {"timestamp": datetime.now(UTC).isoformat(), "source": "reminder", "type": "daemon_died", "reason": reason}
+    notif = {"source": "reminder", "type": "daemon_died", "reason": reason, "timestamp": datetime.now(UTC).isoformat()}
     filename = f"{int(time.time() * 1e6)}-reminder-daemon_died.json"
     tmp = config.notif_dir / f"{filename}.tmp"
     tmp.write_text(json.dumps(notif))
@@ -199,7 +199,7 @@ def _run_serve(config: Config):
     print(json.dumps({"status": "serving"}))
     sys.stdout.flush()
 
-    sync_interval = int(os.environ.get("REMINDER_SYNC_INTERVAL", "5"))
+    sync_interval = int(os.environ["REMINDER_SYNC_INTERVAL"] if "REMINDER_SYNC_INTERVAL" in os.environ else "5")
 
     _write_pid(config)
     try:

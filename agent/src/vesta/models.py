@@ -6,6 +6,7 @@ import pydantic as pyd
 from claude_agent_sdk import ClaudeSDKClient
 
 from .config import VestaConfig
+from .events import EventBus
 
 __all__ = ["State", "Notification", "VestaConfig"]
 
@@ -20,6 +21,7 @@ class State:
     pending_context: str | None = None
     last_dreamer_run: dt.datetime | None = None
     dreamer_active: bool = False
+    event_bus: EventBus = dc.field(default_factory=EventBus)
 
 
 class Notification(pyd.BaseModel):

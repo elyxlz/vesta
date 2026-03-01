@@ -2,7 +2,6 @@ use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
 pub enum ErrorCode {
-    AttachFailed,
     ExecFailed,
     Internal,
 }
@@ -29,9 +28,3 @@ impl std::fmt::Display for VestaError {
 }
 
 impl std::error::Error for VestaError {}
-
-impl From<std::io::Error> for VestaError {
-    fn from(err: std::io::Error) -> Self {
-        Self::new(ErrorCode::Internal, err.to_string())
-    }
-}

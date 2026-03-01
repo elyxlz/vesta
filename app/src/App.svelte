@@ -5,10 +5,20 @@
   import { agentStatus } from "./lib/api";
   import Onboarding from "./components/Onboarding.svelte";
   import AgentView from "./components/AgentView.svelte";
+  import Chat from "./components/Chat.svelte";
   import Console from "./components/Console.svelte";
 
-  let view = $state<"loading" | "onboarding" | "home" | "console">("loading");
+  let view = $state<"loading" | "onboarding" | "home" | "chat" | "console">("loading");
   let ready = $state(false);
+  let transitioning = $state(false);
+
+  async function setView(next: typeof view) {
+    if (next === view) return;
+    transitioning = true;
+    await new Promise((r) => setTimeout(r, 150));
+    view = next;
+    transitioning = false;
+  }
 
   const appWindow = getCurrentWindow();
 
@@ -30,15 +40,35 @@
 
   function handleOnboardingComplete(name: string) {
     agentName.set(name);
-    view = "home";
+    setView("chat");
   }
 
   function handleDestroyed() {
     agent.set(null);
-    view = "onboarding";
+    setView("onboarding");
   }
 
-  let isDark = $derived(view === "console");
+  let isDark = $derived(view === "console" || view === "chat");
+
+  let tipText = $state("");
+  let tipX = $state(0);
+  let tipY = $state(0);
+  let rafPending = false;
+
+  function onGlobalMove(e: PointerEvent) {
+    const target = (e.target as HTMLElement)?.closest?.("[data-tip]") as HTMLElement | null;
+    const tip = target?.dataset.tip ?? "";
+    if (tip !== tipText) tipText = tip;
+    if (!tip || rafPending) return;
+    rafPending = true;
+    const x = e.clientX;
+    const y = e.clientY;
+    requestAnimationFrame(() => {
+      tipX = x;
+      tipY = y;
+      rafPending = false;
+    });
+  }
 
   function startDrag(e: MouseEvent) {
     if ((e.target as HTMLElement).closest(".window-controls")) return;
@@ -46,7 +76,8 @@
   }
 </script>
 
-<div class="window" class:dark={isDark}>
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="window" class:dark={isDark} onpointermove={onGlobalMove}>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="titlebar" onmousedown={startDrag}>
     <div class="window-controls">
@@ -59,25 +90,36 @@
     </div>
   </div>
 
-  <main class:ready>
+  <main class:ready class:transitioning>
     {#if view === "loading"}
       <div class="loading">
         <div class="logo-mark">v</div>
+        <span class="loading-label">loading...</span>
       </div>
     {:else if view === "onboarding"}
       <Onboarding onComplete={handleOnboardingComplete} />
     {:else if view === "home"}
       <AgentView
-        onConsole={() => (view = "console")}
+        onChat={() => setView("chat")}
+        onConsole={() => setView("console")}
         onDestroyed={handleDestroyed}
+      />
+    {:else if view === "chat"}
+      <Chat
+        name={$agentName}
+        onBack={() => setView("home")}
       />
     {:else if view === "console"}
       <Console
         name={$agentName}
-        onBack={() => (view = "home")}
+        onBack={() => setView("home")}
       />
     {/if}
   </main>
+
+  {#if tipText}
+    <div class="tooltip" style="left: {tipX}px; top: {tipY}px;">{tipText}</div>
+  {/if}
 </div>
 
 <style>
@@ -90,6 +132,7 @@
   :root {
     --spring: cubic-bezier(0.16, 1, 0.3, 1);
     --spring-bouncy: cubic-bezier(0.34, 1.56, 0.64, 1);
+    --spring-snappy: cubic-bezier(0.2, 0, 0, 1);
   }
 
   @supports (animation-timing-function: linear(0, 1)) {
@@ -104,6 +147,11 @@
         0.25, 0.391, 0.563, 0.765, 1.006 45.2%,
         1.071, 1.088 57.6%, 1.06, 1.019, 0.995 72.9%,
         0.986, 0.989 83%, 1.001, 1.006 91.9%, 1
+      );
+      --spring-snappy: linear(
+        0, 0.11 2.6%, 0.424 7.2%, 0.766 12.6%,
+        0.946 17.5%, 1.018 22.4%, 1.026 27.4%,
+        1.008 35%, 1.001 43%, 1
       );
     }
   }
@@ -226,13 +274,24 @@
   main {
     flex: 1;
     display: flex;
+    flex-direction: column;
     opacity: 0;
     transition: opacity 0.5s ease;
     min-height: 0;
   }
 
+  main > :global(*) {
+    flex: 1;
+    min-height: 0;
+  }
+
   main.ready {
     opacity: 1;
+  }
+
+  main.transitioning {
+    opacity: 0;
+    transition: opacity 0.15s ease;
   }
 
   .loading {
@@ -252,9 +311,63 @@
     animation: breathe 2.5s ease-in-out infinite;
   }
 
+  .loading-label {
+    font-size: 11px;
+    font-weight: 400;
+    color: #b5aba1;
+    opacity: 0.5;
+    margin-top: 12px;
+    letter-spacing: 0.04em;
+  }
+
   @keyframes breathe {
     0%, 100% { opacity: 0.3; transform: scale(1); }
     50% { opacity: 0.8; transform: scale(1.03); }
+  }
+
+  .tooltip {
+    position: fixed;
+    transform: translate(-50%, -100%) translateY(-12px);
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 450;
+    color: rgba(255, 255, 255, 0.85);
+    background: rgba(30, 28, 26, 0.85);
+    backdrop-filter: blur(8px);
+    pointer-events: none;
+    white-space: nowrap;
+    letter-spacing: 0.02em;
+    animation: tipIn 0.15s var(--spring);
+    z-index: 200;
+  }
+
+  @keyframes tipIn {
+    from { opacity: 0; transform: translate(-50%, -100%) translateY(-6px); }
+    to { opacity: 1; transform: translate(-50%, -100%) translateY(-12px); }
+  }
+
+  :global(.line a) {
+    color: rgba(130, 180, 255, 0.9);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    cursor: pointer;
+  }
+
+  :global(.line a:hover) {
+    color: rgba(160, 200, 255, 1);
+  }
+
+  :global(.line strong) {
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.9);
+  }
+
+  :global(.line code) {
+    background: rgba(255, 255, 255, 0.08);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 0.95em;
   }
 
   @media (prefers-color-scheme: dark) {

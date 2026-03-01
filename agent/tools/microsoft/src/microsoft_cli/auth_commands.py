@@ -18,12 +18,11 @@ def authenticate_account(config: Config) -> dict[str, str]:
     flow = app.initiate_device_flow(scopes=config.scopes)
 
     if "user_code" not in flow:
-        error_msg = flow.get("error_description", "Unknown error")
+        error_msg = flow["error_description"] if "error_description" in flow else "Unknown error"
         raise Exception(f"Failed to get device code: {error_msg}")
 
-    verification_url = flow.get(
-        "verification_uri",
-        flow.get("verification_url", "https://microsoft.com/devicelogin"),
+    verification_url = flow["verification_uri"] if "verification_uri" in flow else (
+        flow["verification_url"] if "verification_url" in flow else "https://microsoft.com/devicelogin"
     )
 
     return {
@@ -35,7 +34,7 @@ def authenticate_account(config: Config) -> dict[str, str]:
         "step4": "After authenticating, use 'microsoft auth complete' to finish",
         "device_code": flow["user_code"],
         "verification_url": verification_url,
-        "expires_in": flow.get("expires_in", 900),
+        "expires_in": flow["expires_in"] if "expires_in" in flow else 900,
         "_flow_cache": json.dumps(flow),
     }
 
@@ -52,7 +51,7 @@ def complete_authentication(config: Config, *, flow_cache: str) -> dict[str, str
     result = app.acquire_token_by_device_flow(flow)
 
     if "error" in result:
-        error_msg = result.get("error_description", result["error"])
+        error_msg = result["error_description"] if "error_description" in result else result["error"]
         if "authorization_pending" in error_msg:
             return {
                 "status": "pending",
@@ -67,7 +66,8 @@ def complete_authentication(config: Config, *, flow_cache: str) -> dict[str, str
     accounts = app.get_accounts()
     if accounts:
         for account in accounts:
-            if account.get("username", "").lower() == result.get("id_token_claims", {}).get("preferred_username", "").lower():
+            claims = result["id_token_claims"] if "id_token_claims" in result else {}
+            if (account["username"] if "username" in account else "").lower() == (claims["preferred_username"] if "preferred_username" in claims else "").lower():
                 return {
                     "status": "success",
                     "username": account["username"],

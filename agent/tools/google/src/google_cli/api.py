@@ -35,7 +35,7 @@ def retry(func, *, max_retries: int = 3, config: "Config | None" = None):
                 auth.get_credentials(config.token_file, config.credentials_file, config.scopes)
                 continue
             if e.resp.status == 429:
-                retry_after = int(e.resp.get("retry-after", "5"))
+                retry_after = int(e.resp["retry-after"] if "retry-after" in e.resp else "5")
                 time.sleep(min(retry_after, 60))
             elif e.resp.status >= 500:
                 time.sleep(2**attempt)

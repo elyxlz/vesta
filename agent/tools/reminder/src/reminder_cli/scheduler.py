@@ -23,16 +23,15 @@ def write_notification(notif_dir: Path, reminder_id: str, message: str, *, data:
     notif_dir.mkdir(exist_ok=True)
 
     notif = {
-        "timestamp": datetime.now(UTC).isoformat(),
-        "source": "scheduler",
+        "source": "reminder",
         "type": "reminder",
         "message": message,
         "reminder_id": reminder_id,
-        "agent_only": True,
         **(data or {}),
+        "timestamp": datetime.now(UTC).isoformat(),
     }
 
-    filename = f"{int(time.time() * 1e6)}-scheduler-reminder.json"
+    filename = f"{int(time.time() * 1e6)}-reminder-reminder.json"
     tmp = notif_dir / f"{filename}.tmp"
     tmp.write_text(json.dumps(notif, indent=2))
     os.replace(tmp, notif_dir / filename)

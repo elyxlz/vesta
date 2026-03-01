@@ -81,10 +81,10 @@ def restore_all_jobs(config: Config, scheduler: BackgroundScheduler):
             reminder_id = row["id"]
             try:
                 trigger_data: TriggerData = json.loads(row["trigger_data"])
-                trigger_type = trigger_data.get("type")
+                trigger_type = trigger_data["type"] if "type" in trigger_data else None
 
                 if trigger_type == "date":
-                    run_date_str = trigger_data.get("run_date")
+                    run_date_str = trigger_data["run_date"] if "run_date" in trigger_data else None
                     if not run_date_str:
                         logger.warning(f"Reminder {reminder_id}: date trigger missing 'run_date', skipping")
                         continue
@@ -98,17 +98,17 @@ def restore_all_jobs(config: Config, scheduler: BackgroundScheduler):
 
                 elif trigger_type == "cron":
                     trigger = CronTrigger(
-                        month=trigger_data.get("month"),
-                        day=trigger_data.get("day"),
-                        day_of_week=trigger_data.get("day_of_week"),
-                        hour=trigger_data.get("hour"),
-                        minute=trigger_data.get("minute"),
+                        month=trigger_data["month"] if "month" in trigger_data else None,
+                        day=trigger_data["day"] if "day" in trigger_data else None,
+                        day_of_week=trigger_data["day_of_week"] if "day_of_week" in trigger_data else None,
+                        hour=trigger_data["hour"] if "hour" in trigger_data else None,
+                        minute=trigger_data["minute"] if "minute" in trigger_data else None,
                     )
 
                 elif trigger_type == "interval":
                     if "hours" not in trigger_data:
                         logger.warning(f"Reminder {reminder_id}: interval trigger missing 'hours', using default 1")
-                    trigger = IntervalTrigger(hours=trigger_data.get("hours", 1))
+                    trigger = IntervalTrigger(hours=trigger_data["hours"] if "hours" in trigger_data else 1)
 
                 else:
                     logger.warning(f"Reminder {reminder_id}: unknown trigger type '{trigger_type}', skipping")
@@ -235,7 +235,7 @@ def list_reminders(config: Config, scheduler: BackgroundScheduler, *, limit: int
         cursor = conn.execute("SELECT * FROM reminders WHERE completed = 0 ORDER BY created_at DESC LIMIT ?", (limit,))
         reminders = []
         for row in cursor:
-            job = jobs.get(row["id"])
+            job = jobs[row["id"]] if row["id"] in jobs else None
             reminders.append(
                 {
                     "id": row["id"],

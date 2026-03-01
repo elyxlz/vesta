@@ -5,9 +5,9 @@ use std::io::{self, Write};
 const CONTAINER_NAME: &str = "vesta";
 const VESTA_IMAGE: &str = "ghcr.io/elyxlz/vesta:latest";
 const LOCAL_IMAGE_TAG: &str = "vesta:local";
-const AGENT_PORT: u16 = 7865;
 const MAX_DOCKERFILE_SEARCH_DEPTH: usize = 5;
-const TOKEN_PATH: &str = "/root/.claude_token";
+const CREDENTIALS_PATH: &str = "/root/.claude/.credentials.json";
+const CLAUDE_JSON_PATH: &str = "/root/.claude.json";
 
 #[derive(PartialEq)]
 enum ContainerStatus {
@@ -91,7 +91,7 @@ fn container_status() -> ContainerStatus {
 }
 
 fn is_authenticated() -> bool {
-    docker_quiet(&["exec", CONTAINER_NAME, "test", "-f", TOKEN_PATH])
+    docker_quiet(&["exec", CONTAINER_NAME, "test", "-f", CREDENTIALS_PATH])
 }
 
 fn ensure_exists() {
@@ -162,23 +162,16 @@ fn resolve_image(build: bool) -> &'static str {
 }
 
 fn create_container(image: &str) {
-    if !docker_ok(&[
-        "create",
-        "--name",
-        CONTAINER_NAME,
-        "-it",
-        "--privileged",
-        "-p",
-        &format!("{}:{}", AGENT_PORT, AGENT_PORT),
-        "--restart",
-        "unless-stopped",
-        image,
-    ]) {
+    let args = vec![
+        "create", "--name", CONTAINER_NAME, "-it", "--privileged",
+        "--restart", "unless-stopped", "--network", "host", image,
+    ];
+    if !docker_ok(&args) {
         die("failed to create container");
     }
 }
 
-fn obtain_token() -> String {
+fn obtain_credentials() -> String {
     println!("authenticating claude...");
     println!("a browser window will open. sign in, then come back here.\n");
 
@@ -199,24 +192,8 @@ fn obtain_token() -> String {
         .join(".claude")
         .join(".credentials.json");
 
-    let content = std::fs::read_to_string(&creds_path)
-        .unwrap_or_else(|_| die("could not read ~/.claude/.credentials.json after setup-token"));
-
-    let parsed: serde_json::Value = serde_json::from_str(&content)
-        .unwrap_or_else(|_| die("could not parse credentials file"));
-
-    let oauth = parsed.get("claudeAiOauth")
-        .unwrap_or_else(|| die("no claudeAiOauth entry in credentials"));
-
-    let token = oauth.get("accessToken")
-        .and_then(|v| v.as_str())
-        .unwrap_or_else(|| die("no accessToken in credentials"));
-
-    if !token.starts_with("sk-ant-") {
-        die("unexpected token format in credentials");
-    }
-
-    token.to_string()
+    std::fs::read_to_string(&creds_path)
+        .unwrap_or_else(|_| die("could not read ~/.claude/.credentials.json after setup-token"))
 }
 
 fn docker_cp_content(container: &str, content: &str, dest: &str) {
@@ -231,9 +208,19 @@ fn docker_cp_content(container: &str, content: &str, dest: &str) {
     }
 }
 
-fn inject_token(container: &str, token: &str) {
-    docker_cp_content(container, token, TOKEN_PATH);
-    docker_cp_content(container, "{\"hasCompletedOnboarding\":true}", "/root/.claude.json");
+fn inject_credentials(container: &str, credentials: &str) {
+    let tmp_dir = std::env::temp_dir().join(format!("vesta_claude_{}", std::process::id()));
+    std::fs::create_dir_all(&tmp_dir)
+        .unwrap_or_else(|e| die(&format!("failed to create temp dir: {}", e)));
+    std::fs::write(tmp_dir.join(".credentials.json"), credentials)
+        .unwrap_or_else(|e| die(&format!("failed to write temp credentials: {}", e)));
+    let target = format!("{}:/root/.claude", container);
+    let ok = docker_ok(&["cp", tmp_dir.to_str().unwrap(), &target]);
+    std::fs::remove_dir_all(&tmp_dir).ok();
+    if !ok {
+        die("failed to copy credentials to container");
+    }
+    docker_cp_content(container, "{\"hasCompletedOnboarding\":true}", CLAUDE_JSON_PATH);
 }
 
 pub fn run(command: Command) {
@@ -251,11 +238,11 @@ pub fn run(command: Command) {
 
             let image = resolve_image(build);
 
-            let token = obtain_token();
+            let credentials = obtain_credentials();
 
             println!("creating agent...");
             create_container(image);
-            inject_token(CONTAINER_NAME, &token);
+            inject_credentials(CONTAINER_NAME, &credentials);
 
             if !docker_ok(&["start", CONTAINER_NAME]) {
                 die("failed to start container");
@@ -325,10 +312,10 @@ pub fn run(command: Command) {
             docker_interactive(&["attach", "--detach-keys=ctrl-q", CONTAINER_NAME]);
         }
 
-        Command::Auth { token } => {
+        Command::Auth { token: credentials } => {
             ensure_exists();
-            let token = token.unwrap_or_else(|| obtain_token());
-            inject_token(CONTAINER_NAME, &token);
+            let credentials = credentials.unwrap_or_else(|| obtain_credentials());
+            inject_credentials(CONTAINER_NAME, &credentials);
             if container_status() == ContainerStatus::Running {
                 docker_ok(&["restart", CONTAINER_NAME]);
             } else if !docker_ok(&["start", CONTAINER_NAME]) {

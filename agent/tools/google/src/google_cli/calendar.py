@@ -69,16 +69,16 @@ def list_events(
         )
     )
 
-    events = events_result.get("items", [])
+    events = events_result["items"] if "items" in events_result else []
 
     if not include_details:
         return [
             {
                 "id": e["id"],
-                "summary": e.get("summary", ""),
-                "start": e.get("start", {}),
-                "end": e.get("end", {}),
-                "location": e.get("location"),
+                "summary": e["summary"] if "summary" in e else "",
+                "start": e["start"] if "start" in e else {},
+                "end": e["end"] if "end" in e else {},
+                "location": e["location"] if "location" in e else None,
             }
             for e in events
         ]
@@ -91,11 +91,11 @@ def list_calendars(config: Config) -> list[dict[str, Any]]:
     return [
         {
             "id": cal["id"],
-            "summary": cal.get("summary", ""),
-            "primary": cal.get("primary", False),
-            "accessRole": cal.get("accessRole", ""),
+            "summary": cal["summary"] if "summary" in cal else "",
+            "primary": cal["primary"] if "primary" in cal else False,
+            "accessRole": cal["accessRole"] if "accessRole" in cal else "",
         }
-        for cal in result.get("items", [])
+        for cal in (result["items"] if "items" in result else [])
     ]
 
 
@@ -151,7 +151,7 @@ def create_event(
         event["attendees"] = [{"email": a} for a in attendees]
 
     if recurrence:
-        freq = RECURRENCE_MAP.get(recurrence, recurrence.upper())
+        freq = RECURRENCE_MAP[recurrence] if recurrence in RECURRENCE_MAP else recurrence.upper()
         rule = f"RRULE:FREQ={freq}"
         if recurrence_end_date:
             date_only = recurrence_end_date.split("T")[0] if "T" in recurrence_end_date else recurrence_end_date
@@ -228,19 +228,19 @@ def respond_event(
     service = api.calendar_service(config)
     event = api.retry(lambda: service.events().get(calendarId=calendar_id, eventId=event_id).execute())
 
-    attendees = event.get("attendees", [])
+    attendees = event["attendees"] if "attendees" in event else []
     if not attendees:
         raise ValueError(f"Event {event_id} has no attendees — cannot set response")
 
     creds = api.auth.get_credentials(config.token_file, config.credentials_file, config.scopes)
     user_email = api.auth.get_user_email(creds)
 
-    response_status = RESPONSE_MAP.get(response, response)
+    response_status = RESPONSE_MAP[response] if response in RESPONSE_MAP else response
 
     found = False
     for attendee in attendees:
-        email = attendee.get("email", "")
-        if email.lower() == user_email.lower() or attendee.get("self"):
+        email = attendee["email"] if "email" in attendee else ""
+        if email.lower() == user_email.lower() or ("self" in attendee and attendee["self"]):
             attendee["responseStatus"] = response_status
             if message:
                 attendee["comment"] = message

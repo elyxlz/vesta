@@ -42,7 +42,7 @@ def _parse_event_time(event: CalendarEvent) -> datetime:
     """Parse event start time to UTC-aware datetime. Raises ValueError on failure."""
     start = event["start"]
     start_dt = start["dateTime"]
-    start_tz = start.get("timeZone")
+    start_tz = start["timeZone"] if "timeZone" in start else None
 
     # Check for timezone info: Z, +HH:MM, or -HH:MM
     has_tz = start_dt.endswith("Z") or "+" in start_dt or (start_dt.count("-") > 2)
@@ -136,15 +136,15 @@ def run(ctx: MicrosoftContext):
                     logger.info(f"Found {len(emails)} new emails for {acc.username}")
 
                     for email in emails:
-                        email_from = email.get("from")
+                        email_from = email["from"] if "from" in email else None
                         if not email_from or "emailAddress" not in email_from:
-                            logger.warning(f"Email missing sender info: {email.get('id')}")
+                            logger.warning(f"Email missing sender info: {email['id'] if 'id' in email else '?'}")
                             continue
                         sender = email_from["emailAddress"]
-                        sender_name = sender.get("name")
-                        sender_addr = sender.get("address")
+                        sender_name = sender["name"] if "name" in sender else None
+                        sender_addr = sender["address"] if "address" in sender else None
                         if not sender_addr:
-                            logger.warning(f"Email sender missing address: {email.get('id')}")
+                            logger.warning(f"Email sender missing address: {email['id'] if 'id' in email else '?'}")
                             continue
 
                         logger.info(f"Writing notification for email from {sender_addr}")
@@ -152,11 +152,11 @@ def run(ctx: MicrosoftContext):
                             ctx.notif_dir,
                             "email",
                             sender=sender_name or sender_addr,
+                            subject=email["subject"] if "subject" in email else None,
+                            preview=(email["bodyPreview"] if "bodyPreview" in email else "")[:200],
                             sender_address=sender_addr,
                             account=acc.username,
-                            subject=email.get("subject"),
-                            preview=(email.get("bodyPreview") or "")[:200],
-                            received_at=email.get("receivedDateTime"),
+                            received_at=email["receivedDateTime"] if "receivedDateTime" in email else None,
                             missed=catching_up or None,
                         )
                 except Exception as e:
@@ -191,13 +191,13 @@ def run(ctx: MicrosoftContext):
                         try:
                             event_time = _parse_event_time(event)
                         except (KeyError, ValueError) as e:
-                            logger.warning(f"Skipping event {event.get('id', '?')}: {e}")
+                            logger.warning(f"Skipping event {event['id'] if 'id' in event else '?'}: {e}")
                             continue
 
                         start_dt = event["start"]["dateTime"]
-                        location = event.get("location")
-                        loc = location.get("displayName") if location else None
-                        subject = event.get("subject") or "(No title)"
+                        location = event["location"] if "location" in event else None
+                        loc = location["displayName"] if location and "displayName" in location else None
+                        subject = (event["subject"] if "subject" in event else None) or "(No title)"
                         mins_until = int((event_time - new_check_time).total_seconds() / 60)
 
                         for threshold_mins in ctx.get_calendar_notify_thresholds():
@@ -211,12 +211,12 @@ def run(ctx: MicrosoftContext):
                             notifications.write_notification(
                                 ctx.notif_dir,
                                 "calendar",
-                                account=acc.username,
                                 subject=subject,
                                 start_time=start_dt,
-                                location=loc,
                                 minutes_until=mins_until,
                                 reminder_window=label,
+                                location=loc,
+                                account=acc.username,
                                 missed=(catching_up and event_time < new_check_time) or None,
                             )
                 except Exception as e:

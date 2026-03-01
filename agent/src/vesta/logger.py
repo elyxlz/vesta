@@ -57,12 +57,7 @@ def setup(logs_dir: pl.Path, *, log_level: str = "INFO") -> None:
 
 
 def _strip_markup(msg: str) -> str:
-    clean = _MARKUP_RE.sub("", msg)
-    if clean and ord(clean[0]) > 127:
-        clean = clean.lstrip()
-        if clean and ord(clean[0]) > 127:
-            clean = clean[1:].lstrip()
-    return clean
+    return _MARKUP_RE.sub("", msg)
 
 
 def _log(msg: str, *, level: int = logging.INFO) -> None:
@@ -73,7 +68,6 @@ def _log(msg: str, *, level: int = logging.INFO) -> None:
     if _file_handler:
         clean_record = _logger.makeRecord(_logger.name, level, "", 0, _strip_markup(msg), (), None)
         _file_handler.emit(clean_record)
-        _file_handler.flush()
 
 
 def _cat(symbol: str, color: str, prefix: str, msg: tp.Any, *, level: int = logging.INFO) -> None:

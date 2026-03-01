@@ -16,17 +16,17 @@ if not os.getenv("MICROSOFT_MCP_CLIENT_ID"):
 
 
 def parse_result(result, tool_name: str | None = None):
-    """Helper to parse MCP tool results consistently."""
-    if result.content and hasattr(result.content[0], "text"):
+    try:
         text = result.content[0].text
-        if text == "[]":
-            return []
-        data = json.loads(text)
-        list_tools = {"list_accounts", "list_emails", "list_events", "list_calendars", "search_emails"}
-        if tool_name in list_tools and isinstance(data, dict):
-            return [data]
-        return data
-    return []
+    except (AttributeError, IndexError):
+        return []
+    if text == "[]":
+        return []
+    data = json.loads(text)
+    list_tools = {"list_accounts", "list_emails", "list_events", "list_calendars", "search_emails"}
+    if tool_name in list_tools and isinstance(data, dict):
+        return [data]
+    return data
 
 
 async def get_session(calendar_notify_thresholds: str | None = None, notif_dir_out: list | None = None):
@@ -113,10 +113,10 @@ async def test_get_email():
         result = await session.call_tool("get_email", {"account_email": account["email"], "email_id": email_id})
         assert not result.isError
         email_detail = parse_result(result)
-        assert email_detail.get("id") == email_id
+        assert email_detail["id"] == email_id
         assert "body" not in email_detail
         assert "body_saved_to" in email_detail
-        assert email_detail.get("body_length", 0) >= 0
+        assert (email_detail["body_length"] if "body_length" in email_detail else 0) >= 0
 
 
 @pytest.mark.asyncio
@@ -148,7 +148,7 @@ async def test_update_email_toggle_read_state():
 
         email = emails[0]
         email_id = email["id"]
-        original_state = email.get("isRead", True)
+        original_state = email["isRead"] if "isRead" in email else True
 
         toggle_result = await session.call_tool(
             "update_email",
@@ -178,7 +178,7 @@ async def test_send_email():
         )
         assert not result.isError
         sent = parse_result(result)
-        assert sent and sent.get("status") == "sent"
+        assert sent and sent["status"] == "sent"
 
 
 @pytest.mark.asyncio
@@ -190,7 +190,7 @@ async def test_reply_to_email_with_reply_all_flag():
         if not emails:
             pytest.skip("No emails available to reply to")
 
-        target = next((email for email in emails if email.get("conversationId")), emails[0])
+        target = next((email for email in emails if "conversationId" in email), emails[0])
         result = await session.call_tool(
             "reply_to_email",
             {
@@ -202,7 +202,7 @@ async def test_reply_to_email_with_reply_all_flag():
         )
         assert not result.isError
         reply = parse_result(result)
-        assert reply and reply.get("status") == "sent"
+        assert reply and reply["status"] == "sent"
 
 
 @pytest.mark.asyncio
@@ -230,7 +230,7 @@ async def test_get_attachment_from_draft():
 
             email_result = await session.call_tool("get_email", {"account_email": account["email"], "email_id": email_id})
             email_detail = parse_result(email_result)
-            attachments = email_detail.get("attachments", [])
+            attachments = email_detail["attachments"] if "attachments" in email_detail else []
             if not attachments:
                 pytest.skip("Email draft did not return attachments")
 
@@ -309,7 +309,7 @@ async def test_calendar_crud_flow():
         get_result = await session.call_tool("get_event", {"account_email": account["email"], "event_id": event_id})
         assert not get_result.isError
         fetched = parse_result(get_result)
-        assert fetched.get("id") == event_id
+        assert fetched["id"] == event_id
 
         new_start = start_time + timedelta(hours=2)
         new_end = new_start + timedelta(hours=1)
@@ -342,7 +342,7 @@ async def test_respond_event_if_invite_available():
         if not events:
             pytest.skip("No events available to respond to")
 
-        invite_event = next((e for e in events if e.get("attendees")), None)
+        invite_event = next((e for e in events if "attendees" in e), None)
         if not invite_event:
             pytest.skip("No events with attendees to respond to")
         assert invite_event is not None  # for type narrowing
@@ -358,7 +358,7 @@ async def test_respond_event_if_invite_available():
         )
         assert not result.isError
         response = parse_result(result)
-        assert response and response.get("status") == "tentativelyAccept"
+        assert response and response["status"] == "tentativelyAccept"
 
 
 @pytest.mark.asyncio
@@ -371,7 +371,7 @@ async def test_list_calendars():
         assert isinstance(calendars, list)
         assert len(calendars) > 0
         # Should have at least the default calendar
-        assert any(c.get("isDefaultCalendar") for c in calendars)
+        assert any("isDefaultCalendar" in c and c["isDefaultCalendar"] for c in calendars)
         # Each calendar should have id and name
         for cal in calendars:
             assert "id" in cal
@@ -398,7 +398,7 @@ async def test_create_all_day_event():
         assert not create_result.isError
         event = parse_result(create_result)
         event_id = event["id"]
-        assert event.get("isAllDay") is True
+        assert event["isAllDay"] is True
 
         # Cleanup
         delete_result = await session.call_tool(
@@ -429,7 +429,7 @@ async def test_create_yearly_recurring_event():
         assert not create_result.isError
         event = parse_result(create_result)
         event_id = event["id"]
-        assert event.get("recurrence") is not None
+        assert "recurrence" in event and event["recurrence"] is not None
         assert event["recurrence"]["pattern"]["type"] == "absoluteYearly"
 
         # Cleanup - delete the series master

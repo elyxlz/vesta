@@ -1,5 +1,6 @@
 import { writable } from "svelte/store";
 import type { AgentInfo } from "./types";
+export { agentState, messages, connected } from "./ws";
 
 export const agent = writable<AgentInfo | null>(null);
 

@@ -76,7 +76,7 @@ def _scrub_email_snapshot(record: dict[str, Any]) -> None:
 
 def _resolve_mail_endpoint(config: Config, folder: str | None) -> str:
     if folder:
-        folder_path = config.folders.get(folder.casefold(), folder)
+        folder_path = config.folders[folder.casefold()] if folder.casefold() in config.folders else folder
         return f"/me/mailFolders/{folder_path}/messages"
     return "/me/messages"
 
@@ -124,7 +124,7 @@ def list_emails(
     settings = _get_settings()
     account_id = auth.get_account_id_by_email(account_email, config.cache_file, settings=settings)
 
-    folder_path = config.folders.get(folder.casefold(), folder)
+    folder_path = config.folders[folder.casefold()] if folder.casefold() in config.folders else folder
 
     params = {
         "$top": min(limit, 100),
@@ -183,19 +183,40 @@ def get_email(
     if not result:
         raise ValueError(f"Email with ID {email_id} not found")
 
-    full_body_content = (result.get("body") or {}).get("content") or ""
+    body_obj = result["body"] if "body" in result else None
+    full_body_content = (body_obj["content"] if body_obj and "content" in body_obj else "") or ""
     _remove_attachment_bytes(result)
 
-    save_path = _prepare_email_output_path(config, email_id, result.get("subject"), save_to_file)
+    save_path = _prepare_email_output_path(config, email_id, result["subject"] if "subject" in result else None, save_to_file)
+
+    from_obj = result["from"] if "from" in result else {}
+    from_email_obj = from_obj["emailAddress"] if "emailAddress" in from_obj else {}
+    from_addr = from_email_obj["address"] if "address" in from_email_obj else "unknown"
+
+    to_recipients = result["toRecipients"] if "toRecipients" in result else []
+    to_addrs = ", ".join(
+        (r["emailAddress"] if "emailAddress" in r else {})["address"]
+        if "address" in (r["emailAddress"] if "emailAddress" in r else {})
+        else ""
+        for r in to_recipients
+    )
+
     content_lines = [
-        f"From: {result.get('from', {}).get('emailAddress', {}).get('address', 'unknown')}",
-        f"Subject: {result.get('subject', 'No subject')}",
-        f"Date: {result.get('receivedDateTime', 'unknown')}",
-        f"To: {', '.join([r.get('emailAddress', {}).get('address', '') for r in result.get('toRecipients', [])])}",
+        f"From: {from_addr}",
+        f"Subject: {result['subject'] if 'subject' in result else 'No subject'}",
+        f"Date: {result['receivedDateTime'] if 'receivedDateTime' in result else 'unknown'}",
+        f"To: {to_addrs}",
     ]
 
-    if result.get("ccRecipients"):
-        content_lines.append(f"Cc: {', '.join([r.get('emailAddress', {}).get('address', '') for r in result.get('ccRecipients', [])])}")
+    cc_recipients = result["ccRecipients"] if "ccRecipients" in result else []
+    if cc_recipients:
+        cc_addrs = ", ".join(
+            (r["emailAddress"] if "emailAddress" in r else {})["address"]
+            if "address" in (r["emailAddress"] if "emailAddress" in r else {})
+            else ""
+            for r in cc_recipients
+        )
+        content_lines.append(f"Cc: {cc_addrs}")
 
     content_lines.extend(["", "=" * 80, "", full_body_content])
 
@@ -303,7 +324,7 @@ def create_email_draft(
             att["name"],
             att["content_bytes"],
             account_id,
-            att.get("content_type", "application/octet-stream"),
+            att["content_type"] if "content_type" in att else "application/octet-stream",
         )
 
     return result
@@ -413,7 +434,7 @@ def send_email(
                     att["name"],
                     att["content_bytes"],
                     account_id,
-                    att.get("content_type", "application/octet-stream"),
+                    att["content_type"] if "content_type" in att else "application/octet-stream",
                 )
             else:
                 small_att = {
@@ -602,9 +623,9 @@ def get_attachment(
     path.write_bytes(content_bytes)
 
     return {
-        "name": result.get("name", "unknown"),
-        "content_type": result.get("contentType", "application/octet-stream"),
-        "size": result.get("size", 0),
+        "name": result["name"] if "name" in result else "unknown",
+        "content_type": result["contentType"] if "contentType" in result else "application/octet-stream",
+        "size": result["size"] if "size" in result else 0,
         "saved_to": str(path),
     }
 

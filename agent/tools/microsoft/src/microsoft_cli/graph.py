@@ -18,7 +18,7 @@ def _retry_http_call(call_func, max_retries: int = 3):
             response = call_func()
 
             if response.status_code == 429:
-                retry_after = int(response.headers.get("Retry-After", "5"))
+                retry_after = int(response.headers["Retry-After"] if "Retry-After" in response.headers else "5")
                 if retry_count < max_retries:
                     time.sleep(min(retry_after, 60))
                     retry_count += 1
@@ -65,12 +65,13 @@ def request(
     if method == "GET":
         if "$search" in (params or {}):
             headers["Prefer"] = 'outlook.body-content-type="text"'
-        elif "body" in (params or {}).get("$select", ""):
+        elif "body" in ((params or {})["$select"] if "$select" in (params or {}) else ""):
             headers["Prefer"] = 'outlook.body-content-type="text"'
     else:
         headers["Content-Type"] = "application/json" if json else "application/octet-stream"
 
-    if params and ("$search" in params or "contains(" in params.get("$filter", "") or "/any(" in params.get("$filter", "")):
+    p_filter = params["$filter"] if params and "$filter" in params else ""
+    if params and ("$search" in params or "contains(" in p_filter or "/any(" in p_filter):
         headers["ConsistencyLevel"] = "eventual"
         params.setdefault("$count", "true")
 
@@ -142,7 +143,7 @@ def request_paginated(
             yield item
             items_returned += 1
 
-        next_link = result.get("@odata.nextLink")
+        next_link = result["@odata.nextLink"] if "@odata.nextLink" in result else None
         if not next_link:
             logger.debug(f"Pagination complete: {items_returned} total items across {page_num} pages")
             break

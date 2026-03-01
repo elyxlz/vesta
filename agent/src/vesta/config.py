@@ -14,7 +14,7 @@ class VestaConfig(pyd_settings.BaseSettings):
     notification_buffer_delay: int = pyd.Field(default=3, ge=0)
     proactive_check_interval: int = pyd.Field(default=60, ge=1)
     query_timeout: int = pyd.Field(default=120, ge=1)
-    response_timeout: int = pyd.Field(default=180, ge=1)
+    response_timeout: int = pyd.Field(default=600, ge=1)
     nightly_memory_hour: int | None = pyd.Field(default=4, ge=0, le=23)
     interrupt_timeout: float = pyd.Field(default=5.0, gt=0)
     max_thinking_tokens: int | None = 10000
@@ -47,10 +47,6 @@ class VestaConfig(pyd_settings.BaseSettings):
     @property
     def logs_dir(self) -> pl.Path:
         return self.state_dir / "logs"
-
-    @property
-    def whatsapp_build_dir(self) -> pl.Path:
-        return self.install_root / "tools" / "whatsapp"
 
     @property
     def memory_dir(self) -> pl.Path:

@@ -1,9 +1,5 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
-import type { AgentInfo, ChatEvent, LogEvent } from "./types";
-
-export async function agentExists(): Promise<boolean> {
-  return invoke("agent_exists");
-}
+import type { AgentInfo, LogEvent } from "./types";
 
 export async function agentStatus(): Promise<AgentInfo> {
   return invoke("agent_status");
@@ -25,22 +21,6 @@ export async function deleteAgent(): Promise<void> {
   return invoke("delete_agent");
 }
 
-export function attachChat(
-  onEvent: (event: ChatEvent) => void,
-): Promise<void> {
-  const channel = new Channel<ChatEvent>();
-  channel.onmessage = onEvent;
-  return invoke("attach_chat", { onEvent: channel });
-}
-
-export async function sendMessage(message: string): Promise<void> {
-  return invoke("send_message", { message });
-}
-
-export async function detachChat(): Promise<void> {
-  return invoke("detach_chat");
-}
-
 export function streamLogs(
   onEvent: (event: LogEvent) => void,
 ): Promise<void> {
@@ -55,4 +35,8 @@ export async function stopLogs(): Promise<void> {
 
 export async function authenticate(): Promise<void> {
   return invoke("authenticate");
+}
+
+export async function agentHost(): Promise<string> {
+  return invoke("agent_host");
 }

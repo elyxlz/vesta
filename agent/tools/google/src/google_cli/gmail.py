@@ -43,28 +43,33 @@ def _get_header(headers: list[dict], name: str) -> str:
 
 
 def _parse_message_snapshot(msg: dict) -> dict:
-    headers = msg.get("payload", {}).get("headers", [])
+    payload = msg["payload"] if "payload" in msg else {}
+    headers = payload["headers"] if "headers" in payload else []
     return {
         "id": msg["id"],
-        "threadId": msg.get("threadId"),
+        "threadId": msg["threadId"] if "threadId" in msg else None,
         "subject": _get_header(headers, "Subject"),
         "from": _get_header(headers, "From"),
         "to": _get_header(headers, "To"),
         "date": _get_header(headers, "Date"),
-        "snippet": msg.get("snippet", ""),
-        "labelIds": msg.get("labelIds", []),
+        "snippet": msg["snippet"] if "snippet" in msg else "",
+        "labelIds": msg["labelIds"] if "labelIds" in msg else [],
     }
 
 
 def _get_body_text(payload: dict) -> str:
-    if payload.get("mimeType") == "text/plain" and payload.get("body", {}).get("data"):
-        return base64.urlsafe_b64decode(payload["body"]["data"]).decode("utf-8", errors="replace")
+    mime = payload["mimeType"] if "mimeType" in payload else None
+    body = payload["body"] if "body" in payload else {}
+    if mime == "text/plain" and ("data" in body and body["data"]):
+        return base64.urlsafe_b64decode(body["data"]).decode("utf-8", errors="replace")
 
-    for part in payload.get("parts", []):
-        if part.get("mimeType") == "text/plain" and part.get("body", {}).get("data"):
-            return base64.urlsafe_b64decode(part["body"]["data"]).decode("utf-8", errors="replace")
+    parts = payload["parts"] if "parts" in payload else []
+    for part in parts:
+        part_body = part["body"] if "body" in part else {}
+        if ("mimeType" in part and part["mimeType"] == "text/plain") and ("data" in part_body and part_body["data"]):
+            return base64.urlsafe_b64decode(part_body["data"]).decode("utf-8", errors="replace")
 
-    for part in payload.get("parts", []):
+    for part in parts:
         result = _get_body_text(part)
         if result:
             return result
@@ -74,17 +79,18 @@ def _get_body_text(payload: dict) -> str:
 
 def _get_attachments_info(payload: dict) -> list[dict]:
     attachments = []
-    for part in payload.get("parts", []):
-        if part.get("filename") and part.get("body", {}).get("attachmentId"):
+    for part in (payload["parts"] if "parts" in payload else []):
+        part_body = part["body"] if "body" in part else {}
+        if ("filename" in part and part["filename"]) and ("attachmentId" in part_body):
             attachments.append(
                 {
-                    "id": part["body"]["attachmentId"],
+                    "id": part_body["attachmentId"],
                     "name": part["filename"],
-                    "size": part.get("body", {}).get("size", 0),
-                    "mimeType": part.get("mimeType", "application/octet-stream"),
+                    "size": part_body["size"] if "size" in part_body else 0,
+                    "mimeType": part["mimeType"] if "mimeType" in part else "application/octet-stream",
                 }
             )
-        if part.get("parts"):
+        if "parts" in part and part["parts"]:
             attachments.extend(_get_attachments_info(part))
     return attachments
 
@@ -116,7 +122,7 @@ def _build_mime_message(to: list[str], subject: str, body: str, cc: list[str] | 
 def list_emails(config: Config, *, label: str = "INBOX", limit: int = 10) -> list[dict[str, Any]]:
     service = api.gmail_service(config)
     results = api.retry(lambda: service.users().messages().list(userId="me", labelIds=[label], maxResults=min(limit, 100)).execute())
-    messages = results.get("messages", [])
+    messages = results["messages"] if "messages" in results else []
 
     output = []
     for msg_ref in messages[:limit]:
@@ -135,22 +141,22 @@ def list_emails(config: Config, *, label: str = "INBOX", limit: int = 10) -> lis
 def get_email(config: Config, *, message_id: str, include_attachments: bool = True, save_to_file: str | None = None) -> dict[str, Any]:
     service = api.gmail_service(config)
     msg = api.retry(lambda: service.users().messages().get(userId="me", id=message_id, format="full").execute())
-    payload = msg.get("payload", {})
-    headers = payload.get("headers", [])
+    payload = msg["payload"] if "payload" in msg else {}
+    headers = payload["headers"] if "headers" in payload else []
 
     subject = _get_header(headers, "Subject")
     full_body = _get_body_text(payload)
 
     result: dict[str, Any] = {
         "id": msg["id"],
-        "threadId": msg.get("threadId"),
+        "threadId": msg["threadId"] if "threadId" in msg else None,
         "subject": subject,
         "from": _get_header(headers, "From"),
         "to": _get_header(headers, "To"),
         "cc": _get_header(headers, "Cc"),
         "date": _get_header(headers, "Date"),
-        "snippet": msg.get("snippet", ""),
-        "labelIds": msg.get("labelIds", []),
+        "snippet": msg["snippet"] if "snippet" in msg else "",
+        "labelIds": msg["labelIds"] if "labelIds" in msg else [],
     }
 
     if include_attachments:
@@ -187,7 +193,7 @@ def send_email(
     service = api.gmail_service(config)
     raw = _build_mime_message(to, subject, body, cc=cc, attachments=attachments)
     result = api.retry(lambda: service.users().messages().send(userId="me", body={"raw": raw}).execute())
-    return {"status": "sent", "id": result.get("id", "")}
+    return {"status": "sent", "id": result["id"] if "id" in result else ""}
 
 
 def create_draft(
@@ -196,7 +202,8 @@ def create_draft(
     service = api.gmail_service(config)
     raw = _build_mime_message(to, subject, body, cc=cc, attachments=attachments)
     result = api.retry(lambda: service.users().drafts().create(userId="me", body={"message": {"raw": raw}}).execute())
-    return {"status": "draft_created", "id": result.get("id", ""), "message_id": result.get("message", {}).get("id", "")}
+    result_msg = result["message"] if "message" in result else {}
+    return {"status": "draft_created", "id": result["id"] if "id" in result else "", "message_id": result_msg["id"] if "id" in result_msg else ""}
 
 
 def reply_to_email(
@@ -216,8 +223,9 @@ def reply_to_email(
             .execute()
         )
     )
-    headers = original.get("payload", {}).get("headers", [])
-    thread_id = original.get("threadId")
+    orig_payload = original["payload"] if "payload" in original else {}
+    headers = orig_payload["headers"] if "headers" in orig_payload else []
+    thread_id = original["threadId"] if "threadId" in original else None
 
     subject = _get_header(headers, "Subject")
     if not subject.lower().startswith("re:"):
@@ -252,7 +260,7 @@ def reply_to_email(
         send_body["threadId"] = thread_id
 
     result = api.retry(lambda: service.users().messages().send(userId="me", body=send_body).execute())
-    return {"status": "sent", "id": result.get("id", "")}
+    return {"status": "sent", "id": result["id"] if "id" in result else ""}
 
 
 def get_attachment(config: Config, *, email_id: str, attachment_id: str, save_path: str) -> dict[str, Any]:
@@ -264,7 +272,7 @@ def get_attachment(config: Config, *, email_id: str, attachment_id: str, save_pa
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)
 
-    return {"size": result.get("size", len(data)), "saved_to": str(path)}
+    return {"size": result["size"] if "size" in result else len(data), "saved_to": str(path)}
 
 
 def search_emails(config: Config, *, query: str, limit: int = 10, label: str | None = None) -> list[dict[str, Any]]:
@@ -274,7 +282,7 @@ def search_emails(config: Config, *, query: str, limit: int = 10, label: str | N
         kwargs["labelIds"] = [label]
 
     results = api.retry(lambda: service.users().messages().list(**kwargs).execute())
-    messages = results.get("messages", [])
+    messages = results["messages"] if "messages" in results else []
 
     output = []
     for msg_ref in messages[:limit]:
@@ -304,4 +312,4 @@ def update_email(
         body["removeLabelIds"] = remove_labels
 
     result = api.retry(lambda: service.users().messages().modify(userId="me", id=message_id, body=body).execute())
-    return {"status": "updated", "id": result.get("id", ""), "labelIds": result.get("labelIds", [])}
+    return {"status": "updated", "id": result["id"] if "id" in result else "", "labelIds": result["labelIds"] if "labelIds" in result else []}

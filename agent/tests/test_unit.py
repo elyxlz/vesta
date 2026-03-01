@@ -156,6 +156,7 @@ async def _run_processor_test(
 
     async def shutdown_timer():
         await asyncio.sleep(0.15)
+        assert state.shutdown_event is not None
         state.shutdown_event.set()
 
     patches = {
@@ -364,6 +365,7 @@ def test_nightly_restart(tmp_path):
         _trigger_nightly_restart(state=state, config=config)
 
     assert state.session_id is None
+    assert state.pending_context is not None
     assert "Vesta restarted" in state.pending_context
     assert "Updated MEMORY.md" in state.pending_context
 
@@ -375,5 +377,6 @@ def test_nightly_restart(tmp_path):
         _trigger_nightly_restart(state=state2, config=config)
 
     assert state2.session_id is None
+    assert state2.pending_context is not None
     assert "Vesta restarted" in state2.pending_context
     assert "Dreamer summary" not in state2.pending_context

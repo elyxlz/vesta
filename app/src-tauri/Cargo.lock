@@ -4127,7 +4127,6 @@ name = "vesta-app"
 version = "0.1.0"
 dependencies = [
  "dirs",
- "regex",
  "serde",
  "serde_json",
  "tauri",

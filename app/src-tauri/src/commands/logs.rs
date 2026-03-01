@@ -26,7 +26,12 @@ pub async fn stream_logs(
     let cleanup_cancel = cancel.clone();
     tokio::spawn(async move {
         cleanup_cancel.cancelled().await;
-        *log_stream.write().await = None;
+        let mut stream = log_stream.write().await;
+        if let Some(ref s) = *stream {
+            if s.cancel.is_cancelled() {
+                *stream = None;
+            }
+        }
     });
 
     stream_agent_logs(on_event, cancel).await

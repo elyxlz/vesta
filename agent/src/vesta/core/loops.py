@@ -11,7 +11,7 @@ from claude_agent_sdk import ClaudeSDKClient, ClaudeSDKError
 
 import vesta.models as vm
 from vesta import logger
-from vesta.core.client import process_message, build_client_options, attempt_interrupt
+from vesta.core.client import process_message, build_client_options, attempt_interrupt, filter_tool_lines
 from vesta.core.init import get_memory_path, load_prompt
 
 
@@ -61,7 +61,7 @@ def format_notification_batch(notifications: list[vm.Notification], *, suffix: s
 
 
 async def load_and_display_new_notifications(
-    notification_buffer: list[vm.Notification], *, buffer_start_time: dt.datetime | None, config: vm.VestaConfig
+    notification_buffer: list[vm.Notification], *, buffer_start_time: dt.datetime | None, state: vm.State, config: vm.VestaConfig
 ) -> tuple[list[vm.Notification], dt.datetime | None]:
     new_notifs = await load_notifications(config=config)
 
@@ -77,11 +77,12 @@ async def load_and_display_new_notifications(
 
             for notif in truly_new:
                 logger.notification(notif.model_dump_json(indent=2))
+                state.event_bus.emit({"type": "notification", "source": notif.source, "summary": notif.format_for_display()})
 
     return notification_buffer, buffer_start_time
 
 
-async def process_batch(notifications: list[vm.Notification], *, queue: asyncio.Queue, state: vm.State, config: vm.VestaConfig) -> None:
+async def process_batch(notifications: list[vm.Notification], *, queue: asyncio.Queue[tuple[str, bool]], state: vm.State, config: vm.VestaConfig) -> None:
     if not notifications:
         return
 
@@ -91,11 +92,11 @@ async def process_batch(notifications: list[vm.Notification], *, queue: asyncio.
     if state.client:
         await attempt_interrupt(state, config=config, reason="Notification interrupt")
 
-    await queue.put((prompt, True))
+    await queue.put((prompt, False))
     await delete_notification_files(notifications)
 
 
-async def queue_greeting(queue: asyncio.Queue, *, config: vm.VestaConfig, first_start: bool) -> None:
+async def queue_greeting(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.VestaConfig, first_start: bool) -> None:
     name = "first_start" if first_start else "returning_start"
     prompt = load_prompt(name, config)
     if not prompt or not prompt.strip():
@@ -123,19 +124,43 @@ def build_dreamer_prompt(config: vm.VestaConfig) -> str:
 
 async def _process_message_safely(msg: str, *, is_user: bool, state: vm.State, config: vm.VestaConfig) -> None:
     try:
-        if not is_user:
+        if is_user:
+            state.event_bus.emit({"type": "user", "text": msg})
+        else:
             preview = msg[:200] + "..." if len(msg) > 200 else msg
             logger.system(preview.replace("\n", " "))
+        state.event_bus.set_state("thinking")
         responses, _ = await process_message(msg, state=state, config=config, is_user=is_user)
         for response in responses:
-            if response and response.strip():
-                logger.assistant(response)
+            if not response or not response.strip():
+                continue
+            filtered = filter_tool_lines(response)
+            if filtered:
+                logger.assistant(filtered)
+                state.event_bus.emit({"type": "assistant", "text": filtered})
     except (ClaudeSDKError, OSError, RuntimeError, ValueError, TimeoutError) as e:
-        logger.error(f"Error processing message: {e}")
-        state.pending_context = f"[System: Previous request failed with error: {e}. Session was reset.]"
+        if isinstance(e, TimeoutError):
+            error_msg = "Response timed out"
+        else:
+            error_msg = str(e) or type(e).__name__
+        if not state.session_id and state.client:
+            try:
+                sid = state.client.session_id  # type: ignore[attr-defined]
+                if sid:
+                    state.session_id = sid
+                    config.session_file.parent.mkdir(parents=True, exist_ok=True)
+                    config.session_file.write_text(sid)
+                    logger.debug(f"Recovered session_id from client: {sid[:16]}...")
+            except (AttributeError, TypeError):
+                pass
+        logger.error(f"Error processing message: {error_msg}")
+        state.event_bus.emit({"type": "error", "text": error_msg})
+        state.pending_context = f"[System: Previous request failed with error: {error_msg}. Session was reset.]"
+    finally:
+        state.event_bus.set_state("idle")
 
 
-async def message_processor(queue: asyncio.Queue, *, state: vm.State, config: vm.VestaConfig) -> None:
+async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig) -> None:
     while state.shutdown_event and not state.shutdown_event.is_set():
         logger.client("Creating new client session...")
         options = build_client_options(config, state)
@@ -158,6 +183,7 @@ async def message_processor(queue: asyncio.Queue, *, state: vm.State, config: vm
 
                     if state.dreamer_active:
                         state.dreamer_active = False
+                        state.event_bus.clear_history()
                         _trigger_nightly_restart(state=state, config=config)
             finally:
                 state.client = None
@@ -167,7 +193,7 @@ async def message_processor(queue: asyncio.Queue, *, state: vm.State, config: vm
 # --- Proactive & dreamer ---
 
 
-async def check_proactive_task(queue: asyncio.Queue, *, config: vm.VestaConfig) -> None:
+async def check_proactive_task(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.VestaConfig) -> None:
     prompt = load_prompt("proactive_check", config)
     if not prompt:
         return
@@ -203,16 +229,21 @@ def _trigger_nightly_restart(*, state: vm.State, config: vm.VestaConfig) -> None
     state.session_id = None
     config.session_file.unlink(missing_ok=True)
 
-    summary = ""
+    parts = ["[System: Vesta restarted with fresh memory after nightly dreamer run.]"]
+
     today = _now().strftime("%Y-%m-%d")
     summary_path = config.dreamer_dir / f"{today}.md"
     if summary_path.exists():
-        summary = f"\n\nDreamer summary:\n{summary_path.read_text().strip()}"
+        parts.append(f"[Dreamer Summary]\n{summary_path.read_text().strip()}")
 
-    state.pending_context = f"[System: Vesta restarted with fresh memory after nightly dreamer run.]{summary}"
+    greeting = load_prompt("returning_start", config) or ""
+    if greeting.strip():
+        parts.append(f"[Instructions]\n{greeting.strip()}")
+
+    state.pending_context = "\n\n".join(parts)
 
 
-async def process_nightly_memory(queue: asyncio.Queue, *, state: vm.State, config: vm.VestaConfig) -> None:
+async def process_nightly_memory(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig) -> None:
     if config.ephemeral:
         return
 
@@ -231,7 +262,7 @@ async def process_nightly_memory(queue: asyncio.Queue, *, state: vm.State, confi
 # --- Monitor loop ---
 
 
-async def monitor_loop(queue: asyncio.Queue, *, state: vm.State, config: vm.VestaConfig) -> None:
+async def monitor_loop(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig) -> None:
     last_proactive = _now()
     notification_buffer: list[vm.Notification] = []
     buffer_start_time: dt.datetime | None = None
@@ -252,7 +283,7 @@ async def monitor_loop(queue: asyncio.Queue, *, state: vm.State, config: vm.Vest
             await process_nightly_memory(queue, state=state, config=config)
 
             notification_buffer, buffer_start_time = await load_and_display_new_notifications(
-                notification_buffer, buffer_start_time=buffer_start_time, config=config
+                notification_buffer, buffer_start_time=buffer_start_time, state=state, config=config
             )
 
             if notification_buffer and buffer_start_time and (now - buffer_start_time).total_seconds() >= config.notification_buffer_delay:

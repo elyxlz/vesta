@@ -42,9 +42,9 @@ def create_meeting(
         "id": data["id"],
         "join_url": data["join_url"],
         "start_url": data["start_url"],
-        "password": data.get("password", ""),
-        "start_time": data.get("start_time", ""),
-        "duration": data.get("duration", 0),
+        "password": data["password"] if "password" in data else "",
+        "start_time": data["start_time"] if "start_time" in data else "",
+        "duration": data["duration"] if "duration" in data else 0,
     }
 
 
@@ -59,12 +59,12 @@ def list_meetings(config: Config) -> list[dict[str, Any]]:
     return [
         {
             "id": m["id"],
-            "topic": m.get("topic", ""),
-            "start_time": m.get("start_time", ""),
-            "duration": m.get("duration", 0),
-            "join_url": m.get("join_url", ""),
+            "topic": m["topic"] if "topic" in m else "",
+            "start_time": m["start_time"] if "start_time" in m else "",
+            "duration": m["duration"] if "duration" in m else 0,
+            "join_url": m["join_url"] if "join_url" in m else "",
         }
-        for m in data.get("meetings", [])
+        for m in (data["meetings"] if "meetings" in data else [])
     ]
 
 

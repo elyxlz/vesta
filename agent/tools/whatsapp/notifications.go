@@ -10,58 +10,77 @@ import (
 	"github.com/google/uuid"
 )
 
+type messageNotif struct {
+	Source       string `json:"source"`
+	Type         string `json:"type"`
+	ContactName  string `json:"contact_name,omitempty"`
+	Message      string `json:"message"`
+	Sender       string `json:"sender,omitempty"`
+	ChatName     string `json:"chat_name,omitempty"`
+	ContactPhone string `json:"contact_phone,omitempty"`
+	MediaType    string `json:"media_type,omitempty"`
+	IsForwarded  bool   `json:"is_forwarded,omitempty"`
+	Timestamp    string `json:"timestamp"`
+	MessageID    string `json:"message_id,omitempty"`
+	ContactSaved bool   `json:"contact_saved"`
+	Note         string `json:"note,omitempty"`
+}
+
+type reactionNotif struct {
+	Source          string `json:"source"`
+	Type            string `json:"type"`
+	ContactName     string `json:"contact_name,omitempty"`
+	Emoji           string `json:"emoji,omitempty"`
+	Sender          string `json:"sender,omitempty"`
+	ChatName        string `json:"chat_name,omitempty"`
+	ContactPhone    string `json:"contact_phone,omitempty"`
+	IsRemoved       bool   `json:"is_removed"`
+	Timestamp       string `json:"timestamp"`
+	TargetMessageID string `json:"target_message_id"`
+	ContactSaved    bool   `json:"contact_saved"`
+	Note            string `json:"note,omitempty"`
+}
+
 func WriteNotification(
 	notifDir, messageID, chatName, contactName, contactPhone string,
 	contactSaved, isDirectChat bool,
 	sender, content, mediaType string, isForwarded bool,
 ) error {
 	if notifDir == "" {
-		return nil // Notifications disabled
+		return nil
 	}
 
 	if err := os.MkdirAll(notifDir, 0755); err != nil {
 		return fmt.Errorf("failed to create notifications dir: %v", err)
 	}
 
-	notification := map[string]interface{}{
-		"timestamp":     time.Now().Format(time.RFC3339),
-		"source":        "whatsapp",
-		"type":          "message",
-		"message":       content,
-		"sender":        sender,
-		"contact_saved": contactSaved,
+	n := messageNotif{
+		Source:       "whatsapp",
+		Type:         "message",
+		ContactName:  contactName,
+		Message:      content,
+		ContactPhone: contactPhone,
+		MediaType:    mediaType,
+		IsForwarded:  isForwarded,
+		Timestamp:    time.Now().Format(time.RFC3339),
+		MessageID:    messageID,
+		ContactSaved: contactSaved,
 	}
-	if contactName != "" {
-		notification["contact_name"] = contactName
-	}
-	if contactPhone != "" {
-		notification["contact_phone"] = contactPhone
-	}
-	if chatName != "" && !isDirectChat {
-		notification["chat_name"] = chatName
-	}
-	if messageID != "" {
-		notification["message_id"] = messageID
-	}
-	if mediaType != "" {
-		notification["media_type"] = mediaType
-	}
-	if isForwarded {
-		notification["is_forwarded"] = true
+	if !isDirectChat {
+		n.Sender = sender
+		n.ChatName = chatName
 	}
 	if !contactSaved && isDirectChat {
-		notification["note"] = "Unknown contact. Ask the user who this is and add them as a contact once you know."
+		n.Note = "Unknown contact. Ask the user who this is and add them as a contact once you know."
 	}
 
-	data, err := json.MarshalIndent(notification, "", "  ")
+	data, err := json.MarshalIndent(n, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal notification: %v", err)
 	}
 
 	filename := fmt.Sprintf("%s-whatsapp-message.json", uuid.New().String())
-	filePath := filepath.Join(notifDir, filename)
-
-	return os.WriteFile(filePath, data, 0644)
+	return os.WriteFile(filepath.Join(notifDir, filename), data, 0644)
 }
 
 func WriteReactionNotification(
@@ -70,45 +89,37 @@ func WriteReactionNotification(
 	sender, emoji string, isRemoved bool,
 ) error {
 	if notifDir == "" {
-		return nil // Notifications disabled
+		return nil
 	}
 
 	if err := os.MkdirAll(notifDir, 0755); err != nil {
 		return fmt.Errorf("failed to create notifications dir: %v", err)
 	}
 
-	notification := map[string]interface{}{
-		"timestamp":         time.Now().Format(time.RFC3339),
-		"source":            "whatsapp",
-		"type":              "reaction",
-		"sender":            sender,
-		"contact_saved":     contactSaved,
-		"target_message_id": targetMessageID,
-		"is_removed":        isRemoved,
+	n := reactionNotif{
+		Source:          "whatsapp",
+		Type:            "reaction",
+		ContactName:     contactName,
+		Emoji:           emoji,
+		ContactPhone:    contactPhone,
+		IsRemoved:       isRemoved,
+		Timestamp:       time.Now().Format(time.RFC3339),
+		TargetMessageID: targetMessageID,
+		ContactSaved:    contactSaved,
 	}
-	if emoji != "" {
-		notification["emoji"] = emoji
-	}
-	if contactName != "" {
-		notification["contact_name"] = contactName
-	}
-	if contactPhone != "" {
-		notification["contact_phone"] = contactPhone
-	}
-	if chatName != "" && !isDirectChat {
-		notification["chat_name"] = chatName
+	if !isDirectChat {
+		n.Sender = sender
+		n.ChatName = chatName
 	}
 	if !contactSaved && isDirectChat {
-		notification["note"] = "Unknown contact. Ask the user who this is and add them as a contact once you know."
+		n.Note = "Unknown contact. Ask the user who this is and add them as a contact once you know."
 	}
 
-	data, err := json.MarshalIndent(notification, "", "  ")
+	data, err := json.MarshalIndent(n, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal reaction notification: %v", err)
 	}
 
 	filename := fmt.Sprintf("%s-whatsapp-reaction.json", uuid.New().String())
-	filePath := filepath.Join(notifDir, filename)
-
-	return os.WriteFile(filePath, data, 0644)
+	return os.WriteFile(filepath.Join(notifDir, filename), data, 0644)
 }
