@@ -415,12 +415,15 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             cli-artifact: vesta-x86_64-unknown-linux-gnu
+            bundles: deb,appimage
           - target: aarch64-apple-darwin
             os: macos-latest
             cli-artifact: vesta-aarch64-apple-darwin
+            bundles: dmg
           - target: x86_64-apple-darwin
             os: macos-latest
             cli-artifact: vesta-x86_64-apple-darwin
+            bundles: dmg
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -484,17 +487,14 @@ jobs:
         with:
           projectPath: app
           tauriScript: npx tauri
-          args: --target ${{ matrix.target }}
+          args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
 
       - name: Collect artifacts
         run: |
           mkdir -p tauri-out
-          if [ "${{ runner.os }}" = "Linux" ]; then
-            cp app/src-tauri/target/${{ matrix.target }}/release/bundle/deb/*.deb tauri-out/
-            cp app/src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage tauri-out/
-          else
-            cp app/src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg tauri-out/
-          fi
+          find app/src-tauri/target/${{ matrix.target }}/release/bundle \
+            -type f \( -name '*.deb' -o -name '*.AppImage' -o -name '*.dmg' \) \
+            -exec cp {} tauri-out/ \;
 
       - uses: actions/upload-artifact@v4
         with:
@@ -542,6 +542,18 @@ jobs:
           mkdir -p app/src-tauri/resources
           cp vesta-wsl-rootfs.tar.gz app/src-tauri/resources/
 
+      - name: Pre-install NSIS
+        shell: bash
+        run: |
+          NSIS_DIR="$LOCALAPPDATA/tauri/NSIS"
+          mkdir -p "$NSIS_DIR"
+          curl -fsSL --retry 3 --retry-delay 5 \
+            -o /tmp/nsis.zip \
+            "https://github.com/tauri-apps/binary-releases/releases/download/nsis-3.11/nsis-3.11.zip"
+          unzip -qo /tmp/nsis.zip -d "$NSIS_DIR"
+          rm /tmp/nsis.zip
+          ls "$NSIS_DIR"
+
       - name: Install frontend deps
         working-directory: app
         run: npm ci
@@ -553,7 +565,7 @@ jobs:
         with:
           projectPath: app
           tauriScript: npx tauri
-          args: --target x86_64-pc-windows-msvc
+          args: --target x86_64-pc-windows-msvc --bundles nsis
 
       - name: Collect artifacts
         shell: bash
