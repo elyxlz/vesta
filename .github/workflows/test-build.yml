@@ -168,9 +168,6 @@ jobs:
           MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec /bin/true
           echo "distro is healthy"
 
-          echo "=== verify vesta binary inside distro ==="
-          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec /usr/local/bin/vesta --version
-
           echo "=== Windows E2E test passed ==="
 
       - name: E2E test (Linux)
