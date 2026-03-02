@@ -118,7 +118,7 @@ jobs:
 
       - name: E2E test (macOS)
         if: inputs.platform == 'macos-arm64'
-        continue-on-error: true
+        timeout-minutes: 10
         run: |
           set -euo pipefail
           CLI="cli/target/${{ steps.targets.outputs.cli-target }}/release/vesta"
@@ -146,7 +146,7 @@ jobs:
 
       - name: E2E test (Windows)
         if: inputs.platform == 'windows'
-        continue-on-error: true
+        timeout-minutes: 10
         shell: bash
         run: |
           set -euo pipefail
@@ -175,7 +175,7 @@ jobs:
 
       - name: E2E test (Linux)
         if: inputs.platform == 'linux'
-        continue-on-error: true
+        timeout-minutes: 10
         run: |
           set -euo pipefail
           CLI="cli/target/${{ steps.targets.outputs.cli-target }}/release/vesta"
@@ -203,7 +203,7 @@ jobs:
       # ── Build Tauri app ────────────────────────────────────────────
 
       - name: Install CLI sidecar (Unix)
-        if: runner.os != 'Windows' && always()
+        if: runner.os != 'Windows'
         run: |
           mkdir -p app/src-tauri/binaries
           cp cli/target/${{ steps.targets.outputs.cli-target }}/release/vesta \
@@ -211,7 +211,7 @@ jobs:
           chmod +x app/src-tauri/binaries/vesta-${{ steps.targets.outputs.tauri-target }}
 
       - name: Install CLI sidecar (Windows)
-        if: runner.os == 'Windows' && always()
+        if: runner.os == 'Windows'
         shell: bash
         run: |
           mkdir -p app/src-tauri/binaries
@@ -219,14 +219,14 @@ jobs:
             app/src-tauri/binaries/vesta-${{ steps.targets.outputs.tauri-target }}.exe
 
       - name: Install Tauri resources (macOS)
-        if: runner.os == 'macOS' && always()
+        if: runner.os == 'macOS'
         run: |
           mkdir -p app/src-tauri/resources
           cp cli/target/${{ steps.targets.outputs.cli-target }}/release/vfkit \
             app/src-tauri/resources/vfkit
 
       - name: Install Tauri resources (Windows)
-        if: runner.os == 'Windows' && always()
+        if: runner.os == 'Windows'
         shell: bash
         run: |
           mkdir -p app/src-tauri/resources
@@ -234,7 +234,7 @@ jobs:
             app/src-tauri/resources/
 
       - name: Ad-hoc sign binaries (macOS)
-        if: runner.os == 'macOS' && always()
+        if: runner.os == 'macOS'
         run: |
           codesign --force --sign - app/src-tauri/binaries/vesta-${{ steps.targets.outputs.tauri-target }}
           if [ -f app/src-tauri/resources/vfkit ]; then
@@ -242,7 +242,7 @@ jobs:
           fi
 
       - name: Verify codesign (macOS)
-        if: runner.os == 'macOS' && always()
+        if: runner.os == 'macOS'
         run: |
           codesign --verify --verbose app/src-tauri/binaries/vesta-${{ steps.targets.outputs.tauri-target }}
           if [ -f app/src-tauri/resources/vfkit ]; then
@@ -250,12 +250,10 @@ jobs:
           fi
 
       - name: Install frontend deps
-        if: always()
         working-directory: app
         run: npm ci
 
       - name: Build Tauri app
-        if: always()
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -265,7 +263,6 @@ jobs:
           args: --target ${{ steps.targets.outputs.tauri-target }}
 
       - name: Collect artifacts
-        if: always()
         shell: bash
         run: |
           mkdir -p out
@@ -280,7 +277,6 @@ jobs:
           fi
 
       - uses: actions/upload-artifact@v4
-        if: always()
         with:
           name: test-build-${{ inputs.platform }}
           path: out/*
