@@ -477,7 +477,7 @@ jobs:
   # ── Build Tauri app (Windows, non-PR) ────────────────────────────────
   build-tauri-windows:
     needs: build-test-windows
-    if: github.event_name != 'pull_request'
+    if: ${{ !failure() && !cancelled() && github.event_name != 'pull_request' }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -541,7 +541,7 @@ jobs:
   # ── Push Docker image (tag only) ─────────────────────────────────────
   push-image:
     needs: [test-linux, build-test-windows]
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: ${{ !failure() && !cancelled() && startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -577,7 +577,7 @@ jobs:
   # ── Create GitHub Release (tag only) ─────────────────────────────────
   release:
     needs: [build-cli, test-linux, test-macos, build-vm-image, build-test-windows, build-tauri, build-tauri-windows, push-image]
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: ${{ !failure() && !cancelled() && startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
