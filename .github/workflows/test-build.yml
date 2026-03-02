@@ -15,6 +15,7 @@ on:
 
 permissions:
   contents: read
+  packages: read
 
 concurrency:
   group: test-build-${{ github.ref }}
@@ -27,6 +28,7 @@ env:
 jobs:
   build:
     runs-on: ${{ inputs.platform == 'windows' && 'windows-latest' || inputs.platform == 'linux' && 'ubuntu-latest' || 'macos-latest' }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -38,18 +40,22 @@ jobs:
             macos-arm64)
               echo "cli-target=aarch64-apple-darwin" >> "$GITHUB_OUTPUT"
               echo "tauri-target=aarch64-apple-darwin" >> "$GITHUB_OUTPUT"
+              echo "e2e=true" >> "$GITHUB_OUTPUT"
               ;;
             macos-x86)
               echo "cli-target=x86_64-apple-darwin" >> "$GITHUB_OUTPUT"
               echo "tauri-target=x86_64-apple-darwin" >> "$GITHUB_OUTPUT"
+              echo "e2e=false" >> "$GITHUB_OUTPUT"
               ;;
             windows)
               echo "cli-target=x86_64-pc-windows-msvc" >> "$GITHUB_OUTPUT"
               echo "tauri-target=x86_64-pc-windows-msvc" >> "$GITHUB_OUTPUT"
+              echo "e2e=true" >> "$GITHUB_OUTPUT"
               ;;
             linux)
               echo "cli-target=x86_64-unknown-linux-gnu" >> "$GITHUB_OUTPUT"
               echo "tauri-target=x86_64-unknown-linux-gnu" >> "$GITHUB_OUTPUT"
+              echo "e2e=true" >> "$GITHUB_OUTPUT"
               ;;
           esac
 
@@ -82,8 +88,122 @@ jobs:
         working-directory: cli
         run: cargo build --release --target ${{ steps.targets.outputs.cli-target }}
 
+      # ── Place platform resources next to CLI for e2e test ───────────
+
+      - name: Download vfkit (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          CLI_DIR="cli/target/${{ steps.targets.outputs.cli-target }}/release"
+          curl -fsSL -o "$CLI_DIR/vfkit" \
+            "https://github.com/crc-org/vfkit/releases/download/v${VFKIT_VERSION}/vfkit"
+          chmod +x "$CLI_DIR/vfkit"
+
+      - name: Download WSL rootfs (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          CLI_DIR="cli/target/${{ steps.targets.outputs.cli-target }}/release"
+          curl -fsSL -o "$CLI_DIR/vesta-wsl-rootfs.tar.gz" \
+            "https://github.com/${{ github.repository }}/releases/latest/download/vesta-wsl-rootfs.tar.gz"
+
+      - name: Login to ghcr.io (Linux)
+        if: runner.os == 'Linux'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── E2E test: actual vesta create/start/destroy ────────────────
+
+      - name: E2E test (macOS)
+        if: inputs.platform == 'macos-arm64'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          CLI="cli/target/${{ steps.targets.outputs.cli-target }}/release/vesta"
+
+          cleanup() {
+            echo "=== Cleanup ==="
+            "$CLI" destroy --yes 2>/dev/null || true
+            pkill vfkit 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          echo "=== vesta status (pre-create) ==="
+          "$CLI" status --json
+
+          echo "=== vesta create ==="
+          "$CLI" create
+
+          echo "=== vesta start ==="
+          "$CLI" start
+
+          echo "=== vesta status (post-start) ==="
+          "$CLI" status --json
+
+          echo "=== E2E test passed ==="
+
+      - name: E2E test (Windows)
+        if: inputs.platform == 'windows'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          CLI="cli/target/${{ steps.targets.outputs.cli-target }}/release/vesta.exe"
+
+          cleanup() {
+            echo "=== Cleanup ==="
+            "$CLI" destroy --yes 2>/dev/null || true
+            wsl.exe --unregister vesta-wsl 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          echo "=== vesta status (pre-create) ==="
+          "$CLI" status --json || true
+
+          echo "=== vesta create ==="
+          "$CLI" create
+
+          echo "=== vesta start ==="
+          "$CLI" start
+
+          echo "=== vesta status (post-start) ==="
+          "$CLI" status --json
+
+          echo "=== E2E test passed ==="
+
+      - name: E2E test (Linux)
+        if: inputs.platform == 'linux'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          CLI="cli/target/${{ steps.targets.outputs.cli-target }}/release/vesta"
+
+          cleanup() {
+            echo "=== Cleanup ==="
+            "$CLI" destroy --yes 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          echo "=== vesta status (pre-create) ==="
+          "$CLI" status --json
+
+          echo "=== vesta create ==="
+          "$CLI" create
+
+          echo "=== vesta start ==="
+          "$CLI" start
+
+          echo "=== vesta status (post-start) ==="
+          "$CLI" status --json
+
+          echo "=== E2E test passed ==="
+
+      # ── Build Tauri app ────────────────────────────────────────────
+
       - name: Install CLI sidecar (Unix)
-        if: runner.os != 'Windows'
+        if: runner.os != 'Windows' && always()
         run: |
           mkdir -p app/src-tauri/binaries
           cp cli/target/${{ steps.targets.outputs.cli-target }}/release/vesta \
@@ -91,42 +211,51 @@ jobs:
           chmod +x app/src-tauri/binaries/vesta-${{ steps.targets.outputs.tauri-target }}
 
       - name: Install CLI sidecar (Windows)
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && always()
         shell: bash
         run: |
           mkdir -p app/src-tauri/binaries
           cp cli/target/${{ steps.targets.outputs.cli-target }}/release/vesta.exe \
             app/src-tauri/binaries/vesta-${{ steps.targets.outputs.tauri-target }}.exe
 
-      - name: Download vfkit (macOS)
-        if: runner.os == 'macOS'
+      - name: Install Tauri resources (macOS)
+        if: runner.os == 'macOS' && always()
         run: |
           mkdir -p app/src-tauri/resources
-          curl -fsSL -o app/src-tauri/resources/vfkit \
-            "https://github.com/crc-org/vfkit/releases/download/v${VFKIT_VERSION}/vfkit"
-          chmod +x app/src-tauri/resources/vfkit
+          cp cli/target/${{ steps.targets.outputs.cli-target }}/release/vfkit \
+            app/src-tauri/resources/vfkit
 
-      - name: Download WSL rootfs from latest release (Windows)
-        if: runner.os == 'Windows'
+      - name: Install Tauri resources (Windows)
+        if: runner.os == 'Windows' && always()
         shell: bash
         run: |
           mkdir -p app/src-tauri/resources
-          curl -fsSL -o app/src-tauri/resources/vesta-wsl-rootfs.tar.gz \
-            "https://github.com/${{ github.repository }}/releases/latest/download/vesta-wsl-rootfs.tar.gz"
+          cp cli/target/${{ steps.targets.outputs.cli-target }}/release/vesta-wsl-rootfs.tar.gz \
+            app/src-tauri/resources/
 
       - name: Ad-hoc sign binaries (macOS)
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && always()
         run: |
           codesign --force --sign - app/src-tauri/binaries/vesta-${{ steps.targets.outputs.tauri-target }}
           if [ -f app/src-tauri/resources/vfkit ]; then
             codesign --force --sign - app/src-tauri/resources/vfkit
           fi
 
+      - name: Verify codesign (macOS)
+        if: runner.os == 'macOS' && always()
+        run: |
+          codesign --verify --verbose app/src-tauri/binaries/vesta-${{ steps.targets.outputs.tauri-target }}
+          if [ -f app/src-tauri/resources/vfkit ]; then
+            codesign --verify --verbose app/src-tauri/resources/vfkit
+          fi
+
       - name: Install frontend deps
+        if: always()
         working-directory: app
         run: npm ci
 
       - name: Build Tauri app
+        if: always()
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -136,6 +265,7 @@ jobs:
           args: --target ${{ steps.targets.outputs.tauri-target }}
 
       - name: Collect artifacts
+        if: always()
         shell: bash
         run: |
           mkdir -p out
@@ -150,6 +280,7 @@ jobs:
           fi
 
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: test-build-${{ inputs.platform }}
           path: out/*
