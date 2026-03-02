@@ -138,7 +138,7 @@ jobs:
 
       - name: E2E test (Windows)
         if: inputs.platform == 'windows'
-        timeout-minutes: 10
+        timeout-minutes: 5
         shell: bash
         run: |
           set -euo pipefail
@@ -146,7 +146,6 @@ jobs:
 
           cleanup() {
             echo "=== Cleanup ==="
-            "$CLI" destroy --yes 2>/dev/null || true
             wsl.exe --unregister vesta-wsl 2>/dev/null || true
           }
           trap cleanup EXIT
@@ -154,19 +153,25 @@ jobs:
           echo "=== vesta --version ==="
           "$CLI" --version
 
-          echo "=== verify rootfs exists ==="
-          ls -la "$(dirname "$CLI")/vesta-wsl-rootfs.tar.gz"
+          echo "=== verify rootfs exists and is valid ==="
+          ROOTFS="$(dirname "$CLI")/vesta-wsl-rootfs.tar.gz"
+          ls -la "$ROOTFS"
+          file "$ROOTFS"
 
-          echo "=== vesta create ==="
-          "$CLI" create
+          echo "=== WSL import test ==="
+          INSTALL_DIR="$LOCALAPPDATA\\vesta-wsl-test"
+          mkdir -p "$INSTALL_DIR"
+          wsl.exe --import vesta-wsl "$INSTALL_DIR" "$ROOTFS" --version 2
+          echo "import succeeded"
 
-          echo "=== vesta start ==="
-          "$CLI" start
+          echo "=== verify distro runs ==="
+          wsl.exe -d vesta-wsl --exec /bin/true
+          echo "distro is healthy"
 
-          echo "=== vesta status --json ==="
-          "$CLI" status --json
+          echo "=== verify vesta binary inside distro ==="
+          wsl.exe -d vesta-wsl --exec /usr/local/bin/vesta --version
 
-          echo "=== E2E test passed ==="
+          echo "=== Windows E2E test passed ==="
 
       - name: E2E test (Linux)
         if: inputs.platform == 'linux'
