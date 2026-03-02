@@ -165,11 +165,11 @@ jobs:
           echo "import succeeded"
 
           echo "=== verify distro runs ==="
-          wsl.exe -d vesta-wsl --exec /bin/true
+          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec /bin/true
           echo "distro is healthy"
 
           echo "=== verify vesta binary inside distro ==="
-          wsl.exe -d vesta-wsl --exec /usr/local/bin/vesta --version
+          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec /usr/local/bin/vesta --version
 
           echo "=== Windows E2E test passed ==="
 
