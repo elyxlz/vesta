@@ -440,6 +440,12 @@ jobs:
           path: artifacts
           pattern: vm-image-*
 
+      - name: Download WSL rootfs
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: wsl-rootfs
+
       - name: Download Tauri artifacts
         uses: actions/download-artifact@v4
         with:
