@@ -5,6 +5,9 @@ use tokio_util::sync::CancellationToken;
 
 use crate::error::{ErrorCode, VestaError};
 
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 fn is_valid_binary(path: &std::path::Path) -> bool {
     path.exists() && std::fs::metadata(path).map(|m| m.len() > 0).unwrap_or(false)
 }
@@ -63,11 +66,18 @@ async fn run(args: &[&str]) -> Result<String, VestaError> {
     let path = cli_path();
     eprintln!("[vesta] exec: {} {}", path.display(), args.join(" "));
 
-    let mut child = Command::new(&path)
-        .args(args)
+    let mut cmd = Command::new(&path);
+    cmd.args(args)
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
+        .stderr(std::process::Stdio::piped());
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let mut child = cmd.spawn()
         .map_err(|e| {
             eprintln!("[vesta] spawn failed: {} (path: {})", e, path.display());
             VestaError::new(ErrorCode::Internal, format!("failed to run cli: {}", e))
@@ -231,11 +241,19 @@ pub async fn stream_agent_logs(
 ) -> Result<(), VestaError> {
     let path = cli_path();
     eprintln!("[vesta] spawn: {} logs", path.display());
-    let mut child = Command::new(&path)
-        .arg("logs")
+
+    let mut cmd = Command::new(&path);
+    cmd.arg("logs")
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .spawn()
+        .stderr(std::process::Stdio::null());
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let mut child = cmd.spawn()
         .map_err(|e| {
             eprintln!("[vesta] logs spawn failed: {}", e);
             VestaError::new(ErrorCode::ExecFailed, format!("failed to spawn cli: {}", e))

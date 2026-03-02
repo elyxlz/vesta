@@ -61,7 +61,8 @@
       runAuth();
     } catch (e: unknown) {
       stopMessages();
-      error = e instanceof Error ? e.message : "something went wrong";
+      const err = e as { message?: string };
+      error = err.message || "something went wrong";
       await goTo("name");
     } finally {
       busy = false;
@@ -79,7 +80,8 @@
       await goTo("done");
     } catch (e: unknown) {
       busy = false;
-      error = e instanceof Error ? e.message : "authentication failed";
+      const err = e as { message?: string };
+      error = err.message || "authentication failed";
     }
   }
 

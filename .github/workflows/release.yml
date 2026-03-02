@@ -322,6 +322,14 @@ jobs:
             cp /tmp/cli-extract/vfkit app/src-tauri/resources/
           fi
 
+      - name: Ad-hoc sign binaries (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          codesign --force --sign - app/src-tauri/binaries/vesta-${{ matrix.target }}
+          if [ -f app/src-tauri/resources/vfkit ]; then
+            codesign --force --sign - app/src-tauri/resources/vfkit
+          fi
+
       - name: Install frontend deps
         working-directory: app
         run: npm ci

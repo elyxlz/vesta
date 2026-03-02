@@ -76,7 +76,8 @@ fn find_rootfs() -> PathBuf {
     let candidates = [
         exe_dir.join("vesta-wsl-rootfs.tar.gz"),
         exe_dir.join("rootfs").join("vesta-wsl-rootfs.tar.gz"),
-        // Tauri app bundles rootfs in resources/ next to binaries/
+        // Tauri NSIS installs place resources/ as subdirectory of install dir
+        exe_dir.join("resources").join("vesta-wsl-rootfs.tar.gz"),
         exe_dir.join("..").join("resources").join("vesta-wsl-rootfs.tar.gz"),
     ];
 

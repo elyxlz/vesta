@@ -1,0 +1,155 @@
+name: Test Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: "Platform to build"
+        required: true
+        type: choice
+        options:
+          - macos-arm64
+          - macos-x86
+          - windows
+          - linux
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  VFKIT_VERSION: "0.6.0"
+
+jobs:
+  build:
+    runs-on: ${{ inputs.platform == 'windows' && 'windows-latest' || inputs.platform == 'linux' && 'ubuntu-latest' || 'macos-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set targets
+        id: targets
+        shell: bash
+        run: |
+          case "${{ inputs.platform }}" in
+            macos-arm64)
+              echo "cli-target=aarch64-apple-darwin" >> "$GITHUB_OUTPUT"
+              echo "tauri-target=aarch64-apple-darwin" >> "$GITHUB_OUTPUT"
+              ;;
+            macos-x86)
+              echo "cli-target=x86_64-apple-darwin" >> "$GITHUB_OUTPUT"
+              echo "tauri-target=x86_64-apple-darwin" >> "$GITHUB_OUTPUT"
+              ;;
+            windows)
+              echo "cli-target=x86_64-pc-windows-msvc" >> "$GITHUB_OUTPUT"
+              echo "tauri-target=x86_64-pc-windows-msvc" >> "$GITHUB_OUTPUT"
+              ;;
+            linux)
+              echo "cli-target=x86_64-unknown-linux-gnu" >> "$GITHUB_OUTPUT"
+              echo "tauri-target=x86_64-unknown-linux-gnu" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ steps.targets.outputs.cli-target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            cli
+            app/src-tauri
+          key: test-${{ inputs.platform }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Linux deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential pkg-config \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev
+
+      - name: Build CLI
+        working-directory: cli
+        run: cargo build --release --target ${{ steps.targets.outputs.cli-target }}
+
+      - name: Install CLI sidecar (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p app/src-tauri/binaries
+          cp cli/target/${{ steps.targets.outputs.cli-target }}/release/vesta \
+            app/src-tauri/binaries/vesta-${{ steps.targets.outputs.tauri-target }}
+          chmod +x app/src-tauri/binaries/vesta-${{ steps.targets.outputs.tauri-target }}
+
+      - name: Install CLI sidecar (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          mkdir -p app/src-tauri/binaries
+          cp cli/target/${{ steps.targets.outputs.cli-target }}/release/vesta.exe \
+            app/src-tauri/binaries/vesta-${{ steps.targets.outputs.tauri-target }}.exe
+
+      - name: Download vfkit (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p app/src-tauri/resources
+          curl -fsSL -o app/src-tauri/resources/vfkit \
+            "https://github.com/crc-org/vfkit/releases/download/v${VFKIT_VERSION}/vfkit"
+          chmod +x app/src-tauri/resources/vfkit
+
+      - name: Download WSL rootfs from latest release (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          mkdir -p app/src-tauri/resources
+          curl -fsSL -o app/src-tauri/resources/vesta-wsl-rootfs.tar.gz \
+            "https://github.com/${{ github.repository }}/releases/latest/download/vesta-wsl-rootfs.tar.gz"
+
+      - name: Ad-hoc sign binaries (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          codesign --force --sign - app/src-tauri/binaries/vesta-${{ steps.targets.outputs.tauri-target }}
+          if [ -f app/src-tauri/resources/vfkit ]; then
+            codesign --force --sign - app/src-tauri/resources/vfkit
+          fi
+
+      - name: Install frontend deps
+        working-directory: app
+        run: npm ci
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: app
+          tauriScript: npx tauri
+          args: --target ${{ steps.targets.outputs.tauri-target }}
+
+      - name: Collect artifacts
+        shell: bash
+        run: |
+          mkdir -p out
+          TARGET="${{ steps.targets.outputs.tauri-target }}"
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            cp app/src-tauri/target/${TARGET}/release/bundle/deb/*.deb out/ 2>/dev/null || true
+            cp app/src-tauri/target/${TARGET}/release/bundle/appimage/*.AppImage out/ 2>/dev/null || true
+          elif [ "${{ runner.os }}" = "macOS" ]; then
+            cp app/src-tauri/target/${TARGET}/release/bundle/dmg/*.dmg out/
+          else
+            cp app/src-tauri/target/release/bundle/nsis/*.exe out/
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test-build-${{ inputs.platform }}
+          path: out/*
