@@ -3,24 +3,16 @@ name: CI
 on:
   push:
     branches: [master]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
-    inputs:
-      platform:
-        description: "Platform (default: all)"
-        type: choice
-        options:
-          - all
-          - macos-arm64
-          - linux
-          - windows
 
 permissions:
-  contents: read
-  packages: read
+  contents: write
+  packages: write
 
 concurrency:
-  group: ci-${{ github.ref }}-${{ inputs.platform || 'all' }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -28,9 +20,251 @@ env:
   VFKIT_VERSION: "0.6.0"
 
 jobs:
-  # ── Build WSL rootfs (needed for Windows e2e) ─────────────────────────
+  # ── Build CLI (all unix targets) ──────────────────────────────────────
+  build-cli:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact: vesta-x86_64-unknown-linux-gnu
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact: vesta-aarch64-unknown-linux-gnu
+            cross: true
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            artifact: vesta-aarch64-apple-darwin
+            vfkit: true
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            artifact: vesta-x86_64-apple-darwin
+            vfkit: true
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: cli
+          key: ${{ matrix.target }}
+
+      - name: Install Linux cross-compile deps
+        if: matrix.cross
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          mkdir -p cli/.cargo
+          echo '[target.aarch64-unknown-linux-gnu]' >> cli/.cargo/config.toml
+          echo 'linker = "aarch64-linux-gnu-gcc"' >> cli/.cargo/config.toml
+
+      - name: Build CLI
+        working-directory: cli
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Download vfkit
+        if: matrix.vfkit
+        run: |
+          curl -fsSL -o /tmp/vfkit \
+            "https://github.com/crc-org/vfkit/releases/download/v${VFKIT_VERSION}/vfkit"
+          chmod +x /tmp/vfkit
+
+      - name: Package
+        run: |
+          mkdir staging
+          cp cli/target/${{ matrix.target }}/release/vesta staging/
+          if [ -f /tmp/vfkit ]; then
+            cp /tmp/vfkit staging/
+          fi
+          tar -czf ${{ matrix.artifact }}.tar.gz -C staging .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}.tar.gz
+
+  # ── Test Linux CLI ────────────────────────────────────────────────────
+  test-linux:
+    needs: build-cli
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Download CLI
+        uses: actions/download-artifact@v4
+        with:
+          name: vesta-x86_64-unknown-linux-gnu
+          path: .
+
+      - name: Extract
+        run: |
+          mkdir -p cli-extract
+          tar -xzf vesta-x86_64-unknown-linux-gnu.tar.gz -C cli-extract
+          chmod +x cli-extract/vesta
+
+      - name: Login to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: E2E test
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          CLI="cli-extract/vesta"
+
+          cleanup() {
+            echo "=== Cleanup ==="
+            "$CLI" destroy --yes 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          echo "=== vesta --version ==="
+          "$CLI" --version
+
+          echo "=== vesta status --json ==="
+          "$CLI" status --json
+
+          echo "=== vesta create ==="
+          "$CLI" create
+
+          echo "=== vesta start ==="
+          "$CLI" start
+
+          echo "=== vesta status --json ==="
+          "$CLI" status --json
+
+  # ── Test macOS CLI ────────────────────────────────────────────────────
+  test-macos:
+    needs: build-cli
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download CLI
+        uses: actions/download-artifact@v4
+        with:
+          name: vesta-aarch64-apple-darwin
+          path: .
+
+      - name: Extract
+        run: |
+          mkdir -p cli-extract
+          tar -xzf vesta-aarch64-apple-darwin.tar.gz -C cli-extract
+          chmod +x cli-extract/vesta cli-extract/vfkit
+
+      # macOS CI can't boot VMs (no nested virtualization), so test CLI basics + codesign
+      - name: E2E test
+        run: |
+          set -euo pipefail
+          echo "=== vesta --version ==="
+          cli-extract/vesta --version
+
+          echo "=== vesta status --json ==="
+          cli-extract/vesta status --json
+
+          echo "=== verify vfkit exists ==="
+          ls -la cli-extract/vfkit
+
+      - name: Ad-hoc sign and verify
+        run: |
+          codesign --force --sign - cli-extract/vesta
+          codesign --force --sign - cli-extract/vfkit
+          codesign --verify --verbose cli-extract/vesta
+          codesign --verify --verbose cli-extract/vfkit
+
+  # ── Build VM images (non-PR only) ────────────────────────────────────
+  build-vm-image:
+    needs: build-cli
+    if: github.event_name != 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            cli-artifact: vesta-x86_64-unknown-linux-gnu
+          - arch: arm64
+            cli-artifact: vesta-aarch64-unknown-linux-gnu
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        if: matrix.arch == 'arm64'
+        uses: docker/setup-qemu-action@v3
+
+      - name: Download Linux CLI
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.cli-artifact }}
+          path: .
+
+      - name: Extract CLI binary
+        run: |
+          mkdir -p /tmp/cli-extract
+          tar -xzf ${{ matrix.cli-artifact }}.tar.gz -C /tmp/cli-extract
+          cp /tmp/cli-extract/vesta cli/vm/vesta
+
+      - name: Build VM Docker image
+        run: docker build --platform linux/${{ matrix.arch }} -t vesta-vm -f cli/vm/Dockerfile cli/vm
+
+      - name: Export rootfs and create disk image
+        run: |
+          CONTAINER=$(docker create --platform linux/${{ matrix.arch }} vesta-vm)
+
+          docker export "$CONTAINER" > /tmp/rootfs.tar
+
+          truncate -s 2G /tmp/vm-disk.raw
+          mkfs.ext4 -q /tmp/vm-disk.raw
+          MOUNT_DIR=$(mktemp -d)
+          sudo mount /tmp/vm-disk.raw "$MOUNT_DIR"
+          sudo tar -xf /tmp/rootfs.tar -C "$MOUNT_DIR"
+
+          VMLINUZ="$MOUNT_DIR/boot/vmlinuz-virt"
+          INITRD="$MOUNT_DIR/boot/initramfs-virt"
+
+          if [ "${{ matrix.arch }}" = "arm64" ] && sudo file "$VMLINUZ" | grep -q gzip; then
+            sudo cp "$VMLINUZ" /tmp/vm-kernel.gz
+            sudo gunzip /tmp/vm-kernel.gz
+          else
+            sudo cp "$VMLINUZ" /tmp/vm-kernel
+          fi
+          sudo cp "$INITRD" /tmp/vm-initrd
+
+          sudo umount "$MOUNT_DIR"
+          rmdir "$MOUNT_DIR"
+          docker rm "$CONTAINER" > /dev/null
+          sudo chown "$(id -u):$(id -g)" /tmp/vm-kernel /tmp/vm-initrd /tmp/vm-disk.raw
+
+          cd /tmp
+          tar -czf vesta-vm-${{ matrix.arch }}.tar.gz vm-kernel vm-initrd vm-disk.raw
+          gzip -c /tmp/rootfs.tar > /tmp/vesta-wsl-rootfs.tar.gz
+
+          rm -f /tmp/rootfs.tar /tmp/vm-kernel /tmp/vm-initrd /tmp/vm-disk.raw
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vm-image-${{ matrix.arch }}
+          path: /tmp/vesta-vm-${{ matrix.arch }}.tar.gz
+
+      - uses: actions/upload-artifact@v4
+        if: matrix.arch == 'amd64'
+        with:
+          name: wsl-rootfs
+          path: /tmp/vesta-wsl-rootfs.tar.gz
+
+      - name: Clean up
+        run: rm -f cli/vm/vesta
+
+  # ── Lightweight rootfs (PR only, for Windows e2e) ────────────────────
   rootfs:
-    if: inputs.platform == '' || inputs.platform == 'all' || inputs.platform == 'windows'
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -63,223 +297,24 @@ jobs:
           name: wsl-rootfs
           path: /tmp/vesta-wsl-rootfs.tar.gz
 
-  # ── macOS (arm64) ─────────────────────────────────────────────────────
-  macos:
-    if: inputs.platform == '' || inputs.platform == 'all' || inputs.platform == 'macos-arm64'
-    runs-on: macos-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            cli
-            app/src-tauri
-          key: macos-arm64
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Build CLI
-        working-directory: cli
-        run: cargo build --release --target aarch64-apple-darwin
-
-      - name: Download vfkit
-        run: |
-          CLI_DIR="cli/target/aarch64-apple-darwin/release"
-          curl -fsSL -o "$CLI_DIR/vfkit" \
-            "https://github.com/crc-org/vfkit/releases/download/v${VFKIT_VERSION}/vfkit"
-          chmod +x "$CLI_DIR/vfkit"
-
-      # macOS CI can't boot VMs (no nested virtualization), so test CLI basics + codesign
-      - name: E2E test
-        timeout-minutes: 2
-        run: |
-          set -euo pipefail
-          CLI="cli/target/aarch64-apple-darwin/release/vesta"
-
-          echo "=== vesta --version ==="
-          "$CLI" --version
-
-          echo "=== vesta status --json ==="
-          "$CLI" status --json
-
-          echo "=== verify vfkit exists ==="
-          ls -la "$(dirname "$CLI")/vfkit"
-
-      - name: Install sidecar and resources
-        run: |
-          mkdir -p app/src-tauri/binaries app/src-tauri/resources
-          cp cli/target/aarch64-apple-darwin/release/vesta \
-            app/src-tauri/binaries/vesta-aarch64-apple-darwin
-          chmod +x app/src-tauri/binaries/vesta-aarch64-apple-darwin
-          cp cli/target/aarch64-apple-darwin/release/vfkit \
-            app/src-tauri/resources/vfkit
-
-      - name: Ad-hoc sign binaries
-        run: |
-          codesign --force --sign - app/src-tauri/binaries/vesta-aarch64-apple-darwin
-          codesign --force --sign - app/src-tauri/resources/vfkit
-
-      - name: Verify codesign
-        run: |
-          codesign --verify --verbose app/src-tauri/binaries/vesta-aarch64-apple-darwin
-          codesign --verify --verbose app/src-tauri/resources/vfkit
-
-      - name: Install frontend deps
-        working-directory: app
-        run: npm ci
-
-      - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          projectPath: app
-          tauriScript: npx tauri
-          args: --target aarch64-apple-darwin
-
-      - name: Collect artifacts
-        run: |
-          mkdir -p out
-          cp app/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg out/
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ci-macos-arm64
-          path: out/*
-
-  # ── Linux ─────────────────────────────────────────────────────────────
-  linux:
-    if: inputs.platform == '' || inputs.platform == 'all' || inputs.platform == 'linux'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-unknown-linux-gnu
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            cli
-            app/src-tauri
-          key: linux
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Install Linux deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential pkg-config \
-            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev
-
-      - name: Build CLI
-        working-directory: cli
-        run: cargo build --release --target x86_64-unknown-linux-gnu
-
-      - name: Login to ghcr.io
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: E2E test
-        timeout-minutes: 10
-        run: |
-          set -euo pipefail
-          CLI="cli/target/x86_64-unknown-linux-gnu/release/vesta"
-
-          cleanup() {
-            echo "=== Cleanup ==="
-            "$CLI" destroy --yes 2>/dev/null || true
-          }
-          trap cleanup EXIT
-
-          echo "=== vesta --version ==="
-          "$CLI" --version
-
-          echo "=== vesta status --json ==="
-          "$CLI" status --json
-
-          echo "=== vesta create ==="
-          "$CLI" create
-
-          echo "=== vesta start ==="
-          "$CLI" start
-
-          echo "=== vesta status --json ==="
-          "$CLI" status --json
-
-      - name: Install sidecar
-        run: |
-          mkdir -p app/src-tauri/binaries
-          cp cli/target/x86_64-unknown-linux-gnu/release/vesta \
-            app/src-tauri/binaries/vesta-x86_64-unknown-linux-gnu
-          chmod +x app/src-tauri/binaries/vesta-x86_64-unknown-linux-gnu
-
-      - name: Install frontend deps
-        working-directory: app
-        run: npm ci
-
-      - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          projectPath: app
-          tauriScript: npx tauri
-          args: --target x86_64-unknown-linux-gnu
-
-      - name: Collect artifacts
-        run: |
-          mkdir -p out
-          cp app/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb out/ 2>/dev/null || true
-          cp app/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage out/ 2>/dev/null || true
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ci-linux
-          path: out/*
-
-  # ── Windows ───────────────────────────────────────────────────────────
-  windows:
-    if: inputs.platform == '' || inputs.platform == 'all' || inputs.platform == 'windows'
-    needs: rootfs
+  # ── Build + Test Windows CLI (native MSVC) ───────────────────────────
+  build-test-windows:
+    needs: [rootfs, build-vm-image]
+    if: ${{ !failure() && !cancelled() }}
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: |
-            cli
-            app/src-tauri
-          key: windows
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
+          workspaces: cli
+          key: x86_64-pc-windows-msvc
 
       - name: Build CLI
         working-directory: cli
@@ -289,7 +324,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: wsl-rootfs
-          path: cli/target/x86_64-pc-windows-msvc/release
+          path: .
 
       - name: E2E test
         timeout-minutes: 5
@@ -308,14 +343,13 @@ jobs:
           "$CLI" --version
 
           echo "=== verify rootfs exists and is valid ==="
-          ROOTFS="$(dirname "$CLI")/vesta-wsl-rootfs.tar.gz"
-          ls -la "$ROOTFS"
-          file "$ROOTFS"
+          ls -la vesta-wsl-rootfs.tar.gz
+          file vesta-wsl-rootfs.tar.gz
 
           echo "=== WSL import test ==="
           INSTALL_DIR="$LOCALAPPDATA\\vesta-wsl-test"
           mkdir -p "$INSTALL_DIR"
-          wsl.exe --import vesta-wsl "$INSTALL_DIR" "$ROOTFS" --version 2
+          wsl.exe --import vesta-wsl "$INSTALL_DIR" vesta-wsl-rootfs.tar.gz --version 2
           echo "import succeeded"
 
           echo "=== verify distro runs ==="
@@ -325,14 +359,92 @@ jobs:
           echo "=== verify vesta binary inside distro ==="
           MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec /usr/local/bin/vesta --version
 
-      - name: Install sidecar and resources
+      - name: Package Windows CLI zip
         shell: bash
         run: |
-          mkdir -p app/src-tauri/binaries app/src-tauri/resources
-          cp cli/target/x86_64-pc-windows-msvc/release/vesta.exe \
-            app/src-tauri/binaries/vesta-x86_64-pc-windows-msvc.exe
-          cp cli/target/x86_64-pc-windows-msvc/release/vesta-wsl-rootfs.tar.gz \
-            app/src-tauri/resources/
+          mkdir vesta-windows
+          cp cli/target/x86_64-pc-windows-msvc/release/vesta.exe vesta-windows/
+          cp vesta-wsl-rootfs.tar.gz vesta-windows/
+          7z a vesta-x86_64-pc-windows-msvc.zip vesta-windows/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vesta-x86_64-pc-windows-msvc
+          path: vesta-x86_64-pc-windows-msvc.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-cli-exe
+          path: cli/target/x86_64-pc-windows-msvc/release/vesta.exe
+
+  # ── Build Tauri app (unix, non-PR) ───────────────────────────────────
+  build-tauri:
+    needs: build-cli
+    if: github.event_name != 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            cli-artifact: vesta-x86_64-unknown-linux-gnu
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            cli-artifact: vesta-aarch64-apple-darwin
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            cli-artifact: vesta-x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+          key: ${{ matrix.target }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Linux deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential pkg-config \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev
+
+      - name: Download CLI sidecar
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.cli-artifact }}
+          path: .
+
+      - name: Install CLI sidecar
+        run: |
+          mkdir -p app/src-tauri/binaries
+          mkdir -p /tmp/cli-extract
+          tar -xzf ${{ matrix.cli-artifact }}.tar.gz -C /tmp/cli-extract
+          mv /tmp/cli-extract/vesta app/src-tauri/binaries/vesta-${{ matrix.target }}
+          chmod +x app/src-tauri/binaries/vesta-${{ matrix.target }}
+          if [ -f /tmp/cli-extract/vfkit ]; then
+            cp /tmp/cli-extract/vfkit app/src-tauri/resources/
+          fi
+
+      - name: Ad-hoc sign binaries (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          codesign --force --sign - app/src-tauri/binaries/vesta-${{ matrix.target }}
+          if [ -f app/src-tauri/resources/vfkit ]; then
+            codesign --force --sign - app/src-tauri/resources/vfkit
+          fi
 
       - name: Install frontend deps
         working-directory: app
@@ -345,15 +457,156 @@ jobs:
         with:
           projectPath: app
           tauriScript: npx tauri
-          args: --target x86_64-pc-windows-msvc
+          args: --target ${{ matrix.target }}
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p tauri-out
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            cp app/src-tauri/target/${{ matrix.target }}/release/bundle/deb/*.deb tauri-out/
+            cp app/src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage tauri-out/
+          else
+            cp app/src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg tauri-out/
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tauri-${{ matrix.target }}
+          path: tauri-out/*
+
+  # ── Build Tauri app (Windows, non-PR) ────────────────────────────────
+  build-tauri-windows:
+    needs: build-test-windows
+    if: github.event_name != 'pull_request'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+          key: x86_64-pc-windows-msvc
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Download Windows CLI sidecar
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-cli-exe
+          path: .
+
+      - name: Download WSL rootfs
+        uses: actions/download-artifact@v4
+        with:
+          name: wsl-rootfs
+          path: .
+
+      - name: Install CLI sidecar and rootfs
+        shell: bash
+        run: |
+          mkdir -p app/src-tauri/binaries
+          cp vesta.exe app/src-tauri/binaries/vesta-x86_64-pc-windows-msvc.exe
+          mkdir -p app/src-tauri/resources
+          cp vesta-wsl-rootfs.tar.gz app/src-tauri/resources/
+
+      - name: Install frontend deps
+        working-directory: app
+        run: npm ci
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: app
+          tauriScript: npx tauri
 
       - name: Collect artifacts
         shell: bash
         run: |
-          mkdir -p out
-          cp app/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe out/
+          mkdir -p tauri-out
+          cp app/src-tauri/target/release/bundle/nsis/*.exe tauri-out/
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ci-windows
-          path: out/*
+          name: tauri-x86_64-pc-windows-msvc
+          path: tauri-out/*
+
+  # ── Push Docker image (tag only) ─────────────────────────────────────
+  push-image:
+    needs: [test-linux, build-test-windows]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract version tag
+        id: meta
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ── Create GitHub Release (tag only) ─────────────────────────────────
+  release:
+    needs: [build-cli, test-linux, test-macos, build-vm-image, build-test-windows, build-tauri, build-tauri-windows, push-image]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect release assets
+        run: |
+          mkdir release
+          find artifacts -type f \( \
+            -name '*.tar.gz' -o -name '*.zip' -o \
+            -name '*.deb' -o -name '*.AppImage' -o -name '*.dmg' -o \
+            -name '*-setup.exe' -o -name '*_x64-setup.exe' \
+          \) -exec cp {} release/ \;
+          # Remove the bare CLI exe (already in the zip)
+          rm -f release/vesta.exe
+          ls -lh release/
+
+      - name: Determine tag
+        id: tag
+        run: echo "name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.name }}
+          files: release/*
+          generate_release_notes: true
+          draft: false
