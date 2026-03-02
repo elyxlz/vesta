@@ -18,6 +18,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   VFKIT_VERSION: "0.6.0"
+  NSIS_VERSION: "3.11"
 
 jobs:
   # ── Build CLI (all unix targets) ──────────────────────────────────────
@@ -71,7 +72,7 @@ jobs:
       - name: Download vfkit
         if: matrix.vfkit
         run: |
-          curl -fsSL -o /tmp/vfkit \
+          curl -fsSL --retry 3 --retry-delay 5 -o /tmp/vfkit \
             "https://github.com/crc-org/vfkit/releases/download/v${VFKIT_VERSION}/vfkit"
           chmod +x /tmp/vfkit
 
@@ -163,11 +164,13 @@ jobs:
       - name: E2E test
         run: |
           set -euo pipefail
+          CLI="cli-extract/vesta"
+
           echo "=== vesta --version ==="
-          cli-extract/vesta --version
+          "$CLI" --version
 
           echo "=== vesta status --json ==="
-          cli-extract/vesta status --json
+          "$CLI" status --json
 
           echo "=== verify vfkit exists ==="
           ls -la cli-extract/vfkit
@@ -192,20 +195,11 @@ jobs:
         run: |
           set -euo pipefail
           tar -xzf vesta-vm-arm64.tar.gz
-
-          echo "=== verify kernel ==="
-          file vm-kernel
-          test -s vm-kernel
-
-          echo "=== verify initrd ==="
-          file vm-initrd
-          test -s vm-initrd
-
-          echo "=== verify disk image ==="
-          file vm-disk.raw
-          test -s vm-disk.raw
-
-          echo "=== file sizes ==="
+          for f in vm-kernel vm-initrd vm-disk.raw; do
+            echo "=== verify $f ==="
+            file "$f"
+            test -s "$f"
+          done
           ls -lh vm-kernel vm-initrd vm-disk.raw
 
   # ── Build VM images (non-PR only) ────────────────────────────────────
@@ -272,6 +266,9 @@ jobs:
           trap - EXIT
           docker rm "$CONTAINER" > /dev/null
           sudo chown "$(id -u):$(id -g)" /tmp/vm-kernel /tmp/vm-initrd /tmp/vm-disk.raw
+          for f in /tmp/vm-kernel /tmp/vm-initrd /tmp/vm-disk.raw; do
+            test -s "$f" || { echo "FATAL: $f is empty"; exit 1; }
+          done
 
           cd /tmp
           tar -czf vesta-vm-${{ matrix.arch }}.tar.gz vm-kernel vm-initrd vm-disk.raw
@@ -495,6 +492,7 @@ jobs:
           find app/src-tauri/target/${{ matrix.target }}/release/bundle \
             -type f \( -name '*.deb' -o -name '*.AppImage' -o -name '*.dmg' \) \
             -exec cp {} tauri-out/ \;
+          [ "$(ls -A tauri-out)" ] || { echo "No artifacts collected"; exit 1; }
 
       - uses: actions/upload-artifact@v4
         with:
@@ -542,17 +540,24 @@ jobs:
           mkdir -p app/src-tauri/resources
           cp vesta-wsl-rootfs.tar.gz app/src-tauri/resources/
 
+      - name: Cache NSIS
+        id: cache-nsis
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\tauri\NSIS
+          key: nsis-${{ env.NSIS_VERSION }}
+
       - name: Pre-install NSIS
+        if: steps.cache-nsis.outputs.cache-hit != 'true'
         shell: bash
         run: |
           NSIS_DIR="$LOCALAPPDATA/tauri/NSIS"
           mkdir -p "$NSIS_DIR"
           curl -fsSL --retry 3 --retry-delay 5 \
             -o /tmp/nsis.zip \
-            "https://github.com/tauri-apps/binary-releases/releases/download/nsis-3.11/nsis-3.11.zip"
+            "https://github.com/tauri-apps/binary-releases/releases/download/nsis-${NSIS_VERSION}/nsis-${NSIS_VERSION}.zip"
           unzip -qo /tmp/nsis.zip -d "$NSIS_DIR"
           rm /tmp/nsis.zip
-          ls "$NSIS_DIR"
 
       - name: Install frontend deps
         working-directory: app
