@@ -3,7 +3,7 @@ FROM alpine:3.21
 RUN echo "https://dl-cdn.alpinelinux.org/alpine/v3.21/community" >> /etc/apk/repositories
 
 RUN apk add --no-cache \
-    ca-certificates curl openssh docker containerd iptables gcompat
+    ca-certificates curl openssh docker containerd iptables gcompat libgcc
 
 # Kernel optimized for VMs (virtio drivers built-in, not modules)
 RUN apk add --no-cache linux-virt

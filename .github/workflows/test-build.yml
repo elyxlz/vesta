@@ -168,6 +168,9 @@ jobs:
           MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec /bin/true
           echo "distro is healthy"
 
+          echo "=== verify vesta binary inside distro ==="
+          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec /usr/local/bin/vesta --version
+
           echo "=== Windows E2E test passed ==="
 
       - name: E2E test (Linux)
@@ -273,7 +276,7 @@ jobs:
           elif [ "${{ runner.os }}" = "macOS" ]; then
             cp app/src-tauri/target/${TARGET}/release/bundle/dmg/*.dmg out/
           else
-            cp app/src-tauri/target/release/bundle/nsis/*.exe out/
+            cp app/src-tauri/target/${TARGET}/release/bundle/nsis/*.exe out/
           fi
 
       - uses: actions/upload-artifact@v4
