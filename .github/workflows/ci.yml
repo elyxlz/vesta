@@ -143,7 +143,8 @@ jobs:
 
   # ── Test macOS CLI ────────────────────────────────────────────────────
   test-macos:
-    needs: build-cli
+    needs: [build-cli, build-vm-image]
+    if: ${{ !failure() && !cancelled() }}
     runs-on: macos-latest
     timeout-minutes: 10
     steps:
@@ -159,7 +160,6 @@ jobs:
           tar -xzf vesta-aarch64-apple-darwin.tar.gz -C cli-extract
           chmod +x cli-extract/vesta cli-extract/vfkit
 
-      # macOS CI can't boot VMs (no nested virtualization), so test CLI basics + codesign
       - name: E2E test
         run: |
           set -euo pipefail
@@ -178,6 +178,35 @@ jobs:
           codesign --force --sign - cli-extract/vfkit
           codesign --verify --verbose cli-extract/vesta
           codesign --verify --verbose cli-extract/vfkit
+
+      # Validate VM image (non-PR only, since build-vm-image is skipped on PRs)
+      - name: Download VM image
+        if: github.event_name != 'pull_request'
+        uses: actions/download-artifact@v4
+        with:
+          name: vm-image-arm64
+          path: .
+
+      - name: Validate VM image
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          tar -xzf vesta-vm-arm64.tar.gz
+
+          echo "=== verify kernel ==="
+          file vm-kernel
+          test -s vm-kernel
+
+          echo "=== verify initrd ==="
+          file vm-initrd
+          test -s vm-initrd
+
+          echo "=== verify disk image ==="
+          file vm-disk.raw
+          test -s vm-disk.raw
+
+          echo "=== file sizes ==="
+          ls -lh vm-kernel vm-initrd vm-disk.raw
 
   # ── Build VM images (non-PR only) ────────────────────────────────────
   build-vm-image:
