@@ -9,52 +9,41 @@ import os
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import jwt
 import requests
 
-CONFIG_DIR = os.path.expanduser("~/.config/vesta-upstream")
-DEFAULT_KEY_PATH = os.path.join(CONFIG_DIR, "private-key.pem")
-CONFIG_PATH = os.path.join(CONFIG_DIR, "config")
+# Config — hardcoded for the vesta-upstream GitHub App
+APP_ID = 2990557
+INSTALLATION_ID = 113559773
 UPSTREAM_REPO = "elyxlz/vesta"
 GITHUB_API = "https://api.github.com"
 
-
-def load_config():
-    """Load app ID and installation ID from config file."""
-    if not os.path.isfile(CONFIG_PATH):
-        print(f"Error: config not found at {CONFIG_PATH}", file=sys.stderr)
-        print("Run the setup steps in the upstream skill first.", file=sys.stderr)
-        sys.exit(1)
-    config = {}
-    with open(CONFIG_PATH) as f:
-        for line in f:
-            if ":" in line:
-                key, val = line.split(":", 1)
-                config[key.strip()] = val.strip()
-    return int(config["App ID"]), int(config["Installation ID"])
+# Key lives next to this script
+SCRIPT_DIR = Path(__file__).resolve().parent
+KEY_PATH = SCRIPT_DIR / "private-key.pem"
 
 
 def load_private_key():
-    key_path = os.environ.get("VESTA_UPSTREAM_KEY_PATH", DEFAULT_KEY_PATH)
-    if not os.path.isfile(key_path):
-        print(f"Error: private key not found at {key_path}", file=sys.stderr)
+    if not KEY_PATH.is_file():
+        print(f"Error: private key not found at {KEY_PATH}", file=sys.stderr)
+        print("Generate one from https://github.com/settings/apps/vesta-upstream", file=sys.stderr)
         sys.exit(1)
-    with open(key_path) as f:
-        return f.read()
+    return KEY_PATH.read_text()
 
 
-def generate_jwt(app_id, private_key):
+def generate_jwt():
+    private_key = load_private_key()
     now = int(time.time())
-    payload = {"iat": now - 60, "exp": now + 600, "iss": str(app_id)}
+    payload = {"iat": now - 60, "exp": now + 600, "iss": str(APP_ID)}
     return jwt.encode(payload, private_key, algorithm="RS256")
 
 
-def get_installation_token(app_id, installation_id):
-    private_key = load_private_key()
-    token_jwt = generate_jwt(app_id, private_key)
+def get_installation_token():
+    token_jwt = generate_jwt()
     resp = requests.post(
-        f"{GITHUB_API}/app/installations/{installation_id}/access_tokens",
+        f"{GITHUB_API}/app/installations/{INSTALLATION_ID}/access_tokens",
         headers={
             "Authorization": f"Bearer {token_jwt}",
             "Accept": "application/vnd.github+json",
@@ -84,8 +73,7 @@ def main():
     parser.add_argument("--token-only", action="store_true", help="Just print an installation token")
     args = parser.parse_args()
 
-    app_id, installation_id = load_config()
-    token = get_installation_token(app_id, installation_id)
+    token = get_installation_token()
 
     if args.token_only:
         print(token)
