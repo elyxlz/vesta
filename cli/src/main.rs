@@ -29,6 +29,9 @@ enum Command {
         /// Build the image locally instead of pulling
         #[arg(long)]
         build: bool,
+        /// Set the agent's display name
+        #[arg(long)]
+        name: Option<String>,
     },
     /// Start the agent
     Start,

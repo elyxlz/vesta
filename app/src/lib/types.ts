@@ -2,6 +2,7 @@ export interface AgentInfo {
   status: AgentStatus;
   id: string;
   authenticated: boolean;
+  name?: string;
 }
 
 export type AgentStatus = "running" | "stopped" | "not_found" | "unknown";

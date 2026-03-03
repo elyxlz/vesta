@@ -168,12 +168,17 @@ fn command_args(command: &Command) -> Vec<&str> {
             }
             args
         }
-        Command::Create { build } => {
-            if *build {
+        Command::Create { build, ref name } => {
+            let mut args = if *build {
                 vec!["create", "--build"]
             } else {
                 vec!["create"]
+            };
+            if let Some(n) = name {
+                args.push("--name");
+                args.push(n);
             }
+            args
         }
         Command::Start => vec!["start"],
         Command::Stop => vec!["stop"],

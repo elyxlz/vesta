@@ -56,6 +56,10 @@ async function doConnect() {
     wsUrl = `ws://${host}:${AGENT_PORT}/ws`;
   } catch {}
 
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+    return;
+  }
+
   const socket = new WebSocket(wsUrl);
   ws = socket;
 

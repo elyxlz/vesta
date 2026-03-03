@@ -220,16 +220,11 @@
     height: 4px;
     border-radius: 50%;
     background: rgba(140, 200, 130, 0.5);
-    animation: thinking-pulse 1.4s ease-in-out infinite;
+    animation: dot-pulse 1.4s ease-in-out infinite;
   }
 
   .thinking-indicator span:nth-child(2) { animation-delay: 0.2s; }
   .thinking-indicator span:nth-child(3) { animation-delay: 0.4s; }
-
-  @keyframes thinking-pulse {
-    0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
-    40% { opacity: 1; transform: scale(1); }
-  }
 
   .reconnect-bar {
     padding: 6px 20px;

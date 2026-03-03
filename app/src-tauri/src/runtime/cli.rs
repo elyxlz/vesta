@@ -116,6 +116,8 @@ pub struct AgentInfo {
     pub id: String,
     #[serde(default)]
     pub authenticated: bool,
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
@@ -131,8 +133,15 @@ pub async fn agent_status() -> Result<AgentInfo, VestaError> {
     run_json(&["status", "--json"]).await
 }
 
-pub async fn create_agent() -> Result<(), VestaError> {
-    run(&["create"]).await?;
+pub async fn create_agent(name: Option<String>) -> Result<(), VestaError> {
+    let mut args = vec!["create"];
+    let name_val;
+    if let Some(ref n) = name {
+        name_val = n.clone();
+        args.push("--name");
+        args.push(&name_val);
+    }
+    run(&args).await?;
     Ok(())
 }
 
@@ -280,12 +289,15 @@ pub async fn stream_agent_logs(
     let cancel_wait = cancel.clone();
     tokio::spawn(async move {
         let timeout = tokio::time::Duration::from_secs(300);
-        let _ = tokio::time::timeout(timeout, async {
+        let timed_out = tokio::time::timeout(timeout, async {
             tokio::select! {
                 _ = cancel_wait.cancelled() => { let _ = child.kill().await; }
                 _ = child.wait() => { cancel_wait.cancel(); }
             }
-        }).await;
+        }).await.is_err();
+        if timed_out {
+            let _ = child.kill().await;
+        }
     });
 
     Ok(())

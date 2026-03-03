@@ -42,6 +42,7 @@
         view = "onboarding";
       } else {
         agent.set(info);
+        if (info.name) agentName.set(info.name);
         view = "home";
         ensureWs(true);
       }

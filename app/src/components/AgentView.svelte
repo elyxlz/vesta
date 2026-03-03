@@ -62,6 +62,7 @@
         authenticated = info.authenticated;
         agent.set(info);
       }
+      if (info.name) agentName.set(info.name);
       if (errorMsg) errorMsg = "";
     } catch {
       status = "unknown";

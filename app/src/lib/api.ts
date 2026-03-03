@@ -5,8 +5,8 @@ export async function agentStatus(): Promise<AgentInfo> {
   return invoke("agent_status");
 }
 
-export async function createAgent(): Promise<void> {
-  return invoke("create_agent");
+export async function createAgent(name?: string): Promise<void> {
+  return invoke("create_agent", { name: name ?? null });
 }
 
 export async function startAgent(): Promise<void> {

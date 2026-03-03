@@ -7,8 +7,8 @@ pub async fn agent_status() -> Result<AgentInfo, VestaError> {
 }
 
 #[tauri::command]
-pub async fn create_agent() -> Result<(), VestaError> {
-    cli::create_agent().await
+pub async fn create_agent(name: Option<String>) -> Result<(), VestaError> {
+    cli::create_agent(name).await
 }
 
 #[tauri::command]

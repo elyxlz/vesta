@@ -66,7 +66,7 @@
     startMessages();
     await goTo("creating");
     try {
-      await createAgent();
+      await createAgent(name);
       stopMessages();
       await goTo("auth");
       runAuth();

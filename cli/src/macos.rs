@@ -14,6 +14,8 @@ struct StatusJson {
     #[serde(skip_serializing_if = "Option::is_none")]
     id: Option<String>,
     authenticated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
 }
 
 fn data_dir() -> PathBuf {
@@ -487,6 +489,7 @@ pub fn run(command: Command) {
                         status: "not_found",
                         id: None,
                         authenticated: false,
+                        name: None,
                     };
                     println!("{}", serde_json::to_string(&s).unwrap());
                 } else {
@@ -516,13 +519,12 @@ pub fn run(command: Command) {
             ssh_exec(&["vesta", "restart"]);
         }
 
-        Command::Create { build } => {
+        Command::Create { build, name } => {
             ensure_vm();
-            if build {
-                ssh_exec(&["vesta", "create", "--build"]);
-            } else {
-                ssh_exec(&["vesta", "create"]);
-            }
+            let mut args = vec!["vesta", "create"];
+            if build { args.push("--build"); }
+            if let Some(ref n) = name { args.push("--name"); args.push(n); }
+            ssh_exec(&args);
         }
 
         Command::Backup => {
