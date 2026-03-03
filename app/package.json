@@ -1,7 +1,7 @@
 {
   "name": "vesta",
   "private": true,
-  "version": "0.1.18",
+  "version": "0.1.19",
   "description": "Vesta desktop app",
   "license": "MIT",
   "repository": {
