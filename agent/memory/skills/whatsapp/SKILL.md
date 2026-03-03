@@ -45,8 +45,8 @@ description: This skill should be used when the user asks about "whatsapp", "mes
 
 ## Quick Reference
 ```bash
-whatsapp send --to "+1234567890" --message 'Hello!'
-whatsapp send --to "+1234567890" --message 'Photo' --attachment /path/to/image.jpg
+whatsapp send '+1234567890' 'Hello!'
+whatsapp send '+1234567890' 'Photo' --attachment /path/to/image.jpg
 whatsapp chats
 whatsapp contacts
 whatsapp messages --chat-id "<jid>" --limit 20
@@ -57,7 +57,6 @@ whatsapp send-file --to "+1234567890" --file /path/to/document.pdf
 ```
 
 ## Notes
-- **Message quoting**: Use single quotes for the `--message` argument to avoid bash escaping issues (e.g. `--message 'hello!'` not `--message "hello\!"`)
 - Phone numbers must include country code with `+` prefix
 - Chat IDs are JIDs (e.g., `1234567890@s.whatsapp.net`)
 - Group IDs end with `@g.us`
