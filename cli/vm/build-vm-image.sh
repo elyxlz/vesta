@@ -16,7 +16,7 @@ CONTAINER=$(docker create --platform "linux/$ARCH" vesta-vm)
 docker export "$CONTAINER" > /tmp/vesta-rootfs.tar
 docker rm "$CONTAINER" > /dev/null
 
-# Create disk image (2GB, ext4)
+# Create disk image (20GB sparse, ext4)
 echo "creating disk image..."
 DISK="/tmp/vesta-vm-disk.raw"
 truncate -s 20G "$DISK"
