@@ -63,16 +63,20 @@ Go through the conversation archives. Find where you messed up, where things got
 - Rewrite prompts that led you somewhere dumb
 - Add rules to memory that would stop you making the same mistake
 
-**Upstream**: Fixed something from the source repo? PR it to https://github.com/elyxlz/vesta too. Fix it for yourself first, then share it.
+**Upstream**: Fixed something from the source repo? PR it to https://github.com/elyxlz/vesta too. Fix it for yourself first, then share it. See the `upstream` skill for how to submit PRs.
 
 ## Upstream Integration
 
 Source repo: https://github.com/elyxlz/vesta
 
+### Pulling changes
 1. `git -C {repo_root} fetch origin && git -C {repo_root} log HEAD..origin/master --oneline` to see what's new
 2. For interesting commits: `git -C {repo_root} show <hash> --stat` then `git -C {repo_root} show <hash>` for the full diff
 3. Your local state may have diverged. Don't paste diffs blindly. Understand what each change was trying to do, then adapt it to where you are now
 4. Track what you've processed so you don't redo it. Keep the last hash in MEMORY.md
+
+### Pushing changes
+Use the `upstream` skill — it has a script and setup instructions for submitting PRs via a GitHub App. No personal GitHub account needed.
 
 ## Summary
 
