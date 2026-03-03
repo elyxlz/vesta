@@ -51,7 +51,7 @@ class VestaConfig(pyd_settings.BaseSettings):
 
     @property
     def memory_dir(self) -> pl.Path:
-        return self.state_dir / "memory"
+        return self.install_root / "memory"
 
     @property
     def skills_dir(self) -> pl.Path:

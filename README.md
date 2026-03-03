@@ -52,4 +52,4 @@ Vesta runs in a Docker container. On Linux, the CLI talks to Docker directly. On
 
 ## Skills
 
-Skill templates live in `agent/src/vesta/templates/skills/`. Each skill has a `SKILL.md` with setup instructions, CLI usage, and memory sections. Vesta activates skills on demand based on what you ask for.
+Skills live in `agent/memory/skills/`. Each skill has a `SKILL.md` with setup instructions, CLI usage, and memory sections. Vesta activates skills on demand based on what you ask for.
