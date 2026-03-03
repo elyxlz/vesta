@@ -71,3 +71,14 @@ class VestaConfig(pyd_settings.BaseSettings):
     @property
     def session_file(self) -> pl.Path:
         return self.data_dir / "session_id"
+
+    @property
+    def agent_name(self) -> str:
+        name_file = self.state_dir / ".vesta-name"
+        try:
+            name = name_file.read_text().strip()
+            if name:
+                return name
+        except (OSError, UnicodeDecodeError):
+            pass
+        return "vesta"

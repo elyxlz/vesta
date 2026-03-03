@@ -52,7 +52,13 @@ def init_main_memory(config: vm.VestaConfig) -> None:
     memory_path = get_memory_path(config)
     if not memory_path.exists():
         memory_path.parent.mkdir(parents=True, exist_ok=True)
-        template = load_memory_template().replace("{install_root}", str(config.install_root))
+        name = config.agent_name
+        template = (
+            load_memory_template()
+            .replace("{install_root}", str(config.install_root))
+            .replace("{agent_name_upper}", name.upper())
+            .replace("{agent_name}", name)
+        )
         memory_path.write_text(template)
         logger.init(f"Initialized main memory ({len(template)} chars)")
 
