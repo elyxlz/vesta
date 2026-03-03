@@ -1,5 +1,10 @@
 FROM debian:bookworm-slim
 
+LABEL org.opencontainers.image.title="Vesta" \
+      org.opencontainers.image.description="Personal assistant agent that works autonomously on your behalf" \
+      org.opencontainers.image.source="https://github.com/elyxlz/vesta" \
+      org.opencontainers.image.licenses="MIT"
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl git ca-certificates && rm -rf /var/lib/apt/lists/*
 

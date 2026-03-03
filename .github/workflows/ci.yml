@@ -31,29 +31,27 @@ jobs:
         run: |
           AGENT=$(grep '^version = ' agent/pyproject.toml | cut -d'"' -f2)
           CLI=$(grep '^version = ' cli/Cargo.toml | head -1 | cut -d'"' -f2)
-          TAURI=$(python3 -c "import json; print(json.load(open('app/src-tauri/tauri.conf.json'))['version'])")
+          TAURI_CONF=$(python3 -c "import json; print(json.load(open('app/src-tauri/tauri.conf.json'))['version'])")
+          TAURI_CARGO=$(grep '^version = ' app/src-tauri/Cargo.toml | head -1 | cut -d'"' -f2)
           APP=$(python3 -c "import json; print(json.load(open('app/package.json'))['version'])")
 
-          echo "agent:  $AGENT"
-          echo "cli:    $CLI"
-          echo "tauri:  $TAURI"
-          echo "app:    $APP"
+          echo "agent:       $AGENT"
+          echo "cli:         $CLI"
+          echo "tauri.conf:  $TAURI_CONF"
+          echo "tauri cargo: $TAURI_CARGO"
+          echo "app:         $APP"
 
           FAIL=0
-          if [ "$AGENT" != "$CLI" ]; then
-            echo "❌ agent ($AGENT) != cli ($CLI)"
-            FAIL=1
-          fi
-          if [ "$AGENT" != "$TAURI" ]; then
-            echo "❌ agent ($AGENT) != tauri ($TAURI)"
-            FAIL=1
-          fi
-          if [ "$AGENT" != "$APP" ]; then
-            echo "❌ agent ($AGENT) != app ($APP)"
-            FAIL=1
-          fi
+          for name_val in "cli:$CLI" "tauri.conf:$TAURI_CONF" "tauri-cargo:$TAURI_CARGO" "app:$APP"; do
+            name="${name_val%%:*}"
+            val="${name_val#*:}"
+            if [ "$AGENT" != "$val" ]; then
+              echo "❌ agent ($AGENT) != $name ($val)"
+              FAIL=1
+            fi
+          done
           if [ "$FAIL" = "1" ]; then
-            echo "All four version sources must match"
+            echo "All version sources must match"
             exit 1
           fi
           echo "✓ All versions match: $AGENT"
