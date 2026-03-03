@@ -5,8 +5,8 @@ export async function agentStatus(): Promise<AgentInfo> {
   return invoke("agent_status");
 }
 
-export async function createAgent(): Promise<void> {
-  return invoke("create_agent");
+export async function createAgent(name?: string): Promise<void> {
+  return invoke("create_agent", { name: name ?? null });
 }
 
 export async function startAgent(): Promise<void> {
@@ -17,8 +17,16 @@ export async function stopAgent(): Promise<void> {
   return invoke("stop_agent");
 }
 
+export async function restartAgent(): Promise<void> {
+  return invoke("restart_agent");
+}
+
 export async function deleteAgent(): Promise<void> {
   return invoke("delete_agent");
+}
+
+export async function setAgentName(name: string): Promise<void> {
+  return invoke("set_agent_name", { name });
 }
 
 export function streamLogs(

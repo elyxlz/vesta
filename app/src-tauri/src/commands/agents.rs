@@ -7,8 +7,8 @@ pub async fn agent_status() -> Result<AgentInfo, VestaError> {
 }
 
 #[tauri::command]
-pub async fn create_agent() -> Result<(), VestaError> {
-    cli::create_agent().await
+pub async fn create_agent(name: Option<String>) -> Result<(), VestaError> {
+    cli::create_agent(name).await
 }
 
 #[tauri::command]
@@ -22,8 +22,18 @@ pub async fn stop_agent() -> Result<(), VestaError> {
 }
 
 #[tauri::command]
+pub async fn restart_agent() -> Result<(), VestaError> {
+    cli::restart_agent().await
+}
+
+#[tauri::command]
 pub async fn delete_agent() -> Result<(), VestaError> {
     cli::delete_agent().await
+}
+
+#[tauri::command]
+pub async fn set_agent_name(name: String) -> Result<(), VestaError> {
+    cli::set_agent_name(&name).await
 }
 
 #[tauri::command]

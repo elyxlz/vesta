@@ -210,19 +210,24 @@ fn remove_autostart() {
 
 fn command_args(command: &Command) -> Vec<&str> {
     match command {
-        Command::Setup { build, .. } => {
-            let mut args = vec!["setup", "-y"];
-            if *build {
-                args.push("--build");
-            }
+        Command::Setup { build, yes, ref name } => {
+            let mut args = vec!["setup"];
+            if *yes { args.push("-y"); }
+            if *build { args.push("--build"); }
+            if let Some(n) = name { args.push("--name"); args.push(n); }
             args
         }
-        Command::Create { build } => {
-            if *build {
+        Command::Create { build, ref name } => {
+            let mut args = if *build {
                 vec!["create", "--build"]
             } else {
                 vec!["create"]
+            };
+            if let Some(n) = name {
+                args.push("--name");
+                args.push(n);
             }
+            args
         }
         Command::Start => vec!["start"],
         Command::Stop => vec!["stop"],
@@ -252,6 +257,7 @@ fn command_args(command: &Command) -> Vec<&str> {
                 vec!["destroy"]
             }
         }
+        Command::Name { ref name } => vec!["name", name],
         Command::Rebuild => vec!["rebuild"],
     }
 }

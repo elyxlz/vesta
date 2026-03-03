@@ -109,32 +109,29 @@ async fn run_json<T: serde::de::DeserializeOwned>(args: &[&str]) -> Result<T, Ve
 
 // ── Agent operations ────────────────────────────────────────────
 
-use serde::Deserialize;
-
-fn deserialize_status<'de, D: serde::Deserializer<'de>>(d: D) -> Result<AgentStatus, D::Error> {
-    let s = String::deserialize(d)?;
-    Ok(match s.as_str() {
-        "running" => AgentStatus::Running,
-        "stopped" => AgentStatus::Stopped,
-        "not_found" => AgentStatus::NotFound,
-        _ => AgentStatus::Unknown,
-    })
-}
-
-#[derive(Debug, Clone, serde::Serialize, Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AgentInfo {
-    #[serde(deserialize_with = "deserialize_status")]
     pub status: AgentStatus,
     #[serde(default)]
     pub id: String,
     #[serde(default)]
     pub authenticated: bool,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub agent_ready: bool,
+    #[serde(default = "default_ws_port")]
+    pub ws_port: u16,
 }
 
-#[derive(Debug, Clone, serde::Serialize, Deserialize, PartialEq)]
+fn default_ws_port() -> u16 { 7865 }
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
 pub enum AgentStatus {
     Running,
     Stopped,
+    Dead,
     NotFound,
     Unknown,
 }
@@ -143,12 +140,15 @@ pub async fn agent_status() -> Result<AgentInfo, VestaError> {
     run_json(&["status", "--json"]).await
 }
 
-pub async fn create_agent() -> Result<(), VestaError> {
-    if cfg!(debug_assertions) {
-        run(&["create", "--build"]).await?;
-    } else {
-        run(&["create"]).await?;
+pub async fn create_agent(name: Option<String>) -> Result<(), VestaError> {
+    let mut args = vec!["create"];
+    let name_val;
+    if let Some(ref n) = name {
+        name_val = n.clone();
+        args.push("--name");
+        args.push(&name_val);
     }
+    run(&args).await?;
     Ok(())
 }
 
@@ -162,8 +162,18 @@ pub async fn stop_agent() -> Result<(), VestaError> {
     Ok(())
 }
 
+pub async fn restart_agent() -> Result<(), VestaError> {
+    run(&["restart"]).await?;
+    Ok(())
+}
+
 pub async fn delete_agent() -> Result<(), VestaError> {
     run(&["destroy", "--yes"]).await?;
+    Ok(())
+}
+
+pub async fn set_agent_name(name: &str) -> Result<(), VestaError> {
+    run(&["name", name]).await?;
     Ok(())
 }
 
@@ -277,11 +287,10 @@ pub async fn stream_agent_logs(
                 _ = cancel_read.cancelled() => break,
                 line = lines.next_line() => {
                     match line {
-                        Ok(Some(text)) if !text.is_empty() => {
+                        Ok(Some(text)) => {
                             let _ = ch.send(LogEvent::Line { text });
                         }
                         Ok(None) | Err(_) => break,
-                        _ => {}
                     }
                 }
             }
@@ -290,10 +299,18 @@ pub async fn stream_agent_logs(
     });
 
     let cancel_wait = cancel.clone();
+    let ch_timeout = channel.clone();
     tokio::spawn(async move {
-        tokio::select! {
-            _ = cancel_wait.cancelled() => { let _ = child.kill().await; }
-            _ = child.wait() => { cancel_wait.cancel(); }
+        let timeout = tokio::time::Duration::from_secs(300);
+        let timed_out = tokio::time::timeout(timeout, async {
+            tokio::select! {
+                _ = cancel_wait.cancelled() => { let _ = child.kill().await; }
+                _ = child.wait() => { cancel_wait.cancel(); }
+            }
+        }).await.is_err();
+        if timed_out {
+            let _ = ch_timeout.send(LogEvent::Error { message: "stream timed out after 5 minutes".to_string() });
+            let _ = child.kill().await;
         }
     });
 

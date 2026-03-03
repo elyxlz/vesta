@@ -5,9 +5,6 @@ import shutil
 import vesta.models as vm
 from vesta import logger
 
-_INSTALL_ROOT_PLACEHOLDER = "{install_root}"
-
-
 def get_memory_path(config: vm.VestaConfig) -> pl.Path:
     return config.memory_dir / "MEMORY.md"
 
@@ -17,23 +14,25 @@ def _discover_skills(config: vm.VestaConfig) -> dict[str, pl.Path]:
     return {d.name: d for d in sorted(skills_dir.iterdir()) if d.is_dir() and (d / "SKILL.md").exists()}
 
 
-def _replace_placeholder_in_file(path: pl.Path, install_root: str) -> bool:
-    """Replace {install_root} placeholder in a file if still present. Returns True if replaced."""
+def _replace_placeholders(path: pl.Path, config: vm.VestaConfig) -> bool:
     content = path.read_text()
-    if _INSTALL_ROOT_PLACEHOLDER in content:
-        path.write_text(content.replace(_INSTALL_ROOT_PLACEHOLDER, install_root))
+    original = content
+    name = config.agent_name
+    content = content.replace("{install_root}", str(config.install_root))
+    content = content.replace("{agent_name_upper}", name.upper())
+    content = content.replace("{agent_name}", name)
+    if content != original:
+        path.write_text(content)
         return True
     return False
 
 
 def init_skills(config: vm.VestaConfig) -> None:
-    install_root = str(config.install_root)
     for skill_name, skill_dir in _discover_skills(config).items():
         skill_md = skill_dir / "SKILL.md"
-        if _replace_placeholder_in_file(skill_md, install_root):
+        if _replace_placeholders(skill_md, config):
             logger.init(f"Initialized skill: {skill_name}")
 
-        # Ensure scripts are executable
         scripts_dir = skill_dir / "scripts"
         if scripts_dir.is_dir():
             for script in scripts_dir.iterdir():
@@ -53,9 +52,8 @@ def init_main_memory(config: vm.VestaConfig) -> None:
     memory_path = get_memory_path(config)
     if not memory_path.exists():
         return
-    install_root = str(config.install_root)
-    if _replace_placeholder_in_file(memory_path, install_root):
-        logger.init("Replaced install_root placeholder in MEMORY.md")
+    if _replace_placeholders(memory_path, config):
+        logger.init("Initialized placeholders in MEMORY.md")
 
 
 def init_prompts(config: vm.VestaConfig) -> None:

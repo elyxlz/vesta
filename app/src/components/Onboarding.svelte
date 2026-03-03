@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
-  import { createAgent, agentStatus, authenticate } from "../lib/api";
+  import { createAgent, agentStatus, authenticate, startAgent, setAgentName } from "../lib/api";
   import { agent } from "../lib/stores";
   import ProgressBar from "./ProgressBar.svelte";
 
@@ -52,10 +52,22 @@
     if (!name || busy) return;
     busy = true;
     error = "";
+
+    try {
+      const info = await agentStatus();
+      if (info.status !== "not_found") {
+        await setAgentName(name).catch(() => {});
+        busy = false;
+        await goTo("auth");
+        runAuth();
+        return;
+      }
+    } catch {}
+
     startMessages();
     await goTo("creating");
     try {
-      await createAgent();
+      await createAgent(name);
       stopMessages();
       await goTo("auth");
       runAuth();
@@ -74,6 +86,7 @@
     error = "";
     try {
       await authenticate();
+      await startAgent();
       const info = await agentStatus();
       agent.set(info);
       busy = false;

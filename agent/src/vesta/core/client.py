@@ -209,14 +209,14 @@ async def process_message(msg: str, *, state: vm.State, config: vm.VestaConfig, 
     return responses, state
 
 
-def _build_vesta_tools_server(state: vm.State) -> tp.Any:
-    @tool("restart_vesta", "Restart Vesta to reload memory, skills, and prompts. Current conversation is preserved.", {})
+def _build_vesta_tools_server(state: vm.State, agent_name: str) -> tp.Any:
+    @tool("restart_vesta", "Restart to reload memory, skills, and prompts. Current conversation is preserved.", {})
     async def restart_vesta(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
         if state.graceful_shutdown and state.graceful_shutdown.is_set():
             if state.shutdown_event:
                 state.shutdown_event.set()
             return {"content": [{"type": "text", "text": "Shutdown complete. Sweet dreams."}]}
-        state.pending_context = "[System: Vesta restarted. Memory, skills, and prompts refreshed. Previous conversation resumed.]"
+        state.pending_context = f"[System: {agent_name} restarted. Memory, skills, and prompts refreshed. Previous conversation resumed.]"
         return {"content": [{"type": "text", "text": "Restart initiated. Session will resume with refreshed configuration."}]}
 
     return create_sdk_mcp_server("vesta-tools", tools=[restart_vesta])
@@ -225,6 +225,9 @@ def _build_vesta_tools_server(state: vm.State) -> tp.Any:
 def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgentOptions:
     memory_path = get_memory_path(config)
     system_prompt = memory_path.read_text()
+
+    name = config.agent_name
+    system_prompt = f"Your name is {name}.\n\n{system_prompt}"
 
     pre_hook, post_hook = _make_tool_hooks(state)
 
@@ -241,6 +244,6 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
         max_thinking_tokens=config.max_thinking_tokens,
         max_buffer_size=10 * 1024 * 1024,
         stderr=lambda line: logger.sdk(line),
-        mcp_servers={"vesta": _build_vesta_tools_server(state)},
+        mcp_servers={"vesta": _build_vesta_tools_server(state, name)},
         resume=state.session_id,
     )

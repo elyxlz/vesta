@@ -2,12 +2,13 @@ import { writable, type Readable } from "svelte/store";
 import type { VestaEvent, AgentActivityState } from "./types";
 import { agentHost } from "./api";
 
-const AGENT_PORT = 7865;
-const RECONNECT_BASE = 2000;
+const DEFAULT_WS_PORT = 7865;
+const RECONNECT_BASE = 1000;
 const RECONNECT_MAX = 30000;
 const MAX_MESSAGES = 500;
 
-let wsUrl = `ws://localhost:${AGENT_PORT}/ws`;
+let agentPort = DEFAULT_WS_PORT;
+let wsUrl = `ws://localhost:${agentPort}/ws`;
 let ws: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let reconnectDelay = RECONNECT_BASE;
@@ -46,7 +47,16 @@ function killSocket(socket: WebSocket) {
   socket.close();
 }
 
-function doConnect() {
+async function doConnect() {
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+    return;
+  }
+
+  try {
+    const host = await agentHost();
+    wsUrl = `ws://${host}:${agentPort}/ws`;
+  } catch {}
+
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
     return;
   }
@@ -87,10 +97,7 @@ export function connect() {
   refCount++;
   if (refCount === 1) {
     _messages.set([]);
-    agentHost()
-      .then((host) => { wsUrl = `ws://${host}:${AGENT_PORT}/ws`; })
-      .catch(() => {})
-      .finally(() => doConnect());
+    doConnect();
   }
 }
 
@@ -107,6 +114,21 @@ export function disconnect() {
     }
     _connected.set(false);
   }
+}
+
+export function resetReconnect() {
+  reconnectDelay = RECONNECT_BASE;
+  if (refCount > 0 && !ws) {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    doConnect();
+  }
+}
+
+export function setPort(port: number) {
+  agentPort = port;
 }
 
 export function send(text: string): boolean {

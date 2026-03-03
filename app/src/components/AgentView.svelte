@@ -1,22 +1,25 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
-  import { agent, agentName, agentState } from "../lib/stores";
-  import { agentStatus, startAgent, stopAgent, deleteAgent, authenticate } from "../lib/api";
-  import { connect, disconnect } from "../lib/ws";
+  import { agent, agentName, agentState, resetReconnect } from "../lib/stores";
+  import { setPort } from "../lib/ws";
+  import { agentStatus, startAgent, stopAgent, restartAgent, deleteAgent, authenticate } from "../lib/api";
   import type { AgentStatus } from "../lib/types";
 
   let {
     onChat,
     onConsole,
     onDestroyed,
+    onReady,
   }: {
     onChat: () => void;
     onConsole: () => void;
     onDestroyed: () => void;
+    onReady: (ready: boolean) => void;
   } = $props();
 
-  let status = $state<AgentStatus>($agent?.status ?? "Unknown");
+  let status = $state<AgentStatus>($agent?.status ?? "unknown");
   let authenticated = $state($agent?.authenticated ?? false);
+  let agentReady = $state($agent?.agent_ready ?? false);
   let confirming = $state(false);
   let menuOpen = $state(false);
   let hovered = $state(false);
@@ -25,7 +28,6 @@
   let authenticating = $state(false);
   let deleting = $state(false);
   let errorMsg = $state("");
-  let errorTimer: ReturnType<typeof setTimeout> | null = null;
   let poll: ReturnType<typeof setInterval>;
   let creatureEl: HTMLDivElement;
   let leaveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -55,24 +57,24 @@
     }, 150);
   }
 
-
-  function showError(msg: string) {
-    errorMsg = msg;
-    if (errorTimer) clearTimeout(errorTimer);
-    errorTimer = setTimeout(() => { errorMsg = ""; }, 4000);
-  }
-
   async function refresh() {
+    if (busy) return;
     try {
       const info = await agentStatus();
-      if (info.status !== status || info.authenticated !== authenticated) {
+      if (info.status !== status || info.authenticated !== authenticated || info.agent_ready !== agentReady) {
         status = info.status;
         authenticated = info.authenticated;
+        agentReady = info.agent_ready;
         agent.set(info);
+        if (info.ws_port) setPort(info.ws_port);
       }
+      if (info.name) agentName.set(info.name);
+      onReady(info.agent_ready);
+      if (errorMsg) errorMsg = "";
     } catch {
-      status = "Unknown";
+      status = "unknown";
       authenticated = false;
+      agentReady = false;
     }
   }
 
@@ -86,20 +88,18 @@
   onMount(() => {
     refresh();
     poll = setInterval(refresh, 5000);
-    connect();
     document.addEventListener("click", onDocClick);
   });
 
   onDestroy(() => {
     clearInterval(poll);
-    if (errorTimer) clearTimeout(errorTimer);
     if (leaveTimer) clearTimeout(leaveTimer);
-    disconnect();
     document.removeEventListener("click", onDocClick);
   });
 
   async function toggleRun() {
     if (busy) return;
+    errorMsg = "";
     if (running) stopping = true;
     else starting = true;
     try {
@@ -107,10 +107,11 @@
         await stopAgent();
       } else {
         await startAgent();
+        resetReconnect();
       }
       await refresh();
     } catch (e: any) {
-      showError(e?.message || (stopping ? "failed to stop" : "failed to start"));
+      errorMsg = e?.message || (stopping ? "failed to stop" : "failed to start");
     } finally {
       stopping = false;
       starting = false;
@@ -123,13 +124,14 @@
       return;
     }
     if (busy) return;
+    errorMsg = "";
     deleting = true;
     try {
       await stopAgent().catch(() => {});
       await deleteAgent();
       onDestroyed();
     } catch (e: any) {
-      showError(e?.message || "failed to delete");
+      errorMsg = e?.message || "failed to delete";
     } finally {
       deleting = false;
       confirming = false;
@@ -142,20 +144,30 @@
 
   async function handleAuth() {
     if (busy) return;
+    errorMsg = "";
     authenticating = true;
     try {
       await authenticate();
+      if (running) {
+        await restartAgent();
+      } else {
+        await startAgent();
+      }
+      resetReconnect();
       await refresh();
     } catch (e: any) {
-      showError(e?.message || "sign in failed");
+      errorMsg = e?.message || "sign in failed";
     } finally {
       authenticating = false;
     }
   }
 
   let busy = $derived(stopping || starting || authenticating || deleting);
-  let running = $derived(status === "Running");
+  let running = $derived(status === "running");
+  let dead = $derived(status === "dead");
   let alive = $derived(running && authenticated);
+  let operational = $derived(alive && !deleting && !stopping);
+  let fullyAlive = $derived(operational && agentReady);
   let showActions = $derived(hovered || !alive || confirming || menuOpen);
 
 </script>
@@ -173,7 +185,7 @@
     onpointerleave={onOrbLeave}
     onpointermove={onOrbMove}
   >
-    <div class="orb-container" class:alive={alive && !deleting && !stopping} class:dead={(!alive && !starting && !authenticating) || deleting} class:stopping class:starting class:authenticating class:deleting class:thinking={alive && !deleting && !stopping && $agentState === 'thinking'} class:tool-use={alive && !deleting && !stopping && $agentState === 'tool_use'}>
+    <div class="orb-container" class:alive={fullyAlive} class:booting={operational && !agentReady} class:dead={(!alive && !starting && !authenticating) || deleting || dead} class:stopping class:starting class:authenticating class:deleting class:thinking={fullyAlive && $agentState === 'thinking'} class:tool-use={fullyAlive && $agentState === 'tool_use'}>
       <div class="orb-glow"></div>
       <div class="orb-body">
         <div class="orb-highlight"></div>
@@ -184,8 +196,8 @@
 
     <div class="label">
       <span class="name">{$agentName}</span>
-      <span class="status" class:alive={alive && !deleting && !stopping} class:error={!!errorMsg}>
-        {errorMsg ? errorMsg : deleting ? "deleting..." : stopping ? "stopping..." : starting ? "starting..." : authenticating ? "signing in..." : alive ? "alive" : running ? "not signed in" : "stopped"}
+      <span class="status" class:alive={fullyAlive} class:error={!!errorMsg}>
+        {errorMsg ? errorMsg : deleting ? "deleting..." : stopping ? "stopping..." : starting ? "starting..." : authenticating ? "signing in..." : fullyAlive ? "alive" : operational ? "waking up..." : running ? "not signed in" : dead ? "broken — delete and recreate" : "stopped"}
       </span>
     </div>
 
@@ -401,6 +413,20 @@
   @keyframes glow-swell {
     0%, 100% { opacity: 0.4; transform: scale(1); }
     50% { opacity: 1; transform: scale(1.12); }
+  }
+
+  /* Booting state — alive but WS not ready yet */
+  .orb-container.booting {
+    animation: float 3s ease-in-out infinite;
+  }
+
+  .orb-container.booting .orb-body {
+    background: radial-gradient(circle at 38% 32%, #c4deb8, #8ab880 50%, #6a9e5a);
+    animation: orb-breathe 2s ease-in-out infinite;
+  }
+
+  .orb-container.booting .orb-glow {
+    animation: glow-swell 1.5s ease-in-out infinite;
   }
 
   /* Authenticating state — slow pulse, waiting on user */

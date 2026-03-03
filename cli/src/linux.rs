@@ -8,12 +8,14 @@ const LOCAL_IMAGE_TAG: &str = "vesta:local";
 const MAX_DOCKERFILE_SEARCH_DEPTH: usize = 5;
 const CREDENTIALS_PATH: &str = "/root/.claude/.credentials.json";
 const CLAUDE_JSON_PATH: &str = "/root/.claude.json";
+const AGENT_WS_PORT: u16 = 7865;
 
 #[derive(PartialEq)]
 enum ContainerStatus {
     Running,
     Stopped,
     NotFound,
+    Dead,
 }
 
 #[derive(Serialize)]
@@ -22,6 +24,11 @@ struct StatusJson {
     #[serde(skip_serializing_if = "Option::is_none")]
     id: Option<String>,
     authenticated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    agent_ready: bool,
+    ws_port: u16,
 }
 
 fn docker(args: &[&str]) -> process::ExitStatus {
@@ -87,20 +94,47 @@ fn ensure_docker() {
 fn container_status() -> ContainerStatus {
     match docker_output(&["inspect", "--format", "{{.State.Status}}", CONTAINER_NAME]) {
         Some(s) => match s.as_str() {
-            "running" => ContainerStatus::Running,
+            "running" | "restarting" | "paused" => ContainerStatus::Running,
+            "exited" | "created" => ContainerStatus::Stopped,
+            "dead" | "removing" => ContainerStatus::Dead,
             _ => ContainerStatus::Stopped,
         },
         None => ContainerStatus::NotFound,
     }
 }
 
+fn container_file_exists(container_path: &str) -> bool {
+    let src = format!("{}:{}", CONTAINER_NAME, container_path);
+    docker_quiet(&["cp", &src, "-"])
+}
+
+fn read_container_file(container_path: &str) -> Option<String> {
+    let tmp = std::env::temp_dir().join(format!("vesta_read_{}", std::process::id()));
+    let src = format!("{}:{}", CONTAINER_NAME, container_path);
+    if !docker_quiet(&["cp", &src, tmp.to_str().unwrap()]) {
+        return None;
+    }
+    let content = std::fs::read_to_string(&tmp).ok();
+    std::fs::remove_file(&tmp).ok();
+    content.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+}
+
 fn is_authenticated() -> bool {
-    docker_quiet(&["exec", CONTAINER_NAME, "test", "-f", CREDENTIALS_PATH])
+    container_file_exists(CREDENTIALS_PATH)
+}
+
+fn is_agent_ready() -> bool {
+    docker_quiet(&[
+        "exec", CONTAINER_NAME, "bash", "-c",
+        &format!("echo > /dev/tcp/localhost/{}", AGENT_WS_PORT),
+    ])
 }
 
 fn ensure_exists() {
-    if container_status() == ContainerStatus::NotFound {
-        die("agent not found. create one first with: vesta setup");
+    match container_status() {
+        ContainerStatus::NotFound => die("agent not found. create one first with: vesta setup"),
+        ContainerStatus::Dead => die("agent is in a broken state. run: vesta destroy --yes && vesta setup"),
+        _ => {}
     }
 }
 
@@ -231,7 +265,7 @@ pub fn run(command: Command) {
     ensure_docker();
 
     match command {
-        Command::Setup { build, yes } => {
+        Command::Setup { build, yes, name } => {
             if container_status() != ContainerStatus::NotFound {
                 if !yes && !confirm("agent already exists. destroy and recreate? [y/N] ") {
                     println!("aborted");
@@ -247,6 +281,9 @@ pub fn run(command: Command) {
 
             println!("creating agent...");
             create_container(image);
+            if let Some(n) = name {
+                docker_cp_content(CONTAINER_NAME, &n, "/root/.vesta-name");
+            }
             inject_credentials(CONTAINER_NAME, &credentials);
 
             if !docker_ok(&["start", CONTAINER_NAME]) {
@@ -258,7 +295,7 @@ pub fn run(command: Command) {
             docker_interactive(&["attach", "--detach-keys=ctrl-q", CONTAINER_NAME]);
         }
 
-        Command::Create { build } => {
+        Command::Create { build, name } => {
             if container_status() != ContainerStatus::NotFound {
                 die("agent already exists. destroy it first.");
             }
@@ -267,6 +304,9 @@ pub fn run(command: Command) {
 
             println!("creating agent...");
             create_container(image);
+            if let Some(n) = name {
+                docker_cp_content(CONTAINER_NAME, &n, "/root/.vesta-name");
+            }
             println!("created (run 'vesta auth' to authenticate, then 'vesta start')");
         }
 
@@ -321,11 +361,6 @@ pub fn run(command: Command) {
             ensure_exists();
             let credentials = credentials.unwrap_or_else(|| obtain_credentials());
             inject_credentials(CONTAINER_NAME, &credentials);
-            if container_status() == ContainerStatus::Running {
-                docker_ok(&["restart", CONTAINER_NAME]);
-            } else if !docker_ok(&["start", CONTAINER_NAME]) {
-                die("failed to start container");
-            }
             println!("authenticated");
         }
 
@@ -357,31 +392,47 @@ pub fn run(command: Command) {
         }
 
         Command::Status { json } => {
-            let (status_str, id, running) = match docker_output(&[
-                "inspect", "--format", "{{.State.Status}} {{.Id}}", CONTAINER_NAME,
-            ]) {
-                Some(raw) => {
-                    let mut parts = raw.splitn(2, ' ');
-                    let s = parts.next().unwrap_or("");
-                    let id = parts.next().unwrap_or("").chars().take(12).collect::<String>();
-                    let running = s == "running";
-                    let label = if running { "running" } else { "stopped" };
-                    (label, Some(id), running)
+            let cs = container_status();
+            let (status_str, id) = match cs {
+                ContainerStatus::NotFound => ("not_found", None),
+                _ => {
+                    let id = docker_output(&["inspect", "--format", "{{.Id}}", CONTAINER_NAME])
+                        .map(|s| s.chars().take(12).collect::<String>());
+                    let label = match cs {
+                        ContainerStatus::Running => "running",
+                        ContainerStatus::Dead => "dead",
+                        _ => "stopped",
+                    };
+                    (label, id)
                 }
-                None => ("not_found", None, false),
             };
-            let authed = running && is_authenticated();
+            let authed = cs != ContainerStatus::NotFound && is_authenticated();
+            let name = if cs != ContainerStatus::NotFound {
+                read_container_file("/root/.vesta-name")
+            } else {
+                None
+            };
+            let ready = cs == ContainerStatus::Running && is_agent_ready();
             if json {
-                let s = StatusJson { status: status_str, id, authenticated: authed };
+                let s = StatusJson {
+                    status: status_str, id, authenticated: authed, name,
+                    agent_ready: ready, ws_port: AGENT_WS_PORT,
+                };
                 println!("{}", serde_json::to_string(&s).unwrap());
-            } else if status_str == "not_found" {
+            } else if cs == ContainerStatus::NotFound {
                 println!("no agent. run: vesta setup");
             } else {
                 println!("status: {}", status_str);
                 if let Some(id) = &id {
                     println!("id:     {}", id);
                 }
+                if let Some(name) = &name {
+                    println!("name:   {}", name);
+                }
                 println!("auth:   {}", if authed { "yes" } else { "no" });
+                if cs == ContainerStatus::Running {
+                    println!("ready:  {}", if ready { "yes" } else { "no" });
+                }
             }
         }
 
@@ -409,6 +460,12 @@ pub fn run(command: Command) {
                 die("failed to destroy");
             }
             println!("destroyed");
+        }
+
+        Command::Name { name } => {
+            ensure_exists();
+            docker_cp_content(CONTAINER_NAME, &name, "/root/.vesta-name");
+            println!("name set: {}", name);
         }
 
         Command::Rebuild => {

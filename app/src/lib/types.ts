@@ -2,9 +2,12 @@ export interface AgentInfo {
   status: AgentStatus;
   id: string;
   authenticated: boolean;
+  name?: string;
+  agent_ready: boolean;
+  ws_port: number;
 }
 
-export type AgentStatus = "Running" | "Stopped" | "NotFound" | "Unknown";
+export type AgentStatus = "running" | "stopped" | "dead" | "not_found" | "unknown";
 
 export type AgentActivityState = "idle" | "thinking" | "tool_use";
 

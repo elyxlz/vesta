@@ -229,7 +229,7 @@ def _trigger_nightly_restart(*, state: vm.State, config: vm.VestaConfig) -> None
     state.session_id = None
     config.session_file.unlink(missing_ok=True)
 
-    parts = ["[System: Vesta restarted with fresh memory after nightly dreamer run.]"]
+    parts = [f"[System: {config.agent_name} restarted with fresh memory after nightly dreamer run.]"]
 
     today = _now().strftime("%Y-%m-%d")
     summary_path = config.dreamer_dir / f"{today}.md"

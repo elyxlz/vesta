@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { agent, agentName } from "./lib/stores";
+  import { connect, disconnect } from "./lib/ws";
   import { agentStatus } from "./lib/api";
   import Onboarding from "./components/Onboarding.svelte";
   import AgentView from "./components/AgentView.svelte";
@@ -11,6 +12,7 @@
   let view = $state<"loading" | "onboarding" | "home" | "chat" | "console">("loading");
   let ready = $state(false);
   let transitioning = $state(false);
+  let wsActive = false;
 
   async function setView(next: typeof view) {
     if (next === view) return;
@@ -20,16 +22,27 @@
     transitioning = false;
   }
 
+  function ensureWs(needed: boolean) {
+    if (needed && !wsActive) {
+      connect();
+      wsActive = true;
+    } else if (!needed && wsActive) {
+      disconnect();
+      wsActive = false;
+    }
+  }
+
   const appWindow = getCurrentWindow();
 
   onMount(async () => {
     await new Promise((r) => setTimeout(r, 400));
     try {
       const info = await agentStatus();
-      if (info.status === "NotFound") {
+      if (info.status === "not_found") {
         view = "onboarding";
       } else {
         agent.set(info);
+        if (info.name) agentName.set(info.name);
         view = "home";
       }
     } catch {
@@ -38,12 +51,16 @@
     ready = true;
   });
 
+  onDestroy(() => { ensureWs(false); });
+
   function handleOnboardingComplete(name: string) {
     agentName.set(name);
+    ensureWs(true);
     setView("chat");
   }
 
   function handleDestroyed() {
+    ensureWs(false);
     agent.set(null);
     setView("onboarding");
   }
@@ -103,6 +120,7 @@
         onChat={() => setView("chat")}
         onConsole={() => setView("console")}
         onDestroyed={handleDestroyed}
+        onReady={ensureWs}
       />
     {:else if view === "chat"}
       <Chat

@@ -71,13 +71,13 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
     signal.signal(signal.SIGINT, _make_signal_handler(state, allow_force_exit=True))
     signal.signal(signal.SIGTERM, _make_signal_handler(state))
 
-    logger.init("VESTA started")
+    logger.init(f"{config.agent_name.upper()} started")
     (config.data_dir / "run_marker").touch()
 
     message_queue: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()
 
     ws_runner = await start_ws_server(state.event_bus, message_queue, state, config)
-    logger.init("WebSocket server started on port 7865")
+    logger.init(f"WebSocket server started on port {config.ws_port}")
 
     tasks = [
         asyncio.create_task(input_handler(message_queue, state=state)),
@@ -114,9 +114,9 @@ def _detect_crash(config: vm.VestaConfig) -> str | None:
     if crash_reason.exists():
         reason = crash_reason.read_text().strip()
         crash_reason.unlink(missing_ok=True)
-        context = f"[System: Vesta restarted after forced exit. Reason: {reason}]"
+        context = f"[System: Restarted after forced exit. Reason: {reason}]"
     elif run_marker.exists():
-        context = "[System: Vesta restarted after unexpected crash.]"
+        context = "[System: Restarted after unexpected crash.]"
 
     run_marker.unlink(missing_ok=True)
     return context
@@ -148,7 +148,7 @@ async def async_main() -> None:
         path.mkdir(parents=True, exist_ok=True)
 
     logger.setup(config.logs_dir, log_level=config.log_level)
-    logger.init("Vesta starting")
+    logger.init(f"{config.agent_name} starting")
 
     first_start = is_first_start(config)
     logger.init("Initializing memory...")
