@@ -33,6 +33,6 @@ class Notification(pyd.BaseModel):
     file_path: str | None = pyd.Field(default=None, exclude=True)
 
     def format_for_display(self) -> str:
-        data = self.model_dump(exclude={"file_path"})
+        data = self.model_dump(exclude={"file_path", "type", "source"})
         parts = [f"{k}={v}" for k, v in data.items() if v is not None]
         return f"[{self.type} from {self.source}] {', '.join(parts)}"

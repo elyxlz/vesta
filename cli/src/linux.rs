@@ -1,5 +1,4 @@
 use super::*;
-use serde::Serialize;
 use std::io::{self, Write};
 
 const CONTAINER_NAME: &str = "vesta";
@@ -14,14 +13,6 @@ enum ContainerStatus {
     Running,
     Stopped,
     NotFound,
-}
-
-#[derive(Serialize)]
-struct StatusJson {
-    status: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    id: Option<String>,
-    authenticated: bool,
 }
 
 fn docker(args: &[&str]) -> process::ExitStatus {
@@ -98,17 +89,15 @@ fn is_authenticated() -> bool {
     docker_quiet(&["exec", CONTAINER_NAME, "test", "-f", CREDENTIALS_PATH])
 }
 
-fn ensure_exists() {
-    if container_status() == ContainerStatus::NotFound {
+fn require_status(needed: ContainerStatus) -> ContainerStatus {
+    let status = container_status();
+    if status == ContainerStatus::NotFound {
         die("agent not found. run: vesta setup");
     }
-}
-
-fn ensure_running() {
-    ensure_exists();
-    if container_status() != ContainerStatus::Running {
+    if needed == ContainerStatus::Running && status != ContainerStatus::Running {
         die("agent is not running. run: vesta start");
     }
+    status
 }
 
 fn confirm(prompt: &str) -> bool {
@@ -271,8 +260,8 @@ pub fn run(command: Command) {
         }
 
         Command::Start => {
-            ensure_exists();
-            if container_status() == ContainerStatus::Running {
+            let status = require_status(ContainerStatus::Stopped);
+            if status == ContainerStatus::Running {
                 println!("already running");
                 return;
             }
@@ -283,7 +272,7 @@ pub fn run(command: Command) {
         }
 
         Command::Stop => {
-            ensure_exists();
+            require_status(ContainerStatus::Stopped);
             if !docker_ok(&["stop", CONTAINER_NAME]) {
                 die("failed to stop");
             }
@@ -291,7 +280,7 @@ pub fn run(command: Command) {
         }
 
         Command::Restart => {
-            ensure_exists();
+            require_status(ContainerStatus::Stopped);
             println!("restarting...");
             if !docker_ok(&["restart", CONTAINER_NAME]) {
                 die("failed to restart");
@@ -300,7 +289,7 @@ pub fn run(command: Command) {
         }
 
         Command::Attach => {
-            ensure_running();
+            require_status(ContainerStatus::Running);
             let _ = process::Command::new("docker")
                 .args([
                     "exec",
@@ -318,10 +307,10 @@ pub fn run(command: Command) {
         }
 
         Command::Auth { token: credentials } => {
-            ensure_exists();
+            let status = require_status(ContainerStatus::Stopped);
             let credentials = credentials.unwrap_or_else(|| obtain_credentials());
             inject_credentials(CONTAINER_NAME, &credentials);
-            if container_status() == ContainerStatus::Running {
+            if status == ContainerStatus::Running {
                 docker_ok(&["restart", CONTAINER_NAME]);
             } else if !docker_ok(&["start", CONTAINER_NAME]) {
                 die("failed to start container");
@@ -330,7 +319,7 @@ pub fn run(command: Command) {
         }
 
         Command::Logs => {
-            ensure_running();
+            require_status(ContainerStatus::Running);
             let status = process::Command::new("docker")
                 .args([
                     "exec",
@@ -352,7 +341,7 @@ pub fn run(command: Command) {
         }
 
         Command::Shell => {
-            ensure_running();
+            require_status(ContainerStatus::Running);
             docker_interactive(&["exec", "-it", "--detach-keys=ctrl-q", CONTAINER_NAME, "bash"]);
         }
 
@@ -386,7 +375,7 @@ pub fn run(command: Command) {
         }
 
         Command::Backup => {
-            ensure_exists();
+            require_status(ContainerStatus::Stopped);
             let ts = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -400,7 +389,7 @@ pub fn run(command: Command) {
         }
 
         Command::Destroy { yes } => {
-            ensure_exists();
+            require_status(ContainerStatus::Stopped);
             if !yes && !confirm("destroy agent (all state lost)? [y/N] ") {
                 println!("aborted");
                 return;
@@ -412,7 +401,7 @@ pub fn run(command: Command) {
         }
 
         Command::Rebuild => {
-            ensure_exists();
+            require_status(ContainerStatus::Stopped);
             let ts = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()

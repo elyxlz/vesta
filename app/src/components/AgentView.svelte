@@ -17,13 +17,11 @@
 
   let status = $state<AgentStatus>($agent?.status ?? "Unknown");
   let authenticated = $state($agent?.authenticated ?? false);
+  type Operation = "idle" | "stopping" | "starting" | "authenticating" | "deleting";
+  let operation = $state<Operation>("idle");
   let confirming = $state(false);
   let menuOpen = $state(false);
   let hovered = $state(false);
-  let stopping = $state(false);
-  let starting = $state(false);
-  let authenticating = $state(false);
-  let deleting = $state(false);
   let errorMsg = $state("");
   let errorTimer: ReturnType<typeof setTimeout> | null = null;
   let poll: ReturnType<typeof setInterval>;
@@ -100,20 +98,19 @@
 
   async function toggleRun() {
     if (busy) return;
-    if (running) stopping = true;
-    else starting = true;
+    const wasRunning = running;
+    operation = wasRunning ? "stopping" : "starting";
     try {
-      if (stopping) {
+      if (wasRunning) {
         await stopAgent();
       } else {
         await startAgent();
       }
       await refresh();
     } catch (e: any) {
-      showError(e?.message || (stopping ? "failed to stop" : "failed to start"));
+      showError(e?.message || (wasRunning ? "failed to stop" : "failed to start"));
     } finally {
-      stopping = false;
-      starting = false;
+      operation = "idle";
     }
   }
 
@@ -123,7 +120,7 @@
       return;
     }
     if (busy) return;
-    deleting = true;
+    operation = "deleting";
     try {
       await stopAgent().catch(() => {});
       await deleteAgent();
@@ -131,7 +128,7 @@
     } catch (e: any) {
       showError(e?.message || "failed to delete");
     } finally {
-      deleting = false;
+      operation = "idle";
       confirming = false;
     }
   }
@@ -142,18 +139,22 @@
 
   async function handleAuth() {
     if (busy) return;
-    authenticating = true;
+    operation = "authenticating";
     try {
       await authenticate();
       await refresh();
     } catch (e: any) {
       showError(e?.message || "sign in failed");
     } finally {
-      authenticating = false;
+      operation = "idle";
     }
   }
 
-  let busy = $derived(stopping || starting || authenticating || deleting);
+  let busy = $derived(operation !== "idle");
+  let stopping = $derived(operation === "stopping");
+  let starting = $derived(operation === "starting");
+  let authenticating = $derived(operation === "authenticating");
+  let deleting = $derived(operation === "deleting");
   let running = $derived(status === "Running");
   let alive = $derived(running && authenticated);
   let showActions = $derived(hovered || !alive || confirming || menuOpen);

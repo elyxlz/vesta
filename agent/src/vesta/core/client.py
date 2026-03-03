@@ -24,6 +24,14 @@ from vesta import logger
 from vesta.core.init import get_memory_path, load_memory_template
 
 
+def persist_session_id(session_id: str, *, state: vm.State, config: vm.VestaConfig) -> None:
+    if session_id and session_id != state.session_id:
+        state.session_id = session_id
+        config.session_file.parent.mkdir(parents=True, exist_ok=True)
+        config.session_file.write_text(session_id)
+        logger.debug(f"Persisted session_id: {session_id[:16]}...")
+
+
 def _build_query(prompt: str, *, timestamp: dt.datetime) -> str:
     timestamp_str = timestamp.strftime("%A, %B %d, %Y at %I:%M:%S %p %Z")
     return f"[Current time: {timestamp_str}]\n{prompt}"
@@ -185,11 +193,8 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
             raise
 
         texts, sub_agent_context, session_id, has_tool_use = _parse_sdk_message(msg, sub_agent_context=sub_agent_context)
-        if session_id and session_id != state.session_id:
-            state.session_id = session_id
-            config.session_file.parent.mkdir(parents=True, exist_ok=True)
-            config.session_file.write_text(session_id)
-            logger.debug(f"Captured session_id: {session_id[:16]}...")
+        if session_id:
+            persist_session_id(session_id, state=state, config=config)
         text = "\n".join(texts) if texts else None
         if not text:
             continue

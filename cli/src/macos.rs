@@ -1,5 +1,4 @@
 use super::*;
-use serde::Serialize;
 use std::io::{self, Write};
 use std::path::PathBuf;
 
@@ -7,14 +6,6 @@ const VFKIT_BIN: &str = "vfkit";
 const VM_CPUS: u32 = 2;
 const VM_MEMORY_MIB: u32 = 4096;
 const VM_MAC: &str = "52:54:00:fe:57:a1";
-
-#[derive(Serialize)]
-struct StatusJson {
-    status: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    id: Option<String>,
-    authenticated: bool,
-}
 
 fn data_dir() -> PathBuf {
     dirs::data_dir()
@@ -349,20 +340,8 @@ fn ssh_base_args() -> Vec<String> {
     ]
 }
 
-fn ssh_exec(cmd_args: &[&str]) -> process::ExitStatus {
-    let mut args = ssh_base_args();
-    args.extend(cmd_args.iter().map(|s| s.to_string()));
-    process::Command::new("ssh")
-        .args(&args)
-        .stdin(process::Stdio::inherit())
-        .stdout(process::Stdio::inherit())
-        .stderr(process::Stdio::inherit())
-        .status()
-        .unwrap_or_else(|_| die("ssh failed"))
-}
-
-fn ssh_exec_tty(cmd_args: &[&str]) -> process::ExitStatus {
-    let mut args = vec!["-t".to_string()];
+fn ssh_run(cmd_args: &[&str], tty: bool) -> process::ExitStatus {
+    let mut args = if tty { vec!["-t".to_string()] } else { vec![] };
     args.extend(ssh_base_args());
     args.extend(cmd_args.iter().map(|s| s.to_string()));
     process::Command::new("ssh")
@@ -441,43 +420,43 @@ pub fn run(command: Command) {
 
             let pubkey = std::fs::read_to_string(ssh_key_path().with_extension("pub"))
                 .unwrap_or_else(|_| die("cannot read SSH public key"));
-            ssh_exec(&[
+            ssh_run(&[
                 "sh",
                 "-c",
                 &format!(
                     "mkdir -p /root/.ssh && printf '%s\\n' '{}' > /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys",
                     pubkey.trim()
                 ),
-            ]);
+            ], false);
 
             let mut args = vec!["vesta", "setup", "-y"];
             if build {
                 args.push("--build");
             }
-            ssh_exec_tty(&args);
+            ssh_run(&args, true);
         }
 
         Command::Attach => {
             ensure_vm();
-            ssh_exec_tty(&["vesta", "attach"]);
+            ssh_run(&["vesta", "attach"], true);
         }
 
         Command::Auth { token } => {
             ensure_vm();
             match token {
-                Some(t) => { ssh_exec(&["vesta", "auth", "--token", &t]); }
-                None => { ssh_exec_tty(&["vesta", "auth"]); }
+                Some(t) => { ssh_run(&["vesta", "auth", "--token", &t], false); }
+                None => { ssh_run(&["vesta", "auth"], true); }
             }
         }
 
         Command::Shell => {
             ensure_vm();
-            ssh_exec_tty(&["vesta", "shell"]);
+            ssh_run(&["vesta", "shell"], true);
         }
 
         Command::Logs => {
             ensure_vm();
-            ssh_exec(&["vesta", "logs"]);
+            ssh_run(&["vesta", "logs"], false);
         }
 
         Command::Status { json } => {
@@ -495,53 +474,53 @@ pub fn run(command: Command) {
                 return;
             }
             if json {
-                ssh_exec(&["vesta", "status", "--json"]);
+                ssh_run(&["vesta", "status", "--json"], false);
             } else {
-                ssh_exec(&["vesta", "status"]);
+                ssh_run(&["vesta", "status"], false);
             }
         }
 
         Command::Start => {
             ensure_vm();
-            ssh_exec(&["vesta", "start"]);
+            ssh_run(&["vesta", "start"], false);
         }
 
         Command::Stop => {
             ensure_vm();
-            ssh_exec(&["vesta", "stop"]);
+            ssh_run(&["vesta", "stop"], false);
         }
 
         Command::Restart => {
             ensure_vm();
-            ssh_exec(&["vesta", "restart"]);
+            ssh_run(&["vesta", "restart"], false);
         }
 
         Command::Create { build } => {
             ensure_vm();
             if build {
-                ssh_exec(&["vesta", "create", "--build"]);
+                ssh_run(&["vesta", "create", "--build"], false);
             } else {
-                ssh_exec(&["vesta", "create"]);
+                ssh_run(&["vesta", "create"], false);
             }
         }
 
         Command::Backup => {
             ensure_vm();
-            ssh_exec(&["vesta", "backup"]);
+            ssh_run(&["vesta", "backup"], false);
         }
 
         Command::Destroy { yes } => {
             ensure_vm();
             if yes {
-                ssh_exec(&["vesta", "destroy", "--yes"]);
+                ssh_run(&["vesta", "destroy", "--yes"], false);
             } else {
-                ssh_exec_tty(&["vesta", "destroy"]);
+                ssh_run(&["vesta", "destroy"], true);
             }
         }
 
         Command::Rebuild => {
             ensure_vm();
-            ssh_exec_tty(&["vesta", "rebuild"]);
+            ssh_run(&["vesta", "rebuild"], true);
         }
     }
 }

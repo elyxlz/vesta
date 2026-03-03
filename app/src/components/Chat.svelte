@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { onMount, onDestroy, tick } from "svelte";
+  import { onMount, onDestroy } from "svelte";
   import { messages, connected } from "../lib/stores";
   import { connect, disconnect, send } from "../lib/ws";
   import { linkify } from "../lib/linkify";
+  import { createAutoScroller } from "../lib/scroll";
   import "../styles/panel.css";
   import type { VestaEvent } from "../lib/types";
 
@@ -17,20 +18,7 @@
   let inputEl: HTMLTextAreaElement;
 
   let wasConnected = $state(false);
-  let wasNearBottom = true;
-
-  function checkNearBottom() {
-    if (!outputEl) return;
-    wasNearBottom = outputEl.scrollHeight - outputEl.scrollTop - outputEl.clientHeight < 40;
-  }
-
-  function scrollToBottom() {
-    tick().then(() => {
-      if (outputEl && wasNearBottom) {
-        outputEl.scrollTop = outputEl.scrollHeight;
-      }
-    });
-  }
+  const scroller = createAutoScroller(() => outputEl);
 
   function eventToLine(ev: VestaEvent): Line | null {
     if (ev.type === "user") return { id: nextId++, text: `> ${ev.text}`, kind: "user" };
@@ -69,7 +57,7 @@
     lastSyncedLen = evts.length;
     lastArray = evts;
     lines = lines;
-    scrollToBottom();
+    scroller.scroll();
   });
 
   $effect(() => {
@@ -95,7 +83,7 @@
       pendingUserTexts.push(msg);
       lines.push({ id: nextId++, text: `> ${msg}`, kind: "user" });
       lines = lines;
-      scrollToBottom();
+      scroller.scroll();
       input = "";
       resizeInput();
     }
@@ -133,7 +121,7 @@
     </button>
   </div>
 
-  <div class="output" bind:this={outputEl} onscroll={checkNearBottom}>
+  <div class="output" bind:this={outputEl} onscroll={scroller.check}>
     {#each lines as line (line.id)}
       {#if (line.kind !== "tool" && line.kind !== "notification") || showTools}
         <div class="line {line.kind}">{@html linkify(line.text)}</div>

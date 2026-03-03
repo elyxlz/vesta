@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use serde::Serialize;
 use std::process;
 
 fn die(msg: &str) -> ! {
@@ -64,6 +65,14 @@ enum Command {
     },
     /// Snapshot, destroy, recreate, restore auth
     Rebuild,
+}
+
+#[derive(Serialize)]
+pub struct StatusJson {
+    pub status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    pub authenticated: bool,
 }
 
 #[cfg(target_os = "linux")]

@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::OnceLock;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
@@ -12,39 +13,55 @@ fn is_valid_binary(path: &std::path::Path) -> bool {
     path.exists() && std::fs::metadata(path).map(|m| m.len() > 0).unwrap_or(false)
 }
 
-fn cli_path() -> PathBuf {
-    let exe = std::env::current_exe().expect("cannot determine executable path");
-    let dir = exe.parent().unwrap();
+fn cli_path() -> &'static PathBuf {
+    static CLI: OnceLock<PathBuf> = OnceLock::new();
+    CLI.get_or_init(|| {
+        let exe = std::env::current_exe().expect("cannot determine executable path");
+        let dir = exe.parent().unwrap();
 
-    #[cfg(target_os = "windows")]
-    let name = "vesta.exe";
-    #[cfg(not(target_os = "windows"))]
-    let name = "vesta";
+        #[cfg(target_os = "windows")]
+        let name = "vesta.exe";
+        #[cfg(not(target_os = "windows"))]
+        let name = "vesta";
 
-    let cli_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("cli")
-        .join("target");
+        let cli_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("cli")
+            .join("target");
 
-    if cfg!(debug_assertions) {
-        let debug = cli_dir.join("debug").join(name);
-        if is_valid_binary(&debug) {
-            return debug;
+        if cfg!(debug_assertions) {
+            let debug = cli_dir.join("debug").join(name);
+            if is_valid_binary(&debug) {
+                return debug;
+            }
         }
-    }
 
-    let candidate = dir.join(name);
-    if is_valid_binary(&candidate) {
-        return candidate;
-    }
+        let candidate = dir.join(name);
+        if is_valid_binary(&candidate) {
+            return candidate;
+        }
 
-    let release = cli_dir.join("release").join(name);
-    if is_valid_binary(&release) {
-        return release;
-    }
+        let release = cli_dir.join("release").join(name);
+        if is_valid_binary(&release) {
+            return release;
+        }
 
-    candidate
+        candidate
+    })
+}
+
+fn cli_command(args: &[&str]) -> Command {
+    let path = cli_path();
+    eprintln!("[vesta] exec: {} {}", path.display(), args.join(" "));
+    let mut cmd = Command::new(path);
+    cmd.args(args);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
 }
 
 fn collect_lines(reader: impl tokio::io::AsyncRead + Unpin + Send + 'static) -> tokio::task::JoinHandle<String> {
@@ -63,24 +80,14 @@ fn collect_lines(reader: impl tokio::io::AsyncRead + Unpin + Send + 'static) -> 
 }
 
 async fn run(args: &[&str]) -> Result<String, VestaError> {
-    let path = cli_path();
-    eprintln!("[vesta] exec: {} {}", path.display(), args.join(" "));
-
-    let mut cmd = Command::new(&path);
-    cmd.args(args)
-        .stdout(std::process::Stdio::piped())
+    let mut cmd = cli_command(args);
+    cmd.stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
-
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
 
     let mut child = cmd.spawn()
         .map_err(|e| {
-            eprintln!("[vesta] spawn failed: {} (path: {})", e, path.display());
-            VestaError::new(ErrorCode::Internal, format!("failed to run cli: {}", e))
+            eprintln!("[vesta] spawn failed: {} (path: {})", e, cli_path().display());
+            VestaError::new(ErrorCode::ExecFailed, format!("failed to run cli: {}", e))
         })?;
 
     let stdout_task = collect_lines(child.stdout.take().unwrap());
@@ -239,19 +246,9 @@ pub async fn stream_agent_logs(
     channel: Channel<LogEvent>,
     cancel: CancellationToken,
 ) -> Result<(), VestaError> {
-    let path = cli_path();
-    eprintln!("[vesta] spawn: {} logs", path.display());
-
-    let mut cmd = Command::new(&path);
-    cmd.arg("logs")
-        .stdout(std::process::Stdio::piped())
+    let mut cmd = cli_command(&["logs"]);
+    cmd.stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null());
-
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
 
     let mut child = cmd.spawn()
         .map_err(|e| {
