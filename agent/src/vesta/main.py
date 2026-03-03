@@ -144,7 +144,7 @@ async def async_main() -> None:
     logger.init("Config:")
     print_json(data=config.model_dump(mode="json"))
 
-    for path in [config.state_dir, config.notifications_dir, config.logs_dir, config.data_dir]:
+    for path in [config.state_dir, config.notifications_dir, config.logs_dir, config.data_dir, config.conversations_dir, config.dreamer_dir]:
         path.mkdir(parents=True, exist_ok=True)
 
     logger.setup(config.logs_dir, log_level=config.log_level)

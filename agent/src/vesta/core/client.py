@@ -21,7 +21,7 @@ from claude_agent_sdk.types import PreToolUseHookInput, PostToolUseHookInput, Ho
 
 import vesta.models as vm
 from vesta import logger
-from vesta.core.init import get_memory_path, load_memory_template
+from vesta.core.init import get_memory_path
 
 
 def _build_query(prompt: str, *, timestamp: dt.datetime) -> str:
@@ -224,10 +224,7 @@ def _build_vesta_tools_server(state: vm.State) -> tp.Any:
 
 def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgentOptions:
     memory_path = get_memory_path(config)
-    try:
-        system_prompt = memory_path.read_text()
-    except FileNotFoundError:
-        system_prompt = load_memory_template()
+    system_prompt = memory_path.read_text()
 
     pre_hook, post_hook = _make_tool_hooks(state)
 

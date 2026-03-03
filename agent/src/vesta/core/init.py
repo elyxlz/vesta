@@ -5,66 +5,61 @@ import shutil
 import vesta.models as vm
 from vesta import logger
 
-_TEMPLATES_DIR = pl.Path(__file__).parent.parent / "templates"
+_INSTALL_ROOT_PLACEHOLDER = "{install_root}"
 
 
 def get_memory_path(config: vm.VestaConfig) -> pl.Path:
     return config.memory_dir / "MEMORY.md"
 
 
-def load_memory_template() -> str:
-    return (_TEMPLATES_DIR / "MEMORY.md").read_text()
-
-
-def _discover_skill_templates() -> dict[str, pl.Path]:
-    skills_dir = _TEMPLATES_DIR / "skills"
+def _discover_skills(config: vm.VestaConfig) -> dict[str, pl.Path]:
+    skills_dir = config.skills_dir
     return {d.name: d for d in sorted(skills_dir.iterdir()) if d.is_dir() and (d / "SKILL.md").exists()}
 
 
+def _replace_placeholder_in_file(path: pl.Path, install_root: str) -> bool:
+    """Replace {install_root} placeholder in a file if still present. Returns True if replaced."""
+    content = path.read_text()
+    if _INSTALL_ROOT_PLACEHOLDER in content:
+        path.write_text(content.replace(_INSTALL_ROOT_PLACEHOLDER, install_root))
+        return True
+    return False
+
+
 def init_skills(config: vm.VestaConfig) -> None:
-    for skill_name, template_dir in _discover_skill_templates().items():
-        skill_dir = config.skills_dir / skill_name
-        if (skill_dir / "SKILL.md").exists():
-            continue
+    install_root = str(config.install_root)
+    for skill_name, skill_dir in _discover_skills(config).items():
+        skill_md = skill_dir / "SKILL.md"
+        if _replace_placeholder_in_file(skill_md, install_root):
+            logger.init(f"Initialized skill: {skill_name}")
 
-        skill_dir.mkdir(parents=True, exist_ok=True)
-
-        content = (template_dir / "SKILL.md").read_text()
-        (skill_dir / "SKILL.md").write_text(content.replace("{install_root}", str(config.install_root)))
-
-        scripts_src = template_dir / "scripts"
-        if scripts_src.is_dir():
-            scripts_dst = skill_dir / "scripts"
-            scripts_dst.mkdir(parents=True, exist_ok=True)
-            for script in scripts_src.iterdir():
+        # Ensure scripts are executable
+        scripts_dir = skill_dir / "scripts"
+        if scripts_dir.is_dir():
+            for script in scripts_dir.iterdir():
                 if script.is_file():
-                    shutil.copy2(script, scripts_dst / script.name)
-                    (scripts_dst / script.name).chmod(0o755)
-
-        logger.init(f"Initialized skill: {skill_name}")
+                    script.chmod(0o755)
 
 
 def is_first_start(config: vm.VestaConfig) -> bool:
-    return not get_memory_path(config).exists()
+    memory_path = get_memory_path(config)
+    if not memory_path.exists():
+        return True
+    content = memory_path.read_text()
+    return '[Unknown - need to ask]' in content
 
 
 def init_main_memory(config: vm.VestaConfig) -> None:
     memory_path = get_memory_path(config)
     if not memory_path.exists():
-        memory_path.parent.mkdir(parents=True, exist_ok=True)
-        template = load_memory_template().replace("{install_root}", str(config.install_root))
-        memory_path.write_text(template)
-        logger.init(f"Initialized main memory ({len(template)} chars)")
+        return
+    install_root = str(config.install_root)
+    if _replace_placeholder_in_file(memory_path, install_root):
+        logger.init(f"Replaced install_root placeholder in MEMORY.md")
 
 
 def init_prompts(config: vm.VestaConfig) -> None:
-    prompts_dir = config.prompts_dir
-    prompts_dir.mkdir(parents=True, exist_ok=True)
-    for src in (_TEMPLATES_DIR / "prompts").glob("*.md"):
-        dest = prompts_dir / src.name
-        if not dest.exists():
-            shutil.copy2(src, dest)
-            logger.init(f"Initialized prompt: {src.stem}")
+    config.prompts_dir.mkdir(parents=True, exist_ok=True)
 
 
 def load_prompt(name: str, config: vm.VestaConfig) -> str | None:
