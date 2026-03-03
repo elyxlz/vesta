@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { onMount, onDestroy, tick } from "svelte";
-  import { messages, connected } from "../lib/stores";
-  import { connect, disconnect, send } from "../lib/ws";
+  import { onDestroy, tick } from "svelte";
+  import { messages, connected, agentState } from "../lib/stores";
+  import { send } from "../lib/ws";
   import { linkify } from "../lib/linkify";
   import "../styles/panel.css";
   import type { VestaEvent } from "../lib/types";
@@ -45,21 +45,22 @@
   let lastSyncedLen = 0;
   let lastArray: VestaEvent[] = [];
 
-  let pendingUserTexts: string[] = [];
+  let pendingUserTexts = new Map<string, number>();
 
   const unsubMessages = messages.subscribe((evts) => {
     if (evts !== lastArray) {
       lines = [];
       nextId = 0;
       lastSyncedLen = 0;
-      pendingUserTexts = [];
+      pendingUserTexts.clear();
     }
     for (let i = lastSyncedLen; i < evts.length; i++) {
       const ev = evts[i];
       if (ev.type === "user") {
-        const idx = pendingUserTexts.indexOf(ev.text);
-        if (idx !== -1) {
-          pendingUserTexts.splice(idx, 1);
+        const count = pendingUserTexts.get(ev.text) ?? 0;
+        if (count > 0) {
+          if (count === 1) pendingUserTexts.delete(ev.text);
+          else pendingUserTexts.set(ev.text, count - 1);
           continue;
         }
       }
@@ -79,20 +80,15 @@
     }
   });
 
-  onMount(() => {
-    connect();
-  });
-
   onDestroy(() => {
     unsubMessages();
-    disconnect();
   });
 
   function handleSend() {
     const msg = input.trim();
     if (!msg) return;
     if (send(msg)) {
-      pendingUserTexts.push(msg);
+      pendingUserTexts.set(msg, (pendingUserTexts.get(msg) ?? 0) + 1);
       lines.push({ id: nextId++, text: `> ${msg}`, kind: "user" });
       lines = lines;
       scrollToBottom();
@@ -113,6 +109,8 @@
     inputEl.style.height = "auto";
     inputEl.style.height = Math.min(inputEl.scrollHeight, 120) + "px";
   }
+
+  let thinking = $derived($agentState === "thinking" || $agentState === "tool_use");
 </script>
 
 <div class="panel">
@@ -139,6 +137,9 @@
         <div class="line {line.kind}">{@html linkify(line.text)}</div>
       {/if}
     {/each}
+    {#if thinking && lines.length > 0}
+      <div class="line thinking-indicator"><span></span><span></span><span></span></div>
+    {/if}
     {#if lines.length === 0}
       <div class="empty-state">
         <div class="empty-dots"><span></span><span></span><span></span></div>
@@ -207,6 +208,28 @@
   .line.tool { color: rgba(255, 255, 255, 0.4); font-size: 11px; }
   .line.notification { color: rgba(255, 200, 100, 0.7); font-size: 11px; }
   .line.error { color: rgba(224, 112, 112, 0.9); }
+
+  .thinking-indicator {
+    display: flex;
+    gap: 4px;
+    padding: 4px 0;
+  }
+
+  .thinking-indicator span {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: rgba(140, 200, 130, 0.5);
+    animation: thinking-pulse 1.4s ease-in-out infinite;
+  }
+
+  .thinking-indicator span:nth-child(2) { animation-delay: 0.2s; }
+  .thinking-indicator span:nth-child(3) { animation-delay: 0.4s; }
+
+  @keyframes thinking-pulse {
+    0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
+    40% { opacity: 1; transform: scale(1); }
+  }
 
   .reconnect-bar {
     padding: 6px 20px;

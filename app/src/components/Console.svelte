@@ -30,14 +30,14 @@
 
   const MAX_LINES = 500;
 
+  let streamEnded = $state(false);
+
   function addLine(text: string) {
     const cleaned = stripAnsi(text).trimEnd();
-    if (cleaned) {
-      lines.push({ id: nextId++, text: cleaned });
-      if (lines.length > MAX_LINES) lines.splice(0, lines.length - MAX_LINES);
-      lines = lines;
-      scrollToBottom();
-    }
+    lines.push({ id: nextId++, text: cleaned });
+    if (lines.length > MAX_LINES) lines.splice(0, lines.length - MAX_LINES);
+    lines = lines;
+    scrollToBottom();
   }
 
   let alive = true;
@@ -48,6 +48,7 @@
         if (!alive) return;
         if (ev.kind === "Line") addLine(ev.text);
         if (ev.kind === "Error") addLine(`error: ${ev.message}`);
+        if (ev.kind === "End") streamEnded = true;
       });
     } catch (e) { console.error("streamLogs failed:", e); }
   });
@@ -74,7 +75,10 @@
     {#each lines as line (line.id)}
       <div class="line">{@html linkify(line.text)}</div>
     {/each}
-    {#if lines.length === 0}
+    {#if streamEnded}
+      <div class="line stream-ended">— stream ended —</div>
+    {/if}
+    {#if lines.length === 0 && !streamEnded}
       <div class="empty-state">
         <div class="empty-dots"><span></span><span></span><span></span></div>
         <span class="empty-label">streaming logs...</span>
@@ -86,5 +90,12 @@
 <style>
   .back-btn {
     corner-shape: squircle;
+  }
+
+  .stream-ended {
+    color: rgba(255, 255, 255, 0.25);
+    font-style: italic;
+    text-align: center;
+    padding: 8px 0;
   }
 </style>

@@ -3,7 +3,7 @@ import type { VestaEvent, AgentActivityState } from "./types";
 import { agentHost } from "./api";
 
 const AGENT_PORT = 7865;
-const RECONNECT_BASE = 2000;
+const RECONNECT_BASE = 1000;
 const RECONNECT_MAX = 30000;
 const MAX_MESSAGES = 500;
 
@@ -46,10 +46,15 @@ function killSocket(socket: WebSocket) {
   socket.close();
 }
 
-function doConnect() {
+async function doConnect() {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
     return;
   }
+
+  try {
+    const host = await agentHost();
+    wsUrl = `ws://${host}:${AGENT_PORT}/ws`;
+  } catch {}
 
   const socket = new WebSocket(wsUrl);
   ws = socket;
@@ -87,10 +92,7 @@ export function connect() {
   refCount++;
   if (refCount === 1) {
     _messages.set([]);
-    agentHost()
-      .then((host) => { wsUrl = `ws://${host}:${AGENT_PORT}/ws`; })
-      .catch(() => {})
-      .finally(() => doConnect());
+    doConnect();
   }
 }
 
@@ -106,6 +108,17 @@ export function disconnect() {
       ws = null;
     }
     _connected.set(false);
+  }
+}
+
+export function resetReconnect() {
+  reconnectDelay = RECONNECT_BASE;
+  if (refCount > 0 && !ws) {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    doConnect();
   }
 }
 

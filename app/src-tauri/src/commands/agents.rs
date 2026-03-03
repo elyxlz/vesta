@@ -22,6 +22,11 @@ pub async fn stop_agent() -> Result<(), VestaError> {
 }
 
 #[tauri::command]
+pub async fn restart_agent() -> Result<(), VestaError> {
+    cli::restart_agent().await
+}
+
+#[tauri::command]
 pub async fn delete_agent() -> Result<(), VestaError> {
     cli::delete_agent().await
 }

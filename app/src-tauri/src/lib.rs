@@ -43,6 +43,7 @@ pub fn run() {
             commands::agents::create_agent,
             commands::agents::start_agent,
             commands::agents::stop_agent,
+            commands::agents::restart_agent,
             commands::agents::delete_agent,
             commands::agents::agent_host,
             commands::logs::stream_logs,

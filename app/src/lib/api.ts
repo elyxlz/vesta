@@ -17,6 +17,10 @@ export async function stopAgent(): Promise<void> {
   return invoke("stop_agent");
 }
 
+export async function restartAgent(): Promise<void> {
+  return invoke("restart_agent");
+}
+
 export async function deleteAgent(): Promise<void> {
   return invoke("delete_agent");
 }

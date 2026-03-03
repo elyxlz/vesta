@@ -4,7 +4,7 @@ export interface AgentInfo {
   authenticated: boolean;
 }
 
-export type AgentStatus = "Running" | "Stopped" | "NotFound" | "Unknown";
+export type AgentStatus = "running" | "stopped" | "not_found" | "unknown";
 
 export type AgentActivityState = "idle" | "thinking" | "tool_use";
 

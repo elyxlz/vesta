@@ -14,6 +14,7 @@ enum ContainerStatus {
     Running,
     Stopped,
     NotFound,
+    Dead,
 }
 
 #[derive(Serialize)]
@@ -87,7 +88,9 @@ fn ensure_docker() {
 fn container_status() -> ContainerStatus {
     match docker_output(&["inspect", "--format", "{{.State.Status}}", CONTAINER_NAME]) {
         Some(s) => match s.as_str() {
-            "running" => ContainerStatus::Running,
+            "running" | "restarting" | "paused" => ContainerStatus::Running,
+            "exited" | "created" => ContainerStatus::Stopped,
+            "dead" | "removing" => ContainerStatus::Dead,
             _ => ContainerStatus::Stopped,
         },
         None => ContainerStatus::NotFound,
@@ -95,12 +98,18 @@ fn container_status() -> ContainerStatus {
 }
 
 fn is_authenticated() -> bool {
-    docker_quiet(&["exec", CONTAINER_NAME, "test", "-f", CREDENTIALS_PATH])
+    let tmp = std::env::temp_dir().join(format!("vesta_auth_check_{}", std::process::id()));
+    let src = format!("{}:{}", CONTAINER_NAME, CREDENTIALS_PATH);
+    let ok = docker_quiet(&["cp", &src, tmp.to_str().unwrap()]);
+    std::fs::remove_file(&tmp).ok();
+    ok
 }
 
 fn ensure_exists() {
-    if container_status() == ContainerStatus::NotFound {
-        die("agent not found. run: vesta setup");
+    match container_status() {
+        ContainerStatus::NotFound => die("agent not found. run: vesta setup"),
+        ContainerStatus::Dead => die("agent is in a broken state. run: vesta destroy --yes && vesta setup"),
+        _ => {}
     }
 }
 
@@ -321,11 +330,6 @@ pub fn run(command: Command) {
             ensure_exists();
             let credentials = credentials.unwrap_or_else(|| obtain_credentials());
             inject_credentials(CONTAINER_NAME, &credentials);
-            if container_status() == ContainerStatus::Running {
-                docker_ok(&["restart", CONTAINER_NAME]);
-            } else if !docker_ok(&["start", CONTAINER_NAME]) {
-                die("failed to start container");
-            }
             println!("authenticated");
         }
 
@@ -357,20 +361,22 @@ pub fn run(command: Command) {
         }
 
         Command::Status { json } => {
-            let (status_str, id, running) = match docker_output(&[
+            let (status_str, id) = match docker_output(&[
                 "inspect", "--format", "{{.State.Status}} {{.Id}}", CONTAINER_NAME,
             ]) {
                 Some(raw) => {
                     let mut parts = raw.splitn(2, ' ');
                     let s = parts.next().unwrap_or("");
                     let id = parts.next().unwrap_or("").chars().take(12).collect::<String>();
-                    let running = s == "running";
-                    let label = if running { "running" } else { "stopped" };
-                    (label, Some(id), running)
+                    let label = match s {
+                        "running" | "restarting" | "paused" => "running",
+                        _ => "stopped",
+                    };
+                    (label, Some(id))
                 }
-                None => ("not_found", None, false),
+                None => ("not_found", None),
             };
-            let authed = running && is_authenticated();
+            let authed = status_str != "not_found" && is_authenticated();
             if json {
                 let s = StatusJson { status: status_str, id, authenticated: authed };
                 println!("{}", serde_json::to_string(&s).unwrap());
