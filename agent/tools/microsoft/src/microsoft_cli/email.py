@@ -248,23 +248,29 @@ def create_email_draft(
     client: httpx.Client,
     *,
     account_email: str,
-    to: list[str],
+    to: list[str] | None = None,
     subject: str,
     body: str,
     cc: list[str] | None = None,
+    bcc: list[str] | None = None,
     attachments: list[str] | None = None,
 ) -> dict[str, Any]:
+    if not to and not cc and not bcc:
+        raise ValueError("At least one recipient is required (--to, --cc, or --bcc)")
+
     settings = _get_settings()
     account_id = auth.get_account_id_by_email(account_email, config.cache_file, settings=settings)
 
     message = {
         "subject": subject,
         "body": {"contentType": "Text", "content": body},
-        "toRecipients": [{"emailAddress": {"address": addr}} for addr in to],
+        "toRecipients": [{"emailAddress": {"address": addr}} for addr in to] if to else [],
     }
 
     if cc:
         message["ccRecipients"] = [{"emailAddress": {"address": addr}} for addr in cc]
+    if bcc:
+        message["bccRecipients"] = [{"emailAddress": {"address": addr}} for addr in bcc]
 
     small_attachments = []
     large_attachments = []
@@ -335,23 +341,30 @@ def send_email(
     client: httpx.Client,
     *,
     account_email: str,
-    to: list[str],
+    to: list[str] | None = None,
     subject: str,
     body: str,
     cc: list[str] | None = None,
+    bcc: list[str] | None = None,
     attachments: list[str] | None = None,
+    html: bool = False,
 ) -> dict[str, str]:
+    if not to and not cc and not bcc:
+        raise ValueError("At least one recipient is required (--to, --cc, or --bcc)")
+
     settings = _get_settings()
     account_id = auth.get_account_id_by_email(account_email, config.cache_file, settings=settings)
 
     message = {
         "subject": subject,
-        "body": {"contentType": "Text", "content": body},
-        "toRecipients": [{"emailAddress": {"address": addr}} for addr in to],
+        "body": {"contentType": "HTML" if html else "Text", "content": body},
+        "toRecipients": [{"emailAddress": {"address": addr}} for addr in to] if to else [],
     }
 
     if cc:
         message["ccRecipients"] = [{"emailAddress": {"address": addr}} for addr in cc]
+    if bcc:
+        message["bccRecipients"] = [{"emailAddress": {"address": addr}} for addr in bcc]
 
     has_large_attachments = False
     processed_attachments = []
@@ -404,6 +417,8 @@ def send_email(
         }
         if cc:
             message["ccRecipients"] = [{"emailAddress": {"address": addr}} for addr in cc]
+        if bcc:
+            message["bccRecipients"] = [{"emailAddress": {"address": addr}} for addr in bcc]
 
         result = graph.request(
             client,
