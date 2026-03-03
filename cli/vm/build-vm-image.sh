@@ -19,7 +19,7 @@ docker rm "$CONTAINER" > /dev/null
 # Create disk image (2GB, ext4)
 echo "creating disk image..."
 DISK="/tmp/vesta-vm-disk.raw"
-truncate -s 2G "$DISK"
+truncate -s 20G "$DISK"
 mkfs.ext4 -q "$DISK"
 
 # Mount and populate

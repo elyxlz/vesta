@@ -134,15 +134,25 @@ fn ensure_services() {
     }
 
     // On Windows 10, [boot] command in wsl.conf is not supported,
-    // so the entrypoint never runs. Start it manually (only if not already running).
-    // The sleep 1 prevents the background process from dying when the
-    // wsl.exe shell exits before nohup fully detaches.
-    let _ = process::Command::new("wsl.exe")
-        .args(["-d", WSL_DISTRO, "--", "sh", "-c",
-               "pgrep -f entrypoint.sh >/dev/null 2>&1 || nohup /entrypoint.sh >/dev/null 2>&1 & sleep 1"])
+    // so the entrypoint never runs. Start it if not already running.
+    // We spawn a dedicated wsl.exe process that stays alive as a background child,
+    // preventing WSL from terminating the distro when interactive sessions exit.
+    let already_running = process::Command::new("wsl.exe")
+        .args(["-d", WSL_DISTRO, "--exec", "pgrep", "-f", "entrypoint.sh"])
         .stdout(process::Stdio::null())
         .stderr(process::Stdio::null())
-        .status();
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    if !already_running {
+        let _ = process::Command::new("wsl.exe")
+            .args(["-d", WSL_DISTRO, "--exec", "/entrypoint.sh"])
+            .stdin(process::Stdio::null())
+            .stdout(process::Stdio::null())
+            .stderr(process::Stdio::null())
+            .spawn();
+    }
 
     print!("waiting for services...");
     io::stdout().flush().ok();
@@ -227,28 +237,40 @@ pub fn run(command: Command) -> ! {
     let mut args = vec!["-d", WSL_DISTRO, "--exec", VESTA_LINUX_BIN];
     args.extend(command_args(&command));
 
-    let status = process::Command::new("wsl.exe")
-        .args(&args)
-        .stdin(process::Stdio::inherit())
-        .stdout(process::Stdio::inherit())
-        .stderr(process::Stdio::inherit())
-        .status()
-        .unwrap_or_else(|_| die("failed to execute wsl.exe"));
-
-    if !status.success() && !distro_healthy() {
-        unregister_distro();
-        println!("reinstalling vesta WSL2 environment...");
-        bootstrap_distro();
-        ensure_services();
-
-        let status = process::Command::new("wsl.exe")
+    let wsl_exec = || -> process::ExitStatus {
+        process::Command::new("wsl.exe")
             .args(&args)
             .stdin(process::Stdio::inherit())
             .stdout(process::Stdio::inherit())
             .stderr(process::Stdio::inherit())
             .status()
-            .unwrap_or_else(|_| die("failed to execute wsl.exe"));
+            .unwrap_or_else(|_| die("failed to execute wsl.exe"))
+    };
 
+    let status = wsl_exec();
+
+    if !status.success() && !distro_healthy() {
+        // Soft recovery: terminate distro and restart services
+        println!("distro is unhealthy. attempting recovery...");
+        let _ = process::Command::new("wsl.exe")
+            .args(["--terminate", WSL_DISTRO])
+            .stdout(process::Stdio::null())
+            .stderr(process::Stdio::null())
+            .status();
+        ensure_services();
+
+        let retry = wsl_exec();
+        if retry.success() {
+            process::exit(0);
+        }
+
+        // Soft recovery failed — nuke and reimport as last resort
+        unregister_distro();
+        println!("reinstalling vesta WSL2 environment...");
+        bootstrap_distro();
+        ensure_services();
+
+        let status = wsl_exec();
         process::exit(status.code().unwrap_or(1));
     }
 
