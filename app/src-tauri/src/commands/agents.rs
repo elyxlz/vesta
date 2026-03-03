@@ -32,6 +32,11 @@ pub async fn delete_agent() -> Result<(), VestaError> {
 }
 
 #[tauri::command]
+pub async fn set_agent_name(name: String) -> Result<(), VestaError> {
+    cli::set_agent_name(&name).await
+}
+
+#[tauri::command]
 pub async fn agent_host() -> String {
     cli::agent_host().await
 }

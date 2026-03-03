@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
-  import { createAgent, agentStatus, authenticate, startAgent } from "../lib/api";
+  import { createAgent, agentStatus, authenticate, startAgent, setAgentName } from "../lib/api";
   import { agent } from "../lib/stores";
   import ProgressBar from "./ProgressBar.svelte";
 
@@ -56,6 +56,7 @@
     try {
       const info = await agentStatus();
       if (info.status !== "not_found") {
+        await setAgentName(name).catch(() => {});
         busy = false;
         await goTo("auth");
         runAuth();

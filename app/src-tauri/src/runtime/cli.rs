@@ -125,6 +125,7 @@ pub struct AgentInfo {
 pub enum AgentStatus {
     Running,
     Stopped,
+    Dead,
     NotFound,
     Unknown,
 }
@@ -162,6 +163,11 @@ pub async fn restart_agent() -> Result<(), VestaError> {
 
 pub async fn delete_agent() -> Result<(), VestaError> {
     run(&["destroy", "--yes"]).await?;
+    Ok(())
+}
+
+pub async fn set_agent_name(name: &str) -> Result<(), VestaError> {
+    run(&["name", name]).await?;
     Ok(())
 }
 
@@ -287,6 +293,7 @@ pub async fn stream_agent_logs(
     });
 
     let cancel_wait = cancel.clone();
+    let ch_timeout = channel.clone();
     tokio::spawn(async move {
         let timeout = tokio::time::Duration::from_secs(300);
         let timed_out = tokio::time::timeout(timeout, async {
@@ -296,6 +303,7 @@ pub async fn stream_agent_logs(
             }
         }).await.is_err();
         if timed_out {
+            let _ = ch_timeout.send(LogEvent::Error { message: "stream timed out after 5 minutes".to_string() });
             let _ = child.kill().await;
         }
     });

@@ -25,6 +25,10 @@ export async function deleteAgent(): Promise<void> {
   return invoke("delete_agent");
 }
 
+export async function setAgentName(name: string): Promise<void> {
+  return invoke("set_agent_name", { name });
+}
+
 export function streamLogs(
   onEvent: (event: LogEvent) => void,
 ): Promise<void> {

@@ -5,7 +5,7 @@ export interface AgentInfo {
   name?: string;
 }
 
-export type AgentStatus = "running" | "stopped" | "not_found" | "unknown";
+export type AgentStatus = "running" | "stopped" | "dead" | "not_found" | "unknown";
 
 export type AgentActivityState = "idle" | "thinking" | "tool_use";
 

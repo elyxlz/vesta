@@ -254,7 +254,7 @@ pub fn run(command: Command) {
     ensure_docker();
 
     match command {
-        Command::Setup { build, yes } => {
+        Command::Setup { build, yes, name } => {
             if container_status() != ContainerStatus::NotFound {
                 if !yes && !confirm("agent already exists. destroy and recreate? [y/N] ") {
                     println!("aborted");
@@ -270,6 +270,9 @@ pub fn run(command: Command) {
 
             println!("creating agent...");
             create_container(image);
+            if let Some(n) = name {
+                docker_cp_content(CONTAINER_NAME, &n, "/root/.vesta-name");
+            }
             inject_credentials(CONTAINER_NAME, &credentials);
 
             if !docker_ok(&["start", CONTAINER_NAME]) {
@@ -439,6 +442,12 @@ pub fn run(command: Command) {
                 die("failed to destroy");
             }
             println!("destroyed");
+        }
+
+        Command::Name { name } => {
+            ensure_exists();
+            docker_cp_content(CONTAINER_NAME, &name, "/root/.vesta-name");
+            println!("name set: {}", name);
         }
 
         Command::Rebuild => {

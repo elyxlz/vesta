@@ -45,6 +45,7 @@ pub fn run() {
             commands::agents::stop_agent,
             commands::agents::restart_agent,
             commands::agents::delete_agent,
+            commands::agents::set_agent_name,
             commands::agents::agent_host,
             commands::logs::stream_logs,
             commands::logs::stop_logs,

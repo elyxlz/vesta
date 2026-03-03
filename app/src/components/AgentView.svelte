@@ -156,6 +156,7 @@
 
   let busy = $derived(stopping || starting || authenticating || deleting);
   let running = $derived(status === "running");
+  let dead = $derived(status === "dead");
   let alive = $derived(running && authenticated);
   let showActions = $derived(hovered || !alive || confirming || menuOpen);
 
@@ -174,7 +175,7 @@
     onpointerleave={onOrbLeave}
     onpointermove={onOrbMove}
   >
-    <div class="orb-container" class:alive={alive && !deleting && !stopping} class:dead={(!alive && !starting && !authenticating) || deleting} class:stopping class:starting class:authenticating class:deleting class:thinking={alive && !deleting && !stopping && $agentState === 'thinking'} class:tool-use={alive && !deleting && !stopping && $agentState === 'tool_use'}>
+    <div class="orb-container" class:alive={alive && !deleting && !stopping} class:dead={(!alive && !starting && !authenticating) || deleting || dead} class:stopping class:starting class:authenticating class:deleting class:thinking={alive && !deleting && !stopping && $agentState === 'thinking'} class:tool-use={alive && !deleting && !stopping && $agentState === 'tool_use'}>
       <div class="orb-glow"></div>
       <div class="orb-body">
         <div class="orb-highlight"></div>
@@ -186,7 +187,7 @@
     <div class="label">
       <span class="name">{$agentName}</span>
       <span class="status" class:alive={alive && !deleting && !stopping} class:error={!!errorMsg}>
-        {errorMsg ? errorMsg : deleting ? "deleting..." : stopping ? "stopping..." : starting ? "starting..." : authenticating ? "signing in..." : alive ? "alive" : running ? "not signed in" : "stopped"}
+        {errorMsg ? errorMsg : deleting ? "deleting..." : stopping ? "stopping..." : starting ? "starting..." : authenticating ? "signing in..." : alive ? "alive" : running ? "not signed in" : dead ? "broken — delete and recreate" : "stopped"}
       </span>
     </div>
 

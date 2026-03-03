@@ -425,7 +425,7 @@ fn download_vm_image() {
 
 pub fn run(command: Command) {
     match command {
-        Command::Setup { build, .. } => {
+        Command::Setup { build, yes, name } => {
             if !vm_image_ready() {
                 download_vm_image();
             }
@@ -452,10 +452,10 @@ pub fn run(command: Command) {
                 ),
             ]);
 
-            let mut args = vec!["vesta", "setup", "-y"];
-            if build {
-                args.push("--build");
-            }
+            let mut args = vec!["vesta", "setup"];
+            if yes { args.push("-y"); }
+            if build { args.push("--build"); }
+            if let Some(ref n) = name { args.push("--name"); args.push(n); }
             ssh_exec_tty(&args);
         }
 
@@ -539,6 +539,11 @@ pub fn run(command: Command) {
             } else {
                 ssh_exec_tty(&["vesta", "destroy"]);
             }
+        }
+
+        Command::Name { name } => {
+            ensure_vm();
+            ssh_exec(&["vesta", "name", &name]);
         }
 
         Command::Rebuild => {
