@@ -59,6 +59,10 @@ cli/target/
 cli/wsl/vesta-wsl-rootfs.tar.gz
 cli/wsl/vesta
 
+# Runtime memory directories (created at startup, not tracked)
+agent/memory/conversations/
+agent/memory/dreamer/
+
 # Tauri build artifacts
 app/src-tauri/target/
 app/src-tauri/binaries/vesta-*

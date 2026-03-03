@@ -24,8 +24,8 @@ def test_config_paths_under_state_dir(tmp_path):
     assert config.notifications_dir.is_relative_to(tmp_path)
     assert config.data_dir.is_relative_to(tmp_path)
     assert config.logs_dir.is_relative_to(tmp_path)
-    assert config.memory_dir.is_relative_to(tmp_path)
-    assert config.skills_dir.is_relative_to(tmp_path)
+    assert config.memory_dir.is_relative_to(config.install_root)
+    assert config.skills_dir.is_relative_to(config.install_root)
 
 
 def test_config_default_values():
@@ -36,9 +36,9 @@ def test_config_default_values():
 
 def test_memory_paths(tmp_path):
     config = _make_config(tmp_path)
-    assert config.memory_dir == tmp_path / "memory"
-    assert get_memory_path(config) == tmp_path / "memory" / "MEMORY.md"
-    assert config.skills_dir == tmp_path / "memory" / "skills"
+    assert config.memory_dir == config.install_root / "memory"
+    assert get_memory_path(config) == config.install_root / "memory" / "MEMORY.md"
+    assert config.skills_dir == config.install_root / "memory" / "skills"
 
 
 # --- Formatting ---
@@ -88,10 +88,11 @@ def test_deployment_structure():
         assert (tools_dir / tool_name / "pyproject.toml").exists(), f"pyproject.toml missing for {tool_name}"
 
 
-def test_skill_templates_discovered():
-    from vesta.core.init import _discover_skill_templates
+def test_skills_discovered():
+    from vesta.core.init import _discover_skills
 
-    templates = _discover_skill_templates()
+    config = vm.VestaConfig()
+    skills = _discover_skills(config)
     expected = {
         "browser",
         "google",
@@ -99,16 +100,16 @@ def test_skill_templates_discovered():
         "microsoft",
         "onedrive",
         "reminders",
-        "report-writer",
         "tasks",
+        "upstream",
         "what-day",
         "whatsapp",
         "whisper",
         "zoom",
     }
-    assert set(templates.keys()) == expected
+    assert set(skills.keys()) == expected
 
-    for name, path in templates.items():
+    for name, path in skills.items():
         assert (path / "SKILL.md").exists(), f"SKILL.md missing for {name}"
 
 

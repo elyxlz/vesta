@@ -26,7 +26,7 @@ RUN cd agent && uv sync --frozen
 
 # State dirs
 WORKDIR /root
-RUN mkdir -p /root/memory/skills /root/notifications /root/logs /root/data
+RUN mkdir -p /root/vesta/agent/memory/conversations /root/vesta/agent/memory/dreamer /root/notifications /root/logs /root/data
 
 ENV HOME=/root
 ENV IS_SANDBOX=1
