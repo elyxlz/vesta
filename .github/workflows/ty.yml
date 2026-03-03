@@ -23,7 +23,7 @@ jobs:
         working-directory: agent
         run: |
           uv sync
-          uv pip install -e tools/microsoft -e tools/reminder -e tools/todo
+          uv pip install -e tools/microsoft -e tools/reminder -e tools/tasks
 
       - name: Run ty
         working-directory: agent
