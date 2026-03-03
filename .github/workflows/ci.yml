@@ -120,7 +120,7 @@ jobs:
       - name: Download vfkit
         if: matrix.vfkit
         run: |
-          curl -fsSL --retry 3 --retry-delay 5 -o /tmp/vfkit \
+          curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors -o /tmp/vfkit \
             "https://github.com/crc-org/vfkit/releases/download/v${VFKIT_VERSION}/vfkit"
           chmod +x /tmp/vfkit
 
@@ -601,7 +601,7 @@ jobs:
         run: |
           NSIS_DIR="$LOCALAPPDATA/tauri/NSIS"
           mkdir -p "$NSIS_DIR"
-          curl -fsSL --retry 3 --retry-delay 5 \
+          curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors \
             -o /tmp/nsis.zip \
             "https://github.com/tauri-apps/binary-releases/releases/download/nsis-${NSIS_VERSION}/nsis-${NSIS_VERSION}.zip"
           unzip -qo /tmp/nsis.zip -d "$NSIS_DIR"
