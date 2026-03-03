@@ -5,7 +5,7 @@ import { agentHost } from "./api";
 const DEFAULT_WS_PORT = 7865;
 const RECONNECT_BASE = 1000;
 const RECONNECT_MAX = 30000;
-const MAX_MESSAGES = 500;
+const MAX_MESSAGES = 5000;
 
 let agentPort = DEFAULT_WS_PORT;
 let wsUrl = `ws://localhost:${agentPort}/ws`;

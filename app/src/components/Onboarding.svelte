@@ -108,11 +108,13 @@
         <h1>welcome to vesta</h1>
         <p class="sub">give it a name to get started.</p>
         <form onsubmit={(e) => { e.preventDefault(); handleCreate(); }}>
+          <!-- svelte-ignore a11y_autofocus -->
           <input
             type="text"
             class="name-input"
             placeholder="e.g. jarvis"
             bind:value={agentName}
+            autofocus
           />
           {#if error}<p class="error">{error}</p>{/if}
           <button class="btn primary full" type="submit" disabled={!agentName.trim() || busy}>create</button>

@@ -33,6 +33,27 @@
   let creatureEl: HTMLDivElement;
   let leaveTimer: ReturnType<typeof setTimeout> | null = null;
   let cachedRect: DOMRect | null = null;
+  let orbEl: HTMLDivElement;
+  let targetX = 0, targetY = 0;
+  let currentX = 0, currentY = 0;
+  let rafId = 0;
+  const LERP = 0.015;
+  const SNAP = 0.5;
+
+  function orbLoop() {
+    if (!orbEl) { rafId = 0; return; }
+    currentX += (targetX - currentX) * LERP;
+    currentY += (targetY - currentY) * LERP;
+    const done = Math.abs(targetX - currentX) < SNAP && Math.abs(targetY - currentY) < SNAP;
+    if (done) { currentX = targetX; currentY = targetY; }
+    orbEl.style.transform = `translate3d(${currentX}px,${currentY}px,0)`;
+    if (done) { rafId = 0; return; }
+    rafId = requestAnimationFrame(orbLoop);
+  }
+
+  function startLoop() {
+    if (!rafId) rafId = requestAnimationFrame(orbLoop);
+  }
 
   function onOrbEnter() {
     if (leaveTimer) { clearTimeout(leaveTimer); leaveTimer = null; }
@@ -41,20 +62,18 @@
   }
 
   function onOrbMove(e: PointerEvent) {
-    if (!alive || !cachedRect) return;
-    const dx = (e.clientX - cachedRect.left - cachedRect.width / 2) / (cachedRect.width / 2);
-    const dy = (e.clientY - cachedRect.top - cachedRect.height / 2) / (cachedRect.height / 2);
-    creatureEl.style.setProperty("--ox", `${dx * 14}px`);
-    creatureEl.style.setProperty("--oy", `${dy * 14}px`);
+    if (!alive || !cachedRect || !orbEl) return;
+    targetX = (e.clientX - cachedRect.left - cachedRect.width / 2) / (cachedRect.width / 2) * 14;
+    targetY = (e.clientY - cachedRect.top - cachedRect.height / 2) / (cachedRect.height / 2) * 14;
+    startLoop();
   }
 
   function onOrbLeave() {
     leaveTimer = setTimeout(() => {
       hovered = false;
-      if (creatureEl) {
-        creatureEl.style.setProperty("--ox", "0px");
-        creatureEl.style.setProperty("--oy", "0px");
-      }
+      targetX = 0;
+      targetY = 0;
+      startLoop();
     }, 150);
   }
 
@@ -86,16 +105,26 @@
     }
   }
 
+  function onKeydown(e: KeyboardEvent) {
+    if (e.key === "Escape" && menuOpen) {
+      menuOpen = false;
+      confirming = false;
+    }
+  }
+
   onMount(() => {
     refresh();
     poll = setInterval(refresh, 5000);
     document.addEventListener("click", onDocClick);
+    document.addEventListener("keydown", onKeydown);
   });
 
   onDestroy(() => {
     clearInterval(poll);
     if (leaveTimer) clearTimeout(leaveTimer);
+    if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
     document.removeEventListener("click", onDocClick);
+    document.removeEventListener("keydown", onKeydown);
   });
 
   async function toggleRun() {
@@ -185,7 +214,7 @@
     onpointerleave={onOrbLeave}
     onpointermove={onOrbMove}
   >
-    <div class="orb-container" class:alive={fullyAlive} class:booting={operational && !agentReady} class:dead={(!alive && !starting && !authenticating) || deleting || dead} class:stopping class:starting class:authenticating class:deleting class:thinking={fullyAlive && $agentState === 'thinking'} class:tool-use={fullyAlive && $agentState === 'tool_use'}>
+    <div class="orb-container" bind:this={orbEl} class:alive={fullyAlive} class:booting={operational && !agentReady} class:dead={(!alive && !starting && !authenticating) || deleting || dead} class:stopping class:starting class:authenticating class:deleting class:thinking={fullyAlive && $agentState === 'thinking'} class:tool-use={fullyAlive && $agentState === 'tool_use'}>
       <div class="orb-glow"></div>
       <div class="orb-body">
         <div class="orb-highlight"></div>
@@ -201,7 +230,7 @@
       </span>
     </div>
 
-    <div class="actions" class:visible={showActions && !deleting && !stopping && !starting && !authenticating}>
+    <div class="actions" class:visible={showActions && !deleting && !stopping && !starting && !authenticating} inert={!showActions || deleting || stopping || starting || authenticating}>
       {#if confirming}
         <button class="action-btn danger" disabled={busy} onclick={destroy}>confirm</button>
         <button class="action-btn muted" disabled={busy} onclick={cancelDestroy}>cancel</button>
@@ -258,7 +287,7 @@
     flex-direction: column;
     align-items: center;
     gap: 20px;
-    padding: 120px 180px;
+    padding: min(120px, 15vh) min(180px, 20vw);
   }
 
   /* --- Orb --- */
@@ -266,8 +295,8 @@
     position: relative;
     width: 140px;
     height: 140px;
-    translate: var(--ox, 0px) var(--oy, 0px);
-    transition: translate 0.8s ease-out, filter 0.8s var(--spring);
+    will-change: transform;
+    transition: filter 0.8s var(--spring);
   }
 
   .orb-body {
@@ -332,8 +361,8 @@
   }
 
   @keyframes float {
-    0%, 100% { transform: translateY(0); }
-    50% { transform: translateY(-6px); }
+    0%, 100% { translate: 0 0; }
+    50% { translate: 0 -6px; }
   }
 
   @keyframes glow-pulse {
@@ -497,6 +526,7 @@
     flex-direction: column;
     align-items: center;
     gap: 4px;
+    max-width: 100%;
   }
 
   .name {
@@ -504,6 +534,10 @@
     font-weight: 550;
     color: #3d3a36;
     letter-spacing: -0.01em;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .status {
@@ -512,6 +546,10 @@
     color: #807870;
     letter-spacing: 0.04em;
     text-transform: lowercase;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .status.alive {

@@ -39,10 +39,16 @@
   color: rgba(255, 255, 255, 0.6);
 }
 
+.back-btn:active {
+  transform: scale(0.97);
+}
+
 .topbar-info {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .title {
@@ -50,6 +56,9 @@
   font-weight: 500;
   color: rgba(255, 255, 255, 0.55);
   letter-spacing: 0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .output {
@@ -67,6 +76,10 @@
   overflow-wrap: break-word;
   color: rgba(255, 255, 255, 0.7);
   animation: lineIn 0.15s ease-out;
+}
+
+.output.no-anim .line {
+  animation: none;
 }
 
 @keyframes lineIn {

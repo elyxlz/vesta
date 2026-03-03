@@ -11,14 +11,16 @@ export type AgentStatus = "running" | "stopped" | "dead" | "not_found" | "unknow
 
 export type AgentActivityState = "idle" | "thinking" | "tool_use";
 
+type BaseEvent = { ts?: string };
+
 export type VestaEvent =
-  | { type: "status"; state: AgentActivityState }
-  | { type: "user"; text: string }
-  | { type: "assistant"; text: string }
-  | { type: "tool_start"; tool: string; input: string }
-  | { type: "tool_end"; tool: string }
-  | { type: "error"; text: string }
-  | { type: "notification"; source: string; summary: string }
+  | (BaseEvent & { type: "status"; state: AgentActivityState })
+  | (BaseEvent & { type: "user"; text: string })
+  | (BaseEvent & { type: "assistant"; text: string })
+  | (BaseEvent & { type: "tool_start"; tool: string; input: string })
+  | (BaseEvent & { type: "tool_end"; tool: string })
+  | (BaseEvent & { type: "error"; text: string })
+  | (BaseEvent & { type: "notification"; source: string; summary: string })
   | { type: "history"; events: VestaEvent[]; state: AgentActivityState };
 
 export type LogEvent =

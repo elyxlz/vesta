@@ -16,7 +16,7 @@
 
   const scroller = createAutoScroller(() => outputEl);
 
-  const MAX_LINES = 500;
+  const MAX_LINES = 5000;
 
   let streamEnded = $state(false);
 
