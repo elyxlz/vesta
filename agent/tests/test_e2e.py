@@ -113,7 +113,7 @@ async def _run_test_scenario(state_dir: Path, test_fn, **config_overrides):
     vmain.input_handler = _noop_input_handler  # type: ignore[assignment]
 
     try:
-        state = vmain.init_state(config=config)
+        state, _ = vmain.init_state(config=config)
 
         async def run_test():
             await asyncio.sleep(2)
@@ -146,7 +146,7 @@ def test_client_lifecycle_with_async_with(tmp_path):
     state_dir = tmp_path / "state"
     _prepare_state_dir(state_dir)
     config = _make_config(state_dir)
-    state = vmain.init_state(config=config)
+    state, _ = vmain.init_state(config=config)
 
     async def test_fn():
         options = build_client_options(config, state)
@@ -167,7 +167,7 @@ def test_pending_context_flag(tmp_path):
     state_dir = tmp_path / "state"
     _prepare_state_dir(state_dir)
     config = _make_config(state_dir)
-    state = vmain.init_state(config=config)
+    state, _ = vmain.init_state(config=config)
 
     async def test_fn():
         assert state.pending_context is None
@@ -185,7 +185,7 @@ def test_multiple_client_sessions(tmp_path):
     state_dir = tmp_path / "state"
     _prepare_state_dir(state_dir)
     config = _make_config(state_dir)
-    state = vmain.init_state(config=config)
+    state, _ = vmain.init_state(config=config)
 
     async def test_fn():
         options = build_client_options(config, state)
@@ -217,7 +217,7 @@ def test_full_reset_flow(tmp_path):
     state_dir = tmp_path / "state"
     _prepare_state_dir(state_dir)
     config = _make_config(state_dir)
-    state = vmain.init_state(config=config)
+    state, _ = vmain.init_state(config=config)
 
     async def test_fn():
         options = build_client_options(config, state)

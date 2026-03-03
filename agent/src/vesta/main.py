@@ -63,7 +63,7 @@ def _make_signal_handler(state: vm.State, *, allow_force_exit: bool = False) -> 
     return handler
 
 
-async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: bool = False) -> None:
+async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: bool = False, crashed: bool = False) -> None:
     state.shutdown_event = asyncio.Event()
     state.graceful_shutdown = asyncio.Event()
 
@@ -85,7 +85,8 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
         asyncio.create_task(monitor_loop(message_queue, state=state, config=config)),
     ]
 
-    await queue_greeting(message_queue, config=config, first_start=first_start)
+    reason = "first_start" if first_start else ("crash — restarted after unexpected exit" if crashed else "restart — clean restart")
+    await queue_greeting(message_queue, config=config, reason=reason)
 
     try:
         await state.graceful_shutdown.wait()
@@ -106,23 +107,27 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
     logger.shutdown("sweet dreams!")
 
 
-def _detect_crash(config: vm.VestaConfig) -> str | None:
+def _detect_crash(config: vm.VestaConfig) -> bool:
     crash_reason = config.data_dir / "crash_reason"
     run_marker = config.data_dir / "run_marker"
 
-    context = None
-    if crash_reason.exists():
-        reason = crash_reason.read_text().strip()
-        crash_reason.unlink(missing_ok=True)
-        context = f"[System: Restarted after forced exit. Reason: {reason}]"
-    elif run_marker.exists():
-        context = "[System: Restarted after unexpected crash.]"
-
+    crashed = crash_reason.exists() or run_marker.exists()
+    crash_reason.unlink(missing_ok=True)
     run_marker.unlink(missing_ok=True)
-    return context
+    return crashed
 
 
-def init_state(*, config: vm.VestaConfig) -> vm.State:
+def _read_last_dreamer_run(config: vm.VestaConfig) -> dt.datetime | None:
+    path = config.data_dir / "last_dreamer_run"
+    try:
+        if path.exists():
+            return dt.datetime.fromisoformat(path.read_text().strip())
+    except (OSError, ValueError, UnicodeDecodeError):
+        logger.warning("Could not read last_dreamer_run file")
+    return None
+
+
+def init_state(*, config: vm.VestaConfig) -> tuple[vm.State, bool]:
     session_id = None
     try:
         if config.session_file.exists():
@@ -130,13 +135,15 @@ def init_state(*, config: vm.VestaConfig) -> vm.State:
     except (OSError, UnicodeDecodeError):
         logger.warning("Could not read session file, starting fresh")
 
-    pending_context = _detect_crash(config)
-    if pending_context:
-        logger.init(f"Crash detected: {pending_context}")
+    crashed = _detect_crash(config)
+    if crashed:
+        logger.init("Crash detected")
+
+    last_dreamer_run = _read_last_dreamer_run(config)
 
     if session_id:
         logger.init(f"Resuming session {session_id[:16]}...")
-    return vm.State(last_dreamer_run=dt.datetime.now(), session_id=session_id, pending_context=pending_context)
+    return vm.State(last_dreamer_run=last_dreamer_run, session_id=session_id), crashed
 
 
 async def async_main() -> None:
@@ -157,9 +164,9 @@ async def async_main() -> None:
     init_skills(config)
     init_skills_symlink(config)
 
-    initial_state = init_state(config=config)
+    initial_state, crashed = init_state(config=config)
     logger.init("Starting main loop...")
-    await run_vesta(config, state=initial_state, first_start=first_start)
+    await run_vesta(config, state=initial_state, first_start=first_start, crashed=crashed)
 
 
 def main() -> None:

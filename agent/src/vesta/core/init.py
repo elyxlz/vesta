@@ -63,6 +63,16 @@ def load_prompt(name: str, config: vm.VestaConfig) -> str | None:
     return None
 
 
+def build_restart_context(reason: str, config: vm.VestaConfig, *, extras: list[str] | None = None) -> str:
+    parts = [f"[System: {reason}]"]
+    if extras:
+        parts.extend(extras)
+    greeting = load_prompt("restart", config) or ""
+    if greeting.strip():
+        parts.append(greeting.strip())
+    return "\n\n".join(parts)
+
+
 def init_skills_symlink(config: vm.VestaConfig) -> None:
     target = config.state_dir / ".claude" / "skills"
     target.parent.mkdir(parents=True, exist_ok=True)

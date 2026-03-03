@@ -12,7 +12,7 @@ from claude_agent_sdk import ClaudeSDKClient, ClaudeSDKError
 import vesta.models as vm
 from vesta import logger
 from vesta.core.client import process_message, build_client_options, attempt_interrupt, filter_tool_lines, persist_session_id
-from vesta.core.init import get_memory_path, load_prompt
+from vesta.core.init import get_memory_path, load_prompt, build_restart_context
 
 
 def _now() -> dt.datetime:
@@ -96,14 +96,16 @@ async def process_batch(notifications: list[vm.Notification], *, queue: asyncio.
     await delete_notification_files(notifications)
 
 
-async def queue_greeting(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.VestaConfig, first_start: bool) -> None:
-    name = "first_start" if first_start else "returning_start"
-    prompt = load_prompt(name, config)
+async def queue_greeting(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.VestaConfig, reason: str) -> None:
+    if reason == "first_start":
+        prompt = load_prompt("first_start", config)
+    else:
+        prompt = build_restart_context(reason, config)
     if not prompt or not prompt.strip():
         return
 
     await queue.put((prompt.strip(), False))
-    logger.startup(f"Queued {'first start' if first_start else 'returning'} greeting")
+    logger.startup(f"Queued {reason} greeting")
 
 
 # --- Message processing ---
@@ -226,18 +228,13 @@ def _trigger_nightly_restart(*, state: vm.State, config: vm.VestaConfig) -> None
     state.session_id = None
     config.session_file.unlink(missing_ok=True)
 
-    parts = [f"[System: {config.agent_name} restarted with fresh memory after nightly dreamer run.]"]
-
     today = _now().strftime("%Y-%m-%d")
     summary_path = config.dreamer_dir / f"{today}.md"
+    extras = []
     if summary_path.exists():
-        parts.append(f"[Dreamer Summary]\n{summary_path.read_text().strip()}")
+        extras.append(f"[Dreamer Summary]\n{summary_path.read_text().strip()}")
 
-    greeting = load_prompt("returning_start", config) or ""
-    if greeting.strip():
-        parts.append(f"[Instructions]\n{greeting.strip()}")
-
-    state.pending_context = "\n\n".join(parts)
+    state.pending_context = build_restart_context("new day — conversation history reset, nightly dreamer ran", config, extras=extras)
 
 
 async def process_nightly_memory(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig) -> None:
@@ -253,6 +250,10 @@ async def process_nightly_memory(queue: asyncio.Queue[tuple[str, bool]], *, stat
             state.dreamer_active = True
             await queue.put((prompt, False))
             state.last_dreamer_run = now
+            try:
+                (config.data_dir / "last_dreamer_run").write_text(now.isoformat())
+            except OSError:
+                logger.warning("Could not persist last_dreamer_run")
             logger.dreamer("Dreamer prompt queued")
 
 

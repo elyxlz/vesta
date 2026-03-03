@@ -2,43 +2,48 @@
 
 import asyncio
 import collections
+import datetime as dt
 import typing as tp
 
 type AgentState = tp.Literal["idle", "thinking", "tool_use"]
 
 
-class StatusEvent(tp.TypedDict):
+class _BaseEvent(tp.TypedDict, total=False):
+    ts: str
+
+
+class StatusEvent(_BaseEvent):
     type: tp.Literal["status"]
     state: AgentState
 
 
-class ToolStartEvent(tp.TypedDict):
+class ToolStartEvent(_BaseEvent):
     type: tp.Literal["tool_start"]
     tool: str
     input: str
 
 
-class ToolEndEvent(tp.TypedDict):
+class ToolEndEvent(_BaseEvent):
     type: tp.Literal["tool_end"]
     tool: str
 
 
-class AssistantEvent(tp.TypedDict):
+class AssistantEvent(_BaseEvent):
     type: tp.Literal["assistant"]
     text: str
 
 
-class UserEvent(tp.TypedDict):
+class UserEvent(_BaseEvent):
     type: tp.Literal["user"]
     text: str
 
 
-class ErrorEvent(tp.TypedDict):
+class ErrorEvent(_BaseEvent):
     type: tp.Literal["error"]
     text: str
 
 
-class NotificationEvent(tp.TypedDict):
+class NotificationEvent(_BaseEvent):
     type: tp.Literal["notification"]
     source: str
     summary: str
@@ -55,7 +60,7 @@ class HistoryEvent(tp.TypedDict):
 
 type VestaEvent = StreamEvent | HistoryEvent
 
-MAX_HISTORY = 500
+MAX_HISTORY = 5000
 
 
 class EventBus:
@@ -73,6 +78,7 @@ class EventBus:
         self._subscribers.discard(q)
 
     def emit(self, event: StreamEvent) -> None:
+        event["ts"] = dt.datetime.now().isoformat()
         if event["type"] != "status":
             self.history.append(event)
         for q in self._subscribers:

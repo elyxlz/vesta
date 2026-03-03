@@ -347,7 +347,7 @@ pub fn run(command: Command) {
                     CONTAINER_NAME,
                     "tail",
                     "-n",
-                    "50",
+                    "200",
                     "/root/logs/vesta.log",
                 ])
                 .stdout(process::Stdio::inherit())
@@ -372,7 +372,7 @@ pub fn run(command: Command) {
                     CONTAINER_NAME,
                     "tail",
                     "-n",
-                    "100",
+                    "500",
                     "-f",
                     "/root/logs/vesta.log",
                 ])
