@@ -93,18 +93,21 @@ def main():
 
     p_send = email_sub.add_parser("send")
     p_send.add_argument("--account", required=True)
-    p_send.add_argument("--to", required=True, nargs="+")
+    p_send.add_argument("--to", nargs="+", default=None)
     p_send.add_argument("--subject", required=True)
     p_send.add_argument("--body", required=True)
     p_send.add_argument("--cc", nargs="+", default=None)
+    p_send.add_argument("--bcc", nargs="+", default=None)
     p_send.add_argument("--attachments", nargs="+", default=None)
+    p_send.add_argument("--html", action="store_true", default=False)
 
     p_draft = email_sub.add_parser("draft")
     p_draft.add_argument("--account", required=True)
-    p_draft.add_argument("--to", required=True, nargs="+")
+    p_draft.add_argument("--to", nargs="+", default=None)
     p_draft.add_argument("--subject", required=True)
     p_draft.add_argument("--body", required=True)
     p_draft.add_argument("--cc", nargs="+", default=None)
+    p_draft.add_argument("--bcc", nargs="+", default=None)
     p_draft.add_argument("--attachments", nargs="+", default=None)
 
     p_reply = email_sub.add_parser("reply")
@@ -246,7 +249,9 @@ def _dispatch_email(args, config, client):
             subject=args.subject,
             body=args.body,
             cc=args.cc,
+            bcc=args.bcc,
             attachments=args.attachments,
+            html=args.html,
         )
     elif args.command == "draft":
         return email.create_email_draft(
@@ -257,6 +262,7 @@ def _dispatch_email(args, config, client):
             subject=args.subject,
             body=args.body,
             cc=args.cc,
+            bcc=args.bcc,
             attachments=args.attachments,
         )
     elif args.command == "reply":
