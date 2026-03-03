@@ -67,3 +67,4 @@ agent/memory/dreamer/
 app/src-tauri/target/
 app/src-tauri/binaries/vesta-*
 app/src-tauri/resources/*.tar.gz
+.claude/
