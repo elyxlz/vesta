@@ -127,7 +127,7 @@ def _read_last_dreamer_run(config: vm.VestaConfig) -> dt.datetime | None:
     return None
 
 
-def init_state(*, config: vm.VestaConfig) -> vm.State:
+def init_state(*, config: vm.VestaConfig) -> tuple[vm.State, bool]:
     session_id = None
     try:
         if config.session_file.exists():
