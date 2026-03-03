@@ -81,7 +81,7 @@ fn ensure_docker() {
         }
         std::thread::sleep(std::time::Duration::from_secs(1));
     }
-    die("docker daemon is not running.\nstart it: sudo systemctl start docker");
+    die("docker daemon is not running. start the docker service and try again.");
 }
 
 fn container_status() -> ContainerStatus {
@@ -100,14 +100,14 @@ fn is_authenticated() -> bool {
 
 fn ensure_exists() {
     if container_status() == ContainerStatus::NotFound {
-        die("agent not found. run: vesta setup");
+        die("agent not found. create one first with: vesta setup");
     }
 }
 
 fn ensure_running() {
     ensure_exists();
     if container_status() != ContainerStatus::Running {
-        die("agent is not running. run: vesta start");
+        die("agent is not running");
     }
 }
 
@@ -260,7 +260,7 @@ pub fn run(command: Command) {
 
         Command::Create { build } => {
             if container_status() != ContainerStatus::NotFound {
-                die("agent already exists. run: vesta destroy first");
+                die("agent already exists. destroy it first.");
             }
 
             let image = resolve_image(build);

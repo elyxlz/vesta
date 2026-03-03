@@ -7,6 +7,8 @@ const VFKIT_BIN: &str = "vfkit";
 const VM_CPUS: u32 = 2;
 const VM_MEMORY_MIB: u32 = 4096;
 const VM_MAC: &str = "52:54:00:fe:57:a1";
+const VSOCK_PORT: u32 = 2222;
+const LAUNCH_AGENT_LABEL: &str = "com.vesta.autostart";
 
 #[derive(Serialize)]
 struct StatusJson {
@@ -31,7 +33,6 @@ fn find_vfkit() -> PathBuf {
     let candidates = [
         exe_dir.join(VFKIT_BIN),
         exe_dir.join("binaries").join(VFKIT_BIN),
-        // Tauri .app bundle: Contents/MacOS/ (exe) -> Contents/Resources/ (resources)
         exe_dir.join("..").join("Resources").join(VFKIT_BIN),
     ];
 
@@ -52,8 +53,8 @@ fn pid_path() -> PathBuf {
     data_dir().join("vfkit.pid")
 }
 
-fn vm_ip_path() -> PathBuf {
-    data_dir().join("vm_ip")
+fn vsock_socket_path() -> PathBuf {
+    data_dir().join("vesta-vsock.sock")
 }
 
 fn vm_disk_path() -> PathBuf {
@@ -68,6 +69,70 @@ fn vm_initrd_path() -> PathBuf {
     data_dir().join("vm-initrd")
 }
 
+fn launch_agent_path() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| die("cannot determine home directory"))
+        .join("Library")
+        .join("LaunchAgents")
+        .join(format!("{}.plist", LAUNCH_AGENT_LABEL))
+}
+
+fn install_autostart() {
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+
+    let plist_path = launch_agent_path();
+    let log_dir = plist_path.parent().unwrap().parent().unwrap().join("Logs");
+
+    let plist_content = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{label}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{exe}</string>
+        <string>start</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>{log_dir}/vesta-autostart.log</string>
+    <key>StandardErrorPath</key>
+    <string>{log_dir}/vesta-autostart.log</string>
+</dict>
+</plist>
+"#,
+        label = LAUNCH_AGENT_LABEL,
+        exe = exe.display(),
+        log_dir = log_dir.display(),
+    );
+
+    if std::fs::write(&plist_path, &plist_content).is_err() {
+        return;
+    }
+
+    let _ = process::Command::new("launchctl")
+        .args(["load", &plist_path.to_string_lossy()])
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .status();
+}
+
+fn remove_autostart() {
+    let plist_path = launch_agent_path();
+    let _ = process::Command::new("launchctl")
+        .args(["unload", &plist_path.to_string_lossy()])
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .status();
+    std::fs::remove_file(&plist_path).ok();
+}
+
 fn vm_image_ready() -> bool {
     vm_disk_path().exists() && vm_kernel_path().exists() && vm_initrd_path().exists()
 }
@@ -79,15 +144,7 @@ fn generate_ssh_key() {
     }
     std::fs::create_dir_all(key_path.parent().unwrap()).ok();
     let status = process::Command::new("ssh-keygen")
-        .args([
-            "-t",
-            "ed25519",
-            "-N",
-            "",
-            "-f",
-            key_path.to_str().unwrap(),
-            "-q",
-        ])
+        .args(["-t", "ed25519", "-N", "", "-f", key_path.to_str().unwrap(), "-q"])
         .status()
         .unwrap_or_else(|_| die("failed to run ssh-keygen"));
     if !status.success() {
@@ -102,110 +159,48 @@ fn read_pid() -> Option<u32> {
 
 fn vm_running() -> bool {
     match read_pid() {
-        Some(pid) => {
-            process::Command::new("kill")
-                .args(["-0", &pid.to_string()])
-                .stdout(process::Stdio::null())
-                .stderr(process::Stdio::null())
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false)
-        }
+        Some(pid) => process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stdout(process::Stdio::null())
+            .stderr(process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false),
         None => false,
     }
 }
 
-fn discover_vm_ip_from_leases() -> Option<String> {
-    let content = std::fs::read_to_string("/var/db/dhcpd_leases").ok()?;
-    let mac_lower = VM_MAC.to_lowercase();
+fn ssh_base_args() -> Vec<String> {
+    let socket = vsock_socket_path();
+    vec![
+        "-i".into(),
+        ssh_key_path().to_str().unwrap().to_string(),
+        "-o".into(),
+        "StrictHostKeyChecking=no".into(),
+        "-o".into(),
+        "UserKnownHostsFile=/dev/null".into(),
+        "-o".into(),
+        "LogLevel=ERROR".into(),
+        "-o".into(),
+        format!("ProxyCommand=nc -U '{}'", socket.display()),
+        "root@localhost".into(),
+    ]
+}
 
-    let mut ip = None;
-    let mut current_ip = None;
-
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("ip_address=") {
-            current_ip = trimmed.strip_prefix("ip_address=").map(|s| s.to_string());
-        }
-        if trimmed.starts_with("hw_address=") {
-            if let Some(hw) = trimmed.strip_prefix("hw_address=") {
-                let hw_mac = hw.split(',').nth(1).unwrap_or("").to_lowercase();
-                if hw_mac == mac_lower {
-                    ip = current_ip.clone();
-                }
-            }
-        }
+fn ssh_reachable() -> bool {
+    if !vsock_socket_path().exists() {
+        return false;
     }
-
-    ip
-}
-
-fn discover_vm_ip_from_arp() -> Option<String> {
-    let output = process::Command::new("arp")
-        .arg("-an")
-        .stdout(process::Stdio::piped())
-        .stderr(process::Stdio::null())
-        .output()
-        .ok()?;
-
-    let text = String::from_utf8_lossy(&output.stdout);
-    let mac_lower = VM_MAC.to_lowercase();
-
-    // arp -an output: ? (192.168.64.5) at 52:54:00:fe:57:a1 on bridge100 ...
-    for line in text.lines() {
-        if line.to_lowercase().contains(&mac_lower) {
-            let start = line.find('(')? + 1;
-            let end = line.find(')')?;
-            return Some(line[start..end].to_string());
-        }
-    }
-    None
-}
-
-fn discover_vm_ip() -> Option<String> {
-    discover_vm_ip_from_leases().or_else(discover_vm_ip_from_arp)
-}
-
-fn get_vm_ip() -> String {
-    if let Ok(ip) = std::fs::read_to_string(vm_ip_path()) {
-        let ip = ip.trim().to_string();
-        if !ip.is_empty() {
-            return ip;
-        }
-    }
-    if let Some(ip) = discover_vm_ip() {
-        std::fs::write(vm_ip_path(), &ip).ok();
-        return ip;
-    }
-    die("cannot determine VM IP address. try: vesta stop && vesta start");
-}
-
-fn resolve_vm_ip() -> Option<String> {
-    std::fs::read_to_string(vm_ip_path())
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .or_else(discover_vm_ip)
-}
-
-fn ssh_reachable(ip: &str) -> bool {
+    let mut args = ssh_base_args();
+    args.extend([
+        "-o".into(),
+        "ConnectTimeout=2".into(),
+        "-o".into(),
+        "BatchMode=yes".into(),
+        "true".into(),
+    ]);
     process::Command::new("ssh")
-        .args([
-            "-i",
-            ssh_key_path().to_str().unwrap(),
-            "-o",
-            "StrictHostKeyChecking=no",
-            "-o",
-            "UserKnownHostsFile=/dev/null",
-            "-o",
-            "LogLevel=ERROR",
-            "-o",
-            "ConnectTimeout=2",
-            "-o",
-            "BatchMode=yes",
-            &format!("root@{}", ip),
-            "true",
-        ])
+        .args(&args)
         .stdout(process::Stdio::null())
         .stderr(process::Stdio::null())
         .status()
@@ -213,11 +208,16 @@ fn ssh_reachable(ip: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn ssh_available() -> bool {
-    match resolve_vm_ip() {
-        Some(ip) => ssh_reachable(&ip),
-        None => false,
+fn clean_stale_state() {
+    if let Some(pid) = read_pid() {
+        let _ = process::Command::new("kill")
+            .arg(&pid.to_string())
+            .stdout(process::Stdio::null())
+            .stderr(process::Stdio::null())
+            .status();
     }
+    std::fs::remove_file(pid_path()).ok();
+    std::fs::remove_file(vsock_socket_path()).ok();
 }
 
 fn boot_vm() {
@@ -225,10 +225,10 @@ fn boot_vm() {
         return;
     }
 
-    stop_vm();
+    clean_stale_state();
 
     if !vm_image_ready() {
-        die("VM image not found. run: vesta setup");
+        die("VM image not found. try reinstalling vesta.");
     }
 
     let vfkit = find_vfkit();
@@ -236,6 +236,9 @@ fn boot_vm() {
     let kernel = vm_kernel_path();
     let initrd = vm_initrd_path();
     let pubkey_dir = data_dir().join("ssh-mount");
+    let vsock_sock = vsock_socket_path();
+
+    std::fs::remove_file(&vsock_sock).ok();
 
     std::fs::create_dir_all(&pubkey_dir).ok();
     let pubkey_content = std::fs::read_to_string(ssh_key_path().with_extension("pub"))
@@ -263,6 +266,12 @@ fn boot_vm() {
                 "virtio-fs,sharedDir={},mountTag=ssh-keys",
                 pubkey_dir.display()
             ),
+            "--device",
+            &format!(
+                "virtio-vsock,port={},socketURL={}",
+                VSOCK_PORT,
+                vsock_sock.display()
+            ),
         ])
         .stdout(process::Stdio::null())
         .stderr(process::Stdio::null())
@@ -275,13 +284,10 @@ fn boot_vm() {
 fn wait_for_ssh_ok() -> bool {
     print!("waiting for VM...");
     io::stdout().flush().ok();
-    for i in 0..60 {
-        if let Some(ip) = if i > 3 { discover_vm_ip() } else { resolve_vm_ip() } {
-            std::fs::write(vm_ip_path(), &ip).ok();
-            if ssh_reachable(&ip) {
-                println!(" ready");
-                return true;
-            }
+    for _ in 0..60 {
+        if ssh_reachable() {
+            println!(" ready");
+            return true;
         }
         std::thread::sleep(std::time::Duration::from_secs(1));
         print!(".");
@@ -293,26 +299,56 @@ fn wait_for_ssh_ok() -> bool {
 
 fn wait_for_ssh() {
     if !wait_for_ssh_ok() {
-        die("VM did not become reachable via SSH within 60s");
+        die("VM did not become reachable within 60s");
     }
 }
 
 fn stop_vm() {
-    if let Some(pid) = read_pid() {
+    let pid = read_pid();
+
+    // Graceful: attempt poweroff (fails harmlessly if SSH isn't reachable)
+    let mut args = ssh_base_args();
+    args.extend([
+        "-o".into(),
+        "ConnectTimeout=2".into(),
+        "-o".into(),
+        "BatchMode=yes".into(),
+        "sh".into(),
+        "-c".into(),
+        "sync && poweroff".into(),
+    ]);
+    let _ = process::Command::new("ssh")
+        .args(&args)
+        .stdin(process::Stdio::null())
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .status();
+
+    // Wait for vfkit to exit after poweroff
+    if let Some(pid) = pid {
+        let pid_str = pid.to_string();
+        for _ in 0..20 {
+            let alive = process::Command::new("kill")
+                .args(["-0", &pid_str])
+                .stdout(process::Stdio::null())
+                .stderr(process::Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if !alive {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
         let _ = process::Command::new("kill")
-            .args([&pid.to_string()])
+            .arg(&pid_str)
             .stdout(process::Stdio::null())
             .stderr(process::Stdio::null())
             .status();
     }
-    // Kill any orphaned vfkit processes (e.g. from a crash)
-    let _ = process::Command::new("pkill")
-        .arg("vfkit")
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .status();
+
     std::fs::remove_file(pid_path()).ok();
-    std::fs::remove_file(vm_ip_path()).ok();
+    std::fs::remove_file(vsock_socket_path()).ok();
 }
 
 fn clean_vm_image() {
@@ -329,24 +365,9 @@ fn ensure_vm() {
     if !vm_running() {
         boot_vm();
         wait_for_ssh();
-    } else if !ssh_available() {
+    } else if !ssh_reachable() {
         wait_for_ssh();
     }
-}
-
-fn ssh_base_args() -> Vec<String> {
-    let ip = get_vm_ip();
-    vec![
-        "-i".into(),
-        ssh_key_path().to_str().unwrap().to_string(),
-        "-o".into(),
-        "StrictHostKeyChecking=no".into(),
-        "-o".into(),
-        "UserKnownHostsFile=/dev/null".into(),
-        "-o".into(),
-        "LogLevel=ERROR".into(),
-        format!("root@{}", ip),
-    ]
 }
 
 fn ssh_exec(cmd_args: &[&str]) -> process::ExitStatus {
@@ -408,9 +429,27 @@ fn download_vm_image() {
         die("failed to download VM image. check your internet connection.");
     }
 
+    let valid = process::Command::new("tar")
+        .args(["-tzf", tmp_path.to_str().unwrap()])
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    if !valid {
+        std::fs::remove_file(&tmp_path).ok();
+        die("downloaded VM image is corrupt. try again.");
+    }
+
     println!("extracting VM image...");
     let status = process::Command::new("tar")
-        .args(["-xzf", tmp_path.to_str().unwrap(), "-C", dir.to_str().unwrap()])
+        .args([
+            "-xzf",
+            tmp_path.to_str().unwrap(),
+            "-C",
+            dir.to_str().unwrap(),
+        ])
         .status()
         .unwrap_or_else(|_| die("failed to extract VM image"));
 
@@ -454,7 +493,10 @@ pub fn run(command: Command) {
             if build {
                 args.push("--build");
             }
-            ssh_exec_tty(&args);
+            let status = ssh_exec_tty(&args);
+            if status.success() {
+                install_autostart();
+            }
         }
 
         Command::Attach => {
@@ -465,8 +507,12 @@ pub fn run(command: Command) {
         Command::Auth { token } => {
             ensure_vm();
             match token {
-                Some(t) => { ssh_exec(&["vesta", "auth", "--token", &t]); }
-                None => { ssh_exec_tty(&["vesta", "auth"]); }
+                Some(t) => {
+                    ssh_exec(&["vesta", "auth", "--token", &t]);
+                }
+                None => {
+                    ssh_exec_tty(&["vesta", "auth"]);
+                }
             }
         }
 
@@ -531,6 +577,7 @@ pub fn run(command: Command) {
         }
 
         Command::Destroy { yes } => {
+            remove_autostart();
             ensure_vm();
             if yes {
                 ssh_exec(&["vesta", "destroy", "--yes"]);

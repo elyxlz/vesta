@@ -41,6 +41,9 @@ if [ -x /sbin/iptables-legacy ] && [ -x /sbin/ip6tables-legacy ] \
     ln -sf /sbin/ip6tables-legacy /sbin/ip6tables
 fi
 
+# Start NTP (handles clock drift after host sleep/wake)
+chronyd 2>/dev/null || true
+
 # Start Docker
 rm -f /var/run/docker.pid /var/run/containerd/containerd.pid
 dockerd --storage-driver=overlay2 &>/dev/null &
@@ -50,6 +53,16 @@ while [ ! -S /var/run/docker.sock ]; do
     if [ "$i" -gt 120 ]; then echo "dockerd failed to start" >&2; exit 1; fi
     sleep 0.5
 done
+# Wait for dockerd to actually accept connections (socket can exist before ready)
+i=0
+while ! docker info >/dev/null 2>&1; do
+    i=$((i+1))
+    if [ "$i" -gt 60 ]; then echo "dockerd not responding" >&2; exit 1; fi
+    sleep 0.5
+done
+
+# Bridge vsock port 2222 to SSH (macOS vfkit only, silently skipped on WSL2)
+socat VSOCK-LISTEN:2222,reuseaddr,fork TCP:127.0.0.1:22 >/dev/null 2>&1 &
 
 # Start SSH (foreground, keeps container/distro alive)
 exec /usr/sbin/sshd -D -e
