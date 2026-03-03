@@ -44,17 +44,16 @@ def init_skills(config: vm.VestaConfig) -> None:
         logger.init(f"Initialized skill: {skill_name}")
 
 
-def is_first_start(config: vm.VestaConfig) -> bool:
-    return not get_memory_path(config).exists()
-
-
-def init_main_memory(config: vm.VestaConfig) -> None:
+def init_main_memory(config: vm.VestaConfig) -> bool:
+    """Initialize main memory if needed. Returns True if this was a first start."""
     memory_path = get_memory_path(config)
-    if not memory_path.exists():
-        memory_path.parent.mkdir(parents=True, exist_ok=True)
-        template = load_memory_template().replace("{install_root}", str(config.install_root))
-        memory_path.write_text(template)
-        logger.init(f"Initialized main memory ({len(template)} chars)")
+    if memory_path.exists():
+        return False
+    memory_path.parent.mkdir(parents=True, exist_ok=True)
+    template = load_memory_template().replace("{install_root}", str(config.install_root))
+    memory_path.write_text(template)
+    logger.init(f"Initialized main memory ({len(template)} chars)")
+    return True
 
 
 def init_prompts(config: vm.VestaConfig) -> None:

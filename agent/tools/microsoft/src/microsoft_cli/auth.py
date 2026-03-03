@@ -37,6 +37,28 @@ def get_app(cache_file: pl.Path, *, settings: MicrosoftSettings) -> msal.PublicC
     return app
 
 
+def _run_device_flow(app, scopes: list[str], cache_file: pl.Path) -> dict:
+    """Run device code flow, persist cache, return token result."""
+    flow = app.initiate_device_flow(scopes=scopes)
+    if "user_code" not in flow:
+        raise Exception(f"Failed to get device code: {flow['error_description'] if 'error_description' in flow else 'Unknown error'}")
+
+    verification_uri = (flow["verification_uri"] if "verification_uri" in flow else None) or (flow["verification_url"] if "verification_url" in flow else None) or "https://microsoft.com/devicelogin"
+    print(f"\nTo authenticate:\n1. Visit {verification_uri}\n2. Enter code: {flow['user_code']}")
+    print("3. Sign in with your Microsoft account\n\nWaiting for authentication...")
+
+    result = app.acquire_token_by_device_flow(flow)
+
+    if "error" in result:
+        raise Exception(f"Auth failed: {result['error_description'] if 'error_description' in result else result['error']}")
+
+    cache = app.token_cache
+    if isinstance(cache, msal.SerializableTokenCache) and cache.has_state_changed:
+        _write_cache(cache_file, content=cache.serialize())
+
+    return result
+
+
 def get_token(cache_file: pl.Path, scopes: list[str], settings: MicrosoftSettings, *, account_id: str | None = None) -> str:
     app = get_app(cache_file, settings=settings)
 
@@ -46,19 +68,7 @@ def get_token(cache_file: pl.Path, scopes: list[str], settings: MicrosoftSetting
     result = app.acquire_token_silent(scopes, account=account)
 
     if not result:
-        flow = app.initiate_device_flow(scopes=scopes)
-        if "user_code" not in flow:
-            raise Exception(f"Failed to get device code: {flow['error_description'] if 'error_description' in flow else 'Unknown error'}")
-        verification_uri = (flow["verification_uri"] if "verification_uri" in flow else None) or (flow["verification_url"] if "verification_url" in flow else None) or "https://microsoft.com/devicelogin"
-        print(f"\nTo authenticate:\n1. Visit {verification_uri}\n2. Enter code: {flow['user_code']}")
-        result = app.acquire_token_by_device_flow(flow)
-
-    if "error" in result:
-        raise Exception(f"Auth failed: {result['error_description'] if 'error_description' in result else result['error']}")
-
-    cache = app.token_cache
-    if isinstance(cache, msal.SerializableTokenCache) and cache.has_state_changed:
-        _write_cache(cache_file, content=cache.serialize())
+        result = _run_device_flow(app, scopes, cache_file)
 
     return result["access_token"]
 
@@ -93,36 +103,15 @@ def get_account_id_by_email(email: str, cache_file: pl.Path, *, settings: Micros
 def authenticate_new_account(cache_file: pl.Path, scopes: list[str], *, settings: MicrosoftSettings) -> Account | None:
     """Authenticate a new account interactively"""
     app = get_app(cache_file, settings=settings)
+    result = _run_device_flow(app, scopes, cache_file)
 
-    flow = app.initiate_device_flow(scopes=scopes)
-    if "user_code" not in flow:
-        raise Exception(f"Failed to get device code: {flow['error_description'] if 'error_description' in flow else 'Unknown error'}")
-
-    print("\nTo authenticate:")
-    verification_uri = (flow["verification_uri"] if "verification_uri" in flow else None) or (flow["verification_url"] if "verification_url" in flow else None) or "https://microsoft.com/devicelogin"
-    print(f"1. Visit: {verification_uri}")
-    print(f"2. Enter code: {flow['user_code']}")
-    print("3. Sign in with your Microsoft account")
-    print("\nWaiting for authentication...")
-
-    result = app.acquire_token_by_device_flow(flow)
-
-    if "error" in result:
-        raise Exception(f"Auth failed: {result['error_description'] if 'error_description' in result else result['error']}")
-
-    cache = app.token_cache
-    if isinstance(cache, msal.SerializableTokenCache) and cache.has_state_changed:
-        _write_cache(cache_file, content=cache.serialize())
-
-    # Get the newly added account
     accounts = app.get_accounts()
     if accounts:
-        # Find the account that matches the token we just got
+        claims = result["id_token_claims"] if "id_token_claims" in result else {}
+        preferred = (claims["preferred_username"] if "preferred_username" in claims else "").lower()
         for account in accounts:
-            claims = result["id_token_claims"] if "id_token_claims" in result else {}
-            if (account["username"] if "username" in account else "").lower() == (claims["preferred_username"] if "preferred_username" in claims else "").lower():
+            if (account["username"] if "username" in account else "").lower() == preferred:
                 return Account(username=account["username"], account_id=account["home_account_id"])
-        # If exact match not found, return the last account
         account = accounts[-1]
         return Account(username=account["username"], account_id=account["home_account_id"])
 

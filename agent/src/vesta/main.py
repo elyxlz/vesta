@@ -14,7 +14,7 @@ from rich import print_json
 import vesta.models as vm
 from vesta import logger
 from vesta.api import start_ws_server
-from vesta.core.init import init_skills, init_main_memory, init_prompts, init_skills_symlink, is_first_start
+from vesta.core.init import init_skills, init_main_memory, init_prompts, init_skills_symlink
 from vesta.core.loops import message_processor, monitor_loop, queue_greeting
 
 SignalHandler = tp.Callable[[int, types.FrameType | None], None]
@@ -150,9 +150,8 @@ async def async_main() -> None:
     logger.setup(config.logs_dir, log_level=config.log_level)
     logger.init("Vesta starting")
 
-    first_start = is_first_start(config)
     logger.init("Initializing memory...")
-    init_main_memory(config)
+    first_start = init_main_memory(config)
     init_prompts(config)
     logger.init("Initializing skills...")
     init_skills(config)

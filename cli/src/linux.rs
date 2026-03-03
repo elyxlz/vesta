@@ -105,9 +105,10 @@ fn ensure_exists() {
 }
 
 fn ensure_running() {
-    ensure_exists();
-    if container_status() != ContainerStatus::Running {
-        die("agent is not running. run: vesta start");
+    match container_status() {
+        ContainerStatus::NotFound => die("agent not found. run: vesta setup"),
+        ContainerStatus::Stopped => die("agent is not running. run: vesta start"),
+        ContainerStatus::Running => {}
     }
 }
 
@@ -271,10 +272,13 @@ pub fn run(command: Command) {
         }
 
         Command::Start => {
-            ensure_exists();
-            if container_status() == ContainerStatus::Running {
-                println!("already running");
-                return;
+            match container_status() {
+                ContainerStatus::NotFound => die("agent not found. run: vesta setup"),
+                ContainerStatus::Running => {
+                    println!("already running");
+                    return;
+                }
+                ContainerStatus::Stopped => {}
             }
             if !docker_ok(&["start", CONTAINER_NAME]) {
                 die("failed to start");

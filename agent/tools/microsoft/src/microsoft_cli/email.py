@@ -13,6 +13,7 @@ from .settings import MicrosoftSettings
 
 EMAIL_SAVE_SUBDIR = "emails"
 LONG_EMAIL_WARNING_THRESHOLD = 5000
+LARGE_ATTACHMENT_THRESHOLD = LARGE_ATTACHMENT_THRESHOLD
 EMAIL_SNAPSHOT_FIELDS = [
     "id",
     "subject",
@@ -37,6 +38,14 @@ def _remove_attachment_bytes(result: dict[str, Any]) -> None:
         for attachment in result["attachments"]:
             if "contentBytes" in attachment:
                 del attachment["contentBytes"]
+
+
+def _extract_addresses(recipients: list[dict]) -> str:
+    addrs = []
+    for r in recipients:
+        email_obj = r["emailAddress"] if "emailAddress" in r else {}
+        addrs.append(email_obj["address"] if "address" in email_obj else "")
+    return ", ".join(addrs)
 
 
 def _sanitize_filename(value: str) -> str:
@@ -193,13 +202,7 @@ def get_email(
     from_email_obj = from_obj["emailAddress"] if "emailAddress" in from_obj else {}
     from_addr = from_email_obj["address"] if "address" in from_email_obj else "unknown"
 
-    to_recipients = result["toRecipients"] if "toRecipients" in result else []
-    to_addrs = ", ".join(
-        (r["emailAddress"] if "emailAddress" in r else {})["address"]
-        if "address" in (r["emailAddress"] if "emailAddress" in r else {})
-        else ""
-        for r in to_recipients
-    )
+    to_addrs = _extract_addresses(result["toRecipients"] if "toRecipients" in result else [])
 
     content_lines = [
         f"From: {from_addr}",
@@ -210,13 +213,7 @@ def get_email(
 
     cc_recipients = result["ccRecipients"] if "ccRecipients" in result else []
     if cc_recipients:
-        cc_addrs = ", ".join(
-            (r["emailAddress"] if "emailAddress" in r else {})["address"]
-            if "address" in (r["emailAddress"] if "emailAddress" in r else {})
-            else ""
-            for r in cc_recipients
-        )
-        content_lines.append(f"Cc: {cc_addrs}")
+        content_lines.append(f"Cc: {_extract_addresses(cc_recipients)}")
 
     content_lines.extend(["", "=" * 80, "", full_body_content])
 
@@ -282,7 +279,7 @@ def create_email_draft(
             att_size = len(content_bytes)
             att_name = path.name
 
-            if att_size < 3 * 1024 * 1024:
+            if att_size < LARGE_ATTACHMENT_THRESHOLD:
                 small_attachments.append(
                     {
                         "@odata.type": "#microsoft.graph.fileAttachment",
@@ -385,102 +382,19 @@ def send_email(
                 }
             )
 
-            if att_size >= 3 * 1024 * 1024:
+            if att_size >= LARGE_ATTACHMENT_THRESHOLD:
                 has_large_attachments = True
 
-    if not has_large_attachments and processed_attachments:
-        message["attachments"] = [
-            {
-                "@odata.type": "#microsoft.graph.fileAttachment",
-                "name": att["name"],
-                "contentBytes": base64.b64encode(att["content_bytes"]).decode("utf-8"),
-            }
-            for att in processed_attachments
-        ]
-        graph.request(
-            client,
-            config.cache_file,
-            config.scopes,
-            settings,
-            config.base_url,
-            "POST",
-            "/me/sendMail",
-            account_id,
-            json={"message": message},
-        )
-        return {"status": "sent"}
-    elif has_large_attachments:
-        message = {
-            "subject": subject,
-            "body": {"contentType": "Text", "content": body},
-            "toRecipients": [{"emailAddress": {"address": addr}} for addr in to],
-        }
-        if cc:
-            message["ccRecipients"] = [{"emailAddress": {"address": addr}} for addr in cc]
-        if bcc:
-            message["bccRecipients"] = [{"emailAddress": {"address": addr}} for addr in bcc]
-
-        result = graph.request(
-            client,
-            config.cache_file,
-            config.scopes,
-            settings,
-            config.base_url,
-            "POST",
-            "/me/messages",
-            account_id,
-            json=message,
-        )
-        if not result:
-            raise ValueError("Failed to create email draft")
-
-        message_id = result["id"]
-
-        for att in processed_attachments:
-            if att["size"] >= 3 * 1024 * 1024:
-                graph.upload_large_mail_attachment(
-                    client,
-                    config.cache_file,
-                    config.scopes,
-                    settings,
-                    config.base_url,
-                    config.upload_chunk_size,
-                    message_id,
-                    att["name"],
-                    att["content_bytes"],
-                    account_id,
-                    att["content_type"] if "content_type" in att else "application/octet-stream",
-                )
-            else:
-                small_att = {
+    if not has_large_attachments:
+        if processed_attachments:
+            message["attachments"] = [
+                {
                     "@odata.type": "#microsoft.graph.fileAttachment",
                     "name": att["name"],
                     "contentBytes": base64.b64encode(att["content_bytes"]).decode("utf-8"),
                 }
-                graph.request(
-                    client,
-                    config.cache_file,
-                    config.scopes,
-                    settings,
-                    config.base_url,
-                    "POST",
-                    f"/me/messages/{message_id}/attachments",
-                    account_id,
-                    json=small_att,
-                )
-
-        graph.request(
-            client,
-            config.cache_file,
-            config.scopes,
-            settings,
-            config.base_url,
-            "POST",
-            f"/me/messages/{message_id}/send",
-            account_id,
-        )
-        return {"status": "sent"}
-    else:
+                for att in processed_attachments
+            ]
         graph.request(
             client,
             config.cache_file,
@@ -493,6 +407,67 @@ def send_email(
             json={"message": message},
         )
         return {"status": "sent"}
+
+    result = graph.request(
+        client,
+        config.cache_file,
+        config.scopes,
+        settings,
+        config.base_url,
+        "POST",
+        "/me/messages",
+        account_id,
+        json=message,
+    )
+    if not result:
+        raise ValueError("Failed to create email draft")
+
+    message_id = result["id"]
+
+    for att in processed_attachments:
+        if att["size"] >= LARGE_ATTACHMENT_THRESHOLD:
+            graph.upload_large_mail_attachment(
+                client,
+                config.cache_file,
+                config.scopes,
+                settings,
+                config.base_url,
+                config.upload_chunk_size,
+                message_id,
+                att["name"],
+                att["content_bytes"],
+                account_id,
+                att["content_type"] if "content_type" in att else "application/octet-stream",
+            )
+        else:
+            small_att = {
+                "@odata.type": "#microsoft.graph.fileAttachment",
+                "name": att["name"],
+                "contentBytes": base64.b64encode(att["content_bytes"]).decode("utf-8"),
+            }
+            graph.request(
+                client,
+                config.cache_file,
+                config.scopes,
+                settings,
+                config.base_url,
+                "POST",
+                f"/me/messages/{message_id}/attachments",
+                account_id,
+                json=small_att,
+            )
+
+    graph.request(
+        client,
+        config.cache_file,
+        config.scopes,
+        settings,
+        config.base_url,
+        "POST",
+        f"/me/messages/{message_id}/send",
+        account_id,
+    )
+    return {"status": "sent"}
 
 
 def reply_to_email(
@@ -544,7 +519,7 @@ def reply_to_email(
             att_size = len(content_bytes)
             att_name = path.name
 
-            if att_size < 3 * 1024 * 1024:
+            if att_size < LARGE_ATTACHMENT_THRESHOLD:
                 attachment = {
                     "@odata.type": "#microsoft.graph.fileAttachment",
                     "name": att_name,
