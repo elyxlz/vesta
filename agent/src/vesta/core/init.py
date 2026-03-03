@@ -55,7 +55,7 @@ def init_main_memory(config: vm.VestaConfig) -> None:
         return
     install_root = str(config.install_root)
     if _replace_placeholder_in_file(memory_path, install_root):
-        logger.init(f"Replaced install_root placeholder in MEMORY.md")
+        logger.init("Replaced install_root placeholder in MEMORY.md")
 
 
 def init_prompts(config: vm.VestaConfig) -> None:
