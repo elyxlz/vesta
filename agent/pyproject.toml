@@ -8,10 +8,6 @@ authors = [
     { name = "elyxlz" }
 ]
 requires-python = ">=3.12"
-
-[project.urls]
-Homepage = "https://github.com/elyxlz/vesta"
-Repository = "https://github.com/elyxlz/vesta"
 dependencies = [
     "aioconsole>=0.8.1",
     "aiohttp>=3.11",
@@ -20,6 +16,10 @@ dependencies = [
     "pydantic-settings>=2.7.0",
     "rich>=14.2.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/elyxlz/vesta"
+Repository = "https://github.com/elyxlz/vesta"
 
 [dependency-groups]
 dev = [
