@@ -119,13 +119,9 @@ def _build_mime_message(to: list[str], subject: str, body: str, cc: list[str] | 
     return base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
 
 
-def list_emails(config: Config, *, label: str = "INBOX", limit: int = 10) -> list[dict[str, Any]]:
-    service = api.gmail_service(config)
-    results = api.retry(lambda: service.users().messages().list(userId="me", labelIds=[label], maxResults=min(limit, 100)).execute())
-    messages = results["messages"] if "messages" in results else []
-
+def _fetch_message_snapshots(service, msg_refs: list[dict], limit: int) -> list[dict[str, Any]]:
     output = []
-    for msg_ref in messages[:limit]:
+    for msg_ref in msg_refs[:limit]:
         msg = api.retry(
             lambda mid=msg_ref["id"]: (
                 service.users()
@@ -136,6 +132,13 @@ def list_emails(config: Config, *, label: str = "INBOX", limit: int = 10) -> lis
         )
         output.append(_parse_message_snapshot(msg))
     return output
+
+
+def list_emails(config: Config, *, label: str = "INBOX", limit: int = 10) -> list[dict[str, Any]]:
+    service = api.gmail_service(config)
+    results = api.retry(lambda: service.users().messages().list(userId="me", labelIds=[label], maxResults=min(limit, 100)).execute())
+    messages = results["messages"] if "messages" in results else []
+    return _fetch_message_snapshots(service, messages, limit)
 
 
 def get_email(config: Config, *, message_id: str, include_attachments: bool = True, save_to_file: str | None = None) -> dict[str, Any]:
@@ -283,19 +286,7 @@ def search_emails(config: Config, *, query: str, limit: int = 10, label: str | N
 
     results = api.retry(lambda: service.users().messages().list(**kwargs).execute())
     messages = results["messages"] if "messages" in results else []
-
-    output = []
-    for msg_ref in messages[:limit]:
-        msg = api.retry(
-            lambda mid=msg_ref["id"]: (
-                service.users()
-                .messages()
-                .get(userId="me", id=mid, format="metadata", metadataHeaders=["Subject", "From", "To", "Date"])
-                .execute()
-            )
-        )
-        output.append(_parse_message_snapshot(msg))
-    return output
+    return _fetch_message_snapshots(service, messages, limit)
 
 
 def update_email(

@@ -82,26 +82,19 @@ def run(ctx: MicrosoftContext):
 
     while not ctx.monitor_stop_event.is_set():
         try:
-            # On first run, check if we were offline and need to catch up
-            if first_run and ctx.monitor_state_file.exists():
-                last_check_str = ctx.monitor_state_file.read_text().strip()
-                last_check_dt = datetime.fromisoformat(last_check_str.replace("Z", "+00:00"))
-                gap_seconds = (datetime.now(UTC) - last_check_dt).total_seconds()
+            last_check = (
+                ctx.monitor_state_file.read_text().strip()
+                if ctx.monitor_state_file.exists()
+                else (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+            )
+            catching_up = False
 
-                # If gap > 90s (normal is 45s), we were offline - use old timestamp to catch up
+            if first_run:
+                last_check_dt = datetime.fromisoformat(last_check.replace("Z", "+00:00"))
+                gap_seconds = (datetime.now(UTC) - last_check_dt).total_seconds()
                 if gap_seconds > 90:
-                    logger.info(f"Detected offline period of {gap_seconds:.0f}s, catching up from {last_check_str}")
-                    last_check = last_check_str
+                    logger.info(f"Detected offline period of {gap_seconds:.0f}s, catching up from {last_check}")
                     catching_up = True
-                else:
-                    last_check = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
-            else:
-                last_check = (
-                    ctx.monitor_state_file.read_text().strip()
-                    if ctx.monitor_state_file.exists()
-                    else (datetime.now(UTC) - timedelta(hours=1)).isoformat()
-                )
-                catching_up = False
             first_run = False
 
             logger.info(f"Checking for updates since {last_check}")

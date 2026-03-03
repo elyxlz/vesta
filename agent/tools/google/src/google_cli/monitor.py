@@ -5,6 +5,7 @@ from googleapiclient.errors import HttpError
 
 from . import api, notifications
 from .context import GoogleContext
+from .gmail import _get_header
 
 
 def _format_threshold_label(minutes: int) -> str:
@@ -45,13 +46,6 @@ def _parse_event_time(event: dict) -> datetime:
     return datetime.fromisoformat(date_str).replace(tzinfo=UTC)
 
 
-def _get_header(headers: list[dict], name: str) -> str:
-    for h in headers:
-        if (h["name"] if "name" in h else "").lower() == name.lower():
-            return h["value"] if "value" in h else ""
-    return ""
-
-
 def run(ctx: GoogleContext):
     config = ctx.config
     logger = ctx.monitor_logger
@@ -61,19 +55,6 @@ def run(ctx: GoogleContext):
 
     while not ctx.monitor_stop_event.is_set():
         try:
-            if first_run and ctx.monitor_state_file.exists():
-                last_check_str = ctx.monitor_state_file.read_text().strip()
-                last_check_dt = datetime.fromisoformat(last_check_str.replace("Z", "+00:00"))
-                gap_seconds = (datetime.now(UTC) - last_check_dt).total_seconds()
-                if gap_seconds > 90:
-                    logger.info(f"Detected offline period of {gap_seconds:.0f}s, catching up from {last_check_str}")
-                    catching_up = True
-                else:
-                    catching_up = False
-            else:
-                catching_up = False
-            first_run = False
-
             if ctx.monitor_state_file.exists():
                 last_check_str = ctx.monitor_state_file.read_text().strip()
             else:
@@ -81,6 +62,14 @@ def run(ctx: GoogleContext):
 
             last_check_dt = datetime.fromisoformat(last_check_str.replace("Z", "+00:00"))
             new_check_time = datetime.now(UTC)
+
+            catching_up = False
+            if first_run:
+                gap_seconds = (new_check_time - last_check_dt).total_seconds()
+                if gap_seconds > 90:
+                    logger.info(f"Detected offline period of {gap_seconds:.0f}s, catching up from {last_check_str}")
+                    catching_up = True
+            first_run = False
 
             logger.info(f"Checking for updates since {last_check_str}")
 

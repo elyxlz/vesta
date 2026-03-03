@@ -12,6 +12,7 @@ from .config import Config
 from .settings import MicrosoftSettings
 
 EMAIL_SAVE_SUBDIR = "emails"
+LARGE_ATTACHMENT_THRESHOLD = 3 * 1024 * 1024
 LONG_EMAIL_WARNING_THRESHOLD = 5000
 EMAIL_SNAPSHOT_FIELDS = [
     "id",
@@ -65,6 +66,15 @@ def _prepare_email_output_path(
     filename = f"{timestamp}_{subject_fragment[:40]}_{id_fragment}.txt".strip("_")
 
     return base_dir / filename
+
+
+def _extract_addresses(recipients: list[dict[str, Any]]) -> str:
+    return ", ".join(
+        (r["emailAddress"] if "emailAddress" in r else {})["address"]
+        if "address" in (r["emailAddress"] if "emailAddress" in r else {})
+        else ""
+        for r in recipients
+    )
 
 
 def _scrub_email_snapshot(record: dict[str, Any]) -> None:
@@ -193,13 +203,7 @@ def get_email(
     from_email_obj = from_obj["emailAddress"] if "emailAddress" in from_obj else {}
     from_addr = from_email_obj["address"] if "address" in from_email_obj else "unknown"
 
-    to_recipients = result["toRecipients"] if "toRecipients" in result else []
-    to_addrs = ", ".join(
-        (r["emailAddress"] if "emailAddress" in r else {})["address"]
-        if "address" in (r["emailAddress"] if "emailAddress" in r else {})
-        else ""
-        for r in to_recipients
-    )
+    to_addrs = _extract_addresses(result["toRecipients"] if "toRecipients" in result else [])
 
     content_lines = [
         f"From: {from_addr}",
@@ -210,13 +214,7 @@ def get_email(
 
     cc_recipients = result["ccRecipients"] if "ccRecipients" in result else []
     if cc_recipients:
-        cc_addrs = ", ".join(
-            (r["emailAddress"] if "emailAddress" in r else {})["address"]
-            if "address" in (r["emailAddress"] if "emailAddress" in r else {})
-            else ""
-            for r in cc_recipients
-        )
-        content_lines.append(f"Cc: {cc_addrs}")
+        content_lines.append(f"Cc: {_extract_addresses(cc_recipients)}")
 
     content_lines.extend(["", "=" * 80, "", full_body_content])
 
@@ -282,7 +280,7 @@ def create_email_draft(
             att_size = len(content_bytes)
             att_name = path.name
 
-            if att_size < 3 * 1024 * 1024:
+            if att_size < LARGE_ATTACHMENT_THRESHOLD:
                 small_attachments.append(
                     {
                         "@odata.type": "#microsoft.graph.fileAttachment",
@@ -385,7 +383,7 @@ def send_email(
                 }
             )
 
-            if att_size >= 3 * 1024 * 1024:
+            if att_size >= LARGE_ATTACHMENT_THRESHOLD:
                 has_large_attachments = True
 
     if not has_large_attachments and processed_attachments:
@@ -410,16 +408,6 @@ def send_email(
         )
         return {"status": "sent"}
     elif has_large_attachments:
-        message = {
-            "subject": subject,
-            "body": {"contentType": "Text", "content": body},
-            "toRecipients": [{"emailAddress": {"address": addr}} for addr in to],
-        }
-        if cc:
-            message["ccRecipients"] = [{"emailAddress": {"address": addr}} for addr in cc]
-        if bcc:
-            message["bccRecipients"] = [{"emailAddress": {"address": addr}} for addr in bcc]
-
         result = graph.request(
             client,
             config.cache_file,
@@ -437,7 +425,7 @@ def send_email(
         message_id = result["id"]
 
         for att in processed_attachments:
-            if att["size"] >= 3 * 1024 * 1024:
+            if att["size"] >= LARGE_ATTACHMENT_THRESHOLD:
                 graph.upload_large_mail_attachment(
                     client,
                     config.cache_file,
@@ -544,7 +532,7 @@ def reply_to_email(
             att_size = len(content_bytes)
             att_name = path.name
 
-            if att_size < 3 * 1024 * 1024:
+            if att_size < LARGE_ATTACHMENT_THRESHOLD:
                 attachment = {
                     "@odata.type": "#microsoft.graph.fileAttachment",
                     "name": att_name,

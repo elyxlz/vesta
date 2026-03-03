@@ -74,13 +74,10 @@ def _get_metadata_path(data_dir: Path, task_id: str) -> Path:
 
 
 def _read_metadata(data_dir: Path, task_id: str) -> str | None:
-    path = _get_metadata_path(data_dir, task_id)
-    if path.exists():
-        try:
-            return path.read_text()
-        except OSError:
-            return None
-    return None
+    try:
+        return _get_metadata_path(data_dir, task_id).read_text()
+    except OSError:
+        return None
 
 
 def _write_metadata(data_dir: Path, task_id: str, content: str):
@@ -90,12 +87,7 @@ def _write_metadata(data_dir: Path, task_id: str, content: str):
 
 
 def _delete_metadata(data_dir: Path, task_id: str):
-    path = _get_metadata_path(data_dir, task_id)
-    if path.exists():
-        try:
-            path.unlink()
-        except OSError:
-            pass
+    _get_metadata_path(data_dir, task_id).unlink(missing_ok=True)
 
 
 def _task_with_metadata(data_dir: Path, row: dict, include_content: bool = False) -> dict:

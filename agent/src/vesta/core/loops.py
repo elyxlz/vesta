@@ -11,7 +11,7 @@ from claude_agent_sdk import ClaudeSDKClient, ClaudeSDKError
 
 import vesta.models as vm
 from vesta import logger
-from vesta.core.client import process_message, build_client_options, attempt_interrupt, filter_tool_lines
+from vesta.core.client import process_message, build_client_options, attempt_interrupt, filter_tool_lines, persist_session_id
 from vesta.core.init import get_memory_path, load_prompt
 
 
@@ -147,10 +147,7 @@ async def _process_message_safely(msg: str, *, is_user: bool, state: vm.State, c
             try:
                 sid = state.client.session_id  # type: ignore[attr-defined]
                 if sid:
-                    state.session_id = sid
-                    config.session_file.parent.mkdir(parents=True, exist_ok=True)
-                    config.session_file.write_text(sid)
-                    logger.debug(f"Recovered session_id from client: {sid[:16]}...")
+                    persist_session_id(sid, state=state, config=config)
             except (AttributeError, TypeError):
                 pass
         logger.error(f"Error processing message: {error_msg}")

@@ -23,10 +23,11 @@
   let confirming = $state(false);
   let menuOpen = $state(false);
   let hovered = $state(false);
-  let stopping = $state(false);
-  let starting = $state(false);
-  let authenticating = $state(false);
-  let deleting = $state(false);
+  let operation = $state<"idle" | "stopping" | "starting" | "authenticating" | "deleting">("idle");
+  let stopping = $derived(operation === "stopping");
+  let starting = $derived(operation === "starting");
+  let authenticating = $derived(operation === "authenticating");
+  let deleting = $derived(operation === "deleting");
   let errorMsg = $state("");
   let poll: ReturnType<typeof setInterval>;
   let creatureEl: HTMLDivElement;
@@ -100,10 +101,10 @@
   async function toggleRun() {
     if (busy) return;
     errorMsg = "";
-    if (running) stopping = true;
-    else starting = true;
+    const wasStopping = running;
+    operation = running ? "stopping" : "starting";
     try {
-      if (stopping) {
+      if (wasStopping) {
         await stopAgent();
       } else {
         await startAgent();
@@ -111,10 +112,9 @@
       }
       await refresh();
     } catch (e: any) {
-      errorMsg = e?.message || (stopping ? "failed to stop" : "failed to start");
+      errorMsg = e?.message || (wasStopping ? "failed to stop" : "failed to start");
     } finally {
-      stopping = false;
-      starting = false;
+      operation = "idle";
     }
   }
 
@@ -125,7 +125,7 @@
     }
     if (busy) return;
     errorMsg = "";
-    deleting = true;
+    operation = "deleting";
     try {
       await stopAgent().catch(() => {});
       await deleteAgent();
@@ -133,7 +133,7 @@
     } catch (e: any) {
       errorMsg = e?.message || "failed to delete";
     } finally {
-      deleting = false;
+      operation = "idle";
       confirming = false;
     }
   }
@@ -145,7 +145,7 @@
   async function handleAuth() {
     if (busy) return;
     errorMsg = "";
-    authenticating = true;
+    operation = "authenticating";
     try {
       await authenticate();
       if (running) {
@@ -158,11 +158,11 @@
     } catch (e: any) {
       errorMsg = e?.message || "sign in failed";
     } finally {
-      authenticating = false;
+      operation = "idle";
     }
   }
 
-  let busy = $derived(stopping || starting || authenticating || deleting);
+  let busy = $derived(operation !== "idle");
   let running = $derived(status === "running");
   let dead = $derived(status === "dead");
   let alive = $derived(running && authenticated);

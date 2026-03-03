@@ -345,7 +345,7 @@ async def test_dreamer_triggers_automatic_restart(tmp_path):
     assert state.session_id is None
     assert state.dreamer_active is False
     assert session_count >= 2
-    assert any("Vesta restarted" in msg for msg in messages)
+    assert any("vesta restarted" in msg for msg in messages)
 
 
 # --- Nightly restart ---
@@ -367,7 +367,7 @@ def test_nightly_restart(tmp_path):
 
     assert state.session_id is None
     assert state.pending_context is not None
-    assert "Vesta restarted" in state.pending_context
+    assert "vesta restarted" in state.pending_context
     assert "Updated MEMORY.md" in state.pending_context
 
     # Without summary
@@ -379,5 +379,5 @@ def test_nightly_restart(tmp_path):
 
     assert state2.session_id is None
     assert state2.pending_context is not None
-    assert "Vesta restarted" in state2.pending_context
+    assert "vesta restarted" in state2.pending_context
     assert "Dreamer summary" not in state2.pending_context

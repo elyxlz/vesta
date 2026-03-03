@@ -21,6 +21,26 @@ def _write_cache(cache_file: pl.Path, *, content: str) -> None:
     cache_file.write_text(content)
 
 
+def _run_device_flow(app: msal.PublicClientApplication, scopes: list[str], cache_file: pl.Path) -> dict:
+    flow = app.initiate_device_flow(scopes=scopes)
+    if "user_code" not in flow:
+        raise Exception(f"Failed to get device code: {flow['error_description'] if 'error_description' in flow else 'Unknown error'}")
+
+    verification_uri = (flow["verification_uri"] if "verification_uri" in flow else None) or (flow["verification_url"] if "verification_url" in flow else None) or "https://microsoft.com/devicelogin"
+    print(f"\nTo authenticate:\n1. Visit {verification_uri}\n2. Enter code: {flow['user_code']}")
+
+    result = app.acquire_token_by_device_flow(flow)
+
+    if "error" in result:
+        raise Exception(f"Auth failed: {result['error_description'] if 'error_description' in result else result['error']}")
+
+    cache = app.token_cache
+    if isinstance(cache, msal.SerializableTokenCache) and cache.has_state_changed:
+        _write_cache(cache_file, content=cache.serialize())
+
+    return result
+
+
 def get_app(cache_file: pl.Path, *, settings: MicrosoftSettings) -> msal.PublicClientApplication:
     if not settings.microsoft_mcp_client_id:
         raise ValueError("MICROSOFT_MCP_CLIENT_ID is required")
@@ -46,19 +66,7 @@ def get_token(cache_file: pl.Path, scopes: list[str], settings: MicrosoftSetting
     result = app.acquire_token_silent(scopes, account=account)
 
     if not result:
-        flow = app.initiate_device_flow(scopes=scopes)
-        if "user_code" not in flow:
-            raise Exception(f"Failed to get device code: {flow['error_description'] if 'error_description' in flow else 'Unknown error'}")
-        verification_uri = (flow["verification_uri"] if "verification_uri" in flow else None) or (flow["verification_url"] if "verification_url" in flow else None) or "https://microsoft.com/devicelogin"
-        print(f"\nTo authenticate:\n1. Visit {verification_uri}\n2. Enter code: {flow['user_code']}")
-        result = app.acquire_token_by_device_flow(flow)
-
-    if "error" in result:
-        raise Exception(f"Auth failed: {result['error_description'] if 'error_description' in result else result['error']}")
-
-    cache = app.token_cache
-    if isinstance(cache, msal.SerializableTokenCache) and cache.has_state_changed:
-        _write_cache(cache_file, content=cache.serialize())
+        result = _run_device_flow(app, scopes, cache_file)
 
     return result["access_token"]
 
@@ -93,26 +101,7 @@ def get_account_id_by_email(email: str, cache_file: pl.Path, *, settings: Micros
 def authenticate_new_account(cache_file: pl.Path, scopes: list[str], *, settings: MicrosoftSettings) -> Account | None:
     """Authenticate a new account interactively"""
     app = get_app(cache_file, settings=settings)
-
-    flow = app.initiate_device_flow(scopes=scopes)
-    if "user_code" not in flow:
-        raise Exception(f"Failed to get device code: {flow['error_description'] if 'error_description' in flow else 'Unknown error'}")
-
-    print("\nTo authenticate:")
-    verification_uri = (flow["verification_uri"] if "verification_uri" in flow else None) or (flow["verification_url"] if "verification_url" in flow else None) or "https://microsoft.com/devicelogin"
-    print(f"1. Visit: {verification_uri}")
-    print(f"2. Enter code: {flow['user_code']}")
-    print("3. Sign in with your Microsoft account")
-    print("\nWaiting for authentication...")
-
-    result = app.acquire_token_by_device_flow(flow)
-
-    if "error" in result:
-        raise Exception(f"Auth failed: {result['error_description'] if 'error_description' in result else result['error']}")
-
-    cache = app.token_cache
-    if isinstance(cache, msal.SerializableTokenCache) and cache.has_state_changed:
-        _write_cache(cache_file, content=cache.serialize())
+    result = _run_device_flow(app, scopes, cache_file)
 
     # Get the newly added account
     accounts = app.get_accounts()
