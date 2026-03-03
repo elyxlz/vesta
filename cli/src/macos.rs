@@ -7,6 +7,7 @@ const VFKIT_BIN: &str = "vfkit";
 const VM_CPUS: u32 = 2;
 const VM_MEMORY_MIB: u32 = 4096;
 const VM_MAC: &str = "52:54:00:fe:57:a1";
+const LAUNCH_AGENT_LABEL: &str = "com.vesta.autostart";
 
 #[derive(Serialize)]
 struct StatusJson {
@@ -66,6 +67,70 @@ fn vm_kernel_path() -> PathBuf {
 
 fn vm_initrd_path() -> PathBuf {
     data_dir().join("vm-initrd")
+}
+
+fn launch_agent_path() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| die("cannot determine home directory"))
+        .join("Library")
+        .join("LaunchAgents")
+        .join(format!("{}.plist", LAUNCH_AGENT_LABEL))
+}
+
+fn install_autostart() {
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+
+    let plist_path = launch_agent_path();
+    let log_dir = plist_path.parent().unwrap().parent().unwrap().join("Logs");
+
+    let plist_content = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{label}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{exe}</string>
+        <string>start</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>{log_dir}/vesta-autostart.log</string>
+    <key>StandardErrorPath</key>
+    <string>{log_dir}/vesta-autostart.log</string>
+</dict>
+</plist>
+"#,
+        label = LAUNCH_AGENT_LABEL,
+        exe = exe.display(),
+        log_dir = log_dir.display(),
+    );
+
+    if std::fs::write(&plist_path, &plist_content).is_err() {
+        return;
+    }
+
+    let _ = process::Command::new("launchctl")
+        .args(["load", &plist_path.to_string_lossy()])
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .status();
+}
+
+fn remove_autostart() {
+    let plist_path = launch_agent_path();
+    let _ = process::Command::new("launchctl")
+        .args(["unload", &plist_path.to_string_lossy()])
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .status();
+    std::fs::remove_file(&plist_path).ok();
 }
 
 fn vm_image_ready() -> bool {
@@ -177,7 +242,7 @@ fn get_vm_ip() -> String {
         std::fs::write(vm_ip_path(), &ip).ok();
         return ip;
     }
-    die("cannot determine VM IP address. try: vesta stop && vesta start");
+    die("cannot determine VM IP address. try restarting vesta.");
 }
 
 fn resolve_vm_ip() -> Option<String> {
@@ -228,7 +293,7 @@ fn boot_vm() {
     stop_vm();
 
     if !vm_image_ready() {
-        die("VM image not found. run: vesta setup");
+        die("VM image not found. try reinstalling vesta.");
     }
 
     let vfkit = find_vfkit();
@@ -454,7 +519,10 @@ pub fn run(command: Command) {
             if build {
                 args.push("--build");
             }
-            ssh_exec_tty(&args);
+            let status = ssh_exec_tty(&args);
+            if status.success() {
+                install_autostart();
+            }
         }
 
         Command::Attach => {
@@ -531,6 +599,7 @@ pub fn run(command: Command) {
         }
 
         Command::Destroy { yes } => {
+            remove_autostart();
             ensure_vm();
             if yes {
                 ssh_exec(&["vesta", "destroy", "--yes"]);

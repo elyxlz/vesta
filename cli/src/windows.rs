@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 const WSL_DISTRO: &str = "vesta-wsl";
 const VESTA_LINUX_BIN: &str = "/usr/local/bin/vesta";
+const REGISTRY_RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 
 fn wsl_available() -> bool {
     process::Command::new("wsl.exe")
@@ -112,7 +113,7 @@ fn bootstrap_distro() {
         .unwrap_or_else(|_| die("failed to run wsl --import"));
 
     if !status.success() {
-        die("wsl --import failed. check that WSL2 is enabled and virtualization is on in BIOS.");
+        die("failed to set up WSL2 environment. ensure WSL2 is enabled and virtualization is turned on in BIOS.");
     }
 
     println!("vesta-wsl distro ready.");
@@ -156,7 +157,45 @@ fn ensure_services() {
         io::stdout().flush().ok();
     }
     println!();
-    die("docker did not start within 30s");
+    die("services did not start within 30s. try restarting and running again.");
+}
+
+fn install_autostart() {
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+
+    let value = format!("\"{}\" start", exe.display());
+    let status = process::Command::new("reg")
+        .args([
+            "add",
+            REGISTRY_RUN_KEY,
+            "/v", "Vesta",
+            "/t", "REG_SZ",
+            "/d", &value,
+            "/f",
+        ])
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .status();
+
+    if !status.map(|s| s.success()).unwrap_or(false) {
+        eprintln!("warning: failed to enable autostart on login");
+    }
+}
+
+fn remove_autostart() {
+    let _ = process::Command::new("reg")
+        .args([
+            "delete",
+            REGISTRY_RUN_KEY,
+            "/v", "Vesta",
+            "/f",
+        ])
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .status();
 }
 
 fn command_args(command: &Command) -> Vec<&str> {
@@ -209,17 +248,32 @@ fn command_args(command: &Command) -> Vec<&str> {
 
 pub fn run(command: Command) -> ! {
     if !wsl_available() {
-        die(
-            "WSL2 is not installed.\n\
-             run in an Administrator PowerShell:\n    \
-             wsl --install --no-distribution\n\
-             then reboot and run vesta again.",
-        );
+        println!("WSL2 is required but not installed. attempting to install...");
+        let status = process::Command::new("powershell.exe")
+            .args([
+                "-Command",
+                "Start-Process wsl -ArgumentList '--install','--no-distribution' -Verb RunAs -Wait -WindowStyle Hidden",
+            ])
+            .status();
+
+        if status.map(|s| s.success()).unwrap_or(false) && wsl_available() {
+            println!("WSL2 installed.");
+        } else {
+            die("WSL2 installation failed or was cancelled. reboot if you just installed it, or install manually:\n    \
+                 wsl --install --no-distribution");
+        }
     }
 
     if !distro_registered() {
         println!("first run: setting up vesta WSL2 environment...");
         bootstrap_distro();
+    }
+
+    let is_setup = matches!(command, Command::Setup { .. });
+    let is_destroy = matches!(command, Command::Destroy { .. });
+
+    if is_destroy {
+        remove_autostart();
     }
 
     ensure_services();
@@ -249,7 +303,15 @@ pub fn run(command: Command) -> ! {
             .status()
             .unwrap_or_else(|_| die("failed to execute wsl.exe"));
 
+        if is_setup && status.success() {
+            install_autostart();
+        }
+
         process::exit(status.code().unwrap_or(1));
+    }
+
+    if is_setup && status.success() {
+        install_autostart();
     }
 
     process::exit(status.code().unwrap_or(1));
