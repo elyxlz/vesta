@@ -9,7 +9,7 @@ Time to dream. When this is done, the system restarts you with fresh memory.
 
 ## Pruning
 
-MEMORY.md stays light because it's an index, not storage.
+MEMORY.md is a spectrum. Things that should be known at all times (identity, preferences, relationships, active context) live here permanently. Anything large or not needed 24/7 lives elsewhere and MEMORY.md just points to it.
 
 **Cut:**
 - Full documents, email bodies, transcripts, task-specific junk
@@ -21,8 +21,9 @@ MEMORY.md stays light because it's an index, not storage.
 - Contradictions (keep whichever one is right)
 
 **Keep:**
-- Pointers to where things live ("birthdays in Google Calendar", "grant research in onedrive/Documents/")
-- Patterns, preferences, relationships, security rules
+- Core identity, preferences, relationships, security rules
+- Active user context (User State, open threads)
+- Pointers to where larger things live ("birthdays in Google Calendar", "grant research in onedrive/Documents/")
 
 **Move:**
 - Birthdays into calendar. Contact details into the relevant skill. Domain data into its proper home

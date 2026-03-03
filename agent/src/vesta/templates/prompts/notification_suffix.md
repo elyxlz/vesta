@@ -1,1 +1,1 @@
-Think about what they're probably doing right now. Is this actually urgent to them, or just new? If it can wait, note it and bring it up later at a better time. If it can't, message them.
+Think about what they're probably doing and what time it is. Mention it at an appropriate moment — if it's late or they're deep in something, hold it for later. Match tone to the moment. Skip things they've said to stop notifying about (check Learned Patterns in MEMORY.md).
