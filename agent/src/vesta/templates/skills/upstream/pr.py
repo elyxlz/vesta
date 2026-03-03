@@ -5,7 +5,6 @@
 """Upstream PR tool — authenticates via GitHub App, pushes branch, creates PR."""
 
 import argparse
-import os
 import subprocess
 import sys
 import time
