@@ -135,9 +135,7 @@
     {/if}
   </main>
 
-  {#if tipText}
-    <div class="tooltip" style="left: {tipX}px; top: {tipY}px;">{tipText}</div>
-  {/if}
+  <div class="tooltip" class:visible={!!tipText} style="left: clamp(40px, {tipX}px, calc(100vw - 40px)); top: {tipY}px;">{tipText}</div>
 </div>
 
 <style>
@@ -345,7 +343,7 @@
 
   .tooltip {
     position: fixed;
-    transform: translate(-50%, -100%) translateY(-12px);
+    transform: translate(-50%, -100%) translateY(-8px);
     padding: 4px 10px;
     border-radius: 6px;
     font-size: 11px;
@@ -356,13 +354,14 @@
     pointer-events: none;
     white-space: nowrap;
     letter-spacing: 0.02em;
-    animation: tipIn 0.15s var(--spring);
     z-index: 200;
+    opacity: 0;
+    transition: opacity 0.12s ease, transform 0.12s ease;
   }
 
-  @keyframes tipIn {
-    from { opacity: 0; transform: translate(-50%, -100%) translateY(-6px); }
-    to { opacity: 1; transform: translate(-50%, -100%) translateY(-12px); }
+  .tooltip.visible {
+    opacity: 1;
+    transform: translate(-50%, -100%) translateY(-12px);
   }
 
   :global(.line a) {
