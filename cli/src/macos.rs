@@ -372,20 +372,8 @@ fn ensure_vm() {
     }
 }
 
-fn ssh_exec(cmd_args: &[&str]) -> process::ExitStatus {
-    let mut args = ssh_base_args();
-    args.extend(cmd_args.iter().map(|s| s.to_string()));
-    process::Command::new("ssh")
-        .args(&args)
-        .stdin(process::Stdio::inherit())
-        .stdout(process::Stdio::inherit())
-        .stderr(process::Stdio::inherit())
-        .status()
-        .unwrap_or_else(|_| die("ssh failed"))
-}
-
-fn ssh_exec_tty(cmd_args: &[&str]) -> process::ExitStatus {
-    let mut args = vec!["-t".to_string()];
+fn ssh_run(cmd_args: &[&str], tty: bool) -> process::ExitStatus {
+    let mut args = if tty { vec!["-t".to_string()] } else { vec![] };
     args.extend(ssh_base_args());
     args.extend(cmd_args.iter().map(|s| s.to_string()));
     process::Command::new("ssh")
@@ -482,20 +470,20 @@ pub fn run(command: Command) {
 
             let pubkey = std::fs::read_to_string(ssh_key_path().with_extension("pub"))
                 .unwrap_or_else(|_| die("cannot read SSH public key"));
-            ssh_exec(&[
+            ssh_run(&[
                 "sh",
                 "-c",
                 &format!(
                     "mkdir -p /root/.ssh && printf '%s\\n' '{}' > /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys",
                     pubkey.trim()
                 ),
-            ]);
+            ], false);
 
             let mut args = vec!["vesta", "setup"];
             if yes { args.push("-y"); }
             if build { args.push("--build"); }
             if let Some(ref n) = name { args.push("--name"); args.push(n); }
-            let status = ssh_exec_tty(&args);
+            let status = ssh_run(&args, true);
             if status.success() {
                 install_autostart();
             }
@@ -503,29 +491,29 @@ pub fn run(command: Command) {
 
         Command::Attach => {
             ensure_vm();
-            ssh_exec_tty(&["vesta", "attach"]);
+            ssh_run(&["vesta", "attach"], true);
         }
 
         Command::Auth { token } => {
             ensure_vm();
             match token {
                 Some(t) => {
-                    ssh_exec(&["vesta", "auth", "--token", &t]);
+                    ssh_run(&["vesta", "auth", "--token", &t], false);
                 }
                 None => {
-                    ssh_exec_tty(&["vesta", "auth"]);
+                    ssh_run(&["vesta", "auth"], true);
                 }
             }
         }
 
         Command::Shell => {
             ensure_vm();
-            ssh_exec_tty(&["vesta", "shell"]);
+            ssh_run(&["vesta", "shell"], true);
         }
 
         Command::Logs => {
             ensure_vm();
-            ssh_exec(&["vesta", "logs"]);
+            ssh_run(&["vesta", "logs"], false);
         }
 
         Command::Status { json } => {
@@ -544,25 +532,25 @@ pub fn run(command: Command) {
                 return;
             }
             if json {
-                ssh_exec(&["vesta", "status", "--json"]);
+                ssh_run(&["vesta", "status", "--json"], false);
             } else {
-                ssh_exec(&["vesta", "status"]);
+                ssh_run(&["vesta", "status"], false);
             }
         }
 
         Command::Start => {
             ensure_vm();
-            ssh_exec(&["vesta", "start"]);
+            ssh_run(&["vesta", "start"], false);
         }
 
         Command::Stop => {
             ensure_vm();
-            ssh_exec(&["vesta", "stop"]);
+            ssh_run(&["vesta", "stop"], false);
         }
 
         Command::Restart => {
             ensure_vm();
-            ssh_exec(&["vesta", "restart"]);
+            ssh_run(&["vesta", "restart"], false);
         }
 
         Command::Create { build, name } => {
@@ -570,32 +558,32 @@ pub fn run(command: Command) {
             let mut args = vec!["vesta", "create"];
             if build { args.push("--build"); }
             if let Some(ref n) = name { args.push("--name"); args.push(n); }
-            ssh_exec(&args);
+            ssh_run(&args, false);
         }
 
         Command::Backup => {
             ensure_vm();
-            ssh_exec(&["vesta", "backup"]);
+            ssh_run(&["vesta", "backup"], false);
         }
 
         Command::Destroy { yes } => {
             remove_autostart();
             ensure_vm();
             if yes {
-                ssh_exec(&["vesta", "destroy", "--yes"]);
+                ssh_run(&["vesta", "destroy", "--yes"], false);
             } else {
-                ssh_exec_tty(&["vesta", "destroy"]);
+                ssh_run(&["vesta", "destroy"], true);
             }
         }
 
         Command::Name { name } => {
             ensure_vm();
-            ssh_exec(&["vesta", "name", &name]);
+            ssh_run(&["vesta", "name", &name], false);
         }
 
         Command::Rebuild => {
             ensure_vm();
-            ssh_exec_tty(&["vesta", "rebuild"]);
+            ssh_run(&["vesta", "rebuild"], true);
         }
     }
 }

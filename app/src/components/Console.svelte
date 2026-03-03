@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { onMount, onDestroy, tick } from "svelte";
+  import { onMount, onDestroy } from "svelte";
   import { streamLogs, stopLogs } from "../lib/api";
   import { stripAnsi } from "../lib/ansi";
   import { linkify } from "../lib/linkify";
+  import { createAutoScroller } from "../lib/scroll";
   import "../styles/panel.css";
   import type { LogEvent } from "../lib/types";
 
@@ -13,20 +14,7 @@
   let nextId = 0;
   let outputEl: HTMLDivElement;
 
-  let wasNearBottom = true;
-
-  function checkNearBottom() {
-    if (!outputEl) return;
-    wasNearBottom = outputEl.scrollHeight - outputEl.scrollTop - outputEl.clientHeight < 40;
-  }
-
-  function scrollToBottom() {
-    tick().then(() => {
-      if (outputEl && wasNearBottom) {
-        outputEl.scrollTop = outputEl.scrollHeight;
-      }
-    });
-  }
+  const scroller = createAutoScroller(() => outputEl);
 
   const MAX_LINES = 500;
 
@@ -37,7 +25,7 @@
     lines.push({ id: nextId++, text: cleaned });
     if (lines.length > MAX_LINES) lines.splice(0, lines.length - MAX_LINES);
     lines = lines;
-    scrollToBottom();
+    scroller.scroll();
   }
 
   let alive = true;
@@ -71,7 +59,7 @@
     </div>
   </div>
 
-  <div class="output" bind:this={outputEl} onscroll={checkNearBottom}>
+  <div class="output" bind:this={outputEl} onscroll={scroller.check}>
     {#each lines as line (line.id)}
       <div class="line">{@html linkify(line.text)}</div>
     {/each}

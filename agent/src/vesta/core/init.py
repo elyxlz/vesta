@@ -40,20 +40,16 @@ def init_skills(config: vm.VestaConfig) -> None:
                     script.chmod(0o755)
 
 
-def is_first_start(config: vm.VestaConfig) -> bool:
+def init_main_memory(config: vm.VestaConfig) -> bool:
+    """Initialize main memory placeholders. Returns True if this is a first start."""
     memory_path = get_memory_path(config)
     if not memory_path.exists():
         return True
     content = memory_path.read_text()
-    return '[Unknown - need to ask]' in content
-
-
-def init_main_memory(config: vm.VestaConfig) -> None:
-    memory_path = get_memory_path(config)
-    if not memory_path.exists():
-        return
+    first_start = '[Unknown - need to ask]' in content
     if _replace_placeholders(memory_path, config):
         logger.init("Initialized placeholders in MEMORY.md")
+    return first_start
 
 
 def init_prompts(config: vm.VestaConfig) -> None:
