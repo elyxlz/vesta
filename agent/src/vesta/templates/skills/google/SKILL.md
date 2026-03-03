@@ -1,6 +1,6 @@
 ---
 name: google
-description: This skill should be used when the user asks about "gmail", "google email", "google calendar", "gcal", "google meet", or needs to read/send emails via Gmail, manage Google Calendar events, create Google Meet links, or handle scheduling via Google. IMPORTANT — this skill requires a background daemon. Before doing anything, immediately make sure the daemon is running. Read this skill to learn how.
+description: This skill should be used when the user asks about "gmail", "google email", "google calendar", "gcal", "google meet", or needs to read/send emails via Gmail, manage Google Calendar events, create Google Meet links, or handle scheduling via Google.
 ---
 
 # Google — CLI: google
@@ -67,14 +67,27 @@ Use `--meet-link` on calendar create to attach a Meet link to an event instead.
 
 ## Background: `google serve &`
 
+### First Use — Data Gathering
+
+On first activation with a new user, spend significant time analyzing their email and calendar data to learn their patterns. This is critical for being immediately useful:
+
+1. **Read sent emails** (`email list --label SENT --limit 50`) — reveals writing style, tone, sign-offs, key contacts
+2. **Read inbox** (`email list --limit 50`) — shows what they receive, subscriptions, who contacts them
+3. **Read calendar** (`calendar list`) — schedule, recurring commitments, timezone
+4. **Get full content** of important sent emails (`email get --id <id>`) — understand tone variations by recipient
+5. **Update this skill file** — fill in every section below with what you learned
+6. **Update MEMORY.md** — add any life details discovered (job, interests, contacts, location, relationships, etc.)
+
+Be thorough. Read dozens of emails. The more context you gather now, the better you can draft emails in their voice, manage their calendar, and anticipate needs.
+
 ### Contact Communication Styles
-[How to communicate with different contacts]
+[How to communicate with different contacts — fill in after data gathering: who are the key contacts, what tone/formality for each, language preferences]
 
 ### Email Preferences
-[User's preferred email handling patterns]
+[User's email patterns — fill in after data gathering: greeting style, sign-offs, capitalization, punctuation habits, typical length, tone]
 
 ### Scheduling Preferences
-[User's preferred meeting times, durations, buffer time]
+[User's scheduling patterns — fill in after data gathering: preferred meeting times, timezone, how they reschedule, buffer preferences]
 
 ### Regular Events
-[Recurring meetings and commitments]
+[Recurring meetings and commitments — fill in after data gathering: weekly/monthly recurring events, who with]
