@@ -2,7 +2,7 @@
 name = "microsoft"
 version = "0.1.0"
 description = "Microsoft Graph CLI for Outlook email and calendar"
-readme = "README.md"
+readme = {text = "", content-type = "text/plain"}
 authors = [
     { name = "elyxlz" }
 ]
