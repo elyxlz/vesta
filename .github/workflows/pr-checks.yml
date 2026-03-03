@@ -17,6 +17,7 @@ jobs:
           fetch-depth: 0
 
       - name: Check version bump
+        if: github.actor != 'dependabot[bot]'
         run: |
           git fetch origin master:master
           BASE_VERSION=$(git show master:agent/pyproject.toml | grep '^version = ' | cut -d'"' -f2)
