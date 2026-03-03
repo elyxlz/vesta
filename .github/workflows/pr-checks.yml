@@ -17,7 +17,7 @@ jobs:
           fetch-depth: 0
 
       - name: Check version bump
-        if: github.actor != 'dependabot[bot]'
+        if: github.event.pull_request.user.login != 'dependabot[bot]'
         run: |
           git fetch origin master:master
           BASE_VERSION=$(git show master:agent/pyproject.toml | grep '^version = ' | cut -d'"' -f2)
@@ -43,9 +43,11 @@ jobs:
           "
 
       - name: Set up uv
+        if: github.event.pull_request.user.login != 'dependabot[bot]'
         run: curl -LsSf https://astral.sh/uv/install.sh | sh
 
       - name: Check lockfile is up to date
+        if: github.event.pull_request.user.login != 'dependabot[bot]'
         working-directory: agent
         run: |
           cp uv.lock uv.lock.before
