@@ -25,7 +25,7 @@ jobs:
   version-check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Check version sync across sources
         run: |
@@ -92,7 +92,7 @@ jobs:
             vfkit: true
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -133,7 +133,7 @@ jobs:
           fi
           tar -czf ${{ matrix.artifact }}.tar.gz -C staging .
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}.tar.gz
@@ -145,7 +145,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Download CLI
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: vesta-x86_64-unknown-linux-gnu
           path: .
@@ -198,7 +198,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Download CLI
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: vesta-aarch64-apple-darwin
           path: .
@@ -233,7 +233,7 @@ jobs:
       # Validate VM image (non-PR only, since build-vm-image is skipped on PRs)
       - name: Download VM image
         if: github.event_name != 'pull_request'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: vm-image-arm64
           path: .
@@ -264,14 +264,14 @@ jobs:
             cli-artifact: vesta-aarch64-unknown-linux-gnu
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up QEMU
         if: matrix.arch == 'arm64'
         uses: docker/setup-qemu-action@v3
 
       - name: Download Linux CLI
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ${{ matrix.cli-artifact }}
           path: .
@@ -324,12 +324,12 @@ jobs:
 
           rm -f /tmp/rootfs.tar /tmp/vm-kernel /tmp/vm-initrd /tmp/vm-disk.raw
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: vm-image-${{ matrix.arch }}
           path: /tmp/vesta-vm-${{ matrix.arch }}.tar.gz
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: matrix.arch == 'amd64'
         with:
           name: wsl-rootfs
@@ -345,10 +345,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Download Linux CLI
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: vesta-x86_64-unknown-linux-gnu
           path: .
@@ -364,7 +364,7 @@ jobs:
           docker rm "$CONTAINER" > /dev/null
           rm cli/vm/vesta
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wsl-rootfs
           path: /tmp/vesta-wsl-rootfs.tar.gz
@@ -376,7 +376,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -393,7 +393,7 @@ jobs:
         run: cargo build --release --target x86_64-pc-windows-msvc
 
       - name: Download rootfs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: wsl-rootfs
           path: .
@@ -439,12 +439,12 @@ jobs:
           cp vesta-wsl-rootfs.tar.gz vesta-windows/
           7z a vesta-x86_64-pc-windows-msvc.zip vesta-windows/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: vesta-x86_64-pc-windows-msvc
           path: vesta-x86_64-pc-windows-msvc.zip
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windows-cli-exe
           path: cli/target/x86_64-pc-windows-msvc/release/vesta.exe
@@ -471,7 +471,7 @@ jobs:
             bundles: dmg
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -484,7 +484,7 @@ jobs:
           key: ${{ matrix.target }}
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
 
@@ -497,7 +497,7 @@ jobs:
             libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev
 
       - name: Download CLI sidecar
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ${{ matrix.cli-artifact }}
           path: .
@@ -542,7 +542,7 @@ jobs:
             -exec cp {} tauri-out/ \;
           [ "$(ls -A tauri-out)" ] || { echo "No artifacts collected"; exit 1; }
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: tauri-${{ matrix.target }}
           path: tauri-out/*
@@ -553,7 +553,7 @@ jobs:
     if: ${{ !failure() && !cancelled() && github.event_name != 'pull_request' }}
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -564,18 +564,18 @@ jobs:
           key: x86_64-pc-windows-msvc
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
 
       - name: Download Windows CLI sidecar
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: windows-cli-exe
           path: .
 
       - name: Download WSL rootfs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: wsl-rootfs
           path: .
@@ -590,7 +590,7 @@ jobs:
 
       - name: Cache NSIS
         id: cache-nsis
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~\AppData\Local\tauri\NSIS
           key: nsis-${{ env.NSIS_VERSION }}
@@ -626,7 +626,7 @@ jobs:
           mkdir -p tauri-out
           cp app/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe tauri-out/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: tauri-x86_64-pc-windows-msvc
           path: tauri-out/*
@@ -637,7 +637,7 @@ jobs:
     if: ${{ !failure() && !cancelled() && startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -673,10 +673,10 @@ jobs:
     if: ${{ !failure() && !cancelled() && startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
 
