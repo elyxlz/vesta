@@ -17,18 +17,82 @@ Install dependencies (first time only):
 # 1. Node.js (if not installed)
 curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y nodejs
 
-# 2. Build and install the browser CLI
+# 2. Xvfb for stealth mode (virtual display)
+apt-get install -y xvfb
+
+# 3. Build and install the browser CLI
 cd {install_root}/tools/browser && npm install && npm run build && npm install -g .
 
-# 3. Install Chromium (matched to playwright-core version)
+# 4. Install Chromium (matched to playwright-core version)
 npx playwright-core install --with-deps chromium
 ```
+
+## Stealth Mode (Bypass Bot Detection)
+
+Many sites (Cloudflare, etc.) detect and block automated browsers. The browser CLI has
+built-in stealth but **headless mode still gets caught**. For maximum stealth:
+
+### Setup: Xvfb (Virtual Display)
+
+Xvfb lets you run a headed browser without a physical screen — sites see a normal browser
+window, not headless automation.
+
+```bash
+# Install Xvfb (first time only)
+apt-get install -y xvfb
+
+# Start virtual display (once per session, before launching browser)
+Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp &
+```
+
+### Launching in Stealth Mode
+
+```bash
+# Preferred: headed via Xvfb (passes Cloudflare, bot detection)
+DISPLAY=:99 browser launch
+
+# Fallback only: headless (gets detected by Cloudflare)
+browser launch --headless
+```
+
+### What Stealth Does Under the Hood
+
+The browser CLI applies multiple layers automatically:
+
+1. **`navigator.webdriver` hidden** — injected via `addInitScript` on every page, so
+   `navigator.webdriver` returns `undefined` instead of `true`
+2. **`--disable-blink-features=AutomationControlled`** — Chrome flag that removes the
+   `AutomationControlled` feature, preventing sites from detecting Chromium automation
+3. **Headed via Xvfb** — runs a real browser window on a virtual display, avoiding all
+   the fingerprinting differences between headless and headed Chrome (screen dimensions,
+   WebGL renderer, missing plugins, etc.)
+
+### When to Use What
+
+| Scenario | Command |
+|----------|---------|
+| Sites with Cloudflare / bot detection | `DISPLAY=:99 browser launch` |
+| Simple scraping, no bot detection | `browser launch --headless` |
+| Need user's cookies/logins | `browser launch --user-data-dir <path>` |
+| Need user's live session | `browser connect http://<ip>:9222` |
+
+### Troubleshooting Stealth
+
+- **Still getting blocked?** Take a screenshot (`browser screenshot`) to see what the site shows. Some sites require solving CAPTCHAs even for headed browsers — escalate to remote control (see below)
+- **Xvfb not running?** Check with `ps aux | grep Xvfb`. If dead, restart it before launching the browser
+- **Browser crashed / zombie processes?** Kill everything and start fresh:
+  ```bash
+  pkill -f chromium || true
+  pkill -f Xvfb || true
+  Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp &
+  DISPLAY=:99 browser launch
+  ```
 
 ## Workflow
 
 1. **Launch** the browser (once per session):
    ```bash
-   browser launch
+   DISPLAY=:99 browser launch
    ```
 
 2. **Open** a page (returns a snapshot):
@@ -51,8 +115,8 @@ npx playwright-core install --with-deps chromium
 
 ```bash
 # Session
-browser launch                          # Start local browser (once per session)
-browser launch --headless               # Start headless
+DISPLAY=:99 browser launch              # Start with stealth (preferred)
+browser launch --headless               # Start headless (no bot detection bypass)
 browser launch --user-data-dir ~/.config/BraveSoftware/Brave-Browser  # Use existing profile (cookies, logins)
 browser connect http://192.168.1.10:9222  # Connect to remote browser (user's laptop, etc.)
 browser stop                            # Disconnect (remote) or stop (local)
