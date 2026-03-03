@@ -57,6 +57,11 @@ func main() {
 		command = canon
 	}
 
+	// The bash execution environment escapes ! to \! — undo that in all args
+	for i := range os.Args {
+		os.Args[i] = strings.ReplaceAll(os.Args[i], `\!`, `!`)
+	}
+
 	// Rewrite leading positional args into flags
 	positionalSpecs := map[string][]string{
 		"send-message":   {"to", "message"},
