@@ -20,6 +20,16 @@ jobs:
         if: github.event.pull_request.user.login != 'dependabot[bot]'
         run: |
           git fetch origin master:master
+
+          # Skip version bump check if only CI/workflow files changed
+          CHANGED=$(git diff --name-only master...HEAD)
+          if echo "$CHANGED" | grep -qvE '^\.github/'; then
+            : # non-CI files changed, check version bump
+          else
+            echo "✓ Only CI files changed, skipping version bump check"
+            exit 0
+          fi
+
           BASE_VERSION=$(git show master:agent/pyproject.toml | grep '^version = ' | cut -d'"' -f2)
           PR_VERSION=$(grep '^version = ' agent/pyproject.toml | cut -d'"' -f2)
 
