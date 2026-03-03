@@ -77,7 +77,7 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
     message_queue: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()
 
     ws_runner = await start_ws_server(state.event_bus, message_queue, state, config)
-    logger.init("WebSocket server started on port 7865")
+    logger.init(f"WebSocket server started on port {config.ws_port}")
 
     tasks = [
         asyncio.create_task(input_handler(message_queue, state=state)),

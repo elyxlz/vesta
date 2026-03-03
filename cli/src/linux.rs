@@ -8,6 +8,7 @@ const LOCAL_IMAGE_TAG: &str = "vesta:local";
 const MAX_DOCKERFILE_SEARCH_DEPTH: usize = 5;
 const CREDENTIALS_PATH: &str = "/root/.claude/.credentials.json";
 const CLAUDE_JSON_PATH: &str = "/root/.claude.json";
+const AGENT_WS_PORT: u16 = 7865;
 
 #[derive(PartialEq)]
 enum ContainerStatus {
@@ -25,6 +26,9 @@ struct StatusJson {
     authenticated: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     name: Option<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    agent_ready: bool,
+    ws_port: u16,
 }
 
 fn docker(args: &[&str]) -> process::ExitStatus {
@@ -117,6 +121,13 @@ fn read_container_file(container_path: &str) -> Option<String> {
 
 fn is_authenticated() -> bool {
     container_file_exists(CREDENTIALS_PATH)
+}
+
+fn is_agent_ready() -> bool {
+    docker_quiet(&[
+        "exec", CONTAINER_NAME, "bash", "-c",
+        &format!("echo > /dev/tcp/localhost/{}", AGENT_WS_PORT),
+    ])
 }
 
 fn ensure_exists() {
@@ -401,8 +412,12 @@ pub fn run(command: Command) {
             } else {
                 None
             };
+            let ready = cs == ContainerStatus::Running && is_agent_ready();
             if json {
-                let s = StatusJson { status: status_str, id, authenticated: authed, name };
+                let s = StatusJson {
+                    status: status_str, id, authenticated: authed, name,
+                    agent_ready: ready, ws_port: AGENT_WS_PORT,
+                };
                 println!("{}", serde_json::to_string(&s).unwrap());
             } else if cs == ContainerStatus::NotFound {
                 println!("no agent. run: vesta setup");
@@ -415,6 +430,9 @@ pub fn run(command: Command) {
                     println!("name:   {}", name);
                 }
                 println!("auth:   {}", if authed { "yes" } else { "no" });
+                if cs == ContainerStatus::Running {
+                    println!("ready:  {}", if ready { "yes" } else { "no" });
+                }
             }
         }
 

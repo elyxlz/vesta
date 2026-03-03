@@ -18,6 +18,7 @@ class VestaConfig(pyd_settings.BaseSettings):
     nightly_memory_hour: int | None = pyd.Field(default=4, ge=0, le=23)
     interrupt_timeout: float = pyd.Field(default=5.0, gt=0)
     max_thinking_tokens: int | None = 10000
+    ws_port: int = 7865
 
     state_dir: pl.Path = pyd.Field(default_factory=lambda: pl.Path.home())
 

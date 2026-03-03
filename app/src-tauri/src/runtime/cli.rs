@@ -118,7 +118,13 @@ pub struct AgentInfo {
     pub authenticated: bool,
     #[serde(default)]
     pub name: Option<String>,
+    #[serde(default)]
+    pub agent_ready: bool,
+    #[serde(default = "default_ws_port")]
+    pub ws_port: u16,
 }
+
+fn default_ws_port() -> u16 { 7865 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]

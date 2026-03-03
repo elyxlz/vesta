@@ -44,7 +44,6 @@
         agent.set(info);
         if (info.name) agentName.set(info.name);
         view = "home";
-        ensureWs(true);
       }
     } catch {
       view = "onboarding";
@@ -121,6 +120,7 @@
         onChat={() => setView("chat")}
         onConsole={() => setView("console")}
         onDestroyed={handleDestroyed}
+        onReady={ensureWs}
       />
     {:else if view === "chat"}
       <Chat

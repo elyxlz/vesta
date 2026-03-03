@@ -82,7 +82,6 @@ async def start_ws_server(
     config: vm.VestaConfig,
     *,
     host: str = "0.0.0.0",
-    port: int = 7865,
 ) -> web.AppRunner:
     app = web.Application()
     app["event_bus"] = event_bus
@@ -93,6 +92,6 @@ async def start_ws_server(
 
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, host, port)
+    site = web.TCPSite(runner, host, config.ws_port)
     await site.start()
     return runner

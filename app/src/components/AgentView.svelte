@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { agent, agentName, agentState, resetReconnect } from "../lib/stores";
+  import { setPort } from "../lib/ws";
   import { agentStatus, startAgent, stopAgent, restartAgent, deleteAgent, authenticate } from "../lib/api";
   import type { AgentStatus } from "../lib/types";
 
@@ -8,14 +9,17 @@
     onChat,
     onConsole,
     onDestroyed,
+    onReady,
   }: {
     onChat: () => void;
     onConsole: () => void;
     onDestroyed: () => void;
+    onReady: (ready: boolean) => void;
   } = $props();
 
   let status = $state<AgentStatus>($agent?.status ?? "unknown");
   let authenticated = $state($agent?.authenticated ?? false);
+  let agentReady = $state($agent?.agent_ready ?? false);
   let confirming = $state(false);
   let menuOpen = $state(false);
   let hovered = $state(false);
@@ -57,16 +61,20 @@
     if (busy) return;
     try {
       const info = await agentStatus();
-      if (info.status !== status || info.authenticated !== authenticated) {
+      if (info.status !== status || info.authenticated !== authenticated || info.agent_ready !== agentReady) {
         status = info.status;
         authenticated = info.authenticated;
+        agentReady = info.agent_ready;
         agent.set(info);
+        if (info.ws_port) setPort(info.ws_port);
       }
       if (info.name) agentName.set(info.name);
+      onReady(info.agent_ready);
       if (errorMsg) errorMsg = "";
     } catch {
       status = "unknown";
       authenticated = false;
+      agentReady = false;
     }
   }
 
@@ -158,6 +166,8 @@
   let running = $derived(status === "running");
   let dead = $derived(status === "dead");
   let alive = $derived(running && authenticated);
+  let operational = $derived(alive && !deleting && !stopping);
+  let fullyAlive = $derived(operational && agentReady);
   let showActions = $derived(hovered || !alive || confirming || menuOpen);
 
 </script>
@@ -175,7 +185,7 @@
     onpointerleave={onOrbLeave}
     onpointermove={onOrbMove}
   >
-    <div class="orb-container" class:alive={alive && !deleting && !stopping} class:dead={(!alive && !starting && !authenticating) || deleting || dead} class:stopping class:starting class:authenticating class:deleting class:thinking={alive && !deleting && !stopping && $agentState === 'thinking'} class:tool-use={alive && !deleting && !stopping && $agentState === 'tool_use'}>
+    <div class="orb-container" class:alive={fullyAlive} class:booting={operational && !agentReady} class:dead={(!alive && !starting && !authenticating) || deleting || dead} class:stopping class:starting class:authenticating class:deleting class:thinking={fullyAlive && $agentState === 'thinking'} class:tool-use={fullyAlive && $agentState === 'tool_use'}>
       <div class="orb-glow"></div>
       <div class="orb-body">
         <div class="orb-highlight"></div>
@@ -186,8 +196,8 @@
 
     <div class="label">
       <span class="name">{$agentName}</span>
-      <span class="status" class:alive={alive && !deleting && !stopping} class:error={!!errorMsg}>
-        {errorMsg ? errorMsg : deleting ? "deleting..." : stopping ? "stopping..." : starting ? "starting..." : authenticating ? "signing in..." : alive ? "alive" : running ? "not signed in" : dead ? "broken — delete and recreate" : "stopped"}
+      <span class="status" class:alive={fullyAlive} class:error={!!errorMsg}>
+        {errorMsg ? errorMsg : deleting ? "deleting..." : stopping ? "stopping..." : starting ? "starting..." : authenticating ? "signing in..." : fullyAlive ? "alive" : operational ? "waking up..." : running ? "not signed in" : dead ? "broken — delete and recreate" : "stopped"}
       </span>
     </div>
 
@@ -403,6 +413,20 @@
   @keyframes glow-swell {
     0%, 100% { opacity: 0.4; transform: scale(1); }
     50% { opacity: 1; transform: scale(1.12); }
+  }
+
+  /* Booting state — alive but WS not ready yet */
+  .orb-container.booting {
+    animation: float 3s ease-in-out infinite;
+  }
+
+  .orb-container.booting .orb-body {
+    background: radial-gradient(circle at 38% 32%, #c4deb8, #8ab880 50%, #6a9e5a);
+    animation: orb-breathe 2s ease-in-out infinite;
+  }
+
+  .orb-container.booting .orb-glow {
+    animation: glow-swell 1.5s ease-in-out infinite;
   }
 
   /* Authenticating state — slow pulse, waiting on user */
