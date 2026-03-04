@@ -679,6 +679,7 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           path: artifacts
+          pattern: "!*.dockerbuild"
 
       - name: Collect release assets
         run: |
