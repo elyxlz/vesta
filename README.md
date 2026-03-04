@@ -53,3 +53,31 @@ Vesta runs in a Docker container. On Linux, the CLI talks to Docker directly. On
 ## Skills
 
 Skills live in `agent/memory/skills/`. Each skill has a `SKILL.md` with setup instructions, CLI usage, and memory sections. Vesta activates skills on demand based on what you ask for.
+
+## CI
+
+CI runs on every push to `master`, every PR, and every version tag (`v*`).
+
+### What runs
+
+| Job | Trigger | What it does |
+|-----|---------|-------------|
+| **version-check** | always | Validates version is in sync across all 5 source files |
+| **build-cli** | always | Builds CLI for linux-x86_64, linux-aarch64, macos-x86_64, macos-aarch64 |
+| **test-linux** | always | E2E tests with the linux CLI (create, start, status) |
+| **test-macos** | always | Smoke tests + codesign on macOS |
+| **build-vm-image** | non-PR | Builds linux VM images (amd64 + arm64) and WSL rootfs |
+| **rootfs** | PR only | Lightweight rootfs for Windows e2e |
+| **build-test-windows** | always | Builds Windows CLI, imports WSL distro, runs e2e |
+| **build-tauri** | non-PR | Builds desktop app (deb, appimage, dmg) |
+| **build-tauri-windows** | non-PR | Builds Windows NSIS installer |
+| **push-image** | tag only | Pushes Docker image to `ghcr.io` |
+| **release** | tag only | Creates GitHub Release with all artifacts |
+
+### Releasing
+
+```bash
+./release.sh
+```
+
+Reads the version from master and creates a GitHub release. CI builds all artifacts and attaches them.
