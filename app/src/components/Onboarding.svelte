@@ -259,6 +259,7 @@
     cursor: not-allowed;
     transform: none;
     box-shadow: none;
+    pointer-events: none;
   }
 
   .btn.full {
