@@ -69,6 +69,25 @@ jobs:
           fi
           echo "✓ Tag matches version"
 
+  # ── Frontend unit tests ──────────────────────────────────────────────
+  test-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Install deps
+        working-directory: app
+        run: npm ci
+
+      - name: Run tests
+        working-directory: app
+        run: npm test
+
   # ── Build CLI (all unix targets) ──────────────────────────────────────
   build-cli:
     strategy:
@@ -83,7 +102,7 @@ jobs:
             artifact: vesta-aarch64-unknown-linux-gnu
             cross: true
           - target: aarch64-apple-darwin
-            os: macos-latest
+            os: macos-latest-xlarge
             artifact: vesta-aarch64-apple-darwin
             vfkit: true
           - target: x86_64-apple-darwin
@@ -98,6 +117,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+          components: clippy
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -113,9 +133,23 @@ jobs:
           echo '[target.aarch64-unknown-linux-gnu]' >> cli/.cargo/config.toml
           echo 'linker = "aarch64-linux-gnu-gcc"' >> cli/.cargo/config.toml
 
+      - name: Install cargo-nextest
+        if: "!matrix.cross"
+        uses: taiki-e/install-action@nextest
+
       - name: Build CLI
         working-directory: cli
         run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Clippy
+        if: "!matrix.cross"
+        working-directory: cli
+        run: cargo clippy --target ${{ matrix.target }} -- -D warnings
+
+      - name: Run tests
+        if: "!matrix.cross"
+        working-directory: cli
+        run: cargo nextest run --target ${{ matrix.target }}
 
       - name: Download vfkit
         if: matrix.vfkit
@@ -233,7 +267,7 @@ jobs:
   test-macos:
     needs: [build-cli, build-vm-image]
     if: ${{ !failure() && !cancelled() }}
-    runs-on: macos-latest
+    runs-on: macos-latest-xlarge
     timeout-minutes: 10
     steps:
       - name: Download CLI
@@ -415,7 +449,7 @@ jobs:
   # ── Build + Test Windows CLI (native MSVC) ───────────────────────────
   build-test-windows:
     needs: [rootfs, build-vm-image]
-    if: ${{ !failure() && !cancelled() }}
+    if: ${{ !failure() && !cancelled() && github.event_name != 'pull_request' }}
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -425,15 +459,27 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
+          components: clippy
 
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: cli
           key: x86_64-pc-windows-msvc
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
       - name: Build CLI
         working-directory: cli
         run: cargo build --release --target x86_64-pc-windows-msvc
+
+      - name: Clippy
+        working-directory: cli
+        run: cargo clippy --target x86_64-pc-windows-msvc -- -D warnings
+
+      - name: Run tests
+        working-directory: cli
+        run: cargo nextest run --target x86_64-pc-windows-msvc
 
       - name: Download rootfs
         uses: actions/download-artifact@v8
@@ -526,7 +572,7 @@ jobs:
             cli-artifact: vesta-x86_64-unknown-linux-gnu
             bundles: deb,appimage
           - target: aarch64-apple-darwin
-            os: macos-latest
+            os: macos-latest-xlarge
             cli-artifact: vesta-aarch64-apple-darwin
             bundles: dmg
           - target: x86_64-apple-darwin
@@ -588,6 +634,10 @@ jobs:
       - name: Install frontend deps
         working-directory: app
         run: npm ci
+
+      - name: Run frontend tests
+        working-directory: app
+        run: npm test
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
@@ -725,7 +775,7 @@ jobs:
 
   # ── Create GitHub Release (tag only) ─────────────────────────────────
   release:
-    needs: [build-cli, test-linux, test-macos, build-vm-image, build-test-windows, build-tauri, build-tauri-windows, push-image]
+    needs: [build-cli, test-frontend, test-linux, test-macos, build-vm-image, build-test-windows, build-tauri, build-tauri-windows, push-image]
     if: ${{ !failure() && !cancelled() && startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-latest
     steps:
