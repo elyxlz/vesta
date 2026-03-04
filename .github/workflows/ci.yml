@@ -102,7 +102,7 @@ jobs:
             artifact: vesta-aarch64-unknown-linux-gnu
             cross: true
           - target: aarch64-apple-darwin
-            os: macos-latest-xlarge
+            os: macos-latest
             artifact: vesta-aarch64-apple-darwin
             vfkit: true
           - target: x86_64-apple-darwin
@@ -258,7 +258,7 @@ jobs:
   test-macos:
     needs: [build-cli, build-vm-image]
     if: ${{ !failure() && !cancelled() }}
-    runs-on: macos-latest-xlarge
+    runs-on: macos-latest
     timeout-minutes: 10
     steps:
       - name: Download CLI
@@ -556,7 +556,7 @@ jobs:
             cli-artifact: vesta-x86_64-unknown-linux-gnu
             bundles: deb,appimage
           - target: aarch64-apple-darwin
-            os: macos-latest-xlarge
+            os: macos-latest
             cli-artifact: vesta-aarch64-apple-darwin
             bundles: dmg
           - target: x86_64-apple-darwin
