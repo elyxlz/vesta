@@ -114,7 +114,7 @@ fn install_autostart() {
         log_dir = log_dir.display(),
     );
 
-    if std::fs::write(&plist_path, &plist_content).is_err() {
+    if std::fs::write(&plist_path, plist_content).is_err() {
         return;
     }
 
@@ -245,8 +245,9 @@ fn boot_vm() {
     std::fs::create_dir_all(&pubkey_dir).ok();
     let pubkey_content = std::fs::read_to_string(ssh_key_path().with_extension("pub"))
         .unwrap_or_else(|_| die("cannot read SSH public key"));
-    std::fs::write(pubkey_dir.join("authorized_keys"), &pubkey_content).ok();
+    std::fs::write(pubkey_dir.join("authorized_keys"), pubkey_content).ok();
 
+    #[allow(clippy::zombie_processes)] // vfkit is a long-running VM daemon managed via PID file
     let child = process::Command::new(&vfkit)
         .args([
             &format!("--cpus={}", VM_CPUS),
