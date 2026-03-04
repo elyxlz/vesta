@@ -77,17 +77,14 @@
     }, 150);
   }
 
-  async function refresh() {
-    if (busy) return;
+  async function syncStatus() {
     try {
       const info = await agentStatus();
-      if (info.status !== status || info.authenticated !== authenticated || info.agent_ready !== agentReady) {
-        status = info.status;
-        authenticated = info.authenticated;
-        agentReady = info.agent_ready;
-        agent.set(info);
-        if (info.ws_port) setPort(info.ws_port);
-      }
+      status = info.status;
+      authenticated = info.authenticated;
+      agentReady = info.agent_ready;
+      agent.set(info);
+      if (info.ws_port) setPort(info.ws_port);
       if (info.name) agentName.set(info.name);
       onReady(info.agent_ready);
       if (errorMsg) errorMsg = "";
@@ -96,6 +93,11 @@
       authenticated = false;
       agentReady = false;
     }
+  }
+
+  async function refresh() {
+    if (busy) return;
+    await syncStatus();
   }
 
   function onDocClick(e: MouseEvent) {
@@ -139,7 +141,7 @@
         await startAgent();
         resetReconnect();
       }
-      await refresh();
+      await syncStatus();
     } catch (e: any) {
       errorMsg = e?.message || (wasStopping ? "failed to stop" : "failed to start");
     } finally {
@@ -183,7 +185,7 @@
         await startAgent();
       }
       resetReconnect();
-      await refresh();
+      await syncStatus();
     } catch (e: any) {
       errorMsg = e?.message || "sign in failed";
     } finally {
@@ -375,35 +377,25 @@
     50% { transform: scale(1.03); }
   }
 
-  /* Thinking state — faster, brighter pulse */
-  .orb-container.thinking {
+  /* Active state (thinking + tool use) — amber */
+  .orb-container.thinking,
+  .orb-container.tool-use {
     animation: float 2s ease-in-out infinite;
   }
 
-  .orb-container.thinking .orb-glow {
+  .orb-container.thinking .orb-body,
+  .orb-container.tool-use .orb-body {
+    background: radial-gradient(circle at 38% 32%, #e8d0a0, #c4a060 50%, #a08040);
+    animation: orb-breathe 1.2s ease-in-out infinite;
+  }
+
+  .orb-container.thinking .orb-glow,
+  .orb-container.tool-use .orb-glow {
+    background: radial-gradient(circle, rgba(200, 170, 100, 0.4), transparent 70%);
     animation: glow-pulse 1.2s ease-in-out infinite;
   }
 
-  .orb-container.thinking .orb-body {
-    animation: orb-breathe 1.2s ease-in-out infinite;
-    background: radial-gradient(circle at 38% 32%, #d0e8c4, #8ab880 50%, #6a9e5a);
-  }
-
-  /* Tool use state — amber */
-  .orb-container.tool-use {
-    animation: float 2.5s ease-in-out infinite;
-  }
-
-  .orb-container.tool-use .orb-body {
-    background: radial-gradient(circle at 38% 32%, #e8d0a0, #c4a060 50%, #a08040);
-    animation: orb-breathe 1.5s ease-in-out infinite;
-  }
-
-  .orb-container.tool-use .orb-glow {
-    background: radial-gradient(circle, rgba(200, 170, 100, 0.4), transparent 70%);
-    animation: glow-pulse 1.5s ease-in-out infinite;
-  }
-
+  .orb-container.thinking .orb-ambient,
   .orb-container.tool-use .orb-ambient {
     background: radial-gradient(circle, rgba(200, 170, 100, 0.12), transparent 70%);
   }
