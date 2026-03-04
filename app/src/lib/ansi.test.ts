@@ -26,6 +26,18 @@ describe("stripAnsi", () => {
     expect(stripAnsi("\x1b[1mA\x1b[0m \x1b[34mB\x1b[0m")).toBe("A B");
   });
 
+  it("strips OSC sequences with ST terminator", () => {
+    expect(stripAnsi("\x1b]0;title\x1b\\text")).toBe("text");
+  });
+
+  it("strips colon-delimited truecolor codes", () => {
+    expect(stripAnsi("\x1b[38:5:196mred\x1b[0m")).toBe("red");
+  });
+
+  it("returns empty string for escape-only input", () => {
+    expect(stripAnsi("\x1b[31m\x1b[0m")).toBe("");
+  });
+
   it("returns empty string for empty input", () => {
     expect(stripAnsi("")).toBe("");
   });

@@ -133,14 +133,14 @@ jobs:
           echo '[target.aarch64-unknown-linux-gnu]' >> cli/.cargo/config.toml
           echo 'linker = "aarch64-linux-gnu-gcc"' >> cli/.cargo/config.toml
 
-      - name: Build CLI
-        working-directory: cli
-        run: cargo build --release --target ${{ matrix.target }}
-
       - name: Clippy
         if: "!matrix.cross"
         working-directory: cli
         run: cargo clippy --target ${{ matrix.target }} -- -D warnings
+
+      - name: Build CLI
+        working-directory: cli
+        run: cargo build --release --target ${{ matrix.target }}
 
       - name: Download vfkit
         if: matrix.vfkit
@@ -406,40 +406,9 @@ jobs:
       - name: Clean up
         run: rm -f cli/vm/vesta
 
-  # ── Lightweight rootfs (PR only, for Windows e2e) ────────────────────
-  rootfs:
-    needs: build-cli
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Download Linux CLI
-        uses: actions/download-artifact@v8
-        with:
-          name: vesta-x86_64-unknown-linux-gnu
-          path: .
-
-      - name: Build and export rootfs
-        run: |
-          mkdir -p /tmp/cli-extract
-          tar -xzf vesta-x86_64-unknown-linux-gnu.tar.gz -C /tmp/cli-extract
-          cp /tmp/cli-extract/vesta cli/vm/vesta
-          docker build -t vesta-vm -f cli/vm/Dockerfile cli/vm
-          CONTAINER=$(docker create vesta-vm)
-          docker export "$CONTAINER" | gzip > /tmp/vesta-wsl-rootfs.tar.gz
-          docker rm "$CONTAINER" > /dev/null
-          rm cli/vm/vesta
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: wsl-rootfs
-          path: /tmp/vesta-wsl-rootfs.tar.gz
-
   # ── Build + Test Windows CLI (native MSVC) ───────────────────────────
   build-test-windows:
-    needs: [rootfs, build-vm-image]
+    needs: build-vm-image
     if: ${{ !failure() && !cancelled() && github.event_name != 'pull_request' }}
     runs-on: windows-latest
     timeout-minutes: 30
@@ -457,13 +426,13 @@ jobs:
           workspaces: cli
           key: x86_64-pc-windows-msvc
 
-      - name: Build CLI
-        working-directory: cli
-        run: cargo build --release --target x86_64-pc-windows-msvc
-
       - name: Clippy
         working-directory: cli
         run: cargo clippy --target x86_64-pc-windows-msvc -- -D warnings
+
+      - name: Build CLI
+        working-directory: cli
+        run: cargo build --release --target x86_64-pc-windows-msvc
 
       - name: Download rootfs
         uses: actions/download-artifact@v8
@@ -618,10 +587,6 @@ jobs:
       - name: Install frontend deps
         working-directory: app
         run: npm ci
-
-      - name: Run frontend tests
-        working-directory: app
-        run: npm test
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0

@@ -38,6 +38,21 @@ describe("linkify", () => {
     expect(linkify("`code`")).toBe("<code>code</code>");
   });
 
+  it("escapes ampersands in text", () => {
+    expect(linkify("a & b")).toBe("a &amp; b");
+  });
+
+  it("escapes ampersands in URL display text but preserves href", () => {
+    const result = linkify("https://example.com?a=1&b=2");
+    expect(result).toContain('href="https://example.com?a=1&b=2"');
+    expect(result).toContain("&amp;b=2</a>");
+  });
+
+  it("includes rel=noopener on links", () => {
+    const result = linkify("https://example.com");
+    expect(result).toContain('rel="noopener"');
+  });
+
   it("handles empty string", () => {
     expect(linkify("")).toBe("");
   });
