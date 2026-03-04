@@ -209,29 +209,41 @@ fn create_container(image: &str) {
     }
 }
 
-fn obtain_credentials() -> String {
+fn obtain_credentials(image: &str) -> String {
     println!("authenticating claude...");
     println!("a browser window will open. sign in, then come back here.\n");
 
-    let status = process::Command::new("claude")
-        .args(["setup-token"])
+    let tmp_dir = std::env::temp_dir().join(format!("vesta_auth_{}", std::process::id()));
+    std::fs::create_dir_all(&tmp_dir)
+        .unwrap_or_else(|e| die(&format!("failed to create temp dir: {}", e)));
+
+    let mount = format!("{}:/tmp/claude-creds", tmp_dir.display());
+    let status = process::Command::new("docker")
+        .args([
+            "run", "--rm", "-it",
+            "-v", &mount,
+            "--entrypoint", "sh",
+            image,
+            "-c", "claude setup-token && cp /root/.claude/.credentials.json /tmp/claude-creds/",
+        ])
         .stdin(process::Stdio::inherit())
         .stdout(process::Stdio::inherit())
         .stderr(process::Stdio::inherit())
         .status()
-        .unwrap_or_else(|_| die("failed to run 'claude setup-token'.\ninstall claude code: npm install -g @anthropic-ai/claude-code"));
+        .unwrap_or_else(|_| die("failed to run claude setup-token"));
 
     if !status.success() {
+        std::fs::remove_dir_all(&tmp_dir).ok();
         die("claude setup-token failed");
     }
 
-    let creds_path = dirs::home_dir()
-        .unwrap_or_else(|| die("cannot determine home directory"))
-        .join(".claude")
-        .join(".credentials.json");
-
-    std::fs::read_to_string(&creds_path)
-        .unwrap_or_else(|_| die("could not read ~/.claude/.credentials.json after setup-token"))
+    let creds = std::fs::read_to_string(tmp_dir.join(".credentials.json"))
+        .unwrap_or_else(|_| {
+            std::fs::remove_dir_all(&tmp_dir).ok();
+            die("could not read credentials after setup-token")
+        });
+    std::fs::remove_dir_all(&tmp_dir).ok();
+    creds
 }
 
 fn docker_cp_content(container: &str, content: &str, dest: &str) {
@@ -276,8 +288,7 @@ pub fn run(command: Command) {
             }
 
             let image = resolve_image(build);
-
-            let credentials = obtain_credentials();
+            let credentials = obtain_credentials(image);
 
             println!("creating agent...");
             create_container(image);
@@ -359,7 +370,9 @@ pub fn run(command: Command) {
 
         Command::Auth { token: credentials } => {
             ensure_exists();
-            let credentials = credentials.unwrap_or_else(|| obtain_credentials());
+            let image = docker_output(&["inspect", "--format", "{{.Config.Image}}", CONTAINER_NAME])
+                .unwrap_or_else(|| VESTA_IMAGE.to_string());
+            let credentials = credentials.unwrap_or_else(|| obtain_credentials(&image));
             inject_credentials(CONTAINER_NAME, &credentials);
             println!("authenticated");
         }

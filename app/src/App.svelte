@@ -172,6 +172,10 @@
     }
   }
 
+  :global(html) {
+    background: transparent;
+  }
+
   :global(body) {
     font-family: "Inter", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
     background: transparent;
