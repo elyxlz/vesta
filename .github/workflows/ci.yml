@@ -175,20 +175,63 @@ jobs:
           }
           trap cleanup EXIT
 
-          echo "=== vesta --version ==="
+          echo "=== basic commands ==="
           "$CLI" --version
+          "$CLI" --help
 
-          echo "=== vesta status --json ==="
-          "$CLI" status --json
+          echo "=== status before create ==="
+          STATUS=$("$CLI" status --json)
+          echo "$STATUS"
+          echo "$STATUS" | jq -e '.status == "not_found"'
 
-          echo "=== vesta create ==="
-          "$CLI" create
+          echo "=== create with name ==="
+          "$CLI" create --name "ci-test-agent"
 
-          echo "=== vesta start ==="
+          echo "=== status after create (stopped) ==="
+          STATUS=$("$CLI" status --json)
+          echo "$STATUS" | jq -e '.status == "stopped" or .status == "created"'
+          echo "$STATUS" | jq -e '.name == "ci-test-agent"'
+
+          echo "=== auth with token ==="
+          FAKE_CREDS='{"claudeAiOauth":{"accessToken":"ci-test","refreshToken":"ci-test","expiresAt":"2099-01-01T00:00:00Z"}}'
+          "$CLI" auth --token "$FAKE_CREDS"
+
+          echo "=== verify authenticated ==="
+          STATUS=$("$CLI" status --json)
+          echo "$STATUS" | jq -e '.authenticated == true'
+
+          echo "=== start ==="
           "$CLI" start
 
-          echo "=== vesta status --json ==="
-          "$CLI" status --json
+          echo "=== status running ==="
+          STATUS=$("$CLI" status --json)
+          echo "$STATUS" | jq -e '.status == "running"'
+
+          echo "=== stop ==="
+          "$CLI" stop
+          STATUS=$("$CLI" status --json)
+          echo "$STATUS" | jq -e '.status != "running"'
+
+          echo "=== restart ==="
+          "$CLI" start
+          "$CLI" restart
+          STATUS=$("$CLI" status --json)
+          echo "$STATUS" | jq -e '.status == "running"'
+
+          echo "=== rename ==="
+          "$CLI" name "renamed-agent"
+          STATUS=$("$CLI" status --json)
+          echo "$STATUS" | jq -e '.name == "renamed-agent"'
+
+          echo "=== backup ==="
+          "$CLI" backup
+
+          echo "=== destroy ==="
+          "$CLI" destroy --yes
+          STATUS=$("$CLI" status --json)
+          echo "$STATUS" | jq -e '.status == "not_found"'
+
+          echo "=== all tests passed ==="
 
   # ── Test macOS CLI ────────────────────────────────────────────────────
   test-macos:
@@ -214,14 +257,18 @@ jobs:
           set -euo pipefail
           CLI="cli-extract/vesta"
 
-          echo "=== vesta --version ==="
+          echo "=== basic commands ==="
           "$CLI" --version
+          "$CLI" --help
 
-          echo "=== vesta status --json ==="
-          "$CLI" status --json
+          echo "=== status without VM ==="
+          STATUS=$("$CLI" status --json)
+          echo "$STATUS"
+          echo "$STATUS" | jq -e '.status'
 
-          echo "=== verify vfkit exists ==="
+          echo "=== verify vfkit ==="
           ls -la cli-extract/vfkit
+          file cli-extract/vfkit
 
       - name: Ad-hoc sign and verify
         run: |
@@ -399,11 +446,13 @@ jobs:
           path: .
 
       - name: E2E test
-        timeout-minutes: 5
+        timeout-minutes: 10
         shell: bash
         run: |
           set -euo pipefail
           CLI="cli/target/x86_64-pc-windows-msvc/release/vesta.exe"
+          WSL="MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec"
+          VCLI="/usr/local/bin/vesta"
 
           cleanup() {
             echo "=== Cleanup ==="
@@ -411,25 +460,46 @@ jobs:
           }
           trap cleanup EXIT
 
-          echo "=== vesta --version ==="
+          echo "=== windows cli basics ==="
           "$CLI" --version
+          "$CLI" --help
 
-          echo "=== verify rootfs exists and is valid ==="
+          echo "=== verify rootfs ==="
           ls -la vesta-wsl-rootfs.tar.gz
           file vesta-wsl-rootfs.tar.gz
 
-          echo "=== WSL import test ==="
+          echo "=== WSL import ==="
           INSTALL_DIR="$LOCALAPPDATA\\vesta-wsl-test"
           mkdir -p "$INSTALL_DIR"
           wsl.exe --import vesta-wsl "$INSTALL_DIR" vesta-wsl-rootfs.tar.gz --version 2
           echo "import succeeded"
 
-          echo "=== verify distro runs ==="
+          echo "=== distro health ==="
           MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec /bin/true
           echo "distro is healthy"
 
-          echo "=== verify vesta binary inside distro ==="
-          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec /usr/local/bin/vesta --version
+          echo "=== linux cli inside WSL ==="
+          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec $VCLI --version
+          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec $VCLI --help
+
+          echo "=== start entrypoint for docker ==="
+          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec /entrypoint.sh &
+          ENTRY_PID=$!
+
+          echo "=== wait for docker ==="
+          for i in $(seq 1 30); do
+            if MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec test -S /var/run/docker.sock 2>/dev/null; then
+              echo "docker ready after ${i}s"
+              break
+            fi
+            [ "$i" -eq 30 ] && { echo "docker not ready"; exit 1; }
+            sleep 1
+          done
+
+          echo "=== status before create ==="
+          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec $VCLI status --json
+
+          echo "=== all tests passed ==="
 
       - name: Package Windows CLI zip
         shell: bash
