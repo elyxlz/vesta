@@ -135,7 +135,7 @@
     {/if}
   </main>
 
-  <div class="tooltip" class:visible={!!tipText} style="left: clamp(40px, {tipX}px, calc(100vw - 40px)); top: {tipY}px;">{tipText}</div>
+  <div class="tooltip" class:visible={!!tipText} style="left: clamp(40px, {tipX}px, calc(100vw - 40px)); top: clamp(28px, {tipY}px, calc(100vh - 20px));">{tipText}</div>
 </div>
 
 <style>
@@ -187,12 +187,7 @@
   }
 
   :global(:focus-visible) {
-    outline: 2px solid rgba(139, 126, 116, 0.4);
-    outline-offset: 2px;
-  }
-
-  .window.dark :global(:focus-visible) {
-    outline-color: rgba(255, 255, 255, 0.25);
+    outline: none;
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -254,12 +249,13 @@
 
   .window-controls {
     display: flex;
-    gap: 8px;
+    gap: 0;
+    margin-left: -6px;
   }
 
   .wc {
-    width: 12px;
-    height: 12px;
+    width: 24px;
+    height: 24px;
     border-radius: 50%;
     border: none;
     cursor: pointer;
@@ -269,13 +265,23 @@
     transition: all 0.15s var(--spring-bouncy);
     padding: 0;
     color: transparent;
+    background: transparent;
+    position: relative;
   }
 
-  .wc.close {
+  .wc::after {
+    content: "";
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    position: absolute;
+  }
+
+  .wc.close::after {
     background: #ed6a5f;
   }
 
-  .wc.minimize {
+  .wc.minimize::after {
     background: #f6be50;
   }
 
@@ -317,6 +323,7 @@
     justify-content: center;
     width: 100%;
     height: 100%;
+    user-select: none;
   }
 
   .logo-mark {
@@ -399,6 +406,10 @@
 
     :global(body) {
       color: #e8e0d8;
+    }
+
+    :global(::selection) {
+      background: rgba(139, 126, 116, 0.4);
     }
 
     .logo-mark {

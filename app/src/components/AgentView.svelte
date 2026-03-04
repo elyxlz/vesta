@@ -225,7 +225,7 @@
 
     <div class="label">
       <span class="name">{$agentName}</span>
-      <span class="status" class:alive={fullyAlive} class:error={!!errorMsg}>
+      <span class="status" class:alive={fullyAlive} class:error={!!errorMsg} title={errorMsg || ""}>
         {errorMsg ? errorMsg : deleting ? "deleting..." : stopping ? "stopping..." : starting ? "starting..." : authenticating ? "signing in..." : fullyAlive ? "alive" : operational ? "waking up..." : running ? "not signed in" : dead ? "broken — delete and recreate" : "stopped"}
       </span>
     </div>
@@ -527,6 +527,7 @@
     align-items: center;
     gap: 4px;
     max-width: 100%;
+    user-select: none;
   }
 
   .name {
@@ -641,6 +642,7 @@
   .action-btn:disabled {
     opacity: 0.25;
     cursor: not-allowed;
+    pointer-events: none;
   }
 
   .menu-wrapper {
@@ -703,6 +705,7 @@
   .menu-item:disabled {
     opacity: 0.25;
     cursor: not-allowed;
+    pointer-events: none;
   }
 
   @media (prefers-color-scheme: dark) {

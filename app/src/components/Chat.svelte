@@ -104,6 +104,12 @@
     }
   }
 
+  function handleGlobalKeydown(e: KeyboardEvent) {
+    if (e.key === "Escape" && (!input.trim() || document.activeElement !== inputEl)) {
+      onBack();
+    }
+  }
+
   function resizeInput() {
     if (!inputEl) return;
     inputEl.style.height = "auto";
@@ -125,7 +131,8 @@
   onDestroy(() => { if (disconnectTimer) clearTimeout(disconnectTimer); });
 </script>
 
-<div class="panel">
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="panel" onkeydown={handleGlobalKeydown}>
   <div class="topbar">
     <button class="back-btn" onclick={onBack} aria-label="back" data-tip="back">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -203,6 +210,7 @@
     cursor: pointer;
     padding: 4px 6px;
     border-radius: 4px;
+    corner-shape: squircle;
     transition: all 0.2s var(--spring);
     display: flex;
     align-items: center;
@@ -211,6 +219,10 @@
   .tool-toggle:hover {
     color: rgba(255, 255, 255, 0.5);
     background: rgba(255, 255, 255, 0.05);
+  }
+
+  .tool-toggle:active {
+    transform: scale(0.95);
   }
 
   .tool-toggle.active {
@@ -305,12 +317,10 @@
     max-height: 120px;
   }
 
-  .input-bar textarea:focus-visible {
-    outline: 2px solid rgba(255, 255, 255, 0.25);
-    outline-offset: 2px;
-    border-radius: 4px;
-  }
+  .input-bar textarea::-webkit-scrollbar { width: 4px; }
+  .input-bar textarea::-webkit-scrollbar-track { background: transparent; }
+  .input-bar textarea::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 2px; }
 
   .input-bar textarea::placeholder { color: rgba(255, 255, 255, 0.35); }
-  .input-bar textarea:disabled { opacity: 0.25; }
+  .input-bar textarea:disabled { opacity: 0.25; cursor: not-allowed; }
 </style>

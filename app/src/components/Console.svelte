@@ -19,6 +19,7 @@
   const MAX_LINES = 5000;
 
   let streamEnded = $state(false);
+  let suppressAnim = $state(true);
 
   function addLine(text: string) {
     const cleaned = stripAnsi(text).trimEnd();
@@ -31,6 +32,7 @@
   let alive = true;
 
   onMount(async () => {
+    requestAnimationFrame(() => { suppressAnim = false; });
     try {
       await streamLogs((ev: LogEvent) => {
         if (!alive) return;
@@ -45,9 +47,14 @@
     alive = false;
     stopLogs().catch(() => {});
   });
+
+  function handleKeydown(e: KeyboardEvent) {
+    if (e.key === "Escape") onBack();
+  }
 </script>
 
-<div class="panel">
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="panel" onkeydown={handleKeydown}>
   <div class="topbar">
     <button class="back-btn" onclick={onBack} aria-label="back" data-tip="back">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -59,7 +66,7 @@
     </div>
   </div>
 
-  <div class="output" bind:this={outputEl} onscroll={scroller.check}>
+  <div class="output" class:no-anim={suppressAnim} bind:this={outputEl} onscroll={scroller.check}>
     {#each lines as line (line.id)}
       <div class="line">{@html linkify(line.text)}</div>
     {/each}
@@ -82,7 +89,8 @@
 
   .stream-ended {
     color: rgba(255, 255, 255, 0.25);
-    font-style: italic;
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    font-size: 12px;
     text-align: center;
     padding: 8px 0;
   }
