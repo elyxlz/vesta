@@ -26,7 +26,7 @@ dirs = "6"
 strip = true
 lto = true
 codegen-units = 1
-opt-level = "z"
+opt-level = "s"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 window-vibrancy = "0.6"

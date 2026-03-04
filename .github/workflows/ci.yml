@@ -169,6 +169,15 @@ jobs:
           set -euo pipefail
           CLI="cli-extract/vesta"
 
+          assert_status() {
+            local s
+            s=$("$CLI" status --json)
+            echo "$s"
+            for expr in "$@"; do
+              echo "$s" | jq -e "$expr" || { echo "FAIL: $expr"; exit 1; }
+            done
+          }
+
           cleanup() {
             echo "=== Cleanup ==="
             "$CLI" destroy --yes 2>/dev/null || true
@@ -180,56 +189,43 @@ jobs:
           "$CLI" --help
 
           echo "=== status before create ==="
-          STATUS=$("$CLI" status --json)
-          echo "$STATUS"
-          echo "$STATUS" | jq -e '.status == "not_found"'
+          assert_status '.status == "not_found"'
 
           echo "=== create with name ==="
           "$CLI" create --name "ci-test-agent"
 
-          echo "=== status after create (stopped) ==="
-          STATUS=$("$CLI" status --json)
-          echo "$STATUS" | jq -e '.status == "stopped" or .status == "created"'
-          echo "$STATUS" | jq -e '.name == "ci-test-agent"'
+          echo "=== status after create ==="
+          assert_status '.status == "stopped" or .status == "created"' '.name == "ci-test-agent"'
 
           echo "=== auth with token ==="
-          FAKE_CREDS='{"claudeAiOauth":{"accessToken":"ci-test","refreshToken":"ci-test","expiresAt":"2099-01-01T00:00:00Z"}}'
-          "$CLI" auth --token "$FAKE_CREDS"
+          "$CLI" auth --token '{"claudeAiOauth":{"accessToken":"ci-test","refreshToken":"ci-test","expiresAt":"2099-01-01T00:00:00Z"}}'
 
           echo "=== verify authenticated ==="
-          STATUS=$("$CLI" status --json)
-          echo "$STATUS" | jq -e '.authenticated == true'
+          assert_status '.authenticated == true'
 
           echo "=== start ==="
           "$CLI" start
-
-          echo "=== status running ==="
-          STATUS=$("$CLI" status --json)
-          echo "$STATUS" | jq -e '.status == "running"'
+          assert_status '.status == "running"'
 
           echo "=== stop ==="
           "$CLI" stop
-          STATUS=$("$CLI" status --json)
-          echo "$STATUS" | jq -e '.status != "running"'
+          assert_status '.status != "running"'
 
           echo "=== restart ==="
           "$CLI" start
           "$CLI" restart
-          STATUS=$("$CLI" status --json)
-          echo "$STATUS" | jq -e '.status == "running"'
+          assert_status '.status == "running"'
 
           echo "=== rename ==="
           "$CLI" name "renamed-agent"
-          STATUS=$("$CLI" status --json)
-          echo "$STATUS" | jq -e '.name == "renamed-agent"'
+          assert_status '.name == "renamed-agent"'
 
           echo "=== backup ==="
           "$CLI" backup
 
           echo "=== destroy ==="
           "$CLI" destroy --yes
-          STATUS=$("$CLI" status --json)
-          echo "$STATUS" | jq -e '.status == "not_found"'
+          assert_status '.status == "not_found"'
 
           echo "=== all tests passed ==="
 
@@ -451,7 +447,6 @@ jobs:
         run: |
           set -euo pipefail
           CLI="cli/target/x86_64-pc-windows-msvc/release/vesta.exe"
-          WSL="MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec"
           VCLI="/usr/local/bin/vesta"
 
           cleanup() {

@@ -434,6 +434,7 @@ fn download_vm_image() {
     std::fs::remove_file(&tmp_path).ok();
 
     if !status.success() {
+        clean_vm_image();
         die("failed to extract VM image");
     }
 }
