@@ -63,7 +63,7 @@ mv "$DISK" "$OUTPUT_DIR/vm-disk.raw"
 # Package
 echo "packaging..."
 cd "$OUTPUT_DIR"
-tar -czf "vesta-vm-${ARCH}.tar.gz" vm-kernel vm-initrd vm-disk.raw
+tar --zstd -cf "vesta-vm-${ARCH}.tar.zst" vm-kernel vm-initrd vm-disk.raw
 rm -f vm-kernel vm-initrd vm-disk.raw
 
-echo "done: $OUTPUT_DIR/vesta-vm-${ARCH}.tar.gz"
+echo "done: $OUTPUT_DIR/vesta-vm-${ARCH}.tar.zst"

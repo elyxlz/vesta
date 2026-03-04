@@ -242,7 +242,7 @@ jobs:
         if: github.event_name != 'pull_request'
         run: |
           set -euo pipefail
-          tar -xzf vesta-vm-arm64.tar.gz
+          tar --zstd -xf vesta-vm-arm64.tar.zst
           for f in vm-kernel vm-initrd vm-disk.raw; do
             echo "=== verify $f ==="
             file "$f"
@@ -319,7 +319,7 @@ jobs:
           done
 
           cd /tmp
-          tar -czf vesta-vm-${{ matrix.arch }}.tar.gz vm-kernel vm-initrd vm-disk.raw
+          tar --zstd -cf vesta-vm-${{ matrix.arch }}.tar.zst vm-kernel vm-initrd vm-disk.raw
           gzip -c /tmp/rootfs.tar > /tmp/vesta-wsl-rootfs.tar.gz
 
           rm -f /tmp/rootfs.tar /tmp/vm-kernel /tmp/vm-initrd /tmp/vm-disk.raw
@@ -327,7 +327,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: vm-image-${{ matrix.arch }}
-          path: /tmp/vesta-vm-${{ matrix.arch }}.tar.gz
+          path: /tmp/vesta-vm-${{ matrix.arch }}.tar.zst
 
       - uses: actions/upload-artifact@v7
         if: matrix.arch == 'amd64'
@@ -436,7 +436,6 @@ jobs:
         run: |
           mkdir vesta-windows
           cp cli/target/x86_64-pc-windows-msvc/release/vesta.exe vesta-windows/
-          cp vesta-wsl-rootfs.tar.gz vesta-windows/
           7z a vesta-x86_64-pc-windows-msvc.zip vesta-windows/
 
       - uses: actions/upload-artifact@v7
@@ -574,19 +573,11 @@ jobs:
           name: windows-cli-exe
           path: .
 
-      - name: Download WSL rootfs
-        uses: actions/download-artifact@v8
-        with:
-          name: wsl-rootfs
-          path: .
-
-      - name: Install CLI sidecar and rootfs
+      - name: Install CLI sidecar
         shell: bash
         run: |
           mkdir -p app/src-tauri/binaries
           cp vesta.exe app/src-tauri/binaries/vesta-x86_64-pc-windows-msvc.exe
-          mkdir -p app/src-tauri/resources
-          cp vesta-wsl-rootfs.tar.gz app/src-tauri/resources/
 
       - name: Cache NSIS
         id: cache-nsis
@@ -685,7 +676,7 @@ jobs:
         run: |
           mkdir release
           find artifacts -type f \( \
-            -name '*.tar.gz' -o -name '*.zip' -o \
+            -name '*.tar.gz' -o -name '*.tar.zst' -o -name '*.zip' -o \
             -name '*.deb' -o -name '*.AppImage' -o -name '*.dmg' -o \
             -name '*-setup.exe' -o -name '*_x64-setup.exe' \
           \) -exec cp {} release/ \;

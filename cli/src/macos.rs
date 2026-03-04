@@ -396,7 +396,7 @@ fn download_vm_image() {
     };
 
     let repo = "elyxlz/vesta";
-    let asset = format!("vesta-vm-{}.tar.gz", arch);
+    let asset = format!("vesta-vm-{}.tar.zst", arch);
     let tmp_path = dir.join(format!("{}.tmp", &asset));
 
     println!("downloading VM image ({})...", arch);
@@ -419,29 +419,17 @@ fn download_vm_image() {
         die("failed to download VM image. check your internet connection.");
     }
 
-    let valid = process::Command::new("tar")
-        .args(["-tzf", tmp_path.to_str().unwrap()])
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-
-    if !valid {
-        std::fs::remove_file(&tmp_path).ok();
-        die("downloaded VM image is corrupt. try again.");
-    }
-
     println!("extracting VM image...");
     let status = process::Command::new("tar")
         .args([
-            "-xzf",
+            "--zstd",
+            "-xf",
             tmp_path.to_str().unwrap(),
             "-C",
             dir.to_str().unwrap(),
         ])
         .status()
-        .unwrap_or_else(|_| die("failed to extract VM image"));
+        .unwrap_or_else(|_| die("failed to extract VM image. ensure zstd is installed."));
 
     std::fs::remove_file(&tmp_path).ok();
 

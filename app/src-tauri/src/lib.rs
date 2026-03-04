@@ -9,8 +9,6 @@ pub fn run() {
     let app_state = AppState::new();
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_dialog::init())
         .manage(app_state)
         .setup(|_app| {
             #[cfg(any(target_os = "macos", target_os = "windows"))]
