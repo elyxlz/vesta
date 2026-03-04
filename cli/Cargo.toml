@@ -1,6 +1,6 @@
 [package]
 name = "vesta"
-version = "0.1.31"
+version = "0.1.32"
 description = "Vesta CLI for managing the personal assistant agent"
 license = "MIT"
 repository = "https://github.com/elyxlz/vesta"
