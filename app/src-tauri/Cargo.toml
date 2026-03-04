@@ -1,6 +1,6 @@
 [package]
 name = "vesta-app"
-version = "0.1.32"
+version = "0.1.33"
 description = "Vesta desktop app"
 license = "MIT"
 repository = "https://github.com/elyxlz/vesta"
@@ -16,13 +16,17 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = ["macos-private-api"] }
-tauri-plugin-dialog = "2"
-tauri-plugin-shell = "2"
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util", "process", "fs", "time"] }
 tokio-util = "0.7"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 dirs = "6"
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+opt-level = "s"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 window-vibrancy = "0.6"

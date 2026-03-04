@@ -69,6 +69,25 @@ jobs:
           fi
           echo "✓ Tag matches version"
 
+  # ── Frontend unit tests ──────────────────────────────────────────────
+  test-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Install deps
+        working-directory: app
+        run: npm ci
+
+      - name: Run tests
+        working-directory: app
+        run: npm test
+
   # ── Build CLI (all unix targets) ──────────────────────────────────────
   build-cli:
     strategy:
@@ -98,6 +117,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+          components: clippy
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -112,6 +132,11 @@ jobs:
           mkdir -p cli/.cargo
           echo '[target.aarch64-unknown-linux-gnu]' >> cli/.cargo/config.toml
           echo 'linker = "aarch64-linux-gnu-gcc"' >> cli/.cargo/config.toml
+
+      - name: Clippy
+        if: "!matrix.cross"
+        working-directory: cli
+        run: cargo clippy --target ${{ matrix.target }} -- -D warnings
 
       - name: Build CLI
         working-directory: cli
@@ -169,26 +194,65 @@ jobs:
           set -euo pipefail
           CLI="cli-extract/vesta"
 
+          assert_status() {
+            local s
+            s=$("$CLI" status --json)
+            echo "$s"
+            for expr in "$@"; do
+              echo "$s" | jq -e "$expr" || { echo "FAIL: $expr"; exit 1; }
+            done
+          }
+
           cleanup() {
             echo "=== Cleanup ==="
             "$CLI" destroy --yes 2>/dev/null || true
           }
           trap cleanup EXIT
 
-          echo "=== vesta --version ==="
+          echo "=== basic commands ==="
           "$CLI" --version
+          "$CLI" --help
 
-          echo "=== vesta status --json ==="
-          "$CLI" status --json
+          echo "=== status before create ==="
+          assert_status '.status == "not_found"'
 
-          echo "=== vesta create ==="
-          "$CLI" create
+          echo "=== create with name ==="
+          "$CLI" create --name "ci-test-agent"
 
-          echo "=== vesta start ==="
+          echo "=== status after create ==="
+          assert_status '.status == "stopped" or .status == "created"' '.name == "ci-test-agent"'
+
+          echo "=== auth with token ==="
+          "$CLI" auth --token '{"claudeAiOauth":{"accessToken":"ci-test","refreshToken":"ci-test","expiresAt":"2099-01-01T00:00:00Z"}}'
+
+          echo "=== verify authenticated ==="
+          assert_status '.authenticated == true'
+
+          echo "=== start ==="
           "$CLI" start
+          assert_status '.status == "running"'
 
-          echo "=== vesta status --json ==="
-          "$CLI" status --json
+          echo "=== stop ==="
+          "$CLI" stop
+          assert_status '.status != "running"'
+
+          echo "=== restart ==="
+          "$CLI" start
+          "$CLI" restart
+          assert_status '.status == "running"'
+
+          echo "=== rename ==="
+          "$CLI" name "renamed-agent"
+          assert_status '.name == "renamed-agent"'
+
+          echo "=== backup ==="
+          "$CLI" backup
+
+          echo "=== destroy ==="
+          "$CLI" destroy --yes
+          assert_status '.status == "not_found"'
+
+          echo "=== all tests passed ==="
 
   # ── Test macOS CLI ────────────────────────────────────────────────────
   test-macos:
@@ -214,14 +278,18 @@ jobs:
           set -euo pipefail
           CLI="cli-extract/vesta"
 
-          echo "=== vesta --version ==="
+          echo "=== basic commands ==="
           "$CLI" --version
+          "$CLI" --help
 
-          echo "=== vesta status --json ==="
-          "$CLI" status --json
+          echo "=== status without VM ==="
+          STATUS=$("$CLI" status --json)
+          echo "$STATUS"
+          echo "$STATUS" | jq -e '.status'
 
-          echo "=== verify vfkit exists ==="
+          echo "=== verify vfkit ==="
           ls -la cli-extract/vfkit
+          file cli-extract/vfkit
 
       - name: Ad-hoc sign and verify
         run: |
@@ -242,7 +310,7 @@ jobs:
         if: github.event_name != 'pull_request'
         run: |
           set -euo pipefail
-          tar -xzf vesta-vm-arm64.tar.gz
+          tar --zstd -xf vesta-vm-arm64.tar.zst
           for f in vm-kernel vm-initrd vm-disk.raw; do
             echo "=== verify $f ==="
             file "$f"
@@ -319,7 +387,7 @@ jobs:
           done
 
           cd /tmp
-          tar -czf vesta-vm-${{ matrix.arch }}.tar.gz vm-kernel vm-initrd vm-disk.raw
+          tar --zstd -cf vesta-vm-${{ matrix.arch }}.tar.zst vm-kernel vm-initrd vm-disk.raw
           gzip -c /tmp/rootfs.tar > /tmp/vesta-wsl-rootfs.tar.gz
 
           rm -f /tmp/rootfs.tar /tmp/vm-kernel /tmp/vm-initrd /tmp/vm-disk.raw
@@ -327,7 +395,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: vm-image-${{ matrix.arch }}
-          path: /tmp/vesta-vm-${{ matrix.arch }}.tar.gz
+          path: /tmp/vesta-vm-${{ matrix.arch }}.tar.zst
 
       - uses: actions/upload-artifact@v7
         if: matrix.arch == 'amd64'
@@ -338,41 +406,10 @@ jobs:
       - name: Clean up
         run: rm -f cli/vm/vesta
 
-  # ── Lightweight rootfs (PR only, for Windows e2e) ────────────────────
-  rootfs:
-    needs: build-cli
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Download Linux CLI
-        uses: actions/download-artifact@v8
-        with:
-          name: vesta-x86_64-unknown-linux-gnu
-          path: .
-
-      - name: Build and export rootfs
-        run: |
-          mkdir -p /tmp/cli-extract
-          tar -xzf vesta-x86_64-unknown-linux-gnu.tar.gz -C /tmp/cli-extract
-          cp /tmp/cli-extract/vesta cli/vm/vesta
-          docker build -t vesta-vm -f cli/vm/Dockerfile cli/vm
-          CONTAINER=$(docker create vesta-vm)
-          docker export "$CONTAINER" | gzip > /tmp/vesta-wsl-rootfs.tar.gz
-          docker rm "$CONTAINER" > /dev/null
-          rm cli/vm/vesta
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: wsl-rootfs
-          path: /tmp/vesta-wsl-rootfs.tar.gz
-
   # ── Build + Test Windows CLI (native MSVC) ───────────────────────────
   build-test-windows:
-    needs: [rootfs, build-vm-image]
-    if: ${{ !failure() && !cancelled() }}
+    needs: build-vm-image
+    if: ${{ !failure() && !cancelled() && github.event_name != 'pull_request' }}
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -382,11 +419,16 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
+          components: clippy
 
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: cli
           key: x86_64-pc-windows-msvc
+
+      - name: Clippy
+        working-directory: cli
+        run: cargo clippy --target x86_64-pc-windows-msvc -- -D warnings
 
       - name: Build CLI
         working-directory: cli
@@ -399,11 +441,12 @@ jobs:
           path: .
 
       - name: E2E test
-        timeout-minutes: 5
+        timeout-minutes: 10
         shell: bash
         run: |
           set -euo pipefail
           CLI="cli/target/x86_64-pc-windows-msvc/release/vesta.exe"
+          VCLI="/usr/local/bin/vesta"
 
           cleanup() {
             echo "=== Cleanup ==="
@@ -411,32 +454,52 @@ jobs:
           }
           trap cleanup EXIT
 
-          echo "=== vesta --version ==="
+          echo "=== windows cli basics ==="
           "$CLI" --version
+          "$CLI" --help
 
-          echo "=== verify rootfs exists and is valid ==="
+          echo "=== verify rootfs ==="
           ls -la vesta-wsl-rootfs.tar.gz
           file vesta-wsl-rootfs.tar.gz
 
-          echo "=== WSL import test ==="
+          echo "=== WSL import ==="
           INSTALL_DIR="$LOCALAPPDATA\\vesta-wsl-test"
           mkdir -p "$INSTALL_DIR"
           wsl.exe --import vesta-wsl "$INSTALL_DIR" vesta-wsl-rootfs.tar.gz --version 2
           echo "import succeeded"
 
-          echo "=== verify distro runs ==="
+          echo "=== distro health ==="
           MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec /bin/true
           echo "distro is healthy"
 
-          echo "=== verify vesta binary inside distro ==="
-          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec /usr/local/bin/vesta --version
+          echo "=== linux cli inside WSL ==="
+          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec $VCLI --version
+          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec $VCLI --help
+
+          echo "=== start entrypoint for docker ==="
+          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec /entrypoint.sh &
+          ENTRY_PID=$!
+
+          echo "=== wait for docker ==="
+          for i in $(seq 1 30); do
+            if MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec test -S /var/run/docker.sock 2>/dev/null; then
+              echo "docker ready after ${i}s"
+              break
+            fi
+            [ "$i" -eq 30 ] && { echo "docker not ready"; exit 1; }
+            sleep 1
+          done
+
+          echo "=== status before create ==="
+          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec $VCLI status --json
+
+          echo "=== all tests passed ==="
 
       - name: Package Windows CLI zip
         shell: bash
         run: |
           mkdir vesta-windows
           cp cli/target/x86_64-pc-windows-msvc/release/vesta.exe vesta-windows/
-          cp vesta-wsl-rootfs.tar.gz vesta-windows/
           7z a vesta-x86_64-pc-windows-msvc.zip vesta-windows/
 
       - uses: actions/upload-artifact@v7
@@ -574,19 +637,11 @@ jobs:
           name: windows-cli-exe
           path: .
 
-      - name: Download WSL rootfs
-        uses: actions/download-artifact@v8
-        with:
-          name: wsl-rootfs
-          path: .
-
-      - name: Install CLI sidecar and rootfs
+      - name: Install CLI sidecar
         shell: bash
         run: |
           mkdir -p app/src-tauri/binaries
           cp vesta.exe app/src-tauri/binaries/vesta-x86_64-pc-windows-msvc.exe
-          mkdir -p app/src-tauri/resources
-          cp vesta-wsl-rootfs.tar.gz app/src-tauri/resources/
 
       - name: Cache NSIS
         id: cache-nsis
@@ -669,7 +724,7 @@ jobs:
 
   # ── Create GitHub Release (tag only) ─────────────────────────────────
   release:
-    needs: [build-cli, test-linux, test-macos, build-vm-image, build-test-windows, build-tauri, build-tauri-windows, push-image]
+    needs: [build-cli, test-frontend, test-linux, test-macos, build-vm-image, build-test-windows, build-tauri, build-tauri-windows, push-image]
     if: ${{ !failure() && !cancelled() && startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-latest
     steps:
@@ -685,7 +740,7 @@ jobs:
         run: |
           mkdir release
           find artifacts -type f \( \
-            -name '*.tar.gz' -o -name '*.zip' -o \
+            -name '*.tar.gz' -o -name '*.tar.zst' -o -name '*.zip' -o \
             -name '*.deb' -o -name '*.AppImage' -o -name '*.dmg' -o \
             -name '*-setup.exe' -o -name '*_x64-setup.exe' \
           \) -exec cp {} release/ \;

@@ -63,6 +63,9 @@ cli/wsl/vesta
 agent/memory/conversations/
 agent/memory/dreamer/
 
+# Node modules
+node_modules/
+
 # Tauri build artifacts
 app/src-tauri/target/
 app/src-tauri/binaries/vesta-*

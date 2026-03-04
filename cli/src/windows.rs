@@ -67,28 +67,49 @@ fn clean_install_dir() {
     }
 }
 
-fn find_rootfs() -> PathBuf {
-    let exe_dir = std::env::current_exe()
-        .unwrap_or_else(|_| die("cannot determine executable path"))
-        .parent()
-        .unwrap()
-        .to_path_buf();
+fn rootfs_path() -> PathBuf {
+    install_dir().join("vesta-wsl-rootfs.tar.gz")
+}
 
-    let candidates = [
-        exe_dir.join("vesta-wsl-rootfs.tar.gz"),
-        exe_dir.join("rootfs").join("vesta-wsl-rootfs.tar.gz"),
-        // Tauri NSIS installs place resources/ as subdirectory of install dir
-        exe_dir.join("resources").join("vesta-wsl-rootfs.tar.gz"),
-        exe_dir.join("..").join("resources").join("vesta-wsl-rootfs.tar.gz"),
-    ];
-
-    for c in &candidates {
-        if c.exists() {
-            return c.clone();
-        }
+fn download_rootfs() -> PathBuf {
+    let path = rootfs_path();
+    if path.exists() {
+        return path;
     }
 
-    die("rootfs tarball not found. expected vesta-wsl-rootfs.tar.gz next to vesta.exe");
+    let dir = path.parent().unwrap();
+    std::fs::create_dir_all(dir)
+        .unwrap_or_else(|e| die(&format!("failed to create directory: {}", e)));
+
+    let repo = "elyxlz/vesta";
+    let asset = "vesta-wsl-rootfs.tar.gz";
+    let tmp_path = dir.join(format!("{}.tmp", asset));
+
+    println!("downloading WSL rootfs...");
+
+    let status = process::Command::new("curl.exe")
+        .args([
+            "-fSL",
+            "--progress-bar",
+            "-o",
+            tmp_path.to_str().unwrap(),
+            &format!(
+                "https://github.com/{}/releases/latest/download/{}",
+                repo, asset
+            ),
+        ])
+        .status()
+        .unwrap_or_else(|_| die("failed to download rootfs. is curl available?"));
+
+    if !status.success() {
+        std::fs::remove_file(&tmp_path).ok();
+        die("failed to download rootfs. check your internet connection.");
+    }
+
+    std::fs::rename(&tmp_path, &path)
+        .unwrap_or_else(|e| die(&format!("failed to save rootfs: {}", e)));
+
+    path
 }
 
 fn bootstrap_distro() {
@@ -97,7 +118,7 @@ fn bootstrap_distro() {
     std::fs::create_dir_all(&install_dir)
         .unwrap_or_else(|_| die("failed to create install directory"));
 
-    let rootfs = find_rootfs();
+    let rootfs = download_rootfs();
 
     println!("importing vesta-wsl distro...");
     let status = process::Command::new("wsl.exe")

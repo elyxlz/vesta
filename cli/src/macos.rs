@@ -114,7 +114,7 @@ fn install_autostart() {
         log_dir = log_dir.display(),
     );
 
-    if std::fs::write(&plist_path, &plist_content).is_err() {
+    if std::fs::write(&plist_path, plist_content).is_err() {
         return;
     }
 
@@ -213,7 +213,7 @@ fn ssh_reachable() -> bool {
 fn clean_stale_state() {
     if let Some(pid) = read_pid() {
         let _ = process::Command::new("kill")
-            .arg(&pid.to_string())
+            .arg(pid.to_string())
             .stdout(process::Stdio::null())
             .stderr(process::Stdio::null())
             .status();
@@ -245,8 +245,9 @@ fn boot_vm() {
     std::fs::create_dir_all(&pubkey_dir).ok();
     let pubkey_content = std::fs::read_to_string(ssh_key_path().with_extension("pub"))
         .unwrap_or_else(|_| die("cannot read SSH public key"));
-    std::fs::write(pubkey_dir.join("authorized_keys"), &pubkey_content).ok();
+    std::fs::write(pubkey_dir.join("authorized_keys"), pubkey_content).ok();
 
+    #[allow(clippy::zombie_processes)] // vfkit is a long-running VM daemon managed via PID file
     let child = process::Command::new(&vfkit)
         .args([
             &format!("--cpus={}", VM_CPUS),
@@ -396,7 +397,7 @@ fn download_vm_image() {
     };
 
     let repo = "elyxlz/vesta";
-    let asset = format!("vesta-vm-{}.tar.gz", arch);
+    let asset = format!("vesta-vm-{}.tar.zst", arch);
     let tmp_path = dir.join(format!("{}.tmp", &asset));
 
     println!("downloading VM image ({})...", arch);
@@ -419,33 +420,22 @@ fn download_vm_image() {
         die("failed to download VM image. check your internet connection.");
     }
 
-    let valid = process::Command::new("tar")
-        .args(["-tzf", tmp_path.to_str().unwrap()])
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-
-    if !valid {
-        std::fs::remove_file(&tmp_path).ok();
-        die("downloaded VM image is corrupt. try again.");
-    }
-
     println!("extracting VM image...");
     let status = process::Command::new("tar")
         .args([
-            "-xzf",
+            "--zstd",
+            "-xf",
             tmp_path.to_str().unwrap(),
             "-C",
             dir.to_str().unwrap(),
         ])
         .status()
-        .unwrap_or_else(|_| die("failed to extract VM image"));
+        .unwrap_or_else(|_| die("failed to extract VM image. ensure zstd is installed."));
 
     std::fs::remove_file(&tmp_path).ok();
 
     if !status.success() {
+        clean_vm_image();
         die("failed to extract VM image");
     }
 }
