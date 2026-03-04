@@ -213,7 +213,7 @@ fn ssh_reachable() -> bool {
 fn clean_stale_state() {
     if let Some(pid) = read_pid() {
         let _ = process::Command::new("kill")
-            .arg(&pid.to_string())
+            .arg(pid.to_string())
             .stdout(process::Stdio::null())
             .stderr(process::Stdio::null())
             .status();
