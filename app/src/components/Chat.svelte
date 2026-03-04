@@ -162,7 +162,7 @@
     {#if lines.length === 0}
       <div class="empty-state">
         <div class="empty-dots"><span></span><span></span><span></span></div>
-        <span class="empty-label">{$connected ? "no messages yet" : "connecting..."}</span>
+        <span class="empty-label">{$connected ? `${name} is listening. say something.` : "connecting..."}</span>
       </div>
     {/if}
   </div>

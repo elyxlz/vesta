@@ -13,12 +13,13 @@
   let busy = $state(false);
   let createMsg = $state("");
   let msgTimer: ReturnType<typeof setInterval> | null = null;
+  let cancelled = $state(false);
 
   const CREATE_MESSAGES = [
     "setting things up...",
-    "building your workspace...",
-    "preparing skills...",
-    "stocking the toolbox...",
+    "preparing email & calendar access...",
+    "loading browser & research tools...",
+    "setting up reminders & tasks...",
     "almost there...",
   ];
 
@@ -36,45 +37,106 @@
   }
 
   function normalizeName(raw: string): string {
-    return raw.trim().toLowerCase().replace(/\s+/g, "-");
+    return raw.trim().toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "").replace(/-{2,}/g, "-").replace(/^-|-$/g, "");
   }
+
+  let normalizedPreview = $derived(normalizeName(agentName));
 
   async function goTo(next: typeof step) {
     transitioning = true;
     await new Promise((r) => setTimeout(r, 150));
     step = next;
-    error = "";
     transitioning = false;
   }
 
+  function formatError(msg: string): string {
+    const lower = msg.toLowerCase();
+    if (lower.includes("reboot")) return "restart your computer to finish setup, then reopen vesta.";
+    if (lower.includes("docker") && lower.includes("not installed")) return "docker is required but not installed. install docker and try again.";
+    if (lower.includes("docker") && (lower.includes("daemon") || lower.includes("not running"))) return "docker isn't running. start docker desktop and try again.";
+    if (lower.includes("failed to pull")) return "couldn't download. check your internet connection and try again.";
+    if (lower.includes("failed to run cli")) return "something went wrong starting vesta. try reinstalling.";
+    return msg;
+  }
+
+  function cancelToName() {
+    cancelled = true;
+    stopMessages();
+    busy = false;
+    error = "";
+    step = "name";
+  }
+
+  async function waitForReady(maxMs = 30_000, intervalMs = 1000) {
+    const deadline = Date.now() + maxMs;
+    while (Date.now() < deadline) {
+      const info = await agentStatus();
+      if (info.agent_ready) return info;
+      await new Promise(r => setTimeout(r, intervalMs));
+    }
+    throw new Error("agent is taking too long to start. try restarting vesta.");
+  }
+
   async function handleCreate() {
-    const name = normalizeName(agentName);
+    const name = normalizedPreview;
     if (!name || busy) return;
     busy = true;
     error = "";
+    cancelled = false;
+
+    startMessages();
+    await goTo("creating");
 
     try {
       const info = await agentStatus();
+      if (cancelled) return;
       if (info.status !== "not_found") {
-        await setAgentName(name).catch(() => {});
+        await setAgentName(name).catch((e) => console.warn("failed to set agent name:", e));
+
+        if (info.status === "running" && info.authenticated && info.agent_ready) {
+          stopMessages();
+          busy = false;
+          agent.set(info);
+          await goTo("done");
+          return;
+        }
+
+        if (info.status === "stopped" || info.status === "dead") {
+          try {
+            await startAgent();
+          } catch (e: unknown) {
+            if (cancelled) return;
+            stopMessages();
+            busy = false;
+            const err = e as { message?: string };
+            error = formatError(err.message || "failed to start agent");
+            await goTo("name");
+            return;
+          }
+        }
+
+        if (cancelled) return;
+        stopMessages();
         busy = false;
         await goTo("auth");
-        runAuth();
+        await runAuth();
         return;
       }
     } catch {}
 
-    startMessages();
-    await goTo("creating");
+    if (cancelled) return;
+
     try {
       await createAgent(name);
+      if (cancelled) return;
       stopMessages();
       await goTo("auth");
-      runAuth();
+      await runAuth();
     } catch (e: unknown) {
+      if (cancelled) return;
       stopMessages();
       const err = e as { message?: string };
-      error = err.message || "something went wrong";
+      error = formatError(err.message || "something went wrong");
       await goTo("name");
     } finally {
       busy = false;
@@ -87,14 +149,14 @@
     try {
       await authenticate();
       await startAgent();
-      const info = await agentStatus();
+      const info = await waitForReady();
       agent.set(info);
       busy = false;
       await goTo("done");
     } catch (e: unknown) {
       busy = false;
       const err = e as { message?: string };
-      error = err.message || "authentication failed";
+      error = formatError(err.message || "authentication failed");
     }
   }
 
@@ -116,8 +178,9 @@
             bind:value={agentName}
             autofocus
           />
+          {#if agentName.trim() && normalizedPreview !== agentName.trim()}<p class="name-preview">{normalizedPreview}</p>{/if}
           {#if error}<p class="error">{error}</p>{/if}
-          <button class="btn primary full" type="submit" disabled={!agentName.trim() || busy}>create</button>
+          <button class="btn primary full" type="submit" disabled={!normalizedPreview || busy}>create</button>
         </form>
       </div>
 
@@ -129,6 +192,8 @@
         {#if error}
           <p class="error">{error}</p>
           <button class="btn primary" onclick={() => goTo("name")}>try again</button>
+        {:else}
+          <button class="btn cancel" onclick={cancelToName}>cancel</button>
         {/if}
       </div>
 
@@ -141,6 +206,7 @@
           <p class="error">{error}</p>
           <button class="btn primary" onclick={runAuth}>retry</button>
         {/if}
+        <button class="btn cancel" onclick={cancelToName}>cancel</button>
       </div>
 
     {:else if step === "done"}
@@ -151,7 +217,7 @@
             <polyline points="22 4 12 14.01 9 11.01"/>
           </svg>
         </div>
-        <h1>you're all set</h1>
+        <h1>{normalizedPreview || "your agent"} is ready</h1>
         <p class="sub">say hi.</p>
         <button class="btn primary" onclick={() => onComplete(normalizeName(agentName))}>continue</button>
       </div>
@@ -306,6 +372,24 @@
     width: 100%;
   }
 
+  .name-preview {
+    font-size: 11px;
+    color: #7a726a;
+    margin: -6px 0 8px;
+    font-weight: 400;
+  }
+
+  .btn.cancel {
+    background: transparent;
+    color: #7a726a;
+    margin-top: 16px;
+    font-size: 12px;
+  }
+
+  .btn.cancel:hover {
+    color: #1a1816;
+  }
+
   .done-icon {
     color: #66bb6a;
     margin-bottom: 14px;
@@ -353,6 +437,18 @@
     .btn.primary:hover {
       background: #f0ece7;
       box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+    }
+
+    .name-preview {
+      color: #8a8078;
+    }
+
+    .btn.cancel {
+      color: #8a8078;
+    }
+
+    .btn.cancel:hover {
+      color: #e8e0d8;
     }
 
     .error {
