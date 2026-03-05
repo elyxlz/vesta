@@ -526,7 +526,8 @@ pub fn run(command: Command) {
                     };
                     println!("{}", serde_json::to_string(&s).unwrap());
                 } else {
-                    println!("no agent. run: vesta setup");
+                    println!("no agent.");
+                    eprintln!("\nhint: run 'vesta setup' to create your agent");
                 }
                 return;
             }
@@ -583,6 +584,36 @@ pub fn run(command: Command) {
         Command::Rebuild => {
             ensure_vm();
             ssh_run(&["vesta", "rebuild"], true);
+        }
+
+        Command::PlatformCheck => {
+            let s = serde_json::json!({
+                "ready": true,
+                "platform": "macos",
+                "wsl_installed": true,
+                "virtualization_enabled": true,
+                "distro_registered": true,
+                "distro_healthy": true,
+                "services_ready": true,
+                "needs_reboot": false,
+                "message": ""
+            });
+            println!("{}", s);
+        }
+
+        Command::PlatformSetup => {
+            let s = serde_json::json!({
+                "ready": true,
+                "platform": "macos",
+                "wsl_installed": true,
+                "virtualization_enabled": true,
+                "distro_registered": true,
+                "distro_healthy": true,
+                "services_ready": true,
+                "needs_reboot": false,
+                "message": ""
+            });
+            println!("{}", s);
         }
     }
 }

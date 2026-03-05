@@ -1,5 +1,5 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
-import type { AgentInfo, LogEvent } from "./types";
+import type { AgentInfo, LogEvent, PlatformStatus } from "./types";
 
 export async function agentStatus(): Promise<AgentInfo> {
   return invoke("agent_status");
@@ -47,4 +47,12 @@ export async function authenticate(): Promise<void> {
 
 export async function agentHost(): Promise<string> {
   return invoke("agent_host");
+}
+
+export async function checkPlatform(): Promise<PlatformStatus> {
+  return invoke("platform_check");
+}
+
+export async function setupPlatform(): Promise<PlatformStatus> {
+  return invoke("platform_setup");
 }

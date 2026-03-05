@@ -4,6 +4,7 @@ use serde::Serialize;
 pub enum ErrorCode {
     ExecFailed,
     Internal,
+    Timeout,
 }
 
 #[derive(Debug, Clone, Serialize)]

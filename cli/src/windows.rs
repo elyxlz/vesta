@@ -6,14 +6,191 @@ const WSL_DISTRO: &str = "vesta-wsl";
 const VESTA_LINUX_BIN: &str = "/usr/local/bin/vesta";
 const REGISTRY_RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 
-fn wsl_available() -> bool {
-    process::Command::new("wsl.exe")
+fn wsl_status_output() -> (bool, String) {
+    let output = process::Command::new("wsl.exe")
         .arg("--status")
+        .stdout(process::Stdio::piped())
+        .stderr(process::Stdio::piped())
+        .output();
+
+    match output {
+        Ok(o) => {
+            let stdout = String::from_utf8_lossy(&o.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&o.stderr).to_string();
+            let combined = format!("{}\n{}", stdout, stderr);
+            (o.status.success(), combined)
+        }
+        Err(_) => (false, String::new()),
+    }
+}
+
+fn virtualization_enabled() -> Option<bool> {
+    let output = process::Command::new("powershell.exe")
+        .args([
+            "-NoProfile", "-Command",
+            "(Get-CimInstance Win32_Processor).VirtualizationFirmwareEnabled",
+        ])
+        .stdout(process::Stdio::piped())
+        .stderr(process::Stdio::null())
+        .output()
+        .ok()?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_lowercase();
+    match stdout.as_str() {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    }
+}
+
+fn wsl_binary_exists() -> bool {
+    process::Command::new("where.exe")
+        .arg("wsl.exe")
         .stdout(process::Stdio::null())
         .stderr(process::Stdio::null())
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
+}
+
+fn platform_check_json() -> serde_json::Value {
+    let wsl_exists = wsl_binary_exists();
+    let (wsl_ok, wsl_output) = wsl_status_output();
+    let wsl_lower = wsl_output.to_lowercase();
+
+    let needs_reboot = wsl_exists && !wsl_ok
+        && (wsl_lower.contains("reboot") || wsl_lower.contains("restart"));
+
+    let virt = if wsl_ok {
+        Some(true)
+    } else if wsl_exists && (wsl_lower.contains("virtual") || wsl_lower.contains("bios")) {
+        Some(false)
+    } else {
+        virtualization_enabled()
+    };
+
+    let registered = wsl_ok && distro_registered();
+    let healthy = registered && distro_healthy();
+    let services = healthy && docker_ready();
+
+    let ready = wsl_ok && healthy && services;
+
+    let message = if !wsl_exists && !wsl_ok {
+        "WSL2 is not installed"
+    } else if needs_reboot {
+        "restart your computer to finish WSL2 setup"
+    } else if virt == Some(false) {
+        "hardware virtualization is disabled in BIOS/UEFI"
+    } else if !wsl_ok {
+        "WSL2 is installed but not working"
+    } else if !registered {
+        "vesta environment needs to be set up"
+    } else if !healthy {
+        "vesta environment is unhealthy"
+    } else if !services {
+        "services are starting..."
+    } else {
+        ""
+    };
+
+    serde_json::json!({
+        "ready": ready,
+        "platform": "windows",
+        "wsl_installed": wsl_ok,
+        "virtualization_enabled": virt,
+        "distro_registered": registered,
+        "distro_healthy": healthy,
+        "services_ready": services,
+        "needs_reboot": needs_reboot,
+        "message": message
+    })
+}
+
+fn try_install_wsl() -> bool {
+    eprintln!("installing WSL2...");
+    let status = process::Command::new("powershell.exe")
+        .args([
+            "-Command",
+            "Start-Process wsl -ArgumentList '--install','--no-distribution' -Verb RunAs -Wait -WindowStyle Hidden",
+        ])
+        .status();
+
+    status.map(|s| s.success()).unwrap_or(false)
+}
+
+fn platform_setup() {
+    let (wsl_ok, _) = wsl_status_output();
+    if !wsl_ok {
+        if !try_install_wsl() {
+            die("WSL2 installation failed or was cancelled");
+        }
+
+        let (wsl_ok_after, _) = wsl_status_output();
+        if !wsl_ok_after {
+            println!("{}", serde_json::json!({
+                "ready": false,
+                "platform": "windows",
+                "wsl_installed": false,
+                "virtualization_enabled": null,
+                "distro_registered": false,
+                "distro_healthy": false,
+                "services_ready": false,
+                "needs_reboot": true,
+                "message": "restart your computer to finish WSL2 setup"
+            }));
+            eprintln!("WSL2 installed. restart your computer to finish setup.");
+            return;
+        }
+        eprintln!("WSL2 installed.");
+    }
+
+    if !distro_registered() {
+        eprintln!("setting up vesta environment...");
+        bootstrap_distro();
+    } else if !distro_healthy() {
+        eprintln!("repairing vesta environment...");
+        let _ = process::Command::new("wsl.exe")
+            .args(["--terminate", WSL_DISTRO])
+            .stdout(process::Stdio::null())
+            .stderr(process::Stdio::null())
+            .status();
+
+        if !distro_healthy() {
+            unregister_distro();
+            bootstrap_distro();
+        }
+    }
+
+    let healthy = distro_healthy();
+    if healthy {
+        ensure_services();
+    }
+
+    let services = healthy && docker_ready();
+    let ready = healthy && services;
+    let message = if !healthy {
+        "vesta environment is unhealthy"
+    } else if !services {
+        "services failed to start"
+    } else {
+        ""
+    };
+
+    println!("{}", serde_json::json!({
+        "ready": ready,
+        "platform": "windows",
+        "wsl_installed": true,
+        "virtualization_enabled": true,
+        "distro_registered": healthy,
+        "distro_healthy": healthy,
+        "services_ready": services,
+        "needs_reboot": false,
+        "message": message
+    }));
+
+    if ready {
+        eprintln!("platform is ready.");
+    }
 }
 
 fn distro_registered() -> bool {
@@ -283,25 +460,30 @@ fn command_args(command: &Command) -> Vec<&str> {
         }
         Command::Name { ref name } => vec!["name", name],
         Command::Rebuild => vec!["rebuild"],
+        Command::PlatformCheck | Command::PlatformSetup => unreachable!(),
     }
 }
 
 pub fn run(command: Command) -> ! {
-    if !wsl_available() {
-        eprintln!("WSL2 is required but not installed. attempting to install...");
-        let status = process::Command::new("powershell.exe")
-            .args([
-                "-Command",
-                "Start-Process wsl -ArgumentList '--install','--no-distribution' -Verb RunAs -Wait -WindowStyle Hidden",
-            ])
-            .status();
+    match command {
+        Command::PlatformCheck => {
+            println!("{}", platform_check_json());
+            process::exit(0);
+        }
+        Command::PlatformSetup => {
+            platform_setup();
+            process::exit(0);
+        }
+        _ => {}
+    }
 
-        if status.map(|s| s.success()).unwrap_or(false) && wsl_available() {
-            eprintln!("WSL2 installed.");
-        } else {
+    if !wsl_status_output().0 {
+        eprintln!("WSL2 is required but not installed. attempting to install...");
+        if !try_install_wsl() || !wsl_status_output().0 {
             die("WSL2 installation failed or was cancelled. reboot if you just installed it, or install manually:\n    \
                  wsl --install --no-distribution");
         }
+        eprintln!("WSL2 installed.");
     }
 
     if !distro_registered() {

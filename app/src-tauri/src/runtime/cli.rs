@@ -6,6 +6,9 @@ use tokio_util::sync::CancellationToken;
 
 use crate::error::{ErrorCode, VestaError};
 
+const DEFAULT_TIMEOUT_SECS: u64 = 120;
+const AUTH_TIMEOUT_SECS: u64 = 600;
+
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
@@ -65,6 +68,52 @@ fn cli_command(args: &[&str]) -> Command {
     cmd
 }
 
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            match chars.peek() {
+                // CSI: \x1b[...letter
+                Some('[') => {
+                    chars.next();
+                    for c in chars.by_ref() {
+                        if c.is_ascii_alphabetic() {
+                            break;
+                        }
+                    }
+                }
+                // OSC: \x1b]...(\x07 | \x1b\\)
+                Some(']') => {
+                    chars.next();
+                    while let Some(c) = chars.next() {
+                        if c == '\x07' {
+                            break;
+                        }
+                        if c == '\x1b' && chars.peek() == Some(&'\\') {
+                            chars.next();
+                            break;
+                        }
+                    }
+                }
+                // Charset designator: \x1b(X
+                Some('(') => {
+                    chars.next();
+                    chars.next();
+                }
+                // Other two-byte escape
+                Some(_) => {
+                    chars.next();
+                }
+                None => {}
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 fn collect_lines(
     reader: impl tokio::io::AsyncRead + Unpin + Send + 'static,
     on_line: impl Fn(&str) + Send + 'static,
@@ -72,7 +121,8 @@ fn collect_lines(
     tokio::spawn(async move {
         let mut lines = BufReader::new(reader).lines();
         let mut buf = String::new();
-        while let Ok(Some(line)) = lines.next_line().await {
+        while let Ok(Some(raw_line)) = lines.next_line().await {
+            let line = strip_ansi(&raw_line);
             eprintln!("[vesta] {}", line);
             on_line(&line);
             if !buf.is_empty() {
@@ -84,7 +134,27 @@ fn collect_lines(
     })
 }
 
-async fn run(args: &[&str]) -> Result<String, VestaError> {
+fn extract_error(stderr: &str) -> String {
+    let last_error = stderr
+        .lines()
+        .rev()
+        .find(|l| l.trim().starts_with("error: "))
+        .map(|l| l.trim().strip_prefix("error: ").unwrap().to_string());
+
+    if let Some(msg) = last_error {
+        return msg;
+    }
+
+    let last_line = stderr
+        .lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .map(|l| l.trim().to_string());
+
+    last_line.unwrap_or_else(|| "command failed with no output".to_string())
+}
+
+async fn run_with_timeout(args: &[&str], timeout_secs: u64) -> Result<String, VestaError> {
     let mut cmd = cli_command(args);
     cmd.stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
@@ -98,25 +168,74 @@ async fn run(args: &[&str]) -> Result<String, VestaError> {
     let stdout_task = collect_lines(child.stdout.take().unwrap(), |_| {});
     let stderr_task = collect_lines(child.stderr.take().unwrap(), |_| {});
 
-    let status = child.wait().await.map_err(|e| {
-        VestaError::new(ErrorCode::Internal, format!("failed to run cli: {}", e))
-    })?;
+    let timeout = tokio::time::Duration::from_secs(timeout_secs);
+    let status = match tokio::time::timeout(timeout, child.wait()).await {
+        Ok(result) => result.map_err(|e| {
+            VestaError::new(ErrorCode::Internal, format!("failed to run cli: {}", e))
+        })?,
+        Err(_) => {
+            let _ = child.kill().await;
+            let label = args.first().unwrap_or(&"cli");
+            return Err(VestaError::new(
+                ErrorCode::Timeout,
+                format!("{} timed out after {}s", label, timeout_secs),
+            ));
+        }
+    };
+
     let stdout_str = stdout_task.await.unwrap_or_default();
     let stderr_str = stderr_task.await.unwrap_or_default();
 
     if !status.success() {
-        let msg = stderr_str.trim().strip_prefix("error: ").unwrap_or(stderr_str.trim());
-        return Err(VestaError::new(ErrorCode::Internal, msg.to_string()));
+        return Err(VestaError::new(ErrorCode::Internal, extract_error(&stderr_str)));
     }
 
     eprintln!("[vesta] ok: {}", args.join(" "));
     Ok(stdout_str)
 }
 
+async fn run(args: &[&str]) -> Result<String, VestaError> {
+    run_with_timeout(args, DEFAULT_TIMEOUT_SECS).await
+}
+
 async fn run_json<T: serde::de::DeserializeOwned>(args: &[&str]) -> Result<T, VestaError> {
     let stdout = run(args).await?;
-    serde_json::from_str(&stdout)
-        .map_err(|e| VestaError::new(ErrorCode::Internal, format!("failed to parse cli output: {} (got: {:?})", e, stdout)))
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() {
+        return Err(VestaError::new(ErrorCode::Internal, "cli returned no output"));
+    }
+    serde_json::from_str(trimmed)
+        .map_err(|e| VestaError::new(ErrorCode::Internal, format!("failed to parse cli output: {} (got: {:?})", e, trimmed)))
+}
+
+// ── Platform operations ─────────────────────────────────────────
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PlatformStatus {
+    pub ready: bool,
+    pub platform: String,
+    #[serde(default)]
+    pub wsl_installed: bool,
+    #[serde(default)]
+    pub virtualization_enabled: Option<bool>,
+    #[serde(default)]
+    pub distro_registered: bool,
+    #[serde(default)]
+    pub distro_healthy: bool,
+    #[serde(default)]
+    pub services_ready: bool,
+    #[serde(default)]
+    pub needs_reboot: bool,
+    #[serde(default)]
+    pub message: String,
+}
+
+pub async fn platform_check() -> Result<PlatformStatus, VestaError> {
+    run_json(&["platform-check"]).await
+}
+
+pub async fn platform_setup() -> Result<PlatformStatus, VestaError> {
+    run_json(&["platform-setup"]).await
 }
 
 // ── Agent operations ────────────────────────────────────────────
@@ -227,15 +346,25 @@ pub async fn obtain_and_inject_credentials() -> Result<(), VestaError> {
     let stdout_task = collect_lines(child.stdout.take().unwrap(), scan_url(opened.clone()));
     let stderr_task = collect_lines(child.stderr.take().unwrap(), scan_url(opened));
 
-    let status = child.wait().await.map_err(|e| {
-        VestaError::new(ErrorCode::Internal, format!("failed to run cli: {}", e))
-    })?;
+    let timeout = tokio::time::Duration::from_secs(AUTH_TIMEOUT_SECS);
+    let status = match tokio::time::timeout(timeout, child.wait()).await {
+        Ok(result) => result.map_err(|e| {
+            VestaError::new(ErrorCode::Internal, format!("failed to run cli: {}", e))
+        })?,
+        Err(_) => {
+            let _ = child.kill().await;
+            return Err(VestaError::new(
+                ErrorCode::Timeout,
+                "authentication timed out after 10 minutes",
+            ));
+        }
+    };
+
     let _ = stdout_task.await;
     let stderr_str = stderr_task.await.unwrap_or_default();
 
     if !status.success() {
-        let msg = stderr_str.trim().strip_prefix("error: ").unwrap_or(stderr_str.trim());
-        return Err(VestaError::new(ErrorCode::Internal, msg.to_string()));
+        return Err(VestaError::new(ErrorCode::Internal, extract_error(&stderr_str)));
     }
 
     Ok(())

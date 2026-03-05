@@ -10,7 +10,7 @@ fn die(msg: &str) -> ! {
 #[command(name = "vesta", version, about = "manage your vesta agent")]
 struct Cli {
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
 #[derive(Subcommand)]
@@ -75,6 +75,10 @@ enum Command {
     },
     /// Snapshot, destroy, recreate, restore auth
     Rebuild,
+    /// Check platform readiness (WSL on Windows, VM on macOS)
+    PlatformCheck,
+    /// Install platform prerequisites (WSL on Windows)
+    PlatformSetup,
 }
 
 #[cfg(target_os = "linux")]
@@ -86,20 +90,40 @@ mod macos;
 #[cfg(target_os = "windows")]
 mod windows;
 
+fn print_welcome() {
+    println!("vesta — your personal AI assistant");
+    println!();
+    println!("Quick start:");
+    println!("  vesta setup        Create agent, authenticate, and start");
+    println!("  vesta start        Start your agent");
+    println!("  vesta status       Check agent status");
+    println!();
+    println!("Run 'vesta --help' for all commands.");
+}
+
 #[cfg(target_os = "linux")]
 fn main() {
     let cli = Cli::parse();
-    linux::run(cli.command);
+    match cli.command {
+        Some(cmd) => linux::run(cmd),
+        None => print_welcome(),
+    }
 }
 
 #[cfg(target_os = "macos")]
 fn main() {
     let cli = Cli::parse();
-    macos::run(cli.command);
+    match cli.command {
+        Some(cmd) => macos::run(cmd),
+        None => print_welcome(),
+    }
 }
 
 #[cfg(target_os = "windows")]
 fn main() {
     let cli = Cli::parse();
-    windows::run(cli.command);
+    match cli.command {
+        Some(cmd) => windows::run(cmd),
+        None => print_welcome(),
+    }
 }

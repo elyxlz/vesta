@@ -1,12 +1,13 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
-  import { createAgent, agentStatus, authenticate, startAgent, setAgentName } from "../lib/api";
+  import { onMount, onDestroy } from "svelte";
+  import { createAgent, agentStatus, authenticate, startAgent, setAgentName, checkPlatform, setupPlatform } from "../lib/api";
+  import type { PlatformStatus } from "../lib/types";
   import { agent } from "../lib/stores";
   import ProgressBar from "./ProgressBar.svelte";
 
   let { onComplete }: { onComplete: (name: string) => void } = $props();
 
-  let step = $state<"name" | "creating" | "auth" | "done">("name");
+  let step = $state<"platform" | "name" | "creating" | "auth" | "done">("platform");
   let agentName = $state("");
   let error = $state<{ friendly: string | null; raw: string } | null>(null);
   let transitioning = $state(false);
@@ -14,6 +15,7 @@
   let createMsg = $state("");
   let msgTimer: ReturnType<typeof setInterval> | null = null;
   let cancelled = $state(false);
+  let platform = $state<PlatformStatus | null>(null);
 
   const CREATE_MESSAGES = [
     "setting things up...",
@@ -22,6 +24,23 @@
     "setting up reminders & tasks...",
     "almost there...",
   ];
+
+  onMount(async () => {
+    try {
+      const status = await checkPlatform();
+      platform = status;
+      if (status.ready || status.platform !== "windows") {
+        await goTo("name");
+        return;
+      }
+      // auto-run setup for distro/service issues (WSL already installed)
+      if (status.wsl_installed && !status.needs_reboot && status.virtualization_enabled !== false) {
+        await handlePlatformSetup();
+      }
+    } catch (e) {
+      setError(e, "failed to check platform");
+    }
+  });
 
   function startMessages() {
     let i = 0;
@@ -59,6 +78,11 @@
     return { friendly: null, raw: msg };
   }
 
+  function setError(e: unknown, fallback: string) {
+    const err = e as { message?: string };
+    error = formatError(err.message || fallback);
+  }
+
   let showRawError = $state(false);
 
   function cancelToName() {
@@ -68,6 +92,42 @@
     error = null;
     showRawError = false;
     step = "name";
+  }
+
+  async function recheckPlatform() {
+    busy = true;
+    error = null;
+    try {
+      const status = await checkPlatform();
+      platform = status;
+      if (status.ready) {
+        await goTo("name");
+      }
+    } catch (e) {
+      setError(e, "failed to check platform");
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function handlePlatformSetup() {
+    busy = true;
+    error = null;
+    try {
+      const result = await setupPlatform();
+      platform = result;
+      if (result.ready) {
+        await goTo("name");
+      } else if (result.needs_reboot) {
+        // stay on platform step, UI will show reboot message
+      } else if (result.message) {
+        error = { friendly: result.message, raw: result.message };
+      }
+    } catch (e) {
+      setError(e, "setup failed");
+    } finally {
+      busy = false;
+    }
   }
 
   async function waitForReady(maxMs = 30_000, intervalMs = 1000) {
@@ -107,12 +167,11 @@
         if (info.status === "stopped" || info.status === "dead") {
           try {
             await startAgent();
-          } catch (e: unknown) {
+          } catch (e) {
             if (cancelled) return;
             stopMessages();
             busy = false;
-            const err = e as { message?: string };
-            error = formatError(err.message || "failed to start agent");
+            setError(e, "failed to start agent");
             await goTo("name");
             return;
           }
@@ -125,7 +184,9 @@
         await runAuth();
         return;
       }
-    } catch {}
+    } catch (e) {
+      console.warn("agentStatus check failed:", e);
+    }
 
     if (cancelled) return;
 
@@ -135,11 +196,10 @@
       stopMessages();
       await goTo("auth");
       await runAuth();
-    } catch (e: unknown) {
+    } catch (e) {
       if (cancelled) return;
       stopMessages();
-      const err = e as { message?: string };
-      error = formatError(err.message || "something went wrong");
+      setError(e, "something went wrong");
       await goTo("name");
     } finally {
       busy = false;
@@ -156,10 +216,9 @@
       agent.set(info);
       busy = false;
       await goTo("done");
-    } catch (e: unknown) {
+    } catch (e) {
       busy = false;
-      const err = e as { message?: string };
-      error = formatError(err.message || "authentication failed");
+      setError(e, "authentication failed");
     }
   }
 
@@ -168,7 +227,68 @@
 
 <div class="onboarding" class:transitioning>
   <div class="card">
-    {#if step === "name"}
+    {#if step === "platform"}
+      <div class="step step-anim">
+        {#if !platform}
+          <h1>checking system</h1>
+          <p class="sub">making sure everything is ready...</p>
+          <ProgressBar message="checking..." />
+        {:else if platform.needs_reboot}
+          <div class="platform-icon">
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/>
+              <path d="M21 3v5h-5"/>
+            </svg>
+          </div>
+          <h1>restart required</h1>
+          <p class="sub">WSL2 was installed successfully.<br/>restart your computer to finish setup, then reopen vesta.</p>
+          <button class="btn primary" onclick={recheckPlatform} disabled={busy}>check again</button>
+        {:else if platform.virtualization_enabled === false}
+          <div class="platform-icon warn">
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+              <line x1="12" y1="9" x2="12" y2="13"/>
+              <line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+          </div>
+          <h1>enable virtualization</h1>
+          <p class="sub">
+            WSL2 needs hardware virtualization enabled.<br/><br/>
+            1. restart your computer<br/>
+            2. press the BIOS key during boot<br/>
+            <span class="hint">(usually F2, F10, F12, or Del)</span><br/>
+            3. find and enable <strong>Intel VT-x</strong> or <strong>AMD-V</strong><br/>
+            4. save and exit BIOS, then reopen vesta
+          </p>
+          <button class="btn primary" onclick={recheckPlatform} disabled={busy}>check again</button>
+        {:else if !platform.wsl_installed}
+          <h1>setting up windows</h1>
+          <p class="sub">vesta needs WSL2 to run.<br/>click below to install it automatically.</p>
+          {#if error}
+            <p class="error">{error.friendly ?? "something went wrong."}</p>
+            {#if error.raw.length > 80 || !error.friendly}
+              <button class="btn details-toggle" onclick={() => showRawError = !showRawError}>{showRawError ? "hide details" : "show details"}</button>
+              {#if showRawError}<pre class="error-details">{error.raw}</pre>{/if}
+            {/if}
+          {/if}
+          {#if busy}
+            <ProgressBar message="installing WSL2... you may see a permission prompt." />
+          {:else}
+            <button class="btn primary full" onclick={handlePlatformSetup}>install WSL2</button>
+          {/if}
+        {:else}
+          <h1>setting up</h1>
+          <p class="sub">preparing vesta's environment...</p>
+          {#if error}
+            <p class="error">{error.friendly ?? "something went wrong."}</p>
+            <button class="btn primary" onclick={handlePlatformSetup} disabled={busy}>retry</button>
+          {:else}
+            <ProgressBar message="setting up..." />
+          {/if}
+        {/if}
+      </div>
+
+    {:else if step === "name"}
       <div class="step step-anim">
         <h1>welcome to vesta</h1>
         <p class="sub">give it a name to get started.</p>
@@ -294,12 +414,18 @@
     font-weight: 400;
   }
 
+  .sub .hint {
+    font-size: 11px;
+    color: #9a928a;
+  }
+
   .error {
     color: #c45450;
     font-size: 12px;
     margin: 6px 0 8px;
     font-weight: 450;
     animation: shake 0.3s ease;
+    white-space: pre-line;
   }
 
   .error-details {
@@ -442,6 +568,16 @@
     animation: popIn 0.4s var(--spring-bouncy);
   }
 
+  .platform-icon {
+    color: #7a726a;
+    margin-bottom: 14px;
+    animation: popIn 0.4s var(--spring-bouncy);
+  }
+
+  .platform-icon.warn {
+    color: #e0a030;
+  }
+
   @keyframes popIn {
     from { opacity: 0; transform: scale(0.5); }
     to { opacity: 1; transform: scale(1); }
@@ -454,6 +590,10 @@
 
     .sub {
       color: #8a8078;
+    }
+
+    .sub .hint {
+      color: #6a625a;
     }
 
     .name-input {
@@ -513,6 +653,14 @@
 
     .btn.details-toggle:hover {
       color: #a09890;
+    }
+
+    .platform-icon {
+      color: #8a8078;
+    }
+
+    .platform-icon.warn {
+      color: #e0a030;
     }
   }
 </style>
