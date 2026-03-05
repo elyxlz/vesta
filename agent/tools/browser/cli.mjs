@@ -31,13 +31,18 @@ function readSession() {
   }
 }
 
-function writeSession(cdpUrl, pid) {
+function writeSession(cdpUrl, pid, stealth = false) {
   mkdirSync(SESSION_DIR, { recursive: true });
-  writeFileSync(SESSION_FILE, JSON.stringify({ cdpUrl, pid, launchedAt: new Date().toISOString() }));
+  writeFileSync(SESSION_FILE, JSON.stringify({ cdpUrl, pid, stealth, launchedAt: new Date().toISOString() }));
 }
 
 function clearSession() {
   try { unlinkSync(SESSION_FILE); } catch {}
+}
+
+function isStealth() {
+  const session = readSession();
+  return session?.stealth === true;
 }
 
 async function connect() {
@@ -56,6 +61,76 @@ async function currentPage(browser) {
     return await browser.currentPage();
   } catch {
     fail('No open tabs. Run: browser open <url>');
+  }
+}
+
+// ── Cloudflare Solving ──
+
+const CF_IFRAME_PATTERN = /^https?:\/\/challenges\.cloudflare\.com\/cdn-cgi\/challenge-platform\/.*/;
+
+async function solveCloudflare(page) {
+  const title = await page.title();
+  if (title !== 'Just a moment...') return true;
+
+  const html = await page.evaluate('() => document.documentElement.innerHTML');
+
+  // Non-interactive challenge (auto-resolve)
+  if (!html.includes('Verifying you are human') && !html.toLowerCase().includes('turnstile')) {
+    const deadline = Date.now() + 30000;
+    while (Date.now() < deadline) {
+      if (await page.title() !== 'Just a moment...') return true;
+      await new Promise(r => setTimeout(r, 1000));
+    }
+    return false;
+  }
+
+  // Wait for verify spinner to pass
+  const spinnerDeadline = Date.now() + 10000;
+  while (Date.now() < spinnerDeadline) {
+    const h = await page.evaluate('() => document.documentElement.innerHTML');
+    if (!h.includes('Verifying you are human')) break;
+    await new Promise(r => setTimeout(r, 500));
+  }
+
+  // Find and click the CF Turnstile iframe checkbox
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const frames = page.page.frames();
+    let iframe = null;
+    for (const frame of frames) {
+      if (CF_IFRAME_PATTERN.test(frame.url() || '')) {
+        iframe = frame;
+        break;
+      }
+    }
+
+    if (iframe) {
+      try {
+        const el = await iframe.frameElement();
+        const box = await el.boundingBox();
+        if (box) {
+          const x = box.x + 26 + Math.random() * 2;
+          const y = box.y + 25 + Math.random() * 2;
+          await page.page.mouse.click(x, y, { delay: 100 + Math.random() * 100 });
+          await new Promise(r => setTimeout(r, 3000));
+        }
+      } catch {}
+    }
+
+    if (await page.title() !== 'Just a moment...') return true;
+    await new Promise(r => setTimeout(r, 2000));
+  }
+
+  return await page.title() !== 'Just a moment...';
+}
+
+// ── Stealth Helpers ──
+
+function generateReferer(url) {
+  try {
+    const domain = new URL(url).hostname.replace(/^www\./, '');
+    return `https://www.google.com/search?q=${domain}`;
+  } catch {
+    return undefined;
   }
 }
 
@@ -100,6 +175,7 @@ async function cmdLaunch(args) {
   }
 
   const inDocker = process.env.IS_SANDBOX === '1';
+  const stealth = Boolean(args.flags.stealth);
   const headless = args.flags.headless !== undefined ? Boolean(args.flags.headless) : inDocker;
   const port = args.flags.port ? Number(args.flags.port) : 9222;
   const userDataDir = args.flags['user-data-dir'] || join(SESSION_DIR, 'profile');
@@ -109,10 +185,11 @@ async function cmdLaunch(args) {
     cdpPort: port,
     noSandbox: inDocker,
     userDataDir,
+    stealth,
   });
 
-  writeSession(browser.url, browser.pid);
-  out({ status: 'launched', cdpUrl: browser.url, pid: browser.pid, headless });
+  writeSession(browser.url, browser.pid, stealth);
+  out({ status: 'launched', cdpUrl: browser.url, pid: browser.pid, headless, stealth });
   process.exit(0);
 }
 
@@ -167,6 +244,9 @@ async function cmdOpen(args) {
   if (!url) fail('Usage: browser open <url>');
   const browser = await connect();
   const page = await browser.open(url);
+  if (isStealth() && !args.flags['no-cf-solve']) {
+    await solveCloudflare(page);
+  }
   const snap = await page.snapshot({ interactive: true });
   out({
     tabId: page.id,
@@ -183,6 +263,9 @@ async function cmdNavigate(args) {
   const browser = await connect();
   const page = await currentPage(browser);
   await page.goto(url);
+  if (isStealth() && !args.flags['no-cf-solve']) {
+    await solveCloudflare(page);
+  }
   const snap = await page.snapshot({ interactive: true });
   out({
     url: await page.url(),

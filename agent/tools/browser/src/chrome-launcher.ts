@@ -372,6 +372,79 @@ export async function getChromeWebSocketUrl(cdpUrl: string, timeoutMs = 500, aut
   finally { clearTimeout(t); }
 }
 
+// Anti-detection Chrome args from Scrapling (https://github.com/D4Vinci/Scrapling).
+// Applied when stealth mode is enabled to reduce automation fingerprint.
+const STEALTH_ARGS = [
+  '--no-pings',
+  '--disable-infobars',
+  '--disable-breakpad',
+  '--no-service-autorun',
+  '--homepage=about:blank',
+  '--disable-hang-monitor',
+  '--disable-session-crashed-bubble',
+  '--disable-search-engine-choice-screen',
+  '--test-type',
+  '--lang=en-US',
+  '--mute-audio',
+  '--hide-scrollbars',
+  '--disable-logging',
+  '--start-maximized',
+  '--enable-async-dns',
+  '--accept-lang=en-US',
+  '--use-mock-keychain',
+  '--disable-translate',
+  '--disable-voice-input',
+  '--window-position=0,0',
+  '--disable-wake-on-wifi',
+  '--ignore-gpu-blocklist',
+  '--enable-tcp-fast-open',
+  '--enable-web-bluetooth',
+  '--disable-cloud-import',
+  '--disable-print-preview',
+  '--metrics-recording-only',
+  '--disable-crash-reporter',
+  '--disable-partial-raster',
+  '--disable-gesture-typing',
+  '--disable-checker-imaging',
+  '--disable-prompt-on-repost',
+  '--force-color-profile=srgb',
+  '--font-render-hinting=none',
+  '--aggressive-cache-discard',
+  '--disable-cookie-encryption',
+  '--disable-domain-reliability',
+  '--disable-threaded-animation',
+  '--disable-threaded-scrolling',
+  '--enable-simple-cache-backend',
+  '--enable-surface-synchronization',
+  '--disable-image-animation-resync',
+  '--disable-renderer-backgrounding',
+  '--disable-ipc-flooding-protection',
+  '--prerender-from-omnibox=disabled',
+  '--safebrowsing-disable-auto-update',
+  '--disable-offer-upload-credit-cards',
+  '--disable-background-timer-throttling',
+  '--disable-new-content-rendering-timeout',
+  '--run-all-compositor-stages-before-draw',
+  '--disable-client-side-phishing-detection',
+  '--disable-backgrounding-occluded-windows',
+  '--disable-layer-tree-host-memory-pressure',
+  '--autoplay-policy=user-gesture-required',
+  '--disable-offer-store-unmasked-wallet-cards',
+  '--disable-component-extensions-with-background-pages',
+  '--enable-features=NetworkService,NetworkServiceInProcess,TrustTokens,TrustTokensAlwaysAllowIssuance',
+  '--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4',
+  '--disable-features=AudioServiceOutOfProcess,TranslateUI,BlinkGenPropertyTrees',
+];
+
+// Chrome args that leak automation signals — removed in stealth mode
+const HARMFUL_ARGS_SET = new Set([
+  '--enable-automation',
+  '--disable-popup-blocking',
+  '--disable-component-update',
+  '--disable-default-apps',
+  '--disable-extensions',
+]);
+
 export async function launchChrome(opts: LaunchOptions = {}): Promise<RunningChrome> {
   const cdpPort = opts.cdpPort ?? DEFAULT_CDP_PORT;
   await ensurePortAvailable(cdpPort);
@@ -405,6 +478,17 @@ export async function launchChrome(opts: LaunchOptions = {}): Promise<RunningChr
       args.push('--no-sandbox', '--disable-setuid-sandbox');
     }
     if (process.platform === 'linux') args.push('--disable-dev-shm-usage');
+    if (opts.stealth) {
+      // Add stealth args, filtering out any already present
+      const existing = new Set(args.map(a => a.split('=')[0]));
+      for (const sa of STEALTH_ARGS) {
+        if (!existing.has(sa.split('=')[0])) args.push(sa);
+      }
+      // Remove harmful args that leak automation signals
+      const filtered = args.filter(a => !HARMFUL_ARGS_SET.has(a));
+      args.length = 0;
+      args.push(...filtered);
+    }
     const extraArgs = Array.isArray(opts.chromeArgs)
       ? opts.chromeArgs.filter((a): a is string => typeof a === 'string' && a.trim().length > 0)
       : [];
