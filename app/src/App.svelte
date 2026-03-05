@@ -254,12 +254,12 @@
   .window-controls {
     display: flex;
     gap: 0;
-    margin-left: -6px;
+    margin-left: -2px;
   }
 
   .wc {
-    width: 24px;
-    height: 24px;
+    width: 20px;
+    height: 20px;
     border-radius: 50%;
     border: none;
     cursor: pointer;
@@ -289,7 +289,12 @@
     background: #f6be50;
   }
 
-  .wc:hover {
+  .wc svg {
+    position: relative;
+    z-index: 1;
+  }
+
+  .window-controls:hover .wc {
     color: rgba(0, 0, 0, 0.5);
   }
 
