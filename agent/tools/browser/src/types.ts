@@ -69,6 +69,8 @@ export interface LaunchOptions {
   profileColor?: string;
   /** Additional Chrome command-line arguments (e.g. `['--start-maximized']`). */
   chromeArgs?: string[];
+  /** Enable stealth mode with 60+ anti-detection Chrome args (from Scrapling). Default: `false` */
+  stealth?: boolean;
   /**
    * SSRF policy controlling which URLs navigation is allowed to reach.
    * Defaults to trusted-network mode (private/internal addresses allowed).
