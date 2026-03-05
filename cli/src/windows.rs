@@ -8,8 +8,23 @@ fn strip_ansi(s: &str) -> String {
     while let Some(c) = chars.next() {
         if c == '\x1b' {
             match chars.peek() {
-                Some('[') => { chars.next(); for c in chars.by_ref() { if c.is_ascii_alphabetic() { break; } } }
-                Some(']') => { chars.next(); while let Some(c) = chars.next() { if c == '\x07' { break; } if c == '\x1b' && chars.peek() == Some(&'\\') { chars.next(); break; } } }
+                Some('[') => {
+                    chars.next();
+                    for c in chars.by_ref() {
+                        if c.is_ascii_alphabetic() { break; }
+                    }
+                }
+                Some(']') => {
+                    chars.next();
+                    while let Some(c) = chars.next() {
+                        if c == '\x07' {
+                            break;
+                        } else if c == '\x1b' && chars.peek() == Some(&'\\') {
+                            chars.next();
+                            break;
+                        }
+                    }
+                }
                 Some('(') => { chars.next(); chars.next(); }
                 Some(_) => { chars.next(); }
                 None => {}
