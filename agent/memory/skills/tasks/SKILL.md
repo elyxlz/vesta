@@ -25,7 +25,7 @@ tasks delete <id>
 - `--initial-metadata`: JSON string of metadata to attach when adding a task
 
 ## Setup: `uv tool install {install_root}/tools/tasks`
-## Background: `tasks serve &`
+## Background: `screen -dmS tasks tasks serve`
 
 ### Task Patterns
 [User's common task categories and workflows]

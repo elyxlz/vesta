@@ -14,7 +14,7 @@ description: This skill should be used when the user asks about "gmail", "google
    - Download the JSON file
 4. Place the credentials file at `~/data/google/credentials.json`
 5. Install: `uv tool install {install_root}/tools/google`
-6. Start background daemon: `google serve &`
+6. Start background daemon: `screen -dmS google google serve`
 
 ## Authentication
 
@@ -65,7 +65,7 @@ Use `--meet-link` on calendar create to attach a Meet link to an event instead.
 - `--no-attachments` on email get skips attachment metadata
 - `--save-to` on email get saves the full email JSON to a file
 
-## Background: `google serve &`
+## Background: `screen -dmS google google serve`
 
 ### First Use — Data Gathering
 

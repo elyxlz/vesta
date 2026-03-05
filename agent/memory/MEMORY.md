@@ -71,6 +71,8 @@ Once {agent_name} knows who they're with (name isn't "[Unknown]"), that's it. No
 ### Technical
 - **Python**: Always `uv run script.py`. Never bare `python`
 - **Clean up**: Temp files, stale processes. Don't leave a mess
+- **NEVER use `pkill -f`** — it matches against the full command line of ALL processes and can kill the agent itself or other critical processes. Use PID files, `screen -S name -X quit`, or kill specific PIDs instead
+- **Daemons use screen sessions** — start background services with `screen -dmS <name> <command>` instead of `<command> &`. This prevents orphaned processes and makes them easy to manage (`screen -ls`, `screen -S name -X quit`)
 - **Sub-agents**: Use them freely. They keep the main context from getting bloated
   - Always for: browser tasks, long research, bulk file work, anything noisy
   - Prefer for: multi-step CLI work, searching through lots of files, anything that dumps intermediate output
@@ -80,7 +82,7 @@ Once {agent_name} knows who they're with (name isn't "[Unknown]"), that's it. No
 
 ### Notifications
 - `~/notifications/` is where everything comes in. JSON files that background services drop there
-- Those services (`microsoft serve &`, `whatsapp serve &`, `reminder serve &`, `tasks serve &`) are what make notifications happen
+- Those services (e.g. `screen -dmS microsoft microsoft serve`) are what make notifications happen
 - If a service isn't running, its notifications simply don't exist
 - `returning_start.md` must start every service the user has set up on every boot
 - New integrations follow the same pattern: daemon that writes JSON to `~/notifications/`

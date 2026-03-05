@@ -149,7 +149,7 @@ func runOneShot(command string) {
 	sockPath := getSocketPath()
 	output, exitCode, connected := trySocketCommand(sockPath, command, os.Args[1:])
 	if !connected {
-		printJSON(map[string]interface{}{"error": "daemon not running — start with: ~/whatsapp serve &"})
+		printJSON(map[string]interface{}{"error": "daemon not running — start with: screen -dmS whatsapp whatsapp serve"})
 		os.Exit(1)
 	}
 	fmt.Println(string(output))

@@ -36,13 +36,13 @@ def _write_death_notification(config, reason):
 def _require_daemon(config):
     pid_file = config.data_dir / "serve.pid"
     if not pid_file.exists():
-        print(json.dumps({"error": "daemon not running — start with: reminder serve &"}), file=sys.stderr)
+        print(json.dumps({"error": "daemon not running — start with: screen -dmS reminder reminder serve"}), file=sys.stderr)
         sys.exit(1)
     try:
         os.kill(int(pid_file.read_text().strip()), 0)
     except (ValueError, ProcessLookupError, OSError):
         pid_file.unlink(missing_ok=True)
-        print(json.dumps({"error": "daemon not running (stale pid file) — start with: reminder serve &"}), file=sys.stderr)
+        print(json.dumps({"error": "daemon not running (stale pid file) — start with: screen -dmS reminder reminder serve"}), file=sys.stderr)
         sys.exit(1)
 
 

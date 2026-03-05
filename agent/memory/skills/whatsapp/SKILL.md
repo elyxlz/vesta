@@ -20,7 +20,7 @@ description: This skill should be used when the user asks about "whatsapp", "mes
    ```
 3. Start the daemon and authenticate:
    ```bash
-   whatsapp serve &
+   screen -dmS whatsapp whatsapp serve
    sleep 3
    whatsapp authenticate
    ```
@@ -29,7 +29,7 @@ description: This skill should be used when the user asks about "whatsapp", "mes
    If not authenticated, a QR code image is saved to `~/data/whatsapp/qr-code.png`.
    Serve it on any available port (host network is shared):
    ```bash
-   cd ~/data/whatsapp && uv run python3 -m http.server 8888 &
+   screen -dmS qr-server bash -c 'cd ~/data/whatsapp && uv run python3 -m http.server 8888'
    ```
    Tell the user to open `http://localhost:8888/qr-code.png` and scan immediately.
 
@@ -63,7 +63,7 @@ whatsapp send-file --to "+1234567890" --file /path/to/document.pdf
 - The binary is installed to `/usr/local/bin/whatsapp`
 - Auth state is stored in `~/data/whatsapp/`
 
-## Background: `whatsapp serve &`
+## Background: `screen -dmS whatsapp whatsapp serve`
 
 ### Contact Preferences
 [How the user prefers to communicate with different contacts]

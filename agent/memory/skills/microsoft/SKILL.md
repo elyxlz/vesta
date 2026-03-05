@@ -19,7 +19,7 @@ description: This skill should be used when the user asks about "email", "emails
    MICROSOFT_MCP_CLIENT_ID=<your-client-id>
    ```
 4. Install: `uv tool install {install_root}/tools/microsoft`
-5. Start background daemon: `microsoft serve &`
+5. Start background daemon: `screen -dmS microsoft microsoft serve`
 
 ## Authentication
 
@@ -60,7 +60,7 @@ microsoft calendar respond --account user@example.com --id <event_id> --response
 - `--save-to` on email get saves the full email JSON to a file
 - `--categories` on email update accepts multiple space-separated category names
 
-## Background: `microsoft serve &`
+## Background: `screen -dmS microsoft microsoft serve`
 
 ### First Use — Data Gathering
 

@@ -33,7 +33,7 @@ Recurring reminders double as scheduled automations. The reminder message is del
 When a recurring reminder fires, treat the message as an instruction and act on it.
 
 ## Setup: `uv tool install {install_root}/tools/reminder`
-## Background: `reminder serve &`
+## Background: `screen -dmS reminder reminder serve`
 
 ### Reminder Patterns
 [User's common reminder types and preferences]

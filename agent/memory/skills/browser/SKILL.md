@@ -42,7 +42,7 @@ window, not headless automation.
 apt-get install -y xvfb
 
 # Start virtual display (once per session, before launching browser)
-Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp &
+screen -dmS xvfb Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp
 ```
 
 ### Launching in Stealth Mode
@@ -82,9 +82,9 @@ The browser CLI applies multiple layers automatically:
 - **Xvfb not running?** Check with `ps aux | grep Xvfb`. If dead, restart it before launching the browser
 - **Browser crashed / zombie processes?** Kill everything and start fresh:
   ```bash
-  pkill -f chromium || true
-  pkill -f Xvfb || true
-  Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp &
+  screen -S chromium -X quit 2>/dev/null || true
+  screen -S xvfb -X quit 2>/dev/null || true
+  screen -dmS xvfb Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp
   DISPLAY=:99 browser launch
   ```
 
