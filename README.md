@@ -81,3 +81,16 @@ CI runs on every push to `master`, every PR, and every version tag (`v*`).
 ```
 
 Reads the version from master and creates a GitHub release. CI builds all artifacts and attaches them.
+
+## Roadmap
+
+- Multi-container / multi-agent support
+- Better memory (long-term recall, semantic search, forgetting)
+- Thorough testing on macOS and Windows
+- Phone number setup in WhatsApp skill
+- Evolutionary multi-agent optimization
+- Starting templates (pre-configured skill sets)
+- Hosted service
+- Mobile app
+- Backups and importing backups
+- Security considerations and hardening
