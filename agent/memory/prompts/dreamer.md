@@ -64,7 +64,7 @@ Go through the conversation archives. Find where you messed up, where things got
 - Rewrite prompts that led you somewhere dumb
 - Add rules to memory that would stop you making the same mistake
 
-**Upstream**: Fixed something from the source repo? PR it to https://github.com/elyxlz/vesta too. Fix it for yourself first, then share it. See the `upstream` skill for how to submit PRs.
+**Upstream**: Fixed something from the source repo? PR it to https://github.com/elyxlz/vesta too. Fix it for yourself first, then share it. See the `upstream` skill for how to submit PRs. **Only PR general-purpose improvements** (bug fixes, skill improvements, prompt upgrades, new tools). Never PR user-specific things (personal config, contacts, memory content, learned patterns, user preferences).
 
 ## Upstream Integration
 
@@ -77,7 +77,7 @@ Source repo: https://github.com/elyxlz/vesta
 4. Track what you've processed so you don't redo it. Keep the last hash in MEMORY.md
 
 ### Pushing changes
-Use the `upstream` skill — it has a script and setup instructions for submitting PRs via a GitHub App. No personal GitHub account needed.
+Use the `upstream` skill — it has a script and setup instructions for submitting PRs via a GitHub App. No personal GitHub account needed. **Only push general-purpose improvements** — bug fixes, better prompts, new skills, tool improvements. Never push user-specific data, personal config, or learned patterns.
 
 ## Summary
 
