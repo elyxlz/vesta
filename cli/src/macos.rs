@@ -498,7 +498,7 @@ pub fn run(command: Command) {
                     ssh_run(&["vesta", "auth", "--token", &t], false);
                 }
                 None => {
-                    ssh_run(&["vesta", "auth"], true);
+                    ssh_run(&["vesta", "auth"], false);
                 }
             }
         }

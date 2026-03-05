@@ -65,12 +65,16 @@ fn cli_command(args: &[&str]) -> Command {
     cmd
 }
 
-fn collect_lines(reader: impl tokio::io::AsyncRead + Unpin + Send + 'static) -> tokio::task::JoinHandle<String> {
+fn collect_lines(
+    reader: impl tokio::io::AsyncRead + Unpin + Send + 'static,
+    on_line: impl Fn(&str) + Send + 'static,
+) -> tokio::task::JoinHandle<String> {
     tokio::spawn(async move {
         let mut lines = BufReader::new(reader).lines();
         let mut buf = String::new();
         while let Ok(Some(line)) = lines.next_line().await {
             eprintln!("[vesta] {}", line);
+            on_line(&line);
             if !buf.is_empty() {
                 buf.push('\n');
             }
@@ -91,8 +95,8 @@ async fn run(args: &[&str]) -> Result<String, VestaError> {
             VestaError::new(ErrorCode::ExecFailed, format!("failed to run cli: {}", e))
         })?;
 
-    let stdout_task = collect_lines(child.stdout.take().unwrap());
-    let stderr_task = collect_lines(child.stderr.take().unwrap());
+    let stdout_task = collect_lines(child.stdout.take().unwrap(), |_| {});
+    let stderr_task = collect_lines(child.stderr.take().unwrap(), |_| {});
 
     let status = child.wait().await.map_err(|e| {
         VestaError::new(ErrorCode::Internal, format!("failed to run cli: {}", e))
@@ -187,39 +191,54 @@ pub async fn set_agent_name(name: &str) -> Result<(), VestaError> {
 
 // ── Auth operations ────────────────────────────────────────────
 
-pub async fn obtain_and_inject_credentials() -> Result<(), VestaError> {
-    let credentials = run_setup_token().await?;
-    run(&["auth", "--token", &credentials]).await?;
-    Ok(())
+fn open_url(url: &str) {
+    #[cfg(target_os = "macos")]
+    let cmd = std::process::Command::new("open").arg(url).spawn();
+    #[cfg(target_os = "windows")]
+    let cmd = std::process::Command::new("cmd").args(["/c", "start", "", url]).spawn();
+    #[cfg(target_os = "linux")]
+    let cmd = std::process::Command::new("xdg-open").arg(url).spawn();
+    if let Err(e) = cmd {
+        eprintln!("[vesta] failed to open browser: {}", e);
+    }
 }
 
-async fn run_setup_token() -> Result<String, VestaError> {
-    eprintln!("[vesta] exec: claude setup-token");
-    let status = Command::new("claude")
-        .args(["setup-token"])
-        .stdout(std::process::Stdio::inherit())
-        .stderr(std::process::Stdio::inherit())
-        .status()
-        .await
-        .map_err(|e| {
-            VestaError::new(
-                ErrorCode::Internal,
-                format!("failed to run 'claude setup-token'. is claude code installed?\n{}", e),
-            )
-        })?;
+pub async fn obtain_and_inject_credentials() -> Result<(), VestaError> {
+    let mut cmd = cli_command(&["auth"]);
+    cmd.stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    let mut child = cmd.spawn().map_err(|e| {
+        VestaError::new(ErrorCode::ExecFailed, format!("failed to run cli: {}", e))
+    })?;
+
+    let opened = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let scan_url = |opened: std::sync::Arc<std::sync::atomic::AtomicBool>| {
+        move |line: &str| {
+            if !opened.load(std::sync::atomic::Ordering::Relaxed) {
+                if let Some(url) = line.split_whitespace().find(|w| w.starts_with("https://")) {
+                    opened.store(true, std::sync::atomic::Ordering::Relaxed);
+                    open_url(url);
+                }
+            }
+        }
+    };
+
+    let stdout_task = collect_lines(child.stdout.take().unwrap(), scan_url(opened.clone()));
+    let stderr_task = collect_lines(child.stderr.take().unwrap(), scan_url(opened));
+
+    let status = child.wait().await.map_err(|e| {
+        VestaError::new(ErrorCode::Internal, format!("failed to run cli: {}", e))
+    })?;
+    let _ = stdout_task.await;
+    let stderr_str = stderr_task.await.unwrap_or_default();
 
     if !status.success() {
-        return Err(VestaError::new(ErrorCode::Internal, "claude setup-token failed"));
+        let msg = stderr_str.trim().strip_prefix("error: ").unwrap_or(stderr_str.trim());
+        return Err(VestaError::new(ErrorCode::Internal, msg.to_string()));
     }
 
-    let creds_path = dirs::home_dir()
-        .ok_or_else(|| VestaError::new(ErrorCode::Internal, "cannot determine home directory"))?
-        .join(".claude")
-        .join(".credentials.json");
-
-    tokio::fs::read_to_string(&creds_path).await.map_err(|e| {
-        VestaError::new(ErrorCode::Internal, format!("could not read credentials file: {}", e))
-    })
+    Ok(())
 }
 
 // ── Agent host ──────────────────────────────────────────────────

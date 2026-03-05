@@ -1,6 +1,6 @@
 use super::*;
 use serde::Serialize;
-use std::io::{self, Write};
+use std::io::{self, BufRead, Write};
 
 const CONTAINER_NAME: &str = "vesta";
 const VESTA_IMAGE: &str = "ghcr.io/elyxlz/vesta:latest";
@@ -211,28 +211,66 @@ fn create_container(image: &str) {
     }
 }
 
+fn try_open_browser(url: &str) {
+    let _ = process::Command::new("xdg-open").arg(url)
+        .stdout(process::Stdio::null()).stderr(process::Stdio::null()).spawn();
+}
+
 fn obtain_credentials(image: &str) -> String {
     eprintln!("authenticating claude...");
-    eprintln!("a browser window will open. sign in, then come back here.\n");
+    eprintln!("sign in via the link below, then come back here.\n");
 
     let tmp_dir = std::env::temp_dir().join(format!("vesta_auth_{}", std::process::id()));
     std::fs::create_dir_all(&tmp_dir)
         .unwrap_or_else(|e| die(&format!("failed to create temp dir: {}", e)));
 
     let mount = format!("{}:/tmp/claude-creds", tmp_dir.display());
-    let status = process::Command::new("docker")
+    let mut child = process::Command::new("docker")
         .args([
-            "run", "--rm", "-it",
+            "run", "--rm",
             "-v", &mount,
             "--entrypoint", "sh",
             image,
             "-c", "claude setup-token && cp /root/.claude/.credentials.json /tmp/claude-creds/",
         ])
         .stdin(process::Stdio::inherit())
-        .stdout(process::Stdio::inherit())
-        .stderr(process::Stdio::inherit())
-        .status()
+        .stdout(process::Stdio::piped())
+        .stderr(process::Stdio::piped())
+        .spawn()
         .unwrap_or_else(|_| die("failed to run claude setup-token"));
+
+    let opened = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let pass_through = |reader: Box<dyn io::Read + Send>, mut writer: Box<dyn io::Write + Send>, opened: std::sync::Arc<std::sync::atomic::AtomicBool>| {
+        std::thread::spawn(move || {
+            let reader = io::BufReader::new(reader);
+            for line in reader.lines() {
+                let Ok(line) = line else { break };
+                let _ = writeln!(writer, "{}", line);
+                if !opened.load(std::sync::atomic::Ordering::Relaxed) {
+                    if let Some(url) = line.split_whitespace().find(|w| w.starts_with("https://")) {
+                        opened.store(true, std::sync::atomic::Ordering::Relaxed);
+                        try_open_browser(url);
+                    }
+                }
+            }
+        })
+    };
+
+    let stdout_thread = pass_through(
+        Box::new(child.stdout.take().unwrap()),
+        Box::new(io::stdout()),
+        opened.clone(),
+    );
+    let stderr_thread = pass_through(
+        Box::new(child.stderr.take().unwrap()),
+        Box::new(io::stderr()),
+        opened,
+    );
+
+    let status = child.wait()
+        .unwrap_or_else(|_| die("failed to run claude setup-token"));
+    let _ = stdout_thread.join();
+    let _ = stderr_thread.join();
 
     if !status.success() {
         std::fs::remove_dir_all(&tmp_dir).ok();
