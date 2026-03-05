@@ -412,7 +412,7 @@ pub async fn stream_agent_logs(
 ) -> Result<(), VestaError> {
     let mut cmd = cli_command(&["logs"]);
     cmd.stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null());
+        .stderr(std::process::Stdio::piped());
 
     let mut child = cmd.spawn()
         .map_err(|e| {
@@ -426,6 +426,16 @@ pub async fn stream_agent_logs(
             return Ok(());
         }
     };
+
+    // Log stderr for diagnostics
+    if let Some(stderr) = child.stderr.take() {
+        tokio::spawn(async move {
+            let mut lines = BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                eprintln!("[vesta:logs] {}", line);
+            }
+        });
+    }
 
     let cancel_read = cancel.clone();
     let ch = channel.clone();
