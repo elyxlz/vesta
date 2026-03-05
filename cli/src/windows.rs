@@ -518,6 +518,30 @@ pub fn run(command: Command) -> ! {
     let mut args = vec!["-d", WSL_DISTRO, "--exec", VESTA_LINUX_BIN];
     args.extend(command_args(&command));
 
+    // Interactive commands need inherited stdio for user prompts/input
+    let interactive = matches!(
+        command,
+        Command::Setup { yes: false, .. }
+            | Command::Destroy { yes: false }
+            | Command::Attach
+            | Command::Shell
+    );
+
+    if interactive {
+        let status = process::Command::new("wsl.exe")
+            .args(&args)
+            .stdin(process::Stdio::inherit())
+            .stdout(process::Stdio::inherit())
+            .stderr(process::Stdio::inherit())
+            .status()
+            .unwrap_or_else(|_| die("failed to execute wsl.exe"));
+
+        if is_setup && status.success() {
+            install_autostart();
+        }
+        process::exit(status.code().unwrap_or(1));
+    }
+
     let wsl_exec = || -> (process::ExitStatus, String) {
         let output = process::Command::new("wsl.exe")
             .args(&args)
@@ -526,12 +550,10 @@ pub fn run(command: Command) -> ! {
             .output()
             .unwrap_or_else(|_| die("failed to execute wsl.exe"));
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        // Print stdout (structured output like JSON) to stdout
         let stdout = String::from_utf8_lossy(&output.stdout);
         if !stdout.is_empty() {
             print!("{}", stdout);
         }
-        // Forward stderr lines that aren't ANSI progress noise
         for line in stderr.lines() {
             if line.starts_with("error:") || line.starts_with("warning:") || !line.contains('\x1b') {
                 eprintln!("{}", line);
@@ -543,7 +565,6 @@ pub fn run(command: Command) -> ! {
     let (status, _stderr) = wsl_exec();
 
     if !status.success() && !distro_healthy() {
-        // Soft recovery: terminate distro and restart services
         eprintln!("distro is unhealthy. attempting recovery...");
         let _ = process::Command::new("wsl.exe")
             .args(["--terminate", WSL_DISTRO])
@@ -560,7 +581,6 @@ pub fn run(command: Command) -> ! {
             process::exit(0);
         }
 
-        // Soft recovery failed — nuke and reimport as last resort
         unregister_distro();
         eprintln!("reinstalling vesta WSL2 environment...");
         bootstrap_distro();
