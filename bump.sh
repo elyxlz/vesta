@@ -36,4 +36,7 @@ sed -i "s/\"version\": \"${CURRENT}\"/\"version\": \"${NEW}\"/" app/package.json
 (cd cli && cargo check --quiet 2>/dev/null) || true
 (cd app/src-tauri && cargo check --quiet 2>/dev/null) || true
 
+# Update uv.lock
+(cd agent && uv lock --quiet 2>/dev/null) || true
+
 echo "Bumped to ${NEW}"
