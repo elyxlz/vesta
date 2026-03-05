@@ -2,14 +2,13 @@
   import { onDestroy } from "svelte";
   import { createAgent, agentStatus, authenticate, startAgent, setAgentName } from "../lib/api";
   import { agent } from "../lib/stores";
-  import { stripAnsi } from "../lib/ansi";
   import ProgressBar from "./ProgressBar.svelte";
 
   let { onComplete }: { onComplete: (name: string) => void } = $props();
 
   let step = $state<"name" | "creating" | "auth" | "done">("name");
   let agentName = $state("");
-  let error = $state("");
+  let error = $state<{ friendly: string | null; raw: string } | null>(null);
   let transitioning = $state(false);
   let busy = $state(false);
   let createMsg = $state("");
@@ -50,22 +49,24 @@
     transitioning = false;
   }
 
-  function formatError(msg: string): string {
-    const clean = stripAnsi(msg).slice(0, 500);
-    const lower = clean.toLowerCase();
-    if (lower.includes("reboot")) return "restart your computer to finish setup, then reopen vesta.";
-    if (lower.includes("docker") && lower.includes("not installed")) return "docker is required but not installed. install docker and try again.";
-    if (lower.includes("docker") && (lower.includes("daemon") || lower.includes("not running"))) return "docker isn't running. start docker desktop and try again.";
-    if (lower.includes("failed to pull")) return "couldn't download. check your internet connection and try again.";
-    if (lower.includes("failed to run cli")) return "something went wrong starting vesta. try reinstalling.";
-    return clean;
+  function formatError(msg: string): { friendly: string | null; raw: string } {
+    const lower = msg.toLowerCase();
+    if (lower.includes("reboot")) return { friendly: "restart your computer to finish setup, then reopen vesta.", raw: msg };
+    if (lower.includes("docker") && lower.includes("not installed")) return { friendly: "docker is required but not installed. install docker and try again.", raw: msg };
+    if (lower.includes("docker") && (lower.includes("daemon") || lower.includes("not running"))) return { friendly: "docker isn't running. start docker desktop and try again.", raw: msg };
+    if (lower.includes("failed to pull")) return { friendly: "couldn't download. check your internet connection and try again.", raw: msg };
+    if (lower.includes("failed to run cli")) return { friendly: "something went wrong starting vesta. try reinstalling.", raw: msg };
+    return { friendly: null, raw: msg };
   }
+
+  let showRawError = $state(false);
 
   function cancelToName() {
     cancelled = true;
     stopMessages();
     busy = false;
-    error = "";
+    error = null;
+    showRawError = false;
     step = "name";
   }
 
@@ -83,7 +84,7 @@
     const name = normalizedPreview;
     if (!name || busy) return;
     busy = true;
-    error = "";
+    error = null;
     cancelled = false;
 
     startMessages();
@@ -147,7 +148,7 @@
 
   async function runAuth() {
     busy = true;
-    error = "";
+    error = null;
     try {
       await authenticate();
       await startAgent();
@@ -181,7 +182,13 @@
             autofocus
           />
           {#if agentName.trim() && normalizedPreview !== agentName.trim()}<p class="name-preview">{normalizedPreview}</p>{/if}
-          {#if error}<p class="error">{error}</p>{/if}
+          {#if error}
+            <p class="error">{error.friendly ?? "something went wrong."}</p>
+            {#if error.raw.length > 80 || !error.friendly}
+              <button class="btn details-toggle" onclick={() => showRawError = !showRawError}>{showRawError ? "hide details" : "show details"}</button>
+              {#if showRawError}<pre class="error-details">{error.raw}</pre>{/if}
+            {/if}
+          {/if}
           <button class="btn primary full" type="submit" disabled={!normalizedPreview || busy}>create</button>
         </form>
       </div>
@@ -192,7 +199,11 @@
         <p class="sub">this may take a couple of mins.</p>
         <ProgressBar message={createMsg} />
         {#if error}
-          <p class="error">{error}</p>
+          <p class="error">{error.friendly ?? "something went wrong."}</p>
+          {#if error.raw.length > 80 || !error.friendly}
+            <button class="btn details-toggle" onclick={() => showRawError = !showRawError}>{showRawError ? "hide details" : "show details"}</button>
+            {#if showRawError}<pre class="error-details">{error.raw}</pre>{/if}
+          {/if}
           <button class="btn primary" onclick={() => goTo("name")}>try again</button>
         {:else}
           <button class="btn cancel" onclick={cancelToName}>cancel</button>
@@ -205,7 +216,11 @@
         <p class="sub">switch to the browser window that opened<br/>and sign in with your anthropic account.</p>
         <ProgressBar message="waiting for sign in..." />
         {#if error}
-          <p class="error">{error}</p>
+          <p class="error">{error.friendly ?? "something went wrong."}</p>
+          {#if error.raw.length > 80 || !error.friendly}
+            <button class="btn details-toggle" onclick={() => showRawError = !showRawError}>{showRawError ? "hide details" : "show details"}</button>
+            {#if showRawError}<pre class="error-details">{error.raw}</pre>{/if}
+          {/if}
           <button class="btn primary" onclick={runAuth}>retry</button>
         {/if}
         <button class="btn cancel" onclick={cancelToName}>cancel</button>
@@ -282,9 +297,38 @@
   .error {
     color: #c45450;
     font-size: 12px;
-    margin: 6px 0 12px;
+    margin: 6px 0 8px;
     font-weight: 450;
     animation: shake 0.3s ease;
+  }
+
+  .error-details {
+    width: 100%;
+    max-height: 150px;
+    overflow: auto;
+    background: rgba(0, 0, 0, 0.04);
+    border: 1px solid rgba(0, 0, 0, 0.06);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 10px;
+    line-height: 1.4;
+    color: #5a524a;
+    text-align: left;
+    white-space: pre-wrap;
+    word-break: break-all;
+    margin: 4px 0 10px;
+  }
+
+  .btn.details-toggle {
+    background: transparent;
+    color: #9a928a;
+    font-size: 11px;
+    padding: 2px 8px;
+    margin-bottom: 4px;
+  }
+
+  .btn.details-toggle:hover {
+    color: #5a524a;
   }
 
   @keyframes shake {
@@ -455,6 +499,20 @@
 
     .error {
       color: #e07070;
+    }
+
+    .error-details {
+      background: rgba(255, 255, 255, 0.04);
+      border-color: rgba(255, 255, 255, 0.08);
+      color: #a09890;
+    }
+
+    .btn.details-toggle {
+      color: #6a625a;
+    }
+
+    .btn.details-toggle:hover {
+      color: #a09890;
     }
   }
 </style>

@@ -6,26 +6,6 @@ use tokio_util::sync::CancellationToken;
 
 use crate::error::{ErrorCode, VestaError};
 
-fn strip_ansi(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut chars = text.chars();
-    while let Some(c) = chars.next() {
-        if c == '\x1b' {
-            match chars.next() {
-                Some('[') => { while let Some(c) = chars.next() { if c.is_ascii_alphabetic() { break; } } }
-                Some(']') => { while let Some(c) = chars.next() { if c == '\x07' { break; } if c == '\x1b' { chars.next(); break; } } }
-                Some('(') => { chars.next(); }
-                _ => {}
-            }
-        } else if c == '\r' {
-            // Skip carriage returns (progress bar artifacts)
-        } else {
-            out.push(c);
-        }
-    }
-    out
-}
-
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
@@ -121,8 +101,7 @@ async fn run(args: &[&str]) -> Result<String, VestaError> {
     let stderr_str = stderr_task.await.unwrap_or_default();
 
     if !status.success() {
-        let clean = strip_ansi(stderr_str.trim());
-        let msg = clean.strip_prefix("error: ").unwrap_or(&clean);
+        let msg = stderr_str.trim().strip_prefix("error: ").unwrap_or(stderr_str.trim());
         return Err(VestaError::new(ErrorCode::Internal, msg.to_string()));
     }
 
