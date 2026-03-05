@@ -409,12 +409,11 @@ jobs:
       - name: Clean up
         run: rm -f cli/vm/vesta
 
-  # ── Build + Test Windows CLI (native MSVC) ───────────────────────────
-  build-test-windows:
-    needs: build-vm-image
-    if: ${{ !failure() && !cancelled() && github.event_name != 'pull_request' }}
+  # ── Windows Clippy (runs on PRs too) ─────────────────────────────────
+  clippy-windows:
+    needs: [version-check, test-frontend]
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
 
@@ -432,6 +431,26 @@ jobs:
       - name: Clippy
         working-directory: cli
         run: cargo clippy --target x86_64-pc-windows-msvc -- -D warnings
+
+  # ── Build + Test Windows CLI (native MSVC) ───────────────────────────
+  build-test-windows:
+    needs: [build-vm-image, clippy-windows]
+    if: ${{ !failure() && !cancelled() && github.event_name != 'pull_request' }}
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: cli
+          key: x86_64-pc-windows-msvc
 
       - name: Build CLI
         working-directory: cli
