@@ -400,7 +400,7 @@ fn download_vm_image() {
     let asset = format!("vesta-vm-{}.tar.zst", arch);
     let tmp_path = dir.join(format!("{}.tmp", &asset));
 
-    println!("downloading VM image ({})...", arch);
+    eprintln!("downloading VM image ({})...", arch);
 
     let status = process::Command::new("curl")
         .args([
@@ -412,6 +412,8 @@ fn download_vm_image() {
                 repo, asset
             ),
         ])
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
         .status()
         .unwrap_or_else(|_| die("failed to download VM image"));
 
@@ -420,7 +422,7 @@ fn download_vm_image() {
         die("failed to download VM image. check your internet connection.");
     }
 
-    println!("extracting VM image...");
+    eprintln!("extracting VM image...");
     let status = process::Command::new("tar")
         .args([
             "--zstd",
@@ -429,6 +431,8 @@ fn download_vm_image() {
             "-C",
             dir.to_str().unwrap(),
         ])
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
         .status()
         .unwrap_or_else(|_| die("failed to extract VM image. ensure zstd is installed."));
 

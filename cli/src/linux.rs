@@ -180,10 +180,12 @@ fn find_dockerfile() -> std::path::PathBuf {
 fn resolve_image(build: bool) -> &'static str {
     if build {
         let context = find_dockerfile();
-        println!("building image from {}...", context.display());
+        eprintln!("building image from {}...", context.display());
         let status = process::Command::new("docker")
             .args(["build", "-t", LOCAL_IMAGE_TAG, "."])
             .current_dir(&context)
+            .stdout(process::Stdio::null())
+            .stderr(process::Stdio::null())
             .status()
             .unwrap_or_else(|e| die(&format!("docker build failed: {}", e)));
         if !status.success() {
@@ -191,8 +193,8 @@ fn resolve_image(build: bool) -> &'static str {
         }
         LOCAL_IMAGE_TAG
     } else {
-        println!("pulling image...");
-        if !docker_ok(&["pull", VESTA_IMAGE]) {
+        eprintln!("pulling image...");
+        if !docker_quiet(&["pull", VESTA_IMAGE]) {
             die("failed to pull image. check your internet connection.");
         }
         VESTA_IMAGE
