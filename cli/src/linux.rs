@@ -304,8 +304,11 @@ fn inject_credentials(container: &str, credentials: &str) {
         .unwrap_or_else(|e| die(&format!("failed to create temp dir: {}", e)));
     std::fs::write(tmp_dir.join(".credentials.json"), credentials)
         .unwrap_or_else(|e| die(&format!("failed to write temp credentials: {}", e)));
-    let target = format!("{}:/root/.claude", container);
-    let ok = docker_ok(&["cp", tmp_dir.to_str().unwrap(), &target]);
+    // Use trailing /. to copy contents of tmp_dir into /root/.claude/
+    // Without this, docker cp creates a subdirectory when /root/.claude/ already exists
+    let src = format!("{}/.", tmp_dir.to_str().unwrap());
+    let target = format!("{}:/root/.claude/", container);
+    let ok = docker_ok(&["cp", &src, &target]);
     std::fs::remove_dir_all(&tmp_dir).ok();
     if !ok {
         die("failed to copy credentials to container");
