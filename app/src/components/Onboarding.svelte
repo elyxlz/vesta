@@ -71,10 +71,16 @@
   function formatError(msg: string): { friendly: string | null; raw: string } {
     const lower = msg.toLowerCase();
     if (lower.includes("reboot")) return { friendly: "restart your computer to finish setup, then reopen vesta.", raw: msg };
+    if (lower.includes("wsl") && lower.includes("not installed")) return { friendly: "WSL2 is required but not installed. open PowerShell as admin and run:\n\nwsl --install --no-distribution\n\nthen restart your computer and reopen vesta.", raw: msg };
+    if (lower.includes("wsl") && (lower.includes("virtualization") || lower.includes("bios"))) return { friendly: "WSL2 needs hardware virtualization enabled. restart your computer, enter BIOS/UEFI settings, enable virtualization (Intel VT-x or AMD-V), then try again.", raw: msg };
+    if (lower.includes("wsl") && lower.includes("failed")) return { friendly: "WSL2 setup failed. open PowerShell as admin and run:\n\nwsl --install --no-distribution\n\nthen restart your computer and reopen vesta.", raw: msg };
+    if (lower.includes("rootfs") && lower.includes("download")) return { friendly: "couldn't download vesta. check your internet connection and try again.", raw: msg };
+    if (lower.includes("services did not start")) return { friendly: "services didn't start in time. try closing vesta and reopening it.", raw: msg };
     if (lower.includes("docker") && lower.includes("not installed")) return { friendly: "docker is required but not installed. install docker and try again.", raw: msg };
     if (lower.includes("docker") && (lower.includes("daemon") || lower.includes("not running"))) return { friendly: "docker isn't running. start docker desktop and try again.", raw: msg };
     if (lower.includes("failed to pull")) return { friendly: "couldn't download. check your internet connection and try again.", raw: msg };
     if (lower.includes("failed to run cli")) return { friendly: "something went wrong starting vesta. try reinstalling.", raw: msg };
+    if (lower.includes("setup-token") || lower.includes("setup_token")) return { friendly: "authentication setup failed. try closing vesta and reopening it.", raw: msg };
     return { friendly: null, raw: msg };
   }
 
@@ -305,7 +311,7 @@
           {#if error}
             <p class="error">{error.friendly ?? "something went wrong."}</p>
             {#if error.raw.length > 80 || !error.friendly}
-              <button class="btn details-toggle" onclick={() => showRawError = !showRawError}>{showRawError ? "hide details" : "show details"}</button>
+              <button type="button" class="btn details-toggle" onclick={() => showRawError = !showRawError}>{showRawError ? "hide details" : "show details"}</button>
               {#if showRawError}<pre class="error-details">{error.raw}</pre>{/if}
             {/if}
           {/if}
