@@ -518,13 +518,16 @@ pub fn run(command: Command) -> ! {
     let mut args = vec!["-d", WSL_DISTRO, "--exec", VESTA_LINUX_BIN];
     args.extend(command_args(&command));
 
-    // Interactive commands need inherited stdio for user prompts/input
+    // Interactive commands need inherited stdio for user prompts/input.
+    // Setup is always interactive because obtain_credentials needs stdin
+    // even when --yes is passed (--yes only skips the confirm prompt).
     let interactive = matches!(
         command,
-        Command::Setup { yes: false, .. }
+        Command::Setup { .. }
             | Command::Destroy { yes: false }
             | Command::Attach
             | Command::Shell
+            | Command::Auth { token: None }
     );
 
     if interactive {
