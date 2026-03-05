@@ -264,7 +264,7 @@ fn download_rootfs() -> PathBuf {
 
     eprintln!("downloading WSL rootfs...");
 
-    let status = process::Command::new("curl.exe")
+    let output = process::Command::new("curl.exe")
         .args([
             "-fSL",
             "-o",
@@ -275,13 +275,19 @@ fn download_rootfs() -> PathBuf {
             ),
         ])
         .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .status()
+        .stderr(process::Stdio::piped())
+        .output()
         .unwrap_or_else(|_| die("failed to download rootfs. is curl available?"));
 
-    if !status.success() {
+    if !output.status.success() {
         std::fs::remove_file(&tmp_path).ok();
-        die("failed to download rootfs. check your internet connection.");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = stderr.trim();
+        if stderr.is_empty() {
+            die("failed to download rootfs. check your internet connection.");
+        } else {
+            die(&format!("failed to download rootfs: {}", stderr));
+        }
     }
 
     std::fs::rename(&tmp_path, &path)
@@ -299,7 +305,7 @@ fn bootstrap_distro() {
     let rootfs = download_rootfs();
 
     eprintln!("importing vesta-wsl distro...");
-    let status = process::Command::new("wsl.exe")
+    let output = process::Command::new("wsl.exe")
         .args([
             "--import",
             WSL_DISTRO,
@@ -308,13 +314,22 @@ fn bootstrap_distro() {
             "--version",
             "2",
         ])
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .status()
+        .stdout(process::Stdio::piped())
+        .stderr(process::Stdio::piped())
+        .output()
         .unwrap_or_else(|_| die("failed to run wsl --import"));
 
-    if !status.success() {
-        die("failed to set up WSL2 environment. ensure WSL2 is enabled and virtualization is turned on in BIOS.");
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = stderr.trim();
+        if stderr.is_empty() {
+            die("failed to set up WSL2 environment. ensure WSL2 is enabled and virtualization is turned on in BIOS.");
+        } else {
+            die(&format!(
+                "failed to set up WSL2 environment: {}\nensure WSL2 is enabled and virtualization is turned on in BIOS.",
+                stderr
+            ));
+        }
     }
 
     eprintln!("vesta-wsl distro ready.");
