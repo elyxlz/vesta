@@ -2,6 +2,7 @@
   import { onDestroy } from "svelte";
   import { createAgent, agentStatus, authenticate, startAgent, setAgentName } from "../lib/api";
   import { agent } from "../lib/stores";
+  import { stripAnsi } from "../lib/ansi";
   import ProgressBar from "./ProgressBar.svelte";
 
   let { onComplete }: { onComplete: (name: string) => void } = $props();
@@ -50,13 +51,14 @@
   }
 
   function formatError(msg: string): string {
-    const lower = msg.toLowerCase();
+    const clean = stripAnsi(msg).slice(0, 500);
+    const lower = clean.toLowerCase();
     if (lower.includes("reboot")) return "restart your computer to finish setup, then reopen vesta.";
     if (lower.includes("docker") && lower.includes("not installed")) return "docker is required but not installed. install docker and try again.";
     if (lower.includes("docker") && (lower.includes("daemon") || lower.includes("not running"))) return "docker isn't running. start docker desktop and try again.";
     if (lower.includes("failed to pull")) return "couldn't download. check your internet connection and try again.";
     if (lower.includes("failed to run cli")) return "something went wrong starting vesta. try reinstalling.";
-    return msg;
+    return clean;
   }
 
   function cancelToName() {

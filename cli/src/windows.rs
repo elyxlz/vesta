@@ -90,7 +90,6 @@ fn download_rootfs() -> PathBuf {
     let status = process::Command::new("curl.exe")
         .args([
             "-fSL",
-            "--progress-bar",
             "-o",
             tmp_path.to_str().unwrap(),
             &format!(
@@ -98,6 +97,8 @@ fn download_rootfs() -> PathBuf {
                 repo, asset
             ),
         ])
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
         .status()
         .unwrap_or_else(|_| die("failed to download rootfs. is curl available?"));
 
@@ -130,6 +131,8 @@ fn bootstrap_distro() {
             "--version",
             "2",
         ])
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
         .status()
         .unwrap_or_else(|_| die("failed to run wsl --import"));
 
@@ -318,17 +321,29 @@ pub fn run(command: Command) -> ! {
     let mut args = vec!["-d", WSL_DISTRO, "--exec", VESTA_LINUX_BIN];
     args.extend(command_args(&command));
 
-    let wsl_exec = || -> process::ExitStatus {
-        process::Command::new("wsl.exe")
+    let wsl_exec = || -> (process::ExitStatus, String) {
+        let output = process::Command::new("wsl.exe")
             .args(&args)
-            .stdin(process::Stdio::inherit())
-            .stdout(process::Stdio::inherit())
-            .stderr(process::Stdio::inherit())
-            .status()
-            .unwrap_or_else(|_| die("failed to execute wsl.exe"))
+            .stdout(process::Stdio::piped())
+            .stderr(process::Stdio::piped())
+            .output()
+            .unwrap_or_else(|_| die("failed to execute wsl.exe"));
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        // Print stdout (structured output like JSON) to stdout
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if !stdout.is_empty() {
+            print!("{}", stdout);
+        }
+        // Forward stderr lines that aren't ANSI progress noise
+        for line in stderr.lines() {
+            if line.starts_with("error:") || line.starts_with("warning:") || !line.contains('\x1b') {
+                eprintln!("{}", line);
+            }
+        }
+        (output.status, stderr)
     };
 
-    let status = wsl_exec();
+    let (status, _stderr) = wsl_exec();
 
     if !status.success() && !distro_healthy() {
         // Soft recovery: terminate distro and restart services
@@ -340,7 +355,7 @@ pub fn run(command: Command) -> ! {
             .status();
         ensure_services();
 
-        let retry = wsl_exec();
+        let (retry, _) = wsl_exec();
         if retry.success() {
             if is_setup {
                 install_autostart();
@@ -354,7 +369,7 @@ pub fn run(command: Command) -> ! {
         bootstrap_distro();
         ensure_services();
 
-        let status = wsl_exec();
+        let (status, _) = wsl_exec();
         if is_setup && status.success() {
             install_autostart();
         }
