@@ -7,6 +7,7 @@ use tokio_util::sync::CancellationToken;
 use crate::error::{ErrorCode, VestaError};
 
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
+const SETUP_TIMEOUT_SECS: u64 = 600;
 const AUTH_TIMEOUT_SECS: u64 = 600;
 
 #[cfg(target_os = "windows")]
@@ -199,7 +200,11 @@ async fn run(args: &[&str]) -> Result<String, VestaError> {
 }
 
 async fn run_json<T: serde::de::DeserializeOwned>(args: &[&str]) -> Result<T, VestaError> {
-    let stdout = run(args).await?;
+    run_json_with_timeout(args, DEFAULT_TIMEOUT_SECS).await
+}
+
+async fn run_json_with_timeout<T: serde::de::DeserializeOwned>(args: &[&str], timeout_secs: u64) -> Result<T, VestaError> {
+    let stdout = run_with_timeout(args, timeout_secs).await?;
     let trimmed = stdout.trim();
     if trimmed.is_empty() {
         return Err(VestaError::new(ErrorCode::Internal, "cli returned no output"));
@@ -235,7 +240,7 @@ pub async fn platform_check() -> Result<PlatformStatus, VestaError> {
 }
 
 pub async fn platform_setup() -> Result<PlatformStatus, VestaError> {
-    run_json(&["platform-setup"]).await
+    run_json_with_timeout(&["platform-setup"], SETUP_TIMEOUT_SECS).await
 }
 
 // ── Agent operations ────────────────────────────────────────────
@@ -279,7 +284,7 @@ pub async fn create_agent(name: Option<String>) -> Result<(), VestaError> {
         args.push("--name");
         args.push(&name_val);
     }
-    run(&args).await?;
+    run_with_timeout(&args, SETUP_TIMEOUT_SECS).await?;
     Ok(())
 }
 
