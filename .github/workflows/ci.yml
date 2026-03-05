@@ -251,6 +251,13 @@ jobs:
           echo "=== backup ==="
           "$CLI" backup
 
+          echo "=== auth URL capture ==="
+          AUTH_OUTPUT=$(docker run --rm --entrypoint sh ghcr.io/elyxlz/vesta:latest \
+            -c "timeout 15 claude setup-token 2>&1 || true")
+          echo "$AUTH_OUTPUT"
+          echo "$AUTH_OUTPUT" | grep -qE 'https://' || { echo "FAIL: no auth URL in output"; exit 1; }
+          echo "auth URL found"
+
           echo "=== destroy ==="
           "$CLI" destroy --yes
           assert_status '.status == "not_found"'
@@ -514,6 +521,14 @@ jobs:
 
           echo "=== status before create ==="
           MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec $VCLI status --json
+
+          echo "=== auth URL capture ==="
+          AUTH_OUTPUT=$(MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec \
+            docker run --rm --entrypoint sh ghcr.io/elyxlz/vesta:latest \
+            -c "timeout 15 claude setup-token 2>&1 || true" 2>&1)
+          echo "$AUTH_OUTPUT"
+          echo "$AUTH_OUTPUT" | grep -qE 'https://' || { echo "FAIL: no auth URL in output"; exit 1; }
+          echo "auth URL found"
 
           echo "=== all tests passed ==="
 
