@@ -180,10 +180,12 @@ fn find_dockerfile() -> std::path::PathBuf {
 fn resolve_image(build: bool) -> &'static str {
     if build {
         let context = find_dockerfile();
-        println!("building image from {}...", context.display());
+        eprintln!("building image from {}...", context.display());
         let status = process::Command::new("docker")
             .args(["build", "-t", LOCAL_IMAGE_TAG, "."])
             .current_dir(&context)
+            .stdout(process::Stdio::null())
+            .stderr(process::Stdio::null())
             .status()
             .unwrap_or_else(|e| die(&format!("docker build failed: {}", e)));
         if !status.success() {
@@ -191,8 +193,8 @@ fn resolve_image(build: bool) -> &'static str {
         }
         LOCAL_IMAGE_TAG
     } else {
-        println!("pulling image...");
-        if !docker_ok(&["pull", VESTA_IMAGE]) {
+        eprintln!("pulling image...");
+        if !docker_quiet(&["pull", VESTA_IMAGE]) {
             die("failed to pull image. check your internet connection.");
         }
         VESTA_IMAGE
@@ -210,8 +212,8 @@ fn create_container(image: &str) {
 }
 
 fn obtain_credentials(image: &str) -> String {
-    println!("authenticating claude...");
-    println!("a browser window will open. sign in, then come back here.\n");
+    eprintln!("authenticating claude...");
+    eprintln!("a browser window will open. sign in, then come back here.\n");
 
     let tmp_dir = std::env::temp_dir().join(format!("vesta_auth_{}", std::process::id()));
     std::fs::create_dir_all(&tmp_dir)
@@ -283,14 +285,14 @@ pub fn run(command: Command) {
                     println!("aborted");
                     return;
                 }
-                println!("replacing existing agent...");
+                eprintln!("replacing existing agent...");
                 docker_ok(&["rm", "-f", CONTAINER_NAME]);
             }
 
             let image = resolve_image(build);
             let credentials = obtain_credentials(image);
 
-            println!("creating agent...");
+            eprintln!("creating agent...");
             create_container(image);
             if let Some(n) = name {
                 docker_cp_content(CONTAINER_NAME, &n, "/root/.vesta-name");
@@ -301,8 +303,8 @@ pub fn run(command: Command) {
                 die("failed to start container");
             }
 
-            println!("agent is ready.");
-            println!("attaching (ctrl-q to detach)...");
+            eprintln!("agent is ready.");
+            eprintln!("attaching (ctrl-q to detach)...");
             docker_interactive(&["attach", "--detach-keys=ctrl-q", CONTAINER_NAME]);
         }
 
@@ -313,24 +315,24 @@ pub fn run(command: Command) {
 
             let image = resolve_image(build);
 
-            println!("creating agent...");
+            eprintln!("creating agent...");
             create_container(image);
             if let Some(n) = name {
                 docker_cp_content(CONTAINER_NAME, &n, "/root/.vesta-name");
             }
-            println!("created (run 'vesta auth' to authenticate, then 'vesta start')");
+            eprintln!("created (run 'vesta auth' to authenticate, then 'vesta start')");
         }
 
         Command::Start => {
             ensure_exists();
             if container_status() == ContainerStatus::Running {
-                println!("already running");
+                eprintln!("already running");
                 return;
             }
             if !docker_ok(&["start", CONTAINER_NAME]) {
                 die("failed to start");
             }
-            println!("started");
+            eprintln!("started");
         }
 
         Command::Stop => {
@@ -338,16 +340,16 @@ pub fn run(command: Command) {
             if !docker_ok(&["stop", CONTAINER_NAME]) {
                 die("failed to stop");
             }
-            println!("stopped");
+            eprintln!("stopped");
         }
 
         Command::Restart => {
             ensure_exists();
-            println!("restarting...");
+            eprintln!("restarting...");
             if !docker_ok(&["restart", CONTAINER_NAME]) {
                 die("failed to restart");
             }
-            println!("restarted");
+            eprintln!("restarted");
         }
 
         Command::Attach => {
@@ -364,7 +366,7 @@ pub fn run(command: Command) {
                 .stdout(process::Stdio::inherit())
                 .stderr(process::Stdio::null())
                 .status();
-            println!("\nattaching (ctrl-q to detach)...");
+            eprintln!("\nattaching (ctrl-q to detach)...");
             docker_interactive(&["attach", "--detach-keys=ctrl-q", CONTAINER_NAME]);
         }
 
@@ -374,7 +376,7 @@ pub fn run(command: Command) {
                 .unwrap_or_else(|| VESTA_IMAGE.to_string());
             let credentials = credentials.unwrap_or_else(|| obtain_credentials(&image));
             inject_credentials(CONTAINER_NAME, &credentials);
-            println!("authenticated");
+            eprintln!("authenticated");
         }
 
         Command::Logs => {
@@ -456,11 +458,11 @@ pub fn run(command: Command) {
                 .unwrap()
                 .as_secs();
             let tag = format!("vesta-backup:{}", ts);
-            println!("creating backup...");
+            eprintln!("creating backup...");
             if !docker_ok(&["commit", CONTAINER_NAME, &tag]) {
                 die("backup failed");
             }
-            println!("backup created: {}", tag);
+            eprintln!("backup created: {}", tag);
         }
 
         Command::Destroy { yes } => {
@@ -472,13 +474,13 @@ pub fn run(command: Command) {
             if !docker_ok(&["rm", "-f", CONTAINER_NAME]) {
                 die("failed to destroy");
             }
-            println!("destroyed");
+            eprintln!("destroyed");
         }
 
         Command::Name { name } => {
             ensure_exists();
             docker_cp_content(CONTAINER_NAME, &name, "/root/.vesta-name");
-            println!("name set: {}", name);
+            eprintln!("name set: {}", name);
         }
 
         Command::Rebuild => {
@@ -489,21 +491,21 @@ pub fn run(command: Command) {
                 .as_secs();
             let backup_tag = format!("vesta-rebuild:{}", ts);
 
-            println!("creating backup...");
+            eprintln!("creating backup...");
             if !docker_ok(&["commit", CONTAINER_NAME, &backup_tag]) {
                 die("backup failed");
             }
 
-            println!("destroying...");
+            eprintln!("destroying...");
             docker_ok(&["rm", "-f", CONTAINER_NAME]);
 
-            println!("recreating from backup...");
+            eprintln!("recreating from backup...");
             create_container(&backup_tag);
 
             if !docker_ok(&["start", CONTAINER_NAME]) {
                 die("failed to start");
             }
-            println!("rebuilt and running");
+            eprintln!("rebuilt and running");
         }
     }
 }

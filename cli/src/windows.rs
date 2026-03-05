@@ -47,7 +47,7 @@ fn distro_healthy() -> bool {
 }
 
 fn unregister_distro() {
-    println!("removing broken vesta-wsl distro...");
+    eprintln!("removing broken vesta-wsl distro...");
     let _ = process::Command::new("wsl.exe")
         .args(["--unregister", WSL_DISTRO])
         .stdout(process::Stdio::null())
@@ -85,7 +85,7 @@ fn download_rootfs() -> PathBuf {
     let asset = "vesta-wsl-rootfs.tar.gz";
     let tmp_path = dir.join(format!("{}.tmp", asset));
 
-    println!("downloading WSL rootfs...");
+    eprintln!("downloading WSL rootfs...");
 
     let status = process::Command::new("curl.exe")
         .args([
@@ -121,7 +121,7 @@ fn bootstrap_distro() {
 
     let rootfs = download_rootfs();
 
-    println!("importing vesta-wsl distro...");
+    eprintln!("importing vesta-wsl distro...");
     let status = process::Command::new("wsl.exe")
         .args([
             "--import",
@@ -140,7 +140,7 @@ fn bootstrap_distro() {
         die("failed to set up WSL2 environment. ensure WSL2 is enabled and virtualization is turned on in BIOS.");
     }
 
-    println!("vesta-wsl distro ready.");
+    eprintln!("vesta-wsl distro ready.");
 }
 
 fn docker_ready() -> bool {
@@ -179,18 +179,18 @@ fn ensure_services() {
             .spawn();
     }
 
-    print!("waiting for services...");
-    io::stdout().flush().ok();
+    eprint!("waiting for services...");
+    io::stderr().flush().ok();
     for _ in 0..30 {
         if docker_ready() {
-            println!(" ready");
+            eprintln!(" ready");
             return;
         }
         std::thread::sleep(std::time::Duration::from_secs(1));
-        print!(".");
-        io::stdout().flush().ok();
+        eprint!(".");
+        io::stderr().flush().ok();
     }
-    println!();
+    eprintln!();
     die("services did not start within 30s. try restarting and running again.");
 }
 
@@ -288,7 +288,7 @@ fn command_args(command: &Command) -> Vec<&str> {
 
 pub fn run(command: Command) -> ! {
     if !wsl_available() {
-        println!("WSL2 is required but not installed. attempting to install...");
+        eprintln!("WSL2 is required but not installed. attempting to install...");
         let status = process::Command::new("powershell.exe")
             .args([
                 "-Command",
@@ -297,7 +297,7 @@ pub fn run(command: Command) -> ! {
             .status();
 
         if status.map(|s| s.success()).unwrap_or(false) && wsl_available() {
-            println!("WSL2 installed.");
+            eprintln!("WSL2 installed.");
         } else {
             die("WSL2 installation failed or was cancelled. reboot if you just installed it, or install manually:\n    \
                  wsl --install --no-distribution");
@@ -305,7 +305,7 @@ pub fn run(command: Command) -> ! {
     }
 
     if !distro_registered() {
-        println!("first run: setting up vesta WSL2 environment...");
+        eprintln!("first run: setting up vesta WSL2 environment...");
         bootstrap_distro();
     }
 
@@ -347,7 +347,7 @@ pub fn run(command: Command) -> ! {
 
     if !status.success() && !distro_healthy() {
         // Soft recovery: terminate distro and restart services
-        println!("distro is unhealthy. attempting recovery...");
+        eprintln!("distro is unhealthy. attempting recovery...");
         let _ = process::Command::new("wsl.exe")
             .args(["--terminate", WSL_DISTRO])
             .stdout(process::Stdio::null())
@@ -365,7 +365,7 @@ pub fn run(command: Command) -> ! {
 
         // Soft recovery failed — nuke and reimport as last resort
         unregister_distro();
-        println!("reinstalling vesta WSL2 environment...");
+        eprintln!("reinstalling vesta WSL2 environment...");
         bootstrap_distro();
         ensure_services();
 
