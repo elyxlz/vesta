@@ -23,7 +23,7 @@ jobs:
 
           # Skip version bump check if no source code changed
           CHANGED=$(git diff --name-only master...HEAD)
-          if echo "$CHANGED" | grep -qvE '^(\.github/|README\.md$|release\.sh$)'; then
+          if echo "$CHANGED" | grep -qvE '^(\.github/|README\.md$|release\.sh$|bump\.sh$)'; then
             : # source files changed, check version bump
           else
             echo "✓ No source changes, skipping version bump check"
