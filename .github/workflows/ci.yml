@@ -92,6 +92,7 @@ jobs:
 
   # ── Build CLI (all unix targets) ──────────────────────────────────────
   build-cli:
+    needs: [version-check, test-frontend]
     strategy:
       fail-fast: false
       matrix:
