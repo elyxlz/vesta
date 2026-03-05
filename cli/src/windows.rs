@@ -2,6 +2,40 @@ use super::*;
 use std::io::{self, Write};
 use std::path::PathBuf;
 
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            match chars.peek() {
+                Some('[') => {
+                    chars.next();
+                    for c in chars.by_ref() {
+                        if c.is_ascii_alphabetic() { break; }
+                    }
+                }
+                Some(']') => {
+                    chars.next();
+                    while let Some(c) = chars.next() {
+                        if c == '\x07' {
+                            break;
+                        } else if c == '\x1b' && chars.peek() == Some(&'\\') {
+                            chars.next();
+                            break;
+                        }
+                    }
+                }
+                Some('(') => { chars.next(); chars.next(); }
+                Some(_) => { chars.next(); }
+                None => {}
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 const WSL_DISTRO: &str = "vesta-wsl";
 const VESTA_LINUX_BIN: &str = "/usr/local/bin/vesta";
 const REGISTRY_RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
@@ -558,8 +592,9 @@ pub fn run(command: Command) -> ! {
             print!("{}", stdout);
         }
         for line in stderr.lines() {
-            if line.starts_with("error:") || line.starts_with("warning:") || !line.contains('\x1b') {
-                eprintln!("{}", line);
+            let clean = strip_ansi(line);
+            if !clean.trim().is_empty() {
+                eprintln!("{}", clean);
             }
         }
         (output.status, stderr)

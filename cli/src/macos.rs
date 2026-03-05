@@ -405,9 +405,9 @@ fn download_vm_image() {
 
     eprintln!("downloading VM image ({})...", arch);
 
-    let status = process::Command::new("curl")
+    let output = process::Command::new("curl")
         .args([
-            "-fsSL",
+            "-fSL",
             "-o",
             tmp_path.to_str().unwrap(),
             &format!(
@@ -416,13 +416,19 @@ fn download_vm_image() {
             ),
         ])
         .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .status()
+        .stderr(process::Stdio::piped())
+        .output()
         .unwrap_or_else(|_| die("failed to download VM image"));
 
-    if !status.success() {
+    if !output.status.success() {
         std::fs::remove_file(&tmp_path).ok();
-        die("failed to download VM image. check your internet connection.");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = stderr.trim();
+        if stderr.is_empty() {
+            die("failed to download VM image. check your internet connection.");
+        } else {
+            die(&format!("failed to download VM image: {}", stderr));
+        }
     }
 
     eprintln!("extracting VM image...");
@@ -498,7 +504,7 @@ pub fn run(command: Command) {
                     ssh_run(&["vesta", "auth", "--token", &t], false);
                 }
                 None => {
-                    ssh_run(&["vesta", "auth"], false);
+                    ssh_run(&["vesta", "auth"], true);
                 }
             }
         }

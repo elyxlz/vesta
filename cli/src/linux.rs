@@ -34,6 +34,8 @@ struct StatusJson {
 fn docker(args: &[&str]) -> process::ExitStatus {
     process::Command::new("docker")
         .args(args)
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::inherit())
         .status()
         .unwrap_or_else(|_| die("failed to run docker"))
 }
@@ -185,7 +187,7 @@ fn resolve_image(build: bool) -> &'static str {
             .args(["build", "-t", LOCAL_IMAGE_TAG, "."])
             .current_dir(&context)
             .stdout(process::Stdio::null())
-            .stderr(process::Stdio::null())
+            .stderr(process::Stdio::inherit())
             .status()
             .unwrap_or_else(|e| die(&format!("docker build failed: {}", e)));
         if !status.success() {
@@ -405,7 +407,7 @@ pub fn run(command: Command) {
                     "/root/logs/vesta.log",
                 ])
                 .stdout(process::Stdio::inherit())
-                .stderr(process::Stdio::null())
+                .stderr(process::Stdio::inherit())
                 .status();
             eprintln!("\nattaching (ctrl-q to detach)...");
             docker_interactive(&["attach", "--detach-keys=ctrl-q", CONTAINER_NAME]);
