@@ -84,13 +84,13 @@ Reads the version from master and creates a GitHub release. CI builds all artifa
 
 ## Roadmap
 
-- Multi-container / multi-agent support
-- Better memory (long-term recall, semantic search, forgetting)
-- Thorough testing on macOS and Windows
-- Phone number setup in WhatsApp skill
-- Evolutionary multi-agent optimization
-- Starting templates (pre-configured skill sets)
-- Hosted service
-- Mobile app
-- Backups and importing backups
-- Security considerations and hardening
+- [ ] Better memory (long-term recall, semantic search, forgetting)
+- [ ] Security considerations and hardening
+- [ ] Backups and importing backups
+- [ ] Thorough testing on macOS and Windows
+- [ ] Starting templates (pre-configured skill sets)
+- [ ] Phone number setup in WhatsApp skill
+- [ ] Multi-container / multi-agent support
+- [ ] Evolutionary multi-agent optimization
+- [ ] Mobile app
+- [ ] Hosted service
