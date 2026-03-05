@@ -32,7 +32,8 @@ func main() {
 		fmt.Fprintln(os.Stderr, "  list-groups (groups)                 add-contact [name] [phone]")
 		fmt.Fprintln(os.Stderr, "  remove-contact [identifier]          leave-group [group]")
 		fmt.Fprintln(os.Stderr, "  backfill [to]                        rename-group (rename) [group] [name]")
-		fmt.Fprintln(os.Stderr, "  serve  authenticate  download-media  create-group  search-contacts")
+		fmt.Fprintln(os.Stderr, "  check-delivery (delivery) [msg-id]   download-media [msg-id]")
+		fmt.Fprintln(os.Stderr, "  serve  authenticate  create-group    search-contacts")
 		fmt.Fprintln(os.Stderr, "  update-group-participants")
 		os.Exit(1)
 	}
@@ -51,6 +52,7 @@ func main() {
 		"file":     "send-file",
 		"react":    "send-reaction",
 		"rename":          "rename-group",
+		"delivery":        "check-delivery",
 		"search-contacts": "list-contacts",
 	}
 	if canon, ok := aliases[command]; ok {
@@ -73,6 +75,7 @@ func main() {
 		"leave-group":    {"group"},
 		"backfill":       {"to"},
 		"rename-group":   {"group", "name"},
+		"check-delivery": {"message-id"},
 	}
 	if spec, ok := positionalSpecs[command]; ok {
 		remaining := os.Args[1:]

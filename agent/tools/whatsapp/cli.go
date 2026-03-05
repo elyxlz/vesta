@@ -422,6 +422,58 @@ func executeCommand(command string, args []string, wac *WhatsAppClient) (interfa
 		success, msg := wac.RenameGroup(group, name)
 		return map[string]interface{}{"success": success, "message": msg}, nil
 
+	case "check-delivery":
+		var messageID, to string
+		var limit int
+		var recent bool
+		fs := flag.NewFlagSet("check-delivery", flag.ContinueOnError)
+		fs.StringVar(&messageID, "message-id", "", "Message ID to check")
+		fs.StringVar(&to, "to", "", "Chat filter (contact name, phone, or group)")
+		fs.IntVar(&limit, "limit", 10, "Number of recent messages to show")
+		fs.BoolVar(&recent, "recent", false, "Show recent outgoing message statuses")
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+
+		if recent || messageID == "" {
+			// Show recent outgoing messages with delivery status
+			var chatJID string
+			if to != "" {
+				jid, err := wac.ResolveRecipient(to)
+				if err != nil {
+					return nil, fmt.Errorf("failed to resolve chat: %v", err)
+				}
+				chatJID = jid.String()
+			}
+			results, err := wac.store.GetRecentOutgoingStatus(chatJID, limit)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]interface{}{"messages": results}, nil
+		}
+
+		// Check specific message
+		var chatJID string
+		if to != "" {
+			jid, err := wac.ResolveRecipient(to)
+			if err != nil {
+				return nil, fmt.Errorf("failed to resolve chat: %v", err)
+			}
+			chatJID = jid.String()
+		}
+		status, ts, err := wac.store.GetDeliveryStatus(messageID, chatJID)
+		if err != nil {
+			return nil, fmt.Errorf("message not found: %v", err)
+		}
+		result := map[string]interface{}{
+			"message_id":      messageID,
+			"delivery_status": status,
+		}
+		if ts != nil {
+			result["delivery_timestamp"] = ts.Format(time.RFC3339)
+		}
+		return result, nil
+
 	default:
 		return nil, fmt.Errorf("unknown command: %s", command)
 	}
