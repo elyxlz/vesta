@@ -1133,7 +1133,7 @@ wheels = [
 
 [[package]]
 name = "vesta"
-version = "0.1.41"
+version = "0.1.42"
 source = { editable = "." }
 dependencies = [
     { name = "aioconsole" },
