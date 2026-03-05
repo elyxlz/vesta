@@ -18,6 +18,9 @@ struct StatusJson {
     authenticated: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     name: Option<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    agent_ready: bool,
+    ws_port: u16,
 }
 
 fn data_dir() -> PathBuf {
@@ -518,6 +521,8 @@ pub fn run(command: Command) {
                         id: None,
                         authenticated: false,
                         name: None,
+                        agent_ready: false,
+                        ws_port: 7865,
                     };
                     println!("{}", serde_json::to_string(&s).unwrap());
                 } else {
