@@ -9,6 +9,18 @@ export interface AgentInfo {
 
 export type AgentStatus = "running" | "stopped" | "dead" | "not_found" | "unknown";
 
+export interface PlatformStatus {
+  ready: boolean;
+  platform: string;
+  wsl_installed: boolean;
+  virtualization_enabled: boolean | null;
+  distro_registered: boolean;
+  distro_healthy: boolean;
+  services_ready: boolean;
+  needs_reboot: boolean;
+  message: string;
+}
+
 export type AgentActivityState = "idle" | "thinking" | "tool_use";
 
 type BaseEvent = { ts?: string };

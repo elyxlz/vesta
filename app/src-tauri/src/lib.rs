@@ -48,6 +48,8 @@ pub fn run() {
             commands::logs::stream_logs,
             commands::logs::stop_logs,
             commands::auth::authenticate,
+            commands::platform::platform_check,
+            commands::platform::platform_setup,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

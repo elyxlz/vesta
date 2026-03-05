@@ -486,6 +486,18 @@ pub fn run(command: Command) {
                 if cs == ContainerStatus::Running {
                     println!("ready:  {}", if ready { "yes" } else { "no" });
                 }
+                match cs {
+                    ContainerStatus::NotFound => {}
+                    ContainerStatus::Stopped | ContainerStatus::Dead => {
+                        eprintln!("\nhint: run 'vesta start' to start your agent");
+                    }
+                    ContainerStatus::Running if !authed => {
+                        eprintln!("\nhint: run 'vesta auth' to sign in");
+                    }
+                    ContainerStatus::Running => {
+                        eprintln!("\nhint: open http://localhost:{} in your browser", AGENT_WS_PORT);
+                    }
+                }
             }
         }
 
@@ -519,6 +531,36 @@ pub fn run(command: Command) {
             ensure_exists();
             docker_cp_content(CONTAINER_NAME, &name, "/root/.vesta-name");
             eprintln!("name set: {}", name);
+        }
+
+        Command::PlatformCheck => {
+            let s = serde_json::json!({
+                "ready": true,
+                "platform": "linux",
+                "wsl_installed": true,
+                "virtualization_enabled": true,
+                "distro_registered": true,
+                "distro_healthy": true,
+                "services_ready": true,
+                "needs_reboot": false,
+                "message": ""
+            });
+            println!("{}", s);
+        }
+
+        Command::PlatformSetup => {
+            let s = serde_json::json!({
+                "ready": true,
+                "platform": "linux",
+                "wsl_installed": true,
+                "virtualization_enabled": true,
+                "distro_registered": true,
+                "distro_healthy": true,
+                "services_ready": true,
+                "needs_reboot": false,
+                "message": ""
+            });
+            println!("{}", s);
         }
 
         Command::Rebuild => {
