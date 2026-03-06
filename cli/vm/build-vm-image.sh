@@ -40,15 +40,20 @@ fi
 # ARM64 requires uncompressed kernel for Virtualization.framework
 if [ "$ARCH" = "arm64" ]; then
     echo "decompressing kernel for arm64..."
-    cp "$VMLINUZ" /tmp/vmlinuz-compressed
-    # vmlinuz is gzip-compressed on Alpine; decompress it
-    if file /tmp/vmlinuz-compressed | grep -q gzip; then
-        mv /tmp/vmlinuz-compressed /tmp/vmlinuz-compressed.gz
-        gunzip /tmp/vmlinuz-compressed.gz
-        mv /tmp/vmlinuz-compressed "$OUTPUT_DIR/vm-kernel"
-    else
-        cp "$VMLINUZ" "$OUTPUT_DIR/vm-kernel"
-    fi
+    # Alpine ARM64 vmlinuz-virt is a PE32+ EFI stub with gzip-compressed kernel inside.
+    # Find the gzip magic bytes and decompress to get the raw Image.
+    python3 -c "
+import zlib
+with open('$VMLINUZ', 'rb') as f:
+    data = f.read()
+idx = data.find(b'\x1f\x8b\x08')
+if idx < 0:
+    raise RuntimeError('no gzip data found in kernel')
+raw = zlib.decompress(data[idx:], 16 + zlib.MAX_WBITS)
+with open('$OUTPUT_DIR/vm-kernel', 'wb') as f:
+    f.write(raw)
+print(f'decompressed kernel: {len(raw)} bytes (gzip at offset {idx})')
+"
 else
     cp "$VMLINUZ" "$OUTPUT_DIR/vm-kernel"
 fi

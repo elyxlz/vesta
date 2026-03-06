@@ -1,6 +1,9 @@
 #!/bin/sh
 set -eu
 
+# Remount root read-write (initramfs may mount it read-only)
+mount -o remount,rw / 2>/dev/null || true
+
 # Mount essential virtual filesystems (skip if already mounted, e.g. WSL2)
 mountpoint -q /proc    || mount -t proc proc /proc
 mountpoint -q /sys     || mount -t sysfs sysfs /sys
@@ -10,6 +13,18 @@ mountpoint -q /dev/pts || mount -t devpts devpts /dev/pts
 mountpoint -q /dev/shm || mount -t tmpfs tmpfs /dev/shm
 mountpoint -q /tmp     || mount -t tmpfs tmpfs /tmp
 mountpoint -q /run     || mount -t tmpfs tmpfs /run
+
+# Bring up loopback interface (needed for localhost/127.0.0.1)
+ip link set lo up 2>/dev/null || true
+
+# Configure network (DHCP on first ethernet interface, needed for internet in VM)
+# Runs in background so it doesn't block SSH (which is over vsock, not network)
+for iface in /sys/class/net/eth*; do
+    [ -e "$iface" ] || continue
+    iface_name="$(basename "$iface")"
+    ip link set "$iface_name" up 2>/dev/null || true
+    udhcpc -i "$iface_name" -q -n 2>/dev/null || true &
+done
 
 # Mount cgroup v2 (unified hierarchy)
 mkdir -p /sys/fs/cgroup
@@ -61,8 +76,16 @@ while ! docker info >/dev/null 2>&1; do
     sleep 0.5
 done
 
-# Bridge vsock port 2222 to SSH (macOS vfkit only, silently skipped on WSL2)
-socat VSOCK-LISTEN:2222,reuseaddr,fork TCP:127.0.0.1:22 >/dev/null 2>&1 &
+# Start SSH
+/usr/sbin/sshd -e
 
-# Start SSH (foreground, keeps container/distro alive)
-exec /usr/sbin/sshd -D -e
+# Bridge vsock port 2222 to SSH (macOS vfkit only, silently skipped on WSL2)
+# Load virtio vsock transport (creates /dev/vsock); silently skip if not available
+modprobe vmw_vsock_virtio_transport 2>/dev/null || true
+if [ -e /dev/vsock ]; then
+    socat VSOCK-LISTEN:2222,reuseaddr,fork TCP4:127.0.0.1:22 &
+fi
+
+# Keep PID 1 alive; forward SIGTERM for clean shutdown
+trap 'kill 0; exit 0' TERM INT
+wait
