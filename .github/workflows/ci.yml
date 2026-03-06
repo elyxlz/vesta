@@ -544,18 +544,12 @@ jobs:
       - name: Configure WSL2 networking
         shell: powershell
         run: |
+          $ErrorActionPreference = "Continue"
           # Use mirrored networking so WSL2 shares the host's network stack
           $wslconfig = "$env:USERPROFILE\.wslconfig"
-          @"
-          [wsl2]
-          networkingMode=mirrored
-          "@ | Set-Content $wslconfig
+          "[wsl2]`nnetworkingMode=mirrored" | Set-Content $wslconfig
           Write-Host "Created .wslconfig with mirrored networking"
-
-          # Add firewall rule to allow WSL2 traffic
-          New-NetFirewallRule -DisplayName "WSL2" -Direction Inbound -InterfaceAlias "vEthernet (WSL)" -Action Allow 2>$null
-          New-NetFirewallRule -DisplayName "WSL2-Out" -Direction Outbound -InterfaceAlias "vEthernet (WSL)" -Action Allow 2>$null
-          Write-Host "Firewall rules added (errors above are OK if interface doesn't exist yet)"
+          Get-Content $wslconfig
 
       - name: E2E test
         timeout-minutes: 10
@@ -584,6 +578,23 @@ jobs:
           mkdir -p "$INSTALL_DIR"
           wsl.exe --import vesta-wsl "$INSTALL_DIR" vesta-wsl-rootfs.tar.gz --version 2
           echo "import succeeded"
+
+          echo "=== add firewall rules for WSL2 ==="
+          powershell.exe -Command '
+            $ErrorActionPreference = "Continue"
+            # Allow all inbound/outbound for WSL2 subnet
+            $wslAdapter = Get-NetAdapter | Where-Object {$_.Name -like "*WSL*"}
+            if ($wslAdapter) {
+              $wslIP = Get-NetIPAddress -InterfaceIndex $wslAdapter.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue
+              if ($wslIP) {
+                $range = "$($wslIP.IPAddress)/$($wslIP.PrefixLength)"
+                Write-Host "WSL network: $range"
+                New-NetFirewallRule -DisplayName "WSL2-In" -Direction Inbound -RemoteAddress $range -Action Allow | Out-Null
+                New-NetFirewallRule -DisplayName "WSL2-Out" -Direction Outbound -RemoteAddress $range -Action Allow | Out-Null
+                Write-Host "Firewall rules added"
+              } else { Write-Host "No WSL IPv4 address found" }
+            } else { Write-Host "No WSL adapter found (mirrored mode has no vEthernet)" }
+          ' || true
 
           echo "=== distro health ==="
           MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec /bin/true
