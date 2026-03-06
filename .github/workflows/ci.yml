@@ -807,3 +807,58 @@ jobs:
             gh release upload "${{ github.event.release.tag_name }}" "$f" --clobber
           done
           gh release edit "${{ github.event.release.tag_name }}" --draft=false
+
+      - name: Update Homebrew cask
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          VERSION="${{ github.event.release.tag_name }}"
+          VERSION="${VERSION#v}"
+          REPO="elyxlz/vesta"
+
+          ARM_URL="https://github.com/${REPO}/releases/download/v${VERSION}/Vesta_${VERSION}_aarch64.dmg"
+          X64_URL="https://github.com/${REPO}/releases/download/v${VERSION}/Vesta_${VERSION}_x64.dmg"
+
+          ARM_SHA=$(shasum -a 256 release/Vesta_${VERSION}_aarch64.dmg | cut -d' ' -f1)
+          X64_SHA=$(shasum -a 256 release/Vesta_${VERSION}_x64.dmg | cut -d' ' -f1)
+
+          cat > /tmp/vesta.rb << EOF
+          cask "vesta" do
+            version "${VERSION}"
+
+            on_arm do
+              url "${ARM_URL}"
+              sha256 "${ARM_SHA}"
+            end
+
+            on_intel do
+              url "${X64_URL}"
+              sha256 "${X64_SHA}"
+            end
+
+            name "Vesta"
+            desc "Autonomous AI agent manager"
+            homepage "https://github.com/${REPO}"
+
+            app "Vesta.app"
+
+            zap trash: [
+              "~/Library/Application Support/com.vesta.app",
+              "~/Library/Caches/com.vesta.app",
+            ]
+          end
+          EOF
+
+          # Remove leading whitespace from heredoc
+          sed -i 's/^          //' /tmp/vesta.rb
+
+          cd /tmp
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/elyxlz/homebrew-vesta.git"
+          cd homebrew-vesta
+          mkdir -p Casks
+          cp /tmp/vesta.rb Casks/vesta.rb
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/vesta.rb
+          git commit -m "Update vesta to ${VERSION}"
+          git push
