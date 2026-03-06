@@ -22,6 +22,26 @@ env:
   NSIS_VERSION: "3.11"
 
 jobs:
+  # ── Detect what changed (for smart PR filtering) ────────────────────────
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      cli: ${{ steps.filter.outputs.cli }}
+      app: ${{ steps.filter.outputs.app }}
+      vm: ${{ steps.filter.outputs.vm }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            cli:
+              - 'cli/**'
+            app:
+              - 'app/**'
+            vm:
+              - 'cli/vm/**'
+
   # ── Version check ──────────────────────────────────────────────────────
   version-check:
     runs-on: ubuntu-latest
@@ -73,6 +93,8 @@ jobs:
 
   # ── Frontend unit tests ──────────────────────────────────────────────
   test-frontend:
+    needs: detect-changes
+    if: github.event_name != 'pull_request' || needs.detect-changes.outputs.app == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -92,7 +114,11 @@ jobs:
 
   # ── Build CLI (all unix targets) ──────────────────────────────────────
   build-cli:
-    needs: [version-check, test-frontend]
+    needs: [version-check, detect-changes]
+    if: >-
+      github.event_name != 'pull_request' ||
+      needs.detect-changes.outputs.cli == 'true' ||
+      needs.detect-changes.outputs.app == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -173,7 +199,12 @@ jobs:
 
   # ── Test Linux CLI ────────────────────────────────────────────────────
   test-linux:
-    needs: build-cli
+    needs: [build-cli, detect-changes]
+    if: >-
+      !failure() && !cancelled() && (
+      github.event_name != 'pull_request' ||
+      needs.detect-changes.outputs.cli == 'true'
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -286,8 +317,12 @@ jobs:
 
   # ── Test macOS CLI ────────────────────────────────────────────────────
   test-macos:
-    needs: [build-cli, build-vm-image]
-    if: ${{ !failure() && !cancelled() }}
+    needs: [build-cli, build-vm-image, detect-changes]
+    if: >-
+      !failure() && !cancelled() && (
+      github.event_name != 'pull_request' ||
+      needs.detect-changes.outputs.cli == 'true'
+      )
     runs-on: macos-latest
     timeout-minutes: 10
     steps:
@@ -419,16 +454,17 @@ jobs:
           if [ "${{ matrix.arch }}" = "arm64" ]; then
             # ARM64 Alpine vmlinuz is an EFI stub wrapping a gzip kernel;
             # vfkit needs the raw uncompressed kernel image
-            GZIP_OFFSET=$(sudo python3 -c "
+            sudo python3 -c "
+          import gzip
           d = open('$VMLINUZ', 'rb').read()
           off = d.find(b'\x1f\x8b\x08')
-          print(off if off >= 0 else -1)
-          ")
-            if [ "$GZIP_OFFSET" -ge 0 ]; then
-              sudo dd if="$VMLINUZ" bs=1 skip="$GZIP_OFFSET" 2>/dev/null | gunzip > /tmp/vm-kernel
-            else
-              sudo cp "$VMLINUZ" /tmp/vm-kernel
-            fi
+          if off >= 0:
+              raw = gzip.decompress(d[off:])
+              open('/tmp/vm-kernel', 'wb').write(raw)
+          else:
+              import shutil
+              shutil.copy('$VMLINUZ', '/tmp/vm-kernel')
+          "
           else
             sudo cp "$VMLINUZ" /tmp/vm-kernel
           fi
@@ -465,7 +501,10 @@ jobs:
 
   # ── Windows Clippy (runs on PRs too) ─────────────────────────────────
   clippy-windows:
-    needs: [version-check, test-frontend]
+    needs: [version-check, detect-changes]
+    if: >-
+      github.event_name != 'pull_request' ||
+      needs.detect-changes.outputs.cli == 'true'
     runs-on: windows-latest
     timeout-minutes: 10
     steps:
@@ -605,7 +644,13 @@ jobs:
 
   # ── Build Tauri app (unix) ────────────────────────────────────────────
   build-tauri:
-    needs: build-cli
+    needs: [build-cli, detect-changes]
+    if: >-
+      !failure() && !cancelled() && (
+      github.event_name != 'pull_request' ||
+      needs.detect-changes.outputs.cli == 'true' ||
+      needs.detect-changes.outputs.app == 'true'
+      )
     strategy:
       fail-fast: false
       matrix:
