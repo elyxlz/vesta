@@ -756,7 +756,7 @@ jobs:
 
   # ── Build Tauri app (Windows, non-PR) ────────────────────────────────
   build-tauri-windows:
-    needs: build-test-windows
+    needs: [clippy-windows]
     if: ${{ !failure() && !cancelled() && github.event_name != 'pull_request' }}
     runs-on: windows-latest
     steps:
@@ -832,7 +832,7 @@ jobs:
 
   # ── Push Docker image (release only) ─────────────────────────────────
   push-image:
-    needs: [test-linux, build-test-windows]
+    needs: [test-linux]
     if: ${{ !failure() && !cancelled() && github.event_name == 'release' }}
     runs-on: ubuntu-latest
     steps:
