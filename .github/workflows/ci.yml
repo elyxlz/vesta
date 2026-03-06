@@ -114,11 +114,7 @@ jobs:
 
   # ── Build CLI (all unix targets) ──────────────────────────────────────
   build-cli:
-    needs: [version-check, detect-changes]
-    if: >-
-      github.event_name != 'pull_request' ||
-      needs.detect-changes.outputs.cli == 'true' ||
-      needs.detect-changes.outputs.app == 'true'
+    needs: [version-check]
     strategy:
       fail-fast: false
       matrix:
@@ -199,12 +195,7 @@ jobs:
 
   # ── Test Linux CLI ────────────────────────────────────────────────────
   test-linux:
-    needs: [build-cli, detect-changes]
-    if: >-
-      !failure() && !cancelled() && (
-      github.event_name != 'pull_request' ||
-      needs.detect-changes.outputs.cli == 'true'
-      )
+    needs: build-cli
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -317,12 +308,8 @@ jobs:
 
   # ── Test macOS CLI ────────────────────────────────────────────────────
   test-macos:
-    needs: [build-cli, build-vm-image, detect-changes]
-    if: >-
-      !failure() && !cancelled() && (
-      github.event_name != 'pull_request' ||
-      needs.detect-changes.outputs.cli == 'true'
-      )
+    needs: [build-cli, build-vm-image]
+    if: ${{ !failure() && !cancelled() }}
     runs-on: macos-latest
     timeout-minutes: 10
     steps:
