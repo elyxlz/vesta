@@ -180,12 +180,16 @@ async function cmdLaunch(args) {
   const port = args.flags.port ? Number(args.flags.port) : 9222;
   const userDataDir = args.flags['user-data-dir'] || join(SESSION_DIR, 'profile');
 
+  const chromeArgs = [];
+  if (args.flags.proxy) chromeArgs.push(`--proxy-server=${args.flags.proxy}`);
+
   const browser = await BrowserClaw.launch({
     headless,
     cdpPort: port,
     noSandbox: inDocker,
     userDataDir,
     stealth,
+    chromeArgs: chromeArgs.length ? chromeArgs : undefined,
   });
 
   writeSession(browser.url, browser.pid, stealth);
