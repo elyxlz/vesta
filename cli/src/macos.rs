@@ -60,9 +60,9 @@ fn pid_path() -> PathBuf {
 }
 
 fn vsock_socket_path() -> PathBuf {
-    // vfkit cannot handle spaces in socketURL paths, so use /tmp instead of data_dir
+    // vfkit cannot handle spaces in socketURL paths, so use temp_dir instead of data_dir
     // (which is ~/Library/Application Support/vesta/ on macOS)
-    PathBuf::from("/tmp/vesta-vsock.sock")
+    std::env::temp_dir().join("vesta-vsock.sock")
 }
 
 fn vm_disk_path() -> PathBuf {
@@ -466,15 +466,6 @@ pub fn run(command: Command) {
                 boot_vm();
                 wait_for_ssh();
             }
-
-            let pubkey = std::fs::read_to_string(ssh_key_path().with_extension("pub"))
-                .unwrap_or_else(|_| die("cannot read SSH public key"));
-            ssh_run(&[
-                &format!(
-                    "mkdir -p /root/.ssh && printf '%s\\n' '{}' > /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys",
-                    pubkey.trim()
-                ),
-            ], false);
 
             let mut args = vec!["vesta", "setup"];
             if yes { args.push("-y"); }

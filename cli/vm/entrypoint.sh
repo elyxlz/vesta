@@ -18,11 +18,12 @@ mountpoint -q /run     || mount -t tmpfs tmpfs /run
 ip link set lo up 2>/dev/null || true
 
 # Configure network (DHCP on first ethernet interface, needed for internet in VM)
+# Runs in background so it doesn't block SSH (which is over vsock, not network)
 for iface in /sys/class/net/eth*; do
     [ -e "$iface" ] || continue
     iface_name="$(basename "$iface")"
     ip link set "$iface_name" up 2>/dev/null || true
-    udhcpc -i "$iface_name" -q -n 2>/dev/null || true
+    udhcpc -i "$iface_name" -q -n 2>/dev/null || true &
 done
 
 # Mount cgroup v2 (unified hierarchy)
@@ -85,5 +86,6 @@ if [ -e /dev/vsock ]; then
     socat VSOCK-LISTEN:2222,reuseaddr,fork TCP4:127.0.0.1:22 &
 fi
 
-# Keep PID 1 alive
+# Keep PID 1 alive; forward SIGTERM for clean shutdown
+trap 'kill 0; exit 0' TERM INT
 wait
