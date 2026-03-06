@@ -275,7 +275,7 @@ fn boot_vm() {
             ),
             "--device",
             &format!(
-                "virtio-vsock,port={},socketURL={}",
+                "virtio-vsock,port={},socketURL={},connect",
                 VSOCK_PORT,
                 vsock_sock.display()
             ),
