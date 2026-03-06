@@ -613,6 +613,7 @@ jobs:
           echo "=== all tests passed ==="
 
       - name: Package Windows CLI zip
+        if: ${{ !cancelled() }}
         shell: bash
         run: |
           mkdir vesta-windows
@@ -620,11 +621,13 @@ jobs:
           7z a vesta-x86_64-pc-windows-msvc.zip vesta-windows/
 
       - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
         with:
           name: vesta-x86_64-pc-windows-msvc
           path: vesta-x86_64-pc-windows-msvc.zip
 
       - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
         with:
           name: windows-cli-exe
           path: cli/target/x86_64-pc-windows-msvc/release/vesta.exe
@@ -756,8 +759,8 @@ jobs:
 
   # ── Build Tauri app (Windows, non-PR) ────────────────────────────────
   build-tauri-windows:
-    needs: [clippy-windows]
-    if: ${{ !failure() && !cancelled() && github.event_name != 'pull_request' }}
+    needs: [clippy-windows, build-test-windows]
+    if: ${{ !cancelled() && github.event_name != 'pull_request' }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
