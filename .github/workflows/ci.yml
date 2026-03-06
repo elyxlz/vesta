@@ -442,12 +442,12 @@ jobs:
             # ARM64 Alpine vmlinuz is an EFI stub wrapping a gzip kernel;
             # vfkit needs the raw uncompressed kernel image
             sudo python3 -c "
-          import gzip, io
+          import zlib
           d = open('$VMLINUZ', 'rb').read()
           off = d.find(b'\x1f\x8b\x08')
           if off >= 0:
-              f = gzip.GzipFile(fileobj=io.BytesIO(d[off:]))
-              open('/tmp/vm-kernel', 'wb').write(f.read())
+              raw = zlib.decompressobj(zlib.MAX_WBITS | 16).decompress(d[off:])
+              open('/tmp/vm-kernel', 'wb').write(raw)
           else:
               import shutil
               shutil.copy('$VMLINUZ', '/tmp/vm-kernel')
