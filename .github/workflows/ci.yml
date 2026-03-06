@@ -600,15 +600,28 @@ jobs:
 
           echo "=== configure WSL2 networking ==="
           # WSL2 creates eth0 but DHCP is unavailable on CI runners.
-          # Manually assign IP in the WSL NAT subnet and route via host.
-          GATEWAY=$(powershell.exe -Command '(Get-NetIPAddress -InterfaceAlias "vEthernet (WSL)" -AddressFamily IPv4).IPAddress' 2>/dev/null | tr -d '\r')
-          echo "Host WSL gateway: $GATEWAY"
-          if [ -n "$GATEWAY" ]; then
+          # Find the host's Hyper-V/WSL adapter IP and use it as gateway.
+          GATEWAY=$(powershell.exe -Command '
+            $ErrorActionPreference = "Continue"
+            # List all adapters to help debug
+            Get-NetAdapter | Format-Table Name, InterfaceDescription, Status -AutoSize | Out-String | Write-Host
+            # Find WSL/Hyper-V adapter
+            $a = Get-NetAdapter | Where-Object { $_.Name -match "WSL|Hyper-V" -and $_.Status -eq "Up" }
+            if ($a) {
+              $ip = Get-NetIPAddress -InterfaceIndex $a.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue
+              if ($ip) { $ip.IPAddress }
+            }
+          ' 2>/dev/null | tr -d '\r' | tail -1)
+          echo "Host WSL gateway: '$GATEWAY'"
+          if [ -n "$GATEWAY" ] && [ "$GATEWAY" != "" ]; then
             MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec sh -c "
               ip addr add ${GATEWAY%.*}.2/20 dev eth0 2>/dev/null || true
               ip route add default via $GATEWAY 2>/dev/null || true
-              echo 'nameserver $GATEWAY' > /etc/resolv.conf
             "
+            echo "Configured eth0 with ${GATEWAY%.*}.2/20, gateway $GATEWAY"
+          else
+            echo "Could not find WSL gateway IP, trying DHCP..."
+            MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec sh -c "udhcpc -i eth0 -q -n 2>&1" || true
           fi
 
           echo "=== network diagnostics ==="
