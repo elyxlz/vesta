@@ -577,21 +577,18 @@ jobs:
           wsl.exe --import vesta-wsl "$INSTALL_DIR" vesta-wsl-rootfs.tar.gz --version 2
           echo "import succeeded"
 
-          echo "=== add firewall rules for WSL2 ==="
+          echo "=== configure firewall for WSL2 ==="
           powershell.exe -Command '
             $ErrorActionPreference = "Continue"
-            # Allow all inbound/outbound for WSL2 subnet
-            $wslAdapter = Get-NetAdapter | Where-Object {$_.Name -like "*WSL*"}
-            if ($wslAdapter) {
-              $wslIP = Get-NetIPAddress -InterfaceIndex $wslAdapter.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue
-              if ($wslIP) {
-                $range = "$($wslIP.IPAddress)/$($wslIP.PrefixLength)"
-                Write-Host "WSL network: $range"
-                New-NetFirewallRule -DisplayName "WSL2-In" -Direction Inbound -RemoteAddress $range -Action Allow | Out-Null
-                New-NetFirewallRule -DisplayName "WSL2-Out" -Direction Outbound -RemoteAddress $range -Action Allow | Out-Null
-                Write-Host "Firewall rules added"
-              } else { Write-Host "No WSL IPv4 address found" }
-            } else { Write-Host "No WSL adapter found (mirrored mode has no vEthernet)" }
+            # Disable firewall on all profiles to allow WSL2 NAT traffic
+            Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled False
+            Write-Host "Firewall disabled on all profiles"
+            # Also add explicit allow rules for the WSL adapter
+            $a = Get-NetAdapter | Where-Object { $_.Name -match "WSL|Hyper-V" -and $_.Status -eq "Up" }
+            if ($a) {
+              New-NetFirewallRule -DisplayName "WSL2-Allow-All" -Direction Inbound -InterfaceAlias $a.Name -Action Allow -ErrorAction SilentlyContinue | Out-Null
+              Write-Host "Added allow rule for $($a.Name)"
+            }
           ' || true
 
           echo "=== distro health ==="
