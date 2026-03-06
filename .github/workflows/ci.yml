@@ -678,6 +678,19 @@ jobs:
           tauriScript: npx tauri
           args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
 
+      - name: Verify macOS app bundle
+        if: runner.os == 'macOS'
+        run: |
+          APP=$(find app/src-tauri/target/${{ matrix.target }}/release/bundle -name '*.app' -type d | head -1)
+          echo "App bundle: $APP"
+          echo "=== MacOS dir ==="
+          ls -la "$APP/Contents/MacOS/"
+          echo "=== Resources dir ==="
+          ls -laR "$APP/Contents/Resources/"
+          test -x "$APP/Contents/MacOS/vesta" || { echo "FAIL: sidecar not found"; exit 1; }
+          test -x "$APP/Contents/Resources/resources/vfkit" || { echo "FAIL: vfkit not found in bundle"; exit 1; }
+          echo "app bundle OK"
+
       - name: Collect artifacts
         run: |
           mkdir -p tauri-out
