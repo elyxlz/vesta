@@ -432,25 +432,18 @@ fn download_vm_image() {
     }
 
     eprintln!("extracting VM image...");
-    let status = process::Command::new("tar")
-        .args([
-            "--zstd",
-            "-xf",
-            tmp_path.to_str().unwrap(),
-            "-C",
-            dir.to_str().unwrap(),
-        ])
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .status()
-        .unwrap_or_else(|_| die("failed to extract VM image. ensure zstd is installed."));
-
-    std::fs::remove_file(&tmp_path).ok();
-
-    if !status.success() {
+    let zst_file =
+        std::fs::File::open(&tmp_path).unwrap_or_else(|_| die("failed to open downloaded image"));
+    let decoder =
+        zstd::Decoder::new(zst_file).unwrap_or_else(|_| die("failed to decompress VM image"));
+    let mut archive = tar::Archive::new(decoder);
+    if archive.unpack(&dir).is_err() {
+        std::fs::remove_file(&tmp_path).ok();
         clean_vm_image();
         die("failed to extract VM image");
     }
+
+    std::fs::remove_file(&tmp_path).ok();
 }
 
 pub fn run(command: Command) {
