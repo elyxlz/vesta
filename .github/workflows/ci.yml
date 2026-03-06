@@ -542,6 +542,22 @@ jobs:
           name: wsl-rootfs
           path: .
 
+      - name: Configure WSL2 networking
+        shell: powershell
+        run: |
+          # Use mirrored networking so WSL2 shares the host's network stack
+          $wslconfig = "$env:USERPROFILE\.wslconfig"
+          @"
+          [wsl2]
+          networkingMode=mirrored
+          "@ | Set-Content $wslconfig
+          Write-Host "Created .wslconfig with mirrored networking"
+
+          # Add firewall rule to allow WSL2 traffic
+          New-NetFirewallRule -DisplayName "WSL2" -Direction Inbound -InterfaceAlias "vEthernet (WSL)" -Action Allow 2>$null
+          New-NetFirewallRule -DisplayName "WSL2-Out" -Direction Outbound -InterfaceAlias "vEthernet (WSL)" -Action Allow 2>$null
+          Write-Host "Firewall rules added (errors above are OK if interface doesn't exist yet)"
+
       - name: E2E test
         timeout-minutes: 10
         shell: bash
@@ -595,8 +611,26 @@ jobs:
           echo "=== status before create ==="
           MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec $VCLI status --json
 
-          echo "=== container image tests (skipped: WSL2 has no internet on CI runners) ==="
-          echo "These tests are covered by test-linux which runs the same checks"
+          echo "=== network diagnostics ==="
+          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec ip addr show 2>/dev/null || true
+          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec ip route show 2>/dev/null || true
+          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec cat /etc/resolv.conf 2>/dev/null || true
+          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec ping -c1 -W2 8.8.8.8 2>/dev/null && echo "internet: OK" || echo "internet: UNREACHABLE"
+
+          echo "=== container image sanity ==="
+          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec \
+            docker run --rm --entrypoint sh ghcr.io/elyxlz/vesta:latest -c "claude --version"
+          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec \
+            docker run --rm --entrypoint sh ghcr.io/elyxlz/vesta:latest -c \
+            "test -d /root/logs && test -d /root/data && test -d /root/notifications && echo dirs ok"
+
+          echo "=== auth URL capture ==="
+          AUTH_OUTPUT=$(MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec \
+            docker run --rm --entrypoint sh ghcr.io/elyxlz/vesta:latest \
+            -c "timeout 15 claude setup-token 2>&1 || true" 2>&1)
+          echo "$AUTH_OUTPUT"
+          echo "$AUTH_OUTPUT" | grep -qE 'https://' || { echo "FAIL: no auth URL in output"; exit 1; }
+          echo "auth URL found"
 
           echo "=== all tests passed ==="
 
