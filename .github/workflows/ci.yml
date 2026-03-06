@@ -416,9 +416,19 @@ jobs:
           VMLINUZ="$MOUNT_DIR/boot/vmlinuz-virt"
           INITRD="$MOUNT_DIR/boot/initramfs-virt"
 
-          if [ "${{ matrix.arch }}" = "arm64" ] && sudo file "$VMLINUZ" | grep -q gzip; then
-            sudo cp "$VMLINUZ" /tmp/vm-kernel.gz
-            sudo gunzip /tmp/vm-kernel.gz
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            # ARM64 Alpine vmlinuz is an EFI stub wrapping a gzip kernel;
+            # vfkit needs the raw uncompressed kernel image
+            GZIP_OFFSET=$(sudo python3 -c "
+          d = open('$VMLINUZ', 'rb').read()
+          off = d.find(b'\x1f\x8b\x08')
+          print(off if off >= 0 else -1)
+          ")
+            if [ "$GZIP_OFFSET" -ge 0 ]; then
+              sudo dd if="$VMLINUZ" bs=1 skip="$GZIP_OFFSET" 2>/dev/null | gunzip > /tmp/vm-kernel
+            else
+              sudo cp "$VMLINUZ" /tmp/vm-kernel
+            fi
           else
             sudo cp "$VMLINUZ" /tmp/vm-kernel
           fi
