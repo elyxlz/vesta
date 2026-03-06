@@ -225,6 +225,18 @@ jobs:
           echo "=== status after create ==="
           assert_status '.status == "stopped" or .status == "created"' '.name == "ci-test-agent"'
 
+          echo "=== container image sanity ==="
+          docker run --rm --entrypoint sh ghcr.io/elyxlz/vesta:latest -c "claude --version"
+          docker run --rm --entrypoint sh ghcr.io/elyxlz/vesta:latest -c \
+            "test -d /root/logs && test -d /root/data && test -d /root/notifications && echo dirs ok"
+
+          echo "=== auth URL capture ==="
+          AUTH_OUTPUT=$(docker run --rm --entrypoint sh ghcr.io/elyxlz/vesta:latest \
+            -c "timeout 15 claude setup-token 2>&1 || true")
+          echo "$AUTH_OUTPUT"
+          echo "$AUTH_OUTPUT" | grep -qE 'https://' || { echo "FAIL: no auth URL in output"; exit 1; }
+          echo "auth URL found"
+
           echo "=== auth with token ==="
           "$CLI" auth --token '{"claudeAiOauth":{"accessToken":"ci-test","refreshToken":"ci-test","expiresAt":"2099-01-01T00:00:00Z"}}'
 
@@ -234,6 +246,11 @@ jobs:
           echo "=== start ==="
           "$CLI" start
           assert_status '.status == "running"'
+
+          echo "=== verify credential file in container ==="
+          CREDS=$(docker exec vesta cat /root/.claude/.credentials.json)
+          echo "$CREDS" | jq -e '.claudeAiOauth.accessToken == "ci-test"' || { echo "FAIL: credentials not injected correctly"; exit 1; }
+          echo "credentials verified"
 
           echo "=== stop ==="
           "$CLI" stop
@@ -250,6 +267,11 @@ jobs:
 
           echo "=== backup ==="
           "$CLI" backup
+
+          echo "=== rebuild preserves auth ==="
+          "$CLI" rebuild
+          assert_status '.status == "running"' '.authenticated == true'
+          echo "rebuild preserved credentials"
 
           echo "=== destroy ==="
           "$CLI" destroy --yes
@@ -514,6 +536,21 @@ jobs:
 
           echo "=== status before create ==="
           MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec $VCLI status --json
+
+          echo "=== container image sanity ==="
+          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec \
+            docker run --rm --entrypoint sh ghcr.io/elyxlz/vesta:latest -c "claude --version"
+          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec \
+            docker run --rm --entrypoint sh ghcr.io/elyxlz/vesta:latest -c \
+            "test -d /root/logs && test -d /root/data && test -d /root/notifications && echo dirs ok"
+
+          echo "=== auth URL capture ==="
+          AUTH_OUTPUT=$(MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec \
+            docker run --rm --entrypoint sh ghcr.io/elyxlz/vesta:latest \
+            -c "timeout 15 claude setup-token 2>&1 || true" 2>&1)
+          echo "$AUTH_OUTPUT"
+          echo "$AUTH_OUTPUT" | grep -qE 'https://' || { echo "FAIL: no auth URL in output"; exit 1; }
+          echo "auth URL found"
 
           echo "=== all tests passed ==="
 
