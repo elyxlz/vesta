@@ -141,6 +141,11 @@ jobs:
         working-directory: cli
         run: cargo clippy --target ${{ matrix.target }} -- -D warnings
 
+      - name: Test
+        if: "!matrix.cross"
+        working-directory: cli
+        run: cargo test --target ${{ matrix.target }}
+
       - name: Build CLI
         working-directory: cli
         run: cargo build --release --target ${{ matrix.target }}
@@ -323,7 +328,7 @@ jobs:
           codesign --verify --verbose cli-extract/vesta
           codesign --verify --verbose cli-extract/vfkit
 
-      # Validate VM image (non-PR only, since build-vm-image is skipped on PRs)
+      # Test VM image extraction + CLI integration (non-PR only)
       - name: Download VM image
         if: github.event_name != 'pull_request'
         uses: actions/download-artifact@v8
@@ -331,17 +336,34 @@ jobs:
           name: vm-image-arm64
           path: .
 
-      - name: Validate VM image
+      - name: Test VM image and CLI integration
         if: github.event_name != 'pull_request'
         run: |
           set -euo pipefail
-          tar --zstd -xf vesta-vm-arm64.tar.zst
+          CLI="cli-extract/vesta"
+          DATA_DIR="$HOME/Library/Application Support/vesta"
+          mkdir -p "$DATA_DIR"
+
+          # Extract VM image and place in data dir (simulates successful download+extraction)
+          tar --zstd -xf vesta-vm-arm64.tar.zst -C "$DATA_DIR"
           for f in vm-kernel vm-initrd vm-disk.raw; do
-            echo "=== verify $f ==="
-            file "$f"
-            test -s "$f"
+            test -s "$DATA_DIR/$f" || { echo "FAIL: $f missing"; exit 1; }
           done
-          ls -lh vm-kernel vm-initrd vm-disk.raw
+          echo "VM image files OK"
+
+          # setup will skip download (files exist), generate SSH key, try to boot vfkit (will fail)
+          "$CLI" setup --yes 2>&1 || true
+
+          # Verify SSH key was generated
+          test -f "$DATA_DIR/ssh_key" || { echo "FAIL: SSH key not generated"; exit 1; }
+          test -f "$DATA_DIR/ssh_key.pub" || { echo "FAIL: SSH public key not generated"; exit 1; }
+          echo "SSH key generation OK"
+
+          # Status should show not_found (vfkit can't run in CI)
+          STATUS=$("$CLI" status --json)
+          echo "$STATUS"
+          echo "$STATUS" | jq -e '.status == "not_found"'
+          echo "all macOS integration tests passed"
 
   # ── Build VM images (non-PR only) ────────────────────────────────────
   build-vm-image:
