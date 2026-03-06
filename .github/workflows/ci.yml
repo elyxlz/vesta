@@ -545,11 +545,9 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference = "Continue"
-          # Get host's DNS servers to pass to WSL
+          # Get host DNS for later use inside WSL
           $dns = (Get-DnsClientServerAddress -AddressFamily IPv4 | Select-Object -ExpandProperty ServerAddresses | Select-Object -First 1)
           Write-Host "Host DNS: $dns"
-          # Don't set networkingMode — use default NAT mode
-          # WSL2 NAT should provide internet if firewall allows it
 
       - name: E2E test
         timeout-minutes: 10
@@ -600,7 +598,20 @@ jobs:
           MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec /bin/true
           echo "distro is healthy"
 
-          echo "=== network diagnostics (before entrypoint) ==="
+          echo "=== configure WSL2 networking ==="
+          # WSL2 creates eth0 but DHCP is unavailable on CI runners.
+          # Manually assign IP in the WSL NAT subnet and route via host.
+          GATEWAY=$(powershell.exe -Command '(Get-NetIPAddress -InterfaceAlias "vEthernet (WSL)" -AddressFamily IPv4).IPAddress' 2>/dev/null | tr -d '\r')
+          echo "Host WSL gateway: $GATEWAY"
+          if [ -n "$GATEWAY" ]; then
+            MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec sh -c "
+              ip addr add ${GATEWAY%.*}.2/20 dev eth0 2>/dev/null || true
+              ip route add default via $GATEWAY 2>/dev/null || true
+              echo 'nameserver $GATEWAY' > /etc/resolv.conf
+            "
+          fi
+
+          echo "=== network diagnostics ==="
           MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec sh -c "ip addr show; echo '---routes---'; ip route show; echo '---resolv---'; cat /etc/resolv.conf 2>/dev/null || echo 'no resolv.conf'; echo '---ping---'; ping -c1 -W3 8.8.8.8 && echo 'internet: OK' || echo 'internet: UNREACHABLE'" || true
 
           echo "=== linux cli inside WSL ==="
