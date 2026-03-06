@@ -593,10 +593,9 @@ jobs:
           name: windows-cli-exe
           path: cli/target/x86_64-pc-windows-msvc/release/vesta.exe
 
-  # ── Build Tauri app (unix, non-PR) ───────────────────────────────────
+  # ── Build Tauri app (unix) ────────────────────────────────────────────
   build-tauri:
     needs: build-cli
-    if: github.event_name != 'pull_request'
     strategy:
       fail-fast: false
       matrix:
@@ -681,17 +680,25 @@ jobs:
       - name: Verify macOS app bundle
         if: runner.os == 'macOS'
         run: |
-          APP=$(find app/src-tauri/target/${{ matrix.target }}/release/bundle -name '*.app' -type d | head -1)
-          echo "App bundle: $APP"
+          DMG=$(find app/src-tauri/target/${{ matrix.target }}/release/bundle -name '*.dmg' | head -1)
+          echo "DMG: $DMG"
+          MOUNT=$(hdiutil attach "$DMG" -nobrowse | tail -1 | awk '{print $NF}')
+          echo "Mounted at: $MOUNT"
+          APP=$(find "$MOUNT" -name '*.app' -maxdepth 1 | head -1)
+          echo "App: $APP"
           echo "=== MacOS dir ==="
           ls -la "$APP/Contents/MacOS/"
           echo "=== Resources dir ==="
           ls -laR "$APP/Contents/Resources/"
           test -x "$APP/Contents/MacOS/vesta" || { echo "FAIL: sidecar not found"; exit 1; }
-          test -x "$APP/Contents/Resources/resources/vfkit" || { echo "FAIL: vfkit not found in bundle"; exit 1; }
+          VFKIT=$(find "$APP" -name vfkit -type f | head -1)
+          test -n "$VFKIT" || { echo "FAIL: vfkit not found anywhere in bundle"; exit 1; }
+          echo "vfkit found at: $VFKIT"
+          hdiutil detach "$MOUNT" -quiet
           echo "app bundle OK"
 
       - name: Collect artifacts
+        if: github.event_name != 'pull_request'
         run: |
           mkdir -p tauri-out
           find app/src-tauri/target/${{ matrix.target }}/release/bundle \
@@ -700,6 +707,7 @@ jobs:
           [ "$(ls -A tauri-out)" ] || { echo "No artifacts collected"; exit 1; }
 
       - uses: actions/upload-artifact@v7
+        if: github.event_name != 'pull_request'
         with:
           name: tauri-${{ matrix.target }}
           path: tauri-out/*
