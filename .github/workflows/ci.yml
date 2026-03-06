@@ -622,10 +622,7 @@ jobs:
           MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec $VCLI status --json
 
           echo "=== network diagnostics ==="
-          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec ip addr show 2>/dev/null || true
-          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec ip route show 2>/dev/null || true
-          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec cat /etc/resolv.conf 2>/dev/null || true
-          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec ping -c1 -W2 8.8.8.8 2>/dev/null && echo "internet: OK" || echo "internet: UNREACHABLE"
+          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec sh -c "ip addr show; echo '---routes---'; ip route show; echo '---resolv---'; cat /etc/resolv.conf; echo '---ping---'; ping -c1 -W3 8.8.8.8 && echo 'internet: OK' || echo 'internet: UNREACHABLE'" || true
 
           echo "=== container image sanity ==="
           MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec \
