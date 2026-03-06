@@ -390,7 +390,6 @@ jobs:
   # ── Build VM images (non-PR only) ────────────────────────────────────
   build-vm-image:
     needs: build-cli
-    if: github.event_name != 'pull_request'
     strategy:
       fail-fast: false
       matrix:
@@ -515,7 +514,7 @@ jobs:
   # ── Build + Test Windows CLI (native MSVC) ───────────────────────────
   build-test-windows:
     needs: [build-vm-image, clippy-windows]
-    if: ${{ !failure() && !cancelled() && github.event_name != 'pull_request' }}
+    if: ${{ !failure() && !cancelled() }}
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
