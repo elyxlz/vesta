@@ -545,11 +545,11 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference = "Continue"
-          # Use mirrored networking so WSL2 shares the host's network stack
-          $wslconfig = "$env:USERPROFILE\.wslconfig"
-          "[wsl2]`nnetworkingMode=mirrored" | Set-Content $wslconfig
-          Write-Host "Created .wslconfig with mirrored networking"
-          Get-Content $wslconfig
+          # Get host's DNS servers to pass to WSL
+          $dns = (Get-DnsClientServerAddress -AddressFamily IPv4 | Select-Object -ExpandProperty ServerAddresses | Select-Object -First 1)
+          Write-Host "Host DNS: $dns"
+          # Don't set networkingMode — use default NAT mode
+          # WSL2 NAT should provide internet if firewall allows it
 
       - name: E2E test
         timeout-minutes: 10
@@ -600,6 +600,9 @@ jobs:
           MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec /bin/true
           echo "distro is healthy"
 
+          echo "=== network diagnostics (before entrypoint) ==="
+          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec sh -c "ip addr show; echo '---routes---'; ip route show; echo '---resolv---'; cat /etc/resolv.conf 2>/dev/null || echo 'no resolv.conf'; echo '---ping---'; ping -c1 -W3 8.8.8.8 && echo 'internet: OK' || echo 'internet: UNREACHABLE'" || true
+
           echo "=== linux cli inside WSL ==="
           MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec $VCLI --version
           MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec $VCLI --help
@@ -621,8 +624,8 @@ jobs:
           echo "=== status before create ==="
           MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec $VCLI status --json
 
-          echo "=== network diagnostics ==="
-          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec sh -c "ip addr show; echo '---routes---'; ip route show; echo '---resolv---'; cat /etc/resolv.conf; echo '---ping---'; ping -c1 -W3 8.8.8.8 && echo 'internet: OK' || echo 'internet: UNREACHABLE'" || true
+          echo "=== network diagnostics (after entrypoint/docker) ==="
+          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec sh -c "ip addr show; echo '---routes---'; ip route show; echo '---resolv---'; cat /etc/resolv.conf 2>/dev/null || echo 'no resolv.conf'; echo '---ping---'; ping -c1 -W3 8.8.8.8 && echo 'internet: OK' || echo 'internet: UNREACHABLE'" || true
 
           echo "=== container image sanity ==="
           MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec \
