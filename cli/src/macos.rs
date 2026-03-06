@@ -60,7 +60,9 @@ fn pid_path() -> PathBuf {
 }
 
 fn vsock_socket_path() -> PathBuf {
-    data_dir().join("vesta-vsock.sock")
+    // vfkit cannot handle spaces in socketURL paths, so use /tmp instead of data_dir
+    // (which is ~/Library/Application Support/vesta/ on macOS)
+    PathBuf::from("/tmp/vesta-vsock.sock")
 }
 
 fn vm_disk_path() -> PathBuf {
@@ -258,7 +260,7 @@ fn boot_vm() {
             &format!("--memory={}", VM_MEMORY_MIB),
             "--bootloader",
             &format!(
-                "linux,kernel={},initrd={},cmdline=root=/dev/vda rw console=hvc0",
+                "linux,kernel={},initrd={},cmdline=root=/dev/vda rootfstype=ext4 rw console=hvc0 init=/entrypoint.sh",
                 kernel.display(),
                 initrd.display()
             ),
@@ -275,7 +277,7 @@ fn boot_vm() {
             ),
             "--device",
             &format!(
-                "virtio-vsock,port={},socketURL={}",
+                "virtio-vsock,port={},socketURL={},connect",
                 VSOCK_PORT,
                 vsock_sock.display()
             ),
@@ -468,8 +470,6 @@ pub fn run(command: Command) {
             let pubkey = std::fs::read_to_string(ssh_key_path().with_extension("pub"))
                 .unwrap_or_else(|_| die("cannot read SSH public key"));
             ssh_run(&[
-                "sh",
-                "-c",
                 &format!(
                     "mkdir -p /root/.ssh && printf '%s\\n' '{}' > /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys",
                     pubkey.trim()
