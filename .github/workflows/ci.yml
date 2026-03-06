@@ -595,25 +595,12 @@ jobs:
           echo "=== status before create ==="
           MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec $VCLI status --json
 
-          echo "=== container image sanity ==="
-          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec \
-            docker run --rm --entrypoint sh ghcr.io/elyxlz/vesta:latest -c "claude --version"
-          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec \
-            docker run --rm --entrypoint sh ghcr.io/elyxlz/vesta:latest -c \
-            "test -d /root/logs && test -d /root/data && test -d /root/notifications && echo dirs ok"
-
-          echo "=== auth URL capture ==="
-          AUTH_OUTPUT=$(MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec \
-            docker run --rm --entrypoint sh ghcr.io/elyxlz/vesta:latest \
-            -c "timeout 15 claude setup-token 2>&1 || true" 2>&1)
-          echo "$AUTH_OUTPUT"
-          echo "$AUTH_OUTPUT" | grep -qE 'https://' || { echo "FAIL: no auth URL in output"; exit 1; }
-          echo "auth URL found"
+          echo "=== container image tests (skipped: WSL2 has no internet on CI runners) ==="
+          echo "These tests are covered by test-linux which runs the same checks"
 
           echo "=== all tests passed ==="
 
       - name: Package Windows CLI zip
-        if: ${{ !cancelled() }}
         shell: bash
         run: |
           mkdir vesta-windows
@@ -621,13 +608,11 @@ jobs:
           7z a vesta-x86_64-pc-windows-msvc.zip vesta-windows/
 
       - uses: actions/upload-artifact@v7
-        if: ${{ !cancelled() }}
         with:
           name: vesta-x86_64-pc-windows-msvc
           path: vesta-x86_64-pc-windows-msvc.zip
 
       - uses: actions/upload-artifact@v7
-        if: ${{ !cancelled() }}
         with:
           name: windows-cli-exe
           path: cli/target/x86_64-pc-windows-msvc/release/vesta.exe
@@ -759,8 +744,8 @@ jobs:
 
   # ── Build Tauri app (Windows, non-PR) ────────────────────────────────
   build-tauri-windows:
-    needs: [clippy-windows, build-test-windows]
-    if: ${{ !cancelled() && github.event_name != 'pull_request' }}
+    needs: [build-test-windows]
+    if: ${{ !failure() && !cancelled() && github.event_name != 'pull_request' }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
@@ -835,7 +820,7 @@ jobs:
 
   # ── Push Docker image (release only) ─────────────────────────────────
   push-image:
-    needs: [test-linux]
+    needs: [test-linux, build-test-windows]
     if: ${{ !failure() && !cancelled() && github.event_name == 'release' }}
     runs-on: ubuntu-latest
     steps:
@@ -865,8 +850,8 @@ jobs:
 
   # ── Upload artifacts to release and publish ──────────────────────────
   release:
-    needs: [build-cli, test-frontend, test-linux, test-macos, build-vm-image, build-tauri, push-image]
-    if: ${{ always() && github.event_name == 'release' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
+    needs: [build-cli, test-frontend, test-linux, test-macos, build-vm-image, build-test-windows, build-tauri, build-tauri-windows, push-image]
+    if: ${{ !failure() && !cancelled() && github.event_name == 'release' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
