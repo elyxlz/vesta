@@ -866,7 +866,7 @@ jobs:
   # ── Upload artifacts to release and publish ──────────────────────────
   release:
     needs: [build-cli, test-frontend, test-linux, test-macos, build-vm-image, build-tauri, build-tauri-windows, push-image]
-    if: ${{ !failure() && !cancelled() && github.event_name == 'release' }}
+    if: ${{ always() && github.event_name == 'release' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
