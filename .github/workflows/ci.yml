@@ -580,15 +580,31 @@ jobs:
           echo "=== configure firewall for WSL2 ==="
           powershell.exe -Command '
             $ErrorActionPreference = "Continue"
-            # Disable firewall on all profiles to allow WSL2 NAT traffic
+            # Disable Windows Defender Firewall on all profiles
             Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled False
-            Write-Host "Firewall disabled on all profiles"
-            # Also add explicit allow rules for the WSL adapter
-            $a = Get-NetAdapter | Where-Object { $_.Name -match "WSL|Hyper-V" -and $_.Status -eq "Up" }
+            Write-Host "Windows Firewall disabled"
+
+            # Disable Hyper-V firewall for WSL
+            Set-NetFirewallHyperVProfile -Name DomainProfile -Enabled False -ErrorAction SilentlyContinue
+            Set-NetFirewallHyperVProfile -Name PublicProfile -Enabled False -ErrorAction SilentlyContinue
+            Set-NetFirewallHyperVProfile -Name PrivateProfile -Enabled False -ErrorAction SilentlyContinue
+            Write-Host "Hyper-V Firewall disabled"
+
+            # Also try setting WSL-specific Hyper-V firewall rules
+            $wslCreatorId = "{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}"
+            New-NetFirewallHyperVRule -Name "WSL-Allow-Out" -Direction Outbound -Action Allow -VMCreatorId $wslCreatorId -ErrorAction SilentlyContinue
+            New-NetFirewallHyperVRule -Name "WSL-Allow-In" -Direction Inbound -Action Allow -VMCreatorId $wslCreatorId -ErrorAction SilentlyContinue
+            Write-Host "Hyper-V WSL rules added"
+
+            # Enable IP forwarding on the WSL adapter
+            $a = Get-NetAdapter | Where-Object { $_.Name -match "WSL|Hyper-V" }
             if ($a) {
-              New-NetFirewallRule -DisplayName "WSL2-Allow-All" -Direction Inbound -InterfaceAlias $a.Name -Action Allow -ErrorAction SilentlyContinue | Out-Null
-              Write-Host "Added allow rule for $($a.Name)"
+              Set-NetIPInterface -InterfaceIndex $a.InterfaceIndex -Forwarding Enabled -ErrorAction SilentlyContinue
+              Write-Host "IP forwarding enabled on $($a.Name)"
             }
+
+            # Check NAT
+            Get-NetNat | Format-Table Name, InternalIPInterfaceAddressPrefix -AutoSize | Out-String | Write-Host
           ' || true
 
           echo "=== distro health ==="
