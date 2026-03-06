@@ -39,6 +39,7 @@ fn find_vfkit() -> PathBuf {
         exe_dir.join(VFKIT_BIN),
         exe_dir.join("binaries").join(VFKIT_BIN),
         exe_dir.join("..").join("Resources").join(VFKIT_BIN),
+        exe_dir.join("..").join("Resources").join("resources").join(VFKIT_BIN),
     ];
 
     for c in &candidates {
