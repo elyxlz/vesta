@@ -243,14 +243,14 @@ jobs:
           echo "=== verify authenticated ==="
           assert_status '.authenticated == true'
 
+          echo "=== start ==="
+          "$CLI" start
+          assert_status '.status == "running"'
+
           echo "=== verify credential file in container ==="
           CREDS=$(docker exec vesta cat /root/.claude/.credentials.json)
           echo "$CREDS" | jq -e '.claudeAiOauth.accessToken == "ci-test"' || { echo "FAIL: credentials not injected correctly"; exit 1; }
           echo "credentials verified"
-
-          echo "=== start ==="
-          "$CLI" start
-          assert_status '.status == "running"'
 
           echo "=== stop ==="
           "$CLI" stop
