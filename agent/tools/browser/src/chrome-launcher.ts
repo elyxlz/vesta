@@ -471,7 +471,11 @@ export async function launchChrome(opts: LaunchOptions = {}): Promise<RunningChr
       '--hide-crash-restore-bubble',
       '--password-store=basic',
     ];
-    if (opts.headless) {
+    // In stealth mode, prefer Xvfb (virtual display) over --headless=new to avoid
+    // the "HeadlessChrome" user agent string that many anti-bot systems detect.
+    const hasDisplay = !!process.env.DISPLAY;
+    const useHeadless = opts.headless && !(opts.stealth && hasDisplay);
+    if (useHeadless) {
       args.push('--headless=new', '--disable-gpu');
     }
     if (opts.noSandbox) {
@@ -545,6 +549,46 @@ export async function launchChrome(opts: LaunchOptions = {}): Promise<RunningChr
   if (!await isChromeReachable(cdpUrl, 500)) {
     try { proc.kill('SIGKILL'); } catch {}
     throw new Error(`Failed to start Chrome CDP on port ${cdpPort}. Chrome may not have started correctly.`);
+  }
+
+  // In stealth mode, override user agent via CDP to strip "HeadlessChrome" fingerprint.
+  // This runs regardless of headless mode since some sites check the UA string.
+  if (opts.stealth) {
+    try {
+      const versionRes = await fetch(`${cdpUrl}/json/version`);
+      const versionData = await versionRes.json() as { Browser?: string; 'User-Agent'?: string; webSocketDebuggerUrl?: string };
+      const rawUA = versionData['User-Agent'] ?? '';
+      if (rawUA.includes('Headless')) {
+        const cleanUA = rawUA.replace(/Headless/g, '');
+        // Apply to all existing pages via CDP
+        const targetsRes = await fetch(`${cdpUrl}/json`);
+        const targets = await targetsRes.json() as Array<{ webSocketDebuggerUrl?: string; type?: string }>;
+        for (const target of targets) {
+          if (target.type === 'page' && target.webSocketDebuggerUrl) {
+            try {
+              const ws = new WebSocket(target.webSocketDebuggerUrl);
+              await new Promise<void>((resolve, reject) => {
+                ws.addEventListener('open', () => {
+                  ws.send(JSON.stringify({
+                    id: 1,
+                    method: 'Emulation.setUserAgentOverride',
+                    params: { userAgent: cleanUA, platform: process.platform === 'linux' ? 'Linux' : '' }
+                  }));
+                  // Also override navigator.webdriver
+                  ws.send(JSON.stringify({
+                    id: 2,
+                    method: 'Page.addScriptToEvaluateOnNewDocument',
+                    params: { source: 'Object.defineProperty(navigator, "webdriver", { get: () => undefined });' }
+                  }));
+                  setTimeout(() => { ws.close(); resolve(); }, 200);
+                });
+                ws.addEventListener('error', () => reject());
+              });
+            } catch {}
+          }
+        }
+      }
+    } catch {}
   }
 
   return {
