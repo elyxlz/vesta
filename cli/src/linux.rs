@@ -233,7 +233,7 @@ fn obtain_credentials(image: &str) -> String {
             "-v", &mount,
             "--entrypoint", "sh",
             image,
-            "-c", "claude setup-token && cp /root/.claude/.credentials.json /tmp/claude-creds/",
+            "-c", "export PATH=/root/.local/bin:$PATH && claude setup-token && cp /root/.claude/.credentials.json /tmp/claude-creds/",
         ])
         .stdin(process::Stdio::inherit())
         .stdout(process::Stdio::piped())
