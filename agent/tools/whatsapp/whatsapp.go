@@ -282,6 +282,8 @@ func (wac *WhatsAppClient) eventHandler(evt interface{}) {
 		} else {
 			wac.handleMessage(v)
 		}
+	case *events.Receipt:
+		wac.handleReceipt(v)
 	case *events.HistorySync:
 		wac.handleHistorySync(v)
 	case *events.Connected:
@@ -289,6 +291,36 @@ func (wac *WhatsAppClient) eventHandler(evt interface{}) {
 	case *events.LoggedOut:
 		wac.logger.Warnf("Device logged out from WhatsApp - initiating re-authentication")
 		wac.initiateReauth()
+	}
+}
+
+func (wac *WhatsAppClient) handleReceipt(evt *events.Receipt) {
+	if wac.store == nil {
+		return
+	}
+
+	var status string
+	switch evt.Type {
+	case types.ReceiptTypeDelivered:
+		status = "delivered"
+	case types.ReceiptTypeRead:
+		status = "read"
+	case types.ReceiptTypePlayed:
+		status = "played"
+	default:
+		// Server ack or unknown type, treat as delivered
+		if evt.Type == types.ReceiptTypeSender || evt.Type == "" {
+			status = "delivered"
+		} else {
+			return
+		}
+	}
+
+	chatJID := evt.Chat.String()
+	for _, msgID := range evt.MessageIDs {
+		if err := wac.store.UpdateDeliveryStatus(string(msgID), chatJID, status, evt.Timestamp); err != nil {
+			wac.logger.Warnf("Failed to update delivery status for %s: %v", msgID, err)
+		}
 	}
 }
 

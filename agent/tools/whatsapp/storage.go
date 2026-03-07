@@ -50,6 +50,8 @@ func NewMessageStore(dataDir string) (*MessageStore, error) {
 			file_sha256 BLOB,
 			file_enc_sha256 BLOB,
 			file_length INTEGER,
+			delivery_status TEXT DEFAULT '',
+			delivery_timestamp TIMESTAMP,
 			PRIMARY KEY (id, chat_jid),
 			FOREIGN KEY (chat_jid) REFERENCES chats(jid)
 		);
@@ -111,6 +113,14 @@ func NewMessageStore(dataDir string) (*MessageStore, error) {
 	if err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to create FTS index: %v", err)
+	}
+
+	// Migrate: add delivery_status and delivery_timestamp columns if missing
+	var colCheck sql.NullString
+	db.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='messages'").Scan(&colCheck)
+	if colCheck.Valid && !strings.Contains(colCheck.String, "delivery_status") {
+		db.Exec("ALTER TABLE messages ADD COLUMN delivery_status TEXT DEFAULT ''")
+		db.Exec("ALTER TABLE messages ADD COLUMN delivery_timestamp TIMESTAMP")
 	}
 
 	ms := &MessageStore{db: db}
@@ -192,15 +202,98 @@ func (ms *MessageStore) StoreMessage(
 	mediaKey, fileSHA256, fileEncSHA256 []byte,
 	fileLength uint64,
 ) error {
+	deliveryStatus := ""
+	if isFromMe {
+		deliveryStatus = "sent"
+	}
 	_, err := ms.db.Exec(`
 		INSERT OR REPLACE INTO messages (
 			id, chat_jid, sender, content, timestamp,
 			is_from_me, is_forwarded, media_type, filename, url,
-			media_key, file_sha256, file_enc_sha256, file_length
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			media_key, file_sha256, file_enc_sha256, file_length,
+			delivery_status, delivery_timestamp
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, id, chatJID, sender, content, timestamp, isFromMe, isForwarded,
-		mediaType, filename, url, mediaKey, fileSHA256, fileEncSHA256, fileLength)
+		mediaType, filename, url, mediaKey, fileSHA256, fileEncSHA256, fileLength,
+		deliveryStatus, timestamp)
 	return err
+}
+
+func (ms *MessageStore) UpdateDeliveryStatus(messageID, chatJID, status string, timestamp time.Time) error {
+	// Only upgrade status: sent -> delivered -> read -> played
+	statusRank := map[string]int{"": 0, "sent": 1, "delivered": 2, "read": 3, "played": 4}
+	newRank := statusRank[status]
+	if newRank == 0 {
+		return nil
+	}
+
+	var current sql.NullString
+	ms.db.QueryRow("SELECT delivery_status FROM messages WHERE id = ? AND chat_jid = ?", messageID, chatJID).Scan(&current)
+	if current.Valid && statusRank[current.String] >= newRank {
+		return nil // don't downgrade
+	}
+
+	_, err := ms.db.Exec(`
+		UPDATE messages SET delivery_status = ?, delivery_timestamp = ?
+		WHERE id = ? AND chat_jid = ?
+	`, status, timestamp, messageID, chatJID)
+	return err
+}
+
+func (ms *MessageStore) GetDeliveryStatus(messageID, chatJID string) (string, *time.Time, error) {
+	var status sql.NullString
+	var ts sql.NullTime
+	err := ms.db.QueryRow(`
+		SELECT delivery_status, delivery_timestamp
+		FROM messages WHERE id = ? AND (? = '' OR chat_jid = ?)
+		ORDER BY timestamp DESC LIMIT 1
+	`, messageID, chatJID, chatJID).Scan(&status, &ts)
+	if err != nil {
+		return "", nil, err
+	}
+	var tsPtr *time.Time
+	if ts.Valid {
+		tsPtr = &ts.Time
+	}
+	return status.String, tsPtr, nil
+}
+
+func (ms *MessageStore) GetRecentOutgoingStatus(chatJID string, limit int) ([]map[string]interface{}, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	rows, err := ms.db.Query(`
+		SELECT id, content, timestamp, delivery_status, delivery_timestamp
+		FROM messages
+		WHERE is_from_me = 1 AND (? = '' OR chat_jid = ?)
+		ORDER BY timestamp DESC LIMIT ?
+	`, chatJID, chatJID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []map[string]interface{}
+	for rows.Next() {
+		var id, content string
+		var ts time.Time
+		var status sql.NullString
+		var deliveryTs sql.NullTime
+		if err := rows.Scan(&id, &content, &ts, &status, &deliveryTs); err != nil {
+			continue
+		}
+		entry := map[string]interface{}{
+			"id":              id,
+			"content":         content,
+			"timestamp":       ts.Format(time.RFC3339),
+			"delivery_status": status.String,
+		}
+		if deliveryTs.Valid {
+			entry["delivery_timestamp"] = deliveryTs.Time.Format(time.RFC3339)
+		}
+		results = append(results, entry)
+	}
+	return results, nil
 }
 
 func (ms *MessageStore) GetChatName(jid string) (string, error) {
