@@ -315,19 +315,9 @@ pub async fn set_agent_name(name: &str) -> Result<(), VestaError> {
 
 // ── Auth operations ────────────────────────────────────────────
 
-fn open_url(url: &str) {
-    #[cfg(target_os = "macos")]
-    let cmd = std::process::Command::new("open").arg(url).spawn();
-    #[cfg(target_os = "windows")]
-    let cmd = std::process::Command::new("cmd").args(["/c", "start", "", url]).spawn();
-    #[cfg(target_os = "linux")]
-    let cmd = std::process::Command::new("xdg-open").arg(url).spawn();
-    if let Err(e) = cmd {
-        eprintln!("[vesta] failed to open browser: {}", e);
-    }
-}
-
 pub async fn obtain_and_inject_credentials() -> Result<(), VestaError> {
+    // The CLI handles browser opening for the auth URL.
+    // We just need to wait for it to finish and capture stderr for errors.
     let mut cmd = cli_command(&["auth"]);
     cmd.stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
@@ -336,20 +326,8 @@ pub async fn obtain_and_inject_credentials() -> Result<(), VestaError> {
         VestaError::new(ErrorCode::ExecFailed, format!("failed to run cli: {}", e))
     })?;
 
-    let opened = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let scan_url = |opened: std::sync::Arc<std::sync::atomic::AtomicBool>| {
-        move |line: &str| {
-            if !opened.load(std::sync::atomic::Ordering::Relaxed) {
-                if let Some(url) = line.split_whitespace().find(|w| w.starts_with("https://")) {
-                    opened.store(true, std::sync::atomic::Ordering::Relaxed);
-                    open_url(url);
-                }
-            }
-        }
-    };
-
-    let stdout_task = collect_lines(child.stdout.take().unwrap(), scan_url(opened.clone()));
-    let stderr_task = collect_lines(child.stderr.take().unwrap(), scan_url(opened));
+    let stdout_task = collect_lines(child.stdout.take().unwrap(), |_| {});
+    let stderr_task = collect_lines(child.stderr.take().unwrap(), |_| {});
 
     let timeout = tokio::time::Duration::from_secs(AUTH_TIMEOUT_SECS);
     let status = match tokio::time::timeout(timeout, child.wait()).await {

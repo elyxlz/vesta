@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use std::io::{BufRead, IsTerminal, Write};
+use std::io::{BufRead, Write};
 use std::process;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -23,11 +23,9 @@ fn try_open_browser(url: &str) {
 }
 
 /// Run a child process with piped stdout/stderr, passing lines through.
-/// When running in a terminal (not piped by Tauri), scans for an auth URL
-/// and opens it in the browser.
+/// Scans output for an auth URL and opens it in the browser.
 fn run_passthrough(mut child: process::Child) -> process::ExitStatus {
     let opened = Arc::new(AtomicBool::new(false));
-    let is_tty = std::io::stdout().is_terminal();
 
     let spawn_reader = |reader: Box<dyn std::io::Read + Send>,
                         mut writer: Box<dyn std::io::Write + Send>,
@@ -36,7 +34,7 @@ fn run_passthrough(mut child: process::Child) -> process::ExitStatus {
             for line in std::io::BufReader::new(reader).lines() {
                 let Ok(line) = line else { break };
                 let _ = writeln!(writer, "{}", line);
-                if is_tty && !opened.load(Ordering::Relaxed) {
+                if !opened.load(Ordering::Relaxed) {
                     if let Some(url) = line.split_whitespace().find(|w| w.starts_with("https://")) {
                         opened.store(true, Ordering::Relaxed);
                         try_open_browser(url);
