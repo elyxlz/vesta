@@ -1,5 +1,5 @@
 use super::*;
-use std::io::{self, Write};
+use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 
 fn strip_ansi(s: &str) -> String {
@@ -458,6 +458,11 @@ fn remove_autostart() {
         .status();
 }
 
+fn try_open_browser(url: &str) {
+    let _ = process::Command::new("cmd").args(["/c", "start", "", url])
+        .stdout(process::Stdio::null()).stderr(process::Stdio::null()).spawn();
+}
+
 fn command_args(command: &Command) -> Vec<&str> {
     match command {
         Command::Setup { build, yes, ref name } => {
@@ -552,6 +557,55 @@ pub fn run(command: Command) -> ! {
     let mut args = vec!["-d", WSL_DISTRO, "--exec", VESTA_LINUX_BIN];
     args.extend(command_args(&command));
 
+    // Auth without token needs passthrough: pipe output so the Tauri app (or
+    // terminal user) can capture the auth URL while still streaming lines in
+    // real time. claude setup-token doesn't need interactive stdin.
+    if matches!(command, Command::Auth { token: None }) {
+        let mut child = process::Command::new("wsl.exe")
+            .args(&args)
+            .stdin(process::Stdio::inherit())
+            .stdout(process::Stdio::piped())
+            .stderr(process::Stdio::piped())
+            .spawn()
+            .unwrap_or_else(|_| die("failed to execute wsl.exe"));
+
+        let opened = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let pass_through = |reader: Box<dyn io::Read + Send>,
+                            mut writer: Box<dyn io::Write + Send>,
+                            opened: std::sync::Arc<std::sync::atomic::AtomicBool>| {
+            std::thread::spawn(move || {
+                let reader = io::BufReader::new(reader);
+                for line in reader.lines() {
+                    let Ok(line) = line else { break };
+                    let clean = strip_ansi(&line);
+                    let _ = writeln!(writer, "{}", clean);
+                    if !opened.load(std::sync::atomic::Ordering::Relaxed) {
+                        if let Some(url) = clean.split_whitespace().find(|w| w.starts_with("https://")) {
+                            opened.store(true, std::sync::atomic::Ordering::Relaxed);
+                            try_open_browser(url);
+                        }
+                    }
+                }
+            })
+        };
+
+        let stdout_thread = pass_through(
+            Box::new(child.stdout.take().unwrap()),
+            Box::new(io::stdout()),
+            opened.clone(),
+        );
+        let stderr_thread = pass_through(
+            Box::new(child.stderr.take().unwrap()),
+            Box::new(io::stderr()),
+            opened,
+        );
+
+        let status = child.wait().unwrap_or_else(|_| die("failed to execute wsl.exe"));
+        let _ = stdout_thread.join();
+        let _ = stderr_thread.join();
+        process::exit(status.code().unwrap_or(1));
+    }
+
     // Interactive commands need inherited stdio for user prompts/input.
     // Setup is always interactive because obtain_credentials needs stdin
     // even when --yes is passed (--yes only skips the confirm prompt).
@@ -561,7 +615,6 @@ pub fn run(command: Command) -> ! {
             | Command::Destroy { yes: false }
             | Command::Attach
             | Command::Shell
-            | Command::Auth { token: None }
     );
 
     if interactive {

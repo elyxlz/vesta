@@ -1,6 +1,6 @@
 use super::*;
 use serde::Serialize;
-use std::io::{self, Write};
+use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 
 const VFKIT_BIN: &str = "vfkit";
@@ -379,6 +379,58 @@ fn ensure_vm() {
     }
 }
 
+fn try_open_browser(url: &str) {
+    let _ = process::Command::new("open").arg(url)
+        .stdout(process::Stdio::null()).stderr(process::Stdio::null()).spawn();
+}
+
+fn ssh_run_passthrough(cmd_args: &[&str]) -> process::ExitStatus {
+    let mut args = ssh_base_args();
+    args.extend(cmd_args.iter().map(|s| s.to_string()));
+    let mut child = process::Command::new("ssh")
+        .args(&args)
+        .stdin(process::Stdio::inherit())
+        .stdout(process::Stdio::piped())
+        .stderr(process::Stdio::piped())
+        .spawn()
+        .unwrap_or_else(|_| die("ssh failed"));
+
+    let opened = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let pass_through = |reader: Box<dyn io::Read + Send>,
+                        mut writer: Box<dyn io::Write + Send>,
+                        opened: std::sync::Arc<std::sync::atomic::AtomicBool>| {
+        std::thread::spawn(move || {
+            let reader = io::BufReader::new(reader);
+            for line in reader.lines() {
+                let Ok(line) = line else { break };
+                let _ = writeln!(writer, "{}", line);
+                if !opened.load(std::sync::atomic::Ordering::Relaxed) {
+                    if let Some(url) = line.split_whitespace().find(|w| w.starts_with("https://")) {
+                        opened.store(true, std::sync::atomic::Ordering::Relaxed);
+                        try_open_browser(url);
+                    }
+                }
+            }
+        })
+    };
+
+    let stdout_thread = pass_through(
+        Box::new(child.stdout.take().unwrap()),
+        Box::new(io::stdout()),
+        opened.clone(),
+    );
+    let stderr_thread = pass_through(
+        Box::new(child.stderr.take().unwrap()),
+        Box::new(io::stderr()),
+        opened,
+    );
+
+    let status = child.wait().unwrap_or_else(|_| die("ssh failed"));
+    let _ = stdout_thread.join();
+    let _ = stderr_thread.join();
+    status
+}
+
 fn ssh_run(cmd_args: &[&str], tty: bool) -> process::ExitStatus {
     let mut args = if tty { vec!["-t".to_string()] } else { vec![] };
     args.extend(ssh_base_args());
@@ -489,7 +541,7 @@ pub fn run(command: Command) {
                     ssh_run(&["vesta", "auth", "--token", &t], false);
                 }
                 None => {
-                    ssh_run(&["vesta", "auth"], true);
+                    ssh_run_passthrough(&["vesta", "auth"]);
                 }
             }
         }
