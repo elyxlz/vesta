@@ -1,9 +1,66 @@
 use clap::{Parser, Subcommand};
+use std::io::{BufRead, IsTerminal, Write};
 use std::process;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 fn die(msg: &str) -> ! {
     eprintln!("error: {}", msg);
     process::exit(1);
+}
+
+fn try_open_browser(url: &str) {
+    #[cfg(target_os = "linux")]
+    let r = process::Command::new("xdg-open").arg(url)
+        .stdout(process::Stdio::null()).stderr(process::Stdio::null()).spawn();
+    #[cfg(target_os = "macos")]
+    let r = process::Command::new("open").arg(url)
+        .stdout(process::Stdio::null()).stderr(process::Stdio::null()).spawn();
+    #[cfg(target_os = "windows")]
+    let r = process::Command::new("cmd").args(["/c", "start", "", url])
+        .stdout(process::Stdio::null()).stderr(process::Stdio::null()).spawn();
+    let _ = r;
+}
+
+/// Run a child process with piped stdout/stderr, passing lines through.
+/// When running in a terminal (not piped by Tauri), scans for an auth URL
+/// and opens it in the browser.
+fn run_passthrough(mut child: process::Child) -> process::ExitStatus {
+    let opened = Arc::new(AtomicBool::new(false));
+    let is_tty = std::io::stdout().is_terminal();
+
+    let spawn_reader = |reader: Box<dyn std::io::Read + Send>,
+                        mut writer: Box<dyn std::io::Write + Send>,
+                        opened: Arc<AtomicBool>| {
+        std::thread::spawn(move || {
+            for line in std::io::BufReader::new(reader).lines() {
+                let Ok(line) = line else { break };
+                let _ = writeln!(writer, "{}", line);
+                if is_tty && !opened.load(Ordering::Relaxed) {
+                    if let Some(url) = line.split_whitespace().find(|w| w.starts_with("https://")) {
+                        opened.store(true, Ordering::Relaxed);
+                        try_open_browser(url);
+                    }
+                }
+            }
+        })
+    };
+
+    let stdout_thread = spawn_reader(
+        Box::new(child.stdout.take().unwrap()),
+        Box::new(std::io::stdout()),
+        opened.clone(),
+    );
+    let stderr_thread = spawn_reader(
+        Box::new(child.stderr.take().unwrap()),
+        Box::new(std::io::stderr()),
+        opened,
+    );
+
+    let status = child.wait().unwrap_or_else(|_| die("command failed"));
+    let _ = stdout_thread.join();
+    let _ = stderr_thread.join();
+    status
 }
 
 #[derive(Parser)]
