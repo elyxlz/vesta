@@ -123,6 +123,10 @@ def system(msg: tp.Any) -> None:
     _cat(">", "cyan", "SYSTEM", msg)
 
 
+def subagent(msg: tp.Any) -> None:
+    _cat("@", "blue", "SUBAGENT", msg)
+
+
 def sdk(msg: tp.Any) -> None:
     _cat("~", "dim", "SDK", msg, level=logging.DEBUG)
 

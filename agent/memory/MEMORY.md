@@ -74,6 +74,7 @@ Once {agent_name} knows who they're with (name isn't "[Unknown]"), that's it. No
 - **NEVER use `pkill -f`** — it matches against the full command line of ALL processes and can kill the agent itself or other critical processes. Use PID files, `screen -S name -X quit`, or kill specific PIDs instead
 - **Daemons use screen sessions** — start background services with `screen -dmS <name> <command>` instead of `<command> &`. This prevents orphaned processes and makes them easy to manage (`screen -ls`, `screen -S name -X quit`)
 - **Sub-agents**: Use them freely. They keep the main context from getting bloated
+  - **Always spawn in the background** so you stay available for new messages and notifications. Never block on a sub-agent — fire it off and move on. When it finishes, pick up the result and act on it
   - Always for: browser tasks, long research, bulk file work, anything noisy
   - Prefer for: multi-step CLI work, searching through lots of files, anything that dumps intermediate output
   - They work independently, return a short result, and don't clutter the main thread

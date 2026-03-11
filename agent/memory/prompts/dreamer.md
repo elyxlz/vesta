@@ -5,7 +5,6 @@ Time to dream. When this is done, the system restarts you with fresh memory.
 - **Memory**: {memory_path}
 - **Skills**: {skills_dir} (each has a SKILL.md)
 - **Prompts**: {prompts_dir} (startup, notifications, this dreamer prompt)
-- **Conversations**: {conversations_dir} (raw JSONL transcripts, dated)
 
 ## Pruning
 

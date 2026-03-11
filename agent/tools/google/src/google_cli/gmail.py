@@ -79,7 +79,7 @@ def _get_body_text(payload: dict) -> str:
 
 def _get_attachments_info(payload: dict) -> list[dict]:
     attachments = []
-    for part in (payload["parts"] if "parts" in payload else []):
+    for part in payload["parts"] if "parts" in payload else []:
         part_body = part["body"] if "body" in part else {}
         if ("filename" in part and part["filename"]) and ("attachmentId" in part_body):
             attachments.append(
@@ -206,7 +206,11 @@ def create_draft(
     raw = _build_mime_message(to, subject, body, cc=cc, attachments=attachments)
     result = api.retry(lambda: service.users().drafts().create(userId="me", body={"message": {"raw": raw}}).execute())
     result_msg = result["message"] if "message" in result else {}
-    return {"status": "draft_created", "id": result["id"] if "id" in result else "", "message_id": result_msg["id"] if "id" in result_msg else ""}
+    return {
+        "status": "draft_created",
+        "id": result["id"] if "id" in result else "",
+        "message_id": result_msg["id"] if "id" in result_msg else "",
+    }
 
 
 def reply_to_email(

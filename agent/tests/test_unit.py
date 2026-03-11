@@ -2,12 +2,16 @@
 
 import asyncio
 import datetime as dt
+import typing as tp
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import vesta.models as vm
-from vesta.core.client import _format_tool_call
+from claude_agent_sdk import HookContext
+from claude_agent_sdk.types import SubagentStartHookInput, SubagentStopHookInput
+from vesta.core.client import _format_tool_call, _parse_agent_input, _tool_summary, _subagent_hook
+from vesta.events import EventBus, SubagentStartEvent
 from vesta.core.init import get_memory_path
 from vesta.core.loops import format_notification_batch
 
@@ -53,6 +57,74 @@ def test_format_tool_call_task():
     assert "[TASK]" in formatted
     assert "test-agent" in formatted
     assert context == "test-agent"
+
+
+def test_format_tool_call_agent():
+    formatted, context = _format_tool_call(
+        "Agent",
+        input_data={"subagent_type": "code-agent", "description": "write tests"},
+        sub_agent_context=None,
+    )
+    assert "[TASK]" in formatted
+    assert "code-agent" in formatted
+    assert context == "code-agent"
+
+
+def test_parse_agent_input_with_dict():
+    assert _parse_agent_input({"subagent_type": "browser", "description": "open page"}) == ("browser", "open page")
+
+
+def test_parse_agent_input_missing_fields():
+    assert _parse_agent_input({"other": "data"}) == ("unknown", "")
+
+
+def test_parse_agent_input_non_dict():
+    assert _parse_agent_input("some string") == ("unknown", "")
+
+
+def test_tool_summary_agent():
+    assert _tool_summary("Agent", {"subagent_type": "research", "description": "find docs"}) == "Task [research]: find docs"
+
+
+def test_tool_summary_task():
+    assert _tool_summary("Task", {"subagent_type": "code", "description": "write code"}) == "Task [code]: write code"
+
+
+def test_eventbus_emit_subagent_start():
+    bus = EventBus()
+    q = bus.subscribe()
+    event = SubagentStartEvent(type="subagent_start", agent_id="abc", agent_type="browser")
+    bus.emit(event)
+    received = q.get_nowait()
+    assert received["type"] == "subagent_start"
+    assert received["agent_id"] == "abc"
+    assert received["agent_type"] == "browser"
+    assert len(bus.history) == 1
+    assert bus.history[0]["type"] == "subagent_start"
+
+
+@pytest.mark.anyio
+async def test_subagent_hook_emits_start_event():
+    state = vm.State()
+    hook = _subagent_hook(state, verb="started", event_type="subagent_start")
+    q = state.event_bus.subscribe()
+    await hook(tp.cast(SubagentStartHookInput, {"agent_id": "test-123", "agent_type": "research"}), None, tp.cast(HookContext, MagicMock()))
+    received = q.get_nowait()
+    assert received["type"] == "subagent_start"
+    assert received["agent_id"] == "test-123"
+    assert received["agent_type"] == "research"
+
+
+@pytest.mark.anyio
+async def test_subagent_hook_emits_stop_event():
+    state = vm.State()
+    hook = _subagent_hook(state, verb="stopped", event_type="subagent_stop")
+    q = state.event_bus.subscribe()
+    await hook(tp.cast(SubagentStopHookInput, {"agent_id": "test-456", "agent_type": "browser"}), None, tp.cast(HookContext, MagicMock()))
+    received = q.get_nowait()
+    assert received["type"] == "subagent_stop"
+    assert received["agent_id"] == "test-456"
+    assert received["agent_type"] == "browser"
 
 
 def test_format_notification_batch_single():
@@ -287,7 +359,6 @@ async def test_dreamer_queues_prompt_and_archives(tmp_path):
 
     with (
         patch("vesta.core.loops._now", return_value=fake_now),
-        patch("vesta.core.loops.archive_conversation") as mock_archive,
         patch("vesta.core.loops.build_dreamer_prompt", return_value="dreamer prompt"),
     ):
         await process_nightly_memory(queue, state=state, config=config)
@@ -298,7 +369,6 @@ async def test_dreamer_queues_prompt_and_archives(tmp_path):
     assert is_user is False
     assert state.last_dreamer_run == fake_now
     assert state.dreamer_active is True
-    mock_archive.assert_called_once()
 
 
 @pytest.mark.anyio
@@ -315,14 +385,12 @@ async def test_dreamer_skips_when_already_run_today(tmp_path):
 
     with (
         patch("vesta.core.loops._now", return_value=fake_now),
-        patch("vesta.core.loops.archive_conversation") as mock_archive,
         patch("vesta.core.loops.build_dreamer_prompt", return_value="dreamer prompt"),
     ):
         await process_nightly_memory(queue, state=state, config=config)
 
     assert queue.empty()
     assert state.dreamer_active is False
-    mock_archive.assert_not_called()
 
 
 @pytest.mark.anyio
@@ -518,3 +586,89 @@ def test_nightly_restart(tmp_path):
     assert state2.pending_context is not None
     assert "new day" in state2.pending_context
     assert "Dreamer Summary" not in state2.pending_context
+
+
+# --- History store ---
+
+
+def test_history_store_save_and_search(tmp_path):
+    from vesta.core.history import open_history, history_save, history_search
+
+    store = open_history(tmp_path / "test.db")
+    history_save(store, "user", "what is the weather in paris")
+    history_save(store, "assistant", "it is sunny in paris today")
+    history_save(store, "user", "how about london")
+    history_save(store, "assistant", "london is rainy as usual")
+
+    results = history_search(store, "paris")
+    assert len(results) == 2
+    assert any("paris" in r["content"] for r in results)
+
+    results = history_search(store, "london")
+    assert len(results) == 2
+
+    results = history_search(store, "sunny")
+    assert len(results) == 1
+    assert results[0]["role"] == "assistant"
+
+
+def test_history_store_search_no_results(tmp_path):
+    from vesta.core.history import open_history, history_save, history_search
+
+    store = open_history(tmp_path / "test.db")
+    history_save(store, "user", "hello world")
+    results = history_search(store, "nonexistent")
+    assert results == []
+
+
+def test_history_store_search_limit(tmp_path):
+    from vesta.core.history import open_history, history_save, history_search
+
+    store = open_history(tmp_path / "test.db")
+    for i in range(10):
+        history_save(store, "user", f"message number {i} about python")
+
+    results = history_search(store, "python", limit=3)
+    assert len(results) == 3
+
+
+def test_history_store_get_range(tmp_path):
+    from vesta.core.history import open_history, history_save, history_get_range
+
+    store = open_history(tmp_path / "test.db")
+    t1 = dt.datetime(2025, 1, 1, 10, 0, 0)
+    t2 = dt.datetime(2025, 1, 2, 10, 0, 0)
+    t3 = dt.datetime(2025, 1, 3, 10, 0, 0)
+    history_save(store, "user", "day one", timestamp=t1)
+    history_save(store, "user", "day two", timestamp=t2)
+    history_save(store, "user", "day three", timestamp=t3)
+
+    results = history_get_range(store, since=t2)
+    assert len(results) == 2
+    assert results[0]["content"] == "day two"
+
+    results = history_get_range(store, until=t2)
+    assert len(results) == 2
+    assert results[1]["content"] == "day two"
+
+
+def test_history_format_results():
+    from vesta.core.history import format_results
+
+    assert format_results([]) == "No results found."
+
+    results = [{"timestamp": "2025-01-01T10:00:00", "role": "user", "content": "hello"}]
+    formatted = format_results(results)
+    assert "hello" in formatted
+    assert "user" in formatted
+
+
+def test_history_store_session_id(tmp_path):
+    from vesta.core.history import open_history, history_save, history_search
+
+    store = open_history(tmp_path / "test.db")
+    history_save(store, "user", "msg one", session_id="session-abc")
+    history_save(store, "user", "msg two", session_id="session-def")
+
+    results = history_search(store, "msg")
+    assert len(results) == 2
