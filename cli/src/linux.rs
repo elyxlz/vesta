@@ -186,6 +186,17 @@ fn container_file_exists(cname: &str, container_path: &str) -> bool {
     docker_quiet(&["cp", &src, "-"])
 }
 
+fn read_container_file(cname: &str, container_path: &str) -> Option<String> {
+    let tmp = std::env::temp_dir().join(format!("vesta_read_{}", std::process::id()));
+    let src = format!("{}:{}", cname, container_path);
+    if !docker_quiet(&["cp", &src, tmp.to_str().unwrap()]) {
+        return None;
+    }
+    let content = std::fs::read_to_string(&tmp).ok();
+    std::fs::remove_file(&tmp).ok();
+    content.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+}
+
 fn is_authenticated(cname: &str) -> bool {
     container_file_exists(cname, CREDENTIALS_PATH)
 }
@@ -384,6 +395,53 @@ fn inject_credentials(container: &str, credentials: &str) {
     docker_cp_content(container, "{\"hasCompletedOnboarding\":true}", CLAUDE_JSON_PATH);
 }
 
+fn maybe_migrate_legacy() {
+    if docker_output(&["inspect", "--format", "{{.State.Status}}", "vesta"]).is_none() {
+        return;
+    }
+
+    let managed = list_managed_containers();
+    if !managed.is_empty() {
+        return;
+    }
+
+    let cs = container_status("vesta");
+    if cs == ContainerStatus::Dead {
+        eprintln!("removing dead legacy container 'vesta'...");
+        docker_ok(&["rm", "-f", "vesta"]);
+        return;
+    }
+
+    eprintln!("migrating legacy container 'vesta'...");
+
+    let was_running = cs == ContainerStatus::Running;
+
+    let name = read_container_file("vesta", "/root/.vesta-name").unwrap_or_else(|| "default".to_string());
+    validate_name(&name);
+    let cname = container_name(&name);
+
+    let migrate_tag = "vesta-migrate:temp";
+    if !docker_ok(&[
+        "commit",
+        "--change", "LABEL vesta.managed=true",
+        "--change", &format!("LABEL vesta.ws_port={}", BASE_WS_PORT),
+        "vesta", migrate_tag,
+    ]) {
+        die("failed to commit legacy container for migration");
+    }
+
+    docker_ok(&["rm", "-f", "vesta"]);
+
+    create_container(&cname, migrate_tag, BASE_WS_PORT);
+
+    if was_running {
+        docker_ok(&["start", &cname]);
+    }
+
+    docker_ok(&["rmi", migrate_tag]);
+    eprintln!("migrated legacy container to '{}'", cname);
+}
+
 fn name_from_cname(cname: &str) -> String {
     cname.strip_prefix("vesta-").unwrap_or(cname).to_string()
 }
@@ -410,6 +468,7 @@ fn friendly_status(status: &ContainerStatus, authenticated: bool, agent_ready: b
 
 pub fn run(command: Command) {
     ensure_docker();
+    maybe_migrate_legacy();
 
     match command {
         Command::Setup { build, yes, name } => {

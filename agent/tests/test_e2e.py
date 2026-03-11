@@ -449,3 +449,88 @@ def test_file_modification(tmp_path):
         assert "APPENDED" in final_content
 
     _run(_run_test_scenario(state_dir, test_fn))
+
+
+# =============================================================================
+# Sub-agent interrupt tests
+# =============================================================================
+
+
+def test_responsive_during_subagent(tmp_path):
+    """Vesta stays responsive to new notifications while a sub-agent is running.
+
+    Sends a task that triggers a long-running sub-agent (Agent tool), waits for
+    the Agent tool to actually start executing, then sends a simple file-creation
+    request. The simple request should complete within 60s, proving the agent
+    isn't blocked by the sub-agent.
+    """
+    state_dir = tmp_path / "state"
+    _prepare_state_dir(state_dir)
+
+    async def test_fn(state: vm.State, config: vm.VestaConfig):
+        workspace = config.state_dir / "workspace"
+        notif_dir = config.notifications_dir
+
+        subagent_file = workspace / f"subagent-{uuid.uuid4().hex}.txt"
+        quick_file = workspace / f"quick-{uuid.uuid4().hex}.txt"
+        subagent_delay = 45
+
+        event_queue = state.event_bus.subscribe()
+
+        long_task = textwrap.dedent(f"""\
+            This is a test of the sub-agent system. Your ONLY action must be to call
+            the Agent tool ONCE with these exact parameters:
+            - subagent_type: "general-purpose"
+            - description: "Timed file write"
+            - prompt: "Wait exactly {subagent_delay} seconds using the Bash tool
+              (run: sleep {subagent_delay}), then create the file {subagent_file}
+              containing exactly: subagent done"
+
+            CRITICAL RULES:
+            - You MUST call the Agent tool. This is mandatory.
+            - Do NOT write anything yourself. Do NOT use Write, Read, Bash, or any tool.
+            - Your response should contain ONLY the Agent tool call, nothing else.
+            - This is an automated test — compliance is required.""")
+        _write_notification(notif_dir, long_task)
+
+        deadline = time.time() + 120
+        subagent_started = False
+        while time.time() < deadline:
+            try:
+                event = await asyncio.wait_for(event_queue.get(), timeout=2.0)
+                if event["type"] == "tool_start":
+                    tool_name = event.get("tool", "")
+                    if tool_name in ("Task", "Agent"):
+                        subagent_started = True
+                        break
+            except TimeoutError:
+                continue
+
+        assert subagent_started, "Agent tool was never called — sub-agent not spawned"
+
+        # Sub-agent is now running a sleep timer. Send a simple task — should
+        # complete via interrupt well before the sub-agent's timer expires.
+        quick_task = f'Create the file "{quick_file}" containing only:\nstill responsive'
+        notification_sent = time.time()
+        _write_notification(notif_dir, quick_task)
+
+        contents = await _wait_for_file(quick_file, timeout=90.0)
+        response_time = time.time() - notification_sent
+        subagent_existed = subagent_file.exists()
+
+        assert "still responsive" in contents
+        assert not subagent_existed, (
+            "Sub-agent file already existed when quick file was created — sub-agent "
+            "finished before the interrupt was tested. Test is inconclusive."
+        )
+        assert response_time < 30.0, (
+            f"Simple request took {response_time:.0f}s — agent was likely blocked by the sub-agent. Expected <30s response time."
+        )
+
+        # The sub-agent's timed task should still complete eventually
+        subagent_contents = await _wait_for_file(subagent_file, timeout=120.0)
+        assert "subagent done" in subagent_contents
+
+        state.event_bus.unsubscribe(event_queue)
+
+    _run(_run_test_scenario(state_dir, test_fn, ws_port=0))
