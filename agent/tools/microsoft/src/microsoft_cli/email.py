@@ -70,9 +70,7 @@ def _prepare_email_output_path(
 
 def _extract_addresses(recipients: list[dict[str, Any]]) -> str:
     return ", ".join(
-        (r["emailAddress"] if "emailAddress" in r else {})["address"]
-        if "address" in (r["emailAddress"] if "emailAddress" in r else {})
-        else ""
+        (r["emailAddress"] if "emailAddress" in r else {})["address"] if "address" in (r["emailAddress"] if "emailAddress" in r else {}) else ""
         for r in recipients
     )
 
