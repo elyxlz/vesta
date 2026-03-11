@@ -49,7 +49,29 @@ class NotificationEvent(_BaseEvent):
     summary: str
 
 
-type StreamEvent = StatusEvent | ToolStartEvent | ToolEndEvent | AssistantEvent | UserEvent | ErrorEvent | NotificationEvent
+class SubagentStartEvent(_BaseEvent):
+    type: tp.Literal["subagent_start"]
+    agent_id: str
+    agent_type: str
+
+
+class SubagentStopEvent(_BaseEvent):
+    type: tp.Literal["subagent_stop"]
+    agent_id: str
+    agent_type: str
+
+
+type StreamEvent = (
+    StatusEvent
+    | ToolStartEvent
+    | ToolEndEvent
+    | AssistantEvent
+    | UserEvent
+    | ErrorEvent
+    | NotificationEvent
+    | SubagentStartEvent
+    | SubagentStopEvent
+)
 
 
 class HistoryEvent(tp.TypedDict):

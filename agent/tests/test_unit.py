@@ -55,6 +55,17 @@ def test_format_tool_call_task():
     assert context == "test-agent"
 
 
+def test_format_tool_call_agent():
+    formatted, context = _format_tool_call(
+        "Agent",
+        input_data={"subagent_type": "code-agent", "description": "write tests"},
+        sub_agent_context=None,
+    )
+    assert "[TASK]" in formatted
+    assert "code-agent" in formatted
+    assert context == "code-agent"
+
+
 def test_format_notification_batch_single():
     notif = vm.Notification(timestamp=dt.datetime(2025, 1, 1), source="test", type="message")
     formatted = format_notification_batch([notif])

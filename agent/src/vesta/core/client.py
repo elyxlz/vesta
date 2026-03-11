@@ -17,7 +17,14 @@ from claude_agent_sdk import (
     tool,
     create_sdk_mcp_server,
 )
-from claude_agent_sdk.types import PreToolUseHookInput, PostToolUseHookInput, HookJSONOutput, HookCallback
+from claude_agent_sdk.types import (
+    PreToolUseHookInput,
+    PostToolUseHookInput,
+    SubagentStartHookInput,
+    SubagentStopHookInput,
+    HookJSONOutput,
+    HookCallback,
+)
 
 import vesta.models as vm
 from vesta import logger
@@ -33,7 +40,7 @@ def _format_tool_call(name: str, *, input_data: object, sub_agent_context: str |
     input_str = json.dumps(input_data) if isinstance(input_data, dict) else str(input_data)
     input_preview = (input_str[:150] + "...") if len(input_str) > 150 else input_str
 
-    if name == "Task":
+    if name in ("Task", "Agent"):
         if isinstance(input_data, dict):
             data = tp.cast(dict[str, tp.Any], input_data)
             agent_type = data["subagent_type"] if "subagent_type" in data else "unknown"
@@ -67,25 +74,18 @@ def _parse_sdk_message(msg: Message, *, sub_agent_context: str | None) -> tuple[
         return ([msg] if isinstance(msg, str) else [], sub_agent_context, None, False)
 
     texts = []
-    has_task_result = False
     has_tool_use = False
     current_context = sub_agent_context
 
     for block in msg.content:
         if isinstance(block, TextBlock):
-            text = block.text
-            if current_context and "completed" in text.lower():
-                has_task_result = True
-            texts.append(text)
+            texts.append(block.text)
         elif isinstance(block, ToolUseBlock):
             has_tool_use = True
             formatted, new_context = _format_tool_call(block.name, input_data=block.input, sub_agent_context=current_context)
             texts.append(formatted)
             if new_context:
                 current_context = new_context
-
-    if has_task_result and current_context:
-        current_context = None
 
     return texts, current_context, None, has_tool_use
 
@@ -102,7 +102,7 @@ _TOOL_KEYS: dict[str, str] = {
 
 
 def _tool_summary(name: str, tool_input: dict[str, tp.Any]) -> str:
-    if name == "Task":
+    if name in ("Task", "Agent"):
         agent = tool_input["subagent_type"] if "subagent_type" in tool_input else "?"
         desc = tool_input["description"] if "description" in tool_input else ""
         return f"Task [{agent}]: {desc}"
@@ -115,7 +115,9 @@ def _tool_summary(name: str, tool_input: dict[str, tp.Any]) -> str:
     return f"{name}: {preview}"
 
 
-def _make_tool_hooks(state: vm.State) -> tuple[HookCallback, HookCallback]:
+def _make_hooks(
+    state: vm.State,
+) -> tuple[HookCallback, HookCallback, HookCallback, HookCallback]:
     async def log_tool_start(input_data: PreToolUseHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
         name = input_data["tool_name"]
         summary = _tool_summary(name, input_data["tool_input"])
@@ -131,7 +133,26 @@ def _make_tool_hooks(state: vm.State) -> tuple[HookCallback, HookCallback]:
         state.event_bus.set_state("thinking")
         return tp.cast(HookJSONOutput, {})
 
-    return tp.cast(HookCallback, log_tool_start), tp.cast(HookCallback, log_tool_finish)
+    async def log_subagent_start(input_data: SubagentStartHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
+        agent_id = input_data["agent_id"]
+        agent_type = input_data["agent_type"]
+        logger.subagent(f"started [{agent_type}] id={agent_id}")
+        state.event_bus.emit({"type": "subagent_start", "agent_id": agent_id, "agent_type": agent_type})
+        return tp.cast(HookJSONOutput, {})
+
+    async def log_subagent_stop(input_data: SubagentStopHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
+        agent_id = input_data["agent_id"]
+        agent_type = input_data["agent_type"]
+        logger.subagent(f"stopped [{agent_type}] id={agent_id}")
+        state.event_bus.emit({"type": "subagent_stop", "agent_id": agent_id, "agent_type": agent_type})
+        return tp.cast(HookJSONOutput, {})
+
+    return (
+        tp.cast(HookCallback, log_tool_start),
+        tp.cast(HookCallback, log_tool_finish),
+        tp.cast(HookCallback, log_subagent_start),
+        tp.cast(HookCallback, log_subagent_stop),
+    )
 
 
 async def attempt_interrupt(state: vm.State, *, config: vm.VestaConfig, reason: str) -> bool:
@@ -233,13 +254,15 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
     name = config.agent_name
     system_prompt = f"Your name is {name}.\n\n{system_prompt}"
 
-    pre_hook, post_hook = _make_tool_hooks(state)
+    pre_hook, post_hook, subagent_start_hook, subagent_stop_hook = _make_hooks(state)
 
     return ClaudeAgentOptions(
         system_prompt=system_prompt,
         hooks={
             "PreToolUse": [HookMatcher(hooks=[pre_hook])],
             "PostToolUse": [HookMatcher(hooks=[post_hook])],
+            "SubagentStart": [HookMatcher(hooks=[subagent_start_hook])],
+            "SubagentStop": [HookMatcher(hooks=[subagent_stop_hook])],
         },
         permission_mode="bypassPermissions",
         cwd=config.state_dir,
