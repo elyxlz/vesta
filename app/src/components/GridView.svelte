@@ -16,7 +16,10 @@
 
   async function refresh() {
     try {
-      agents = await listAgents();
+      const next = await listAgents();
+      if (JSON.stringify(next) !== JSON.stringify(agents)) {
+        agents = next;
+      }
     } catch (e) {
       console.warn("failed to list agents:", e);
     }
@@ -31,7 +34,7 @@
     clearInterval(poll);
   });
 
-  function statusColor(status: string): string {
+  function statusColor(status: ListEntry["status"]): string {
     if (status === "running") return "green";
     if (status === "dead") return "red";
     return "gray";

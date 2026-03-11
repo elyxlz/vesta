@@ -42,17 +42,16 @@
     ready = true;
   });
 
-  onDestroy(() => {
-    if (agentConnection) {
-      agentConnection.disconnect();
-      agentConnection = null;
-    }
-  });
+  function clearConnection() {
+    agentConnection?.disconnect();
+    agentConnection = null;
+    selectedAgent = null;
+  }
+
+  onDestroy(clearConnection);
 
   function handleSelectAgent(name: string, wsPort: number) {
-    if (agentConnection) {
-      agentConnection.disconnect();
-    }
+    agentConnection?.disconnect();
     selectedAgent = { name, wsPort };
     agentConnection = createAgentConnection(wsPort);
     agentConnection.connect();
@@ -60,20 +59,12 @@
   }
 
   function handleBackToGrid() {
-    if (agentConnection) {
-      agentConnection.disconnect();
-      agentConnection = null;
-    }
-    selectedAgent = null;
+    clearConnection();
     setView("grid");
   }
 
   function handleDestroyed() {
-    if (agentConnection) {
-      agentConnection.disconnect();
-      agentConnection = null;
-    }
-    selectedAgent = null;
+    clearConnection();
     setView("grid");
   }
 
