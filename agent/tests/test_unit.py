@@ -2,11 +2,14 @@
 
 import asyncio
 import datetime as dt
+import typing as tp
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import vesta.models as vm
+from claude_agent_sdk import HookContext
+from claude_agent_sdk.types import SubagentStartHookInput, SubagentStopHookInput
 from vesta.core.client import _format_tool_call, _parse_agent_input, _tool_summary, _subagent_hook
 from vesta.events import EventBus, SubagentStartEvent
 from vesta.core.init import get_memory_path
@@ -105,7 +108,7 @@ async def test_subagent_hook_emits_start_event():
     state = vm.State()
     hook = _subagent_hook(state, verb="started", event_type="subagent_start")
     q = state.event_bus.subscribe()
-    await hook({"agent_id": "test-123", "agent_type": "research"}, None, MagicMock())
+    await hook(tp.cast(SubagentStartHookInput, {"agent_id": "test-123", "agent_type": "research"}), None, tp.cast(HookContext, MagicMock()))
     received = q.get_nowait()
     assert received["type"] == "subagent_start"
     assert received["agent_id"] == "test-123"
@@ -117,7 +120,7 @@ async def test_subagent_hook_emits_stop_event():
     state = vm.State()
     hook = _subagent_hook(state, verb="stopped", event_type="subagent_stop")
     q = state.event_bus.subscribe()
-    await hook({"agent_id": "test-456", "agent_type": "browser"}, None, MagicMock())
+    await hook(tp.cast(SubagentStopHookInput, {"agent_id": "test-456", "agent_type": "browser"}), None, tp.cast(HookContext, MagicMock()))
     received = q.get_nowait()
     assert received["type"] == "subagent_stop"
     assert received["agent_id"] == "test-456"
