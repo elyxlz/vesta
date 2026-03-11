@@ -102,7 +102,10 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
     for task in tasks:
         task.cancel()
 
-    await asyncio.gather(*tasks, return_exceptions=True)
+    _, pending = await asyncio.wait(tasks, timeout=5)
+    if pending:
+        logger.shutdown("Shutdown timed out (SDK cleanup hung), forcing exit")
+        os._exit(1)
     await ws_runner.cleanup()
     (config.data_dir / "run_marker").unlink(missing_ok=True)
     logger.shutdown("sweet dreams!")

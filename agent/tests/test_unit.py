@@ -461,6 +461,88 @@ async def test_message_processor_interrupts_on_new_message(tmp_path):
 
 
 @pytest.mark.anyio
+async def test_process_interruptible_cancels_process_task(tmp_path):
+    """Cancelling _process_interruptible must cancel its in-flight process_task (no orphaned tasks)."""
+    from vesta.core.loops import _process_interruptible
+
+    config = _make_config(tmp_path)
+    state = vm.State()
+    state.shutdown_event = asyncio.Event()
+    queue: asyncio.Queue = asyncio.Queue()
+
+    task_started = asyncio.Event()
+    task_cancelled = False
+
+    async def hanging_process(msg, *, state, config, is_user):
+        nonlocal task_cancelled
+        task_started.set()
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            task_cancelled = True
+            raise
+        return (["OK"], state)
+
+    with patch("vesta.core.loops._process_message_safely", hanging_process):
+        interruptible_task = asyncio.create_task(_process_interruptible("test msg", is_user=True, queue=queue, state=state, config=config))
+        await task_started.wait()
+        interruptible_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await interruptible_task
+
+    assert task_cancelled, "process_task should have been cancelled, not left orphaned"
+
+
+@pytest.mark.anyio
+async def test_run_vesta_force_exits_on_hung_cleanup(tmp_path):
+    """run_vesta must force-exit if task cleanup hangs (e.g. SDK __aexit__ blocking)."""
+    from vesta.main import run_vesta
+
+    config = _make_config(tmp_path)
+    config.data_dir.mkdir(parents=True, exist_ok=True)
+    state = vm.State()
+
+    force_exit_called_with: list[int] = []
+    exit_event = asyncio.Event()
+
+    def fake_exit(code):
+        force_exit_called_with.append(code)
+        exit_event.set()
+
+    async def hanging_on_cancel(*args, **kwargs):
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            # Simulate SDK __aexit__ hanging during cleanup — resist repeated cancellation
+            while not exit_event.is_set():
+                try:
+                    await asyncio.sleep(0.01)
+                except asyncio.CancelledError:
+                    continue
+
+    with (
+        patch("vesta.main.start_ws_server", new_callable=AsyncMock) as mock_ws,
+        patch("vesta.main.input_handler", hanging_on_cancel),
+        patch("vesta.main.message_processor", hanging_on_cancel),
+        patch("vesta.main.monitor_loop", hanging_on_cancel),
+        patch("vesta.main.queue_greeting", new_callable=AsyncMock),
+        patch("os._exit", fake_exit),
+    ):
+        mock_ws.return_value = MagicMock()
+        mock_ws.return_value.cleanup = AsyncMock()
+
+        async def trigger_shutdown():
+            await asyncio.sleep(0.05)
+            assert state.graceful_shutdown is not None
+            state.graceful_shutdown.set()
+            await exit_event.wait()
+
+        await asyncio.gather(run_vesta(config, state=state), trigger_shutdown())
+
+    assert force_exit_called_with == [1], f"os._exit(1) should have been called, got {force_exit_called_with}"
+
+
+@pytest.mark.anyio
 async def test_converse_breaks_on_interrupt_event():
     """converse exits promptly when interrupt_event is set, not waiting for slow response iterator."""
     from vesta.core.client import converse

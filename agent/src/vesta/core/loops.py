@@ -153,32 +153,40 @@ async def _process_interruptible(
 ) -> None:
     """Process a message while monitoring the queue for new messages that should interrupt."""
     pending: collections.deque[tuple[str, bool]] = collections.deque([(msg, is_user)])
+    process_task: asyncio.Task[None] | None = None
 
-    while pending:
-        if state.pending_context is not None:
-            for remaining in pending:
-                await queue.put(remaining)
-            break
-
-        current_msg, current_is_user = pending.popleft()
-        state.interrupt_event = asyncio.Event()
-        process_task = asyncio.create_task(_process_message_safely(current_msg, is_user=current_is_user, state=state, config=config))
-
-        while not process_task.done():
-            queue_task: asyncio.Task[tuple[str, bool]] = asyncio.create_task(queue.get())
-            done, _ = await asyncio.wait({process_task, queue_task}, return_when=asyncio.FIRST_COMPLETED)
-
-            if queue_task in done:
-                pending.append(queue_task.result())
-                state.interrupt_event.set()
-                logger.interrupt(f"New message queued, interrupting current processing ({len(pending)} pending)")
-                await process_task
+    try:
+        while pending:
+            if state.pending_context is not None:
+                for remaining in pending:
+                    await queue.put(remaining)
                 break
-            else:
-                await _cancel_task(queue_task)
 
-        await process_task
-        state.interrupt_event = None
+            current_msg, current_is_user = pending.popleft()
+            state.interrupt_event = asyncio.Event()
+            process_task = asyncio.create_task(_process_message_safely(current_msg, is_user=current_is_user, state=state, config=config))
+
+            while not process_task.done():
+                queue_task: asyncio.Task[tuple[str, bool]] = asyncio.create_task(queue.get())
+                done, _ = await asyncio.wait({process_task, queue_task}, return_when=asyncio.FIRST_COMPLETED)
+
+                if queue_task in done:
+                    pending.append(queue_task.result())
+                    state.interrupt_event.set()
+                    logger.interrupt(f"New message queued, interrupting current processing ({len(pending)} pending)")
+                    await process_task
+                    break
+                else:
+                    await _cancel_task(queue_task)
+
+            await process_task
+            process_task = None
+            state.interrupt_event = None
+    except asyncio.CancelledError:
+        if process_task and not process_task.done():
+            process_task.cancel()
+            await asyncio.gather(process_task, return_exceptions=True)
+        raise
 
 
 async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig) -> None:
