@@ -1,6 +1,6 @@
 use super::*;
 use serde::Serialize;
-use std::io::{self, BufRead, Write};
+use std::io::{self, Write};
 
 const CONTAINER_NAME: &str = "vesta";
 const VESTA_IMAGE: &str = "ghcr.io/elyxlz/vesta:latest";
@@ -213,11 +213,6 @@ fn create_container(image: &str) {
     }
 }
 
-fn try_open_browser(url: &str) {
-    let _ = process::Command::new("xdg-open").arg(url)
-        .stdout(process::Stdio::null()).stderr(process::Stdio::null()).spawn();
-}
-
 fn obtain_credentials(image: &str) -> String {
     eprintln!("authenticating claude...");
     eprintln!("sign in via the link below, then come back here.\n");
@@ -227,7 +222,7 @@ fn obtain_credentials(image: &str) -> String {
         .unwrap_or_else(|e| die(&format!("failed to create temp dir: {}", e)));
 
     let mount = format!("{}:/tmp/claude-creds", tmp_dir.display());
-    let mut child = process::Command::new("docker")
+    let child = process::Command::new("docker")
         .args([
             "run", "--rm",
             "-v", &mount,
@@ -241,38 +236,7 @@ fn obtain_credentials(image: &str) -> String {
         .spawn()
         .unwrap_or_else(|_| die("failed to run claude setup-token"));
 
-    let opened = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let pass_through = |reader: Box<dyn io::Read + Send>, mut writer: Box<dyn io::Write + Send>, opened: std::sync::Arc<std::sync::atomic::AtomicBool>| {
-        std::thread::spawn(move || {
-            let reader = io::BufReader::new(reader);
-            for line in reader.lines() {
-                let Ok(line) = line else { break };
-                let _ = writeln!(writer, "{}", line);
-                if !opened.load(std::sync::atomic::Ordering::Relaxed) {
-                    if let Some(url) = line.split_whitespace().find(|w| w.starts_with("https://")) {
-                        opened.store(true, std::sync::atomic::Ordering::Relaxed);
-                        try_open_browser(url);
-                    }
-                }
-            }
-        })
-    };
-
-    let stdout_thread = pass_through(
-        Box::new(child.stdout.take().unwrap()),
-        Box::new(io::stdout()),
-        opened.clone(),
-    );
-    let stderr_thread = pass_through(
-        Box::new(child.stderr.take().unwrap()),
-        Box::new(io::stderr()),
-        opened,
-    );
-
-    let status = child.wait()
-        .unwrap_or_else(|_| die("failed to run claude setup-token"));
-    let _ = stdout_thread.join();
-    let _ = stderr_thread.join();
+    let status = run_passthrough(child);
 
     if !status.success() {
         std::fs::remove_dir_all(&tmp_dir).ok();

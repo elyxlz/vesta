@@ -489,7 +489,16 @@ pub fn run(command: Command) {
                     ssh_run(&["vesta", "auth", "--token", &t], false);
                 }
                 None => {
-                    ssh_run(&["vesta", "auth"], true);
+                    let mut args = ssh_base_args();
+                    args.extend(["vesta".into(), "auth".into()]);
+                    let child = process::Command::new("ssh")
+                        .args(&args)
+                        .stdin(process::Stdio::inherit())
+                        .stdout(process::Stdio::piped())
+                        .stderr(process::Stdio::piped())
+                        .spawn()
+                        .unwrap_or_else(|_| die("ssh failed"));
+                    run_passthrough(child);
                 }
             }
         }

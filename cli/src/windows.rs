@@ -552,6 +552,21 @@ pub fn run(command: Command) -> ! {
     let mut args = vec!["-d", WSL_DISTRO, "--exec", VESTA_LINUX_BIN];
     args.extend(command_args(&command));
 
+    // Auth without token needs passthrough: pipe output so the Tauri app (or
+    // terminal user) can capture the auth URL while still streaming lines in
+    // real time. claude setup-token doesn't need interactive stdin.
+    if matches!(command, Command::Auth { token: None }) {
+        let child = process::Command::new("wsl.exe")
+            .args(&args)
+            .stdin(process::Stdio::inherit())
+            .stdout(process::Stdio::piped())
+            .stderr(process::Stdio::piped())
+            .spawn()
+            .unwrap_or_else(|_| die("failed to execute wsl.exe"));
+        let status = run_passthrough(child);
+        process::exit(status.code().unwrap_or(1));
+    }
+
     // Interactive commands need inherited stdio for user prompts/input.
     // Setup is always interactive because obtain_credentials needs stdin
     // even when --yes is passed (--yes only skips the confirm prompt).
@@ -561,7 +576,6 @@ pub fn run(command: Command) -> ! {
             | Command::Destroy { yes: false }
             | Command::Attach
             | Command::Shell
-            | Command::Auth { token: None }
     );
 
     if interactive {
