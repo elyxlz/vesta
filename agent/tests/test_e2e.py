@@ -449,3 +449,54 @@ def test_file_modification(tmp_path):
         assert "APPENDED" in final_content
 
     _run(_run_test_scenario(state_dir, test_fn))
+
+
+# =============================================================================
+# Sub-agent interrupt tests
+# =============================================================================
+
+
+def test_responsive_during_subagent(tmp_path):
+    """Vesta stays responsive to new notifications while a sub-agent is running.
+
+    Sends a task that triggers a long-running sub-agent (Agent tool), then sends
+    a simple file-creation request. The simple request should complete within 60s,
+    not block until the sub-agent finishes (which could take many minutes).
+    """
+    state_dir = tmp_path / "state"
+    _prepare_state_dir(state_dir)
+
+    async def test_fn(state: vm.State, config: vm.VestaConfig):
+        workspace = config.state_dir / "workspace"
+        notif_dir = config.notifications_dir
+
+        essay_file = workspace / f"essay-{uuid.uuid4().hex}.txt"
+        quick_file = workspace / f"quick-{uuid.uuid4().hex}.txt"
+
+        long_task = textwrap.dedent(f"""\
+            IMPORTANT: You MUST use the Agent tool for this task. Spawn a sub-agent
+            (subagent_type "general-purpose") to write a detailed, thorough 3000-word
+            essay about the complete history of artificial intelligence from the 1950s
+            to today, covering Turing, expert systems, neural networks, deep learning,
+            and large language models. Save the final essay to "{essay_file}".
+            Do NOT write it yourself — delegate entirely to a sub-agent via the Agent tool.""")
+        _write_notification(notif_dir, long_task)
+
+        # Wait for the sub-agent to be launched (give time for notification pickup + query)
+        await asyncio.sleep(20)
+
+        # Send a simple task — should be processed via interrupt, not blocked
+        quick_task = f'Create the file "{quick_file}" containing only:\nstill responsive'
+        notification_sent = time.time()
+        _write_notification(notif_dir, quick_task)
+
+        contents = await _wait_for_file(quick_file, timeout=90.0)
+        response_time = time.time() - notification_sent
+
+        assert "still responsive" in contents
+        assert response_time < 60.0, (
+            f"Simple request took {response_time:.0f}s — agent was likely blocked by the sub-agent. "
+            f"Expected <60s response time."
+        )
+
+    _run(_run_test_scenario(state_dir, test_fn))
