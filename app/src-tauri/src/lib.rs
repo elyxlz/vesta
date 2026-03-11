@@ -28,10 +28,6 @@ pub fn run() {
                         let _ = window.set_decorations(true);
                         let _ = window
                             .set_title_bar_style(tauri::TitleBarStyle::Overlay);
-                        let _ = window
-                            .set_traffic_light_position(tauri::Position::Logical(
-                                tauri::LogicalPosition { x: 8.0, y: 14.0 },
-                            ));
                     }
                     #[cfg(target_os = "windows")]
                     {

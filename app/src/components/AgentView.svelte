@@ -223,14 +223,17 @@
   async function handleBackup() {
     if (busy) return;
     errorMsg = "";
+    const date = new Date().toISOString().slice(0, 10);
     const path = await save({
-      defaultPath: `${name}.tar.gz`,
+      defaultPath: `${name}-backup-${date}.tar.gz`,
       filters: [{ name: "Backup", extensions: ["tar.gz"] }],
     });
     if (!path) return;
     operation = "backing-up";
     try {
       await backupAgent(name, path);
+      connection.resetReconnect();
+      await syncStatus();
     } catch (e: any) {
       errorMsg = e?.message || "backup failed";
     } finally {

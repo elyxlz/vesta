@@ -143,14 +143,16 @@
   }
 
   async function handleBackup(agent: ListEntry) {
+    const date = new Date().toISOString().slice(0, 10);
     const path = await save({
-      defaultPath: `${agent.name}.tar.gz`,
+      defaultPath: `${agent.name}-backup-${date}.tar.gz`,
       filters: [{ name: "Backup", extensions: ["tar.gz"] }],
     });
     if (!path) return;
     busyAgent = agent.name;
     try {
       await backupAgent(agent.name, path);
+      await refresh();
     } catch (e) {
       console.warn("backup failed:", e);
     } finally {
