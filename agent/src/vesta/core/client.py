@@ -134,30 +134,25 @@ def _subagent_hook(state: vm.State, *, verb: str, event_type: str) -> HookCallba
     return tp.cast(HookCallback, hook)
 
 
-def _is_subagent_call(state: vm.State, input_data: PreToolUseHookInput | PostToolUseHookInput) -> bool:
-    if not state.session_id:
-        return False
-    hook_session = input_data["session_id"] if "session_id" in input_data else None
-    return hook_session is not None and hook_session != state.session_id
-
-
 def _make_hooks(
     state: vm.State,
 ) -> tuple[HookCallback, HookCallback, HookCallback, HookCallback]:
     async def log_tool_start(input_data: PreToolUseHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
         name = input_data["tool_name"]
         summary = _tool_summary(name, input_data["tool_input"])
-        prefix = "[SUB] " if _is_subagent_call(state, input_data) else ""
+        is_sub = "agent_id" in input_data
+        prefix = f"[SUB:{input_data['agent_type']}] " if is_sub and "agent_type" in input_data else "[SUB] " if is_sub else ""
         logger.tool(f"{prefix}{summary}")
         state.event_bus.set_state("tool_use")
-        state.event_bus.emit({"type": "tool_start", "tool": name, "input": summary, "subagent": bool(prefix)})
+        state.event_bus.emit({"type": "tool_start", "tool": name, "input": summary, "subagent": is_sub})
         return tp.cast(HookJSONOutput, {})
 
     async def log_tool_finish(input_data: PostToolUseHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
         name = input_data["tool_name"]
-        prefix = "[SUB] " if _is_subagent_call(state, input_data) else ""
+        is_sub = "agent_id" in input_data
+        prefix = f"[SUB:{input_data['agent_type']}] " if is_sub and "agent_type" in input_data else "[SUB] " if is_sub else ""
         logger.tool(f"{prefix}done: {name}")
-        state.event_bus.emit({"type": "tool_end", "tool": name, "subagent": bool(prefix)})
+        state.event_bus.emit({"type": "tool_end", "tool": name, "subagent": is_sub})
         state.event_bus.set_state("thinking")
         return tp.cast(HookJSONOutput, {})
 
