@@ -225,18 +225,25 @@ jobs:
           CLI="cli-extract/vesta"
           AGENT="ci-test"
 
-          assert_status() {
+          assert_agent_status() {
+            local agent="$1"; shift
             local s
-            s=$("$CLI" status "$AGENT" --json)
+            s=$("$CLI" status "$agent" --json)
             echo "$s"
             for expr in "$@"; do
               echo "$s" | jq -e "$expr" || { echo "FAIL: $expr"; exit 1; }
             done
           }
 
+          assert_status() {
+            assert_agent_status "$AGENT" "$@"
+          }
+
           cleanup() {
             echo "=== Cleanup ==="
-            "$CLI" destroy "$AGENT" --yes 2>/dev/null || true
+            "$CLI" destroy ci-test --yes 2>/dev/null || true
+            "$CLI" destroy ci-test2 --yes 2>/dev/null || true
+            "$CLI" destroy ci-restored --yes 2>/dev/null || true
           }
           trap cleanup EXIT
 
@@ -317,7 +324,70 @@ jobs:
           echo "=== restore from backup ==="
           "$CLI" restore /tmp/test-backup.tar.gz --name ci-test
           assert_status '.status == "stopped" or .status == "created"' '.name == "ci-test"'
-          "$CLI" destroy "$AGENT" --yes
+
+          echo "=== restore conflict (should fail) ==="
+          if "$CLI" restore /tmp/test-backup.tar.gz --name ci-test 2>/dev/null; then
+            echo "FAIL: restore should fail when agent already exists"
+            exit 1
+          fi
+          echo "restore conflict correctly rejected"
+
+          echo "=== restore with --replace ==="
+          "$CLI" restore /tmp/test-backup.tar.gz --name ci-test --replace
+          assert_status '.status == "stopped" or .status == "created"' '.name == "ci-test"'
+          echo "restore --replace succeeded"
+
+          echo "=== restore with different name ==="
+          "$CLI" restore /tmp/test-backup.tar.gz --name ci-restored
+          assert_agent_status ci-restored '.status == "stopped" or .status == "created"' '.name == "ci-restored"'
+          echo "restore to different name succeeded"
+
+          echo "=== multi-agent: create second agent ==="
+          "$CLI" create --name ci-test2
+
+          echo "=== multi-agent: list shows all agents ==="
+          LIST=$("$CLI" list --json)
+          echo "$LIST"
+          echo "$LIST" | jq -e 'length == 3' || { echo "FAIL: list should have 3 entries (ci-test, ci-test2, ci-restored)"; exit 1; }
+          echo "list shows 3 agents"
+
+          echo "=== multi-agent: unique ports ==="
+          PORT1=$(echo "$LIST" | jq -r '.[] | select(.name == "ci-test") | .ws_port')
+          PORT2=$(echo "$LIST" | jq -r '.[] | select(.name == "ci-test2") | .ws_port')
+          PORT3=$(echo "$LIST" | jq -r '.[] | select(.name == "ci-restored") | .ws_port')
+          echo "ports: ci-test=$PORT1 ci-test2=$PORT2 ci-restored=$PORT3"
+          if [ "$PORT1" = "$PORT2" ] || [ "$PORT1" = "$PORT3" ] || [ "$PORT2" = "$PORT3" ]; then
+            echo "FAIL: agents have duplicate ports"
+            exit 1
+          fi
+          echo "all ports unique"
+
+          echo "=== multi-agent: start all ==="
+          "$CLI" start
+          assert_agent_status ci-test '.status == "running"'
+          assert_agent_status ci-test2 '.status == "running"'
+          assert_agent_status ci-restored '.status == "running"'
+          echo "start-all started all agents"
+
+          echo "=== multi-agent: stop one, start-all skips running ==="
+          "$CLI" stop ci-test2
+          assert_agent_status ci-test2 '.status != "running"'
+          "$CLI" start
+          assert_agent_status ci-test '.status == "running"'
+          assert_agent_status ci-test2 '.status == "running"'
+          assert_agent_status ci-restored '.status == "running"'
+          echo "start-all restarted only stopped agent"
+
+          echo "=== multi-agent: independent status ==="
+          "$CLI" stop ci-test
+          assert_agent_status ci-test '.status != "running"'
+          assert_agent_status ci-test2 '.status == "running"'
+          echo "agents have independent status"
+
+          echo "=== cleanup extra agents ==="
+          "$CLI" destroy ci-test2 --yes
+          "$CLI" destroy ci-restored --yes
+          "$CLI" destroy ci-test --yes
 
           echo "=== all tests passed ==="
 
