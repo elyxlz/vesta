@@ -24,9 +24,8 @@
   let connectedVal = $state(false);
   let agentStateVal = $state<AgentActivityState>("idle");
 
-  const conn = connection;
-  const unsubConnected = (conn.connected as any).subscribe((v: boolean) => { connectedVal = v; });
-  const unsubAgentState = (conn.agentState as any).subscribe((v: AgentActivityState) => { agentStateVal = v; });
+  const unsubConnected = (connection.connected as any).subscribe((v: boolean) => { connectedVal = v; });
+  const unsubAgentState = (connection.agentState as any).subscribe((v: AgentActivityState) => { agentStateVal = v; });
 
   function fmtTime(iso?: string) {
     if (!iso) return "";

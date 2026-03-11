@@ -45,8 +45,7 @@
   const SNAP = 0.5;
 
   let agentStateVal = $state<AgentActivityState>("idle");
-  const conn = connection;
-  const unsubAgentState = (conn.agentState as any).subscribe((v: AgentActivityState) => { agentStateVal = v; });
+  const unsubAgentState = (connection.agentState as any).subscribe((v: AgentActivityState) => { agentStateVal = v; });
 
   function orbLoop() {
     if (!orbEl) { rafId = 0; return; }
