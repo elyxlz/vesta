@@ -15,7 +15,7 @@ import vesta.models as vm
 from vesta import logger
 from vesta.api import start_ws_server
 from vesta.core.history import open_history
-from vesta.core.init import init_skills, init_main_memory, init_prompts, init_skills_symlink
+from vesta.core.init import init_skills, init_main_memory, init_prompts
 from vesta.core.loops import message_processor, monitor_loop, queue_greeting
 
 SignalHandler = tp.Callable[[int, types.FrameType | None], None]
@@ -163,7 +163,6 @@ async def async_main() -> None:
     init_prompts(config)
     logger.init("Initializing skills...")
     init_skills(config)
-    init_skills_symlink(config)
 
     initial_state, crashed = init_state(config=config)
     initial_state.history = open_history(config.history_db)
