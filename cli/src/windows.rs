@@ -518,6 +518,9 @@ fn command_args(command: &Command) -> Vec<String> {
             args
         }
         Command::Rebuild { ref name } => vec!["rebuild".into(), name.clone()],
+        Command::WaitReady { ref name, timeout } => {
+            vec!["wait-ready".into(), name.clone(), "--timeout".into(), timeout.to_string()]
+        }
         Command::PlatformCheck | Command::PlatformSetup => unreachable!(),
     }
 }

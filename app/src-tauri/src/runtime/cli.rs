@@ -257,6 +257,10 @@ pub struct AgentInfo {
     pub agent_ready: bool,
     #[serde(default = "default_ws_port")]
     pub ws_port: u16,
+    #[serde(default)]
+    pub alive: bool,
+    #[serde(default)]
+    pub friendly_status: String,
 }
 
 fn default_ws_port() -> u16 { 7865 }
@@ -268,6 +272,10 @@ pub struct ListEntry {
     pub authenticated: bool,
     pub agent_ready: bool,
     pub ws_port: u16,
+    #[serde(default)]
+    pub alive: bool,
+    #[serde(default)]
+    pub friendly_status: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
@@ -377,6 +385,14 @@ pub async fn restore_agent(input: &str, name: Option<&str>, replace: bool) -> Re
         args.push("--replace");
     }
     run_with_timeout(&args, SETUP_TIMEOUT_SECS).await?;
+    Ok(())
+}
+
+pub async fn wait_for_ready(name: &str, timeout: u64) -> Result<(), VestaError> {
+    run_with_timeout(
+        &["wait-ready", name, "--timeout", &timeout.to_string()],
+        timeout + 10,
+    ).await?;
     Ok(())
 }
 

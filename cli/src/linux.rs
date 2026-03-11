@@ -28,6 +28,8 @@ struct StatusJson {
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     agent_ready: bool,
     ws_port: u16,
+    alive: bool,
+    friendly_status: &'static str,
 }
 
 #[derive(Serialize)]
@@ -37,15 +39,40 @@ struct ListEntry {
     authenticated: bool,
     agent_ready: bool,
     ws_port: u16,
+    alive: bool,
+    friendly_status: &'static str,
 }
 
 fn container_name(name: &str) -> String {
     format!("vesta-{}", name)
 }
 
-fn validate_name(name: &str) {
+fn normalize_name(raw: &str) -> String {
+    let s: String = raw.trim().to_lowercase()
+        .replace(|c: char| c.is_whitespace() || c == '_', "-")
+        .chars().filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '-').collect();
+    let s = s.trim_matches('-').to_string();
+    let mut result = String::new();
+    let mut prev_hyphen = false;
+    for c in s.chars() {
+        if c == '-' {
+            if !prev_hyphen { result.push(c); }
+            prev_hyphen = true;
+        } else {
+            result.push(c);
+            prev_hyphen = false;
+        }
+    }
+    if result.len() > NAME_MAX_LEN {
+        result.truncate(NAME_MAX_LEN);
+        result = result.trim_end_matches('-').to_string();
+    }
+    result
+}
+
+fn try_validate_name(name: &str) -> Result<(), &'static str> {
     if name.is_empty() || name.len() > NAME_MAX_LEN {
-        die(&format!("agent name must be 1-{} characters", NAME_MAX_LEN));
+        return Err("agent name must be 1-32 characters");
     }
     let valid = if name.len() == 1 {
         name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
@@ -57,7 +84,14 @@ fn validate_name(name: &str) {
         first_last_ok && middle_ok
     };
     if !valid {
-        die("agent name must match [a-z0-9][a-z0-9-]*[a-z0-9] (lowercase, digits, hyphens; must start/end with alphanumeric)");
+        return Err("agent name must match [a-z0-9][a-z0-9-]*[a-z0-9]");
+    }
+    Ok(())
+}
+
+fn validate_name(name: &str) {
+    if let Err(msg) = try_validate_name(name) {
+        die(msg);
     }
 }
 
@@ -66,11 +100,10 @@ fn prompt_name() -> String {
     io::stderr().flush().ok();
     let mut input = String::new();
     io::stdin().read_line(&mut input).ok();
-    let name = input.trim().to_string();
+    let name = normalize_name(&input);
     if name.is_empty() {
         die("agent name is required");
     }
-    validate_name(&name);
     name
 }
 
@@ -415,6 +448,17 @@ fn status_label(cs: &ContainerStatus) -> &'static str {
     }
 }
 
+fn friendly_status(status: &ContainerStatus, authenticated: bool, agent_ready: bool) -> &'static str {
+    match status {
+        ContainerStatus::Running if !authenticated => "not signed in",
+        ContainerStatus::Running if agent_ready => "alive",
+        ContainerStatus::Running => "starting...",
+        ContainerStatus::Dead => "broken",
+        ContainerStatus::Stopped => "stopped",
+        ContainerStatus::NotFound => "not found",
+    }
+}
+
 pub fn run(command: Command) {
     ensure_docker();
     maybe_migrate_legacy();
@@ -607,11 +651,14 @@ pub fn run(command: Command) {
             };
             let authed = cs != ContainerStatus::NotFound && is_authenticated(&cname);
             let ready = cs == ContainerStatus::Running && is_agent_ready(&cname, port);
+            let alive = cs == ContainerStatus::Running && authed;
+            let friendly = friendly_status(&cs, authed, ready);
             if json {
                 let s = StatusJson {
                     name: name.clone(),
                     status: status_str, id, authenticated: authed,
                     agent_ready: ready, ws_port: port,
+                    alive, friendly_status: friendly,
                 };
                 println!("{}", serde_json::to_string(&s).unwrap());
             } else if cs == ContainerStatus::NotFound {
@@ -652,12 +699,16 @@ pub fn run(command: Command) {
                     let port = get_container_port(cname);
                     let authed = cs != ContainerStatus::NotFound && is_authenticated(cname);
                     let ready = cs == ContainerStatus::Running && is_agent_ready(cname, port);
+                    let alive = cs == ContainerStatus::Running && authed;
+                    let friendly = friendly_status(&cs, authed, ready);
                     ListEntry {
                         name: name_from_cname(cname),
                         status: status_label(&cs),
                         authenticated: authed,
                         agent_ready: ready,
                         ws_port: port,
+                        alive,
+                        friendly_status: friendly,
                     }
                 }).collect();
                 if json {
@@ -816,6 +867,9 @@ pub fn run(command: Command) {
                 println!("aborted");
                 return;
             }
+            if container_status(&cname) == ContainerStatus::Running {
+                docker_ok(&["stop", &cname]);
+            }
             if !docker_ok(&["rm", "-f", &cname]) {
                 die("failed to destroy");
             }
@@ -881,5 +935,133 @@ pub fn run(command: Command) {
             docker_ok(&["rmi", &backup_tag]);
             eprintln!("{}: rebuilt and running", name);
         }
+
+        Command::WaitReady { name, timeout } => {
+            validate_name(&name);
+            let cname = container_name(&name);
+            ensure_running(&cname);
+            let port = get_container_port(&cname);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout);
+            while std::time::Instant::now() < deadline {
+                if is_agent_ready(&cname, port) {
+                    eprintln!("{}: ready", name);
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
+            die(&format!("{}: not ready after {}s", name, timeout));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_simple() {
+        assert_eq!(normalize_name("MyAgent"), "myagent");
+    }
+
+    #[test]
+    fn normalize_spaces_and_underscores() {
+        assert_eq!(normalize_name("My Agent_Name"), "my-agent-name");
+    }
+
+    #[test]
+    fn normalize_special_chars() {
+        assert_eq!(normalize_name("hello!@#world"), "helloworld");
+    }
+
+    #[test]
+    fn normalize_leading_trailing_hyphens() {
+        assert_eq!(normalize_name("--test--"), "test");
+    }
+
+    #[test]
+    fn normalize_multiple_hyphens() {
+        assert_eq!(normalize_name("a---b"), "a-b");
+    }
+
+    #[test]
+    fn normalize_whitespace() {
+        assert_eq!(normalize_name("  hello  "), "hello");
+    }
+
+    #[test]
+    fn normalize_empty() {
+        assert_eq!(normalize_name(""), "");
+    }
+
+    #[test]
+    fn normalize_all_special() {
+        assert_eq!(normalize_name("!!!"), "");
+    }
+
+    #[test]
+    fn normalize_truncates_long_name() {
+        let long = "a".repeat(50);
+        let result = normalize_name(&long);
+        assert_eq!(result.len(), NAME_MAX_LEN);
+    }
+
+    #[test]
+    fn normalize_truncate_strips_trailing_hyphen() {
+        let input = format!("{}--b", "a".repeat(31));
+        let result = normalize_name(&input);
+        assert!(!result.ends_with('-'));
+        assert!(result.len() <= NAME_MAX_LEN);
+    }
+
+    #[test]
+    fn validate_ok() {
+        assert!(try_validate_name("hello").is_ok());
+        assert!(try_validate_name("a").is_ok());
+        assert!(try_validate_name("test-agent").is_ok());
+        assert!(try_validate_name("a1").is_ok());
+        assert!(try_validate_name("123").is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_empty() {
+        assert!(try_validate_name("").is_err());
+    }
+
+    #[test]
+    fn validate_rejects_uppercase() {
+        assert!(try_validate_name("Hello").is_err());
+    }
+
+    #[test]
+    fn validate_rejects_leading_hyphen() {
+        assert!(try_validate_name("-hello").is_err());
+    }
+
+    #[test]
+    fn validate_rejects_trailing_hyphen() {
+        assert!(try_validate_name("hello-").is_err());
+    }
+
+    #[test]
+    fn validate_rejects_too_long() {
+        let long = "a".repeat(NAME_MAX_LEN + 1);
+        assert!(try_validate_name(&long).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_special_chars() {
+        assert!(try_validate_name("hello world").is_err());
+        assert!(try_validate_name("hello_world").is_err());
+    }
+
+    #[test]
+    fn container_name_roundtrip() {
+        assert_eq!(name_from_cname(&container_name("test")), "test");
+        assert_eq!(name_from_cname(&container_name("my-agent")), "my-agent");
+    }
+
+    #[test]
+    fn name_from_cname_no_prefix() {
+        assert_eq!(name_from_cname("random"), "random");
     }
 }

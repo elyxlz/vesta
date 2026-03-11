@@ -46,6 +46,7 @@ pub fn run() {
             commands::agents::delete_agent,
             commands::agents::backup_agent,
             commands::agents::restore_agent,
+            commands::agents::wait_for_ready,
             commands::agents::agent_host,
             commands::logs::stream_logs,
             commands::logs::stop_logs,

@@ -244,6 +244,11 @@ jobs:
             "$CLI" destroy ci-test --yes 2>/dev/null || true
             "$CLI" destroy ci-test2 --yes 2>/dev/null || true
             "$CLI" destroy ci-restored --yes 2>/dev/null || true
+            "$CLI" destroy my-test-agent --yes 2>/dev/null || true
+            "$CLI" destroy ci-wait-test --yes 2>/dev/null || true
+            "$CLI" destroy ci-destroy-test --yes 2>/dev/null || true
+            "$CLI" destroy ci-friendly --yes 2>/dev/null || true
+            "$CLI" destroy ci-status-test --yes 2>/dev/null || true
           }
           trap cleanup EXIT
 
@@ -383,6 +388,52 @@ jobs:
           assert_agent_status ci-test '.status != "running"'
           assert_agent_status ci-test2 '.status == "running"'
           echo "agents have independent status"
+
+          echo "=== name normalization ==="
+          "$CLI" create --name "My Test Agent"
+          assert_agent_status my-test-agent '.name == "my-test-agent"'
+          "$CLI" destroy my-test-agent --yes
+          echo "name normalization works"
+
+          echo "=== name validation: empty ==="
+          if "$CLI" create --name "" 2>/dev/null; then
+            echo "FAIL: empty name should be rejected"; exit 1
+          fi
+          echo "empty name correctly rejected"
+
+          echo "=== wait-ready (timeout without auth) ==="
+          "$CLI" create --name ci-wait-test
+          "$CLI" start ci-wait-test
+          if "$CLI" wait-ready ci-wait-test --timeout 3 2>/dev/null; then
+            echo "FAIL: wait-ready should timeout without auth"; exit 1
+          fi
+          echo "wait-ready timeout works"
+          "$CLI" destroy ci-wait-test --yes
+
+          echo "=== destroy auto-stops running container ==="
+          "$CLI" create --name ci-destroy-test
+          "$CLI" auth ci-destroy-test --token '{"claudeAiOauth":{"accessToken":"ci-test","refreshToken":"ci-test","expiresAt":"2099-01-01T00:00:00Z"}}'
+          "$CLI" start ci-destroy-test
+          assert_agent_status ci-destroy-test '.status == "running"'
+          "$CLI" destroy ci-destroy-test --yes
+          assert_agent_status ci-destroy-test '.status == "not_found"'
+          echo "destroy auto-stopped and removed"
+
+          echo "=== friendly_status in list ==="
+          "$CLI" create --name ci-friendly
+          LIST=$("$CLI" list --json)
+          echo "$LIST" | jq -e '.[] | select(.name == "ci-friendly") | .friendly_status == "stopped"' || { echo "FAIL: friendly_status should be stopped"; exit 1; }
+          echo "$LIST" | jq -e '.[] | select(.name == "ci-friendly") | .alive == false' || { echo "FAIL: alive should be false"; exit 1; }
+          "$CLI" destroy ci-friendly --yes
+          echo "friendly_status and alive fields work"
+
+          echo "=== status includes alive and friendly_status ==="
+          "$CLI" create --name ci-status-test
+          STATUS=$("$CLI" status ci-status-test --json)
+          echo "$STATUS" | jq -e '.alive == false' || { echo "FAIL: alive should be false when stopped"; exit 1; }
+          echo "$STATUS" | jq -e '.friendly_status == "stopped"' || { echo "FAIL: friendly_status should be stopped"; exit 1; }
+          "$CLI" destroy ci-status-test --yes
+          echo "status fields work"
 
           echo "=== cleanup extra agents ==="
           "$CLI" destroy ci-test2 --yes

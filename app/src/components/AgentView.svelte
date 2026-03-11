@@ -162,7 +162,6 @@
     errorMsg = "";
     operation = "deleting";
     try {
-      await stopAgent(name).catch(() => {});
       await deleteAgent(name);
       onDestroyed();
     } catch (e: any) {

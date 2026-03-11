@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
-  import { createAgent, agentStatus, authenticate, startAgent, checkPlatform, setupPlatform } from "../lib/api";
+  import { createAgent, agentStatus, authenticate, startAgent, waitForReady, checkPlatform, setupPlatform } from "../lib/api";
   import type { PlatformStatus } from "../lib/types";
   import ProgressBar from "./ProgressBar.svelte";
 
@@ -135,14 +135,8 @@
     }
   }
 
-  async function waitForReady(agentName: string, maxMs = 30_000, intervalMs = 1000) {
-    const deadline = Date.now() + maxMs;
-    while (Date.now() < deadline) {
-      const info = await agentStatus(agentName);
-      if (info.agent_ready) return info;
-      await new Promise(r => setTimeout(r, intervalMs));
-    }
-    throw new Error("agent is taking too long to start. try restarting vesta.");
+  async function waitUntilReady(agentName: string) {
+    await waitForReady(agentName, 30);
   }
 
   async function handleCreate() {
@@ -215,7 +209,7 @@
     try {
       await authenticate(name);
       await startAgent(name);
-      await waitForReady(name);
+      await waitUntilReady(name);
       busy = false;
       await goTo("done");
     } catch (e) {

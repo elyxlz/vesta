@@ -40,14 +40,6 @@
     return "gray";
   }
 
-  function statusText(entry: ListEntry): string {
-    if (entry.status === "running") {
-      if (!entry.authenticated) return "not signed in";
-      if (entry.agent_ready) return "alive";
-      return "starting...";
-    }
-    return entry.status;
-  }
 </script>
 
 <div class="grid-view">
@@ -56,7 +48,7 @@
       <button class="card" onclick={() => onSelect(agent.name, agent.ws_port)}>
         <div class="dot {statusColor(agent.status)}"></div>
         <span class="card-name">{agent.name}</span>
-        <span class="card-status">{statusText(agent)}</span>
+        <span class="card-status">{agent.friendly_status}</span>
       </button>
     {/each}
     <button class="card add-card" onclick={onCreate}>
