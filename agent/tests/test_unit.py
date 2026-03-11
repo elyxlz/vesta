@@ -13,7 +13,7 @@ from claude_agent_sdk import HookContext
 from claude_agent_sdk.types import SubagentStartHookInput
 from vesta.core.client import _format_tool_call, _parse_agent_input, _tool_summary, _subagent_hook
 from vesta.core.history import format_results, history_get_range, history_save, history_search, open_history
-from vesta.events import EventBus, SubagentStartEvent
+from vesta.events import EventBus, SubagentStartEvent, SubagentStopEvent
 from vesta.core.init import get_memory_path
 from vesta.core.loops import format_notification_batch
 
@@ -105,7 +105,7 @@ async def test_subagent_hook_emits_event(verb, event_type, agent_id, agent_type)
     hook = _subagent_hook(state, verb=verb, event_type=event_type)
     q = state.event_bus.subscribe()
     await hook(tp.cast(SubagentStartHookInput, {"agent_id": agent_id, "agent_type": agent_type}), None, tp.cast(HookContext, MagicMock()))
-    received = q.get_nowait()
+    received = tp.cast(SubagentStartEvent | SubagentStopEvent, q.get_nowait())
     assert received["type"] == event_type
     assert received["agent_id"] == agent_id
     assert received["agent_type"] == agent_type
