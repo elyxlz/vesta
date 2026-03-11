@@ -29,6 +29,7 @@ from claude_agent_sdk.types import (
 import vesta.models as vm
 from vesta import logger
 from vesta.core.init import get_memory_path, build_restart_context
+from vesta.events import SubagentStartEvent, SubagentStopEvent, StreamEvent
 
 
 def _build_query(prompt: str, *, timestamp: dt.datetime) -> str:
@@ -126,7 +127,12 @@ def _subagent_hook(state: vm.State, *, verb: str, event_type: str) -> HookCallba
         agent_id = input_data["agent_id"]
         agent_type = input_data["agent_type"]
         logger.subagent(f"{verb} [{agent_type}] id={agent_id}")
-        state.event_bus.emit({"type": event_type, "agent_id": agent_id, "agent_type": agent_type})
+        event: StreamEvent
+        if event_type == "subagent_start":
+            event = SubagentStartEvent(type="subagent_start", agent_id=agent_id, agent_type=agent_type)
+        else:
+            event = SubagentStopEvent(type="subagent_stop", agent_id=agent_id, agent_type=agent_type)
+        state.event_bus.emit(event)
         return tp.cast(HookJSONOutput, {})
 
     return tp.cast(HookCallback, hook)
