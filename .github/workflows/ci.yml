@@ -293,7 +293,15 @@ jobs:
           assert_status '.name == "renamed-agent"'
 
           echo "=== backup ==="
-          "$CLI" backup
+          "$CLI" backup /tmp/vesta-test-backup.tar.gz
+          test -f /tmp/vesta-test-backup.tar.gz
+          echo "backup file created"
+
+          echo "=== restore ==="
+          "$CLI" restore /tmp/vesta-test-backup.tar.gz
+          assert_status '.status == "running"' '.authenticated == true'
+          echo "restore succeeded"
+          rm -f /tmp/vesta-test-backup.tar.gz
 
           echo "=== rebuild preserves auth ==="
           "$CLI" rebuild
