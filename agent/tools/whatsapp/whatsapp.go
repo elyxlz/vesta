@@ -8,6 +8,7 @@ import (
 	"math"
 	"math/rand/v2"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -379,6 +380,13 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 		fileLength,
 	); err != nil {
 		wac.logger.Warnf("Failed to store message: %v", err)
+	}
+
+	// Auto-transcribe audio messages
+	if mediaType == "audio" && !info.IsFromMe {
+		if transcription := wac.transcribeAudio(info.ID, info.Chat.String()); transcription != "" {
+			content = transcription
+		}
 	}
 
 	// Write notification
@@ -1401,6 +1409,59 @@ func (wac *WhatsAppClient) DownloadMedia(messageID, chatIdentifier, downloadPath
 	}
 
 	return savePath, nil
+}
+
+func (wac *WhatsAppClient) transcribeAudio(messageID, chatJID string) string {
+	// Download the audio to a temp file
+	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("wa_audio_%s.ogg", messageID))
+	defer os.Remove(tmpFile)
+
+	mediaInfo, err := wac.store.GetMessageMediaInfo(messageID, chatJID)
+	if err != nil {
+		wac.logger.Warnf("Failed to get audio media info for transcription: %v", err)
+		return ""
+	}
+
+	var downloadable whatsmeow.DownloadableMessage
+	downloadable = &waProto.AudioMessage{
+		URL:           proto.String(mediaInfo.URL),
+		MediaKey:      mediaInfo.MediaKey,
+		FileSHA256:    mediaInfo.FileSHA256,
+		FileEncSHA256: mediaInfo.FileEncSHA256,
+		FileLength:    proto.Uint64(mediaInfo.FileLength),
+	}
+
+	data, err := wac.client.Download(context.Background(), downloadable)
+	if err != nil {
+		wac.logger.Warnf("Failed to download audio for transcription: %v", err)
+		return ""
+	}
+
+	if err := os.WriteFile(tmpFile, data, 0644); err != nil {
+		wac.logger.Warnf("Failed to write audio temp file: %v", err)
+		return ""
+	}
+
+	// Find whisper transcription script
+	whisperScript := filepath.Join(os.Getenv("HOME"), "memory/skills/whisper/scripts/whisper_transcribe.sh")
+	if _, err := os.Stat(whisperScript); os.IsNotExist(err) {
+		wac.logger.Warnf("Whisper script not found at %s", whisperScript)
+		return ""
+	}
+
+	// Run transcription
+	cmd := exec.Command(whisperScript, tmpFile)
+	output, err := cmd.Output()
+	if err != nil {
+		wac.logger.Warnf("Whisper transcription failed: %v", err)
+		return ""
+	}
+
+	transcription := strings.TrimSpace(string(output))
+	if transcription != "" {
+		wac.logger.Infof("Transcribed audio %s: %s", messageID, transcription)
+	}
+	return transcription
 }
 
 func getExtensionForMediaType(mediaType string) string {
