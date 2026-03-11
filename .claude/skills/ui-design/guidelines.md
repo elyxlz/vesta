@@ -393,7 +393,42 @@ Design rationale: thinking/tool_use animations are 2-2.5x faster than idle — c
 - Ring: inset 14px from container, 1px white at 0.08 opacity. Subtle structural definition.
 - Ambient: extends 30px beyond container, very faint colored halo (0.08 opacity). Environmental light spill.
 
-## 9. Component Checklist
+## 9. View Transition Flashing (Known Issues)
+
+The app has several sources of visual flashing during view transitions. These must be considered when modifying transition logic.
+
+### Root Causes
+
+1. **`setView` timing mismatch**: The 150ms `setTimeout` in `setView()` doesn't perfectly sync with the 0.15s CSS transition on `main.transitioning`. The component swap happens at T=150ms while the CSS fade-out may still be in-flight.
+
+2. **Window background transition lag**: The `.window` background transitions over 0.35s (light↔dark), but the content swaps at 150ms. The background is mid-transition when new content appears, creating a color flash — especially visible on grid↔chat/console transitions.
+
+3. **Nested opacity animations**: The `main` container fades in (0.5s) while child views also have entrance animations (`viewIn` 0.6s, `panelIn` 0.35s). This double-fading can appear as flicker. The `panelIn` animation is effectively redundant with the parent fade.
+
+4. **Empty state flash on mount**: Both GridView and Chat render with empty data (`agents = []`, `lines = []`) before their async `onMount` calls complete. The grid shows blank before populating; chat shows "connecting..." before WebSocket handshake + history load.
+
+5. **WebSocket `onopen` clears messages**: `_messages.set([])` in ws.ts creates a blank frame before the server sends the history event.
+
+6. **Opacity transition duration switch**: If `setView` is called while `main` is still fading in (0.5s), the `main.transitioning` class switches the transition to 0.15s mid-animation, causing a visual jump.
+
+### Affected Transitions
+
+| Transition | Issues |
+|-----------|--------|
+| Grid → Chat/Console | Background flash (light→dark), WebSocket empty state |
+| Chat/Console → Grid/AgentView | Background flash (dark→light), empty grid |
+| Grid → AgentView | Status default values until API responds |
+| Any → Any | 150ms/CSS timing mismatch, nested opacity |
+
+### Rules for New Transitions
+
+- Never change transition duration mid-animation
+- Ensure background color transition completes before or simultaneously with content swap
+- Pre-fetch data before transitioning when possible (or carry previous state)
+- Avoid redundant entrance animations on children when parent is already fading in
+- Test every transition path: grid↔agent-home↔chat↔console, and back
+
+## 10. Component Checklist
 
 Before shipping any new UI:
 

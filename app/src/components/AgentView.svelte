@@ -21,6 +21,7 @@
     onBack: () => void;
   } = $props();
 
+  let statusLoaded = $state(false);
   let status = $state<AgentStatus>("unknown");
   let authenticated = $state(false);
   let agentReady = $state(false);
@@ -45,7 +46,11 @@
   const SNAP = 0.5;
 
   let agentStateVal = $state<AgentActivityState>("idle");
-  const unsubAgentState = (connection.agentState as any).subscribe((v: AgentActivityState) => { agentStateVal = v; });
+
+  $effect(() => {
+    const unsub = connection.agentState.subscribe((v: AgentActivityState) => { agentStateVal = v; });
+    return () => unsub();
+  });
 
   function orbLoop() {
     if (!orbEl) { rafId = 0; return; }
@@ -96,6 +101,7 @@
       authenticated = false;
       agentReady = false;
     }
+    statusLoaded = true;
   }
 
   async function refresh() {
@@ -130,7 +136,6 @@
     if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
     document.removeEventListener("click", onDocClick);
     document.removeEventListener("keydown", onKeydown);
-    unsubAgentState();
   });
 
   async function toggleRun() {
@@ -196,6 +201,21 @@
     }
   }
 
+  async function handleRestart() {
+    if (busy) return;
+    errorMsg = "";
+    operation = "starting";
+    try {
+      await restartAgent(name);
+      connection.resetReconnect();
+      await syncStatus();
+    } catch (e: any) {
+      errorMsg = e?.message || "failed to restart";
+    } finally {
+      operation = "idle";
+    }
+  }
+
   async function handleBackup() {
     if (busy) return;
     errorMsg = "";
@@ -241,7 +261,7 @@
   let alive = $derived(running && authenticated);
   let operational = $derived(alive && !deleting && !stopping);
   let fullyAlive = $derived(operational && agentReady);
-  let showActions = $derived(hovered || !alive || confirming || menuOpen);
+  let showActions = $derived(statusLoaded && (hovered || !alive || confirming || menuOpen));
 
 </script>
 
@@ -263,7 +283,7 @@
     onpointerleave={onOrbLeave}
     onpointermove={onOrbMove}
   >
-    <div class="orb-container" bind:this={orbEl} class:alive={fullyAlive} class:booting={operational && !agentReady} class:dead={(!alive && !starting && !authenticating) || deleting || dead} class:stopping class:starting class:authenticating class:deleting class:thinking={fullyAlive && agentStateVal === 'thinking'} class:tool-use={fullyAlive && agentStateVal === 'tool_use'}>
+    <div class="orb-container" bind:this={orbEl} class:alive={fullyAlive} class:booting={operational && !agentReady} class:dead={statusLoaded && ((!alive && !starting && !authenticating) || deleting || dead)} class:stopping class:starting class:authenticating class:deleting class:thinking={fullyAlive && agentStateVal === 'thinking'} class:tool-use={fullyAlive && agentStateVal === 'tool_use'}>
       <div class="orb-glow"></div>
       <div class="orb-body">
         <div class="orb-highlight"></div>
@@ -275,7 +295,11 @@
     <div class="label">
       <span class="name">{name}</span>
       <span class="status" class:alive={fullyAlive} class:error={!!errorMsg} title={errorMsg || ""}>
-        {errorMsg ? errorMsg : deleting ? "deleting..." : operation === "backing-up" ? "backing up..." : operation === "restoring" ? "restoring..." : stopping ? "stopping..." : starting ? "starting..." : authenticating ? "signing in..." : fullyAlive ? "alive" : operational ? "waking up..." : running ? "not signed in" : dead ? "broken — delete and recreate" : "stopped"}
+        {#if !statusLoaded}
+          &nbsp;
+        {:else}
+          {errorMsg ? errorMsg : deleting ? "deleting..." : operation === "backing-up" ? "backing up..." : operation === "restoring" ? "restoring..." : stopping ? "stopping..." : starting ? "starting..." : authenticating ? "signing in..." : fullyAlive ? "alive" : operational ? "waking up..." : running ? "not signed in" : dead ? "broken — delete and recreate" : "stopped"}
+        {/if}
       </span>
     </div>
 
@@ -307,6 +331,9 @@
             <div class="menu-dropdown">
               {#if alive}
                 <button class="menu-item" onclick={() => { menuOpen = false; onConsole(); }} data-tip="view raw logs">console</button>
+              {/if}
+              {#if running}
+                <button class="menu-item" disabled={busy} onclick={() => { menuOpen = false; handleRestart(); }} data-tip="restart agent">restart</button>
               {/if}
               <button class="menu-item" disabled={busy} onclick={() => { menuOpen = false; handleBackup(); }} data-tip="export to file">backup</button>
               <button class="menu-item" disabled={busy} onclick={() => { menuOpen = false; handleRestore(); }} data-tip="restore from file">load backup</button>

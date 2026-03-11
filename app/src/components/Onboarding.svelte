@@ -4,7 +4,7 @@
   import type { PlatformStatus } from "../lib/types";
   import ProgressBar from "./ProgressBar.svelte";
 
-  let { onComplete }: { onComplete: (name: string) => void } = $props();
+  let { onComplete, onCancel }: { onComplete: (name: string) => void; onCancel?: () => void } = $props();
 
   let step = $state<"platform" | "name" | "creating" | "auth" | "done">("platform");
   let agentName = $state("");
@@ -222,6 +222,13 @@
 </script>
 
 <div class="onboarding" class:transitioning>
+  {#if onCancel}
+    <button class="back-btn" onclick={onCancel} aria-label="back" data-tip="back">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="15 18 9 12 15 6"/>
+      </svg>
+    </button>
+  {/if}
   <div class="card">
     {#if step === "platform"}
       <div class="step step-anim">
@@ -286,7 +293,7 @@
 
     {:else if step === "name"}
       <div class="step step-anim">
-        <h1>welcome to vesta</h1>
+        <h1>new agent</h1>
         <p class="sub">give it a name to get started.</p>
         <form onsubmit={(e) => { e.preventDefault(); handleCreate(); }}>
           <!-- svelte-ignore a11y_autofocus -->
@@ -360,6 +367,7 @@
 
 <style>
   .onboarding {
+    position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -389,9 +397,38 @@
   }
 
   .step {
+    position: relative;
     display: flex;
     flex-direction: column;
     align-items: center;
+  }
+
+  .back-btn {
+    position: absolute;
+    top: 4px;
+    left: 8px;
+    z-index: 10;
+    width: 44px;
+    height: 44px;
+    border: none;
+    border-radius: 8px;
+    corner-shape: squircle;
+    background: transparent;
+    color: rgba(0, 0, 0, 0.2);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s var(--spring-bouncy);
+  }
+
+  .back-btn:hover {
+    background: rgba(0, 0, 0, 0.04);
+    color: rgba(0, 0, 0, 0.45);
+  }
+
+  .back-btn:active {
+    transform: scale(0.97);
   }
 
   h1 {
@@ -583,6 +620,14 @@
   }
 
   @media (prefers-color-scheme: dark) {
+    .back-btn {
+      color: rgba(255, 255, 255, 0.25);
+    }
+    .back-btn:hover {
+      background: rgba(255, 255, 255, 0.06);
+      color: rgba(255, 255, 255, 0.6);
+    }
+
     h1 {
       color: #e8e0d8;
     }

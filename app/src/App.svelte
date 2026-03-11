@@ -16,6 +16,7 @@
   let transitioning = $state(false);
   let selectedAgent = $state<{ name: string; wsPort: number } | null>(null);
   let agentConnection = $state<AgentConnection | null>(null);
+  let hasAgents = $state(false);
 
   async function setView(next: View) {
     if (next === view) return;
@@ -31,10 +32,11 @@
     await new Promise((r) => setTimeout(r, 400));
     try {
       const agents = await listAgents();
-      if (agents.length === 0) {
-        view = "onboarding";
-      } else {
+      hasAgents = agents.length > 0;
+      if (hasAgents) {
         view = "grid";
+      } else {
+        view = "onboarding";
       }
     } catch {
       view = "onboarding";
@@ -121,9 +123,14 @@
         <span class="loading-label">loading...</span>
       </div>
     {:else if view === "grid"}
-      <GridView onSelect={handleSelectAgent} onCreate={() => setView("onboarding")} />
+      <GridView
+        onSelect={handleSelectAgent}
+        onCreate={() => setView("onboarding")}
+        onChat={(name, wsPort) => { handleSelectAgent(name, wsPort); setView("agent-chat"); }}
+        onConsole={(name, wsPort) => { handleSelectAgent(name, wsPort); setView("agent-console"); }}
+      />
     {:else if view === "onboarding"}
-      <Onboarding onComplete={handleOnboardingComplete} />
+      <Onboarding onComplete={handleOnboardingComplete} onCancel={hasAgents ? () => setView("grid") : undefined} />
     {:else if view === "agent-home" && selectedAgent && agentConnection}
       <AgentView
         name={selectedAgent.name}
@@ -362,7 +369,7 @@
     display: flex;
     flex-direction: column;
     opacity: 0;
-    transition: opacity 0.5s ease;
+    transition: opacity 0.25s ease;
     min-height: 0;
   }
 
