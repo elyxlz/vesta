@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
+  import { get } from "svelte/store";
   import type { AgentConnection } from "../lib/ws";
   import { agentStatus, startAgent, stopAgent, restartAgent, deleteAgent, authenticate, backupAgent, restoreAgent } from "../lib/api";
   import { save, open } from "@tauri-apps/plugin-dialog";
@@ -45,7 +46,7 @@
   const LERP = 0.015;
   const SNAP = 0.5;
 
-  let agentStateVal = $state<AgentActivityState>("idle");
+  let agentStateVal = $state<AgentActivityState>(get(connection.agentState));
 
   $effect(() => {
     const unsub = connection.agentState.subscribe((v: AgentActivityState) => { agentStateVal = v; });

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, tick } from "svelte";
+  import { get } from "svelte/store";
   import type { AgentConnection } from "../lib/ws";
   import { linkify } from "../lib/linkify";
   import { createAutoScroller } from "../lib/scroll";
@@ -21,8 +22,8 @@
   let suppressAnim = $state(false);
   const scroller = createAutoScroller(() => outputEl);
 
-  let connectedVal = $state(false);
-  let agentStateVal = $state<AgentActivityState>("idle");
+  let connectedVal = $state(get(connection.connected));
+  let agentStateVal = $state<AgentActivityState>(get(connection.agentState));
 
   $effect(() => {
     const u1 = connection.connected.subscribe((v: boolean) => { connectedVal = v; });
