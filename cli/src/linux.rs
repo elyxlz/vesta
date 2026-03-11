@@ -405,9 +405,16 @@ fn maybe_migrate_legacy() {
         return;
     }
 
+    let cs = container_status("vesta");
+    if cs == ContainerStatus::Dead {
+        eprintln!("removing dead legacy container 'vesta'...");
+        docker_ok(&["rm", "-f", "vesta"]);
+        return;
+    }
+
     eprintln!("migrating legacy container 'vesta'...");
 
-    let was_running = container_status("vesta") == ContainerStatus::Running;
+    let was_running = cs == ContainerStatus::Running;
 
     let name = read_container_file("vesta", "/root/.vesta-name").unwrap_or_else(|| "default".to_string());
     validate_name(&name);
