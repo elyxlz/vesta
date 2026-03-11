@@ -484,9 +484,7 @@ async def test_process_interruptible_cancels_process_task(tmp_path):
         return (["OK"], state)
 
     with patch("vesta.core.loops._process_message_safely", hanging_process):
-        interruptible_task = asyncio.create_task(
-            _process_interruptible("test msg", is_user=True, queue=queue, state=state, config=config)
-        )
+        interruptible_task = asyncio.create_task(_process_interruptible("test msg", is_user=True, queue=queue, state=state, config=config))
         await task_started.wait()
         interruptible_task.cancel()
         with pytest.raises(asyncio.CancelledError):
