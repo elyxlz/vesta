@@ -12,7 +12,7 @@ from claude_agent_sdk import ClaudeSDKClient, ClaudeSDKError
 import vesta.models as vm
 from vesta import logger
 from vesta.core.client import process_message, build_client_options, attempt_interrupt, filter_tool_lines, persist_session_id, _cancel_task
-from vesta.core.init import get_memory_path, load_prompt, build_restart_context
+from vesta.core.init import load_prompt, build_restart_context
 
 
 def _now() -> dt.datetime:
