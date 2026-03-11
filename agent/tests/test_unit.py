@@ -417,6 +417,143 @@ async def test_dreamer_triggers_automatic_restart(tmp_path):
     assert any("new day" in msg for msg in messages)
 
 
+# --- Interrupt tests ---
+
+
+@pytest.mark.anyio
+async def test_message_processor_interrupts_on_new_message(tmp_path):
+    """New messages arriving during processing set the interrupt event and are processed after."""
+    processing_started = asyncio.Event()
+    interrupt_seen = asyncio.Event()
+
+    async def slow_side_effect(msg, *, state, config, is_user):
+        if "slow" in msg:
+            processing_started.set()
+            for _ in range(100):
+                if state.interrupt_event and state.interrupt_event.is_set():
+                    interrupt_seen.set()
+                    break
+                await asyncio.sleep(0.05)
+        return (["OK"], state)
+
+    config = _make_config(tmp_path)
+    state = vm.State()
+    state.shutdown_event = asyncio.Event()
+    queue: asyncio.Queue = asyncio.Queue()
+
+    await queue.put(("slow processing message", True))
+
+    processed: list[str] = []
+    original = slow_side_effect
+
+    async def tracking(msg, *, state, config, is_user):
+        processed.append(msg)
+        return await original(msg, state=state, config=config, is_user=is_user)
+
+    mock_client = MagicMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def inject_message_and_shutdown():
+        await processing_started.wait()
+        await queue.put(("urgent message", True))
+        await interrupt_seen.wait()
+        await asyncio.sleep(0.1)
+        assert state.shutdown_event is not None
+        state.shutdown_event.set()
+
+    from vesta.core.loops import message_processor
+
+    with (
+        patch("vesta.core.loops.ClaudeSDKClient", return_value=mock_client),
+        patch("vesta.core.loops.process_message", tracking),
+        patch("vesta.core.loops.build_client_options", return_value=MagicMock()),
+    ):
+        await asyncio.gather(
+            message_processor(queue, state=state, config=config),
+            inject_message_and_shutdown(),
+        )
+
+    assert interrupt_seen.is_set(), "interrupt_event should have been set when new message arrived"
+    assert "slow processing message" in processed
+    assert "urgent message" in processed
+
+
+@pytest.mark.anyio
+async def test_converse_breaks_on_interrupt_event():
+    """converse exits promptly when interrupt_event is set, not waiting for slow response iterator."""
+    from vesta.core.client import converse
+
+    yielded_count = 0
+
+    async def slow_response():
+        nonlocal yielded_count
+        msg = MagicMock()
+        msg.content = []
+        yielded_count += 1
+        yield msg
+        await asyncio.sleep(10)
+        yielded_count += 1
+        yield msg
+
+    config = vm.VestaConfig(interrupt_timeout=0.5)
+    state = vm.State()
+    state.interrupt_event = asyncio.Event()
+
+    mock_client = MagicMock()
+    mock_client.query = AsyncMock()
+    mock_client.receive_response = MagicMock(return_value=slow_response())
+    mock_client.interrupt = AsyncMock()
+    state.client = mock_client
+
+    async def trigger_interrupt():
+        await asyncio.sleep(0.1)
+        assert state.interrupt_event is not None
+        state.interrupt_event.set()
+
+    asyncio.create_task(trigger_interrupt())
+
+    import time
+
+    start = time.monotonic()
+    await converse("test prompt", state=state, config=config, show_output=False)
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 2.0, f"converse should have exited promptly but took {elapsed:.1f}s"
+    assert mock_client.interrupt.called, "interrupt should have been called"
+    assert yielded_count == 1, "should have only yielded once before interrupt"
+
+
+@pytest.mark.anyio
+async def test_converse_works_normally_without_interrupt():
+    """converse processes all messages when no interrupt is set."""
+    from vesta.core.client import converse
+
+    messages_yielded = 0
+
+    async def normal_response():
+        nonlocal messages_yielded
+        for _ in range(3):
+            msg = MagicMock()
+            msg.content = []
+            messages_yielded += 1
+            yield msg
+
+    config = vm.VestaConfig()
+    state = vm.State()
+
+    mock_client = MagicMock()
+    mock_client.query = AsyncMock()
+    mock_client.receive_response = MagicMock(return_value=normal_response())
+    mock_client.interrupt = AsyncMock()
+    state.client = mock_client
+
+    await converse("test prompt", state=state, config=config, show_output=False)
+
+    assert messages_yielded == 3, "all messages should have been processed"
+    assert not mock_client.interrupt.called, "interrupt should not have been called"
+
+
 # --- Nightly restart ---
 
 

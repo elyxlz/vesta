@@ -1,6 +1,7 @@
 """Background processing loops and notification handling."""
 
 import asyncio
+import collections
 import datetime as dt
 import json
 import pathlib as pl
@@ -10,8 +11,8 @@ from claude_agent_sdk import ClaudeSDKClient, ClaudeSDKError
 
 import vesta.models as vm
 from vesta import logger
-from vesta.core.client import process_message, build_client_options, attempt_interrupt, filter_tool_lines, persist_session_id
-from vesta.core.init import load_prompt, build_restart_context
+from vesta.core.client import process_message, build_client_options, attempt_interrupt, filter_tool_lines, persist_session_id, _cancel_task
+from vesta.core.init import get_memory_path, load_prompt, build_restart_context
 
 
 def _now() -> dt.datetime:
@@ -147,6 +148,39 @@ async def _process_message_safely(msg: str, *, is_user: bool, state: vm.State, c
         state.event_bus.set_state("idle")
 
 
+async def _process_interruptible(
+    msg: str, *, is_user: bool, queue: asyncio.Queue[tuple[str, bool]], state: vm.State, config: vm.VestaConfig
+) -> None:
+    """Process a message while monitoring the queue for new messages that should interrupt."""
+    pending: collections.deque[tuple[str, bool]] = collections.deque([(msg, is_user)])
+
+    while pending:
+        if state.pending_context is not None:
+            for remaining in pending:
+                await queue.put(remaining)
+            break
+
+        current_msg, current_is_user = pending.popleft()
+        state.interrupt_event = asyncio.Event()
+        process_task = asyncio.create_task(_process_message_safely(current_msg, is_user=current_is_user, state=state, config=config))
+
+        while not process_task.done():
+            queue_task: asyncio.Task[tuple[str, bool]] = asyncio.create_task(queue.get())
+            done, _ = await asyncio.wait({process_task, queue_task}, return_when=asyncio.FIRST_COMPLETED)
+
+            if queue_task in done:
+                pending.append(queue_task.result())
+                state.interrupt_event.set()
+                logger.interrupt(f"New message queued, interrupting current processing ({len(pending)} pending)")
+                await process_task
+                break
+            else:
+                await _cancel_task(queue_task)
+
+        await process_task
+        state.interrupt_event = None
+
+
 async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig) -> None:
     while state.shutdown_event and not state.shutdown_event.is_set():
         logger.client("Creating new client session...")
@@ -166,7 +200,7 @@ async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm
                     except TimeoutError:
                         continue
 
-                    await _process_message_safely(msg, is_user=is_user, state=state, config=config)
+                    await _process_interruptible(msg, is_user=is_user, queue=queue, state=state, config=config)
 
                     if state.dreamer_active:
                         state.dreamer_active = False
@@ -174,6 +208,7 @@ async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm
                         _trigger_nightly_restart(state=state, config=config)
             finally:
                 state.client = None
+                state.interrupt_event = None
                 logger.client("Client session closed")
 
 

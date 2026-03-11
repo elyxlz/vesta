@@ -193,6 +193,17 @@ def persist_session_id(session_id: str, *, state: vm.State, config: vm.VestaConf
     logger.debug(f"Captured session_id: {session_id[:16]}...")
 
 
+_STOP = object()
+
+
+async def _cancel_task(task: asyncio.Task[tp.Any]) -> None:
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
 async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show_output: bool) -> list[str]:
     assert state.client is not None
     client = state.client
@@ -209,29 +220,52 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
     sub_agent_context: str | None = None
     response_iter = client.receive_response().__aiter__()
 
-    while True:
-        try:
-            msg = await asyncio.wait_for(response_iter.__anext__(), timeout=config.response_timeout)
-        except StopAsyncIteration:
-            break
-        except TimeoutError:
-            await attempt_interrupt(state, config=config, reason="Response timeout")
-            raise
+    interrupt_task: asyncio.Task[tp.Any] | None = None
+    if state.interrupt_event and not state.interrupt_event.is_set():
+        interrupt_task = asyncio.create_task(state.interrupt_event.wait())
 
-        texts, sub_agent_context, session_id, has_tool_use = _parse_sdk_message(msg, sub_agent_context=sub_agent_context)
-        if session_id and session_id != state.session_id:
-            persist_session_id(session_id, state=state, config=config)
-        text = "\n".join(texts) if texts else None
-        if not text:
-            continue
-        if not show_output:
-            responses.append(text)
-            continue
-        filtered = filter_tool_lines(text)
-        if filtered and not has_tool_use:
-            logger.assistant(filtered)
-            state.event_bus.emit({"type": "assistant", "text": filtered})
-            assistant_texts.append(filtered)
+    try:
+        while True:
+            anext_task = asyncio.create_task(anext(response_iter, _STOP))
+            waitables: set[asyncio.Task[tp.Any]] = {anext_task}
+            if interrupt_task and not interrupt_task.done():
+                waitables.add(interrupt_task)
+
+            done, pending = await asyncio.wait(waitables, return_when=asyncio.FIRST_COMPLETED, timeout=config.response_timeout)
+
+            if not done:
+                await _cancel_task(anext_task)
+                await attempt_interrupt(state, config=config, reason="Response timeout")
+                raise TimeoutError
+
+            if interrupt_task and interrupt_task in done:
+                logger.interrupt("Conversation interrupted by new message")
+                await attempt_interrupt(state, config=config, reason="New message interrupt")
+                await _cancel_task(anext_task)
+                break
+
+            result = anext_task.result()
+            if result is _STOP:
+                break
+
+            msg = tp.cast(Message, result)
+            texts, sub_agent_context, session_id, has_tool_use = _parse_sdk_message(msg, sub_agent_context=sub_agent_context)
+            if session_id and session_id != state.session_id:
+                persist_session_id(session_id, state=state, config=config)
+            text = "\n".join(texts) if texts else None
+            if not text:
+                continue
+            if not show_output:
+                responses.append(text)
+                continue
+            filtered = filter_tool_lines(text)
+            if filtered and not has_tool_use:
+                logger.assistant(filtered)
+                state.event_bus.emit({"type": "assistant", "text": filtered})
+                assistant_texts.append(filtered)
+    finally:
+        if interrupt_task and not interrupt_task.done():
+            await _cancel_task(interrupt_task)
 
     if state.history is not None:
         combined = "\n".join(r for r in (assistant_texts or responses) if r and r.strip())
