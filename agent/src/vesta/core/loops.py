@@ -1,6 +1,7 @@
 """Background processing loops and notification handling."""
 
 import asyncio
+import collections
 import datetime as dt
 import json
 import pathlib as pl
@@ -11,7 +12,7 @@ from claude_agent_sdk import ClaudeSDKClient, ClaudeSDKError
 
 import vesta.models as vm
 from vesta import logger
-from vesta.core.client import process_message, build_client_options, attempt_interrupt, filter_tool_lines, persist_session_id
+from vesta.core.client import process_message, build_client_options, attempt_interrupt, filter_tool_lines, persist_session_id, _cancel_task
 from vesta.core.init import get_memory_path, load_prompt, build_restart_context
 
 
@@ -163,7 +164,7 @@ async def _process_interruptible(
     msg: str, *, is_user: bool, queue: asyncio.Queue[tuple[str, bool]], state: vm.State, config: vm.VestaConfig
 ) -> None:
     """Process a message while monitoring the queue for new messages that should interrupt."""
-    messages_to_process: list[tuple[str, bool]] = [(msg, is_user)]
+    messages_to_process: collections.deque[tuple[str, bool]] = collections.deque([(msg, is_user)])
 
     while messages_to_process:
         if state.pending_context is not None:
@@ -171,7 +172,7 @@ async def _process_interruptible(
                 await queue.put(remaining)
             break
 
-        current_msg, current_is_user = messages_to_process.pop(0)
+        current_msg, current_is_user = messages_to_process.popleft()
         state.interrupt_event = asyncio.Event()
 
         process_task = asyncio.create_task(_process_message_safely(current_msg, is_user=current_is_user, state=state, config=config))
@@ -184,12 +185,10 @@ async def _process_interruptible(
                 messages_to_process.append(queue_task.result())
                 state.interrupt_event.set()
                 logger.interrupt(f"New message queued, interrupting current processing ({len(messages_to_process)} pending)")
+                await process_task
+                break
             else:
-                queue_task.cancel()
-                try:
-                    await queue_task
-                except asyncio.CancelledError:
-                    pass
+                await _cancel_task(queue_task)
 
         await process_task
         state.interrupt_event = None
