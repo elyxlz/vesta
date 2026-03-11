@@ -499,4 +499,4 @@ def test_responsive_during_subagent(tmp_path):
             f"Expected <60s response time."
         )
 
-    _run(_run_test_scenario(state_dir, test_fn))
+    _run(_run_test_scenario(state_dir, test_fn, ws_port=0))
