@@ -335,7 +335,12 @@
 
   .input-bar textarea::placeholder { color: rgba(255, 255, 255, 0.35); }
   .input-bar textarea:disabled { opacity: 0.25; cursor: not-allowed; }
-  .input-bar textarea:focus-visible { box-shadow: none !important; }
+  .input-bar textarea:focus,
+  .input-bar textarea:focus-visible {
+    outline: none !important;
+    box-shadow: none !important;
+    -webkit-focus-ring-color: transparent;
+  }
 
   .input-bar:has(textarea:focus-visible) {
     border-top-color: rgba(255, 255, 255, 0.12);
