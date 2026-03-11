@@ -561,14 +561,68 @@ pub fn run(command: Command) {
             ssh_run(&args, false);
         }
 
-        Command::Backup { .. } => {
-            eprintln!("backup/restore not yet supported on macOS");
-            process::exit(1);
+        Command::Backup { output } => {
+            ensure_vm();
+            let remote_tmp = "/tmp/vesta-backup.tar.gz";
+            let status = ssh_run(&["vesta", "backup", remote_tmp], false);
+            if !status.success() {
+                die("backup failed inside VM");
+            }
+            eprintln!("copying backup to host...");
+            let mut scp_args = vec!["-i".to_string(), ssh_key_path().to_str().unwrap().to_string()];
+            scp_args.extend([
+                "-o".into(), "StrictHostKeyChecking=no".into(),
+                "-o".into(), "UserKnownHostsFile=/dev/null".into(),
+                "-o".into(), "LogLevel=ERROR".into(),
+                "-o".into(), format!("ProxyCommand=nc -U '{}'", vsock_socket_path().display()),
+                "root@localhost:".to_string() + remote_tmp,
+                output.to_str().unwrap_or_else(|| die("invalid output path")).to_string(),
+            ]);
+            let scp_status = process::Command::new("scp")
+                .args(&scp_args)
+                .stdout(process::Stdio::inherit())
+                .stderr(process::Stdio::inherit())
+                .status()
+                .unwrap_or_else(|_| die("scp failed"));
+            if !scp_status.success() {
+                die("failed to copy backup from VM");
+            }
+            ssh_run(&["rm", "-f", remote_tmp], false);
+            let size = std::fs::metadata(&output).map(|m| m.len()).unwrap_or(0);
+            eprintln!("backup saved: {} ({:.1} MB)", output.display(), size as f64 / 1_048_576.0);
         }
 
-        Command::Restore { .. } => {
-            eprintln!("backup/restore not yet supported on macOS");
-            process::exit(1);
+        Command::Restore { input } => {
+            if !input.exists() {
+                die(&format!("file not found: {}", input.display()));
+            }
+            ensure_vm();
+            let remote_tmp = "/tmp/vesta-backup.tar.gz";
+            eprintln!("copying backup to VM...");
+            let mut scp_args = vec!["-i".to_string(), ssh_key_path().to_str().unwrap().to_string()];
+            scp_args.extend([
+                "-o".into(), "StrictHostKeyChecking=no".into(),
+                "-o".into(), "UserKnownHostsFile=/dev/null".into(),
+                "-o".into(), "LogLevel=ERROR".into(),
+                "-o".into(), format!("ProxyCommand=nc -U '{}'", vsock_socket_path().display()),
+                input.to_str().unwrap_or_else(|| die("invalid input path")).to_string(),
+                "root@localhost:".to_string() + remote_tmp,
+            ]);
+            let scp_status = process::Command::new("scp")
+                .args(&scp_args)
+                .stdout(process::Stdio::inherit())
+                .stderr(process::Stdio::inherit())
+                .status()
+                .unwrap_or_else(|_| die("scp failed"));
+            if !scp_status.success() {
+                die("failed to copy backup to VM");
+            }
+            let status = ssh_run(&["vesta", "restore", remote_tmp], false);
+            ssh_run(&["rm", "-f", remote_tmp], false);
+            if !status.success() {
+                die("restore failed inside VM");
+            }
+            eprintln!("restore complete");
         }
 
         Command::Destroy { yes } => {

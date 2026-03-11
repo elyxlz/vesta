@@ -420,6 +420,19 @@ fn ensure_services() {
     die("services did not start within 30s. try restarting and running again.");
 }
 
+fn win_to_wsl_path(path: &std::path::Path) -> String {
+    let output = process::Command::new("wsl.exe")
+        .args(["-d", WSL_DISTRO, "--exec", "wslpath", "-a", path.to_str().unwrap_or_else(|| die("invalid path"))])
+        .stdout(process::Stdio::piped())
+        .stderr(process::Stdio::null())
+        .output()
+        .unwrap_or_else(|_| die("failed to convert path to WSL format"));
+    if !output.status.success() {
+        die("failed to convert path to WSL format");
+    }
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
 fn install_autostart() {
     let exe = match std::env::current_exe() {
         Ok(p) => p,
@@ -523,9 +536,48 @@ pub fn run(command: Command) -> ! {
             platform_setup();
             process::exit(0);
         }
-        Command::Backup { .. } | Command::Restore { .. } => {
-            eprintln!("backup/restore not yet supported on Windows");
-            process::exit(1);
+        Command::Backup { ref output } => {
+            if !wsl_status_output().0 {
+                die("WSL2 is required for backup");
+            }
+            if !distro_registered() || !distro_healthy() {
+                die("vesta WSL2 environment is not ready");
+            }
+            ensure_services();
+            let wsl_path = win_to_wsl_path(output);
+            let mut args = vec!["-d", WSL_DISTRO, "--exec", VESTA_LINUX_BIN, "backup"];
+            args.push(&wsl_path);
+            let status = process::Command::new("wsl.exe")
+                .args(&args)
+                .stdin(process::Stdio::inherit())
+                .stdout(process::Stdio::inherit())
+                .stderr(process::Stdio::inherit())
+                .status()
+                .unwrap_or_else(|_| die("failed to execute wsl.exe"));
+            process::exit(status.code().unwrap_or(1));
+        }
+        Command::Restore { ref input } => {
+            if !input.exists() {
+                die(&format!("file not found: {}", input.display()));
+            }
+            if !wsl_status_output().0 {
+                die("WSL2 is required for restore");
+            }
+            if !distro_registered() || !distro_healthy() {
+                die("vesta WSL2 environment is not ready");
+            }
+            ensure_services();
+            let wsl_path = win_to_wsl_path(input);
+            let mut args = vec!["-d", WSL_DISTRO, "--exec", VESTA_LINUX_BIN, "restore"];
+            args.push(&wsl_path);
+            let status = process::Command::new("wsl.exe")
+                .args(&args)
+                .stdin(process::Stdio::inherit())
+                .stdout(process::Stdio::inherit())
+                .stderr(process::Stdio::inherit())
+                .status()
+                .unwrap_or_else(|_| die("failed to execute wsl.exe"));
+            process::exit(status.code().unwrap_or(1));
         }
         _ => {}
     }
