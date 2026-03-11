@@ -62,8 +62,8 @@ class VestaConfig(pyd_settings.BaseSettings):
         return self.memory_dir / "prompts"
 
     @property
-    def conversations_dir(self) -> pl.Path:
-        return self.memory_dir / "conversations"
+    def history_db(self) -> pl.Path:
+        return self.data_dir / "history.db"
 
     @property
     def dreamer_dir(self) -> pl.Path:
