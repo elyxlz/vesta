@@ -21,11 +21,13 @@ class ToolStartEvent(_BaseEvent):
     type: tp.Literal["tool_start"]
     tool: str
     input: str
+    subagent: bool
 
 
 class ToolEndEvent(_BaseEvent):
     type: tp.Literal["tool_end"]
     tool: str
+    subagent: bool
 
 
 class AssistantEvent(_BaseEvent):

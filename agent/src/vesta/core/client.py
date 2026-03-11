@@ -29,7 +29,7 @@ from claude_agent_sdk.types import (
 import vesta.models as vm
 from vesta import logger
 from vesta.core.history import history_save, history_search, format_results
-from vesta.core.init import get_memory_path, build_restart_context
+from vesta.core.init import get_memory_path
 from vesta.events import SubagentStartEvent, SubagentStopEvent, StreamEvent
 
 
@@ -134,21 +134,32 @@ def _subagent_hook(state: vm.State, *, verb: str, event_type: str) -> HookCallba
     return tp.cast(HookCallback, hook)
 
 
+def _subagent_prefix(input_data: dict[str, object]) -> tuple[str, bool]:
+    """Extract sub-agent prefix from hook input. SDK adds agent_id/agent_type for sub-agent calls."""
+    if "agent_id" not in input_data:
+        return "", False
+    agent_type = input_data["agent_type"] if "agent_type" in input_data else None
+    prefix = f"[SUB:{agent_type}] " if agent_type else "[SUB] "
+    return prefix, True
+
+
 def _make_hooks(
     state: vm.State,
 ) -> tuple[HookCallback, HookCallback, HookCallback, HookCallback]:
     async def log_tool_start(input_data: PreToolUseHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
         name = input_data["tool_name"]
         summary = _tool_summary(name, input_data["tool_input"])
-        logger.tool(summary)
+        prefix, is_sub = _subagent_prefix(input_data)  # type: ignore[arg-type]
+        logger.tool(f"{prefix}{summary}")
         state.event_bus.set_state("tool_use")
-        state.event_bus.emit({"type": "tool_start", "tool": name, "input": summary})
+        state.event_bus.emit({"type": "tool_start", "tool": name, "input": summary, "subagent": is_sub})
         return tp.cast(HookJSONOutput, {})
 
     async def log_tool_finish(input_data: PostToolUseHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
         name = input_data["tool_name"]
-        logger.tool(f"done: {name}")
-        state.event_bus.emit({"type": "tool_end", "tool": name})
+        prefix, is_sub = _subagent_prefix(input_data)  # type: ignore[arg-type]
+        logger.tool(f"{prefix}done: {name}")
+        state.event_bus.emit({"type": "tool_end", "tool": name, "subagent": is_sub})
         state.event_bus.set_state("thinking")
         return tp.cast(HookJSONOutput, {})
 
@@ -307,14 +318,15 @@ _SEARCH_HISTORY_SCHEMA = {
 
 
 def _build_vesta_tools_server(state: vm.State, config: vm.VestaConfig) -> tp.Any:
-    @tool("restart_vesta", "Restart to reload memory, skills, and prompts. Current conversation is preserved.", {})
+    @tool("restart_vesta", "Restart the agent container. Triggers a full Docker container restart to reload everything.", {})
     async def restart_vesta(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
         if state.graceful_shutdown and state.graceful_shutdown.is_set():
             if state.shutdown_event:
                 state.shutdown_event.set()
             return {"content": [{"type": "text", "text": "Shutdown complete. Sweet dreams."}]}
-        state.pending_context = build_restart_context("self restart — memory, skills, and prompts refreshed", config)
-        return {"content": [{"type": "text", "text": "Restart initiated. Session will resume with refreshed configuration."}]}
+        logger.shutdown("Container restart requested")
+        os.kill(os.getpid(), signal.SIGTERM)
+        return {"content": [{"type": "text", "text": "Container restart initiated."}]}
 
     @tool("search_history", _SEARCH_HISTORY_DESCRIPTION, _SEARCH_HISTORY_SCHEMA)
     async def search_history(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
