@@ -36,22 +36,29 @@ def _build_query(prompt: str, *, timestamp: dt.datetime) -> str:
     return f"[Current time: {timestamp_str}]\n{prompt}"
 
 
+_AGENT_TOOLS = ("Task", "Agent")
+
+
+def _parse_agent_input(input_data: object) -> tuple[str, str]:
+    if isinstance(input_data, dict):
+        data = tp.cast(dict[str, tp.Any], input_data)
+        agent_type = data["subagent_type"] if "subagent_type" in data else "unknown"
+        description = data["description"] if "description" in data else ""
+    else:
+        agent_type = "unknown"
+        description = ""
+    return agent_type, description
+
+
 def _format_tool_call(name: str, *, input_data: object, sub_agent_context: str | None) -> tuple[str, str | None]:
     input_str = json.dumps(input_data) if isinstance(input_data, dict) else str(input_data)
-    input_preview = (input_str[:150] + "...") if len(input_str) > 150 else input_str
 
-    if name in ("Task", "Agent"):
-        if isinstance(input_data, dict):
-            data = tp.cast(dict[str, tp.Any], input_data)
-            agent_type = data["subagent_type"] if "subagent_type" in data else "unknown"
-            description = data["description"] if "description" in data else ""
-        else:
-            agent_type = "unknown"
-            description = ""
-        return f"[TASK] [{agent_type}]: {description or input_preview}", agent_type
+    if name in _AGENT_TOOLS:
+        agent_type, description = _parse_agent_input(input_data)
+        return f"[TASK] [{agent_type}]: {description or input_str}", agent_type
 
     prefix = f"[{sub_agent_context}] " if sub_agent_context else ""
-    return f"[TOOL] {prefix}{name}: {input_preview}", sub_agent_context
+    return f"[TOOL] {prefix}{name}: {input_str}", sub_agent_context
 
 
 def filter_tool_lines(text: str) -> str:
@@ -102,17 +109,27 @@ _TOOL_KEYS: dict[str, str] = {
 
 
 def _tool_summary(name: str, tool_input: dict[str, tp.Any]) -> str:
-    if name in ("Task", "Agent"):
-        agent = tool_input["subagent_type"] if "subagent_type" in tool_input else "?"
-        desc = tool_input["description"] if "description" in tool_input else ""
-        return f"Task [{agent}]: {desc}"
+    if name in _AGENT_TOOLS:
+        agent_type, description = _parse_agent_input(tool_input)
+        return f"Task [{agent_type}]: {description}"
     if name in _TOOL_KEYS:
         val = tool_input[_TOOL_KEYS[name]] if _TOOL_KEYS[name] in tool_input else "?"
-        preview = (val[:120] + "...") if len(val) > 120 else val
-        return f"{name}: {preview}"
+        return f"{name}: {val}"
     raw = json.dumps(tool_input)
-    preview = (raw[:100] + "...") if len(raw) > 100 else raw
-    return f"{name}: {preview}"
+    return f"{name}: {raw}"
+
+
+def _subagent_hook(state: vm.State, *, verb: str, event_type: str) -> HookCallback:
+    async def hook(
+        input_data: SubagentStartHookInput | SubagentStopHookInput, tool_use_id: str | None, context: HookContext
+    ) -> HookJSONOutput:
+        agent_id = input_data["agent_id"]
+        agent_type = input_data["agent_type"]
+        logger.subagent(f"{verb} [{agent_type}] id={agent_id}")
+        state.event_bus.emit({"type": event_type, "agent_id": agent_id, "agent_type": agent_type})
+        return tp.cast(HookJSONOutput, {})
+
+    return tp.cast(HookCallback, hook)
 
 
 def _make_hooks(
@@ -133,25 +150,11 @@ def _make_hooks(
         state.event_bus.set_state("thinking")
         return tp.cast(HookJSONOutput, {})
 
-    async def log_subagent_start(input_data: SubagentStartHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
-        agent_id = input_data["agent_id"]
-        agent_type = input_data["agent_type"]
-        logger.subagent(f"started [{agent_type}] id={agent_id}")
-        state.event_bus.emit({"type": "subagent_start", "agent_id": agent_id, "agent_type": agent_type})
-        return tp.cast(HookJSONOutput, {})
-
-    async def log_subagent_stop(input_data: SubagentStopHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
-        agent_id = input_data["agent_id"]
-        agent_type = input_data["agent_type"]
-        logger.subagent(f"stopped [{agent_type}] id={agent_id}")
-        state.event_bus.emit({"type": "subagent_stop", "agent_id": agent_id, "agent_type": agent_type})
-        return tp.cast(HookJSONOutput, {})
-
     return (
         tp.cast(HookCallback, log_tool_start),
         tp.cast(HookCallback, log_tool_finish),
-        tp.cast(HookCallback, log_subagent_start),
-        tp.cast(HookCallback, log_subagent_stop),
+        _subagent_hook(state, verb="started", event_type="subagent_start"),
+        _subagent_hook(state, verb="stopped", event_type="subagent_stop"),
     )
 
 
