@@ -227,7 +227,7 @@ _SEARCH_HISTORY_DESCRIPTION = (
     "Use this to recall specific past discussions, decisions, or information no longer in context.\n\n"
     "FTS5 query syntax:\n"
     '- Simple words: "meeting notes" finds messages containing both words\n'
-    '- Phrases: \'"exact phrase"\' finds the exact phrase\n'
+    "- Phrases: '\"exact phrase\"' finds the exact phrase\n"
     '- OR: "cats OR dogs" finds messages with either word\n'
     '- Prefix: "sched*" matches schedule, scheduled, scheduling, etc.\n'
     '- NOT: "meeting NOT cancelled" excludes matches\n\n'
@@ -254,7 +254,7 @@ def _build_vesta_tools_server(state: vm.State, config: vm.VestaConfig) -> tp.Any
         state.pending_context = build_restart_context("self restart — memory, skills, and prompts refreshed", config)
         return {"content": [{"type": "text", "text": "Restart initiated. Session will resume with refreshed configuration."}]}
 
-    @tool("search_history",_SEARCH_HISTORY_DESCRIPTION, _SEARCH_HISTORY_SCHEMA)
+    @tool("search_history", _SEARCH_HISTORY_DESCRIPTION, _SEARCH_HISTORY_SCHEMA)
     async def search_history(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
         if state.history is None:
             return {"content": [{"type": "text", "text": "History store not available."}]}
