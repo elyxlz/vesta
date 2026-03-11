@@ -34,3 +34,10 @@ uv run {skills_dir}/upstream/pr.py --token-only
 - Private key and script live in this skill directory
 - Generates a short-lived installation token, pushes the branch, creates the PR
 - No personal GitHub account or CLI auth needed
+
+## After Creating a PR
+- Monitor the PR until CI passes — don't just fire and forget
+- Check CI status: `cd /root/vesta && gh pr checks <PR_NUMBER>`
+- The `pr-validation` check requires a version bump in `agent/pyproject.toml` for any source code changes
+- If CI fails, fix the issue, commit to the same branch, and push — the PR updates automatically
+- Only report the PR as done to the user once CI is green
