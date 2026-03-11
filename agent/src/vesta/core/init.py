@@ -1,6 +1,4 @@
-import os
 import pathlib as pl
-import shutil
 
 import vesta.models as vm
 from vesta import logger
@@ -71,15 +69,3 @@ def build_restart_context(reason: str, config: vm.VestaConfig, *, extras: list[s
     if greeting.strip():
         parts.append(greeting.strip())
     return "\n\n".join(parts)
-
-
-def init_skills_symlink(config: vm.VestaConfig) -> None:
-    target = config.state_dir / ".claude" / "skills"
-    target.parent.mkdir(parents=True, exist_ok=True)
-    path = str(target)
-    if os.path.islink(path) or os.path.lexists(path):
-        if os.path.isdir(path) and not os.path.islink(path):
-            shutil.rmtree(path)
-        else:
-            os.unlink(path)
-    target.symlink_to(config.skills_dir)
