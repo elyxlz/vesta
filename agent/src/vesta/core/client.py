@@ -21,6 +21,7 @@ from claude_agent_sdk.types import PreToolUseHookInput, PostToolUseHookInput, Ho
 
 import vesta.models as vm
 from vesta import logger
+from vesta.core.history import history_save, history_search, format_results
 from vesta.core.init import get_memory_path, build_restart_context
 
 
@@ -179,6 +180,7 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
         raise
 
     responses: list[str] = []
+    assistant_texts: list[str] = []
     sub_agent_context: str | None = None
     response_iter = client.receive_response().__aiter__()
 
@@ -204,13 +206,45 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
         if filtered and not has_tool_use:
             logger.assistant(filtered)
             state.event_bus.emit({"type": "assistant", "text": filtered})
+            assistant_texts.append(filtered)
+
+    if state.history is not None:
+        combined = "\n".join(r for r in (assistant_texts or responses) if r and r.strip())
+        if combined:
+            history_save(state.history, "assistant", combined, session_id=state.session_id)
 
     return responses
 
 
 async def process_message(msg: str, *, state: vm.State, config: vm.VestaConfig, is_user: bool) -> tuple[list[str], vm.State]:
+    if state.history is not None:
+        role = "user" if is_user else "system"
+        history_save(state.history, role, msg, session_id=state.session_id)
     responses = await converse(msg, state=state, config=config, show_output=is_user)
     return responses, state
+
+
+_SEARCH_HISTORY_DESCRIPTION = (
+    "Search past conversation memory using full-text search (SQLite FTS5). "
+    "Searches ALL past conversations across sessions and days, not just the current session. "
+    "Use this to recall specific past discussions, decisions, or information no longer in context.\n\n"
+    "FTS5 query syntax:\n"
+    '- Simple words: "meeting notes" finds messages containing both words\n'
+    '- Phrases: \'"exact phrase"\' finds the exact phrase\n'
+    '- OR: "cats OR dogs" finds messages with either word\n'
+    '- Prefix: "sched*" matches schedule, scheduled, scheduling, etc.\n'
+    '- NOT: "meeting NOT cancelled" excludes matches\n\n'
+    "Returns messages in chronological order with timestamps and roles (user/assistant/system)."
+)
+
+_SEARCH_HISTORY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "query": {"type": "string", "description": "FTS5 search query"},
+        "limit": {"type": "integer", "description": "Max results to return (default 20)", "default": 20},
+    },
+    "required": ["query"],
+}
 
 
 def _build_vesta_tools_server(state: vm.State, config: vm.VestaConfig) -> tp.Any:
@@ -223,7 +257,19 @@ def _build_vesta_tools_server(state: vm.State, config: vm.VestaConfig) -> tp.Any
         state.pending_context = build_restart_context("self restart — memory, skills, and prompts refreshed", config)
         return {"content": [{"type": "text", "text": "Restart initiated. Session will resume with refreshed configuration."}]}
 
-    return create_sdk_mcp_server("vesta-tools", tools=[restart_vesta])
+    @tool("search_history",_SEARCH_HISTORY_DESCRIPTION, _SEARCH_HISTORY_SCHEMA)
+    async def search_history(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
+        if state.history is None:
+            return {"content": [{"type": "text", "text": "History store not available."}]}
+        query = str(args["query"])
+        limit = int(args["limit"]) if "limit" in args else 20
+        try:
+            results = history_search(state.history, query, limit=limit)
+        except Exception as e:
+            return {"content": [{"type": "text", "text": f"Search error: {e}"}]}
+        return {"content": [{"type": "text", "text": format_results(results)}]}
+
+    return create_sdk_mcp_server("vesta-tools", tools=[restart_vesta, search_history])
 
 
 def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgentOptions:
