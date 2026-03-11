@@ -392,18 +392,7 @@ fn maybe_migrate_legacy() {
 
     docker_ok(&["rm", "-f", "vesta"]);
 
-    let ws_port_env = format!("WS_PORT={}", BASE_WS_PORT);
-    let port_label = format!("vesta.ws_port={}", BASE_WS_PORT);
-    if !docker_ok(&[
-        "create", "--name", &cname, "-it", "--privileged",
-        "--restart", "unless-stopped", "--network", "host",
-        "--label", "vesta.managed=true",
-        "--label", &port_label,
-        "-e", &ws_port_env,
-        migrate_tag,
-    ]) {
-        die("failed to recreate container during migration");
-    }
+    create_container(&cname, migrate_tag, BASE_WS_PORT);
 
     if was_running {
         docker_ok(&["start", &cname]);
@@ -655,7 +644,9 @@ pub fn run(command: Command) {
 
         Command::List { json } => {
             let containers = list_managed_containers();
-            if json {
+            if containers.is_empty() && !json {
+                println!("no agents. run: vesta setup");
+            } else {
                 let entries: Vec<ListEntry> = containers.iter().map(|cname| {
                     let cs = container_status(cname);
                     let port = get_container_port(cname);
@@ -669,22 +660,18 @@ pub fn run(command: Command) {
                         ws_port: port,
                     }
                 }).collect();
-                println!("{}", serde_json::to_string(&entries).unwrap());
-            } else if containers.is_empty() {
-                println!("no agents. run: vesta setup");
-            } else {
-                for cname in &containers {
-                    let cs = container_status(cname);
-                    let port = get_container_port(cname);
-                    let authed = cs != ContainerStatus::NotFound && is_authenticated(cname);
-                    let ready = cs == ContainerStatus::Running && is_agent_ready(cname, port);
-                    let ready_str = if cs == ContainerStatus::Running {
-                        if ready { " (ready)" } else { " (not ready)" }
-                    } else {
-                        ""
-                    };
-                    let auth_str = if authed { "" } else { " [no auth]" };
-                    println!("  {} — {}{}{}  (port {})", name_from_cname(cname), status_label(&cs), ready_str, auth_str, port);
+                if json {
+                    println!("{}", serde_json::to_string(&entries).unwrap());
+                } else {
+                    for e in &entries {
+                        let ready_str = if e.status == "running" {
+                            if e.agent_ready { " (ready)" } else { " (not ready)" }
+                        } else {
+                            ""
+                        };
+                        let auth_str = if e.authenticated { "" } else { " [no auth]" };
+                        println!("  {} — {}{}{}  (port {})", e.name, e.status, ready_str, auth_str, e.ws_port);
+                    }
                 }
             }
         }
@@ -812,18 +799,7 @@ pub fn run(command: Command) {
             }
 
             let port = allocate_port();
-            let ws_port_env = format!("WS_PORT={}", port);
-            let port_label = format!("vesta.ws_port={}", port);
-            if !docker_ok(&[
-                "create", "--name", &cname, "-it", "--privileged",
-                "--restart", "unless-stopped", "--network", "host",
-                "--label", "vesta.managed=true",
-                "--label", &port_label,
-                "-e", &ws_port_env,
-                &loaded_image,
-            ]) {
-                die("failed to create container from backup");
-            }
+            create_container(&cname, &loaded_image, port);
 
             docker_cp_content(&cname, &name, "/root/.vesta-name");
 
