@@ -441,6 +441,7 @@
     background: rgba(0, 0, 0, 0.04);
     border: 1px solid rgba(0, 0, 0, 0.06);
     border-radius: 6px;
+    corner-shape: squircle;
     padding: 8px 10px;
     font-size: 10px;
     line-height: 1.4;
@@ -456,6 +457,7 @@
     color: #9a928a;
     font-size: 11px;
     padding: 2px 8px;
+    min-height: 36px;
     margin-bottom: 4px;
   }
 
@@ -518,7 +520,7 @@
     corner-shape: squircle;
     font-size: 14px;
     font-family: inherit;
-    background: white;
+    background: rgba(255, 255, 255, 0.95);
     color: #1a1816;
     margin-bottom: 12px;
     outline: none;
@@ -562,6 +564,7 @@
     color: #7a726a;
     margin-top: 16px;
     font-size: 12px;
+    min-height: 36px;
   }
 
   .btn.cancel:hover {

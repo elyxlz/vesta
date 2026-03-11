@@ -208,12 +208,15 @@
     border: none;
     color: rgba(255, 255, 255, 0.25);
     cursor: pointer;
-    padding: 4px 6px;
-    border-radius: 4px;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0;
+    border-radius: 8px;
     corner-shape: squircle;
     transition: all 0.2s var(--spring);
     display: flex;
     align-items: center;
+    justify-content: center;
   }
 
   .tool-toggle:hover {
@@ -269,6 +272,7 @@
     background: rgba(255, 200, 100, 0.06);
     border-top: 1px solid transparent;
     text-align: center;
+    user-select: none;
     opacity: 0;
     transition: max-height 0.2s var(--spring), opacity 0.2s var(--spring), padding 0.2s var(--spring), border-color 0.2s var(--spring);
   }
@@ -323,4 +327,8 @@
 
   .input-bar textarea::placeholder { color: rgba(255, 255, 255, 0.35); }
   .input-bar textarea:disabled { opacity: 0.25; cursor: not-allowed; }
+
+  .input-bar:has(textarea:focus-visible) {
+    border-top-color: rgba(255, 255, 255, 0.12);
+  }
 </style>
