@@ -161,6 +161,16 @@ export async function fillFormViaPlaywright(opts: {
       continue;
     }
 
+    if (type === 'select') {
+      const selectValues = Array.isArray(rawValue) ? rawValue.map(String) : [value];
+      try {
+        await locator.selectOption(selectValues, { timeout });
+      } catch (err) {
+        throw toAIFriendlyError(err, ref);
+      }
+      continue;
+    }
+
     try {
       await locator.fill(value, { timeout });
     } catch (err) {

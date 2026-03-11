@@ -498,10 +498,15 @@ export async function launchChrome(opts: LaunchOptions = {}): Promise<RunningChr
       : [];
     if (extraArgs.length) args.push(...extraArgs);
     args.push('about:blank');
-    return spawn(exe.path, args, {
-      stdio: 'pipe',
+    const proc = spawn(exe.path, args, {
+      stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env, HOME: os.homedir() },
     });
+    // Buffer stderr for diagnostics on failure
+    const stderrChunks: Buffer[] = [];
+    proc.stderr?.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
+    (proc as any)._stderrChunks = stderrChunks;
+    return proc;
   };
 
   const startedAt = Date.now();
@@ -547,8 +552,26 @@ export async function launchChrome(opts: LaunchOptions = {}): Promise<RunningChr
   }
 
   if (!await isChromeReachable(cdpUrl, 500)) {
+    const stderrChunks: Buffer[] = (proc as any)._stderrChunks ?? [];
+    const stderr = Buffer.concat(stderrChunks).toString('utf8').trim();
+    const exitCode = proc.exitCode;
     try { proc.kill('SIGKILL'); } catch {}
-    throw new Error(`Failed to start Chrome CDP on port ${cdpPort}. Chrome may not have started correctly.`);
+
+    const hints: string[] = [];
+    if (opts.stealth && !!process.env.DISPLAY) {
+      hints.push(`Stealth mode skipped --headless because DISPLAY=${process.env.DISPLAY} is set. Ensure Xvfb or a real X server is running on that display.`);
+    }
+    if (stderr.includes('Failed to open X display') || stderr.includes('cannot open display')) {
+      hints.push('X display is not available. Start Xvfb first: Xvfb :99 -screen 0 1920x1080x24 &');
+    }
+
+    const parts = [`Failed to start Chrome CDP on port ${cdpPort}.`];
+    if (exitCode != null) parts.push(`Chrome exited with code ${exitCode}.`);
+    if (stderr) parts.push(`Chrome stderr: ${stderr.slice(0, 500)}`);
+    if (hints.length) parts.push(hints.join(' '));
+    if (!stderr && !hints.length) parts.push('Chrome may not have started correctly. Check if another Chrome instance is using the same port or profile directory.');
+
+    throw new Error(parts.join(' '));
   }
 
   // In stealth mode, override user agent via CDP to strip "HeadlessChrome" fingerprint.
