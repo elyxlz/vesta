@@ -140,8 +140,10 @@ def _make_hooks(
     async def log_tool_start(input_data: PreToolUseHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
         name = input_data["tool_name"]
         summary = _tool_summary(name, input_data["tool_input"])
-        is_sub = "agent_id" in input_data
-        prefix = f"[SUB:{input_data['agent_type']}] " if is_sub and "agent_type" in input_data else "[SUB] " if is_sub else ""
+        raw = tp.cast(dict[str, tp.Any], input_data)
+        is_sub = "agent_id" in raw
+        agent_type = raw["agent_type"] if "agent_type" in raw else None
+        prefix = f"[SUB:{agent_type}] " if is_sub and agent_type else "[SUB] " if is_sub else ""
         logger.tool(f"{prefix}{summary}")
         state.event_bus.set_state("tool_use")
         state.event_bus.emit({"type": "tool_start", "tool": name, "input": summary, "subagent": is_sub})
@@ -149,8 +151,10 @@ def _make_hooks(
 
     async def log_tool_finish(input_data: PostToolUseHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
         name = input_data["tool_name"]
-        is_sub = "agent_id" in input_data
-        prefix = f"[SUB:{input_data['agent_type']}] " if is_sub and "agent_type" in input_data else "[SUB] " if is_sub else ""
+        raw = tp.cast(dict[str, tp.Any], input_data)
+        is_sub = "agent_id" in raw
+        agent_type = raw["agent_type"] if "agent_type" in raw else None
+        prefix = f"[SUB:{agent_type}] " if is_sub and agent_type else "[SUB] " if is_sub else ""
         logger.tool(f"{prefix}done: {name}")
         state.event_bus.emit({"type": "tool_end", "tool": name, "subagent": is_sub})
         state.event_bus.set_state("thinking")
