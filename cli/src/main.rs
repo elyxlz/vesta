@@ -169,6 +169,14 @@ enum Command {
         /// Agent name
         name: String,
     },
+    /// Wait for agent to become ready
+    WaitReady {
+        /// Agent name
+        name: String,
+        /// Timeout in seconds
+        #[arg(long, default_value = "30")]
+        timeout: u64,
+    },
     /// List all agents
     List {
         /// Output as JSON

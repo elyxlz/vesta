@@ -556,7 +556,7 @@ pub fn run(command: Command) {
         Command::Status { name, json } => {
             if !vm_running() {
                 if json {
-                    println!("{{\"name\":\"{}\",\"status\":\"not_found\",\"authenticated\":false,\"ws_port\":7865}}", name);
+                    println!("{{\"name\":\"{}\",\"status\":\"not_found\",\"authenticated\":false,\"ws_port\":7865,\"alive\":false,\"friendly_status\":\"not found\"}}", name);
                 } else {
                     println!("agent '{}' not found.", name);
                     eprintln!("\nhint: run 'vesta setup' to create your agent");
@@ -621,6 +621,11 @@ pub fn run(command: Command) {
         Command::Rebuild { name } => {
             ensure_vm();
             ssh_run(&["vesta", "rebuild", &name], true);
+        }
+
+        Command::WaitReady { name, timeout } => {
+            ensure_vm();
+            ssh_run(&["vesta", "wait-ready", &name, "--timeout", &timeout.to_string()], false);
         }
 
         Command::PlatformCheck => {

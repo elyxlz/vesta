@@ -5,6 +5,8 @@ export interface AgentInfo {
   name: string;
   agent_ready: boolean;
   ws_port: number;
+  alive: boolean;
+  friendly_status: string;
 }
 
 export type AgentStatus = "running" | "stopped" | "dead" | "not_found" | "unknown";
@@ -15,6 +17,8 @@ export interface ListEntry {
   authenticated: boolean;
   agent_ready: boolean;
   ws_port: number;
+  alive: boolean;
+  friendly_status: string;
 }
 
 export interface PlatformStatus {

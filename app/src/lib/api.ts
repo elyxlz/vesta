@@ -37,6 +37,10 @@ export async function restoreAgent(input: string, name?: string, replace?: boole
   return invoke("restore_agent", { input, name: name ?? null, replace: replace ?? false });
 }
 
+export async function waitForReady(name: string, timeout?: number): Promise<void> {
+  return invoke("wait_for_ready", { name, timeout: timeout ?? 30 });
+}
+
 export function streamLogs(
   name: string,
   onEvent: (event: LogEvent) => void,

@@ -47,6 +47,11 @@ pub async fn restore_agent(input: String, name: Option<String>, replace: bool) -
 }
 
 #[tauri::command]
+pub async fn wait_for_ready(name: String, timeout: u64) -> Result<(), VestaError> {
+    cli::wait_for_ready(&name, timeout).await
+}
+
+#[tauri::command]
 pub async fn agent_host() -> String {
     cli::agent_host().await
 }
