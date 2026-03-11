@@ -472,7 +472,7 @@ pub fn run(command: Command) {
 
     match command {
         Command::Setup { build, yes, name } => {
-            let name = name.unwrap_or_else(prompt_name);
+            let name = name.map(|n| normalize_name(&n)).unwrap_or_else(prompt_name);
             validate_name(&name);
             let cname = container_name(&name);
 
@@ -504,7 +504,7 @@ pub fn run(command: Command) {
         }
 
         Command::Create { build, name } => {
-            let name = name.unwrap_or_else(prompt_name);
+            let name = name.map(|n| normalize_name(&n)).unwrap_or_else(prompt_name);
             validate_name(&name);
             let cname = container_name(&name);
 

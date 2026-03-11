@@ -524,8 +524,7 @@ def test_responsive_during_subagent(tmp_path):
             "finished before the interrupt was tested. Test is inconclusive."
         )
         assert response_time < 30.0, (
-            f"Simple request took {response_time:.0f}s — agent was likely blocked by the sub-agent. "
-            f"Expected <30s response time."
+            f"Simple request took {response_time:.0f}s — agent was likely blocked by the sub-agent. Expected <30s response time."
         )
 
         # The sub-agent's timed task should still complete eventually
