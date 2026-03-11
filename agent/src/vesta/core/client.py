@@ -29,7 +29,7 @@ from claude_agent_sdk.types import (
 import vesta.models as vm
 from vesta import logger
 from vesta.core.history import history_save, history_search, format_results
-from vesta.core.init import get_memory_path, build_restart_context
+from vesta.core.init import get_memory_path
 from vesta.events import SubagentStartEvent, SubagentStopEvent, StreamEvent
 
 
@@ -316,28 +316,15 @@ _SEARCH_HISTORY_SCHEMA = {
 
 
 def _build_vesta_tools_server(state: vm.State, config: vm.VestaConfig) -> tp.Any:
-    @tool(
-        "restart_vesta",
-        "Restart the agent. Use full=true for a full container restart (reloads everything including system packages), "
-        "or full=false (default) for a soft restart (reloads memory, skills, prompts while preserving the conversation).",
-        {
-            "type": "object",
-            "properties": {"full": {"type": "boolean", "description": "Full container restart (default: false)", "default": False}},
-            "required": [],
-        },
-    )
+    @tool("restart_vesta", "Restart the agent container. Triggers a full Docker container restart to reload everything.", {})
     async def restart_vesta(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
         if state.graceful_shutdown and state.graceful_shutdown.is_set():
             if state.shutdown_event:
                 state.shutdown_event.set()
             return {"content": [{"type": "text", "text": "Shutdown complete. Sweet dreams."}]}
-        full = args["full"] if "full" in args else False
-        if full:
-            logger.shutdown("Full container restart requested")
-            os.kill(os.getpid(), signal.SIGTERM)
-            return {"content": [{"type": "text", "text": "Full container restart initiated. Docker will restart the container."}]}
-        state.pending_context = build_restart_context("self restart — memory, skills, and prompts refreshed", config)
-        return {"content": [{"type": "text", "text": "Restart initiated. Session will resume with refreshed configuration."}]}
+        logger.shutdown("Container restart requested")
+        os.kill(os.getpid(), signal.SIGTERM)
+        return {"content": [{"type": "text", "text": "Container restart initiated."}]}
 
     @tool("search_history", _SEARCH_HISTORY_DESCRIPTION, _SEARCH_HISTORY_SCHEMA)
     async def search_history(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
