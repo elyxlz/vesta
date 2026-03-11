@@ -211,6 +211,11 @@
   role="group"
   aria-label="Controls"
 >
+  <button class="back-btn" onclick={onBack} aria-label="back" data-tip="back">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="15 18 9 12 15 6"/>
+    </svg>
+  </button>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="creature-area"
@@ -265,7 +270,6 @@
                 <button class="menu-item" onclick={() => { menuOpen = false; onConsole(); }} data-tip="view raw logs">console</button>
                 <div class="menu-divider"></div>
               {/if}
-              <button class="menu-item" onclick={() => { menuOpen = false; onBack(); }} data-tip="back to grid">back</button>
               <button class="menu-item danger" disabled={busy} onclick={() => { menuOpen = false; destroy(); }} data-tip="permanently delete">delete</button>
             </div>
           {/if}
@@ -279,12 +283,51 @@
 
 <style>
   .agent-view {
+    position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
     width: 100%;
     height: 100%;
     animation: viewIn 0.6s var(--spring);
+  }
+
+  .back-btn {
+    position: absolute;
+    top: 4px;
+    left: 8px;
+    z-index: 10;
+    width: 44px;
+    height: 44px;
+    border: none;
+    border-radius: 8px;
+    corner-shape: squircle;
+    background: transparent;
+    color: rgba(0, 0, 0, 0.2);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s var(--spring-bouncy);
+  }
+
+  .back-btn:hover {
+    background: rgba(0, 0, 0, 0.04);
+    color: rgba(0, 0, 0, 0.45);
+  }
+
+  .back-btn:active {
+    transform: scale(0.97);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .back-btn {
+      color: rgba(255, 255, 255, 0.25);
+    }
+    .back-btn:hover {
+      background: rgba(255, 255, 255, 0.06);
+      color: rgba(255, 255, 255, 0.6);
+    }
   }
 
   @keyframes viewIn {
