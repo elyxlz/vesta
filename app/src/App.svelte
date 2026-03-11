@@ -33,7 +33,12 @@
     try {
       const agents = await listAgents();
       hasAgents = agents.length > 0;
-      if (hasAgents) {
+      if (agents.length === 1) {
+        selectedAgent = { name: agents[0].name, wsPort: agents[0].ws_port };
+        agentConnection = createAgentConnection(agents[0].ws_port);
+        agentConnection.connect();
+        view = "agent-home";
+      } else if (agents.length > 1) {
         view = "grid";
       } else {
         view = "onboarding";
