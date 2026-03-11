@@ -134,16 +134,22 @@ def _subagent_hook(state: vm.State, *, verb: str, event_type: str) -> HookCallba
     return tp.cast(HookCallback, hook)
 
 
+def _subagent_prefix(input_data: dict[str, object]) -> tuple[str, bool]:
+    """Extract sub-agent prefix from hook input. SDK adds agent_id/agent_type for sub-agent calls."""
+    if "agent_id" not in input_data:
+        return "", False
+    agent_type = input_data["agent_type"] if "agent_type" in input_data else None
+    prefix = f"[SUB:{agent_type}] " if agent_type else "[SUB] "
+    return prefix, True
+
+
 def _make_hooks(
     state: vm.State,
 ) -> tuple[HookCallback, HookCallback, HookCallback, HookCallback]:
     async def log_tool_start(input_data: PreToolUseHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
         name = input_data["tool_name"]
         summary = _tool_summary(name, input_data["tool_input"])
-        raw = tp.cast(dict[str, tp.Any], input_data)
-        is_sub = "agent_id" in raw
-        agent_type = raw["agent_type"] if "agent_type" in raw else None
-        prefix = f"[SUB:{agent_type}] " if is_sub and agent_type else "[SUB] " if is_sub else ""
+        prefix, is_sub = _subagent_prefix(input_data)  # type: ignore[arg-type]
         logger.tool(f"{prefix}{summary}")
         state.event_bus.set_state("tool_use")
         state.event_bus.emit({"type": "tool_start", "tool": name, "input": summary, "subagent": is_sub})
@@ -151,10 +157,7 @@ def _make_hooks(
 
     async def log_tool_finish(input_data: PostToolUseHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
         name = input_data["tool_name"]
-        raw = tp.cast(dict[str, tp.Any], input_data)
-        is_sub = "agent_id" in raw
-        agent_type = raw["agent_type"] if "agent_type" in raw else None
-        prefix = f"[SUB:{agent_type}] " if is_sub and agent_type else "[SUB] " if is_sub else ""
+        prefix, is_sub = _subagent_prefix(input_data)  # type: ignore[arg-type]
         logger.tool(f"{prefix}done: {name}")
         state.event_bus.emit({"type": "tool_end", "tool": name, "subagent": is_sub})
         state.event_bus.set_state("thinking")
