@@ -376,17 +376,17 @@ fn ssh_run(cmd_args: &[&str], tty: bool) -> process::ExitStatus {
         .unwrap_or_else(|_| die("ssh failed"))
 }
 
-fn scp_to_vm(local: &std::path::Path, remote: &str) {
-    let args = vec![
+fn scp(src: &str, dst: &str) {
+    let mut args = vec![
         "-i".to_string(),
         ssh_key_path().to_str().unwrap().to_string(),
         "-o".into(), "StrictHostKeyChecking=no".into(),
         "-o".into(), "UserKnownHostsFile=/dev/null".into(),
         "-o".into(), "LogLevel=ERROR".into(),
         "-o".into(), format!("ProxyCommand=nc -U '{}'", vsock_socket_path().display()),
-        local.to_str().unwrap().to_string(),
-        format!("root@localhost:{}", remote),
     ];
+    args.push(src.to_string());
+    args.push(dst.to_string());
     let status = process::Command::new("scp")
         .args(&args)
         .stdout(process::Stdio::inherit())
@@ -394,30 +394,16 @@ fn scp_to_vm(local: &std::path::Path, remote: &str) {
         .status()
         .unwrap_or_else(|_| die("scp failed"));
     if !status.success() {
-        die("scp to VM failed");
+        die("scp failed");
     }
 }
 
+fn scp_to_vm(local: &std::path::Path, remote: &str) {
+    scp(local.to_str().unwrap(), &format!("root@localhost:{}", remote));
+}
+
 fn scp_from_vm(remote: &str, local: &std::path::Path) {
-    let args = vec![
-        "-i".to_string(),
-        ssh_key_path().to_str().unwrap().to_string(),
-        "-o".into(), "StrictHostKeyChecking=no".into(),
-        "-o".into(), "UserKnownHostsFile=/dev/null".into(),
-        "-o".into(), "LogLevel=ERROR".into(),
-        "-o".into(), format!("ProxyCommand=nc -U '{}'", vsock_socket_path().display()),
-        format!("root@localhost:{}", remote),
-        local.to_str().unwrap().to_string(),
-    ];
-    let status = process::Command::new("scp")
-        .args(&args)
-        .stdout(process::Stdio::inherit())
-        .stderr(process::Stdio::inherit())
-        .status()
-        .unwrap_or_else(|_| die("scp failed"));
-    if !status.success() {
-        die("scp from VM failed");
-    }
+    scp(&format!("root@localhost:{}", remote), local.to_str().unwrap());
 }
 
 fn download_vm_image() {
