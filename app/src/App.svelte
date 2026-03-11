@@ -4,6 +4,7 @@
   import { listAgents } from "./lib/api";
   import { createAgentConnection, type AgentConnection } from "./lib/ws";
   import { detectPlatform } from "./lib/platform";
+  import type { AgentActivityState } from "./lib/types";
   import Onboarding from "./components/Onboarding.svelte";
   import AgentView from "./components/AgentView.svelte";
   import Chat from "./components/Chat.svelte";
@@ -17,11 +18,9 @@
   let view = $state<View>("loading");
   let ready = $state(false);
   let transitioning = $state(false);
-  import type { AgentActivityState } from "./lib/types";
-
   let selectedAgent = $state<{ name: string; wsPort: number } | null>(null);
   let agentConnection = $state<AgentConnection | null>(null);
-  let initialActivity = $state<AgentActivityState>("idle");
+  let initialActivity: AgentActivityState = "idle";
   let hasAgents = $state(false);
 
   async function setView(next: View) {
@@ -138,7 +137,7 @@
       </div>
     {:else if view === "grid"}
       <GridView
-        onSelect={(name, wsPort, activity) => handleSelectAgent(name, wsPort, activity)}
+        onSelect={handleSelectAgent}
         onCreate={() => setView("onboarding")}
         onChat={(name, wsPort, activity) => { handleSelectAgent(name, wsPort, activity); setView("agent-chat"); }}
         onConsole={(name, wsPort, activity) => { handleSelectAgent(name, wsPort, activity); setView("agent-console"); }}

@@ -45,7 +45,7 @@
       if (agent.alive && !connections.has(key)) {
         const conn = createAgentConnection(agent.ws_port);
         const unsub = conn.agentState.subscribe((v: AgentActivityState) => {
-          activityStates[agent.name] = v;
+          if (activityStates[agent.name] !== v) activityStates[agent.name] = v;
         });
         conn.connect();
         connections.set(key, { conn, unsub });
@@ -115,7 +115,6 @@
   async function handleToggle(agent: ListEntry) {
     if (busyAgent) return;
     busyAgent = agent.name;
-    openMenu = null;
     try {
       if (agent.status === "running") {
         await stopAgent(agent.name);
@@ -133,7 +132,6 @@
   async function handleRestart(agent: ListEntry) {
     if (busyAgent) return;
     busyAgent = agent.name;
-    openMenu = null;
     try {
       await restartAgent(agent.name);
       await refresh();
@@ -145,7 +143,6 @@
   }
 
   async function handleBackup(agent: ListEntry) {
-    openMenu = null;
     const path = await save({
       defaultPath: `${agent.name}.tar.gz`,
       filters: [{ name: "Backup", extensions: ["tar.gz"] }],
@@ -162,7 +159,6 @@
   }
 
   async function handleRestore(agent: ListEntry) {
-    openMenu = null;
     const path = await open({
       filters: [{ name: "Backup", extensions: ["tar.gz"] }],
       multiple: false,
@@ -186,7 +182,6 @@
       return;
     }
     busyAgent = agentName;
-    openMenu = null;
     confirming = null;
     try {
       await deleteAgent(agentName);

@@ -35,6 +35,8 @@
   let starting = $derived(operation === "starting");
   let authenticating = $derived(operation === "authenticating");
   let deleting = $derived(operation === "deleting");
+  let backingUp = $derived(operation === "backing-up");
+  let restoring = $derived(operation === "restoring");
   let errorMsg = $state("");
   let poll: ReturnType<typeof setInterval>;
   let creatureEl: HTMLDivElement;
@@ -94,16 +96,16 @@
   async function syncStatus() {
     try {
       const info = await agentStatus(name);
-      status = info.status;
-      authenticated = info.authenticated;
-      agentReady = info.agent_ready;
+      if (status !== info.status) status = info.status;
+      if (authenticated !== info.authenticated) authenticated = info.authenticated;
+      if (agentReady !== info.agent_ready) agentReady = info.agent_ready;
       if (errorMsg) errorMsg = "";
     } catch {
-      status = "unknown";
-      authenticated = false;
-      agentReady = false;
+      if (status !== "unknown") status = "unknown";
+      if (authenticated) authenticated = false;
+      if (agentReady) agentReady = false;
     }
-    statusLoaded = true;
+    if (!statusLoaded) statusLoaded = true;
   }
 
   async function refresh() {
@@ -300,12 +302,12 @@
         {#if !statusLoaded}
           &nbsp;
         {:else}
-          {errorMsg ? errorMsg : deleting ? "deleting..." : operation === "backing-up" ? "backing up..." : operation === "restoring" ? "restoring..." : stopping ? "stopping..." : starting ? "starting..." : authenticating ? "signing in..." : fullyAlive ? "alive" : operational ? "waking up..." : running ? "not signed in" : dead ? "broken — delete and recreate" : "stopped"}
+          {errorMsg ? errorMsg : deleting ? "deleting..." : backingUp ? "backing up..." : restoring ? "restoring..." : stopping ? "stopping..." : starting ? "starting..." : authenticating ? "signing in..." : fullyAlive ? "alive" : operational ? "waking up..." : running ? "not signed in" : dead ? "broken — delete and recreate" : "stopped"}
         {/if}
       </span>
     </div>
 
-    <div class="actions" class:visible={showActions && !deleting && !stopping && !starting && !authenticating && operation !== "backing-up" && operation !== "restoring"} inert={!showActions || deleting || stopping || starting || authenticating || operation === "backing-up" || operation === "restoring"}>
+    <div class="actions" class:visible={showActions && !deleting && !stopping && !starting && !authenticating && !backingUp && !restoring} inert={!showActions || deleting || stopping || starting || authenticating || backingUp || restoring}>
       {#if confirming}
         <button class="action-btn danger" disabled={busy} onclick={destroy}>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
