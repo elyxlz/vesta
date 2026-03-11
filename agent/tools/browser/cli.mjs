@@ -93,28 +93,33 @@ async function solveCloudflare(page) {
   }
 
   // Find and click the CF Turnstile iframe checkbox
+  // Use evaluateInAllFrames to find the CF challenge iframe and get its bounding box,
+  // then use evaluate to dispatch a click at the right coordinates.
   for (let attempt = 0; attempt < 3; attempt++) {
-    const frames = page.page.frames();
-    let iframe = null;
-    for (const frame of frames) {
-      if (CF_IFRAME_PATTERN.test(frame.url() || '')) {
-        iframe = frame;
-        break;
-      }
-    }
-
-    if (iframe) {
-      try {
-        const el = await iframe.frameElement();
-        const box = await el.boundingBox();
-        if (box) {
-          const x = box.x + 26 + Math.random() * 2;
-          const y = box.y + 25 + Math.random() * 2;
-          await page.page.mouse.click(x, y, { delay: 100 + Math.random() * 100 });
-          await new Promise(r => setTimeout(r, 3000));
+    try {
+      // Find CF iframe bounding box via top-level evaluate
+      const box = await page.evaluate(`() => {
+        const iframes = document.querySelectorAll('iframe');
+        for (const iframe of iframes) {
+          if (/challenges\\.cloudflare\\.com\\/cdn-cgi\\/challenge-platform/.test(iframe.src || '')) {
+            const rect = iframe.getBoundingClientRect();
+            return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+          }
         }
-      } catch {}
-    }
+        return null;
+      }`);
+
+      if (box) {
+        // Click at the checkbox position within the iframe (offset ~26, ~25 from top-left)
+        const x = box.x + 26 + Math.random() * 2;
+        const y = box.y + 25 + Math.random() * 2;
+        await page.evaluate(`() => {
+          const el = document.elementFromPoint(${x}, ${y});
+          if (el) el.click();
+        }`);
+        await new Promise(r => setTimeout(r, 3000));
+      }
+    } catch {}
 
     if (await page.title() !== 'Just a moment...') return true;
     await new Promise(r => setTimeout(r, 2000));
@@ -198,8 +203,7 @@ async function cmdLaunch(args) {
 }
 
 async function cmdConnect(args) {
-  const cdpUrl = args.positionals[0];
-  if (!cdpUrl) fail('Usage: browser connect <cdp-url>  (e.g. http://192.168.1.10:9222)');
+  const cdpUrl = args.positionals[0] || 'http://localhost:9222';
 
   const existing = readSession();
   if (existing) {
@@ -251,7 +255,7 @@ async function cmdOpen(args) {
   if (isStealth() && !args.flags['no-cf-solve']) {
     await solveCloudflare(page);
   }
-  const snap = await page.snapshot({ interactive: true });
+  const snap = await page.snapshot(snapshotOpts());
   out({
     tabId: page.id,
     url: await page.url(),
@@ -270,7 +274,7 @@ async function cmdNavigate(args) {
   if (isStealth() && !args.flags['no-cf-solve']) {
     await solveCloudflare(page);
   }
-  const snap = await page.snapshot({ interactive: true });
+  const snap = await page.snapshot(snapshotOpts());
   out({
     url: await page.url(),
     title: await page.title(),
@@ -295,6 +299,14 @@ async function cmdClose(args) {
   out({ status: 'closed', tabId });
 }
 
+// Default max chars for snapshots to prevent overwhelming output on complex pages.
+// Can be overridden with --max-chars flag or BROWSER_MAX_CHARS env var.
+const DEFAULT_MAX_CHARS = Number(process.env.BROWSER_MAX_CHARS) || 50000;
+
+function snapshotOpts(extra = {}) {
+  return { interactive: true, maxChars: DEFAULT_MAX_CHARS, ...extra };
+}
+
 async function cmdSnapshot(args) {
   const browser = await connect();
   const page = await currentPage(browser);
@@ -303,6 +315,7 @@ async function cmdSnapshot(args) {
   if (args.flags.compact) opts.compact = true;
   if (args.flags.mode) opts.mode = args.flags.mode;
   if (args.flags['max-depth']) opts.maxDepth = Number(args.flags['max-depth']);
+  opts.maxChars = args.flags['max-chars'] ? Number(args.flags['max-chars']) : DEFAULT_MAX_CHARS;
   const result = await page.snapshot(opts);
   out({
     snapshot: result.snapshot,
@@ -334,7 +347,7 @@ async function cmdClick(args) {
   if (args.flags.double) opts.doubleClick = true;
   if (args.flags.right) opts.button = 'right';
   await page.click(ref, opts);
-  const snap = await page.snapshot({ interactive: true });
+  const snap = await page.snapshot(snapshotOpts());
   out({
     status: 'clicked',
     ref,
@@ -355,7 +368,7 @@ async function cmdType(args) {
   if (args.flags.submit) opts.submit = true;
   if (args.flags.slowly) opts.slowly = true;
   await page.type(ref, text, opts);
-  const snap = await page.snapshot({ interactive: true });
+  const snap = await page.snapshot(snapshotOpts());
   out({
     status: 'typed',
     ref,
@@ -372,7 +385,7 @@ async function cmdHover(args) {
   const page = await currentPage(browser);
   await page.snapshot();
   await page.hover(ref);
-  const snap = await page.snapshot({ interactive: true });
+  const snap = await page.snapshot(snapshotOpts());
   out({ status: 'hovered', ref, snapshot: snap.snapshot, stats: snap.stats });
 }
 
@@ -384,7 +397,7 @@ async function cmdSelect(args) {
   const page = await currentPage(browser);
   await page.snapshot();
   await page.select(ref, ...values);
-  const snap = await page.snapshot({ interactive: true });
+  const snap = await page.snapshot(snapshotOpts());
   out({ status: 'selected', ref, values, snapshot: snap.snapshot, stats: snap.stats });
 }
 
@@ -396,7 +409,7 @@ async function cmdDrag(args) {
   const page = await currentPage(browser);
   await page.snapshot();
   await page.drag(from, to);
-  const snap = await page.snapshot({ interactive: true });
+  const snap = await page.snapshot(snapshotOpts());
   out({ status: 'dragged', from, to, snapshot: snap.snapshot, stats: snap.stats });
 }
 
@@ -409,7 +422,7 @@ async function cmdFill(args) {
   const page = await currentPage(browser);
   await page.snapshot();
   await page.fill(fields);
-  const snap = await page.snapshot({ interactive: true });
+  const snap = await page.snapshot(snapshotOpts());
   out({ status: 'filled', count: fields.length, snapshot: snap.snapshot, stats: snap.stats });
 }
 
@@ -419,7 +432,7 @@ async function cmdPress(args) {
   const browser = await connect();
   const page = await currentPage(browser);
   await page.press(key);
-  const snap = await page.snapshot({ interactive: true });
+  const snap = await page.snapshot(snapshotOpts());
   out({ status: 'pressed', key, snapshot: snap.snapshot, stats: snap.stats });
 }
 
@@ -430,14 +443,14 @@ async function cmdScroll(args) {
   if (ref) {
     await page.snapshot();
     await page.scrollIntoView(ref);
-    const snap = await page.snapshot({ interactive: true });
+    const snap = await page.snapshot(snapshotOpts());
     out({ status: 'scrolled', ref, snapshot: snap.snapshot, stats: snap.stats });
   } else {
     const direction = args.flags.up ? 'up' : 'down';
     const amount = Number(args.flags.up || args.flags.down || 500);
     const delta = direction === 'up' ? -amount : amount;
     await page.evaluate(`() => window.scrollBy(0, ${delta})`);
-    const snap = await page.snapshot({ interactive: true });
+    const snap = await page.snapshot(snapshotOpts());
     out({ status: 'scrolled', direction, amount, snapshot: snap.snapshot, stats: snap.stats });
   }
 }
@@ -454,7 +467,7 @@ async function cmdWait(args) {
   if (args.flags.timeout) opts.timeoutMs = Number(args.flags.timeout);
   if (args.flags['load-state']) opts.loadState = args.flags['load-state'];
   await page.waitFor(opts);
-  const snap = await page.snapshot({ interactive: true });
+  const snap = await page.snapshot(snapshotOpts());
   out({ status: 'done', snapshot: snap.snapshot, stats: snap.stats, url: await page.url() });
 }
 
@@ -471,7 +484,7 @@ async function cmdReload() {
   const browser = await connect();
   const page = await currentPage(browser);
   await page.reload();
-  const snap = await page.snapshot({ interactive: true });
+  const snap = await page.snapshot(snapshotOpts());
   out({ status: 'reloaded', snapshot: snap.snapshot, stats: snap.stats, url: await page.url() });
 }
 
@@ -479,7 +492,7 @@ async function cmdBack() {
   const browser = await connect();
   const page = await currentPage(browser);
   await page.goBack();
-  const snap = await page.snapshot({ interactive: true });
+  const snap = await page.snapshot(snapshotOpts());
   out({ status: 'navigated_back', snapshot: snap.snapshot, stats: snap.stats, url: await page.url() });
 }
 
@@ -487,7 +500,7 @@ async function cmdForward() {
   const browser = await connect();
   const page = await currentPage(browser);
   await page.goForward();
-  const snap = await page.snapshot({ interactive: true });
+  const snap = await page.snapshot(snapshotOpts());
   out({ status: 'navigated_forward', snapshot: snap.snapshot, stats: snap.stats, url: await page.url() });
 }
 

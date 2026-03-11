@@ -388,6 +388,12 @@ export function toAIFriendlyError(error: unknown, selector: string): Error {
   if (message.includes('intercepts pointer events') || message.includes('not visible') || message.includes('not receive pointer events')) {
     return new Error(`Element "${selector}" is not interactable (hidden or covered). Try scrolling it into view, closing overlays, or re-snapshotting.`);
   }
+  if (message.includes('Target page, context or browser has been closed') || message.includes('Target closed')) {
+    return new Error(`Browser page was closed. The page may have navigated or crashed. Re-open the page and take a new snapshot.`);
+  }
+  if (message.includes('Execution context was destroyed') || message.includes('frame was detached')) {
+    return new Error(`Page navigated while performing action on "${selector}". Take a new snapshot to get fresh refs for the current page.`);
+  }
   return error instanceof Error ? error : new Error(message);
 }
 
