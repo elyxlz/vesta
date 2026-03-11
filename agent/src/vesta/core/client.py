@@ -224,7 +224,7 @@ async def process_message(msg: str, *, state: vm.State, config: vm.VestaConfig, 
     return responses, state
 
 
-_SEARCH_MEMORY_DESCRIPTION = (
+_SEARCH_HISTORY_DESCRIPTION = (
     "Search past conversation memory using full-text search (SQLite FTS5). "
     "Searches ALL past conversations across sessions and days, not just the current session. "
     "Use this to recall specific past discussions, decisions, or information no longer in context.\n\n"
@@ -237,7 +237,7 @@ _SEARCH_MEMORY_DESCRIPTION = (
     "Returns messages in chronological order with timestamps and roles (user/assistant/system)."
 )
 
-_SEARCH_MEMORY_SCHEMA = {
+_SEARCH_HISTORY_SCHEMA = {
     "type": "object",
     "properties": {
         "query": {"type": "string", "description": "FTS5 search query"},
@@ -257,8 +257,8 @@ def _build_vesta_tools_server(state: vm.State, config: vm.VestaConfig) -> tp.Any
         state.pending_context = build_restart_context("self restart — memory, skills, and prompts refreshed", config)
         return {"content": [{"type": "text", "text": "Restart initiated. Session will resume with refreshed configuration."}]}
 
-    @tool("search_memory", _SEARCH_MEMORY_DESCRIPTION, _SEARCH_MEMORY_SCHEMA)
-    async def search_memory(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
+    @tool("search_history",_SEARCH_HISTORY_DESCRIPTION, _SEARCH_HISTORY_SCHEMA)
+    async def search_history(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
         if not isinstance(state.history, HistoryStore):
             return {"content": [{"type": "text", "text": "History store not available."}]}
         query = str(args["query"])
@@ -269,7 +269,7 @@ def _build_vesta_tools_server(state: vm.State, config: vm.VestaConfig) -> tp.Any
             return {"content": [{"type": "text", "text": f"Search error: {e}"}]}
         return {"content": [{"type": "text", "text": format_results(results)}]}
 
-    return create_sdk_mcp_server("vesta-tools", tools=[restart_vesta, search_memory])
+    return create_sdk_mcp_server("vesta-tools", tools=[restart_vesta, search_history])
 
 
 def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgentOptions:
