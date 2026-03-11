@@ -14,6 +14,7 @@ from rich import print_json
 import vesta.models as vm
 from vesta import logger
 from vesta.api import start_ws_server
+from vesta.core.history import open_history
 from vesta.core.init import init_skills, init_main_memory, init_prompts
 from vesta.core.loops import message_processor, monitor_loop, queue_greeting
 
@@ -151,7 +152,7 @@ async def async_main() -> None:
     logger.init("Config:")
     print_json(data=config.model_dump(mode="json"))
 
-    for path in [config.state_dir, config.notifications_dir, config.logs_dir, config.data_dir, config.conversations_dir, config.dreamer_dir]:
+    for path in [config.state_dir, config.notifications_dir, config.logs_dir, config.data_dir, config.dreamer_dir]:
         path.mkdir(parents=True, exist_ok=True)
 
     logger.setup(config.logs_dir, log_level=config.log_level)
@@ -164,6 +165,7 @@ async def async_main() -> None:
     init_skills(config)
 
     initial_state, crashed = init_state(config=config)
+    initial_state.history = open_history(config.history_db)
     logger.init("Starting main loop...")
     await run_vesta(config, state=initial_state, first_start=first_start, crashed=crashed)
 
