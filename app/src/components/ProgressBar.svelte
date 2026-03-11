@@ -45,6 +45,7 @@
     color: #807870;
     text-align: center;
     letter-spacing: 0.02em;
+    user-select: none;
     animation: msgIn 0.4s ease;
   }
 
