@@ -287,7 +287,6 @@ async def test_dreamer_queues_prompt_and_archives(tmp_path):
 
     with (
         patch("vesta.core.loops._now", return_value=fake_now),
-        patch("vesta.core.loops.archive_conversation") as mock_archive,
         patch("vesta.core.loops.build_dreamer_prompt", return_value="dreamer prompt"),
     ):
         await process_nightly_memory(queue, state=state, config=config)
@@ -298,7 +297,6 @@ async def test_dreamer_queues_prompt_and_archives(tmp_path):
     assert is_user is False
     assert state.last_dreamer_run == fake_now
     assert state.dreamer_active is True
-    mock_archive.assert_called_once()
 
 
 @pytest.mark.anyio
@@ -315,14 +313,12 @@ async def test_dreamer_skips_when_already_run_today(tmp_path):
 
     with (
         patch("vesta.core.loops._now", return_value=fake_now),
-        patch("vesta.core.loops.archive_conversation") as mock_archive,
         patch("vesta.core.loops.build_dreamer_prompt", return_value="dreamer prompt"),
     ):
         await process_nightly_memory(queue, state=state, config=config)
 
     assert queue.empty()
     assert state.dreamer_active is False
-    mock_archive.assert_not_called()
 
 
 @pytest.mark.anyio
@@ -381,3 +377,89 @@ def test_nightly_restart(tmp_path):
     assert state2.pending_context is not None
     assert "new day" in state2.pending_context
     assert "Dreamer Summary" not in state2.pending_context
+
+
+# --- History store ---
+
+
+def test_history_store_save_and_search(tmp_path):
+    from vesta.core.history import HistoryStore
+
+    store = HistoryStore(tmp_path / "test.db")
+    store.save("user", "what is the weather in paris")
+    store.save("assistant", "it is sunny in paris today")
+    store.save("user", "how about london")
+    store.save("assistant", "london is rainy as usual")
+
+    results = store.search("paris")
+    assert len(results) == 2
+    assert any("paris" in r["content"] for r in results)
+
+    results = store.search("london")
+    assert len(results) == 2
+
+    results = store.search("sunny")
+    assert len(results) == 1
+    assert results[0]["role"] == "assistant"
+
+
+def test_history_store_search_no_results(tmp_path):
+    from vesta.core.history import HistoryStore
+
+    store = HistoryStore(tmp_path / "test.db")
+    store.save("user", "hello world")
+    results = store.search("nonexistent")
+    assert results == []
+
+
+def test_history_store_search_limit(tmp_path):
+    from vesta.core.history import HistoryStore
+
+    store = HistoryStore(tmp_path / "test.db")
+    for i in range(10):
+        store.save("user", f"message number {i} about python")
+
+    results = store.search("python", limit=3)
+    assert len(results) == 3
+
+
+def test_history_store_get_range(tmp_path):
+    from vesta.core.history import HistoryStore
+
+    store = HistoryStore(tmp_path / "test.db")
+    t1 = dt.datetime(2025, 1, 1, 10, 0, 0)
+    t2 = dt.datetime(2025, 1, 2, 10, 0, 0)
+    t3 = dt.datetime(2025, 1, 3, 10, 0, 0)
+    store.save("user", "day one", timestamp=t1)
+    store.save("user", "day two", timestamp=t2)
+    store.save("user", "day three", timestamp=t3)
+
+    results = store.get_range(since=t2)
+    assert len(results) == 2
+    assert results[0]["content"] == "day two"
+
+    results = store.get_range(until=t2)
+    assert len(results) == 2
+    assert results[1]["content"] == "day two"
+
+
+def test_history_format_results():
+    from vesta.core.history import format_results
+
+    assert format_results([]) == "No results found."
+
+    results = [{"timestamp": "2025-01-01T10:00:00", "role": "user", "content": "hello"}]
+    formatted = format_results(results)
+    assert "hello" in formatted
+    assert "user" in formatted
+
+
+def test_history_store_session_id(tmp_path):
+    from vesta.core.history import HistoryStore
+
+    store = HistoryStore(tmp_path / "test.db")
+    store.save("user", "msg one", session_id="session-abc")
+    store.save("user", "msg two", session_id="session-def")
+
+    results = store.search("msg")
+    assert len(results) == 2

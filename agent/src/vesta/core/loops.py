@@ -4,7 +4,6 @@ import asyncio
 import datetime as dt
 import json
 import pathlib as pl
-import shutil
 
 import pydantic
 from claude_agent_sdk import ClaudeSDKClient, ClaudeSDKError
@@ -117,7 +116,6 @@ def build_dreamer_prompt(config: vm.VestaConfig) -> str:
         memory_path=get_memory_path(config),
         skills_dir=config.skills_dir,
         prompts_dir=config.prompts_dir,
-        conversations_dir=config.conversations_dir,
         dreamer_dir=config.dreamer_dir,
         install_root=config.install_root,
         repo_root=config.repo_root,
@@ -201,28 +199,6 @@ async def check_proactive_task(queue: asyncio.Queue[tuple[str, bool]], *, config
     await queue.put((prompt, False))
 
 
-def _session_jsonl_path(state: vm.State, config: vm.VestaConfig) -> pl.Path | None:
-    if not state.session_id:
-        return None
-    slug = str(config.state_dir).replace("/", "-")
-    path = pl.Path.home() / ".claude" / "projects" / slug / f"{state.session_id}.jsonl"
-    if path.exists():
-        return path
-    return None
-
-
-def archive_conversation(state: vm.State, config: vm.VestaConfig) -> None:
-    src = _session_jsonl_path(state, config)
-    if not src:
-        logger.dreamer("No session transcript to archive")
-        return
-
-    config.conversations_dir.mkdir(parents=True, exist_ok=True)
-    dest = config.conversations_dir / f"{_now().strftime('%Y-%m-%d_%H%M%S')}.jsonl"
-    shutil.copy2(src, dest)
-    logger.dreamer(f"Archived conversation to {dest}")
-
-
 def _trigger_nightly_restart(*, state: vm.State, config: vm.VestaConfig) -> None:
     logger.dreamer("Dreamer complete, triggering nightly restart...")
     state.session_id = None
@@ -245,7 +221,6 @@ async def process_nightly_memory(queue: asyncio.Queue[tuple[str, bool]], *, stat
     if config.nightly_memory_hour is not None and now.hour == config.nightly_memory_hour:
         if state.last_dreamer_run is None or now.date() > state.last_dreamer_run.date():
             logger.dreamer("Nightly dreamer starting...")
-            archive_conversation(state, config)
             prompt = build_dreamer_prompt(config)
             state.dreamer_active = True
             await queue.put((prompt, False))
