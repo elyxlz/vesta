@@ -1,6 +1,6 @@
 [project]
 name = "vesta"
-version = "0.1.70"
+version = "0.1.71"
 description = "Personal assistant agent that works autonomously on your behalf"
 readme = "../README.md"
 license = "MIT"
