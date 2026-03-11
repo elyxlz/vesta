@@ -37,13 +37,16 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::agents::list_agents,
             commands::agents::agent_status,
             commands::agents::create_agent,
             commands::agents::start_agent,
             commands::agents::stop_agent,
             commands::agents::restart_agent,
             commands::agents::delete_agent,
-            commands::agents::set_agent_name,
+            commands::agents::backup_agent,
+            commands::agents::restore_agent,
+            commands::agents::wait_for_ready,
             commands::agents::agent_host,
             commands::logs::stream_logs,
             commands::logs::stop_logs,

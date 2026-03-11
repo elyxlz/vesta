@@ -2,13 +2,13 @@ use super::*;
 use serde::Serialize;
 use std::io::{self, Write};
 
-const CONTAINER_NAME: &str = "vesta";
 const VESTA_IMAGE: &str = "ghcr.io/elyxlz/vesta:latest";
 const LOCAL_IMAGE_TAG: &str = "vesta:local";
 const MAX_DOCKERFILE_SEARCH_DEPTH: usize = 5;
 const CREDENTIALS_PATH: &str = "/root/.claude/.credentials.json";
 const CLAUDE_JSON_PATH: &str = "/root/.claude.json";
-const AGENT_WS_PORT: u16 = 7865;
+const BASE_WS_PORT: u16 = 7865;
+const NAME_MAX_LEN: usize = 32;
 
 #[derive(PartialEq)]
 enum ContainerStatus {
@@ -20,15 +20,91 @@ enum ContainerStatus {
 
 #[derive(Serialize)]
 struct StatusJson {
+    name: String,
     status: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     id: Option<String>,
     authenticated: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    name: Option<String>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     agent_ready: bool,
     ws_port: u16,
+    alive: bool,
+    friendly_status: &'static str,
+}
+
+#[derive(Serialize)]
+struct ListEntry {
+    name: String,
+    status: &'static str,
+    authenticated: bool,
+    agent_ready: bool,
+    ws_port: u16,
+    alive: bool,
+    friendly_status: &'static str,
+}
+
+fn container_name(name: &str) -> String {
+    format!("vesta-{}", name)
+}
+
+fn normalize_name(raw: &str) -> String {
+    let s: String = raw.trim().to_lowercase()
+        .replace(|c: char| c.is_whitespace() || c == '_', "-")
+        .chars().filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '-').collect();
+    let s = s.trim_matches('-').to_string();
+    let mut result = String::new();
+    let mut prev_hyphen = false;
+    for c in s.chars() {
+        if c == '-' {
+            if !prev_hyphen { result.push(c); }
+            prev_hyphen = true;
+        } else {
+            result.push(c);
+            prev_hyphen = false;
+        }
+    }
+    if result.len() > NAME_MAX_LEN {
+        result.truncate(NAME_MAX_LEN);
+        result = result.trim_end_matches('-').to_string();
+    }
+    result
+}
+
+fn try_validate_name(name: &str) -> Result<(), &'static str> {
+    if name.is_empty() || name.len() > NAME_MAX_LEN {
+        return Err("agent name must be 1-32 characters");
+    }
+    let valid = if name.len() == 1 {
+        name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+    } else {
+        let chars: Vec<char> = name.chars().collect();
+        let first_last_ok = (chars[0].is_ascii_lowercase() || chars[0].is_ascii_digit())
+            && (chars[chars.len() - 1].is_ascii_lowercase() || chars[chars.len() - 1].is_ascii_digit());
+        let middle_ok = chars.iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '-');
+        first_last_ok && middle_ok
+    };
+    if !valid {
+        return Err("agent name must match [a-z0-9][a-z0-9-]*[a-z0-9]");
+    }
+    Ok(())
+}
+
+fn validate_name(name: &str) {
+    if let Err(msg) = try_validate_name(name) {
+        die(msg);
+    }
+}
+
+fn prompt_name() -> String {
+    eprint!("agent name: ");
+    io::stderr().flush().ok();
+    let mut input = String::new();
+    io::stdin().read_line(&mut input).ok();
+    let name = normalize_name(&input);
+    if name.is_empty() {
+        die("agent name is required");
+    }
+    name
 }
 
 fn docker(args: &[&str]) -> process::ExitStatus {
@@ -93,8 +169,8 @@ fn ensure_docker() {
     die("docker daemon is not running. start the docker service and try again.");
 }
 
-fn container_status() -> ContainerStatus {
-    match docker_output(&["inspect", "--format", "{{.State.Status}}", CONTAINER_NAME]) {
+fn container_status(cname: &str) -> ContainerStatus {
+    match docker_output(&["inspect", "--format", "{{.State.Status}}", cname]) {
         Some(s) => match s.as_str() {
             "running" | "restarting" | "paused" => ContainerStatus::Running,
             "exited" | "created" => ContainerStatus::Stopped,
@@ -105,45 +181,34 @@ fn container_status() -> ContainerStatus {
     }
 }
 
-fn container_file_exists(container_path: &str) -> bool {
-    let src = format!("{}:{}", CONTAINER_NAME, container_path);
+fn container_file_exists(cname: &str, container_path: &str) -> bool {
+    let src = format!("{}:{}", cname, container_path);
     docker_quiet(&["cp", &src, "-"])
 }
 
-fn read_container_file(container_path: &str) -> Option<String> {
-    let tmp = std::env::temp_dir().join(format!("vesta_read_{}", std::process::id()));
-    let src = format!("{}:{}", CONTAINER_NAME, container_path);
-    if !docker_quiet(&["cp", &src, tmp.to_str().unwrap()]) {
-        return None;
-    }
-    let content = std::fs::read_to_string(&tmp).ok();
-    std::fs::remove_file(&tmp).ok();
-    content.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+fn is_authenticated(cname: &str) -> bool {
+    container_file_exists(cname, CREDENTIALS_PATH)
 }
 
-fn is_authenticated() -> bool {
-    container_file_exists(CREDENTIALS_PATH)
-}
-
-fn is_agent_ready() -> bool {
+fn is_agent_ready(cname: &str, port: u16) -> bool {
     docker_quiet(&[
-        "exec", CONTAINER_NAME, "bash", "-c",
-        &format!("echo > /dev/tcp/localhost/{}", AGENT_WS_PORT),
+        "exec", cname, "bash", "-c",
+        &format!("echo > /dev/tcp/localhost/{}", port),
     ])
 }
 
-fn ensure_exists() {
-    match container_status() {
-        ContainerStatus::NotFound => die("agent not found. create one first with: vesta setup"),
-        ContainerStatus::Dead => die("agent is in a broken state. run: vesta destroy --yes && vesta setup"),
+fn ensure_exists(cname: &str) {
+    match container_status(cname) {
+        ContainerStatus::NotFound => die(&format!("agent '{}' not found. create one first with: vesta setup", cname)),
+        ContainerStatus::Dead => die(&format!("agent '{}' is in a broken state. run: vesta destroy <name> --yes && vesta setup", cname)),
         _ => {}
     }
 }
 
-fn ensure_running() {
-    ensure_exists();
-    if container_status() != ContainerStatus::Running {
-        die("agent is not running");
+fn ensure_running(cname: &str) {
+    ensure_exists(cname);
+    if container_status(cname) != ContainerStatus::Running {
+        die(&format!("agent '{}' is not running", cname));
     }
 }
 
@@ -203,10 +268,49 @@ fn resolve_image(build: bool) -> &'static str {
     }
 }
 
-fn create_container(image: &str) {
+fn allocate_port() -> u16 {
+    let used: Vec<u16> = list_managed_containers()
+        .iter()
+        .map(|cname| get_container_port(cname))
+        .collect();
+    let mut port = BASE_WS_PORT;
+    while used.contains(&port) {
+        port += 1;
+    }
+    port
+}
+
+fn get_container_port(cname: &str) -> u16 {
+    docker_output(&[
+        "inspect", "--format", "{{index .Config.Labels \"vesta.ws_port\"}}", cname,
+    ])
+    .and_then(|s| s.parse().ok())
+    .unwrap_or(BASE_WS_PORT)
+}
+
+fn list_managed_containers() -> Vec<String> {
+    docker_output(&[
+        "ps", "-a",
+        "--filter", "label=vesta.managed=true",
+        "--format", "{{.Names}}",
+    ])
+    .unwrap_or_default()
+    .lines()
+    .filter(|l| !l.trim().is_empty())
+    .map(|l| l.trim().to_string())
+    .collect()
+}
+
+fn create_container(cname: &str, image: &str, port: u16) {
+    let ws_port_env = format!("WS_PORT={}", port);
+    let port_label = format!("vesta.ws_port={}", port);
     let args = vec![
-        "create", "--name", CONTAINER_NAME, "-it", "--privileged",
-        "--restart", "unless-stopped", "--network", "host", image,
+        "create", "--name", cname, "-it", "--privileged",
+        "--restart", "unless-stopped", "--network", "host",
+        "--label", "vesta.managed=true",
+        "--label", &port_label,
+        "-e", &ws_port_env,
+        image,
     ];
     if !docker_ok(&args) {
         die("failed to create container");
@@ -270,8 +374,6 @@ fn inject_credentials(container: &str, credentials: &str) {
         .unwrap_or_else(|e| die(&format!("failed to create temp dir: {}", e)));
     std::fs::write(tmp_dir.join(".credentials.json"), credentials)
         .unwrap_or_else(|e| die(&format!("failed to write temp credentials: {}", e)));
-    // Use trailing /. to copy contents of tmp_dir into /root/.claude/
-    // Without this, docker cp creates a subdirectory when /root/.claude/ already exists
     let src = format!("{}/.", tmp_dir.to_str().unwrap());
     let target = format!("{}:/root/.claude/", container);
     let ok = docker_ok(&["cp", &src, &target]);
@@ -282,89 +384,152 @@ fn inject_credentials(container: &str, credentials: &str) {
     docker_cp_content(container, "{\"hasCompletedOnboarding\":true}", CLAUDE_JSON_PATH);
 }
 
+fn name_from_cname(cname: &str) -> String {
+    cname.strip_prefix("vesta-").unwrap_or(cname).to_string()
+}
+
+fn status_label(cs: &ContainerStatus) -> &'static str {
+    match cs {
+        ContainerStatus::Running => "running",
+        ContainerStatus::Dead => "dead",
+        ContainerStatus::NotFound => "not_found",
+        ContainerStatus::Stopped => "stopped",
+    }
+}
+
+fn friendly_status(status: &ContainerStatus, authenticated: bool, agent_ready: bool) -> &'static str {
+    match status {
+        ContainerStatus::Running if !authenticated => "not signed in",
+        ContainerStatus::Running if agent_ready => "alive",
+        ContainerStatus::Running => "starting...",
+        ContainerStatus::Dead => "broken",
+        ContainerStatus::Stopped => "stopped",
+        ContainerStatus::NotFound => "not found",
+    }
+}
+
 pub fn run(command: Command) {
     ensure_docker();
 
     match command {
         Command::Setup { build, yes, name } => {
-            if container_status() != ContainerStatus::NotFound {
-                if !yes && !confirm("agent already exists. destroy and recreate? [y/N] ") {
+            let name = name.map(|n| normalize_name(&n)).unwrap_or_else(prompt_name);
+            validate_name(&name);
+            let cname = container_name(&name);
+
+            if container_status(&cname) != ContainerStatus::NotFound {
+                if !yes && !confirm(&format!("agent '{}' already exists. destroy and recreate? [y/N] ", name)) {
                     println!("aborted");
                     return;
                 }
                 eprintln!("replacing existing agent...");
-                docker_ok(&["rm", "-f", CONTAINER_NAME]);
+                docker_ok(&["rm", "-f", &cname]);
             }
 
             let image = resolve_image(build);
             let credentials = obtain_credentials(image);
+            let port = allocate_port();
 
-            eprintln!("creating agent...");
-            create_container(image);
-            if let Some(n) = name {
-                docker_cp_content(CONTAINER_NAME, &n, "/root/.vesta-name");
-            }
-            inject_credentials(CONTAINER_NAME, &credentials);
+            eprintln!("creating agent '{}'...", name);
+            create_container(&cname, image, port);
+            docker_cp_content(&cname, &name, "/root/.vesta-name");
+            inject_credentials(&cname, &credentials);
 
-            if !docker_ok(&["start", CONTAINER_NAME]) {
+            if !docker_ok(&["start", &cname]) {
                 die("failed to start container");
             }
 
-            eprintln!("agent is ready.");
+            eprintln!("agent '{}' is ready.", name);
             eprintln!("attaching (ctrl-q to detach)...");
-            docker_interactive(&["attach", "--detach-keys=ctrl-q", CONTAINER_NAME]);
+            docker_interactive(&["attach", "--detach-keys=ctrl-q", &cname]);
         }
 
         Command::Create { build, name } => {
-            if container_status() != ContainerStatus::NotFound {
-                die("agent already exists. destroy it first.");
+            let name = name.map(|n| normalize_name(&n)).unwrap_or_else(prompt_name);
+            validate_name(&name);
+            let cname = container_name(&name);
+
+            if container_status(&cname) != ContainerStatus::NotFound {
+                die(&format!("agent '{}' already exists. destroy it first.", name));
             }
 
             let image = resolve_image(build);
+            let port = allocate_port();
 
-            eprintln!("creating agent...");
-            create_container(image);
-            if let Some(n) = name {
-                docker_cp_content(CONTAINER_NAME, &n, "/root/.vesta-name");
-            }
-            eprintln!("created (run 'vesta auth' to authenticate, then 'vesta start')");
+            eprintln!("creating agent '{}'...", name);
+            create_container(&cname, image, port);
+            docker_cp_content(&cname, &name, "/root/.vesta-name");
+            eprintln!("created (run 'vesta auth {}' to authenticate, then 'vesta start {}')", name, name);
         }
 
-        Command::Start => {
-            ensure_exists();
-            if container_status() == ContainerStatus::Running {
-                eprintln!("already running");
-                return;
+        Command::Start { name } => {
+            match name {
+                Some(name) => {
+                    validate_name(&name);
+                    let cname = container_name(&name);
+                    ensure_exists(&cname);
+                    if container_status(&cname) == ContainerStatus::Running {
+                        eprintln!("{}: already running", name);
+                        return;
+                    }
+                    if !docker_ok(&["start", &cname]) {
+                        die(&format!("failed to start '{}'", name));
+                    }
+                    eprintln!("{}: started", name);
+                }
+                None => {
+                    let containers = list_managed_containers();
+                    if containers.is_empty() {
+                        eprintln!("no agents found. create one with: vesta setup");
+                        return;
+                    }
+                    let mut started = 0;
+                    for cname in &containers {
+                        if container_status(cname) != ContainerStatus::Running {
+                            if docker_ok(&["start", cname]) {
+                                eprintln!("{}: started", name_from_cname(cname));
+                                started += 1;
+                            } else {
+                                eprintln!("{}: failed to start", name_from_cname(cname));
+                            }
+                        }
+                    }
+                    if started == 0 {
+                        eprintln!("all agents already running");
+                    }
+                }
             }
-            if !docker_ok(&["start", CONTAINER_NAME]) {
-                die("failed to start");
-            }
-            eprintln!("started");
         }
 
-        Command::Stop => {
-            ensure_exists();
-            if !docker_ok(&["stop", CONTAINER_NAME]) {
+        Command::Stop { name } => {
+            validate_name(&name);
+            let cname = container_name(&name);
+            ensure_exists(&cname);
+            if !docker_ok(&["stop", &cname]) {
                 die("failed to stop");
             }
-            eprintln!("stopped");
+            eprintln!("{}: stopped", name);
         }
 
-        Command::Restart => {
-            ensure_exists();
-            eprintln!("restarting...");
-            if !docker_ok(&["restart", CONTAINER_NAME]) {
+        Command::Restart { name } => {
+            validate_name(&name);
+            let cname = container_name(&name);
+            ensure_exists(&cname);
+            eprintln!("{}: restarting...", name);
+            if !docker_ok(&["restart", &cname]) {
                 die("failed to restart");
             }
-            eprintln!("restarted");
+            eprintln!("{}: restarted", name);
         }
 
-        Command::Attach => {
-            ensure_running();
+        Command::Attach { name } => {
+            validate_name(&name);
+            let cname = container_name(&name);
+            ensure_running(&cname);
             let _ = process::Command::new("docker")
                 .args([
                     "exec",
-                    CONTAINER_NAME,
+                    &cname,
                     "tail",
                     "-n",
                     "200",
@@ -374,24 +539,28 @@ pub fn run(command: Command) {
                 .stderr(process::Stdio::inherit())
                 .status();
             eprintln!("\nattaching (ctrl-q to detach)...");
-            docker_interactive(&["attach", "--detach-keys=ctrl-q", CONTAINER_NAME]);
+            docker_interactive(&["attach", "--detach-keys=ctrl-q", &cname]);
         }
 
-        Command::Auth { token: credentials } => {
-            ensure_exists();
-            let image = docker_output(&["inspect", "--format", "{{.Config.Image}}", CONTAINER_NAME])
+        Command::Auth { name, token: credentials } => {
+            validate_name(&name);
+            let cname = container_name(&name);
+            ensure_exists(&cname);
+            let image = docker_output(&["inspect", "--format", "{{.Config.Image}}", &cname])
                 .unwrap_or_else(|| VESTA_IMAGE.to_string());
             let credentials = credentials.unwrap_or_else(|| obtain_credentials(&image));
-            inject_credentials(CONTAINER_NAME, &credentials);
-            eprintln!("authenticated");
+            inject_credentials(&cname, &credentials);
+            eprintln!("{}: authenticated", name);
         }
 
-        Command::Logs => {
-            ensure_running();
+        Command::Logs { name } => {
+            validate_name(&name);
+            let cname = container_name(&name);
+            ensure_running(&cname);
             let status = process::Command::new("docker")
                 .args([
                     "exec",
-                    CONTAINER_NAME,
+                    &cname,
                     "tail",
                     "-n",
                     "500",
@@ -408,98 +577,251 @@ pub fn run(command: Command) {
             }
         }
 
-        Command::Shell => {
-            ensure_running();
-            docker_interactive(&["exec", "-it", "--detach-keys=ctrl-q", CONTAINER_NAME, "bash"]);
+        Command::Shell { name } => {
+            validate_name(&name);
+            let cname = container_name(&name);
+            ensure_running(&cname);
+            docker_interactive(&["exec", "-it", "--detach-keys=ctrl-q", &cname, "bash"]);
         }
 
-        Command::Status { json } => {
-            let cs = container_status();
+        Command::Status { name, json } => {
+            validate_name(&name);
+            let cname = container_name(&name);
+            let cs = container_status(&cname);
+            let port = if cs != ContainerStatus::NotFound { get_container_port(&cname) } else { BASE_WS_PORT };
             let (status_str, id) = match cs {
                 ContainerStatus::NotFound => ("not_found", None),
                 _ => {
-                    let id = docker_output(&["inspect", "--format", "{{.Id}}", CONTAINER_NAME])
+                    let id = docker_output(&["inspect", "--format", "{{.Id}}", &cname])
                         .map(|s| s.chars().take(12).collect::<String>());
-                    let label = match cs {
-                        ContainerStatus::Running => "running",
-                        ContainerStatus::Dead => "dead",
-                        _ => "stopped",
-                    };
-                    (label, id)
+                    (status_label(&cs), id)
                 }
             };
-            let authed = cs != ContainerStatus::NotFound && is_authenticated();
-            let name = if cs != ContainerStatus::NotFound {
-                read_container_file("/root/.vesta-name")
-            } else {
-                None
-            };
-            let ready = cs == ContainerStatus::Running && is_agent_ready();
+            let authed = cs != ContainerStatus::NotFound && is_authenticated(&cname);
+            let ready = cs == ContainerStatus::Running && is_agent_ready(&cname, port);
+            let alive = cs == ContainerStatus::Running && authed;
+            let friendly = friendly_status(&cs, authed, ready);
             if json {
                 let s = StatusJson {
-                    status: status_str, id, authenticated: authed, name,
-                    agent_ready: ready, ws_port: AGENT_WS_PORT,
+                    name: name.clone(),
+                    status: status_str, id, authenticated: authed,
+                    agent_ready: ready, ws_port: port,
+                    alive, friendly_status: friendly,
                 };
                 println!("{}", serde_json::to_string(&s).unwrap());
             } else if cs == ContainerStatus::NotFound {
-                println!("no agent. run: vesta setup");
+                println!("agent '{}' not found. run: vesta setup", name);
             } else {
+                println!("name:   {}", name);
                 println!("status: {}", status_str);
                 if let Some(id) = &id {
                     println!("id:     {}", id);
                 }
-                if let Some(name) = &name {
-                    println!("name:   {}", name);
-                }
                 println!("auth:   {}", if authed { "yes" } else { "no" });
+                println!("port:   {}", port);
                 if cs == ContainerStatus::Running {
                     println!("ready:  {}", if ready { "yes" } else { "no" });
                 }
                 match cs {
                     ContainerStatus::NotFound => {}
                     ContainerStatus::Stopped | ContainerStatus::Dead => {
-                        eprintln!("\nhint: run 'vesta start' to start your agent");
+                        eprintln!("\nhint: run 'vesta start {}' to start your agent", name);
                     }
                     ContainerStatus::Running if !authed => {
-                        eprintln!("\nhint: run 'vesta auth' to sign in");
+                        eprintln!("\nhint: run 'vesta auth {}' to sign in", name);
                     }
                     ContainerStatus::Running => {
-                        eprintln!("\nhint: open http://localhost:{} in your browser", AGENT_WS_PORT);
+                        eprintln!("\nhint: open http://localhost:{} in your browser", port);
                     }
                 }
             }
         }
 
-        Command::Backup => {
-            ensure_exists();
+        Command::List { json } => {
+            let containers = list_managed_containers();
+            if containers.is_empty() && !json {
+                println!("no agents. run: vesta setup");
+            } else {
+                let entries: Vec<ListEntry> = containers.iter().map(|cname| {
+                    let cs = container_status(cname);
+                    let port = get_container_port(cname);
+                    let authed = cs != ContainerStatus::NotFound && is_authenticated(cname);
+                    let ready = cs == ContainerStatus::Running && is_agent_ready(cname, port);
+                    let alive = cs == ContainerStatus::Running && authed;
+                    let friendly = friendly_status(&cs, authed, ready);
+                    ListEntry {
+                        name: name_from_cname(cname),
+                        status: status_label(&cs),
+                        authenticated: authed,
+                        agent_ready: ready,
+                        ws_port: port,
+                        alive,
+                        friendly_status: friendly,
+                    }
+                }).collect();
+                if json {
+                    println!("{}", serde_json::to_string(&entries).unwrap());
+                } else {
+                    for e in &entries {
+                        let ready_str = if e.status == "running" {
+                            if e.agent_ready { " (ready)" } else { " (not ready)" }
+                        } else {
+                            ""
+                        };
+                        let auth_str = if e.authenticated { "" } else { " [no auth]" };
+                        println!("  {} — {}{}{}  (port {})", e.name, e.status, ready_str, auth_str, e.ws_port);
+                    }
+                }
+            }
+        }
+
+        Command::Backup { name, output } => {
+            validate_name(&name);
+            let cname = container_name(&name);
+            ensure_exists(&cname);
+
+            let was_running = container_status(&cname) == ContainerStatus::Running;
+            if was_running {
+                eprintln!("stopping agent for backup...");
+                docker_ok(&["stop", &cname]);
+            }
+
             let ts = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs();
-            let tag = format!("vesta-backup:{}", ts);
+            let backup_tag = format!("vesta-backup:{}_{}", name, ts);
+
             eprintln!("creating backup...");
-            if !docker_ok(&["commit", CONTAINER_NAME, &tag]) {
-                die("backup failed");
+            let commit_label = format!("LABEL vesta.agent_name={}", name);
+            if !docker_ok(&["commit", "--change", &commit_label, &cname, &backup_tag]) {
+                if was_running {
+                    docker_ok(&["start", &cname]);
+                }
+                die("backup commit failed");
             }
-            eprintln!("backup created: {}", tag);
+
+            eprintln!("exporting to {}...", output.display());
+
+            let mut docker_save = process::Command::new("docker")
+                .args(["save", &backup_tag])
+                .stdout(process::Stdio::piped())
+                .stderr(process::Stdio::inherit())
+                .spawn()
+                .unwrap_or_else(|_| die("failed to run docker save"));
+
+            let file = std::fs::File::create(&output)
+                .unwrap_or_else(|e| die(&format!("failed to create {}: {}", output.display(), e)));
+
+            let mut gzip = process::Command::new("gzip")
+                .stdin(docker_save.stdout.take().unwrap())
+                .stdout(file)
+                .stderr(process::Stdio::inherit())
+                .spawn()
+                .unwrap_or_else(|_| die("failed to run gzip"));
+
+            let docker_status = docker_save.wait().unwrap_or_else(|_| die("docker save failed"));
+            let gzip_status = gzip.wait().unwrap_or_else(|_| die("gzip failed"));
+
+            if !docker_status.success() || !gzip_status.success() {
+                std::fs::remove_file(&output).ok();
+                docker_ok(&["rmi", &backup_tag]);
+                if was_running {
+                    docker_ok(&["start", &cname]);
+                }
+                die("backup export failed");
+            }
+
+            docker_ok(&["rmi", &backup_tag]);
+
+            if was_running {
+                docker_ok(&["start", &cname]);
+                eprintln!("agent restarted");
+            }
+            eprintln!("backup saved to {}", output.display());
         }
 
-        Command::Destroy { yes } => {
-            ensure_exists();
-            if !yes && !confirm("destroy agent (all state lost)? [y/N] ") {
+        Command::Restore { input, name: name_override, replace } => {
+            eprintln!("loading backup from {}...", input.display());
+
+            let file = std::fs::File::open(&input)
+                .unwrap_or_else(|e| die(&format!("failed to open {}: {}", input.display(), e)));
+
+            let mut gunzip = process::Command::new("gunzip")
+                .arg("-c")
+                .stdin(file)
+                .stdout(process::Stdio::piped())
+                .stderr(process::Stdio::inherit())
+                .spawn()
+                .unwrap_or_else(|_| die("failed to run gunzip"));
+
+            let load_output = process::Command::new("docker")
+                .args(["load"])
+                .stdin(gunzip.stdout.take().unwrap())
+                .stdout(process::Stdio::piped())
+                .stderr(process::Stdio::inherit())
+                .output()
+                .unwrap_or_else(|_| die("failed to run docker load"));
+
+            let gunzip_status = gunzip.wait().unwrap_or_else(|_| die("gunzip failed"));
+            if !gunzip_status.success() || !load_output.status.success() {
+                die("failed to load backup");
+            }
+
+            let load_stdout = String::from_utf8_lossy(&load_output.stdout);
+            let loaded_image = load_stdout
+                .lines()
+                .find_map(|l| l.strip_prefix("Loaded image: "))
+                .unwrap_or_else(|| die("could not determine loaded image from docker load output"))
+                .trim()
+                .to_string();
+
+            let name_from_backup = docker_output(&[
+                "inspect", "--format", "{{index .Config.Labels \"vesta.agent_name\"}}", &loaded_image,
+            ]);
+
+            let name = name_override.unwrap_or_else(|| {
+                name_from_backup.clone()
+                    .filter(|n| !n.is_empty() && n != "<no value>")
+                    .unwrap_or_else(|| die("backup has no agent name label. use --name to specify one."))
+            });
+            validate_name(&name);
+            let cname = container_name(&name);
+
+            if container_status(&cname) != ContainerStatus::NotFound {
+                if !replace {
+                    docker_ok(&["rmi", &loaded_image]);
+                    die(&format!("agent '{}' already exists. use --replace to overwrite, or --name to pick a different name.", name));
+                }
+                eprintln!("replacing existing agent '{}'...", name);
+                docker_ok(&["rm", "-f", &cname]);
+            }
+
+            let port = allocate_port();
+            create_container(&cname, &loaded_image, port);
+
+            docker_cp_content(&cname, &name, "/root/.vesta-name");
+
+            docker_ok(&["rmi", &loaded_image]);
+
+            eprintln!("agent '{}' restored (port {}). run 'vesta start {}' to start it.", name, port, name);
+        }
+
+        Command::Destroy { name, yes } => {
+            validate_name(&name);
+            let cname = container_name(&name);
+            ensure_exists(&cname);
+            if !yes && !confirm(&format!("destroy agent '{}' (all state lost)? [y/N] ", name)) {
                 println!("aborted");
                 return;
             }
-            if !docker_ok(&["rm", "-f", CONTAINER_NAME]) {
+            if container_status(&cname) == ContainerStatus::Running {
+                docker_ok(&["stop", &cname]);
+            }
+            if !docker_ok(&["rm", "-f", &cname]) {
                 die("failed to destroy");
             }
-            eprintln!("destroyed");
-        }
-
-        Command::Name { name } => {
-            ensure_exists();
-            docker_cp_content(CONTAINER_NAME, &name, "/root/.vesta-name");
-            eprintln!("name set: {}", name);
+            eprintln!("{}: destroyed", name);
         }
 
         Command::PlatformCheck => {
@@ -532,29 +854,162 @@ pub fn run(command: Command) {
             println!("{}", s);
         }
 
-        Command::Rebuild => {
-            ensure_exists();
+        Command::Rebuild { name } => {
+            validate_name(&name);
+            let cname = container_name(&name);
+            ensure_exists(&cname);
+            let port = get_container_port(&cname);
             let ts = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs();
-            let backup_tag = format!("vesta-rebuild:{}", ts);
+            let backup_tag = format!("vesta-rebuild:{}_{}", name, ts);
 
             eprintln!("creating backup...");
-            if !docker_ok(&["commit", CONTAINER_NAME, &backup_tag]) {
+            if !docker_ok(&["commit", &cname, &backup_tag]) {
                 die("backup failed");
             }
 
             eprintln!("destroying...");
-            docker_ok(&["rm", "-f", CONTAINER_NAME]);
+            docker_ok(&["rm", "-f", &cname]);
 
             eprintln!("recreating from backup...");
-            create_container(&backup_tag);
+            create_container(&cname, &backup_tag, port);
+            docker_cp_content(&cname, &name, "/root/.vesta-name");
 
-            if !docker_ok(&["start", CONTAINER_NAME]) {
+            if !docker_ok(&["start", &cname]) {
                 die("failed to start");
             }
-            eprintln!("rebuilt and running");
+            docker_ok(&["rmi", &backup_tag]);
+            eprintln!("{}: rebuilt and running", name);
         }
+
+        Command::WaitReady { name, timeout } => {
+            validate_name(&name);
+            let cname = container_name(&name);
+            ensure_running(&cname);
+            let port = get_container_port(&cname);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout);
+            while std::time::Instant::now() < deadline {
+                if is_agent_ready(&cname, port) {
+                    eprintln!("{}: ready", name);
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
+            die(&format!("{}: not ready after {}s", name, timeout));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_simple() {
+        assert_eq!(normalize_name("MyAgent"), "myagent");
+    }
+
+    #[test]
+    fn normalize_spaces_and_underscores() {
+        assert_eq!(normalize_name("My Agent_Name"), "my-agent-name");
+    }
+
+    #[test]
+    fn normalize_special_chars() {
+        assert_eq!(normalize_name("hello!@#world"), "helloworld");
+    }
+
+    #[test]
+    fn normalize_leading_trailing_hyphens() {
+        assert_eq!(normalize_name("--test--"), "test");
+    }
+
+    #[test]
+    fn normalize_multiple_hyphens() {
+        assert_eq!(normalize_name("a---b"), "a-b");
+    }
+
+    #[test]
+    fn normalize_whitespace() {
+        assert_eq!(normalize_name("  hello  "), "hello");
+    }
+
+    #[test]
+    fn normalize_empty() {
+        assert_eq!(normalize_name(""), "");
+    }
+
+    #[test]
+    fn normalize_all_special() {
+        assert_eq!(normalize_name("!!!"), "");
+    }
+
+    #[test]
+    fn normalize_truncates_long_name() {
+        let long = "a".repeat(50);
+        let result = normalize_name(&long);
+        assert_eq!(result.len(), NAME_MAX_LEN);
+    }
+
+    #[test]
+    fn normalize_truncate_strips_trailing_hyphen() {
+        let input = format!("{}--b", "a".repeat(31));
+        let result = normalize_name(&input);
+        assert!(!result.ends_with('-'));
+        assert!(result.len() <= NAME_MAX_LEN);
+    }
+
+    #[test]
+    fn validate_ok() {
+        assert!(try_validate_name("hello").is_ok());
+        assert!(try_validate_name("a").is_ok());
+        assert!(try_validate_name("test-agent").is_ok());
+        assert!(try_validate_name("a1").is_ok());
+        assert!(try_validate_name("123").is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_empty() {
+        assert!(try_validate_name("").is_err());
+    }
+
+    #[test]
+    fn validate_rejects_uppercase() {
+        assert!(try_validate_name("Hello").is_err());
+    }
+
+    #[test]
+    fn validate_rejects_leading_hyphen() {
+        assert!(try_validate_name("-hello").is_err());
+    }
+
+    #[test]
+    fn validate_rejects_trailing_hyphen() {
+        assert!(try_validate_name("hello-").is_err());
+    }
+
+    #[test]
+    fn validate_rejects_too_long() {
+        let long = "a".repeat(NAME_MAX_LEN + 1);
+        assert!(try_validate_name(&long).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_special_chars() {
+        assert!(try_validate_name("hello world").is_err());
+        assert!(try_validate_name("hello_world").is_err());
+    }
+
+    #[test]
+    fn container_name_roundtrip() {
+        assert_eq!(name_from_cname(&container_name("test")), "test");
+        assert_eq!(name_from_cname(&container_name("my-agent")), "my-agent");
+    }
+
+    #[test]
+    fn name_from_cname_no_prefix() {
+        assert_eq!(name_from_cname("random"), "random");
     }
 }

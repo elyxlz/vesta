@@ -1,25 +1,28 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
-  import { agent, agentName, agentState, resetReconnect } from "../lib/stores";
-  import { setPort } from "../lib/ws";
+  import type { AgentConnection } from "../lib/ws";
   import { agentStatus, startAgent, stopAgent, restartAgent, deleteAgent, authenticate } from "../lib/api";
-  import type { AgentStatus } from "../lib/types";
+  import type { AgentStatus, AgentActivityState } from "../lib/types";
 
   let {
+    name,
+    connection,
     onChat,
     onConsole,
     onDestroyed,
-    onReady,
+    onBack,
   }: {
+    name: string;
+    connection: AgentConnection;
     onChat: () => void;
     onConsole: () => void;
     onDestroyed: () => void;
-    onReady: (ready: boolean) => void;
+    onBack: () => void;
   } = $props();
 
-  let status = $state<AgentStatus>($agent?.status ?? "unknown");
-  let authenticated = $state($agent?.authenticated ?? false);
-  let agentReady = $state($agent?.agent_ready ?? false);
+  let status = $state<AgentStatus>("unknown");
+  let authenticated = $state(false);
+  let agentReady = $state(false);
   let confirming = $state(false);
   let menuOpen = $state(false);
   let hovered = $state(false);
@@ -39,6 +42,10 @@
   let rafId = 0;
   const LERP = 0.015;
   const SNAP = 0.5;
+
+  let agentStateVal = $state<AgentActivityState>("idle");
+  const conn = connection;
+  const unsubAgentState = (conn.agentState as any).subscribe((v: AgentActivityState) => { agentStateVal = v; });
 
   function orbLoop() {
     if (!orbEl) { rafId = 0; return; }
@@ -79,14 +86,10 @@
 
   async function syncStatus() {
     try {
-      const info = await agentStatus();
+      const info = await agentStatus(name);
       status = info.status;
       authenticated = info.authenticated;
       agentReady = info.agent_ready;
-      agent.set(info);
-      if (info.ws_port) setPort(info.ws_port);
-      if (info.name) agentName.set(info.name);
-      onReady(info.agent_ready);
       if (errorMsg) errorMsg = "";
     } catch {
       status = "unknown";
@@ -127,6 +130,7 @@
     if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
     document.removeEventListener("click", onDocClick);
     document.removeEventListener("keydown", onKeydown);
+    unsubAgentState();
   });
 
   async function toggleRun() {
@@ -136,10 +140,10 @@
     operation = running ? "stopping" : "starting";
     try {
       if (wasStopping) {
-        await stopAgent();
+        await stopAgent(name);
       } else {
-        await startAgent();
-        resetReconnect();
+        await startAgent(name);
+        connection.resetReconnect();
       }
       await syncStatus();
     } catch (e: any) {
@@ -158,8 +162,7 @@
     errorMsg = "";
     operation = "deleting";
     try {
-      await stopAgent().catch(() => {});
-      await deleteAgent();
+      await deleteAgent(name);
       onDestroyed();
     } catch (e: any) {
       errorMsg = e?.message || "failed to delete";
@@ -178,13 +181,13 @@
     errorMsg = "";
     operation = "authenticating";
     try {
-      await authenticate();
+      await authenticate(name);
       if (running) {
-        await restartAgent();
+        await restartAgent(name);
       } else {
-        await startAgent();
+        await startAgent(name);
       }
-      resetReconnect();
+      connection.resetReconnect();
       await syncStatus();
     } catch (e: any) {
       errorMsg = e?.message || "sign in failed";
@@ -208,6 +211,11 @@
   role="group"
   aria-label="Controls"
 >
+  <button class="back-btn" onclick={onBack} aria-label="back" data-tip="back">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="15 18 9 12 15 6"/>
+    </svg>
+  </button>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="creature-area"
@@ -216,7 +224,7 @@
     onpointerleave={onOrbLeave}
     onpointermove={onOrbMove}
   >
-    <div class="orb-container" bind:this={orbEl} class:alive={fullyAlive} class:booting={operational && !agentReady} class:dead={(!alive && !starting && !authenticating) || deleting || dead} class:stopping class:starting class:authenticating class:deleting class:thinking={fullyAlive && $agentState === 'thinking'} class:tool-use={fullyAlive && $agentState === 'tool_use'}>
+    <div class="orb-container" bind:this={orbEl} class:alive={fullyAlive} class:booting={operational && !agentReady} class:dead={(!alive && !starting && !authenticating) || deleting || dead} class:stopping class:starting class:authenticating class:deleting class:thinking={fullyAlive && agentStateVal === 'thinking'} class:tool-use={fullyAlive && agentStateVal === 'tool_use'}>
       <div class="orb-glow"></div>
       <div class="orb-body">
         <div class="orb-highlight"></div>
@@ -226,7 +234,7 @@
     </div>
 
     <div class="label">
-      <span class="name">{$agentName}</span>
+      <span class="name">{name}</span>
       <span class="status" class:alive={fullyAlive} class:error={!!errorMsg} title={errorMsg || ""}>
         {errorMsg ? errorMsg : deleting ? "deleting..." : stopping ? "stopping..." : starting ? "starting..." : authenticating ? "signing in..." : fullyAlive ? "alive" : operational ? "waking up..." : running ? "not signed in" : dead ? "broken — delete and recreate" : "stopped"}
       </span>
@@ -275,12 +283,51 @@
 
 <style>
   .agent-view {
+    position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
     width: 100%;
     height: 100%;
     animation: viewIn 0.6s var(--spring);
+  }
+
+  .back-btn {
+    position: absolute;
+    top: 4px;
+    left: 8px;
+    z-index: 10;
+    width: 44px;
+    height: 44px;
+    border: none;
+    border-radius: 8px;
+    corner-shape: squircle;
+    background: transparent;
+    color: rgba(0, 0, 0, 0.2);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s var(--spring-bouncy);
+  }
+
+  .back-btn:hover {
+    background: rgba(0, 0, 0, 0.04);
+    color: rgba(0, 0, 0, 0.45);
+  }
+
+  .back-btn:active {
+    transform: scale(0.97);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .back-btn {
+      color: rgba(255, 255, 255, 0.25);
+    }
+    .back-btn:hover {
+      background: rgba(255, 255, 255, 0.06);
+      color: rgba(255, 255, 255, 0.6);
+    }
   }
 
   @keyframes viewIn {

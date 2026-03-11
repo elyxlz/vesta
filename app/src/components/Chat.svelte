@@ -1,13 +1,12 @@
 <script lang="ts">
   import { onDestroy, tick } from "svelte";
-  import { messages, connected, agentState } from "../lib/stores";
-  import { send } from "../lib/ws";
+  import type { AgentConnection } from "../lib/ws";
   import { linkify } from "../lib/linkify";
   import { createAutoScroller } from "../lib/scroll";
   import "../styles/panel.css";
-  import type { VestaEvent } from "../lib/types";
+  import type { VestaEvent, AgentActivityState } from "../lib/types";
 
-  let { name, onBack }: { name: string; onBack: () => void } = $props();
+  let { name, connection, onBack }: { name: string; connection: AgentConnection; onBack: () => void } = $props();
 
   type Line = { id: number; text: string; kind: string; time: string };
   const MAX_MESSAGES = 5000;
@@ -21,6 +20,13 @@
   let wasConnected = $state(false);
   let suppressAnim = $state(false);
   const scroller = createAutoScroller(() => outputEl);
+
+  let connectedVal = $state(false);
+  let agentStateVal = $state<AgentActivityState>("idle");
+
+  const conn = connection;
+  const unsubConnected = (conn.connected as any).subscribe((v: boolean) => { connectedVal = v; });
+  const unsubAgentState = (conn.agentState as any).subscribe((v: AgentActivityState) => { agentStateVal = v; });
 
   function fmtTime(iso?: string) {
     if (!iso) return "";
@@ -44,7 +50,7 @@
 
   let pendingUserTexts = new Map<string, number>();
 
-  const unsubMessages = messages.subscribe((evts) => {
+  const unsubMessages = (conn.messages as any).subscribe((evts: VestaEvent[]) => {
     if (evts !== lastArray) {
       lines = [];
       nextId = 0;
@@ -74,7 +80,7 @@
   });
 
   $effect(() => {
-    if ($connected) {
+    if (connectedVal) {
       wasConnected = true;
       tick().then(() => inputEl?.focus());
     }
@@ -82,12 +88,14 @@
 
   onDestroy(() => {
     unsubMessages();
+    unsubConnected();
+    unsubAgentState();
   });
 
   function handleSend() {
     const msg = input.trim();
     if (!msg) return;
-    if (send(msg)) {
+    if (connection.send(msg)) {
       pendingUserTexts.set(msg, (pendingUserTexts.get(msg) ?? 0) + 1);
       lines.push({ id: nextId++, text: `> ${msg}`, kind: "user", time: fmtTime(new Date().toISOString()) });
       lines = lines;
@@ -116,12 +124,12 @@
     inputEl.style.height = Math.min(inputEl.scrollHeight, 120) + "px";
   }
 
-  let thinking = $derived($agentState === "thinking" || $agentState === "tool_use");
+  let thinking = $derived(agentStateVal === "thinking" || agentStateVal === "tool_use");
 
   let stableConnected = $state(false);
   let disconnectTimer: ReturnType<typeof setTimeout> | null = null;
   $effect(() => {
-    if ($connected) {
+    if (connectedVal) {
       if (disconnectTimer) { clearTimeout(disconnectTimer); disconnectTimer = null; }
       stableConnected = true;
     } else {
@@ -141,7 +149,7 @@
     </button>
     <div class="topbar-info">
       <span class="title">{name}</span>
-      <span class="dot" class:connected={stableConnected} class:thinking title={!stableConnected ? "disconnected" : thinking ? ($agentState === "tool_use" ? "using a tool" : "thinking") : "connected"}></span>
+      <span class="dot" class:connected={stableConnected} class:thinking title={!stableConnected ? "disconnected" : thinking ? (agentStateVal === "tool_use" ? "using a tool" : "thinking") : "connected"}></span>
     </div>
     <button class="tool-toggle" class:active={showTools} onclick={() => { showTools = !showTools; tick().then(() => { if (outputEl) outputEl.scrollTop = outputEl.scrollHeight; }); }} aria-label="show tool activity" data-tip={showTools ? "hide tools" : "show tools"}>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -162,21 +170,21 @@
     {#if lines.length === 0}
       <div class="empty-state">
         <div class="empty-dots"><span></span><span></span><span></span></div>
-        <span class="empty-label">{$connected ? `${name} is listening. say something.` : "connecting..."}</span>
+        <span class="empty-label">{connectedVal ? `${name} is listening. say something.` : "connecting..."}</span>
       </div>
     {/if}
   </div>
 
-  <div class="reconnect-bar" class:visible={!$connected && wasConnected}>reconnecting...</div>
+  <div class="reconnect-bar" class:visible={!connectedVal && wasConnected}>reconnecting...</div>
 
   <form class="input-bar" onsubmit={(e) => { e.preventDefault(); handleSend(); }}>
     <span class="prompt-char">&gt;</span>
     <textarea
       rows="1"
-      placeholder={$connected ? "send a message..." : "connecting..."}
+      placeholder={connectedVal ? "send a message..." : "connecting..."}
       bind:value={input}
       bind:this={inputEl}
-      disabled={!$connected}
+      disabled={!connectedVal}
       oninput={resizeInput}
       onkeydown={handleKeydown}
     ></textarea>

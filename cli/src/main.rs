@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand};
 use std::io::{BufRead, Write};
+use std::path::PathBuf;
 use std::process;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -62,7 +63,7 @@ fn run_passthrough(mut child: process::Child) -> process::ExitStatus {
 }
 
 #[derive(Parser)]
-#[command(name = "vesta", version, about = "manage your vesta agent")]
+#[command(name = "vesta", version, about = "manage your vesta agents")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
@@ -78,58 +79,110 @@ enum Command {
         /// Skip confirmation prompts
         #[arg(long, short)]
         yes: bool,
-        /// Set the agent's display name
+        /// Agent name (prompted interactively if omitted)
         #[arg(long)]
         name: Option<String>,
     },
-    /// Create the agent container (without starting or authenticating)
+    /// Create an agent container (without starting or authenticating)
     Create {
         /// Build the image locally instead of pulling
         #[arg(long)]
         build: bool,
-        /// Set the agent's display name
+        /// Agent name (prompted interactively if omitted)
         #[arg(long)]
         name: Option<String>,
     },
-    /// Start the agent
-    Start,
-    /// Stop the agent
-    Stop,
-    /// Restart the agent
-    Restart,
-    /// Attach to the agent's main process
-    Attach,
-    /// Authenticate Claude
+    /// Start an agent (or all agents if no name given)
+    Start {
+        /// Agent name (starts all if omitted)
+        name: Option<String>,
+    },
+    /// Stop an agent
+    Stop {
+        /// Agent name
+        name: String,
+    },
+    /// Restart an agent
+    Restart {
+        /// Agent name
+        name: String,
+    },
+    /// Attach to an agent's main process
+    Attach {
+        /// Agent name
+        name: String,
+    },
+    /// Authenticate Claude for an agent
     Auth {
+        /// Agent name
+        name: String,
         /// Provide a token directly (skip interactive flow)
         #[arg(long)]
         token: Option<String>,
     },
     /// Tail agent logs
-    Logs,
-    /// Open a shell inside the agent
-    Shell,
+    Logs {
+        /// Agent name
+        name: String,
+    },
+    /// Open a shell inside an agent
+    Shell {
+        /// Agent name
+        name: String,
+    },
     /// Show agent status
     Status {
+        /// Agent name
+        name: String,
         /// Output as JSON
         #[arg(long)]
         json: bool,
     },
-    /// Create a snapshot backup
-    Backup,
-    /// Destroy the agent (irreversible)
+    /// Export an agent to a backup file
+    Backup {
+        /// Agent name
+        name: String,
+        /// Output file path (.tar.gz)
+        output: PathBuf,
+    },
+    /// Import an agent from a backup file
+    Restore {
+        /// Input backup file path (.tar.gz)
+        input: PathBuf,
+        /// Override agent name from backup
+        #[arg(long)]
+        name: Option<String>,
+        /// Replace existing agent with same name
+        #[arg(long)]
+        replace: bool,
+    },
+    /// Destroy an agent (irreversible)
     Destroy {
+        /// Agent name
+        name: String,
         /// Skip confirmation prompt
         #[arg(long, short)]
         yes: bool,
     },
-    /// Set the agent's display name
-    Name {
-        /// The name to set
+    /// Snapshot, destroy, recreate, restore auth
+    Rebuild {
+        /// Agent name
         name: String,
     },
-    /// Snapshot, destroy, recreate, restore auth
-    Rebuild,
+    /// Wait for agent to become ready
+    WaitReady {
+        /// Agent name
+        name: String,
+        /// Timeout in seconds
+        #[arg(long, default_value = "30")]
+        timeout: u64,
+    },
+    /// List all agents
+    List {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Check platform readiness (WSL on Windows, VM on macOS)
     PlatformCheck,
     /// Install platform prerequisites (WSL on Windows)
@@ -149,9 +202,8 @@ fn print_welcome() {
     println!("vesta — your personal AI assistant");
     println!();
     println!("Quick start:");
-    println!("  vesta setup        Create agent, authenticate, and start");
-    println!("  vesta start        Start your agent");
-    println!("  vesta status       Check agent status");
+    println!("  vesta setup        Create an agent, authenticate, and start");
+    println!("  vesta list         List all agents");
     println!();
     println!("Run 'vesta --help' for all commands.");
 }

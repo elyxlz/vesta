@@ -1,20 +1,23 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { agent, agentName } from "./lib/stores";
-  import { connect, disconnect } from "./lib/ws";
-  import { agentStatus } from "./lib/api";
+  import { listAgents } from "./lib/api";
+  import { createAgentConnection, type AgentConnection } from "./lib/ws";
   import Onboarding from "./components/Onboarding.svelte";
   import AgentView from "./components/AgentView.svelte";
   import Chat from "./components/Chat.svelte";
   import Console from "./components/Console.svelte";
+  import GridView from "./components/GridView.svelte";
 
-  let view = $state<"loading" | "onboarding" | "home" | "chat" | "console">("loading");
+  type View = "loading" | "grid" | "onboarding" | "agent-home" | "agent-chat" | "agent-console";
+
+  let view = $state<View>("loading");
   let ready = $state(false);
   let transitioning = $state(false);
-  let wsActive = false;
+  let selectedAgent = $state<{ name: string; wsPort: number } | null>(null);
+  let agentConnection = $state<AgentConnection | null>(null);
 
-  async function setView(next: typeof view) {
+  async function setView(next: View) {
     if (next === view) return;
     transitioning = true;
     await new Promise((r) => setTimeout(r, 150));
@@ -22,28 +25,16 @@
     transitioning = false;
   }
 
-  function ensureWs(needed: boolean) {
-    if (needed && !wsActive) {
-      connect();
-      wsActive = true;
-    } else if (!needed && wsActive) {
-      disconnect();
-      wsActive = false;
-    }
-  }
-
   const appWindow = getCurrentWindow();
 
   onMount(async () => {
     await new Promise((r) => setTimeout(r, 400));
     try {
-      const info = await agentStatus();
-      if (info.status === "not_found") {
+      const agents = await listAgents();
+      if (agents.length === 0) {
         view = "onboarding";
       } else {
-        agent.set(info);
-        if (info.name) agentName.set(info.name);
-        view = "home";
+        view = "grid";
       }
     } catch {
       view = "onboarding";
@@ -51,21 +42,37 @@
     ready = true;
   });
 
-  onDestroy(() => { ensureWs(false); });
+  function clearConnection() {
+    agentConnection?.disconnect();
+    agentConnection = null;
+    selectedAgent = null;
+  }
 
-  function handleOnboardingComplete(name: string) {
-    agentName.set(name);
-    ensureWs(true);
-    setView("chat");
+  onDestroy(clearConnection);
+
+  function handleSelectAgent(name: string, wsPort: number) {
+    agentConnection?.disconnect();
+    selectedAgent = { name, wsPort };
+    agentConnection = createAgentConnection(wsPort);
+    agentConnection.connect();
+    setView("agent-home");
+  }
+
+  function handleBackToGrid() {
+    clearConnection();
+    setView("grid");
   }
 
   function handleDestroyed() {
-    ensureWs(false);
-    agent.set(null);
-    setView("onboarding");
+    clearConnection();
+    setView("grid");
   }
 
-  let isDark = $derived(view === "console" || view === "chat");
+  function handleOnboardingComplete(_name: string) {
+    setView("grid");
+  }
+
+  let isDark = $derived(view === "agent-console" || view === "agent-chat");
 
   let tipText = $state("");
   let tipX = $state(0);
@@ -113,24 +120,29 @@
         <div class="logo-mark">v</div>
         <span class="loading-label">loading...</span>
       </div>
+    {:else if view === "grid"}
+      <GridView onSelect={handleSelectAgent} onCreate={() => setView("onboarding")} />
     {:else if view === "onboarding"}
       <Onboarding onComplete={handleOnboardingComplete} />
-    {:else if view === "home"}
+    {:else if view === "agent-home" && selectedAgent && agentConnection}
       <AgentView
-        onChat={() => setView("chat")}
-        onConsole={() => setView("console")}
+        name={selectedAgent.name}
+        connection={agentConnection}
+        onChat={() => setView("agent-chat")}
+        onConsole={() => setView("agent-console")}
         onDestroyed={handleDestroyed}
-        onReady={ensureWs}
+        onBack={handleBackToGrid}
       />
-    {:else if view === "chat"}
+    {:else if view === "agent-chat" && selectedAgent && agentConnection}
       <Chat
-        name={$agentName}
-        onBack={() => setView("home")}
+        name={selectedAgent.name}
+        connection={agentConnection}
+        onBack={() => setView("agent-home")}
       />
-    {:else if view === "console"}
+    {:else if view === "agent-console" && selectedAgent}
       <Console
-        name={$agentName}
-        onBack={() => setView("home")}
+        name={selectedAgent.name}
+        onBack={() => setView("agent-home")}
       />
     {/if}
   </main>

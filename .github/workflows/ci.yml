@@ -223,19 +223,32 @@ jobs:
         run: |
           set -euo pipefail
           CLI="cli-extract/vesta"
+          AGENT="ci-test"
 
-          assert_status() {
+          assert_agent_status() {
+            local agent="$1"; shift
             local s
-            s=$("$CLI" status --json)
+            s=$("$CLI" status "$agent" --json)
             echo "$s"
             for expr in "$@"; do
               echo "$s" | jq -e "$expr" || { echo "FAIL: $expr"; exit 1; }
             done
           }
 
+          assert_status() {
+            assert_agent_status "$AGENT" "$@"
+          }
+
           cleanup() {
             echo "=== Cleanup ==="
-            "$CLI" destroy --yes 2>/dev/null || true
+            "$CLI" destroy ci-test --yes 2>/dev/null || true
+            "$CLI" destroy ci-test2 --yes 2>/dev/null || true
+            "$CLI" destroy ci-restored --yes 2>/dev/null || true
+            "$CLI" destroy my-test-agent --yes 2>/dev/null || true
+            "$CLI" destroy ci-wait-test --yes 2>/dev/null || true
+            "$CLI" destroy ci-destroy-test --yes 2>/dev/null || true
+            "$CLI" destroy ci-friendly --yes 2>/dev/null || true
+            "$CLI" destroy ci-status-test --yes 2>/dev/null || true
           }
           trap cleanup EXIT
 
@@ -246,11 +259,22 @@ jobs:
           echo "=== status before create ==="
           assert_status '.status == "not_found"'
 
+          echo "=== list before create ==="
+          LIST=$("$CLI" list --json)
+          echo "$LIST"
+          echo "$LIST" | jq -e 'length == 0' || { echo "FAIL: list should be empty"; exit 1; }
+
           echo "=== create with name ==="
-          "$CLI" create --name "ci-test-agent"
+          "$CLI" create --name ci-test
 
           echo "=== status after create ==="
-          assert_status '.status == "stopped" or .status == "created"' '.name == "ci-test-agent"'
+          assert_status '.status == "stopped" or .status == "created"' '.name == "ci-test"'
+
+          echo "=== list after create ==="
+          LIST=$("$CLI" list --json)
+          echo "$LIST"
+          echo "$LIST" | jq -e 'length == 1' || { echo "FAIL: list should have 1 entry"; exit 1; }
+          echo "$LIST" | jq -e '.[0].name == "ci-test"' || { echo "FAIL: list entry name"; exit 1; }
 
           echo "=== container image sanity ==="
           docker run --rm --entrypoint sh ghcr.io/elyxlz/vesta:latest -c "claude --version"
@@ -265,44 +289,156 @@ jobs:
           echo "auth URL found"
 
           echo "=== auth with token ==="
-          "$CLI" auth --token '{"claudeAiOauth":{"accessToken":"ci-test","refreshToken":"ci-test","expiresAt":"2099-01-01T00:00:00Z"}}'
+          "$CLI" auth "$AGENT" --token '{"claudeAiOauth":{"accessToken":"ci-test","refreshToken":"ci-test","expiresAt":"2099-01-01T00:00:00Z"}}'
 
           echo "=== verify authenticated ==="
           assert_status '.authenticated == true'
 
           echo "=== start ==="
-          "$CLI" start
+          "$CLI" start "$AGENT"
           assert_status '.status == "running"'
 
           echo "=== verify credential file in container ==="
-          CREDS=$(docker exec vesta cat /root/.claude/.credentials.json)
+          CREDS=$(docker exec vesta-ci-test cat /root/.claude/.credentials.json)
           echo "$CREDS" | jq -e '.claudeAiOauth.accessToken == "ci-test"' || { echo "FAIL: credentials not injected correctly"; exit 1; }
           echo "credentials verified"
 
           echo "=== stop ==="
-          "$CLI" stop
+          "$CLI" stop "$AGENT"
           assert_status '.status != "running"'
 
           echo "=== restart ==="
-          "$CLI" start
-          "$CLI" restart
+          "$CLI" start "$AGENT"
+          "$CLI" restart "$AGENT"
           assert_status '.status == "running"'
 
-          echo "=== rename ==="
-          "$CLI" name "renamed-agent"
-          assert_status '.name == "renamed-agent"'
-
           echo "=== backup ==="
-          "$CLI" backup
+          "$CLI" backup "$AGENT" /tmp/test-backup.tar.gz
+          test -f /tmp/test-backup.tar.gz || { echo "FAIL: backup file not created"; exit 1; }
+          echo "backup file created"
 
           echo "=== rebuild preserves auth ==="
-          "$CLI" rebuild
+          "$CLI" rebuild "$AGENT"
           assert_status '.status == "running"' '.authenticated == true'
           echo "rebuild preserved credentials"
 
           echo "=== destroy ==="
-          "$CLI" destroy --yes
+          "$CLI" destroy "$AGENT" --yes
           assert_status '.status == "not_found"'
+
+          echo "=== restore from backup ==="
+          "$CLI" restore /tmp/test-backup.tar.gz --name ci-test
+          assert_status '.status == "stopped" or .status == "created"' '.name == "ci-test"'
+
+          echo "=== restore conflict (should fail) ==="
+          if "$CLI" restore /tmp/test-backup.tar.gz --name ci-test 2>/dev/null; then
+            echo "FAIL: restore should fail when agent already exists"
+            exit 1
+          fi
+          echo "restore conflict correctly rejected"
+
+          echo "=== restore with --replace ==="
+          "$CLI" restore /tmp/test-backup.tar.gz --name ci-test --replace
+          assert_status '.status == "stopped" or .status == "created"' '.name == "ci-test"'
+          echo "restore --replace succeeded"
+
+          echo "=== restore with different name ==="
+          "$CLI" restore /tmp/test-backup.tar.gz --name ci-restored
+          assert_agent_status ci-restored '.status == "stopped" or .status == "created"' '.name == "ci-restored"'
+          echo "restore to different name succeeded"
+
+          echo "=== multi-agent: create second agent ==="
+          "$CLI" create --name ci-test2
+
+          echo "=== multi-agent: list shows all agents ==="
+          LIST=$("$CLI" list --json)
+          echo "$LIST"
+          echo "$LIST" | jq -e 'length == 3' || { echo "FAIL: list should have 3 entries (ci-test, ci-test2, ci-restored)"; exit 1; }
+          echo "list shows 3 agents"
+
+          echo "=== multi-agent: unique ports ==="
+          PORT1=$(echo "$LIST" | jq -r '.[] | select(.name == "ci-test") | .ws_port')
+          PORT2=$(echo "$LIST" | jq -r '.[] | select(.name == "ci-test2") | .ws_port')
+          PORT3=$(echo "$LIST" | jq -r '.[] | select(.name == "ci-restored") | .ws_port')
+          echo "ports: ci-test=$PORT1 ci-test2=$PORT2 ci-restored=$PORT3"
+          if [ "$PORT1" = "$PORT2" ] || [ "$PORT1" = "$PORT3" ] || [ "$PORT2" = "$PORT3" ]; then
+            echo "FAIL: agents have duplicate ports"
+            exit 1
+          fi
+          echo "all ports unique"
+
+          echo "=== multi-agent: start all ==="
+          "$CLI" start
+          assert_agent_status ci-test '.status == "running"'
+          assert_agent_status ci-test2 '.status == "running"'
+          assert_agent_status ci-restored '.status == "running"'
+          echo "start-all started all agents"
+
+          echo "=== multi-agent: stop one, start-all skips running ==="
+          "$CLI" stop ci-test2
+          assert_agent_status ci-test2 '.status != "running"'
+          "$CLI" start
+          assert_agent_status ci-test '.status == "running"'
+          assert_agent_status ci-test2 '.status == "running"'
+          assert_agent_status ci-restored '.status == "running"'
+          echo "start-all restarted only stopped agent"
+
+          echo "=== multi-agent: independent status ==="
+          "$CLI" stop ci-test
+          assert_agent_status ci-test '.status != "running"'
+          assert_agent_status ci-test2 '.status == "running"'
+          echo "agents have independent status"
+
+          echo "=== name normalization ==="
+          "$CLI" create --name "My Test Agent"
+          assert_agent_status my-test-agent '.name == "my-test-agent"'
+          "$CLI" destroy my-test-agent --yes
+          echo "name normalization works"
+
+          echo "=== name validation: empty ==="
+          if "$CLI" create --name "" 2>/dev/null; then
+            echo "FAIL: empty name should be rejected"; exit 1
+          fi
+          echo "empty name correctly rejected"
+
+          echo "=== wait-ready (timeout without auth) ==="
+          "$CLI" create --name ci-wait-test
+          "$CLI" start ci-wait-test
+          if "$CLI" wait-ready ci-wait-test --timeout 3 2>/dev/null; then
+            echo "FAIL: wait-ready should timeout without auth"; exit 1
+          fi
+          echo "wait-ready timeout works"
+          "$CLI" destroy ci-wait-test --yes
+
+          echo "=== destroy auto-stops running container ==="
+          "$CLI" create --name ci-destroy-test
+          "$CLI" auth ci-destroy-test --token '{"claudeAiOauth":{"accessToken":"ci-test","refreshToken":"ci-test","expiresAt":"2099-01-01T00:00:00Z"}}'
+          "$CLI" start ci-destroy-test
+          assert_agent_status ci-destroy-test '.status == "running"'
+          "$CLI" destroy ci-destroy-test --yes
+          assert_agent_status ci-destroy-test '.status == "not_found"'
+          echo "destroy auto-stopped and removed"
+
+          echo "=== friendly_status in list ==="
+          "$CLI" create --name ci-friendly
+          LIST=$("$CLI" list --json)
+          echo "$LIST" | jq -e '.[] | select(.name == "ci-friendly") | .friendly_status == "stopped"' || { echo "FAIL: friendly_status should be stopped"; exit 1; }
+          echo "$LIST" | jq -e '.[] | select(.name == "ci-friendly") | .alive == false' || { echo "FAIL: alive should be false"; exit 1; }
+          "$CLI" destroy ci-friendly --yes
+          echo "friendly_status and alive fields work"
+
+          echo "=== status includes alive and friendly_status ==="
+          "$CLI" create --name ci-status-test
+          STATUS=$("$CLI" status ci-status-test --json)
+          echo "$STATUS" | jq -e '.alive == false' || { echo "FAIL: alive should be false when stopped"; exit 1; }
+          echo "$STATUS" | jq -e '.friendly_status == "stopped"' || { echo "FAIL: friendly_status should be stopped"; exit 1; }
+          "$CLI" destroy ci-status-test --yes
+          echo "status fields work"
+
+          echo "=== cleanup extra agents ==="
+          "$CLI" destroy ci-test2 --yes
+          "$CLI" destroy ci-restored --yes
+          "$CLI" destroy ci-test --yes
 
           echo "=== all tests passed ==="
 
@@ -334,10 +470,10 @@ jobs:
           "$CLI" --version
           "$CLI" --help
 
-          echo "=== status without VM ==="
-          STATUS=$("$CLI" status --json)
-          echo "$STATUS"
-          echo "$STATUS" | jq -e '.status'
+          echo "=== list without VM ==="
+          LIST=$("$CLI" list --json)
+          echo "$LIST"
+          echo "$LIST" | jq -e 'length == 0'
 
           echo "=== verify vfkit ==="
           ls -la cli-extract/vfkit
@@ -592,8 +728,8 @@ jobs:
             sleep 1
           done
 
-          echo "=== status before create ==="
-          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec $VCLI status --json
+          echo "=== list before create ==="
+          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec $VCLI list --json
 
           echo "=== container image tests (skipped: WSL2 has no internet on CI runners) ==="
           echo "These tests are covered by test-linux which runs the same checks"

@@ -1,8 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
-  import { createAgent, agentStatus, authenticate, startAgent, setAgentName, checkPlatform, setupPlatform } from "../lib/api";
+  import { createAgent, agentStatus, authenticate, startAgent, waitForReady, checkPlatform, setupPlatform } from "../lib/api";
   import type { PlatformStatus } from "../lib/types";
-  import { agent } from "../lib/stores";
   import ProgressBar from "./ProgressBar.svelte";
 
   let { onComplete }: { onComplete: (name: string) => void } = $props();
@@ -136,14 +135,8 @@
     }
   }
 
-  async function waitForReady(maxMs = 30_000, intervalMs = 1000) {
-    const deadline = Date.now() + maxMs;
-    while (Date.now() < deadline) {
-      const info = await agentStatus();
-      if (info.agent_ready) return info;
-      await new Promise(r => setTimeout(r, intervalMs));
-    }
-    throw new Error("agent is taking too long to start. try restarting vesta.");
+  async function waitUntilReady(agentName: string) {
+    await waitForReady(agentName, 30);
   }
 
   async function handleCreate() {
@@ -157,22 +150,19 @@
     await goTo("creating");
 
     try {
-      const info = await agentStatus();
+      const info = await agentStatus(name);
       if (cancelled) return;
       if (info.status !== "not_found") {
-        await setAgentName(name).catch((e) => console.warn("failed to set agent name:", e));
-
         if (info.status === "running" && info.authenticated && info.agent_ready) {
           stopMessages();
           busy = false;
-          agent.set(info);
           await goTo("done");
           return;
         }
 
         if (info.status === "stopped" || info.status === "dead") {
           try {
-            await startAgent();
+            await startAgent(name);
           } catch (e) {
             if (cancelled) return;
             stopMessages();
@@ -213,13 +203,13 @@
   }
 
   async function runAuth() {
+    const name = normalizedPreview;
     busy = true;
     error = null;
     try {
-      await authenticate();
-      await startAgent();
-      const info = await waitForReady();
-      agent.set(info);
+      await authenticate(name);
+      await startAgent(name);
+      await waitUntilReady(name);
       busy = false;
       await goTo("done");
     } catch (e) {

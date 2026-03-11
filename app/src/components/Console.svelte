@@ -34,7 +34,7 @@
   onMount(async () => {
     requestAnimationFrame(() => { suppressAnim = false; });
     try {
-      await streamLogs((ev: LogEvent) => {
+      await streamLogs(name, (ev: LogEvent) => {
         if (!alive) return;
         if (ev.kind === "Line") addLine(ev.text);
         if (ev.kind === "Error") addLine(`error: ${ev.message}`);
@@ -45,7 +45,7 @@
 
   onDestroy(() => {
     alive = false;
-    stopLogs().catch(() => {});
+    stopLogs(name).catch(() => {});
   });
 
   function handleKeydown(e: KeyboardEvent) {
