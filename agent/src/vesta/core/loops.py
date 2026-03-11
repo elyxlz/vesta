@@ -159,6 +159,42 @@ async def _process_message_safely(msg: str, *, is_user: bool, state: vm.State, c
         state.event_bus.set_state("idle")
 
 
+async def _process_interruptible(
+    msg: str, *, is_user: bool, queue: asyncio.Queue[tuple[str, bool]], state: vm.State, config: vm.VestaConfig
+) -> None:
+    """Process a message while monitoring the queue for new messages that should interrupt."""
+    messages_to_process: list[tuple[str, bool]] = [(msg, is_user)]
+
+    while messages_to_process:
+        if state.pending_context is not None:
+            for remaining in messages_to_process:
+                await queue.put(remaining)
+            break
+
+        current_msg, current_is_user = messages_to_process.pop(0)
+        state.interrupt_event = asyncio.Event()
+
+        process_task = asyncio.create_task(_process_message_safely(current_msg, is_user=current_is_user, state=state, config=config))
+
+        while not process_task.done():
+            queue_task: asyncio.Task[tuple[str, bool]] = asyncio.create_task(queue.get())
+            done, _ = await asyncio.wait({process_task, queue_task}, return_when=asyncio.FIRST_COMPLETED)
+
+            if queue_task in done:
+                messages_to_process.append(queue_task.result())
+                state.interrupt_event.set()
+                logger.interrupt(f"New message queued, interrupting current processing ({len(messages_to_process)} pending)")
+            else:
+                queue_task.cancel()
+                try:
+                    await queue_task
+                except asyncio.CancelledError:
+                    pass
+
+        await process_task
+        state.interrupt_event = None
+
+
 async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig) -> None:
     while state.shutdown_event and not state.shutdown_event.is_set():
         logger.client("Creating new client session...")
@@ -178,7 +214,7 @@ async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm
                     except TimeoutError:
                         continue
 
-                    await _process_message_safely(msg, is_user=is_user, state=state, config=config)
+                    await _process_interruptible(msg, is_user=is_user, queue=queue, state=state, config=config)
 
                     if state.dreamer_active:
                         state.dreamer_active = False
@@ -186,6 +222,7 @@ async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm
                         _trigger_nightly_restart(state=state, config=config)
             finally:
                 state.client = None
+                state.interrupt_event = None
                 logger.client("Client session closed")
 
 

@@ -21,6 +21,7 @@ class State:
     pending_context: str | None = None
     last_dreamer_run: dt.datetime | None = None
     dreamer_active: bool = False
+    interrupt_event: asyncio.Event | None = None
     event_bus: EventBus = dc.field(default_factory=EventBus)
 
 

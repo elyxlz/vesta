@@ -167,6 +167,16 @@ def persist_session_id(session_id: str, *, state: vm.State, config: vm.VestaConf
     logger.debug(f"Captured session_id: {session_id[:16]}...")
 
 
+_STOP = object()
+
+
+async def _anext_or_stop(aiter: tp.AsyncIterator[tp.Any]) -> tp.Any:
+    try:
+        return await aiter.__anext__()
+    except StopAsyncIteration:
+        return _STOP
+
+
 async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show_output: bool) -> list[str]:
     assert state.client is not None
     client = state.client
@@ -183,13 +193,51 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
     response_iter = client.receive_response().__aiter__()
 
     while True:
-        try:
-            msg = await asyncio.wait_for(response_iter.__anext__(), timeout=config.response_timeout)
-        except StopAsyncIteration:
+        if state.interrupt_event and state.interrupt_event.is_set():
+            logger.interrupt("Conversation interrupted by new message")
+            await attempt_interrupt(state, config=config, reason="New message interrupt")
             break
-        except TimeoutError:
+
+        anext_task = asyncio.create_task(_anext_or_stop(response_iter))
+        waitables: set[asyncio.Task[tp.Any]] = {anext_task}
+        interrupt_task: asyncio.Task[tp.Any] | None = None
+
+        if state.interrupt_event and not state.interrupt_event.is_set():
+            interrupt_task = asyncio.create_task(state.interrupt_event.wait())
+            waitables.add(interrupt_task)
+
+        done, pending = await asyncio.wait(waitables, return_when=asyncio.FIRST_COMPLETED, timeout=config.response_timeout)
+
+        for p in pending:
+            if p is not anext_task:
+                p.cancel()
+
+        if not done:
+            anext_task.cancel()
+            try:
+                await anext_task
+            except asyncio.CancelledError:
+                pass
             await attempt_interrupt(state, config=config, reason="Response timeout")
-            raise
+            raise TimeoutError
+
+        if interrupt_task and interrupt_task in done:
+            logger.interrupt("Conversation interrupted by new message")
+            await attempt_interrupt(state, config=config, reason="New message interrupt")
+            if not anext_task.done():
+                try:
+                    await asyncio.wait_for(asyncio.shield(anext_task), timeout=config.interrupt_timeout)
+                except TimeoutError:
+                    anext_task.cancel()
+                    try:
+                        await anext_task
+                    except asyncio.CancelledError:
+                        pass
+            break
+
+        msg = anext_task.result()
+        if msg is _STOP:
+            break
 
         texts, sub_agent_context, session_id, has_tool_use = _parse_sdk_message(msg, sub_agent_context=sub_agent_context)
         if session_id and session_id != state.session_id:
