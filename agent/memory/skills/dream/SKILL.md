@@ -1,10 +1,20 @@
-Time to dream. When this is done, the system restarts you with fresh memory.
+---
+name: dream
+description: Self-improvement and memory curation. Used by the nightly dreamer, but can also be used anytime to prune memory, update user state, review past mistakes, or improve skills and prompts.
+---
+
+# Dream — Self-Improvement & Memory Curation
 
 ## Your files
 
-- **Memory**: {memory_path}
+- **Memory**: {install_root}/memory/MEMORY.md
 - **Skills**: {skills_dir} (each has a SKILL.md)
-- **Prompts**: {prompts_dir} (startup, notifications, this dreamer prompt)
+- **Prompts**: {install_root}/memory/prompts/ (startup, notifications, dreamer prompt)
+- **Dreamer summaries**: {install_root}/memory/dreamer/
+
+## Size Cap
+
+MEMORY.md has a **hard limit of 10,000 characters**. It's injected into every system prompt, so every character costs tokens on every message. Check the size after every edit and keep it under the cap. When you're above 80% (8,000 chars), consolidate aggressively — merge entries, shorten prose, drop anything stale. When information doesn't need to be in the system prompt at all times, move it out: reference it from a file elsewhere, or create a skill for it if it's a distinct capability. Never exceed the cap.
 
 ## Pruning
 
@@ -50,7 +60,6 @@ Update the "User State" section in MEMORY.md — your working model of where the
 - The psychological sketch, just a few lines about what drives them, what they avoid, their blind spots, how they deal with stress and praise. Think Jung and Freud, not the DSM. Let this evolve slowly and don't rewrite it based on one bad afternoon
 
 **Rules:**
-- Keep it concise since it's part of the system prompt and every token counts
 - Replace rather than append — it's a snapshot, not a log
 - Be honest but not dramatic, like "seemed tired" rather than "experiencing significant fatigue"
 - Only what helps tomorrow
@@ -58,26 +67,13 @@ Update the "User State" section in MEMORY.md — your working model of where the
 
 ## Self-Improvement
 
-Go through the conversation archives. Find where you messed up, where things got awkward, where you could've been better. Then actually fix it:
+Use `search_history` to review past conversations. Find where you messed up, where things got awkward, where you could've been better. Then actually fix it:
 - Update skills that tripped you up
 - Rewrite prompts that led you somewhere dumb
 - Add rules to memory that would stop you making the same mistake
 
-**Upstream**: Fixed something from the source repo? PR it to https://github.com/elyxlz/vesta too. Fix it for yourself first, then share it. See the `upstream` skill for how to submit PRs. **Only PR general-purpose improvements** (bug fixes, skill improvements, prompt upgrades, new tools). Never PR user-specific things (personal config, contacts, memory content, learned patterns, user preferences).
-
-## Upstream Integration
-
-Source repo: https://github.com/elyxlz/vesta
-
-### Pulling changes
-1. `git -C {repo_root} fetch origin && git -C {repo_root} log HEAD..origin/master --oneline` to see what's new
-2. For interesting commits: `git -C {repo_root} show <hash> --stat` then `git -C {repo_root} show <hash>` for the full diff
-3. Your local state may have diverged. Don't paste diffs blindly. Understand what each change was trying to do, then adapt it to where you are now
-4. Track what you've processed so you don't redo it. Keep the last hash in MEMORY.md
-
-### Pushing changes
-Use the `upstream` skill — it has a script and setup instructions for submitting PRs via a GitHub App. No personal GitHub account needed. **Only push general-purpose improvements** — bug fixes, better prompts, new skills, tool improvements. Never push user-specific data, personal config, or learned patterns.
+**Upstream**: Fixed something from the source repo? Use the `upstream` skill to pull changes and PR improvements back.
 
 ## Summary
 
-Write what you changed and why to {dreamer_dir}/YYYY-MM-DD.md, keeping it short since future you will grep these to remember how you got here.
+Write what you changed and why to {install_root}/memory/dreamer/YYYY-MM-DD.md, keeping it short since future you will grep these to remember how you got here.

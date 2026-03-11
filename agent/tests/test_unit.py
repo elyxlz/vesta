@@ -167,6 +167,7 @@ def test_skills_discovered():
     skills = _discover_skills(config)
     expected = {
         "browser",
+        "dream",
         "google",
         "keeper",
         "microsoft",
@@ -359,7 +360,7 @@ async def test_dreamer_queues_prompt_and_archives(tmp_path):
 
     with (
         patch("vesta.core.loops._now", return_value=fake_now),
-        patch("vesta.core.loops.build_dreamer_prompt", return_value="dreamer prompt"),
+        patch("vesta.core.loops.load_prompt", return_value="dreamer prompt"),
     ):
         await process_nightly_memory(queue, state=state, config=config)
 
@@ -385,7 +386,7 @@ async def test_dreamer_skips_when_already_run_today(tmp_path):
 
     with (
         patch("vesta.core.loops._now", return_value=fake_now),
-        patch("vesta.core.loops.build_dreamer_prompt", return_value="dreamer prompt"),
+        patch("vesta.core.loops.load_prompt", return_value="dreamer prompt"),
     ):
         await process_nightly_memory(queue, state=state, config=config)
 

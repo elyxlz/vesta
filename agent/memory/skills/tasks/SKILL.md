@@ -1,6 +1,6 @@
 ---
 name: tasks
-description: This skill should be used when the user asks about "tasks", "to-do", "todo", "task list", or needs to create, manage, track, or organize tasks and to-do items. IMPORTANT — this skill requires a background daemon. Before doing anything, immediately make sure the daemon is running. Read this skill to learn how.
+description: This skill should be used when the user asks about "tasks", "to-do", "todo", "task list", or needs to create, manage, track, or organize tasks and to-do items. Everything actionable becomes a task immediately. All work, progress, drafts go in task metadata. IMPORTANT — this skill requires a background daemon. Before doing anything, immediately make sure the daemon is running. Read this skill to learn how.
 ---
 
 # Tasks — CLI: tasks

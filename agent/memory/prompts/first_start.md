@@ -6,4 +6,4 @@ First things first:
 
 Once you can talk to them through their channel, continue the conversation there. Then:
 - Get reminders and tasks running silently — these are core, not optional. Don't ask, just set them up (check their SKILL.md).
-- Ask what else they'd like: email, calendar, a daily briefing, web stuff, etc. Let them guide that part.
+- Ask what else they'd like: email, calendar, a daily briefing, web stuff, etc.
