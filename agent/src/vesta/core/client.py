@@ -119,9 +119,7 @@ def _tool_summary(name: str, tool_input: dict[str, tp.Any]) -> str:
 
 
 def _subagent_hook(state: vm.State, *, verb: str, event_type: str) -> HookCallback:
-    async def hook(
-        input_data: SubagentStartHookInput | SubagentStopHookInput, tool_use_id: str | None, context: HookContext
-    ) -> HookJSONOutput:
+    async def hook(input_data: SubagentStartHookInput | SubagentStopHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
         agent_id = input_data["agent_id"]
         agent_type = input_data["agent_type"]
         logger.subagent(f"{verb} [{agent_type}] id={agent_id}")
