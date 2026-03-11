@@ -1,13 +1,19 @@
 ---
 name: upstream
-description: Use when you need to submit a PR to the upstream vesta repo (elyxlz/vesta). This skill handles authentication via a GitHub App and creates pull requests.
+description: Use when you need to pull changes from or submit a PR to the upstream vesta repo (elyxlz/vesta). Handles pulling upstream commits, authentication via a GitHub App, and creating pull requests.
 ---
 
-# Upstream PRs
+# Upstream Integration
 
-Submit improvements back to https://github.com/elyxlz/vesta so all vesta instances benefit.
+Source repo: https://github.com/elyxlz/vesta
 
-## Usage
+## Pulling changes
+1. `git -C {repo_root} fetch origin && git -C {repo_root} log HEAD..origin/master --oneline` to see what's new
+2. For interesting commits: `git -C {repo_root} show <hash> --stat` then `git -C {repo_root} show <hash>` for the full diff
+3. Your local state may have diverged. Don't paste diffs blindly. Understand what each change was trying to do, then adapt it to where you are now
+4. Track what you've processed so you don't redo it. Keep the last hash in MEMORY.md
+
+## Pushing changes
 
 From inside the vesta repo, on a feature branch:
 ```bash

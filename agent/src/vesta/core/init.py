@@ -18,6 +18,8 @@ def _replace_placeholders(path: pl.Path, config: vm.VestaConfig) -> bool:
     original = content
     name = config.agent_name
     content = content.replace("{install_root}", str(config.install_root))
+    content = content.replace("{repo_root}", str(config.repo_root))
+    content = content.replace("{skills_dir}", str(config.skills_dir))
     content = content.replace("{agent_name_upper}", name.upper())
     content = content.replace("{agent_name}", name)
     if content != original:

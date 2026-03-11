@@ -12,7 +12,7 @@ from claude_agent_sdk import ClaudeSDKClient, ClaudeSDKError
 import vesta.models as vm
 from vesta import logger
 from vesta.core.client import process_message, build_client_options, attempt_interrupt, filter_tool_lines, persist_session_id, _cancel_task
-from vesta.core.init import get_memory_path, load_prompt, build_restart_context
+from vesta.core.init import load_prompt, build_restart_context
 
 
 def _now() -> dt.datetime:
@@ -111,18 +111,6 @@ async def queue_greeting(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.V
 
 
 # --- Message processing ---
-
-
-def build_dreamer_prompt(config: vm.VestaConfig) -> str:
-    content = load_prompt("dreamer", config) or ""
-    return content.format(
-        memory_path=get_memory_path(config),
-        skills_dir=config.skills_dir,
-        prompts_dir=config.prompts_dir,
-        dreamer_dir=config.dreamer_dir,
-        install_root=config.install_root,
-        repo_root=config.repo_root,
-    )
 
 
 async def _process_message_safely(msg: str, *, is_user: bool, state: vm.State, config: vm.VestaConfig) -> None:
@@ -258,7 +246,7 @@ async def process_nightly_memory(queue: asyncio.Queue[tuple[str, bool]], *, stat
     if config.nightly_memory_hour is not None and now.hour == config.nightly_memory_hour:
         if state.last_dreamer_run is None or now.date() > state.last_dreamer_run.date():
             logger.dreamer("Nightly dreamer starting...")
-            prompt = build_dreamer_prompt(config)
+            prompt = load_prompt("dream", config) or ""
             state.dreamer_active = True
             await queue.put((prompt, False))
             state.last_dreamer_run = now

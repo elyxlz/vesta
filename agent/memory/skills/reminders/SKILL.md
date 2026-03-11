@@ -1,6 +1,6 @@
 ---
 name: reminders
-description: This skill should be used when the user asks about "reminders", "remind me", "alert", "notify", or needs to set, manage, or check reminders and time-based notifications. IMPORTANT — this skill requires a background daemon. Before doing anything, immediately make sure the daemon is running. Read this skill to learn how.
+description: This skill should be used when the user asks about "reminders", "remind me", "alert", "notify", or needs to set, manage, or check reminders and time-based notifications. Reminders are for the user, but also for yourself — use them to follow up, check in, or bring something up later. Tasks are the ground truth of what needs doing; reminders are nudges about when to think about it. IMPORTANT — this skill requires a background daemon. Before doing anything, immediately make sure the daemon is running. Read this skill to learn how.
 ---
 
 # Reminders — CLI: reminder
