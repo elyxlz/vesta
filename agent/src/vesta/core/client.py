@@ -48,10 +48,7 @@ def _format_tool_call(name: str, *, input_data: object, sub_agent_context: str |
 
 
 def filter_tool_lines(text: str) -> str:
-    return "\n".join(
-        s for line in text.split("\n")
-        if (s := line.strip()) and not s.startswith("[TOOL]") and not s.startswith("[TASK]")
-    )
+    return "\n".join(s for line in text.split("\n") if (s := line.strip()) and not s.startswith("[TOOL]") and not s.startswith("[TASK]"))
 
 
 def _parse_sdk_message(msg: Message, *, sub_agent_context: str | None) -> tuple[list[str], str | None, str | None, bool]:
