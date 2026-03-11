@@ -21,8 +21,10 @@ def authenticate_account(config: Config) -> dict[str, str]:
         error_msg = flow["error_description"] if "error_description" in flow else "Unknown error"
         raise Exception(f"Failed to get device code: {error_msg}")
 
-    verification_url = flow["verification_uri"] if "verification_uri" in flow else (
-        flow["verification_url"] if "verification_url" in flow else "https://microsoft.com/devicelogin"
+    verification_url = (
+        flow["verification_uri"]
+        if "verification_uri" in flow
+        else (flow["verification_url"] if "verification_url" in flow else "https://microsoft.com/devicelogin")
     )
 
     return {
@@ -67,7 +69,9 @@ def complete_authentication(config: Config, *, flow_cache: str) -> dict[str, str
     if accounts:
         for account in accounts:
             claims = result["id_token_claims"] if "id_token_claims" in result else {}
-            if (account["username"] if "username" in account else "").lower() == (claims["preferred_username"] if "preferred_username" in claims else "").lower():
+            if (account["username"] if "username" in account else "").lower() == (
+                claims["preferred_username"] if "preferred_username" in claims else ""
+            ).lower():
                 return {
                     "status": "success",
                     "username": account["username"],

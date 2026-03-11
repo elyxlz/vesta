@@ -81,7 +81,9 @@ async def load_and_display_new_notifications(
     return notification_buffer, buffer_start_time
 
 
-async def process_batch(notifications: list[vm.Notification], *, queue: asyncio.Queue[tuple[str, bool]], state: vm.State, config: vm.VestaConfig) -> None:
+async def process_batch(
+    notifications: list[vm.Notification], *, queue: asyncio.Queue[tuple[str, bool]], state: vm.State, config: vm.VestaConfig
+) -> None:
     if not notifications:
         return
 

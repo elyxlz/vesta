@@ -3,6 +3,7 @@ import pathlib as pl
 import vesta.models as vm
 from vesta import logger
 
+
 def get_memory_path(config: vm.VestaConfig) -> pl.Path:
     return config.memory_dir / "MEMORY.md"
 
@@ -44,7 +45,7 @@ def init_main_memory(config: vm.VestaConfig) -> bool:
     if not memory_path.exists():
         return True
     content = memory_path.read_text()
-    first_start = '[Unknown - need to ask]' in content
+    first_start = "[Unknown - need to ask]" in content
     if _replace_placeholders(memory_path, config):
         logger.init("Initialized placeholders in MEMORY.md")
     return first_start

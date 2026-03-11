@@ -61,6 +61,7 @@ async def _recv_loop(
                     await message_queue.put((text, True))
             elif msg_type == "interrupt":
                 from vesta.core.client import attempt_interrupt
+
                 await attempt_interrupt(state, config=config, reason="WS interrupt")
         elif msg.type in (web.WSMsgType.ERROR, web.WSMsgType.CLOSE):
             break

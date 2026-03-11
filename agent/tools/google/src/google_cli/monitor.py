@@ -154,7 +154,9 @@ def run(ctx: GoogleContext):
                         logger.info(f"Writing {label} reminder for: {subject}")
 
                         start_info = event["start"] if "start" in event else {}
-                        start_str = (start_info["dateTime"] if "dateTime" in start_info else None) or (start_info["date"] if "date" in start_info else "")
+                        start_str = (start_info["dateTime"] if "dateTime" in start_info else None) or (
+                            start_info["date"] if "date" in start_info else ""
+                        )
 
                         notifications.write_notification(
                             config.notif_dir,

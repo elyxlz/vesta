@@ -26,7 +26,11 @@ def _run_device_flow(app: msal.PublicClientApplication, scopes: list[str], cache
     if "user_code" not in flow:
         raise Exception(f"Failed to get device code: {flow['error_description'] if 'error_description' in flow else 'Unknown error'}")
 
-    verification_uri = (flow["verification_uri"] if "verification_uri" in flow else None) or (flow["verification_url"] if "verification_url" in flow else None) or "https://microsoft.com/devicelogin"
+    verification_uri = (
+        (flow["verification_uri"] if "verification_uri" in flow else None)
+        or (flow["verification_url"] if "verification_url" in flow else None)
+        or "https://microsoft.com/devicelogin"
+    )
     print(f"\nTo authenticate:\n1. Visit {verification_uri}\n2. Enter code: {flow['user_code']}")
 
     result = app.acquire_token_by_device_flow(flow)
@@ -109,7 +113,9 @@ def authenticate_new_account(cache_file: pl.Path, scopes: list[str], *, settings
         # Find the account that matches the token we just got
         for account in accounts:
             claims = result["id_token_claims"] if "id_token_claims" in result else {}
-            if (account["username"] if "username" in account else "").lower() == (claims["preferred_username"] if "preferred_username" in claims else "").lower():
+            if (account["username"] if "username" in account else "").lower() == (
+                claims["preferred_username"] if "preferred_username" in claims else ""
+            ).lower():
                 return Account(username=account["username"], account_id=account["home_account_id"])
         # If exact match not found, return the last account
         account = accounts[-1]
