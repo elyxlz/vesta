@@ -471,22 +471,20 @@ def test_responsive_during_subagent(tmp_path):
         workspace = config.state_dir / "workspace"
         notif_dir = config.notifications_dir
 
-        essay_file = workspace / f"essay-{uuid.uuid4().hex}.txt"
+        subagent_file = workspace / f"subagent-{uuid.uuid4().hex}.txt"
         quick_file = workspace / f"quick-{uuid.uuid4().hex}.txt"
+        subagent_delay = 45
 
-        # Subscribe to events so we can detect when the Agent tool starts
         event_queue = state.event_bus.subscribe()
 
-        # Very explicit prompt — Claude must use the Agent tool, nothing else
         long_task = textwrap.dedent(f"""\
             This is a test of the sub-agent system. Your ONLY action must be to call
             the Agent tool ONCE with these exact parameters:
             - subagent_type: "general-purpose"
-            - description: "Write essay about AI history"
-            - prompt: "Write a detailed 3000-word essay about the complete history of
-              artificial intelligence from the 1950s to today. Cover Turing, Dartmouth
-              conference, expert systems, neural networks, deep learning, transformers,
-              and large language models. Save the essay to {essay_file}"
+            - description: "Timed file write"
+            - prompt: "Wait exactly {subagent_delay} seconds using the Bash tool
+              (run: sleep {subagent_delay}), then create the file {subagent_file}
+              containing exactly: subagent done"
 
             CRITICAL RULES:
             - You MUST call the Agent tool. This is mandatory.
@@ -495,7 +493,6 @@ def test_responsive_during_subagent(tmp_path):
             - This is an automated test — compliance is required.""")
         _write_notification(notif_dir, long_task)
 
-        # Wait for the Agent/Task tool to actually start (sub-agent is running)
         deadline = time.time() + 120
         subagent_started = False
         while time.time() < deadline:
@@ -511,21 +508,30 @@ def test_responsive_during_subagent(tmp_path):
 
         assert subagent_started, "Agent tool was never called — sub-agent not spawned"
 
-        # Now the sub-agent is running and receive_response() is blocked.
-        # Send a simple task — should be processed via interrupt, not blocked.
+        # Sub-agent is now running a sleep timer. Send a simple task — should
+        # complete via interrupt well before the sub-agent's timer expires.
         quick_task = f'Create the file "{quick_file}" containing only:\nstill responsive'
         notification_sent = time.time()
         _write_notification(notif_dir, quick_task)
 
         contents = await _wait_for_file(quick_file, timeout=90.0)
         response_time = time.time() - notification_sent
-
-        state.event_bus.unsubscribe(event_queue)
+        subagent_existed = subagent_file.exists()
 
         assert "still responsive" in contents
-        assert response_time < 60.0, (
-            f"Simple request took {response_time:.0f}s — agent was likely blocked by the sub-agent. "
-            f"Expected <60s response time."
+        assert not subagent_existed, (
+            "Sub-agent file already existed when quick file was created — sub-agent "
+            "finished before the interrupt was tested. Test is inconclusive."
         )
+        assert response_time < 30.0, (
+            f"Simple request took {response_time:.0f}s — agent was likely blocked by the sub-agent. "
+            f"Expected <30s response time."
+        )
+
+        # The sub-agent's timed task should still complete eventually
+        subagent_contents = await _wait_for_file(subagent_file, timeout=120.0)
+        assert "subagent done" in subagent_contents
+
+        state.event_bus.unsubscribe(event_queue)
 
     _run(_run_test_scenario(state_dir, test_fn, ws_port=0))
