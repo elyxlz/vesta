@@ -1,12 +1,14 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import type { AgentConnection } from "../lib/ws";
-  import { agentStatus, startAgent, stopAgent, restartAgent, deleteAgent, authenticate } from "../lib/api";
+  import { agentStatus, startAgent, stopAgent, restartAgent, deleteAgent, authenticate, backupAgent, restoreAgent } from "../lib/api";
+  import { save, open } from "@tauri-apps/plugin-dialog";
   import type { AgentStatus, AgentActivityState } from "../lib/types";
 
   let {
     name,
     connection,
+    initialActivity = "idle",
     onChat,
     onConsole,
     onDestroyed,
@@ -14,23 +16,27 @@
   }: {
     name: string;
     connection: AgentConnection;
+    initialActivity?: AgentActivityState;
     onChat: () => void;
     onConsole: () => void;
     onDestroyed: () => void;
     onBack: () => void;
   } = $props();
 
+  let statusLoaded = $state(false);
   let status = $state<AgentStatus>("unknown");
   let authenticated = $state(false);
   let agentReady = $state(false);
   let confirming = $state(false);
   let menuOpen = $state(false);
   let hovered = $state(false);
-  let operation = $state<"idle" | "stopping" | "starting" | "authenticating" | "deleting">("idle");
+  let operation = $state<"idle" | "stopping" | "starting" | "authenticating" | "deleting" | "backing-up" | "restoring">("idle");
   let stopping = $derived(operation === "stopping");
   let starting = $derived(operation === "starting");
   let authenticating = $derived(operation === "authenticating");
   let deleting = $derived(operation === "deleting");
+  let backingUp = $derived(operation === "backing-up");
+  let restoring = $derived(operation === "restoring");
   let errorMsg = $state("");
   let poll: ReturnType<typeof setInterval>;
   let creatureEl: HTMLDivElement;
@@ -43,9 +49,12 @@
   const LERP = 0.015;
   const SNAP = 0.5;
 
-  let agentStateVal = $state<AgentActivityState>("idle");
-  const conn = connection;
-  const unsubAgentState = (conn.agentState as any).subscribe((v: AgentActivityState) => { agentStateVal = v; });
+  let agentStateVal = $state<AgentActivityState>(initialActivity);
+
+  $effect(() => {
+    const unsub = connection.agentState.subscribe((v: AgentActivityState) => { agentStateVal = v; });
+    return () => unsub();
+  });
 
   function orbLoop() {
     if (!orbEl) { rafId = 0; return; }
@@ -87,15 +96,16 @@
   async function syncStatus() {
     try {
       const info = await agentStatus(name);
-      status = info.status;
-      authenticated = info.authenticated;
-      agentReady = info.agent_ready;
+      if (status !== info.status) status = info.status;
+      if (authenticated !== info.authenticated) authenticated = info.authenticated;
+      if (agentReady !== info.agent_ready) agentReady = info.agent_ready;
       if (errorMsg) errorMsg = "";
     } catch {
-      status = "unknown";
-      authenticated = false;
-      agentReady = false;
+      if (status !== "unknown") status = "unknown";
+      if (authenticated) authenticated = false;
+      if (agentReady) agentReady = false;
     }
+    if (!statusLoaded) statusLoaded = true;
   }
 
   async function refresh() {
@@ -130,7 +140,6 @@
     if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
     document.removeEventListener("click", onDocClick);
     document.removeEventListener("keydown", onKeydown);
-    unsubAgentState();
   });
 
   async function toggleRun() {
@@ -196,13 +205,70 @@
     }
   }
 
+  async function handleRestart() {
+    if (busy) return;
+    errorMsg = "";
+    operation = "starting";
+    try {
+      await restartAgent(name);
+      connection.resetReconnect();
+      await syncStatus();
+    } catch (e: any) {
+      errorMsg = e?.message || "failed to restart";
+    } finally {
+      operation = "idle";
+    }
+  }
+
+  async function handleBackup() {
+    if (busy) return;
+    errorMsg = "";
+    const date = new Date().toISOString().slice(0, 10);
+    const path = await save({
+      defaultPath: `${name}-backup-${date}.tar.gz`,
+      filters: [{ name: "Backup", extensions: ["tar.gz"] }],
+    });
+    if (!path) return;
+    operation = "backing-up";
+    try {
+      await backupAgent(name, path);
+      connection.resetReconnect();
+      await syncStatus();
+    } catch (e: any) {
+      errorMsg = e?.message || "backup failed";
+    } finally {
+      operation = "idle";
+    }
+  }
+
+  async function handleRestore() {
+    if (busy) return;
+    errorMsg = "";
+    const path = await open({
+      filters: [{ name: "Backup", extensions: ["tar.gz"] }],
+      multiple: false,
+      directory: false,
+    });
+    if (!path) return;
+    operation = "restoring";
+    try {
+      await restoreAgent(path, name, true);
+      connection.resetReconnect();
+      await syncStatus();
+    } catch (e: any) {
+      errorMsg = e?.message || "restore failed";
+    } finally {
+      operation = "idle";
+    }
+  }
+
   let busy = $derived(operation !== "idle");
   let running = $derived(status === "running");
   let dead = $derived(status === "dead");
   let alive = $derived(running && authenticated);
   let operational = $derived(alive && !deleting && !stopping);
   let fullyAlive = $derived(operational && agentReady);
-  let showActions = $derived(hovered || !alive || confirming || menuOpen);
+  let showActions = $derived(statusLoaded && (hovered || !alive || confirming || menuOpen));
 
 </script>
 
@@ -224,7 +290,7 @@
     onpointerleave={onOrbLeave}
     onpointermove={onOrbMove}
   >
-    <div class="orb-container" bind:this={orbEl} class:alive={fullyAlive} class:booting={operational && !agentReady} class:dead={(!alive && !starting && !authenticating) || deleting || dead} class:stopping class:starting class:authenticating class:deleting class:thinking={fullyAlive && agentStateVal === 'thinking'} class:tool-use={fullyAlive && agentStateVal === 'tool_use'}>
+    <div class="orb-container" class:orb-loading={!statusLoaded} bind:this={orbEl} class:alive={fullyAlive} class:booting={operational && !agentReady} class:dead={statusLoaded && ((!alive && !starting && !authenticating) || deleting || dead)} class:stopping class:starting class:authenticating class:deleting class:thinking={fullyAlive && agentStateVal === 'thinking'} class:tool-use={fullyAlive && agentStateVal === 'tool_use'}>
       <div class="orb-glow"></div>
       <div class="orb-body">
         <div class="orb-highlight"></div>
@@ -236,11 +302,15 @@
     <div class="label">
       <span class="name">{name}</span>
       <span class="status" class:alive={fullyAlive} class:error={!!errorMsg} title={errorMsg || ""}>
-        {errorMsg ? errorMsg : deleting ? "deleting..." : stopping ? "stopping..." : starting ? "starting..." : authenticating ? "signing in..." : fullyAlive ? "alive" : operational ? "waking up..." : running ? "not signed in" : dead ? "broken — delete and recreate" : "stopped"}
+        {#if !statusLoaded}
+          &nbsp;
+        {:else}
+          {errorMsg ? errorMsg : deleting ? "deleting..." : backingUp ? "backing up..." : restoring ? "restoring..." : stopping ? "stopping..." : starting ? "starting..." : authenticating ? "signing in..." : fullyAlive ? "alive" : operational ? "waking up..." : running ? "not signed in" : dead ? "broken — delete and recreate" : "stopped"}
+        {/if}
       </span>
     </div>
 
-    <div class="actions" class:visible={showActions && !deleting && !stopping && !starting && !authenticating} inert={!showActions || deleting || stopping || starting || authenticating}>
+    <div class="actions" class:visible={showActions && !deleting && !stopping && !starting && !authenticating && !backingUp && !restoring} inert={!showActions || deleting || stopping || starting || authenticating || backingUp || restoring}>
       {#if confirming}
         <button class="action-btn danger" disabled={busy} onclick={destroy}>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
@@ -268,8 +338,13 @@
             <div class="menu-dropdown">
               {#if alive}
                 <button class="menu-item" onclick={() => { menuOpen = false; onConsole(); }} data-tip="view raw logs">console</button>
-                <div class="menu-divider"></div>
               {/if}
+              {#if running}
+                <button class="menu-item" disabled={busy} onclick={() => { menuOpen = false; handleRestart(); }} data-tip="restart agent">restart</button>
+              {/if}
+              <button class="menu-item" disabled={busy} onclick={() => { menuOpen = false; handleBackup(); }} data-tip="export to file">backup</button>
+              <button class="menu-item" disabled={busy} onclick={() => { menuOpen = false; handleRestore(); }} data-tip="restore from file">load backup</button>
+              <div class="menu-divider"></div>
               <button class="menu-item danger" disabled={busy} onclick={() => { menuOpen = false; destroy(); }} data-tip="permanently delete">delete</button>
             </div>
           {/if}
@@ -350,6 +425,16 @@
     height: 140px;
     will-change: transform;
     transition: filter 0.8s var(--spring);
+  }
+
+  .orb-container.orb-loading {
+    opacity: 0;
+  }
+
+  .orb-container.orb-loading,
+  .orb-container.orb-loading * {
+    transition: none !important;
+    animation: none !important;
   }
 
   .orb-body {

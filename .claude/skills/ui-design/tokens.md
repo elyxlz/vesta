@@ -99,12 +99,23 @@ Every design value in the codebase. If a value isn't here, don't invent one — 
 | Auth | `#c0d0e8 → #80a0c4 → #6080a4` | `rgba(100, 150, 200, 0.35)` | `rgba(100, 150, 200, 0.1)` |
 | Dead/Stopped | `#c4bdb5 → #a09890 → #8b7e74` | `rgba(160, 152, 144, 0.2)` | dim |
 
-### Window Controls
-| Control | Dot Color |
-|---------|-----------|
-| Close | `#ed6a5f` |
-| Minimize | `#f6be50` |
-| Hover text | `rgba(0, 0, 0, 0.5)` |
+### Window Controls (macOS)
+| Control | Active Color | Border | Inactive |
+|---------|-------------|--------|----------|
+| Close | `#ed6a5f` | `#e24b41` | `#dddddd` |
+| Minimize | `#f6be50` | `#e1a73e` | `#dddddd` |
+| Fullscreen | `#61c555` | `#2dac2f` | `#dddddd` |
+| Glyph (hover) | `rgba(0, 0, 0, 0.5)` | — | — |
+
+### Window Controls (Windows)
+| Control | Hover BG | Icon Color |
+|---------|----------|------------|
+| Close | `#c42b1c` | white |
+| Minimize | subtle gray | inherit |
+| Maximize | subtle gray | inherit |
+
+### Window Controls (Linux/GNOME)
+Flat icon buttons, no colored backgrounds. Subtle highlight on hover. Icons: × − □.
 
 ## Typography
 

@@ -28,12 +28,40 @@ Vesta is a warm, living companion — not a cold tool. Every design choice serve
 - Destructive items in menus: always at the bottom, always red, separated by a divider.
 - Long-press on back button reveals navigation stack (iOS 14+ pattern — consider for breadcrumb tooltips).
 
-### Window Chrome (Desktop)
-- Custom titlebar: 40px height. macOS Big Sur+ standard is 28pt; we use 40px for comfort.
-- Draggable region excludes all interactive elements. Use `window.startDragging()` in Tauri — not CSS `-webkit-app-region`.
-- Traffic lights left-aligned: close (red #ed6a5f), minimize (yellow #f6be50). No maximize for fixed-size windows.
-- Window controls: 12px colored dots inside 20px hit targets. Icons visible only on hover of the control group.
-- Active press: `scale(0.85)` — 15% shrink, snappy.
+### Window Chrome (Desktop) — Cross-Platform
+
+Custom titlebar: 40px height. `decorations: false` in Tauri config. Draggable region excludes all interactive elements — use `window.startDragging()` in Tauri, not CSS `-webkit-app-region`.
+
+#### macOS — Traffic Lights (left-aligned)
+- **Order**: Close (red), Minimize (yellow), Fullscreen (green) — left to right.
+- **Dot size**: 12px diameter. **Gap**: 8px between dots. **Offset**: 8px from left, vertically centered.
+- **Colors (focused)**: Close `#ed6a5f` (border `#e24b41`), Minimize `#f6be50` (border `#e1a73e`), Fullscreen `#61c555` (border `#2dac2f`).
+- **Colors (unfocused/inactive window)**: all three become uniform gray `#dddddd` (border `#d1d0d2`).
+- **Glyphs**: hidden at rest. On hover of the **group** (not individual), all three show: × (close), − (minimize), ↗ (fullscreen). Glyph color: dark tints of each button color.
+- **Press**: slightly darker shade of each color.
+- **Close behavior**: on macOS, close should **hide** the window (app stays in dock), not quit. Quit is Cmd+Q.
+- Consider using Tauri's `titleBarStyle: "overlay"` to get **native** traffic lights instead of custom — feels most native and handles edge cases (force touch, accessibility).
+
+#### Linux — GNOME/KDE Style (right-aligned)
+- **GNOME default**: only Close button, on the **right**. Ubuntu overrides to left (macOS-like).
+- **KDE default**: Minimize, Maximize, Close — all on the right.
+- **Style**: flat icon buttons (not colored dots). No background at rest, subtle highlight on hover. Icons: × (close), − (minimize), □ (maximize).
+- **Hit targets**: ~24x24px within ~46px header bar.
+- **Close behavior**: close = quit the app.
+
+#### Windows — Caption Buttons (right-aligned)
+- **Order**: Minimize, Maximize/Restore, Close — right side of title bar.
+- **Style**: full-bleed backplate buttons (no border, fills title bar height). Icons use Segoe Fluent Icons.
+- **Button width**: ~46px each. Height matches title bar (32px standard).
+- **Hover**: Close gets red background (`#c42b1c`) with white icon. Minimize/Maximize get subtle gray highlight.
+- **Close behavior**: close = quit the app.
+- Consider using Tauri's `titleBarOverlay: true` for native caption buttons.
+
+#### Implementation Strategy
+- Use `@tauri-apps/plugin-os` to detect platform at runtime.
+- Render platform-appropriate controls (dots on macOS, icons on Linux/Windows).
+- Position: left on macOS, right on Linux/Windows.
+- Active press: `scale(0.85)` on macOS dots, no scale on Windows/Linux buttons.
 
 ### Typography
 
@@ -393,7 +421,76 @@ Design rationale: thinking/tool_use animations are 2-2.5x faster than idle — c
 - Ring: inset 14px from container, 1px white at 0.08 opacity. Subtle structural definition.
 - Ambient: extends 30px beyond container, very faint colored halo (0.08 opacity). Environmental light spill.
 
-## 9. Component Checklist
+## 9. View Transition Flashing (Known Issues)
+
+The app has several sources of visual flashing during view transitions. These must be considered when modifying transition logic.
+
+### Root Causes
+
+1. **`setView` timing mismatch**: The 150ms `setTimeout` in `setView()` doesn't perfectly sync with the 0.15s CSS transition on `main.transitioning`. The component swap happens at T=150ms while the CSS fade-out may still be in-flight.
+
+2. **Window background transition lag**: The `.window` background transitions over 0.35s (light↔dark), but the content swaps at 150ms. The background is mid-transition when new content appears, creating a color flash — especially visible on grid↔chat/console transitions.
+
+3. **Nested opacity animations**: The `main` container fades in (0.5s) while child views also have entrance animations (`viewIn` 0.6s, `panelIn` 0.35s). This double-fading can appear as flicker. The `panelIn` animation is effectively redundant with the parent fade.
+
+4. **Empty state flash on mount**: Both GridView and Chat render with empty data (`agents = []`, `lines = []`) before their async `onMount` calls complete. The grid shows blank before populating; chat shows "connecting..." before WebSocket handshake + history load.
+
+5. **WebSocket `onopen` clears messages**: `_messages.set([])` in ws.ts creates a blank frame before the server sends the history event.
+
+6. **Opacity transition duration switch**: If `setView` is called while `main` is still fading in (0.5s), the `main.transitioning` class switches the transition to 0.15s mid-animation, causing a visual jump.
+
+### Affected Transitions
+
+| Transition | Issues |
+|-----------|--------|
+| Grid → Chat/Console | Background flash (light→dark), WebSocket empty state |
+| Chat/Console → Grid/AgentView | Background flash (dark→light), empty grid |
+| Grid → AgentView | Status default values until API responds |
+| Any → Any | 150ms/CSS timing mismatch, nested opacity |
+
+### Rules for New Transitions
+
+- Never change transition duration mid-animation
+- Ensure background color transition completes before or simultaneously with content swap
+- Pre-fetch data before transitioning when possible (or carry previous state)
+- Avoid redundant entrance animations on children when parent is already fading in
+- Test every transition path: grid↔agent-home↔chat↔console, and back
+
+## 10. Cross-Platform Native Feel
+
+### Platform Detection
+- Use `@tauri-apps/plugin-os` (`platform()` returns `"macos"`, `"linux"`, `"windows"`).
+- Detect once at app startup, store in a reactive variable, pass to components as needed.
+- Current platform detection exists on the Rust backend via `platform-check` CLI command — but for UI-only decisions (window controls, shortcuts), detect in the frontend.
+
+### Window Vibrancy (Already Implemented)
+- **macOS**: `NSVisualEffectMaterial::HudWindow` via `window-vibrancy` crate.
+- **Windows**: Mica (Win 11) with Acrylic fallback (Win 10).
+- **Linux**: no vibrancy — standard window manager compositing.
+
+### Scrollbars
+- macOS has overlay scrollbars by default (appear on scroll, auto-hide). Our `::-webkit-scrollbar` overrides force always-visible thin scrollbars.
+- This is acceptable for our 380px window — overlay scrollbars can be jarring in small views.
+- Keep current approach: 6px track, transparent background, semi-transparent thumb.
+
+### Keyboard Shortcuts
+- macOS: Cmd (Meta) is the primary modifier. Cmd+Q = quit, Cmd+W = close window.
+- Windows/Linux: Ctrl is the primary modifier. Alt+F4 = close, Ctrl+Q = quit (some apps).
+- When adding shortcuts, check `e.metaKey` on macOS, `e.ctrlKey` on Windows/Linux.
+- Escape is universal — use for back/dismiss on all platforms.
+
+### Close vs Hide
+- **macOS**: closing the window should hide it (app stays in dock). Quit is Cmd+Q. This is the native convention for document-less utility apps.
+- **Windows/Linux**: close = quit is standard.
+- Implementation: use Tauri's `on_close_requested` event with platform detection.
+
+### State Initialization Anti-Pattern
+- **Problem**: initializing `$state` with default values (e.g., `"idle"`, `false`) causes flash when the real value arrives from a store or API.
+- **Fix**: use `get(store)` from `svelte/store` to read the current store value synchronously at initialization time.
+- Example: `let agentStateVal = $state(get(connection.agentState))` instead of `$state("idle")`.
+- This eliminates the one-frame gap between component mount and first `$effect` subscription callback.
+
+## 11. Component Checklist
 
 Before shipping any new UI:
 
@@ -414,3 +511,5 @@ Before shipping any new UI:
 15. Loading states with progress bar + descriptive message (no spinners)
 16. Response feedback within 100ms (Nielsen's instantaneous threshold)
 17. Test with Increase Contrast + Reduce Transparency accessibility settings
+18. Initialize `$state` from store values with `get(store)`, never hardcoded defaults that cause flash
+19. Test on all target platforms (macOS, Linux, Windows) for native feel

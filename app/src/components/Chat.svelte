@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, tick } from "svelte";
+  import { get } from "svelte/store";
   import type { AgentConnection } from "../lib/ws";
   import { linkify } from "../lib/linkify";
   import { createAutoScroller } from "../lib/scroll";
@@ -21,12 +22,14 @@
   let suppressAnim = $state(false);
   const scroller = createAutoScroller(() => outputEl);
 
-  let connectedVal = $state(false);
-  let agentStateVal = $state<AgentActivityState>("idle");
+  let connectedVal = $state(get(connection.connected));
+  let agentStateVal = $state<AgentActivityState>(get(connection.agentState));
 
-  const conn = connection;
-  const unsubConnected = (conn.connected as any).subscribe((v: boolean) => { connectedVal = v; });
-  const unsubAgentState = (conn.agentState as any).subscribe((v: AgentActivityState) => { agentStateVal = v; });
+  $effect(() => {
+    const u1 = connection.connected.subscribe((v: boolean) => { connectedVal = v; });
+    const u2 = connection.agentState.subscribe((v: AgentActivityState) => { agentStateVal = v; });
+    return () => { u1(); u2(); };
+  });
 
   function fmtTime(iso?: string) {
     if (!iso) return "";
@@ -50,33 +53,36 @@
 
   let pendingUserTexts = new Map<string, number>();
 
-  const unsubMessages = (conn.messages as any).subscribe((evts: VestaEvent[]) => {
-    if (evts !== lastArray) {
-      lines = [];
-      nextId = 0;
-      lastSyncedLen = 0;
-      pendingUserTexts.clear();
-      suppressAnim = true;
-      requestAnimationFrame(() => { suppressAnim = false; });
-    }
-    for (let i = lastSyncedLen; i < evts.length; i++) {
-      const ev = evts[i];
-      if (ev.type === "user") {
-        const count = pendingUserTexts.get(ev.text) ?? 0;
-        if (count > 0) {
-          if (count === 1) pendingUserTexts.delete(ev.text);
-          else pendingUserTexts.set(ev.text, count - 1);
-          continue;
-        }
+  $effect(() => {
+    const unsub = connection.messages.subscribe((evts: VestaEvent[]) => {
+      if (evts !== lastArray) {
+        lines = [];
+        nextId = 0;
+        lastSyncedLen = 0;
+        pendingUserTexts.clear();
+        suppressAnim = true;
+        requestAnimationFrame(() => { suppressAnim = false; });
       }
-      const line = eventToLine(ev);
-      if (line) lines.push(line);
-    }
-    if (lines.length > MAX_MESSAGES) lines.splice(0, lines.length - MAX_MESSAGES);
-    lastSyncedLen = evts.length;
-    lastArray = evts;
-    lines = lines;
-    scroller.scroll();
+      for (let i = lastSyncedLen; i < evts.length; i++) {
+        const ev = evts[i];
+        if (ev.type === "user") {
+          const count = pendingUserTexts.get(ev.text) ?? 0;
+          if (count > 0) {
+            if (count === 1) pendingUserTexts.delete(ev.text);
+            else pendingUserTexts.set(ev.text, count - 1);
+            continue;
+          }
+        }
+        const line = eventToLine(ev);
+        if (line) lines.push(line);
+      }
+      if (lines.length > MAX_MESSAGES) lines.splice(0, lines.length - MAX_MESSAGES);
+      lastSyncedLen = evts.length;
+      lastArray = evts;
+      lines = lines;
+      scroller.scroll();
+    });
+    return () => unsub();
   });
 
   $effect(() => {
@@ -84,12 +90,6 @@
       wasConnected = true;
       tick().then(() => inputEl?.focus());
     }
-  });
-
-  onDestroy(() => {
-    unsubMessages();
-    unsubConnected();
-    unsubAgentState();
   });
 
   function handleSend() {
@@ -335,6 +335,7 @@
 
   .input-bar textarea::placeholder { color: rgba(255, 255, 255, 0.35); }
   .input-bar textarea:disabled { opacity: 0.25; cursor: not-allowed; }
+  .input-bar textarea:focus-visible { box-shadow: none !important; }
 
   .input-bar:has(textarea:focus-visible) {
     border-top-color: rgba(255, 255, 255, 0.12);
