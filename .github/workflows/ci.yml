@@ -223,10 +223,11 @@ jobs:
         run: |
           set -euo pipefail
           CLI="cli-extract/vesta"
+          AGENT="ci-test"
 
           assert_status() {
             local s
-            s=$("$CLI" status --json)
+            s=$("$CLI" status "$AGENT" --json)
             echo "$s"
             for expr in "$@"; do
               echo "$s" | jq -e "$expr" || { echo "FAIL: $expr"; exit 1; }
@@ -235,7 +236,7 @@ jobs:
 
           cleanup() {
             echo "=== Cleanup ==="
-            "$CLI" destroy --yes 2>/dev/null || true
+            "$CLI" destroy "$AGENT" --yes 2>/dev/null || true
           }
           trap cleanup EXIT
 
@@ -246,11 +247,22 @@ jobs:
           echo "=== status before create ==="
           assert_status '.status == "not_found"'
 
+          echo "=== list before create ==="
+          LIST=$("$CLI" list --json)
+          echo "$LIST"
+          echo "$LIST" | jq -e 'length == 0' || { echo "FAIL: list should be empty"; exit 1; }
+
           echo "=== create with name ==="
-          "$CLI" create --name "ci-test-agent"
+          "$CLI" create --name ci-test
 
           echo "=== status after create ==="
-          assert_status '.status == "stopped" or .status == "created"' '.name == "ci-test-agent"'
+          assert_status '.status == "stopped" or .status == "created"' '.name == "ci-test"'
+
+          echo "=== list after create ==="
+          LIST=$("$CLI" list --json)
+          echo "$LIST"
+          echo "$LIST" | jq -e 'length == 1' || { echo "FAIL: list should have 1 entry"; exit 1; }
+          echo "$LIST" | jq -e '.[0].name == "ci-test"' || { echo "FAIL: list entry name"; exit 1; }
 
           echo "=== container image sanity ==="
           docker run --rm --entrypoint sh ghcr.io/elyxlz/vesta:latest -c "claude --version"
@@ -265,44 +277,47 @@ jobs:
           echo "auth URL found"
 
           echo "=== auth with token ==="
-          "$CLI" auth --token '{"claudeAiOauth":{"accessToken":"ci-test","refreshToken":"ci-test","expiresAt":"2099-01-01T00:00:00Z"}}'
+          "$CLI" auth "$AGENT" --token '{"claudeAiOauth":{"accessToken":"ci-test","refreshToken":"ci-test","expiresAt":"2099-01-01T00:00:00Z"}}'
 
           echo "=== verify authenticated ==="
           assert_status '.authenticated == true'
 
           echo "=== start ==="
-          "$CLI" start
+          "$CLI" start "$AGENT"
           assert_status '.status == "running"'
 
           echo "=== verify credential file in container ==="
-          CREDS=$(docker exec vesta cat /root/.claude/.credentials.json)
+          CREDS=$(docker exec vesta-ci-test cat /root/.claude/.credentials.json)
           echo "$CREDS" | jq -e '.claudeAiOauth.accessToken == "ci-test"' || { echo "FAIL: credentials not injected correctly"; exit 1; }
           echo "credentials verified"
 
           echo "=== stop ==="
-          "$CLI" stop
+          "$CLI" stop "$AGENT"
           assert_status '.status != "running"'
 
           echo "=== restart ==="
-          "$CLI" start
-          "$CLI" restart
+          "$CLI" start "$AGENT"
+          "$CLI" restart "$AGENT"
           assert_status '.status == "running"'
 
-          echo "=== rename ==="
-          "$CLI" name "renamed-agent"
-          assert_status '.name == "renamed-agent"'
-
           echo "=== backup ==="
-          "$CLI" backup
+          "$CLI" backup "$AGENT" /tmp/test-backup.tar.gz
+          test -f /tmp/test-backup.tar.gz || { echo "FAIL: backup file not created"; exit 1; }
+          echo "backup file created"
 
           echo "=== rebuild preserves auth ==="
-          "$CLI" rebuild
+          "$CLI" rebuild "$AGENT"
           assert_status '.status == "running"' '.authenticated == true'
           echo "rebuild preserved credentials"
 
           echo "=== destroy ==="
-          "$CLI" destroy --yes
+          "$CLI" destroy "$AGENT" --yes
           assert_status '.status == "not_found"'
+
+          echo "=== restore from backup ==="
+          "$CLI" restore /tmp/test-backup.tar.gz --name ci-test
+          assert_status '.status == "stopped" or .status == "created"' '.name == "ci-test"'
+          "$CLI" destroy "$AGENT" --yes
 
           echo "=== all tests passed ==="
 
@@ -334,10 +349,10 @@ jobs:
           "$CLI" --version
           "$CLI" --help
 
-          echo "=== status without VM ==="
-          STATUS=$("$CLI" status --json)
-          echo "$STATUS"
-          echo "$STATUS" | jq -e '.status'
+          echo "=== list without VM ==="
+          LIST=$("$CLI" list --json)
+          echo "$LIST"
+          echo "$LIST" | jq -e 'length == 0'
 
           echo "=== verify vfkit ==="
           ls -la cli-extract/vfkit
@@ -592,8 +607,8 @@ jobs:
             sleep 1
           done
 
-          echo "=== status before create ==="
-          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec $VCLI status --json
+          echo "=== list before create ==="
+          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec $VCLI list --json
 
           echo "=== container image tests (skipped: WSL2 has no internet on CI runners) ==="
           echo "These tests are covered by test-linux which runs the same checks"

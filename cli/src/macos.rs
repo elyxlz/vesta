@@ -1,5 +1,4 @@
 use super::*;
-use serde::Serialize;
 use std::io::{self, Write};
 use std::path::PathBuf;
 
@@ -9,19 +8,6 @@ const VM_MEMORY_MIB: u32 = 4096;
 const VM_MAC: &str = "52:54:00:fe:57:a1";
 const VSOCK_PORT: u32 = 2222;
 const LAUNCH_AGENT_LABEL: &str = "com.vesta.autostart";
-
-#[derive(Serialize)]
-struct StatusJson {
-    status: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    id: Option<String>,
-    authenticated: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    name: Option<String>,
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    agent_ready: bool,
-    ws_port: u16,
-}
 
 fn data_dir() -> PathBuf {
     dirs::data_dir()
@@ -315,7 +301,6 @@ fn wait_for_ssh() {
 fn stop_vm() {
     let pid = read_pid();
 
-    // Graceful: attempt poweroff (fails harmlessly if SSH isn't reachable)
     let mut args = ssh_base_args();
     args.extend([
         "-o".into(),
@@ -333,7 +318,6 @@ fn stop_vm() {
         .stderr(process::Stdio::null())
         .status();
 
-    // Wait for vfkit to exit after poweroff
     if let Some(pid) = pid {
         let pid_str = pid.to_string();
         for _ in 0..20 {
@@ -390,6 +374,50 @@ fn ssh_run(cmd_args: &[&str], tty: bool) -> process::ExitStatus {
         .stderr(process::Stdio::inherit())
         .status()
         .unwrap_or_else(|_| die("ssh failed"))
+}
+
+fn scp_to_vm(local: &std::path::Path, remote: &str) {
+    let args = vec![
+        "-i".to_string(),
+        ssh_key_path().to_str().unwrap().to_string(),
+        "-o".into(), "StrictHostKeyChecking=no".into(),
+        "-o".into(), "UserKnownHostsFile=/dev/null".into(),
+        "-o".into(), "LogLevel=ERROR".into(),
+        "-o".into(), format!("ProxyCommand=nc -U '{}'", vsock_socket_path().display()),
+        local.to_str().unwrap().to_string(),
+        format!("root@localhost:{}", remote),
+    ];
+    let status = process::Command::new("scp")
+        .args(&args)
+        .stdout(process::Stdio::inherit())
+        .stderr(process::Stdio::inherit())
+        .status()
+        .unwrap_or_else(|_| die("scp failed"));
+    if !status.success() {
+        die("scp to VM failed");
+    }
+}
+
+fn scp_from_vm(remote: &str, local: &std::path::Path) {
+    let args = vec![
+        "-i".to_string(),
+        ssh_key_path().to_str().unwrap().to_string(),
+        "-o".into(), "StrictHostKeyChecking=no".into(),
+        "-o".into(), "UserKnownHostsFile=/dev/null".into(),
+        "-o".into(), "LogLevel=ERROR".into(),
+        "-o".into(), format!("ProxyCommand=nc -U '{}'", vsock_socket_path().display()),
+        format!("root@localhost:{}", remote),
+        local.to_str().unwrap().to_string(),
+    ];
+    let status = process::Command::new("scp")
+        .args(&args)
+        .stdout(process::Stdio::inherit())
+        .stderr(process::Stdio::inherit())
+        .status()
+        .unwrap_or_else(|_| die("scp failed"));
+    if !status.success() {
+        die("scp from VM failed");
+    }
 }
 
 fn download_vm_image() {
@@ -477,20 +505,46 @@ pub fn run(command: Command) {
             }
         }
 
-        Command::Attach => {
+        Command::Create { build, name } => {
             ensure_vm();
-            ssh_run(&["vesta", "attach"], true);
+            let mut args = vec!["vesta", "create"];
+            if build { args.push("--build"); }
+            if let Some(ref n) = name { args.push("--name"); args.push(n); }
+            ssh_run(&args, false);
         }
 
-        Command::Auth { token } => {
+        Command::Start { name } => {
+            ensure_vm();
+            match name {
+                Some(ref n) => { ssh_run(&["vesta", "start", n], false); }
+                None => { ssh_run(&["vesta", "start"], false); }
+            }
+        }
+
+        Command::Stop { name } => {
+            ensure_vm();
+            ssh_run(&["vesta", "stop", &name], false);
+        }
+
+        Command::Restart { name } => {
+            ensure_vm();
+            ssh_run(&["vesta", "restart", &name], false);
+        }
+
+        Command::Attach { name } => {
+            ensure_vm();
+            ssh_run(&["vesta", "attach", &name], true);
+        }
+
+        Command::Auth { name, token } => {
             ensure_vm();
             match token {
                 Some(t) => {
-                    ssh_run(&["vesta", "auth", "--token", &t], false);
+                    ssh_run(&["vesta", "auth", &name, "--token", &t], false);
                 }
                 None => {
                     let mut args = ssh_base_args();
-                    args.extend(["vesta".into(), "auth".into()]);
+                    args.extend(["vesta".into(), "auth".into(), name.clone()]);
                     let child = process::Command::new("ssh")
                         .args(&args)
                         .stdin(process::Stdio::inherit())
@@ -503,87 +557,84 @@ pub fn run(command: Command) {
             }
         }
 
-        Command::Shell => {
+        Command::Shell { name } => {
             ensure_vm();
-            ssh_run(&["vesta", "shell"], true);
+            ssh_run(&["vesta", "shell", &name], true);
         }
 
-        Command::Logs => {
+        Command::Logs { name } => {
             ensure_vm();
-            ssh_run(&["vesta", "logs"], false);
+            ssh_run(&["vesta", "logs", &name], false);
         }
 
-        Command::Status { json } => {
+        Command::Status { name, json } => {
             if !vm_running() {
                 if json {
-                    let s = StatusJson {
-                        status: "not_found",
-                        id: None,
-                        authenticated: false,
-                        name: None,
-                        agent_ready: false,
-                        ws_port: 7865,
-                    };
-                    println!("{}", serde_json::to_string(&s).unwrap());
+                    println!("{{\"name\":\"{}\",\"status\":\"not_found\",\"authenticated\":false,\"ws_port\":7865}}", name);
                 } else {
-                    println!("no agent.");
+                    println!("agent '{}' not found.", name);
                     eprintln!("\nhint: run 'vesta setup' to create your agent");
                 }
                 return;
             }
             if json {
-                ssh_run(&["vesta", "status", "--json"], false);
+                ssh_run(&["vesta", "status", &name, "--json"], false);
             } else {
-                ssh_run(&["vesta", "status"], false);
+                ssh_run(&["vesta", "status", &name], false);
             }
         }
 
-        Command::Start => {
-            ensure_vm();
-            ssh_run(&["vesta", "start"], false);
+        Command::List { json } => {
+            if !vm_running() {
+                if json {
+                    println!("[]");
+                } else {
+                    println!("no agents (VM not running).");
+                    eprintln!("\nhint: run 'vesta setup' to create your agent");
+                }
+                return;
+            }
+            if json {
+                ssh_run(&["vesta", "list", "--json"], false);
+            } else {
+                ssh_run(&["vesta", "list"], false);
+            }
         }
 
-        Command::Stop => {
+        Command::Backup { name, output } => {
             ensure_vm();
-            ssh_run(&["vesta", "stop"], false);
+            let remote_path = format!("/tmp/vesta-backup-{}.tar.gz", name);
+            ssh_run(&["vesta", "backup", &name, &remote_path], false);
+            scp_from_vm(&remote_path, &output);
+            ssh_run(&["rm", "-f", &remote_path], false);
+            eprintln!("backup saved to {}", output.display());
         }
 
-        Command::Restart => {
+        Command::Restore { input, name, replace } => {
             ensure_vm();
-            ssh_run(&["vesta", "restart"], false);
+            let remote_path = "/tmp/vesta-restore-input.tar.gz";
+            scp_to_vm(&input, remote_path);
+            let mut args = vec!["vesta".to_string(), "restore".to_string(), remote_path.to_string()];
+            if let Some(ref n) = name { args.push("--name".into()); args.push(n.clone()); }
+            if replace { args.push("--replace".into()); }
+            let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+            ssh_run(&refs, false);
+            ssh_run(&["rm", "-f", remote_path], false);
         }
 
-        Command::Create { build, name } => {
-            ensure_vm();
-            let mut args = vec!["vesta", "create"];
-            if build { args.push("--build"); }
-            if let Some(ref n) = name { args.push("--name"); args.push(n); }
-            ssh_run(&args, false);
-        }
-
-        Command::Backup => {
-            ensure_vm();
-            ssh_run(&["vesta", "backup"], false);
-        }
-
-        Command::Destroy { yes } => {
+        Command::Destroy { name, yes } => {
             remove_autostart();
             ensure_vm();
             if yes {
-                ssh_run(&["vesta", "destroy", "--yes"], false);
+                ssh_run(&["vesta", "destroy", &name, "--yes"], false);
             } else {
-                ssh_run(&["vesta", "destroy"], true);
+                ssh_run(&["vesta", "destroy", &name], true);
             }
         }
 
-        Command::Name { name } => {
+        Command::Rebuild { name } => {
             ensure_vm();
-            ssh_run(&["vesta", "name", &name], false);
-        }
-
-        Command::Rebuild => {
-            ensure_vm();
-            ssh_run(&["vesta", "rebuild"], true);
+            ssh_run(&["vesta", "rebuild", &name], true);
         }
 
         Command::PlatformCheck => {
