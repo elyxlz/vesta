@@ -51,18 +51,21 @@ export function createAgentConnection(port: number): AgentConnection {
     socket.close();
   }
 
+  let cachedHost: string | null = null;
+
   async function doConnect() {
     if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
       return;
     }
 
-    let wsUrl: string;
-    try {
-      const host = await agentHost();
-      wsUrl = `ws://${host}:${port}/ws`;
-    } catch {
-      wsUrl = `ws://localhost:${port}/ws`;
+    if (!cachedHost) {
+      try {
+        cachedHost = await agentHost();
+      } catch {
+        cachedHost = "localhost";
+      }
     }
+    const wsUrl = `ws://${cachedHost}:${port}/ws`;
 
     if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
       return;

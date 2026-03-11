@@ -11,7 +11,7 @@ export type AgentStatus = "running" | "stopped" | "dead" | "not_found" | "unknow
 
 export interface ListEntry {
   name: string;
-  status: string;
+  status: AgentStatus;
   authenticated: boolean;
   agent_ready: boolean;
   ws_port: number;
