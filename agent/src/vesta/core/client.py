@@ -21,7 +21,7 @@ from claude_agent_sdk.types import PreToolUseHookInput, PostToolUseHookInput, Ho
 
 import vesta.models as vm
 from vesta import logger
-from vesta.core.history import HistoryStore, format_results
+from vesta.core.history import history_save, history_search, format_results
 from vesta.core.init import get_memory_path, build_restart_context
 
 
@@ -208,18 +208,18 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
             state.event_bus.emit({"type": "assistant", "text": filtered})
             assistant_texts.append(filtered)
 
-    if isinstance(state.history, HistoryStore):
+    if state.history is not None:
         combined = "\n".join(r for r in (assistant_texts or responses) if r and r.strip())
         if combined:
-            state.history.save("assistant", combined, session_id=state.session_id)
+            history_save(state.history, "assistant", combined, session_id=state.session_id)
 
     return responses
 
 
 async def process_message(msg: str, *, state: vm.State, config: vm.VestaConfig, is_user: bool) -> tuple[list[str], vm.State]:
-    if isinstance(state.history, HistoryStore):
+    if state.history is not None:
         role = "user" if is_user else "system"
-        state.history.save(role, msg, session_id=state.session_id)
+        history_save(state.history, role, msg, session_id=state.session_id)
     responses = await converse(msg, state=state, config=config, show_output=is_user)
     return responses, state
 
@@ -259,12 +259,12 @@ def _build_vesta_tools_server(state: vm.State, config: vm.VestaConfig) -> tp.Any
 
     @tool("search_history",_SEARCH_HISTORY_DESCRIPTION, _SEARCH_HISTORY_SCHEMA)
     async def search_history(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
-        if not isinstance(state.history, HistoryStore):
+        if state.history is None:
             return {"content": [{"type": "text", "text": "History store not available."}]}
         query = str(args["query"])
         limit = int(args["limit"]) if "limit" in args else 20
         try:
-            results = state.history.search(query, limit=limit)
+            results = history_search(state.history, query, limit=limit)
         except Exception as e:
             return {"content": [{"type": "text", "text": f"Search error: {e}"}]}
         return {"content": [{"type": "text", "text": format_results(results)}]}

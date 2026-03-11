@@ -1,5 +1,6 @@
 """Conversation history persistence with SQLite + FTS5 full-text search."""
 
+import dataclasses
 import datetime as dt
 import pathlib as pl
 import sqlite3
@@ -35,53 +36,64 @@ END;
 """
 
 
-class HistoryStore:
-    def __init__(self, db_path: pl.Path) -> None:
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(db_path))
-        self._conn.executescript(_SCHEMA)
+@dataclasses.dataclass
+class HistoryDB:
+    conn: sqlite3.Connection
 
-    def save(self, role: str, content: str, *, session_id: str | None = None, timestamp: dt.datetime | None = None) -> None:
-        ts = (timestamp or dt.datetime.now()).isoformat()
-        self._conn.execute(
-            "INSERT INTO messages (timestamp, role, content, session_id) VALUES (?, ?, ?, ?)",
-            (ts, role, content, session_id),
-        )
-        self._conn.commit()
 
-    def search(self, query: str, *, limit: int = 20) -> list[dict[str, str]]:
-        rows = self._conn.execute(
-            """
-            SELECT m.timestamp, m.role, m.content
-            FROM messages_fts f
-            JOIN messages m ON m.id = f.rowid
-            WHERE messages_fts MATCH ?
-            ORDER BY m.id DESC
-            LIMIT ?
-            """,
-            (query, limit),
-        ).fetchall()
-        return [{"timestamp": r[0], "role": r[1], "content": r[2]} for r in reversed(rows)]
+def open_history(db_path: pl.Path) -> HistoryDB:
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path))
+    conn.executescript(_SCHEMA)
+    return HistoryDB(conn=conn)
 
-    def get_range(self, *, since: dt.datetime | None = None, until: dt.datetime | None = None, limit: int = 100) -> list[dict[str, str]]:
-        conditions = []
-        params: list[str | int] = []
-        if since:
-            conditions.append("timestamp >= ?")
-            params.append(since.isoformat())
-        if until:
-            conditions.append("timestamp <= ?")
-            params.append(until.isoformat())
-        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-        params.append(limit)
-        rows = self._conn.execute(
-            f"SELECT timestamp, role, content FROM messages {where} ORDER BY id DESC LIMIT ?",
-            params,
-        ).fetchall()
-        return [{"timestamp": r[0], "role": r[1], "content": r[2]} for r in reversed(rows)]
 
-    def close(self) -> None:
-        self._conn.close()
+def history_save(db: HistoryDB, role: str, content: str, *, session_id: str | None = None, timestamp: dt.datetime | None = None) -> None:
+    ts = (timestamp or dt.datetime.now()).isoformat()
+    db.conn.execute(
+        "INSERT INTO messages (timestamp, role, content, session_id) VALUES (?, ?, ?, ?)",
+        (ts, role, content, session_id),
+    )
+    db.conn.commit()
+
+
+def history_search(db: HistoryDB, query: str, *, limit: int = 20) -> list[dict[str, str]]:
+    rows = db.conn.execute(
+        """
+        SELECT m.timestamp, m.role, m.content
+        FROM messages_fts f
+        JOIN messages m ON m.id = f.rowid
+        WHERE messages_fts MATCH ?
+        ORDER BY m.id DESC
+        LIMIT ?
+        """,
+        (query, limit),
+    ).fetchall()
+    return [{"timestamp": r[0], "role": r[1], "content": r[2]} for r in reversed(rows)]
+
+
+def history_get_range(
+    db: HistoryDB, *, since: dt.datetime | None = None, until: dt.datetime | None = None, limit: int = 100
+) -> list[dict[str, str]]:
+    conditions = []
+    params: list[str | int] = []
+    if since:
+        conditions.append("timestamp >= ?")
+        params.append(since.isoformat())
+    if until:
+        conditions.append("timestamp <= ?")
+        params.append(until.isoformat())
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    params.append(limit)
+    rows = db.conn.execute(
+        f"SELECT timestamp, role, content FROM messages {where} ORDER BY id DESC LIMIT ?",
+        params,
+    ).fetchall()
+    return [{"timestamp": r[0], "role": r[1], "content": r[2]} for r in reversed(rows)]
+
+
+def history_close(db: HistoryDB) -> None:
+    db.conn.close()
 
 
 def format_results(results: list[dict[str, str]], *, max_chars: int = 50000) -> str:

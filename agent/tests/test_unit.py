@@ -383,62 +383,62 @@ def test_nightly_restart(tmp_path):
 
 
 def test_history_store_save_and_search(tmp_path):
-    from vesta.core.history import HistoryStore
+    from vesta.core.history import open_history, history_save, history_search
 
-    store = HistoryStore(tmp_path / "test.db")
-    store.save("user", "what is the weather in paris")
-    store.save("assistant", "it is sunny in paris today")
-    store.save("user", "how about london")
-    store.save("assistant", "london is rainy as usual")
+    store = open_history(tmp_path / "test.db")
+    history_save(store, "user", "what is the weather in paris")
+    history_save(store, "assistant", "it is sunny in paris today")
+    history_save(store, "user", "how about london")
+    history_save(store, "assistant", "london is rainy as usual")
 
-    results = store.search("paris")
+    results = history_search(store, "paris")
     assert len(results) == 2
     assert any("paris" in r["content"] for r in results)
 
-    results = store.search("london")
+    results = history_search(store, "london")
     assert len(results) == 2
 
-    results = store.search("sunny")
+    results = history_search(store, "sunny")
     assert len(results) == 1
     assert results[0]["role"] == "assistant"
 
 
 def test_history_store_search_no_results(tmp_path):
-    from vesta.core.history import HistoryStore
+    from vesta.core.history import open_history, history_save, history_search
 
-    store = HistoryStore(tmp_path / "test.db")
-    store.save("user", "hello world")
-    results = store.search("nonexistent")
+    store = open_history(tmp_path / "test.db")
+    history_save(store, "user", "hello world")
+    results = history_search(store, "nonexistent")
     assert results == []
 
 
 def test_history_store_search_limit(tmp_path):
-    from vesta.core.history import HistoryStore
+    from vesta.core.history import open_history, history_save, history_search
 
-    store = HistoryStore(tmp_path / "test.db")
+    store = open_history(tmp_path / "test.db")
     for i in range(10):
-        store.save("user", f"message number {i} about python")
+        history_save(store, "user", f"message number {i} about python")
 
-    results = store.search("python", limit=3)
+    results = history_search(store, "python", limit=3)
     assert len(results) == 3
 
 
 def test_history_store_get_range(tmp_path):
-    from vesta.core.history import HistoryStore
+    from vesta.core.history import open_history, history_save, history_get_range
 
-    store = HistoryStore(tmp_path / "test.db")
+    store = open_history(tmp_path / "test.db")
     t1 = dt.datetime(2025, 1, 1, 10, 0, 0)
     t2 = dt.datetime(2025, 1, 2, 10, 0, 0)
     t3 = dt.datetime(2025, 1, 3, 10, 0, 0)
-    store.save("user", "day one", timestamp=t1)
-    store.save("user", "day two", timestamp=t2)
-    store.save("user", "day three", timestamp=t3)
+    history_save(store, "user", "day one", timestamp=t1)
+    history_save(store, "user", "day two", timestamp=t2)
+    history_save(store, "user", "day three", timestamp=t3)
 
-    results = store.get_range(since=t2)
+    results = history_get_range(store, since=t2)
     assert len(results) == 2
     assert results[0]["content"] == "day two"
 
-    results = store.get_range(until=t2)
+    results = history_get_range(store, until=t2)
     assert len(results) == 2
     assert results[1]["content"] == "day two"
 
@@ -455,11 +455,11 @@ def test_history_format_results():
 
 
 def test_history_store_session_id(tmp_path):
-    from vesta.core.history import HistoryStore
+    from vesta.core.history import open_history, history_save, history_search
 
-    store = HistoryStore(tmp_path / "test.db")
-    store.save("user", "msg one", session_id="session-abc")
-    store.save("user", "msg two", session_id="session-def")
+    store = open_history(tmp_path / "test.db")
+    history_save(store, "user", "msg one", session_id="session-abc")
+    history_save(store, "user", "msg two", session_id="session-def")
 
-    results = store.search("msg")
+    results = history_search(store, "msg")
     assert len(results) == 2
