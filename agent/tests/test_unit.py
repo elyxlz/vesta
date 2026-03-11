@@ -535,6 +535,7 @@ async def test_run_vesta_force_exits_on_hung_cleanup(tmp_path):
 
         async def trigger_shutdown():
             await asyncio.sleep(0.05)
+            assert state.graceful_shutdown is not None
             state.graceful_shutdown.set()
             await exit_event.wait()
 
