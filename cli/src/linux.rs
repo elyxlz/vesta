@@ -247,15 +247,9 @@ fn resolve_image(build: bool) -> &'static str {
 }
 
 fn allocate_port() -> u16 {
-    let output = docker_output(&[
-        "ps", "-a",
-        "--filter", "label=vesta.managed=true",
-        "--format", "{{index .Labels \"vesta.ws_port\"}}",
-    ]);
-    let used: Vec<u16> = output
-        .unwrap_or_default()
-        .lines()
-        .filter_map(|l| l.trim().parse().ok())
+    let used: Vec<u16> = list_managed_containers()
+        .iter()
+        .map(|cname| get_container_port(cname))
         .collect();
     let mut port = BASE_WS_PORT;
     while used.contains(&port) {
