@@ -7,7 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import vesta.models as vm
-from vesta.core.client import _format_tool_call
+from vesta.core.client import _format_tool_call, _parse_agent_input, _tool_summary, _subagent_hook
+from vesta.events import EventBus, SubagentStartEvent
 from vesta.core.init import get_memory_path
 from vesta.core.loops import format_notification_batch
 
@@ -64,6 +65,63 @@ def test_format_tool_call_agent():
     assert "[TASK]" in formatted
     assert "code-agent" in formatted
     assert context == "code-agent"
+
+
+def test_parse_agent_input_with_dict():
+    assert _parse_agent_input({"subagent_type": "browser", "description": "open page"}) == ("browser", "open page")
+
+
+def test_parse_agent_input_missing_fields():
+    assert _parse_agent_input({"other": "data"}) == ("unknown", "")
+
+
+def test_parse_agent_input_non_dict():
+    assert _parse_agent_input("some string") == ("unknown", "")
+
+
+def test_tool_summary_agent():
+    assert _tool_summary("Agent", {"subagent_type": "research", "description": "find docs"}) == "Task [research]: find docs"
+
+
+def test_tool_summary_task():
+    assert _tool_summary("Task", {"subagent_type": "code", "description": "write code"}) == "Task [code]: write code"
+
+
+def test_eventbus_emit_subagent_start():
+    bus = EventBus()
+    q = bus.subscribe()
+    event = SubagentStartEvent(type="subagent_start", agent_id="abc", agent_type="browser")
+    bus.emit(event)
+    received = q.get_nowait()
+    assert received["type"] == "subagent_start"
+    assert received["agent_id"] == "abc"
+    assert received["agent_type"] == "browser"
+    assert len(bus.history) == 1
+    assert bus.history[0]["type"] == "subagent_start"
+
+
+@pytest.mark.anyio
+async def test_subagent_hook_emits_start_event():
+    state = vm.State()
+    hook = _subagent_hook(state, verb="started", event_type="subagent_start")
+    q = state.event_bus.subscribe()
+    await hook({"agent_id": "test-123", "agent_type": "research"}, None, MagicMock())
+    received = q.get_nowait()
+    assert received["type"] == "subagent_start"
+    assert received["agent_id"] == "test-123"
+    assert received["agent_type"] == "research"
+
+
+@pytest.mark.anyio
+async def test_subagent_hook_emits_stop_event():
+    state = vm.State()
+    hook = _subagent_hook(state, verb="stopped", event_type="subagent_stop")
+    q = state.event_bus.subscribe()
+    await hook({"agent_id": "test-456", "agent_type": "browser"}, None, MagicMock())
+    received = q.get_nowait()
+    assert received["type"] == "subagent_stop"
+    assert received["agent_id"] == "test-456"
+    assert received["agent_type"] == "browser"
 
 
 def test_format_notification_batch_single():
