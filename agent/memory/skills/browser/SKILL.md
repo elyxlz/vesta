@@ -140,13 +140,15 @@ DISPLAY=:99 browser launch --stealth
 
 - **Still getting blocked?** Take a screenshot (`browser screenshot`) to see what the site shows. Try `--stealth` if not already using it
 - **Xvfb not running?** Check with `ps aux | grep Xvfb`. If dead, restart it before launching the browser
-- **Browser crashed / zombie processes?** Kill everything and start fresh:
+- **Browser crashed / zombie processes?** Use `browser stop` first, then kill by exact process name:
   ```bash
-  pkill -f chromium || true
-  pkill -f Xvfb || true
+  browser stop 2>/dev/null || true
+  pkill -x chromium 2>/dev/null || true
+  pkill -x Xvfb 2>/dev/null || true
   Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp &
   DISPLAY=:99 browser launch --stealth
   ```
+  **CRITICAL: Always use `pkill -x` (exact match), NEVER `pkill -f` (pattern match).** `pkill -f` can kill unrelated processes including the agent runtime.
 
 ## Memory
 

@@ -134,21 +134,30 @@ def _subagent_hook(state: vm.State, *, verb: str, event_type: str) -> HookCallba
     return tp.cast(HookCallback, hook)
 
 
+def _is_subagent_call(state: vm.State, input_data: PreToolUseHookInput | PostToolUseHookInput) -> bool:
+    if not state.session_id:
+        return False
+    hook_session = input_data["session_id"] if "session_id" in input_data else None
+    return hook_session is not None and hook_session != state.session_id
+
+
 def _make_hooks(
     state: vm.State,
 ) -> tuple[HookCallback, HookCallback, HookCallback, HookCallback]:
     async def log_tool_start(input_data: PreToolUseHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
         name = input_data["tool_name"]
         summary = _tool_summary(name, input_data["tool_input"])
-        logger.tool(summary)
+        prefix = "[SUB] " if _is_subagent_call(state, input_data) else ""
+        logger.tool(f"{prefix}{summary}")
         state.event_bus.set_state("tool_use")
-        state.event_bus.emit({"type": "tool_start", "tool": name, "input": summary})
+        state.event_bus.emit({"type": "tool_start", "tool": name, "input": summary, "subagent": bool(prefix)})
         return tp.cast(HookJSONOutput, {})
 
     async def log_tool_finish(input_data: PostToolUseHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
         name = input_data["tool_name"]
-        logger.tool(f"done: {name}")
-        state.event_bus.emit({"type": "tool_end", "tool": name})
+        prefix = "[SUB] " if _is_subagent_call(state, input_data) else ""
+        logger.tool(f"{prefix}done: {name}")
+        state.event_bus.emit({"type": "tool_end", "tool": name, "subagent": bool(prefix)})
         state.event_bus.set_state("thinking")
         return tp.cast(HookJSONOutput, {})
 
@@ -307,12 +316,26 @@ _SEARCH_HISTORY_SCHEMA = {
 
 
 def _build_vesta_tools_server(state: vm.State, config: vm.VestaConfig) -> tp.Any:
-    @tool("restart_vesta", "Restart to reload memory, skills, and prompts. Current conversation is preserved.", {})
+    @tool(
+        "restart_vesta",
+        "Restart the agent. Use full=true for a full container restart (reloads everything including system packages), "
+        "or full=false (default) for a soft restart (reloads memory, skills, prompts while preserving the conversation).",
+        {
+            "type": "object",
+            "properties": {"full": {"type": "boolean", "description": "Full container restart (default: false)", "default": False}},
+            "required": [],
+        },
+    )
     async def restart_vesta(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
         if state.graceful_shutdown and state.graceful_shutdown.is_set():
             if state.shutdown_event:
                 state.shutdown_event.set()
             return {"content": [{"type": "text", "text": "Shutdown complete. Sweet dreams."}]}
+        full = args["full"] if "full" in args else False
+        if full:
+            logger.shutdown("Full container restart requested")
+            os.kill(os.getpid(), signal.SIGTERM)
+            return {"content": [{"type": "text", "text": "Full container restart initiated. Docker will restart the container."}]}
         state.pending_context = build_restart_context("self restart — memory, skills, and prompts refreshed", config)
         return {"content": [{"type": "text", "text": "Restart initiated. Session will resume with refreshed configuration."}]}
 
