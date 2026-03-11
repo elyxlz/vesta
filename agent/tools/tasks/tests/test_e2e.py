@@ -51,6 +51,14 @@ def parse(result: subprocess.CompletedProcess):
     return json.loads(output)
 
 
+@pytest.fixture
+def state_dir(tmp_path):
+    (tmp_path / "data" / "tasks").mkdir(parents=True)
+    (tmp_path / "logs" / "tasks").mkdir(parents=True)
+    (tmp_path / "notifications").mkdir(parents=True)
+    return tmp_path
+
+
 @pytest.fixture(scope="session")
 def shared_env(tmp_path_factory):
     state_dir = tmp_path_factory.mktemp("shared")
@@ -359,20 +367,14 @@ class TestCompletedFiltering:
 
 
 class TestMonitorNotifications:
-    def test_due_soon_notification(self, tmp_path):
-        state_dir = tmp_path
-        (state_dir / "data" / "tasks").mkdir(parents=True)
-        (state_dir / "logs" / "tasks").mkdir(parents=True)
-        notif_dir = state_dir / "notifications"
-        notif_dir.mkdir(parents=True)
-
+    def test_due_soon_notification(self, state_dir):
         proc = start_daemon(state_dir, monitor_interval=1)
         try:
             due = (datetime.now(UTC) + timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%S")
             parse(tasks_cli(state_dir, "add", "due soon task", "--due-datetime", due, "--timezone", "UTC"))
             time.sleep(3)
 
-            notif_files = list(notif_dir.glob("*-tasks-due.json"))
+            notif_files = list((state_dir / "notifications").glob("*-tasks-due.json"))
             assert len(notif_files) >= 1
             data = json.loads(notif_files[0].read_text())
             assert data["type"] == "task_due"
@@ -381,47 +383,30 @@ class TestMonitorNotifications:
         finally:
             stop_daemon(proc)
 
-    def test_no_notification_for_far_future(self, tmp_path):
-        state_dir = tmp_path
-        (state_dir / "data" / "tasks").mkdir(parents=True)
-        (state_dir / "logs" / "tasks").mkdir(parents=True)
-        notif_dir = state_dir / "notifications"
-        notif_dir.mkdir(parents=True)
-
+    def test_no_notification_for_far_future(self, state_dir):
         proc = start_daemon(state_dir, monitor_interval=1)
         try:
             due = (datetime.now(UTC) + timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%S")
             parse(tasks_cli(state_dir, "add", "far future", "--due-datetime", due, "--timezone", "UTC"))
             time.sleep(3)
 
-            notif_files = list(notif_dir.glob("*-tasks-due.json"))
+            notif_files = list((state_dir / "notifications").glob("*-tasks-due.json"))
             assert len(notif_files) == 0
         finally:
             stop_daemon(proc)
 
-    def test_no_notification_for_no_due_date(self, tmp_path):
-        state_dir = tmp_path
-        (state_dir / "data" / "tasks").mkdir(parents=True)
-        (state_dir / "logs" / "tasks").mkdir(parents=True)
-        notif_dir = state_dir / "notifications"
-        notif_dir.mkdir(parents=True)
-
+    def test_no_notification_for_no_due_date(self, state_dir):
         proc = start_daemon(state_dir, monitor_interval=1)
         try:
             parse(tasks_cli(state_dir, "add", "no deadline"))
             time.sleep(3)
-            notif_files = list(notif_dir.glob("*-tasks-due.json"))
+            notif_files = list((state_dir / "notifications").glob("*-tasks-due.json"))
             assert len(notif_files) == 0
         finally:
             stop_daemon(proc)
 
-    def test_deduplication(self, tmp_path):
-        state_dir = tmp_path
-        (state_dir / "data" / "tasks").mkdir(parents=True)
-        (state_dir / "logs" / "tasks").mkdir(parents=True)
+    def test_deduplication(self, state_dir):
         notif_dir = state_dir / "notifications"
-        notif_dir.mkdir(parents=True)
-
         proc = start_daemon(state_dir, monitor_interval=1)
         try:
             due = (datetime.now(UTC) + timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%S")
@@ -446,20 +431,12 @@ class TestMonitorNotifications:
 
 
 class TestDaemonLifecycle:
-    def test_requires_daemon(self, tmp_path):
-        state_dir = tmp_path
-        (state_dir / "data" / "tasks").mkdir(parents=True)
-        (state_dir / "logs" / "tasks").mkdir(parents=True)
-        (state_dir / "notifications").mkdir(parents=True)
+    def test_requires_daemon(self, state_dir):
         r = tasks_cli(state_dir, "list")
         assert r.returncode != 0
         assert "daemon not running" in r.stderr.lower()
 
-    def test_death_notification(self, tmp_path):
-        state_dir = tmp_path
-        (state_dir / "data" / "tasks").mkdir(parents=True)
-        (state_dir / "logs" / "tasks").mkdir(parents=True)
-        (state_dir / "notifications").mkdir(parents=True)
+    def test_death_notification(self, state_dir):
         proc = start_daemon(state_dir)
         stop_daemon(proc)
 
@@ -469,12 +446,7 @@ class TestDaemonLifecycle:
         assert data["type"] == "daemon_died"
         assert data["source"] == "tasks"
 
-    def test_pid_file_lifecycle(self, tmp_path):
-        state_dir = tmp_path
-        (state_dir / "data" / "tasks").mkdir(parents=True)
-        (state_dir / "logs" / "tasks").mkdir(parents=True)
-        (state_dir / "notifications").mkdir(parents=True)
-
+    def test_pid_file_lifecycle(self, state_dir):
         pid_file = state_dir / "data" / "tasks" / "serve.pid"
         assert not pid_file.exists()
 

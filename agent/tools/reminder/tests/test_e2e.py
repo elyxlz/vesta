@@ -64,6 +64,14 @@ def parse(result: subprocess.CompletedProcess):
     return json.loads(output)
 
 
+@pytest.fixture
+def state_dir(tmp_path):
+    (tmp_path / "data" / "reminder").mkdir(parents=True)
+    (tmp_path / "logs" / "reminder").mkdir(parents=True)
+    (tmp_path / "notifications").mkdir(parents=True)
+    return tmp_path
+
+
 # --- Basic CRUD (shared daemon) ---
 
 
@@ -250,11 +258,7 @@ class TestCancelReminder:
 
 
 class TestDaemonSync:
-    def test_daemon_picks_up_new_reminder(self, tmp_path):
-        state_dir = tmp_path
-        (state_dir / "data" / "reminder").mkdir(parents=True)
-        (state_dir / "logs" / "reminder").mkdir(parents=True)
-        (state_dir / "notifications").mkdir(parents=True)
+    def test_daemon_picks_up_new_reminder(self, state_dir):
         proc = start_daemon(state_dir)
         try:
             s = parse(reminder_cli(state_dir, "set", "synced", "--in-minutes", "60"))
@@ -268,11 +272,7 @@ class TestDaemonSync:
 
 
 class TestNotificationFires:
-    def test_one_time_fires_and_completes(self, tmp_path):
-        state_dir = tmp_path
-        (state_dir / "data" / "reminder").mkdir(parents=True)
-        (state_dir / "logs" / "reminder").mkdir(parents=True)
-        (state_dir / "notifications").mkdir(parents=True)
+    def test_one_time_fires_and_completes(self, state_dir):
         proc = start_daemon(state_dir)
         try:
             fire_at = (datetime.now(UTC) + timedelta(seconds=3)).strftime("%Y-%m-%dT%H:%M:%S")
@@ -280,8 +280,7 @@ class TestNotificationFires:
             rid = s["id"]
             time.sleep(5)
 
-            notif_dir = state_dir / "notifications"
-            notif_files = list(notif_dir.glob("*-scheduler-reminder.json"))
+            notif_files = list((state_dir / "notifications").glob("*-scheduler-reminder.json"))
             assert len(notif_files) >= 1
             found = False
             for f in notif_files:
@@ -297,11 +296,7 @@ class TestNotificationFires:
         finally:
             stop_daemon(proc)
 
-    def test_recurring_stays_active(self, tmp_path):
-        state_dir = tmp_path
-        (state_dir / "data" / "reminder").mkdir(parents=True)
-        (state_dir / "logs" / "reminder").mkdir(parents=True)
-        (state_dir / "notifications").mkdir(parents=True)
+    def test_recurring_stays_active(self, state_dir):
         proc = start_daemon(state_dir)
         try:
             s = parse(reminder_cli(state_dir, "set", "hourly check", "--recurring", "hourly"))
@@ -314,14 +309,8 @@ class TestNotificationFires:
 
 
 class TestPastDueOnRestart:
-    def test_missed_reminder_on_restart(self, tmp_path):
-        state_dir = tmp_path
+    def test_missed_reminder_on_restart(self, state_dir):
         data_dir = state_dir / "data" / "reminder"
-        notif_dir = state_dir / "notifications"
-        data_dir.mkdir(parents=True)
-        (state_dir / "logs" / "reminder").mkdir(parents=True)
-        notif_dir.mkdir(parents=True)
-
         conn = sqlite3.connect(data_dir / "reminders.db")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS reminders (
@@ -341,6 +330,7 @@ class TestPastDueOnRestart:
         proc = start_daemon(state_dir)
         try:
             time.sleep(1)
+            notif_dir = state_dir / "notifications"
             notif_files = list(notif_dir.glob("*-scheduler-reminder.json"))
             assert len(notif_files) >= 1
             data = json.loads(notif_files[0].read_text())
@@ -354,20 +344,12 @@ class TestPastDueOnRestart:
 
 
 class TestDaemonLifecycle:
-    def test_requires_daemon(self, tmp_path):
-        state_dir = tmp_path
-        (state_dir / "data" / "reminder").mkdir(parents=True)
-        (state_dir / "logs" / "reminder").mkdir(parents=True)
-        (state_dir / "notifications").mkdir(parents=True)
+    def test_requires_daemon(self, state_dir):
         r = reminder_cli(state_dir, "list")
         assert r.returncode != 0
         assert "daemon not running" in r.stderr.lower()
 
-    def test_death_notification(self, tmp_path):
-        state_dir = tmp_path
-        (state_dir / "data" / "reminder").mkdir(parents=True)
-        (state_dir / "logs" / "reminder").mkdir(parents=True)
-        (state_dir / "notifications").mkdir(parents=True)
+    def test_death_notification(self, state_dir):
         proc = start_daemon(state_dir)
         stop_daemon(proc)
 
@@ -377,12 +359,7 @@ class TestDaemonLifecycle:
         assert data["type"] == "daemon_died"
         assert data["reason"] == "SIGTERM"
 
-    def test_pid_file_lifecycle(self, tmp_path):
-        state_dir = tmp_path
-        (state_dir / "data" / "reminder").mkdir(parents=True)
-        (state_dir / "logs" / "reminder").mkdir(parents=True)
-        (state_dir / "notifications").mkdir(parents=True)
-
+    def test_pid_file_lifecycle(self, state_dir):
         pid_file = state_dir / "data" / "reminder" / "serve.pid"
         assert not pid_file.exists()
 

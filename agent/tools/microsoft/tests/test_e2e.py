@@ -116,7 +116,8 @@ async def test_get_email():
         assert email_detail["id"] == email_id
         assert "body" not in email_detail
         assert "body_saved_to" in email_detail
-        assert (email_detail["body_length"] if "body_length" in email_detail else 0) >= 0
+        if "body_length" in email_detail:
+            assert email_detail["body_length"] >= 0
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,7 @@
 """Unit tests for Vesta core modules."""
 
 import asyncio
+import contextlib
 import datetime as dt
 import typing as tp
 from pathlib import Path
@@ -9,9 +10,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import vesta.models as vm
 from claude_agent_sdk import HookContext
-from claude_agent_sdk.types import SubagentStartHookInput, SubagentStopHookInput
+from claude_agent_sdk.types import SubagentStartHookInput
 from vesta.core.client import _format_tool_call, _parse_agent_input, _tool_summary, _subagent_hook
-from vesta.events import EventBus, SubagentStartEvent
+from vesta.core.history import format_results, history_get_range, history_save, history_search, open_history
+from vesta.events import EventBus, SubagentStartEvent, SubagentStopEvent
 from vesta.core.init import get_memory_path
 from vesta.core.loops import format_notification_batch
 
@@ -48,26 +50,16 @@ def test_memory_paths(tmp_path):
 # --- Formatting ---
 
 
-def test_format_tool_call_task():
+@pytest.mark.parametrize("tool_name,agent_type", [("Task", "test-agent"), ("Agent", "code-agent")])
+def test_format_tool_call_task_and_agent(tool_name, agent_type):
     formatted, context = _format_tool_call(
-        "Task",
-        input_data={"subagent_type": "test-agent", "description": "do something"},
+        tool_name,
+        input_data={"subagent_type": agent_type, "description": "do something"},
         sub_agent_context=None,
     )
     assert "[TASK]" in formatted
-    assert "test-agent" in formatted
-    assert context == "test-agent"
-
-
-def test_format_tool_call_agent():
-    formatted, context = _format_tool_call(
-        "Agent",
-        input_data={"subagent_type": "code-agent", "description": "write tests"},
-        sub_agent_context=None,
-    )
-    assert "[TASK]" in formatted
-    assert "code-agent" in formatted
-    assert context == "code-agent"
+    assert agent_type in formatted
+    assert context == agent_type
 
 
 def test_parse_agent_input_with_dict():
@@ -104,27 +96,19 @@ def test_eventbus_emit_subagent_start():
 
 
 @pytest.mark.anyio
-async def test_subagent_hook_emits_start_event():
+@pytest.mark.parametrize(
+    "verb,event_type,agent_id,agent_type",
+    [("started", "subagent_start", "test-123", "research"), ("stopped", "subagent_stop", "test-456", "browser")],
+)
+async def test_subagent_hook_emits_event(verb, event_type, agent_id, agent_type):
     state = vm.State()
-    hook = _subagent_hook(state, verb="started", event_type="subagent_start")
+    hook = _subagent_hook(state, verb=verb, event_type=event_type)
     q = state.event_bus.subscribe()
-    await hook(tp.cast(SubagentStartHookInput, {"agent_id": "test-123", "agent_type": "research"}), None, tp.cast(HookContext, MagicMock()))
-    received = q.get_nowait()
-    assert received["type"] == "subagent_start"
-    assert received["agent_id"] == "test-123"
-    assert received["agent_type"] == "research"
-
-
-@pytest.mark.anyio
-async def test_subagent_hook_emits_stop_event():
-    state = vm.State()
-    hook = _subagent_hook(state, verb="stopped", event_type="subagent_stop")
-    q = state.event_bus.subscribe()
-    await hook(tp.cast(SubagentStopHookInput, {"agent_id": "test-456", "agent_type": "browser"}), None, tp.cast(HookContext, MagicMock()))
-    received = q.get_nowait()
-    assert received["type"] == "subagent_stop"
-    assert received["agent_id"] == "test-456"
-    assert received["agent_type"] == "browser"
+    await hook(tp.cast(SubagentStartHookInput, {"agent_id": agent_id, "agent_type": agent_type}), None, tp.cast(HookContext, MagicMock()))
+    received = tp.cast(SubagentStartEvent | SubagentStopEvent, q.get_nowait())
+    assert received["type"] == event_type
+    assert received["agent_id"] == agent_id
+    assert received["agent_type"] == agent_type
 
 
 def test_format_notification_batch_single():
@@ -241,9 +225,6 @@ async def _run_processor_test(
         patches.update(extra_patches)
 
     ctx_managers = [patch(k, v if not callable(v) or isinstance(v, MagicMock) else v) for k, v in patches.items()]
-    # Use ExitStack to apply all patches
-    import contextlib
-
     with contextlib.ExitStack() as stack:
         for cm in ctx_managers:
             stack.enter_context(cm)
@@ -592,8 +573,6 @@ def test_nightly_restart(tmp_path):
 
 
 def test_history_store_save_and_search(tmp_path):
-    from vesta.core.history import open_history, history_save, history_search
-
     store = open_history(tmp_path / "test.db")
     history_save(store, "user", "what is the weather in paris")
     history_save(store, "assistant", "it is sunny in paris today")
@@ -613,8 +592,6 @@ def test_history_store_save_and_search(tmp_path):
 
 
 def test_history_store_search_no_results(tmp_path):
-    from vesta.core.history import open_history, history_save, history_search
-
     store = open_history(tmp_path / "test.db")
     history_save(store, "user", "hello world")
     results = history_search(store, "nonexistent")
@@ -622,8 +599,6 @@ def test_history_store_search_no_results(tmp_path):
 
 
 def test_history_store_search_limit(tmp_path):
-    from vesta.core.history import open_history, history_save, history_search
-
     store = open_history(tmp_path / "test.db")
     for i in range(10):
         history_save(store, "user", f"message number {i} about python")
@@ -633,8 +608,6 @@ def test_history_store_search_limit(tmp_path):
 
 
 def test_history_store_get_range(tmp_path):
-    from vesta.core.history import open_history, history_save, history_get_range
-
     store = open_history(tmp_path / "test.db")
     t1 = dt.datetime(2025, 1, 1, 10, 0, 0)
     t2 = dt.datetime(2025, 1, 2, 10, 0, 0)
@@ -653,8 +626,6 @@ def test_history_store_get_range(tmp_path):
 
 
 def test_history_format_results():
-    from vesta.core.history import format_results
-
     assert format_results([]) == "No results found."
 
     results = [{"timestamp": "2025-01-01T10:00:00", "role": "user", "content": "hello"}]
@@ -664,8 +635,6 @@ def test_history_format_results():
 
 
 def test_history_store_session_id(tmp_path):
-    from vesta.core.history import open_history, history_save, history_search
-
     store = open_history(tmp_path / "test.db")
     history_save(store, "user", "msg one", session_id="session-abc")
     history_save(store, "user", "msg two", session_id="session-def")
