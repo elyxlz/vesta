@@ -11,6 +11,7 @@ import time
 import uuid
 from pathlib import Path
 
+import pytest
 import vesta.main as vmain
 import vesta.models as vm
 from vesta import logger
@@ -100,6 +101,13 @@ def _make_config(state_dir: Path, **overrides: object) -> vm.VestaConfig:
     return vm.VestaConfig(**defaults)  # type: ignore[arg-type]
 
 
+@pytest.fixture
+def state_dir(tmp_path):
+    d = tmp_path / "state"
+    _prepare_state_dir(d)
+    return d
+
+
 async def _noop_input_handler(queue: asyncio.Queue, *, state: vm.State) -> None:
     if state.shutdown_event:
         await state.shutdown_event.wait()
@@ -141,10 +149,8 @@ async def _run_test_scenario(state_dir: Path, test_fn, **config_overrides):
 # =============================================================================
 
 
-def test_client_lifecycle_with_async_with(tmp_path):
+def test_client_lifecycle_with_async_with(state_dir):
     """Client should work correctly with async with context manager."""
-    state_dir = tmp_path / "state"
-    _prepare_state_dir(state_dir)
     config = _make_config(state_dir)
     state, _ = vmain.init_state(config=config)
 
@@ -162,10 +168,8 @@ def test_client_lifecycle_with_async_with(tmp_path):
     _run(test_fn())
 
 
-def test_pending_context_flag(tmp_path):
+def test_pending_context_flag(state_dir):
     """Setting pending_context should work correctly."""
-    state_dir = tmp_path / "state"
-    _prepare_state_dir(state_dir)
     config = _make_config(state_dir)
     state, _ = vmain.init_state(config=config)
 
@@ -180,10 +184,8 @@ def test_pending_context_flag(tmp_path):
     _run(test_fn())
 
 
-def test_multiple_client_sessions(tmp_path):
+def test_multiple_client_sessions(state_dir):
     """Should be able to create multiple client sessions sequentially."""
-    state_dir = tmp_path / "state"
-    _prepare_state_dir(state_dir)
     config = _make_config(state_dir)
     state, _ = vmain.init_state(config=config)
 
@@ -212,10 +214,8 @@ def test_multiple_client_sessions(tmp_path):
     _run(test_fn())
 
 
-def test_full_reset_flow(tmp_path):
+def test_full_reset_flow(state_dir):
     """Full flow: pending_context triggers client recreation."""
-    state_dir = tmp_path / "state"
-    _prepare_state_dir(state_dir)
     config = _make_config(state_dir)
     state, _ = vmain.init_state(config=config)
 
@@ -248,10 +248,8 @@ def test_full_reset_flow(tmp_path):
 # =============================================================================
 
 
-def test_notification_creates_file(tmp_path):
+def test_notification_creates_file(state_dir):
     """Vesta should process a notification and create the requested file."""
-    state_dir = tmp_path / "state"
-    _prepare_state_dir(state_dir)
 
     async def test_fn(state: vm.State, config: vm.VestaConfig):
         workspace = config.state_dir / "workspace"
@@ -271,10 +269,8 @@ def test_notification_creates_file(tmp_path):
     _run(_run_test_scenario(state_dir, test_fn))
 
 
-def test_sequential_and_interrupt_flow(tmp_path):
+def test_sequential_and_interrupt_flow(state_dir):
     """Vesta should handle sequential tasks and interrupts correctly."""
-    state_dir = tmp_path / "state"
-    _prepare_state_dir(state_dir)
 
     async def test_fn(state: vm.State, config: vm.VestaConfig):
         workspace = config.state_dir / "workspace"
@@ -316,10 +312,8 @@ def test_sequential_and_interrupt_flow(tmp_path):
     _run(_run_test_scenario(state_dir, test_fn))
 
 
-def test_notification_batching(tmp_path):
+def test_notification_batching(state_dir):
     """Multiple notifications arriving together should be batched."""
-    state_dir = tmp_path / "state"
-    _prepare_state_dir(state_dir)
 
     async def test_fn(state: vm.State, config: vm.VestaConfig):
         workspace = config.state_dir / "workspace"
@@ -331,19 +325,17 @@ def test_notification_batching(tmp_path):
         _write_notification(notif_dir, f'This is an automated test. Create the file "{file1}" containing only:\nfirst')
         _write_notification(notif_dir, f'This is an automated test. Create the file "{file2}" containing only:\nsecond')
 
-        await _wait_for_file(file1)
-        await _wait_for_file(file2)
+        content1 = await _wait_for_file(file1)
+        content2 = await _wait_for_file(file2)
 
-        assert "first" in file1.read_text()
-        assert "second" in file2.read_text()
+        assert "first" in content1
+        assert "second" in content2
 
     _run(_run_test_scenario(state_dir, test_fn, notification_buffer_delay=3))
 
 
-def test_client_created_on_notification(tmp_path):
+def test_client_created_on_notification(state_dir):
     """Claude client should be created when processing a notification."""
-    state_dir = tmp_path / "state"
-    _prepare_state_dir(state_dir)
 
     async def test_fn(state: vm.State, config: vm.VestaConfig):
         notif_dir = config.notifications_dir
@@ -358,10 +350,8 @@ def test_client_created_on_notification(tmp_path):
     _run(_run_test_scenario(state_dir, test_fn))
 
 
-def test_memory_exists_on_startup(tmp_path):
+def test_memory_exists_on_startup(state_dir):
     """Memory file should exist when Vesta starts."""
-    state_dir = tmp_path / "state"
-    _prepare_state_dir(state_dir)
     config = _make_config(state_dir)
     memory_path = get_memory_path(config)
     assert memory_path.exists()
@@ -375,10 +365,8 @@ def test_memory_exists_on_startup(tmp_path):
     _run(_run_test_scenario(state_dir, test_fn))
 
 
-def test_graceful_shutdown(tmp_path):
+def test_graceful_shutdown(state_dir):
     """Vesta should shut down gracefully without errors."""
-    state_dir = tmp_path / "state"
-    _prepare_state_dir(state_dir)
 
     async def test_fn(state: vm.State, config: vm.VestaConfig):
         log_file = config.logs_dir / "vesta.log"
@@ -387,10 +375,8 @@ def test_graceful_shutdown(tmp_path):
     _run(_run_test_scenario(state_dir, test_fn))
 
 
-def test_multiple_files_single_request(tmp_path):
+def test_multiple_files_single_request(state_dir):
     """Vesta should handle requests to create multiple files."""
-    state_dir = tmp_path / "state"
-    _prepare_state_dir(state_dir)
 
     async def test_fn(state: vm.State, config: vm.VestaConfig):
         workspace = config.state_dir / "workspace"
@@ -411,21 +397,19 @@ def test_multiple_files_single_request(tmp_path):
         )
         _write_notification(notif_dir, message)
 
-        await _wait_for_file(file_a)
-        await _wait_for_file(file_b)
-        await _wait_for_file(file_c)
+        content_a = await _wait_for_file(file_a)
+        content_b = await _wait_for_file(file_b)
+        content_c = await _wait_for_file(file_c)
 
-        assert "A" in file_a.read_text()
-        assert "B" in file_b.read_text()
-        assert "C" in file_c.read_text()
+        assert "A" in content_a
+        assert "B" in content_b
+        assert "C" in content_c
 
     _run(_run_test_scenario(state_dir, test_fn))
 
 
-def test_file_modification(tmp_path):
+def test_file_modification(state_dir):
     """Vesta should be able to modify existing files."""
-    state_dir = tmp_path / "state"
-    _prepare_state_dir(state_dir)
 
     async def test_fn(state: vm.State, config: vm.VestaConfig):
         workspace = config.state_dir / "workspace"
