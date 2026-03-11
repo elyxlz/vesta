@@ -1,6 +1,9 @@
 name: Ruff
 
-on: [pull_request]
+on:
+  push:
+    branches: [master]
+  pull_request:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -11,4 +14,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: chartboost/ruff-action@v1
+
+      - name: Lint
+        working-directory: agent
+        run: uvx ruff check .
+
+      - name: Format
+        working-directory: agent
+        run: uvx ruff format --check .
