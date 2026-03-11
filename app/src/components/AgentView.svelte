@@ -285,7 +285,7 @@
     onpointerleave={onOrbLeave}
     onpointermove={onOrbMove}
   >
-    <div class="orb-container" bind:this={orbEl} class:alive={fullyAlive} class:booting={operational && !agentReady} class:dead={statusLoaded && ((!alive && !starting && !authenticating) || deleting || dead)} class:stopping class:starting class:authenticating class:deleting class:thinking={fullyAlive && agentStateVal === 'thinking'} class:tool-use={fullyAlive && agentStateVal === 'tool_use'}>
+    <div class="orb-container" class:orb-loading={!statusLoaded} bind:this={orbEl} class:alive={fullyAlive} class:booting={operational && !agentReady} class:dead={statusLoaded && ((!alive && !starting && !authenticating) || deleting || dead)} class:stopping class:starting class:authenticating class:deleting class:thinking={fullyAlive && agentStateVal === 'thinking'} class:tool-use={fullyAlive && agentStateVal === 'tool_use'}>
       <div class="orb-glow"></div>
       <div class="orb-body">
         <div class="orb-highlight"></div>
@@ -420,6 +420,16 @@
     height: 140px;
     will-change: transform;
     transition: filter 0.8s var(--spring);
+  }
+
+  .orb-container.orb-loading {
+    opacity: 0;
+  }
+
+  .orb-container.orb-loading,
+  .orb-container.orb-loading * {
+    transition: none !important;
+    animation: none !important;
   }
 
   .orb-body {
