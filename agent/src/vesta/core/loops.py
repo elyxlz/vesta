@@ -112,7 +112,6 @@ async def queue_greeting(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.V
 # --- Message processing ---
 
 
-
 async def _process_message_safely(msg: str, *, is_user: bool, state: vm.State, config: vm.VestaConfig) -> None:
     try:
         if is_user:
