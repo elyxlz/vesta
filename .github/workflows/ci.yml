@@ -401,13 +401,12 @@ jobs:
           fi
           echo "empty name correctly rejected"
 
-          echo "=== wait-ready (timeout without auth) ==="
+          echo "=== wait-ready (authenticated agent) ==="
           "$CLI" create --name ci-wait-test
+          "$CLI" auth ci-wait-test --token '{"claudeAiOauth":{"accessToken":"ci-test","refreshToken":"ci-test","expiresAt":"2099-01-01T00:00:00Z"}}'
           "$CLI" start ci-wait-test
-          if "$CLI" wait-ready ci-wait-test --timeout 3 2>/dev/null; then
-            echo "FAIL: wait-ready should timeout without auth"; exit 1
-          fi
-          echo "wait-ready timeout works"
+          "$CLI" wait-ready ci-wait-test --timeout 30
+          echo "wait-ready works"
           "$CLI" destroy ci-wait-test --yes
 
           echo "=== destroy auto-stops running container ==="
@@ -510,7 +509,7 @@ jobs:
           echo "VM image files OK"
 
           # setup will skip download (files exist), generate SSH key, try to boot vfkit (will fail)
-          "$CLI" setup --yes 2>&1 || true
+          "$CLI" setup --name ci-test --yes 2>&1 || true
 
           # Verify SSH key was generated
           test -f "$DATA_DIR/ssh_key" || { echo "FAIL: SSH key not generated"; exit 1; }
@@ -518,7 +517,7 @@ jobs:
           echo "SSH key generation OK"
 
           # Status should show not_found (vfkit can't run in CI)
-          STATUS=$("$CLI" status --json)
+          STATUS=$("$CLI" status ci-test --json)
           echo "$STATUS"
           echo "$STATUS" | jq -e '.status == "not_found"'
           echo "all macOS integration tests passed"
