@@ -2,12 +2,20 @@ export interface AgentInfo {
   status: AgentStatus;
   id: string;
   authenticated: boolean;
-  name?: string;
+  name: string;
   agent_ready: boolean;
   ws_port: number;
 }
 
 export type AgentStatus = "running" | "stopped" | "dead" | "not_found" | "unknown";
+
+export interface ListEntry {
+  name: string;
+  status: string;
+  authenticated: boolean;
+  agent_ready: boolean;
+  ws_port: number;
+}
 
 export interface PlatformStatus {
   ready: boolean;

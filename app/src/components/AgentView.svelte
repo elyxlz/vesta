@@ -1,25 +1,28 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
-  import { agent, agentName, agentState, resetReconnect } from "../lib/stores";
-  import { setPort } from "../lib/ws";
+  import type { AgentConnection } from "../lib/ws";
   import { agentStatus, startAgent, stopAgent, restartAgent, deleteAgent, authenticate } from "../lib/api";
-  import type { AgentStatus } from "../lib/types";
+  import type { AgentStatus, AgentActivityState } from "../lib/types";
 
   let {
+    name,
+    connection,
     onChat,
     onConsole,
     onDestroyed,
-    onReady,
+    onBack,
   }: {
+    name: string;
+    connection: AgentConnection;
     onChat: () => void;
     onConsole: () => void;
     onDestroyed: () => void;
-    onReady: (ready: boolean) => void;
+    onBack: () => void;
   } = $props();
 
-  let status = $state<AgentStatus>($agent?.status ?? "unknown");
-  let authenticated = $state($agent?.authenticated ?? false);
-  let agentReady = $state($agent?.agent_ready ?? false);
+  let status = $state<AgentStatus>("unknown");
+  let authenticated = $state(false);
+  let agentReady = $state(false);
   let confirming = $state(false);
   let menuOpen = $state(false);
   let hovered = $state(false);
@@ -39,6 +42,10 @@
   let rafId = 0;
   const LERP = 0.015;
   const SNAP = 0.5;
+
+  let agentStateVal = $state<AgentActivityState>("idle");
+  const conn = connection;
+  const unsubAgentState = (conn.agentState as any).subscribe((v: AgentActivityState) => { agentStateVal = v; });
 
   function orbLoop() {
     if (!orbEl) { rafId = 0; return; }
@@ -79,14 +86,10 @@
 
   async function syncStatus() {
     try {
-      const info = await agentStatus();
+      const info = await agentStatus(name);
       status = info.status;
       authenticated = info.authenticated;
       agentReady = info.agent_ready;
-      agent.set(info);
-      if (info.ws_port) setPort(info.ws_port);
-      if (info.name) agentName.set(info.name);
-      onReady(info.agent_ready);
       if (errorMsg) errorMsg = "";
     } catch {
       status = "unknown";
@@ -127,6 +130,7 @@
     if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
     document.removeEventListener("click", onDocClick);
     document.removeEventListener("keydown", onKeydown);
+    unsubAgentState();
   });
 
   async function toggleRun() {
@@ -136,10 +140,10 @@
     operation = running ? "stopping" : "starting";
     try {
       if (wasStopping) {
-        await stopAgent();
+        await stopAgent(name);
       } else {
-        await startAgent();
-        resetReconnect();
+        await startAgent(name);
+        connection.resetReconnect();
       }
       await syncStatus();
     } catch (e: any) {
@@ -158,8 +162,8 @@
     errorMsg = "";
     operation = "deleting";
     try {
-      await stopAgent().catch(() => {});
-      await deleteAgent();
+      await stopAgent(name).catch(() => {});
+      await deleteAgent(name);
       onDestroyed();
     } catch (e: any) {
       errorMsg = e?.message || "failed to delete";
@@ -178,13 +182,13 @@
     errorMsg = "";
     operation = "authenticating";
     try {
-      await authenticate();
+      await authenticate(name);
       if (running) {
-        await restartAgent();
+        await restartAgent(name);
       } else {
-        await startAgent();
+        await startAgent(name);
       }
-      resetReconnect();
+      connection.resetReconnect();
       await syncStatus();
     } catch (e: any) {
       errorMsg = e?.message || "sign in failed";
@@ -216,7 +220,7 @@
     onpointerleave={onOrbLeave}
     onpointermove={onOrbMove}
   >
-    <div class="orb-container" bind:this={orbEl} class:alive={fullyAlive} class:booting={operational && !agentReady} class:dead={(!alive && !starting && !authenticating) || deleting || dead} class:stopping class:starting class:authenticating class:deleting class:thinking={fullyAlive && $agentState === 'thinking'} class:tool-use={fullyAlive && $agentState === 'tool_use'}>
+    <div class="orb-container" bind:this={orbEl} class:alive={fullyAlive} class:booting={operational && !agentReady} class:dead={(!alive && !starting && !authenticating) || deleting || dead} class:stopping class:starting class:authenticating class:deleting class:thinking={fullyAlive && agentStateVal === 'thinking'} class:tool-use={fullyAlive && agentStateVal === 'tool_use'}>
       <div class="orb-glow"></div>
       <div class="orb-body">
         <div class="orb-highlight"></div>
@@ -226,7 +230,7 @@
     </div>
 
     <div class="label">
-      <span class="name">{$agentName}</span>
+      <span class="name">{name}</span>
       <span class="status" class:alive={fullyAlive} class:error={!!errorMsg} title={errorMsg || ""}>
         {errorMsg ? errorMsg : deleting ? "deleting..." : stopping ? "stopping..." : starting ? "starting..." : authenticating ? "signing in..." : fullyAlive ? "alive" : operational ? "waking up..." : running ? "not signed in" : dead ? "broken — delete and recreate" : "stopped"}
       </span>
@@ -258,6 +262,7 @@
               {#if alive}
                 <button class="menu-item" onclick={() => { menuOpen = false; onConsole(); }} data-tip="view raw logs">console</button>
               {/if}
+              <button class="menu-item" onclick={() => { menuOpen = false; onBack(); }} data-tip="back to grid">back</button>
               <button class="menu-item danger" disabled={busy} onclick={() => { menuOpen = false; destroy(); }} data-tip="permanently delete">delete</button>
             </div>
           {/if}
