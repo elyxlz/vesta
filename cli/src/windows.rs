@@ -236,7 +236,6 @@ fn distro_registered() -> bool {
         Err(_) => return false,
     };
 
-    // wsl --list --quiet outputs UTF-16LE with BOM on Windows
     let u16s: Vec<u16> = output
         .stdout
         .chunks_exact(2)
@@ -384,10 +383,6 @@ fn ensure_services() {
         return;
     }
 
-    // On Windows 10, [boot] command in wsl.conf is not supported,
-    // so the entrypoint never runs. Start it if not already running.
-    // We spawn a dedicated wsl.exe process that stays alive as a background child,
-    // preventing WSL from terminating the distro when interactive sessions exit.
     let already_running = process::Command::new("wsl.exe")
         .args(["-d", WSL_DISTRO, "--exec", "pgrep", "-f", "entrypoint.sh"])
         .stdout(process::Stdio::null())
@@ -458,57 +453,71 @@ fn remove_autostart() {
         .status();
 }
 
-fn command_args(command: &Command) -> Vec<&str> {
+fn wslpath(win_path: &std::path::Path) -> String {
+    let output = process::Command::new("wsl.exe")
+        .args(["-d", WSL_DISTRO, "--exec", "wslpath", "-a", win_path.to_str().unwrap()])
+        .stdout(process::Stdio::piped())
+        .stderr(process::Stdio::null())
+        .output()
+        .unwrap_or_else(|_| die("failed to convert path with wslpath"));
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+fn command_args(command: &Command) -> Vec<String> {
     match command {
         Command::Setup { build, yes, ref name } => {
-            let mut args = vec!["setup"];
-            if *yes { args.push("-y"); }
-            if *build { args.push("--build"); }
-            if let Some(n) = name { args.push("--name"); args.push(n); }
+            let mut args = vec!["setup".into()];
+            if *yes { args.push("-y".into()); }
+            if *build { args.push("--build".into()); }
+            if let Some(n) = name { args.push("--name".into()); args.push(n.clone()); }
             args
         }
         Command::Create { build, ref name } => {
-            let mut args = if *build {
-                vec!["create", "--build"]
-            } else {
-                vec!["create"]
-            };
-            if let Some(n) = name {
-                args.push("--name");
-                args.push(n);
-            }
+            let mut args = vec!["create".into()];
+            if *build { args.push("--build".into()); }
+            if let Some(n) = name { args.push("--name".into()); args.push(n.clone()); }
             args
         }
-        Command::Start => vec!["start"],
-        Command::Stop => vec!["stop"],
-        Command::Restart => vec!["restart"],
-        Command::Attach => vec!["attach"],
-        Command::Auth { ref token } => {
-            if let Some(t) = token {
-                vec!["auth", "--token", t]
-            } else {
-                vec!["auth"]
-            }
+        Command::Start { ref name } => {
+            let mut args = vec!["start".into()];
+            if let Some(n) = name { args.push(n.clone()); }
+            args
         }
-        Command::Logs => vec!["logs"],
-        Command::Shell => vec!["shell"],
-        Command::Status { json } => {
-            if *json {
-                vec!["status", "--json"]
-            } else {
-                vec!["status"]
-            }
+        Command::Stop { ref name } => vec!["stop".into(), name.clone()],
+        Command::Restart { ref name } => vec!["restart".into(), name.clone()],
+        Command::Attach { ref name } => vec!["attach".into(), name.clone()],
+        Command::Auth { ref name, ref token } => {
+            let mut args = vec!["auth".into(), name.clone()];
+            if let Some(t) = token { args.push("--token".into()); args.push(t.clone()); }
+            args
         }
-        Command::Backup => vec!["backup"],
-        Command::Destroy { yes } => {
-            if *yes {
-                vec!["destroy", "--yes"]
-            } else {
-                vec!["destroy"]
-            }
+        Command::Logs { ref name } => vec!["logs".into(), name.clone()],
+        Command::Shell { ref name } => vec!["shell".into(), name.clone()],
+        Command::Status { ref name, json } => {
+            let mut args = vec!["status".into(), name.clone()];
+            if *json { args.push("--json".into()); }
+            args
         }
-        Command::Name { ref name } => vec!["name", name],
-        Command::Rebuild => vec!["rebuild"],
+        Command::List { json } => {
+            let mut args = vec!["list".into()];
+            if *json { args.push("--json".into()); }
+            args
+        }
+        Command::Backup { ref name, ref output } => {
+            vec!["backup".into(), name.clone(), wslpath(output)]
+        }
+        Command::Restore { ref input, ref name, replace } => {
+            let mut args = vec!["restore".into(), wslpath(input)];
+            if let Some(n) = name { args.push("--name".into()); args.push(n.clone()); }
+            if *replace { args.push("--replace".into()); }
+            args
+        }
+        Command::Destroy { ref name, yes } => {
+            let mut args = vec!["destroy".into(), name.clone()];
+            if *yes { args.push("--yes".into()); }
+            args
+        }
+        Command::Rebuild { ref name } => vec!["rebuild".into(), name.clone()],
         Command::PlatformCheck | Command::PlatformSetup => unreachable!(),
     }
 }
@@ -549,13 +558,12 @@ pub fn run(command: Command) -> ! {
 
     ensure_services();
 
-    let mut args = vec!["-d", WSL_DISTRO, "--exec", VESTA_LINUX_BIN];
-    args.extend(command_args(&command));
+    let cmd_args = command_args(&command);
+    let cmd_args_refs: Vec<&str> = cmd_args.iter().map(|s| s.as_str()).collect();
+    let mut args: Vec<&str> = vec!["-d", WSL_DISTRO, "--exec", VESTA_LINUX_BIN];
+    args.extend(&cmd_args_refs);
 
-    // Auth without token needs passthrough: pipe output so the Tauri app (or
-    // terminal user) can capture the auth URL while still streaming lines in
-    // real time. claude setup-token doesn't need interactive stdin.
-    if matches!(command, Command::Auth { token: None }) {
+    if matches!(command, Command::Auth { token: None, .. }) {
         let child = process::Command::new("wsl.exe")
             .args(&args)
             .stdin(process::Stdio::inherit())
@@ -567,15 +575,12 @@ pub fn run(command: Command) -> ! {
         process::exit(status.code().unwrap_or(1));
     }
 
-    // Interactive commands need inherited stdio for user prompts/input.
-    // Setup is always interactive because obtain_credentials needs stdin
-    // even when --yes is passed (--yes only skips the confirm prompt).
     let interactive = matches!(
         command,
         Command::Setup { .. }
-            | Command::Destroy { yes: false }
-            | Command::Attach
-            | Command::Shell
+            | Command::Destroy { yes: false, .. }
+            | Command::Attach { .. }
+            | Command::Shell { .. }
     );
 
     if interactive {
