@@ -3,19 +3,25 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { listAgents } from "./lib/api";
   import { createAgentConnection, type AgentConnection } from "./lib/ws";
+  import { detectPlatform } from "./lib/platform";
   import Onboarding from "./components/Onboarding.svelte";
   import AgentView from "./components/AgentView.svelte";
   import Chat from "./components/Chat.svelte";
   import Console from "./components/Console.svelte";
   import GridView from "./components/GridView.svelte";
 
+  const platform = detectPlatform();
+
   type View = "loading" | "grid" | "onboarding" | "agent-home" | "agent-chat" | "agent-console";
 
   let view = $state<View>("loading");
   let ready = $state(false);
   let transitioning = $state(false);
+  import type { AgentActivityState } from "./lib/types";
+
   let selectedAgent = $state<{ name: string; wsPort: number } | null>(null);
   let agentConnection = $state<AgentConnection | null>(null);
+  let initialActivity = $state<AgentActivityState>("idle");
   let hasAgents = $state(false);
 
   async function setView(next: View) {
@@ -57,9 +63,10 @@
 
   onDestroy(clearConnection);
 
-  function handleSelectAgent(name: string, wsPort: number) {
+  function handleSelectAgent(name: string, wsPort: number, activity: AgentActivityState = "idle") {
     agentConnection?.disconnect();
     selectedAgent = { name, wsPort };
+    initialActivity = activity;
     agentConnection = createAgentConnection(wsPort);
     agentConnection.connect();
     setView("agent-home");
@@ -110,15 +117,17 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="window" class:dark={isDark} onpointermove={onGlobalMove}>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="titlebar" onmousedown={startDrag}>
-    <div class="window-controls">
-      <button class="wc close" onclick={() => appWindow.close()} aria-label="close">
-        <svg width="10" height="10" viewBox="0 0 10 10"><path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
-      </button>
-      <button class="wc minimize" onclick={() => appWindow.minimize()} aria-label="minimize">
-        <svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 5h6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
-      </button>
-    </div>
+  <div class="titlebar" class:titlebar-macos={platform === "macos"} class:titlebar-right={platform !== "macos"} onmousedown={startDrag}>
+    {#if platform !== "macos"}
+      <div class="window-controls {platform}">
+        <button class="wc" onclick={() => appWindow.minimize()} aria-label="minimize">
+          <svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 5h6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+        </button>
+        <button class="wc close" onclick={() => appWindow.close()} aria-label="close">
+          <svg width="10" height="10" viewBox="0 0 10 10"><path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+    {/if}
   </div>
 
   <main class:ready class:transitioning inert={transitioning}>
@@ -129,10 +138,10 @@
       </div>
     {:else if view === "grid"}
       <GridView
-        onSelect={handleSelectAgent}
+        onSelect={(name, wsPort, activity) => handleSelectAgent(name, wsPort, activity)}
         onCreate={() => setView("onboarding")}
-        onChat={(name, wsPort) => { handleSelectAgent(name, wsPort); setView("agent-chat"); }}
-        onConsole={(name, wsPort) => { handleSelectAgent(name, wsPort); setView("agent-console"); }}
+        onChat={(name, wsPort, activity) => { handleSelectAgent(name, wsPort, activity); setView("agent-chat"); }}
+        onConsole={(name, wsPort, activity) => { handleSelectAgent(name, wsPort, activity); setView("agent-console"); }}
       />
     {:else if view === "onboarding"}
       <Onboarding onComplete={handleOnboardingComplete} onCancel={hasAgents ? () => setView("grid") : undefined} />
@@ -140,6 +149,7 @@
       <AgentView
         name={selectedAgent.name}
         connection={agentConnection}
+        {initialActivity}
         onChat={() => setView("agent-chat")}
         onConsole={() => setView("agent-console")}
         onDestroyed={handleDestroyed}
@@ -314,20 +324,29 @@
     z-index: 100;
   }
 
+  .titlebar.titlebar-macos {
+    padding-left: 78px;
+  }
+
+  .titlebar.titlebar-right {
+    justify-content: flex-end;
+  }
+
   .titlebar:active {
     cursor: grabbing;
   }
 
-  .window-controls {
+  /* --- Linux: flat icon buttons --- */
+  .window-controls.linux {
     display: flex;
-    gap: 0;
-    margin-left: -8px;
+    gap: 2px;
   }
 
-  .wc {
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
+  .linux .wc {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    corner-shape: squircle;
     border: none;
     cursor: pointer;
     display: flex;
@@ -335,38 +354,62 @@
     justify-content: center;
     transition: all 0.15s var(--spring-bouncy);
     padding: 0;
-    color: transparent;
+    color: rgba(0, 0, 0, 0.35);
     background: transparent;
-    position: relative;
   }
 
-  .wc::after {
-    content: "";
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    position: absolute;
+  .linux .wc:hover {
+    background: rgba(0, 0, 0, 0.06);
+    color: rgba(0, 0, 0, 0.6);
   }
 
-  .wc.close::after {
-    background: #ed6a5f;
+  .linux .wc.close:hover {
+    background: rgba(224, 80, 70, 0.12);
+    color: #c45450;
   }
 
-  .wc.minimize::after {
-    background: #f6be50;
+  .linux .wc:active {
+    transform: scale(0.9);
   }
 
-  .wc svg {
-    position: relative;
-    z-index: 1;
+  /* --- Windows: caption-style buttons --- */
+  .window-controls.windows {
+    display: flex;
+    gap: 0;
+    margin-right: -16px;
   }
 
-  .window-controls:hover .wc {
-    color: rgba(0, 0, 0, 0.5);
+  .windows .wc {
+    width: 46px;
+    height: 40px;
+    border-radius: 0;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.1s ease;
+    padding: 0;
+    color: rgba(0, 0, 0, 0.6);
+    background: transparent;
   }
 
-  .wc:active {
-    transform: scale(0.85);
+  .windows .wc:hover {
+    background: rgba(0, 0, 0, 0.06);
+  }
+
+  .windows .wc.close:hover {
+    background: #c42b1c;
+    color: white;
+  }
+
+  .windows .wc:active {
+    background: rgba(0, 0, 0, 0.1);
+  }
+
+  .windows .wc.close:active {
+    background: #b02818;
+    color: white;
   }
 
   main {
@@ -494,6 +537,42 @@
 
     .loading-label {
       color: #6a625a;
+    }
+
+    .linux .wc {
+      color: rgba(255, 255, 255, 0.35);
+    }
+
+    .linux .wc:hover {
+      background: rgba(255, 255, 255, 0.08);
+      color: rgba(255, 255, 255, 0.7);
+    }
+
+    .linux .wc.close:hover {
+      background: rgba(224, 80, 70, 0.2);
+      color: #e07070;
+    }
+
+    .windows .wc {
+      color: rgba(255, 255, 255, 0.7);
+    }
+
+    .windows .wc:hover {
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .windows .wc.close:hover {
+      background: #c42b1c;
+      color: white;
+    }
+
+    .windows .wc:active {
+      background: rgba(255, 255, 255, 0.12);
+    }
+
+    .windows .wc.close:active {
+      background: #b02818;
+      color: white;
     }
   }
 </style>

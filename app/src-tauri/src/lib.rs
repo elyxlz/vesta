@@ -8,7 +8,7 @@ use state::AppState;
 pub fn run() {
     let app_state = AppState::new();
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(app_state)
         .setup(|_app| {
@@ -25,6 +25,13 @@ pub fn run() {
                             None,
                             None,
                         );
+                        let _ = window.set_decorations(true);
+                        let _ = window
+                            .set_title_bar_style(tauri::TitleBarStyle::Overlay);
+                        let _ = window
+                            .set_traffic_light_position(tauri::Position::Logical(
+                                tauri::LogicalPosition { x: 8.0, y: 14.0 },
+                            ));
                     }
                     #[cfg(target_os = "windows")]
                     {
@@ -55,6 +62,31 @@ pub fn run() {
             commands::platform::platform_check,
             commands::platform::platform_setup,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    #[cfg(target_os = "macos")]
+    {
+        use tauri::Manager;
+        let main_window = builder.get_webview_window("main").unwrap();
+        let win = main_window.clone();
+        main_window.on_window_event(move |event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = win.hide();
+            }
+        });
+    }
+
+    builder.run(|app_handle, event| {
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Reopen { .. } = event {
+            use tauri::Manager;
+            if let Some(window) = app_handle.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }
+        let _ = (app_handle, event);
+    });
 }

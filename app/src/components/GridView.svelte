@@ -11,10 +11,10 @@
     onChat,
     onConsole,
   }: {
-    onSelect: (name: string, wsPort: number) => void;
+    onSelect: (name: string, wsPort: number, activity: AgentActivityState) => void;
     onCreate: () => void;
-    onChat: (name: string, wsPort: number) => void;
-    onConsole: (name: string, wsPort: number) => void;
+    onChat: (name: string, wsPort: number, activity: AgentActivityState) => void;
+    onConsole: (name: string, wsPort: number, activity: AgentActivityState) => void;
   } = $props();
 
   let agents = $state<ListEntry[]>([]);
@@ -214,7 +214,7 @@
   <div class="grid cols-{gridCols}" class:few={gridCols < 3}>
     {#each agents as agent}
       <div class="card-wrapper">
-        <button class="card" class:busy={busyAgent === agent.name} onclick={() => onSelect(agent.name, agent.ws_port)}>
+        <button class="card" class:busy={busyAgent === agent.name} onclick={() => onSelect(agent.name, agent.ws_port, activityStates[agent.name] ?? "idle")}>
           <div class="mini-orb-container {orbClass(agent, activityStates[agent.name])}">
             <div class="mini-orb-glow"></div>
             <div class="mini-orb-body">
@@ -246,8 +246,8 @@
                 <button class="menu-item muted" onclick={menuAction(() => { confirming = null; })}>cancel</button>
               {:else}
                 {#if agent.alive}
-                  <button class="menu-item" onclick={menuAction(() => onChat(agent.name, agent.ws_port))}>chat</button>
-                  <button class="menu-item" onclick={menuAction(() => onConsole(agent.name, agent.ws_port))}>console</button>
+                  <button class="menu-item" onclick={menuAction(() => onChat(agent.name, agent.ws_port, activityStates[agent.name] ?? "idle"))}>chat</button>
+                  <button class="menu-item" onclick={menuAction(() => onConsole(agent.name, agent.ws_port, activityStates[agent.name] ?? "idle"))}>console</button>
                 {/if}
                 <button class="menu-item" disabled={!!busyAgent} onclick={menuAction(() => handleToggle(agent))}>{agent.status === "running" ? "stop" : "start"}</button>
                 {#if agent.status === "running"}
