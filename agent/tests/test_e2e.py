@@ -459,9 +459,10 @@ def test_file_modification(tmp_path):
 def test_responsive_during_subagent(tmp_path):
     """Vesta stays responsive to new notifications while a sub-agent is running.
 
-    Sends a task that triggers a long-running sub-agent (Agent tool), then sends
-    a simple file-creation request. The simple request should complete within 60s,
-    not block until the sub-agent finishes (which could take many minutes).
+    Sends a task that triggers a long-running sub-agent (Agent tool), waits for
+    the Agent tool to actually start executing, then sends a simple file-creation
+    request. The simple request should complete within 60s, proving the agent
+    isn't blocked by the sub-agent.
     """
     state_dir = tmp_path / "state"
     _prepare_state_dir(state_dir)
@@ -473,25 +474,53 @@ def test_responsive_during_subagent(tmp_path):
         essay_file = workspace / f"essay-{uuid.uuid4().hex}.txt"
         quick_file = workspace / f"quick-{uuid.uuid4().hex}.txt"
 
+        # Subscribe to events so we can detect when the Agent tool starts
+        event_queue = state.event_bus.subscribe()
+
+        # Very explicit prompt — Claude must use the Agent tool, nothing else
         long_task = textwrap.dedent(f"""\
-            IMPORTANT: You MUST use the Agent tool for this task. Spawn a sub-agent
-            (subagent_type "general-purpose") to write a detailed, thorough 3000-word
-            essay about the complete history of artificial intelligence from the 1950s
-            to today, covering Turing, expert systems, neural networks, deep learning,
-            and large language models. Save the final essay to "{essay_file}".
-            Do NOT write it yourself — delegate entirely to a sub-agent via the Agent tool.""")
+            This is a test of the sub-agent system. Your ONLY action must be to call
+            the Agent tool ONCE with these exact parameters:
+            - subagent_type: "general-purpose"
+            - description: "Write essay about AI history"
+            - prompt: "Write a detailed 3000-word essay about the complete history of
+              artificial intelligence from the 1950s to today. Cover Turing, Dartmouth
+              conference, expert systems, neural networks, deep learning, transformers,
+              and large language models. Save the essay to {essay_file}"
+
+            CRITICAL RULES:
+            - You MUST call the Agent tool. This is mandatory.
+            - Do NOT write anything yourself. Do NOT use Write, Read, Bash, or any tool.
+            - Your response should contain ONLY the Agent tool call, nothing else.
+            - This is an automated test — compliance is required.""")
         _write_notification(notif_dir, long_task)
 
-        # Wait for the sub-agent to be launched (give time for notification pickup + query)
-        await asyncio.sleep(20)
+        # Wait for the Agent/Task tool to actually start (sub-agent is running)
+        deadline = time.time() + 120
+        subagent_started = False
+        while time.time() < deadline:
+            try:
+                event = await asyncio.wait_for(event_queue.get(), timeout=2.0)
+                if event["type"] == "tool_start":
+                    tool_name = event.get("tool", "")
+                    if tool_name in ("Task", "Agent"):
+                        subagent_started = True
+                        break
+            except TimeoutError:
+                continue
 
-        # Send a simple task — should be processed via interrupt, not blocked
+        assert subagent_started, "Agent tool was never called — sub-agent not spawned"
+
+        # Now the sub-agent is running and receive_response() is blocked.
+        # Send a simple task — should be processed via interrupt, not blocked.
         quick_task = f'Create the file "{quick_file}" containing only:\nstill responsive'
         notification_sent = time.time()
         _write_notification(notif_dir, quick_task)
 
         contents = await _wait_for_file(quick_file, timeout=90.0)
         response_time = time.time() - notification_sent
+
+        state.event_bus.unsubscribe(event_queue)
 
         assert "still responsive" in contents
         assert response_time < 60.0, (
