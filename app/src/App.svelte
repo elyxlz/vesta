@@ -114,7 +114,7 @@
     </div>
   </div>
 
-  <main class:ready class:transitioning>
+  <main class:ready class:transitioning inert={transitioning}>
     {#if view === "loading"}
       <div class="loading">
         <div class="logo-mark">v</div>
@@ -206,21 +206,64 @@
     outline: none;
   }
 
+  :global(button:focus-visible),
+  :global(textarea:focus-visible),
+  :global(input:focus-visible) {
+    box-shadow: 0 0 0 3px rgba(139, 126, 116, 0.2) !important;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :global(button:focus-visible),
+    :global(textarea:focus-visible),
+    :global(input:focus-visible) {
+      box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.1) !important;
+    }
+  }
+
   @media (prefers-reduced-motion: reduce) {
     :global(.orb-container.alive),
+    :global(.orb-container.thinking),
+    :global(.orb-container.tool-use),
+    :global(.orb-container.booting),
+    :global(.orb-container.authenticating),
     :global(.orb-container.alive .orb-glow),
+    :global(.orb-container.thinking .orb-glow),
+    :global(.orb-container.tool-use .orb-glow),
+    :global(.orb-container.booting .orb-glow),
+    :global(.orb-container.authenticating .orb-glow),
     :global(.orb-container.alive .orb-body),
+    :global(.orb-container.thinking .orb-body),
+    :global(.orb-container.tool-use .orb-body),
+    :global(.orb-container.booting .orb-body),
+    :global(.orb-container.authenticating .orb-body),
+    :global(.orb-container.stopping .orb-body),
+    :global(.orb-container.stopping .orb-glow),
+    :global(.orb-container.stopping .orb-ring),
+    :global(.orb-container.deleting),
+    :global(.orb-container.deleting .orb-glow),
     :global(.logo-mark),
     :global(.empty-dots span),
+    :global(.thinking-indicator span),
     :global(.line),
-    :global(.fill) {
+    :global(.fill),
+    :global(.done-icon),
+    :global(.platform-icon) {
       animation: none !important;
     }
     :global(.orb-container.alive .orb-glow) { opacity: 1; }
     :global(.logo-mark) { opacity: 0.6; }
     :global(.empty-dots span) { opacity: 0.5; }
+    :global(.thinking-indicator span) { opacity: 0.5; }
     :global(.actions) { transition: opacity 0.01ms !important; transform: none !important; }
     :global(.actions.visible) { transform: none !important; }
+    :global(.step-anim) { animation: none !important; }
+    :global(.panel) { animation: none !important; }
+    :global(.agent-view) { animation: none !important; }
+    :global(.grid-view) { animation: none !important; }
+    :global(.menu-dropdown) { animation: none !important; }
+    :global(.msg) { animation: none !important; }
+    :global(.status.error) { animation: none !important; }
+    :global(.error) { animation: none !important; }
   }
 
   .window {
@@ -266,12 +309,12 @@
   .window-controls {
     display: flex;
     gap: 0;
-    margin-left: -2px;
+    margin-left: -8px;
   }
 
   .wc {
-    width: 20px;
-    height: 20px;
+    width: 32px;
+    height: 32px;
     border-radius: 50%;
     border: none;
     cursor: pointer;
@@ -435,6 +478,10 @@
 
     .logo-mark {
       color: #8a8078;
+    }
+
+    .loading-label {
+      color: #6a625a;
     }
   }
 </style>

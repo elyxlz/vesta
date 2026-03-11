@@ -242,7 +242,10 @@
 
     <div class="actions" class:visible={showActions && !deleting && !stopping && !starting && !authenticating} inert={!showActions || deleting || stopping || starting || authenticating}>
       {#if confirming}
-        <button class="action-btn danger" disabled={busy} onclick={destroy}>confirm</button>
+        <button class="action-btn danger" disabled={busy} onclick={destroy}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+          confirm
+        </button>
         <button class="action-btn muted" disabled={busy} onclick={cancelDestroy}>cancel</button>
       {:else}
         {#if alive}
@@ -265,6 +268,7 @@
             <div class="menu-dropdown">
               {#if alive}
                 <button class="menu-item" onclick={() => { menuOpen = false; onConsole(); }} data-tip="view raw logs">console</button>
+                <div class="menu-divider"></div>
               {/if}
               <button class="menu-item danger" disabled={busy} onclick={() => { menuOpen = false; destroy(); }} data-tip="permanently delete">delete</button>
             </div>
@@ -590,6 +594,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    user-select: none;
   }
 
   .status.alive {
@@ -625,6 +630,7 @@
 
   .action-btn {
     padding: 8px 16px;
+    min-height: 36px;
     border: 1px solid rgba(0, 0, 0, 0.08);
     border-radius: 8px;
     corner-shape: squircle;
@@ -635,12 +641,15 @@
     font-weight: 500;
     color: #5a5450;
     cursor: pointer;
-    transition: all 0.2s var(--spring-bouncy);
+    transition: all 0.15s var(--spring-bouncy);
     letter-spacing: 0.01em;
+    display: flex;
+    align-items: center;
+    gap: 4px;
   }
 
   .action-btn:hover {
-    background: white;
+    background: rgba(255, 255, 255, 0.95);
     border-color: rgba(0, 0, 0, 0.12);
     color: #1a1816;
     transform: translateY(-1px);
@@ -690,6 +699,9 @@
 
   .menu-trigger {
     padding: 8px 10px;
+    min-width: 36px;
+    min-height: 36px;
+    justify-content: center;
   }
 
   .menu-dropdown {
@@ -714,8 +726,15 @@
     to { opacity: 1; transform: translateY(0) scale(1); }
   }
 
+  .menu-divider {
+    height: 1px;
+    background: rgba(0, 0, 0, 0.06);
+    margin: 2px 8px;
+  }
+
   .menu-item {
     padding: 8px 12px;
+    min-height: 36px;
     border: none;
     background: transparent;
     font-family: inherit;
@@ -727,6 +746,8 @@
     corner-shape: squircle;
     text-align: left;
     transition: background 0.12s ease;
+    display: flex;
+    align-items: center;
   }
 
   .menu-item:hover {
@@ -825,6 +846,10 @@
     .menu-item.danger:hover {
       background: rgba(224, 112, 112, 0.1);
       color: #f08080;
+    }
+
+    .menu-divider {
+      background: rgba(255, 255, 255, 0.06);
     }
   }
 </style>
