@@ -164,17 +164,16 @@ async def _process_interruptible(
     msg: str, *, is_user: bool, queue: asyncio.Queue[tuple[str, bool]], state: vm.State, config: vm.VestaConfig
 ) -> None:
     """Process a message while monitoring the queue for new messages that should interrupt."""
-    messages_to_process: collections.deque[tuple[str, bool]] = collections.deque([(msg, is_user)])
+    pending: collections.deque[tuple[str, bool]] = collections.deque([(msg, is_user)])
 
-    while messages_to_process:
+    while pending:
         if state.pending_context is not None:
-            for remaining in messages_to_process:
+            for remaining in pending:
                 await queue.put(remaining)
             break
 
-        current_msg, current_is_user = messages_to_process.popleft()
+        current_msg, current_is_user = pending.popleft()
         state.interrupt_event = asyncio.Event()
-
         process_task = asyncio.create_task(_process_message_safely(current_msg, is_user=current_is_user, state=state, config=config))
 
         while not process_task.done():
@@ -182,9 +181,9 @@ async def _process_interruptible(
             done, _ = await asyncio.wait({process_task, queue_task}, return_when=asyncio.FIRST_COMPLETED)
 
             if queue_task in done:
-                messages_to_process.append(queue_task.result())
+                pending.append(queue_task.result())
                 state.interrupt_event.set()
-                logger.interrupt(f"New message queued, interrupting current processing ({len(messages_to_process)} pending)")
+                logger.interrupt(f"New message queued, interrupting current processing ({len(pending)} pending)")
                 await process_task
                 break
             else:
