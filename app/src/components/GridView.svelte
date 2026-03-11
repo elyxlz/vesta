@@ -201,6 +201,8 @@
   function menuAction(fn: () => void) {
     return (e: MouseEvent) => { e.stopPropagation(); openMenu = null; fn(); };
   }
+
+  let gridCols = $derived(agents.length === 1 ? 1 : agents.length === 2 ? 2 : 3);
 </script>
 
 <div class="grid-view">
@@ -209,7 +211,7 @@
       <path d="M12 5v14M5 12h14"/>
     </svg>
   </button>
-  <div class="grid">
+  <div class="grid cols-{gridCols}">
     {#each agents as agent}
       <div class="card-wrapper">
         <button class="card" class:busy={busyAgent === agent.name} onclick={() => onSelect(agent.name, agent.ws_port)}>
@@ -317,10 +319,22 @@
 
   .grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
     gap: 8px;
     width: 100%;
     padding-top: 40px;
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .grid.cols-1 {
+    grid-template-columns: 1fr;
+    max-width: 220px;
+    margin: 0 auto;
+  }
+
+  .grid.cols-2 {
+    grid-template-columns: repeat(2, 1fr);
+    max-width: 440px;
+    margin: 0 auto;
   }
 
   .card-wrapper {
@@ -373,7 +387,17 @@
     position: relative;
     width: 36px;
     height: 36px;
-    transition: filter 0.8s var(--spring);
+    transition: filter 0.8s var(--spring), width 0.3s var(--spring), height 0.3s var(--spring);
+  }
+
+  .cols-1 .mini-orb-container {
+    width: 56px;
+    height: 56px;
+  }
+
+  .cols-2 .mini-orb-container {
+    width: 44px;
+    height: 44px;
   }
 
   .mini-orb-body {
@@ -513,6 +537,14 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     user-select: none;
+  }
+
+  .cols-1 .card-name {
+    font-size: 14px;
+  }
+
+  .cols-2 .card-name {
+    font-size: 12px;
   }
 
   /* --- Three-dot menu --- */
