@@ -1,48 +1,57 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
-import type { AgentInfo, LogEvent, PlatformStatus } from "./types";
+import type { AgentInfo, ListEntry, LogEvent, PlatformStatus } from "./types";
 
-export async function agentStatus(): Promise<AgentInfo> {
-  return invoke("agent_status");
+export async function listAgents(): Promise<ListEntry[]> {
+  return invoke("list_agents");
 }
 
-export async function createAgent(name?: string): Promise<void> {
-  return invoke("create_agent", { name: name ?? null });
+export async function agentStatus(name: string): Promise<AgentInfo> {
+  return invoke("agent_status", { name });
 }
 
-export async function startAgent(): Promise<void> {
-  return invoke("start_agent");
+export async function createAgent(name: string): Promise<void> {
+  return invoke("create_agent", { name });
 }
 
-export async function stopAgent(): Promise<void> {
-  return invoke("stop_agent");
+export async function startAgent(name: string): Promise<void> {
+  return invoke("start_agent", { name });
 }
 
-export async function restartAgent(): Promise<void> {
-  return invoke("restart_agent");
+export async function stopAgent(name: string): Promise<void> {
+  return invoke("stop_agent", { name });
 }
 
-export async function deleteAgent(): Promise<void> {
-  return invoke("delete_agent");
+export async function restartAgent(name: string): Promise<void> {
+  return invoke("restart_agent", { name });
 }
 
-export async function setAgentName(name: string): Promise<void> {
-  return invoke("set_agent_name", { name });
+export async function deleteAgent(name: string): Promise<void> {
+  return invoke("delete_agent", { name });
+}
+
+export async function backupAgent(name: string, output: string): Promise<void> {
+  return invoke("backup_agent", { name, output });
+}
+
+export async function restoreAgent(input: string, name?: string, replace?: boolean): Promise<void> {
+  return invoke("restore_agent", { input, name: name ?? null, replace: replace ?? false });
 }
 
 export function streamLogs(
+  name: string,
   onEvent: (event: LogEvent) => void,
 ): Promise<void> {
   const channel = new Channel<LogEvent>();
   channel.onmessage = onEvent;
-  return invoke("stream_logs", { onEvent: channel });
+  return invoke("stream_logs", { name, onEvent: channel });
 }
 
-export async function stopLogs(): Promise<void> {
-  return invoke("stop_logs");
+export async function stopLogs(name: string): Promise<void> {
+  return invoke("stop_logs", { name });
 }
 
-export async function authenticate(): Promise<void> {
-  return invoke("authenticate");
+export async function authenticate(name: string): Promise<void> {
+  return invoke("authenticate", { name });
 }
 
 export async function agentHost(): Promise<string> {

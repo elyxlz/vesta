@@ -1,7 +1,2 @@
-import { writable } from "svelte/store";
-import type { AgentInfo } from "./types";
-export { agentState, messages, connected, resetReconnect } from "./ws";
-
-export const agent = writable<AgentInfo | null>(null);
-
-export const agentName = writable<string>("vesta");
+// Per-agent state is now managed by AgentConnection (ws.ts) and component props.
+// This file is kept for any future shared stores.

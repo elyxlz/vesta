@@ -252,8 +252,7 @@ pub struct AgentInfo {
     pub id: String,
     #[serde(default)]
     pub authenticated: bool,
-    #[serde(default)]
-    pub name: Option<String>,
+    pub name: String,
     #[serde(default)]
     pub agent_ready: bool,
     #[serde(default = "default_ws_port")]
@@ -261,6 +260,15 @@ pub struct AgentInfo {
 }
 
 fn default_ws_port() -> u16 { 7865 }
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ListEntry {
+    pub name: String,
+    pub status: String,
+    pub authenticated: bool,
+    pub agent_ready: bool,
+    pub ws_port: u16,
+}
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -272,8 +280,12 @@ pub enum AgentStatus {
     Unknown,
 }
 
-pub async fn agent_status() -> Result<AgentInfo, VestaError> {
-    run_json(&["status", "--json"]).await
+pub async fn list_agents() -> Result<Vec<ListEntry>, VestaError> {
+    run_json(&["list", "--json"]).await
+}
+
+pub async fn agent_status(name: &str) -> Result<AgentInfo, VestaError> {
+    run_json(&["status", name, "--json"]).await
 }
 
 pub async fn create_agent(name: Option<String>) -> Result<(), VestaError> {
@@ -288,37 +300,30 @@ pub async fn create_agent(name: Option<String>) -> Result<(), VestaError> {
     Ok(())
 }
 
-pub async fn start_agent() -> Result<(), VestaError> {
-    run(&["start"]).await?;
+pub async fn start_agent(name: &str) -> Result<(), VestaError> {
+    run(&["start", name]).await?;
     Ok(())
 }
 
-pub async fn stop_agent() -> Result<(), VestaError> {
-    run(&["stop"]).await?;
+pub async fn stop_agent(name: &str) -> Result<(), VestaError> {
+    run(&["stop", name]).await?;
     Ok(())
 }
 
-pub async fn restart_agent() -> Result<(), VestaError> {
-    run(&["restart"]).await?;
+pub async fn restart_agent(name: &str) -> Result<(), VestaError> {
+    run(&["restart", name]).await?;
     Ok(())
 }
 
-pub async fn delete_agent() -> Result<(), VestaError> {
-    run(&["destroy", "--yes"]).await?;
-    Ok(())
-}
-
-pub async fn set_agent_name(name: &str) -> Result<(), VestaError> {
-    run(&["name", name]).await?;
+pub async fn delete_agent(name: &str) -> Result<(), VestaError> {
+    run(&["destroy", name, "--yes"]).await?;
     Ok(())
 }
 
 // ── Auth operations ────────────────────────────────────────────
 
-pub async fn obtain_and_inject_credentials() -> Result<(), VestaError> {
-    // The CLI handles browser opening for the auth URL.
-    // We just need to wait for it to finish and capture stderr for errors.
-    let mut cmd = cli_command(&["auth"]);
+pub async fn obtain_and_inject_credentials(name: &str) -> Result<(), VestaError> {
+    let mut cmd = cli_command(&["auth", name]);
     cmd.stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
 
@@ -350,6 +355,28 @@ pub async fn obtain_and_inject_credentials() -> Result<(), VestaError> {
         return Err(VestaError::new(ErrorCode::Internal, extract_error(&stderr_str)));
     }
 
+    Ok(())
+}
+
+// ── Backup/Restore operations ───────────────────────────────────
+
+pub async fn backup_agent(name: &str, output: &str) -> Result<(), VestaError> {
+    run_with_timeout(&["backup", name, output], SETUP_TIMEOUT_SECS).await?;
+    Ok(())
+}
+
+pub async fn restore_agent(input: &str, name: Option<&str>, replace: bool) -> Result<(), VestaError> {
+    let mut args = vec!["restore", input];
+    let name_val;
+    if let Some(n) = name {
+        name_val = n.to_string();
+        args.push("--name");
+        args.push(&name_val);
+    }
+    if replace {
+        args.push("--replace");
+    }
+    run_with_timeout(&args, SETUP_TIMEOUT_SECS).await?;
     Ok(())
 }
 
@@ -385,10 +412,11 @@ pub enum LogEvent {
 }
 
 pub async fn stream_agent_logs(
+    name: &str,
     channel: Channel<LogEvent>,
     cancel: CancellationToken,
 ) -> Result<(), VestaError> {
-    let mut cmd = cli_command(&["logs"]);
+    let mut cmd = cli_command(&["logs", name]);
     cmd.stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
 
@@ -405,7 +433,6 @@ pub async fn stream_agent_logs(
         }
     };
 
-    // Log stderr for diagnostics
     if let Some(stderr) = child.stderr.take() {
         tokio::spawn(async move {
             let mut lines = BufReader::new(stderr).lines();
