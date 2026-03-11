@@ -49,6 +49,14 @@ export async function agentHost(): Promise<string> {
   return invoke("agent_host");
 }
 
+export async function backupAgent(path: string): Promise<string> {
+  return invoke<string>("backup_agent", { path });
+}
+
+export async function restoreAgent(path: string): Promise<string> {
+  return invoke<string>("restore_agent", { path });
+}
+
 export async function checkPlatform(): Promise<PlatformStatus> {
   return invoke("platform_check");
 }

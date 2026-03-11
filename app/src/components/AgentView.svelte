@@ -2,7 +2,8 @@
   import { onMount, onDestroy } from "svelte";
   import { agent, agentName, agentState, resetReconnect } from "../lib/stores";
   import { setPort } from "../lib/ws";
-  import { agentStatus, startAgent, stopAgent, restartAgent, deleteAgent, authenticate } from "../lib/api";
+  import { agentStatus, startAgent, stopAgent, restartAgent, deleteAgent, authenticate, backupAgent, restoreAgent } from "../lib/api";
+  import { save, open } from "@tauri-apps/plugin-dialog";
   import type { AgentStatus } from "../lib/types";
 
   let {
@@ -23,11 +24,13 @@
   let confirming = $state(false);
   let menuOpen = $state(false);
   let hovered = $state(false);
-  let operation = $state<"idle" | "stopping" | "starting" | "authenticating" | "deleting">("idle");
+  let operation = $state<"idle" | "stopping" | "starting" | "authenticating" | "deleting" | "backing-up" | "restoring">("idle");
   let stopping = $derived(operation === "stopping");
   let starting = $derived(operation === "starting");
   let authenticating = $derived(operation === "authenticating");
   let deleting = $derived(operation === "deleting");
+  let backingUp = $derived(operation === "backing-up");
+  let restoring = $derived(operation === "restoring");
   let errorMsg = $state("");
   let poll: ReturnType<typeof setInterval>;
   let creatureEl: HTMLDivElement;
@@ -193,6 +196,46 @@
     }
   }
 
+  async function handleBackup() {
+    if (busy) return;
+    errorMsg = "";
+    const path = await save({
+      defaultPath: "vesta-backup.tar.gz",
+      filters: [{ name: "Backup", extensions: ["tar.gz"] }],
+    });
+    if (!path) return;
+    operation = "backing-up";
+    try {
+      await backupAgent(path);
+    } catch (e: any) {
+      errorMsg = e?.message || "backup failed";
+    } finally {
+      operation = "idle";
+      await syncStatus();
+    }
+  }
+
+  async function handleRestore() {
+    if (busy) return;
+    errorMsg = "";
+    const path = await open({
+      filters: [{ name: "Backup", extensions: ["tar.gz"] }],
+      multiple: false,
+      directory: false,
+    });
+    if (!path) return;
+    operation = "restoring";
+    try {
+      await restoreAgent(path);
+      resetReconnect();
+    } catch (e: any) {
+      errorMsg = e?.message || "restore failed";
+    } finally {
+      operation = "idle";
+      await syncStatus();
+    }
+  }
+
   let busy = $derived(operation !== "idle");
   let running = $derived(status === "running");
   let dead = $derived(status === "dead");
@@ -228,11 +271,11 @@
     <div class="label">
       <span class="name">{$agentName}</span>
       <span class="status" class:alive={fullyAlive} class:error={!!errorMsg} title={errorMsg || ""}>
-        {errorMsg ? errorMsg : deleting ? "deleting..." : stopping ? "stopping..." : starting ? "starting..." : authenticating ? "signing in..." : fullyAlive ? "alive" : operational ? "waking up..." : running ? "not signed in" : dead ? "broken — delete and recreate" : "stopped"}
+        {errorMsg ? errorMsg : deleting ? "deleting..." : stopping ? "stopping..." : starting ? "starting..." : authenticating ? "signing in..." : backingUp ? "backing up..." : restoring ? "restoring..." : fullyAlive ? "alive" : operational ? "waking up..." : running ? "not signed in" : dead ? "broken — delete and recreate" : "stopped"}
       </span>
     </div>
 
-    <div class="actions" class:visible={showActions && !deleting && !stopping && !starting && !authenticating} inert={!showActions || deleting || stopping || starting || authenticating}>
+    <div class="actions" class:visible={showActions && !deleting && !stopping && !starting && !authenticating && !backingUp && !restoring} inert={!showActions || deleting || stopping || starting || authenticating || backingUp || restoring}>
       {#if confirming}
         <button class="action-btn danger" disabled={busy} onclick={destroy}>confirm</button>
         <button class="action-btn muted" disabled={busy} onclick={cancelDestroy}>cancel</button>
@@ -258,6 +301,8 @@
               {#if alive}
                 <button class="menu-item" onclick={() => { menuOpen = false; onConsole(); }} data-tip="view raw logs">console</button>
               {/if}
+              <button class="menu-item" disabled={busy} onclick={() => { menuOpen = false; handleBackup(); }} data-tip="save backup to file">{backingUp ? "backing up..." : "backup"}</button>
+              <button class="menu-item" disabled={busy} onclick={() => { menuOpen = false; handleRestore(); }} data-tip="restore from backup file">{restoring ? "restoring..." : "restore"}</button>
               <button class="menu-item danger" disabled={busy} onclick={() => { menuOpen = false; destroy(); }} data-tip="permanently delete">delete</button>
             </div>
           {/if}

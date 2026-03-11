@@ -313,6 +313,16 @@ pub async fn set_agent_name(name: &str) -> Result<(), VestaError> {
     Ok(())
 }
 
+// ── Backup/restore operations ───────────────────────────────────
+
+pub async fn backup_agent(path: &str) -> Result<String, VestaError> {
+    run_with_timeout(&["backup", path], SETUP_TIMEOUT_SECS).await
+}
+
+pub async fn restore_agent(path: &str) -> Result<String, VestaError> {
+    run_with_timeout(&["restore", path], SETUP_TIMEOUT_SECS).await
+}
+
 // ── Auth operations ────────────────────────────────────────────
 
 pub async fn obtain_and_inject_credentials() -> Result<(), VestaError> {

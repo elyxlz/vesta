@@ -470,18 +470,117 @@ pub fn run(command: Command) {
             }
         }
 
-        Command::Backup => {
+        Command::Backup { output } => {
             ensure_exists();
-            let ts = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
-            let tag = format!("vesta-backup:{}", ts);
-            eprintln!("creating backup...");
-            if !docker_ok(&["commit", CONTAINER_NAME, &tag]) {
+            let was_running = container_status() == ContainerStatus::Running;
+            if was_running {
+                eprintln!("stopping agent...");
+                if !docker_ok(&["stop", CONTAINER_NAME]) {
+                    die("failed to stop agent");
+                }
+            }
+
+            eprintln!("creating snapshot...");
+            if !docker_ok(&["commit", CONTAINER_NAME, "vesta:backup-temp"]) {
+                if was_running {
+                    docker_ok(&["start", CONTAINER_NAME]);
+                }
                 die("backup failed");
             }
-            eprintln!("backup created: {}", tag);
+
+            eprintln!("saving to {}...", output.display());
+            let output_str = output.to_str().unwrap_or_else(|| die("invalid output path"));
+            let save_cmd = format!("docker save vesta:backup-temp | gzip > '{}'", output_str);
+            let status = process::Command::new("sh")
+                .args(["-c", &save_cmd])
+                .stdout(process::Stdio::null())
+                .stderr(process::Stdio::inherit())
+                .status()
+                .unwrap_or_else(|_| die("failed to save backup"));
+
+            docker_ok(&["rmi", "vesta:backup-temp"]);
+
+            if !status.success() {
+                if was_running {
+                    docker_ok(&["start", CONTAINER_NAME]);
+                }
+                die("failed to save backup file");
+            }
+
+            if was_running {
+                eprintln!("restarting agent...");
+                if !docker_ok(&["start", CONTAINER_NAME]) {
+                    die("failed to restart agent");
+                }
+            }
+
+            let size = std::fs::metadata(&output)
+                .map(|m| m.len())
+                .unwrap_or(0);
+            let size_mb = size as f64 / 1_048_576.0;
+            eprintln!("backup saved: {} ({:.1} MB)", output.display(), size_mb);
+        }
+
+        Command::Restore { input } => {
+            if !input.exists() {
+                die(&format!("file not found: {}", input.display()));
+            }
+
+            let was_running = container_status() == ContainerStatus::Running;
+            if was_running {
+                eprintln!("stopping agent...");
+                if !docker_ok(&["stop", CONTAINER_NAME]) {
+                    die("failed to stop agent");
+                }
+            }
+
+            if container_status() != ContainerStatus::NotFound {
+                eprintln!("removing existing container...");
+                if !docker_ok(&["rm", CONTAINER_NAME]) {
+                    die("failed to remove existing container");
+                }
+            }
+
+            eprintln!("loading backup from {}...", input.display());
+            let input_str = input.to_str().unwrap_or_else(|| die("invalid input path"));
+            let load_cmd = format!("gunzip -c '{}' | docker load", input_str);
+            let load_output = process::Command::new("sh")
+                .args(["-c", &load_cmd])
+                .stdout(process::Stdio::piped())
+                .stderr(process::Stdio::inherit())
+                .output()
+                .unwrap_or_else(|_| die("failed to load backup"));
+
+            if !load_output.status.success() {
+                die("failed to load backup image");
+            }
+
+            let load_stdout = String::from_utf8_lossy(&load_output.stdout);
+            let loaded_image = load_stdout
+                .lines()
+                .filter_map(|l| l.strip_prefix("Loaded image: "))
+                .next_back()
+                .unwrap_or_else(|| die("could not determine loaded image name"))
+                .to_string();
+
+            eprintln!("loaded image: {}", loaded_image);
+
+            if loaded_image != LOCAL_IMAGE_TAG {
+                eprintln!("tagging as {}...", LOCAL_IMAGE_TAG);
+                if !docker_ok(&["tag", &loaded_image, LOCAL_IMAGE_TAG]) {
+                    die("failed to tag image");
+                }
+            }
+
+            eprintln!("creating container...");
+            create_container(LOCAL_IMAGE_TAG);
+
+            eprintln!("starting agent...");
+            if !docker_ok(&["start", CONTAINER_NAME]) {
+                die("failed to start agent");
+            }
+
+            eprintln!("restore complete");
         }
 
         Command::Destroy { yes } => {

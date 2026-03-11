@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand};
 use std::io::{BufRead, Write};
+use std::path::PathBuf;
 use std::process;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -116,7 +117,15 @@ enum Command {
         json: bool,
     },
     /// Create a snapshot backup
-    Backup,
+    Backup {
+        /// Output file path for the backup (.tar.gz)
+        output: PathBuf,
+    },
+    /// Restore agent from a backup file
+    Restore {
+        /// Input backup file path (.tar.gz)
+        input: PathBuf,
+    },
     /// Destroy the agent (irreversible)
     Destroy {
         /// Skip confirmation prompt

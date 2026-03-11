@@ -36,6 +36,7 @@ pub fn run() {
             }
             Ok(())
         })
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             commands::agents::agent_status,
             commands::agents::create_agent,
@@ -45,6 +46,8 @@ pub fn run() {
             commands::agents::delete_agent,
             commands::agents::set_agent_name,
             commands::agents::agent_host,
+            commands::agents::backup_agent,
+            commands::agents::restore_agent,
             commands::logs::stream_logs,
             commands::logs::stop_logs,
             commands::auth::authenticate,

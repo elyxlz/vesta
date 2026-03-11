@@ -499,7 +499,7 @@ fn command_args(command: &Command) -> Vec<&str> {
                 vec!["status"]
             }
         }
-        Command::Backup => vec!["backup"],
+        Command::Backup { .. } | Command::Restore { .. } => unreachable!(),
         Command::Destroy { yes } => {
             if *yes {
                 vec!["destroy", "--yes"]
@@ -522,6 +522,10 @@ pub fn run(command: Command) -> ! {
         Command::PlatformSetup => {
             platform_setup();
             process::exit(0);
+        }
+        Command::Backup { .. } | Command::Restore { .. } => {
+            eprintln!("backup/restore not yet supported on Windows");
+            process::exit(1);
         }
         _ => {}
     }

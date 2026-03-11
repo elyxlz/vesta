@@ -561,9 +561,14 @@ pub fn run(command: Command) {
             ssh_run(&args, false);
         }
 
-        Command::Backup => {
-            ensure_vm();
-            ssh_run(&["vesta", "backup"], false);
+        Command::Backup { .. } => {
+            eprintln!("backup/restore not yet supported on macOS");
+            process::exit(1);
+        }
+
+        Command::Restore { .. } => {
+            eprintln!("backup/restore not yet supported on macOS");
+            process::exit(1);
         }
 
         Command::Destroy { yes } => {
