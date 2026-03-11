@@ -32,20 +32,3 @@ vesta rebuild    Recreate agent from backup
 vesta status     Show agent status
 vesta destroy    Remove the agent
 ```
-
-## Roadmap
-
-- [ ] Better memory (long-term recall, semantic search, forgetting)
-- [ ] Auth detection and re-sign-in (handle expired Claude sessions gracefully)
-- [ ] Security considerations and hardening
-- [ ] Backups and importing backups
-- [ ] Thorough testing on macOS and Windows
-- [ ] Starting templates (pre-configured skill sets)
-- [ ] Phone number setup in WhatsApp skill
-- [ ] Telegram skill
-- [ ] Multi-container / multi-agent support
-- [ ] Evolutionary multi-agent optimization
-- [ ] Mobile app
-- [ ] Hosted service
-- [ ] OpenClaw comparison
-- [ ] Blog post
