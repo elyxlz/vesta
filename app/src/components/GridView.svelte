@@ -205,13 +205,13 @@
   let gridCols = $derived(agents.length === 1 ? 1 : agents.length === 2 ? 2 : 3);
 </script>
 
-<div class="grid-view">
+<div class="grid-view" class:centered={gridCols < 3}>
   <button class="add-btn" onclick={onCreate} aria-label="new agent" data-tip="new agent">
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
       <path d="M12 5v14M5 12h14"/>
     </svg>
   </button>
-  <div class="grid cols-{gridCols}">
+  <div class="grid cols-{gridCols}" class:few={gridCols < 3}>
     {#each agents as agent}
       <div class="card-wrapper">
         <button class="card" class:busy={busyAgent === agent.name} onclick={() => onSelect(agent.name, agent.ws_port)}>
@@ -276,6 +276,13 @@
     animation: viewIn 0.6s var(--spring);
   }
 
+  .grid-view.centered {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+
   .grid-view::-webkit-scrollbar { width: 6px; }
   .grid-view::-webkit-scrollbar-track { background: transparent; }
   .grid-view::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.08); border-radius: 3px; }
@@ -323,6 +330,10 @@
     width: 100%;
     padding-top: 40px;
     grid-template-columns: repeat(3, 1fr);
+  }
+
+  .grid.few {
+    padding-top: 0;
   }
 
   .grid.cols-1 {
