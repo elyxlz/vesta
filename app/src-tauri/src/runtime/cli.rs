@@ -355,6 +355,8 @@ pub async fn obtain_and_inject_credentials(
             on_event("auth-url", Some(url));
         } else if line == "auth-code-needed" {
             on_event("auth-code-needed", None);
+        } else if line == "auth-code-invalid" {
+            on_event("auth-code-invalid", None);
         }
     });
     let stderr_task = collect_lines(child.stderr.take().unwrap(), move |line: &str| {
@@ -362,6 +364,8 @@ pub async fn obtain_and_inject_credentials(
             on_event2("auth-url", Some(url));
         } else if line == "auth-code-needed" {
             on_event2("auth-code-needed", None);
+        } else if line == "auth-code-invalid" {
+            on_event2("auth-code-invalid", None);
         }
     });
 

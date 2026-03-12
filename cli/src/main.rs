@@ -23,6 +23,7 @@ fn try_open_browser(url: &str) {
     let _ = r;
 }
 
+#[allow(dead_code)]
 fn strip_ansi(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
@@ -30,7 +31,7 @@ fn strip_ansi(s: &str) -> String {
         if c == '\x1b' {
             match chars.peek() {
                 Some('[') => { chars.next(); for c in chars.by_ref() { if c.is_ascii_alphabetic() { break; } } }
-                Some(']') => { chars.next(); while let Some(c) = chars.next() { if c == '\x07' { break; } if c == '\x1b' && chars.peek() == Some(&'\\') { chars.next(); break; } } }
+                Some(']') => { chars.next(); while let Some(c) = chars.next() { if c == '\x07' { break; } else if c == '\x1b' && chars.peek() == Some(&'\\') { chars.next(); break; } } }
                 _ => { chars.next(); }
             }
         } else {
@@ -42,6 +43,7 @@ fn strip_ansi(s: &str) -> String {
 
 /// Run a child process with piped stdout/stderr, passing lines through.
 /// Scans output for an auth URL and opens it in the browser.
+#[allow(dead_code)]
 fn run_passthrough(mut child: process::Child) -> process::ExitStatus {
     let opened = Arc::new(AtomicBool::new(false));
 
@@ -205,6 +207,51 @@ enum Command {
     PlatformCheck,
     /// Install platform prerequisites (WSL on Windows)
     PlatformSetup,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strip_ansi_plain() {
+        assert_eq!(strip_ansi("hello world"), "hello world");
+    }
+
+    #[test]
+    fn strip_ansi_csi() {
+        assert_eq!(strip_ansi("\x1b[31mred\x1b[0m"), "red");
+    }
+
+    #[test]
+    fn strip_ansi_cursor_movement() {
+        assert_eq!(strip_ansi("\x1b[1CPaste\x1b[1Ccode"), "Pastecode");
+    }
+
+    #[test]
+    fn strip_ansi_osc() {
+        assert_eq!(strip_ansi("\x1b]0;title\x07text"), "text");
+    }
+
+    #[test]
+    fn strip_ansi_url_preserved() {
+        let input = "\x1b[37mhttps://claude.ai/oauth?code=true\x1b[39m";
+        assert_eq!(strip_ansi(input), "https://claude.ai/oauth?code=true");
+    }
+
+    #[test]
+    fn strip_ansi_complex_ink_output() {
+        let input = "\x1b[1C\x1b[97m·\x1b[1C\x1b[39mOpening\x1b[1Cbrowser";
+        assert_eq!(strip_ansi(input), "·Openingbrowser");
+    }
+
+    #[test]
+    fn url_extraction_from_ansi() {
+        let raw = "\x1b[37mhttps://claude.ai/oauth/authorize?code=true&client_id=abc\x1b[39m";
+        let clean = strip_ansi(raw);
+        let url = clean.split_whitespace().find(|w| w.starts_with("https://"));
+        assert_eq!(url, Some("https://claude.ai/oauth/authorize?code=true&client_id=abc"));
+    }
 }
 
 #[cfg(target_os = "linux")]

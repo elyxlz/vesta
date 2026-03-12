@@ -18,6 +18,7 @@
   let platform = $state<PlatformStatus | null>(null);
   let authUrl = $state<string | null>(null);
   let authCodeNeeded = $state(false);
+  let authCodeSubmitted = $state(false);
   let authCode = $state("");
   let unlisteners: (() => void)[] = [];
 
@@ -29,10 +30,18 @@
     authCodeNeeded = true;
   }).then((fn) => { unlisteners.push(fn); });
 
+  listen<string>("auth-code-invalid", () => {
+    authCodeNeeded = true;
+    authCodeSubmitted = false;
+    authCode = "";
+    error = { friendly: "invalid auth code — try again", raw: "auth-code-invalid" };
+  }).then((fn) => { unlisteners.push(fn); });
+
   async function handleSubmitCode() {
     if (!authCode.trim()) return;
     await submitAuthCode(authCode.trim());
     authCodeNeeded = false;
+    authCodeSubmitted = true;
   }
 
   const CREATE_MESSAGES = [
@@ -227,6 +236,7 @@
     error = null;
     authUrl = null;
     authCodeNeeded = false;
+    authCodeSubmitted = false;
     authCode = "";
     try {
       await authenticate(name);
@@ -365,6 +375,9 @@
             <input type="text" class="name-input" placeholder="paste code here" bind:value={authCode} autofocus />
             <button class="btn primary full" type="submit" disabled={!authCode.trim()}>submit</button>
           </form>
+        {:else if authCodeSubmitted}
+          <p class="sub">verifying code...</p>
+          <ProgressBar message="verifying..." />
         {:else if authUrl}
           <p class="sub">sign in via the browser window that opened.<br/>if it didn't open, use the link below.</p>
           <a class="auth-link" href={authUrl} target="_blank" rel="noopener">{authUrl.slice(0, 50)}...</a>
