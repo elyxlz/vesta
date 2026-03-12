@@ -253,7 +253,7 @@
                 <button class="menu-item" disabled={!!busyAgent} onclick={menuAction(() => handleBackup(agent))}>backup</button>
                 <button class="menu-item" disabled={!!busyAgent} onclick={menuAction(() => handleRestore(agent))}>load backup</button>
                 <div class="menu-divider"></div>
-                <button class="menu-item danger" disabled={!!busyAgent} onclick={menuAction(() => handleDelete(agent.name))}>delete</button>
+                <button class="menu-item danger" disabled={!!busyAgent} onclick={(e: MouseEvent) => { e.stopPropagation(); handleDelete(agent.name); }}>delete</button>
               {/if}
             </div>
           {/if}

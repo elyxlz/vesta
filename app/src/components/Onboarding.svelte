@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
-  import { createAgent, agentStatus, authenticate, startAgent, waitForReady, checkPlatform, setupPlatform } from "../lib/api";
+  import { listen } from "@tauri-apps/api/event";
+  import { createAgent, agentStatus, authenticate, submitAuthCode, startAgent, waitForReady, checkPlatform, setupPlatform } from "../lib/api";
   import type { PlatformStatus } from "../lib/types";
   import ProgressBar from "./ProgressBar.svelte";
 
@@ -15,6 +16,33 @@
   let msgTimer: ReturnType<typeof setInterval> | null = null;
   let cancelled = $state(false);
   let platform = $state<PlatformStatus | null>(null);
+  let authUrl = $state<string | null>(null);
+  let authCodeNeeded = $state(false);
+  let authCodeSubmitted = $state(false);
+  let authCode = $state("");
+  let unlisteners: (() => void)[] = [];
+
+  listen<string>("auth-url", (event) => {
+    authUrl = event.payload;
+  }).then((fn) => { unlisteners.push(fn); });
+
+  listen<string>("auth-code-needed", () => {
+    authCodeNeeded = true;
+  }).then((fn) => { unlisteners.push(fn); });
+
+  listen<string>("auth-code-invalid", () => {
+    authCodeNeeded = true;
+    authCodeSubmitted = false;
+    authCode = "";
+    error = { friendly: "invalid auth code — try again", raw: "auth-code-invalid" };
+  }).then((fn) => { unlisteners.push(fn); });
+
+  async function handleSubmitCode() {
+    if (!authCode.trim()) return;
+    await submitAuthCode(authCode.trim());
+    authCodeNeeded = false;
+    authCodeSubmitted = true;
+  }
 
   const CREATE_MESSAGES = [
     "setting things up...",
@@ -206,6 +234,10 @@
     const name = normalizedPreview;
     busy = true;
     error = null;
+    authUrl = null;
+    authCodeNeeded = false;
+    authCodeSubmitted = false;
+    authCode = "";
     try {
       await authenticate(name);
       await startAgent(name);
@@ -218,7 +250,7 @@
     }
   }
 
-  onDestroy(() => { stopMessages(); });
+  onDestroy(() => { stopMessages(); for (const fn of unlisteners) fn(); });
 </script>
 
 <div class="onboarding" class:transitioning>
@@ -336,8 +368,24 @@
     {:else if step === "auth"}
       <div class="step step-anim">
         <h1>sign in to claude</h1>
-        <p class="sub">switch to the browser window that opened<br/>and sign in with your anthropic account.</p>
-        <ProgressBar message="waiting for sign in..." />
+        {#if authCodeNeeded}
+          <p class="sub">paste the code from the browser below.</p>
+          <form onsubmit={(e) => { e.preventDefault(); handleSubmitCode(); }}>
+            <!-- svelte-ignore a11y_autofocus -->
+            <input type="text" class="name-input" placeholder="paste code here" bind:value={authCode} autofocus />
+            <button class="btn primary full" type="submit" disabled={!authCode.trim()}>submit</button>
+          </form>
+        {:else if authCodeSubmitted}
+          <p class="sub">verifying code...</p>
+          <ProgressBar message="verifying..." />
+        {:else if authUrl}
+          <p class="sub">sign in via the browser window that opened.<br/>if it didn't open, use the link below.</p>
+          <a class="auth-link" href={authUrl} target="_blank" rel="noopener">{authUrl.slice(0, 50)}...</a>
+          <ProgressBar message="waiting for sign in..." />
+        {:else}
+          <p class="sub">opening browser...</p>
+          <ProgressBar message="waiting..." />
+        {/if}
         {#if error}
           <p class="error">{error.friendly ?? "something went wrong."}</p>
           {#if error.raw.length > 80 || !error.friendly}
@@ -586,6 +634,21 @@
     font-weight: 400;
   }
 
+  .auth-link {
+    font-size: 11px;
+    color: #7a726a;
+    word-break: break-all;
+    margin-bottom: 16px;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    cursor: pointer;
+    transition: color 0.15s;
+  }
+
+  .auth-link:hover {
+    color: #1a1816;
+  }
+
   .btn.cancel {
     background: transparent;
     color: #7a726a;
@@ -671,6 +734,14 @@
 
     .name-preview {
       color: #8a8078;
+    }
+
+    .auth-link {
+      color: #8a8078;
+    }
+
+    .auth-link:hover {
+      color: #e8e0d8;
     }
 
     .btn.cancel {

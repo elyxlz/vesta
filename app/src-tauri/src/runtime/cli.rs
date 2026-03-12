@@ -330,17 +330,55 @@ pub async fn delete_agent(name: &str) -> Result<(), VestaError> {
 
 // ── Auth operations ────────────────────────────────────────────
 
-pub async fn obtain_and_inject_credentials(name: &str) -> Result<(), VestaError> {
+pub async fn obtain_and_inject_credentials(
+    name: &str,
+    on_event: impl Fn(&str, Option<&str>) + Send + Sync + 'static,
+    code_rx: tokio::sync::oneshot::Receiver<String>,
+) -> Result<(), VestaError> {
     let mut cmd = cli_command(&["auth", name]);
-    cmd.stdout(std::process::Stdio::piped())
+    cmd.stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
 
     let mut child = cmd.spawn().map_err(|e| {
         VestaError::new(ErrorCode::ExecFailed, format!("failed to run cli: {}", e))
     })?;
 
-    let stdout_task = collect_lines(child.stdout.take().unwrap(), |_| {});
-    let stderr_task = collect_lines(child.stderr.take().unwrap(), |_| {});
+    let cli_stdin = child.stdin.take();
+
+    let on_event: std::sync::Arc<Box<dyn Fn(&str, Option<&str>) + Send + Sync>> =
+        std::sync::Arc::new(Box::new(on_event));
+    let on_event2 = on_event.clone();
+
+    let stdout_task = collect_lines(child.stdout.take().unwrap(), move |line: &str| {
+        if let Some(url) = line.strip_prefix("auth-url: ") {
+            on_event("auth-url", Some(url));
+        } else if line == "auth-code-needed" {
+            on_event("auth-code-needed", None);
+        } else if line == "auth-code-invalid" {
+            on_event("auth-code-invalid", None);
+        }
+    });
+    let stderr_task = collect_lines(child.stderr.take().unwrap(), move |line: &str| {
+        if let Some(url) = line.strip_prefix("auth-url: ") {
+            on_event2("auth-url", Some(url));
+        } else if line == "auth-code-needed" {
+            on_event2("auth-code-needed", None);
+        } else if line == "auth-code-invalid" {
+            on_event2("auth-code-invalid", None);
+        }
+    });
+
+    // Wait for code from frontend and pipe to CLI stdin
+    tokio::spawn(async move {
+        if let Ok(code) = code_rx.await {
+            if let Some(mut stdin) = cli_stdin {
+                use tokio::io::AsyncWriteExt;
+                let _ = stdin.write_all(format!("{}\n", code).as_bytes()).await;
+                let _ = stdin.flush().await;
+            }
+        }
+    });
 
     let timeout = tokio::time::Duration::from_secs(AUTH_TIMEOUT_SECS);
     let status = match tokio::time::timeout(timeout, child.wait()).await {

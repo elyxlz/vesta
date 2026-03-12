@@ -58,6 +58,10 @@ export async function authenticate(name: string): Promise<void> {
   return invoke("authenticate", { name });
 }
 
+export async function submitAuthCode(code: string): Promise<void> {
+  return invoke("submit_auth_code", { code });
+}
+
 export async function agentHost(): Promise<string> {
   return invoke("agent_host");
 }

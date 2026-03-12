@@ -328,43 +328,154 @@ fn create_container(cname: &str, image: &str, port: u16) {
     }
 }
 
-fn obtain_credentials(image: &str) -> String {
+const OAUTH_CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+const OAUTH_REDIRECT_URI: &str = "https://console.anthropic.com/oauth/code/callback";
+const OAUTH_TOKEN_URL: &str = "https://console.anthropic.com/v1/oauth/token";
+const OAUTH_AUTHORIZE_URL: &str = "https://claude.ai/oauth/authorize";
+
+fn generate_pkce() -> (String, String) {
+    // Generate code_verifier: 32 random bytes → base64url
+    let raw = process::Command::new("openssl")
+        .args(["rand", "-base64", "32"])
+        .output()
+        .unwrap_or_else(|_| die("openssl not found — install openssl"));
+    let verifier = String::from_utf8_lossy(&raw.stdout)
+        .trim()
+        .replace('+', "-")
+        .replace('/', "_")
+        .replace('=', "");
+
+    // code_challenge = base64url(SHA256(code_verifier))
+    let sha_cmd = format!(
+        "printf '%s' '{}' | openssl dgst -sha256 -binary | openssl base64 -A",
+        verifier
+    );
+    let raw = process::Command::new("sh")
+        .args(["-c", &sha_cmd])
+        .output()
+        .unwrap_or_else(|_| die("failed to compute code challenge"));
+    let challenge = String::from_utf8_lossy(&raw.stdout)
+        .trim()
+        .replace('+', "-")
+        .replace('/', "_")
+        .replace('=', "");
+
+    (verifier, challenge)
+}
+
+fn generate_state() -> String {
+    let raw = process::Command::new("openssl")
+        .args(["rand", "-base64", "32"])
+        .output()
+        .unwrap_or_else(|_| die("openssl not found"));
+    String::from_utf8_lossy(&raw.stdout)
+        .trim()
+        .replace('+', "-")
+        .replace('/', "_")
+        .replace('=', "")
+}
+
+fn obtain_credentials(_image: &str) -> String {
     eprintln!("authenticating claude...");
-    eprintln!("sign in via the link below, then come back here.\n");
 
-    let tmp_dir = std::env::temp_dir().join(format!("vesta_auth_{}", std::process::id()));
-    std::fs::create_dir_all(&tmp_dir)
-        .unwrap_or_else(|e| die(&format!("failed to create temp dir: {}", e)));
+    let (code_verifier, code_challenge) = generate_pkce();
+    let state = generate_state();
 
-    let mount = format!("{}:/tmp/claude-creds", tmp_dir.display());
-    let child = process::Command::new("docker")
-        .args([
-            "run", "--rm",
-            "-v", &mount,
-            "--entrypoint", "sh",
-            image,
-            "-c", "export PATH=/root/.local/bin:$PATH && claude setup-token && cp /root/.claude/.credentials.json /tmp/claude-creds/",
-        ])
-        .stdin(process::Stdio::inherit())
-        .stdout(process::Stdio::piped())
-        .stderr(process::Stdio::piped())
-        .spawn()
-        .unwrap_or_else(|_| die("failed to run claude setup-token"));
+    let auth_url = format!(
+        "{}?code=true&client_id={}&redirect_uri={}&response_type=code&scope={}&code_challenge={}&code_challenge_method=S256&state={}",
+        OAUTH_AUTHORIZE_URL,
+        OAUTH_CLIENT_ID,
+        urlencod(OAUTH_REDIRECT_URI),
+        urlencod("user:inference user:profile"),
+        code_challenge,
+        state,
+    );
 
-    let status = run_passthrough(child);
+    eprintln!("auth-url: {}", auth_url);
+    try_open_browser(&auth_url);
 
-    if !status.success() {
-        std::fs::remove_dir_all(&tmp_dir).ok();
-        die("claude setup-token failed");
+    eprintln!("auth-code-needed");
+    let mut input = String::new();
+    io::stdin().read_line(&mut input).unwrap_or_else(|_| die("failed to read auth code"));
+    let input = input.trim();
+    if input.is_empty() {
+        die("no auth code provided");
     }
 
-    let creds = std::fs::read_to_string(tmp_dir.join(".credentials.json"))
+    // The pasted code includes #state suffix — extract code and state
+    let (auth_code, pasted_state) = match input.split_once('#') {
+        Some((code, st)) => (code, st),
+        None => (input, state.as_str()),
+    };
+
+    // Exchange authorization code for tokens
+    let body = format!(
+        r#"{{"grant_type":"authorization_code","code":"{}","client_id":"{}","redirect_uri":"{}","code_verifier":"{}","state":"{}"}}"#,
+        auth_code, OAUTH_CLIENT_ID, OAUTH_REDIRECT_URI, code_verifier, pasted_state,
+    );
+
+    let response = process::Command::new("curl")
+        .args([
+            "-s", "-X", "POST", OAUTH_TOKEN_URL,
+            "-H", "Content-Type: application/json",
+            "-d", &body,
+        ])
+        .output()
+        .unwrap_or_else(|_| die("curl not found — install curl"));
+
+    let response_str = String::from_utf8_lossy(&response.stdout);
+    let token_data: serde_json::Value = serde_json::from_str(&response_str)
         .unwrap_or_else(|_| {
-            std::fs::remove_dir_all(&tmp_dir).ok();
-            die("could not read credentials after setup-token")
+            eprintln!("auth-code-invalid");
+            die(&format!("token exchange failed: {}", response_str));
         });
-    std::fs::remove_dir_all(&tmp_dir).ok();
-    creds
+
+    if let Some(error) = token_data.get("error") {
+        eprintln!("auth-code-invalid");
+        die(&format!("auth failed: {} — {}", error, token_data.get("error_description").unwrap_or(error)));
+    }
+
+    let access_token = token_data["access_token"].as_str()
+        .unwrap_or_else(|| die("no access_token in response"));
+    let refresh_token = token_data.get("refresh_token").and_then(|v| v.as_str());
+    let expires_in = token_data["expires_in"].as_u64().unwrap_or(28800);
+
+    let expires_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() + (expires_in as u128) * 1000;
+
+    // Construct credentials.json in the format Claude Code expects
+    let mut creds = serde_json::json!({
+        "claudeAiOauth": {
+            "accessToken": access_token,
+            "expiresAt": expires_at as u64,
+        }
+    });
+    if let Some(rt) = refresh_token {
+        creds["claudeAiOauth"]["refreshToken"] = serde_json::json!(rt);
+    }
+    if let Some(scopes) = token_data.get("scope").and_then(|v| v.as_str()) {
+        let scope_list: Vec<&str> = scopes.split_whitespace().collect();
+        creds["claudeAiOauth"]["scopes"] = serde_json::json!(scope_list);
+    }
+
+    creds.to_string()
+}
+
+fn urlencod(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() * 3);
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            _ => {
+                out.push('%');
+                out.push(char::from(b"0123456789ABCDEF"[(b >> 4) as usize]));
+                out.push(char::from(b"0123456789ABCDEF"[(b & 0xf) as usize]));
+            }
+        }
+    }
+    out
 }
 
 fn docker_cp_content(container: &str, content: &str, dest: &str) {
@@ -1070,5 +1181,12 @@ mod tests {
     #[test]
     fn name_from_cname_no_prefix() {
         assert_eq!(name_from_cname("random"), "random");
+    }
+
+    #[test]
+    fn urlencod_basic() {
+        assert_eq!(urlencod("hello world"), "hello%20world");
+        assert_eq!(urlencod("https://example.com/path"), "https%3A%2F%2Fexample.com%2Fpath");
+        assert_eq!(urlencod("a-b_c.d~e"), "a-b_c.d~e");
     }
 }

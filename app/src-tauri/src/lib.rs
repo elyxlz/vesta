@@ -55,6 +55,7 @@ pub fn run() {
             commands::logs::stream_logs,
             commands::logs::stop_logs,
             commands::auth::authenticate,
+            commands::auth::submit_auth_code,
             commands::platform::platform_check,
             commands::platform::platform_setup,
         ])
