@@ -339,7 +339,7 @@ fn obtain_credentials(image: &str) -> String {
     let mount = format!("{}:/tmp/claude-creds", tmp_dir.display());
     let child = process::Command::new("docker")
         .args([
-            "run", "--rm",
+            "run", "--rm", "-t",
             "-v", &mount,
             "--entrypoint", "sh",
             image,
