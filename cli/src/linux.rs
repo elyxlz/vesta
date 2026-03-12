@@ -344,33 +344,54 @@ fn obtain_credentials(image: &str) -> String {
             image,
             "-c", "stty columns 10000 2>/dev/null; export PATH=/root/.local/bin:$PATH && claude setup-token && cp /root/.claude/.credentials.json /tmp/claude-creds/",
         ])
-        .stdin(process::Stdio::null())
+        .stdin(process::Stdio::piped())
         .stdout(process::Stdio::piped())
         .stderr(process::Stdio::piped())
         .spawn()
         .unwrap_or_else(|_| die("failed to run claude setup-token"));
 
-    // Collect output silently, extract auth URL, open browser
-    let opened = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let docker_stdin = child.stdin.take().unwrap();
+    let docker_stdin = std::sync::Arc::new(std::sync::Mutex::new(Some(docker_stdin)));
+
+    // Collect output silently, extract auth URL and code prompt
+    use std::sync::atomic::{AtomicBool, Ordering as AtOrd};
+    let url_found = std::sync::Arc::new(AtomicBool::new(false));
+    let code_prompted = std::sync::Arc::new(AtomicBool::new(false));
     let mut readers = Vec::new();
     let streams: Vec<Box<dyn std::io::Read + Send>> = vec![
         Box::new(child.stdout.take().unwrap()),
         Box::new(child.stderr.take().unwrap()),
     ];
     for r in streams {
-        let opened = opened.clone();
+        let url_found = url_found.clone();
+        let code_prompted = code_prompted.clone();
+        let docker_stdin = docker_stdin.clone();
         readers.push(std::thread::spawn(move || {
             use std::io::BufRead;
             for line in std::io::BufReader::new(r).lines() {
                 let Ok(line) = line else { break };
-                if opened.load(std::sync::atomic::Ordering::Relaxed) {
-                    continue;
-                }
                 let clean = strip_ansi(&line);
-                if let Some(url) = clean.split_whitespace().find(|w| w.starts_with("https://")) {
-                    opened.store(true, std::sync::atomic::Ordering::Relaxed);
-                    eprintln!("auth-url: {}", url);
-                    try_open_browser(url);
+                if !url_found.load(AtOrd::Relaxed) {
+                    if let Some(url) = clean.split_whitespace().find(|w| w.starts_with("https://")) {
+                        url_found.store(true, AtOrd::Relaxed);
+                        eprintln!("auth-url: {}", url);
+                        try_open_browser(url);
+                    }
+                }
+                if !code_prompted.load(AtOrd::Relaxed)
+                    && clean.to_lowercase().contains("paste code")
+                {
+                    code_prompted.store(true, AtOrd::Relaxed);
+                    eprintln!("auth-code-needed");
+                    // Read code from our stdin and forward to docker
+                    let mut code = String::new();
+                    if std::io::stdin().read_line(&mut code).is_ok() && !code.is_empty() {
+                        use std::io::Write;
+                        if let Some(mut stdin) = docker_stdin.lock().unwrap().take() {
+                            let _ = write!(stdin, "{}", code);
+                            let _ = stdin.flush();
+                        }
+                    }
                 }
             }
         }));

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { listen } from "@tauri-apps/api/event";
-  import { createAgent, agentStatus, authenticate, startAgent, waitForReady, checkPlatform, setupPlatform } from "../lib/api";
+  import { createAgent, agentStatus, authenticate, submitAuthCode, startAgent, waitForReady, checkPlatform, setupPlatform } from "../lib/api";
   import type { PlatformStatus } from "../lib/types";
   import ProgressBar from "./ProgressBar.svelte";
 
@@ -17,11 +17,23 @@
   let cancelled = $state(false);
   let platform = $state<PlatformStatus | null>(null);
   let authUrl = $state<string | null>(null);
-  let unlisten: (() => void) | null = null;
+  let authCodeNeeded = $state(false);
+  let authCode = $state("");
+  let unlisteners: (() => void)[] = [];
 
   listen<string>("auth-url", (event) => {
     authUrl = event.payload;
-  }).then((fn) => { unlisten = fn; });
+  }).then((fn) => { unlisteners.push(fn); });
+
+  listen<string>("auth-code-needed", () => {
+    authCodeNeeded = true;
+  }).then((fn) => { unlisteners.push(fn); });
+
+  async function handleSubmitCode() {
+    if (!authCode.trim()) return;
+    await submitAuthCode(authCode.trim());
+    authCodeNeeded = false;
+  }
 
   const CREATE_MESSAGES = [
     "setting things up...",
@@ -214,6 +226,8 @@
     busy = true;
     error = null;
     authUrl = null;
+    authCodeNeeded = false;
+    authCode = "";
     try {
       await authenticate(name);
       await startAgent(name);
@@ -226,7 +240,7 @@
     }
   }
 
-  onDestroy(() => { stopMessages(); if (unlisten) unlisten(); });
+  onDestroy(() => { stopMessages(); for (const fn of unlisteners) fn(); });
 </script>
 
 <div class="onboarding" class:transitioning>
@@ -344,13 +358,21 @@
     {:else if step === "auth"}
       <div class="step step-anim">
         <h1>sign in to claude</h1>
-        {#if authUrl}
-          <p class="sub">a browser window should have opened.<br/>if not, use the link below.</p>
+        {#if authCodeNeeded}
+          <p class="sub">paste the code from the browser below.</p>
+          <form onsubmit={(e) => { e.preventDefault(); handleSubmitCode(); }}>
+            <!-- svelte-ignore a11y_autofocus -->
+            <input type="text" class="name-input" placeholder="paste code here" bind:value={authCode} autofocus />
+            <button class="btn primary full" type="submit" disabled={!authCode.trim()}>submit</button>
+          </form>
+        {:else if authUrl}
+          <p class="sub">sign in via the browser window that opened.<br/>if it didn't open, use the link below.</p>
           <a class="auth-link" href={authUrl} target="_blank" rel="noopener">{authUrl.slice(0, 50)}...</a>
+          <ProgressBar message="waiting for sign in..." />
         {:else}
           <p class="sub">opening browser...</p>
+          <ProgressBar message="waiting..." />
         {/if}
-        <ProgressBar message="waiting for sign in..." />
         {#if error}
           <p class="error">{error.friendly ?? "something went wrong."}</p>
           {#if error.raw.length > 80 || !error.friendly}
