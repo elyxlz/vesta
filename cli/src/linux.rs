@@ -330,29 +330,54 @@ fn create_container(cname: &str, image: &str, port: u16) {
 
 fn obtain_credentials(image: &str) -> String {
     eprintln!("authenticating claude...");
-    eprintln!("sign in via the link below, then come back here.\n");
 
     let tmp_dir = std::env::temp_dir().join(format!("vesta_auth_{}", std::process::id()));
     std::fs::create_dir_all(&tmp_dir)
         .unwrap_or_else(|e| die(&format!("failed to create temp dir: {}", e)));
 
     let mount = format!("{}:/tmp/claude-creds", tmp_dir.display());
-    let child = process::Command::new("docker")
+    let mut child = process::Command::new("docker")
         .args([
             "run", "--rm", "-t",
-            "-e", "COLUMNS=500",
             "-v", &mount,
             "--entrypoint", "sh",
             image,
-            "-c", "export PATH=/root/.local/bin:$PATH && claude setup-token && cp /root/.claude/.credentials.json /tmp/claude-creds/",
+            "-c", "stty columns 10000 2>/dev/null; export PATH=/root/.local/bin:$PATH && claude setup-token && cp /root/.claude/.credentials.json /tmp/claude-creds/",
         ])
-        .stdin(process::Stdio::inherit())
+        .stdin(process::Stdio::null())
         .stdout(process::Stdio::piped())
         .stderr(process::Stdio::piped())
         .spawn()
         .unwrap_or_else(|_| die("failed to run claude setup-token"));
 
-    let status = run_passthrough(child);
+    // Collect output silently, extract auth URL, open browser
+    let opened = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut readers = Vec::new();
+    let streams: Vec<Box<dyn std::io::Read + Send>> = vec![
+        Box::new(child.stdout.take().unwrap()),
+        Box::new(child.stderr.take().unwrap()),
+    ];
+    for r in streams {
+        let opened = opened.clone();
+        readers.push(std::thread::spawn(move || {
+            use std::io::BufRead;
+            for line in std::io::BufReader::new(r).lines() {
+                let Ok(line) = line else { break };
+                if opened.load(std::sync::atomic::Ordering::Relaxed) {
+                    continue;
+                }
+                let clean = strip_ansi(&line);
+                if let Some(url) = clean.split_whitespace().find(|w| w.starts_with("https://")) {
+                    opened.store(true, std::sync::atomic::Ordering::Relaxed);
+                    eprintln!("auth-url: {}", url);
+                    try_open_browser(url);
+                }
+            }
+        }));
+    }
+
+    let status = child.wait().unwrap_or_else(|_| die("command failed"));
+    for r in readers { let _ = r.join(); }
 
     if !status.success() {
         std::fs::remove_dir_all(&tmp_dir).ok();

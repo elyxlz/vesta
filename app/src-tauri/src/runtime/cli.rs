@@ -330,19 +330,10 @@ pub async fn delete_agent(name: &str) -> Result<(), VestaError> {
 
 // ── Auth operations ────────────────────────────────────────────
 
-fn try_open_browser(url: &str) {
-    #[cfg(target_os = "linux")]
-    let _ = std::process::Command::new("xdg-open").arg(url)
-        .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn();
-    #[cfg(target_os = "macos")]
-    let _ = std::process::Command::new("open").arg(url)
-        .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn();
-    #[cfg(target_os = "windows")]
-    let _ = std::process::Command::new("cmd").args(["/c", "start", "", url])
-        .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn();
-}
-
-pub async fn obtain_and_inject_credentials(name: &str) -> Result<(), VestaError> {
+pub async fn obtain_and_inject_credentials(
+    name: &str,
+    on_url: impl Fn(String) + Send + 'static,
+) -> Result<(), VestaError> {
     let mut cmd = cli_command(&["auth", name]);
     cmd.stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
@@ -351,19 +342,26 @@ pub async fn obtain_and_inject_credentials(name: &str) -> Result<(), VestaError>
         VestaError::new(ErrorCode::ExecFailed, format!("failed to run cli: {}", e))
     })?;
 
-    let opened = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let opened2 = opened.clone();
-    let open_url = move |line: &str| {
-        if !opened2.load(std::sync::atomic::Ordering::Relaxed) {
-            if let Some(url) = line.split_whitespace().find(|w| w.starts_with("https://")) {
-                opened2.store(true, std::sync::atomic::Ordering::Relaxed);
-                try_open_browser(url);
+    let found = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let on_url: std::sync::Arc<std::sync::Mutex<Option<Box<dyn Fn(String) + Send>>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Some(Box::new(on_url))));
+    let (found2, on_url2) = (found.clone(), on_url.clone());
+    let stdout_task = collect_lines(child.stdout.take().unwrap(), move |line: &str| {
+        if !found.load(std::sync::atomic::Ordering::Relaxed) {
+            if let Some(rest) = line.strip_prefix("auth-url: ") {
+                found.store(true, std::sync::atomic::Ordering::Relaxed);
+                if let Some(cb) = on_url.lock().unwrap().take() { cb(rest.to_string()); }
             }
         }
-    };
-    let open_url2 = open_url.clone();
-    let stdout_task = collect_lines(child.stdout.take().unwrap(), open_url);
-    let stderr_task = collect_lines(child.stderr.take().unwrap(), open_url2);
+    });
+    let stderr_task = collect_lines(child.stderr.take().unwrap(), move |line: &str| {
+        if !found2.load(std::sync::atomic::Ordering::Relaxed) {
+            if let Some(rest) = line.strip_prefix("auth-url: ") {
+                found2.store(true, std::sync::atomic::Ordering::Relaxed);
+                if let Some(cb) = on_url2.lock().unwrap().take() { cb(rest.to_string()); }
+            }
+        }
+    });
 
     let timeout = tokio::time::Duration::from_secs(AUTH_TIMEOUT_SECS);
     let status = match tokio::time::timeout(timeout, child.wait()).await {

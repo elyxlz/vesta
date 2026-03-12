@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
+  import { listen } from "@tauri-apps/api/event";
   import { createAgent, agentStatus, authenticate, startAgent, waitForReady, checkPlatform, setupPlatform } from "../lib/api";
   import type { PlatformStatus } from "../lib/types";
   import ProgressBar from "./ProgressBar.svelte";
@@ -15,6 +16,12 @@
   let msgTimer: ReturnType<typeof setInterval> | null = null;
   let cancelled = $state(false);
   let platform = $state<PlatformStatus | null>(null);
+  let authUrl = $state<string | null>(null);
+  let unlisten: (() => void) | null = null;
+
+  listen<string>("auth-url", (event) => {
+    authUrl = event.payload;
+  }).then((fn) => { unlisten = fn; });
 
   const CREATE_MESSAGES = [
     "setting things up...",
@@ -206,6 +213,7 @@
     const name = normalizedPreview;
     busy = true;
     error = null;
+    authUrl = null;
     try {
       await authenticate(name);
       await startAgent(name);
@@ -218,7 +226,7 @@
     }
   }
 
-  onDestroy(() => { stopMessages(); });
+  onDestroy(() => { stopMessages(); if (unlisten) unlisten(); });
 </script>
 
 <div class="onboarding" class:transitioning>
@@ -336,7 +344,12 @@
     {:else if step === "auth"}
       <div class="step step-anim">
         <h1>sign in to claude</h1>
-        <p class="sub">switch to the browser window that opened<br/>and sign in with your anthropic account.</p>
+        {#if authUrl}
+          <p class="sub">a browser window should have opened.<br/>if not, use the link below.</p>
+          <a class="auth-link" href={authUrl} target="_blank" rel="noopener">{authUrl.slice(0, 50)}...</a>
+        {:else}
+          <p class="sub">opening browser...</p>
+        {/if}
         <ProgressBar message="waiting for sign in..." />
         {#if error}
           <p class="error">{error.friendly ?? "something went wrong."}</p>
@@ -586,6 +599,21 @@
     font-weight: 400;
   }
 
+  .auth-link {
+    font-size: 11px;
+    color: #7a726a;
+    word-break: break-all;
+    margin-bottom: 16px;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    cursor: pointer;
+    transition: color 0.15s;
+  }
+
+  .auth-link:hover {
+    color: #1a1816;
+  }
+
   .btn.cancel {
     background: transparent;
     color: #7a726a;
@@ -671,6 +699,14 @@
 
     .name-preview {
       color: #8a8078;
+    }
+
+    .auth-link {
+      color: #8a8078;
+    }
+
+    .auth-link:hover {
+      color: #e8e0d8;
     }
 
     .btn.cancel {
