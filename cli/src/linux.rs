@@ -378,8 +378,9 @@ fn obtain_credentials(image: &str) -> String {
                         try_open_browser(url);
                     }
                 }
+                let lower = clean.to_lowercase().replace(' ', "");
                 if !code_prompted.load(AtOrd::Relaxed)
-                    && clean.to_lowercase().contains("paste code")
+                    && lower.contains("pastecode")
                 {
                     code_prompted.store(true, AtOrd::Relaxed);
                     eprintln!("auth-code-needed");
