@@ -23,6 +23,23 @@ fn try_open_browser(url: &str) {
     let _ = r;
 }
 
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            match chars.peek() {
+                Some('[') => { chars.next(); for c in chars.by_ref() { if c.is_ascii_alphabetic() { break; } } }
+                Some(']') => { chars.next(); while let Some(c) = chars.next() { if c == '\x07' { break; } if c == '\x1b' && chars.peek() == Some(&'\\') { chars.next(); break; } } }
+                _ => { chars.next(); }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// Run a child process with piped stdout/stderr, passing lines through.
 /// Scans output for an auth URL and opens it in the browser.
 fn run_passthrough(mut child: process::Child) -> process::ExitStatus {
@@ -36,7 +53,8 @@ fn run_passthrough(mut child: process::Child) -> process::ExitStatus {
                 let Ok(line) = line else { break };
                 let _ = writeln!(writer, "{}", line);
                 if !opened.load(Ordering::Relaxed) {
-                    if let Some(url) = line.split_whitespace().find(|w| w.starts_with("https://")) {
+                    let clean = strip_ansi(&line);
+                    if let Some(url) = clean.split_whitespace().find(|w| w.starts_with("https://")) {
                         opened.store(true, Ordering::Relaxed);
                         try_open_browser(url);
                     }

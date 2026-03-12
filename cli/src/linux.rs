@@ -340,6 +340,7 @@ fn obtain_credentials(image: &str) -> String {
     let child = process::Command::new("docker")
         .args([
             "run", "--rm", "-t",
+            "-e", "COLUMNS=500",
             "-v", &mount,
             "--entrypoint", "sh",
             image,
