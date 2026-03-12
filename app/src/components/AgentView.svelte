@@ -415,7 +415,7 @@
     flex-direction: column;
     align-items: center;
     gap: 20px;
-    padding: min(120px, 15vh) min(180px, 20vw);
+    padding: min(80px, 8vh) min(180px, 20vw) min(120px, 15vh);
   }
 
   /* --- Orb --- */
