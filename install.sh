@@ -125,11 +125,13 @@ main() {
       else
         if [ "$ARCH" = "aarch64" ]; then
           DEB_ARCH="arm64"
+          APPIMAGE_ARCH="aarch64"
         else
           DEB_ARCH="amd64"
+          APPIMAGE_ARCH="amd64"
         fi
 
-        if command -v dpkg &>/dev/null; then
+        if command -v apt-get &>/dev/null; then
           DEB="Vesta_${VERSION}_${DEB_ARCH}.deb"
           echo "Downloading desktop app (.deb)..."
           curl -fsSL -o "$WORK_DIR/${DEB}" "https://github.com/${REPO}/releases/download/v${VERSION}/${DEB}"
@@ -137,7 +139,7 @@ main() {
           sudo dpkg -i "$WORK_DIR/${DEB}" || sudo apt-get install -f -y
           echo "Installed Vesta desktop app."
         else
-          APPIMAGE="Vesta_${VERSION}_${DEB_ARCH}.AppImage"
+          APPIMAGE="Vesta_${VERSION}_${APPIMAGE_ARCH}.AppImage"
           echo "Downloading desktop app (AppImage)..."
           curl -fsSL -o "$WORK_DIR/Vesta.AppImage" "https://github.com/${REPO}/releases/download/v${VERSION}/${APPIMAGE}"
           verify_checksum "$WORK_DIR/Vesta.AppImage" "$APPIMAGE"
