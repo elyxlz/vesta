@@ -659,6 +659,8 @@ pub fn run(command: Command) {
         }
 
         Command::Update => {
+            let current_exe = std::env::current_exe().unwrap_or_else(|e| die(&format!("cannot determine binary path: {}", e)));
+
             let current = env!("CARGO_PKG_VERSION");
             eprintln!("current version: v{}", current);
 
@@ -696,7 +698,9 @@ pub fn run(command: Command) {
                 latest, rust_target
             );
 
-            let tmp_dir = std::env::temp_dir().join("vesta-update");
+            // Use a temp dir on the same filesystem as the binary for atomic rename
+            let exe_dir = current_exe.parent().unwrap_or_else(|| die("cannot determine binary directory"));
+            let tmp_dir = exe_dir.join(".vesta-update-tmp");
             let _ = std::fs::remove_dir_all(&tmp_dir);
             std::fs::create_dir_all(&tmp_dir).unwrap_or_else(|e| die(&format!("failed to create temp dir: {}", e)));
 
@@ -708,6 +712,7 @@ pub fn run(command: Command) {
                 .status()
                 .unwrap_or_else(|_| die("curl not found"));
             if !dl.success() {
+                let _ = std::fs::remove_dir_all(&tmp_dir);
                 die("failed to download update");
             }
 
@@ -719,21 +724,18 @@ pub fn run(command: Command) {
                 .status()
                 .unwrap_or_else(|_| die("tar not found"));
             if !extract.success() {
+                let _ = std::fs::remove_dir_all(&tmp_dir);
                 die("failed to extract update");
             }
 
             let new_binary = tmp_dir.join("vesta");
-            let current_exe = std::env::current_exe().unwrap_or_else(|e| die(&format!("cannot determine binary path: {}", e)));
-
-            if std::fs::rename(&new_binary, &current_exe).is_err() {
-                std::fs::copy(&new_binary, &current_exe)
-                    .unwrap_or_else(|e| die(&format!("failed to replace binary: {}", e)));
-            }
+            self_replace::self_replace(&new_binary)
+                .unwrap_or_else(|e| die(&format!("failed to replace binary: {}", e)));
 
             // Also update vfkit if present in tarball
             let new_vfkit = tmp_dir.join("vfkit");
             if new_vfkit.exists() {
-                let vfkit_dest = current_exe.parent().unwrap().join("vfkit");
+                let vfkit_dest = exe_dir.join("vfkit");
                 if std::fs::rename(&new_vfkit, &vfkit_dest).is_err() {
                     let _ = std::fs::copy(&new_vfkit, &vfkit_dest);
                 }

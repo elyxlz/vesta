@@ -566,7 +566,9 @@ pub fn run(command: Command) -> ! {
                 latest
             );
 
-            let tmp_dir = std::env::temp_dir().join("vesta-update");
+            let current_exe = std::env::current_exe().unwrap_or_else(|e| die(&format!("cannot determine binary path: {}", e)));
+            let exe_dir = current_exe.parent().unwrap_or_else(|| die("cannot determine binary directory"));
+            let tmp_dir = exe_dir.join(".vesta-update-tmp");
             let _ = std::fs::remove_dir_all(&tmp_dir);
             std::fs::create_dir_all(&tmp_dir).unwrap_or_else(|e| die(&format!("failed to create temp dir: {}", e)));
 
@@ -578,6 +580,7 @@ pub fn run(command: Command) -> ! {
                 .status()
                 .unwrap_or_else(|_| die("curl not found"));
             if !dl.success() {
+                let _ = std::fs::remove_dir_all(&tmp_dir);
                 die("failed to download update");
             }
 
@@ -589,22 +592,14 @@ pub fn run(command: Command) -> ! {
                 .status()
                 .unwrap_or_else(|_| die("tar not found"));
             if !extract.success() {
+                let _ = std::fs::remove_dir_all(&tmp_dir);
                 die("failed to extract update");
             }
 
             let new_binary = tmp_dir.join("vesta-windows").join("vesta.exe");
-            let current_exe = std::env::current_exe().unwrap_or_else(|e| die(&format!("cannot determine binary path: {}", e)));
+            self_replace::self_replace(&new_binary)
+                .unwrap_or_else(|e| die(&format!("failed to replace binary: {}", e)));
 
-            // On Windows, can't replace a running exe directly — rename the old one first
-            let backup = current_exe.with_extension("exe.old");
-            let _ = std::fs::remove_file(&backup);
-            std::fs::rename(&current_exe, &backup)
-                .unwrap_or_else(|e| die(&format!("failed to move old binary: {}", e)));
-            if std::fs::rename(&new_binary, &current_exe).is_err() {
-                std::fs::copy(&new_binary, &current_exe)
-                    .unwrap_or_else(|e| die(&format!("failed to install new binary: {}", e)));
-            }
-            let _ = std::fs::remove_file(&backup);
             let _ = std::fs::remove_dir_all(&tmp_dir);
             eprintln!("updated to v{}", latest);
             process::exit(0);
