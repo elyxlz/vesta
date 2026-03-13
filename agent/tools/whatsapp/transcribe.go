@@ -1,11 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 
@@ -16,9 +16,8 @@ import (
 const defaultModelPath = "/usr/local/share/ggml-small.en.bin"
 
 var (
-	whisperModel     whisper.Model
-	whisperModelOnce sync.Once
-	whisperModelErr  error
+	whisperModel   whisper.Model
+	whisperModelMu sync.Mutex
 )
 
 func getModelPath() string {
@@ -37,14 +36,18 @@ func getModelPath() string {
 }
 
 func loadWhisperModel() (whisper.Model, error) {
-	whisperModelOnce.Do(func() {
-		modelPath := getModelPath()
-		whisperModel, whisperModelErr = whisper.New(modelPath)
-		if whisperModelErr != nil {
-			whisperModelErr = fmt.Errorf("failed to load whisper model at %s: %w", modelPath, whisperModelErr)
-		}
-	})
-	return whisperModel, whisperModelErr
+	whisperModelMu.Lock()
+	defer whisperModelMu.Unlock()
+	if whisperModel != nil {
+		return whisperModel, nil
+	}
+	modelPath := getModelPath()
+	model, err := whisper.New(modelPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load whisper model at %s: %w", modelPath, err)
+	}
+	whisperModel = model
+	return whisperModel, nil
 }
 
 // transcribeAudioBuiltIn transcribes audio using the built-in whisper.cpp bindings.
@@ -59,10 +62,10 @@ func transcribeAudioBuiltIn(audioPath string) (string, error) {
 	defer os.Remove(wavPath)
 
 	cmd := exec.Command("ffmpeg", "-i", audioPath, "-ar", "16000", "-ac", "1", "-f", "wav", "-y", wavPath)
-	cmd.Stderr = nil
-	cmd.Stdout = nil
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("ffmpeg conversion failed: %w", err)
+		return "", fmt.Errorf("ffmpeg conversion failed: %w: %s", err, stderr.String())
 	}
 
 	// Read WAV file
@@ -127,11 +130,16 @@ func readWAVSamples(path string) ([]float32, error) {
 
 // Convenience wrapper used by handleMessage
 func (wac *WhatsAppClient) transcribeAudioMessage(messageID, chatJID string) string {
-	// Download audio to temp file
-	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("wa_audio_%s.ogg", messageID))
-	defer os.Remove(tmpFile)
+	tmpFile, err := os.CreateTemp("", "wa_audio_*.ogg")
+	if err != nil {
+		wac.logger.Warnf("Failed to create temp file for transcription: %v", err)
+		return ""
+	}
+	tmpPath := tmpFile.Name()
+	tmpFile.Close()
+	defer os.Remove(tmpPath)
 
-	path, err := wac.DownloadMedia(messageID, chatJID, tmpFile)
+	path, err := wac.DownloadMedia(messageID, chatJID, tmpPath)
 	if err != nil {
 		wac.logger.Warnf("Failed to download audio for transcription: %v", err)
 		return ""
