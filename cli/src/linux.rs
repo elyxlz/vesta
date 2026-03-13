@@ -1059,6 +1059,17 @@ pub fn run(command: Command) {
             }
             die(&format!("{}: not ready after {}s", name, timeout));
         }
+
+        Command::Update => {
+            let target = match std::env::consts::ARCH {
+                "x86_64" => "x86_64-unknown-linux-gnu",
+                "aarch64" => "aarch64-unknown-linux-gnu",
+                other => die(&format!("unsupported architecture: {}", other)),
+            };
+            if let Some(tmp_dir) = cli_self_update(target, false, "vesta") {
+                let _ = std::fs::remove_dir_all(&tmp_dir);
+            }
+        }
     }
 }
 

@@ -657,5 +657,22 @@ pub fn run(command: Command) {
             });
             println!("{}", s);
         }
+
+        Command::Update => {
+            let target = match std::env::consts::ARCH {
+                "x86_64" => "x86_64-apple-darwin",
+                "aarch64" => "aarch64-apple-darwin",
+                other => die(&format!("unsupported architecture: {}", other)),
+            };
+            if let Some(tmp_dir) = cli_self_update(target, false, "vesta") {
+                let new_vfkit = tmp_dir.join("vfkit");
+                let exe = std::env::current_exe().unwrap();
+                let vfkit_dest = exe.parent().unwrap().join("vfkit");
+                if std::fs::rename(&new_vfkit, &vfkit_dest).is_err() {
+                    let _ = std::fs::copy(&new_vfkit, &vfkit_dest);
+                }
+                let _ = std::fs::remove_dir_all(&tmp_dir);
+            }
+        }
     }
 }

@@ -207,6 +207,8 @@ enum Command {
     PlatformCheck,
     /// Install platform prerequisites (WSL on Windows)
     PlatformSetup,
+    /// Update vesta to the latest version
+    Update,
 }
 
 #[cfg(test)]
@@ -252,6 +254,106 @@ mod tests {
         let url = clean.split_whitespace().find(|w| w.starts_with("https://"));
         assert_eq!(url, Some("https://claude.ai/oauth/authorize?code=true&client_id=abc"));
     }
+}
+
+/// Check GitHub for the latest CLI version. Returns Some(version) if update available, None if up to date.
+#[allow(dead_code)]
+fn check_latest_version() -> Option<String> {
+    let current = env!("CARGO_PKG_VERSION");
+    eprintln!("current version: v{}", current);
+
+    let output = process::Command::new("curl")
+        .args(["-fsSL", "https://api.github.com/repos/elyxlz/vesta/releases/latest"])
+        .output()
+        .unwrap_or_else(|_| die("curl not found — install curl"));
+    if !output.status.success() {
+        die("failed to check for updates");
+    }
+
+    let body = String::from_utf8_lossy(&output.stdout);
+    let data: serde_json::Value = serde_json::from_str(&body)
+        .unwrap_or_else(|_| die("failed to parse release info"));
+    let latest = data["tag_name"].as_str().unwrap_or("").trim_start_matches('v');
+    if latest.is_empty() {
+        die("could not determine latest version");
+    }
+
+    if latest == current {
+        eprintln!("already up to date");
+        return None;
+    }
+    eprintln!("updating to v{}...", latest);
+    Some(latest.to_string())
+}
+
+/// Download, extract, and self-replace the CLI binary.
+/// Returns Some(tmp_dir) on success for caller to do post-processing and cleanup.
+/// Returns None if already up to date.
+#[allow(dead_code)]
+fn cli_self_update(rust_target: &str, is_zip: bool, binary_subpath: &str) -> Option<PathBuf> {
+    let latest = check_latest_version()?;
+
+    let ext = if is_zip { "zip" } else { "tar.gz" };
+    let archive_name = format!("vesta-{}.{}", rust_target, ext);
+    let url = format!(
+        "https://github.com/elyxlz/vesta/releases/download/v{}/{}",
+        latest, archive_name
+    );
+
+    let current_exe = std::env::current_exe()
+        .unwrap_or_else(|e| die(&format!("cannot determine binary path: {}", e)));
+    let exe_dir = current_exe.parent()
+        .unwrap_or_else(|| die("cannot determine binary directory"));
+
+    // Prefer same-filesystem temp for atomic rename; fall back to system temp if not writable
+    let tmp_dir = {
+        let primary = exe_dir.join(".vesta-update-tmp");
+        let _ = std::fs::remove_dir_all(&primary);
+        if std::fs::create_dir_all(&primary).is_ok() {
+            primary
+        } else {
+            let fallback = std::env::temp_dir().join("vesta-update");
+            let _ = std::fs::remove_dir_all(&fallback);
+            std::fs::create_dir_all(&fallback)
+                .unwrap_or_else(|e| die(&format!("failed to create temp dir: {}", e)));
+            fallback
+        }
+    };
+
+    let archive = tmp_dir.join(&archive_name);
+    let dl = process::Command::new("curl")
+        .args(["-fsSL", "-o"])
+        .arg(&archive)
+        .arg(&url)
+        .status()
+        .unwrap_or_else(|_| die("curl not found"));
+    if !dl.success() {
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+        die("failed to download update");
+    }
+
+    let tar_flag = if is_zip { "-xf" } else { "-xzf" };
+    let extract = process::Command::new("tar")
+        .arg(tar_flag)
+        .arg(&archive)
+        .arg("-C")
+        .arg(&tmp_dir)
+        .status()
+        .unwrap_or_else(|_| die("tar not found"));
+    if !extract.success() {
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+        die("failed to extract update");
+    }
+
+    let new_binary = tmp_dir.join(binary_subpath);
+    self_replace::self_replace(&new_binary)
+        .unwrap_or_else(|e| {
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+            die(&format!("failed to replace binary: {}", e));
+        });
+
+    eprintln!("updated to v{}", latest);
+    Some(tmp_dir)
 }
 
 #[cfg(target_os = "linux")]

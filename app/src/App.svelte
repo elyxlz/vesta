@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
-  import { listAgents } from "./lib/api";
+  import { listAgents, checkAndInstallUpdate } from "./lib/api";
   import { createAgentConnection, type AgentConnection } from "./lib/ws";
   import { detectPlatform } from "./lib/platform";
   import type { AgentActivityState } from "./lib/types";
@@ -22,6 +22,7 @@
   let agentConnection = $state<AgentConnection | null>(null);
   let initialActivity: AgentActivityState = "idle";
   let hasAgents = $state(false);
+  let updateInfo = $state<{ version: string; installing: boolean } | null>(null);
 
   async function setView(next: View) {
     if (next === view) return;
@@ -64,6 +65,9 @@
     } catch {
       view = "onboarding";
     }
+    checkAndInstallUpdate().then((result) => {
+      if (result) updateInfo = { version: result.version, installing: result.installing };
+    });
     ready = true;
   });
 
@@ -180,6 +184,17 @@
       />
     {/if}
   </main>
+
+  {#if updateInfo}
+    <div class="update-bar">
+      {#if updateInfo.installing}
+        v{updateInfo.version} installed — restart to apply
+      {:else}
+        v{updateInfo.version} available
+      {/if}
+      <button class="update-dismiss" onclick={() => updateInfo = null}>dismiss</button>
+    </div>
+  {/if}
 
   <div class="tooltip" class:visible={!!tipText} style="left: clamp(40px, {tipX}px, calc(100vw - 40px)); top: clamp(28px, {tipY}px, calc(100vh - 20px));">{tipText}</div>
 </div>
@@ -585,6 +600,61 @@
     .windows .wc.close:active {
       background: #b02818;
       color: white;
+    }
+  }
+
+  .update-bar {
+    position: absolute;
+    bottom: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 4px 14px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 450;
+    color: #7a726a;
+    background: rgba(0, 0, 0, 0.05);
+    border: 1px solid rgba(0, 0, 0, 0.06);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    z-index: 50;
+    animation: fadeSlideUp 0.3s var(--spring);
+    letter-spacing: 0.01em;
+  }
+
+  .update-dismiss {
+    background: none;
+    border: none;
+    color: #9a928a;
+    font-size: 10px;
+    cursor: pointer;
+    padding: 0;
+    font-family: inherit;
+  }
+
+  .update-dismiss:hover {
+    color: #5a524a;
+  }
+
+  @keyframes fadeSlideUp {
+    from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+    to { opacity: 1; transform: translateX(-50%) translateY(0); }
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .update-bar {
+      background: rgba(255, 255, 255, 0.06);
+      border-color: rgba(255, 255, 255, 0.08);
+      color: #8a8078;
+    }
+
+    .update-dismiss {
+      color: #6a625a;
+    }
+
+    .update-dismiss:hover {
+      color: #a09890;
     }
   }
 </style>

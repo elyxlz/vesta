@@ -10,6 +10,7 @@ pub fn run() {
 
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(app_state)
         .setup(|_app| {
             #[cfg(any(target_os = "macos", target_os = "windows"))]

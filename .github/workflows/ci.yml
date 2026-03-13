@@ -769,6 +769,10 @@ jobs:
             os: ubuntu-latest
             cli-artifact: vesta-x86_64-unknown-linux-gnu
             bundles: deb,appimage
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+            cli-artifact: vesta-aarch64-unknown-linux-gnu
+            bundles: deb,appimage
           - target: aarch64-apple-darwin
             os: macos-latest
             cli-artifact: vesta-aarch64-apple-darwin
@@ -837,6 +841,8 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: app
           tauriScript: npx tauri
@@ -867,8 +873,13 @@ jobs:
         run: |
           mkdir -p tauri-out
           find app/src-tauri/target/${{ matrix.target }}/release/bundle \
-            -type f \( -name '*.deb' -o -name '*.AppImage' -o -name '*.dmg' \) \
+            -type f \( -name '*.deb' -o -name '*.AppImage' -o -name '*.dmg' -o -name '*.tar.gz' -o -name '*.sig' \) \
             -exec cp {} tauri-out/ \;
+          # Disambiguate macOS updater artifacts by architecture (both builds produce Vesta.app.tar.gz)
+          ARCH_PREFIX=$(echo "${{ matrix.target }}" | cut -d'-' -f1)
+          for f in tauri-out/Vesta.app.tar.gz*; do
+            [ -f "$f" ] && mv "$f" "${f/Vesta.app/Vesta_${ARCH_PREFIX}.app}"
+          done
           [ "$(ls -A tauri-out)" ] || { echo "No artifacts collected"; exit 1; }
 
       - uses: actions/upload-artifact@v7
@@ -937,6 +948,8 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: app
           tauriScript: npx tauri
@@ -947,6 +960,7 @@ jobs:
         run: |
           mkdir -p tauri-out
           cp app/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe tauri-out/
+          find app/src-tauri/target/x86_64-pc-windows-msvc/release/bundle -name '*.sig' -exec cp {} tauri-out/ \;
 
       - uses: actions/upload-artifact@v7
         with:
@@ -1003,9 +1017,60 @@ jobs:
           find artifacts -type f \( \
             -name '*.tar.gz' -o -name '*.tar.zst' -o -name '*.zip' -o \
             -name '*.deb' -o -name '*.AppImage' -o -name '*.dmg' -o \
-            -name '*-setup.exe' -o -name '*_x64-setup.exe' \
+            -name '*-setup.exe' -o -name '*_x64-setup.exe' -o \
+            -name '*.sig' \
           \) -exec cp {} release/ \;
           ls -lh release/
+
+      - name: Generate updater manifest
+        run: |
+          VERSION="${{ github.event.release.tag_name }}"
+          VERSION="${VERSION#v}"
+          REPO="elyxlz/vesta"
+          BASE="https://github.com/${REPO}/releases/download/v${VERSION}"
+          DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          read_sig() {
+            local f="release/$1"
+            if [ -f "$f" ]; then cat "$f"; else echo ""; fi
+          }
+
+          # Tauri updater platform keys: {os}-{arch}
+          # macOS uses .app.tar.gz, Linux uses .AppImage.tar.gz, Windows uses .nsis.zip
+          cat > release/latest.json << MANIFEST
+          {
+            "version": "${VERSION}",
+            "pub_date": "${DATE}",
+            "platforms": {
+              "darwin-aarch64": {
+                "url": "${BASE}/Vesta_aarch64.app.tar.gz",
+                "signature": "$(read_sig Vesta_aarch64.app.tar.gz.sig)"
+              },
+              "darwin-x86_64": {
+                "url": "${BASE}/Vesta_x86_64.app.tar.gz",
+                "signature": "$(read_sig Vesta_x86_64.app.tar.gz.sig)"
+              },
+              "linux-x86_64": {
+                "url": "${BASE}/Vesta_${VERSION}_amd64.AppImage.tar.gz",
+                "signature": "$(read_sig Vesta_${VERSION}_amd64.AppImage.tar.gz.sig)"
+              },
+              "linux-aarch64": {
+                "url": "${BASE}/Vesta_${VERSION}_arm64.AppImage.tar.gz",
+                "signature": "$(read_sig Vesta_${VERSION}_arm64.AppImage.tar.gz.sig)"
+              },
+              "windows-x86_64": {
+                "url": "${BASE}/Vesta_${VERSION}_x64-setup.exe",
+                "signature": "$(read_sig Vesta_${VERSION}_x64-setup.exe.sig)"
+              }
+            }
+          }
+          MANIFEST
+          sed -i 's/^          //' release/latest.json
+          echo "Generated latest.json:"
+          cat release/latest.json
+
+      - name: Generate checksums
+        run: cd release && sha256sum * > checksums.txt
 
       - name: Upload assets and publish
         env:
@@ -1015,112 +1080,3 @@ jobs:
             gh release upload "${{ github.event.release.tag_name }}" "$f" --clobber
           done
           gh release edit "${{ github.event.release.tag_name }}" --draft=false
-
-      - name: Update Homebrew cask
-        env:
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-        run: |
-          VERSION="${{ github.event.release.tag_name }}"
-          VERSION="${VERSION#v}"
-          REPO="elyxlz/vesta"
-
-          ARM_URL="https://github.com/${REPO}/releases/download/v${VERSION}/Vesta_${VERSION}_aarch64.dmg"
-          X64_URL="https://github.com/${REPO}/releases/download/v${VERSION}/Vesta_${VERSION}_x64.dmg"
-
-          ARM_SHA=$(shasum -a 256 release/Vesta_${VERSION}_aarch64.dmg | cut -d' ' -f1)
-          X64_SHA=$(shasum -a 256 release/Vesta_${VERSION}_x64.dmg | cut -d' ' -f1)
-
-          cat > /tmp/vesta.rb << EOF
-          cask "vesta" do
-            version "${VERSION}"
-
-            on_arm do
-              url "${ARM_URL}"
-              sha256 "${ARM_SHA}"
-            end
-
-            on_intel do
-              url "${X64_URL}"
-              sha256 "${X64_SHA}"
-            end
-
-            name "Vesta"
-            desc "Autonomous AI agent manager"
-            homepage "https://github.com/${REPO}"
-
-            app "Vesta.app"
-
-            zap trash: [
-              "~/Library/Application Support/com.vesta.app",
-              "~/Library/Caches/com.vesta.app",
-            ]
-          end
-          EOF
-
-          # Remove leading whitespace from heredoc
-          sed -i 's/^          //' /tmp/vesta.rb
-
-          # Generate CLI formula (pre-built binaries)
-          MAC_ARM_CLI_URL="https://github.com/${REPO}/releases/download/v${VERSION}/vesta-aarch64-apple-darwin.tar.gz"
-          MAC_X64_CLI_URL="https://github.com/${REPO}/releases/download/v${VERSION}/vesta-x86_64-apple-darwin.tar.gz"
-          LINUX_X64_CLI_URL="https://github.com/${REPO}/releases/download/v${VERSION}/vesta-x86_64-unknown-linux-gnu.tar.gz"
-          LINUX_ARM_CLI_URL="https://github.com/${REPO}/releases/download/v${VERSION}/vesta-aarch64-unknown-linux-gnu.tar.gz"
-
-          MAC_ARM_CLI_SHA=$(shasum -a 256 release/vesta-aarch64-apple-darwin.tar.gz | cut -d' ' -f1)
-          MAC_X64_CLI_SHA=$(shasum -a 256 release/vesta-x86_64-apple-darwin.tar.gz | cut -d' ' -f1)
-          LINUX_X64_CLI_SHA=$(shasum -a 256 release/vesta-x86_64-unknown-linux-gnu.tar.gz | cut -d' ' -f1)
-          LINUX_ARM_CLI_SHA=$(shasum -a 256 release/vesta-aarch64-unknown-linux-gnu.tar.gz | cut -d' ' -f1)
-
-          cat > /tmp/vesta-cli.rb << FORMULA
-          class VestaCli < Formula
-            desc "CLI for managing the Vesta autonomous AI agent"
-            homepage "https://github.com/${REPO}"
-            version "${VERSION}"
-            license "MIT"
-
-            on_macos do
-              on_arm do
-                url "${MAC_ARM_CLI_URL}"
-                sha256 "${MAC_ARM_CLI_SHA}"
-              end
-              on_intel do
-                url "${MAC_X64_CLI_URL}"
-                sha256 "${MAC_X64_CLI_SHA}"
-              end
-            end
-
-            on_linux do
-              on_arm do
-                url "${LINUX_ARM_CLI_URL}"
-                sha256 "${LINUX_ARM_CLI_SHA}"
-              end
-              on_intel do
-                url "${LINUX_X64_CLI_URL}"
-                sha256 "${LINUX_X64_CLI_SHA}"
-              end
-            end
-
-            def install
-              bin.install "vesta"
-              bin.install "vfkit" if File.exist?("vfkit")
-            end
-
-            test do
-              assert_match version.to_s, shell_output("#{bin}/vesta --version")
-            end
-          end
-          FORMULA
-
-          sed -i 's/^          //' /tmp/vesta-cli.rb
-
-          cd /tmp
-          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/elyxlz/homebrew-vesta.git"
-          cd homebrew-vesta
-          mkdir -p Casks Formula
-          cp /tmp/vesta.rb Casks/vesta.rb
-          cp /tmp/vesta-cli.rb Formula/vesta-cli.rb
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Casks/vesta.rb Formula/vesta-cli.rb
-          git commit -m "Update vesta to ${VERSION}"
-          git push

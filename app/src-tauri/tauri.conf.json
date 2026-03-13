@@ -1,6 +1,6 @@
 {
   "productName": "Vesta",
-  "version": "0.1.85",
+  "version": "0.1.86",
   "identifier": "com.vesta.app",
   "build": {
     "beforeDevCommand": "cargo build --manifest-path ../cli/Cargo.toml && npm run dev",
@@ -23,6 +23,14 @@
     ],
     "security": {
       "csp": null
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/elyxlz/vesta/releases/latest/download/latest.json"
+      ],
+      "pubkey": ""
     }
   },
   "bundle": {

@@ -1,7 +1,7 @@
 {
   "name": "vesta",
   "private": true,
-  "version": "0.1.85",
+  "version": "0.1.86",
   "description": "Vesta desktop app",
   "license": "MIT",
   "repository": {
@@ -18,7 +18,8 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
-    "@tauri-apps/plugin-dialog": "^2.6.0"
+    "@tauri-apps/plugin-dialog": "^2.6.0",
+    "@tauri-apps/plugin-updater": "^2"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^6.2.4",

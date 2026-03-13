@@ -1,6 +1,6 @@
 [package]
 name = "vesta"
-version = "0.1.85"
+version = "0.1.86"
 description = "Vesta CLI for managing the personal assistant agent"
 license = "MIT"
 repository = "https://github.com/elyxlz/vesta"
@@ -13,14 +13,12 @@ path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
+self-replace = "1"
+serde_json = "1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
 dirs = "6"
-
-[target.'cfg(target_os = "windows")'.dependencies]
-serde_json = "1"
 
 [profile.release]
 strip = true
@@ -31,7 +29,6 @@ panic = "abort"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
 dirs = "6"
 zstd = "0.13"
 tar = "0.4"

@@ -521,7 +521,7 @@ fn command_args(command: &Command) -> Vec<String> {
         Command::WaitReady { ref name, timeout } => {
             vec!["wait-ready".into(), name.clone(), "--timeout".into(), timeout.to_string()]
         }
-        Command::PlatformCheck | Command::PlatformSetup => unreachable!(),
+        Command::PlatformCheck | Command::PlatformSetup | Command::Update => unreachable!(),
     }
 }
 
@@ -533,6 +533,12 @@ pub fn run(command: Command) -> ! {
         }
         Command::PlatformSetup => {
             platform_setup();
+            process::exit(0);
+        }
+        Command::Update => {
+            if let Some(tmp_dir) = cli_self_update("x86_64-pc-windows-msvc", true, "vesta-windows/vesta.exe") {
+                let _ = std::fs::remove_dir_all(&tmp_dir);
+            }
             process::exit(0);
         }
         _ => {}
