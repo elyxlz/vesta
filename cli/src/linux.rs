@@ -333,19 +333,17 @@ const OAUTH_REDIRECT_URI: &str = "https://console.anthropic.com/oauth/code/callb
 const OAUTH_TOKEN_URL: &str = "https://console.anthropic.com/v1/oauth/token";
 const OAUTH_AUTHORIZE_URL: &str = "https://claude.ai/oauth/authorize";
 
+fn base64url(b64: &str) -> String {
+    b64.replace('+', "-").replace('/', "_").replace('=', "")
+}
+
 fn generate_pkce() -> (String, String) {
-    // Generate code_verifier: 32 random bytes → base64url
     let raw = process::Command::new("openssl")
         .args(["rand", "-base64", "32"])
         .output()
         .unwrap_or_else(|_| die("openssl not found — install openssl"));
-    let verifier = String::from_utf8_lossy(&raw.stdout)
-        .trim()
-        .replace('+', "-")
-        .replace('/', "_")
-        .replace('=', "");
+    let verifier = base64url(String::from_utf8_lossy(&raw.stdout).trim());
 
-    // code_challenge = base64url(SHA256(code_verifier))
     let sha_cmd = format!(
         "printf '%s' '{}' | openssl dgst -sha256 -binary | openssl base64 -A",
         verifier
@@ -354,11 +352,7 @@ fn generate_pkce() -> (String, String) {
         .args(["-c", &sha_cmd])
         .output()
         .unwrap_or_else(|_| die("failed to compute code challenge"));
-    let challenge = String::from_utf8_lossy(&raw.stdout)
-        .trim()
-        .replace('+', "-")
-        .replace('/', "_")
-        .replace('=', "");
+    let challenge = base64url(String::from_utf8_lossy(&raw.stdout).trim());
 
     (verifier, challenge)
 }
@@ -368,11 +362,7 @@ fn generate_state() -> String {
         .args(["rand", "-base64", "32"])
         .output()
         .unwrap_or_else(|_| die("openssl not found"));
-    String::from_utf8_lossy(&raw.stdout)
-        .trim()
-        .replace('+', "-")
-        .replace('/', "_")
-        .replace('=', "")
+    base64url(String::from_utf8_lossy(&raw.stdout).trim())
 }
 
 fn obtain_credentials(_image: &str) -> String {

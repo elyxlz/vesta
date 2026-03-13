@@ -22,21 +22,6 @@
   let authCode = $state("");
   let unlisteners: (() => void)[] = [];
 
-  listen<string>("auth-url", (event) => {
-    authUrl = event.payload;
-  }).then((fn) => { unlisteners.push(fn); });
-
-  listen<string>("auth-code-needed", () => {
-    authCodeNeeded = true;
-  }).then((fn) => { unlisteners.push(fn); });
-
-  listen<string>("auth-code-invalid", () => {
-    authCodeNeeded = true;
-    authCodeSubmitted = false;
-    authCode = "";
-    error = { friendly: "invalid auth code — try again", raw: "auth-code-invalid" };
-  }).then((fn) => { unlisteners.push(fn); });
-
   async function handleSubmitCode() {
     if (!authCode.trim()) return;
     await submitAuthCode(authCode.trim());
@@ -53,6 +38,21 @@
   ];
 
   onMount(async () => {
+    listen<string>("auth-url", (event) => {
+      authUrl = event.payload;
+    }).then((fn) => { unlisteners.push(fn); });
+
+    listen<string>("auth-code-needed", () => {
+      authCodeNeeded = true;
+    }).then((fn) => { unlisteners.push(fn); });
+
+    listen<string>("auth-code-invalid", () => {
+      authCodeNeeded = true;
+      authCodeSubmitted = false;
+      authCode = "";
+      error = { friendly: "invalid auth code — try again", raw: "auth-code-invalid" };
+    }).then((fn) => { unlisteners.push(fn); });
+
     try {
       const status = await checkPlatform();
       platform = status;
