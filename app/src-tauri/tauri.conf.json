@@ -1,6 +1,6 @@
 {
   "productName": "Vesta",
-  "version": "0.1.87",
+  "version": "0.1.88",
   "identifier": "com.vesta.app",
   "build": {
     "beforeDevCommand": "cargo build --manifest-path ../cli/Cargo.toml && npm run dev",
@@ -31,7 +31,7 @@
       "endpoints": [
         "https://github.com/elyxlz/vesta/releases/latest/download/latest.json"
       ],
-      "pubkey": ""
+      "pubkey": "RWTWRfbC1xMocwXfhiVUb4V181c6Qvd/p9JO0P292pMgLhCuwDcYQafM"
     }
   },
   "bundle": {
