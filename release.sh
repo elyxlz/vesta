@@ -25,8 +25,7 @@ fi
 
 git add -A
 git commit -m "Bump version to ${VERSION}"
-git tag "$TAG"
-git push origin master "$TAG"
+git push origin master
 
 echo "Releasing ${TAG}..."
-gh release create "$TAG" --title "$TAG" --generate-notes
+gh release create "$TAG" --title "$TAG" --generate-notes --target master
