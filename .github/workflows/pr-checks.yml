@@ -1,6 +1,9 @@
 name: PR Checks
 
 on:
+  push:
+    branches: [ master ]
+    paths: [ 'agent/**' ]
   pull_request:
     branches: [ master ]
 
@@ -9,17 +12,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  pr-validation:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      agent: ${{ steps.filter.outputs.agent }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            agent:
+              - 'agent/**'
+
+  lockfile:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
 
       - name: Set up uv
-        if: github.event.pull_request.user.login != 'dependabot[bot]'
         run: curl -LsSf https://astral.sh/uv/install.sh | sh
 
       - name: Check lockfile is up to date
-        if: github.event.pull_request.user.login != 'dependabot[bot]'
         working-directory: agent
         run: |
           cp uv.lock uv.lock.before
@@ -34,6 +51,8 @@ jobs:
           echo "✓ uv.lock is up to date"
 
   agent-tests:
+    needs: detect-changes
+    if: github.event_name != 'pull_request' || needs.detect-changes.outputs.agent == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -44,6 +63,18 @@ jobs:
       - name: Lint
         working-directory: agent
         run: uv run ruff check
+
+      - name: Format check
+        working-directory: agent
+        run: uv run ruff format --check
+
+      - name: Install tools
+        working-directory: agent
+        run: |
+          uv sync
+          for tool in tools/*/; do
+            [ -f "$tool/pyproject.toml" ] && uv pip install -e "$tool"
+          done
 
       - name: Type check
         working-directory: agent
