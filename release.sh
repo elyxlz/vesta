@@ -12,12 +12,8 @@ if [ -n "$(git status --porcelain)" ]; then
   exit 1
 fi
 
-# Bump version
-if [ $# -eq 1 ]; then
-  ./bump.sh "$1"
-else
-  ./bump.sh
-fi
+# Bump version (patch/minor/major, defaults to patch)
+./bump.sh "${1:-patch}"
 
 VERSION=$(grep '^version = ' agent/pyproject.toml | cut -d'"' -f2)
 TAG="v${VERSION}"
