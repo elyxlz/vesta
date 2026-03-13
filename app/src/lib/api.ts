@@ -81,7 +81,8 @@ export async function checkAndInstallUpdate(): Promise<{ version: string; instal
     if (!update) return null;
     await update.downloadAndInstall();
     return { version: update.version, installing: true };
-  } catch {
+  } catch (e) {
+    console.error("Update check failed:", e);
     return null;
   }
 }

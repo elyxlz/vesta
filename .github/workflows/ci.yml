@@ -875,6 +875,11 @@ jobs:
           find app/src-tauri/target/${{ matrix.target }}/release/bundle \
             -type f \( -name '*.deb' -o -name '*.AppImage' -o -name '*.dmg' -o -name '*.tar.gz' -o -name '*.sig' \) \
             -exec cp {} tauri-out/ \;
+          # Disambiguate macOS updater artifacts by architecture (both builds produce Vesta.app.tar.gz)
+          ARCH_PREFIX=$(echo "${{ matrix.target }}" | cut -d'-' -f1)
+          for f in tauri-out/Vesta.app.tar.gz*; do
+            [ -f "$f" ] && mv "$f" "${f/Vesta.app/Vesta_${ARCH_PREFIX}.app}"
+          done
           [ "$(ls -A tauri-out)" ] || { echo "No artifacts collected"; exit 1; }
 
       - uses: actions/upload-artifact@v7
@@ -1038,12 +1043,12 @@ jobs:
             "pub_date": "${DATE}",
             "platforms": {
               "darwin-aarch64": {
-                "url": "${BASE}/Vesta.app.tar.gz",
-                "signature": "$(read_sig Vesta.app.tar.gz.sig)"
+                "url": "${BASE}/Vesta_aarch64.app.tar.gz",
+                "signature": "$(read_sig Vesta_aarch64.app.tar.gz.sig)"
               },
               "darwin-x86_64": {
-                "url": "${BASE}/Vesta.app.tar.gz",
-                "signature": "$(read_sig Vesta.app.tar.gz.sig)"
+                "url": "${BASE}/Vesta_x86_64.app.tar.gz",
+                "signature": "$(read_sig Vesta_x86_64.app.tar.gz.sig)"
               },
               "linux-x86_64": {
                 "url": "${BASE}/Vesta_${VERSION}_amd64.AppImage.tar.gz",

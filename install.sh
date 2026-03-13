@@ -39,13 +39,13 @@ main() {
   fi
   echo "Installing Vesta v${VERSION}..."
 
-  TMPDIR=$(mktemp -d)
-  trap 'rm -rf "$TMPDIR"' EXIT
+  WORK_DIR=$(mktemp -d)
+  trap 'rm -rf "$WORK_DIR"' EXIT
 
   verify_checksum() {
     local file="$1"
     local artifact="$2"
-    local checksums="$TMPDIR/checksums.txt"
+    local checksums="$WORK_DIR/checksums.txt"
     if curl -fsSL -o "$checksums" "https://github.com/${REPO}/releases/download/v${VERSION}/checksums.txt" 2>/dev/null; then
       local expected
       expected=$(grep "  ${artifact}$" "$checksums" | cut -d' ' -f1 || true)
@@ -80,12 +80,12 @@ main() {
       if [ "$CLI_ONLY" = true ]; then
         ARTIFACT="vesta-${ARCH}-apple-darwin.tar.gz"
         echo "Downloading CLI..."
-        curl -fsSL -o "$TMPDIR/vesta.tar.gz" "https://github.com/${REPO}/releases/download/v${VERSION}/${ARTIFACT}"
-        verify_checksum "$TMPDIR/vesta.tar.gz" "$ARTIFACT"
-        tar -xzf "$TMPDIR/vesta.tar.gz" -C "$TMPDIR"
-        install_cli_to_path "$TMPDIR/vesta"
-        if [ -f "$TMPDIR/vfkit" ]; then
-          install -m 755 "$TMPDIR/vfkit" "$HOME/.local/bin/vfkit"
+        curl -fsSL -o "$WORK_DIR/vesta.tar.gz" "https://github.com/${REPO}/releases/download/v${VERSION}/${ARTIFACT}"
+        verify_checksum "$WORK_DIR/vesta.tar.gz" "$ARTIFACT"
+        tar -xzf "$WORK_DIR/vesta.tar.gz" -C "$WORK_DIR"
+        install_cli_to_path "$WORK_DIR/vesta"
+        if [ -f "$WORK_DIR/vfkit" ]; then
+          install -m 755 "$WORK_DIR/vfkit" "$HOME/.local/bin/vfkit"
         fi
       else
         if [ "$ARCH" = "aarch64" ]; then
@@ -94,11 +94,12 @@ main() {
           DMG="Vesta_${VERSION}_x64.dmg"
         fi
         echo "Downloading desktop app..."
-        curl -fsSL -o "$TMPDIR/${DMG}" "https://github.com/${REPO}/releases/download/v${VERSION}/${DMG}"
-        verify_checksum "$TMPDIR/${DMG}" "$DMG"
+        curl -fsSL -o "$WORK_DIR/${DMG}" "https://github.com/${REPO}/releases/download/v${VERSION}/${DMG}"
+        verify_checksum "$WORK_DIR/${DMG}" "$DMG"
         echo "Opening installer..."
-        open "$TMPDIR/${DMG}"
+        open "$WORK_DIR/${DMG}"
         echo "Drag Vesta to Applications to complete installation."
+        echo "If macOS says the app is damaged, run: xattr -cr /Applications/Vesta.app"
       fi
       ;;
     linux)
@@ -114,10 +115,10 @@ main() {
         esac
         ARTIFACT="vesta-${RUST_TARGET}.tar.gz"
         echo "Downloading CLI..."
-        curl -fsSL -o "$TMPDIR/vesta.tar.gz" "https://github.com/${REPO}/releases/download/v${VERSION}/${ARTIFACT}"
-        verify_checksum "$TMPDIR/vesta.tar.gz" "$ARTIFACT"
-        tar -xzf "$TMPDIR/vesta.tar.gz" -C "$TMPDIR"
-        install_cli_to_path "$TMPDIR/vesta"
+        curl -fsSL -o "$WORK_DIR/vesta.tar.gz" "https://github.com/${REPO}/releases/download/v${VERSION}/${ARTIFACT}"
+        verify_checksum "$WORK_DIR/vesta.tar.gz" "$ARTIFACT"
+        tar -xzf "$WORK_DIR/vesta.tar.gz" -C "$WORK_DIR"
+        install_cli_to_path "$WORK_DIR/vesta"
       else
         if [ "$ARCH" = "aarch64" ]; then
           DEB_ARCH="arm64"
@@ -128,17 +129,17 @@ main() {
         if command -v dpkg &>/dev/null; then
           DEB="Vesta_${VERSION}_${DEB_ARCH}.deb"
           echo "Downloading desktop app (.deb)..."
-          curl -fsSL -o "$TMPDIR/${DEB}" "https://github.com/${REPO}/releases/download/v${VERSION}/${DEB}"
-          verify_checksum "$TMPDIR/${DEB}" "$DEB"
-          sudo dpkg -i "$TMPDIR/${DEB}" || sudo apt-get install -f -y
+          curl -fsSL -o "$WORK_DIR/${DEB}" "https://github.com/${REPO}/releases/download/v${VERSION}/${DEB}"
+          verify_checksum "$WORK_DIR/${DEB}" "$DEB"
+          sudo dpkg -i "$WORK_DIR/${DEB}" || sudo apt-get install -f -y
           echo "Installed Vesta desktop app."
         else
           APPIMAGE="Vesta_${VERSION}_${DEB_ARCH}.AppImage"
           echo "Downloading desktop app (AppImage)..."
-          curl -fsSL -o "$TMPDIR/Vesta.AppImage" "https://github.com/${REPO}/releases/download/v${VERSION}/${APPIMAGE}"
-          verify_checksum "$TMPDIR/Vesta.AppImage" "$APPIMAGE"
+          curl -fsSL -o "$WORK_DIR/Vesta.AppImage" "https://github.com/${REPO}/releases/download/v${VERSION}/${APPIMAGE}"
+          verify_checksum "$WORK_DIR/Vesta.AppImage" "$APPIMAGE"
           mkdir -p "$HOME/.local/bin"
-          install -m 755 "$TMPDIR/Vesta.AppImage" "$HOME/.local/bin/Vesta.AppImage"
+          install -m 755 "$WORK_DIR/Vesta.AppImage" "$HOME/.local/bin/Vesta.AppImage"
           echo "Installed to ~/.local/bin/Vesta.AppImage"
         fi
       fi
