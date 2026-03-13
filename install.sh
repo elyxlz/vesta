@@ -96,10 +96,10 @@ main() {
         echo "Downloading desktop app..."
         curl -fsSL -o "$WORK_DIR/${DMG}" "https://github.com/${REPO}/releases/download/v${VERSION}/${DMG}"
         verify_checksum "$WORK_DIR/${DMG}" "$DMG"
+        xattr -cr "$WORK_DIR/${DMG}"
         echo "Opening installer..."
         open "$WORK_DIR/${DMG}"
         echo "Drag Vesta to Applications to complete installation."
-        echo "If macOS says the app is damaged, run: xattr -cr /Applications/Vesta.app"
       fi
       ;;
     linux)
