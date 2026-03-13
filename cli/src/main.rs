@@ -347,7 +347,10 @@ fn cli_self_update(rust_target: &str, is_zip: bool, binary_subpath: &str) -> Opt
 
     let new_binary = tmp_dir.join(binary_subpath);
     self_replace::self_replace(&new_binary)
-        .unwrap_or_else(|e| die(&format!("failed to replace binary: {}", e)));
+        .unwrap_or_else(|e| {
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+            die(&format!("failed to replace binary: {}", e));
+        });
 
     eprintln!("updated to v{}", latest);
     Some(tmp_dir)

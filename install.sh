@@ -42,13 +42,16 @@ main() {
   WORK_DIR=$(mktemp -d)
   trap 'rm -rf "$WORK_DIR"' EXIT
 
+  # Download checksums once for verification
+  CHECKSUMS="$WORK_DIR/checksums.txt"
+  curl -fsSL -o "$CHECKSUMS" "https://github.com/${REPO}/releases/download/v${VERSION}/checksums.txt" 2>/dev/null || true
+
   verify_checksum() {
     local file="$1"
     local artifact="$2"
-    local checksums="$WORK_DIR/checksums.txt"
-    if curl -fsSL -o "$checksums" "https://github.com/${REPO}/releases/download/v${VERSION}/checksums.txt" 2>/dev/null; then
+    if [ -f "$CHECKSUMS" ]; then
       local expected
-      expected=$(grep "  ${artifact}$" "$checksums" | cut -d' ' -f1 || true)
+      expected=$(grep "  ${artifact}$" "$CHECKSUMS" | cut -d' ' -f1 || true)
       if [ -n "$expected" ]; then
         local actual
         actual=$(sha256sum "$file" | cut -d' ' -f1)

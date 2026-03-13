@@ -22,7 +22,7 @@
   let agentConnection = $state<AgentConnection | null>(null);
   let initialActivity: AgentActivityState = "idle";
   let hasAgents = $state(false);
-  let updateInfo = $state<{ version: string; installed: boolean } | null>(null);
+  let updateInfo = $state<{ version: string; installing: boolean } | null>(null);
 
   async function setView(next: View) {
     if (next === view) return;
@@ -66,7 +66,7 @@
       view = "onboarding";
     }
     checkAndInstallUpdate().then((result) => {
-      if (result) updateInfo = { version: result.version, installed: result.installing };
+      if (result) updateInfo = { version: result.version, installing: result.installing };
     });
     ready = true;
   });
@@ -187,7 +187,7 @@
 
   {#if updateInfo}
     <div class="update-bar">
-      {#if updateInfo.installed}
+      {#if updateInfo.installing}
         v{updateInfo.version} installed — restart to apply
       {:else}
         v{updateInfo.version} available

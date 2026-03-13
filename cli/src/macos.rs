@@ -665,14 +665,11 @@ pub fn run(command: Command) {
                 other => die(&format!("unsupported architecture: {}", other)),
             };
             if let Some(tmp_dir) = cli_self_update(target, false, "vesta") {
-                // Also update vfkit sidecar if present in tarball
                 let new_vfkit = tmp_dir.join("vfkit");
-                if new_vfkit.exists() {
-                    let exe = std::env::current_exe().unwrap();
-                    let vfkit_dest = exe.parent().unwrap().join("vfkit");
-                    if std::fs::rename(&new_vfkit, &vfkit_dest).is_err() {
-                        let _ = std::fs::copy(&new_vfkit, &vfkit_dest);
-                    }
+                let exe = std::env::current_exe().unwrap();
+                let vfkit_dest = exe.parent().unwrap().join("vfkit");
+                if std::fs::rename(&new_vfkit, &vfkit_dest).is_err() {
+                    let _ = std::fs::copy(&new_vfkit, &vfkit_dest);
                 }
                 let _ = std::fs::remove_dir_all(&tmp_dir);
             }
