@@ -88,8 +88,7 @@ def _parse_sdk_message(msg: Message, *, sub_agent_context: str | None) -> tuple[
             texts.append(block.text)
         elif isinstance(block, ToolUseBlock):
             has_tool_use = True
-            formatted, new_context = _format_tool_call(block.name, input_data=block.input, sub_agent_context=current_context)
-            texts.append(formatted)
+            _, new_context = _format_tool_call(block.name, input_data=block.input, sub_agent_context=current_context)
             if new_context:
                 current_context = new_context
 
