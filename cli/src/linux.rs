@@ -181,11 +181,6 @@ fn container_status(cname: &str) -> ContainerStatus {
     }
 }
 
-fn container_file_exists(cname: &str, container_path: &str) -> bool {
-    let src = format!("{}:{}", cname, container_path);
-    docker_quiet(&["cp", &src, "-"])
-}
-
 fn read_container_file(cname: &str, container_path: &str) -> Option<String> {
     let tmp = std::env::temp_dir().join(format!("vesta_read_{}", std::process::id()));
     let src = format!("{}:{}", cname, container_path);
@@ -198,7 +193,20 @@ fn read_container_file(cname: &str, container_path: &str) -> Option<String> {
 }
 
 fn is_authenticated(cname: &str) -> bool {
-    container_file_exists(cname, CREDENTIALS_PATH)
+    let Some(content) = read_container_file(cname, CREDENTIALS_PATH) else {
+        return false;
+    };
+    let Ok(creds) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return false;
+    };
+    let Some(expires_at) = creds["claudeAiOauth"]["expiresAt"].as_u64() else {
+        return false;
+    };
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    expires_at > now_ms
 }
 
 fn is_agent_ready(cname: &str, port: u16) -> bool {
