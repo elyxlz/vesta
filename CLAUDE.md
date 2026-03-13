@@ -42,6 +42,8 @@ cargo clippy                               # Lint
 ./release.sh major   # Major release (0.1.0 -> 1.0.0)
 ```
 
+Triggers a GitHub Actions workflow that bumps version, commits to master, tags, and creates the release.
+
 **Do NOT bump versions in PRs** — `release.sh` handles version bumps automatically at release time.
 
 ## Code Conventions
