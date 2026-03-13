@@ -138,6 +138,17 @@ main() {
           verify_checksum "$WORK_DIR/${DEB}" "$DEB"
           sudo dpkg -i "$WORK_DIR/${DEB}" || sudo apt-get install -f -y
           echo "Installed Vesta desktop app."
+        elif command -v dnf &>/dev/null || command -v yum &>/dev/null; then
+          RPM="vesta-${VERSION}-1.${ARCH}.rpm"
+          echo "Downloading desktop app (.rpm)..."
+          curl -fsSL -o "$WORK_DIR/${RPM}" "https://github.com/${REPO}/releases/download/v${VERSION}/${RPM}"
+          verify_checksum "$WORK_DIR/${RPM}" "$RPM"
+          if command -v dnf &>/dev/null; then
+            sudo dnf install -y "$WORK_DIR/${RPM}"
+          else
+            sudo yum install -y "$WORK_DIR/${RPM}"
+          fi
+          echo "Installed Vesta desktop app."
         else
           APPIMAGE="Vesta_${VERSION}_${APPIMAGE_ARCH}.AppImage"
           echo "Downloading desktop app (AppImage)..."
