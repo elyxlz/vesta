@@ -41,8 +41,9 @@
     const appWindow = getCurrentWindow();
     const monitor = await currentMonitor();
     if (!monitor) return;
-    const shortest = Math.min(monitor.size.width / monitor.scaleFactor, monitor.size.height / monitor.scaleFactor);
+    const shortest = Math.min(monitor.size.width, monitor.size.height);
     const size = Math.round(Math.max(MIN_SIZE, Math.min(MAX_SIZE, shortest * SCREEN_FRACTION)));
+
     await appWindow.setSize(new LogicalSize(size, size));
     await appWindow.center();
   }
