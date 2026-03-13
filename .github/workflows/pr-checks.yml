@@ -45,6 +45,18 @@ jobs:
         working-directory: agent
         run: uv run ruff check
 
+      - name: Format check
+        working-directory: agent
+        run: uv run ruff format --check
+
+      - name: Install tools
+        working-directory: agent
+        run: |
+          uv sync
+          for tool in tools/*/; do
+            [ -f "$tool/pyproject.toml" ] && uv pip install -e "$tool"
+          done
+
       - name: Type check
         working-directory: agent
         run: uv run ty check

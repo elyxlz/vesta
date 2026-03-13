@@ -43,4 +43,4 @@ jobs:
         run: |
           VERSION=$(grep '^version = ' agent/pyproject.toml | cut -d'"' -f2)
           TAG="v${VERSION}"
-          gh release create "$TAG" --title "$TAG" --generate-notes --target master
+          gh release create "$TAG" --title "$TAG" --generate-notes --target master --draft
