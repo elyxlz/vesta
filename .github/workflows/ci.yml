@@ -289,7 +289,7 @@ jobs:
           echo "auth URL found"
 
           echo "=== auth with token ==="
-          "$CLI" auth "$AGENT" --token '{"claudeAiOauth":{"accessToken":"ci-test","refreshToken":"ci-test","expiresAt":"2099-01-01T00:00:00Z"}}'
+          "$CLI" auth "$AGENT" --token '{"claudeAiOauth":{"accessToken":"ci-test","refreshToken":"ci-test","expiresAt":4070908800000}}'
 
           echo "=== verify authenticated ==="
           assert_status '.authenticated == true'
@@ -403,7 +403,7 @@ jobs:
 
           echo "=== wait-ready (authenticated agent) ==="
           "$CLI" create --name ci-wait-test
-          "$CLI" auth ci-wait-test --token '{"claudeAiOauth":{"accessToken":"ci-test","refreshToken":"ci-test","expiresAt":"2099-01-01T00:00:00Z"}}'
+          "$CLI" auth ci-wait-test --token '{"claudeAiOauth":{"accessToken":"ci-test","refreshToken":"ci-test","expiresAt":4070908800000}}'
           "$CLI" start ci-wait-test
           "$CLI" wait-ready ci-wait-test --timeout 30
           echo "wait-ready works"
@@ -411,7 +411,7 @@ jobs:
 
           echo "=== destroy auto-stops running container ==="
           "$CLI" create --name ci-destroy-test
-          "$CLI" auth ci-destroy-test --token '{"claudeAiOauth":{"accessToken":"ci-test","refreshToken":"ci-test","expiresAt":"2099-01-01T00:00:00Z"}}'
+          "$CLI" auth ci-destroy-test --token '{"claudeAiOauth":{"accessToken":"ci-test","refreshToken":"ci-test","expiresAt":4070908800000}}'
           "$CLI" start ci-destroy-test
           assert_agent_status ci-destroy-test '.status == "running"'
           "$CLI" destroy ci-destroy-test --yes
