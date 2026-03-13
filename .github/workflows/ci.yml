@@ -1071,7 +1071,9 @@ jobs:
           cat release/latest.json
 
       - name: Generate checksums
-        run: cd release && sha256sum * > checksums.txt
+        run: |
+          cd release
+          sha256sum $(ls | grep -v '\.sig$\|\.json$') > checksums.txt
 
       - name: Upload assets and publish
         env:
