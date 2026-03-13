@@ -2,18 +2,17 @@
 set -euo pipefail
 
 CURRENT=$(grep '^version = ' agent/pyproject.toml | cut -d'"' -f2)
+IFS='.' read -r major minor patch <<< "$CURRENT"
 
-if [ $# -eq 0 ]; then
-  IFS='.' read -r major minor patch <<< "$CURRENT"
-  NEW="${major}.${minor}.$((patch + 1))"
-elif [ $# -eq 1 ]; then
-  NEW="$1"
-else
-  echo "Usage: ./bump.sh [version]"
-  echo "  No args: bump patch (${CURRENT} -> next)"
-  echo "  With arg: set exact version"
-  exit 1
-fi
+case "${1:-patch}" in
+  patch) NEW="${major}.${minor}.$((patch + 1))" ;;
+  minor) NEW="${major}.$((minor + 1)).0" ;;
+  major) NEW="$((major + 1)).0.0" ;;
+  *)
+    echo "Usage: ./bump.sh [patch|minor|major]"
+    exit 1
+    ;;
+esac
 
 echo "${CURRENT} -> ${NEW}"
 

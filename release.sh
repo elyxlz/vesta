@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION=$(grep '^version = ' agent/pyproject.toml | cut -d'"' -f2)
-TAG="v${VERSION}"
+BUMP="${1:-patch}"
 
-if gh release view "$TAG" &>/dev/null; then
-  echo "Release ${TAG} already exists"
-  exit 1
-fi
+case "$BUMP" in
+  patch|minor|major) ;;
+  *) echo "Usage: ./release.sh [patch|minor|major]"; exit 1 ;;
+esac
 
-echo "Releasing ${TAG}..."
-gh release create "$TAG" --title "$TAG" --generate-notes
+echo "Triggering $BUMP release..."
+gh workflow run release.yml -f bump="$BUMP"
+echo "Release workflow started. Watch progress: gh run watch"
