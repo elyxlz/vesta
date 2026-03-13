@@ -31,6 +31,26 @@ Write-Host "Installing Vesta v$Version..."
 $TmpDir = Join-Path $env:TEMP "vesta-install-$(Get-Random)"
 New-Item -ItemType Directory -Path $TmpDir -Force | Out-Null
 
+# Download checksums for verification
+$Checksums = @{}
+try {
+    $ChecksumsPath = Join-Path $TmpDir 'checksums.txt'
+    Invoke-WebRequest -Uri "https://github.com/$Repo/releases/download/v$Version/checksums.txt" -OutFile $ChecksumsPath -UseBasicParsing
+    Get-Content $ChecksumsPath | ForEach-Object {
+        if ($_ -match '^(\S+)\s+(.+)$') { $Checksums[$Matches[2]] = $Matches[1] }
+    }
+} catch {}
+
+function Test-Checksum($File, $ArtifactName) {
+    if ($Checksums.ContainsKey($ArtifactName)) {
+        $actual = (Get-FileHash -Path $File -Algorithm SHA256).Hash.ToLower()
+        $expected = $Checksums[$ArtifactName]
+        if ($actual -ne $expected) {
+            throw "Checksum verification failed for $ArtifactName`n  expected: $expected`n  got:      $actual"
+        }
+    }
+}
+
 try {
     if ($CliOnly) {
         $Artifact = "vesta-x86_64-pc-windows-msvc.zip"
@@ -39,6 +59,7 @@ try {
 
         Write-Host "Downloading CLI..."
         Invoke-WebRequest -Uri $Url -OutFile $ZipPath -UseBasicParsing
+        Test-Checksum $ZipPath $Artifact
 
         Expand-Archive -Path $ZipPath -DestinationPath $TmpDir -Force
 
@@ -63,6 +84,7 @@ try {
 
         Write-Host "Downloading desktop app..."
         Invoke-WebRequest -Uri $Url -OutFile $ExePath -UseBasicParsing
+        Test-Checksum $ExePath $Installer
 
         Write-Host "Running installer..."
         Start-Process -FilePath $ExePath -Wait

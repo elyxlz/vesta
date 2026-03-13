@@ -256,34 +256,54 @@ mod tests {
     }
 }
 
+/// Fetch the latest version string from GitHub. Returns None on any failure.
+#[allow(dead_code)]
+fn fetch_latest_version(timeout: Option<u64>) -> Option<String> {
+    let mut args = vec!["-fsSL"];
+    let timeout_connect;
+    let timeout_max;
+    if let Some(t) = timeout {
+        timeout_connect = format!("{}", t);
+        timeout_max = format!("{}", t);
+        args.extend(["--connect-timeout", &timeout_connect, "--max-time", &timeout_max]);
+    }
+    args.push("https://api.github.com/repos/elyxlz/vesta/releases/latest");
+
+    let output = process::Command::new("curl")
+        .args(&args)
+        .stdout(process::Stdio::piped())
+        .stderr(process::Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let body = String::from_utf8_lossy(&output.stdout);
+    let data: serde_json::Value = serde_json::from_str(&body).ok()?;
+    let latest = data["tag_name"].as_str()?.trim_start_matches('v');
+    if latest.is_empty() {
+        return None;
+    }
+    Some(latest.to_string())
+}
+
 /// Check GitHub for the latest CLI version. Returns Some(version) if update available, None if up to date.
+/// Dies on failure (used by the interactive `update` command).
 #[allow(dead_code)]
 fn check_latest_version() -> Option<String> {
     let current = env!("CARGO_PKG_VERSION");
     eprintln!("current version: v{}", current);
 
-    let output = process::Command::new("curl")
-        .args(["-fsSL", "https://api.github.com/repos/elyxlz/vesta/releases/latest"])
-        .output()
-        .unwrap_or_else(|_| die("curl not found — install curl"));
-    if !output.status.success() {
-        die("failed to check for updates");
-    }
-
-    let body = String::from_utf8_lossy(&output.stdout);
-    let data: serde_json::Value = serde_json::from_str(&body)
-        .unwrap_or_else(|_| die("failed to parse release info"));
-    let latest = data["tag_name"].as_str().unwrap_or("").trim_start_matches('v');
-    if latest.is_empty() {
-        die("could not determine latest version");
-    }
+    let latest = fetch_latest_version(None)
+        .unwrap_or_else(|| die("failed to check for updates"));
 
     if latest == current {
         eprintln!("already up to date");
         return None;
     }
     eprintln!("updating to v{}...", latest);
-    Some(latest.to_string())
+    Some(latest)
 }
 
 /// Download, extract, and self-replace the CLI binary.
@@ -356,56 +376,44 @@ fn cli_self_update(rust_target: &str, is_zip: bool, binary_subpath: &str) -> Opt
     Some(tmp_dir)
 }
 
-/// Spawn a background thread that checks for a newer CLI version and prints a warning.
-/// Caches the result for 24 hours to avoid hitting the API on every invocation.
+/// Check if an update is available, using a 24-hour file cache.
+/// Returns the cached result synchronously if fresh, or spawns a background thread for the network check.
 #[allow(dead_code)]
-fn spawn_update_check() -> std::thread::JoinHandle<Option<String>> {
-    std::thread::spawn(|| {
-        let cache_dir = dirs::cache_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
-        let cache_file = cache_dir.join("vesta-version-check");
+fn check_update_cached() -> Option<std::thread::JoinHandle<Option<String>>> {
+    let cache_dir = dirs::cache_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
+    let cache_file = cache_dir.join("vesta-version-check");
 
-        // Check cache: skip if checked within the last 24 hours
+    // Check cache synchronously — no thread needed if fresh
+    if let Ok(contents) = std::fs::read_to_string(&cache_file) {
         if let Ok(meta) = std::fs::metadata(&cache_file) {
             if let Ok(modified) = meta.modified() {
                 if modified.elapsed().unwrap_or_default() < std::time::Duration::from_secs(86400) {
-                    let cached = std::fs::read_to_string(&cache_file).unwrap_or_default();
-                    let latest = cached.trim();
-                    if latest.is_empty() || latest == env!("CARGO_PKG_VERSION") {
-                        return None;
+                    let latest = contents.trim();
+                    if !latest.is_empty() && latest != env!("CARGO_PKG_VERSION") {
+                        // Print immediately, no thread needed
+                        eprintln!(
+                            "\nUpdate available: v{} → v{} (run 'vesta update')",
+                            env!("CARGO_PKG_VERSION"),
+                            latest
+                        );
                     }
-                    return Some(latest.to_string());
+                    return None;
                 }
             }
         }
+    }
 
-        let output = process::Command::new("curl")
-            .args(["-fsSL", "--connect-timeout", "3", "--max-time", "5",
-                   "https://api.github.com/repos/elyxlz/vesta/releases/latest"])
-            .stdout(process::Stdio::piped())
-            .stderr(process::Stdio::null())
-            .output()
-            .ok()?;
-        if !output.status.success() {
-            return None;
-        }
-
-        let body = String::from_utf8_lossy(&output.stdout);
-        let data: serde_json::Value = serde_json::from_str(&body).ok()?;
-        let latest = data["tag_name"].as_str()?.trim_start_matches('v');
-        if latest.is_empty() {
-            return None;
-        }
-
-        // Cache the result
+    // Cache stale or missing — fetch in background
+    Some(std::thread::spawn(move || {
+        let latest = fetch_latest_version(Some(5))?;
         let _ = std::fs::create_dir_all(&cache_dir);
-        let _ = std::fs::write(&cache_file, latest);
-
+        let _ = std::fs::write(&cache_file, &latest);
         if latest != env!("CARGO_PKG_VERSION") {
-            Some(latest.to_string())
+            Some(latest)
         } else {
             None
         }
-    })
+    }))
 }
 
 #[cfg(target_os = "linux")]
@@ -429,16 +437,22 @@ fn print_welcome() {
 
 fn run_with_update_check(run: impl FnOnce(Command), cmd: Command) {
     let is_update = matches!(cmd, Command::Update);
-    let handle = if is_update { None } else { Some(spawn_update_check()) };
+    let bg_handle = if is_update { None } else { check_update_cached() };
     run(cmd);
-    if let Some(handle) = handle {
-        // Wait briefly for the check to finish (should already be done by now)
-        if let Ok(Some(latest)) = handle.join() {
-            eprintln!(
-                "\nUpdate available: v{} → v{} (run 'vesta update')",
-                env!("CARGO_PKG_VERSION"),
-                latest
-            );
+    if let Some(handle) = bg_handle {
+        // Don't block more than 100ms waiting for the network check
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(100);
+        while !handle.is_finished() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        if handle.is_finished() {
+            if let Ok(Some(latest)) = handle.join() {
+                eprintln!(
+                    "\nUpdate available: v{} → v{} (run 'vesta update')",
+                    env!("CARGO_PKG_VERSION"),
+                    latest
+                );
+            }
         }
     }
 }
