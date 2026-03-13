@@ -657,5 +657,90 @@ pub fn run(command: Command) {
             });
             println!("{}", s);
         }
+
+        Command::Update => {
+            let current = env!("CARGO_PKG_VERSION");
+            eprintln!("current version: v{}", current);
+
+            let output = process::Command::new("curl")
+                .args(["-fsSL", "https://api.github.com/repos/elyxlz/vesta/releases/latest"])
+                .output()
+                .unwrap_or_else(|_| die("curl not found"));
+            if !output.status.success() {
+                die("failed to check for updates");
+            }
+
+            let body = String::from_utf8_lossy(&output.stdout);
+            let data: serde_json::Value = serde_json::from_str(&body)
+                .unwrap_or_else(|_| die("failed to parse release info"));
+            let latest = data["tag_name"].as_str().unwrap_or("").trim_start_matches('v');
+            if latest.is_empty() {
+                die("could not determine latest version");
+            }
+
+            if latest == current {
+                eprintln!("already up to date");
+                return;
+            }
+            eprintln!("updating to v{}...", latest);
+
+            let arch = std::env::consts::ARCH;
+            let rust_target = match arch {
+                "x86_64" => "x86_64-apple-darwin",
+                "aarch64" => "aarch64-apple-darwin",
+                _ => die(&format!("unsupported architecture: {}", arch)),
+            };
+
+            let url = format!(
+                "https://github.com/elyxlz/vesta/releases/download/v{}/vesta-{}.tar.gz",
+                latest, rust_target
+            );
+
+            let tmp_dir = std::env::temp_dir().join("vesta-update");
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+            std::fs::create_dir_all(&tmp_dir).unwrap_or_else(|e| die(&format!("failed to create temp dir: {}", e)));
+
+            let tarball = tmp_dir.join("vesta.tar.gz");
+            let dl = process::Command::new("curl")
+                .args(["-fsSL", "-o"])
+                .arg(&tarball)
+                .arg(&url)
+                .status()
+                .unwrap_or_else(|_| die("curl not found"));
+            if !dl.success() {
+                die("failed to download update");
+            }
+
+            let extract = process::Command::new("tar")
+                .args(["-xzf"])
+                .arg(&tarball)
+                .arg("-C")
+                .arg(&tmp_dir)
+                .status()
+                .unwrap_or_else(|_| die("tar not found"));
+            if !extract.success() {
+                die("failed to extract update");
+            }
+
+            let new_binary = tmp_dir.join("vesta");
+            let current_exe = std::env::current_exe().unwrap_or_else(|e| die(&format!("cannot determine binary path: {}", e)));
+
+            if std::fs::rename(&new_binary, &current_exe).is_err() {
+                std::fs::copy(&new_binary, &current_exe)
+                    .unwrap_or_else(|e| die(&format!("failed to replace binary: {}", e)));
+            }
+
+            // Also update vfkit if present in tarball
+            let new_vfkit = tmp_dir.join("vfkit");
+            if new_vfkit.exists() {
+                let vfkit_dest = current_exe.parent().unwrap().join("vfkit");
+                if std::fs::rename(&new_vfkit, &vfkit_dest).is_err() {
+                    let _ = std::fs::copy(&new_vfkit, &vfkit_dest);
+                }
+            }
+
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+            eprintln!("updated to v{}", latest);
+        }
     }
 }

@@ -521,7 +521,7 @@ fn command_args(command: &Command) -> Vec<String> {
         Command::WaitReady { ref name, timeout } => {
             vec!["wait-ready".into(), name.clone(), "--timeout".into(), timeout.to_string()]
         }
-        Command::PlatformCheck | Command::PlatformSetup => unreachable!(),
+        Command::PlatformCheck | Command::PlatformSetup | Command::Update => unreachable!(),
     }
 }
 
@@ -533,6 +533,80 @@ pub fn run(command: Command) -> ! {
         }
         Command::PlatformSetup => {
             platform_setup();
+            process::exit(0);
+        }
+        Command::Update => {
+            let current = env!("CARGO_PKG_VERSION");
+            eprintln!("current version: v{}", current);
+
+            let output = process::Command::new("curl")
+                .args(["-fsSL", "https://api.github.com/repos/elyxlz/vesta/releases/latest"])
+                .output()
+                .unwrap_or_else(|_| die("curl not found"));
+            if !output.status.success() {
+                die("failed to check for updates");
+            }
+
+            let body = String::from_utf8_lossy(&output.stdout);
+            let data: serde_json::Value = serde_json::from_str(&body)
+                .unwrap_or_else(|_| die("failed to parse release info"));
+            let latest = data["tag_name"].as_str().unwrap_or("").trim_start_matches('v');
+            if latest.is_empty() {
+                die("could not determine latest version");
+            }
+
+            if latest == current {
+                eprintln!("already up to date");
+                process::exit(0);
+            }
+            eprintln!("updating to v{}...", latest);
+
+            let url = format!(
+                "https://github.com/elyxlz/vesta/releases/download/v{}/vesta-x86_64-pc-windows-msvc.zip",
+                latest
+            );
+
+            let tmp_dir = std::env::temp_dir().join("vesta-update");
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+            std::fs::create_dir_all(&tmp_dir).unwrap_or_else(|e| die(&format!("failed to create temp dir: {}", e)));
+
+            let zipfile = tmp_dir.join("vesta.zip");
+            let dl = process::Command::new("curl")
+                .args(["-fsSL", "-o"])
+                .arg(&zipfile)
+                .arg(&url)
+                .status()
+                .unwrap_or_else(|_| die("curl not found"));
+            if !dl.success() {
+                die("failed to download update");
+            }
+
+            let extract = process::Command::new("tar")
+                .args(["-xf"])
+                .arg(&zipfile)
+                .arg("-C")
+                .arg(&tmp_dir)
+                .status()
+                .unwrap_or_else(|_| die("tar not found"));
+            if !extract.success() {
+                die("failed to extract update");
+            }
+
+            let new_binary = tmp_dir.join("vesta-windows").join("vesta.exe");
+            let current_exe = std::env::current_exe().unwrap_or_else(|e| die(&format!("cannot determine binary path: {}", e)));
+
+            // On Windows, can't replace a running exe directly — rename the old one first
+            let backup = current_exe.with_extension("exe.old");
+            let _ = std::fs::remove_file(&backup);
+            std::fs::rename(&current_exe, &backup)
+                .unwrap_or_else(|e| die(&format!("failed to move old binary: {}", e)));
+            if std::fs::rename(&new_binary, &current_exe).is_err() {
+                std::fs::copy(&new_binary, &current_exe)
+                    .unwrap_or_else(|e| die(&format!("failed to install new binary: {}", e)));
+            }
+            let _ = std::fs::remove_file(&backup);
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+            eprintln!("updated to v{}", latest);
             process::exit(0);
         }
         _ => {}

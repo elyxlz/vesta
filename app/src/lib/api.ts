@@ -1,4 +1,5 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
+import { check } from "@tauri-apps/plugin-updater";
 import type { AgentInfo, ListEntry, LogEvent, PlatformStatus } from "./types";
 
 export async function listAgents(): Promise<ListEntry[]> {
@@ -72,4 +73,15 @@ export async function checkPlatform(): Promise<PlatformStatus> {
 
 export async function setupPlatform(): Promise<PlatformStatus> {
   return invoke("platform_setup");
+}
+
+export async function checkAndInstallUpdate(): Promise<{ version: string; installing: boolean } | null> {
+  try {
+    const update = await check();
+    if (!update) return null;
+    await update.downloadAndInstall();
+    return { version: update.version, installing: true };
+  } catch {
+    return null;
+  }
 }

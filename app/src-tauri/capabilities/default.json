@@ -13,6 +13,7 @@
     "core:window:allow-set-title-bar-style",
     "core:window:allow-set-fullscreen",
     "dialog:allow-save",
-    "dialog:allow-open"
+    "dialog:allow-open",
+    "updater:default"
   ]
 }

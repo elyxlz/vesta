@@ -207,6 +207,8 @@ enum Command {
     PlatformCheck,
     /// Install platform prerequisites (WSL on Windows)
     PlatformSetup,
+    /// Update vesta to the latest version
+    Update,
 }
 
 #[cfg(test)]

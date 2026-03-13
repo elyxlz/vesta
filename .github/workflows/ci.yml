@@ -769,6 +769,10 @@ jobs:
             os: ubuntu-latest
             cli-artifact: vesta-x86_64-unknown-linux-gnu
             bundles: deb,appimage
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+            cli-artifact: vesta-aarch64-unknown-linux-gnu
+            bundles: deb,appimage
           - target: aarch64-apple-darwin
             os: macos-latest
             cli-artifact: vesta-aarch64-apple-darwin
@@ -837,6 +841,8 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: app
           tauriScript: npx tauri
@@ -867,7 +873,7 @@ jobs:
         run: |
           mkdir -p tauri-out
           find app/src-tauri/target/${{ matrix.target }}/release/bundle \
-            -type f \( -name '*.deb' -o -name '*.AppImage' -o -name '*.dmg' \) \
+            -type f \( -name '*.deb' -o -name '*.AppImage' -o -name '*.dmg' -o -name '*.tar.gz' -o -name '*.sig' \) \
             -exec cp {} tauri-out/ \;
           [ "$(ls -A tauri-out)" ] || { echo "No artifacts collected"; exit 1; }
 
@@ -937,6 +943,8 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: app
           tauriScript: npx tauri
@@ -947,6 +955,7 @@ jobs:
         run: |
           mkdir -p tauri-out
           cp app/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe tauri-out/
+          find app/src-tauri/target/x86_64-pc-windows-msvc/release/bundle -name '*.sig' -exec cp {} tauri-out/ \;
 
       - uses: actions/upload-artifact@v7
         with:
@@ -1003,9 +1012,57 @@ jobs:
           find artifacts -type f \( \
             -name '*.tar.gz' -o -name '*.tar.zst' -o -name '*.zip' -o \
             -name '*.deb' -o -name '*.AppImage' -o -name '*.dmg' -o \
-            -name '*-setup.exe' -o -name '*_x64-setup.exe' \
+            -name '*-setup.exe' -o -name '*_x64-setup.exe' -o \
+            -name '*.sig' \
           \) -exec cp {} release/ \;
           ls -lh release/
+
+      - name: Generate updater manifest
+        run: |
+          VERSION="${{ github.event.release.tag_name }}"
+          VERSION="${VERSION#v}"
+          REPO="elyxlz/vesta"
+          BASE="https://github.com/${REPO}/releases/download/v${VERSION}"
+          DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          read_sig() {
+            local f="release/$1"
+            if [ -f "$f" ]; then cat "$f"; else echo ""; fi
+          }
+
+          # Tauri updater platform keys: {os}-{arch}
+          # macOS uses .app.tar.gz, Linux uses .AppImage.tar.gz, Windows uses .nsis.zip
+          cat > release/latest.json << MANIFEST
+          {
+            "version": "${VERSION}",
+            "pub_date": "${DATE}",
+            "platforms": {
+              "darwin-aarch64": {
+                "url": "${BASE}/Vesta.app.tar.gz",
+                "signature": "$(read_sig Vesta.app.tar.gz.sig)"
+              },
+              "darwin-x86_64": {
+                "url": "${BASE}/Vesta.app.tar.gz",
+                "signature": "$(read_sig Vesta.app.tar.gz.sig)"
+              },
+              "linux-x86_64": {
+                "url": "${BASE}/Vesta_${VERSION}_amd64.AppImage.tar.gz",
+                "signature": "$(read_sig Vesta_${VERSION}_amd64.AppImage.tar.gz.sig)"
+              },
+              "linux-aarch64": {
+                "url": "${BASE}/Vesta_${VERSION}_arm64.AppImage.tar.gz",
+                "signature": "$(read_sig Vesta_${VERSION}_arm64.AppImage.tar.gz.sig)"
+              },
+              "windows-x86_64": {
+                "url": "${BASE}/Vesta_${VERSION}_x64-setup.exe",
+                "signature": "$(read_sig Vesta_${VERSION}_x64-setup.exe.sig)"
+              }
+            }
+          }
+          MANIFEST
+          sed -i 's/^          //' release/latest.json
+          echo "Generated latest.json:"
+          cat release/latest.json
 
       - name: Upload assets and publish
         env:

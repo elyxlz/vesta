@@ -25,6 +25,14 @@
       "csp": null
     }
   },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/elyxlz/vesta/releases/latest/download/latest.json"
+      ],
+      "pubkey": ""
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",
