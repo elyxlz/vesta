@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from "svelte";
   import type { BoxConnection } from "../lib/ws";
   import { boxStatus, startBox, stopBox, restartBox, deleteBox, authenticate, backupBox, restoreBox } from "../lib/api";
-  import { getBoxOp, setBoxOp, clearBoxOp, setBoxError } from "../lib/store";
+  import { getBoxOp, setBoxOp, clearBoxOp, setBoxError, type BoxOperation } from "../lib/store";
   import { save, open } from "@tauri-apps/plugin-dialog";
   import type { BoxStatus, BoxActivityState } from "../lib/types";
 
@@ -146,12 +146,22 @@
     document.removeEventListener("keydown", onKeydown);
   });
 
-  async function toggleRun() {
+  async function withBoxOp(op: BoxOperation, fn: () => Promise<void>, fallback: string) {
     if (busy) return;
     setBoxError(name, "");
-    const wasStopping = running;
-    setBoxOp(name, running ? "stopping" : "starting");
+    setBoxOp(name, op);
     try {
+      await fn();
+    } catch (e: any) {
+      setBoxError(name, e?.message || fallback);
+    } finally {
+      clearBoxOp(name);
+    }
+  }
+
+  async function toggleRun() {
+    const wasStopping = running;
+    await withBoxOp(running ? "stopping" : "starting", async () => {
       if (wasStopping) {
         await stopBox(name);
       } else {
@@ -159,11 +169,7 @@
         connection.resetReconnect();
       }
       await syncStatus();
-    } catch (e: any) {
-      setBoxError(name, e?.message || (wasStopping ? "failed to stop" : "failed to start"));
-    } finally {
-      clearBoxOp(name);
-    }
+    }, wasStopping ? "failed to stop" : "failed to start");
   }
 
   async function destroy() {
@@ -171,18 +177,11 @@
       confirming = true;
       return;
     }
-    if (busy) return;
-    setBoxError(name, "");
-    setBoxOp(name, "deleting");
-    try {
+    await withBoxOp("deleting", async () => {
       await deleteBox(name);
       onDestroyed();
-    } catch (e: any) {
-      setBoxError(name, e?.message || "failed to delete");
-    } finally {
-      clearBoxOp(name);
-      confirming = false;
-    }
+    }, "failed to delete");
+    confirming = false;
   }
 
   function cancelDestroy() {
@@ -190,10 +189,7 @@
   }
 
   async function handleAuth() {
-    if (busy) return;
-    setBoxError(name, "");
-    setBoxOp(name, "authenticating");
-    try {
+    await withBoxOp("authenticating", async () => {
       await authenticate(name);
       if (running) {
         await restartBox(name);
@@ -202,26 +198,15 @@
       }
       connection.resetReconnect();
       await syncStatus();
-    } catch (e: any) {
-      setBoxError(name, e?.message || "sign in failed");
-    } finally {
-      clearBoxOp(name);
-    }
+    }, "sign in failed");
   }
 
   async function handleRestart() {
-    if (busy) return;
-    setBoxError(name, "");
-    setBoxOp(name, "starting");
-    try {
+    await withBoxOp("starting", async () => {
       await restartBox(name);
       connection.resetReconnect();
       await syncStatus();
-    } catch (e: any) {
-      setBoxError(name, e?.message || "failed to restart");
-    } finally {
-      clearBoxOp(name);
-    }
+    }, "failed to restart");
   }
 
   async function handleBackup() {
@@ -233,16 +218,11 @@
       filters: [{ name: "Backup", extensions: ["tar.gz"] }],
     });
     if (!path) return;
-    setBoxOp(name, "backing-up");
-    try {
+    await withBoxOp("backing-up", async () => {
       await backupBox(name, path);
       connection.resetReconnect();
       await syncStatus();
-    } catch (e: any) {
-      setBoxError(name, e?.message || "backup failed");
-    } finally {
-      clearBoxOp(name);
-    }
+    }, "backup failed");
   }
 
   async function handleRestore() {
@@ -254,16 +234,11 @@
       directory: false,
     });
     if (!path) return;
-    setBoxOp(name, "restoring");
-    try {
+    await withBoxOp("restoring", async () => {
       await restoreBox(path, name, true);
       connection.resetReconnect();
       await syncStatus();
-    } catch (e: any) {
-      setBoxError(name, e?.message || "restore failed");
-    } finally {
-      clearBoxOp(name);
-    }
+    }, "restore failed");
   }
 
   let running = $derived(status === "running");
@@ -272,6 +247,16 @@
   let operational = $derived(alive && !deleting && !stopping);
   let fullyAlive = $derived(operational && boxReady);
   let showActions = $derived(statusLoaded && (hovered || !alive || confirming || menuOpen));
+
+  const OP_LABELS: Record<BoxOperation, string> = {
+    "idle": "", "stopping": "stopping...", "starting": "starting...",
+    "authenticating": "signing in...", "deleting": "deleting...",
+    "backing-up": "backing up...", "restoring": "restoring...",
+  };
+  let statusLabel = $derived(
+    errorMsg ? errorMsg
+    : OP_LABELS[operation] || (fullyAlive ? "alive" : operational ? "waking up..." : running ? "not signed in" : dead ? "broken — delete and recreate" : "stopped")
+  );
 
 </script>
 
@@ -308,7 +293,7 @@
         {#if !statusLoaded}
           &nbsp;
         {:else}
-          {errorMsg ? errorMsg : deleting ? "deleting..." : backingUp ? "backing up..." : restoring ? "restoring..." : stopping ? "stopping..." : starting ? "starting..." : authenticating ? "signing in..." : fullyAlive ? "alive" : operational ? "waking up..." : running ? "not signed in" : dead ? "broken — delete and recreate" : "stopped"}
+          {statusLabel}
         {/if}
       </span>
     </div>

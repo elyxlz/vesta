@@ -49,9 +49,13 @@
   }
 
   onMount(async () => {
-    await Promise.all([scaleToMonitor(), new Promise((r) => setTimeout(r, 400))]);
+    const [, , boxes] = await Promise.all([
+      scaleToMonitor(),
+      new Promise((r) => setTimeout(r, 400)),
+      listBoxes().catch(() => null),
+    ]);
     try {
-      const boxes = await listBoxes();
+      if (!boxes) throw new Error();
       hasBoxes = boxes.length > 0;
       if (boxes.length === 1) {
         selectedBox = { name: boxes[0].name, wsPort: boxes[0].ws_port };
