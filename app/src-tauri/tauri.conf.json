@@ -1,6 +1,6 @@
 {
   "productName": "Vesta",
-  "version": "0.1.83",
+  "version": "0.1.84",
   "identifier": "com.vesta.app",
   "build": {
     "beforeDevCommand": "cargo build --manifest-path ../cli/Cargo.toml && npm run dev",
