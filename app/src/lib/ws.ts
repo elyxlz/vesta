@@ -1,14 +1,14 @@
 import { writable, type Writable, type Readable } from "svelte/store";
-import type { VestaEvent, AgentActivityState } from "./types";
-import { agentHost } from "./api";
+import type { VestaEvent, BoxActivityState } from "./types";
+import { boxHost } from "./api";
 
 const RECONNECT_BASE = 1000;
 const RECONNECT_MAX = 30000;
 const MAX_MESSAGES = 5000;
 
-export interface AgentConnection {
+export interface BoxConnection {
   messages: Readable<VestaEvent[]>;
-  agentState: Readable<AgentActivityState>;
+  boxState: Readable<BoxActivityState>;
   connected: Readable<boolean>;
   connect(): void;
   disconnect(): void;
@@ -16,9 +16,9 @@ export interface AgentConnection {
   resetReconnect(): void;
 }
 
-export function createAgentConnection(port: number): AgentConnection {
+export function createBoxConnection(port: number): BoxConnection {
   const _messages: Writable<VestaEvent[]> = writable([]);
-  const _agentState: Writable<AgentActivityState> = writable("idle");
+  const _boxState: Writable<BoxActivityState> = writable("idle");
   const _connected: Writable<boolean> = writable(false);
 
   let ws: WebSocket | null = null;
@@ -30,7 +30,7 @@ export function createAgentConnection(port: number): AgentConnection {
     if (event.type === "history") {
       const evts = event.events;
       _messages.set(evts.length > MAX_MESSAGES ? evts.slice(-MAX_MESSAGES) : evts);
-      if (event.state) _agentState.set(event.state);
+      if (event.state) _boxState.set(event.state);
       return;
     }
     _messages.update((msgs) => {
@@ -39,7 +39,7 @@ export function createAgentConnection(port: number): AgentConnection {
       return msgs;
     });
     if (event.type === "status") {
-      _agentState.set(event.state);
+      _boxState.set(event.state);
     }
   }
 
@@ -60,7 +60,7 @@ export function createAgentConnection(port: number): AgentConnection {
 
     if (!cachedHost) {
       try {
-        cachedHost = await agentHost();
+        cachedHost = await boxHost();
       } catch {
         cachedHost = "localhost";
       }
@@ -144,7 +144,7 @@ export function createAgentConnection(port: number): AgentConnection {
 
   return {
     messages: _messages,
-    agentState: _agentState,
+    boxState: _boxState,
     connected: _connected,
     connect,
     disconnect,

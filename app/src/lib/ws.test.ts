@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { get } from "svelte/store";
-import { createAgentConnection } from "./ws";
+import { createBoxConnection } from "./ws";
 
 class MockWebSocket {
   static CONNECTING = 0;
@@ -49,7 +49,7 @@ let instances: MockWebSocket[] = [];
 
 vi.stubGlobal("WebSocket", MockWebSocket);
 vi.mock("./api", () => ({
-  agentHost: vi.fn().mockResolvedValue("localhost"),
+  boxHost: vi.fn().mockResolvedValue("localhost"),
 }));
 
 beforeEach(() => {
@@ -61,9 +61,9 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("createAgentConnection", () => {
+describe("createBoxConnection", () => {
   it("creates connection with correct port", async () => {
-    const conn = createAgentConnection(7865);
+    const conn = createBoxConnection(7865);
     conn.connect();
     await vi.advanceTimersByTimeAsync(0);
     expect(instances).toHaveLength(1);
@@ -72,7 +72,7 @@ describe("createAgentConnection", () => {
   });
 
   it("sets connected to true on open", async () => {
-    const conn = createAgentConnection(7866);
+    const conn = createBoxConnection(7866);
     conn.connect();
     await vi.advanceTimersByTimeAsync(0);
     instances[0].simulateOpen();
@@ -81,7 +81,7 @@ describe("createAgentConnection", () => {
   });
 
   it("sets connected to false on disconnect", async () => {
-    const conn = createAgentConnection(7867);
+    const conn = createBoxConnection(7867);
     conn.connect();
     await vi.advanceTimersByTimeAsync(0);
     instances[0].simulateOpen();
@@ -90,12 +90,12 @@ describe("createAgentConnection", () => {
   });
 
   it("send returns false when not connected", () => {
-    const conn = createAgentConnection(7868);
+    const conn = createBoxConnection(7868);
     expect(conn.send("hello")).toBe(false);
   });
 
   it("send returns true and sends JSON when connected", async () => {
-    const conn = createAgentConnection(7869);
+    const conn = createBoxConnection(7869);
     conn.connect();
     await vi.advanceTimersByTimeAsync(0);
     instances[0].simulateOpen();
@@ -106,7 +106,7 @@ describe("createAgentConnection", () => {
   });
 
   it("handles history events", async () => {
-    const conn = createAgentConnection(7870);
+    const conn = createBoxConnection(7870);
     conn.connect();
     await vi.advanceTimersByTimeAsync(0);
     instances[0].simulateOpen();
@@ -124,18 +124,18 @@ describe("createAgentConnection", () => {
     conn.disconnect();
   });
 
-  it("updates agentState on status event", async () => {
-    const conn = createAgentConnection(7871);
+  it("updates boxState on status event", async () => {
+    const conn = createBoxConnection(7871);
     conn.connect();
     await vi.advanceTimersByTimeAsync(0);
     instances[0].simulateOpen();
     instances[0].simulateMessage({ type: "status", state: "thinking" });
-    expect(get(conn.agentState)).toBe("thinking");
+    expect(get(conn.boxState)).toBe("thinking");
     conn.disconnect();
   });
 
   it("does not reconnect after disconnect", async () => {
-    const conn = createAgentConnection(7872);
+    const conn = createBoxConnection(7872);
     conn.connect();
     await vi.advanceTimersByTimeAsync(0);
     instances[0].simulateOpen();
@@ -146,7 +146,7 @@ describe("createAgentConnection", () => {
   });
 
   it("reconnects on unexpected close", async () => {
-    const conn = createAgentConnection(7873);
+    const conn = createBoxConnection(7873);
     conn.connect();
     await vi.advanceTimersByTimeAsync(0);
     const first = instances[0];
@@ -158,7 +158,7 @@ describe("createAgentConnection", () => {
   });
 
   it("resetReconnect triggers immediate reconnect", async () => {
-    const conn = createAgentConnection(7874);
+    const conn = createBoxConnection(7874);
     conn.connect();
     await vi.advanceTimersByTimeAsync(0);
     instances[0].simulateOpen();

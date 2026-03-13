@@ -1,40 +1,40 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
 import { check } from "@tauri-apps/plugin-updater";
-import type { AgentInfo, ListEntry, LogEvent, PlatformStatus } from "./types";
+import type { BoxInfo, ListEntry, LogEvent, PlatformStatus } from "./types";
 
-export async function listAgents(): Promise<ListEntry[]> {
+export async function listBoxes(): Promise<ListEntry[]> {
   return invoke("list_agents");
 }
 
-export async function agentStatus(name: string): Promise<AgentInfo> {
+export async function boxStatus(name: string): Promise<BoxInfo> {
   return invoke("agent_status", { name });
 }
 
-export async function createAgent(name: string): Promise<void> {
+export async function createBox(name: string): Promise<void> {
   return invoke("create_agent", { name });
 }
 
-export async function startAgent(name: string): Promise<void> {
+export async function startBox(name: string): Promise<void> {
   return invoke("start_agent", { name });
 }
 
-export async function stopAgent(name: string): Promise<void> {
+export async function stopBox(name: string): Promise<void> {
   return invoke("stop_agent", { name });
 }
 
-export async function restartAgent(name: string): Promise<void> {
+export async function restartBox(name: string): Promise<void> {
   return invoke("restart_agent", { name });
 }
 
-export async function deleteAgent(name: string): Promise<void> {
+export async function deleteBox(name: string): Promise<void> {
   return invoke("delete_agent", { name });
 }
 
-export async function backupAgent(name: string, output: string): Promise<void> {
+export async function backupBox(name: string, output: string): Promise<void> {
   return invoke("backup_agent", { name, output });
 }
 
-export async function restoreAgent(input: string, name?: string, replace?: boolean): Promise<void> {
+export async function restoreBox(input: string, name?: string, replace?: boolean): Promise<void> {
   return invoke("restore_agent", { input, name: name ?? null, replace: replace ?? false });
 }
 
@@ -63,7 +63,7 @@ export async function submitAuthCode(code: string): Promise<void> {
   return invoke("submit_auth_code", { code });
 }
 
-export async function agentHost(): Promise<string> {
+export async function boxHost(): Promise<string> {
   return invoke("agent_host");
 }
 

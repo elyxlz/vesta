@@ -1,13 +1,13 @@
 <script lang="ts">
   import { onDestroy, tick } from "svelte";
   import { get } from "svelte/store";
-  import type { AgentConnection } from "../lib/ws";
+  import type { BoxConnection } from "../lib/ws";
   import { linkify } from "../lib/linkify";
   import { createAutoScroller } from "../lib/scroll";
   import "../styles/panel.css";
-  import type { VestaEvent, AgentActivityState } from "../lib/types";
+  import type { VestaEvent, BoxActivityState } from "../lib/types";
 
-  let { name, connection, onBack }: { name: string; connection: AgentConnection; onBack: () => void } = $props();
+  let { name, connection, onBack }: { name: string; connection: BoxConnection; onBack: () => void } = $props();
 
   type Line = { id: number; text: string; kind: string; time: string };
   const MAX_MESSAGES = 5000;
@@ -23,11 +23,11 @@
   const scroller = createAutoScroller(() => outputEl);
 
   let connectedVal = $state(get(connection.connected));
-  let agentStateVal = $state<AgentActivityState>(get(connection.agentState));
+  let boxStateVal = $state<BoxActivityState>(get(connection.boxState));
 
   $effect(() => {
     const u1 = connection.connected.subscribe((v: boolean) => { connectedVal = v; });
-    const u2 = connection.agentState.subscribe((v: AgentActivityState) => { agentStateVal = v; });
+    const u2 = connection.boxState.subscribe((v: BoxActivityState) => { boxStateVal = v; });
     return () => { u1(); u2(); };
   });
 
@@ -124,7 +124,7 @@
     inputEl.style.height = Math.min(inputEl.scrollHeight, 120) + "px";
   }
 
-  let thinking = $derived(agentStateVal === "thinking" || agentStateVal === "tool_use");
+  let thinking = $derived(boxStateVal === "thinking" || boxStateVal === "tool_use");
 
   let stableConnected = $state(false);
   let disconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -149,7 +149,7 @@
     </button>
     <div class="topbar-info">
       <span class="title">{name}</span>
-      <span class="dot" class:connected={stableConnected} class:thinking title={!stableConnected ? "disconnected" : thinking ? (agentStateVal === "tool_use" ? "using a tool" : "thinking") : "connected"}></span>
+      <span class="dot" class:connected={stableConnected} class:thinking title={!stableConnected ? "disconnected" : thinking ? (boxStateVal === "tool_use" ? "using a tool" : "thinking") : "connected"}></span>
     </div>
     <button class="tool-toggle" class:active={showTools} onclick={() => { showTools = !showTools; tick().then(() => { if (outputEl) outputEl.scrollTop = outputEl.scrollHeight; }); }} aria-label="show tool activity" data-tip={showTools ? "hide tools" : "show tools"}>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">

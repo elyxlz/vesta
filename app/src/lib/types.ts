@@ -1,5 +1,5 @@
-export interface AgentInfo {
-  status: AgentStatus;
+export interface BoxInfo {
+  status: BoxStatus;
   id: string;
   authenticated: boolean;
   name: string;
@@ -9,11 +9,11 @@ export interface AgentInfo {
   friendly_status: string;
 }
 
-export type AgentStatus = "running" | "stopped" | "dead" | "not_found" | "unknown";
+export type BoxStatus = "running" | "stopped" | "dead" | "not_found" | "unknown";
 
 export interface ListEntry {
   name: string;
-  status: AgentStatus;
+  status: BoxStatus;
   authenticated: boolean;
   agent_ready: boolean;
   ws_port: number;
@@ -33,19 +33,19 @@ export interface PlatformStatus {
   message: string;
 }
 
-export type AgentActivityState = "idle" | "thinking" | "tool_use";
+export type BoxActivityState = "idle" | "thinking" | "tool_use";
 
 type BaseEvent = { ts?: string };
 
 export type VestaEvent =
-  | (BaseEvent & { type: "status"; state: AgentActivityState })
+  | (BaseEvent & { type: "status"; state: BoxActivityState })
   | (BaseEvent & { type: "user"; text: string })
   | (BaseEvent & { type: "assistant"; text: string })
   | (BaseEvent & { type: "tool_start"; tool: string; input: string })
   | (BaseEvent & { type: "tool_end"; tool: string })
   | (BaseEvent & { type: "error"; text: string })
   | (BaseEvent & { type: "notification"; source: string; summary: string })
-  | (BaseEvent & { type: "history"; events: VestaEvent[]; state: AgentActivityState });
+  | (BaseEvent & { type: "history"; events: VestaEvent[]; state: BoxActivityState });
 
 export type LogEvent =
   | { kind: "Line"; text: string }

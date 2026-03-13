@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
-  import type { AgentConnection } from "../lib/ws";
-  import { agentStatus, startAgent, stopAgent, restartAgent, deleteAgent, authenticate, backupAgent, restoreAgent } from "../lib/api";
+  import type { BoxConnection } from "../lib/ws";
+  import { boxStatus, startBox, stopBox, restartBox, deleteBox, authenticate, backupBox, restoreBox } from "../lib/api";
+  import { getBoxOp, setBoxOp, clearBoxOp, setBoxError, type BoxOperation } from "../lib/store";
   import { save, open } from "@tauri-apps/plugin-dialog";
-  import type { AgentStatus, AgentActivityState } from "../lib/types";
+  import type { BoxStatus, BoxActivityState } from "../lib/types";
 
   let {
     name,
@@ -15,8 +16,8 @@
     onBack,
   }: {
     name: string;
-    connection: AgentConnection;
-    initialActivity?: AgentActivityState;
+    connection: BoxConnection;
+    initialActivity?: BoxActivityState;
     onChat: () => void;
     onConsole: () => void;
     onDestroyed: () => void;
@@ -24,20 +25,12 @@
   } = $props();
 
   let statusLoaded = $state(false);
-  let status = $state<AgentStatus>("unknown");
+  let status = $state<BoxStatus>("unknown");
   let authenticated = $state(false);
-  let agentReady = $state(false);
+  let boxReady = $state(false);
   let confirming = $state(false);
   let menuOpen = $state(false);
   let hovered = $state(false);
-  let operation = $state<"idle" | "stopping" | "starting" | "authenticating" | "deleting" | "backing-up" | "restoring">("idle");
-  let stopping = $derived(operation === "stopping");
-  let starting = $derived(operation === "starting");
-  let authenticating = $derived(operation === "authenticating");
-  let deleting = $derived(operation === "deleting");
-  let backingUp = $derived(operation === "backing-up");
-  let restoring = $derived(operation === "restoring");
-  let errorMsg = $state("");
   let poll: ReturnType<typeof setInterval>;
   let creatureEl: HTMLDivElement;
   let leaveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -49,10 +42,21 @@
   const LERP = 0.015;
   const SNAP = 0.5;
 
-  let agentStateVal = $state<AgentActivityState>(initialActivity);
+  let boxOp = $derived(getBoxOp(name));
+  let operation = $derived(boxOp.operation);
+  let errorMsg = $derived(boxOp.error);
+  let stopping = $derived(operation === "stopping");
+  let starting = $derived(operation === "starting");
+  let authenticating = $derived(operation === "authenticating");
+  let deleting = $derived(operation === "deleting");
+  let backingUp = $derived(operation === "backing-up");
+  let restoring = $derived(operation === "restoring");
+  let busy = $derived(operation !== "idle");
+
+  let boxStateVal = $state<BoxActivityState>(initialActivity);
 
   $effect(() => {
-    const unsub = connection.agentState.subscribe((v: AgentActivityState) => { agentStateVal = v; });
+    const unsub = connection.boxState.subscribe((v: BoxActivityState) => { boxStateVal = v; });
     return () => unsub();
   });
 
@@ -95,15 +99,15 @@
 
   async function syncStatus() {
     try {
-      const info = await agentStatus(name);
+      const info = await boxStatus(name);
       if (status !== info.status) status = info.status;
       if (authenticated !== info.authenticated) authenticated = info.authenticated;
-      if (agentReady !== info.agent_ready) agentReady = info.agent_ready;
-      if (errorMsg) errorMsg = "";
+      if (boxReady !== info.agent_ready) boxReady = info.agent_ready;
+      if (errorMsg) setBoxError(name, "");
     } catch {
       if (status !== "unknown") status = "unknown";
       if (authenticated) authenticated = false;
-      if (agentReady) agentReady = false;
+      if (boxReady) boxReady = false;
     }
     if (!statusLoaded) statusLoaded = true;
   }
@@ -142,24 +146,30 @@
     document.removeEventListener("keydown", onKeydown);
   });
 
-  async function toggleRun() {
+  async function withBoxOp(op: BoxOperation, fn: () => Promise<void>, fallback: string) {
     if (busy) return;
-    errorMsg = "";
-    const wasStopping = running;
-    operation = running ? "stopping" : "starting";
+    setBoxError(name, "");
+    setBoxOp(name, op);
     try {
+      await fn();
+    } catch (e: any) {
+      setBoxError(name, e?.message || fallback);
+    } finally {
+      clearBoxOp(name);
+    }
+  }
+
+  async function toggleRun() {
+    const wasStopping = running;
+    await withBoxOp(running ? "stopping" : "starting", async () => {
       if (wasStopping) {
-        await stopAgent(name);
+        await stopBox(name);
       } else {
-        await startAgent(name);
+        await startBox(name);
         connection.resetReconnect();
       }
       await syncStatus();
-    } catch (e: any) {
-      errorMsg = e?.message || (wasStopping ? "failed to stop" : "failed to start");
-    } finally {
-      operation = "idle";
-    }
+    }, wasStopping ? "failed to stop" : "failed to start");
   }
 
   async function destroy() {
@@ -167,18 +177,11 @@
       confirming = true;
       return;
     }
-    if (busy) return;
-    errorMsg = "";
-    operation = "deleting";
-    try {
-      await deleteAgent(name);
+    await withBoxOp("deleting", async () => {
+      await deleteBox(name);
       onDestroyed();
-    } catch (e: any) {
-      errorMsg = e?.message || "failed to delete";
-    } finally {
-      operation = "idle";
-      confirming = false;
-    }
+    }, "failed to delete");
+    confirming = false;
   }
 
   function cancelDestroy() {
@@ -186,94 +189,79 @@
   }
 
   async function handleAuth() {
-    if (busy) return;
-    errorMsg = "";
-    operation = "authenticating";
-    try {
+    await withBoxOp("authenticating", async () => {
       await authenticate(name);
       if (running) {
-        await restartAgent(name);
+        await restartBox(name);
       } else {
-        await startAgent(name);
+        await startBox(name);
       }
       connection.resetReconnect();
       await syncStatus();
-    } catch (e: any) {
-      errorMsg = e?.message || "sign in failed";
-    } finally {
-      operation = "idle";
-    }
+    }, "sign in failed");
   }
 
   async function handleRestart() {
-    if (busy) return;
-    errorMsg = "";
-    operation = "starting";
-    try {
-      await restartAgent(name);
+    await withBoxOp("starting", async () => {
+      await restartBox(name);
       connection.resetReconnect();
       await syncStatus();
-    } catch (e: any) {
-      errorMsg = e?.message || "failed to restart";
-    } finally {
-      operation = "idle";
-    }
+    }, "failed to restart");
   }
 
   async function handleBackup() {
     if (busy) return;
-    errorMsg = "";
+    setBoxError(name, "");
     const date = new Date().toISOString().slice(0, 10);
     const path = await save({
       defaultPath: `${name}-backup-${date}.tar.gz`,
       filters: [{ name: "Backup", extensions: ["tar.gz"] }],
     });
     if (!path) return;
-    operation = "backing-up";
-    try {
-      await backupAgent(name, path);
+    await withBoxOp("backing-up", async () => {
+      await backupBox(name, path);
       connection.resetReconnect();
       await syncStatus();
-    } catch (e: any) {
-      errorMsg = e?.message || "backup failed";
-    } finally {
-      operation = "idle";
-    }
+    }, "backup failed");
   }
 
   async function handleRestore() {
     if (busy) return;
-    errorMsg = "";
+    setBoxError(name, "");
     const path = await open({
       filters: [{ name: "Backup", extensions: ["tar.gz"] }],
       multiple: false,
       directory: false,
     });
     if (!path) return;
-    operation = "restoring";
-    try {
-      await restoreAgent(path, name, true);
+    await withBoxOp("restoring", async () => {
+      await restoreBox(path, name, true);
       connection.resetReconnect();
       await syncStatus();
-    } catch (e: any) {
-      errorMsg = e?.message || "restore failed";
-    } finally {
-      operation = "idle";
-    }
+    }, "restore failed");
   }
 
-  let busy = $derived(operation !== "idle");
   let running = $derived(status === "running");
   let dead = $derived(status === "dead");
   let alive = $derived(running && authenticated);
   let operational = $derived(alive && !deleting && !stopping);
-  let fullyAlive = $derived(operational && agentReady);
+  let fullyAlive = $derived(operational && boxReady);
   let showActions = $derived(statusLoaded && (hovered || !alive || confirming || menuOpen));
+
+  const OP_LABELS: Record<BoxOperation, string> = {
+    "idle": "", "stopping": "stopping...", "starting": "starting...",
+    "authenticating": "signing in...", "deleting": "deleting...",
+    "backing-up": "backing up...", "restoring": "restoring...",
+  };
+  let statusLabel = $derived(
+    errorMsg ? errorMsg
+    : OP_LABELS[operation] || (fullyAlive ? "alive" : operational ? "waking up..." : running ? "not signed in" : dead ? "broken — delete and recreate" : "stopped")
+  );
 
 </script>
 
 <div
-  class="agent-view"
+  class="box-view"
   role="group"
   aria-label="Controls"
 >
@@ -290,7 +278,7 @@
     onpointerleave={onOrbLeave}
     onpointermove={onOrbMove}
   >
-    <div class="orb-container" class:orb-loading={!statusLoaded} bind:this={orbEl} class:alive={fullyAlive} class:booting={operational && !agentReady} class:dead={statusLoaded && ((!alive && !starting && !authenticating) || deleting || dead)} class:stopping class:starting class:authenticating class:deleting class:thinking={fullyAlive && agentStateVal === 'thinking'} class:tool-use={fullyAlive && agentStateVal === 'tool_use'}>
+    <div class="orb-container" class:orb-loading={!statusLoaded} bind:this={orbEl} class:alive={fullyAlive} class:booting={operational && !boxReady} class:dead={statusLoaded && ((!alive && !starting && !authenticating) || deleting || dead)} class:stopping class:starting class:authenticating class:deleting class:thinking={fullyAlive && boxStateVal === 'thinking'} class:tool-use={fullyAlive && boxStateVal === 'tool_use'}>
       <div class="orb-glow"></div>
       <div class="orb-body">
         <div class="orb-highlight"></div>
@@ -305,7 +293,7 @@
         {#if !statusLoaded}
           &nbsp;
         {:else}
-          {errorMsg ? errorMsg : deleting ? "deleting..." : backingUp ? "backing up..." : restoring ? "restoring..." : stopping ? "stopping..." : starting ? "starting..." : authenticating ? "signing in..." : fullyAlive ? "alive" : operational ? "waking up..." : running ? "not signed in" : dead ? "broken — delete and recreate" : "stopped"}
+          {statusLabel}
         {/if}
       </span>
     </div>
@@ -340,7 +328,7 @@
                 <button class="menu-item" onclick={() => { menuOpen = false; onConsole(); }} data-tip="view raw logs">console</button>
               {/if}
               {#if running}
-                <button class="menu-item" disabled={busy} onclick={() => { menuOpen = false; handleRestart(); }} data-tip="restart agent">restart</button>
+                <button class="menu-item" disabled={busy} onclick={() => { menuOpen = false; handleRestart(); }} data-tip="restart box">restart</button>
               {/if}
               {#if running && authenticated}
                 <button class="menu-item" disabled={busy} onclick={() => { menuOpen = false; handleAuth(); }} data-tip="re-authenticate claude">sign in</button>
@@ -360,7 +348,7 @@
 </div>
 
 <style>
-  .agent-view {
+  .box-view {
     position: relative;
     display: flex;
     align-items: center;
