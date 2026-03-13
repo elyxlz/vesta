@@ -18,7 +18,8 @@
         "decorations": false,
         "resizable": false,
         "transparent": true,
-        "shadow": false
+        "shadow": false,
+        "backgroundColor": [0, 0, 0, 0]
       }
     ],
     "security": {
