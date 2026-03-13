@@ -37,9 +37,10 @@ cargo clippy                               # Lint
 ### Releasing
 
 ```bash
-./release.sh         # Patch bump (0.1.0 -> 0.1.1)
-./release.sh minor   # Minor bump (0.1.0 -> 0.2.0)
-./release.sh major   # Major bump (0.1.0 -> 1.0.0)
+./release.sh         # Step 1: patch bump PR (0.1.0 -> 0.1.1)
+./release.sh minor   # Step 1: minor bump PR (0.1.0 -> 0.2.0)
+./release.sh major   # Step 1: major bump PR (0.1.0 -> 1.0.0)
+./release.sh --tag   # Step 2: after PR merge, tag and create GitHub release
 ```
 
 **Do NOT bump versions in PRs** — `release.sh` handles version bumps automatically at release time.
