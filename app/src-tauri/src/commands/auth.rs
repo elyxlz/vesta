@@ -9,7 +9,7 @@ pub async fn authenticate(app: AppHandle, name: String) -> Result<(), VestaError
 
     // Store sender so submit_auth_code can use it
     let state = app.state::<AppState>();
-    *state.auth_code_tx.write().await = Some(tx);
+    *state.auth_code_tx.lock().await = Some(tx);
 
     let app2 = app.clone();
     cli::obtain_and_inject_credentials(
@@ -25,7 +25,7 @@ pub async fn authenticate(app: AppHandle, name: String) -> Result<(), VestaError
 #[tauri::command]
 pub async fn submit_auth_code(app: AppHandle, code: String) -> Result<(), VestaError> {
     let state = app.state::<AppState>();
-    let tx = state.auth_code_tx.write().await.take();
+    let tx = state.auth_code_tx.lock().await.take();
     if let Some(tx) = tx {
         let _ = tx.send(code);
     }

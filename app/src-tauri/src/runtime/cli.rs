@@ -348,26 +348,21 @@ pub async fn obtain_and_inject_credentials(
 
     let on_event: std::sync::Arc<Box<dyn Fn(&str, Option<&str>) + Send + Sync>> =
         std::sync::Arc::new(Box::new(on_event));
-    let on_event2 = on_event.clone();
 
-    let stdout_task = collect_lines(child.stdout.take().unwrap(), move |line: &str| {
-        if let Some(url) = line.strip_prefix("auth-url: ") {
-            on_event("auth-url", Some(url));
-        } else if line == "auth-code-needed" {
-            on_event("auth-code-needed", None);
-        } else if line == "auth-code-invalid" {
-            on_event("auth-code-invalid", None);
+    let make_auth_handler = |cb: std::sync::Arc<Box<dyn Fn(&str, Option<&str>) + Send + Sync>>| {
+        move |line: &str| {
+            if let Some(url) = line.strip_prefix("auth-url: ") {
+                cb("auth-url", Some(url));
+            } else if line == "auth-code-needed" {
+                cb("auth-code-needed", None);
+            } else if line == "auth-code-invalid" {
+                cb("auth-code-invalid", None);
+            }
         }
-    });
-    let stderr_task = collect_lines(child.stderr.take().unwrap(), move |line: &str| {
-        if let Some(url) = line.strip_prefix("auth-url: ") {
-            on_event2("auth-url", Some(url));
-        } else if line == "auth-code-needed" {
-            on_event2("auth-code-needed", None);
-        } else if line == "auth-code-invalid" {
-            on_event2("auth-code-invalid", None);
-        }
-    });
+    };
+
+    let stdout_task = collect_lines(child.stdout.take().unwrap(), make_auth_handler(on_event.clone()));
+    let stderr_task = collect_lines(child.stderr.take().unwrap(), make_auth_handler(on_event));
 
     // Wait for code from frontend and pipe to CLI stdin
     tokio::spawn(async move {
