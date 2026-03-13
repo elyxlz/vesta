@@ -356,6 +356,58 @@ fn cli_self_update(rust_target: &str, is_zip: bool, binary_subpath: &str) -> Opt
     Some(tmp_dir)
 }
 
+/// Spawn a background thread that checks for a newer CLI version and prints a warning.
+/// Caches the result for 24 hours to avoid hitting the API on every invocation.
+#[allow(dead_code)]
+fn spawn_update_check() -> std::thread::JoinHandle<Option<String>> {
+    std::thread::spawn(|| {
+        let cache_dir = dirs::cache_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
+        let cache_file = cache_dir.join("vesta-version-check");
+
+        // Check cache: skip if checked within the last 24 hours
+        if let Ok(meta) = std::fs::metadata(&cache_file) {
+            if let Ok(modified) = meta.modified() {
+                if modified.elapsed().unwrap_or_default() < std::time::Duration::from_secs(86400) {
+                    let cached = std::fs::read_to_string(&cache_file).unwrap_or_default();
+                    let latest = cached.trim();
+                    if latest.is_empty() || latest == env!("CARGO_PKG_VERSION") {
+                        return None;
+                    }
+                    return Some(latest.to_string());
+                }
+            }
+        }
+
+        let output = process::Command::new("curl")
+            .args(["-fsSL", "--connect-timeout", "3", "--max-time", "5",
+                   "https://api.github.com/repos/elyxlz/vesta/releases/latest"])
+            .stdout(process::Stdio::piped())
+            .stderr(process::Stdio::null())
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+
+        let body = String::from_utf8_lossy(&output.stdout);
+        let data: serde_json::Value = serde_json::from_str(&body).ok()?;
+        let latest = data["tag_name"].as_str()?.trim_start_matches('v');
+        if latest.is_empty() {
+            return None;
+        }
+
+        // Cache the result
+        let _ = std::fs::create_dir_all(&cache_dir);
+        let _ = std::fs::write(&cache_file, latest);
+
+        if latest != env!("CARGO_PKG_VERSION") {
+            Some(latest.to_string())
+        } else {
+            None
+        }
+    })
+}
+
 #[cfg(target_os = "linux")]
 mod linux;
 
@@ -375,11 +427,27 @@ fn print_welcome() {
     println!("Run 'vesta --help' for all commands.");
 }
 
+fn run_with_update_check(run: impl FnOnce(Command), cmd: Command) {
+    let is_update = matches!(cmd, Command::Update);
+    let handle = if is_update { None } else { Some(spawn_update_check()) };
+    run(cmd);
+    if let Some(handle) = handle {
+        // Wait briefly for the check to finish (should already be done by now)
+        if let Ok(Some(latest)) = handle.join() {
+            eprintln!(
+                "\nUpdate available: v{} → v{} (run 'vesta update')",
+                env!("CARGO_PKG_VERSION"),
+                latest
+            );
+        }
+    }
+}
+
 #[cfg(target_os = "linux")]
 fn main() {
     let cli = Cli::parse();
     match cli.command {
-        Some(cmd) => linux::run(cmd),
+        Some(cmd) => run_with_update_check(linux::run, cmd),
         None => print_welcome(),
     }
 }
@@ -388,7 +456,7 @@ fn main() {
 fn main() {
     let cli = Cli::parse();
     match cli.command {
-        Some(cmd) => macos::run(cmd),
+        Some(cmd) => run_with_update_check(macos::run, cmd),
         None => print_welcome(),
     }
 }
@@ -397,7 +465,7 @@ fn main() {
 fn main() {
     let cli = Cli::parse();
     match cli.command {
-        Some(cmd) => windows::run(cmd),
+        Some(cmd) => run_with_update_check(windows::run, cmd),
         None => print_welcome(),
     }
 }
