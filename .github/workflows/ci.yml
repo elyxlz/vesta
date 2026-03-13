@@ -769,6 +769,10 @@ jobs:
             os: ubuntu-latest
             cli-artifact: vesta-x86_64-unknown-linux-gnu
             bundles: deb,appimage
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+            cli-artifact: vesta-aarch64-unknown-linux-gnu
+            bundles: deb,appimage
           - target: aarch64-apple-darwin
             os: macos-latest
             cli-artifact: vesta-aarch64-apple-darwin
@@ -1002,10 +1006,60 @@ jobs:
           mkdir release
           find artifacts -type f \( \
             -name '*.tar.gz' -o -name '*.tar.zst' -o -name '*.zip' -o \
-            -name '*.deb' -o -name '*.AppImage' -o -name '*.dmg' -o \
+            -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' -o -name '*.dmg' -o \
             -name '*-setup.exe' -o -name '*_x64-setup.exe' \
           \) -exec cp {} release/ \;
           ls -lh release/
+
+      - name: Build CLI packages (deb + rpm)
+        run: |
+          sudo apt-get update && sudo apt-get install -y ruby ruby-dev rubygems rpm
+          sudo gem install fpm --no-document
+
+          VERSION="${{ github.event.release.tag_name }}"
+          VERSION="${VERSION#v}"
+
+          for arch_pair in "x86_64-unknown-linux-gnu:amd64:x86_64" "aarch64-unknown-linux-gnu:arm64:aarch64"; do
+            RUST_TARGET="${arch_pair%%:*}"
+            rest="${arch_pair#*:}"
+            DEB_ARCH="${rest%%:*}"
+            RPM_ARCH="${rest#*:}"
+
+            TARBALL="release/vesta-${RUST_TARGET}.tar.gz"
+            if [ ! -f "$TARBALL" ]; then
+              echo "Skipping $RUST_TARGET: tarball not found"
+              continue
+            fi
+
+            mkdir -p /tmp/cli-${DEB_ARCH}
+            tar -xzf "$TARBALL" -C /tmp/cli-${DEB_ARCH}
+
+            # .deb
+            fpm -s dir -t deb \
+              -n vesta-cli \
+              -v "$VERSION" \
+              --architecture "$DEB_ARCH" \
+              --description "CLI for managing the Vesta autonomous AI agent" \
+              --url "https://github.com/elyxlz/vesta" \
+              --license "MIT" \
+              --maintainer "elyxlz" \
+              -p "release/vesta-cli_${VERSION}_${DEB_ARCH}.deb" \
+              /tmp/cli-${DEB_ARCH}/vesta=/usr/bin/vesta
+
+            # .rpm
+            fpm -s dir -t rpm \
+              -n vesta-cli \
+              -v "$VERSION" \
+              --architecture "$RPM_ARCH" \
+              --description "CLI for managing the Vesta autonomous AI agent" \
+              --url "https://github.com/elyxlz/vesta" \
+              --license "MIT" \
+              --maintainer "elyxlz" \
+              -p "release/vesta-cli-${VERSION}-1.${RPM_ARCH}.rpm" \
+              /tmp/cli-${DEB_ARCH}/vesta=/usr/bin/vesta
+          done
+
+          ls -lh release/vesta-cli*
 
       - name: Upload assets and publish
         env:
@@ -1124,3 +1178,197 @@ jobs:
           git add Casks/vesta.rb Formula/vesta-cli.rb
           git commit -m "Update vesta to ${VERSION}"
           git push
+
+      - name: Update APT repository
+        env:
+          APT_REPO_TOKEN: ${{ secrets.APT_REPO_TOKEN }}
+        run: |
+          VERSION="${{ github.event.release.tag_name }}"
+          VERSION="${VERSION#v}"
+
+          cd /tmp
+          git clone "https://x-access-token:${APT_REPO_TOKEN}@github.com/elyxlz/apt-repo.git"
+          cd apt-repo
+
+          mkdir -p pool
+
+          # Copy all .deb files (CLI packages + desktop app packages)
+          cp $GITHUB_WORKSPACE/release/*.deb pool/
+
+          # Generate repository metadata
+          apt-ftparchive packages pool > Packages
+          gzip -k -f Packages
+          apt-ftparchive release . > Release
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet || { git commit -m "Update to ${VERSION}" && git push; }
+
+      - name: Update RPM repository
+        env:
+          RPM_REPO_TOKEN: ${{ secrets.RPM_REPO_TOKEN }}
+        run: |
+          sudo apt-get install -y createrepo-c
+
+          VERSION="${{ github.event.release.tag_name }}"
+          VERSION="${VERSION#v}"
+
+          cd /tmp
+          git clone "https://x-access-token:${RPM_REPO_TOKEN}@github.com/elyxlz/rpm-repo.git"
+          cd rpm-repo
+
+          mkdir -p packages
+
+          # Copy all .rpm files
+          cp $GITHUB_WORKSPACE/release/*.rpm packages/
+
+          createrepo_c .
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet || { git commit -m "Update to ${VERSION}" && git push; }
+
+      - name: Update AUR packages
+        env:
+          AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+        run: |
+          VERSION="${{ github.event.release.tag_name }}"
+          VERSION="${VERSION#v}"
+          REPO="elyxlz/vesta"
+
+          # Compute checksums
+          CLI_X64_SHA=$(shasum -a 256 release/vesta-x86_64-unknown-linux-gnu.tar.gz | cut -d' ' -f1)
+          CLI_ARM_SHA=$(shasum -a 256 release/vesta-aarch64-unknown-linux-gnu.tar.gz | cut -d' ' -f1)
+          APP_X64_SHA=$(shasum -a 256 release/Vesta_${VERSION}_amd64.deb | cut -d' ' -f1)
+          APP_ARM_SHA=$(shasum -a 256 release/Vesta_${VERSION}_arm64.deb | cut -d' ' -f1 2>/dev/null || echo "SKIP")
+
+          # Setup SSH for AUR
+          mkdir -p ~/.ssh
+          echo "$AUR_SSH_KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          echo "Host aur.archlinux.org" >> ~/.ssh/config
+          echo "  IdentityFile ~/.ssh/aur" >> ~/.ssh/config
+          echo "  User aur" >> ~/.ssh/config
+          ssh-keyscan aur.archlinux.org >> ~/.ssh/known_hosts 2>/dev/null
+
+          # --- vesta-bin (CLI) ---
+          git clone ssh://aur@aur.archlinux.org/vesta-bin.git /tmp/vesta-bin || {
+            mkdir -p /tmp/vesta-bin && cd /tmp/vesta-bin && git init
+          }
+          cd /tmp/vesta-bin
+
+          cat > PKGBUILD << 'PKGEOF'
+          # Maintainer: elyxlz
+          pkgname=vesta-bin
+          pkgver=VERSION_PLACEHOLDER
+          pkgrel=1
+          pkgdesc="CLI for managing the Vesta autonomous AI agent"
+          arch=('x86_64' 'aarch64')
+          url="https://github.com/elyxlz/vesta"
+          license=('MIT')
+          provides=('vesta')
+          conflicts=('vesta' 'vesta-desktop-bin')
+          source_x86_64=("https://github.com/elyxlz/vesta/releases/download/v${pkgver}/vesta-x86_64-unknown-linux-gnu.tar.gz")
+          source_aarch64=("https://github.com/elyxlz/vesta/releases/download/v${pkgver}/vesta-aarch64-unknown-linux-gnu.tar.gz")
+          sha256sums_x86_64=('CLI_X64_SHA_PLACEHOLDER')
+          sha256sums_aarch64=('CLI_ARM_SHA_PLACEHOLDER')
+
+          package() {
+              install -Dm755 vesta "$pkgdir/usr/bin/vesta"
+          }
+          PKGEOF
+
+          sed -i "s/VERSION_PLACEHOLDER/${VERSION}/g" PKGBUILD
+          sed -i "s/CLI_X64_SHA_PLACEHOLDER/${CLI_X64_SHA}/g" PKGBUILD
+          sed -i "s/CLI_ARM_SHA_PLACEHOLDER/${CLI_ARM_SHA}/g" PKGBUILD
+          sed -i 's/^          //' PKGBUILD
+
+          # Generate .SRCINFO
+          cat > .SRCINFO << SRCEOF
+          pkgbase = vesta-bin
+          	pkgdesc = CLI for managing the Vesta autonomous AI agent
+          	pkgver = ${VERSION}
+          	pkgrel = 1
+          	url = https://github.com/elyxlz/vesta
+          	arch = x86_64
+          	arch = aarch64
+          	license = MIT
+          	provides = vesta
+          	conflicts = vesta
+          	conflicts = vesta-desktop-bin
+          	source_x86_64 = https://github.com/elyxlz/vesta/releases/download/v${VERSION}/vesta-x86_64-unknown-linux-gnu.tar.gz
+          	sha256sums_x86_64 = ${CLI_X64_SHA}
+          	source_aarch64 = https://github.com/elyxlz/vesta/releases/download/v${VERSION}/vesta-aarch64-unknown-linux-gnu.tar.gz
+          	sha256sums_aarch64 = ${CLI_ARM_SHA}
+
+          pkgname = vesta-bin
+          SRCEOF
+          sed -i 's/^          //' .SRCINFO
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add PKGBUILD .SRCINFO
+          git diff --cached --quiet || { git commit -m "Update to ${VERSION}" && git push; }
+
+          # --- vesta-desktop-bin (Desktop App) ---
+          git clone ssh://aur@aur.archlinux.org/vesta-desktop-bin.git /tmp/vesta-desktop-bin || {
+            mkdir -p /tmp/vesta-desktop-bin && cd /tmp/vesta-desktop-bin && git init
+          }
+          cd /tmp/vesta-desktop-bin
+
+          cat > PKGBUILD << 'PKGEOF'
+          # Maintainer: elyxlz
+          pkgname=vesta-desktop-bin
+          pkgver=VERSION_PLACEHOLDER
+          pkgrel=1
+          pkgdesc="Vesta autonomous AI agent - desktop app"
+          arch=('x86_64' 'aarch64')
+          url="https://github.com/elyxlz/vesta"
+          license=('MIT')
+          depends=('webkit2gtk-4.1' 'gtk3')
+          provides=('vesta')
+          conflicts=('vesta' 'vesta-bin')
+          source_x86_64=("https://github.com/elyxlz/vesta/releases/download/v${pkgver}/Vesta_${pkgver}_amd64.deb")
+          source_aarch64=("https://github.com/elyxlz/vesta/releases/download/v${pkgver}/Vesta_${pkgver}_arm64.deb")
+          sha256sums_x86_64=('APP_X64_SHA_PLACEHOLDER')
+          sha256sums_aarch64=('APP_ARM_SHA_PLACEHOLDER')
+
+          package() {
+              bsdtar -xf data.tar.gz -C "$pkgdir/"
+          }
+          PKGEOF
+
+          sed -i "s/VERSION_PLACEHOLDER/${VERSION}/g" PKGBUILD
+          sed -i "s/APP_X64_SHA_PLACEHOLDER/${APP_X64_SHA}/g" PKGBUILD
+          sed -i "s/APP_ARM_SHA_PLACEHOLDER/${APP_ARM_SHA}/g" PKGBUILD
+          sed -i 's/^          //' PKGBUILD
+
+          cat > .SRCINFO << SRCEOF
+          pkgbase = vesta-desktop-bin
+          	pkgdesc = Vesta autonomous AI agent - desktop app
+          	pkgver = ${VERSION}
+          	pkgrel = 1
+          	url = https://github.com/elyxlz/vesta
+          	arch = x86_64
+          	arch = aarch64
+          	license = MIT
+          	depends = webkit2gtk-4.1
+          	depends = gtk3
+          	provides = vesta
+          	conflicts = vesta
+          	conflicts = vesta-bin
+          	source_x86_64 = https://github.com/elyxlz/vesta/releases/download/v${VERSION}/Vesta_${VERSION}_amd64.deb
+          	sha256sums_x86_64 = ${APP_X64_SHA}
+          	source_aarch64 = https://github.com/elyxlz/vesta/releases/download/v${VERSION}/Vesta_${VERSION}_arm64.deb
+          	sha256sums_aarch64 = ${APP_ARM_SHA}
+
+          pkgname = vesta-desktop-bin
+          SRCEOF
+          sed -i 's/^          //' .SRCINFO
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add PKGBUILD .SRCINFO
+          git diff --cached --quiet || { git commit -m "Update to ${VERSION}" && git push; }
