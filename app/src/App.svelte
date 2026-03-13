@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
-  import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
   import { listAgents } from "./lib/api";
   import { createAgentConnection, type AgentConnection } from "./lib/ws";
   import { detectPlatform } from "./lib/platform";
@@ -33,8 +33,21 @@
 
   const appWindow = getCurrentWindow();
 
+  const SCREEN_FRACTION = 0.28;
+  const MIN_SIZE = 380;
+  const MAX_SIZE = 760;
+
+  async function scaleToMonitor() {
+    const monitor = await appWindow.currentMonitor();
+    if (!monitor) return;
+    const shortest = Math.min(monitor.size.width / monitor.scaleFactor, monitor.size.height / monitor.scaleFactor);
+    const size = Math.round(Math.max(MIN_SIZE, Math.min(MAX_SIZE, shortest * SCREEN_FRACTION)));
+    await appWindow.setSize(new LogicalSize(size, size));
+    await appWindow.center();
+  }
+
   onMount(async () => {
-    await new Promise((r) => setTimeout(r, 400));
+    await Promise.all([scaleToMonitor(), new Promise((r) => setTimeout(r, 400))]);
     try {
       const agents = await listAgents();
       hasAgents = agents.length > 0;
