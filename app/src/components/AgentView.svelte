@@ -342,6 +342,9 @@
               {#if running}
                 <button class="menu-item" disabled={busy} onclick={() => { menuOpen = false; handleRestart(); }} data-tip="restart agent">restart</button>
               {/if}
+              {#if running && authenticated}
+                <button class="menu-item" disabled={busy} onclick={() => { menuOpen = false; handleAuth(); }} data-tip="re-authenticate claude">sign in</button>
+              {/if}
               <button class="menu-item" disabled={busy} onclick={() => { menuOpen = false; handleBackup(); }} data-tip="export to file">backup</button>
               <button class="menu-item" disabled={busy} onclick={() => { menuOpen = false; handleRestore(); }} data-tip="restore from file">load backup</button>
               <div class="menu-divider"></div>
