@@ -800,6 +800,20 @@ func (ms *MessageStore) GetMessageMediaInfo(messageID, chatJID string) (*MediaIn
 		&mediaKey, &fileSHA256, &fileEncSHA256, &fileLength,
 	)
 
+	if err == sql.ErrNoRows {
+		// Fallback: some contacts use LID JIDs (@lid) instead of phone JIDs (@s.whatsapp.net).
+		// Try matching by message ID alone.
+		err = ms.db.QueryRow(`
+			SELECT id, chat_jid, media_type, filename, url,
+				media_key, file_sha256, file_enc_sha256, file_length
+			FROM messages
+			WHERE id = ?
+		`, messageID).Scan(
+			&info.MessageID, &info.ChatJID, &mediaType, &filename, &url,
+			&mediaKey, &fileSHA256, &fileEncSHA256, &fileLength,
+		)
+	}
+
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("message %s not found in this chat", messageID)

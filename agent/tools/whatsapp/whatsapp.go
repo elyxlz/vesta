@@ -381,6 +381,13 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 		wac.logger.Warnf("Failed to store message: %v", err)
 	}
 
+	// Auto-transcribe audio messages
+	if mediaType == "audio" && !info.IsFromMe {
+		if transcription := wac.transcribeAudioMessage(info.ID, info.Chat.String()); transcription != "" {
+			content = transcription
+		}
+	}
+
 	// Write notification
 	if wac.notificationsDir != "" && !info.IsFromMe {
 		_, senderDisplay, contactName, contactPhone, contactSaved, isDirectChat := wac.prepareNotificationInfo(info.MessageSource)
