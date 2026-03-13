@@ -1,9 +1,9 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
-  import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
+  import { getCurrentWindow, currentMonitor, LogicalSize } from "@tauri-apps/api/window";
   import { listBoxes, checkAndInstallUpdate } from "./lib/api";
   import { createBoxConnection, type BoxConnection } from "./lib/ws";
-  import { removeBoxState, resetOnboarding } from "./lib/store";
+  import { removeBoxState, resetOnboarding } from "./lib/store.svelte";
   import { detectPlatform } from "./lib/platform";
   import type { BoxActivityState } from "./lib/types";
   import Onboarding from "./components/Onboarding.svelte";
@@ -33,17 +33,17 @@
     transitioning = false;
   }
 
-  const appWindow = getCurrentWindow();
-
   const SCREEN_FRACTION = 0.28;
   const MIN_SIZE = 380;
   const MAX_SIZE = 760;
 
   async function scaleToMonitor() {
-    const monitor = await appWindow.currentMonitor();
+    const appWindow = getCurrentWindow();
+    const monitor = await currentMonitor();
     if (!monitor) return;
-    const shortest = Math.min(monitor.size.width / monitor.scaleFactor, monitor.size.height / monitor.scaleFactor);
+    const shortest = Math.min(monitor.size.width, monitor.size.height);
     const size = Math.round(Math.max(MIN_SIZE, Math.min(MAX_SIZE, shortest * SCREEN_FRACTION)));
+
     await appWindow.setSize(new LogicalSize(size, size));
     await appWindow.center();
   }
@@ -132,7 +132,7 @@
 
   function startDrag(e: MouseEvent) {
     if ((e.target as HTMLElement).closest(".window-controls")) return;
-    appWindow.startDragging();
+    getCurrentWindow().startDragging();
   }
 </script>
 
@@ -142,10 +142,10 @@
   <div class="titlebar" class:titlebar-macos={platform === "macos"} class:titlebar-right={platform !== "macos"} onmousedown={startDrag}>
     {#if platform !== "macos"}
       <div class="window-controls {platform}">
-        <button class="wc" onclick={() => appWindow.minimize()} aria-label="minimize">
+        <button class="wc" onclick={() => getCurrentWindow().minimize()} aria-label="minimize">
           <svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 5h6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
         </button>
-        <button class="wc close" onclick={() => appWindow.close()} aria-label="close">
+        <button class="wc close" onclick={() => getCurrentWindow().close()} aria-label="close">
           <svg width="10" height="10" viewBox="0 0 10 10"><path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
         </button>
       </div>

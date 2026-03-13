@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from "svelte";
   import type { BoxConnection } from "../lib/ws";
   import { boxStatus, startBox, stopBox, restartBox, deleteBox, authenticate, backupBox, restoreBox } from "../lib/api";
-  import { getBoxOp, setBoxOp, clearBoxOp, setBoxError, type BoxOperation } from "../lib/store";
+  import { getBoxOp, setBoxOp, clearBoxOp, setBoxError, type BoxOperation } from "../lib/store.svelte";
   import { save, open } from "@tauri-apps/plugin-dialog";
   import type { BoxStatus, BoxActivityState } from "../lib/types";
 
