@@ -479,7 +479,7 @@ fn main() {
 fn main() {
     let cli = Cli::parse();
     match cli.command {
-        Some(cmd) => run_with_update_check(windows::run, cmd),
+        Some(cmd) => run_with_update_check(|cmd| { windows::run(cmd); }, cmd),
         None => print_welcome(),
     }
 }
