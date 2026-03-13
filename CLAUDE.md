@@ -34,13 +34,14 @@ cargo build                                # Build
 cargo clippy                               # Lint
 ```
 
-### Version Bumping
+### Releasing
 
 ```bash
-./bump.sh          # Patch bump (syncs all 5 version sources)
-./bump.sh 1.2.3    # Exact version
-cd agent && uv lock # MUST run after bump — CI checks uv.lock freshness
+./release.sh       # Patch bump, commit, tag, push, create GitHub release
+./release.sh 1.2.3 # Release with exact version
 ```
+
+**Do NOT bump versions in PRs** — `release.sh` handles version bumps automatically at release time.
 
 ## Code Conventions
 
@@ -54,4 +55,4 @@ cd agent && uv lock # MUST run after bump — CI checks uv.lock freshness
 
 ## CI
 
-Runs on push to `master` and PRs. Checks: version sync across 5 sources (`agent/pyproject.toml`, `cli/Cargo.toml`, `app/src-tauri/Cargo.toml`, `app/src-tauri/tauri.conf.json`, `app/package.json`), ruff, ty, cargo clippy, pytest, `uv.lock` freshness. Tag pushes trigger release.
+Runs on push to `master` and PRs. Checks: version sync across 5 sources (`agent/pyproject.toml`, `cli/Cargo.toml`, `app/src-tauri/Cargo.toml`, `app/src-tauri/tauri.conf.json`, `app/package.json`), ruff, ty, cargo clippy, pytest, `uv.lock` freshness. Releases are triggered by `gh release create` (via `./release.sh`).
