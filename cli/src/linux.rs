@@ -182,7 +182,7 @@ fn container_status(cname: &str) -> ContainerStatus {
 }
 
 fn read_container_file(cname: &str, container_path: &str) -> Option<String> {
-    let tmp = std::env::temp_dir().join(format!("vesta_read_{}", std::process::id()));
+    let tmp = std::env::temp_dir().join(format!("vesta_read_{}_{}", std::process::id(), cname));
     let src = format!("{}:{}", cname, container_path);
     if !docker_quiet(&["cp", &src, tmp.to_str().unwrap()]) {
         return None;
