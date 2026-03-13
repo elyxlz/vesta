@@ -1,27 +1,28 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
-  import { listAgents, checkAndInstallUpdate } from "./lib/api";
-  import { createAgentConnection, type AgentConnection } from "./lib/ws";
+  import { listBoxes, checkAndInstallUpdate } from "./lib/api";
+  import { createBoxConnection, type BoxConnection } from "./lib/ws";
+  import { removeBoxState, resetOnboarding } from "./lib/store";
   import { detectPlatform } from "./lib/platform";
-  import type { AgentActivityState } from "./lib/types";
+  import type { BoxActivityState } from "./lib/types";
   import Onboarding from "./components/Onboarding.svelte";
-  import AgentView from "./components/AgentView.svelte";
+  import BoxView from "./components/BoxView.svelte";
   import Chat from "./components/Chat.svelte";
   import Console from "./components/Console.svelte";
   import GridView from "./components/GridView.svelte";
 
   const platform = detectPlatform();
 
-  type View = "loading" | "grid" | "onboarding" | "agent-home" | "agent-chat" | "agent-console";
+  type View = "loading" | "grid" | "onboarding" | "box-home" | "box-chat" | "box-console";
 
   let view = $state<View>("loading");
   let ready = $state(false);
   let transitioning = $state(false);
-  let selectedAgent = $state<{ name: string; wsPort: number } | null>(null);
-  let agentConnection = $state<AgentConnection | null>(null);
-  let initialActivity: AgentActivityState = "idle";
-  let hasAgents = $state(false);
+  let selectedBox = $state<{ name: string; wsPort: number } | null>(null);
+  let boxConnection = $state<BoxConnection | null>(null);
+  let initialActivity: BoxActivityState = "idle";
+  let hasBoxes = $state(false);
   let updateInfo = $state<{ version: string; installing: boolean } | null>(null);
 
   async function setView(next: View) {
@@ -50,14 +51,14 @@
   onMount(async () => {
     await Promise.all([scaleToMonitor(), new Promise((r) => setTimeout(r, 400))]);
     try {
-      const agents = await listAgents();
-      hasAgents = agents.length > 0;
-      if (agents.length === 1) {
-        selectedAgent = { name: agents[0].name, wsPort: agents[0].ws_port };
-        agentConnection = createAgentConnection(agents[0].ws_port);
-        agentConnection.connect();
-        view = "agent-home";
-      } else if (agents.length > 1) {
+      const boxes = await listBoxes();
+      hasBoxes = boxes.length > 0;
+      if (boxes.length === 1) {
+        selectedBox = { name: boxes[0].name, wsPort: boxes[0].ws_port };
+        boxConnection = createBoxConnection(boxes[0].ws_port);
+        boxConnection.connect();
+        view = "box-home";
+      } else if (boxes.length > 1) {
         view = "grid";
       } else {
         view = "onboarding";
@@ -72,20 +73,20 @@
   });
 
   function clearConnection() {
-    agentConnection?.disconnect();
-    agentConnection = null;
-    selectedAgent = null;
+    boxConnection?.disconnect();
+    boxConnection = null;
+    selectedBox = null;
   }
 
   onDestroy(clearConnection);
 
-  function handleSelectAgent(name: string, wsPort: number, activity: AgentActivityState = "idle") {
-    agentConnection?.disconnect();
-    selectedAgent = { name, wsPort };
+  function handleSelectBox(name: string, wsPort: number, activity: BoxActivityState = "idle") {
+    boxConnection?.disconnect();
+    selectedBox = { name, wsPort };
     initialActivity = activity;
-    agentConnection = createAgentConnection(wsPort);
-    agentConnection.connect();
-    setView("agent-home");
+    boxConnection = createBoxConnection(wsPort);
+    boxConnection.connect();
+    setView("box-home");
   }
 
   function handleBackToGrid() {
@@ -94,6 +95,7 @@
   }
 
   function handleDestroyed() {
+    if (selectedBox) removeBoxState(selectedBox.name);
     clearConnection();
     setView("grid");
   }
@@ -102,7 +104,7 @@
     setView("grid");
   }
 
-  let isDark = $derived(view === "agent-console" || view === "agent-chat");
+  let isDark = $derived(view === "box-console" || view === "box-chat");
 
   let tipText = $state("");
   let tipX = $state(0);
@@ -154,33 +156,33 @@
       </div>
     {:else if view === "grid"}
       <GridView
-        onSelect={handleSelectAgent}
+        onSelect={handleSelectBox}
         onCreate={() => setView("onboarding")}
-        onChat={(name, wsPort, activity) => { handleSelectAgent(name, wsPort, activity); setView("agent-chat"); }}
-        onConsole={(name, wsPort, activity) => { handleSelectAgent(name, wsPort, activity); setView("agent-console"); }}
+        onChat={(name, wsPort, activity) => { handleSelectBox(name, wsPort, activity); setView("box-chat"); }}
+        onConsole={(name, wsPort, activity) => { handleSelectBox(name, wsPort, activity); setView("box-console"); }}
       />
     {:else if view === "onboarding"}
-      <Onboarding onComplete={handleOnboardingComplete} onCancel={hasAgents ? () => setView("grid") : undefined} />
-    {:else if view === "agent-home" && selectedAgent && agentConnection}
-      <AgentView
-        name={selectedAgent.name}
-        connection={agentConnection}
+      <Onboarding onComplete={handleOnboardingComplete} onCancel={hasBoxes ? () => setView("grid") : undefined} />
+    {:else if view === "box-home" && selectedBox && boxConnection}
+      <BoxView
+        name={selectedBox.name}
+        connection={boxConnection}
         {initialActivity}
-        onChat={() => setView("agent-chat")}
-        onConsole={() => setView("agent-console")}
+        onChat={() => setView("box-chat")}
+        onConsole={() => setView("box-console")}
         onDestroyed={handleDestroyed}
         onBack={handleBackToGrid}
       />
-    {:else if view === "agent-chat" && selectedAgent && agentConnection}
+    {:else if view === "box-chat" && selectedBox && boxConnection}
       <Chat
-        name={selectedAgent.name}
-        connection={agentConnection}
-        onBack={() => setView("agent-home")}
+        name={selectedBox.name}
+        connection={boxConnection}
+        onBack={() => setView("box-home")}
       />
-    {:else if view === "agent-console" && selectedAgent}
+    {:else if view === "box-console" && selectedBox}
       <Console
-        name={selectedAgent.name}
-        onBack={() => setView("agent-home")}
+        name={selectedBox.name}
+        onBack={() => setView("box-home")}
       />
     {/if}
   </main>
@@ -307,7 +309,7 @@
     :global(.actions.visible) { transform: none !important; }
     :global(.step-anim) { animation: none !important; }
     :global(.panel) { animation: none !important; }
-    :global(.agent-view) { animation: none !important; }
+    :global(.box-view) { animation: none !important; }
     :global(.grid-view) { animation: none !important; }
     :global(.menu-dropdown) { animation: none !important; }
     :global(.msg) { animation: none !important; }

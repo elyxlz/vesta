@@ -1,32 +1,35 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { listen } from "@tauri-apps/api/event";
-  import { createAgent, agentStatus, authenticate, submitAuthCode, startAgent, waitForReady, checkPlatform, setupPlatform } from "../lib/api";
+  import { createBox, boxStatus, authenticate, submitAuthCode, startBox, waitForReady, checkPlatform, setupPlatform } from "../lib/api";
+  import { getOnboarding, updateOnboarding, resetOnboarding } from "../lib/store";
   import type { PlatformStatus } from "../lib/types";
   import ProgressBar from "./ProgressBar.svelte";
 
   let { onComplete, onCancel }: { onComplete: (name: string) => void; onCancel?: () => void } = $props();
 
-  let step = $state<"platform" | "name" | "creating" | "auth" | "done">("platform");
-  let agentName = $state("");
-  let error = $state<{ friendly: string | null; raw: string } | null>(null);
+  let ob = $derived(getOnboarding());
+  let step = $derived(ob.step);
+  let boxName = $derived(ob.name);
+  let error = $derived(ob.error);
+  let showRawError = $derived(ob.showRawError);
+  let busy = $derived(ob.busy);
+  let createMsg = $derived(ob.createMsg);
+  let platform = $derived(ob.platform);
+  let authUrl = $derived(ob.authUrl);
+  let authCodeNeeded = $derived(ob.authCodeNeeded);
+  let authCodeSubmitted = $derived(ob.authCodeSubmitted);
+  let authCode = $derived(ob.authCode);
+
   let transitioning = $state(false);
-  let busy = $state(false);
-  let createMsg = $state("");
   let msgTimer: ReturnType<typeof setInterval> | null = null;
   let cancelled = $state(false);
-  let platform = $state<PlatformStatus | null>(null);
-  let authUrl = $state<string | null>(null);
-  let authCodeNeeded = $state(false);
-  let authCodeSubmitted = $state(false);
-  let authCode = $state("");
   let unlisteners: (() => void)[] = [];
 
   async function handleSubmitCode() {
     if (!authCode.trim()) return;
     await submitAuthCode(authCode.trim());
-    authCodeNeeded = false;
-    authCodeSubmitted = true;
+    updateOnboarding({ authCodeNeeded: false, authCodeSubmitted: true });
   }
 
   const CREATE_MESSAGES = [
@@ -39,42 +42,47 @@
 
   onMount(async () => {
     listen<string>("auth-url", (event) => {
-      authUrl = event.payload;
+      updateOnboarding({ authUrl: event.payload });
     }).then((fn) => { unlisteners.push(fn); });
 
     listen<string>("auth-code-needed", () => {
-      authCodeNeeded = true;
+      updateOnboarding({ authCodeNeeded: true });
     }).then((fn) => { unlisteners.push(fn); });
 
     listen<string>("auth-code-invalid", () => {
-      authCodeNeeded = true;
-      authCodeSubmitted = false;
-      authCode = "";
-      error = { friendly: "invalid auth code — try again", raw: "auth-code-invalid" };
+      updateOnboarding({
+        authCodeNeeded: true,
+        authCodeSubmitted: false,
+        authCode: "",
+        error: { friendly: "invalid auth code — try again", raw: "auth-code-invalid" },
+      });
     }).then((fn) => { unlisteners.push(fn); });
 
-    try {
-      const status = await checkPlatform();
-      platform = status;
-      if (status.ready || status.platform !== "windows") {
-        await goTo("name");
-        return;
+    // Only run initial setup if we're on the platform step and haven't loaded platform yet
+    if (step === "platform" && !platform) {
+      try {
+        const status = await checkPlatform();
+        updateOnboarding({ platform: status });
+        if (status.ready || status.platform !== "windows") {
+          await goTo("name");
+          return;
+        }
+        // auto-run setup for distro/service issues (WSL already installed)
+        if (status.wsl_installed && !status.needs_reboot && status.virtualization_enabled !== false) {
+          await handlePlatformSetup();
+        }
+      } catch (e) {
+        setError(e, "failed to check platform");
       }
-      // auto-run setup for distro/service issues (WSL already installed)
-      if (status.wsl_installed && !status.needs_reboot && status.virtualization_enabled !== false) {
-        await handlePlatformSetup();
-      }
-    } catch (e) {
-      setError(e, "failed to check platform");
     }
   });
 
   function startMessages() {
     let i = 0;
-    createMsg = CREATE_MESSAGES[0];
+    updateOnboarding({ createMsg: CREATE_MESSAGES[0] });
     msgTimer = setInterval(() => {
       i = (i + 1) % CREATE_MESSAGES.length;
-      createMsg = CREATE_MESSAGES[i];
+      updateOnboarding({ createMsg: CREATE_MESSAGES[i] });
     }, 3000);
   }
 
@@ -86,12 +94,12 @@
     return raw.trim().toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "").replace(/-{2,}/g, "-").replace(/^-|-$/g, "");
   }
 
-  let normalizedPreview = $derived(normalizeName(agentName));
+  let normalizedPreview = $derived(normalizeName(boxName));
 
   async function goTo(next: typeof step) {
     transitioning = true;
     await new Promise((r) => setTimeout(r, 150));
-    step = next;
+    updateOnboarding({ step: next });
     transitioning = false;
   }
 
@@ -113,89 +121,81 @@
 
   function setError(e: unknown, fallback: string) {
     const err = e as { message?: string };
-    error = formatError(err.message || fallback);
+    updateOnboarding({ error: formatError(err.message || fallback) });
   }
-
-  let showRawError = $state(false);
 
   function cancelToName() {
     cancelled = true;
     stopMessages();
-    busy = false;
-    error = null;
-    showRawError = false;
-    step = "name";
+    updateOnboarding({ busy: false, error: null, showRawError: false, step: "name" });
   }
 
   async function recheckPlatform() {
-    busy = true;
-    error = null;
+    updateOnboarding({ busy: true, error: null });
     try {
       const status = await checkPlatform();
-      platform = status;
+      updateOnboarding({ platform: status });
       if (status.ready) {
         await goTo("name");
       }
     } catch (e) {
       setError(e, "failed to check platform");
     } finally {
-      busy = false;
+      updateOnboarding({ busy: false });
     }
   }
 
   async function handlePlatformSetup() {
-    busy = true;
-    error = null;
+    updateOnboarding({ busy: true, error: null });
     try {
       const result = await setupPlatform();
-      platform = result;
+      updateOnboarding({ platform: result });
       if (result.ready) {
         await goTo("name");
       } else if (result.needs_reboot) {
         // stay on platform step, UI will show reboot message
       } else if (result.message) {
-        error = { friendly: result.message, raw: result.message };
+        updateOnboarding({ error: { friendly: result.message, raw: result.message } });
       }
     } catch (e) {
       setError(e, "setup failed");
     } finally {
-      busy = false;
+      updateOnboarding({ busy: false });
     }
   }
 
-  async function waitUntilReady(agentName: string) {
-    await waitForReady(agentName, 30);
+  async function waitUntilReady(name: string) {
+    await waitForReady(name, 30);
   }
 
   async function handleCreate() {
     const name = normalizedPreview;
     if (!name || busy) return;
-    busy = true;
-    error = null;
+    updateOnboarding({ busy: true, error: null });
     cancelled = false;
 
     startMessages();
     await goTo("creating");
 
     try {
-      const info = await agentStatus(name);
+      const info = await boxStatus(name);
       if (cancelled) return;
       if (info.status !== "not_found") {
         if (info.status === "running" && info.authenticated && info.agent_ready) {
           stopMessages();
-          busy = false;
+          updateOnboarding({ busy: false });
           await goTo("done");
           return;
         }
 
         if (info.status === "stopped" || info.status === "dead") {
           try {
-            await startAgent(name);
+            await startBox(name);
           } catch (e) {
             if (cancelled) return;
             stopMessages();
-            busy = false;
-            setError(e, "failed to start agent");
+            updateOnboarding({ busy: false });
+            setError(e, "failed to start box");
             await goTo("name");
             return;
           }
@@ -203,19 +203,19 @@
 
         if (cancelled) return;
         stopMessages();
-        busy = false;
+        updateOnboarding({ busy: false });
         await goTo("auth");
         await runAuth();
         return;
       }
     } catch (e) {
-      console.warn("agentStatus check failed:", e);
+      console.warn("boxStatus check failed:", e);
     }
 
     if (cancelled) return;
 
     try {
-      await createAgent(name);
+      await createBox(name);
       if (cancelled) return;
       stopMessages();
       await goTo("auth");
@@ -226,28 +226,29 @@
       setError(e, "something went wrong");
       await goTo("name");
     } finally {
-      busy = false;
+      updateOnboarding({ busy: false });
     }
   }
 
   async function runAuth() {
     const name = normalizedPreview;
-    busy = true;
-    error = null;
-    authUrl = null;
-    authCodeNeeded = false;
-    authCodeSubmitted = false;
-    authCode = "";
+    updateOnboarding({ busy: true, error: null, authUrl: null, authCodeNeeded: false, authCodeSubmitted: false, authCode: "" });
     try {
       await authenticate(name);
-      await startAgent(name);
+      await startBox(name);
       await waitUntilReady(name);
-      busy = false;
+      updateOnboarding({ busy: false });
       await goTo("done");
     } catch (e) {
-      busy = false;
+      updateOnboarding({ busy: false });
       setError(e, "authentication failed");
     }
+  }
+
+  function handleComplete() {
+    const name = normalizeName(boxName);
+    resetOnboarding();
+    onComplete(name);
   }
 
   onDestroy(() => { stopMessages(); for (const fn of unlisteners) fn(); });
@@ -302,7 +303,7 @@
           {#if error}
             <p class="error">{error.friendly ?? "something went wrong."}</p>
             {#if error.raw.length > 80 || !error.friendly}
-              <button class="btn details-toggle" onclick={() => showRawError = !showRawError}>{showRawError ? "hide details" : "show details"}</button>
+              <button class="btn details-toggle" onclick={() => updateOnboarding({ showRawError: !showRawError })}>{showRawError ? "hide details" : "show details"}</button>
               {#if showRawError}<pre class="error-details">{error.raw}</pre>{/if}
             {/if}
           {/if}
@@ -325,7 +326,7 @@
 
     {:else if step === "name"}
       <div class="step step-anim">
-        <h1>new agent</h1>
+        <h1>new box</h1>
         <p class="sub">give it a name to get started.</p>
         <form onsubmit={(e) => { e.preventDefault(); handleCreate(); }}>
           <!-- svelte-ignore a11y_autofocus -->
@@ -333,14 +334,15 @@
             type="text"
             class="name-input"
             placeholder="e.g. jarvis"
-            bind:value={agentName}
+            value={boxName}
+            oninput={(e) => updateOnboarding({ name: (e.target as HTMLInputElement).value })}
             autofocus
           />
-          {#if agentName.trim() && normalizedPreview !== agentName.trim()}<p class="name-preview">{normalizedPreview}</p>{/if}
+          {#if boxName.trim() && normalizedPreview !== boxName.trim()}<p class="name-preview">{normalizedPreview}</p>{/if}
           {#if error}
             <p class="error">{error.friendly ?? "something went wrong."}</p>
             {#if error.raw.length > 80 || !error.friendly}
-              <button type="button" class="btn details-toggle" onclick={() => showRawError = !showRawError}>{showRawError ? "hide details" : "show details"}</button>
+              <button type="button" class="btn details-toggle" onclick={() => updateOnboarding({ showRawError: !showRawError })}>{showRawError ? "hide details" : "show details"}</button>
               {#if showRawError}<pre class="error-details">{error.raw}</pre>{/if}
             {/if}
           {/if}
@@ -356,7 +358,7 @@
         {#if error}
           <p class="error">{error.friendly ?? "something went wrong."}</p>
           {#if error.raw.length > 80 || !error.friendly}
-            <button class="btn details-toggle" onclick={() => showRawError = !showRawError}>{showRawError ? "hide details" : "show details"}</button>
+            <button class="btn details-toggle" onclick={() => updateOnboarding({ showRawError: !showRawError })}>{showRawError ? "hide details" : "show details"}</button>
             {#if showRawError}<pre class="error-details">{error.raw}</pre>{/if}
           {/if}
           <button class="btn primary" onclick={() => goTo("name")}>try again</button>
@@ -372,7 +374,7 @@
           <p class="sub">paste the code from the browser below.</p>
           <form onsubmit={(e) => { e.preventDefault(); handleSubmitCode(); }}>
             <!-- svelte-ignore a11y_autofocus -->
-            <input type="text" class="name-input" placeholder="paste code here" bind:value={authCode} autofocus />
+            <input type="text" class="name-input" placeholder="paste code here" value={authCode} oninput={(e) => updateOnboarding({ authCode: (e.target as HTMLInputElement).value })} autofocus />
             <button class="btn primary full" type="submit" disabled={!authCode.trim()}>submit</button>
           </form>
         {:else if authCodeSubmitted}
@@ -389,7 +391,7 @@
         {#if error}
           <p class="error">{error.friendly ?? "something went wrong."}</p>
           {#if error.raw.length > 80 || !error.friendly}
-            <button class="btn details-toggle" onclick={() => showRawError = !showRawError}>{showRawError ? "hide details" : "show details"}</button>
+            <button class="btn details-toggle" onclick={() => updateOnboarding({ showRawError: !showRawError })}>{showRawError ? "hide details" : "show details"}</button>
             {#if showRawError}<pre class="error-details">{error.raw}</pre>{/if}
           {/if}
           <button class="btn primary" onclick={runAuth}>retry</button>
@@ -405,9 +407,9 @@
             <polyline points="22 4 12 14.01 9 11.01"/>
           </svg>
         </div>
-        <h1>{normalizedPreview || "your agent"} is ready</h1>
+        <h1>{normalizedPreview || "your box"} is ready</h1>
         <p class="sub">say hi.</p>
-        <button class="btn primary" onclick={() => onComplete(normalizeName(agentName))}>continue</button>
+        <button class="btn primary" onclick={handleComplete}>continue</button>
       </div>
     {/if}
   </div>
