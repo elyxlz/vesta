@@ -3,7 +3,7 @@
   import { getCurrentWindow, currentMonitor, LogicalSize } from "@tauri-apps/api/window";
   import { listBoxes, checkAndInstallUpdate } from "./lib/api";
   import { createBoxConnection, type BoxConnection } from "./lib/ws";
-  import { removeBoxState, resetOnboarding } from "./lib/store";
+  import { removeBoxState, resetOnboarding } from "./lib/store.svelte";
   import { detectPlatform } from "./lib/platform";
   import type { BoxActivityState } from "./lib/types";
   import Onboarding from "./components/Onboarding.svelte";

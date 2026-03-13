@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { listBoxes, startBox, stopBox, restartBox, deleteBox, backupBox, restoreBox } from "../lib/api";
-  import { getBoxOp, setBoxOp, clearBoxOp, busyBoxName } from "../lib/store";
+  import { getBoxOp, setBoxOp, clearBoxOp, busyBoxName } from "../lib/store.svelte";
   import { save, open } from "@tauri-apps/plugin-dialog";
   import { createBoxConnection, type BoxConnection } from "../lib/ws";
   import type { ListEntry, BoxActivityState } from "../lib/types";

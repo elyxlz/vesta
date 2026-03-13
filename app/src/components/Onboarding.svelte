@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from "svelte";
   import { listen } from "@tauri-apps/api/event";
   import { createBox, boxStatus, authenticate, submitAuthCode, startBox, waitForReady, checkPlatform, setupPlatform } from "../lib/api";
-  import { getOnboarding, updateOnboarding, resetOnboarding } from "../lib/store";
+  import { getOnboarding, updateOnboarding, resetOnboarding } from "../lib/store.svelte";
   import type { PlatformStatus } from "../lib/types";
   import ProgressBar from "./ProgressBar.svelte";
 
