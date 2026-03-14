@@ -104,8 +104,15 @@
     setView("grid");
   }
 
-  function handleOnboardingComplete(_name: string) {
-    setView("grid");
+  async function handleOnboardingComplete(name: string) {
+    hasBoxes = true;
+    const boxes = await listBoxes().catch(() => []);
+    const box = boxes.find((b) => b.name === name);
+    if (box) {
+      handleSelectBox(box.name, box.ws_port);
+    } else {
+      setView("grid");
+    }
   }
 
   let isDark = $derived(view === "box-console" || view === "box-chat");
