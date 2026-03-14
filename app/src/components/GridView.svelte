@@ -1,10 +1,13 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
+  import { getVersion } from "@tauri-apps/api/app";
   import { listBoxes, startBox, stopBox, restartBox, deleteBox, backupBox, restoreBox } from "../lib/api";
   import { getBoxOp, setBoxOp, clearBoxOp, busyBoxName } from "../lib/store.svelte";
   import { save, open } from "@tauri-apps/plugin-dialog";
   import { createBoxConnection, type BoxConnection } from "../lib/ws";
   import type { ListEntry, BoxActivityState } from "../lib/types";
+
+  let appVersion = $state("");
 
   let {
     onSelect,
@@ -73,11 +76,12 @@
     }
   }
 
-  onMount(() => {
+  onMount(async () => {
     refresh();
     poll = setInterval(refresh, 5000);
     document.addEventListener("click", onDocClick);
     document.addEventListener("keydown", onKeydown);
+    appVersion = await getVersion();
   });
 
   onDestroy(() => {
@@ -265,6 +269,9 @@
       </div>
     {/each}
   </div>
+  {#if appVersion}
+    <span class="version">v{appVersion}</span>
+  {/if}
 </div>
 
 <style>
@@ -654,6 +661,19 @@
     pointer-events: none;
   }
 
+  .version {
+    position: absolute;
+    bottom: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 10px;
+    font-weight: 400;
+    letter-spacing: 0.02em;
+    color: #c4bdb5;
+    user-select: none;
+    pointer-events: none;
+  }
+
   @media (prefers-color-scheme: dark) {
     .grid-view::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.08); }
 
@@ -717,6 +737,9 @@
     }
     .menu-divider {
       background: rgba(255, 255, 255, 0.06);
+    }
+    .version {
+      color: #5a5450;
     }
   }
 </style>
