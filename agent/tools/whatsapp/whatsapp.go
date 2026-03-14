@@ -749,6 +749,9 @@ func (wac *WhatsAppClient) SendMessageWithPresence(recipient, message string) (b
 		return false, "Recipient and message are required. Provide a contact name, phone number, or group name plus the message text"
 	}
 
+	// Strip shell-escaped special characters (e.g. \! -> !)
+	message = strings.NewReplacer(`\!`, `!`, `\?`, `?`, `\.`, `.`, `\-`, `-`, `\(`, `(`, `\)`, `)`, `\#`, `#`).Replace(message)
+
 	if err := wac.EnsureConnected(); err != nil {
 		return false, err.Error()
 	}
@@ -847,6 +850,9 @@ func (wac *WhatsAppClient) SendMessage(recipient, message string) (bool, string)
 	if recipient == "" || message == "" {
 		return false, "Recipient and message are required. Provide a contact name, phone number, or group name plus the message text"
 	}
+
+	// Strip shell-escaped special characters (e.g. \! -> !)
+	message = strings.NewReplacer(`\!`, `!`, `\?`, `?`, `\.`, `.`, `\-`, `-`, `\(`, `(`, `\)`, `)`, `\#`, `#`).Replace(message)
 
 	if err := wac.EnsureConnected(); err != nil {
 		return false, err.Error()
