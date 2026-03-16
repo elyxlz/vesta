@@ -1,0 +1,3 @@
+Check each relevant skill's SKILL.md and restart any background services that aren't running.
+
+Then check your User State in MEMORY.md and reach out on their preferred channel. Match the tone to the situation — if it's a new day, greet them warmly. If you just restarted mid-conversation, keep it brief. If you crashed, mention it. If it's the middle of the night, wait until morning.
