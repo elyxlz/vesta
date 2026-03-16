@@ -7,6 +7,33 @@ A personal AI assistant that runs as a persistent daemon in Docker, powered by C
 - Claude subscription
 - **Linux**: Docker
 - **macOS**: macOS 13+
+- **Windows**: WSL2
+
+## Install
+
+### macOS / Linux
+
+Desktop app (includes CLI):
+```bash
+curl -fsSL https://raw.githubusercontent.com/elyxlz/vesta/master/install.sh | bash
+```
+
+CLI only:
+```bash
+curl -fsSL https://raw.githubusercontent.com/elyxlz/vesta/master/install.sh | bash -s -- --cli
+```
+
+### Windows
+
+Desktop app (includes CLI):
+```powershell
+irm https://raw.githubusercontent.com/elyxlz/vesta/master/install.ps1 | iex
+```
+
+CLI only:
+```powershell
+irm https://raw.githubusercontent.com/elyxlz/vesta/master/install.ps1 | iex -CliOnly
+```
 
 ## Getting started
 
