@@ -1,0 +1,54 @@
+{
+  "productName": "Vesta",
+  "version": "0.1.92",
+  "identifier": "com.vesta.app",
+  "build": {
+    "beforeDevCommand": "cargo build --manifest-path ../cli/Cargo.toml && npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "cargo build --release --manifest-path ../cli/Cargo.toml && npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "macOSPrivateApi": true,
+    "windows": [
+      {
+        "title": "Vesta",
+        "width": 380,
+        "height": 380,
+        "decorations": false,
+        "resizable": false,
+        "transparent": true,
+        "shadow": false,
+        "backgroundColor": [0, 0, 0, 0]
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/elyxlz/vesta/releases/latest/download/latest.json"
+      ],
+      "pubkey": "RWT4khqXLpL0lgzv2o6/1EFJPw77M8+KYc+SzpQ2CyZ8WpdAqufrVSNt"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "externalBin": [
+      "binaries/vesta"
+    ],
+    "resources": [
+      "resources/*"
+    ]
+  }
+}

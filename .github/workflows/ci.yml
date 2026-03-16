@@ -1,0 +1,1085 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  release:
+    types: [created]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  VFKIT_VERSION: "0.6.0"
+  NSIS_VERSION: "3.11"
+
+jobs:
+  # ── Detect what changed (for smart PR filtering) ────────────────────────
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      cli: ${{ steps.filter.outputs.cli }}
+      app: ${{ steps.filter.outputs.app }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            cli:
+              - 'cli/**'
+            app:
+              - 'app/**'
+
+  # ── Version check ──────────────────────────────────────────────────────
+  version-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check version sync across sources
+        run: |
+          AGENT=$(grep '^version = ' agent/pyproject.toml | cut -d'"' -f2)
+          CLI=$(grep '^version = ' cli/Cargo.toml | head -1 | cut -d'"' -f2)
+          TAURI_CONF=$(python3 -c "import json; print(json.load(open('app/src-tauri/tauri.conf.json'))['version'])")
+          TAURI_CARGO=$(grep '^version = ' app/src-tauri/Cargo.toml | head -1 | cut -d'"' -f2)
+          APP=$(python3 -c "import json; print(json.load(open('app/package.json'))['version'])")
+
+          echo "agent:       $AGENT"
+          echo "cli:         $CLI"
+          echo "tauri.conf:  $TAURI_CONF"
+          echo "tauri cargo: $TAURI_CARGO"
+          echo "app:         $APP"
+
+          FAIL=0
+          for name_val in "cli:$CLI" "tauri.conf:$TAURI_CONF" "tauri-cargo:$TAURI_CARGO" "app:$APP"; do
+            name="${name_val%%:*}"
+            val="${name_val#*:}"
+            if [ "$AGENT" != "$val" ]; then
+              echo "❌ agent ($AGENT) != $name ($val)"
+              FAIL=1
+            fi
+          done
+          if [ "$FAIL" = "1" ]; then
+            echo "All version sources must match"
+            exit 1
+          fi
+          echo "✓ All versions match: $AGENT"
+
+      - name: Check tag matches version
+        if: github.event_name == 'release'
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          TAG="${TAG#v}"
+          VERSION=$(grep '^version = ' agent/pyproject.toml | cut -d'"' -f2)
+          echo "Tag: v$TAG"
+          echo "Version: $VERSION"
+          if [ "$TAG" != "$VERSION" ]; then
+            echo "❌ Tag v$TAG does not match pyproject.toml version $VERSION"
+            exit 1
+          fi
+          echo "✓ Tag matches version"
+
+  # ── Frontend unit tests ──────────────────────────────────────────────
+  test-frontend:
+    needs: detect-changes
+    if: github.event_name != 'pull_request' || needs.detect-changes.outputs.app == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Install deps
+        working-directory: app
+        run: npm ci
+
+      - name: Type check
+        working-directory: app
+        run: npm run check
+
+      - name: Run tests
+        working-directory: app
+        run: npm test
+
+  # ── Build CLI (all unix targets) ──────────────────────────────────────
+  build-cli:
+    needs: [version-check]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact: vesta-x86_64-unknown-linux-gnu
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact: vesta-aarch64-unknown-linux-gnu
+            cross: true
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            artifact: vesta-aarch64-apple-darwin
+            vfkit: true
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            artifact: vesta-x86_64-apple-darwin
+            vfkit: true
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: cli
+          key: ${{ matrix.target }}
+
+      - name: Install Linux cross-compile deps
+        if: matrix.cross
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          mkdir -p cli/.cargo
+          echo '[target.aarch64-unknown-linux-gnu]' >> cli/.cargo/config.toml
+          echo 'linker = "aarch64-linux-gnu-gcc"' >> cli/.cargo/config.toml
+
+      - name: Clippy
+        if: "!matrix.cross"
+        working-directory: cli
+        run: cargo clippy --target ${{ matrix.target }} -- -D warnings
+
+      - name: Test
+        if: "!matrix.cross"
+        working-directory: cli
+        run: cargo test --target ${{ matrix.target }}
+
+      - name: Build CLI
+        working-directory: cli
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Download vfkit
+        if: matrix.vfkit
+        run: |
+          curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors -o /tmp/vfkit \
+            "https://github.com/crc-org/vfkit/releases/download/v${VFKIT_VERSION}/vfkit"
+          chmod +x /tmp/vfkit
+
+      - name: Package
+        run: |
+          mkdir staging
+          cp cli/target/${{ matrix.target }}/release/vesta staging/
+          if [ -f /tmp/vfkit ]; then
+            cp /tmp/vfkit staging/
+          fi
+          tar -czf ${{ matrix.artifact }}.tar.gz -C staging .
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}.tar.gz
+
+  # ── Test Linux CLI ────────────────────────────────────────────────────
+  test-linux:
+    needs: build-cli
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Download CLI
+        uses: actions/download-artifact@v8
+        with:
+          name: vesta-x86_64-unknown-linux-gnu
+          path: .
+
+      - name: Extract
+        run: |
+          mkdir -p cli-extract
+          tar -xzf vesta-x86_64-unknown-linux-gnu.tar.gz -C cli-extract
+          chmod +x cli-extract/vesta
+
+      - name: Login to ghcr.io
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: E2E test
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          CLI="cli-extract/vesta"
+          AGENT="ci-test"
+
+          assert_agent_status() {
+            local agent="$1"; shift
+            local s
+            s=$("$CLI" status "$agent" --json)
+            echo "$s"
+            for expr in "$@"; do
+              echo "$s" | jq -e "$expr" || { echo "FAIL: $expr"; exit 1; }
+            done
+          }
+
+          assert_status() {
+            assert_agent_status "$AGENT" "$@"
+          }
+
+          cleanup() {
+            echo "=== Cleanup ==="
+            "$CLI" destroy ci-test --yes 2>/dev/null || true
+            "$CLI" destroy ci-test2 --yes 2>/dev/null || true
+            "$CLI" destroy ci-restored --yes 2>/dev/null || true
+            "$CLI" destroy my-test-agent --yes 2>/dev/null || true
+            "$CLI" destroy ci-wait-test --yes 2>/dev/null || true
+            "$CLI" destroy ci-destroy-test --yes 2>/dev/null || true
+            "$CLI" destroy ci-friendly --yes 2>/dev/null || true
+            "$CLI" destroy ci-status-test --yes 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          echo "=== basic commands ==="
+          "$CLI" --version
+          "$CLI" --help
+
+          echo "=== status before create ==="
+          assert_status '.status == "not_found"'
+
+          echo "=== list before create ==="
+          LIST=$("$CLI" list --json)
+          echo "$LIST"
+          echo "$LIST" | jq -e 'length == 0' || { echo "FAIL: list should be empty"; exit 1; }
+
+          echo "=== create with name ==="
+          "$CLI" create --name ci-test
+
+          echo "=== status after create ==="
+          assert_status '.status == "stopped" or .status == "created"' '.name == "ci-test"'
+
+          echo "=== list after create ==="
+          LIST=$("$CLI" list --json)
+          echo "$LIST"
+          echo "$LIST" | jq -e 'length == 1' || { echo "FAIL: list should have 1 entry"; exit 1; }
+          echo "$LIST" | jq -e '.[0].name == "ci-test"' || { echo "FAIL: list entry name"; exit 1; }
+
+          echo "=== container image sanity ==="
+          docker run --rm --entrypoint sh ghcr.io/elyxlz/vesta:latest -c "claude --version"
+          docker run --rm --entrypoint sh ghcr.io/elyxlz/vesta:latest -c \
+            "test -d /root/logs && test -d /root/data && test -d /root/notifications && echo dirs ok"
+
+          echo "=== auth URL capture ==="
+          AUTH_OUTPUT=$(docker run --rm --entrypoint sh ghcr.io/elyxlz/vesta:latest \
+            -c "timeout 15 claude setup-token 2>&1 || true")
+          echo "$AUTH_OUTPUT"
+          echo "$AUTH_OUTPUT" | grep -qE 'https://' || { echo "FAIL: no auth URL in output"; exit 1; }
+          echo "auth URL found"
+
+          echo "=== auth with token ==="
+          "$CLI" auth "$AGENT" --token '{"claudeAiOauth":{"accessToken":"ci-test","refreshToken":"ci-test","expiresAt":4070908800000}}'
+
+          echo "=== verify authenticated ==="
+          assert_status '.authenticated == true'
+
+          echo "=== start ==="
+          "$CLI" start "$AGENT"
+          assert_status '.status == "running"'
+
+          echo "=== verify credential file in container ==="
+          CREDS=$(docker exec vesta-ci-test cat /root/.claude/.credentials.json)
+          echo "$CREDS" | jq -e '.claudeAiOauth.accessToken == "ci-test"' || { echo "FAIL: credentials not injected correctly"; exit 1; }
+          echo "credentials verified"
+
+          echo "=== stop ==="
+          "$CLI" stop "$AGENT"
+          assert_status '.status != "running"'
+
+          echo "=== restart ==="
+          "$CLI" start "$AGENT"
+          "$CLI" restart "$AGENT"
+          assert_status '.status == "running"'
+
+          echo "=== backup ==="
+          "$CLI" backup "$AGENT" /tmp/test-backup.tar.gz
+          test -f /tmp/test-backup.tar.gz || { echo "FAIL: backup file not created"; exit 1; }
+          echo "backup file created"
+
+          echo "=== rebuild preserves auth ==="
+          "$CLI" rebuild "$AGENT"
+          assert_status '.status == "running"' '.authenticated == true'
+          echo "rebuild preserved credentials"
+
+          echo "=== destroy ==="
+          "$CLI" destroy "$AGENT" --yes
+          assert_status '.status == "not_found"'
+
+          echo "=== restore from backup ==="
+          "$CLI" restore /tmp/test-backup.tar.gz --name ci-test
+          assert_status '.status == "stopped" or .status == "created"' '.name == "ci-test"'
+
+          echo "=== restore conflict (should fail) ==="
+          if "$CLI" restore /tmp/test-backup.tar.gz --name ci-test 2>/dev/null; then
+            echo "FAIL: restore should fail when agent already exists"
+            exit 1
+          fi
+          echo "restore conflict correctly rejected"
+
+          echo "=== restore with --replace ==="
+          "$CLI" restore /tmp/test-backup.tar.gz --name ci-test --replace
+          assert_status '.status == "stopped" or .status == "created"' '.name == "ci-test"'
+          echo "restore --replace succeeded"
+
+          echo "=== restore with different name ==="
+          "$CLI" restore /tmp/test-backup.tar.gz --name ci-restored
+          assert_agent_status ci-restored '.status == "stopped" or .status == "created"' '.name == "ci-restored"'
+          echo "restore to different name succeeded"
+
+          echo "=== multi-agent: create second agent ==="
+          "$CLI" create --name ci-test2
+
+          echo "=== multi-agent: list shows all agents ==="
+          LIST=$("$CLI" list --json)
+          echo "$LIST"
+          echo "$LIST" | jq -e 'length == 3' || { echo "FAIL: list should have 3 entries (ci-test, ci-test2, ci-restored)"; exit 1; }
+          echo "list shows 3 agents"
+
+          echo "=== multi-agent: unique ports ==="
+          PORT1=$(echo "$LIST" | jq -r '.[] | select(.name == "ci-test") | .ws_port')
+          PORT2=$(echo "$LIST" | jq -r '.[] | select(.name == "ci-test2") | .ws_port')
+          PORT3=$(echo "$LIST" | jq -r '.[] | select(.name == "ci-restored") | .ws_port')
+          echo "ports: ci-test=$PORT1 ci-test2=$PORT2 ci-restored=$PORT3"
+          if [ "$PORT1" = "$PORT2" ] || [ "$PORT1" = "$PORT3" ] || [ "$PORT2" = "$PORT3" ]; then
+            echo "FAIL: agents have duplicate ports"
+            exit 1
+          fi
+          echo "all ports unique"
+
+          echo "=== multi-agent: start all ==="
+          "$CLI" start
+          assert_agent_status ci-test '.status == "running"'
+          assert_agent_status ci-test2 '.status == "running"'
+          assert_agent_status ci-restored '.status == "running"'
+          echo "start-all started all agents"
+
+          echo "=== multi-agent: stop one, start-all skips running ==="
+          "$CLI" stop ci-test2
+          assert_agent_status ci-test2 '.status != "running"'
+          "$CLI" start
+          assert_agent_status ci-test '.status == "running"'
+          assert_agent_status ci-test2 '.status == "running"'
+          assert_agent_status ci-restored '.status == "running"'
+          echo "start-all restarted only stopped agent"
+
+          echo "=== multi-agent: independent status ==="
+          "$CLI" stop ci-test
+          assert_agent_status ci-test '.status != "running"'
+          assert_agent_status ci-test2 '.status == "running"'
+          echo "agents have independent status"
+
+          echo "=== name normalization ==="
+          "$CLI" create --name "My Test Agent"
+          assert_agent_status my-test-agent '.name == "my-test-agent"'
+          "$CLI" destroy my-test-agent --yes
+          echo "name normalization works"
+
+          echo "=== name validation: empty ==="
+          if "$CLI" create --name "" 2>/dev/null; then
+            echo "FAIL: empty name should be rejected"; exit 1
+          fi
+          echo "empty name correctly rejected"
+
+          echo "=== wait-ready (authenticated agent) ==="
+          "$CLI" create --name ci-wait-test
+          "$CLI" auth ci-wait-test --token '{"claudeAiOauth":{"accessToken":"ci-test","refreshToken":"ci-test","expiresAt":4070908800000}}'
+          "$CLI" start ci-wait-test
+          "$CLI" wait-ready ci-wait-test --timeout 30
+          echo "wait-ready works"
+          "$CLI" destroy ci-wait-test --yes
+
+          echo "=== destroy auto-stops running container ==="
+          "$CLI" create --name ci-destroy-test
+          "$CLI" auth ci-destroy-test --token '{"claudeAiOauth":{"accessToken":"ci-test","refreshToken":"ci-test","expiresAt":4070908800000}}'
+          "$CLI" start ci-destroy-test
+          assert_agent_status ci-destroy-test '.status == "running"'
+          "$CLI" destroy ci-destroy-test --yes
+          assert_agent_status ci-destroy-test '.status == "not_found"'
+          echo "destroy auto-stopped and removed"
+
+          echo "=== friendly_status in list ==="
+          "$CLI" create --name ci-friendly
+          LIST=$("$CLI" list --json)
+          echo "$LIST" | jq -e '.[] | select(.name == "ci-friendly") | .friendly_status == "stopped"' || { echo "FAIL: friendly_status should be stopped"; exit 1; }
+          echo "$LIST" | jq -e '.[] | select(.name == "ci-friendly") | .alive == false' || { echo "FAIL: alive should be false"; exit 1; }
+          "$CLI" destroy ci-friendly --yes
+          echo "friendly_status and alive fields work"
+
+          echo "=== status includes alive and friendly_status ==="
+          "$CLI" create --name ci-status-test
+          STATUS=$("$CLI" status ci-status-test --json)
+          echo "$STATUS" | jq -e '.alive == false' || { echo "FAIL: alive should be false when stopped"; exit 1; }
+          echo "$STATUS" | jq -e '.friendly_status == "stopped"' || { echo "FAIL: friendly_status should be stopped"; exit 1; }
+          "$CLI" destroy ci-status-test --yes
+          echo "status fields work"
+
+          echo "=== cleanup extra agents ==="
+          "$CLI" destroy ci-test2 --yes
+          "$CLI" destroy ci-restored --yes
+          "$CLI" destroy ci-test --yes
+
+          echo "=== all tests passed ==="
+
+  # ── Test macOS CLI ────────────────────────────────────────────────────
+  test-macos:
+    needs: [build-cli, build-vm-image]
+    if: ${{ !failure() && !cancelled() }}
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download CLI
+        uses: actions/download-artifact@v8
+        with:
+          name: vesta-aarch64-apple-darwin
+          path: .
+
+      - name: Extract
+        run: |
+          mkdir -p cli-extract
+          tar -xzf vesta-aarch64-apple-darwin.tar.gz -C cli-extract
+          chmod +x cli-extract/vesta cli-extract/vfkit
+
+      - name: E2E test
+        run: |
+          set -euo pipefail
+          CLI="cli-extract/vesta"
+
+          echo "=== basic commands ==="
+          "$CLI" --version
+          "$CLI" --help
+
+          echo "=== list without VM ==="
+          LIST=$("$CLI" list --json)
+          echo "$LIST"
+          echo "$LIST" | jq -e 'length == 0'
+
+          echo "=== verify vfkit ==="
+          ls -la cli-extract/vfkit
+          file cli-extract/vfkit
+
+      - name: Ad-hoc sign and verify
+        run: |
+          codesign --force --sign - cli-extract/vesta
+          codesign --force --sign - cli-extract/vfkit
+          codesign --verify --verbose cli-extract/vesta
+          codesign --verify --verbose cli-extract/vfkit
+
+      # Test VM image extraction + CLI integration (non-PR only)
+      - name: Download VM image
+        if: github.event_name != 'pull_request'
+        uses: actions/download-artifact@v8
+        with:
+          name: vm-image-arm64
+          path: .
+
+      - name: Test VM image and CLI integration
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          CLI="cli-extract/vesta"
+          DATA_DIR="$HOME/Library/Application Support/vesta"
+          mkdir -p "$DATA_DIR"
+
+          # Extract VM image and place in data dir (simulates successful download+extraction)
+          tar --zstd -xf vesta-vm-arm64.tar.zst -C "$DATA_DIR"
+          for f in vm-kernel vm-initrd vm-disk.raw; do
+            test -s "$DATA_DIR/$f" || { echo "FAIL: $f missing"; exit 1; }
+          done
+          echo "VM image files OK"
+
+          # setup will skip download (files exist), generate SSH key, try to boot vfkit (will fail)
+          "$CLI" setup --name ci-test --yes 2>&1 || true
+
+          # Verify SSH key was generated
+          test -f "$DATA_DIR/ssh_key" || { echo "FAIL: SSH key not generated"; exit 1; }
+          test -f "$DATA_DIR/ssh_key.pub" || { echo "FAIL: SSH public key not generated"; exit 1; }
+          echo "SSH key generation OK"
+
+          # Status should show not_found (vfkit can't run in CI)
+          STATUS=$("$CLI" status ci-test --json)
+          echo "$STATUS"
+          echo "$STATUS" | jq -e '.status == "not_found"'
+          echo "all macOS integration tests passed"
+
+  # ── Build VM images (non-PR only) ────────────────────────────────────
+  build-vm-image:
+    needs: build-cli
+    if: github.event_name != 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            cli-artifact: vesta-x86_64-unknown-linux-gnu
+          - arch: arm64
+            cli-artifact: vesta-aarch64-unknown-linux-gnu
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up QEMU
+        if: matrix.arch == 'arm64'
+        uses: docker/setup-qemu-action@v4
+
+      - name: Download Linux CLI
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ matrix.cli-artifact }}
+          path: .
+
+      - name: Extract CLI binary
+        run: |
+          mkdir -p /tmp/cli-extract
+          tar -xzf ${{ matrix.cli-artifact }}.tar.gz -C /tmp/cli-extract
+          cp /tmp/cli-extract/vesta cli/vm/vesta
+
+      - name: Build VM Docker image
+        run: docker build --platform linux/${{ matrix.arch }} -t vesta-vm -f cli/vm/Dockerfile cli/vm
+
+      - name: Export rootfs and create disk image
+        run: |
+          CONTAINER=$(docker create --platform linux/${{ matrix.arch }} vesta-vm)
+
+          docker export "$CONTAINER" > /tmp/rootfs.tar
+
+          truncate -s 2G /tmp/vm-disk.raw
+          mkfs.ext4 -q /tmp/vm-disk.raw
+          MOUNT_DIR=$(mktemp -d)
+          sudo mount /tmp/vm-disk.raw "$MOUNT_DIR"
+          trap "sudo umount '$MOUNT_DIR' 2>/dev/null; rmdir '$MOUNT_DIR' 2>/dev/null" EXIT
+          sudo tar -xf /tmp/rootfs.tar -C "$MOUNT_DIR"
+
+          VMLINUZ="$MOUNT_DIR/boot/vmlinuz-virt"
+          INITRD="$MOUNT_DIR/boot/initramfs-virt"
+
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            # ARM64 Alpine vmlinuz is an EFI stub wrapping a gzip kernel;
+            # vfkit needs the raw uncompressed kernel image
+            sudo python3 -c "
+          import zlib
+          d = open('$VMLINUZ', 'rb').read()
+          off = d.find(b'\x1f\x8b\x08')
+          if off >= 0:
+              raw = zlib.decompressobj(zlib.MAX_WBITS | 16).decompress(d[off:])
+              open('/tmp/vm-kernel', 'wb').write(raw)
+          else:
+              import shutil
+              shutil.copy('$VMLINUZ', '/tmp/vm-kernel')
+          "
+          else
+            sudo cp "$VMLINUZ" /tmp/vm-kernel
+          fi
+          sudo cp "$INITRD" /tmp/vm-initrd
+
+          sudo umount "$MOUNT_DIR"
+          rmdir "$MOUNT_DIR"
+          trap - EXIT
+          docker rm "$CONTAINER" > /dev/null
+          sudo chown "$(id -u):$(id -g)" /tmp/vm-kernel /tmp/vm-initrd /tmp/vm-disk.raw
+          for f in /tmp/vm-kernel /tmp/vm-initrd /tmp/vm-disk.raw; do
+            test -s "$f" || { echo "FATAL: $f is empty"; exit 1; }
+          done
+
+          cd /tmp
+          tar --zstd -cf vesta-vm-${{ matrix.arch }}.tar.zst vm-kernel vm-initrd vm-disk.raw
+          gzip -c /tmp/rootfs.tar > /tmp/vesta-wsl-rootfs.tar.gz
+
+          rm -f /tmp/rootfs.tar /tmp/vm-kernel /tmp/vm-initrd /tmp/vm-disk.raw
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: vm-image-${{ matrix.arch }}
+          path: /tmp/vesta-vm-${{ matrix.arch }}.tar.zst
+
+      - uses: actions/upload-artifact@v7
+        if: matrix.arch == 'amd64'
+        with:
+          name: wsl-rootfs
+          path: /tmp/vesta-wsl-rootfs.tar.gz
+
+      - name: Clean up
+        run: rm -f cli/vm/vesta
+
+  # ── Windows Clippy (runs on PRs too) ─────────────────────────────────
+  clippy-windows:
+    needs: [version-check, detect-changes]
+    if: >-
+      github.event_name != 'pull_request' ||
+      needs.detect-changes.outputs.cli == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: cli
+          key: x86_64-pc-windows-msvc
+
+      - name: Clippy
+        working-directory: cli
+        run: cargo clippy --target x86_64-pc-windows-msvc -- -D warnings
+
+  # ── Build + Test Windows CLI (native MSVC) ───────────────────────────
+  build-test-windows:
+    needs: [build-vm-image, clippy-windows]
+    if: ${{ !failure() && !cancelled() && github.event_name != 'pull_request' }}
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: cli
+          key: x86_64-pc-windows-msvc
+
+      - name: Build CLI
+        working-directory: cli
+        run: cargo build --release --target x86_64-pc-windows-msvc
+
+      - name: Download rootfs
+        uses: actions/download-artifact@v8
+        with:
+          name: wsl-rootfs
+          path: .
+
+      - name: E2E test
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          CLI="cli/target/x86_64-pc-windows-msvc/release/vesta.exe"
+          VCLI="/usr/local/bin/vesta"
+
+          cleanup() {
+            echo "=== Cleanup ==="
+            wsl.exe --unregister vesta-wsl 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          echo "=== windows cli basics ==="
+          "$CLI" --version
+          "$CLI" --help
+
+          echo "=== verify rootfs ==="
+          ls -la vesta-wsl-rootfs.tar.gz
+          file vesta-wsl-rootfs.tar.gz
+
+          echo "=== WSL import ==="
+          INSTALL_DIR="$LOCALAPPDATA\\vesta-wsl-test"
+          mkdir -p "$INSTALL_DIR"
+          wsl.exe --import vesta-wsl "$INSTALL_DIR" vesta-wsl-rootfs.tar.gz --version 2
+          echo "import succeeded"
+
+          echo "=== distro health ==="
+          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec /bin/true
+          echo "distro is healthy"
+
+          echo "=== linux cli inside WSL ==="
+          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec $VCLI --version
+          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec $VCLI --help
+
+          echo "=== start entrypoint for docker ==="
+          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec /entrypoint.sh &
+          ENTRY_PID=$!
+
+          echo "=== wait for docker ==="
+          for i in $(seq 1 30); do
+            if MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec test -S /var/run/docker.sock 2>/dev/null; then
+              echo "docker ready after ${i}s"
+              break
+            fi
+            [ "$i" -eq 30 ] && { echo "docker not ready"; exit 1; }
+            sleep 1
+          done
+
+          echo "=== list before create ==="
+          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec $VCLI list --json
+
+          echo "=== container image tests (skipped: WSL2 has no internet on CI runners) ==="
+          echo "These tests are covered by test-linux which runs the same checks"
+
+          echo "=== all tests passed ==="
+
+      - name: Package Windows CLI zip
+        shell: bash
+        run: |
+          mkdir vesta-windows
+          cp cli/target/x86_64-pc-windows-msvc/release/vesta.exe vesta-windows/
+          7z a vesta-x86_64-pc-windows-msvc.zip vesta-windows/
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: vesta-x86_64-pc-windows-msvc
+          path: vesta-x86_64-pc-windows-msvc.zip
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-cli-exe
+          path: cli/target/x86_64-pc-windows-msvc/release/vesta.exe
+
+  # ── Build Tauri app (unix) ────────────────────────────────────────────
+  build-tauri:
+    needs: [build-cli, test-frontend, detect-changes]
+    if: >-
+      !failure() && !cancelled() && (
+      github.event_name != 'pull_request' ||
+      needs.detect-changes.outputs.cli == 'true' ||
+      needs.detect-changes.outputs.app == 'true'
+      )
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            cli-artifact: vesta-x86_64-unknown-linux-gnu
+            bundles: deb,appimage,rpm
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+            cli-artifact: vesta-aarch64-unknown-linux-gnu
+            bundles: deb,appimage,rpm
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            cli-artifact: vesta-aarch64-apple-darwin
+            bundles: dmg
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            cli-artifact: vesta-x86_64-apple-darwin
+            bundles: dmg
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+          key: ${{ matrix.target }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Install Linux deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential pkg-config \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev
+
+      - name: Download CLI sidecar
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ matrix.cli-artifact }}
+          path: .
+
+      - name: Install CLI sidecar
+        run: |
+          mkdir -p app/src-tauri/binaries
+          mkdir -p /tmp/cli-extract
+          tar -xzf ${{ matrix.cli-artifact }}.tar.gz -C /tmp/cli-extract
+          mv /tmp/cli-extract/vesta app/src-tauri/binaries/vesta-${{ matrix.target }}
+          chmod +x app/src-tauri/binaries/vesta-${{ matrix.target }}
+          if [ -f /tmp/cli-extract/vfkit ]; then
+            cp /tmp/cli-extract/vfkit app/src-tauri/resources/
+          fi
+
+      - name: Ad-hoc sign binaries (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          codesign --force --sign - app/src-tauri/binaries/vesta-${{ matrix.target }}
+          if [ -f app/src-tauri/resources/vfkit ]; then
+            codesign --force --sign - app/src-tauri/resources/vfkit
+          fi
+
+      - name: Install frontend deps
+        working-directory: app
+        run: npm ci
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: app
+          tauriScript: npx tauri
+          args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+
+      - name: Verify macOS app bundle
+        if: runner.os == 'macOS'
+        run: |
+          DMG=$(find app/src-tauri/target/${{ matrix.target }}/release/bundle -name '*.dmg' | head -1)
+          echo "DMG: $DMG"
+          MOUNT=$(hdiutil attach "$DMG" -nobrowse | tail -1 | awk '{print $NF}')
+          echo "Mounted at: $MOUNT"
+          APP=$(find "$MOUNT" -name '*.app' -maxdepth 1 | head -1)
+          echo "App: $APP"
+          echo "=== MacOS dir ==="
+          ls -la "$APP/Contents/MacOS/"
+          echo "=== Resources dir ==="
+          ls -laR "$APP/Contents/Resources/"
+          test -x "$APP/Contents/MacOS/vesta" || { echo "FAIL: sidecar not found"; exit 1; }
+          VFKIT=$(find "$APP" -name vfkit -type f | head -1)
+          test -n "$VFKIT" || { echo "FAIL: vfkit not found anywhere in bundle"; exit 1; }
+          echo "vfkit found at: $VFKIT"
+          hdiutil detach "$MOUNT" -quiet
+          echo "app bundle OK"
+
+      - name: Collect artifacts
+        if: github.event_name != 'pull_request'
+        run: |
+          mkdir -p tauri-out
+          find app/src-tauri/target/${{ matrix.target }}/release/bundle \
+            -type f \( -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' -o -name '*.dmg' -o -name '*.tar.gz' -o -name '*.sig' \) \
+            -exec cp {} tauri-out/ \;
+          # Disambiguate macOS updater artifacts by architecture (both builds produce Vesta.app.tar.gz)
+          ARCH_PREFIX=$(echo "${{ matrix.target }}" | cut -d'-' -f1)
+          for f in tauri-out/Vesta.app.tar.gz*; do
+            [ -f "$f" ] && mv "$f" "${f/Vesta.app/Vesta_${ARCH_PREFIX}.app}"
+          done
+          [ "$(ls -A tauri-out)" ] || { echo "No artifacts collected"; exit 1; }
+
+      - uses: actions/upload-artifact@v7
+        if: github.event_name != 'pull_request'
+        with:
+          name: tauri-${{ matrix.target }}
+          path: tauri-out/*
+
+  # ── Build Tauri app (Windows, non-PR) ────────────────────────────────
+  build-tauri-windows:
+    needs: [build-test-windows]
+    if: ${{ !failure() && !cancelled() && github.event_name != 'pull_request' }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+          key: x86_64-pc-windows-msvc
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Download Windows CLI sidecar
+        uses: actions/download-artifact@v8
+        with:
+          name: windows-cli-exe
+          path: .
+
+      - name: Install CLI sidecar
+        shell: bash
+        run: |
+          mkdir -p app/src-tauri/binaries
+          cp vesta.exe app/src-tauri/binaries/vesta-x86_64-pc-windows-msvc.exe
+
+      - name: Cache NSIS
+        id: cache-nsis
+        uses: actions/cache@v5
+        with:
+          path: ~\AppData\Local\tauri\NSIS
+          key: nsis-${{ env.NSIS_VERSION }}
+
+      - name: Pre-install NSIS
+        if: steps.cache-nsis.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          NSIS_DIR="$LOCALAPPDATA/tauri/NSIS"
+          mkdir -p "$NSIS_DIR"
+          curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors \
+            -o /tmp/nsis.zip \
+            "https://github.com/tauri-apps/binary-releases/releases/download/nsis-${NSIS_VERSION}/nsis-${NSIS_VERSION}.zip"
+          unzip -qo /tmp/nsis.zip -d "$NSIS_DIR"
+          rm /tmp/nsis.zip
+
+      - name: Install frontend deps
+        working-directory: app
+        run: npm ci
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: app
+          tauriScript: npx tauri
+          args: --target x86_64-pc-windows-msvc --bundles nsis
+
+      - name: Collect artifacts
+        shell: bash
+        run: |
+          mkdir -p tauri-out
+          cp app/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe tauri-out/
+          find app/src-tauri/target/x86_64-pc-windows-msvc/release/bundle -name '*.sig' -exec cp {} tauri-out/ \;
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: tauri-x86_64-pc-windows-msvc
+          path: tauri-out/*
+
+  # ── Push Docker image (release only) ─────────────────────────────────
+  push-image:
+    needs: [test-linux, build-test-windows]
+    if: ${{ !failure() && !cancelled() && github.event_name == 'release' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to ghcr.io
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ github.event.release.tag_name }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ── Upload artifacts to release and publish ──────────────────────────
+  release:
+    needs: [build-cli, test-frontend, test-linux, test-macos, build-vm-image, build-test-windows, build-tauri, build-tauri-windows, push-image]
+    if: ${{ !failure() && !cancelled() && github.event_name == 'release' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          pattern: "!*.dockerbuild"
+
+      - name: Collect release assets
+        run: |
+          mkdir release
+          find artifacts -type f \( \
+            -name '*.tar.gz' -o -name '*.tar.zst' -o -name '*.zip' -o \
+            -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' -o -name '*.dmg' -o \
+            -name '*-setup.exe' -o -name '*_x64-setup.exe' -o \
+            -name '*.sig' \
+          \) -exec cp {} release/ \;
+          ls -lh release/
+
+      - name: Generate updater manifest
+        run: |
+          VERSION="${{ github.event.release.tag_name }}"
+          VERSION="${VERSION#v}"
+          REPO="elyxlz/vesta"
+          BASE="https://github.com/${REPO}/releases/download/v${VERSION}"
+          DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          read_sig() {
+            local f="release/$1"
+            if [ -f "$f" ]; then cat "$f"; else echo ""; fi
+          }
+
+          # Tauri updater platform keys: {os}-{arch}
+          # macOS uses .app.tar.gz, Linux uses .AppImage.tar.gz, Windows uses .nsis.zip
+          cat > release/latest.json << MANIFEST
+          {
+            "version": "${VERSION}",
+            "pub_date": "${DATE}",
+            "platforms": {
+              "darwin-aarch64": {
+                "url": "${BASE}/Vesta_aarch64.app.tar.gz",
+                "signature": "$(read_sig Vesta_aarch64.app.tar.gz.sig)"
+              },
+              "darwin-x86_64": {
+                "url": "${BASE}/Vesta_x86_64.app.tar.gz",
+                "signature": "$(read_sig Vesta_x86_64.app.tar.gz.sig)"
+              },
+              "linux-x86_64": {
+                "url": "${BASE}/Vesta_${VERSION}_amd64.AppImage.tar.gz",
+                "signature": "$(read_sig Vesta_${VERSION}_amd64.AppImage.tar.gz.sig)"
+              },
+              "linux-aarch64": {
+                "url": "${BASE}/Vesta_${VERSION}_arm64.AppImage.tar.gz",
+                "signature": "$(read_sig Vesta_${VERSION}_arm64.AppImage.tar.gz.sig)"
+              },
+              "windows-x86_64": {
+                "url": "${BASE}/Vesta_${VERSION}_x64-setup.exe",
+                "signature": "$(read_sig Vesta_${VERSION}_x64-setup.exe.sig)"
+              }
+            }
+          }
+          MANIFEST
+          sed -i 's/^          //' release/latest.json
+          echo "Generated latest.json:"
+          cat release/latest.json
+
+      - name: Generate checksums
+        run: |
+          cd release
+          sha256sum $(ls | grep -v '\.sig$\|\.json$') > checksums.txt
+
+      - name: Upload assets and publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for f in release/*; do
+            gh release upload "${{ github.event.release.tag_name }}" "$f" --clobber
+          done
+          gh release edit "${{ github.event.release.tag_name }}" --draft=false

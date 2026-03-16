@@ -1,0 +1,29 @@
+[project]
+name = "microsoft"
+version = "0.1.0"
+description = "Microsoft Graph CLI for Outlook email and calendar"
+readme = {text = "", content-type = "text/plain"}
+authors = [
+    { name = "elyxlz" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.28.1",
+    "msal>=1.32.3",
+    "pydantic-settings>=2.7.0",
+]
+
+[project.scripts]
+microsoft = "microsoft_cli.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/microsoft_cli"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.0",
+]
