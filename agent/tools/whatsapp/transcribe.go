@@ -1,11 +1,11 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -13,41 +13,44 @@ import (
 	wav "github.com/go-audio/wav"
 )
 
-const defaultModelPath = "/usr/local/share/ggml-small.en.bin"
+const defaultModelPath = "/usr/local/share/ggml-small.bin"
 
 var (
-	whisperModel   whisper.Model
-	whisperModelMu sync.Mutex
+	whisperModel     whisper.Model
+	whisperModelOnce sync.Once
+	whisperModelErr  error
 )
 
 func getModelPath() string {
 	if p := os.Getenv("WHISPER_MODEL"); p != "" {
 		return p
 	}
-	// Try small.en first, fall back to tiny.en
+	// Prefer multilingual models, fall back to english-only
 	if _, err := os.Stat(defaultModelPath); err == nil {
 		return defaultModelPath
 	}
-	tiny := "/usr/local/share/ggml-tiny.en.bin"
-	if _, err := os.Stat(tiny); err == nil {
-		return tiny
+	fallbacks := []string{
+		"/usr/local/share/ggml-small.en.bin",
+		"/usr/local/share/ggml-tiny.bin",
+		"/usr/local/share/ggml-tiny.en.bin",
+	}
+	for _, fb := range fallbacks {
+		if _, err := os.Stat(fb); err == nil {
+			return fb
+		}
 	}
 	return defaultModelPath
 }
 
 func loadWhisperModel() (whisper.Model, error) {
-	whisperModelMu.Lock()
-	defer whisperModelMu.Unlock()
-	if whisperModel != nil {
-		return whisperModel, nil
-	}
-	modelPath := getModelPath()
-	model, err := whisper.New(modelPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load whisper model at %s: %w", modelPath, err)
-	}
-	whisperModel = model
-	return whisperModel, nil
+	whisperModelOnce.Do(func() {
+		modelPath := getModelPath()
+		whisperModel, whisperModelErr = whisper.New(modelPath)
+		if whisperModelErr != nil {
+			whisperModelErr = fmt.Errorf("failed to load whisper model at %s: %w", modelPath, whisperModelErr)
+		}
+	})
+	return whisperModel, whisperModelErr
 }
 
 // transcribeAudioBuiltIn transcribes audio using the built-in whisper.cpp bindings.
@@ -62,10 +65,10 @@ func transcribeAudioBuiltIn(audioPath string) (string, error) {
 	defer os.Remove(wavPath)
 
 	cmd := exec.Command("ffmpeg", "-i", audioPath, "-ar", "16000", "-ac", "1", "-f", "wav", "-y", wavPath)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
+	cmd.Stderr = nil
+	cmd.Stdout = nil
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("ffmpeg conversion failed: %w: %s", err, stderr.String())
+		return "", fmt.Errorf("ffmpeg conversion failed: %w", err)
 	}
 
 	// Read WAV file
@@ -78,6 +81,11 @@ func transcribeAudioBuiltIn(audioPath string) (string, error) {
 	ctx, err := model.NewContext()
 	if err != nil {
 		return "", fmt.Errorf("failed to create whisper context: %w", err)
+	}
+
+	// Auto-detect language (supports Italian, English, etc.)
+	if err := ctx.SetLanguage("auto"); err != nil {
+		return "", fmt.Errorf("failed to set language to auto: %w", err)
 	}
 
 	if err := ctx.Process(samples, nil, nil, nil); err != nil {
@@ -130,16 +138,11 @@ func readWAVSamples(path string) ([]float32, error) {
 
 // Convenience wrapper used by handleMessage
 func (wac *WhatsAppClient) transcribeAudioMessage(messageID, chatJID string) string {
-	tmpFile, err := os.CreateTemp("", "wa_audio_*.ogg")
-	if err != nil {
-		wac.logger.Warnf("Failed to create temp file for transcription: %v", err)
-		return ""
-	}
-	tmpPath := tmpFile.Name()
-	tmpFile.Close()
-	defer os.Remove(tmpPath)
+	// Download audio to temp file
+	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("wa_audio_%s.ogg", messageID))
+	defer os.Remove(tmpFile)
 
-	path, err := wac.DownloadMedia(messageID, chatJID, tmpPath)
+	path, err := wac.DownloadMedia(messageID, chatJID, tmpFile)
 	if err != nil {
 		wac.logger.Warnf("Failed to download audio for transcription: %v", err)
 		return ""

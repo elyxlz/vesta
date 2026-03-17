@@ -15,7 +15,7 @@ require (
 	github.com/beeper/argo-go v1.1.2 // indirect
 	github.com/coder/websocket v1.8.14 // indirect
 	github.com/elliotchance/orderedmap/v3 v3.1.0 // indirect
-	github.com/ggerganov/whisper.cpp/bindings/go v0.0.0-20260305053642-30c5194c9691 // indirect
+	github.com/ggerganov/whisper.cpp/bindings/go v0.0.0-20260317061908-dc9611662265 // indirect
 	github.com/go-audio/audio v1.0.0 // indirect
 	github.com/go-audio/riff v1.0.0 // indirect
 	github.com/go-audio/wav v1.1.0 // indirect
