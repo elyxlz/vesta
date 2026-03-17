@@ -174,8 +174,9 @@ async function cmdLaunch(args) {
       const b = await BrowserClaw.connect(existing.cdpUrl);
       await b.stop();
     } catch {}
-    const profileDir = join(SESSION_DIR, 'profile');
-    try { execSync(`pkill -f "user-data-dir=${profileDir}"`, { stdio: 'ignore' }); } catch {}
+    if (existing.pid) {
+      try { process.kill(existing.pid, 'SIGTERM'); } catch {}
+    }
     clearSession();
   }
 
@@ -232,8 +233,6 @@ async function cmdStop() {
 
   // Only kill local processes (remote sessions have no local PID)
   if (session.pid) {
-    const profileDir = join(SESSION_DIR, 'profile');
-    try { execSync(`pkill -f "user-data-dir=${profileDir}"`, { stdio: 'ignore' }); } catch {}
     try { process.kill(session.pid, 'SIGTERM'); } catch {}
   }
 
