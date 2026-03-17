@@ -123,41 +123,49 @@ main() {
         tar -xzf "$WORK_DIR/vesta.tar.gz" -C "$WORK_DIR"
         install_cli_to_path "$WORK_DIR/vesta"
       else
-        if [ "$ARCH" = "aarch64" ]; then
-          DEB_ARCH="arm64"
-          APPIMAGE_ARCH="aarch64"
-        else
-          DEB_ARCH="amd64"
-          APPIMAGE_ARCH="amd64"
+        APPIMAGE_ARCH=$([ "$ARCH" = "aarch64" ] && echo "aarch64" || echo "amd64")
+        APPIMAGE="Vesta_${VERSION}_${APPIMAGE_ARCH}.AppImage"
+        APPIMAGE_DIR="$HOME/.local/share/vesta"
+        APPIMAGE_PATH="$APPIMAGE_DIR/Vesta.AppImage"
+
+        echo "Downloading desktop app..."
+        mkdir -p "$APPIMAGE_DIR"
+        curl -fsSL -o "$WORK_DIR/Vesta.AppImage" "https://github.com/${REPO}/releases/download/v${VERSION}/${APPIMAGE}"
+        verify_checksum "$WORK_DIR/Vesta.AppImage" "$APPIMAGE"
+        install -m 755 "$WORK_DIR/Vesta.AppImage" "$APPIMAGE_PATH"
+
+        # Symlink to PATH
+        mkdir -p "$HOME/.local/bin"
+        ln -sf "$APPIMAGE_PATH" "$HOME/.local/bin/Vesta"
+        case ":$PATH:" in
+          *":$HOME/.local/bin:"*) ;;
+          *) echo "WARNING: $HOME/.local/bin is not in your PATH. Add it with:"
+             echo "  export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
+        esac
+
+        # Desktop entry for app launcher integration
+        mkdir -p "$HOME/.local/share/applications"
+        cat > "$HOME/.local/share/applications/vesta.desktop" << DESKTOP
+[Desktop Entry]
+Name=Vesta
+Exec=$APPIMAGE_PATH
+Icon=$APPIMAGE_DIR/vesta.png
+Type=Application
+Categories=Utility;
+StartupWMClass=vesta
+DESKTOP
+
+        # Extract icon from AppImage if possible
+        "$APPIMAGE_PATH" --appimage-extract usr/share/icons 2>/dev/null || true
+        ICON=$(find squashfs-root -name '*.png' 2>/dev/null | head -1)
+        if [ -n "$ICON" ]; then
+          cp "$ICON" "$APPIMAGE_DIR/vesta.png"
+          rm -rf squashfs-root
         fi
 
-        if command -v apt-get &>/dev/null; then
-          DEB="Vesta_${VERSION}_${DEB_ARCH}.deb"
-          echo "Downloading desktop app (.deb)..."
-          curl -fsSL -o "$WORK_DIR/${DEB}" "https://github.com/${REPO}/releases/download/v${VERSION}/${DEB}"
-          verify_checksum "$WORK_DIR/${DEB}" "$DEB"
-          sudo dpkg -i "$WORK_DIR/${DEB}" || sudo apt-get install -f -y
-          echo "Installed Vesta desktop app."
-        elif command -v dnf &>/dev/null || command -v yum &>/dev/null; then
-          RPM="vesta-${VERSION}-1.${ARCH}.rpm"
-          echo "Downloading desktop app (.rpm)..."
-          curl -fsSL -o "$WORK_DIR/${RPM}" "https://github.com/${REPO}/releases/download/v${VERSION}/${RPM}"
-          verify_checksum "$WORK_DIR/${RPM}" "$RPM"
-          if command -v dnf &>/dev/null; then
-            sudo dnf install -y "$WORK_DIR/${RPM}"
-          else
-            sudo yum install -y "$WORK_DIR/${RPM}"
-          fi
-          echo "Installed Vesta desktop app."
-        else
-          APPIMAGE="Vesta_${VERSION}_${APPIMAGE_ARCH}.AppImage"
-          echo "Downloading desktop app (AppImage)..."
-          curl -fsSL -o "$WORK_DIR/Vesta.AppImage" "https://github.com/${REPO}/releases/download/v${VERSION}/${APPIMAGE}"
-          verify_checksum "$WORK_DIR/Vesta.AppImage" "$APPIMAGE"
-          mkdir -p "$HOME/.local/bin"
-          install -m 755 "$WORK_DIR/Vesta.AppImage" "$HOME/.local/bin/Vesta.AppImage"
-          echo "Installed to ~/.local/bin/Vesta.AppImage"
-        fi
+        update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
+        echo "Installed Vesta desktop app."
+        echo "You can launch it from your app menu or by running: Vesta"
       fi
       ;;
     *)
