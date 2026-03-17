@@ -123,53 +123,41 @@ main() {
         tar -xzf "$WORK_DIR/vesta.tar.gz" -C "$WORK_DIR"
         install_cli_to_path "$WORK_DIR/vesta"
       else
-        APPIMAGE_ARCH=$([ "$ARCH" = "aarch64" ] && echo "aarch64" || echo "amd64")
-        APPIMAGE="Vesta_${VERSION}_${APPIMAGE_ARCH}.AppImage"
-        APPIMAGE_DIR="$HOME/.local/share/vesta"
-        APPIMAGE_PATH="$APPIMAGE_DIR/Vesta.AppImage"
-
-        echo "Downloading desktop app..."
-        mkdir -p "$APPIMAGE_DIR"
-        curl -fsSL -o "$WORK_DIR/Vesta.AppImage" "https://github.com/${REPO}/releases/download/v${VERSION}/${APPIMAGE}"
-        verify_checksum "$WORK_DIR/Vesta.AppImage" "$APPIMAGE"
-        install -m 755 "$WORK_DIR/Vesta.AppImage" "$APPIMAGE_PATH"
-
-        # Wrapper script (sets env vars needed for Wayland/EGL compat)
-        mkdir -p "$HOME/.local/bin"
-        cat > "$HOME/.local/bin/Vesta" << WRAPPER
-#!/usr/bin/env bash
-exec env GDK_BACKEND=x11 WEBKIT_DISABLE_DMABUF_RENDERER=1 "$APPIMAGE_PATH" "\$@"
-WRAPPER
-        chmod +x "$HOME/.local/bin/Vesta"
-        case ":$PATH:" in
-          *":$HOME/.local/bin:"*) ;;
-          *) echo "WARNING: $HOME/.local/bin is not in your PATH. Add it with:"
-             echo "  export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
-        esac
-
-        # Desktop entry for app launcher integration
-        mkdir -p "$HOME/.local/share/applications"
-        cat > "$HOME/.local/share/applications/vesta.desktop" << DESKTOP
-[Desktop Entry]
-Name=Vesta
-Exec=env GDK_BACKEND=x11 WEBKIT_DISABLE_DMABUF_RENDERER=1 $APPIMAGE_PATH
-Icon=$APPIMAGE_DIR/vesta.png
-Type=Application
-Categories=Utility;
-StartupWMClass=vesta
-DESKTOP
-
-        # Extract icon from AppImage if possible
-        "$APPIMAGE_PATH" --appimage-extract usr/share/icons 2>/dev/null || true
-        ICON=$(find squashfs-root -name '*.png' 2>/dev/null | head -1)
-        if [ -n "$ICON" ]; then
-          cp "$ICON" "$APPIMAGE_DIR/vesta.png"
-          rm -rf squashfs-root
+        if command -v rpm >/dev/null 2>&1 && [ -f /etc/redhat-release ] || [ -f /etc/fedora-release ] || [ -f /etc/suse-release ]; then
+          PKG_TYPE="rpm"
+        elif command -v dpkg >/dev/null 2>&1; then
+          PKG_TYPE="deb"
+        elif command -v rpm >/dev/null 2>&1; then
+          PKG_TYPE="rpm"
+        else
+          echo "No supported package manager found (dpkg or rpm required)"
+          exit 1
         fi
 
-        update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
+        if [ "$PKG_TYPE" = "rpm" ]; then
+          case "$ARCH" in
+            x86_64) PKG_ARCH="x86_64" ;;
+            aarch64) PKG_ARCH="aarch64" ;;
+          esac
+          ARTIFACT="Vesta-${VERSION}-1.${PKG_ARCH}.rpm"
+          echo "Downloading desktop app (RPM)..."
+          curl -fsSL -o "$WORK_DIR/vesta.rpm" "https://github.com/${REPO}/releases/download/v${VERSION}/${ARTIFACT}"
+          verify_checksum "$WORK_DIR/vesta.rpm" "$ARTIFACT"
+          sudo rpm -U --force "$WORK_DIR/vesta.rpm"
+        else
+          case "$ARCH" in
+            x86_64) PKG_ARCH="amd64" ;;
+            aarch64) PKG_ARCH="arm64" ;;
+          esac
+          ARTIFACT="Vesta_${VERSION}_${PKG_ARCH}.deb"
+          echo "Downloading desktop app (DEB)..."
+          curl -fsSL -o "$WORK_DIR/vesta.deb" "https://github.com/${REPO}/releases/download/v${VERSION}/${ARTIFACT}"
+          verify_checksum "$WORK_DIR/vesta.deb" "$ARTIFACT"
+          sudo dpkg -i "$WORK_DIR/vesta.deb"
+        fi
+
         echo "Installed Vesta desktop app."
-        echo "You can launch it from your app menu or by running: Vesta"
+        echo "Launch it from your app menu or by running: vesta-app"
       fi
       ;;
     *)
