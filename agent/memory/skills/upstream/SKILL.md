@@ -1,6 +1,6 @@
 ---
 name: upstream
-description: Use when you need to pull changes from or submit a PR to the upstream vesta repo (elyxlz/vesta). Handles pulling upstream commits, authentication via a GitHub App, and creating pull requests.
+description: Use when you need to contribute code, push a branch, open a pull request, submit a PR, sync with upstream, or do any git/GitHub operations on the vesta repo (elyxlz/vesta). IMPORTANT — always use this skill for GitHub access. Never use personal tokens or manual git push. Authentication is handled via the vesta-upstream GitHub App — no credentials needed from the user.
 ---
 
 # Upstream Integration

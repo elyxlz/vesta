@@ -43,6 +43,9 @@ type WhatsAppClient struct {
 	logger            waLog.Logger
 	dataDir           string
 	notificationsDir  string
+	instance          string
+	readOnly          bool
+	skipSenders       map[string]bool
 	messageSenders    map[string]string
 	senderOrder       []string
 	sendersMutex      sync.RWMutex
@@ -56,7 +59,7 @@ type WhatsAppClient struct {
 	connectMutex      sync.Mutex
 }
 
-func NewWhatsAppClient(dataDir, notificationsDir string, logger waLog.Logger) (*WhatsAppClient, error) {
+func NewWhatsAppClient(dataDir, notificationsDir, instance string, readOnly bool, skipSenders map[string]bool, logger waLog.Logger) (*WhatsAppClient, error) {
 	// Create message store
 	store, err := NewMessageStore(dataDir)
 	if err != nil {
@@ -98,6 +101,9 @@ func NewWhatsAppClient(dataDir, notificationsDir string, logger waLog.Logger) (*
 		logger:           logger,
 		dataDir:          dataDir,
 		notificationsDir: notificationsDir,
+		instance:         instance,
+		readOnly:         readOnly,
+		skipSenders:      skipSenders,
 		messageSenders:   make(map[string]string),
 		authStatus:       AuthStatusNotAuthenticated,
 	}
@@ -254,6 +260,20 @@ func (wac *WhatsAppClient) IsAuthenticated() bool {
 	return status == AuthStatusAuthenticated
 }
 
+func (wac *WhatsAppClient) PairPhone(phone string) (string, error) {
+	// Strip + prefix if present, PairPhone expects numeric only
+	phone = strings.TrimPrefix(phone, "+")
+	code, err := wac.client.PairPhone(context.Background(), phone, true, whatsmeow.PairClientChrome, "Chrome (Linux)")
+	if err != nil {
+		return "", err
+	}
+	// Format as XXXX-XXXX
+	if len(code) == 8 {
+		code = code[:4] + "-" + code[4:]
+	}
+	return code, nil
+}
+
 func (wac *WhatsAppClient) writeAuthStatusFile(data map[string]string) {
 	b, err := json.Marshal(data)
 	if err != nil {
@@ -392,25 +412,28 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 	// Write notification
 	if wac.notificationsDir != "" && !info.IsFromMe {
 		_, senderDisplay, contactName, contactPhone, contactSaved, isDirectChat := wac.prepareNotificationInfo(info.MessageSource)
-		WriteNotification(
-			wac.notificationsDir,
-			info.ID,
-			chatName,
-			contactName,
-			contactPhone,
-			contactSaved,
-			isDirectChat,
-			senderDisplay,
-			content,
-			mediaType,
-			isForwarded,
-			quotedMessageID,
-			quotedText,
-		)
+		if !wac.skipSenders[contactPhone] {
+			WriteNotification(
+				wac.notificationsDir,
+				info.ID,
+				chatName,
+				contactName,
+				contactPhone,
+				wac.instance,
+				contactSaved,
+				isDirectChat,
+				senderDisplay,
+				content,
+				mediaType,
+				isForwarded,
+				quotedMessageID,
+				quotedText,
+			)
+		}
 	}
 
 	// Send read receipt if not from me
-	if !info.IsFromMe && wac.client.IsConnected() {
+	if !info.IsFromMe && !wac.readOnly && wac.client.IsConnected() {
 		// Copy fields to avoid race condition with event data
 		msgID := info.ID
 		chatJID := info.Chat
@@ -481,6 +504,7 @@ func (wac *WhatsAppClient) handleReaction(evt *events.Message) {
 			chatName,
 			contactName,
 			contactPhone,
+			wac.instance,
 			contactSaved,
 			isDirectChat,
 			senderDisplay,
