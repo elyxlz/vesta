@@ -134,9 +134,13 @@ main() {
         verify_checksum "$WORK_DIR/Vesta.AppImage" "$APPIMAGE"
         install -m 755 "$WORK_DIR/Vesta.AppImage" "$APPIMAGE_PATH"
 
-        # Symlink to PATH
+        # Wrapper script (sets env vars needed for Wayland/EGL compat)
         mkdir -p "$HOME/.local/bin"
-        ln -sf "$APPIMAGE_PATH" "$HOME/.local/bin/Vesta"
+        cat > "$HOME/.local/bin/Vesta" << WRAPPER
+#!/usr/bin/env bash
+exec env GDK_BACKEND=x11 WEBKIT_DISABLE_DMABUF_RENDERER=1 "$APPIMAGE_PATH" "\$@"
+WRAPPER
+        chmod +x "$HOME/.local/bin/Vesta"
         case ":$PATH:" in
           *":$HOME/.local/bin:"*) ;;
           *) echo "WARNING: $HOME/.local/bin is not in your PATH. Add it with:"
@@ -148,7 +152,7 @@ main() {
         cat > "$HOME/.local/share/applications/vesta.desktop" << DESKTOP
 [Desktop Entry]
 Name=Vesta
-Exec=$APPIMAGE_PATH
+Exec=env GDK_BACKEND=x11 WEBKIT_DISABLE_DMABUF_RENDERER=1 $APPIMAGE_PATH
 Icon=$APPIMAGE_DIR/vesta.png
 Type=Application
 Categories=Utility;
