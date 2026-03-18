@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
-  import { getVersion } from "@tauri-apps/api/app";
+  import { appVersion as appVersionPromise } from "../lib/version";
   import { listBoxes, startBox, stopBox, restartBox, deleteBox, backupBox, restoreBox } from "../lib/api";
   import { getBoxOp, setBoxOp, clearBoxOp, busyBoxName } from "../lib/store.svelte";
   import { save, open } from "@tauri-apps/plugin-dialog";
@@ -81,7 +81,7 @@
     poll = setInterval(refresh, 5000);
     document.addEventListener("click", onDocClick);
     document.addEventListener("keydown", onKeydown);
-    appVersion = await getVersion();
+    appVersion = await appVersionPromise;
   });
 
   onDestroy(() => {

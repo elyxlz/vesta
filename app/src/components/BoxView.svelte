@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
+  import { appVersion as appVersionPromise } from "../lib/version";
   import type { BoxConnection } from "../lib/ws";
   import { boxStatus, startBox, stopBox, restartBox, deleteBox, authenticate, backupBox, restoreBox } from "../lib/api";
   import { getBoxOp, setBoxOp, clearBoxOp, setBoxError, type BoxOperation } from "../lib/store.svelte";
@@ -24,6 +25,7 @@
     onBack: () => void;
   } = $props();
 
+  let appVersion = $state("");
   let statusLoaded = $state(false);
   let status = $state<BoxStatus>("unknown");
   let authenticated = $state(false);
@@ -131,11 +133,12 @@
     }
   }
 
-  onMount(() => {
+  onMount(async () => {
     refresh();
     poll = setInterval(refresh, 5000);
     document.addEventListener("click", onDocClick);
     document.addEventListener("keydown", onKeydown);
+    appVersion = await appVersionPromise;
   });
 
   onDestroy(() => {
@@ -344,7 +347,9 @@
     </div>
   </div>
 
-
+  {#if appVersion}
+    <span class="version">v{appVersion}</span>
+  {/if}
 </div>
 
 <style>
@@ -844,7 +849,24 @@
     pointer-events: none;
   }
 
+  .version {
+    position: absolute;
+    bottom: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 10px;
+    font-weight: 400;
+    letter-spacing: 0.02em;
+    color: #c4bdb5;
+    user-select: none;
+    pointer-events: none;
+  }
+
   @media (prefers-color-scheme: dark) {
+    .version {
+      color: #5a5450;
+    }
+
     .name {
       color: #e8e0d8;
     }
