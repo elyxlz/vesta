@@ -123,41 +123,39 @@ main() {
         tar -xzf "$WORK_DIR/vesta.tar.gz" -C "$WORK_DIR"
         install_cli_to_path "$WORK_DIR/vesta"
       else
-        if [ "$ARCH" = "aarch64" ]; then
-          DEB_ARCH="arm64"
-          APPIMAGE_ARCH="aarch64"
+        if command -v dpkg >/dev/null 2>&1; then
+          PKG_TYPE="deb"
+        elif command -v rpm >/dev/null 2>&1; then
+          PKG_TYPE="rpm"
         else
-          DEB_ARCH="amd64"
-          APPIMAGE_ARCH="amd64"
+          echo "No supported package manager found (dpkg or rpm required)"
+          exit 1
         fi
 
-        if command -v apt-get &>/dev/null; then
-          DEB="Vesta_${VERSION}_${DEB_ARCH}.deb"
-          echo "Downloading desktop app (.deb)..."
-          curl -fsSL -o "$WORK_DIR/${DEB}" "https://github.com/${REPO}/releases/download/v${VERSION}/${DEB}"
-          verify_checksum "$WORK_DIR/${DEB}" "$DEB"
-          sudo dpkg -i "$WORK_DIR/${DEB}" || sudo apt-get install -f -y
-          echo "Installed Vesta desktop app."
-        elif command -v dnf &>/dev/null || command -v yum &>/dev/null; then
-          RPM="vesta-${VERSION}-1.${ARCH}.rpm"
-          echo "Downloading desktop app (.rpm)..."
-          curl -fsSL -o "$WORK_DIR/${RPM}" "https://github.com/${REPO}/releases/download/v${VERSION}/${RPM}"
-          verify_checksum "$WORK_DIR/${RPM}" "$RPM"
-          if command -v dnf &>/dev/null; then
-            sudo dnf install -y "$WORK_DIR/${RPM}"
-          else
-            sudo yum install -y "$WORK_DIR/${RPM}"
-          fi
-          echo "Installed Vesta desktop app."
+        if [ "$PKG_TYPE" = "rpm" ]; then
+          case "$ARCH" in
+            x86_64) PKG_ARCH="x86_64" ;;
+            aarch64) PKG_ARCH="aarch64" ;;
+          esac
+          ARTIFACT="Vesta-${VERSION}-1.${PKG_ARCH}.rpm"
+          echo "Downloading desktop app (RPM)..."
+          curl -fsSL -o "$WORK_DIR/vesta.rpm" "https://github.com/${REPO}/releases/download/v${VERSION}/${ARTIFACT}"
+          verify_checksum "$WORK_DIR/vesta.rpm" "$ARTIFACT"
+          sudo rpm -U --force "$WORK_DIR/vesta.rpm"
         else
-          APPIMAGE="Vesta_${VERSION}_${APPIMAGE_ARCH}.AppImage"
-          echo "Downloading desktop app (AppImage)..."
-          curl -fsSL -o "$WORK_DIR/Vesta.AppImage" "https://github.com/${REPO}/releases/download/v${VERSION}/${APPIMAGE}"
-          verify_checksum "$WORK_DIR/Vesta.AppImage" "$APPIMAGE"
-          mkdir -p "$HOME/.local/bin"
-          install -m 755 "$WORK_DIR/Vesta.AppImage" "$HOME/.local/bin/Vesta.AppImage"
-          echo "Installed to ~/.local/bin/Vesta.AppImage"
+          case "$ARCH" in
+            x86_64) PKG_ARCH="amd64" ;;
+            aarch64) PKG_ARCH="arm64" ;;
+          esac
+          ARTIFACT="Vesta_${VERSION}_${PKG_ARCH}.deb"
+          echo "Downloading desktop app (DEB)..."
+          curl -fsSL -o "$WORK_DIR/vesta.deb" "https://github.com/${REPO}/releases/download/v${VERSION}/${ARTIFACT}"
+          verify_checksum "$WORK_DIR/vesta.deb" "$ARTIFACT"
+          sudo dpkg -i "$WORK_DIR/vesta.deb"
         fi
+
+        echo "Installed Vesta desktop app."
+        echo "Launch it from your app menu or by running: vesta-app"
       fi
       ;;
     *)

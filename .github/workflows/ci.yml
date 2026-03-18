@@ -769,11 +769,11 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             cli-artifact: vesta-x86_64-unknown-linux-gnu
-            bundles: deb,appimage,rpm
+            bundles: deb,rpm
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04-arm
             cli-artifact: vesta-aarch64-unknown-linux-gnu
-            bundles: deb,appimage,rpm
+            bundles: deb,rpm
           - target: aarch64-apple-darwin
             os: macos-latest
             cli-artifact: vesta-aarch64-apple-darwin
@@ -874,7 +874,7 @@ jobs:
         run: |
           mkdir -p tauri-out
           find app/src-tauri/target/${{ matrix.target }}/release/bundle \
-            -type f \( -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' -o -name '*.dmg' -o -name '*.tar.gz' -o -name '*.sig' \) \
+            -type f \( -name '*.deb' -o -name '*.rpm' -o -name '*.dmg' -o -name '*.tar.gz' -o -name '*.sig' \) \
             -exec cp {} tauri-out/ \;
           # Disambiguate macOS updater artifacts by architecture (both builds produce Vesta.app.tar.gz)
           ARCH_PREFIX=$(echo "${{ matrix.target }}" | cut -d'-' -f1)
@@ -1017,7 +1017,7 @@ jobs:
           mkdir release
           find artifacts -type f \( \
             -name '*.tar.gz' -o -name '*.tar.zst' -o -name '*.zip' -o \
-            -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' -o -name '*.dmg' -o \
+            -name '*.deb' -o -name '*.rpm' -o -name '*.dmg' -o \
             -name '*-setup.exe' -o -name '*_x64-setup.exe' -o \
             -name '*.sig' \
           \) -exec cp {} release/ \;
@@ -1037,7 +1037,8 @@ jobs:
           }
 
           # Tauri updater platform keys: {os}-{arch}
-          # macOS uses .app.tar.gz, Linux uses .AppImage.tar.gz, Windows uses .nsis.zip
+          # macOS uses .app.tar.gz, Windows uses .nsis.zip
+          # Linux uses script-based self-update (not Tauri updater)
           cat > release/latest.json << MANIFEST
           {
             "version": "${VERSION}",
@@ -1050,14 +1051,6 @@ jobs:
               "darwin-x86_64": {
                 "url": "${BASE}/Vesta_x86_64.app.tar.gz",
                 "signature": "$(read_sig Vesta_x86_64.app.tar.gz.sig)"
-              },
-              "linux-x86_64": {
-                "url": "${BASE}/Vesta_${VERSION}_amd64.AppImage.tar.gz",
-                "signature": "$(read_sig Vesta_${VERSION}_amd64.AppImage.tar.gz.sig)"
-              },
-              "linux-aarch64": {
-                "url": "${BASE}/Vesta_${VERSION}_arm64.AppImage.tar.gz",
-                "signature": "$(read_sig Vesta_${VERSION}_arm64.AppImage.tar.gz.sig)"
               },
               "windows-x86_64": {
                 "url": "${BASE}/Vesta_${VERSION}_x64-setup.exe",
