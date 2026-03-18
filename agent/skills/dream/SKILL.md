@@ -83,16 +83,21 @@ This list is your work queue for the fixes below.
 
 ### 3. Fix
 
-For each problem identified, actually fix it:
-- Update skills that tripped you up
-- Rewrite prompts that led you somewhere dumb
-- Add rules to memory that would stop you making the same mistake
+For each problem identified, actually fix it. Prefer the simplest, most reliable change that addresses the root cause — a one-line rule beats a clever rewrite. Options, from lightest to heaviest:
+- Add a rule to memory that would stop you making the same mistake
+- Rewrite skill instructions or prompts that led you astray
+- Fix or improve scripts, CLIs, or tools that broke or behaved poorly
+- Write new code — a script, a tool, a config change — if the problem is systemic
+
+You can change anything: skills, prompts, memory, scripts, configs, system setup. If a fix requires code, write the code.
 
 ### 4. Validate each fix
 
-After editing a skill or prompt, re-read the failing exchange from the trace and simulate: would the updated version have changed the outcome? Walk through it mentally with the new text loaded. If the answer is no or unclear, revise further or note it as unresolved in the summary. Don't mark something fixed if you can't convince yourself it would have helped.
+Re-read the failing exchange and simulate: would the updated version have changed the outcome? Walk through it with the new text or code loaded. If the answer is no or unclear, revise further or note it as unresolved in the summary. Don't mark something fixed if you can't convince yourself it would have helped.
 
-**Upstream**: Fixed something worth contributing back to the source repo? Use the `upstream` skill to PR it.
+### 5. Upstream
+
+If you fixed something that improves the source repo (not just your local instance), use the `upstream` skill to PR it back. This is important — fixes that only live locally get overwritten on updates.
 
 ## Summary
 
