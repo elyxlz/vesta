@@ -50,8 +50,8 @@ uv run /root/vesta/agent/memory/skills/upstream/pr.py --token-only
 - No personal GitHub account or CLI auth needed
 
 ## After creating a PR
-- Monitor CI until it passes — don't just fire and forget
-- Check CI: visit https://github.com/elyxlz/vesta/pulls or use the GitHub API with the token
-- The `lockfile` check requires `uv lock` to be run in `agent/` if dependencies changed
-- If CI fails, fix the issue, commit to the same branch, push with the token — PR updates automatically
-- Only report the PR as done once CI is green
+- **Keep working until all CI checks pass** — do not stop after opening the PR
+- Check CI status via the GitHub API (use `--token-only` to get a token, then hit the check-runs endpoint)
+- The `lockfile` check requires `uv lock` to be run in `agent/` if any Python dependencies changed
+- If any check fails: diagnose, fix, commit to the same branch, push — the PR updates automatically and CI reruns
+- Only report the PR as done to the user once every check is green
