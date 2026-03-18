@@ -43,11 +43,10 @@
   }
 
   async function startStream() {
-    streamEnded = false;
     try {
       await streamLogs(name, (ev: LogEvent) => {
         if (!alive) return;
-        if (ev.kind === "Line") { retryDelay = 1000; addLine(ev.text); }
+        if (ev.kind === "Line") { streamEnded = false; retryDelay = 1000; addLine(ev.text); }
         if (ev.kind === "Error") addLine(`error: ${ev.message}`);
         if (ev.kind === "End") scheduleRetry();
       });
