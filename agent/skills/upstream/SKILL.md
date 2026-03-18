@@ -12,9 +12,10 @@ Local fork: `~/vesta` (this is a fork — it diverges from upstream as local cha
 
 1. `git -C ~/vesta fetch origin`
 2. `git -C ~/vesta log HEAD..origin/master --oneline` — see what's new
-3. For each interesting commit: `git -C ~/vesta show <hash>` — understand what it does
-4. Manually apply the relevant changes to `~/vesta` source (don't paste diffs blindly — local may have diverged, adapt the intent)
-5. Track the last processed commit hash in MEMORY.md so you don't redo it next time
+3. Only look at changes under `agent/` — `cli/` (Rust) and `app/` (Tauri) don't run in the container
+4. For each interesting commit: `git -C ~/vesta show <hash>` — understand what it does
+5. Manually apply the relevant changes to `~/vesta` source (don't paste diffs blindly — local may have diverged, adapt the intent)
+6. Track the last processed commit hash in MEMORY.md so you don't redo it next time
 
 ## Pushing local changes upstream (creating a PR)
 
@@ -45,13 +46,13 @@ uv run ~/vesta/skills/upstream/pr.py --token-only
 
 ## Skill registry sync
 
-Skill commits are prefixed `[skill]`. When syncing upstream:
+When syncing upstream, also check for skill updates under `agent/skills/`:
 
-- To find skill updates: `git -C ~/vesta log HEAD..origin/master --oneline | grep '^\[skill\]'`
-- For each installed skill with new commits, read the diff and apply useful generic improvements to `~/vesta/skills/<name>/`
+- For each installed skill (`ls ~/vesta/skills/`) check if there are new commits touching `agent/skills/<name>/`
+- Read the diff and apply useful generic improvements to `~/vesta/skills/<name>/`
 - Update `~/vesta/skills-lock.json` with the latest processed commit hash
 
-When contributing a skill improvement back upstream, use the same worktree flow but prefix the commit `[skill] <name>: <description>`. All skill changes — core or not — live in `agent/skills/<name>/`. The Dockerfile copies core skills into the container at build time.
+When contributing a skill improvement back upstream, use the same worktree flow. All skill changes — core or not — go in `agent/skills/<name>/`.
 
 ## How it works
 - Authenticates via the `vesta-upstream` GitHub App (ID 2990557)

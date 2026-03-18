@@ -88,67 +88,29 @@ jobs:
           fi
           echo "✓ Tag matches version"
 
-  # ── Skills index freshness check ─────────────────────────────────────
-  skills-index-check:
+  # ── Skills index auto-update ──────────────────────────────────────────
+  skills-index-update:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Regenerate skills index
-        run: python3 agent/generate-skills-index.py
-
-      - name: Check index is up to date
-        run: |
-          if ! git diff --exit-code agent/skills-index.json; then
-            echo "❌ agent/skills-index.json is out of date — run 'python3 agent/generate-skills-index.py' and commit the result"
-            exit 1
-          fi
-          echo "✓ skills-index.json is up to date"
-
-  # ── Skill commit prefix enforcement (PRs only) ───────────────────────
-  skill-commit-prefix:
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 0
+          ref: ${{ github.head_ref || github.ref_name }}
 
-      - name: Check [skill] prefix on skill-only PRs
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh && echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Regenerate and commit skills index
         run: |
-          CHANGED=$(git diff --name-only origin/master...HEAD)
-          echo "Changed files:"
-          echo "$CHANGED"
-
-          ALL_SKILL_FILES=true
-          while IFS= read -r f; do
-            if [ -z "$f" ]; then continue; fi
-            if [[ "$f" != agent/skills/* && "$f" != "agent/skills-index.json" ]]; then
-              ALL_SKILL_FILES=false
-              break
-            fi
-          done <<< "$CHANGED"
-
-          if [ "$ALL_SKILL_FILES" = "false" ]; then
-            echo "PR contains non-skill files — skipping prefix check"
-            exit 0
+          uv run python agent/generate-skills-index.py
+          if ! git diff --exit-code agent/skills-index.json; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add agent/skills-index.json
+            git commit -m "Auto-regenerate skills-index.json"
+            git push
           fi
-
-          echo "All changed files are under skills/ — enforcing [skill] prefix"
-          FAIL=0
-          while IFS= read -r msg; do
-            if [ -z "$msg" ]; then continue; fi
-            if [[ "$msg" != \[skill\]* ]]; then
-              echo "❌ Commit does not start with [skill]: $msg"
-              FAIL=1
-            fi
-          done <<< "$(git log origin/master..HEAD --format='%s')"
-
-          if [ "$FAIL" = "1" ]; then
-            echo "All commits in a skill-only PR must start with [skill]"
-            exit 1
-          fi
-          echo "✓ All commits have [skill] prefix"
 
   # ── Frontend unit tests ──────────────────────────────────────────────
   test-frontend:
