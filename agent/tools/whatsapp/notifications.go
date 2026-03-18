@@ -13,6 +13,7 @@ import (
 type messageNotif struct {
 	Source          string `json:"source"`
 	Type            string `json:"type"`
+	Instance        string `json:"instance,omitempty"`
 	ContactName     string `json:"contact_name,omitempty"`
 	Message         string `json:"message"`
 	Sender          string `json:"sender,omitempty"`
@@ -31,6 +32,7 @@ type messageNotif struct {
 type reactionNotif struct {
 	Source          string `json:"source"`
 	Type            string `json:"type"`
+	Instance        string `json:"instance,omitempty"`
 	ContactName     string `json:"contact_name,omitempty"`
 	Emoji           string `json:"emoji,omitempty"`
 	Sender          string `json:"sender,omitempty"`
@@ -44,7 +46,7 @@ type reactionNotif struct {
 }
 
 func WriteNotification(
-	notifDir, messageID, chatName, contactName, contactPhone string,
+	notifDir, messageID, chatName, contactName, contactPhone, instance string,
 	contactSaved, isDirectChat bool,
 	sender, content, mediaType string, isForwarded bool,
 	quotedMessageID, quotedText string,
@@ -60,6 +62,7 @@ func WriteNotification(
 	n := messageNotif{
 		Source:          "whatsapp",
 		Type:            "message",
+		Instance:        instance,
 		ContactName:     contactName,
 		Message:         content,
 		ContactPhone:    contactPhone,
@@ -75,7 +78,7 @@ func WriteNotification(
 		n.Sender = sender
 		n.ChatName = chatName
 	}
-	if !contactSaved && isDirectChat {
+	if !contactSaved && isDirectChat && instance == "" {
 		n.Note = "Unknown contact. Ask the user who this is and add them as a contact once you know."
 	}
 
@@ -89,7 +92,7 @@ func WriteNotification(
 }
 
 func WriteReactionNotification(
-	notifDir, targetMessageID, chatName, contactName, contactPhone string,
+	notifDir, targetMessageID, chatName, contactName, contactPhone, instance string,
 	contactSaved, isDirectChat bool,
 	sender, emoji string, isRemoved bool,
 ) error {
@@ -104,6 +107,7 @@ func WriteReactionNotification(
 	n := reactionNotif{
 		Source:          "whatsapp",
 		Type:            "reaction",
+		Instance:        instance,
 		ContactName:     contactName,
 		Emoji:           emoji,
 		ContactPhone:    contactPhone,
@@ -116,7 +120,7 @@ func WriteReactionNotification(
 		n.Sender = sender
 		n.ChatName = chatName
 	}
-	if !contactSaved && isDirectChat {
+	if !contactSaved && isDirectChat && instance == "" {
 		n.Note = "Unknown contact. Ask the user who this is and add them as a contact once you know."
 	}
 

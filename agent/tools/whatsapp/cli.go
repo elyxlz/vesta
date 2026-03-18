@@ -26,15 +26,68 @@ func extractStateDir() string {
 	return defaultStateDir
 }
 
+func extractInstance() string {
+	for i, arg := range os.Args {
+		if arg == "--instance" && i+1 < len(os.Args) {
+			return os.Args[i+1]
+		}
+		if strings.HasPrefix(arg, "--instance=") {
+			return strings.TrimPrefix(arg, "--instance=")
+		}
+	}
+	return ""
+}
+
+func isReadOnly() bool {
+	for _, arg := range os.Args {
+		if arg == "--read-only" {
+			return true
+		}
+	}
+	return false
+}
+
+func extractSkipSenders() map[string]bool {
+	result := make(map[string]bool)
+	for i, arg := range os.Args {
+		var val string
+		if arg == "--skip-senders" && i+1 < len(os.Args) {
+			val = os.Args[i+1]
+		} else if strings.HasPrefix(arg, "--skip-senders=") {
+			val = strings.TrimPrefix(arg, "--skip-senders=")
+		}
+		if val != "" {
+			for _, phone := range strings.Split(val, ",") {
+				phone = strings.TrimSpace(phone)
+				if phone != "" {
+					result[phone] = true
+				}
+			}
+		}
+	}
+	return result
+}
+
 func parseStateDir() (dataDir, logDir, notifDir string) {
 	stateDir := extractStateDir()
-	dataDir = filepath.Join(stateDir, "data", "whatsapp")
-	logDir = filepath.Join(stateDir, "logs", "whatsapp")
+	instance := extractInstance()
+	if instance != "" {
+		dataDir = filepath.Join(stateDir, "data", "whatsapp", instance)
+		logDir = filepath.Join(stateDir, "logs", "whatsapp", instance)
+	} else {
+		dataDir = filepath.Join(stateDir, "data", "whatsapp")
+		logDir = filepath.Join(stateDir, "logs", "whatsapp")
+	}
+	// Notifications always go to the same directory so the agent picks them up
 	notifDir = filepath.Join(stateDir, "notifications")
 	return
 }
 
 func getSocketPath() string {
+	instance := extractInstance()
+	if instance != "" {
+		return filepath.Join(extractStateDir(), "data", "whatsapp", instance, "whatsapp.sock")
+	}
 	return filepath.Join(extractStateDir(), "data", "whatsapp", "whatsapp.sock")
 }
 
@@ -105,7 +158,7 @@ func runServe(logger waLog.Logger) {
 		os.Exit(1)
 	}
 
-	wac, err := NewWhatsAppClient(dataDir, notifDir, logger)
+	wac, err := NewWhatsAppClient(dataDir, notifDir, extractInstance(), isReadOnly(), extractSkipSenders(), logger)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to initialize WhatsApp client: %v\n", err)
 		os.Exit(1)
@@ -122,8 +175,16 @@ func runServe(logger waLog.Logger) {
 		fmt.Fprintf(os.Stderr, "Warning: failed to start socket server: %v\n", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "WhatsApp client initialized. Data: %s\n", dataDir)
+	instance := extractInstance()
+	if instance != "" {
+		fmt.Fprintf(os.Stderr, "WhatsApp client initialized (instance: %s). Data: %s\n", instance, dataDir)
+	} else {
+		fmt.Fprintf(os.Stderr, "WhatsApp client initialized. Data: %s\n", dataDir)
+	}
 	fmt.Fprintf(os.Stderr, "Notifications: %s\n", notifDir)
+	if isReadOnly() {
+		fmt.Fprintln(os.Stderr, "Running in READ-ONLY mode (no sending, no read receipts)")
+	}
 
 	if !wac.IsAuthenticated() {
 		fmt.Fprintln(os.Stderr, "Not authenticated. Use 'whatsapp authenticate' to get QR code.")
@@ -145,9 +206,29 @@ func runServe(logger waLog.Logger) {
 	wac.Disconnect()
 }
 
+func stripGlobalFlags(args []string) []string {
+	var filtered []string
+	skip := false
+	for _, arg := range args {
+		if skip {
+			skip = false
+			continue
+		}
+		if arg == "--instance" || arg == "--state-dir" || arg == "--skip-senders" {
+			skip = true
+			continue
+		}
+		if strings.HasPrefix(arg, "--instance=") || strings.HasPrefix(arg, "--state-dir=") || arg == "--read-only" || strings.HasPrefix(arg, "--skip-senders=") {
+			continue
+		}
+		filtered = append(filtered, arg)
+	}
+	return filtered
+}
+
 func runOneShot(command string) {
 	sockPath := getSocketPath()
-	output, exitCode, connected := trySocketCommand(sockPath, command, os.Args[1:])
+	output, exitCode, connected := trySocketCommand(sockPath, command, stripGlobalFlags(os.Args[1:]))
 	if !connected {
 		printJSON(map[string]interface{}{"error": "daemon not running — start with: screen -dmS whatsapp whatsapp serve"})
 		os.Exit(1)
@@ -157,6 +238,19 @@ func runOneShot(command string) {
 }
 
 func executeCommand(command string, args []string, wac *WhatsAppClient) (interface{}, error) {
+	// Block write commands on read-only instances
+	if wac.readOnly {
+		writeCommands := map[string]bool{
+			"send-message": true, "send-file": true, "send-reaction": true,
+			"send-audio": true, "add-contact": true, "remove-contact": true,
+			"leave-group": true, "create-group": true, "rename-group": true,
+			"update-group-participants": true,
+		}
+		if writeCommands[command] {
+			return nil, fmt.Errorf("command %q blocked: instance is read-only", command)
+		}
+	}
+
 	switch command {
 	case "list-contacts":
 		var query string
@@ -302,6 +396,20 @@ func executeCommand(command string, args []string, wac *WhatsAppClient) (interfa
 			return nil, fmt.Errorf("--to and --file-path are required")
 		}
 		success, msg := wac.SendFile(to, filePath, caption, displayName)
+		return map[string]interface{}{"success": success, "message": msg}, nil
+
+	case "send-audio":
+		var to, filePath string
+		fs := flag.NewFlagSet("send-audio", flag.ContinueOnError)
+		fs.StringVar(&to, "to", "", "Recipient")
+		fs.StringVar(&filePath, "file-path", "", "Path to audio file")
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		if to == "" || filePath == "" {
+			return nil, fmt.Errorf("--to and --file-path are required")
+		}
+		success, msg := wac.SendAudioMessage(to, filePath)
 		return map[string]interface{}{"success": success, "message": msg}, nil
 
 	case "download-media":
@@ -473,6 +581,22 @@ func executeCommand(command string, args []string, wac *WhatsAppClient) (interfa
 			result["delivery_timestamp"] = ts.Format(time.RFC3339)
 		}
 		return result, nil
+
+	case "pair-phone":
+		var phone string
+		fs := flag.NewFlagSet("pair-phone", flag.ContinueOnError)
+		fs.StringVar(&phone, "phone", "", "Phone number to pair with (E.164 format, e.g. +393481234567)")
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		if phone == "" {
+			return nil, fmt.Errorf("--phone is required (E.164 format, e.g. +393481234567)")
+		}
+		code, err := wac.PairPhone(phone)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate pairing code: %v", err)
+		}
+		return map[string]interface{}{"pairing_code": code, "phone": phone, "instructions": "Enter this code in WhatsApp > Linked Devices > Link a Device > Link with phone number"}, nil
 
 	default:
 		return nil, fmt.Errorf("unknown command: %s", command)
