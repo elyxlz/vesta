@@ -91,6 +91,8 @@ For each problem identified, actually fix it. Prefer the simplest, most reliable
 
 You can change anything: skills, prompts, memory, scripts, configs, system setup. If a fix requires code, write the code.
 
+**Memory vs skill:** Memory is for things you need to know at all times — identity, preferences, rules, user context. It's always loaded, so every character costs tokens on every message. A skill is for a distinct capability with its own workflow — instructions, scripts, examples for a specific domain. If a fix is a short rule ("always confirm before sending emails"), it belongs in memory. If it's a procedure with multiple steps, tool usage, or domain-specific context ("how to manage calendar events"), it belongs in a skill. When in doubt: if it's under two lines and broadly relevant, memory. If it's longer or only relevant when doing a specific task, skill.
+
 ### 4. Validate each fix
 
 Re-read the failing exchange and simulate: would the updated version have changed the outcome? Walk through it with the new text or code loaded. If the answer is no or unclear, revise further or note it as unresolved in the summary. Don't mark something fixed if you can't convince yourself it would have helped.
