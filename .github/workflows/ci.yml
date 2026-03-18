@@ -1072,4 +1072,4 @@ jobs:
           for f in release/*; do
             gh release upload "${{ github.event.release.tag_name }}" "$f" --clobber
           done
-          gh release edit "${{ github.event.release.tag_name }}" --draft=false
+          gh release edit "${{ github.event.release.tag_name }}" --draft=false --prerelease=false
