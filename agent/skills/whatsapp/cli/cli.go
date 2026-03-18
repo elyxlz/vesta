@@ -14,17 +14,22 @@ import (
 	waLog "go.mau.fi/whatsmeow/util/log"
 )
 
-func extractInstance() string {
+func extractFlag(name string) string {
+	flag := "--" + name
+	prefix := flag + "="
 	for i, arg := range os.Args {
-		if arg == "--instance" && i+1 < len(os.Args) {
+		if arg == flag && i+1 < len(os.Args) {
 			return os.Args[i+1]
 		}
-		if strings.HasPrefix(arg, "--instance=") {
-			return strings.TrimPrefix(arg, "--instance=")
+		if strings.HasPrefix(arg, prefix) {
+			return strings.TrimPrefix(arg, prefix)
 		}
 	}
 	return ""
 }
+
+func extractInstance() string        { return extractFlag("instance") }
+func extractNotificationsDir() string { return extractFlag("notifications-dir") }
 
 func isReadOnly() bool {
 	for _, arg := range os.Args {
@@ -36,36 +41,17 @@ func isReadOnly() bool {
 }
 
 func extractSkipSenders() map[string]bool {
+	val := extractFlag("skip-senders")
 	result := make(map[string]bool)
-	for i, arg := range os.Args {
-		var val string
-		if arg == "--skip-senders" && i+1 < len(os.Args) {
-			val = os.Args[i+1]
-		} else if strings.HasPrefix(arg, "--skip-senders=") {
-			val = strings.TrimPrefix(arg, "--skip-senders=")
-		}
-		if val != "" {
-			for _, phone := range strings.Split(val, ",") {
-				phone = strings.TrimSpace(phone)
-				if phone != "" {
-					result[phone] = true
-				}
+	if val != "" {
+		for _, phone := range strings.Split(val, ",") {
+			phone = strings.TrimSpace(phone)
+			if phone != "" {
+				result[phone] = true
 			}
 		}
 	}
 	return result
-}
-
-func extractNotificationsDir() string {
-	for i, arg := range os.Args {
-		if arg == "--notifications-dir" && i+1 < len(os.Args) {
-			return os.Args[i+1]
-		}
-		if strings.HasPrefix(arg, "--notifications-dir=") {
-			return strings.TrimPrefix(arg, "--notifications-dir=")
-		}
-	}
-	return ""
 }
 
 func parseStateDir() (dataDir, logDir string) {

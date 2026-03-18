@@ -55,11 +55,11 @@ def _to_utc(datetime_str: str, timezone_str: str) -> datetime:
 
 def send_reminder_job(reminder_id: str, *, message: str, data_dir, notif_dir):
     data_dir = Path(data_dir)
-    notif_dir = Path(notif_dir)
 
     msg_preview = message[:50] + "..." if len(message) > 50 else message
     logger.info(f"Firing reminder {reminder_id}: {msg_preview}")
-    write_notification(notif_dir, reminder_id, message)
+    if notif_dir:
+        write_notification(Path(notif_dir), reminder_id, message)
 
     with closing(db.get_db(data_dir)) as conn:
         cursor = conn.execute("SELECT trigger_data FROM reminders WHERE id = ?", (reminder_id,))
