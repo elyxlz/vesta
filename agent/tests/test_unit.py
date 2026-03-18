@@ -132,14 +132,65 @@ def test_deployment_structure():
     assert config.install_root.is_dir()
 
     skills_dir = config.install_root / "skills"
-    assert skills_dir.is_dir()
+    assert skills_dir.is_dir(), "skills/ directory missing"
 
-    whatsapp_cli_dir = skills_dir / "whatsapp" / "cli"
-    assert (whatsapp_cli_dir / "go.mod").exists()
-    assert (whatsapp_cli_dir / "main.go").exists()
+    expected_skills = [
+        "reminders",
+        "tasks",
+        "upstream",
+        "dream",
+        "what-day",
+        "browser",
+        "skills-registry",
+        "google",
+        "microsoft",
+        "whatsapp",
+        "whisper",
+        "zoom",
+        "keeper",
+        "onedrive",
+    ]
+    for skill_name in expected_skills:
+        assert (skills_dir / skill_name).is_dir(), f"Skill '{skill_name}' missing from skills/"
 
-    for skill_name, tool_name in [("microsoft", "microsoft"), ("reminders", "reminder"), ("tasks", "tasks")]:
-        assert (skills_dir / skill_name / "cli" / "pyproject.toml").exists(), f"pyproject.toml missing for {tool_name}"
+    for skill_name in ("reminders", "tasks"):
+        assert (skills_dir / skill_name / "cli" / "pyproject.toml").exists(), f"pyproject.toml missing for {skill_name}"
+
+    assert (skills_dir / "whatsapp" / "cli" / "go.mod").exists(), "go.mod missing for whatsapp"
+
+
+def test_skill_frontmatter():
+    import re
+
+    skills_dir = vm.VestaConfig().install_root / "skills"
+    for skill_md in skills_dir.glob("*/SKILL.md"):
+        text = skill_md.read_text()
+        match = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
+        assert match, f"{skill_md}: missing frontmatter"
+        fm = dict(re.findall(r"^(\w[\w-]*)\s*:\s*(.+)$", match.group(1), re.MULTILINE))
+        assert fm.get("name"), f"{skill_md}: missing 'name' in frontmatter"
+        assert fm.get("description"), f"{skill_md}: missing 'description' in frontmatter"
+
+
+def test_skills_index_valid():
+    import json
+    import re
+
+    install_root = vm.VestaConfig().install_root
+    index = json.loads((install_root / "skills-index.json").read_text())
+    assert isinstance(index, list) and index, "skills-index.json must be a non-empty list"
+    skill_names = {s["name"] for s in index}
+    for skill_md in (install_root / "skills").glob("*/SKILL.md"):
+        text = skill_md.read_text()
+        match = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
+        fm = dict(re.findall(r"^(\w[\w-]*)\s*:\s*(.+)$", match.group(1), re.MULTILINE)) if match else {}
+        assert fm.get("name", skill_md.parent.name) in skill_names, f"{skill_md.parent.name} missing from skills-index.json"
+
+
+def test_skills_registry_scripts_executable():
+    scripts_dir = vm.VestaConfig().install_root / "skills" / "skills-registry" / "scripts"
+    for script in scripts_dir.iterdir():
+        assert script.stat().st_mode & 0o111, f"{script.name} is not executable"
 
 
 # --- Message processor tests ---

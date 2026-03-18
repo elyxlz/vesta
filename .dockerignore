@@ -7,6 +7,14 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 agent/tests/
+agent/generate-skills-index.py
+agent/skills/google
+agent/skills/keeper
+agent/skills/microsoft
+agent/skills/onedrive
+agent/skills/whatsapp
+agent/skills/whisper
+agent/skills/zoom
 app/
 cli/
 .github/

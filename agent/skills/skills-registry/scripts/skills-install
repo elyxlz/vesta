@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SKILL_NAME="${1:?Usage: skills-install <skill-name>}"
+SKILLS_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+DEST="$SKILLS_DIR/$SKILL_NAME"
+
+if [ -d "$DEST" ]; then
+    echo "Skill '$SKILL_NAME' is already installed."
+    exit 0
+fi
+
+REPO="https://github.com/elyxlz/vesta"
+TMP_CLONE_DIR=$(mktemp -d)
+trap 'rm -rf "$TMP_CLONE_DIR"' EXIT
+
+echo "Downloading '$SKILL_NAME' from registry..."
+git clone --no-checkout --depth=1 --filter=blob:none "$REPO" "$TMP_CLONE_DIR/repo" -q
+cd "$TMP_CLONE_DIR/repo"
+git sparse-checkout init --no-cone -q
+git sparse-checkout set "agent/skills/$SKILL_NAME"
+git checkout -q
+
+if [ ! -d "agent/skills/$SKILL_NAME" ]; then
+    echo "Error: skill '$SKILL_NAME' not found in registry."
+    exit 1
+fi
+
+cp -r "agent/skills/$SKILL_NAME" "$DEST"
+echo "Installed '$SKILL_NAME'. Restart Vesta to activate it."
+if [ -f "$DEST/SETUP.md" ]; then
+    echo "This skill requires setup — read $DEST/SETUP.md for instructions."
+fi

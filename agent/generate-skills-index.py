@@ -1,0 +1,19 @@
+#!/usr/bin/env python3
+"""Generate agent/skills-index.json from all SKILL.md files in agent/skills/."""
+
+import json
+import pathlib
+import re
+
+SKILLS_DIR = pathlib.Path(__file__).parent / "skills"
+OUTPUT_FILE = pathlib.Path(__file__).parent / "skills-index.json"
+
+if __name__ == "__main__":
+    skills = []
+    for skill_md in sorted(SKILLS_DIR.glob("*/SKILL.md")):
+        text = skill_md.read_text()
+        match = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
+        fm = dict(re.findall(r"^(\w[\w-]*)\s*:\s*(.+)$", match.group(1), re.MULTILINE)) if match else {}
+        skills.append({"name": fm.get("name", skill_md.parent.name), "description": fm.get("description", "")})
+    OUTPUT_FILE.write_text(json.dumps(skills, indent=2) + "\n")
+    print(f"Generated {OUTPUT_FILE} with {len(skills)} skills.")

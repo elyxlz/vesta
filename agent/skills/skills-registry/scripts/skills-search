@@ -1,0 +1,31 @@
+#!/usr/bin/env python3
+"""Search the Vesta skills registry."""
+
+import json
+import pathlib
+import sys
+import urllib.request
+
+INDEX_URL = "https://raw.githubusercontent.com/elyxlz/vesta/master/agent/skills-index.json"
+
+query = " ".join(sys.argv[1:]).lower()
+
+try:
+    with urllib.request.urlopen(INDEX_URL, timeout=10) as resp:
+        skills = json.load(resp)
+except Exception as e:
+    print(f"Failed to fetch skills index: {e}", file=sys.stderr)
+    sys.exit(1)
+
+skills_dir = pathlib.Path(__file__).resolve().parents[2]
+installed = {p.name for p in skills_dir.iterdir() if p.is_dir()} if skills_dir.exists() else set()
+
+results = [s for s in skills if not query or query in s["name"].lower() or query in s["description"].lower()]
+
+if not results:
+    print(f"No skills found matching: {query}")
+    sys.exit(0)
+
+for s in results:
+    marker = " [installed]" if s["name"] in installed else ""
+    print(f"{s['name']}: {s['description']}{marker}")

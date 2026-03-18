@@ -20,8 +20,12 @@ COPY agent/pyproject.toml agent/uv.lock ./
 RUN uv sync --frozen --no-install-project
 
 # Source (changes often, but deps are cached above)
-COPY agent/ ./
+COPY agent/src ./src
+COPY agent/prompts ./prompts
 RUN uv sync --frozen
+
+# Core skills (non-core excluded via .dockerignore)
+COPY agent/skills ./skills
 
 ENV HOME=/root
 ENV STATE_DIR=/root/vesta
