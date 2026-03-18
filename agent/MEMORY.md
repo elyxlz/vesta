@@ -1,4 +1,4 @@
-# [agent_name_upper] MEMORY SYSTEM
+# [agent_name] MEMORY SYSTEM
 
 ## 1. CORE IDENTITY & PERSONALITY
 
