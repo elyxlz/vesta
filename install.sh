@@ -123,12 +123,12 @@ main() {
         tar -xzf "$WORK_DIR/vesta.tar.gz" -C "$WORK_DIR"
         install_cli_to_path "$WORK_DIR/vesta"
       else
-        if command -v dpkg >/dev/null 2>&1; then
+        if command -v apt-get >/dev/null 2>&1; then
           PKG_TYPE="deb"
         elif command -v rpm >/dev/null 2>&1; then
           PKG_TYPE="rpm"
         else
-          echo "No supported package manager found (dpkg or rpm required)"
+          echo "No supported package manager found (apt-get or rpm required)"
           exit 1
         fi
 
