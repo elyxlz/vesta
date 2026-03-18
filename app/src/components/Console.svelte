@@ -30,21 +30,41 @@
   }
 
   let alive = true;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  let retryDelay = 1000;
+  const RETRY_MAX = 30000;
 
-  onMount(async () => {
-    requestAnimationFrame(() => { suppressAnim = false; });
+  function scheduleRetry() {
+    streamEnded = true;
+    if (!alive) return;
+    if (retryTimer) clearTimeout(retryTimer);
+    retryTimer = setTimeout(startStream, retryDelay);
+    retryDelay = Math.min(retryDelay * 2, RETRY_MAX);
+  }
+
+  async function startStream() {
+    streamEnded = false;
     try {
       await streamLogs(name, (ev: LogEvent) => {
         if (!alive) return;
-        if (ev.kind === "Line") addLine(ev.text);
+        if (ev.kind === "Line") { retryDelay = 1000; addLine(ev.text); }
         if (ev.kind === "Error") addLine(`error: ${ev.message}`);
-        if (ev.kind === "End") streamEnded = true;
+        if (ev.kind === "End") scheduleRetry();
       });
-    } catch (e) { console.error("streamLogs failed:", e); }
+    } catch (e) {
+      console.error("streamLogs failed:", e);
+      scheduleRetry();
+    }
+  }
+
+  onMount(() => {
+    requestAnimationFrame(() => { suppressAnim = false; });
+    startStream();
   });
 
   onDestroy(() => {
     alive = false;
+    if (retryTimer) clearTimeout(retryTimer);
     stopLogs(name).catch(() => {});
   });
 
@@ -71,7 +91,7 @@
       <div class="line">{@html linkify(line.text)}</div>
     {/each}
     {#if streamEnded}
-      <div class="line stream-ended">— stream ended —</div>
+      <div class="line stream-ended">— reconnecting —</div>
     {/if}
     {#if lines.length === 0 && !streamEnded}
       <div class="empty-state">
