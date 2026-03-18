@@ -49,7 +49,7 @@ curl -L -o /usr/local/share/ggml-tiny.en.bin \
 ## Building the WhatsApp CLI
 
 ```bash
-cd agent/tools/whatsapp
+cd ~/vesta/skills/whatsapp/cli
 
 C_INCLUDE_PATH=/opt/whisper.cpp/include:/opt/whisper.cpp/ggml/include \
 LIBRARY_PATH=/opt/whisper.cpp/build-static/src:/opt/whisper.cpp/build-static/ggml/src \

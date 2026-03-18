@@ -32,7 +32,7 @@ Recurring reminders double as scheduled automations. The reminder message is del
 
 When a recurring reminder fires, treat the message as an instruction and act on it.
 
-## Setup: `uv tool install ~/vesta/tools/reminder`
+## Setup: `uv tool install ~/vesta/skills/reminders/cli`
 ## Background: `screen -dmS reminder reminder serve`
 
 ### Reminder Patterns

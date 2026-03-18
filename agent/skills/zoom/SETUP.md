@@ -6,5 +6,5 @@
 4. Note down the **Account ID**, **Client ID**, and **Client Secret**
 5. Under "Scopes", add: `meeting:write:admin`, `meeting:read:admin`
 6. Activate the app
-7. Install: `uv tool install ~/vesta/tools/zoom`
+7. Install: `uv tool install ~/vesta/skills/zoom/cli`
 8. Run: `zoom setup` and enter the 3 credentials when prompted
