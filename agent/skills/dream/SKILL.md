@@ -9,7 +9,7 @@ description: Self-improvement and memory curation. Used by the nightly dreamer, 
 
 - **Memory**: ~/vesta/MEMORY.md
 - **Skills**: ~/vesta/skills/ (each has a SKILL.md)
-- **Prompts**: ~/vesta/prompts/ (startup, notifications, dreamer prompt)
+- **Prompts**: ~/vesta/prompts/
 - **Dreamer summaries**: ~/vesta/dreamer/
 
 ## Order of operations
