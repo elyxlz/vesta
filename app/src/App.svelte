@@ -207,7 +207,7 @@
         v{updateInfo.version} installed — restart to apply
       {:else}
         v{updateInfo.version} available —
-        <button class="update-dismiss" onclick={() => { updateInfo = { ...updateInfo!, installing: true }; runInstallScript().then(() => { updateInfo = { version: updateInfo!.version, installing: true } }).catch(() => { updateInfo = null }) }}>install</button>
+        <button class="update-dismiss" onclick={() => { updateInfo = { ...updateInfo!, installing: true }; runInstallScript(updateInfo!.version).then(() => { updateInfo = { version: updateInfo!.version, installing: true } }).catch(() => { updateInfo = null }) }}>install</button>
       {/if}
       <button class="update-dismiss" onclick={() => updateInfo = null}>dismiss</button>
     </div>

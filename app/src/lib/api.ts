@@ -80,8 +80,8 @@ export async function getOs(): Promise<string> {
   return invoke("get_os");
 }
 
-export async function runInstallScript(): Promise<void> {
-  return invoke("run_install_script");
+export async function runInstallScript(version: string): Promise<void> {
+  return invoke("run_install_script", { version });
 }
 
 export async function checkAndInstallUpdate(): Promise<{ version: string; installing: boolean } | null> {
