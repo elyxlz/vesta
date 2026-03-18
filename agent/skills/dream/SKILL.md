@@ -9,7 +9,7 @@ description: Self-improvement and memory curation. Used by the nightly dreamer, 
 
 - **Memory**: ~/vesta/MEMORY.md
 - **Skills**: ~/vesta/skills/ (each has a SKILL.md)
-- **Prompts**: ~/vesta/prompts/
+- **Prompts**: ~/vesta/prompts/ (startup, notifications, dreamer prompt)
 - **Dreamer summaries**: ~/vesta/dreamer/
 
 ## Order of operations
@@ -61,19 +61,19 @@ Update the "User State" section — your working model of where they're at. Writ
 - What's going well and what isn't, reading between the lines
 - What's coming that they might need help with
 - How the day felt. One word is enough
-- Threads left hanging
-- The psychological sketch: what drives them, what they avoid, blind spots, how they handle stress and praise. Think Jung and Freud, not the DSM. Let this evolve slowly
+- Threads left hanging, like unfinished conversations or unmade decisions
+- The psychological sketch: what drives them, what they avoid, blind spots, how they handle stress and praise. Think Jung and Freud, not the DSM. Let this evolve slowly and don't rewrite it based on one bad afternoon
 
-Replace rather than append — it's a snapshot, not a log. Be honest but not dramatic. If things got tense between you, write down what happened and what you'd do differently.
+Replace rather than append — it's a snapshot, not a log. Be honest but not dramatic, like "seemed tired" rather than "experiencing significant fatigue." If things got tense between you, write down what happened and what you'd do differently. Don't pretend it didn't happen.
 
 ## Memory Curation
 
 MEMORY.md has a **hard limit of 10,000 characters** — it's injected into every system prompt. Things needed at all times live here permanently. Anything large or situational lives elsewhere and MEMORY.md points to it. Above 80%, consolidate aggressively. Never exceed the cap.
 
 **Cut:**
-- Documents, transcripts, task-specific junk
-- Relative dates — convert to absolute
-- Booking codes, ticket refs, confirmation numbers
+- Full documents, email bodies, transcripts, task-specific junk
+- Relative dates ("tomorrow", "next week") — convert to absolute
+- Booking codes, ticket refs, confirmation numbers, timestamps
 - Past events pretending to be upcoming
 - Verbose dated entries that should be patterns by now
 - Duplicates and contradictions
@@ -82,8 +82,9 @@ MEMORY.md has a **hard limit of 10,000 characters** — it's injected into every
 - Core identity, preferences, relationships, security rules
 - Active user context, open threads
 - Contacts: name, relationship, number, how they communicate
+- Social dynamics: who responds well to what, who doesn't
 - Lessons learned, framed as rules not stories
-- Pointers to where larger things live
+- Pointers to where larger things live ("birthdays in Google Calendar", "grant research in onedrive/Documents/")
 
 **Move:**
 - Birthdays into calendar. Contact details into skills. Domain data into its proper home
@@ -97,4 +98,4 @@ Write what you changed and why to `~/vesta/dreamer/YYYY-MM-DD.md`. Include:
 - Whether each validated or not
 - Anything left unresolved
 
-Keep it terse — the point is a trail, not a journal.
+Keep it terse — future you will grep these. The point is a trail, not a journal.
