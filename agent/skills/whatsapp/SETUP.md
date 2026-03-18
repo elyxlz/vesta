@@ -7,10 +7,11 @@
    curl -fsSL "https://go.dev/dl/$(curl -fsSL 'https://go.dev/VERSION?m=text' | head -1).linux-${ARCH}.tar.gz" | tar -C /usr/local -xz
    export PATH="/usr/local/go/bin:$PATH"
    ```
-2. Build the WhatsApp CLI (CGO required for SQLite):
+2. Build the WhatsApp CLI (CGO required for SQLite with FTS5):
    ```bash
-   cd ~/vesta/skills/whatsapp/cli && CGO_ENABLED=1 go build -o /usr/local/bin/whatsapp .
+   cd ~/vesta/skills/whatsapp/cli && CGO_ENABLED=1 CGO_CFLAGS="-DSQLITE_ENABLE_FTS5" CGO_LDFLAGS="-lm" go build -o /usr/local/bin/whatsapp .
    ```
+   > **Note:** Audio transcription is optional and requires whisper.cpp to be installed separately (see the whisper skill). Without it, voice messages will arrive without transcription.
 3. Start the daemon and authenticate:
    ```bash
    screen -dmS whatsapp whatsapp serve
