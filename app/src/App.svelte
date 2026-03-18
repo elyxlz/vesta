@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
-  import { getCurrentWindow, currentMonitor, PhysicalSize } from "@tauri-apps/api/window";
+  import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
   import { listBoxes, checkAndInstallUpdate, runInstallScript } from "./lib/api";
   import { createBoxConnection, type BoxConnection } from "./lib/ws";
   import { removeBoxState, resetOnboarding } from "./lib/store.svelte";
@@ -33,21 +33,15 @@
     transitioning = false;
   }
 
-  const SCREEN_FRACTION = 0.28;
-  const MIN_SIZE = 380;
-  const MAX_SIZE = 760;
+  const SCREEN_FRACTION = 0.6;
+  const MIN_SIZE = 400; // logical px
+  const MAX_SIZE = 800; // logical px
 
   async function scaleToMonitor() {
     const appWindow = getCurrentWindow();
-    const monitor = await currentMonitor();
-    if (!monitor) return;
-    // Work in physical pixels so window appears as the same fraction of screen
-    // regardless of OS scaling / DPI
-    const scale = monitor.scaleFactor;
-    const shortest = Math.min(monitor.size.width, monitor.size.height);
-    const size = Math.round(Math.max(MIN_SIZE * scale, Math.min(MAX_SIZE * scale, shortest * SCREEN_FRACTION)));
-
-    await appWindow.setSize(new PhysicalSize(size, size));
+    const shortest = Math.min(window.screen.width, window.screen.height);
+    const size = Math.round(Math.max(MIN_SIZE, Math.min(MAX_SIZE, shortest * SCREEN_FRACTION)));
+    await appWindow.setSize(new LogicalSize(size, size));
     await appWindow.center();
   }
 
