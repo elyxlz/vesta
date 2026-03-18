@@ -95,10 +95,16 @@
     setView("grid");
   }
 
-  function handleDestroyed() {
+  async function handleDestroyed() {
     if (selectedBox) removeBoxState(selectedBox.name);
     clearConnection();
-    setView("grid");
+    const remaining = await listBoxes().catch(() => []);
+    if (remaining.length === 0) {
+      hasBoxes = false;
+      setView("onboarding");
+    } else {
+      setView("grid");
+    }
   }
 
   async function handleOnboardingComplete(name: string) {
