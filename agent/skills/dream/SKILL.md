@@ -67,13 +67,38 @@ Update the "User State" section in MEMORY.md — your working model of where the
 
 ## Self-Improvement
 
-Use `search_history` to review past conversations. Find where you messed up, where things got awkward, where you could've been better. Then actually fix it:
+### 1. Retrospective
+
+Read the most recent file in `~/vesta/dreamer/`. For each fix listed there, check today's trace: did that situation come up again? Did it go better? If a fix didn't help or made things worse, revisit it now. If it worked, note it briefly in tonight's summary so the pattern is confirmed.
+
+### 2. Read today's trace
+
+Before investigating anything, pull the full day's conversation using `search_history` with today's date. Read it completely. Don't rely on memory of how the day went — the trace is the ground truth. Note:
+- Moments where you gave a wrong or incomplete answer
+- Places the user corrected you or had to repeat themselves
+- Tasks that stalled, failed, or felt clunky
+- Anything where a skill or prompt clearly led you astray
+
+This list is your work queue for the fixes below.
+
+### 3. Fix
+
+For each problem identified, actually fix it:
 - Update skills that tripped you up
 - Rewrite prompts that led you somewhere dumb
 - Add rules to memory that would stop you making the same mistake
 
-**Upstream**: Fixed something from the source repo? Use the `upstream` skill to pull changes and PR improvements back.
+### 4. Validate each fix
+
+After editing a skill or prompt, re-read the failing exchange from the trace and simulate: would the updated version have changed the outcome? Walk through it mentally with the new text loaded. If the answer is no or unclear, revise further or note it as unresolved in the summary. Don't mark something fixed if you can't convince yourself it would have helped.
+
+**Upstream**: Fixed something worth contributing back to the source repo? Use the `upstream` skill to PR it.
 
 ## Summary
 
-Write what you changed and why to ~/vesta/dreamer/YYYY-MM-DD.md, keeping it short since future you will grep these to remember how you got here.
+Write what you changed and why to `~/vesta/dreamer/YYYY-MM-DD.md`. Include:
+- What each fix was and what triggered it (quote the trace moment briefly)
+- Whether each validated or not
+- Anything left unresolved
+
+Keep it short — future you will grep these. The point is a trail, not a journal.
