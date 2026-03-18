@@ -1,0 +1,264 @@
+2025-09-14 00:20:36,222 - [SCHEDULER-SERVER] - INFO - Logging to /home/elyx/Repos/vesta2/mcps/scheduler-mcp/logs/scheduler-mcp.log
+2025-09-14 00:20:36,222 - [SCHEDULER-SERVER] - INFO - 🚀 Scheduler MCP starting up...
+2025-09-14 00:20:36,222 - [SCHEDULER-SERVER] - INFO - 📅 Scheduler will start when first tool is called
+2025-09-14 00:20:36,222 - [SCHEDULER-SERVER] - INFO - 🔌 Starting MCP server...
+2025-09-14 00:20:36,746 - [SCHEDULER-SERVER] - INFO - Logging to /home/elyx/Repos/vesta2/mcps/scheduler-mcp/logs/scheduler-mcp.log
+2025-09-14 00:20:36,746 - [SCHEDULER-SERVER] - INFO - 🚀 Scheduler MCP starting up...
+2025-09-14 00:20:36,746 - [SCHEDULER-SERVER] - INFO - 📅 Scheduler will start when first tool is called
+2025-09-14 00:20:36,746 - [SCHEDULER-SERVER] - INFO - 🔌 Starting MCP server...
+2025-09-14 00:20:37,246 - [SCHEDULER-SERVER] - INFO - Logging to /home/elyx/Repos/vesta2/mcps/scheduler-mcp/logs/scheduler-mcp.log
+2025-09-14 00:20:37,246 - [SCHEDULER-SERVER] - INFO - 🚀 Scheduler MCP starting up...
+2025-09-14 00:20:37,246 - [SCHEDULER-SERVER] - INFO - 📅 Scheduler will start when first tool is called
+2025-09-14 00:20:37,246 - [SCHEDULER-SERVER] - INFO - 🔌 Starting MCP server...
+2025-09-14 00:20:37,257 - [SCHEDULER-SERVER] - INFO - Processing request of type CallToolRequest
+2025-09-14 00:20:37,260 - [SCHEDULER-MCP] - INFO - 🔧 SET_REMINDER called: message='Test reminder', datetime=2025-09-14T01:20:37.256590, minutes=None, hours=None, days=None, recurring=None
+2025-09-14 00:20:37,260 - [SCHEDULER-SERVER] - INFO - 🔧 SET_REMINDER called: message='Test reminder', datetime=2025-09-14T01:20:37.256590, minutes=None, hours=None, days=None, recurring=None
+2025-09-14 00:20:37,261 - [SCHEDULER-SERVER] - INFO - Scheduler started
+2025-09-14 00:20:37,261 - [SCHEDULER-MCP] - INFO - ✅ Scheduler started successfully
+2025-09-14 00:20:37,261 - [SCHEDULER-SERVER] - INFO - ✅ Scheduler started successfully
+2025-09-14 00:20:37,262 - [SCHEDULER-MCP] - INFO - 📋 Found 0 existing scheduled jobs
+2025-09-14 00:20:37,262 - [SCHEDULER-SERVER] - INFO - 📋 Found 0 existing scheduled jobs
+2025-09-14 00:20:37,262 - [SCHEDULER-MCP] - INFO - 📅 Scheduling job: id=d1b2685d, trigger=date[2025-09-14 01:20:37 BST], next_run=2025-09-14 01:20:37.256590
+2025-09-14 00:20:37,262 - [SCHEDULER-SERVER] - INFO - 📅 Scheduling job: id=d1b2685d, trigger=date[2025-09-14 01:20:37 BST], next_run=2025-09-14 01:20:37.256590
+2025-09-14 00:20:37,264 - [SCHEDULER] - INFO - ➕ Job added: d1b2685d
+2025-09-14 00:20:37,264 - [SCHEDULER-SERVER] - INFO - ➕ Job added: d1b2685d
+2025-09-14 00:20:37,264 - [SCHEDULER-SERVER] - INFO - Added job "write_notification" to job store "default"
+2025-09-14 00:20:37,264 - [SCHEDULER-MCP] - INFO - ✅ Job scheduled successfully: d1b2685d
+2025-09-14 00:20:37,264 - [SCHEDULER-SERVER] - INFO - ✅ Job scheduled successfully: d1b2685d
+2025-09-14 00:20:37,264 - [SCHEDULER-MCP] - INFO - 💾 Saved reminder metadata: d1b2685d
+2025-09-14 00:20:37,264 - [SCHEDULER-SERVER] - INFO - 💾 Saved reminder metadata: d1b2685d
+2025-09-14 00:20:37,266 - [SCHEDULER-SERVER] - INFO - Processing request of type ListToolsRequest
+2025-09-14 00:20:37,267 - [SCHEDULER-SERVER] - INFO - Processing request of type CallToolRequest
+2025-09-14 00:20:37,268 - [SCHEDULER-MCP] - INFO - 🔧 LIST_REMINDERS called
+2025-09-14 00:20:37,268 - [SCHEDULER-SERVER] - INFO - 🔧 LIST_REMINDERS called
+2025-09-14 00:20:37,268 - [SCHEDULER-MCP] - INFO - 📋 Found 1 active reminders
+2025-09-14 00:20:37,268 - [SCHEDULER-SERVER] - INFO - 📋 Found 1 active reminders
+2025-09-14 00:20:37,270 - [SCHEDULER-SERVER] - INFO - Processing request of type CallToolRequest
+2025-09-14 00:20:37,270 - [SCHEDULER-MCP] - INFO - 🔧 CANCEL_REMINDER called: reminder_id=d1b2685d
+2025-09-14 00:20:37,270 - [SCHEDULER-SERVER] - INFO - 🔧 CANCEL_REMINDER called: reminder_id=d1b2685d
+2025-09-14 00:20:37,271 - [SCHEDULER] - INFO - ➖ Job removed: d1b2685d
+2025-09-14 00:20:37,271 - [SCHEDULER-SERVER] - INFO - ➖ Job removed: d1b2685d
+2025-09-14 00:20:37,271 - [SCHEDULER-SERVER] - INFO - Removed job d1b2685d
+2025-09-14 00:20:37,271 - [SCHEDULER-MCP] - INFO - ✅ Job removed from scheduler: d1b2685d
+2025-09-14 00:20:37,271 - [SCHEDULER-SERVER] - INFO - ✅ Job removed from scheduler: d1b2685d
+2025-09-14 00:20:37,271 - [SCHEDULER-MCP] - INFO - 💾 Removed from metadata: d1b2685d
+2025-09-14 00:20:37,271 - [SCHEDULER-SERVER] - INFO - 💾 Removed from metadata: d1b2685d
+2025-09-14 00:20:37,765 - [SCHEDULER-SERVER] - INFO - Logging to /home/elyx/Repos/vesta2/mcps/scheduler-mcp/logs/scheduler-mcp.log
+2025-09-14 00:20:37,765 - [SCHEDULER-SERVER] - INFO - 🚀 Scheduler MCP starting up...
+2025-09-14 00:20:37,765 - [SCHEDULER-SERVER] - INFO - 📅 Scheduler will start when first tool is called
+2025-09-14 00:20:37,765 - [SCHEDULER-SERVER] - INFO - 🔌 Starting MCP server...
+2025-09-14 00:20:37,777 - [SCHEDULER-SERVER] - INFO - Processing request of type CallToolRequest
+2025-09-14 00:20:37,781 - [SCHEDULER-MCP] - INFO - 🔧 SET_REMINDER called: message='To be cancelled', datetime=2025-09-14T02:20:37.776706, minutes=None, hours=None, days=None, recurring=None
+2025-09-14 00:20:37,781 - [SCHEDULER-SERVER] - INFO - 🔧 SET_REMINDER called: message='To be cancelled', datetime=2025-09-14T02:20:37.776706, minutes=None, hours=None, days=None, recurring=None
+2025-09-14 00:20:37,781 - [SCHEDULER-SERVER] - INFO - Scheduler started
+2025-09-14 00:20:37,781 - [SCHEDULER-MCP] - INFO - ✅ Scheduler started successfully
+2025-09-14 00:20:37,781 - [SCHEDULER-SERVER] - INFO - ✅ Scheduler started successfully
+2025-09-14 00:20:37,782 - [SCHEDULER-MCP] - INFO - 📋 Found 0 existing scheduled jobs
+2025-09-14 00:20:37,782 - [SCHEDULER-SERVER] - INFO - 📋 Found 0 existing scheduled jobs
+2025-09-14 00:20:37,782 - [SCHEDULER-MCP] - INFO - 📅 Scheduling job: id=742fc48a, trigger=date[2025-09-14 02:20:37 BST], next_run=2025-09-14 02:20:37.776706
+2025-09-14 00:20:37,782 - [SCHEDULER-SERVER] - INFO - 📅 Scheduling job: id=742fc48a, trigger=date[2025-09-14 02:20:37 BST], next_run=2025-09-14 02:20:37.776706
+2025-09-14 00:20:37,784 - [SCHEDULER] - INFO - ➕ Job added: 742fc48a
+2025-09-14 00:20:37,784 - [SCHEDULER-SERVER] - INFO - ➕ Job added: 742fc48a
+2025-09-14 00:20:37,784 - [SCHEDULER-SERVER] - INFO - Added job "write_notification" to job store "default"
+2025-09-14 00:20:37,784 - [SCHEDULER-MCP] - INFO - ✅ Job scheduled successfully: 742fc48a
+2025-09-14 00:20:37,784 - [SCHEDULER-SERVER] - INFO - ✅ Job scheduled successfully: 742fc48a
+2025-09-14 00:20:37,784 - [SCHEDULER-MCP] - INFO - 💾 Saved reminder metadata: 742fc48a
+2025-09-14 00:20:37,784 - [SCHEDULER-SERVER] - INFO - 💾 Saved reminder metadata: 742fc48a
+2025-09-14 00:20:37,787 - [SCHEDULER-SERVER] - INFO - Processing request of type ListToolsRequest
+2025-09-14 00:20:37,789 - [SCHEDULER-SERVER] - INFO - Processing request of type CallToolRequest
+2025-09-14 00:20:37,790 - [SCHEDULER-MCP] - INFO - 🔧 CANCEL_REMINDER called: reminder_id=742fc48a
+2025-09-14 00:20:37,790 - [SCHEDULER-SERVER] - INFO - 🔧 CANCEL_REMINDER called: reminder_id=742fc48a
+2025-09-14 00:20:37,791 - [SCHEDULER] - INFO - ➖ Job removed: 742fc48a
+2025-09-14 00:20:37,791 - [SCHEDULER-SERVER] - INFO - ➖ Job removed: 742fc48a
+2025-09-14 00:20:37,791 - [SCHEDULER-SERVER] - INFO - Removed job 742fc48a
+2025-09-14 00:20:37,791 - [SCHEDULER-MCP] - INFO - ✅ Job removed from scheduler: 742fc48a
+2025-09-14 00:20:37,791 - [SCHEDULER-SERVER] - INFO - ✅ Job removed from scheduler: 742fc48a
+2025-09-14 00:20:37,791 - [SCHEDULER-MCP] - INFO - 💾 Removed from metadata: 742fc48a
+2025-09-14 00:20:37,791 - [SCHEDULER-SERVER] - INFO - 💾 Removed from metadata: 742fc48a
+2025-09-14 00:20:53,248 - [SCHEDULER-SERVER] - INFO - Logging to /home/elyx/Repos/vesta2/mcps/scheduler-mcp/logs/scheduler-mcp.log
+2025-09-14 00:20:53,248 - [SCHEDULER-SERVER] - INFO - 🚀 Scheduler MCP starting up...
+2025-09-14 00:20:53,248 - [SCHEDULER-SERVER] - INFO - 📅 Scheduler will start when first tool is called
+2025-09-14 00:20:53,249 - [SCHEDULER-SERVER] - INFO - 🔌 Starting MCP server...
+2025-09-14 00:20:53,753 - [SCHEDULER-SERVER] - INFO - Logging to /home/elyx/Repos/vesta2/mcps/scheduler-mcp/logs/scheduler-mcp.log
+2025-09-14 00:20:53,753 - [SCHEDULER-SERVER] - INFO - 🚀 Scheduler MCP starting up...
+2025-09-14 00:20:53,753 - [SCHEDULER-SERVER] - INFO - 📅 Scheduler will start when first tool is called
+2025-09-14 00:20:53,753 - [SCHEDULER-SERVER] - INFO - 🔌 Starting MCP server...
+2025-09-14 00:20:54,250 - [SCHEDULER-SERVER] - INFO - Logging to /home/elyx/Repos/vesta2/mcps/scheduler-mcp/logs/scheduler-mcp.log
+2025-09-14 00:20:54,250 - [SCHEDULER-SERVER] - INFO - 🚀 Scheduler MCP starting up...
+2025-09-14 00:20:54,250 - [SCHEDULER-SERVER] - INFO - 📅 Scheduler will start when first tool is called
+2025-09-14 00:20:54,250 - [SCHEDULER-SERVER] - INFO - 🔌 Starting MCP server...
+2025-09-14 00:20:54,261 - [SCHEDULER-SERVER] - INFO - Processing request of type CallToolRequest
+2025-09-14 00:20:54,264 - [SCHEDULER-MCP] - INFO - 🔧 SET_REMINDER called: message='Test reminder', datetime=2025-09-14T01:20:54.260698, minutes=None, hours=None, days=None, recurring=None
+2025-09-14 00:20:54,264 - [SCHEDULER-SERVER] - INFO - 🔧 SET_REMINDER called: message='Test reminder', datetime=2025-09-14T01:20:54.260698, minutes=None, hours=None, days=None, recurring=None
+2025-09-14 00:20:54,265 - [SCHEDULER-SERVER] - INFO - Scheduler started
+2025-09-14 00:20:54,265 - [SCHEDULER-MCP] - INFO - ✅ Scheduler started successfully
+2025-09-14 00:20:54,265 - [SCHEDULER-SERVER] - INFO - ✅ Scheduler started successfully
+2025-09-14 00:20:54,266 - [SCHEDULER-MCP] - INFO - 📋 Found 0 existing scheduled jobs
+2025-09-14 00:20:54,266 - [SCHEDULER-SERVER] - INFO - 📋 Found 0 existing scheduled jobs
+2025-09-14 00:20:54,266 - [SCHEDULER-MCP] - INFO - 📅 Scheduling job: id=02baf73c, trigger=date[2025-09-14 01:20:54 BST], next_run=2025-09-14 01:20:54.260698
+2025-09-14 00:20:54,266 - [SCHEDULER-SERVER] - INFO - 📅 Scheduling job: id=02baf73c, trigger=date[2025-09-14 01:20:54 BST], next_run=2025-09-14 01:20:54.260698
+2025-09-14 00:20:54,268 - [SCHEDULER] - INFO - ➕ Job added: 02baf73c
+2025-09-14 00:20:54,268 - [SCHEDULER-SERVER] - INFO - ➕ Job added: 02baf73c
+2025-09-14 00:20:54,268 - [SCHEDULER-SERVER] - INFO - Added job "write_notification" to job store "default"
+2025-09-14 00:20:54,268 - [SCHEDULER-MCP] - INFO - ✅ Job scheduled successfully: 02baf73c
+2025-09-14 00:20:54,268 - [SCHEDULER-SERVER] - INFO - ✅ Job scheduled successfully: 02baf73c
+2025-09-14 00:20:54,269 - [SCHEDULER-MCP] - INFO - 💾 Saved reminder metadata: 02baf73c
+2025-09-14 00:20:54,269 - [SCHEDULER-SERVER] - INFO - 💾 Saved reminder metadata: 02baf73c
+2025-09-14 00:20:54,271 - [SCHEDULER-SERVER] - INFO - Processing request of type ListToolsRequest
+2025-09-14 00:20:54,274 - [SCHEDULER-SERVER] - INFO - Processing request of type CallToolRequest
+2025-09-14 00:20:54,274 - [SCHEDULER-MCP] - INFO - 🔧 LIST_REMINDERS called
+2025-09-14 00:20:54,274 - [SCHEDULER-SERVER] - INFO - 🔧 LIST_REMINDERS called
+2025-09-14 00:20:54,274 - [SCHEDULER-MCP] - INFO - 📋 Found 1 active reminders
+2025-09-14 00:20:54,274 - [SCHEDULER-SERVER] - INFO - 📋 Found 1 active reminders
+2025-09-14 00:20:54,277 - [SCHEDULER-SERVER] - INFO - Processing request of type CallToolRequest
+2025-09-14 00:20:54,277 - [SCHEDULER-MCP] - INFO - 🔧 CANCEL_REMINDER called: reminder_id=02baf73c
+2025-09-14 00:20:54,277 - [SCHEDULER-SERVER] - INFO - 🔧 CANCEL_REMINDER called: reminder_id=02baf73c
+2025-09-14 00:20:54,278 - [SCHEDULER] - INFO - ➖ Job removed: 02baf73c
+2025-09-14 00:20:54,278 - [SCHEDULER-SERVER] - INFO - ➖ Job removed: 02baf73c
+2025-09-14 00:20:54,278 - [SCHEDULER-SERVER] - INFO - Removed job 02baf73c
+2025-09-14 00:20:54,278 - [SCHEDULER-MCP] - INFO - ✅ Job removed from scheduler: 02baf73c
+2025-09-14 00:20:54,278 - [SCHEDULER-SERVER] - INFO - ✅ Job removed from scheduler: 02baf73c
+2025-09-14 00:20:54,278 - [SCHEDULER-MCP] - INFO - 💾 Removed from metadata: 02baf73c
+2025-09-14 00:20:54,278 - [SCHEDULER-SERVER] - INFO - 💾 Removed from metadata: 02baf73c
+2025-09-14 00:20:54,782 - [SCHEDULER-SERVER] - INFO - Logging to /home/elyx/Repos/vesta2/mcps/scheduler-mcp/logs/scheduler-mcp.log
+2025-09-14 00:20:54,782 - [SCHEDULER-SERVER] - INFO - 🚀 Scheduler MCP starting up...
+2025-09-14 00:20:54,782 - [SCHEDULER-SERVER] - INFO - 📅 Scheduler will start when first tool is called
+2025-09-14 00:20:54,782 - [SCHEDULER-SERVER] - INFO - 🔌 Starting MCP server...
+2025-09-14 00:20:54,793 - [SCHEDULER-SERVER] - INFO - Processing request of type CallToolRequest
+2025-09-14 00:20:54,797 - [SCHEDULER-MCP] - INFO - 🔧 SET_REMINDER called: message='To be cancelled', datetime=2025-09-14T02:20:54.793147, minutes=None, hours=None, days=None, recurring=None
+2025-09-14 00:20:54,797 - [SCHEDULER-SERVER] - INFO - 🔧 SET_REMINDER called: message='To be cancelled', datetime=2025-09-14T02:20:54.793147, minutes=None, hours=None, days=None, recurring=None
+2025-09-14 00:20:54,798 - [SCHEDULER-SERVER] - INFO - Scheduler started
+2025-09-14 00:20:54,798 - [SCHEDULER-MCP] - INFO - ✅ Scheduler started successfully
+2025-09-14 00:20:54,798 - [SCHEDULER-SERVER] - INFO - ✅ Scheduler started successfully
+2025-09-14 00:20:54,798 - [SCHEDULER-MCP] - INFO - 📋 Found 0 existing scheduled jobs
+2025-09-14 00:20:54,798 - [SCHEDULER-SERVER] - INFO - 📋 Found 0 existing scheduled jobs
+2025-09-14 00:20:54,799 - [SCHEDULER-MCP] - INFO - 📅 Scheduling job: id=95abd58b, trigger=date[2025-09-14 02:20:54 BST], next_run=2025-09-14 02:20:54.793147
+2025-09-14 00:20:54,799 - [SCHEDULER-SERVER] - INFO - 📅 Scheduling job: id=95abd58b, trigger=date[2025-09-14 02:20:54 BST], next_run=2025-09-14 02:20:54.793147
+2025-09-14 00:20:54,800 - [SCHEDULER] - INFO - ➕ Job added: 95abd58b
+2025-09-14 00:20:54,800 - [SCHEDULER-SERVER] - INFO - ➕ Job added: 95abd58b
+2025-09-14 00:20:54,800 - [SCHEDULER-SERVER] - INFO - Added job "write_notification" to job store "default"
+2025-09-14 00:20:54,800 - [SCHEDULER-MCP] - INFO - ✅ Job scheduled successfully: 95abd58b
+2025-09-14 00:20:54,800 - [SCHEDULER-SERVER] - INFO - ✅ Job scheduled successfully: 95abd58b
+2025-09-14 00:20:54,800 - [SCHEDULER-MCP] - INFO - 💾 Saved reminder metadata: 95abd58b
+2025-09-14 00:20:54,800 - [SCHEDULER-SERVER] - INFO - 💾 Saved reminder metadata: 95abd58b
+2025-09-14 00:20:54,803 - [SCHEDULER-SERVER] - INFO - Processing request of type ListToolsRequest
+2025-09-14 00:20:54,808 - [SCHEDULER-SERVER] - INFO - Processing request of type CallToolRequest
+2025-09-14 00:20:54,808 - [SCHEDULER-MCP] - INFO - 🔧 CANCEL_REMINDER called: reminder_id=95abd58b
+2025-09-14 00:20:54,808 - [SCHEDULER-SERVER] - INFO - 🔧 CANCEL_REMINDER called: reminder_id=95abd58b
+2025-09-14 00:20:54,809 - [SCHEDULER] - INFO - ➖ Job removed: 95abd58b
+2025-09-14 00:20:54,809 - [SCHEDULER-SERVER] - INFO - ➖ Job removed: 95abd58b
+2025-09-14 00:20:54,809 - [SCHEDULER-SERVER] - INFO - Removed job 95abd58b
+2025-09-14 00:20:54,809 - [SCHEDULER-MCP] - INFO - ✅ Job removed from scheduler: 95abd58b
+2025-09-14 00:20:54,809 - [SCHEDULER-SERVER] - INFO - ✅ Job removed from scheduler: 95abd58b
+2025-09-14 00:20:54,809 - [SCHEDULER-MCP] - INFO - 💾 Removed from metadata: 95abd58b
+2025-09-14 00:20:54,809 - [SCHEDULER-SERVER] - INFO - 💾 Removed from metadata: 95abd58b
+2025-09-14 00:21:10,519 - [SCHEDULER-SERVER] - INFO - Logging to /home/elyx/Repos/vesta2/mcps/scheduler-mcp/logs/scheduler-mcp.log
+2025-09-14 00:21:10,519 - [SCHEDULER-SERVER] - INFO - 🚀 Scheduler MCP starting up...
+2025-09-14 00:21:10,519 - [SCHEDULER-SERVER] - INFO - 📅 Scheduler will start when first tool is called
+2025-09-14 00:21:10,519 - [SCHEDULER-SERVER] - INFO - 🔌 Starting MCP server...
+2025-09-14 00:21:11,020 - [SCHEDULER-SERVER] - INFO - Logging to /home/elyx/Repos/vesta2/mcps/scheduler-mcp/logs/scheduler-mcp.log
+2025-09-14 00:21:11,020 - [SCHEDULER-SERVER] - INFO - 🚀 Scheduler MCP starting up...
+2025-09-14 00:21:11,020 - [SCHEDULER-SERVER] - INFO - 📅 Scheduler will start when first tool is called
+2025-09-14 00:21:11,020 - [SCHEDULER-SERVER] - INFO - 🔌 Starting MCP server...
+2025-09-14 00:21:56,108 - [SCHEDULER-SERVER] - INFO - Logging to /home/elyx/Repos/vesta2/mcps/scheduler-mcp/logs/scheduler-mcp.log
+2025-09-14 00:21:56,108 - [SCHEDULER-SERVER] - INFO - 🚀 Scheduler MCP starting up...
+2025-09-14 00:21:56,108 - [SCHEDULER-SERVER] - INFO - 📅 Scheduler will start when first tool is called
+2025-09-14 00:21:56,108 - [SCHEDULER-SERVER] - INFO - 🔌 Starting MCP server...
+2025-09-14 00:21:56,119 - [SCHEDULER-SERVER] - INFO - Processing request of type CallToolRequest
+2025-09-14 00:21:56,119 - [SCHEDULER-MCP] - INFO - 🔧 LIST_REMINDERS called
+2025-09-14 00:21:56,119 - [SCHEDULER-SERVER] - INFO - 🔧 LIST_REMINDERS called
+2025-09-14 00:21:56,120 - [SCHEDULER-SERVER] - INFO - Scheduler started
+2025-09-14 00:21:56,120 - [SCHEDULER-MCP] - INFO - ✅ Scheduler started successfully
+2025-09-14 00:21:56,120 - [SCHEDULER-SERVER] - INFO - ✅ Scheduler started successfully
+2025-09-14 00:21:56,121 - [SCHEDULER-MCP] - INFO - 📋 Found 0 existing scheduled jobs
+2025-09-14 00:21:56,121 - [SCHEDULER-SERVER] - INFO - 📋 Found 0 existing scheduled jobs
+2025-09-14 00:21:56,121 - [SCHEDULER-MCP] - INFO - 📋 Found 0 active reminders
+2025-09-14 00:21:56,121 - [SCHEDULER-SERVER] - INFO - 📋 Found 0 active reminders
+2025-09-14 00:21:56,123 - [SCHEDULER-SERVER] - INFO - Processing request of type ListToolsRequest
+2025-09-14 00:21:56,628 - [SCHEDULER-SERVER] - INFO - Logging to /home/elyx/Repos/vesta2/mcps/scheduler-mcp/logs/scheduler-mcp.log
+2025-09-14 00:21:56,628 - [SCHEDULER-SERVER] - INFO - 🚀 Scheduler MCP starting up...
+2025-09-14 00:21:56,628 - [SCHEDULER-SERVER] - INFO - 📅 Scheduler will start when first tool is called
+2025-09-14 00:21:56,628 - [SCHEDULER-SERVER] - INFO - 🔌 Starting MCP server...
+2025-09-14 00:21:56,640 - [SCHEDULER-SERVER] - INFO - Processing request of type CallToolRequest
+2025-09-14 00:21:56,640 - [SCHEDULER-MCP] - INFO - 🔧 LIST_REMINDERS called
+2025-09-14 00:21:56,640 - [SCHEDULER-SERVER] - INFO - 🔧 LIST_REMINDERS called
+2025-09-14 00:21:56,641 - [SCHEDULER-SERVER] - INFO - Scheduler started
+2025-09-14 00:21:56,641 - [SCHEDULER-MCP] - INFO - ✅ Scheduler started successfully
+2025-09-14 00:21:56,641 - [SCHEDULER-SERVER] - INFO - ✅ Scheduler started successfully
+2025-09-14 00:21:56,642 - [SCHEDULER-MCP] - INFO - 📋 Found 0 existing scheduled jobs
+2025-09-14 00:21:56,642 - [SCHEDULER-SERVER] - INFO - 📋 Found 0 existing scheduled jobs
+2025-09-14 00:21:56,642 - [SCHEDULER-MCP] - INFO - 📋 Found 0 active reminders
+2025-09-14 00:21:56,642 - [SCHEDULER-SERVER] - INFO - 📋 Found 0 active reminders
+2025-09-14 00:21:56,644 - [SCHEDULER-SERVER] - INFO - Processing request of type ListToolsRequest
+2025-09-14 00:21:56,648 - [SCHEDULER-SERVER] - INFO - Processing request of type CallToolRequest
+2025-09-14 00:21:56,651 - [SCHEDULER-MCP] - INFO - 🔧 SET_REMINDER called: message='test', datetime=None, minutes=None, hours=None, days=None, recurring=None
+2025-09-14 00:21:56,651 - [SCHEDULER-SERVER] - INFO - 🔧 SET_REMINDER called: message='test', datetime=None, minutes=None, hours=None, days=None, recurring=None
+2025-09-14 00:21:57,211 - [SCHEDULER-SERVER] - INFO - Logging to /home/elyx/Repos/vesta2/mcps/scheduler-mcp/logs/scheduler-mcp.log
+2025-09-14 00:21:57,211 - [SCHEDULER-SERVER] - INFO - 🚀 Scheduler MCP starting up...
+2025-09-14 00:21:57,211 - [SCHEDULER-SERVER] - INFO - 📅 Scheduler will start when first tool is called
+2025-09-14 00:21:57,211 - [SCHEDULER-SERVER] - INFO - 🔌 Starting MCP server...
+2025-09-14 00:21:57,222 - [SCHEDULER-SERVER] - INFO - Processing request of type CallToolRequest
+2025-09-14 00:21:57,226 - [SCHEDULER-MCP] - INFO - 🔧 SET_REMINDER called: message='Test reminder', datetime=2025-09-14T01:21:57.221799, minutes=None, hours=None, days=None, recurring=None
+2025-09-14 00:21:57,226 - [SCHEDULER-SERVER] - INFO - 🔧 SET_REMINDER called: message='Test reminder', datetime=2025-09-14T01:21:57.221799, minutes=None, hours=None, days=None, recurring=None
+2025-09-14 00:21:57,226 - [SCHEDULER-SERVER] - INFO - Scheduler started
+2025-09-14 00:21:57,226 - [SCHEDULER-MCP] - INFO - ✅ Scheduler started successfully
+2025-09-14 00:21:57,226 - [SCHEDULER-SERVER] - INFO - ✅ Scheduler started successfully
+2025-09-14 00:21:57,227 - [SCHEDULER-MCP] - INFO - 📋 Found 0 existing scheduled jobs
+2025-09-14 00:21:57,227 - [SCHEDULER-SERVER] - INFO - 📋 Found 0 existing scheduled jobs
+2025-09-14 00:21:57,227 - [SCHEDULER-MCP] - INFO - 📅 Scheduling job: id=59c06b84, trigger=date[2025-09-14 01:21:57 BST], next_run=2025-09-14 01:21:57.221799
+2025-09-14 00:21:57,227 - [SCHEDULER-SERVER] - INFO - 📅 Scheduling job: id=59c06b84, trigger=date[2025-09-14 01:21:57 BST], next_run=2025-09-14 01:21:57.221799
+2025-09-14 00:21:57,229 - [SCHEDULER] - INFO - ➕ Job added: 59c06b84
+2025-09-14 00:21:57,229 - [SCHEDULER-SERVER] - INFO - ➕ Job added: 59c06b84
+2025-09-14 00:21:57,229 - [SCHEDULER-SERVER] - INFO - Added job "write_notification" to job store "default"
+2025-09-14 00:21:57,229 - [SCHEDULER-MCP] - INFO - ✅ Job scheduled successfully: 59c06b84
+2025-09-14 00:21:57,229 - [SCHEDULER-SERVER] - INFO - ✅ Job scheduled successfully: 59c06b84
+2025-09-14 00:21:57,229 - [SCHEDULER-MCP] - INFO - 💾 Saved reminder metadata: 59c06b84
+2025-09-14 00:21:57,229 - [SCHEDULER-SERVER] - INFO - 💾 Saved reminder metadata: 59c06b84
+2025-09-14 00:21:57,233 - [SCHEDULER-SERVER] - INFO - Processing request of type ListToolsRequest
+2025-09-14 00:21:57,236 - [SCHEDULER-SERVER] - INFO - Processing request of type CallToolRequest
+2025-09-14 00:21:57,236 - [SCHEDULER-MCP] - INFO - 🔧 LIST_REMINDERS called
+2025-09-14 00:21:57,236 - [SCHEDULER-SERVER] - INFO - 🔧 LIST_REMINDERS called
+2025-09-14 00:21:57,236 - [SCHEDULER-MCP] - INFO - 📋 Found 1 active reminders
+2025-09-14 00:21:57,236 - [SCHEDULER-SERVER] - INFO - 📋 Found 1 active reminders
+2025-09-14 00:21:57,240 - [SCHEDULER-SERVER] - INFO - Processing request of type CallToolRequest
+2025-09-14 00:21:57,241 - [SCHEDULER-MCP] - INFO - 🔧 CANCEL_REMINDER called: reminder_id=59c06b84
+2025-09-14 00:21:57,241 - [SCHEDULER-SERVER] - INFO - 🔧 CANCEL_REMINDER called: reminder_id=59c06b84
+2025-09-14 00:21:57,242 - [SCHEDULER] - INFO - ➖ Job removed: 59c06b84
+2025-09-14 00:21:57,242 - [SCHEDULER-SERVER] - INFO - ➖ Job removed: 59c06b84
+2025-09-14 00:21:57,242 - [SCHEDULER-SERVER] - INFO - Removed job 59c06b84
+2025-09-14 00:21:57,242 - [SCHEDULER-MCP] - INFO - ✅ Job removed from scheduler: 59c06b84
+2025-09-14 00:21:57,242 - [SCHEDULER-SERVER] - INFO - ✅ Job removed from scheduler: 59c06b84
+2025-09-14 00:21:57,242 - [SCHEDULER-MCP] - INFO - 💾 Removed from metadata: 59c06b84
+2025-09-14 00:21:57,242 - [SCHEDULER-SERVER] - INFO - 💾 Removed from metadata: 59c06b84
+2025-09-14 00:21:57,718 - [SCHEDULER-SERVER] - INFO - Logging to /home/elyx/Repos/vesta2/mcps/scheduler-mcp/logs/scheduler-mcp.log
+2025-09-14 00:21:57,718 - [SCHEDULER-SERVER] - INFO - 🚀 Scheduler MCP starting up...
+2025-09-14 00:21:57,718 - [SCHEDULER-SERVER] - INFO - 📅 Scheduler will start when first tool is called
+2025-09-14 00:21:57,719 - [SCHEDULER-SERVER] - INFO - 🔌 Starting MCP server...
+2025-09-14 00:21:57,730 - [SCHEDULER-SERVER] - INFO - Processing request of type CallToolRequest
+2025-09-14 00:21:57,733 - [SCHEDULER-MCP] - INFO - 🔧 SET_REMINDER called: message='To be cancelled', datetime=2025-09-14T02:21:57.729592, minutes=None, hours=None, days=None, recurring=None
+2025-09-14 00:21:57,733 - [SCHEDULER-SERVER] - INFO - 🔧 SET_REMINDER called: message='To be cancelled', datetime=2025-09-14T02:21:57.729592, minutes=None, hours=None, days=None, recurring=None
+2025-09-14 00:21:57,734 - [SCHEDULER-SERVER] - INFO - Scheduler started
+2025-09-14 00:21:57,734 - [SCHEDULER-MCP] - INFO - ✅ Scheduler started successfully
+2025-09-14 00:21:57,734 - [SCHEDULER-SERVER] - INFO - ✅ Scheduler started successfully
+2025-09-14 00:21:57,735 - [SCHEDULER-MCP] - INFO - 📋 Found 0 existing scheduled jobs
+2025-09-14 00:21:57,735 - [SCHEDULER-SERVER] - INFO - 📋 Found 0 existing scheduled jobs
+2025-09-14 00:21:57,735 - [SCHEDULER-MCP] - INFO - 📅 Scheduling job: id=a0d49413, trigger=date[2025-09-14 02:21:57 BST], next_run=2025-09-14 02:21:57.729592
+2025-09-14 00:21:57,735 - [SCHEDULER-SERVER] - INFO - 📅 Scheduling job: id=a0d49413, trigger=date[2025-09-14 02:21:57 BST], next_run=2025-09-14 02:21:57.729592
+2025-09-14 00:21:57,736 - [SCHEDULER] - INFO - ➕ Job added: a0d49413
+2025-09-14 00:21:57,736 - [SCHEDULER-SERVER] - INFO - ➕ Job added: a0d49413
+2025-09-14 00:21:57,737 - [SCHEDULER-SERVER] - INFO - Added job "write_notification" to job store "default"
+2025-09-14 00:21:57,737 - [SCHEDULER-MCP] - INFO - ✅ Job scheduled successfully: a0d49413
+2025-09-14 00:21:57,737 - [SCHEDULER-SERVER] - INFO - ✅ Job scheduled successfully: a0d49413
+2025-09-14 00:21:57,737 - [SCHEDULER-MCP] - INFO - 💾 Saved reminder metadata: a0d49413
+2025-09-14 00:21:57,737 - [SCHEDULER-SERVER] - INFO - 💾 Saved reminder metadata: a0d49413
+2025-09-14 00:21:57,739 - [SCHEDULER-SERVER] - INFO - Processing request of type ListToolsRequest
+2025-09-14 00:21:57,743 - [SCHEDULER-SERVER] - INFO - Processing request of type CallToolRequest
+2025-09-14 00:21:57,744 - [SCHEDULER-MCP] - INFO - 🔧 CANCEL_REMINDER called: reminder_id=a0d49413
+2025-09-14 00:21:57,744 - [SCHEDULER-SERVER] - INFO - 🔧 CANCEL_REMINDER called: reminder_id=a0d49413
+2025-09-14 00:21:57,745 - [SCHEDULER] - INFO - ➖ Job removed: a0d49413
+2025-09-14 00:21:57,745 - [SCHEDULER-SERVER] - INFO - ➖ Job removed: a0d49413
+2025-09-14 00:21:57,745 - [SCHEDULER-SERVER] - INFO - Removed job a0d49413
+2025-09-14 00:21:57,745 - [SCHEDULER-MCP] - INFO - ✅ Job removed from scheduler: a0d49413
+2025-09-14 00:21:57,745 - [SCHEDULER-SERVER] - INFO - ✅ Job removed from scheduler: a0d49413
+2025-09-14 00:21:57,745 - [SCHEDULER-MCP] - INFO - 💾 Removed from metadata: a0d49413
+2025-09-14 00:21:57,745 - [SCHEDULER-SERVER] - INFO - 💾 Removed from metadata: a0d49413

@@ -134,12 +134,23 @@ def test_deployment_structure():
     skills_dir = config.install_root / "skills"
     assert skills_dir.is_dir()
 
-    whatsapp_cli_dir = skills_dir / "whatsapp" / "cli"
-    assert (whatsapp_cli_dir / "go.mod").exists()
-    assert (whatsapp_cli_dir / "main.go").exists()
+    # Core skills must be present in agent/skills/
+    for skill_name in ["reminders", "tasks", "skills"]:
+        assert (skills_dir / skill_name).is_dir(), f"Core skill '{skill_name}' missing from skills/"
 
-    for skill_name, tool_name in [("microsoft", "microsoft"), ("reminders", "reminder"), ("tasks", "tasks")]:
+    for skill_name, tool_name in [("reminders", "reminder"), ("tasks", "tasks")]:
         assert (skills_dir / skill_name / "cli" / "pyproject.toml").exists(), f"pyproject.toml missing for {tool_name}"
+
+    # skills-registry/ must exist and contain the expected skills
+    registry_dir = config.install_root / "skills-registry"
+    assert registry_dir.is_dir(), "skills-registry/ directory missing"
+
+    expected_registry_skills = [
+        "google", "keeper", "microsoft", "onedrive", "whatsapp", "whisper", "zoom",
+        "reminders", "tasks", "upstream", "dream", "what-day", "browser", "skills",
+    ]
+    for skill_name in expected_registry_skills:
+        assert (registry_dir / skill_name).is_dir(), f"Skill '{skill_name}' missing from skills-registry/"
 
 
 # --- Message processor tests ---
