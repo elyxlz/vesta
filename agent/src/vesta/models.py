@@ -15,8 +15,8 @@ __all__ = ["State", "Notification", "VestaConfig"]
 @dc.dataclass
 class State:
     client: ClaudeSDKClient | None = None
-    shutdown_event: asyncio.Event | None = None
-    graceful_shutdown: asyncio.Event | None = None
+    shutdown_event: asyncio.Event = dc.field(default_factory=asyncio.Event)
+    graceful_shutdown: asyncio.Event = dc.field(default_factory=asyncio.Event)
     shutdown_count: int = 0
     session_id: str | None = None
     pending_context: str | None = None

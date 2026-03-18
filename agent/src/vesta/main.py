@@ -15,17 +15,17 @@ import vesta.models as vm
 from vesta import logger
 from vesta.api import start_ws_server
 from vesta.core.history import open_history
-from vesta.core.init import init_skills, init_main_memory, init_prompts
+from vesta.core.init import get_memory_path
 from vesta.core.loops import message_processor, monitor_loop, queue_greeting
 
 SignalHandler = tp.Callable[[int, types.FrameType | None], None]
 
 
 async def input_handler(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State) -> None:
-    while state.shutdown_event and not state.shutdown_event.is_set():
+    while not state.shutdown_event.is_set():
         try:
             user_msg = await aioconsole.ainput("")
-            if state.shutdown_event and state.shutdown_event.is_set():
+            if state.shutdown_event.is_set():
                 break
             if not user_msg.strip():
                 continue
@@ -33,8 +33,7 @@ async def input_handler(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.Sta
             logger.user(user_msg.strip())
             await queue.put((user_msg.strip(), True))
         except (KeyboardInterrupt, EOFError):
-            if state.shutdown_event:
-                state.shutdown_event.set()
+            state.shutdown_event.set()
             break
         except asyncio.CancelledError:
             break
@@ -53,21 +52,16 @@ def _make_signal_handler(state: vm.State, *, allow_force_exit: bool = False) -> 
     def handler(signum: int, frame: types.FrameType | None) -> None:
         state.shutdown_count += 1
         if state.shutdown_count == 1:
-            if state.graceful_shutdown:
-                state.graceful_shutdown.set()
+            state.graceful_shutdown.set()
         elif allow_force_exit and state.shutdown_count > 2:
             os._exit(0)
         else:
-            if state.shutdown_event:
-                state.shutdown_event.set()
+            state.shutdown_event.set()
 
     return handler
 
 
 async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: bool = False, crashed: bool = False) -> None:
-    state.shutdown_event = asyncio.Event()
-    state.graceful_shutdown = asyncio.Event()
-
     signal.signal(signal.SIGHUP, signal.SIG_IGN)
     signal.signal(signal.SIGINT, _make_signal_handler(state, allow_force_exit=True))
     signal.signal(signal.SIGTERM, _make_signal_handler(state))
@@ -112,11 +106,8 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
 
 
 def _detect_crash(config: vm.VestaConfig) -> bool:
-    crash_reason = config.data_dir / "crash_reason"
     run_marker = config.data_dir / "run_marker"
-
-    crashed = crash_reason.exists() or run_marker.exists()
-    crash_reason.unlink(missing_ok=True)
+    crashed = run_marker.exists()
     run_marker.unlink(missing_ok=True)
     return crashed
 
@@ -161,12 +152,7 @@ async def async_main() -> None:
     logger.setup(config.logs_dir, log_level=config.log_level)
     logger.init(f"{config.agent_name} starting")
 
-    logger.init("Initializing memory...")
-    first_start = init_main_memory(config)
-    init_prompts(config)
-    logger.init("Initializing skills...")
-    init_skills(config)
-
+    first_start = "[Unknown - need to ask]" in get_memory_path(config).read_text()
     initial_state, crashed = init_state(config=config)
     initial_state.history = open_history(config.history_db)
     logger.init("Starting main loop...")

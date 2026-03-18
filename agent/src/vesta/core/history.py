@@ -42,7 +42,6 @@ class HistoryDB:
 
 
 def open_history(db_path: pl.Path) -> HistoryDB:
-    db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path))
     conn.executescript(_SCHEMA)
     return HistoryDB(conn=conn)
@@ -90,10 +89,6 @@ def history_get_range(
         params,
     ).fetchall()
     return [{"timestamp": r[0], "role": r[1], "content": r[2]} for r in reversed(rows)]
-
-
-def history_close(db: HistoryDB) -> None:
-    db.conn.close()
 
 
 def format_results(results: list[dict[str, str]], *, max_chars: int = 50000) -> str:

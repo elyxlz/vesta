@@ -1,0 +1,1 @@
+What's probably going on with them right now? Could you get started on any tasks, check in on something, or take care of anything quietly? Only reach out if something genuinely needs them — notifications handle the inbox and calendar, this is about being proactive with work and check-ins.

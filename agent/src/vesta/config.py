@@ -34,10 +34,6 @@ class VestaConfig(pyd_settings.BaseSettings):
         return pl.Path(__file__).parent.parent.parent.absolute()
 
     @property
-    def repo_root(self) -> pl.Path:
-        return self.install_root.parent
-
-    @property
     def notifications_dir(self) -> pl.Path:
         return self.state_dir / "notifications"
 
@@ -50,16 +46,12 @@ class VestaConfig(pyd_settings.BaseSettings):
         return self.state_dir / "logs"
 
     @property
-    def memory_dir(self) -> pl.Path:
-        return self.install_root / "memory"
-
-    @property
     def skills_dir(self) -> pl.Path:
-        return self.memory_dir / "skills"
+        return self.install_root / "skills"
 
     @property
     def prompts_dir(self) -> pl.Path:
-        return self.memory_dir / "prompts"
+        return self.install_root / "prompts"
 
     @property
     def history_db(self) -> pl.Path:
@@ -67,19 +59,10 @@ class VestaConfig(pyd_settings.BaseSettings):
 
     @property
     def dreamer_dir(self) -> pl.Path:
-        return self.memory_dir / "dreamer"
+        return self.state_dir / "dreamer"
 
     @property
     def session_file(self) -> pl.Path:
         return self.data_dir / "session_id"
 
-    @property
-    def agent_name(self) -> str:
-        name_file = self.state_dir / ".vesta-name"
-        try:
-            name = name_file.read_text().strip()
-            if name:
-                return name
-        except (OSError, UnicodeDecodeError):
-            pass
-        return "vesta"
+    agent_name: str = "vesta"
