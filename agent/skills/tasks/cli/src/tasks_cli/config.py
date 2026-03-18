@@ -1,7 +1,8 @@
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
-VESTA_DIR = Path.home()
+VESTA_DIR = Path(os.environ["VESTA_ROOT"]) if "VESTA_ROOT" in os.environ else Path.home() / "vesta"
 
 
 @dataclass

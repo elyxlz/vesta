@@ -5,6 +5,9 @@ import pydantic as pyd
 import pydantic_settings as pyd_settings
 
 
+_DEFAULT_ROOT = pl.Path.home() / "vesta"
+
+
 class VestaConfig(pyd_settings.BaseSettings):
     model_config = pyd_settings.SettingsConfigDict(extra="ignore")
 
@@ -20,38 +23,34 @@ class VestaConfig(pyd_settings.BaseSettings):
     max_thinking_tokens: int | None = 10000
     ws_port: int = 7865
 
-    state_dir: pl.Path = pyd.Field(default_factory=lambda: pl.Path.home())
+    root: pl.Path = pyd.Field(default=_DEFAULT_ROOT)
 
-    @pyd.field_validator("state_dir", mode="before")
+    @pyd.field_validator("root", mode="before")
     @classmethod
-    def _normalize_state_dir(cls, value: pl.Path | str | None) -> pl.Path:
+    def _normalize_root(cls, value: pl.Path | str | None) -> pl.Path:
         if value is None or value == "":
-            return pl.Path.home()
+            return _DEFAULT_ROOT
         return pl.Path(value).expanduser().resolve()
 
     @property
-    def install_root(self) -> pl.Path:
-        return pl.Path(__file__).parent.parent.parent.absolute()
-
-    @property
     def notifications_dir(self) -> pl.Path:
-        return self.state_dir / "notifications"
+        return self.root / "notifications"
 
     @property
     def data_dir(self) -> pl.Path:
-        return self.state_dir / "data"
+        return self.root / "data"
 
     @property
     def logs_dir(self) -> pl.Path:
-        return self.state_dir / "logs"
+        return self.root / "logs"
 
     @property
     def skills_dir(self) -> pl.Path:
-        return self.install_root / "skills"
+        return self.root / "skills"
 
     @property
     def prompts_dir(self) -> pl.Path:
-        return self.install_root / "prompts"
+        return self.root / "prompts"
 
     @property
     def history_db(self) -> pl.Path:
@@ -59,7 +58,7 @@ class VestaConfig(pyd_settings.BaseSettings):
 
     @property
     def dreamer_dir(self) -> pl.Path:
-        return self.state_dir / "dreamer"
+        return self.root / "dreamer"
 
     @property
     def session_file(self) -> pl.Path:

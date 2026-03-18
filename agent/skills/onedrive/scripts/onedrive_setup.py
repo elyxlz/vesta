@@ -21,9 +21,10 @@ def _require_env(name: str) -> str:
 
 
 def _paths() -> tuple[pl.Path, pl.Path, pl.Path]:
-    data_dir = pl.Path(os.environ["ONEDRIVE_DATA_DIR"] if "ONEDRIVE_DATA_DIR" in os.environ else str(pl.Path.home() / "data"))
-    mount_dir = pl.Path(os.environ["ONEDRIVE_MOUNT_DIR"] if "ONEDRIVE_MOUNT_DIR" in os.environ else str(pl.Path.home() / "onedrive"))
-    logs_dir = pl.Path(os.environ["ONEDRIVE_LOGS_DIR"] if "ONEDRIVE_LOGS_DIR" in os.environ else str(pl.Path.home() / "logs"))
+    vesta_dir = pl.Path.home() / "vesta"
+    data_dir = pl.Path(os.environ["ONEDRIVE_DATA_DIR"] if "ONEDRIVE_DATA_DIR" in os.environ else str(vesta_dir / "data"))
+    mount_dir = pl.Path(os.environ["ONEDRIVE_MOUNT_DIR"] if "ONEDRIVE_MOUNT_DIR" in os.environ else str(vesta_dir / "onedrive"))
+    logs_dir = pl.Path(os.environ["ONEDRIVE_LOGS_DIR"] if "ONEDRIVE_LOGS_DIR" in os.environ else str(vesta_dir / "logs"))
     return data_dir, mount_dir, logs_dir
 
 

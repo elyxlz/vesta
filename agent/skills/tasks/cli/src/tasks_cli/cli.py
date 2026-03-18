@@ -7,7 +7,6 @@ import sys
 import threading
 import time
 from datetime import datetime, UTC
-from pathlib import Path
 
 from .config import Config
 from . import commands, db, monitor
@@ -46,19 +45,8 @@ def _require_daemon(config):
         sys.exit(1)
 
 
-def build_config(args) -> Config:
-    config = Config()
-    if "state_dir" in vars(args) and args.state_dir:
-        base = Path(args.state_dir)
-        config.data_dir = base / "data" / "tasks"
-        config.log_dir = base / "logs" / "tasks"
-        config.notif_dir = base / "notifications"
-    return config
-
-
 def main():
     parser = argparse.ArgumentParser(prog="tasks")
-    parser.add_argument("--state-dir", type=str, help="Override state directory (default: ~)")
     sub = parser.add_subparsers(dest="command", required=True)
 
     # serve
@@ -105,7 +93,7 @@ def main():
     p_search.add_argument("--show-completed", action="store_true")
 
     args = parser.parse_args()
-    config = build_config(args)
+    config = Config()
 
     # Ensure dirs exist
     config.data_dir.mkdir(parents=True, exist_ok=True)

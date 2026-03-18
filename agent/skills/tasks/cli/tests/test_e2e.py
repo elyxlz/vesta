@@ -14,21 +14,22 @@ TASKS_BIN = str(CLI_DIR / ".venv" / "bin" / "tasks")
 
 def tasks_cli(state_dir: Path, *args: str, timeout: float = 10) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [TASKS_BIN, "--state-dir", str(state_dir), *args],
+        [TASKS_BIN, *args],
         capture_output=True,
         text=True,
         timeout=timeout,
+        env={**os.environ, "VESTA_ROOT": str(state_dir)},
     )
 
 
 def start_daemon(state_dir: Path, monitor_interval: int = 1) -> subprocess.Popen:
     proc = subprocess.Popen(
-        [TASKS_BIN, "--state-dir", str(state_dir), "serve"],
+        [TASKS_BIN, "serve"],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
         start_new_session=True,
-        env={**os.environ, "TASKS_MONITOR_INTERVAL": str(monitor_interval)},
+        env={**os.environ, "VESTA_ROOT": str(state_dir), "TASKS_MONITOR_INTERVAL": str(monitor_interval)},
     )
     line = proc.stdout.readline()
     assert "serving" in line, f"daemon failed to start: {line}"

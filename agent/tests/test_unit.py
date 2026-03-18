@@ -19,18 +19,18 @@ from vesta.core.loops import format_notification_batch
 
 
 def _make_config(tmp_path: Path) -> vm.VestaConfig:
-    return vm.VestaConfig(state_dir=tmp_path)
+    return vm.VestaConfig(root=tmp_path)
 
 
 # --- Config & init ---
 
 
-def test_config_paths_under_state_dir(tmp_path):
+def test_config_paths_under_root(tmp_path):
     config = _make_config(tmp_path)
     assert config.notifications_dir.is_relative_to(tmp_path)
     assert config.data_dir.is_relative_to(tmp_path)
     assert config.logs_dir.is_relative_to(tmp_path)
-    assert config.skills_dir.is_relative_to(config.install_root)
+    assert config.skills_dir.is_relative_to(config.root)
 
 
 def test_config_default_values():
@@ -41,8 +41,8 @@ def test_config_default_values():
 
 def test_memory_paths(tmp_path):
     config = _make_config(tmp_path)
-    assert get_memory_path(config) == config.install_root / "MEMORY.md"
-    assert config.skills_dir == config.install_root / "skills"
+    assert get_memory_path(config) == config.root / "MEMORY.md"
+    assert config.skills_dir == config.root / "skills"
 
 
 # --- Formatting ---
@@ -128,10 +128,10 @@ def test_format_notification_batch_multiple():
 
 
 def test_deployment_structure():
-    config = vm.VestaConfig()
-    assert config.install_root.is_dir()
+    source_root = Path(__file__).parent.parent
+    assert source_root.is_dir()
 
-    skills_dir = config.install_root / "skills"
+    skills_dir = source_root / "skills"
     assert skills_dir.is_dir(), "skills/ directory missing"
 
     expected_skills = [
@@ -162,7 +162,7 @@ def test_deployment_structure():
 def test_skill_frontmatter():
     import re
 
-    skills_dir = vm.VestaConfig().install_root / "skills"
+    skills_dir = Path(__file__).parent.parent / "skills"
     for skill_md in skills_dir.glob("*/SKILL.md"):
         text = skill_md.read_text()
         match = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
@@ -176,11 +176,11 @@ def test_skills_index_valid():
     import json
     import re
 
-    install_root = vm.VestaConfig().install_root
-    index = json.loads((install_root / "skills-index.json").read_text())
+    source_root = Path(__file__).parent.parent
+    index = json.loads((source_root / "skills-index.json").read_text())
     assert isinstance(index, list) and index, "skills-index.json must be a non-empty list"
     skill_names = {s["name"] for s in index}
-    for skill_md in (install_root / "skills").glob("*/SKILL.md"):
+    for skill_md in (source_root / "skills").glob("*/SKILL.md"):
         text = skill_md.read_text()
         match = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
         fm = dict(re.findall(r"^(\w[\w-]*)\s*:\s*(.+)$", match.group(1), re.MULTILINE)) if match else {}
@@ -188,7 +188,7 @@ def test_skills_index_valid():
 
 
 def test_skills_registry_scripts_executable():
-    scripts_dir = vm.VestaConfig().install_root / "skills" / "skills-registry" / "scripts"
+    scripts_dir = Path(__file__).parent.parent / "skills" / "skills-registry" / "scripts"
     for script in scripts_dir.iterdir():
         assert script.stat().st_mode & 0o111, f"{script.name} is not executable"
 
@@ -359,7 +359,7 @@ async def test_dreamer_queues_prompt_and_archives(tmp_path):
     queue: asyncio.Queue = asyncio.Queue()
 
     dreamer_hour = 4
-    config = vm.VestaConfig(state_dir=tmp_path, nightly_memory_hour=dreamer_hour)
+    config = vm.VestaConfig(root=tmp_path, nightly_memory_hour=dreamer_hour)
     fake_now = dt.datetime(2025, 6, 15, dreamer_hour, 0, 0)
 
     with (
@@ -381,7 +381,7 @@ async def test_dreamer_skips_when_already_run_today(tmp_path):
     from vesta.core.loops import process_nightly_memory
 
     dreamer_hour = 4
-    config = vm.VestaConfig(state_dir=tmp_path, nightly_memory_hour=dreamer_hour)
+    config = vm.VestaConfig(root=tmp_path, nightly_memory_hour=dreamer_hour)
     fake_now = dt.datetime(2025, 6, 15, dreamer_hour, 0, 0)
 
     state = vm.State()
@@ -646,7 +646,7 @@ async def test_converse_works_normally_without_interrupt():
 def test_nightly_restart(tmp_path):
     from vesta.core.loops import _trigger_nightly_restart
 
-    config = vm.VestaConfig(state_dir=tmp_path)
+    config = vm.VestaConfig(root=tmp_path)
     fake_now = dt.datetime(2025, 6, 15, 4, 5, 0)
 
     # With summary
