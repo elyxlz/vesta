@@ -71,9 +71,9 @@ Update the "User State" section in MEMORY.md — your working model of where the
 
 Read the most recent file in `~/vesta/dreamer/`. For each fix listed there, check today's trace: did that situation come up again? Did it go better? If a fix didn't help or made things worse, revisit it now. If it worked, note it briefly in tonight's summary so the pattern is confirmed.
 
-### 2. Read today's trace
+### 2. Review today's conversation
 
-Before investigating anything, pull the full day's conversation using `search_history` with today's date. Read it completely. Don't rely on memory of how the day went — the trace is the ground truth. Note:
+You've been running all day — today's conversation is already in your context. Review it now with fresh eyes. Note:
 - Moments where you gave a wrong or incomplete answer
 - Places the user corrected you or had to repeat themselves
 - Tasks that stalled, failed, or felt clunky
