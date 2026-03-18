@@ -12,7 +12,7 @@ Local fork: `~/vesta` (this is a fork — it diverges from upstream as local cha
 
 1. `git -C ~/vesta fetch origin`
 2. `git -C ~/vesta log HEAD..origin/master --oneline` — see what's new
-3. Only look at changes under `agent/` — `cli/` (Rust) and `app/` (Tauri) don't run in the container
+3. Only look at changes under `agent/`
 4. For each interesting commit: `git -C ~/vesta show <hash>` — understand what it does
 5. Manually apply the relevant changes to `~/vesta` source (don't paste diffs blindly — local may have diverged, adapt the intent)
 6. Track the last processed commit hash in MEMORY.md so you don't redo it next time
