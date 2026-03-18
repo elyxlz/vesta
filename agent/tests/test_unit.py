@@ -146,8 +146,20 @@ def test_deployment_structure():
     assert registry_dir.is_dir(), "skills-registry/ directory missing"
 
     expected_registry_skills = [
-        "google", "keeper", "microsoft", "onedrive", "whatsapp", "whisper", "zoom",
-        "reminders", "tasks", "upstream", "dream", "what-day", "browser", "skills",
+        "google",
+        "keeper",
+        "microsoft",
+        "onedrive",
+        "whatsapp",
+        "whisper",
+        "zoom",
+        "reminders",
+        "tasks",
+        "upstream",
+        "dream",
+        "what-day",
+        "browser",
+        "skills",
     ]
     for skill_name in expected_registry_skills:
         assert (registry_dir / skill_name).is_dir(), f"Skill '{skill_name}' missing from skills-registry/"
