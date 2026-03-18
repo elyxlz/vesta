@@ -252,7 +252,7 @@ def test_notification_creates_file(state_dir):
     """Vesta should process a notification and create the requested file."""
 
     async def test_fn(state: vm.State, config: vm.VestaConfig):
-        workspace = config.state_dir / "workspace"
+        workspace = config.root / "workspace"
         notif_dir = config.notifications_dir
         target = workspace / f"single-{uuid.uuid4().hex}.txt"
         expected_text = f"E2E notification content {uuid.uuid4().hex}"
@@ -273,7 +273,7 @@ def test_sequential_and_interrupt_flow(state_dir):
     """Vesta should handle sequential tasks and interrupts correctly."""
 
     async def test_fn(state: vm.State, config: vm.VestaConfig):
-        workspace = config.state_dir / "workspace"
+        workspace = config.root / "workspace"
         notif_dir = config.notifications_dir
 
         first = workspace / f"sequence-{uuid.uuid4().hex}-first.txt"
@@ -316,7 +316,7 @@ def test_notification_batching(state_dir):
     """Multiple notifications arriving together should be batched."""
 
     async def test_fn(state: vm.State, config: vm.VestaConfig):
-        workspace = config.state_dir / "workspace"
+        workspace = config.root / "workspace"
         notif_dir = config.notifications_dir
 
         file1 = workspace / f"batch-{uuid.uuid4().hex}-1.txt"
@@ -339,7 +339,7 @@ def test_client_created_on_notification(state_dir):
 
     async def test_fn(state: vm.State, config: vm.VestaConfig):
         notif_dir = config.notifications_dir
-        workspace = config.state_dir / "workspace"
+        workspace = config.root / "workspace"
         target = workspace / f"client-test-{uuid.uuid4().hex}.txt"
         _write_notification(notif_dir, f'Create file "{target}" with content "client test"')
         await _wait_for_file(target)
@@ -379,7 +379,7 @@ def test_multiple_files_single_request(state_dir):
     """Vesta should handle requests to create multiple files."""
 
     async def test_fn(state: vm.State, config: vm.VestaConfig):
-        workspace = config.state_dir / "workspace"
+        workspace = config.root / "workspace"
         notif_dir = config.notifications_dir
 
         uid = uuid.uuid4().hex[:8]
@@ -412,7 +412,7 @@ def test_file_modification(state_dir):
     """Vesta should be able to modify existing files."""
 
     async def test_fn(state: vm.State, config: vm.VestaConfig):
-        workspace = config.state_dir / "workspace"
+        workspace = config.root / "workspace"
         notif_dir = config.notifications_dir
 
         target = workspace / f"modify-{uuid.uuid4().hex}.txt"
@@ -452,7 +452,7 @@ def test_responsive_during_subagent(tmp_path):
     _prepare_state_dir(state_dir)
 
     async def test_fn(state: vm.State, config: vm.VestaConfig):
-        workspace = config.state_dir / "workspace"
+        workspace = config.root / "workspace"
         notif_dir = config.notifications_dir
 
         subagent_file = workspace / f"subagent-{uuid.uuid4().hex}.txt"

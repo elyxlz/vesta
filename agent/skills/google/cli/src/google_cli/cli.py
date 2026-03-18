@@ -5,7 +5,6 @@ import os
 import signal
 import sys
 import threading
-from pathlib import Path
 
 from .config import Config
 from . import auth_commands, gmail, calendar, meet, monitor, notifications
@@ -36,19 +35,8 @@ def _require_daemon(config):
         sys.exit(1)
 
 
-def build_config(args) -> Config:
-    config = Config()
-    if "state_dir" in vars(args) and args.state_dir:
-        base = Path(args.state_dir)
-        config.data_dir = base / "data" / "google"
-        config.log_dir = base / "logs" / "google"
-        config.notif_dir = base / "notifications"
-    return config
-
-
 def main():
     parser = argparse.ArgumentParser(prog="google")
-    parser.add_argument("--state-dir", type=str)
     group = parser.add_subparsers(dest="group", required=True)
 
     # serve
@@ -169,7 +157,7 @@ def main():
     meet_sub.add_parser("create")
 
     args = parser.parse_args()
-    config = build_config(args)
+    config = Config()
 
     config.data_dir.mkdir(parents=True, exist_ok=True)
     config.log_dir.mkdir(parents=True, exist_ok=True)

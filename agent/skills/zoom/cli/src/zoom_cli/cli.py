@@ -1,18 +1,9 @@
 import argparse
 import json
 import sys
-from pathlib import Path
 
 from .config import Config
 from . import meetings
-
-
-def build_config(args) -> Config:
-    config = Config()
-    if "state_dir" in vars(args) and args.state_dir:
-        base = Path(args.state_dir)
-        config.data_dir = base / "data" / "zoom"
-    return config
 
 
 def _setup(config: Config):
@@ -32,7 +23,6 @@ def _setup(config: Config):
 
 def main():
     parser = argparse.ArgumentParser(prog="zoom")
-    parser.add_argument("--state-dir", type=str)
     group = parser.add_subparsers(dest="group", required=True)
 
     # setup
@@ -54,7 +44,7 @@ def main():
     p_delete.add_argument("--id", required=True, dest="meeting_id")
 
     args = parser.parse_args()
-    config = build_config(args)
+    config = Config()
     config.data_dir.mkdir(parents=True, exist_ok=True)
 
     try:

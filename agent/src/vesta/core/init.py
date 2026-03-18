@@ -4,7 +4,7 @@ import vesta.models as vm
 
 
 def get_memory_path(config: vm.VestaConfig) -> pl.Path:
-    return config.install_root / "MEMORY.md"
+    return config.root / "MEMORY.md"
 
 
 def load_prompt(name: str, config: vm.VestaConfig) -> str | None:

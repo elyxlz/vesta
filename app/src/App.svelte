@@ -195,7 +195,7 @@
     {/if}
   </main>
 
-  {#if updateInfo}
+  {#if updateInfo && view === "box-home"}
     <div class="update-bar">
       {#if updateInfo.installing}
         v{updateInfo.version} installed — restart to apply
@@ -616,7 +616,7 @@
 
   .update-bar {
     position: absolute;
-    bottom: 8px;
+    bottom: 28px;
     left: 50%;
     transform: translateX(-50%);
     padding: 4px 14px;
@@ -649,8 +649,8 @@
   }
 
   @keyframes fadeSlideUp {
-    from { opacity: 0; transform: translateX(-50%) translateY(8px); }
-    to { opacity: 1; transform: translateX(-50%) translateY(0); }
+    from { opacity: 0; transform: translateX(-50%) translateY(6px); }
+    to { opacity: 1; transform: translateX(-50%); }
   }
 
   @media (prefers-color-scheme: dark) {

@@ -28,6 +28,5 @@ RUN uv sync --frozen
 COPY agent/skills ./skills
 
 ENV HOME=/root
-ENV STATE_DIR=/root/vesta
 ENV IS_SANDBOX=1
 ENTRYPOINT ["uv", "run", "--project", "/root/vesta", "python", "-m", "vesta.main"]

@@ -5,7 +5,6 @@ import os
 import signal
 import sys
 import threading
-from pathlib import Path
 
 import httpx
 
@@ -39,19 +38,8 @@ def _require_daemon(config):
         sys.exit(1)
 
 
-def build_config(args) -> Config:
-    config = Config()
-    if "state_dir" in vars(args) and args.state_dir:
-        base = Path(args.state_dir)
-        config.data_dir = base / "data" / "microsoft"
-        config.log_dir = base / "logs" / "microsoft"
-        config.notif_dir = base / "notifications"
-    return config
-
-
 def main():
     parser = argparse.ArgumentParser(prog="microsoft")
-    parser.add_argument("--state-dir", type=str)
     group = parser.add_subparsers(dest="group", required=True)
 
     # serve
@@ -179,7 +167,7 @@ def main():
     p_respond.add_argument("--message", default=None)
 
     args = parser.parse_args()
-    config = build_config(args)
+    config = Config()
 
     config.data_dir.mkdir(parents=True, exist_ok=True)
     config.log_dir.mkdir(parents=True, exist_ok=True)

@@ -1,7 +1,8 @@
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-VESTA_DIR = Path.home()
+VESTA_DIR = Path(os.environ["VESTA_ROOT"]) if "VESTA_ROOT" in os.environ else Path.home() / "vesta"
 
 SCOPES = ["https://graph.microsoft.com/.default"]
 BASE_URL = "https://graph.microsoft.com/v1.0"
