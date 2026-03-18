@@ -15,11 +15,11 @@ TMP_CLONE_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_CLONE_DIR"' EXIT
 
 echo "Downloading '$SKILL_NAME' from registry..."
-git clone --no-checkout --depth=1 --filter=blob:none "$REPO" "$TMP_CLONE_DIR/repo" -q
+git clone --no-checkout --depth=1 --filter=blob:none "$REPO" "$TMP_CLONE_DIR/repo"
 cd "$TMP_CLONE_DIR/repo"
-git sparse-checkout init --no-cone -q
+git sparse-checkout init --no-cone
 git sparse-checkout set "agent/skills/$SKILL_NAME"
-git checkout -q
+git checkout
 
 if [ ! -d "agent/skills/$SKILL_NAME" ]; then
     echo "Error: skill '$SKILL_NAME' not found in registry."
