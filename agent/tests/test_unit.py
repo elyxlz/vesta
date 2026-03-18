@@ -131,15 +131,15 @@ def test_deployment_structure():
     config = vm.VestaConfig()
     assert config.install_root.is_dir()
 
-    tools_dir = config.install_root / "tools"
-    assert tools_dir.is_dir()
+    skills_dir = config.install_root / "skills"
+    assert skills_dir.is_dir()
 
-    whatsapp_dir = tools_dir / "whatsapp"
-    assert (whatsapp_dir / "go.mod").exists()
-    assert (whatsapp_dir / "main.go").exists()
+    whatsapp_cli_dir = skills_dir / "whatsapp" / "cli"
+    assert (whatsapp_cli_dir / "go.mod").exists()
+    assert (whatsapp_cli_dir / "main.go").exists()
 
-    for tool_name in ["microsoft", "reminder", "tasks"]:
-        assert (tools_dir / tool_name / "pyproject.toml").exists(), f"pyproject.toml missing for {tool_name}"
+    for skill_name, tool_name in [("microsoft", "microsoft"), ("reminders", "reminder"), ("tasks", "tasks")]:
+        assert (skills_dir / skill_name / "cli" / "pyproject.toml").exists(), f"pyproject.toml missing for {tool_name}"
 
 
 # --- Message processor tests ---
