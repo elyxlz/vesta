@@ -20,13 +20,7 @@ except Exception as e:
 skills_dir = pathlib.Path(__file__).resolve().parents[2]
 installed = {p.name for p in skills_dir.iterdir() if p.is_dir()} if skills_dir.exists() else set()
 
-results = [
-    s for s in skills
-    if not query
-    or query in s["name"].lower()
-    or query in s["description"].lower()
-    or any(query in t for t in s.get("tags", []))
-]
+results = [s for s in skills if not query or query in s["name"].lower() or query in s["description"].lower()]
 
 if not results:
     print(f"No skills found matching: {query}")

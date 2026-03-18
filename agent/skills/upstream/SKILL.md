@@ -50,7 +50,7 @@ When syncing upstream, also check for skill updates under `agent/skills/`:
 
 - For each installed skill (`ls ~/vesta/skills/`) check if there are new commits touching `agent/skills/<name>/`
 - Read the diff and apply useful generic improvements to `~/vesta/skills/<name>/`
-- Update `~/vesta/skills-lock.json` with the latest processed commit hash
+- Track the last processed commit hash in MEMORY.md (same as core upstream sync)
 
 When contributing a skill improvement back upstream, use the same worktree flow. All skill changes — core or not — go in `agent/skills/<name>/`.
 

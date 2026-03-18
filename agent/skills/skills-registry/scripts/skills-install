@@ -27,21 +27,7 @@ if [ ! -d "agent/skills/$SKILL_NAME" ]; then
 fi
 
 cp -r "agent/skills/$SKILL_NAME" "$DEST"
-
-# Record commit hash in skills-lock.json
-COMMIT=$(git rev-parse HEAD)
-LOCK_FILE="$HOME/vesta/skills-lock.json"
-mkdir -p "$HOME/vesta"
-SKILL_NAME="$SKILL_NAME" COMMIT="$COMMIT" LOCK_FILE="$LOCK_FILE" python3 - <<'EOF'
-import json, os, pathlib
-lock_file = pathlib.Path(os.environ["LOCK_FILE"])
-lock = json.loads(lock_file.read_text()) if lock_file.exists() else {}
-lock[os.environ["SKILL_NAME"]] = os.environ["COMMIT"]
-lock_file.write_text(json.dumps(lock, indent=2))
-EOF
-
-echo "Installed '$SKILL_NAME'."
+echo "Installed '$SKILL_NAME'. Restart Vesta to activate it."
 if [ -f "$DEST/SETUP.md" ]; then
     echo "This skill requires setup — read $DEST/SETUP.md for instructions."
 fi
-echo "Restart Vesta to activate it."
