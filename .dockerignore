@@ -7,7 +7,7 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 agent/tests/
-agent/generate-skills-index.py
+agent/skills/generate-index.py
 agent/skills/google
 agent/skills/keeper
 agent/skills/microsoft

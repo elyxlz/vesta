@@ -369,7 +369,7 @@
 
     {:else if step === "auth"}
       <div class="step step-anim">
-        <h1>re authenticate to claude</h1>
+        <h1>authenticate claude</h1>
         {#if authCodeNeeded}
           <p class="sub">paste the code from the browser below.</p>
           <form onsubmit={(e) => { e.preventDefault(); handleSubmitCode(); }}>
@@ -381,9 +381,9 @@
           <p class="sub">verifying code...</p>
           <ProgressBar message="verifying..." />
         {:else if authUrl}
-          <p class="sub">re authenticate via the browser window that opened.<br/>if it didn't open, use the link below.</p>
+          <p class="sub">authenticate via the browser window that opened.<br/>if it didn't open, use the link below.</p>
           <a class="auth-link" href={authUrl} target="_blank" rel="noopener">{authUrl.slice(0, 50)}...</a>
-          <ProgressBar message="waiting for re authentication..." />
+          <ProgressBar message="waiting for authentication..." />
         {:else}
           <p class="sub">opening browser...</p>
           <ProgressBar message="waiting..." />

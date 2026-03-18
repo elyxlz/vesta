@@ -24,8 +24,12 @@ COPY agent/src ./src
 COPY agent/prompts ./prompts
 RUN uv sync --frozen
 
-# Core skills (non-core excluded via .dockerignore)
-COPY agent/skills ./skills
+# Everything else in agent/ (skills, any new dirs — safety net)
+COPY agent/ .
+
+# Bare repo for upstream skill (fetch/worktree/show without exposing cli/app as working files)
+RUN git clone --bare --single-branch https://github.com/elyxlz/vesta.git .git && \
+    git config core.bare false
 
 ENV HOME=/root
 ENV IS_SANDBOX=1

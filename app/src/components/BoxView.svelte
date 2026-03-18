@@ -201,7 +201,7 @@
       }
       connection.resetReconnect();
       await syncStatus();
-    }, "re authentication failed");
+    }, "authentication failed");
   }
 
   async function handleRestart() {
@@ -312,7 +312,7 @@
         {#if alive}
           <button class="action-btn primary" onclick={onChat} data-tip="open chat">chat</button>
         {:else if running && !authenticated}
-          <button class="action-btn primary" disabled={busy} onclick={handleAuth} data-tip="re authenticate to claude">re authenticate</button>
+          <button class="action-btn primary" disabled={busy} onclick={handleAuth} data-tip="authenticate claude">authenticate</button>
         {/if}
         <button class="action-btn" disabled={busy} onclick={toggleRun} data-tip={running ? "stop" : "start"}>
           {running ? "stop" : "start"}
@@ -334,7 +334,7 @@
                 <button class="menu-item" disabled={busy} onclick={() => { menuOpen = false; handleRestart(); }} data-tip="restart box">restart</button>
               {/if}
               {#if running && authenticated}
-                <button class="menu-item" disabled={busy} onclick={() => { menuOpen = false; handleAuth(); }} data-tip="re-authenticate claude">re authenticate</button>
+                <button class="menu-item" disabled={busy} onclick={() => { menuOpen = false; handleAuth(); }} data-tip="authenticate claude">authenticate</button>
               {/if}
               <button class="menu-item" disabled={busy} onclick={() => { menuOpen = false; handleBackup(); }} data-tip="export to file">backup</button>
               <button class="menu-item" disabled={busy} onclick={() => { menuOpen = false; handleRestore(); }} data-tip="restore from file">load backup</button>
