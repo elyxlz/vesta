@@ -24,7 +24,7 @@ tasks delete <id>
 - `--show-completed`: include done tasks in list/search
 - `--initial-metadata`: JSON string of metadata to attach when adding a task
 
-## Setup: `uv tool install ~/vesta/tools/tasks`
+## Setup: `uv tool install ~/vesta/skills/tasks/cli`
 ## Background: `screen -dmS tasks tasks serve`
 
 ### Task Patterns

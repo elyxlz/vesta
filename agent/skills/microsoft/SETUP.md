@@ -11,7 +11,7 @@
    ```
    MICROSOFT_MCP_CLIENT_ID=<your-client-id>
    ```
-4. Install: `uv tool install ~/vesta/tools/microsoft`
+4. Install: `uv tool install ~/vesta/skills/microsoft/cli`
 5. Start background daemon: `screen -dmS microsoft microsoft serve`
 
 ## Authentication

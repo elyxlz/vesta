@@ -9,7 +9,7 @@
    ```
 2. Build the WhatsApp CLI (CGO required for SQLite):
    ```bash
-   cd ~/vesta/tools/whatsapp && CGO_ENABLED=1 go build -o /usr/local/bin/whatsapp .
+   cd ~/vesta/skills/whatsapp/cli && CGO_ENABLED=1 go build -o /usr/local/bin/whatsapp .
    ```
 3. Start the daemon and authenticate:
    ```bash

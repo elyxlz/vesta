@@ -10,7 +10,7 @@ curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y 
 apt-get install -y xvfb
 
 # 3. Build and install the browser CLI
-cd ~/vesta/tools/browser && npm install && npm run build && npm install -g .
+cd ~/vesta/skills/browser/cli && npm install && npm run build && npm install -g .
 
 # 4. Install Chromium (matched to playwright-core version)
 npx playwright-core install --with-deps chromium
