@@ -10,5 +10,3 @@ agent/tests/
 app/
 cli/
 .github/
-agent/skills-registry
-agent/generate-skills-index.py

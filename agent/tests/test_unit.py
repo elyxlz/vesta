@@ -131,28 +131,11 @@ def test_deployment_structure():
     config = vm.VestaConfig()
     assert config.install_root.is_dir()
 
-    skills_dir = config.install_root / "skills"
-    assert skills_dir.is_dir()
-
-    # Core skills must be present in agent/skills/
-    for skill_name in ["reminders", "tasks", "skills"]:
-        assert (skills_dir / skill_name).is_dir(), f"Core skill '{skill_name}' missing from skills/"
-
-    for skill_name, tool_name in [("reminders", "reminder"), ("tasks", "tasks")]:
-        assert (skills_dir / skill_name / "cli" / "pyproject.toml").exists(), f"pyproject.toml missing for {tool_name}"
-
-    # skills-registry/ must exist and contain the expected skills
-    registry_dir = config.install_root / "skills-registry"
-    assert registry_dir.is_dir(), "skills-registry/ directory missing"
+    # skills-registry/ is the single source of truth for all skills
+    skills_registry_dir = config.install_root / "skills-registry"
+    assert skills_registry_dir.is_dir(), "skills-registry/ directory missing"
 
     expected_registry_skills = [
-        "google",
-        "keeper",
-        "microsoft",
-        "onedrive",
-        "whatsapp",
-        "whisper",
-        "zoom",
         "reminders",
         "tasks",
         "upstream",
@@ -160,9 +143,21 @@ def test_deployment_structure():
         "what-day",
         "browser",
         "skills",
+        "google",
+        "microsoft",
+        "whatsapp",
+        "whisper",
+        "zoom",
+        "keeper",
+        "onedrive",
     ]
     for skill_name in expected_registry_skills:
-        assert (registry_dir / skill_name).is_dir(), f"Skill '{skill_name}' missing from skills-registry/"
+        assert (skills_registry_dir / skill_name).is_dir(), f"Skill '{skill_name}' missing from skills-registry/"
+
+    for skill_name in ("reminders", "tasks"):
+        assert (skills_registry_dir / skill_name / "cli" / "pyproject.toml").exists(), f"pyproject.toml missing for {skill_name}"
+
+    assert (skills_registry_dir / "whatsapp" / "cli" / "go.mod").exists(), "go.mod missing for whatsapp"
 
 
 # --- Message processor tests ---
