@@ -11,12 +11,12 @@ if [ -d "$DEST" ]; then
 fi
 
 REPO="https://github.com/elyxlz/vesta"
-TMPDIR=$(mktemp -d)
-trap 'rm -rf "$TMPDIR"' EXIT
+TMP_CLONE_DIR=$(mktemp -d)
+trap 'rm -rf "$TMP_CLONE_DIR"' EXIT
 
 echo "Downloading '$SKILL_NAME' from registry..."
-git clone --no-checkout --depth=1 --filter=blob:none "$REPO" "$TMPDIR/repo" -q
-cd "$TMPDIR/repo"
+git clone --no-checkout --depth=1 --filter=blob:none "$REPO" "$TMP_CLONE_DIR/repo" -q
+cd "$TMP_CLONE_DIR/repo"
 git sparse-checkout init --no-cone -q
 git sparse-checkout set "agent/skills/$SKILL_NAME"
 git checkout -q
@@ -31,16 +31,14 @@ cp -r "agent/skills/$SKILL_NAME" "$DEST"
 # Record commit hash in skills-lock.json
 COMMIT=$(git rev-parse HEAD)
 LOCK_FILE="$HOME/vesta/skills-lock.json"
-if [ -f "$LOCK_FILE" ]; then
-    python3 -c "
-import json, pathlib
-lock = json.loads(pathlib.Path('$LOCK_FILE').read_text())
-lock['$SKILL_NAME'] = '$COMMIT'
-pathlib.Path('$LOCK_FILE').write_text(json.dumps(lock, indent=2))
-"
-else
-    echo "{\"$SKILL_NAME\": \"$COMMIT\"}" > "$LOCK_FILE"
-fi
+mkdir -p "$HOME/vesta"
+SKILL_NAME="$SKILL_NAME" COMMIT="$COMMIT" LOCK_FILE="$LOCK_FILE" python3 - <<'EOF'
+import json, os, pathlib
+lock_file = pathlib.Path(os.environ["LOCK_FILE"])
+lock = json.loads(lock_file.read_text()) if lock_file.exists() else {}
+lock[os.environ["SKILL_NAME"]] = os.environ["COMMIT"]
+lock_file.write_text(json.dumps(lock, indent=2))
+EOF
 
 echo "Installed '$SKILL_NAME'."
 if [ -f "$DEST/SETUP.md" ]; then
