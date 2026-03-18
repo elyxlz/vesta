@@ -31,7 +31,7 @@ COPY agent/skills-registry/upstream ./skills/upstream
 COPY agent/skills-registry/dream ./skills/dream
 COPY agent/skills-registry/what-day ./skills/what-day
 COPY agent/skills-registry/browser ./skills/browser
-COPY agent/skills-registry/skills ./skills/skills
+COPY agent/skills-registry/skills-registry ./skills/skills-registry
 
 ENV HOME=/root
 ENV STATE_DIR=/root/vesta

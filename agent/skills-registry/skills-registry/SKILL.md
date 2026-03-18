@@ -1,5 +1,5 @@
 ---
-name: skills
+name: skills-registry
 description: Discover and install new capabilities from the skill registry. Use this when asked to add a new feature, when you want to explore what you could do, or when a user asks if you can do something you don't have a skill for yet. The registry lives on GitHub — search it to find skills, then install them to give yourself new abilities.
 ---
 
@@ -10,14 +10,14 @@ Vesta's skills come from a registry on GitHub (`agent/skills-registry/`). You ca
 ## Search the registry
 
 ```bash
-~/vesta/skills/skills/scripts/skills-search                  # list all available skills
-~/vesta/skills/skills/scripts/skills-search email            # search by keyword
+~/vesta/skills/skills-registry/scripts/skills-search                  # list all available skills
+~/vesta/skills/skills-registry/scripts/skills-search email            # search by keyword
 ```
 
 ## Install a skill
 
 ```bash
-~/vesta/skills/skills/scripts/skills-install <name>
+~/vesta/skills/skills-registry/scripts/skills-install <name>
 ```
 
 After installing, restart yourself with the `restart_vesta` tool to load the new skill into context.

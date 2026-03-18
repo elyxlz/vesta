@@ -142,7 +142,7 @@ def test_deployment_structure():
         "dream",
         "what-day",
         "browser",
-        "skills",
+        "skills-registry",
         "google",
         "microsoft",
         "whatsapp",
