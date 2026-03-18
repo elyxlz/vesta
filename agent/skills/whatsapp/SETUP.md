@@ -11,7 +11,6 @@
    ```bash
    cd ~/vesta/skills/whatsapp/cli && CGO_ENABLED=1 CGO_CFLAGS="-DSQLITE_ENABLE_FTS5" CGO_LDFLAGS="-lm" go build -o /usr/local/bin/whatsapp .
    ```
-   > **Note:** Audio transcription is optional and requires whisper.cpp to be installed separately (see the whisper skill). Without it, voice messages will arrive without transcription.
 3. Start the daemon and authenticate:
    ```bash
    screen -dmS whatsapp whatsapp serve
