@@ -97,7 +97,7 @@ Re-read the failing exchange and simulate: would the updated version have change
 
 ### 5. Upstream
 
-If you fixed something that improves the source repo (not just your local instance), use the `upstream` skill to PR it back. This is important — fixes that only live locally get overwritten on updates.
+If you fixed something generic — something that would help any fresh Vesta, not just your instance — use the `upstream` skill to PR it back to the source repo.
 
 ## Summary
 
