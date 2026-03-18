@@ -24,8 +24,8 @@ COPY agent/src ./src
 COPY agent/prompts ./prompts
 RUN uv sync --frozen
 
-# Everything else in agent/ (skills, any new dirs — safety net)
-COPY agent/ .
+# Core skills (non-core excluded via .dockerignore)
+COPY agent/skills ./skills
 
 # Bare repo for upstream skill (fetch/worktree/show without exposing cli/app as working files)
 RUN git clone --bare --single-branch https://github.com/elyxlz/vesta.git .git && \
