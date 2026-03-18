@@ -123,7 +123,7 @@ jobs:
           ALL_SKILL_FILES=true
           while IFS= read -r f; do
             if [ -z "$f" ]; then continue; fi
-            if [[ "$f" != agent/skills-registry/* && "$f" != "agent/skills-index.json" ]]; then
+            if [[ "$f" != agent/skills/* && "$f" != "agent/skills-index.json" ]]; then
               ALL_SKILL_FILES=false
               break
             fi
@@ -134,7 +134,7 @@ jobs:
             exit 0
           fi
 
-          echo "All changed files are under skills-registry/ — enforcing [skill] prefix"
+          echo "All changed files are under skills/ — enforcing [skill] prefix"
           FAIL=0
           while IFS= read -r msg; do
             if [ -z "$msg" ]; then continue; fi

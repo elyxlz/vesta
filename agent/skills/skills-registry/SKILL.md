@@ -5,7 +5,7 @@ description: Discover and install new capabilities from the skill registry. Use 
 
 # Skills Manager
 
-Vesta's skills come from a registry on GitHub (`agent/skills-registry/`). You can search for new skills and install them on demand. Installed skills are activated on the next restart.
+Vesta's skills come from a registry on GitHub (`agent/skills/`). You can search for new skills and install them on demand. Installed skills are activated on the next restart.
 
 ## Search the registry
 
@@ -30,6 +30,6 @@ ls ~/vesta/skills/
 
 ## Notes
 
-- Skills you install are downloaded from `agent/skills-registry/` in the GitHub repo
+- Skills you install are downloaded from `agent/skills/` in the GitHub repo
 - Core skills ship pre-installed; optional skills are downloaded on demand
 - After installing a skill that requires setup, read its `SETUP.md`

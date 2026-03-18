@@ -24,14 +24,14 @@ COPY agent/src ./src
 COPY agent/prompts ./prompts
 RUN uv sync --frozen
 
-# Core skills from registry
-COPY agent/skills-registry/reminders ./skills/reminders
-COPY agent/skills-registry/tasks ./skills/tasks
-COPY agent/skills-registry/upstream ./skills/upstream
-COPY agent/skills-registry/dream ./skills/dream
-COPY agent/skills-registry/what-day ./skills/what-day
-COPY agent/skills-registry/browser ./skills/browser
-COPY agent/skills-registry/skills-registry ./skills/skills-registry
+# Core skills
+COPY agent/skills/reminders ./skills/reminders
+COPY agent/skills/tasks ./skills/tasks
+COPY agent/skills/upstream ./skills/upstream
+COPY agent/skills/dream ./skills/dream
+COPY agent/skills/what-day ./skills/what-day
+COPY agent/skills/browser ./skills/browser
+COPY agent/skills/skills-registry ./skills/skills-registry
 
 ENV HOME=/root
 ENV STATE_DIR=/root/vesta

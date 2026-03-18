@@ -18,15 +18,15 @@ echo "Downloading '$SKILL_NAME' from registry..."
 git clone --no-checkout --depth=1 --filter=blob:none "$REPO" "$TMPDIR/repo" -q
 cd "$TMPDIR/repo"
 git sparse-checkout init --no-cone -q
-git sparse-checkout set "agent/skills-registry/$SKILL_NAME"
+git sparse-checkout set "agent/skills/$SKILL_NAME"
 git checkout -q
 
-if [ ! -d "agent/skills-registry/$SKILL_NAME" ]; then
+if [ ! -d "agent/skills/$SKILL_NAME" ]; then
     echo "Error: skill '$SKILL_NAME' not found in registry."
     exit 1
 fi
 
-cp -r "agent/skills-registry/$SKILL_NAME" "$DEST"
+cp -r "agent/skills/$SKILL_NAME" "$DEST"
 
 # Record commit hash in skills-lock.json
 COMMIT=$(git rev-parse HEAD)

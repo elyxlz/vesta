@@ -131,11 +131,10 @@ def test_deployment_structure():
     config = vm.VestaConfig()
     assert config.install_root.is_dir()
 
-    # skills-registry/ is the single source of truth for all skills
-    skills_registry_dir = config.install_root / "skills-registry"
-    assert skills_registry_dir.is_dir(), "skills-registry/ directory missing"
+    skills_dir = config.install_root / "skills"
+    assert skills_dir.is_dir(), "skills/ directory missing"
 
-    expected_registry_skills = [
+    expected_skills = [
         "reminders",
         "tasks",
         "upstream",
@@ -151,13 +150,13 @@ def test_deployment_structure():
         "keeper",
         "onedrive",
     ]
-    for skill_name in expected_registry_skills:
-        assert (skills_registry_dir / skill_name).is_dir(), f"Skill '{skill_name}' missing from skills-registry/"
+    for skill_name in expected_skills:
+        assert (skills_dir / skill_name).is_dir(), f"Skill '{skill_name}' missing from skills/"
 
     for skill_name in ("reminders", "tasks"):
-        assert (skills_registry_dir / skill_name / "cli" / "pyproject.toml").exists(), f"pyproject.toml missing for {skill_name}"
+        assert (skills_dir / skill_name / "cli" / "pyproject.toml").exists(), f"pyproject.toml missing for {skill_name}"
 
-    assert (skills_registry_dir / "whatsapp" / "cli" / "go.mod").exists(), "go.mod missing for whatsapp"
+    assert (skills_dir / "whatsapp" / "cli" / "go.mod").exists(), "go.mod missing for whatsapp"
 
 
 # --- Message processor tests ---

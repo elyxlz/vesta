@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Generate agent/skills-index.json from all SKILL.md files in agent/skills-registry/."""
+"""Generate agent/skills-index.json from all SKILL.md files in agent/skills/."""
 
 import json
 import pathlib
 import re
 
-REGISTRY_DIR = pathlib.Path(__file__).parent / "skills-registry"
+REGISTRY_DIR = pathlib.Path(__file__).parent / "skills"
 OUTPUT_FILE = pathlib.Path(__file__).parent / "skills-index.json"
 
 

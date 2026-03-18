@@ -51,7 +51,7 @@ Skill commits are prefixed `[skill]`. When syncing upstream:
 - For each installed skill with new commits, read the diff and apply useful generic improvements to `~/vesta/skills/<name>/`
 - Update `~/vesta/skills-lock.json` with the latest processed commit hash
 
-When contributing a skill improvement back upstream, use the same worktree flow but prefix the commit `[skill] <name>: <description>`. All skill changes — core or not — go only in `agent/skills-registry/<name>/`. The Dockerfile handles copying core skills into the container at build time; `agent/skills/` does not exist in the repo.
+When contributing a skill improvement back upstream, use the same worktree flow but prefix the commit `[skill] <name>: <description>`. All skill changes — core or not — live in `agent/skills/<name>/`. The Dockerfile copies core skills into the container at build time.
 
 ## How it works
 - Authenticates via the `vesta-upstream` GitHub App (ID 2990557)
