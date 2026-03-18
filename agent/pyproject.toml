@@ -2,7 +2,6 @@
 name = "vesta"
 version = "0.1.97"
 description = "Personal assistant agent that works autonomously on your behalf"
-readme = "../README.md"
 license = "MIT"
 authors = [
     { name = "elyxlz" }
