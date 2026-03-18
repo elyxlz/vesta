@@ -184,10 +184,6 @@ async def attempt_interrupt(state: vm.State, *, config: vm.VestaConfig, reason: 
         return True
     except TimeoutError:
         logger.error("SDK unresponsive, sending SIGTERM for graceful shutdown")
-        try:
-            (config.data_dir / "crash_reason").write_text("SDK became unresponsive (interrupt timed out)")
-        except OSError:
-            pass
         os.kill(os.getpid(), signal.SIGTERM)
         await asyncio.sleep(10)
         os._exit(1)

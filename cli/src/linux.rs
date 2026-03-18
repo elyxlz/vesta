@@ -3,6 +3,7 @@ use serde::Serialize;
 use std::io::{self, Write};
 
 const VESTA_IMAGE: &str = "ghcr.io/elyxlz/vesta:latest";
+const VESTA_LOG_PATH: &str = "/root/vesta/logs/vesta.log";
 const LOCAL_IMAGE_TAG: &str = "vesta:local";
 const MAX_DOCKERFILE_SEARCH_DEPTH: usize = 5;
 const CREDENTIALS_PATH: &str = "/root/.claude/.credentials.json";
@@ -320,8 +321,9 @@ fn list_managed_containers() -> Vec<String> {
     .collect()
 }
 
-fn create_container(cname: &str, image: &str, port: u16) {
+fn create_container(cname: &str, image: &str, port: u16, agent_name: &str) {
     let ws_port_env = format!("WS_PORT={}", port);
+    let agent_name_env = format!("AGENT_NAME={}", agent_name);
     let port_label = format!("vesta.ws_port={}", port);
     let args = vec![
         "create", "--name", cname, "-it", "--privileged",
@@ -329,6 +331,7 @@ fn create_container(cname: &str, image: &str, port: u16) {
         "--label", "vesta.managed=true",
         "--label", &port_label,
         "-e", &ws_port_env,
+        "-e", &agent_name_env,
         image,
     ];
     if !docker_ok(&args) {
@@ -541,7 +544,7 @@ fn maybe_migrate_legacy() {
 
     docker_ok(&["rm", "-f", "vesta"]);
 
-    create_container(&cname, migrate_tag, BASE_WS_PORT);
+    create_container(&cname, migrate_tag, BASE_WS_PORT, &name);
 
     if was_running {
         docker_ok(&["start", &cname]);
@@ -599,8 +602,7 @@ pub fn run(command: Command) {
             let port = allocate_port();
 
             eprintln!("creating agent '{}'...", name);
-            create_container(&cname, image, port);
-            docker_cp_content(&cname, &name, "/root/.vesta-name");
+            create_container(&cname, image, port, &name);
             inject_credentials(&cname, &credentials);
 
             if !docker_ok(&["start", &cname]) {
@@ -625,8 +627,7 @@ pub fn run(command: Command) {
             let port = allocate_port();
 
             eprintln!("creating agent '{}'...", name);
-            create_container(&cname, image, port);
-            docker_cp_content(&cname, &name, "/root/.vesta-name");
+            create_container(&cname, image, port, &name);
             eprintln!("created (run 'vesta auth {}' to authenticate, then 'vesta start {}')", name, name);
         }
 
@@ -701,7 +702,7 @@ pub fn run(command: Command) {
                     "tail",
                     "-n",
                     "200",
-                    "/root/logs/vesta.log",
+                    VESTA_LOG_PATH,
                 ])
                 .stdout(process::Stdio::inherit())
                 .stderr(process::Stdio::inherit())
@@ -733,7 +734,7 @@ pub fn run(command: Command) {
                     "-n",
                     "500",
                     "-f",
-                    "/root/logs/vesta.log",
+                    VESTA_LOG_PATH,
                 ])
                 .stdin(process::Stdio::inherit())
                 .stdout(process::Stdio::inherit())
@@ -966,9 +967,7 @@ pub fn run(command: Command) {
             }
 
             let port = allocate_port();
-            create_container(&cname, &loaded_image, port);
-
-            docker_cp_content(&cname, &name, "/root/.vesta-name");
+            create_container(&cname, &loaded_image, port, &name);
 
             docker_ok(&["rmi", &loaded_image]);
 
@@ -1042,8 +1041,7 @@ pub fn run(command: Command) {
             docker_ok(&["rm", "-f", &cname]);
 
             eprintln!("recreating from backup...");
-            create_container(&cname, &backup_tag, port);
-            docker_cp_content(&cname, &name, "/root/.vesta-name");
+            create_container(&cname, &backup_tag, port, &name);
 
             if !docker_ok(&["start", &cname]) {
                 die("failed to start");

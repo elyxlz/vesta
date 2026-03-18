@@ -279,9 +279,6 @@ jobs:
 
           echo "=== container image sanity ==="
           docker run --rm --entrypoint sh ghcr.io/elyxlz/vesta:latest -c "claude --version"
-          docker run --rm --entrypoint sh ghcr.io/elyxlz/vesta:latest -c \
-            "test -d /root/logs && test -d /root/data && test -d /root/notifications && echo dirs ok"
-
           echo "=== auth URL capture ==="
           AUTH_OUTPUT=$(docker run --rm --entrypoint sh ghcr.io/elyxlz/vesta:latest \
             -c "timeout 15 claude setup-token 2>&1 || true")

@@ -71,9 +71,8 @@ async def load_and_display_new_notifications(
 
         if truly_new:
             notification_buffer.extend(truly_new)
-            now = dt.datetime.now()
             if buffer_start_time is None:
-                buffer_start_time = now
+                buffer_start_time = dt.datetime.now()
 
             for notif in truly_new:
                 logger.notification(notif.model_dump_json(indent=2))
@@ -101,6 +100,8 @@ async def process_batch(
 async def queue_greeting(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.VestaConfig, reason: str) -> None:
     if reason == "first_start":
         prompt = load_prompt("first_start", config)
+        if prompt:
+            prompt = f"[System: your name is {config.agent_name}]\n\n{prompt}"
     else:
         prompt = build_restart_context(reason, config)
     if not prompt or not prompt.strip():
@@ -227,7 +228,6 @@ async def check_proactive_task(queue: asyncio.Queue[tuple[str, bool]], *, config
     prompt = load_prompt("proactive_check", config)
     if not prompt:
         return
-    prompt = prompt.replace("{proactive_check_interval}", str(config.proactive_check_interval))
     logger.proactive(f"Running {config.proactive_check_interval}-minute check...")
     await queue.put((prompt, False))
 

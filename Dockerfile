@@ -16,17 +16,14 @@ ENV PATH="/root/.local/bin:${PATH}"
 WORKDIR /root/vesta
 
 # Dependencies (cached unless lockfile changes)
-COPY agent/pyproject.toml agent/uv.lock agent/
-RUN cd agent && uv sync --frozen --no-install-project
+COPY agent/pyproject.toml agent/uv.lock ./
+RUN uv sync --frozen --no-install-project
 
 # Source (changes often, but deps are cached above)
-COPY . .
-RUN cd agent && uv sync --frozen
-
-# State dirs
-WORKDIR /root
-RUN mkdir -p /root/vesta/agent/memory/conversations /root/vesta/agent/memory/dreamer /root/notifications /root/logs /root/data
+COPY agent/ ./
+RUN uv sync --frozen
 
 ENV HOME=/root
+ENV STATE_DIR=/root/vesta
 ENV IS_SANDBOX=1
-ENTRYPOINT ["uv", "run", "--project", "/root/vesta/agent", "python", "-m", "vesta.main"]
+ENTRYPOINT ["uv", "run", "--project", "/root/vesta", "python", "-m", "vesta.main"]
