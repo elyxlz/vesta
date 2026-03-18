@@ -123,9 +123,7 @@ main() {
         tar -xzf "$WORK_DIR/vesta.tar.gz" -C "$WORK_DIR"
         install_cli_to_path "$WORK_DIR/vesta"
       else
-        if command -v rpm >/dev/null 2>&1 && [ -f /etc/redhat-release ] || [ -f /etc/fedora-release ] || [ -f /etc/suse-release ]; then
-          PKG_TYPE="rpm"
-        elif command -v dpkg >/dev/null 2>&1; then
+        if command -v dpkg >/dev/null 2>&1; then
           PKG_TYPE="deb"
         elif command -v rpm >/dev/null 2>&1; then
           PKG_TYPE="rpm"

@@ -59,7 +59,6 @@ pub fn run() {
             commands::auth::submit_auth_code,
             commands::platform::platform_check,
             commands::platform::platform_setup,
-            commands::platform::get_os,
             commands::platform::run_install_script,
         ])
         .build(tauri::generate_context!())

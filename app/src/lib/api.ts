@@ -1,6 +1,7 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { check } from "@tauri-apps/plugin-updater";
+import { detectPlatform } from "./platform";
 import type { BoxInfo, ListEntry, LogEvent, PlatformStatus } from "./types";
 
 export async function listBoxes(): Promise<ListEntry[]> {
@@ -76,18 +77,13 @@ export async function setupPlatform(): Promise<PlatformStatus> {
   return invoke("platform_setup");
 }
 
-export async function getOs(): Promise<string> {
-  return invoke("get_os");
-}
-
 export async function runInstallScript(version: string): Promise<void> {
   return invoke("run_install_script", { version });
 }
 
 export async function checkAndInstallUpdate(): Promise<{ version: string; installing: boolean } | null> {
   try {
-    const os = await getOs();
-    if (os === "linux") {
+    if (detectPlatform() === "linux") {
       const current = await getVersion();
       const resp = await fetch("https://api.github.com/repos/elyxlz/vesta/releases/latest");
       if (!resp.ok) return null;

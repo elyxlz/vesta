@@ -12,26 +12,8 @@ pub async fn platform_setup() -> Result<cli::PlatformStatus, VestaError> {
 }
 
 #[tauri::command]
-pub fn get_os() -> &'static str {
-    #[cfg(target_os = "linux")]
-    return "linux";
-    #[cfg(target_os = "macos")]
-    return "macos";
-    #[cfg(target_os = "windows")]
-    return "windows";
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-    return "unknown";
-}
-
-#[tauri::command]
 pub async fn run_install_script(version: String) -> Result<(), VestaError> {
-    // Detect architecture
-    let arch_out = tokio::process::Command::new("uname")
-        .arg("-m")
-        .output()
-        .await
-        .map_err(|e| VestaError::new(ErrorCode::ExecFailed, e.to_string()))?;
-    let arch = std::str::from_utf8(&arch_out.stdout).unwrap_or("").trim().to_string();
+    let arch = std::env::consts::ARCH; // compile-time constant
 
     // Detect package manager
     let has_dpkg = tokio::process::Command::new("which")
@@ -40,25 +22,26 @@ pub async fn run_install_script(version: String) -> Result<(), VestaError> {
         .await
         .map(|s| s.success())
         .unwrap_or(false);
-    let has_rpm = tokio::process::Command::new("which")
-        .arg("rpm")
-        .status()
-        .await
-        .map(|s| s.success())
-        .unwrap_or(false);
 
-    let (filename, install_cmd) = if has_dpkg {
+    let (filename, pkg_manager, pkg_args) = if has_dpkg {
         let pkg_arch = if arch == "aarch64" { "arm64" } else { "amd64" };
         let name = format!("Vesta_{version}_{pkg_arch}.deb");
-        let cmd = format!("dpkg -i /tmp/{name}");
-        (name, cmd)
-    } else if has_rpm {
+        let tmp = format!("/tmp/{name}");
+        (name, "dpkg", vec!["-i".to_string(), tmp])
+    } else {
+        let has_rpm = tokio::process::Command::new("which")
+            .arg("rpm")
+            .status()
+            .await
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !has_rpm {
+            return Err(VestaError::new(ErrorCode::ExecFailed, "no supported package manager (dpkg or rpm)"));
+        }
         let pkg_arch = if arch == "aarch64" { "aarch64" } else { "x86_64" };
         let name = format!("Vesta-{version}-1.{pkg_arch}.rpm");
-        let cmd = format!("rpm -U --force /tmp/{name}");
-        (name, cmd)
-    } else {
-        return Err(VestaError::new(ErrorCode::ExecFailed, "no supported package manager (dpkg or rpm)"));
+        let tmp = format!("/tmp/{name}");
+        (name, "rpm", vec!["-U".to_string(), "--force".to_string(), tmp])
     };
 
     let tmp_path = format!("/tmp/{filename}");
@@ -71,17 +54,20 @@ pub async fn run_install_script(version: String) -> Result<(), VestaError> {
         .await
         .map_err(|e| VestaError::new(ErrorCode::ExecFailed, e.to_string()))?;
     if !download.success() {
+        let _ = tokio::fs::remove_file(&tmp_path).await;
         return Err(VestaError::new(ErrorCode::ExecFailed, "failed to download package"));
     }
 
     // Install with pkexec — shows a graphical polkit auth dialog
+    // Pass args directly (no shell) to avoid any injection risk
     let status = tokio::process::Command::new("pkexec")
-        .args(["bash", "-c", &install_cmd])
+        .arg(pkg_manager)
+        .args(&pkg_args)
         .status()
         .await
         .map_err(|e| VestaError::new(ErrorCode::ExecFailed, e.to_string()))?;
 
-    let _ = std::fs::remove_file(&tmp_path);
+    let _ = tokio::fs::remove_file(&tmp_path).await;
 
     if !status.success() {
         return Err(VestaError::new(ErrorCode::ExecFailed, "package install failed or was cancelled"));
