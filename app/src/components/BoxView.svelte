@@ -152,6 +152,7 @@
   onDestroy(() => {
     clearInterval(poll);
     if (leaveTimer) clearTimeout(leaveTimer);
+    if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
     if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
     document.removeEventListener("click", onDocClick);
     document.removeEventListener("keydown", onKeydown);

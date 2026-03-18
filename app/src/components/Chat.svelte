@@ -63,6 +63,7 @@
         suppressAnim = true;
         requestAnimationFrame(() => { suppressAnim = false; });
       }
+      if (evts.length === lastSyncedLen) return;
       for (let i = lastSyncedLen; i < evts.length; i++) {
         const ev = evts[i];
         if (ev.type === "user") {
