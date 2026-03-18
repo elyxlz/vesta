@@ -72,7 +72,7 @@ jobs:
         working-directory: agent
         run: |
           uv sync
-          for tool in tools/*/; do
+          for tool in skills/*/cli/; do
             [ -f "$tool/pyproject.toml" ] && uv pip install -e "$tool"
           done
 
