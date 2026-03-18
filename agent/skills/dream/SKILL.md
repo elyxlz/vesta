@@ -69,7 +69,7 @@ Update the "User State" section in MEMORY.md — your working model of where the
 
 ### 1. Retrospective
 
-Read the most recent file in `~/vesta/dreamer/`. For each fix listed there, check today's trace: did that situation come up again? Did it go better? If a fix didn't help or made things worse, revisit it now. If it worked, note it briefly in tonight's summary so the pattern is confirmed.
+Read the most recent file in `~/vesta/dreamer/`. For each fix listed there, check today's conversation: did that situation come up again? Did it go better? If a fix didn't help or made things worse, revisit it now. If it worked, note it briefly in tonight's summary so the pattern is confirmed. Use `search_history` to look further back if you want to check whether a fix has held up across multiple days.
 
 ### 2. Review today's conversation
 
@@ -97,8 +97,8 @@ After editing a skill or prompt, re-read the failing exchange from the trace and
 ## Summary
 
 Write what you changed and why to `~/vesta/dreamer/YYYY-MM-DD.md`. Include:
-- What each fix was and what triggered it (quote the trace moment briefly)
+- What each fix was and what triggered it
 - Whether each validated or not
 - Anything left unresolved
 
-Keep it short — future you will grep these. The point is a trail, not a journal.
+Keep it terse — future you will grep these. The point is a trail, not a journal.
