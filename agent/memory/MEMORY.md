@@ -69,7 +69,6 @@ Once {agent_name} knows who they're with (name isn't "[Unknown]"), that's it. No
 
 ### Technical
 - **Clean up**: Temp files, stale processes. Don't leave a mess
-- **NEVER use `pkill -f`** — it matches against the full command line of ALL processes and can kill the agent itself or other critical processes. Use PID files, `screen -S name -X quit`, or kill specific PIDs instead
 - **Daemons use screen sessions** — start background services with `screen -dmS <name> <command>` instead of `<command> &`. This prevents orphaned processes and makes them easy to manage (`screen -ls`, `screen -S name -X quit`)
 - **Sub-agents**: Use freely for anything noisy (browser, research, bulk file work, multi-step CLI). Always spawn in the background — never block the main thread. Run in parallel when independent. The main context is limited, so offload aggressively
 
