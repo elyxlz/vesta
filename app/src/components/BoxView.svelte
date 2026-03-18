@@ -56,10 +56,18 @@
   let busy = $derived(operation !== "idle");
 
   let boxStateVal = $state<BoxActivityState>(initialActivity);
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
 
   $effect(() => {
-    const unsub = connection.boxState.subscribe((v: BoxActivityState) => { boxStateVal = v; });
-    return () => unsub();
+    const unsub = connection.boxState.subscribe((v: BoxActivityState) => {
+      if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+      if (v === "idle") {
+        idleTimer = setTimeout(() => { boxStateVal = v; }, 400);
+      } else {
+        boxStateVal = v;
+      }
+    });
+    return () => { unsub(); if (idleTimer) clearTimeout(idleTimer); };
   });
 
   function orbLoop() {
