@@ -9,6 +9,7 @@ from .config import Config
 @dataclass
 class GoogleContext:
     config: Config
+    notif_dir: Path
 
     monitor_base_dir: Path
     monitor_state_file: Path

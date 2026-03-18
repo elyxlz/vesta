@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { listen } from "@tauri-apps/api/event";
-  import { createBox, boxStatus, authenticate, submitAuthCode, startBox, waitForReady, checkPlatform, setupPlatform } from "../lib/api";
-  import { getOnboarding, updateOnboarding, resetOnboarding } from "../lib/store.svelte";
+  import { open } from "@tauri-apps/plugin-dialog";
+  import { openUrl } from "@tauri-apps/plugin-opener";
+  import { createBox, boxStatus, authenticate, submitAuthCode, startBox, waitForReady, checkPlatform, setupPlatform, restoreBox, listBoxes } from "../lib/api";
+  import { getOnboarding, updateOnboarding } from "../lib/store.svelte";
   import type { PlatformStatus } from "../lib/types";
   import ProgressBar from "./ProgressBar.svelte";
 
@@ -64,7 +66,7 @@
         const status = await checkPlatform();
         updateOnboarding({ platform: status });
         if (status.ready || status.platform !== "windows") {
-          await goTo("name");
+          updateOnboarding({ step: "name" });
           return;
         }
         // auto-run setup for distro/service issues (WSL already installed)
@@ -245,9 +247,36 @@
     }
   }
 
+  async function handleRestore() {
+    if (busy) return;
+    const path = await open({
+      filters: [{ name: "Backup", extensions: ["tar.gz"] }],
+      multiple: false,
+      directory: false,
+    });
+    if (!path) return;
+    const before = new Set((await listBoxes().catch(() => [])).map((b) => b.name));
+    updateOnboarding({ busy: true, error: null });
+    startMessages();
+    await goTo("creating");
+    try {
+      await restoreBox(path);
+      const after = await listBoxes().catch(() => []);
+      const restored = after.find((b) => !before.has(b.name));
+      if (restored) updateOnboarding({ name: restored.name });
+      stopMessages();
+      updateOnboarding({ busy: false });
+      await goTo("done");
+    } catch (e) {
+      stopMessages();
+      updateOnboarding({ busy: false });
+      setError(e, "restore failed");
+      await goTo("name");
+    }
+  }
+
   function handleComplete() {
     const name = normalizeName(boxName);
-    resetOnboarding();
     onComplete(name);
   }
 
@@ -333,12 +362,11 @@
           <input
             type="text"
             class="name-input"
-            placeholder="e.g. jarvis"
+            placeholder="name your box"
             value={boxName}
             oninput={(e) => updateOnboarding({ name: (e.target as HTMLInputElement).value })}
             autofocus
           />
-          {#if boxName.trim() && normalizedPreview !== boxName.trim()}<p class="name-preview">{normalizedPreview}</p>{/if}
           {#if error}
             <p class="error">{error.friendly ?? "something went wrong."}</p>
             {#if error.raw.length > 80 || !error.friendly}
@@ -348,6 +376,7 @@
           {/if}
           <button class="btn primary full" type="submit" disabled={!normalizedPreview || busy}>create</button>
         </form>
+        <button class="btn cancel" onclick={handleRestore} disabled={busy}>restore from backup</button>
       </div>
 
     {:else if step === "creating"}
@@ -382,7 +411,7 @@
           <ProgressBar message="verifying..." />
         {:else if authUrl}
           <p class="sub">authenticate via the browser window that opened.<br/>if it didn't open, use the link below.</p>
-          <a class="auth-link" href={authUrl} target="_blank" rel="noopener">{authUrl.slice(0, 50)}...</a>
+          <button class="auth-link" onclick={() => openUrl(authUrl!)}>{authUrl!.slice(0, 50)}...</button>
           <ProgressBar message="waiting for authentication..." />
         {:else}
           <p class="sub">opening browser...</p>
@@ -629,13 +658,6 @@
     width: 100%;
   }
 
-  .name-preview {
-    font-size: 11px;
-    color: #7a726a;
-    margin: -6px 0 8px;
-    font-weight: 400;
-  }
-
   .auth-link {
     font-size: 11px;
     color: #7a726a;
@@ -732,10 +754,6 @@
     .btn.primary:hover {
       background: #f0ece7;
       box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
-    }
-
-    .name-preview {
-      color: #8a8078;
     }
 
     .auth-link {

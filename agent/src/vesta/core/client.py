@@ -340,6 +340,8 @@ def _build_vesta_tools_server(state: vm.State, config: vm.VestaConfig) -> tp.Any
 
 def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgentOptions:
     memory_path = get_memory_path(config)
+    if not memory_path.exists():
+        raise FileNotFoundError(f"MEMORY.md not found at {memory_path} — cannot start agent without it")
     system_prompt = memory_path.read_text()
 
     name = config.agent_name
@@ -358,7 +360,7 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
         permission_mode="bypassPermissions",
         cwd=config.root,
         setting_sources=["project"],
-        add_dirs=[str(config.root), str(config.skills_dir)],
+        add_dirs=[str(config.root)],
         max_thinking_tokens=config.max_thinking_tokens,
         max_buffer_size=10 * 1024 * 1024,
         stderr=lambda line: logger.sdk(line),

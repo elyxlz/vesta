@@ -14,18 +14,6 @@ import (
 	waLog "go.mau.fi/whatsmeow/util/log"
 )
 
-func extractStateDir() string {
-	for i, arg := range os.Args {
-		if arg == "--state-dir" && i+1 < len(os.Args) {
-			return os.Args[i+1]
-		}
-		if strings.HasPrefix(arg, "--state-dir=") {
-			return strings.TrimPrefix(arg, "--state-dir=")
-		}
-	}
-	return defaultStateDir
-}
-
 func extractInstance() string {
 	for i, arg := range os.Args {
 		if arg == "--instance" && i+1 < len(os.Args) {
@@ -68,27 +56,36 @@ func extractSkipSenders() map[string]bool {
 	return result
 }
 
-func parseStateDir() (dataDir, logDir, notifDir string) {
-	stateDir := extractStateDir()
+func extractNotificationsDir() string {
+	for i, arg := range os.Args {
+		if arg == "--notifications-dir" && i+1 < len(os.Args) {
+			return os.Args[i+1]
+		}
+		if strings.HasPrefix(arg, "--notifications-dir=") {
+			return strings.TrimPrefix(arg, "--notifications-dir=")
+		}
+	}
+	return ""
+}
+
+func parseStateDir() (dataDir, logDir string) {
 	instance := extractInstance()
 	if instance != "" {
-		dataDir = filepath.Join(stateDir, "data", "whatsapp", instance)
-		logDir = filepath.Join(stateDir, "logs", "whatsapp", instance)
+		dataDir = filepath.Join(os.Getenv("HOME"), ".whatsapp", instance)
+		logDir = filepath.Join(os.Getenv("HOME"), ".whatsapp", instance, "logs")
 	} else {
-		dataDir = filepath.Join(stateDir, "data", "whatsapp")
-		logDir = filepath.Join(stateDir, "logs", "whatsapp")
+		dataDir = filepath.Join(os.Getenv("HOME"), ".whatsapp")
+		logDir = filepath.Join(os.Getenv("HOME"), ".whatsapp", "logs")
 	}
-	// Notifications always go to the same directory so the agent picks them up
-	notifDir = filepath.Join(stateDir, "notifications")
 	return
 }
 
 func getSocketPath() string {
 	instance := extractInstance()
 	if instance != "" {
-		return filepath.Join(extractStateDir(), "data", "whatsapp", instance, "whatsapp.sock")
+		return filepath.Join(os.Getenv("HOME"), ".whatsapp", instance, "whatsapp.sock")
 	}
-	return filepath.Join(extractStateDir(), "data", "whatsapp", "whatsapp.sock")
+	return filepath.Join(os.Getenv("HOME"), ".whatsapp", "whatsapp.sock")
 }
 
 func printJSON(v interface{}) {
@@ -133,7 +130,7 @@ func readAuthStatus(dataDir string) map[string]string {
 }
 
 func runAuthenticate() {
-	dataDir, _, _ := parseStateDir()
+	dataDir, _ := parseStateDir()
 	var err error
 	dataDir, err = resolveDir(dataDir)
 	if err != nil {
@@ -144,7 +141,13 @@ func runAuthenticate() {
 }
 
 func runServe(logger waLog.Logger) {
-	dataDir, _, notifDir := parseStateDir()
+	dataDir, _ := parseStateDir()
+
+	notifDir := extractNotificationsDir()
+	if notifDir == "" {
+		fmt.Fprintln(os.Stderr, "error: --notifications-dir is required for serve")
+		os.Exit(1)
+	}
 
 	var err error
 	dataDir, err = resolveDir(dataDir)
@@ -214,11 +217,11 @@ func stripGlobalFlags(args []string) []string {
 			skip = false
 			continue
 		}
-		if arg == "--instance" || arg == "--state-dir" || arg == "--skip-senders" {
+		if arg == "--instance" || arg == "--notifications-dir" || arg == "--skip-senders" {
 			skip = true
 			continue
 		}
-		if strings.HasPrefix(arg, "--instance=") || strings.HasPrefix(arg, "--state-dir=") || arg == "--read-only" || strings.HasPrefix(arg, "--skip-senders=") {
+		if strings.HasPrefix(arg, "--instance=") || strings.HasPrefix(arg, "--notifications-dir=") || arg == "--read-only" || strings.HasPrefix(arg, "--skip-senders=") {
 			continue
 		}
 		filtered = append(filtered, arg)

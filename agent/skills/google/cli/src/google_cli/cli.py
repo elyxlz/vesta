@@ -5,6 +5,7 @@ import os
 import signal
 import sys
 import threading
+from pathlib import Path
 
 from .config import Config
 from . import auth_commands, gmail, calendar, meet, monitor, notifications
@@ -40,7 +41,8 @@ def main():
     group = parser.add_subparsers(dest="group", required=True)
 
     # serve
-    group.add_parser("serve")
+    serve_parser = group.add_parser("serve")
+    serve_parser.add_argument("--notifications-dir", required=True)
 
     # auth
     auth_parser = group.add_parser("auth")
@@ -161,11 +163,10 @@ def main():
 
     config.data_dir.mkdir(parents=True, exist_ok=True)
     config.log_dir.mkdir(parents=True, exist_ok=True)
-    config.notif_dir.mkdir(parents=True, exist_ok=True)
 
     try:
         if args.group == "serve":
-            _run_serve(config)
+            _run_serve(config, Path(args.notifications_dir))
             return
 
         if args.group not in ("auth", "meet"):
@@ -282,7 +283,8 @@ def _dispatch_meet(args, config):
         return meet.create_space(config)
 
 
-def _run_serve(config: Config):
+def _run_serve(config: Config, notif_dir: Path):
+    notif_dir.mkdir(parents=True, exist_ok=True)
     monitor_base_dir = config.data_dir / "monitor"
     monitor_base_dir.mkdir(parents=True, exist_ok=True)
     monitor_state_file = monitor_base_dir / "state.txt"
@@ -300,6 +302,7 @@ def _run_serve(config: Config):
 
     ctx = GoogleContext(
         config=config,
+        notif_dir=notif_dir,
         monitor_base_dir=monitor_base_dir,
         monitor_state_file=monitor_state_file,
         monitor_log_file=monitor_log_file,
@@ -325,5 +328,5 @@ def _run_serve(config: Config):
     try:
         monitor.run(ctx)
     finally:
-        notifications.write_notification(config.notif_dir, "daemon_died", reason=shutdown_reason)
+        notifications.write_notification(notif_dir, "daemon_died", reason=shutdown_reason)
         _remove_pid(config)

@@ -1,8 +1,6 @@
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-VESTA_DIR = Path(os.environ["VESTA_ROOT"]) if "VESTA_ROOT" in os.environ else Path.home() / "vesta"
 
 GMAIL_SCOPES = [
     "https://www.googleapis.com/auth/gmail.modify",
@@ -19,9 +17,8 @@ SCOPES = GMAIL_SCOPES + CALENDAR_SCOPES + MEET_SCOPES
 
 @dataclass
 class Config:
-    data_dir: Path = VESTA_DIR / "data" / "google"
-    log_dir: Path = VESTA_DIR / "logs" / "google"
-    notif_dir: Path = VESTA_DIR / "notifications"
+    data_dir: Path = Path.home() / ".google"
+    log_dir: Path = Path.home() / ".google" / "logs"
     scopes: list[str] = field(default_factory=lambda: list(SCOPES))
     calendar_notify_thresholds: list[int] | None = None
 

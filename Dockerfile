@@ -24,8 +24,11 @@ COPY agent/src ./src
 COPY agent/prompts ./prompts
 RUN uv sync --frozen
 
-# Core skills (non-core excluded via .dockerignore)
-COPY agent/skills ./skills
+# Everything else (non-core skills excluded via .dockerignore)
+COPY agent/ .
+
+# SDK discovers skills from .claude/skills/ relative to cwd
+RUN mkdir -p .claude && ln -s ../skills .claude/skills
 
 # Bare repo for upstream skill (fetch/worktree/show without exposing cli/app as working files)
 RUN git clone --bare --single-branch https://github.com/elyxlz/vesta.git .git && \

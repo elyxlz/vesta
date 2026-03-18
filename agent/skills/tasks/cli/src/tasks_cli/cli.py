@@ -7,6 +7,7 @@ import sys
 import threading
 import time
 from datetime import datetime, UTC
+from pathlib import Path
 
 from .config import Config
 from . import commands, db, monitor
@@ -23,13 +24,13 @@ def _remove_pid(config):
         pass
 
 
-def _write_death_notification(config, reason):
-    config.notif_dir.mkdir(exist_ok=True)
+def _write_death_notification(notif_dir: Path, reason: str):
+    notif_dir.mkdir(exist_ok=True)
     notif = {"timestamp": datetime.now(UTC).isoformat(), "source": "tasks", "type": "daemon_died", "reason": reason}
     filename = f"{int(time.time() * 1e6)}-tasks-daemon_died.json"
-    tmp = config.notif_dir / f"{filename}.tmp"
+    tmp = notif_dir / f"{filename}.tmp"
     tmp.write_text(json.dumps(notif))
-    os.replace(tmp, config.notif_dir / filename)
+    os.replace(tmp, notif_dir / filename)
 
 
 def _require_daemon(config):
@@ -50,7 +51,8 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
 
     # serve
-    sub.add_parser("serve", help="Run background monitor daemon")
+    p_serve = sub.add_parser("serve", help="Run background monitor daemon")
+    p_serve.add_argument("--notifications-dir", required=True)
 
     # add
     p_add = sub.add_parser("add", help="Add a new task")
@@ -98,14 +100,13 @@ def main():
     # Ensure dirs exist
     config.data_dir.mkdir(parents=True, exist_ok=True)
     config.log_dir.mkdir(parents=True, exist_ok=True)
-    config.notif_dir.mkdir(parents=True, exist_ok=True)
 
     # Init DB
     db.init_db(config.data_dir)
 
     try:
         if args.command == "serve":
-            _run_serve(config)
+            _run_serve(config, Path(args.notifications_dir))
             return
 
         _require_daemon(config)
@@ -164,7 +165,8 @@ def main():
         sys.exit(1)
 
 
-def _run_serve(config: Config):
+def _run_serve(config: Config, notif_dir: Path):
+    notif_dir.mkdir(parents=True, exist_ok=True)
     logger = logging.getLogger("tasks-monitor")
     logger.setLevel(logging.INFO)
     handler = logging.FileHandler(config.log_dir / "monitor.log")
@@ -194,11 +196,11 @@ def _run_serve(config: Config):
     try:
         monitor.run(
             config.data_dir / "tasks.db",
-            config.notif_dir,
+            notif_dir,
             stop_event,
             logger,
             interval,
         )
     finally:
-        _write_death_notification(config, shutdown_reason)
+        _write_death_notification(notif_dir, shutdown_reason)
         _remove_pid(config)

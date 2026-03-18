@@ -34,9 +34,9 @@ export function createBoxConnection(port: number): BoxConnection {
       return;
     }
     _messages.update((msgs) => {
-      msgs.push(event);
-      if (msgs.length > MAX_MESSAGES) msgs.splice(0, msgs.length - MAX_MESSAGES);
-      return msgs;
+      const updated = [...msgs, event];
+      if (updated.length > MAX_MESSAGES) updated.splice(0, updated.length - MAX_MESSAGES);
+      return updated;
     });
     if (event.type === "status") {
       _boxState.set(event.state);

@@ -8,6 +8,7 @@ __pycache__/
 *.egg-info/
 agent/tests/
 agent/skills/generate-index.py
+agent/skills/index.json
 agent/skills/google
 agent/skills/keeper
 agent/skills/microsoft

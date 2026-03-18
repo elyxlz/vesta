@@ -98,7 +98,7 @@ def run(ctx: GoogleContext):
                         snippet = msg["snippet"] if "snippet" in msg else ""
 
                         notifications.write_notification(
-                            config.notif_dir,
+                            ctx.notif_dir,
                             "email",
                             sender=sender,
                             subject=subject,
@@ -159,7 +159,7 @@ def run(ctx: GoogleContext):
                         )
 
                         notifications.write_notification(
-                            config.notif_dir,
+                            ctx.notif_dir,
                             "calendar",
                             subject=subject,
                             start_time=start_str,

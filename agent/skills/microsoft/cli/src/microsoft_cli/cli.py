@@ -5,6 +5,7 @@ import os
 import signal
 import sys
 import threading
+from pathlib import Path
 
 import httpx
 
@@ -43,7 +44,8 @@ def main():
     group = parser.add_subparsers(dest="group", required=True)
 
     # serve
-    group.add_parser("serve")
+    p_serve = group.add_parser("serve")
+    p_serve.add_argument("--notifications-dir", required=True)
 
     # auth
     auth_parser = group.add_parser("auth")
@@ -171,11 +173,10 @@ def main():
 
     config.data_dir.mkdir(parents=True, exist_ok=True)
     config.log_dir.mkdir(parents=True, exist_ok=True)
-    config.notif_dir.mkdir(parents=True, exist_ok=True)
 
     try:
         if args.group == "serve":
-            _run_serve(config)
+            _run_serve(config, Path(args.notifications_dir))
             return
 
         if args.group != "auth":
@@ -320,7 +321,8 @@ def _dispatch_calendar(args, config, client):
         )
 
 
-def _run_serve(config: Config):
+def _run_serve(config: Config, notif_dir: Path):
+    notif_dir.mkdir(parents=True, exist_ok=True)
     settings = MicrosoftSettings()
     http_client = httpx.Client(timeout=30.0, follow_redirects=True)
 
@@ -343,7 +345,7 @@ def _run_serve(config: Config):
         cache_file=config.cache_file,
         http_client=http_client,
         log_dir=config.log_dir,
-        notif_dir=config.notif_dir,
+        notif_dir=notif_dir,
         monitor_base_dir=monitor_base_dir,
         monitor_state_file=monitor_state_file,
         monitor_log_file=monitor_log_file,
@@ -375,6 +377,6 @@ def _run_serve(config: Config):
     try:
         monitor.run(ctx)
     finally:
-        notifications.write_notification(config.notif_dir, "daemon_died", reason=shutdown_reason)
+        notifications.write_notification(notif_dir, "daemon_died", reason=shutdown_reason)
         _remove_pid(config)
         http_client.close()

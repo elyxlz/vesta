@@ -1,8 +1,6 @@
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-VESTA_DIR = Path(os.environ["VESTA_ROOT"]) if "VESTA_ROOT" in os.environ else Path.home() / "vesta"
 
 SCOPES = ["https://graph.microsoft.com/.default"]
 BASE_URL = "https://graph.microsoft.com/v1.0"
@@ -20,9 +18,8 @@ FOLDERS = {
 
 @dataclass
 class Config:
-    data_dir: Path = VESTA_DIR / "data" / "microsoft"
-    log_dir: Path = VESTA_DIR / "logs" / "microsoft"
-    notif_dir: Path = VESTA_DIR / "notifications"
+    data_dir: Path = Path.home() / ".microsoft"
+    log_dir: Path = Path.home() / ".microsoft" / "logs"
     scopes: list[str] = field(default_factory=lambda: list(SCOPES))
     base_url: str = BASE_URL
     upload_chunk_size: int = UPLOAD_CHUNK_SIZE

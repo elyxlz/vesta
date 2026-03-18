@@ -25,7 +25,7 @@ tasks delete <id>
 - `--initial-metadata`: JSON string of metadata to attach when adding a task
 
 ## Setup: `uv tool install ~/vesta/skills/tasks/cli`
-## Background: `screen -dmS tasks tasks serve`
+## Background: `screen -dmS tasks tasks serve --notifications-dir ~/vesta/notifications`
 
 ### Task Patterns
 [User's common task categories and workflows]
