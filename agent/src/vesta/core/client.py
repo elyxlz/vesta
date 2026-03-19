@@ -223,7 +223,6 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
 
     responses: list[str] = []
     assistant_texts: list[str] = []
-    pending_text: str | None = None
     sub_agent_context: str | None = None
 
     def _emit(t: str) -> None:
@@ -255,6 +254,20 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
                 logger.interrupt("Conversation interrupted by new message")
                 await attempt_interrupt(state, config=config, reason="New message interrupt")
                 await _cancel_task(anext_task)
+                # Cancelling anext_task finalizes response_iter, so drain leftover
+                # messages with a fresh iterator to keep the stream clean.
+                # Emit any text so it's not lost.
+                try:
+                    drain = client.receive_response().__aiter__()
+                    while (leftover := await asyncio.wait_for(anext(drain, None), timeout=5.0)) is not None:
+                        texts, _, _, _ = _parse_sdk_message(tp.cast(Message, leftover), sub_agent_context=sub_agent_context)
+                        text = "\n".join(texts) if texts else None
+                        if text and show_output:
+                            filtered = filter_tool_lines(text)
+                            if filtered:
+                                _emit(filtered)
+                except (TimeoutError, StopAsyncIteration):
+                    pass
                 break
 
             result = anext_task.result()
@@ -262,7 +275,7 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
                 break
 
             msg = tp.cast(Message, result)
-            texts, sub_agent_context, session_id, has_tool_use = _parse_sdk_message(msg, sub_agent_context=sub_agent_context)
+            texts, sub_agent_context, session_id, _ = _parse_sdk_message(msg, sub_agent_context=sub_agent_context)
             if session_id and session_id != state.session_id:
                 persist_session_id(session_id, state=state, config=config)
             text = "\n".join(texts) if texts else None
@@ -272,19 +285,11 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
                 responses.append(text)
                 continue
             filtered = filter_tool_lines(text)
-            if filtered and not has_tool_use:
-                if pending_text:
-                    _emit(pending_text)
-                    pending_text = None
+            if filtered:
                 _emit(filtered)
-            elif filtered:
-                pending_text = filtered
     finally:
         if interrupt_task and not interrupt_task.done():
             await _cancel_task(interrupt_task)
-
-    if pending_text and show_output:
-        _emit(pending_text)
 
     if state.history is not None:
         combined = "\n".join(r for r in (assistant_texts or responses) if r and r.strip())
