@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, tick, untrack } from "svelte";
+  import { onDestroy, tick } from "svelte";
   import { get } from "svelte/store";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import type { BoxConnection } from "../lib/ws";
@@ -52,13 +52,8 @@
   let lastSyncedLen = 0;
   let pendingUserTexts = new Map<string, number>();
 
-  // Bridge Svelte store to $state so the processing effect runs in reactive context
-  let _evts = $state<VestaEvent[]>([]);
-  $effect(() => connection.messages.subscribe((v) => { _evts = v; }));
-
   $effect(() => {
-    const evts = _evts; // tracked — effect re-runs when store updates
-    untrack(() => {
+    return connection.messages.subscribe((evts) => {
       if (evts.length < lastSyncedLen) {
         lines = [];
         nextId = 0;
@@ -83,8 +78,8 @@
       }
       if (lines.length > MAX_MESSAGES) lines.splice(0, lines.length - MAX_MESSAGES);
       lastSyncedLen = evts.length;
+      tick().then(() => scroller.scroll());
     });
-    tick().then(() => scroller.scroll());
   });
 
   $effect(() => {
@@ -100,7 +95,6 @@
     if (connection.send(msg)) {
       pendingUserTexts.set(msg, (pendingUserTexts.get(msg) ?? 0) + 1);
       lines.push({ id: nextId++, text: `> ${msg}`, kind: "user", time: fmtTime(new Date().toISOString()) });
-      lines = lines;
       scroller.scroll();
       input = "";
       resizeInput();
