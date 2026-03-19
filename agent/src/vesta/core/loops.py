@@ -117,6 +117,7 @@ async def queue_greeting(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.V
 async def _process_message_safely(msg: str, *, is_user: bool, state: vm.State, config: vm.VestaConfig) -> None:
     try:
         if is_user:
+            logger.user(msg)
             state.event_bus.emit({"type": "user", "text": msg})
         else:
             preview = msg[:200] + "..." if len(msg) > 200 else msg
