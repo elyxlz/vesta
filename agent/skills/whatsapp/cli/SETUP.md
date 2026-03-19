@@ -34,16 +34,22 @@ After building, the required static libraries will be at:
 
 ## Downloading a whisper model
 
-Download a whisper model to `/usr/local/share/`. The CLI tries `ggml-small.en.bin` first, then falls back to `ggml-tiny.en.bin`. You can override the path with the `WHISPER_MODEL` environment variable.
+Download a whisper model to `/usr/local/share/`. The CLI tries models in this order: `ggml-small.bin` (multilingual), `ggml-small.en.bin`, `ggml-tiny.bin`, `ggml-tiny.en.bin`. You can override the path with the `WHISPER_MODEL` environment variable.
+
+**This step is required for voice memo transcription to work.** Without a model file, transcription silently fails on first use.
 
 ```bash
-# Option A: small.en (better accuracy, ~466 MB)
-curl -L -o /usr/local/share/ggml-small.en.bin \
+# Recommended: small multilingual (best accuracy, supports all languages, ~466 MB)
+curl -fSL -o /usr/local/share/ggml-small.bin \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin
+
+# Alternative: small english-only (~466 MB)
+curl -fSL -o /usr/local/share/ggml-small.en.bin \
   https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin
 
-# Option B: tiny.en (faster, ~75 MB)
-curl -L -o /usr/local/share/ggml-tiny.en.bin \
-  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin
+# Alternative: tiny multilingual (faster, ~75 MB)
+curl -fSL -o /usr/local/share/ggml-tiny.bin \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin
 ```
 
 ## Building the WhatsApp CLI
@@ -73,7 +79,7 @@ go build -tags "fts5" -o /usr/local/bin/whatsapp .
 
 - The `whatsapp` binary at `/usr/local/bin/whatsapp`
 - `ffmpeg` on PATH (used to convert audio to 16kHz mono WAV before transcription)
-- A whisper model file at `/usr/local/share/ggml-small.en.bin` (or `ggml-tiny.en.bin`, or set `WHISPER_MODEL`)
+- A whisper model file at `/usr/local/share/ggml-small.bin` (or any fallback listed above, or set `WHISPER_MODEL`)
 
 ## How transcription works
 
@@ -88,4 +94,4 @@ All transcription runs in-process -- no external scripts or services needed.
 
 | Variable | Default | Description |
 |---|---|---|
-| `WHISPER_MODEL` | `/usr/local/share/ggml-small.en.bin` | Path to the GGML whisper model file |
+| `WHISPER_MODEL` | `/usr/local/share/ggml-small.bin` | Path to the GGML whisper model file |
