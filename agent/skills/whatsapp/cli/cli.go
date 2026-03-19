@@ -233,7 +233,7 @@ func executeCommand(command string, args []string, wac *WhatsAppClient) (interfa
 			"send-message": true, "send-file": true, "send-reaction": true,
 			"send-audio": true, "add-contact": true, "remove-contact": true,
 			"leave-group": true, "create-group": true, "rename-group": true,
-			"update-group-participants": true,
+			"update-group-participants": true, "set-group-photo": true,
 		}
 		if writeCommands[command] {
 			return nil, fmt.Errorf("command %q blocked: instance is read-only", command)
@@ -517,6 +517,20 @@ func executeCommand(command string, args []string, wac *WhatsAppClient) (interfa
 			return nil, fmt.Errorf("--group and --name are required")
 		}
 		success, msg := wac.RenameGroup(group, name)
+		return map[string]interface{}{"success": success, "message": msg}, nil
+
+	case "set-group-photo":
+		var group, filePath string
+		fs := flag.NewFlagSet("set-group-photo", flag.ContinueOnError)
+		fs.StringVar(&group, "group", "", "Group name or JID")
+		fs.StringVar(&filePath, "file-path", "", "Path to image file")
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		if group == "" || filePath == "" {
+			return nil, fmt.Errorf("--group and --file-path are required")
+		}
+		success, msg := wac.SetGroupPhoto(group, filePath)
 		return map[string]interface{}{"success": success, "message": msg}, nil
 
 	case "check-delivery":
