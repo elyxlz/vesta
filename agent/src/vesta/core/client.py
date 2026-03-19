@@ -256,10 +256,16 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
                 await _cancel_task(anext_task)
                 # Cancelling anext_task finalizes response_iter, so drain leftover
                 # messages with a fresh iterator to keep the stream clean.
+                # Emit any text so it's not lost.
                 try:
                     drain = client.receive_response().__aiter__()
-                    while await asyncio.wait_for(anext(drain, None), timeout=5.0) is not None:
-                        pass
+                    while (leftover := await asyncio.wait_for(anext(drain, None), timeout=5.0)) is not None:
+                        texts, _, _, _ = _parse_sdk_message(tp.cast(Message, leftover), sub_agent_context=sub_agent_context)
+                        text = "\n".join(texts) if texts else None
+                        if text and show_output:
+                            filtered = filter_tool_lines(text)
+                            if filtered:
+                                _emit(filtered)
                 except (TimeoutError, StopAsyncIteration):
                     pass
                 break

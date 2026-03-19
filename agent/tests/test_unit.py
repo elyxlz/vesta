@@ -647,7 +647,6 @@ async def test_converse_emits_text_immediately_with_tool_use():
     from vesta.core.client import converse
 
     emitted: list[str] = []
-    emit_order: list[str] = []
 
     def _assistant_msg(content):
         msg = MagicMock(spec=AssistantMessage)
@@ -655,13 +654,8 @@ async def test_converse_emits_text_immediately_with_tool_use():
         return msg
 
     async def response_with_tool_use():
-        # Message 1: text + tool_use (was buffered by pending_text)
         yield _assistant_msg([TextBlock("restarting daemon"), ToolUseBlock("1", "Bash", {})])
-        emit_order.append("after_msg1")
-        # Message 2: another text + tool_use (would have overwritten pending_text)
         yield _assistant_msg([TextBlock("checking status"), ToolUseBlock("2", "Bash", {})])
-        emit_order.append("after_msg2")
-        # Message 3: pure text (no tool_use)
         yield _assistant_msg([TextBlock("all done")])
 
     config = vm.VestaConfig()
@@ -686,6 +680,104 @@ async def test_converse_emits_text_immediately_with_tool_use():
     await converse("test", state=state, config=config, show_output=True)
 
     assert emitted == ["restarting daemon", "checking status", "all done"], f"All text must be emitted immediately, got: {emitted}"
+
+
+@pytest.mark.anyio
+async def test_interrupt_does_not_leak_or_lose_messages():
+    """End-to-end: after an interrupt, leftover messages must be emitted (not lost)
+    and must NOT leak into the next converse() call."""
+    import time
+
+    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
+    from vesta.core.client import converse
+
+    def _assistant_msg(content):
+        msg = MagicMock(spec=AssistantMessage)
+        msg.content = content
+        return msg
+
+    def _result_msg():
+        msg = MagicMock(spec=ResultMessage)
+        msg.content = []
+        return msg
+
+    # Shared message queue — simulates the SDK's internal anyio stream.
+    # Both converse() calls read from the same queue via receive_response(),
+    # just like the real SDK where one _query._message_receive is shared.
+    message_queue: asyncio.Queue[tp.Any] = asyncio.Queue()
+    _SENTINEL = object()
+
+    async def _receive_response():
+        """Yields messages from the shared queue until ResultMessage."""
+        while True:
+            msg = await message_queue.get()
+            yield msg
+            if isinstance(msg, ResultMessage):
+                return
+
+    emitted: list[tuple[str, float]] = []  # (text, timestamp)
+
+    config = vm.VestaConfig(interrupt_timeout=0.5)
+    state = vm.State()
+    state.event_bus = EventBus()
+
+    original_emit = state.event_bus.emit
+
+    def tracking_emit(event):
+        if isinstance(event, dict) and event.get("type") == "assistant":
+            emitted.append((event["text"], time.monotonic()))
+        original_emit(event)
+
+    state.event_bus.emit = tracking_emit  # type: ignore[assignment]
+
+    mock_client = MagicMock()
+    mock_client.query = AsyncMock()
+    mock_client.receive_response = MagicMock(side_effect=lambda: _receive_response())
+    mock_client.interrupt = AsyncMock()
+    state.client = mock_client
+
+    # --- Conversation 1: gets interrupted, has a leftover message ---
+    state.interrupt_event = asyncio.Event()
+
+    async def simulate_conversation_1():
+        # Model does a tool call (no text)
+        await message_queue.put(_assistant_msg([ToolUseBlock("1", "Bash", {})]))
+        await asyncio.sleep(0.1)
+        # Interrupt fires while model is "thinking"
+        assert state.interrupt_event is not None
+        state.interrupt_event.set()
+        await asyncio.sleep(0.1)
+        # Model's response arrives AFTER interrupt (this is the leaked message)
+        await message_queue.put(_assistant_msg([TextBlock("here are the files")]))
+        await message_queue.put(_result_msg())
+
+    asyncio.create_task(simulate_conversation_1())
+    await converse("list files in /tmp", state=state, config=config, show_output=True)
+
+    # The leftover "here are the files" should have been emitted during drain
+    assert any(text == "here are the files" for text, _ in emitted), (
+        f"Leftover message must be emitted during drain, got: {[t for t, _ in emitted]}"
+    )
+    # --- Conversation 2: should NOT see leftover messages from conversation 1 ---
+    state.interrupt_event = None
+    emitted_before_conv2 = len(emitted)
+
+    async def simulate_conversation_2():
+        await asyncio.sleep(0.3)  # Simulate model thinking
+        await message_queue.put(_assistant_msg([TextBlock("fresh response")]))
+        await message_queue.put(_result_msg())
+
+    asyncio.create_task(simulate_conversation_2())
+    t_conv2_start = time.monotonic()
+    await converse("well?", state=state, config=config, show_output=True)
+
+    conv2_messages = emitted[emitted_before_conv2:]
+    assert len(conv2_messages) == 1, f"Expected 1 message in conv2, got: {[t for t, _ in conv2_messages]}"
+    assert conv2_messages[0][0] == "fresh response", f"Conv2 should get fresh response, got: {conv2_messages[0][0]}"
+
+    # The fresh response should NOT arrive instantly (0ms) — that would mean it leaked
+    delay_ms = (conv2_messages[0][1] - t_conv2_start) * 1000
+    assert delay_ms > 100, f"Response arrived in {delay_ms:.0f}ms — too fast, likely a leaked message from conv1"
 
 
 # --- Nightly restart ---
