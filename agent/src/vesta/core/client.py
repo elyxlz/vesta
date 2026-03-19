@@ -225,6 +225,11 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
     assistant_texts: list[str] = []
     pending_text: str | None = None
     sub_agent_context: str | None = None
+
+    def _emit(t: str) -> None:
+        logger.assistant(t)
+        state.event_bus.emit({"type": "assistant", "text": t})
+        assistant_texts.append(t)
     response_iter = client.receive_response().__aiter__()
 
     interrupt_task: asyncio.Task[tp.Any] | None = None
@@ -268,13 +273,9 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
             filtered = filter_tool_lines(text)
             if filtered and not has_tool_use:
                 if pending_text:
-                    logger.assistant(pending_text)
-                    state.event_bus.emit({"type": "assistant", "text": pending_text})
-                    assistant_texts.append(pending_text)
+                    _emit(pending_text)
                     pending_text = None
-                logger.assistant(filtered)
-                state.event_bus.emit({"type": "assistant", "text": filtered})
-                assistant_texts.append(filtered)
+                _emit(filtered)
             elif filtered:
                 pending_text = filtered
     finally:
@@ -282,9 +283,7 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
             await _cancel_task(interrupt_task)
 
     if pending_text and show_output:
-        logger.assistant(pending_text)
-        state.event_bus.emit({"type": "assistant", "text": pending_text})
-        assistant_texts.append(pending_text)
+        _emit(pending_text)
 
     if state.history is not None:
         combined = "\n".join(r for r in (assistant_texts or responses) if r and r.strip())

@@ -148,7 +148,6 @@
     document.addEventListener("click", onDocClick);
     document.addEventListener("keydown", onKeydown);
     appVersion = await appVersionPromise;
-
   });
 
   onDestroy(() => {
