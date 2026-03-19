@@ -1617,6 +1617,36 @@ func (wac *WhatsAppClient) RenameGroup(groupIdentifier, newName string) (bool, s
 	return true, fmt.Sprintf("Group renamed to '%s'", newName)
 }
 
+func (wac *WhatsAppClient) SetGroupPhoto(groupIdentifier, filePath string) (bool, string) {
+	if groupIdentifier == "" || filePath == "" {
+		return false, "Group identifier and file path are required"
+	}
+
+	jid, err := wac.ResolveRecipient(groupIdentifier)
+	if err != nil {
+		return false, fmt.Sprintf("Failed to resolve group: %v", err)
+	}
+	if jid.Server != types.GroupServer {
+		return false, "The specified identifier is not a WhatsApp group"
+	}
+
+	imageBytes, err := os.ReadFile(filePath)
+	if err != nil {
+		return false, fmt.Sprintf("Failed to read image file: %v", err)
+	}
+
+	if err := wac.EnsureConnected(); err != nil {
+		return false, err.Error()
+	}
+
+	_, err = wac.client.SetGroupPhoto(context.Background(), jid, imageBytes)
+	if err != nil {
+		return false, fmt.Sprintf("Failed to set group photo: %v", err)
+	}
+
+	return true, "Group photo updated successfully"
+}
+
 func (wac *WhatsAppClient) GetGroupInviteLink(groupIdentifier string) (bool, string, string) {
 	jid, err := wac.ResolveRecipient(groupIdentifier)
 	if err != nil {
