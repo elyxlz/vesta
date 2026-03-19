@@ -50,6 +50,7 @@ pub fn run() {
             commands::agents::stop_agent,
             commands::agents::restart_agent,
             commands::agents::delete_agent,
+            commands::agents::rebuild_agent,
             commands::agents::backup_agent,
             commands::agents::restore_agent,
             commands::agents::wait_for_ready,

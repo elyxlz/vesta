@@ -2,10 +2,11 @@
   import { onMount, onDestroy } from "svelte";
   import { appVersion as appVersionPromise } from "../lib/version";
   import type { BoxConnection } from "../lib/ws";
-  import { boxStatus, startBox, stopBox, restartBox, deleteBox, authenticate, backupBox, restoreBox } from "../lib/api";
+  import { boxStatus, startBox, stopBox, restartBox, rebuildBox, deleteBox, authenticate, backupBox, restoreBox } from "../lib/api";
   import { getBoxOp, setBoxOp, clearBoxOp, setBoxError, type BoxOperation } from "../lib/store.svelte";
   import { save, open } from "@tauri-apps/plugin-dialog";
   import type { BoxStatus, BoxActivityState } from "../lib/types";
+  import AuthFlow from "./AuthFlow.svelte";
 
   let {
     name,
@@ -221,6 +222,14 @@
     }, "failed to restart");
   }
 
+  async function handleRebuild() {
+    await withBoxOp("rebuilding", async () => {
+      await rebuildBox(name);
+      connection.resetReconnect();
+      await syncStatus();
+    }, "failed to rebuild");
+  }
+
   async function handleBackup() {
     if (busy) return;
     setBoxError(name, "");
@@ -263,7 +272,7 @@
   const OP_LABELS: Record<BoxOperation, string> = {
     "idle": "", "stopping": "stopping...", "starting": "starting...",
     "authenticating": "signing in...", "deleting": "deleting...",
-    "backing-up": "backing up...", "restoring": "restoring...",
+    "rebuilding": "rebuilding...", "backing-up": "backing up...", "restoring": "restoring...",
   };
   let statusLabel = $derived(
     errorMsg ? errorMsg
@@ -310,6 +319,12 @@
       </span>
     </div>
 
+    {#if authenticating}
+      <div class="auth-panel">
+        <AuthFlow />
+      </div>
+    {/if}
+
     <div class="actions" class:visible={showActions && !deleting && !stopping && !starting && !authenticating && !backingUp && !restoring} inert={!showActions || deleting || stopping || starting || authenticating || backingUp || restoring}>
       {#if confirming}
         <button class="action-btn danger" disabled={busy} onclick={destroy}>
@@ -341,6 +356,7 @@
               {/if}
               {#if running}
                 <button class="menu-item" disabled={busy} onclick={() => { menuOpen = false; handleRestart(); }} data-tip="restart box">restart</button>
+                <button class="menu-item" disabled={busy} onclick={() => { menuOpen = false; handleRebuild(); }} data-tip="rebuild container from latest image">rebuild</button>
               {/if}
               {#if running && authenticated}
                 <button class="menu-item" disabled={busy} onclick={() => { menuOpen = false; handleAuth(); }} data-tip="authenticate claude">authenticate</button>
@@ -713,6 +729,12 @@
     0%, 100% { transform: translateX(0); }
     25% { transform: translateX(-3px); }
     75% { transform: translateX(3px); }
+  }
+
+  /* --- Auth panel --- */
+  .auth-panel {
+    width: 280px;
+    animation: viewIn 0.3s var(--spring);
   }
 
   /* --- Actions --- */
