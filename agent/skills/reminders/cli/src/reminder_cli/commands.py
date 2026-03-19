@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, UTC
 from contextlib import closing
+from pathlib import Path
 from typing import TypedDict
 import json
 import logging
@@ -53,14 +54,12 @@ def _to_utc(datetime_str: str, timezone_str: str) -> datetime:
 
 
 def send_reminder_job(reminder_id: str, *, message: str, data_dir, notif_dir):
-    from pathlib import Path
-
     data_dir = Path(data_dir)
-    notif_dir = Path(notif_dir)
 
     msg_preview = message[:50] + "..." if len(message) > 50 else message
     logger.info(f"Firing reminder {reminder_id}: {msg_preview}")
-    write_notification(notif_dir, reminder_id, message)
+    if notif_dir:
+        write_notification(Path(notif_dir), reminder_id, message)
 
     with closing(db.get_db(data_dir)) as conn:
         cursor = conn.execute("SELECT trigger_data FROM reminders WHERE id = ?", (reminder_id,))
@@ -72,7 +71,7 @@ def send_reminder_job(reminder_id: str, *, message: str, data_dir, notif_dir):
                 conn.commit()
 
 
-def restore_all_jobs(config: Config, scheduler: BackgroundScheduler):
+def restore_all_jobs(config: Config, scheduler: BackgroundScheduler, *, notif_dir: Path | None = None):
     now = _now_utc()
     with closing(db.get_db(config.data_dir)) as conn:
         cursor = conn.execute("SELECT id, message, trigger_data FROM reminders WHERE completed = 0 AND trigger_data IS NOT NULL")
@@ -91,7 +90,8 @@ def restore_all_jobs(config: Config, scheduler: BackgroundScheduler):
                     run_date = _parse_datetime(run_date_str)
                     if run_date < now:
                         logger.info(f"Reminder {reminder_id}: past due, sending missed notification")
-                        write_notification(config.notif_dir, reminder_id, row["message"], data={"missed": True})
+                        if notif_dir:
+                            write_notification(notif_dir, reminder_id, row["message"], data={"missed": True})
                         conn.execute("UPDATE reminders SET completed = 1 WHERE id = ?", (reminder_id,))
                         continue
                     trigger = DateTrigger(run_date=run_date)
@@ -118,7 +118,7 @@ def restore_all_jobs(config: Config, scheduler: BackgroundScheduler):
                     func=send_reminder_job,
                     trigger=trigger,
                     args=[reminder_id],
-                    kwargs={"message": row["message"], "data_dir": config.data_dir, "notif_dir": config.notif_dir},
+                    kwargs={"message": row["message"], "data_dir": config.data_dir, "notif_dir": str(notif_dir) if notif_dir else ""},
                     id=reminder_id,
                     replace_existing=True,
                 )
@@ -141,6 +141,7 @@ def set_reminder(
     in_hours: int | None = None,
     in_days: int | None = None,
     recurring: str | None = None,
+    notif_dir: Path | None = None,
 ) -> dict:
     reminder_id = str(uuid.uuid4())[:8]
     trigger_data = None
@@ -196,7 +197,7 @@ def set_reminder(
         func=send_reminder_job,
         trigger=trigger,
         args=[reminder_id],
-        kwargs={"message": message, "data_dir": config.data_dir, "notif_dir": config.notif_dir},
+        kwargs={"message": message, "data_dir": config.data_dir, "notif_dir": str(notif_dir) if notif_dir else ""},
         id=reminder_id,
         replace_existing=True,
     )
@@ -249,7 +250,7 @@ def list_reminders(config: Config, scheduler: BackgroundScheduler, *, limit: int
     return reminders
 
 
-def update_reminder(config: Config, scheduler: BackgroundScheduler, *, reminder_id: str, message: str) -> dict:
+def update_reminder(config: Config, scheduler: BackgroundScheduler, *, reminder_id: str, message: str, notif_dir: Path | None = None) -> dict:
     with closing(db.get_db(config.data_dir)) as conn:
         cursor = conn.execute("SELECT * FROM reminders WHERE id = ? AND completed = 0", (reminder_id,))
         reminder = cursor.fetchone()
@@ -260,7 +261,9 @@ def update_reminder(config: Config, scheduler: BackgroundScheduler, *, reminder_
 
     job = scheduler.get_job(reminder_id)
     if job:
-        job.modify(args=[reminder_id], kwargs={"message": message, "data_dir": config.data_dir, "notif_dir": config.notif_dir})
+        job.modify(
+            args=[reminder_id], kwargs={"message": message, "data_dir": config.data_dir, "notif_dir": str(notif_dir) if notif_dir else ""}
+        )
 
     return {
         "id": reminder_id,

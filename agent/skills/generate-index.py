@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Generate agent/skills-index.json from all SKILL.md files in agent/skills/."""
+"""Generate skills/index.json from all SKILL.md files in agent/skills/."""
 
 import json
 import pathlib
 import re
 
-SKILLS_DIR = pathlib.Path(__file__).parent / "skills"
-OUTPUT_FILE = pathlib.Path(__file__).parent / "skills-index.json"
+SKILLS_DIR = pathlib.Path(__file__).parent
+OUTPUT_FILE = pathlib.Path(__file__).parent / "index.json"
 
 if __name__ == "__main__":
     skills = []

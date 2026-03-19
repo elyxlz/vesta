@@ -6,7 +6,7 @@ description: This skill should be used when the user asks about "email", "emails
 # Microsoft — CLI: microsoft
 
 **Setup**: See [SETUP.md](SETUP.md)
-**Background**: `screen -dmS microsoft microsoft serve`
+**Background**: `screen -dmS microsoft microsoft serve --notifications-dir ~/vesta/notifications`
 
 ## Email
 

@@ -258,6 +258,13 @@ mod tests {
 
 /// Fetch the latest version string from GitHub. Returns None on any failure.
 #[allow(dead_code)]
+fn version_less_than(a: &str, b: &str) -> bool {
+    let parse = |v: &str| -> Vec<u64> {
+        v.split('.').filter_map(|s| s.parse().ok()).collect()
+    };
+    parse(a) < parse(b)
+}
+
 fn fetch_latest_version(timeout: Option<u64>) -> Option<String> {
     let mut args = vec!["-fsSL"];
     let timeout_connect;
@@ -387,15 +394,19 @@ fn check_update_cached() -> Option<std::thread::JoinHandle<Option<String>>> {
     if let Ok(contents) = std::fs::read_to_string(&cache_file) {
         if let Ok(meta) = std::fs::metadata(&cache_file) {
             if let Ok(modified) = meta.modified() {
-                if modified.elapsed().unwrap_or_default() < std::time::Duration::from_secs(86400) {
+                if modified.elapsed().unwrap_or_default() < std::time::Duration::from_secs(3600) {
                     let latest = contents.trim();
                     if !latest.is_empty() && latest != env!("CARGO_PKG_VERSION") {
-                        // Print immediately, no thread needed
-                        eprintln!(
-                            "\nUpdate available: v{} → v{} (run 'vesta update')",
-                            env!("CARGO_PKG_VERSION"),
-                            latest
-                        );
+                        // Stale cache: cached version is older than current (e.g. after manual update)
+                        if version_less_than(latest, env!("CARGO_PKG_VERSION")) {
+                            let _ = std::fs::remove_file(&cache_file);
+                        } else {
+                            eprintln!(
+                                "\nUpdate available: v{} → v{} (run 'vesta update')",
+                                env!("CARGO_PKG_VERSION"),
+                                latest
+                            );
+                        }
                     }
                     return None;
                 }

@@ -56,10 +56,18 @@
   let busy = $derived(operation !== "idle");
 
   let boxStateVal = $state<BoxActivityState>(initialActivity);
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
 
   $effect(() => {
-    const unsub = connection.boxState.subscribe((v: BoxActivityState) => { boxStateVal = v; });
-    return () => unsub();
+    const unsub = connection.boxState.subscribe((v: BoxActivityState) => {
+      if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+      if (v === "idle") {
+        idleTimer = setTimeout(() => { boxStateVal = v; }, 400);
+      } else {
+        boxStateVal = v;
+      }
+    });
+    return () => { unsub(); if (idleTimer) clearTimeout(idleTimer); };
   });
 
   function orbLoop() {
@@ -144,6 +152,7 @@
   onDestroy(() => {
     clearInterval(poll);
     if (leaveTimer) clearTimeout(leaveTimer);
+    if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
     if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
     document.removeEventListener("click", onDocClick);
     document.removeEventListener("keydown", onKeydown);
@@ -201,7 +210,7 @@
       }
       connection.resetReconnect();
       await syncStatus();
-    }, "re authentication failed");
+    }, "authentication failed");
   }
 
   async function handleRestart() {
@@ -312,7 +321,7 @@
         {#if alive}
           <button class="action-btn primary" onclick={onChat} data-tip="open chat">chat</button>
         {:else if running && !authenticated}
-          <button class="action-btn primary" disabled={busy} onclick={handleAuth} data-tip="re authenticate to claude">re authenticate</button>
+          <button class="action-btn primary" disabled={busy} onclick={handleAuth} data-tip="authenticate claude">authenticate</button>
         {/if}
         <button class="action-btn" disabled={busy} onclick={toggleRun} data-tip={running ? "stop" : "start"}>
           {running ? "stop" : "start"}
@@ -334,7 +343,7 @@
                 <button class="menu-item" disabled={busy} onclick={() => { menuOpen = false; handleRestart(); }} data-tip="restart box">restart</button>
               {/if}
               {#if running && authenticated}
-                <button class="menu-item" disabled={busy} onclick={() => { menuOpen = false; handleAuth(); }} data-tip="re-authenticate claude">re authenticate</button>
+                <button class="menu-item" disabled={busy} onclick={() => { menuOpen = false; handleAuth(); }} data-tip="authenticate claude">authenticate</button>
               {/if}
               <button class="menu-item" disabled={busy} onclick={() => { menuOpen = false; handleBackup(); }} data-tip="export to file">backup</button>
               <button class="menu-item" disabled={busy} onclick={() => { menuOpen = false; handleRestore(); }} data-tip="restore from file">load backup</button>
@@ -433,15 +442,21 @@
     animation: none !important;
   }
 
+  @property --orb-c1 { syntax: "<color>"; inherits: true; initial-value: #b8ceb0; }
+  @property --orb-c2 { syntax: "<color>"; inherits: true; initial-value: #7a9e70; }
+  @property --orb-c3 { syntax: "<color>"; inherits: true; initial-value: #5a7e50; }
+  @property --orb-glow { syntax: "<color>"; inherits: true; initial-value: rgba(138, 180, 120, 0.35); }
+  @property --orb-ambient { syntax: "<color>"; inherits: true; initial-value: rgba(138, 180, 120, 0.08); }
+
   .orb-body {
     position: absolute;
     inset: 20px;
     border-radius: 50%;
-    background: radial-gradient(circle at 38% 32%, #b8ceb0, #7a9e70 50%, #5a7e50);
+    background: radial-gradient(circle at 38% 32%, var(--orb-c1), var(--orb-c2) 50%, var(--orb-c3));
     box-shadow:
       inset 0 -8px 20px rgba(0, 0, 0, 0.15),
       inset 0 4px 12px rgba(255, 255, 255, 0.15);
-    transition: background 0.8s var(--spring), box-shadow 0.8s var(--spring), transform 0.8s var(--spring);
+    transition: --orb-c1 0.8s var(--spring), --orb-c2 0.8s var(--spring), --orb-c3 0.8s var(--spring), box-shadow 0.8s var(--spring), transform 0.8s var(--spring);
   }
 
   .orb-highlight {
@@ -460,9 +475,9 @@
     position: absolute;
     inset: -5px;
     border-radius: 50%;
-    background: radial-gradient(circle, rgba(138, 180, 120, 0.35), transparent 70%);
+    background: radial-gradient(circle, var(--orb-glow), transparent 70%);
     filter: blur(18px);
-    transition: opacity 0.8s var(--spring), background 0.8s var(--spring);
+    transition: opacity 0.8s var(--spring), --orb-glow 0.8s var(--spring);
   }
 
   .orb-ring {
@@ -477,8 +492,8 @@
     position: absolute;
     inset: -30px;
     border-radius: 50%;
-    background: radial-gradient(circle, rgba(138, 180, 120, 0.08), transparent 70%);
-    transition: opacity 0.8s var(--spring), background 0.8s var(--spring);
+    background: radial-gradient(circle, var(--orb-ambient), transparent 70%);
+    transition: opacity 0.8s var(--spring), --orb-ambient 0.8s var(--spring);
   }
 
   /* Alive state */
@@ -512,24 +527,22 @@
   /* Active state (thinking + tool use) — amber */
   .orb-container.thinking,
   .orb-container.tool-use {
+    --orb-c1: #e8d0a0;
+    --orb-c2: #c4a060;
+    --orb-c3: #a08040;
+    --orb-glow: rgba(200, 170, 100, 0.4);
+    --orb-ambient: rgba(200, 170, 100, 0.12);
     animation: float 2s ease-in-out infinite;
   }
 
   .orb-container.thinking .orb-body,
   .orb-container.tool-use .orb-body {
-    background: radial-gradient(circle at 38% 32%, #e8d0a0, #c4a060 50%, #a08040);
     animation: orb-breathe 1.2s ease-in-out infinite;
   }
 
   .orb-container.thinking .orb-glow,
   .orb-container.tool-use .orb-glow {
-    background: radial-gradient(circle, rgba(200, 170, 100, 0.4), transparent 70%);
     animation: glow-pulse 1.2s ease-in-out infinite;
-  }
-
-  .orb-container.thinking .orb-ambient,
-  .orb-container.tool-use .orb-ambient {
-    background: radial-gradient(circle, rgba(200, 170, 100, 0.12), transparent 70%);
   }
 
   /* Stopping state */
@@ -573,8 +586,13 @@
     animation: float 3s ease-in-out infinite;
   }
 
+  .orb-container.booting {
+    --orb-c1: #c4deb8;
+    --orb-c2: #8ab880;
+    --orb-c3: #6a9e5a;
+  }
+
   .orb-container.booting .orb-body {
-    background: radial-gradient(circle at 38% 32%, #c4deb8, #8ab880 50%, #6a9e5a);
     animation: orb-breathe 2s ease-in-out infinite;
   }
 
@@ -583,22 +601,21 @@
   }
 
   /* Authenticating state — slow pulse, waiting on user */
+  .orb-container.authenticating {
+    --orb-c1: #c0d0e8;
+    --orb-c2: #80a0c4;
+    --orb-c3: #6080a4;
+    --orb-glow: rgba(100, 150, 200, 0.35);
+    --orb-ambient: rgba(100, 150, 200, 0.1);
+    animation: float 3s ease-in-out infinite;
+  }
+
   .orb-container.authenticating .orb-body {
-    background: radial-gradient(circle at 38% 32%, #c0d0e8, #80a0c4 50%, #6080a4);
     animation: orb-breathe 2s ease-in-out infinite;
   }
 
   .orb-container.authenticating .orb-glow {
-    background: radial-gradient(circle, rgba(100, 150, 200, 0.35), transparent 70%);
     animation: glow-pulse 2s ease-in-out infinite;
-  }
-
-  .orb-container.authenticating .orb-ambient {
-    background: radial-gradient(circle, rgba(100, 150, 200, 0.1), transparent 70%);
-  }
-
-  .orb-container.authenticating {
-    animation: float 3s ease-in-out infinite;
   }
 
   /* Deleting state */
@@ -619,8 +636,14 @@
   }
 
   /* Dead state */
+  .orb-container.dead {
+    --orb-c1: #c4bdb5;
+    --orb-c2: #a09890;
+    --orb-c3: #8b7e74;
+    --orb-glow: rgba(160, 152, 144, 0.2);
+  }
+
   .orb-container.dead .orb-body {
-    background: radial-gradient(circle at 38% 32%, #c4bdb5, #a09890 50%, #8b7e74);
     box-shadow:
       inset 0 -8px 20px rgba(0, 0, 0, 0.1),
       inset 0 4px 12px rgba(255, 255, 255, 0.05);
@@ -629,7 +652,6 @@
 
   .orb-container.dead .orb-glow {
     opacity: 0.15;
-    background: radial-gradient(circle, rgba(160, 152, 144, 0.2), transparent 70%);
   }
 
   .orb-container.dead .orb-highlight {

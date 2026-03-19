@@ -7,7 +7,7 @@ import { execSync } from 'child_process';
 
 // ── Paths ──
 
-const SESSION_DIR = join(homedir(), 'data', 'browser');
+const SESSION_DIR = join(homedir(), '.browser');
 const SESSION_FILE = join(SESSION_DIR, 'session.json');
 
 // ── Output ──

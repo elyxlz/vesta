@@ -177,14 +177,14 @@ def test_skills_index_valid():
     import re
 
     source_root = Path(__file__).parent.parent
-    index = json.loads((source_root / "skills-index.json").read_text())
-    assert isinstance(index, list) and index, "skills-index.json must be a non-empty list"
+    index = json.loads((source_root / "skills" / "index.json").read_text())
+    assert isinstance(index, list) and index, "skills/index.json must be a non-empty list"
     skill_names = {s["name"] for s in index}
     for skill_md in (source_root / "skills").glob("*/SKILL.md"):
         text = skill_md.read_text()
         match = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
         fm = dict(re.findall(r"^(\w[\w-]*)\s*:\s*(.+)$", match.group(1), re.MULTILINE)) if match else {}
-        assert fm.get("name", skill_md.parent.name) in skill_names, f"{skill_md.parent.name} missing from skills-index.json"
+        assert fm.get("name", skill_md.parent.name) in skill_names, f"{skill_md.parent.name} missing from skills/index.json"
 
 
 def test_skills_registry_scripts_executable():

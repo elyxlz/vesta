@@ -9,8 +9,6 @@ import (
 	waLog "go.mau.fi/whatsmeow/util/log"
 )
 
-var defaultStateDir = os.Getenv("HOME")
-
 func resolveDir(path string) (string, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {

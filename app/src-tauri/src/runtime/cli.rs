@@ -298,6 +298,9 @@ pub async fn agent_status(name: &str) -> Result<AgentInfo, VestaError> {
 
 pub async fn create_agent(name: Option<String>) -> Result<(), VestaError> {
     let mut args = vec!["create"];
+    if cfg!(debug_assertions) {
+        args.push("--build");
+    }
     let name_val;
     if let Some(ref n) = name {
         name_val = n.clone();

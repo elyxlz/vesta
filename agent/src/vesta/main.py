@@ -152,7 +152,8 @@ async def async_main() -> None:
     logger.setup(config.logs_dir, log_level=config.log_level)
     logger.init(f"{config.agent_name} starting")
 
-    first_start = "[Unknown - need to ask]" in get_memory_path(config).read_text()
+    memory_path = get_memory_path(config)
+    first_start = not memory_path.exists() or "[Unknown - need to ask]" in memory_path.read_text()
     initial_state, crashed = init_state(config=config)
     initial_state.history = open_history(config.history_db)
     logger.init("Starting main loop...")

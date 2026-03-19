@@ -6,6 +6,7 @@ import signal
 import sys
 import time
 from datetime import datetime, UTC
+from pathlib import Path
 
 from .config import Config
 from . import commands, db
@@ -23,13 +24,13 @@ def _remove_pid(config):
         pass
 
 
-def _write_death_notification(config, reason):
-    config.notif_dir.mkdir(exist_ok=True)
+def _write_death_notification(notif_dir: Path, reason: str):
+    notif_dir.mkdir(exist_ok=True)
     notif = {"source": "reminder", "type": "daemon_died", "reason": reason, "timestamp": datetime.now(UTC).isoformat()}
     filename = f"{int(time.time() * 1e6)}-reminder-daemon_died.json"
-    tmp = config.notif_dir / f"{filename}.tmp"
+    tmp = notif_dir / f"{filename}.tmp"
     tmp.write_text(json.dumps(notif))
-    os.replace(tmp, config.notif_dir / filename)
+    os.replace(tmp, notif_dir / filename)
 
 
 def _require_daemon(config):
@@ -45,11 +46,11 @@ def _require_daemon(config):
         sys.exit(1)
 
 
-def _init_scheduler(config: Config):
+def _init_scheduler(config: Config, notif_dir: Path | None = None):
     scheduler = create_scheduler(config.data_dir)
     scheduler.start()
     db.init_db(config.data_dir)
-    commands.restore_all_jobs(config, scheduler)
+    commands.restore_all_jobs(config, scheduler, notif_dir=notif_dir)
     return scheduler
 
 
@@ -58,7 +59,8 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
 
     # serve
-    sub.add_parser("serve", help="Run scheduler daemon")
+    p_serve = sub.add_parser("serve", help="Run scheduler daemon")
+    p_serve.add_argument("--notifications-dir", required=True, help="Directory for notification files")
 
     # set
     p_set = sub.add_parser("set", help="Set a reminder")
@@ -91,11 +93,12 @@ def main():
 
     config.data_dir.mkdir(parents=True, exist_ok=True)
     config.log_dir.mkdir(parents=True, exist_ok=True)
-    config.notif_dir.mkdir(parents=True, exist_ok=True)
 
     try:
         if args.command == "serve":
-            _run_serve(config)
+            notif_dir = Path(args.notifications_dir)
+            notif_dir.mkdir(parents=True, exist_ok=True)
+            _run_serve(config, notif_dir)
             return
 
         _require_daemon(config)
@@ -141,7 +144,7 @@ def _dispatch(args, config: Config, scheduler):
         return commands.cancel_reminder(config, scheduler, reminder_id=reminder_id)
 
 
-def _sync_jobs(config: Config, scheduler):
+def _sync_jobs(config: Config, scheduler, notif_dir: Path):
     scheduled_ids = {job.id for job in scheduler.get_jobs()}
     from contextlib import closing
 
@@ -158,10 +161,10 @@ def _sync_jobs(config: Config, scheduler):
 
     new_ids = db_ids - scheduled_ids
     if new_ids:
-        commands.restore_all_jobs(config, scheduler)
+        commands.restore_all_jobs(config, scheduler, notif_dir=notif_dir)
 
 
-def _run_serve(config: Config):
+def _run_serve(config: Config, notif_dir: Path):
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(levelname)s - %(message)s",
@@ -171,7 +174,7 @@ def _run_serve(config: Config):
         ],
     )
 
-    scheduler = _init_scheduler(config)
+    scheduler = _init_scheduler(config, notif_dir=notif_dir)
     stop = False
     shutdown_reason = "unknown"
 
@@ -193,8 +196,8 @@ def _run_serve(config: Config):
     try:
         while not stop:
             time.sleep(sync_interval)
-            _sync_jobs(config, scheduler)
+            _sync_jobs(config, scheduler, notif_dir)
     finally:
-        _write_death_notification(config, shutdown_reason)
+        _write_death_notification(notif_dir, shutdown_reason)
         _remove_pid(config)
         scheduler.shutdown(wait=True)

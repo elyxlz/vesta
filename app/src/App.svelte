@@ -3,7 +3,7 @@
   import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
   import { listBoxes, checkAndInstallUpdate, runInstallScript } from "./lib/api";
   import { createBoxConnection, type BoxConnection } from "./lib/ws";
-  import { removeBoxState, resetOnboarding } from "./lib/store.svelte";
+  import { removeBoxState, resetOnboarding, updateOnboarding } from "./lib/store.svelte";
   import { detectPlatform } from "./lib/platform";
   import type { BoxActivityState } from "./lib/types";
   import Onboarding from "./components/Onboarding.svelte";
@@ -54,13 +54,16 @@
     try {
       if (!boxes) throw new Error();
       hasBoxes = boxes.length > 0;
-      if (boxes.length === 1) {
+      if (boxes.length === 1 && boxes[0].authenticated) {
         selectedBox = { name: boxes[0].name, wsPort: boxes[0].ws_port };
         boxConnection = createBoxConnection(boxes[0].ws_port);
         boxConnection.connect();
         view = "box-home";
       } else if (boxes.length > 1) {
         view = "grid";
+      } else if (boxes.length === 1 && !boxes[0].authenticated) {
+        updateOnboarding({ name: boxes[0].name, step: "name" });
+        view = "onboarding";
       } else {
         view = "onboarding";
       }
@@ -101,9 +104,9 @@
     const remaining = await listBoxes().catch(() => []);
     if (remaining.length === 0) {
       hasBoxes = false;
-      setView("onboarding");
+      view = "onboarding";
     } else {
-      setView("grid");
+      view = "grid";
     }
   }
 
@@ -112,10 +115,15 @@
     const boxes = await listBoxes().catch(() => []);
     const box = boxes.find((b) => b.name === name);
     if (box) {
-      handleSelectBox(box.name, box.ws_port);
+      boxConnection?.disconnect();
+      selectedBox = { name: box.name, wsPort: box.ws_port };
+      boxConnection = createBoxConnection(box.ws_port);
+      boxConnection.connect();
+      await setView("box-home");
     } else {
-      setView("grid");
+      await setView("grid");
     }
+    resetOnboarding();
   }
 
   let isDark = $derived(view === "box-console" || view === "box-chat");
@@ -547,7 +555,7 @@
 
   :global(.line strong) {
     font-weight: 600;
-    color: rgba(255, 255, 255, 0.9);
+    color: inherit;
   }
 
   :global(.line code) {

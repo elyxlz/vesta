@@ -6,7 +6,7 @@ import pathlib
 import sys
 import urllib.request
 
-INDEX_URL = "https://raw.githubusercontent.com/elyxlz/vesta/master/agent/skills-index.json"
+INDEX_URL = "https://raw.githubusercontent.com/elyxlz/vesta/master/agent/skills/index.json"
 
 query = " ".join(sys.argv[1:]).lower()
 

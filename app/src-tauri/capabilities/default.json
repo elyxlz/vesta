@@ -18,6 +18,7 @@
     "core:window:allow-set-focus",
     "dialog:allow-save",
     "dialog:allow-open",
-    "updater:default"
+    "updater:default",
+    "opener:default"
   ]
 }

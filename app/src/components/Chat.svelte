@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, tick } from "svelte";
   import { get } from "svelte/store";
+  import { openUrl } from "@tauri-apps/plugin-opener";
   import type { BoxConnection } from "../lib/ws";
   import { linkify } from "../lib/linkify";
   import { createAutoScroller } from "../lib/scroll";
@@ -49,13 +50,12 @@
   }
 
   let lastSyncedLen = 0;
-  let lastArray: VestaEvent[] = [];
 
   let pendingUserTexts = new Map<string, number>();
 
   $effect(() => {
     const unsub = connection.messages.subscribe((evts: VestaEvent[]) => {
-      if (evts !== lastArray) {
+      if (evts.length < lastSyncedLen) {
         lines = [];
         nextId = 0;
         lastSyncedLen = 0;
@@ -63,6 +63,7 @@
         suppressAnim = true;
         requestAnimationFrame(() => { suppressAnim = false; });
       }
+      if (evts.length === lastSyncedLen) return;
       for (let i = lastSyncedLen; i < evts.length; i++) {
         const ev = evts[i];
         if (ev.type === "user") {
@@ -78,7 +79,6 @@
       }
       if (lines.length > MAX_MESSAGES) lines.splice(0, lines.length - MAX_MESSAGES);
       lastSyncedLen = evts.length;
-      lastArray = evts;
       lines = lines;
       scroller.scroll();
     });
@@ -158,7 +158,7 @@
     </button>
   </div>
 
-  <div class="output" class:no-anim={suppressAnim} bind:this={outputEl} onscroll={scroller.check}>
+  <div class="output" class:no-anim={suppressAnim} bind:this={outputEl} onscroll={scroller.check} onclick={(e) => { const a = (e.target as HTMLElement).closest("a"); if (a?.href) { e.preventDefault(); openUrl(a.href); } }}>
     {#each lines as line (line.id)}
       {#if (line.kind !== "tool" && line.kind !== "notification") || showTools}
         <div class="line {line.kind}"><span class="ts">{line.time}</span>{@html linkify(line.text)}</div>
