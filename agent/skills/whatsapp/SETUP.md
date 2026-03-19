@@ -1,8 +1,8 @@
 # WhatsApp Setup
 
-1. Install dependencies (gcc for CGO, and Go from https://go.dev/dl/ — NOT the system package manager):
+1. Install dependencies (gcc for CGO, ffmpeg for voice note transcription, and Go from https://go.dev/dl/ — NOT the system package manager):
    ```bash
-   apt-get install -y gcc
+   apt-get install -y gcc ffmpeg
    ARCH=$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/')
    curl -fsSL "https://go.dev/dl/$(curl -fsSL 'https://go.dev/VERSION?m=text' | head -1).linux-${ARCH}.tar.gz" | tar -C /usr/local -xz
    export PATH="/usr/local/go/bin:$PATH"
@@ -11,7 +11,11 @@
    ```bash
    cd ~/vesta/skills/whatsapp/cli && CGO_ENABLED=1 CGO_CFLAGS="-DSQLITE_ENABLE_FTS5" CGO_LDFLAGS="-lm" go build -o /usr/local/bin/whatsapp .
    ```
-3. Start the daemon and authenticate:
+3. Download the whisper model for voice memo transcription (~466 MB):
+   ```bash
+   curl -fSL "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin" -o /usr/local/share/ggml-small.bin
+   ```
+4. Start the daemon and authenticate:
    ```bash
    screen -dmS whatsapp whatsapp serve
    sleep 3
