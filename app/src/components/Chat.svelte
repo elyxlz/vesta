@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, tick } from "svelte";
+  import { onDestroy, tick, flushSync } from "svelte";
   import { get } from "svelte/store";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import type { BoxConnection } from "../lib/ws";
@@ -52,41 +52,37 @@
   let lastSyncedLen = 0;
   let pendingUserTexts = new Map<string, number>();
 
-  // Bridge store into Svelte's reactive system so $effect tracks changes
-  let currentMessages = $state<VestaEvent[]>([]);
-
   $effect(() => {
-    const unsub = connection.messages.subscribe((v: VestaEvent[]) => { currentMessages = v; });
-    return () => unsub();
-  });
-
-  $effect(() => {
-    const evts = currentMessages;
-    if (evts.length < lastSyncedLen) {
-      lines = [];
-      nextId = 0;
-      lastSyncedLen = 0;
-      pendingUserTexts.clear();
-      suppressAnim = true;
-      requestAnimationFrame(() => { suppressAnim = false; });
-    }
-    if (evts.length === lastSyncedLen) return;
-    for (let i = lastSyncedLen; i < evts.length; i++) {
-      const ev = evts[i];
-      if (ev.type === "user") {
-        const count = pendingUserTexts.get(ev.text) ?? 0;
-        if (count > 0) {
-          if (count === 1) pendingUserTexts.delete(ev.text);
-          else pendingUserTexts.set(ev.text, count - 1);
-          continue;
+    const unsub = connection.messages.subscribe((evts: VestaEvent[]) => {
+      flushSync(() => {
+        if (evts.length < lastSyncedLen) {
+          lines = [];
+          nextId = 0;
+          lastSyncedLen = 0;
+          pendingUserTexts.clear();
+          suppressAnim = true;
+          requestAnimationFrame(() => { suppressAnim = false; });
         }
-      }
-      const line = eventToLine(ev);
-      if (line) lines.push(line);
-    }
-    if (lines.length > MAX_MESSAGES) lines.splice(0, lines.length - MAX_MESSAGES);
-    lastSyncedLen = evts.length;
-    scroller.scroll();
+        if (evts.length === lastSyncedLen) return;
+        for (let i = lastSyncedLen; i < evts.length; i++) {
+          const ev = evts[i];
+          if (ev.type === "user") {
+            const count = pendingUserTexts.get(ev.text) ?? 0;
+            if (count > 0) {
+              if (count === 1) pendingUserTexts.delete(ev.text);
+              else pendingUserTexts.set(ev.text, count - 1);
+              continue;
+            }
+          }
+          const line = eventToLine(ev);
+          if (line) lines.push(line);
+        }
+        if (lines.length > MAX_MESSAGES) lines.splice(0, lines.length - MAX_MESSAGES);
+        lastSyncedLen = evts.length;
+      });
+      scroller.scroll();
+    });
+    return () => unsub();
   });
 
   $effect(() => {
