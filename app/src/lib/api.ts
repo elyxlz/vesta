@@ -32,6 +32,10 @@ export async function deleteBox(name: string): Promise<void> {
   return invoke("delete_agent", { name });
 }
 
+export async function rebuildBox(name: string): Promise<void> {
+  return invoke("rebuild_agent", { name });
+}
+
 export async function backupBox(name: string, output: string): Promise<void> {
   return invoke("backup_agent", { name, output });
 }

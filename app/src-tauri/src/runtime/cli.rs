@@ -331,6 +331,11 @@ pub async fn delete_agent(name: &str) -> Result<(), VestaError> {
     Ok(())
 }
 
+pub async fn rebuild_agent(name: &str) -> Result<(), VestaError> {
+    run_with_timeout(&["rebuild", name], SETUP_TIMEOUT_SECS).await?;
+    Ok(())
+}
+
 // ── Auth operations ────────────────────────────────────────────
 
 pub async fn obtain_and_inject_credentials(

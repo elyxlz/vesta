@@ -2,7 +2,7 @@ import type { PlatformStatus } from "./types";
 
 // ── Per-box operation state ────────────────────────────────────
 
-export type BoxOperation = "idle" | "stopping" | "starting" | "authenticating" | "deleting" | "backing-up" | "restoring";
+export type BoxOperation = "idle" | "stopping" | "starting" | "authenticating" | "deleting" | "rebuilding" | "backing-up" | "restoring";
 
 type BoxOpState = {
   operation: BoxOperation;

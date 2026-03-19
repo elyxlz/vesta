@@ -37,6 +37,11 @@ pub async fn delete_agent(name: String) -> Result<(), VestaError> {
 }
 
 #[tauri::command]
+pub async fn rebuild_agent(name: String) -> Result<(), VestaError> {
+    cli::rebuild_agent(&name).await
+}
+
+#[tauri::command]
 pub async fn backup_agent(name: String, output: String) -> Result<(), VestaError> {
     cli::backup_agent(&name, &output).await
 }
