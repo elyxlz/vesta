@@ -25,7 +25,6 @@
     const cleaned = stripAnsi(text).trimEnd();
     lines.push({ id: nextId++, text: cleaned });
     if (lines.length > MAX_LINES) lines.splice(0, lines.length - MAX_LINES);
-    lines = lines;
     scroller.scroll();
   }
 
