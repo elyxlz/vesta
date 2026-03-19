@@ -1,13 +1,12 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
-  import { listen } from "@tauri-apps/api/event";
-  import { openUrl } from "@tauri-apps/plugin-opener";
   import { appVersion as appVersionPromise } from "../lib/version";
   import type { BoxConnection } from "../lib/ws";
-  import { boxStatus, startBox, stopBox, restartBox, rebuildBox, deleteBox, authenticate, submitAuthCode, backupBox, restoreBox } from "../lib/api";
+  import { boxStatus, startBox, stopBox, restartBox, rebuildBox, deleteBox, authenticate, backupBox, restoreBox } from "../lib/api";
   import { getBoxOp, setBoxOp, clearBoxOp, setBoxError, type BoxOperation } from "../lib/store.svelte";
   import { save, open } from "@tauri-apps/plugin-dialog";
   import type { BoxStatus, BoxActivityState } from "../lib/types";
+  import AuthFlow from "./AuthFlow.svelte";
 
   let {
     name,
@@ -34,11 +33,6 @@
   let boxReady = $state(false);
   let confirming = $state(false);
   let menuOpen = $state(false);
-  let authUrl = $state<string | null>(null);
-  let authCodeNeeded = $state(false);
-  let authCodeSubmitted = $state(false);
-  let authCode = $state("");
-  let authUnlisteners: (() => void)[] = [];
   let hovered = $state(false);
   let poll: ReturnType<typeof setInterval>;
   let creatureEl: HTMLDivElement;
@@ -155,13 +149,6 @@
     document.addEventListener("keydown", onKeydown);
     appVersion = await appVersionPromise;
 
-    listen<string>("auth-url", (e) => { authUrl = e.payload; }).then((fn) => authUnlisteners.push(fn));
-    listen<string>("auth-code-needed", () => { authCodeNeeded = true; }).then((fn) => authUnlisteners.push(fn));
-    listen<string>("auth-code-invalid", () => {
-      authCodeNeeded = true;
-      authCodeSubmitted = false;
-      authCode = "";
-    }).then((fn) => authUnlisteners.push(fn));
   });
 
   onDestroy(() => {
@@ -171,7 +158,6 @@
     if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
     document.removeEventListener("click", onDocClick);
     document.removeEventListener("keydown", onKeydown);
-    for (const fn of authUnlisteners) fn();
   });
 
   async function withBoxOp(op: BoxOperation, fn: () => Promise<void>, fallback: string) {
@@ -217,10 +203,6 @@
   }
 
   async function handleAuth() {
-    authUrl = null;
-    authCodeNeeded = false;
-    authCodeSubmitted = false;
-    authCode = "";
     await withBoxOp("authenticating", async () => {
       await authenticate(name);
       if (running) {
@@ -231,15 +213,6 @@
       connection.resetReconnect();
       await syncStatus();
     }, "authentication failed");
-    authUrl = null;
-    authCodeNeeded = false;
-  }
-
-  async function handleSubmitAuthCode() {
-    if (!authCode.trim()) return;
-    await submitAuthCode(authCode.trim());
-    authCodeNeeded = false;
-    authCodeSubmitted = true;
   }
 
   async function handleRestart() {
@@ -347,22 +320,9 @@
       </span>
     </div>
 
-    {#if authenticating && (authUrl || authCodeNeeded || authCodeSubmitted)}
+    {#if authenticating}
       <div class="auth-panel">
-        {#if authCodeNeeded}
-          <form class="auth-code-form" onsubmit={(e) => { e.preventDefault(); handleSubmitAuthCode(); }}>
-            <!-- svelte-ignore a11y_autofocus -->
-            <input class="auth-code-input" type="text" placeholder="paste code here" bind:value={authCode} autofocus />
-            <button class="action-btn primary" type="submit" disabled={!authCode.trim()}>submit</button>
-          </form>
-        {:else if authCodeSubmitted}
-          <span class="auth-status">verifying...</span>
-        {:else if authUrl}
-          <button class="auth-link" onclick={() => openUrl(authUrl!)}>{authUrl.slice(0, 40)}...</button>
-          <span class="auth-status">waiting for auth...</span>
-        {:else}
-          <span class="auth-status">opening browser...</span>
-        {/if}
+        <AuthFlow />
       </div>
     {/if}
 
@@ -774,73 +734,8 @@
 
   /* --- Auth panel --- */
   .auth-panel {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 10px;
+    width: 280px;
     animation: viewIn 0.3s var(--spring);
-  }
-
-  .auth-code-form {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 8px;
-    width: 220px;
-  }
-
-  .auth-code-input {
-    width: 100%;
-    padding: 8px 12px;
-    border: 1px solid rgba(0, 0, 0, 0.1);
-    border-radius: 8px;
-    corner-shape: squircle;
-    background: rgba(255, 255, 255, 0.8);
-    font-family: inherit;
-    font-size: 12px;
-    color: #3d3a36;
-    outline: none;
-    text-align: center;
-    transition: border-color 0.15s;
-  }
-
-  .auth-code-input:focus {
-    border-color: rgba(0, 0, 0, 0.2);
-  }
-
-  .auth-status {
-    font-size: 11px;
-    color: #807870;
-    letter-spacing: 0.04em;
-  }
-
-  .auth-link {
-    font-size: 11px;
-    color: #6080a4;
-    background: none;
-    border: none;
-    cursor: pointer;
-    text-decoration: underline;
-    padding: 0;
-    font-family: inherit;
-    max-width: 220px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  @media (prefers-color-scheme: dark) {
-    .auth-code-input {
-      background: rgba(255, 255, 255, 0.06);
-      border-color: rgba(255, 255, 255, 0.08);
-      color: #e8e0d8;
-    }
-    .auth-code-input:focus {
-      border-color: rgba(255, 255, 255, 0.18);
-    }
-    .auth-link {
-      color: #80a0c4;
-    }
   }
 
   /* --- Actions --- */

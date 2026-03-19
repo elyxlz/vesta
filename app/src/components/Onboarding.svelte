@@ -1,12 +1,11 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
-  import { listen } from "@tauri-apps/api/event";
   import { open } from "@tauri-apps/plugin-dialog";
-  import { openUrl } from "@tauri-apps/plugin-opener";
-  import { createBox, boxStatus, authenticate, submitAuthCode, startBox, waitForReady, checkPlatform, setupPlatform, restoreBox, listBoxes } from "../lib/api";
+  import { createBox, boxStatus, authenticate, startBox, waitForReady, checkPlatform, setupPlatform, restoreBox, listBoxes } from "../lib/api";
   import { getOnboarding, updateOnboarding } from "../lib/store.svelte";
   import type { PlatformStatus } from "../lib/types";
   import ProgressBar from "./ProgressBar.svelte";
+  import AuthFlow from "./AuthFlow.svelte";
 
   let { onComplete, onCancel }: { onComplete: (name: string) => void; onCancel?: () => void } = $props();
 
@@ -18,21 +17,10 @@
   let busy = $derived(ob.busy);
   let createMsg = $derived(ob.createMsg);
   let platform = $derived(ob.platform);
-  let authUrl = $derived(ob.authUrl);
-  let authCodeNeeded = $derived(ob.authCodeNeeded);
-  let authCodeSubmitted = $derived(ob.authCodeSubmitted);
-  let authCode = $derived(ob.authCode);
 
   let transitioning = $state(false);
   let msgTimer: ReturnType<typeof setInterval> | null = null;
   let cancelled = $state(false);
-  let unlisteners: (() => void)[] = [];
-
-  async function handleSubmitCode() {
-    if (!authCode.trim()) return;
-    await submitAuthCode(authCode.trim());
-    updateOnboarding({ authCodeNeeded: false, authCodeSubmitted: true });
-  }
 
   const CREATE_MESSAGES = [
     "setting things up...",
@@ -43,23 +31,6 @@
   ];
 
   onMount(async () => {
-    listen<string>("auth-url", (event) => {
-      updateOnboarding({ authUrl: event.payload });
-    }).then((fn) => { unlisteners.push(fn); });
-
-    listen<string>("auth-code-needed", () => {
-      updateOnboarding({ authCodeNeeded: true });
-    }).then((fn) => { unlisteners.push(fn); });
-
-    listen<string>("auth-code-invalid", () => {
-      updateOnboarding({
-        authCodeNeeded: true,
-        authCodeSubmitted: false,
-        authCode: "",
-        error: { friendly: "invalid auth code — try again", raw: "auth-code-invalid" },
-      });
-    }).then((fn) => { unlisteners.push(fn); });
-
     // Only run initial setup if we're on the platform step and haven't loaded platform yet
     if (step === "platform" && !platform) {
       try {
@@ -234,7 +205,7 @@
 
   async function runAuth() {
     const name = normalizedPreview;
-    updateOnboarding({ busy: true, error: null, authUrl: null, authCodeNeeded: false, authCodeSubmitted: false, authCode: "" });
+    updateOnboarding({ busy: true, error: null });
     try {
       await authenticate(name);
       await startBox(name);
@@ -280,7 +251,7 @@
     onComplete(name);
   }
 
-  onDestroy(() => { stopMessages(); for (const fn of unlisteners) fn(); });
+  onDestroy(() => { stopMessages(); });
 </script>
 
 <div class="onboarding" class:transitioning>
@@ -398,25 +369,7 @@
 
     {:else if step === "auth"}
       <div class="step step-anim">
-        <h1>authenticate claude</h1>
-        {#if authCodeNeeded}
-          <p class="sub">paste the code from the browser below.</p>
-          <form onsubmit={(e) => { e.preventDefault(); handleSubmitCode(); }}>
-            <!-- svelte-ignore a11y_autofocus -->
-            <input type="text" class="name-input" placeholder="paste code here" value={authCode} oninput={(e) => updateOnboarding({ authCode: (e.target as HTMLInputElement).value })} autofocus />
-            <button class="btn primary full" type="submit" disabled={!authCode.trim()}>submit</button>
-          </form>
-        {:else if authCodeSubmitted}
-          <p class="sub">verifying code...</p>
-          <ProgressBar message="verifying..." />
-        {:else if authUrl}
-          <p class="sub">authenticate via the browser window that opened.<br/>if it didn't open, use the link below.</p>
-          <button class="auth-link" onclick={() => openUrl(authUrl!)}>{authUrl!.slice(0, 50)}...</button>
-          <ProgressBar message="waiting for authentication..." />
-        {:else}
-          <p class="sub">opening browser...</p>
-          <ProgressBar message="waiting..." />
-        {/if}
+        <AuthFlow onCancel={cancelToName} />
         {#if error}
           <p class="error">{error.friendly ?? "something went wrong."}</p>
           {#if error.raw.length > 80 || !error.friendly}
@@ -425,7 +378,6 @@
           {/if}
           <button class="btn primary" onclick={runAuth}>retry</button>
         {/if}
-        <button class="btn cancel" onclick={cancelToName}>cancel</button>
       </div>
 
     {:else if step === "done"}
