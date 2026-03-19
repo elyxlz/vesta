@@ -3,7 +3,7 @@
   import { appVersion as appVersionPromise } from "../lib/version";
   import type { BoxConnection } from "../lib/ws";
   import { boxStatus, startBox, stopBox, restartBox, rebuildBox, deleteBox, authenticate, backupBox, restoreBox } from "../lib/api";
-  import { getBoxOp, setBoxOp, clearBoxOp, setBoxError, type BoxOperation } from "../lib/store.svelte";
+  import { getBoxOp, setBoxError, withBoxOp, type BoxOperation } from "../lib/store.svelte";
   import { save, open } from "@tauri-apps/plugin-dialog";
   import type { BoxStatus, BoxActivityState } from "../lib/types";
   import AuthFlow from "./AuthFlow.svelte";
@@ -11,7 +11,6 @@
   let {
     name,
     connection,
-    initialActivity = "idle",
     onChat,
     onConsole,
     onDestroyed,
@@ -19,7 +18,6 @@
   }: {
     name: string;
     connection: BoxConnection;
-    initialActivity?: BoxActivityState;
     onChat: () => void;
     onConsole: () => void;
     onDestroyed: () => void;
@@ -56,7 +54,7 @@
   let restoring = $derived(operation === "restoring");
   let busy = $derived(operation !== "idle");
 
-  let boxStateVal = $state<BoxActivityState>(initialActivity);
+  let boxStateVal = $state<BoxActivityState>("idle");
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
 
   $effect(() => {
@@ -159,22 +157,9 @@
     document.removeEventListener("keydown", onKeydown);
   });
 
-  async function withBoxOp(op: BoxOperation, fn: () => Promise<void>, fallback: string) {
-    if (busy) return;
-    setBoxError(name, "");
-    setBoxOp(name, op);
-    try {
-      await fn();
-    } catch (e: any) {
-      setBoxError(name, e?.message || fallback);
-    } finally {
-      clearBoxOp(name);
-    }
-  }
-
   async function toggleRun() {
     const wasStopping = running;
-    await withBoxOp(running ? "stopping" : "starting", async () => {
+    await withBoxOp(name, running ? "stopping" : "starting", async () => {
       if (wasStopping) {
         await stopBox(name);
       } else {
@@ -190,7 +175,7 @@
       confirming = true;
       return;
     }
-    await withBoxOp("deleting", async () => {
+    await withBoxOp(name, "deleting", async () => {
       await deleteBox(name);
       onDestroyed();
     }, "failed to delete");
@@ -202,7 +187,7 @@
   }
 
   async function handleAuth() {
-    await withBoxOp("authenticating", async () => {
+    await withBoxOp(name, "authenticating", async () => {
       await authenticate(name);
       if (running) {
         await restartBox(name);
@@ -215,7 +200,7 @@
   }
 
   async function handleRestart() {
-    await withBoxOp("starting", async () => {
+    await withBoxOp(name, "starting", async () => {
       await restartBox(name);
       connection.resetReconnect();
       await syncStatus();
@@ -223,7 +208,7 @@
   }
 
   async function handleRebuild() {
-    await withBoxOp("rebuilding", async () => {
+    await withBoxOp(name, "rebuilding", async () => {
       await rebuildBox(name);
       connection.resetReconnect();
       await syncStatus();
@@ -239,7 +224,7 @@
       filters: [{ name: "Backup", extensions: ["tar.gz"] }],
     });
     if (!path) return;
-    await withBoxOp("backing-up", async () => {
+    await withBoxOp(name, "backing-up", async () => {
       await backupBox(name, path);
       connection.resetReconnect();
       await syncStatus();
@@ -255,7 +240,7 @@
       directory: false,
     });
     if (!path) return;
-    await withBoxOp("restoring", async () => {
+    await withBoxOp(name, "restoring", async () => {
       await restoreBox(path, name, true);
       connection.resetReconnect();
       await syncStatus();
@@ -299,7 +284,7 @@
     onpointerleave={onOrbLeave}
     onpointermove={onOrbMove}
   >
-    <div class="orb-container" class:orb-loading={!statusLoaded} bind:this={orbEl} class:alive={fullyAlive} class:booting={operational && !boxReady} class:dead={statusLoaded && ((!alive && !starting && !authenticating) || deleting || dead)} class:stopping class:starting class:authenticating class:deleting class:thinking={fullyAlive && boxStateVal === 'thinking'} class:tool-use={fullyAlive && boxStateVal === 'tool_use'}>
+    <div class="orb-container" class:orb-loading={!statusLoaded} bind:this={orbEl} class:alive={fullyAlive} class:booting={operational && !boxReady} class:dead={statusLoaded && ((!alive && !starting && !authenticating) || deleting || dead)} class:stopping class:starting class:authenticating class:deleting class:thinking={boxStateVal === 'thinking'} class:tool-use={boxStateVal === 'tool_use'}>
       <div class="orb-glow"></div>
       <div class="orb-body">
         <div class="orb-highlight"></div>

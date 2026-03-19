@@ -2,21 +2,19 @@
   import { onMount, onDestroy } from "svelte";
   import { open } from "@tauri-apps/plugin-dialog";
   import { createBox, boxStatus, authenticate, startBox, waitForReady, checkPlatform, setupPlatform, restoreBox, listBoxes } from "../lib/api";
-  import { getOnboarding, updateOnboarding } from "../lib/store.svelte";
-  import type { PlatformStatus } from "../lib/types";
+  import type { PlatformStatus, OnboardingStep } from "../lib/types";
   import ProgressBar from "./ProgressBar.svelte";
   import AuthFlow from "./AuthFlow.svelte";
 
-  let { onComplete, onCancel }: { onComplete: (name: string) => void; onCancel?: () => void } = $props();
+  let { onComplete, onCancel, initialName }: { onComplete: (name: string) => void; onCancel?: () => void; initialName?: string } = $props();
 
-  let ob = $derived(getOnboarding());
-  let step = $derived(ob.step);
-  let boxName = $derived(ob.name);
-  let error = $derived(ob.error);
-  let showRawError = $derived(ob.showRawError);
-  let busy = $derived(ob.busy);
-  let createMsg = $derived(ob.createMsg);
-  let platform = $derived(ob.platform);
+  let step = $state<OnboardingStep>(initialName ? "name" : "platform");
+  let boxName = $state(initialName ?? "");
+  let error = $state<{ friendly: string | null; raw: string } | null>(null);
+  let showRawError = $state(false);
+  let busy = $state(false);
+  let createMsg = $state("");
+  let platform = $state<PlatformStatus | null>(null);
 
   let transitioning = $state(false);
   let msgTimer: ReturnType<typeof setInterval> | null = null;
@@ -35,9 +33,9 @@
     if (step === "platform" && !platform) {
       try {
         const status = await checkPlatform();
-        updateOnboarding({ platform: status });
+        platform = status;
         if (status.ready || status.platform !== "windows") {
-          updateOnboarding({ step: "name" });
+          step = "name";
           return;
         }
         // auto-run setup for distro/service issues (WSL already installed)
@@ -52,10 +50,10 @@
 
   function startMessages() {
     let i = 0;
-    updateOnboarding({ createMsg: CREATE_MESSAGES[0] });
+    createMsg = CREATE_MESSAGES[0];
     msgTimer = setInterval(() => {
       i = (i + 1) % CREATE_MESSAGES.length;
-      updateOnboarding({ createMsg: CREATE_MESSAGES[i] });
+      createMsg = CREATE_MESSAGES[i];
     }, 3000);
   }
 
@@ -69,10 +67,10 @@
 
   let normalizedPreview = $derived(normalizeName(boxName));
 
-  async function goTo(next: typeof step) {
+  async function goTo(next: OnboardingStep) {
     transitioning = true;
     await new Promise((r) => setTimeout(r, 150));
-    updateOnboarding({ step: next });
+    step = next;
     transitioning = false;
   }
 
@@ -94,57 +92,59 @@
 
   function setError(e: unknown, fallback: string) {
     const err = e as { message?: string };
-    updateOnboarding({ error: formatError(err.message || fallback) });
+    error = formatError(err.message || fallback);
   }
 
   function cancelToName() {
     cancelled = true;
     stopMessages();
-    updateOnboarding({ busy: false, error: null, showRawError: false, step: "name" });
+    busy = false;
+    error = null;
+    showRawError = false;
+    step = "name";
   }
 
   async function recheckPlatform() {
-    updateOnboarding({ busy: true, error: null });
+    busy = true;
+    error = null;
     try {
       const status = await checkPlatform();
-      updateOnboarding({ platform: status });
+      platform = status;
       if (status.ready) {
         await goTo("name");
       }
     } catch (e) {
       setError(e, "failed to check platform");
     } finally {
-      updateOnboarding({ busy: false });
+      busy = false;
     }
   }
 
   async function handlePlatformSetup() {
-    updateOnboarding({ busy: true, error: null });
+    busy = true;
+    error = null;
     try {
       const result = await setupPlatform();
-      updateOnboarding({ platform: result });
+      platform = result;
       if (result.ready) {
         await goTo("name");
       } else if (result.needs_reboot) {
         // stay on platform step, UI will show reboot message
       } else if (result.message) {
-        updateOnboarding({ error: { friendly: result.message, raw: result.message } });
+        error = { friendly: result.message, raw: result.message };
       }
     } catch (e) {
       setError(e, "setup failed");
     } finally {
-      updateOnboarding({ busy: false });
+      busy = false;
     }
-  }
-
-  async function waitUntilReady(name: string) {
-    await waitForReady(name, 30);
   }
 
   async function handleCreate() {
     const name = normalizedPreview;
     if (!name || busy) return;
-    updateOnboarding({ busy: true, error: null });
+    busy = true;
+    error = null;
     cancelled = false;
 
     startMessages();
@@ -156,7 +156,7 @@
       if (info.status !== "not_found") {
         if (info.status === "running" && info.authenticated && info.agent_ready) {
           stopMessages();
-          updateOnboarding({ busy: false });
+          busy = false;
           await goTo("done");
           return;
         }
@@ -167,7 +167,7 @@
           } catch (e) {
             if (cancelled) return;
             stopMessages();
-            updateOnboarding({ busy: false });
+            busy = false;
             setError(e, "failed to start box");
             await goTo("name");
             return;
@@ -176,7 +176,7 @@
 
         if (cancelled) return;
         stopMessages();
-        updateOnboarding({ busy: false });
+        busy = false;
         await goTo("auth");
         await runAuth();
         return;
@@ -199,21 +199,22 @@
       setError(e, "something went wrong");
       await goTo("name");
     } finally {
-      updateOnboarding({ busy: false });
+      busy = false;
     }
   }
 
   async function runAuth() {
     const name = normalizedPreview;
-    updateOnboarding({ busy: true, error: null });
+    busy = true;
+    error = null;
     try {
       await authenticate(name);
       await startBox(name);
-      await waitUntilReady(name);
-      updateOnboarding({ busy: false });
+      await waitForReady(name, 30);
+      busy = false;
       await goTo("done");
     } catch (e) {
-      updateOnboarding({ busy: false });
+      busy = false;
       setError(e, "authentication failed");
     }
   }
@@ -227,28 +228,28 @@
     });
     if (!path) return;
     const before = new Set((await listBoxes().catch(() => [])).map((b) => b.name));
-    updateOnboarding({ busy: true, error: null });
+    busy = true;
+    error = null;
     startMessages();
     await goTo("creating");
     try {
       await restoreBox(path);
       const after = await listBoxes().catch(() => []);
       const restored = after.find((b) => !before.has(b.name));
-      if (restored) updateOnboarding({ name: restored.name });
+      if (restored) boxName = restored.name;
       stopMessages();
-      updateOnboarding({ busy: false });
+      busy = false;
       await goTo("done");
     } catch (e) {
       stopMessages();
-      updateOnboarding({ busy: false });
+      busy = false;
       setError(e, "restore failed");
       await goTo("name");
     }
   }
 
   function handleComplete() {
-    const name = normalizeName(boxName);
-    onComplete(name);
+    onComplete(normalizedPreview);
   }
 
   onDestroy(() => { stopMessages(); });
@@ -303,7 +304,7 @@
           {#if error}
             <p class="error">{error.friendly ?? "something went wrong."}</p>
             {#if error.raw.length > 80 || !error.friendly}
-              <button class="btn details-toggle" onclick={() => updateOnboarding({ showRawError: !showRawError })}>{showRawError ? "hide details" : "show details"}</button>
+              <button class="btn details-toggle" onclick={() => { showRawError = !showRawError; }}>{showRawError ? "hide details" : "show details"}</button>
               {#if showRawError}<pre class="error-details">{error.raw}</pre>{/if}
             {/if}
           {/if}
@@ -335,13 +336,13 @@
             class="name-input"
             placeholder="name your box"
             value={boxName}
-            oninput={(e) => updateOnboarding({ name: (e.target as HTMLInputElement).value })}
+            oninput={(e) => { boxName = (e.target as HTMLInputElement).value; }}
             autofocus
           />
           {#if error}
             <p class="error">{error.friendly ?? "something went wrong."}</p>
             {#if error.raw.length > 80 || !error.friendly}
-              <button type="button" class="btn details-toggle" onclick={() => updateOnboarding({ showRawError: !showRawError })}>{showRawError ? "hide details" : "show details"}</button>
+              <button type="button" class="btn details-toggle" onclick={() => { showRawError = !showRawError; }}>{showRawError ? "hide details" : "show details"}</button>
               {#if showRawError}<pre class="error-details">{error.raw}</pre>{/if}
             {/if}
           {/if}
@@ -358,7 +359,7 @@
         {#if error}
           <p class="error">{error.friendly ?? "something went wrong."}</p>
           {#if error.raw.length > 80 || !error.friendly}
-            <button class="btn details-toggle" onclick={() => updateOnboarding({ showRawError: !showRawError })}>{showRawError ? "hide details" : "show details"}</button>
+            <button class="btn details-toggle" onclick={() => { showRawError = !showRawError; }}>{showRawError ? "hide details" : "show details"}</button>
             {#if showRawError}<pre class="error-details">{error.raw}</pre>{/if}
           {/if}
           <button class="btn primary" onclick={() => goTo("name")}>try again</button>
@@ -373,7 +374,7 @@
         {#if error}
           <p class="error">{error.friendly ?? "something went wrong."}</p>
           {#if error.raw.length > 80 || !error.friendly}
-            <button class="btn details-toggle" onclick={() => updateOnboarding({ showRawError: !showRawError })}>{showRawError ? "hide details" : "show details"}</button>
+            <button class="btn details-toggle" onclick={() => { showRawError = !showRawError; }}>{showRawError ? "hide details" : "show details"}</button>
             {#if showRawError}<pre class="error-details">{error.raw}</pre>{/if}
           {/if}
           <button class="btn primary" onclick={runAuth}>retry</button>

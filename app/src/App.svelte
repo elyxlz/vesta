@@ -3,9 +3,8 @@
   import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
   import { listBoxes, checkAndInstallUpdate, runInstallScript } from "./lib/api";
   import { createBoxConnection, type BoxConnection } from "./lib/ws";
-  import { removeBoxState, resetOnboarding, updateOnboarding } from "./lib/store.svelte";
+  import { removeBoxState } from "./lib/store.svelte";
   import { detectPlatform } from "./lib/platform";
-  import type { BoxActivityState } from "./lib/types";
   import Onboarding from "./components/Onboarding.svelte";
   import BoxView from "./components/BoxView.svelte";
   import Chat from "./components/Chat.svelte";
@@ -21,7 +20,7 @@
   let transitioning = $state(false);
   let selectedBox = $state<{ name: string; wsPort: number } | null>(null);
   let boxConnection = $state<BoxConnection | null>(null);
-  let initialActivity: BoxActivityState = "idle";
+  let onboardingInitialName = $state("");
   let hasBoxes = $state(false);
   let updateInfo = $state<{ version: string; installing: boolean } | null>(null);
 
@@ -62,7 +61,7 @@
       } else if (boxes.length > 1) {
         view = "grid";
       } else if (boxes.length === 1 && !boxes[0].authenticated) {
-        updateOnboarding({ name: boxes[0].name, step: "name" });
+        onboardingInitialName = boxes[0].name;
         view = "onboarding";
       } else {
         view = "onboarding";
@@ -84,10 +83,9 @@
 
   onDestroy(clearConnection);
 
-  function handleSelectBox(name: string, wsPort: number, activity: BoxActivityState = "idle") {
+  function handleSelectBox(name: string, wsPort: number) {
     boxConnection?.disconnect();
     selectedBox = { name, wsPort };
-    initialActivity = activity;
     boxConnection = createBoxConnection(wsPort);
     boxConnection.connect();
     setView("box-home");
@@ -112,6 +110,7 @@
 
   async function handleOnboardingComplete(name: string) {
     hasBoxes = true;
+    onboardingInitialName = "";
     const boxes = await listBoxes().catch(() => []);
     const box = boxes.find((b) => b.name === name);
     if (box) {
@@ -123,7 +122,6 @@
     } else {
       await setView("grid");
     }
-    resetOnboarding();
   }
 
   let isDark = $derived(view === "box-console" || view === "box-chat");
@@ -179,33 +177,34 @@
     {:else if view === "grid"}
       <GridView
         onSelect={handleSelectBox}
-        onCreate={() => setView("onboarding")}
-        onChat={(name, wsPort, activity) => { handleSelectBox(name, wsPort, activity); setView("box-chat"); }}
-        onConsole={(name, wsPort, activity) => { handleSelectBox(name, wsPort, activity); setView("box-console"); }}
+        onCreate={() => { onboardingInitialName = ""; setView("onboarding"); }}
+        onChat={(name, wsPort) => { handleSelectBox(name, wsPort); setView("box-chat"); }}
+        onConsole={(name, wsPort) => { handleSelectBox(name, wsPort); setView("box-console"); }}
       />
     {:else if view === "onboarding"}
-      <Onboarding onComplete={handleOnboardingComplete} onCancel={hasBoxes ? () => setView("grid") : undefined} />
-    {:else if view === "box-home" && selectedBox && boxConnection}
-      <BoxView
-        name={selectedBox.name}
-        connection={boxConnection}
-        {initialActivity}
-        onChat={() => setView("box-chat")}
-        onConsole={() => setView("box-console")}
-        onDestroyed={handleDestroyed}
-        onBack={handleBackToGrid}
-      />
-    {:else if view === "box-chat" && selectedBox && boxConnection}
-      <Chat
-        name={selectedBox.name}
-        connection={boxConnection}
-        onBack={() => setView("box-home")}
-      />
-    {:else if view === "box-console" && selectedBox}
-      <Console
-        name={selectedBox.name}
-        onBack={() => setView("box-home")}
-      />
+      <Onboarding onComplete={handleOnboardingComplete} onCancel={hasBoxes ? () => setView("grid") : undefined} initialName={onboardingInitialName} />
+    {:else if (view === "box-home" || view === "box-chat" || view === "box-console") && selectedBox && boxConnection}
+      <div class="box-stack">
+        <div class="box-layer" class:box-hidden={view !== "box-home"} inert={view !== "box-home"}>
+          <BoxView
+            name={selectedBox.name}
+            connection={boxConnection}
+            onChat={() => setView("box-chat")}
+            onConsole={() => setView("box-console")}
+            onDestroyed={handleDestroyed}
+            onBack={handleBackToGrid}
+          />
+        </div>
+        {#if view === "box-chat"}
+          <div class="overlay-layer">
+            <Chat name={selectedBox.name} connection={boxConnection} onBack={() => setView("box-home")} />
+          </div>
+        {:else if view === "box-console"}
+          <div class="overlay-layer">
+            <Console name={selectedBox.name} onBack={() => setView("box-home")} />
+          </div>
+        {/if}
+      </div>
     {/if}
   </main>
 
@@ -476,6 +475,33 @@
   main > :global(*) {
     flex: 1;
     min-height: 0;
+  }
+
+  .box-stack {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+  }
+
+  .box-layer {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+  }
+
+  .box-layer.box-hidden {
+    visibility: hidden;
+    pointer-events: none;
+  }
+
+  .overlay-layer {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
   }
 
   main.ready {

@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from "svelte";
   import { appVersion as appVersionPromise } from "../lib/version";
   import { listBoxes, startBox, stopBox, restartBox, deleteBox, backupBox, restoreBox } from "../lib/api";
-  import { getBoxOp, setBoxOp, clearBoxOp, busyBoxName } from "../lib/store.svelte";
+  import { getBoxOp, busyBoxName, withBoxOp } from "../lib/store.svelte";
   import { save, open } from "@tauri-apps/plugin-dialog";
   import { createBoxConnection, type BoxConnection } from "../lib/ws";
   import type { ListEntry, BoxActivityState } from "../lib/types";
@@ -15,10 +15,10 @@
     onChat,
     onConsole,
   }: {
-    onSelect: (name: string, wsPort: number, activity: BoxActivityState) => void;
+    onSelect: (name: string, wsPort: number) => void;
     onCreate: () => void;
-    onChat: (name: string, wsPort: number, activity: BoxActivityState) => void;
-    onConsole: (name: string, wsPort: number, activity: BoxActivityState) => void;
+    onChat: (name: string, wsPort: number) => void;
+    onConsole: (name: string, wsPort: number) => void;
   } = $props();
 
   let boxes = $state<ListEntry[]>([]);
@@ -118,32 +118,24 @@
 
   async function handleToggle(box: ListEntry) {
     if (busyBoxName()) return;
-    setBoxOp(box.name, box.status === "running" ? "stopping" : "starting");
-    try {
+    const op = box.status === "running" ? "stopping" : "starting";
+    const fallback = box.status === "running" ? "failed to stop" : "failed to start";
+    await withBoxOp(box.name, op, async () => {
       if (box.status === "running") {
         await stopBox(box.name);
       } else {
         await startBox(box.name);
       }
       await refresh();
-    } catch (e) {
-      console.warn("toggle failed:", e);
-    } finally {
-      clearBoxOp(box.name);
-    }
+    }, fallback);
   }
 
   async function handleRestart(box: ListEntry) {
     if (busyBoxName()) return;
-    setBoxOp(box.name, "starting");
-    try {
+    await withBoxOp(box.name, "starting", async () => {
       await restartBox(box.name);
       await refresh();
-    } catch (e) {
-      console.warn("restart failed:", e);
-    } finally {
-      clearBoxOp(box.name);
-    }
+    }, "failed to restart");
   }
 
   async function handleBackup(box: ListEntry) {
@@ -153,15 +145,10 @@
       filters: [{ name: "Backup", extensions: ["tar.gz"] }],
     });
     if (!path) return;
-    setBoxOp(box.name, "backing-up");
-    try {
+    await withBoxOp(box.name, "backing-up", async () => {
       await backupBox(box.name, path);
       await refresh();
-    } catch (e) {
-      console.warn("backup failed:", e);
-    } finally {
-      clearBoxOp(box.name);
-    }
+    }, "backup failed");
   }
 
   async function handleRestore(box: ListEntry) {
@@ -171,15 +158,10 @@
       directory: false,
     });
     if (!path) return;
-    setBoxOp(box.name, "restoring");
-    try {
+    await withBoxOp(box.name, "restoring", async () => {
       await restoreBox(path, box.name, true);
       await refresh();
-    } catch (e) {
-      console.warn("restore failed:", e);
-    } finally {
-      clearBoxOp(box.name);
-    }
+    }, "restore failed");
   }
 
   async function handleDelete(boxName: string) {
@@ -187,16 +169,11 @@
       confirming = boxName;
       return;
     }
-    setBoxOp(boxName, "deleting");
     confirming = null;
-    try {
+    await withBoxOp(boxName, "deleting", async () => {
       await deleteBox(boxName);
       await refresh();
-    } catch (e) {
-      console.warn("delete failed:", e);
-    } finally {
-      clearBoxOp(boxName);
-    }
+    }, "failed to delete");
   }
 
   function menuAction(fn: () => void) {
@@ -219,7 +196,7 @@
   <div class="grid cols-{gridCols}" class:few={gridCols < 3}>
     {#each boxes as box}
       <div class="card-wrapper">
-        <button class="card" class:busy={isBoxBusy(box.name)} onclick={() => onSelect(box.name, box.ws_port, activityStates[box.name] ?? "idle")}>
+        <button class="card" class:busy={isBoxBusy(box.name)} onclick={() => onSelect(box.name, box.ws_port)}>
           <div class="mini-orb-container {orbClass(box, activityStates[box.name])}">
             <div class="mini-orb-glow"></div>
             <div class="mini-orb-body">
@@ -251,8 +228,8 @@
                 <button class="menu-item muted" onclick={menuAction(() => { confirming = null; })}>cancel</button>
               {:else}
                 {#if box.alive}
-                  <button class="menu-item" onclick={menuAction(() => onChat(box.name, box.ws_port, activityStates[box.name] ?? "idle"))}>chat</button>
-                  <button class="menu-item" onclick={menuAction(() => onConsole(box.name, box.ws_port, activityStates[box.name] ?? "idle"))}>console</button>
+                  <button class="menu-item" onclick={menuAction(() => onChat(box.name, box.ws_port))}>chat</button>
+                  <button class="menu-item" onclick={menuAction(() => onConsole(box.name, box.ws_port))}>console</button>
                 {/if}
                 <button class="menu-item" disabled={!!busyBoxName()} onclick={menuAction(() => handleToggle(box))}>{box.status === "running" ? "stop" : "start"}</button>
                 {#if box.status === "running"}
@@ -402,6 +379,11 @@
   }
 
   /* --- Mini Orb --- */
+  @property --mini-c1 { syntax: "<color>"; inherits: true; initial-value: #b8ceb0; }
+  @property --mini-c2 { syntax: "<color>"; inherits: true; initial-value: #7a9e70; }
+  @property --mini-c3 { syntax: "<color>"; inherits: true; initial-value: #5a7e50; }
+  @property --mini-glow { syntax: "<color>"; inherits: true; initial-value: rgba(138, 180, 120, 0.35); }
+
   .mini-orb-container {
     position: relative;
     width: 36px;
@@ -423,11 +405,11 @@
     position: absolute;
     inset: 6px;
     border-radius: 50%;
-    background: radial-gradient(circle at 38% 32%, #b8ceb0, #7a9e70 50%, #5a7e50);
+    background: radial-gradient(circle at 38% 32%, var(--mini-c1), var(--mini-c2) 50%, var(--mini-c3));
     box-shadow:
       inset 0 -3px 8px rgba(0, 0, 0, 0.15),
       inset 0 2px 4px rgba(255, 255, 255, 0.15);
-    transition: background 0.8s var(--spring), box-shadow 0.8s var(--spring);
+    transition: --mini-c1 0.8s var(--spring), --mini-c2 0.8s var(--spring), --mini-c3 0.8s var(--spring), box-shadow 0.8s var(--spring);
   }
 
   .mini-orb-highlight {
@@ -446,9 +428,9 @@
     position: absolute;
     inset: -2px;
     border-radius: 50%;
-    background: radial-gradient(circle, rgba(138, 180, 120, 0.35), transparent 70%);
+    background: radial-gradient(circle, var(--mini-glow), transparent 70%);
     filter: blur(6px);
-    transition: opacity 0.8s var(--spring), background 0.8s var(--spring);
+    transition: opacity 0.8s var(--spring), --mini-glow 0.8s var(--spring);
   }
 
   /* Alive */
@@ -466,26 +448,30 @@
 
   /* Active — thinking / tool use (amber) */
   .mini-orb-container.active {
+    --mini-c1: #e8d0a0;
+    --mini-c2: #c4a060;
+    --mini-c3: #a08040;
+    --mini-glow: rgba(200, 170, 100, 0.4);
     animation: float 2s ease-in-out infinite;
   }
 
   .mini-orb-container.active .mini-orb-body {
-    background: radial-gradient(circle at 38% 32%, #e8d0a0, #c4a060 50%, #a08040);
     animation: orb-breathe 1.2s ease-in-out infinite;
   }
 
   .mini-orb-container.active .mini-orb-glow {
-    background: radial-gradient(circle, rgba(200, 170, 100, 0.4), transparent 70%);
     animation: glow-pulse 1.2s ease-in-out infinite;
   }
 
   /* Booting — alive but WS not ready */
   .mini-orb-container.booting {
+    --mini-c1: #c4deb8;
+    --mini-c2: #8ab880;
+    --mini-c3: #6a9e5a;
     animation: float 3s ease-in-out infinite;
   }
 
   .mini-orb-container.booting .mini-orb-body {
-    background: radial-gradient(circle at 38% 32%, #c4deb8, #8ab880 50%, #6a9e5a);
     animation: orb-breathe 2s ease-in-out infinite;
   }
 
@@ -495,22 +481,30 @@
 
   /* Auth — running but not signed in */
   .mini-orb-container.auth {
+    --mini-c1: #c0d0e8;
+    --mini-c2: #80a0c4;
+    --mini-c3: #6080a4;
+    --mini-glow: rgba(100, 150, 200, 0.35);
     animation: float 3s ease-in-out infinite;
   }
 
   .mini-orb-container.auth .mini-orb-body {
-    background: radial-gradient(circle at 38% 32%, #c0d0e8, #80a0c4 50%, #6080a4);
     animation: orb-breathe 2s ease-in-out infinite;
   }
 
   .mini-orb-container.auth .mini-orb-glow {
-    background: radial-gradient(circle, rgba(100, 150, 200, 0.35), transparent 70%);
     animation: glow-pulse 2s ease-in-out infinite;
   }
 
   /* Dead / Stopped */
+  .mini-orb-container.dead {
+    --mini-c1: #c4bdb5;
+    --mini-c2: #a09890;
+    --mini-c3: #8b7e74;
+    --mini-glow: rgba(160, 152, 144, 0.2);
+  }
+
   .mini-orb-container.dead .mini-orb-body {
-    background: radial-gradient(circle at 38% 32%, #c4bdb5, #a09890 50%, #8b7e74);
     box-shadow:
       inset 0 -3px 8px rgba(0, 0, 0, 0.1),
       inset 0 2px 4px rgba(255, 255, 255, 0.05);
@@ -519,7 +513,6 @@
 
   .mini-orb-container.dead .mini-orb-glow {
     opacity: 0.15;
-    background: radial-gradient(circle, rgba(160, 152, 144, 0.2), transparent 70%);
   }
 
   .mini-orb-container.dead .mini-orb-highlight {
