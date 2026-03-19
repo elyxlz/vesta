@@ -782,11 +782,22 @@ async def test_interrupt_does_not_leak_or_lose_messages():
 
 @pytest.mark.anyio
 async def test_message_arrives_without_user_interaction():
-    """The core bug: model generates a response after tool calls, and it must arrive
-    on its own — without the user needing to send another message to unstick it.
+    """Reproduces the exact bug from docker logs: user conversation is interrupted
+    by a notification, notification processing does tool calls and responds — that
+    response must arrive on its own without the user sending another message.
 
-    Simulates: user sends message → agent does tool call → agent responds with text.
-    The text must be emitted promptly after the model generates it."""
+    Timeline from real bug:
+      12:28:02 USER: "i did it instantly..."
+      12:28:07 TOOL: Bash (check logs)
+      12:28:21 INTERRUPT (notification arrives)
+      12:28:22 SYSTEM: daemon_died notification processed
+      12:28:27 TOOL: Bash (restart daemon)
+      12:28:30 TOOL: done
+      -- 62 seconds stuck, no ASSISTANT message --
+      12:29:32 USER: "well?" → ASSISTANT appears instantly
+
+    The fix must ensure the notification's response arrives after its tool call
+    without waiting for user input."""
     import time
 
     from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
@@ -802,6 +813,7 @@ async def test_message_arrives_without_user_interaction():
         msg.content = []
         return msg
 
+    # Shared stream — both converse() calls read from this, like the real SDK.
     message_queue: asyncio.Queue[tp.Any] = asyncio.Queue()
 
     async def _receive_response():
@@ -813,7 +825,7 @@ async def test_message_arrives_without_user_interaction():
 
     emitted: list[tuple[str, float]] = []
 
-    config = vm.VestaConfig()
+    config = vm.VestaConfig(interrupt_timeout=0.5)
     state = vm.State()
     state.event_bus = EventBus()
 
@@ -832,31 +844,55 @@ async def test_message_arrives_without_user_interaction():
     mock_client.interrupt = AsyncMock()
     state.client = mock_client
 
-    t_start = time.monotonic()
+    # --- Conv 1: user message, gets interrupted by notification ---
+    state.interrupt_event = asyncio.Event()
 
-    async def simulate_model():
-        # Model does a tool call first (text + tool_use, like "let me check")
+    async def simulate_conv1():
+        # Model does tool call for user's message
         await asyncio.sleep(0.05)
-        await message_queue.put(_assistant_msg([TextBlock("let me check"), ToolUseBlock("1", "Bash", {})]))
-        # Tool runs, then model responds with the answer
+        await message_queue.put(_assistant_msg([ToolUseBlock("1", "Bash", {})]))
+        await asyncio.sleep(0.1)
+        # Notification interrupt fires mid-conversation
+        assert state.interrupt_event is not None
+        state.interrupt_event.set()
+        # Model's response arrives after interrupt (leftover)
+        await asyncio.sleep(0.1)
+        await message_queue.put(_assistant_msg([TextBlock("checking logs")]))
+        await message_queue.put(_result_msg())
+
+    asyncio.create_task(simulate_conv1())
+    await converse("i did it instantly", state=state, config=config, show_output=True)
+
+    # Conv 1's leftover must be emitted (not lost)
+    assert any(t == "checking logs" for t, _ in emitted), f"Conv 1 leftover must be emitted during drain: {[t for t, _ in emitted]}"
+
+    # --- Conv 2: notification processing — tool call then response ---
+    # This is the one that got STUCK in the real bug.
+    state.interrupt_event = None
+    emitted_before = len(emitted)
+    t_conv2 = time.monotonic()
+
+    async def simulate_conv2():
+        # Model does a tool call (restart daemon)
+        await asyncio.sleep(0.05)
+        await message_queue.put(_assistant_msg([ToolUseBlock("2", "Bash", {})]))
+        # Tool finishes, model responds
         await asyncio.sleep(0.2)
-        await message_queue.put(_assistant_msg([TextBlock("here are the files in /tmp")]))
+        await message_queue.put(_assistant_msg([TextBlock("daemon's back up")]))
         await asyncio.sleep(0.05)
         await message_queue.put(_result_msg())
 
-    asyncio.create_task(simulate_model())
-    await converse("list /tmp", state=state, config=config, show_output=True)
+    asyncio.create_task(simulate_conv2())
+    await converse("daemon_died notification", state=state, config=config, show_output=True)
 
-    # Both messages must have been emitted
-    texts = [t for t, _ in emitted]
-    assert "let me check" in texts, f"First message not emitted: {texts}"
-    assert "here are the files in /tmp" in texts, f"Second message not emitted: {texts}"
+    conv2_texts = [t for t, _ in emitted[emitted_before:]]
+    assert "daemon's back up" in conv2_texts, f"Conv 2 response must arrive without user interaction: {conv2_texts}"
 
-    # Messages must arrive promptly — not stuck waiting for user input.
-    # "let me check" should arrive at ~50ms, "here are the files" at ~250ms.
-    for text, t in emitted:
-        delay_ms = (t - t_start) * 1000
-        assert delay_ms < 2000, f"'{text}' took {delay_ms:.0f}ms — agent was stuck"
+    # Must arrive promptly (within 2s), not stuck for 60+ seconds
+    for text, t in emitted[emitted_before:]:
+        if text == "daemon's back up":
+            delay_ms = (t - t_conv2) * 1000
+            assert delay_ms < 2000, f"'{text}' took {delay_ms:.0f}ms — agent was stuck"
 
 
 # --- Nightly restart ---
