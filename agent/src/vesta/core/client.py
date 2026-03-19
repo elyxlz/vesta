@@ -254,21 +254,12 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
                 logger.interrupt("Conversation interrupted by new message")
                 await attempt_interrupt(state, config=config, reason="New message interrupt")
                 await _cancel_task(anext_task)
-                # Cancelling anext_task finalizes response_iter, so drain with a fresh
-                # iterator to consume any leftover messages from the interrupted turn.
+                # Cancelling anext_task finalizes response_iter, so drain leftover
+                # messages with a fresh iterator to keep the stream clean.
                 try:
-                    drain_iter = client.receive_response().__aiter__()
-                    while True:
-                        leftover = await asyncio.wait_for(anext(drain_iter, _STOP), timeout=5.0)
-                        if leftover is _STOP:
-                            break
-                        leftover_msg = tp.cast(Message, leftover)
-                        texts, _, _, _ = _parse_sdk_message(leftover_msg, sub_agent_context=sub_agent_context)
-                        text = "\n".join(texts) if texts else None
-                        if text and show_output:
-                            filtered = filter_tool_lines(text)
-                            if filtered:
-                                _emit(filtered)
+                    drain = client.receive_response().__aiter__()
+                    while await asyncio.wait_for(anext(drain, None), timeout=5.0) is not None:
+                        pass
                 except (TimeoutError, StopAsyncIteration):
                     pass
                 break
