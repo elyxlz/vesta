@@ -1909,6 +1909,9 @@ func parseParticipantJIDs(participants []string) ([]types.JID, error) {
 		if strings.Contains(p, "@") {
 			jid, err = types.ParseJID(p)
 		} else {
+			// Strip leading "+" from phone numbers — raw "+" prefix
+			// causes "info query timed out" when creating groups.
+			p = strings.TrimPrefix(p, "+")
 			jid = types.NewJID(p, types.DefaultUserServer)
 		}
 		if err != nil {
@@ -1938,12 +1941,14 @@ func (wac *WhatsAppClient) UpdateGroupParticipants(groupIdentifier, action strin
 	}
 
 	changeType, ok := map[string]whatsmeow.ParticipantChange{
-		"add":    whatsmeow.ParticipantChangeAdd,
-		"remove": whatsmeow.ParticipantChangeRemove,
+		"add":     whatsmeow.ParticipantChangeAdd,
+		"remove":  whatsmeow.ParticipantChangeRemove,
+		"promote": whatsmeow.ParticipantChangePromote,
+		"demote":  whatsmeow.ParticipantChangeDemote,
 	}[action]
 
 	if !ok {
-		return false, "Invalid action: must be 'add' or 'remove'"
+		return false, "Invalid action: must be 'add', 'remove', 'promote', or 'demote'"
 	}
 
 	_, err = wac.client.UpdateGroupParticipants(context.Background(), jid, participantJIDs, changeType)
