@@ -118,7 +118,7 @@
       selectedBox = { name: box.name, wsPort: box.ws_port };
       boxConnection = createBoxConnection(box.ws_port);
       boxConnection.connect();
-      await setView("box-home");
+      await setView("box-chat");
     } else {
       await setView("grid");
     }

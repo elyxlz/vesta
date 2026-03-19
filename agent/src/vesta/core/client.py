@@ -298,7 +298,7 @@ async def process_message(msg: str, *, state: vm.State, config: vm.VestaConfig, 
     if state.history is not None:
         role = "user" if is_user else "system"
         history_save(state.history, role, msg, session_id=state.session_id)
-    responses = await converse(msg, state=state, config=config, show_output=is_user)
+    responses = await converse(msg, state=state, config=config, show_output=True)
     return responses, state
 
 
