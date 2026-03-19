@@ -230,6 +230,7 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
         logger.assistant(t)
         state.event_bus.emit({"type": "assistant", "text": t})
         assistant_texts.append(t)
+
     response_iter = client.receive_response().__aiter__()
 
     interrupt_task: asyncio.Task[tp.Any] | None = None
