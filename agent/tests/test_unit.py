@@ -675,7 +675,7 @@ async def test_converse_emits_text_immediately_with_tool_use():
             emitted.append(event["text"])
         original_emit(event)
 
-    state.event_bus.emit = tracking_emit
+    state.event_bus.emit = tracking_emit  # type: ignore[assignment]
 
     mock_client = MagicMock()
     mock_client.query = AsyncMock()
