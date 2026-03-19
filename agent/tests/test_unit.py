@@ -780,6 +780,85 @@ async def test_interrupt_does_not_leak_or_lose_messages():
     assert delay_ms > 100, f"Response arrived in {delay_ms:.0f}ms — too fast, likely a leaked message from conv1"
 
 
+@pytest.mark.anyio
+async def test_message_arrives_without_user_interaction():
+    """The core bug: model generates a response after tool calls, and it must arrive
+    on its own — without the user needing to send another message to unstick it.
+
+    Simulates: user sends message → agent does tool call → agent responds with text.
+    The text must be emitted promptly after the model generates it."""
+    import time
+
+    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
+    from vesta.core.client import converse
+
+    def _assistant_msg(content):
+        msg = MagicMock(spec=AssistantMessage)
+        msg.content = content
+        return msg
+
+    def _result_msg():
+        msg = MagicMock(spec=ResultMessage)
+        msg.content = []
+        return msg
+
+    message_queue: asyncio.Queue[tp.Any] = asyncio.Queue()
+
+    async def _receive_response():
+        while True:
+            msg = await message_queue.get()
+            yield msg
+            if isinstance(msg, ResultMessage):
+                return
+
+    emitted: list[tuple[str, float]] = []
+
+    config = vm.VestaConfig()
+    state = vm.State()
+    state.event_bus = EventBus()
+
+    original_emit = state.event_bus.emit
+
+    def tracking_emit(event):
+        if isinstance(event, dict) and event.get("type") == "assistant":
+            emitted.append((event["text"], time.monotonic()))
+        original_emit(event)
+
+    state.event_bus.emit = tracking_emit  # type: ignore[assignment]
+
+    mock_client = MagicMock()
+    mock_client.query = AsyncMock()
+    mock_client.receive_response = MagicMock(side_effect=lambda: _receive_response())
+    mock_client.interrupt = AsyncMock()
+    state.client = mock_client
+
+    t_start = time.monotonic()
+
+    async def simulate_model():
+        # Model does a tool call first (text + tool_use, like "let me check")
+        await asyncio.sleep(0.05)
+        await message_queue.put(_assistant_msg([TextBlock("let me check"), ToolUseBlock("1", "Bash", {})]))
+        # Tool runs, then model responds with the answer
+        await asyncio.sleep(0.2)
+        await message_queue.put(_assistant_msg([TextBlock("here are the files in /tmp")]))
+        await asyncio.sleep(0.05)
+        await message_queue.put(_result_msg())
+
+    asyncio.create_task(simulate_model())
+    await converse("list /tmp", state=state, config=config, show_output=True)
+
+    # Both messages must have been emitted
+    texts = [t for t, _ in emitted]
+    assert "let me check" in texts, f"First message not emitted: {texts}"
+    assert "here are the files in /tmp" in texts, f"Second message not emitted: {texts}"
+
+    # Messages must arrive promptly — not stuck waiting for user input.
+    # "let me check" should arrive at ~50ms, "here are the files" at ~250ms.
+    for text, t in emitted:
+        delay_ms = (t - t_start) * 1000
+        assert delay_ms < 2000, f"'{text}' took {delay_ms:.0f}ms — agent was stuck"
+
+
 # --- Nightly restart ---
 
 
