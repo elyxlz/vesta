@@ -640,6 +640,54 @@ async def test_converse_works_normally_without_interrupt():
     assert not mock_client.interrupt.called, "interrupt should not have been called"
 
 
+@pytest.mark.anyio
+async def test_converse_emits_text_immediately_with_tool_use():
+    """Text in messages that also have tool_use must be emitted immediately, not buffered."""
+    from claude_agent_sdk import AssistantMessage, TextBlock, ToolUseBlock
+    from vesta.core.client import converse
+
+    emitted: list[str] = []
+    emit_order: list[str] = []
+
+    def _assistant_msg(content):
+        msg = MagicMock(spec=AssistantMessage)
+        msg.content = content
+        return msg
+
+    async def response_with_tool_use():
+        # Message 1: text + tool_use (was buffered by pending_text)
+        yield _assistant_msg([TextBlock("restarting daemon"), ToolUseBlock("1", "Bash", {})])
+        emit_order.append("after_msg1")
+        # Message 2: another text + tool_use (would have overwritten pending_text)
+        yield _assistant_msg([TextBlock("checking status"), ToolUseBlock("2", "Bash", {})])
+        emit_order.append("after_msg2")
+        # Message 3: pure text (no tool_use)
+        yield _assistant_msg([TextBlock("all done")])
+
+    config = vm.VestaConfig()
+    state = vm.State()
+    state.event_bus = EventBus()
+
+    original_emit = state.event_bus.emit
+    def tracking_emit(event):
+        if isinstance(event, dict) and event.get("type") == "assistant":
+            emitted.append(event["text"])
+        original_emit(event)
+    state.event_bus.emit = tracking_emit
+
+    mock_client = MagicMock()
+    mock_client.query = AsyncMock()
+    mock_client.receive_response = MagicMock(return_value=response_with_tool_use())
+    mock_client.interrupt = AsyncMock()
+    state.client = mock_client
+
+    await converse("test", state=state, config=config, show_output=True)
+
+    assert emitted == ["restarting daemon", "checking status", "all done"], (
+        f"All text must be emitted immediately, got: {emitted}"
+    )
+
+
 # --- Nightly restart ---
 
 
