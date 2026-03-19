@@ -234,6 +234,7 @@ func executeCommand(command string, args []string, wac *WhatsAppClient) (interfa
 			"send-audio": true, "add-contact": true, "remove-contact": true,
 			"leave-group": true, "create-group": true, "rename-group": true,
 			"update-group-participants": true, "set-group-photo": true,
+			"revoke-message": true,
 		}
 		if writeCommands[command] {
 			return nil, fmt.Errorf("command %q blocked: instance is read-only", command)
@@ -432,6 +433,20 @@ func executeCommand(command string, args []string, wac *WhatsAppClient) (interfa
 			return nil, fmt.Errorf("--message-id, --emoji, and --to are required")
 		}
 		success, msg := wac.SendReaction(messageID, emoji, to)
+		return map[string]interface{}{"success": success, "message": msg}, nil
+
+	case "revoke-message":
+		var messageID, to string
+		fs := flag.NewFlagSet("revoke-message", flag.ContinueOnError)
+		fs.StringVar(&messageID, "message-id", "", "Message ID to revoke/delete for everyone")
+		fs.StringVar(&to, "to", "", "Chat (contact name, phone, or group)")
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		if messageID == "" || to == "" {
+			return nil, fmt.Errorf("--message-id and --to are required")
+		}
+		success, msg := wac.RevokeMessage(messageID, to)
 		return map[string]interface{}{"success": success, "message": msg}, nil
 
 	case "create-group":
