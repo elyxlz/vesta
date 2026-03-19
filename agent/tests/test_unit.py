@@ -669,10 +669,12 @@ async def test_converse_emits_text_immediately_with_tool_use():
     state.event_bus = EventBus()
 
     original_emit = state.event_bus.emit
+
     def tracking_emit(event):
         if isinstance(event, dict) and event.get("type") == "assistant":
             emitted.append(event["text"])
         original_emit(event)
+
     state.event_bus.emit = tracking_emit
 
     mock_client = MagicMock()
@@ -683,9 +685,7 @@ async def test_converse_emits_text_immediately_with_tool_use():
 
     await converse("test", state=state, config=config, show_output=True)
 
-    assert emitted == ["restarting daemon", "checking status", "all done"], (
-        f"All text must be emitted immediately, got: {emitted}"
-    )
+    assert emitted == ["restarting daemon", "checking status", "all done"], f"All text must be emitted immediately, got: {emitted}"
 
 
 # --- Nightly restart ---
