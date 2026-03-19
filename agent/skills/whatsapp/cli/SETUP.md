@@ -89,5 +89,3 @@ All transcription runs in-process -- no external scripts or services needed.
 | Variable | Default | Description |
 |---|---|---|
 | `WHISPER_MODEL` | `/usr/local/share/ggml-small.en.bin` | Path to the GGML whisper model file |
-| `WHATSAPP_DATA_DIR` | `~/.whatsapp` | Directory for WhatsApp session data and message DB |
-| `WHATSAPP_NOTIFICATIONS_DIR` | (none) | Directory where notification files are written |
