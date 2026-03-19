@@ -261,7 +261,9 @@ def update_reminder(config: Config, scheduler: BackgroundScheduler, *, reminder_
 
     job = scheduler.get_job(reminder_id)
     if job:
-        job.modify(args=[reminder_id], kwargs={"message": message, "data_dir": config.data_dir, "notif_dir": str(notif_dir) if notif_dir else ""})
+        job.modify(
+            args=[reminder_id], kwargs={"message": message, "data_dir": config.data_dir, "notif_dir": str(notif_dir) if notif_dir else ""}
+        )
 
     return {
         "id": reminder_id,

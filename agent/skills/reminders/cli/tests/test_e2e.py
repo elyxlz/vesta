@@ -146,25 +146,19 @@ class TestSetRecurring:
 
     def test_daily(self, shared_env):
         home, _, _ = shared_env
-        data = parse(
-            reminder_cli(home, "set", "standup", "--recurring", "daily", "--scheduled-datetime", "2024-12-02T10:30:00", "--tz", "UTC")
-        )
+        data = parse(reminder_cli(home, "set", "standup", "--recurring", "daily", "--scheduled-datetime", "2024-12-02T10:30:00", "--tz", "UTC"))
         assert "daily" in data["schedule"]
         assert "10:30" in data["schedule"]
 
     def test_weekly(self, shared_env):
         home, _, _ = shared_env
-        data = parse(
-            reminder_cli(home, "set", "review", "--recurring", "weekly", "--scheduled-datetime", "2024-12-06T17:00:00", "--tz", "UTC")
-        )
+        data = parse(reminder_cli(home, "set", "review", "--recurring", "weekly", "--scheduled-datetime", "2024-12-06T17:00:00", "--tz", "UTC"))
         assert "weekly" in data["schedule"]
         assert "fri" in data["schedule"]
 
     def test_monthly(self, shared_env):
         home, _, _ = shared_env
-        data = parse(
-            reminder_cli(home, "set", "bills", "--recurring", "monthly", "--scheduled-datetime", "2024-12-15T09:00:00", "--tz", "UTC")
-        )
+        data = parse(reminder_cli(home, "set", "bills", "--recurring", "monthly", "--scheduled-datetime", "2024-12-15T09:00:00", "--tz", "UTC"))
         assert "monthly" in data["schedule"]
         assert "day 15" in data["schedule"]
 
