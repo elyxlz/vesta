@@ -640,259 +640,274 @@ async def test_converse_works_normally_without_interrupt():
     assert not mock_client.interrupt.called, "interrupt should not have been called"
 
 
+# --- Converse / streaming e2e helpers ---
+
+
+def _assistant_msg(content):
+    from claude_agent_sdk import AssistantMessage
+
+    msg = MagicMock(spec=AssistantMessage)
+    msg.content = content
+    return msg
+
+
+def _result_msg():
+    from claude_agent_sdk import ResultMessage
+
+    msg = MagicMock(spec=ResultMessage)
+    msg.content = []
+    return msg
+
+
+def _make_converse_harness(*, use_shared_queue: bool = False):
+    """Build a converse() test harness with tracking and a mock SDK client.
+
+    Returns (state, config, mock_client, emitted, message_queue).
+    message_queue is only set if use_shared_queue=True (for multi-converse tests).
+    """
+    import time
+
+    emitted: list[tuple[str, float]] = []
+    config = vm.VestaConfig(interrupt_timeout=0.5)
+    state = vm.State()
+    state.event_bus = EventBus()
+
+    original_emit = state.event_bus.emit
+
+    def tracking_emit(event):
+        if isinstance(event, dict) and event.get("type") == "assistant":
+            emitted.append((event["text"], time.monotonic()))
+        original_emit(event)
+
+    state.event_bus.emit = tracking_emit  # type: ignore[assignment]
+
+    mock_client = MagicMock()
+    mock_client.query = AsyncMock()
+    mock_client.interrupt = AsyncMock()
+    state.client = mock_client
+
+    message_queue: asyncio.Queue[tp.Any] | None = None
+    if use_shared_queue:
+        message_queue = asyncio.Queue()
+
+        async def _receive_response():
+            from claude_agent_sdk import ResultMessage
+
+            while True:
+                msg = await message_queue.get()
+                yield msg
+                if isinstance(msg, ResultMessage):
+                    return
+
+        mock_client.receive_response = MagicMock(side_effect=lambda: _receive_response())
+
+    return state, config, mock_client, emitted, message_queue
+
+
+# --- Converse / streaming regression tests ---
+
+
+def test_filter_tool_lines():
+    """filter_tool_lines must keep normal text and only strip [TOOL]/[TASK] prefixed lines."""
+    from vesta.core.client import filter_tool_lines
+
+    assert filter_tool_lines("hello world") == "hello world"
+    assert filter_tool_lines("[TOOL] Bash: ls\nthe result") == "the result"
+    assert filter_tool_lines("[TASK] [browser]: search\nfound it") == "found it"
+    assert filter_tool_lines("[TOOL] done\n[TASK] done") == ""
+    assert filter_tool_lines("line one\n  \nline two") == "line one\nline two"
+    assert filter_tool_lines("") == ""
+
+
+def test_process_message_always_streams():
+    """process_message must always pass show_output=True — regression guard."""
+    import ast
+    import inspect
+
+    from vesta.core.client import process_message
+
+    source = inspect.getsource(process_message)
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.keyword) and node.arg == "show_output":
+            val = node.value
+            assert isinstance(val, ast.Constant) and val.value is True, (
+                f"process_message must pass show_output=True to converse(), found show_output={ast.dump(val)}"
+            )
+
+
 @pytest.mark.anyio
 async def test_converse_emits_text_immediately_with_tool_use():
     """Text in messages that also have tool_use must be emitted immediately, not buffered."""
-    from claude_agent_sdk import AssistantMessage, TextBlock, ToolUseBlock
+    from claude_agent_sdk import TextBlock, ToolUseBlock
     from vesta.core.client import converse
 
-    emitted: list[str] = []
-
-    def _assistant_msg(content):
-        msg = MagicMock(spec=AssistantMessage)
-        msg.content = content
-        return msg
+    state, config, mock_client, emitted, _ = _make_converse_harness()
 
     async def response_with_tool_use():
         yield _assistant_msg([TextBlock("restarting daemon"), ToolUseBlock("1", "Bash", {})])
         yield _assistant_msg([TextBlock("checking status"), ToolUseBlock("2", "Bash", {})])
         yield _assistant_msg([TextBlock("all done")])
 
-    config = vm.VestaConfig()
-    state = vm.State()
-    state.event_bus = EventBus()
-
-    original_emit = state.event_bus.emit
-
-    def tracking_emit(event):
-        if isinstance(event, dict) and event.get("type") == "assistant":
-            emitted.append(event["text"])
-        original_emit(event)
-
-    state.event_bus.emit = tracking_emit  # type: ignore[assignment]
-
-    mock_client = MagicMock()
-    mock_client.query = AsyncMock()
     mock_client.receive_response = MagicMock(return_value=response_with_tool_use())
-    mock_client.interrupt = AsyncMock()
-    state.client = mock_client
 
     await converse("test", state=state, config=config, show_output=True)
 
-    assert emitted == ["restarting daemon", "checking status", "all done"], f"All text must be emitted immediately, got: {emitted}"
+    texts = [t for t, _ in emitted]
+    assert texts == ["restarting daemon", "checking status", "all done"], f"All text must be emitted immediately, got: {texts}"
 
 
 @pytest.mark.anyio
-async def test_interrupt_does_not_leak_or_lose_messages():
-    """End-to-end: after an interrupt, leftover messages must be emitted (not lost)
+async def test_interrupt_drains_stream_and_emits_leftovers():
+    """After an interrupt, leftover messages must be emitted (not lost)
     and must NOT leak into the next converse() call."""
     import time
 
-    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
+    from claude_agent_sdk import TextBlock, ToolUseBlock
     from vesta.core.client import converse
 
-    def _assistant_msg(content):
-        msg = MagicMock(spec=AssistantMessage)
-        msg.content = content
-        return msg
+    state, config, mock_client, emitted, message_queue = _make_converse_harness(use_shared_queue=True)
+    assert message_queue is not None
 
-    def _result_msg():
-        msg = MagicMock(spec=ResultMessage)
-        msg.content = []
-        return msg
-
-    # Shared message queue — simulates the SDK's internal anyio stream.
-    # Both converse() calls read from the same queue via receive_response(),
-    # just like the real SDK where one _query._message_receive is shared.
-    message_queue: asyncio.Queue[tp.Any] = asyncio.Queue()
-    _SENTINEL = object()
-
-    async def _receive_response():
-        """Yields messages from the shared queue until ResultMessage."""
-        while True:
-            msg = await message_queue.get()
-            yield msg
-            if isinstance(msg, ResultMessage):
-                return
-
-    emitted: list[tuple[str, float]] = []  # (text, timestamp)
-
-    config = vm.VestaConfig(interrupt_timeout=0.5)
-    state = vm.State()
-    state.event_bus = EventBus()
-
-    original_emit = state.event_bus.emit
-
-    def tracking_emit(event):
-        if isinstance(event, dict) and event.get("type") == "assistant":
-            emitted.append((event["text"], time.monotonic()))
-        original_emit(event)
-
-    state.event_bus.emit = tracking_emit  # type: ignore[assignment]
-
-    mock_client = MagicMock()
-    mock_client.query = AsyncMock()
-    mock_client.receive_response = MagicMock(side_effect=lambda: _receive_response())
-    mock_client.interrupt = AsyncMock()
-    state.client = mock_client
-
-    # --- Conversation 1: gets interrupted, has a leftover message ---
+    # --- Conv 1: interrupted, has a leftover ---
     state.interrupt_event = asyncio.Event()
 
-    async def simulate_conversation_1():
-        # Model does a tool call (no text)
+    async def sim_conv1():
         await message_queue.put(_assistant_msg([ToolUseBlock("1", "Bash", {})]))
         await asyncio.sleep(0.1)
-        # Interrupt fires while model is "thinking"
         assert state.interrupt_event is not None
         state.interrupt_event.set()
         await asyncio.sleep(0.1)
-        # Model's response arrives AFTER interrupt (this is the leaked message)
         await message_queue.put(_assistant_msg([TextBlock("here are the files")]))
         await message_queue.put(_result_msg())
 
-    asyncio.create_task(simulate_conversation_1())
-    await converse("list files in /tmp", state=state, config=config, show_output=True)
+    asyncio.create_task(sim_conv1())
+    await converse("list /tmp", state=state, config=config, show_output=True)
 
-    # The leftover "here are the files" should have been emitted during drain
-    assert any(text == "here are the files" for text, _ in emitted), (
-        f"Leftover message must be emitted during drain, got: {[t for t, _ in emitted]}"
-    )
-    # --- Conversation 2: should NOT see leftover messages from conversation 1 ---
+    assert any(t == "here are the files" for t, _ in emitted), f"Leftover must be emitted during drain: {[t for t, _ in emitted]}"
+
+    # --- Conv 2: must NOT see conv 1's leftovers ---
     state.interrupt_event = None
-    emitted_before_conv2 = len(emitted)
+    n_before = len(emitted)
 
-    async def simulate_conversation_2():
-        await asyncio.sleep(0.3)  # Simulate model thinking
+    async def sim_conv2():
+        await asyncio.sleep(0.3)
         await message_queue.put(_assistant_msg([TextBlock("fresh response")]))
         await message_queue.put(_result_msg())
 
-    asyncio.create_task(simulate_conversation_2())
-    t_conv2_start = time.monotonic()
+    asyncio.create_task(sim_conv2())
+    t0 = time.monotonic()
     await converse("well?", state=state, config=config, show_output=True)
 
-    conv2_messages = emitted[emitted_before_conv2:]
-    assert len(conv2_messages) == 1, f"Expected 1 message in conv2, got: {[t for t, _ in conv2_messages]}"
-    assert conv2_messages[0][0] == "fresh response", f"Conv2 should get fresh response, got: {conv2_messages[0][0]}"
-
-    # The fresh response should NOT arrive instantly (0ms) — that would mean it leaked
-    delay_ms = (conv2_messages[0][1] - t_conv2_start) * 1000
-    assert delay_ms > 100, f"Response arrived in {delay_ms:.0f}ms — too fast, likely a leaked message from conv1"
+    conv2 = emitted[n_before:]
+    assert len(conv2) == 1 and conv2[0][0] == "fresh response", f"Conv 2 got wrong messages: {[t for t, _ in conv2]}"
+    delay_ms = (conv2[0][1] - t0) * 1000
+    assert delay_ms > 100, f"Response at +{delay_ms:.0f}ms — too fast, likely leaked from conv 1"
 
 
 @pytest.mark.anyio
-async def test_message_arrives_without_user_interaction():
+async def test_interrupt_then_response_arrives_without_user_input():
     """Reproduces the exact bug from docker logs: user conversation is interrupted
-    by a notification, notification processing does tool calls and responds — that
-    response must arrive on its own without the user sending another message.
+    by a notification, notification does tool calls then responds — that response
+    must arrive on its own without the user sending another message.
 
-    Timeline from real bug:
+    Real timeline:
       12:28:02 USER: "i did it instantly..."
-      12:28:07 TOOL: Bash (check logs)
-      12:28:21 INTERRUPT (notification arrives)
-      12:28:22 SYSTEM: daemon_died notification processed
+      12:28:21 INTERRUPT (notification)
       12:28:27 TOOL: Bash (restart daemon)
       12:28:30 TOOL: done
-      -- 62 seconds stuck, no ASSISTANT message --
-      12:29:32 USER: "well?" → ASSISTANT appears instantly
-
-    The fix must ensure the notification's response arrives after its tool call
-    without waiting for user input."""
+      -- 62 seconds stuck --
+      12:29:32 USER: "well?" → ASSISTANT appears instantly"""
     import time
 
-    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
+    from claude_agent_sdk import TextBlock, ToolUseBlock
     from vesta.core.client import converse
 
-    def _assistant_msg(content):
-        msg = MagicMock(spec=AssistantMessage)
-        msg.content = content
-        return msg
+    state, config, mock_client, emitted, message_queue = _make_converse_harness(use_shared_queue=True)
+    assert message_queue is not None
 
-    def _result_msg():
-        msg = MagicMock(spec=ResultMessage)
-        msg.content = []
-        return msg
-
-    # Shared stream — both converse() calls read from this, like the real SDK.
-    message_queue: asyncio.Queue[tp.Any] = asyncio.Queue()
-
-    async def _receive_response():
-        while True:
-            msg = await message_queue.get()
-            yield msg
-            if isinstance(msg, ResultMessage):
-                return
-
-    emitted: list[tuple[str, float]] = []
-
-    config = vm.VestaConfig(interrupt_timeout=0.5)
-    state = vm.State()
-    state.event_bus = EventBus()
-
-    original_emit = state.event_bus.emit
-
-    def tracking_emit(event):
-        if isinstance(event, dict) and event.get("type") == "assistant":
-            emitted.append((event["text"], time.monotonic()))
-        original_emit(event)
-
-    state.event_bus.emit = tracking_emit  # type: ignore[assignment]
-
-    mock_client = MagicMock()
-    mock_client.query = AsyncMock()
-    mock_client.receive_response = MagicMock(side_effect=lambda: _receive_response())
-    mock_client.interrupt = AsyncMock()
-    state.client = mock_client
-
-    # --- Conv 1: user message, gets interrupted by notification ---
+    # --- Conv 1: user message interrupted by notification ---
     state.interrupt_event = asyncio.Event()
 
-    async def simulate_conv1():
-        # Model does tool call for user's message
+    async def sim_conv1():
         await asyncio.sleep(0.05)
         await message_queue.put(_assistant_msg([ToolUseBlock("1", "Bash", {})]))
         await asyncio.sleep(0.1)
-        # Notification interrupt fires mid-conversation
         assert state.interrupt_event is not None
         state.interrupt_event.set()
-        # Model's response arrives after interrupt (leftover)
         await asyncio.sleep(0.1)
         await message_queue.put(_assistant_msg([TextBlock("checking logs")]))
         await message_queue.put(_result_msg())
 
-    asyncio.create_task(simulate_conv1())
+    asyncio.create_task(sim_conv1())
     await converse("i did it instantly", state=state, config=config, show_output=True)
 
-    # Conv 1's leftover must be emitted (not lost)
-    assert any(t == "checking logs" for t, _ in emitted), f"Conv 1 leftover must be emitted during drain: {[t for t, _ in emitted]}"
+    assert any(t == "checking logs" for t, _ in emitted), f"Conv 1 leftover not emitted: {[t for t, _ in emitted]}"
 
-    # --- Conv 2: notification processing — tool call then response ---
-    # This is the one that got STUCK in the real bug.
+    # --- Conv 2: notification processing (was STUCK in the real bug) ---
     state.interrupt_event = None
-    emitted_before = len(emitted)
-    t_conv2 = time.monotonic()
+    n_before = len(emitted)
+    t0 = time.monotonic()
 
-    async def simulate_conv2():
-        # Model does a tool call (restart daemon)
+    async def sim_conv2():
         await asyncio.sleep(0.05)
         await message_queue.put(_assistant_msg([ToolUseBlock("2", "Bash", {})]))
-        # Tool finishes, model responds
         await asyncio.sleep(0.2)
         await message_queue.put(_assistant_msg([TextBlock("daemon's back up")]))
         await asyncio.sleep(0.05)
         await message_queue.put(_result_msg())
 
-    asyncio.create_task(simulate_conv2())
+    asyncio.create_task(sim_conv2())
     await converse("daemon_died notification", state=state, config=config, show_output=True)
 
-    conv2_texts = [t for t, _ in emitted[emitted_before:]]
+    conv2_texts = [t for t, _ in emitted[n_before:]]
     assert "daemon's back up" in conv2_texts, f"Conv 2 response must arrive without user interaction: {conv2_texts}"
-
-    # Must arrive promptly (within 2s), not stuck for 60+ seconds
-    for text, t in emitted[emitted_before:]:
+    for text, t in emitted[n_before:]:
         if text == "daemon's back up":
-            delay_ms = (t - t_conv2) * 1000
+            delay_ms = (t - t0) * 1000
             assert delay_ms < 2000, f"'{text}' took {delay_ms:.0f}ms — agent was stuck"
+
+
+@pytest.mark.anyio
+async def test_drain_timeout_does_not_block_forever():
+    """If the SDK is slow to send ResultMessage after interrupt, the drain must
+    time out and not block the next conversation forever."""
+    from claude_agent_sdk import ToolUseBlock
+    from vesta.core.client import converse
+
+    state, config, mock_client, _, _ = _make_converse_harness()
+
+    call_count = 0
+
+    async def slow_drain_response():
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            # First call: normal conversation that gets interrupted
+            yield _assistant_msg([ToolUseBlock("1", "Bash", {})])
+            await asyncio.sleep(60)  # Hangs — simulates SDK not sending ResultMessage
+        else:
+            # Drain call: also hangs (SDK is stuck)
+            await asyncio.sleep(60)
+
+    mock_client.receive_response = MagicMock(side_effect=lambda: slow_drain_response())
+    state.client = mock_client
+    state.interrupt_event = asyncio.Event()
+
+    async def trigger():
+        await asyncio.sleep(0.1)
+        assert state.interrupt_event is not None
+        state.interrupt_event.set()
+
+    import time
+
+    asyncio.create_task(trigger())
+    t0 = time.monotonic()
+    await converse("test", state=state, config=config, show_output=True)
+    elapsed = time.monotonic() - t0
+
+    # Must exit within drain timeout (5s) + some margin, not hang for 60s
+    assert elapsed < 8.0, f"converse took {elapsed:.1f}s — drain blocked too long"
 
 
 # --- Nightly restart ---
