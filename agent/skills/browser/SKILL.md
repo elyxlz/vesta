@@ -136,6 +136,53 @@ DISPLAY=:99 browser launch --stealth
 | Need user's cookies/logins | `browser launch --user-data-dir <path>` |
 | Need user's live session | `browser connect http://<ip>:9222` |
 
+## Remote Assist (User Takeover)
+
+When the automated browser gets stuck — CAPTCHA, sign-in blocks, fingerprint detection — hand control to the user via noVNC. This lets them interact with the browser directly from their phone/laptop, then you take back over.
+
+### Prerequisites
+```bash
+apt-get install -y novnc x11vnc scrot
+```
+
+### Flow
+```bash
+# 1. Make sure Xvfb is running
+pkill -x Xvfb 2>/dev/null; sleep 1
+Xvfb :99 -screen 0 1280x720x24 &>/dev/null &
+
+# 2. Launch visible Chromium with a PERSISTENT profile (keeps cookies/sessions across restarts)
+DISPLAY=:99 chromium --no-sandbox --disable-gpu --disable-software-rasterizer \
+  --user-data-dir=/root/.browser-profile \
+  --window-size=1280,720 'https://example.com' &>/dev/null &
+
+# 3. Start VNC + noVNC on an available port
+x11vnc -display :99 -nopw -forever -shared -rfbport 5900 &>/dev/null &
+websockify --web=/usr/share/novnc <PORT> localhost:5900 &>/dev/null &
+
+# 4. Send the user the link
+# http://<LAN_IP>:<PORT>/vnc.html
+```
+
+### After user finishes
+```bash
+# Kill VNC/noVNC (keep the browser profile for future use)
+kill $(fuser 5900/tcp 2>/dev/null | tr -d ' ') 2>/dev/null
+kill $(fuser <PORT>/tcp 2>/dev/null | tr -d ' ') 2>/dev/null
+```
+
+### Persistent Browser Profile
+- Profile dir: `/root/.browser-profile`
+- Once the user logs into any site here, session cookies persist across browser restarts
+- Use `browser launch --stealth --user-data-dir /root/.browser-profile` for automated sessions that reuse these cookies — avoids sign-in flows entirely
+- Works for any site — Google, banking, anything that blocks automated logins
+
+### Key Notes
+- The user can access from any device on the same network via the noVNC web link
+- Always use the persistent profile dir so logins accumulate over time
+- After remote assist, switch back to the `browser` CLI tool — the profile cookies are shared
+- This is the escape hatch for any site that defeats stealth mode — let the user handle the auth, then take over
+
 ## Troubleshooting
 
 - **Still getting blocked?** Take a screenshot (`browser screenshot`) to see what the site shows. Try `--stealth` if not already using it
@@ -146,6 +193,7 @@ DISPLAY=:99 browser launch --stealth
   Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp &
   DISPLAY=:99 browser launch
   ```
+- **Sign-in blocked (e.g. Google)?** Sites like Google detect automated browsers even with stealth. Use Remote Assist — have the user log in once via noVNC, then reuse the persistent profile for future automated sessions
 
 ## Memory
 
