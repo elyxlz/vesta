@@ -668,15 +668,10 @@ jobs:
           echo "WS correctly rejects no-auth"
 
           echo "=== WebSocket proxy (real WS client) ==="
+          pip install -q websockets
           # Use Python to test actual WebSocket upgrade + message exchange through proxy
           python3 -c "
-          import asyncio, ssl, json
-          try:
-              import websockets
-          except ImportError:
-              import subprocess, sys
-              subprocess.check_call([sys.executable, '-m', 'pip', 'install', '-q', 'websockets'])
-              import websockets
+          import asyncio, ssl, json, websockets
 
           async def test_ws():
               url = 'wss://localhost:7860/agents/cli-e2e/ws?token=$API_KEY'
@@ -702,11 +697,7 @@ jobs:
           "$VESTA" stop cli-e2e
           sleep 2
           python3 -c "
-          import asyncio, ssl, json
-          try:
-              import websockets
-          except ImportError:
-              pass
+          import asyncio, ssl, json, websockets
           async def test_ws_stopped():
               url = 'wss://localhost:7860/agents/cli-e2e/ws?token=$API_KEY'
               ctx = ssl.create_default_context()
