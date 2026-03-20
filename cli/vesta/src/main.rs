@@ -6,11 +6,6 @@ use std::process;
 mod client;
 mod platform;
 
-fn die(msg: &str) -> ! {
-    eprintln!("error: {}", msg);
-    process::exit(1);
-}
-
 fn try_open_browser(url: &str) {
     #[cfg(target_os = "linux")]
     let r = process::Command::new("xdg-open")
@@ -165,50 +160,21 @@ enum Command {
     Update,
 }
 
-fn normalize_name(raw: &str) -> String {
-    let s: String = raw
-        .trim()
-        .to_lowercase()
-        .replace(|c: char| c.is_whitespace() || c == '_', "-")
-        .chars()
-        .filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '-')
-        .collect();
-    let s = s.trim_matches('-').to_string();
-    let mut result = String::new();
-    let mut prev_hyphen = false;
-    for c in s.chars() {
-        if c == '-' {
-            if !prev_hyphen {
-                result.push(c);
-            }
-            prev_hyphen = true;
-        } else {
-            result.push(c);
-            prev_hyphen = false;
-        }
-    }
-    if result.len() > 32 {
-        result.truncate(32);
-        result = result.trim_end_matches('-').to_string();
-    }
-    result
-}
-
 fn prompt_name() -> String {
     eprint!("agent name: ");
     io::stderr().flush().ok();
     let mut input = String::new();
     io::stdin().read_line(&mut input).ok();
-    let name = normalize_name(&input);
+    let name = input.trim().to_string();
     if name.is_empty() {
-        die("agent name is required");
+        platform::die("agent name is required");
     }
     name
 }
 
 fn get_client(host: Option<&str>, token: Option<&str>) -> client::Client {
     let config = platform::load_server_config(host, token)
-        .unwrap_or_else(|| die("no server configured. run: vesta setup"));
+        .unwrap_or_else(|| platform::die("no server configured. run: vesta setup"));
     client::Client::new(config.url, config.api_key, config.cert_fingerprint)
 }
 
@@ -261,7 +227,7 @@ fn check_latest_version() -> Option<String> {
     eprintln!("current version: v{}", current);
 
     let latest =
-        fetch_latest_version(None).unwrap_or_else(|| die("failed to check for updates"));
+        fetch_latest_version(None).unwrap_or_else(|| platform::die("failed to check for updates"));
 
     if latest == current {
         eprintln!("already up to date");
@@ -282,10 +248,10 @@ fn cli_self_update(rust_target: &str, is_zip: bool, binary_subpath: &str) -> Opt
     );
 
     let current_exe =
-        std::env::current_exe().unwrap_or_else(|e| die(&format!("cannot determine binary path: {}", e)));
+        std::env::current_exe().unwrap_or_else(|e| platform::die(&format!("cannot determine binary path: {}", e)));
     let exe_dir = current_exe
         .parent()
-        .unwrap_or_else(|| die("cannot determine binary directory"));
+        .unwrap_or_else(|| platform::die("cannot determine binary directory"));
 
     let tmp_dir = {
         let primary = exe_dir.join(".vesta-update-tmp");
@@ -296,7 +262,7 @@ fn cli_self_update(rust_target: &str, is_zip: bool, binary_subpath: &str) -> Opt
             let fallback = std::env::temp_dir().join("vesta-update");
             let _ = std::fs::remove_dir_all(&fallback);
             std::fs::create_dir_all(&fallback)
-                .unwrap_or_else(|e| die(&format!("failed to create temp dir: {}", e)));
+                .unwrap_or_else(|e| platform::die(&format!("failed to create temp dir: {}", e)));
             fallback
         }
     };
@@ -307,10 +273,10 @@ fn cli_self_update(rust_target: &str, is_zip: bool, binary_subpath: &str) -> Opt
         .arg(&archive)
         .arg(&url)
         .status()
-        .unwrap_or_else(|_| die("curl not found"));
+        .unwrap_or_else(|_| platform::die("curl not found"));
     if !dl.success() {
         let _ = std::fs::remove_dir_all(&tmp_dir);
-        die("failed to download update");
+        platform::die("failed to download update");
     }
 
     let tar_flag = if is_zip { "-xf" } else { "-xzf" };
@@ -320,16 +286,16 @@ fn cli_self_update(rust_target: &str, is_zip: bool, binary_subpath: &str) -> Opt
         .arg("-C")
         .arg(&tmp_dir)
         .status()
-        .unwrap_or_else(|_| die("tar not found"));
+        .unwrap_or_else(|_| platform::die("tar not found"));
     if !extract.success() {
         let _ = std::fs::remove_dir_all(&tmp_dir);
-        die("failed to extract update");
+        platform::die("failed to extract update");
     }
 
     let new_binary = tmp_dir.join(binary_subpath);
     self_replace::self_replace(&new_binary).unwrap_or_else(|e| {
         let _ = std::fs::remove_dir_all(&tmp_dir);
-        die(&format!("failed to replace binary: {}", e));
+        platform::die(&format!("failed to replace binary: {}", e));
     });
 
     eprintln!("updated to v{}", latest);
@@ -463,7 +429,7 @@ fn run(cli: Cli) {
             let c = get_client(host_ref, token_ref);
 
             let name = name
-                .map(|n| normalize_name(&n))
+                .map(|n| n.trim().to_string())
                 .unwrap_or_else(prompt_name);
 
             // Create agent
@@ -473,14 +439,14 @@ fn run(cli: Cli) {
                     eprintln!("agent '{}' already exists, continuing...", name);
                 }
                 Err(e) if e.contains("already exists") => {
-                    die(&format!("agent '{}' already exists. use --yes to continue", name));
+                    platform::die(&format!("agent '{}' already exists. use --yes to continue", name));
                 }
-                Err(e) => die(&e),
+                Err(e) => platform::die(&e),
             }
 
             // Auth
             eprintln!("authenticating claude...");
-            let auth = c.start_auth(&name).unwrap_or_else(|e| die(&e));
+            let auth = c.start_auth(&name).unwrap_or_else(|e| platform::die(&e));
             eprintln!("open this URL to authenticate:");
             eprintln!("  {}", auth.auth_url);
             try_open_browser(&auth.auth_url);
@@ -490,17 +456,17 @@ fn run(cli: Cli) {
             let mut code = String::new();
             io::stdin()
                 .read_line(&mut code)
-                .unwrap_or_else(|_| die("failed to read auth code"));
+                .unwrap_or_else(|_| platform::die("failed to read auth code"));
             let code = code.trim();
             if code.is_empty() {
-                die("no auth code provided");
+                platform::die("no auth code provided");
             }
             c.complete_auth(&name, &auth.session_id, code)
-                .unwrap_or_else(|e| die(&e));
+                .unwrap_or_else(|e| platform::die(&e));
             eprintln!("authenticated!");
 
             // Start
-            c.start_agent(&name).unwrap_or_else(|e| die(&e));
+            c.start_agent(&name).unwrap_or_else(|e| platform::die(&e));
             eprintln!("agent '{}' is running.", name);
 
             // Install autostart
@@ -517,9 +483,9 @@ fn run(cli: Cli) {
         Command::Create { build, name } => {
             let c = get_client(host_ref, token_ref);
             let name = name
-                .map(|n| normalize_name(&n))
+                .map(|n| n.trim().to_string())
                 .unwrap_or_else(prompt_name);
-            let name = c.create_agent(&name, build).unwrap_or_else(|e| die(&e));
+            let name = c.create_agent(&name, build).unwrap_or_else(|e| platform::die(&e));
             eprintln!(
                 "created (run 'vesta auth {}' to authenticate, then 'vesta start {}')",
                 name, name
@@ -530,11 +496,11 @@ fn run(cli: Cli) {
             let c = get_client(host_ref, token_ref);
             match name {
                 Some(name) => {
-                    c.start_agent(&name).unwrap_or_else(|e| die(&e));
+                    c.start_agent(&name).unwrap_or_else(|e| platform::die(&e));
                     eprintln!("{}: started", name);
                 }
                 None => {
-                    let results = c.start_all().unwrap_or_else(|e| die(&e));
+                    let results = c.start_all().unwrap_or_else(|e| platform::die(&e));
                     if results.is_empty() {
                         eprintln!("no agents found. create one with: vesta setup");
                     } else {
@@ -556,13 +522,13 @@ fn run(cli: Cli) {
 
         Command::Stop { name } => {
             let c = get_client(host_ref, token_ref);
-            c.stop_agent(&name).unwrap_or_else(|e| die(&e));
+            c.stop_agent(&name).unwrap_or_else(|e| platform::die(&e));
             eprintln!("{}: stopped", name);
         }
 
         Command::Restart { name } => {
             let c = get_client(host_ref, token_ref);
-            c.restart_agent(&name).unwrap_or_else(|e| die(&e));
+            c.restart_agent(&name).unwrap_or_else(|e| platform::die(&e));
             eprintln!("{}: restarted", name);
         }
 
@@ -570,10 +536,10 @@ fn run(cli: Cli) {
             let c = get_client(host_ref, token_ref);
             if let Some(token_str) = token {
                 c.inject_token(&name, &token_str)
-                    .unwrap_or_else(|e| die(&e));
+                    .unwrap_or_else(|e| platform::die(&e));
                 eprintln!("{}: authenticated", name);
             } else {
-                let auth = c.start_auth(&name).unwrap_or_else(|e| die(&e));
+                let auth = c.start_auth(&name).unwrap_or_else(|e| platform::die(&e));
                 eprintln!("open this URL to authenticate:");
                 eprintln!("  {}", auth.auth_url);
                 try_open_browser(&auth.auth_url);
@@ -583,25 +549,25 @@ fn run(cli: Cli) {
                 let mut code = String::new();
                 io::stdin()
                     .read_line(&mut code)
-                    .unwrap_or_else(|_| die("failed to read auth code"));
+                    .unwrap_or_else(|_| platform::die("failed to read auth code"));
                 let code = code.trim();
                 if code.is_empty() {
-                    die("no auth code provided");
+                    platform::die("no auth code provided");
                 }
                 c.complete_auth(&name, &auth.session_id, code)
-                    .unwrap_or_else(|e| die(&e));
+                    .unwrap_or_else(|e| platform::die(&e));
                 eprintln!("{}: authenticated", name);
             }
         }
 
         Command::Chat { name } => {
             let c = get_client(host_ref, token_ref);
-            c.chat(&name).unwrap_or_else(|e| die(&e));
+            c.chat(&name).unwrap_or_else(|e| platform::die(&e));
         }
 
         Command::Logs { name } => {
             let c = get_client(host_ref, token_ref);
-            c.stream_logs(&name).unwrap_or_else(|e| die(&e));
+            c.stream_logs(&name).unwrap_or_else(|e| platform::die(&e));
         }
 
         Command::Status { name, json } => {
@@ -621,7 +587,7 @@ fn run(cli: Cli) {
                     );
                     process::exit(0);
                 }
-                die(&e);
+                platform::die(&e);
             });
             if json {
                 println!("{}", serde_json::to_string(&status).unwrap());
@@ -647,7 +613,7 @@ fn run(cli: Cli) {
 
         Command::List { json } => {
             let c = get_client(host_ref, token_ref);
-            let agents = c.list_agents().unwrap_or_else(|e| die(&e));
+            let agents = c.list_agents().unwrap_or_else(|e| platform::die(&e));
             if json {
                 println!("{}", serde_json::to_string(&agents).unwrap());
             } else if agents.is_empty() {
@@ -674,7 +640,7 @@ fn run(cli: Cli) {
 
         Command::Backup { name, output } => {
             let c = get_client(host_ref, token_ref);
-            c.backup(&name, &output).unwrap_or_else(|e| die(&e));
+            c.backup(&name, &output).unwrap_or_else(|e| platform::die(&e));
             eprintln!("backup saved to {}", output.display());
         }
 
@@ -686,25 +652,25 @@ fn run(cli: Cli) {
             let c = get_client(host_ref, token_ref);
             let name = c
                 .restore(&input, name.as_deref(), replace)
-                .unwrap_or_else(|e| die(&e));
+                .unwrap_or_else(|e| platform::die(&e));
             eprintln!("agent '{}' restored. run 'vesta start {}' to start it.", name, name);
         }
 
         Command::Destroy { name } => {
             let c = get_client(host_ref, token_ref);
-            c.destroy_agent(&name).unwrap_or_else(|e| die(&e));
+            c.destroy_agent(&name).unwrap_or_else(|e| platform::die(&e));
             eprintln!("{}: destroyed", name);
         }
 
         Command::Rebuild { name } => {
             let c = get_client(host_ref, token_ref);
-            c.rebuild_agent(&name).unwrap_or_else(|e| die(&e));
+            c.rebuild_agent(&name).unwrap_or_else(|e| platform::die(&e));
             eprintln!("{}: rebuilt and running", name);
         }
 
         Command::WaitReady { name, timeout } => {
             let c = get_client(host_ref, token_ref);
-            c.wait_ready(&name, timeout).unwrap_or_else(|e| die(&e));
+            c.wait_ready(&name, timeout).unwrap_or_else(|e| platform::die(&e));
             eprintln!("{}: ready", name);
         }
 
@@ -720,10 +686,10 @@ fn run(cli: Cli) {
             let mut key = String::new();
             io::stdin()
                 .read_line(&mut key)
-                .unwrap_or_else(|_| die("failed to read API key"));
+                .unwrap_or_else(|_| platform::die("failed to read API key"));
             let key = key.trim().to_string();
             if key.is_empty() {
-                die("API key is required");
+                platform::die("API key is required");
             }
 
             let config = platform::ServerConfig {
@@ -735,7 +701,7 @@ fn run(cli: Cli) {
             // Verify connection
             let c = client::Client::new(config.url.clone(), config.api_key.clone(), config.cert_fingerprint.clone());
             c.health()
-                .unwrap_or_else(|e| die(&format!("cannot reach server: {}", e)));
+                .unwrap_or_else(|e| platform::die(&format!("cannot reach server: {}", e)));
 
             platform::save_server_config(&config);
             eprintln!("connected to {}", url);
@@ -767,7 +733,7 @@ fn run(cli: Cli) {
                 let target = match std::env::consts::ARCH {
                     "x86_64" => "x86_64-unknown-linux-gnu",
                     "aarch64" => "aarch64-unknown-linux-gnu",
-                    other => die(&format!("unsupported architecture: {}", other)),
+                    other => platform::die(&format!("unsupported architecture: {}", other)),
                 };
                 if let Some(tmp_dir) = cli_self_update(target, false, "vesta") {
                     let _ = std::fs::remove_dir_all(&tmp_dir);
@@ -778,7 +744,7 @@ fn run(cli: Cli) {
                 let target = match std::env::consts::ARCH {
                     "x86_64" => "x86_64-apple-darwin",
                     "aarch64" => "aarch64-apple-darwin",
-                    other => die(&format!("unsupported architecture: {}", other)),
+                    other => platform::die(&format!("unsupported architecture: {}", other)),
                 };
                 if let Some(tmp_dir) = cli_self_update(target, false, "vesta") {
                     let _ = std::fs::remove_dir_all(&tmp_dir);

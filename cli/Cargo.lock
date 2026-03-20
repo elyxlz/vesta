@@ -1775,6 +1775,7 @@ version = "0.1.104"
 dependencies = [
  "clap",
  "dirs",
+ "ring",
  "rustls",
  "self-replace",
  "serde",
@@ -1800,6 +1801,7 @@ dependencies = [
  "libc",
  "rand",
  "rcgen",
+ "ring",
  "rustls",
  "self-replace",
  "serde",

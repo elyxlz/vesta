@@ -52,15 +52,11 @@ pub fn ensure_tls(config_dir: &std::path::Path) -> (String, String, String) {
 
     // Compute SHA-256 fingerprint of the DER certificate
     let der_bytes = cert.der();
-    let digest = {
-        use std::io::Write;
-        let mut hasher = Sha256::new();
-        hasher.write_all(der_bytes).unwrap();
-        hasher.finalize()
-    };
+    let digest = ring::digest::digest(&ring::digest::SHA256, der_bytes);
     let fingerprint = format!(
         "sha256:{}",
         digest
+            .as_ref()
             .iter()
             .map(|b| format!("{:02X}", b))
             .collect::<Vec<_>>()
@@ -80,41 +76,6 @@ pub fn ensure_tls(config_dir: &std::path::Path) -> (String, String, String) {
     }
 
     (cert_pem, key_pem, fingerprint)
-}
-
-// Simple SHA-256 for certificate fingerprint (no external dep)
-struct Sha256 {
-    data: Vec<u8>,
-}
-impl Sha256 {
-    fn new() -> Self {
-        Self { data: Vec::new() }
-    }
-    fn finalize(self) -> Vec<u8> {
-        // Use openssl for hashing since we already depend on it at runtime
-        let output = std::process::Command::new("openssl")
-            .args(["dgst", "-sha256", "-binary"])
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .and_then(|mut child| {
-                use std::io::Write;
-                child.stdin.take().unwrap().write_all(&self.data).ok();
-                child.wait_with_output()
-            })
-            .expect("openssl sha256 failed");
-        output.stdout
-    }
-}
-impl std::io::Write for Sha256 {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.data.extend_from_slice(buf);
-        Ok(buf.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
 }
 
 // --- API key generation ---
@@ -568,19 +529,9 @@ async fn logs_handler(
 // --- WebSocket proxy ---
 
 async fn ws_handler(
-    State(state): State<SharedState>,
     Path(name): Path<String>,
-    Query(params): Query<HashMap<String, String>>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
-    // Auth via query param
-    let token = params
-        .get("token")
-        .ok_or_else(|| err_response(StatusCode::UNAUTHORIZED, "missing token parameter"))?;
-    if token != &state.api_key {
-        return Err(err_response(StatusCode::UNAUTHORIZED, "invalid token"));
-    }
-
     docker::validate_name(&name).map_err(|e| err_response(StatusCode::BAD_REQUEST, &e))?;
     let cname = docker::container_name(&name);
     docker::ensure_running(&cname).map_err(map_err)?;

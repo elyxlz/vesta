@@ -72,21 +72,11 @@ impl rustls::client::danger::ServerCertVerifier for FingerprintVerifier {
 }
 
 fn cert_fingerprint(der: &[u8]) -> String {
-    use std::io::Write;
-    use std::process::{Command, Stdio};
-    let mut child = Command::new("openssl")
-        .args(["dgst", "-sha256", "-binary"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("openssl not found");
-    child.stdin.take().unwrap().write_all(der).ok();
-    let output = child.wait_with_output().expect("openssl failed");
+    let digest = ring::digest::digest(&ring::digest::SHA256, der);
     format!(
         "sha256:{}",
-        output
-            .stdout
+        digest
+            .as_ref()
             .iter()
             .map(|b| format!("{:02X}", b))
             .collect::<Vec<_>>()
@@ -464,8 +454,4 @@ impl Client {
         Ok(())
     }
 
-    #[allow(dead_code)]
-    pub fn base_url(&self) -> &str {
-        &self.base_url
-    }
 }

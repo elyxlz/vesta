@@ -130,27 +130,6 @@ async fn api_post_empty(path: &str, body: &impl serde::Serialize) -> Result<(), 
     Ok(())
 }
 
-async fn api_delete(path: &str) -> Result<(), VestaError> {
-    let config = load_config()?;
-    let url = format!("{}{}", config.url, path);
-    let resp = http_client()
-        .delete(&url)
-        .bearer_auth(&config.api_key)
-        .send()
-        .await
-        .map_err(|e| VestaError::new(ErrorCode::Internal, format!("request failed: {}", e)))?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        let msg = extract_server_error(&body)
-            .unwrap_or_else(|| format!("server returned {}", status));
-        return Err(VestaError::new(ErrorCode::Internal, msg));
-    }
-
-    Ok(())
-}
-
 fn extract_server_error(body: &str) -> Option<String> {
     let v: serde_json::Value = serde_json::from_str(body).ok()?;
     v["error"].as_str().map(|s| s.to_string())
@@ -452,7 +431,7 @@ pub async fn restart_agent(name: &str) -> Result<(), VestaError> {
 }
 
 pub async fn delete_agent(name: &str) -> Result<(), VestaError> {
-    api_delete(&format!("/agents/{}", name)).await
+    api_post_empty(&format!("/agents/{}/destroy", name), &EmptyBody {}).await
 }
 
 pub async fn rebuild_agent(name: &str) -> Result<(), VestaError> {
@@ -511,27 +490,34 @@ pub async fn obtain_and_inject_credentials(
 
 // ── Backup/Restore operations ───────────────────────────────────
 
-#[derive(serde::Serialize)]
-struct BackupRequest {
-    output: String,
-}
-
 pub async fn backup_agent(name: &str, output: &str) -> Result<(), VestaError> {
-    api_post_empty(
-        &format!("/agents/{}/backup", name),
-        &BackupRequest {
-            output: output.to_string(),
-        },
-    )
-    .await
-}
+    let config = load_config()?;
+    let url = format!("{}/agents/{}/backup", config.url, name);
+    let resp = http_client()
+        .post(&url)
+        .bearer_auth(&config.api_key)
+        .send()
+        .await
+        .map_err(|e| VestaError::new(ErrorCode::Internal, format!("request failed: {}", e)))?;
 
-#[derive(serde::Serialize)]
-struct RestoreRequest {
-    input: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    name: Option<String>,
-    replace: bool,
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        let msg = extract_server_error(&body)
+            .unwrap_or_else(|| format!("server returned {}", status));
+        return Err(VestaError::new(ErrorCode::Internal, msg));
+    }
+
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| VestaError::new(ErrorCode::Internal, format!("failed to read backup stream: {}", e)))?;
+
+    tokio::fs::write(output, &bytes)
+        .await
+        .map_err(|e| VestaError::new(ErrorCode::Internal, format!("failed to write backup file: {}", e)))?;
+
+    Ok(())
 }
 
 pub async fn restore_agent(
@@ -539,15 +525,38 @@ pub async fn restore_agent(
     name: Option<&str>,
     replace: bool,
 ) -> Result<(), VestaError> {
-    api_post_empty(
-        "/agents/restore",
-        &RestoreRequest {
-            input: input.to_string(),
-            name: name.map(|s| s.to_string()),
-            replace,
-        },
-    )
-    .await
+    let config = load_config()?;
+
+    let bytes = tokio::fs::read(input)
+        .await
+        .map_err(|e| VestaError::new(ErrorCode::Internal, format!("failed to read backup file: {}", e)))?;
+
+    let mut query: Vec<(&str, String)> = Vec::new();
+    if let Some(n) = name {
+        query.push(("name", n.to_string()));
+    }
+    query.push(("replace", replace.to_string()));
+
+    let url = format!("{}/agents/restore", config.url);
+    let resp = http_client()
+        .post(&url)
+        .bearer_auth(&config.api_key)
+        .query(&query)
+        .header("content-type", "application/gzip")
+        .body(bytes)
+        .send()
+        .await
+        .map_err(|e| VestaError::new(ErrorCode::Internal, format!("request failed: {}", e)))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        let msg = extract_server_error(&body)
+            .unwrap_or_else(|| format!("server returned {}", status));
+        return Err(VestaError::new(ErrorCode::Internal, msg));
+    }
+
+    Ok(())
 }
 
 pub async fn wait_for_ready(name: &str, timeout: u64) -> Result<(), VestaError> {
