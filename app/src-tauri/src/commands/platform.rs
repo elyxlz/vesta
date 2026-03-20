@@ -13,9 +13,8 @@ pub async fn platform_setup() -> Result<cli::PlatformStatus, VestaError> {
 
 #[tauri::command]
 pub async fn run_install_script(version: String) -> Result<(), VestaError> {
-    let arch = std::env::consts::ARCH; // compile-time constant
+    let arch = std::env::consts::ARCH;
 
-    // Detect package manager
     let has_dpkg = tokio::process::Command::new("which")
         .arg("dpkg")
         .status()
@@ -36,18 +35,29 @@ pub async fn run_install_script(version: String) -> Result<(), VestaError> {
             .map(|s| s.success())
             .unwrap_or(false);
         if !has_rpm {
-            return Err(VestaError::new(ErrorCode::ExecFailed, "no supported package manager (dpkg or rpm)"));
+            return Err(VestaError::new(
+                ErrorCode::ExecFailed,
+                "no supported package manager (dpkg or rpm)",
+            ));
         }
-        let pkg_arch = if arch == "aarch64" { "aarch64" } else { "x86_64" };
+        let pkg_arch = if arch == "aarch64" {
+            "aarch64"
+        } else {
+            "x86_64"
+        };
         let name = format!("Vesta-{version}-1.{pkg_arch}.rpm");
         let tmp = format!("/tmp/{name}");
-        (name, "rpm", vec!["-U".to_string(), "--force".to_string(), tmp])
+        (
+            name,
+            "rpm",
+            vec!["-U".to_string(), "--force".to_string(), tmp],
+        )
     };
 
     let tmp_path = format!("/tmp/{filename}");
-    let url = format!("https://github.com/elyxlz/vesta/releases/download/v{version}/{filename}");
+    let url =
+        format!("https://github.com/elyxlz/vesta/releases/download/v{version}/{filename}");
 
-    // Download package as current user (no root needed)
     let download = tokio::process::Command::new("curl")
         .args(["-fsSL", "-o", &tmp_path, &url])
         .status()
@@ -55,11 +65,12 @@ pub async fn run_install_script(version: String) -> Result<(), VestaError> {
         .map_err(|e| VestaError::new(ErrorCode::ExecFailed, e.to_string()))?;
     if !download.success() {
         let _ = tokio::fs::remove_file(&tmp_path).await;
-        return Err(VestaError::new(ErrorCode::ExecFailed, "failed to download package"));
+        return Err(VestaError::new(
+            ErrorCode::ExecFailed,
+            "failed to download package",
+        ));
     }
 
-    // Install with pkexec — shows a graphical polkit auth dialog
-    // Pass args directly (no shell) to avoid any injection risk
     let status = tokio::process::Command::new("pkexec")
         .arg(pkg_manager)
         .args(&pkg_args)
@@ -70,7 +81,10 @@ pub async fn run_install_script(version: String) -> Result<(), VestaError> {
     let _ = tokio::fs::remove_file(&tmp_path).await;
 
     if !status.success() {
-        return Err(VestaError::new(ErrorCode::ExecFailed, "package install failed or was cancelled"));
+        return Err(VestaError::new(
+            ErrorCode::ExecFailed,
+            "package install failed or was cancelled",
+        ));
     }
     Ok(())
 }

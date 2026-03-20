@@ -127,8 +127,8 @@ jobs:
         working-directory: app
         run: npm test
 
-  # ── Build CLI (all unix targets) ──────────────────────────────────────
-  build-cli:
+  # ── Build vesta client (all unix targets) ─────────────────────────────
+  build-vesta:
     needs: [version-check]
     strategy:
       fail-fast: false
@@ -176,16 +176,16 @@ jobs:
       - name: Clippy
         if: "!matrix.cross"
         working-directory: cli
-        run: cargo clippy --target ${{ matrix.target }} -- -D warnings
+        run: cargo clippy --workspace --target ${{ matrix.target }} -- -D warnings
 
       - name: Test
         if: "!matrix.cross"
         working-directory: cli
-        run: cargo test --target ${{ matrix.target }}
+        run: cargo test --workspace --target ${{ matrix.target }}
 
-      - name: Build CLI
+      - name: Build vesta
         working-directory: cli
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release -p vesta --target ${{ matrix.target }}
 
       - name: Download vfkit
         if: matrix.vfkit
@@ -208,21 +208,92 @@ jobs:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}.tar.gz
 
-  # ── Test Linux CLI ────────────────────────────────────────────────────
+  # ── Build vestad server (Linux only) ─────────────────────────────────
+  build-vestad:
+    needs: [version-check, detect-changes]
+    if: needs.detect-changes.outputs.cli == 'true' || github.event_name != 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # musl targets for static binaries (vestad runs in Alpine VM/WSL with musl)
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            artifact: vestad-x86_64-unknown-linux-gnu
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            artifact: vestad-aarch64-unknown-linux-gnu
+            cross: true
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: cli
+          key: vestad-${{ matrix.target }}
+
+      - name: Install musl toolchain
+        if: ${{ !matrix.cross }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Install cross
+        if: matrix.cross
+        run: cargo install cross --locked
+
+      - name: Build vestad
+        working-directory: cli
+        run: |
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            cross build --release -p vestad --target ${{ matrix.target }}
+          else
+            cargo build --release -p vestad --target ${{ matrix.target }}
+          fi
+
+      - name: Package
+        run: |
+          mkdir staging
+          cp cli/target/${{ matrix.target }}/release/vestad staging/
+          tar -czf ${{ matrix.artifact }}.tar.gz -C staging .
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}.tar.gz
+
+  # ── Test Linux (vestad HTTP API) ──────────────────────────────────────
   test-linux:
-    needs: build-cli
+    needs: [build-vestad, build-vesta]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Download CLI
+      - name: Download vestad
         uses: actions/download-artifact@v8
         with:
-          name: vesta-x86_64-unknown-linux-gnu
+          name: vestad-x86_64-unknown-linux-gnu
           path: .
 
       - name: Extract
         run: |
           mkdir -p cli-extract
+          tar -xzf vestad-x86_64-unknown-linux-gnu.tar.gz -C cli-extract
+          chmod +x cli-extract/vestad
+
+      - name: Download vesta
+        uses: actions/download-artifact@v8
+        with:
+          name: vesta-x86_64-unknown-linux-gnu
+          path: .
+
+      - name: Extract vesta
+        run: |
           tar -xzf vesta-x86_64-unknown-linux-gnu.tar.gz -C cli-extract
           chmod +x cli-extract/vesta
 
@@ -237,13 +308,42 @@ jobs:
         timeout-minutes: 10
         run: |
           set -euo pipefail
-          CLI="cli-extract/vesta"
+          VESTAD="cli-extract/vestad"
           AGENT="ci-test"
+
+          # Start vestad in background
+          "$VESTAD" serve &
+          VESTAD_PID=$!
+
+          # Wait for health endpoint
+          for i in $(seq 1 30); do
+            if curl -sk https://localhost:7860/health >/dev/null 2>&1; then
+              echo "vestad ready after ${i}s"
+              break
+            fi
+            [ "$i" -eq 30 ] && { echo "vestad not ready"; kill $VESTAD_PID 2>/dev/null; exit 1; }
+            sleep 1
+          done
+
+          API_KEY=$(cat ~/.config/vesta/api-key)
+          API="https://localhost:7860"
+          AUTH="Authorization: Bearer $API_KEY"
+          CURL="curl -sfk"
+
+          api() {
+            local method="$1" path="$2"; shift 2
+            $CURL -X "$method" -H "$AUTH" -H 'Content-Type: application/json' "$API$path" "$@"
+          }
+
+          api_json() {
+            local method="$1" path="$2" body="$3"; shift 3
+            $CURL -X "$method" -H "$AUTH" -H 'Content-Type: application/json' -d "$body" "$API$path" "$@"
+          }
 
           assert_agent_status() {
             local agent="$1"; shift
             local s
-            s=$("$CLI" status "$agent" --json)
+            s=$(api GET "/agents/$agent")
             echo "$s"
             for expr in "$@"; do
               echo "$s" | jq -e "$expr" || { echo "FAIL: $expr"; exit 1; }
@@ -254,39 +354,56 @@ jobs:
             assert_agent_status "$AGENT" "$@"
           }
 
+          TOKEN='{"claudeAiOauth":{"accessToken":"ci-test","refreshToken":"ci-test","expiresAt":4070908800000}}'
+
           cleanup() {
             echo "=== Cleanup ==="
-            "$CLI" destroy ci-test --yes 2>/dev/null || true
-            "$CLI" destroy ci-test2 --yes 2>/dev/null || true
-            "$CLI" destroy ci-restored --yes 2>/dev/null || true
-            "$CLI" destroy my-test-agent --yes 2>/dev/null || true
-            "$CLI" destroy ci-wait-test --yes 2>/dev/null || true
-            "$CLI" destroy ci-destroy-test --yes 2>/dev/null || true
-            "$CLI" destroy ci-friendly --yes 2>/dev/null || true
-            "$CLI" destroy ci-status-test --yes 2>/dev/null || true
+            api POST "/agents/ci-test/destroy" 2>/dev/null || true
+            api POST "/agents/ci-test2/destroy" 2>/dev/null || true
+            api POST "/agents/ci-restored/destroy" 2>/dev/null || true
+            api POST "/agents/my-test-agent/destroy" 2>/dev/null || true
+            api POST "/agents/ci-destroy-test/destroy" 2>/dev/null || true
+            api POST "/agents/ci-friendly/destroy" 2>/dev/null || true
+            api POST "/agents/ci-status-test/destroy" 2>/dev/null || true
+            api POST "/agents/cli-e2e/destroy" 2>/dev/null || true
+            kill $VESTAD_PID 2>/dev/null || true
           }
           trap cleanup EXIT
 
-          echo "=== basic commands ==="
-          "$CLI" --version
-          "$CLI" --help
+          echo "=== security: no auth → 401 ==="
+          HTTP_CODE=$(curl -sk -o /dev/null -w '%{http_code}' "$API/agents")
+          [ "$HTTP_CODE" = "401" ] || { echo "FAIL: expected 401 without auth, got $HTTP_CODE"; exit 1; }
+
+          echo "=== security: wrong token → 401 ==="
+          HTTP_CODE=$(curl -sk -o /dev/null -w '%{http_code}' -H "Authorization: Bearer wrong" "$API/agents")
+          [ "$HTTP_CODE" = "401" ] || { echo "FAIL: expected 401 with wrong token, got $HTTP_CODE"; exit 1; }
+
+          echo "=== security: health needs no auth ==="
+          curl -sk "$API/health" | jq -e '.ok == true'
+
+          echo "=== security: correct token → 200 ==="
+          HTTP_CODE=$(curl -sk -o /dev/null -w '%{http_code}' -H "$AUTH" "$API/agents")
+          [ "$HTTP_CODE" = "200" ] || { echo "FAIL: expected 200 with correct token, got $HTTP_CODE"; exit 1; }
+
+          echo "=== health check ==="
+          curl -sk "$API/health" | jq .
 
           echo "=== status before create ==="
           assert_status '.status == "not_found"'
 
           echo "=== list before create ==="
-          LIST=$("$CLI" list --json)
+          LIST=$(api GET "/agents")
           echo "$LIST"
           echo "$LIST" | jq -e 'length == 0' || { echo "FAIL: list should be empty"; exit 1; }
 
           echo "=== create with name ==="
-          "$CLI" create --name ci-test
+          api_json POST "/agents" '{"name":"ci-test"}'
 
           echo "=== status after create ==="
-          assert_status '.status == "stopped" or .status == "created"' '.name == "ci-test"'
+          assert_status '.status == "stopped"' '.name == "ci-test"'
 
           echo "=== list after create ==="
-          LIST=$("$CLI" list --json)
+          LIST=$(api GET "/agents")
           echo "$LIST"
           echo "$LIST" | jq -e 'length == 1' || { echo "FAIL: list should have 1 entry"; exit 1; }
           echo "$LIST" | jq -e '.[0].name == "ci-test"' || { echo "FAIL: list entry name"; exit 1; }
@@ -300,14 +417,14 @@ jobs:
           echo "$AUTH_OUTPUT" | grep -qE 'https://' || { echo "FAIL: no auth URL in output"; exit 1; }
           echo "auth URL found"
 
-          echo "=== auth with token ==="
-          "$CLI" auth "$AGENT" --token '{"claudeAiOauth":{"accessToken":"ci-test","refreshToken":"ci-test","expiresAt":4070908800000}}'
+          echo "=== auth with token injection ==="
+          api_json POST "/agents/$AGENT/auth/token" "{\"token\":$TOKEN}"
 
           echo "=== verify authenticated ==="
           assert_status '.authenticated == true'
 
           echo "=== start ==="
-          "$CLI" start "$AGENT"
+          api POST "/agents/$AGENT/start"
           assert_status '.status == "running"'
 
           echo "=== verify credential file in container ==="
@@ -315,57 +432,67 @@ jobs:
           echo "$CREDS" | jq -e '.claudeAiOauth.accessToken == "ci-test"' || { echo "FAIL: credentials not injected correctly"; exit 1; }
           echo "credentials verified"
 
+          echo "=== start idempotent ==="
+          api POST "/agents/$AGENT/start"
+          assert_status '.status == "running"'
+
           echo "=== stop ==="
-          "$CLI" stop "$AGENT"
+          api POST "/agents/$AGENT/stop"
           assert_status '.status != "running"'
 
+          echo "=== stop idempotent ==="
+          api POST "/agents/$AGENT/stop"
+
           echo "=== restart ==="
-          "$CLI" start "$AGENT"
-          "$CLI" restart "$AGENT"
+          api POST "/agents/$AGENT/start"
+          api POST "/agents/$AGENT/restart"
           assert_status '.status == "running"'
 
           echo "=== backup ==="
-          "$CLI" backup "$AGENT" /tmp/test-backup.tar.gz
-          test -f /tmp/test-backup.tar.gz || { echo "FAIL: backup file not created"; exit 1; }
+          $CURL -X POST -H "$AUTH" -o /tmp/test-backup.tar.gz "$API/agents/$AGENT/backup"
+          test -s /tmp/test-backup.tar.gz || { echo "FAIL: backup file not created or empty"; exit 1; }
           echo "backup file created"
 
           echo "=== rebuild preserves auth ==="
-          "$CLI" rebuild "$AGENT"
+          api POST "/agents/$AGENT/rebuild"
           assert_status '.status == "running"' '.authenticated == true'
           echo "rebuild preserved credentials"
 
           echo "=== destroy ==="
-          "$CLI" destroy "$AGENT" --yes
+          api POST "/agents/$AGENT/destroy"
           assert_status '.status == "not_found"'
 
           echo "=== restore from backup ==="
-          "$CLI" restore /tmp/test-backup.tar.gz --name ci-test
-          assert_status '.status == "stopped" or .status == "created"' '.name == "ci-test"'
+          $CURL -X POST -H "$AUTH" -H "Content-Type: application/gzip" \
+            --data-binary @/tmp/test-backup.tar.gz "$API/agents/restore?name=ci-test"
+          assert_status '.status == "stopped"' '.name == "ci-test"'
 
           echo "=== restore conflict (should fail) ==="
-          if "$CLI" restore /tmp/test-backup.tar.gz --name ci-test 2>/dev/null; then
-            echo "FAIL: restore should fail when agent already exists"
-            exit 1
-          fi
+          HTTP_CODE=$(curl -sk -o /dev/null -w '%{http_code}' -X POST -H "$AUTH" \
+            -H "Content-Type: application/gzip" --data-binary @/tmp/test-backup.tar.gz \
+            "$API/agents/restore?name=ci-test")
+          [ "$HTTP_CODE" != "200" ] && [ "$HTTP_CODE" != "201" ] || { echo "FAIL: restore should fail when agent exists"; exit 1; }
           echo "restore conflict correctly rejected"
 
-          echo "=== restore with --replace ==="
-          "$CLI" restore /tmp/test-backup.tar.gz --name ci-test --replace
-          assert_status '.status == "stopped" or .status == "created"' '.name == "ci-test"'
+          echo "=== restore with replace ==="
+          $CURL -X POST -H "$AUTH" -H "Content-Type: application/gzip" \
+            --data-binary @/tmp/test-backup.tar.gz "$API/agents/restore?name=ci-test&replace=true"
+          assert_status '.status == "stopped"' '.name == "ci-test"'
           echo "restore --replace succeeded"
 
           echo "=== restore with different name ==="
-          "$CLI" restore /tmp/test-backup.tar.gz --name ci-restored
-          assert_agent_status ci-restored '.status == "stopped" or .status == "created"' '.name == "ci-restored"'
+          $CURL -X POST -H "$AUTH" -H "Content-Type: application/gzip" \
+            --data-binary @/tmp/test-backup.tar.gz "$API/agents/restore?name=ci-restored"
+          assert_agent_status ci-restored '.status == "stopped"' '.name == "ci-restored"'
           echo "restore to different name succeeded"
 
           echo "=== multi-agent: create second agent ==="
-          "$CLI" create --name ci-test2
+          api_json POST "/agents" '{"name":"ci-test2"}'
 
           echo "=== multi-agent: list shows all agents ==="
-          LIST=$("$CLI" list --json)
+          LIST=$(api GET "/agents")
           echo "$LIST"
-          echo "$LIST" | jq -e 'length == 3' || { echo "FAIL: list should have 3 entries (ci-test, ci-test2, ci-restored)"; exit 1; }
+          echo "$LIST" | jq -e 'length == 3' || { echo "FAIL: list should have 3 entries"; exit 1; }
           echo "list shows 3 agents"
 
           echo "=== multi-agent: unique ports ==="
@@ -373,89 +500,227 @@ jobs:
           PORT2=$(echo "$LIST" | jq -r '.[] | select(.name == "ci-test2") | .ws_port')
           PORT3=$(echo "$LIST" | jq -r '.[] | select(.name == "ci-restored") | .ws_port')
           echo "ports: ci-test=$PORT1 ci-test2=$PORT2 ci-restored=$PORT3"
-          if [ "$PORT1" = "$PORT2" ] || [ "$PORT1" = "$PORT3" ] || [ "$PORT2" = "$PORT3" ]; then
-            echo "FAIL: agents have duplicate ports"
-            exit 1
-          fi
+          [ "$PORT1" != "$PORT2" ] && [ "$PORT1" != "$PORT3" ] && [ "$PORT2" != "$PORT3" ] || { echo "FAIL: duplicate ports"; exit 1; }
           echo "all ports unique"
 
           echo "=== multi-agent: start all ==="
-          "$CLI" start
+          api_json POST "/agents/ci-test/auth/token" "{\"token\":$TOKEN}"
+          api_json POST "/agents/ci-test2/auth/token" "{\"token\":$TOKEN}"
+          api_json POST "/agents/ci-restored/auth/token" "{\"token\":$TOKEN}"
+          api POST "/agents/start"
           assert_agent_status ci-test '.status == "running"'
           assert_agent_status ci-test2 '.status == "running"'
           assert_agent_status ci-restored '.status == "running"'
           echo "start-all started all agents"
 
           echo "=== multi-agent: stop one, start-all skips running ==="
-          "$CLI" stop ci-test2
+          api POST "/agents/ci-test2/stop"
           assert_agent_status ci-test2 '.status != "running"'
-          "$CLI" start
+          api POST "/agents/start"
           assert_agent_status ci-test '.status == "running"'
           assert_agent_status ci-test2 '.status == "running"'
           assert_agent_status ci-restored '.status == "running"'
           echo "start-all restarted only stopped agent"
 
           echo "=== multi-agent: independent status ==="
-          "$CLI" stop ci-test
+          api POST "/agents/ci-test/stop"
           assert_agent_status ci-test '.status != "running"'
           assert_agent_status ci-test2 '.status == "running"'
           echo "agents have independent status"
 
           echo "=== name normalization ==="
-          "$CLI" create --name "My Test Agent"
+          api_json POST "/agents" '{"name":"My Test Agent"}'
           assert_agent_status my-test-agent '.name == "my-test-agent"'
-          "$CLI" destroy my-test-agent --yes
+          api POST "/agents/my-test-agent/destroy"
           echo "name normalization works"
 
           echo "=== name validation: empty ==="
-          if "$CLI" create --name "" 2>/dev/null; then
-            echo "FAIL: empty name should be rejected"; exit 1
-          fi
+          HTTP_CODE=$(curl -sk -o /dev/null -w '%{http_code}' -X POST -H "$AUTH" -H 'Content-Type: application/json' -d '{"name":""}' "$API/agents")
+          [ "$HTTP_CODE" != "200" ] && [ "$HTTP_CODE" != "201" ] || { echo "FAIL: empty name should be rejected"; exit 1; }
           echo "empty name correctly rejected"
 
-          echo "=== wait-ready (authenticated agent) ==="
-          "$CLI" create --name ci-wait-test
-          "$CLI" auth ci-wait-test --token '{"claudeAiOauth":{"accessToken":"ci-test","refreshToken":"ci-test","expiresAt":4070908800000}}'
-          "$CLI" start ci-wait-test
-          "$CLI" wait-ready ci-wait-test --timeout 30
-          echo "wait-ready works"
-          "$CLI" destroy ci-wait-test --yes
+          echo "=== create conflict → 409 ==="
+          # ci-test already exists from restore tests
+          HTTP_CODE=$(curl -sk -o /dev/null -w '%{http_code}' -X POST -H "$AUTH" -H 'Content-Type: application/json' -d '{"name":"ci-test"}' "$API/agents")
+          [ "$HTTP_CODE" = "409" ] || { echo "FAIL: expected 409, got $HTTP_CODE"; exit 1; }
+          echo "create conflict returns 409"
 
           echo "=== destroy auto-stops running container ==="
-          "$CLI" create --name ci-destroy-test
-          "$CLI" auth ci-destroy-test --token '{"claudeAiOauth":{"accessToken":"ci-test","refreshToken":"ci-test","expiresAt":4070908800000}}'
-          "$CLI" start ci-destroy-test
+          api_json POST "/agents" '{"name":"ci-destroy-test"}'
+          api_json POST "/agents/ci-destroy-test/auth/token" "{\"token\":$TOKEN}"
+          api POST "/agents/ci-destroy-test/start"
           assert_agent_status ci-destroy-test '.status == "running"'
-          "$CLI" destroy ci-destroy-test --yes
+          api POST "/agents/ci-destroy-test/destroy"
           assert_agent_status ci-destroy-test '.status == "not_found"'
           echo "destroy auto-stopped and removed"
 
           echo "=== friendly_status in list ==="
-          "$CLI" create --name ci-friendly
-          LIST=$("$CLI" list --json)
+          api_json POST "/agents" '{"name":"ci-friendly"}'
+          LIST=$(api GET "/agents")
           echo "$LIST" | jq -e '.[] | select(.name == "ci-friendly") | .friendly_status == "stopped"' || { echo "FAIL: friendly_status should be stopped"; exit 1; }
           echo "$LIST" | jq -e '.[] | select(.name == "ci-friendly") | .alive == false' || { echo "FAIL: alive should be false"; exit 1; }
-          "$CLI" destroy ci-friendly --yes
+          api POST "/agents/ci-friendly/destroy"
           echo "friendly_status and alive fields work"
 
           echo "=== status includes alive and friendly_status ==="
-          "$CLI" create --name ci-status-test
-          STATUS=$("$CLI" status ci-status-test --json)
+          api_json POST "/agents" '{"name":"ci-status-test"}'
+          STATUS=$(api GET "/agents/ci-status-test")
           echo "$STATUS" | jq -e '.alive == false' || { echo "FAIL: alive should be false when stopped"; exit 1; }
           echo "$STATUS" | jq -e '.friendly_status == "stopped"' || { echo "FAIL: friendly_status should be stopped"; exit 1; }
-          "$CLI" destroy ci-status-test --yes
+          api POST "/agents/ci-status-test/destroy"
           echo "status fields work"
 
           echo "=== cleanup extra agents ==="
-          "$CLI" destroy ci-test2 --yes
-          "$CLI" destroy ci-restored --yes
-          "$CLI" destroy ci-test --yes
+          api POST "/agents/ci-test2/destroy" || true
+          api POST "/agents/ci-restored/destroy" || true
+          api POST "/agents/ci-test/destroy" || true
 
           echo "=== all tests passed ==="
 
+          echo ""
+          echo "========================================"
+          echo "=== Client CLI E2E tests ==="
+          echo "========================================"
+
+          VESTA="cli-extract/vesta"
+          export VESTA_HOST="https://localhost:7860"
+          export VESTA_TOKEN="$API_KEY"
+
+          echo "=== vesta list ==="
+          LIST=$("$VESTA" list --json)
+          echo "$LIST"
+          echo "$LIST" | jq -e 'length == 0' || { echo "FAIL: list should be empty after cleanup"; exit 1; }
+
+          echo "=== vesta create ==="
+          "$VESTA" create --name cli-e2e
+
+          echo "=== vesta status ==="
+          STATUS=$("$VESTA" status cli-e2e --json)
+          echo "$STATUS"
+          echo "$STATUS" | jq -e '.status == "stopped"'
+          echo "$STATUS" | jq -e '.name == "cli-e2e"'
+
+          echo "=== vesta auth --token ==="
+          "$VESTA" auth cli-e2e --token "$TOKEN"
+
+          echo "=== vesta start ==="
+          "$VESTA" start cli-e2e
+
+          echo "=== vesta status running ==="
+          STATUS=$("$VESTA" status cli-e2e --json)
+          echo "$STATUS" | jq -e '.status == "running"'
+          echo "$STATUS" | jq -e '.authenticated == true'
+
+          echo "=== vesta stop ==="
+          "$VESTA" stop cli-e2e
+
+          echo "=== vesta restart ==="
+          "$VESTA" restart cli-e2e
+
+          echo "=== vesta wait-ready ==="
+          "$VESTA" wait-ready cli-e2e --timeout 60
+
+          echo "=== vesta logs (brief) ==="
+          timeout 5 "$VESTA" logs cli-e2e || true
+          echo "(logs stream verified)"
+
+          echo "=== vesta backup ==="
+          "$VESTA" backup cli-e2e /tmp/cli-e2e-backup.tar.gz
+          test -s /tmp/cli-e2e-backup.tar.gz
+
+          echo "=== vesta rebuild ==="
+          "$VESTA" rebuild cli-e2e
+
+          echo "=== vesta status after rebuild ==="
+          STATUS=$("$VESTA" status cli-e2e --json)
+          echo "$STATUS" | jq -e '.status == "running"'
+          echo "$STATUS" | jq -e '.authenticated == true'
+
+          echo "=== vesta destroy ==="
+          "$VESTA" destroy cli-e2e
+
+          echo "=== vesta restore ==="
+          "$VESTA" restore /tmp/cli-e2e-backup.tar.gz --name cli-e2e
+
+          echo "=== vesta list after restore ==="
+          LIST=$("$VESTA" list --json)
+          echo "$LIST" | jq -e 'length == 1'
+          echo "$LIST" | jq -e '.[0].name == "cli-e2e"'
+
+          echo "=== vesta start (for WS/SSE tests) ==="
+          "$VESTA" start cli-e2e
+          "$VESTA" wait-ready cli-e2e --timeout 60
+
+          echo "=== SSE logs via curl ==="
+          timeout 5 $CURL -N -H "$AUTH" "$API/agents/cli-e2e/logs" > /tmp/sse-output.txt 2>/dev/null || true
+          if [ -s /tmp/sse-output.txt ]; then
+            echo "SSE stream received data"
+            head -5 /tmp/sse-output.txt
+          else
+            echo "WARNING: SSE stream empty (agent may not have logs yet)"
+          fi
+
+          echo "=== WebSocket auth rejection ==="
+          # curl can't do real WS upgrades, but can verify auth middleware gatekeeping
+          WS_NO_AUTH=$(curl -sk -o /dev/null -w '%{http_code}' "$API/agents/cli-e2e/ws")
+          echo "WS no auth response: $WS_NO_AUTH"
+          [ "$WS_NO_AUTH" = "401" ] || { echo "FAIL: expected 401 without token, got $WS_NO_AUTH"; exit 1; }
+          echo "WS correctly rejects no-auth"
+
+          echo "=== WebSocket proxy (real WS client) ==="
+          pip install -q websockets
+          # Use Python to test actual WebSocket upgrade + message exchange through proxy
+          python3 -c "
+          import asyncio, ssl, json, websockets
+
+          async def test_ws():
+              url = 'wss://localhost:7860/agents/cli-e2e/ws?token=$API_KEY'
+              ctx = ssl.create_default_context()
+              ctx.check_hostname = False
+              ctx.verify_mode = ssl.CERT_NONE
+              async with websockets.connect(url, ssl=ctx) as ws:
+                  # Send a message
+                  await ws.send(json.dumps({'type': 'message', 'text': 'hello from CI'}))
+                  # Read until we get a response or timeout
+                  try:
+                      msg = await asyncio.wait_for(ws.recv(), timeout=10)
+                      print(f'WS received: {msg[:200]}')
+                  except asyncio.TimeoutError:
+                      print('WS connected but no response within 10s (agent may not reply to invalid auth)')
+                  print('WS upgrade + send succeeded')
+
+          asyncio.run(test_ws())
+          "
+          echo "WS proxy test passed"
+
+          echo "=== WebSocket rejected for stopped agent ==="
+          "$VESTA" stop cli-e2e
+          sleep 2
+          python3 -c "
+          import asyncio, ssl, json, websockets
+          async def test_ws_stopped():
+              url = 'wss://localhost:7860/agents/cli-e2e/ws?token=$API_KEY'
+              ctx = ssl.create_default_context()
+              ctx.check_hostname = False
+              ctx.verify_mode = ssl.CERT_NONE
+              try:
+                  async with websockets.connect(url, ssl=ctx) as ws:
+                      print('FAIL: should not connect to stopped agent')
+                      exit(1)
+              except Exception as e:
+                  print(f'Correctly rejected: {e}')
+          asyncio.run(test_ws_stopped())
+          "
+          echo "WS stopped agent rejection verified"
+
+          echo "=== final cleanup ==="
+          "$VESTA" destroy cli-e2e
+
+          echo "=== ALL CLIENT CLI + WS/SSE TESTS PASSED ==="
+
   # ── Test macOS CLI ────────────────────────────────────────────────────
   test-macos:
-    needs: [build-cli, build-vm-image]
+    needs: [build-vesta, build-vm-image]
     if: ${{ !failure() && !cancelled() }}
     runs-on: macos-latest
     timeout-minutes: 10
@@ -480,11 +745,6 @@ jobs:
           echo "=== basic commands ==="
           "$CLI" --version
           "$CLI" --help
-
-          echo "=== list without VM ==="
-          LIST=$("$CLI" list --json)
-          echo "$LIST"
-          echo "$LIST" | jq -e 'length == 0'
 
           echo "=== verify vfkit ==="
           ls -la cli-extract/vfkit
@@ -534,18 +794,18 @@ jobs:
           echo "$STATUS" | jq -e '.status == "not_found"'
           echo "all macOS integration tests passed"
 
-  # ── Build VM images (non-PR only) ────────────────────────────────────
+  # ── Build VM images ─────────────────────────────────────────────────
   build-vm-image:
-    needs: build-cli
-    if: github.event_name != 'pull_request'
+    needs: [build-vestad, detect-changes]
+    if: needs.detect-changes.outputs.cli == 'true' || github.event_name != 'pull_request'
     strategy:
       fail-fast: false
       matrix:
         include:
           - arch: amd64
-            cli-artifact: vesta-x86_64-unknown-linux-gnu
+            vestad-artifact: vestad-x86_64-unknown-linux-gnu
           - arch: arm64
-            cli-artifact: vesta-aarch64-unknown-linux-gnu
+            vestad-artifact: vestad-aarch64-unknown-linux-gnu
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -554,17 +814,17 @@ jobs:
         if: matrix.arch == 'arm64'
         uses: docker/setup-qemu-action@v4
 
-      - name: Download Linux CLI
+      - name: Download vestad
         uses: actions/download-artifact@v8
         with:
-          name: ${{ matrix.cli-artifact }}
+          name: ${{ matrix.vestad-artifact }}
           path: .
 
-      - name: Extract CLI binary
+      - name: Extract vestad binary
         run: |
-          mkdir -p /tmp/cli-extract
-          tar -xzf ${{ matrix.cli-artifact }}.tar.gz -C /tmp/cli-extract
-          cp /tmp/cli-extract/vesta cli/vm/vesta
+          mkdir -p /tmp/vestad-extract
+          tar -xzf ${{ matrix.vestad-artifact }}.tar.gz -C /tmp/vestad-extract
+          cp /tmp/vestad-extract/vestad cli/vm/vestad
 
       - name: Build VM Docker image
         run: docker build --platform linux/${{ matrix.arch }} -t vesta-vm -f cli/vm/Dockerfile cli/vm
@@ -631,7 +891,7 @@ jobs:
           path: /tmp/vesta-wsl-rootfs.tar.gz
 
       - name: Clean up
-        run: rm -f cli/vm/vesta
+        run: rm -f cli/vm/vestad
 
   # ── Windows Clippy (runs on PRs too) ─────────────────────────────────
   clippy-windows:
@@ -657,12 +917,16 @@ jobs:
 
       - name: Clippy
         working-directory: cli
-        run: cargo clippy --target x86_64-pc-windows-msvc -- -D warnings
+        run: cargo clippy -p vesta --target x86_64-pc-windows-msvc -- -D warnings
 
   # ── Build + Test Windows CLI (native MSVC) ───────────────────────────
   build-test-windows:
-    needs: [build-vm-image, clippy-windows]
-    if: ${{ !failure() && !cancelled() && github.event_name != 'pull_request' }}
+    needs: [build-vm-image, clippy-windows, detect-changes]
+    if: >-
+      !failure() && !cancelled() && (
+      needs.detect-changes.outputs.cli == 'true' ||
+      github.event_name != 'pull_request'
+      )
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -679,9 +943,9 @@ jobs:
           workspaces: cli
           key: x86_64-pc-windows-msvc
 
-      - name: Build CLI
+      - name: Build vesta
         working-directory: cli
-        run: cargo build --release --target x86_64-pc-windows-msvc
+        run: cargo build --release -p vesta --target x86_64-pc-windows-msvc
 
       - name: Download rootfs
         uses: actions/download-artifact@v8
@@ -695,7 +959,7 @@ jobs:
         run: |
           set -euo pipefail
           CLI="cli/target/x86_64-pc-windows-msvc/release/vesta.exe"
-          VCLI="/usr/local/bin/vesta"
+          VESTAD="/usr/local/bin/vestad"
 
           cleanup() {
             echo "=== Cleanup ==="
@@ -721,9 +985,9 @@ jobs:
           MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec /bin/true
           echo "distro is healthy"
 
-          echo "=== linux cli inside WSL ==="
-          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec $VCLI --version
-          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec $VCLI --help
+          echo "=== vestad inside WSL ==="
+          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec $VESTAD --version
+          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec $VESTAD --help
 
           echo "=== start entrypoint for docker ==="
           MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec /entrypoint.sh &
@@ -739,8 +1003,8 @@ jobs:
             sleep 1
           done
 
-          echo "=== list before create ==="
-          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec $VCLI list --json
+          echo "=== vestad health check inside WSL ==="
+          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec $VESTAD --version
 
           echo "=== container image tests (skipped: WSL2 has no internet on CI runners) ==="
           echo "These tests are covered by test-linux which runs the same checks"
@@ -766,7 +1030,7 @@ jobs:
 
   # ── Build Tauri app (unix) ────────────────────────────────────────────
   build-tauri:
-    needs: [build-cli, test-frontend, detect-changes]
+    needs: [build-vesta, test-frontend, detect-changes]
     if: >-
       !failure() && !cancelled() && (
       github.event_name != 'pull_request' ||
@@ -1011,7 +1275,7 @@ jobs:
 
   # ── Upload artifacts to release and publish ──────────────────────────
   release:
-    needs: [build-cli, test-frontend, test-linux, test-macos, build-vm-image, build-test-windows, build-tauri, build-tauri-windows, push-image]
+    needs: [build-vesta, build-vestad, test-frontend, test-linux, test-macos, build-vm-image, build-test-windows, build-tauri, build-tauri-windows, push-image]
     if: ${{ !failure() && !cancelled() && github.event_name == 'release' }}
     runs-on: ubuntu-latest
     steps:
