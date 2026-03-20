@@ -116,12 +116,23 @@ main() {
           x86_64) RUST_TARGET="x86_64-unknown-linux-gnu" ;;
           aarch64) RUST_TARGET="aarch64-unknown-linux-gnu" ;;
         esac
-        ARTIFACT="vesta-${RUST_TARGET}.tar.gz"
-        echo "Downloading CLI..."
-        curl -fsSL -o "$WORK_DIR/vesta.tar.gz" "https://github.com/${REPO}/releases/download/v${VERSION}/${ARTIFACT}"
-        verify_checksum "$WORK_DIR/vesta.tar.gz" "$ARTIFACT"
+
+        VESTA_ARTIFACT="vesta-${RUST_TARGET}.tar.gz"
+        echo "Downloading vesta client..."
+        curl -fsSL -o "$WORK_DIR/vesta.tar.gz" "https://github.com/${REPO}/releases/download/v${VERSION}/${VESTA_ARTIFACT}"
+        verify_checksum "$WORK_DIR/vesta.tar.gz" "$VESTA_ARTIFACT"
         tar -xzf "$WORK_DIR/vesta.tar.gz" -C "$WORK_DIR"
         install_cli_to_path "$WORK_DIR/vesta"
+
+        VESTAD_ARTIFACT="vestad-${RUST_TARGET}.tar.gz"
+        echo "Downloading vestad server..."
+        curl -fsSL -o "$WORK_DIR/vestad.tar.gz" "https://github.com/${REPO}/releases/download/v${VERSION}/${VESTAD_ARTIFACT}"
+        verify_checksum "$WORK_DIR/vestad.tar.gz" "$VESTAD_ARTIFACT"
+        tar -xzf "$WORK_DIR/vestad.tar.gz" -C "$WORK_DIR"
+        local bin_dir="$HOME/.local/bin"
+        mkdir -p "$bin_dir"
+        install -m 755 "$WORK_DIR/vestad" "$bin_dir/vestad"
+        echo "Installed vestad to $bin_dir/vestad"
       else
         if command -v apt-get >/dev/null 2>&1; then
           PKG_TYPE="deb"

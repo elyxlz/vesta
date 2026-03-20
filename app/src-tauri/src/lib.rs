@@ -55,6 +55,7 @@ pub fn run() {
             commands::agents::restore_agent,
             commands::agents::wait_for_ready,
             commands::agents::agent_host,
+            commands::agents::get_server_config,
             commands::logs::stream_logs,
             commands::logs::stop_logs,
             commands::auth::authenticate,

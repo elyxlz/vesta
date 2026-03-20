@@ -14,9 +14,9 @@ RUN mkdir -p /root/.ssh && chmod 700 /root/.ssh \
     && ssh-keygen -A \
     && sed -i 's/#PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config
 
-# Vesta CLI
-COPY vesta /usr/local/bin/vesta
-RUN chmod +x /usr/local/bin/vesta
+# Vesta server daemon
+COPY vestad /usr/local/bin/vestad
+RUN chmod +x /usr/local/bin/vestad
 
 # Boot
 COPY entrypoint.sh /entrypoint.sh
