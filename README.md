@@ -1,6 +1,17 @@
 # Vesta
 
-A personal AI assistant that runs as a persistent daemon in Docker, powered by Claude.
+A personal AI agent that lives in a Docker container, powered by Claude.
+
+## Why Vesta
+
+- **Opinionated and easy to set up.** One command to install, one command to start. No gateway, no infrastructure to manage.
+- **Bitter lesson pilled.** No MCP, no gateway. The agent's full source code is editable by itself, including communication channels. Very little is hardcoded.
+- **Self-improving.** Vesta has a powerful self-improvement core. It can edit its own source code, write new skills, and fix its own bugs.
+- **1 agent = 1 container.** The Docker container is the state. No external databases, no config drift. Back up the container, restore the container.
+- **Agentic bidirectional sync.** Vesta instances can evolve and diverge from the source. Syncing is semantic — the agent understands what changed and why, and merges upstream updates or contributes patches back intelligently.
+- **Self-proliferating.** A Vesta can encourage and help other users onboard and create their own Vestas.
+- **Secure by default.** An external supervisor LLM governs security. It follows strict guidelines, only inspects tool calls to avoid prompt injections, and can only be bypassed by user 2FA.
+- **Built on Claude Agent SDK.** Benefits from Anthropic's RL on its own harness.
 
 ## Prerequisites
 
@@ -13,26 +24,14 @@ A personal AI assistant that runs as a persistent daemon in Docker, powered by C
 
 ### macOS / Linux
 
-Desktop app (includes CLI):
 ```bash
 curl -fsSL https://raw.githubusercontent.com/elyxlz/vesta/master/install.sh | bash
 ```
 
-CLI only:
-```bash
-curl -fsSL https://raw.githubusercontent.com/elyxlz/vesta/master/install.sh | bash -s -- --cli
-```
-
 ### Windows
 
-Desktop app (includes CLI):
 ```powershell
 irm https://raw.githubusercontent.com/elyxlz/vesta/master/install.ps1 | iex
-```
-
-CLI only:
-```powershell
-irm https://raw.githubusercontent.com/elyxlz/vesta/master/install.ps1 | iex -CliOnly
 ```
 
 ## Getting started
