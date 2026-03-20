@@ -520,7 +520,7 @@ jobs:
           echo "empty name correctly rejected"
 
           echo "=== create conflict → 409 ==="
-          api_json POST "/agents" '{"name":"ci-test"}'
+          # ci-test already exists from restore tests
           HTTP_CODE=$(curl -sk -o /dev/null -w '%{http_code}' -X POST -H "$AUTH" -H 'Content-Type: application/json' -d '{"name":"ci-test"}' "$API/agents")
           [ "$HTTP_CODE" = "409" ] || { echo "FAIL: expected 409, got $HTTP_CODE"; exit 1; }
           echo "create conflict returns 409"
