@@ -134,6 +134,10 @@ def sdk(msg: tp.Any) -> None:
     _cat("~", "dim", "SDK", msg, level=logging.DEBUG)
 
 
+def usage(msg: tp.Any) -> None:
+    _cat("$", "green", "USAGE", msg)
+
+
 def debug(msg: tp.Any) -> None:
     _log(f"[dim]{msg}[/dim]", level=logging.DEBUG)
 
