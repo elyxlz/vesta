@@ -34,6 +34,8 @@ RUN mkdir -p .claude && ln -s ../skills .claude/skills
 RUN git clone --bare --single-branch https://github.com/elyxlz/vesta.git .git && \
     git config core.bare false
 
+RUN rm -f /usr/bin/pkill /usr/bin/killall
+
 ENV HOME=/root
 ENV IS_SANDBOX=1
 ENTRYPOINT ["uv", "run", "--project", "/root/vesta", "python", "-m", "vesta.main"]
