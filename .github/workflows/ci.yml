@@ -239,23 +239,23 @@ jobs:
           key: vestad-${{ matrix.target }}
 
       - name: Install musl toolchain
+        if: ${{ !matrix.cross }}
         run: |
           sudo apt-get update
           sudo apt-get install -y musl-tools
-      - name: Install Linux cross-compile deps
+
+      - name: Install cross
         if: matrix.cross
-        run: |
-          sudo apt-get install -y gcc-aarch64-linux-gnu musl-dev
-          # Install aarch64 musl cross-compiler
-          curl -fsSL https://musl.cc/aarch64-linux-musl-cross.tgz | sudo tar xz -C /opt
-          echo "/opt/aarch64-linux-musl-cross/bin" >> $GITHUB_PATH
-          mkdir -p cli/.cargo
-          echo '[target.aarch64-unknown-linux-musl]' >> cli/.cargo/config.toml
-          echo 'linker = "aarch64-linux-musl-gcc"' >> cli/.cargo/config.toml
+        run: cargo install cross --locked
 
       - name: Build vestad
         working-directory: cli
-        run: cargo build --release -p vestad --target ${{ matrix.target }}
+        run: |
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            cross build --release -p vestad --target ${{ matrix.target }}
+          else
+            cargo build --release -p vestad --target ${{ matrix.target }}
+          fi
 
       - name: Package
         run: |
