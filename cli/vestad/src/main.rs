@@ -3,6 +3,7 @@ use clap::Parser;
 mod docker;
 mod serve;
 
+
 #[derive(Parser)]
 #[command(name = "vestad", version, about = "Vesta API server daemon")]
 struct Cli {
@@ -38,6 +39,12 @@ fn config_dir() -> std::path::PathBuf {
 }
 
 fn main() {
+    // Install ring as the rustls crypto provider (aws-lc-rs generates C23 glibc symbols
+    // incompatible with Alpine gcompat)
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("failed to install crypto provider");
+
     let cli = Cli::parse();
 
     match cli.command.unwrap_or(Command::Serve { port: 7860 }) {
