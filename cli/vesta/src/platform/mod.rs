@@ -2,9 +2,11 @@
 pub mod linux;
 
 #[cfg(target_os = "macos")]
+#[allow(dead_code)]
 pub mod macos;
 
 #[cfg(target_os = "windows")]
+#[allow(dead_code)]
 pub mod windows;
 
 use std::path::PathBuf;

@@ -822,7 +822,10 @@ pub fn build_router(api_key: String) -> Router {
         .route("/agents", get(list_agents_handler))
         .route("/agents", post(create_agent_handler))
         .route("/agents/start", post(start_all_handler))
-        .route("/agents/restore", post(restore_handler))
+        .route(
+            "/agents/restore",
+            post(restore_handler).layer(axum::extract::DefaultBodyLimit::max(4 * 1024 * 1024 * 1024)), // 4GB
+        )
         .route("/agents/{name}", get(agent_status_handler))
         .route("/agents/{name}/start", post(start_agent_handler))
         .route("/agents/{name}/stop", post(stop_agent_handler))

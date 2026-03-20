@@ -478,7 +478,7 @@ pub fn extract_credentials() -> Option<ServerConfig> {
     })
 }
 
-pub fn setup(name: Option<&str>, build: bool, yes: bool) {
+pub fn setup(_name: Option<&str>, _build: bool, _yes: bool) {
     if !vm_image_ready() {
         download_vm_image();
     }
