@@ -666,10 +666,63 @@ jobs:
           echo "WS no auth response: $WS_NO_AUTH"
           [ "$WS_NO_AUTH" = "401" ] || { echo "FAIL: expected 401 without token, got $WS_NO_AUTH"; exit 1; }
           echo "WS correctly rejects no-auth"
-          # Note: stopped-agent and upgrade tests require a real WS client (not curl)
+
+          echo "=== WebSocket proxy (real WS client) ==="
+          # Use Python to test actual WebSocket upgrade + message exchange through proxy
+          python3 -c "
+          import asyncio, ssl, json
+          try:
+              import websockets
+          except ImportError:
+              import subprocess, sys
+              subprocess.check_call([sys.executable, '-m', 'pip', 'install', '-q', 'websockets'])
+              import websockets
+
+          async def test_ws():
+              url = 'wss://localhost:7860/agents/cli-e2e/ws?token=$API_KEY'
+              ctx = ssl.create_default_context()
+              ctx.check_hostname = False
+              ctx.verify_mode = ssl.CERT_NONE
+              async with websockets.connect(url, ssl=ctx) as ws:
+                  # Send a message
+                  await ws.send(json.dumps({'type': 'message', 'text': 'hello from CI'}))
+                  # Read until we get a response or timeout
+                  try:
+                      msg = await asyncio.wait_for(ws.recv(), timeout=10)
+                      print(f'WS received: {msg[:200]}')
+                  except asyncio.TimeoutError:
+                      print('WS connected but no response within 10s (agent may not reply to invalid auth)')
+                  print('WS upgrade + send succeeded')
+
+          asyncio.run(test_ws())
+          "
+          echo "WS proxy test passed"
+
+          echo "=== WebSocket rejected for stopped agent ==="
+          "$VESTA" stop cli-e2e
+          sleep 2
+          python3 -c "
+          import asyncio, ssl, json
+          try:
+              import websockets
+          except ImportError:
+              pass
+          async def test_ws_stopped():
+              url = 'wss://localhost:7860/agents/cli-e2e/ws?token=$API_KEY'
+              ctx = ssl.create_default_context()
+              ctx.check_hostname = False
+              ctx.verify_mode = ssl.CERT_NONE
+              try:
+                  async with websockets.connect(url, ssl=ctx) as ws:
+                      print('FAIL: should not connect to stopped agent')
+                      exit(1)
+              except Exception as e:
+                  print(f'Correctly rejected: {e}')
+          asyncio.run(test_ws_stopped())
+          "
+          echo "WS stopped agent rejection verified"
 
           echo "=== final cleanup ==="
-          "$VESTA" stop cli-e2e 2>/dev/null || true
           "$VESTA" destroy cli-e2e
 
           echo "=== ALL CLIENT CLI + WS/SSE TESTS PASSED ==="
