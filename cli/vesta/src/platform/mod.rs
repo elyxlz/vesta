@@ -69,10 +69,13 @@ pub fn load_server_config(host_flag: Option<&str>, token_flag: Option<&str>) -> 
         if let Ok(key) = std::fs::read_to_string(&key_path) {
             let key = key.trim().to_string();
             if !key.is_empty() {
+                let fingerprint = std::fs::read_to_string(format!("{}/.config/vesta/tls/fingerprint", home))
+                    .ok()
+                    .map(|s| s.trim().to_string());
                 return Some(ServerConfig {
                     url: "https://localhost:7860".to_string(),
                     api_key: key,
-                    cert_fingerprint: None,
+                    cert_fingerprint: fingerprint,
                 });
             }
         }

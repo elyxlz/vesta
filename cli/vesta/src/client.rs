@@ -4,28 +4,49 @@ use std::sync::Arc;
 use ureq::http::Response;
 use ureq::Body;
 
-fn make_rustls_config() -> Arc<rustls::ClientConfig> {
+fn make_rustls_config(fingerprint: Option<String>) -> Arc<rustls::ClientConfig> {
     Arc::new(
         rustls::ClientConfig::builder()
             .dangerous()
-            .with_custom_certificate_verifier(Arc::new(NoVerify))
+            .with_custom_certificate_verifier(Arc::new(FingerprintVerifier {
+                expected: fingerprint,
+            }))
             .with_no_client_auth(),
     )
 }
 
+/// TLS cert verifier that checks SHA-256 fingerprint instead of CA chain.
+/// Falls back to accepting any cert if no fingerprint is configured (e.g. env var auth).
 #[derive(Debug)]
-struct NoVerify;
+struct FingerprintVerifier {
+    expected: Option<String>, // e.g. "sha256:AB:CD:EF:..."
+}
 
-impl rustls::client::danger::ServerCertVerifier for NoVerify {
+impl rustls::client::danger::ServerCertVerifier for FingerprintVerifier {
     fn verify_server_cert(
         &self,
-        _: &rustls::pki_types::CertificateDer<'_>,
-        _: &[rustls::pki_types::CertificateDer<'_>],
-        _: &rustls::pki_types::ServerName<'_>,
-        _: &[u8],
-        _: rustls::pki_types::UnixTime,
+        end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
     ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        Ok(rustls::client::danger::ServerCertVerified::assertion())
+        let Some(expected) = &self.expected else {
+            // No fingerprint configured — accept any cert
+            return Ok(rustls::client::danger::ServerCertVerified::assertion());
+        };
+
+        // Compute SHA-256 of the DER-encoded certificate
+        let actual = cert_fingerprint(end_entity.as_ref());
+
+        if actual == *expected {
+            Ok(rustls::client::danger::ServerCertVerified::assertion())
+        } else {
+            Err(rustls::Error::General(format!(
+                "certificate fingerprint mismatch: expected {}, got {}",
+                expected, actual
+            )))
+        }
     }
     fn verify_tls12_signature(
         &self,
@@ -48,6 +69,29 @@ impl rustls::client::danger::ServerCertVerifier for NoVerify {
             .signature_verification_algorithms
             .supported_schemes()
     }
+}
+
+fn cert_fingerprint(der: &[u8]) -> String {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let mut child = Command::new("openssl")
+        .args(["dgst", "-sha256", "-binary"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("openssl not found");
+    child.stdin.take().unwrap().write_all(der).ok();
+    let output = child.wait_with_output().expect("openssl failed");
+    format!(
+        "sha256:{}",
+        output
+            .stdout
+            .iter()
+            .map(|b| format!("{:02X}", b))
+            .collect::<Vec<_>>()
+            .join(":")
+    )
 }
 
 #[derive(Deserialize, Serialize, Clone)]
@@ -97,6 +141,7 @@ pub struct Client {
     agent: ureq::Agent,
     base_url: String,
     api_key: String,
+    cert_fingerprint: Option<String>,
 }
 
 fn check_response(resp: Response<Body>) -> Result<Response<Body>, String> {
@@ -135,7 +180,7 @@ fn map_error(e: ureq::Error) -> String {
 }
 
 impl Client {
-    pub fn new(base_url: String, api_key: String) -> Self {
+    pub fn new(base_url: String, api_key: String, cert_fingerprint: Option<String>) -> Self {
         let agent = ureq::Agent::config_builder()
             .http_status_as_error(false)
             .tls_config(
@@ -149,6 +194,7 @@ impl Client {
             agent,
             base_url,
             api_key,
+            cert_fingerprint,
         }
     }
 
@@ -361,7 +407,7 @@ impl Client {
         let port = parsed.port().unwrap_or(7860);
         let tcp = std::net::TcpStream::connect((host, port))
             .map_err(|e| format!("ws tcp connect failed: {}", e))?;
-        let connector = tungstenite::Connector::Rustls(make_rustls_config());
+        let connector = tungstenite::Connector::Rustls(make_rustls_config(self.cert_fingerprint.clone()));
         let (mut socket, _) =
             tungstenite::client_tls_with_config(url, tcp, None, Some(connector))
                 .map_err(|e| format!("ws connect failed: {}", e))?;

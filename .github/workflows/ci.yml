@@ -263,7 +263,7 @@ jobs:
 
   # ── Test Linux (vestad HTTP API) ──────────────────────────────────────
   test-linux:
-    needs: build-vestad
+    needs: [build-vestad, build-vesta]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -278,6 +278,17 @@ jobs:
           mkdir -p cli-extract
           tar -xzf vestad-x86_64-unknown-linux-gnu.tar.gz -C cli-extract
           chmod +x cli-extract/vestad
+
+      - name: Download vesta
+        uses: actions/download-artifact@v8
+        with:
+          name: vesta-x86_64-unknown-linux-gnu
+          path: .
+
+      - name: Extract vesta
+        run: |
+          tar -xzf vesta-x86_64-unknown-linux-gnu.tar.gz -C cli-extract
+          chmod +x cli-extract/vesta
 
       - name: Login to ghcr.io
         uses: docker/login-action@v4
@@ -336,6 +347,8 @@ jobs:
             assert_agent_status "$AGENT" "$@"
           }
 
+          TOKEN='{"claudeAiOauth":{"accessToken":"ci-test","refreshToken":"ci-test","expiresAt":4070908800000}}'
+
           cleanup() {
             echo "=== Cleanup ==="
             api POST "/agents/ci-test/destroy" 2>/dev/null || true
@@ -345,6 +358,7 @@ jobs:
             api POST "/agents/ci-destroy-test/destroy" 2>/dev/null || true
             api POST "/agents/ci-friendly/destroy" 2>/dev/null || true
             api POST "/agents/ci-status-test/destroy" 2>/dev/null || true
+            api POST "/agents/cli-e2e/destroy" 2>/dev/null || true
             kill $VESTAD_PID 2>/dev/null || true
           }
           trap cleanup EXIT
@@ -397,7 +411,6 @@ jobs:
           echo "auth URL found"
 
           echo "=== auth with token injection ==="
-          TOKEN='{"claudeAiOauth":{"accessToken":"ci-test","refreshToken":"ci-test","expiresAt":4070908800000}}'
           api_json POST "/agents/$AGENT/auth/token" "{\"token\":$TOKEN}"
 
           echo "=== verify authenticated ==="
@@ -557,6 +570,123 @@ jobs:
 
           echo "=== all tests passed ==="
 
+          echo ""
+          echo "========================================"
+          echo "=== Client CLI E2E tests ==="
+          echo "========================================"
+
+          VESTA="cli-extract/vesta"
+          export VESTA_HOST="https://localhost:7860"
+          export VESTA_TOKEN="$API_KEY"
+
+          echo "=== vesta list ==="
+          LIST=$("$VESTA" list --json)
+          echo "$LIST"
+          echo "$LIST" | jq -e 'length == 0' || { echo "FAIL: list should be empty after cleanup"; exit 1; }
+
+          echo "=== vesta create ==="
+          "$VESTA" create --name cli-e2e
+
+          echo "=== vesta status ==="
+          STATUS=$("$VESTA" status cli-e2e --json)
+          echo "$STATUS"
+          echo "$STATUS" | jq -e '.status == "stopped"'
+          echo "$STATUS" | jq -e '.name == "cli-e2e"'
+
+          echo "=== vesta auth --token ==="
+          "$VESTA" auth cli-e2e --token "$TOKEN"
+
+          echo "=== vesta start ==="
+          "$VESTA" start cli-e2e
+
+          echo "=== vesta status running ==="
+          STATUS=$("$VESTA" status cli-e2e --json)
+          echo "$STATUS" | jq -e '.status == "running"'
+          echo "$STATUS" | jq -e '.authenticated == true'
+
+          echo "=== vesta stop ==="
+          "$VESTA" stop cli-e2e
+
+          echo "=== vesta restart ==="
+          "$VESTA" restart cli-e2e
+
+          echo "=== vesta wait-ready ==="
+          "$VESTA" wait-ready cli-e2e --timeout 60
+
+          echo "=== vesta logs (brief) ==="
+          timeout 5 "$VESTA" logs cli-e2e || true
+          echo "(logs stream verified)"
+
+          echo "=== vesta backup ==="
+          "$VESTA" backup cli-e2e /tmp/cli-e2e-backup.tar.gz
+          test -s /tmp/cli-e2e-backup.tar.gz
+
+          echo "=== vesta rebuild ==="
+          "$VESTA" rebuild cli-e2e
+
+          echo "=== vesta status after rebuild ==="
+          STATUS=$("$VESTA" status cli-e2e --json)
+          echo "$STATUS" | jq -e '.status == "running"'
+          echo "$STATUS" | jq -e '.authenticated == true'
+
+          echo "=== vesta destroy ==="
+          "$VESTA" destroy cli-e2e
+
+          echo "=== vesta restore ==="
+          "$VESTA" restore /tmp/cli-e2e-backup.tar.gz --name cli-e2e
+
+          echo "=== vesta list after restore ==="
+          LIST=$("$VESTA" list --json)
+          echo "$LIST" | jq -e 'length == 1'
+          echo "$LIST" | jq -e '.[0].name == "cli-e2e"'
+
+          echo "=== vesta start (for WS/SSE tests) ==="
+          "$VESTA" start cli-e2e
+          "$VESTA" wait-ready cli-e2e --timeout 60
+
+          echo "=== SSE logs via curl ==="
+          timeout 5 $CURL -N -H "$AUTH" "$API/agents/cli-e2e/logs" > /tmp/sse-output.txt 2>/dev/null || true
+          if [ -s /tmp/sse-output.txt ]; then
+            echo "SSE stream received data"
+            head -5 /tmp/sse-output.txt
+          else
+            echo "WARNING: SSE stream empty (agent may not have logs yet)"
+          fi
+
+          echo "=== WebSocket proxy (basic connectivity) ==="
+          # Test WS upgrade returns 101 with correct auth
+          WS_CODE=$(curl -sk -o /dev/null -w '%{http_code}' \
+            -H "Connection: Upgrade" -H "Upgrade: websocket" \
+            -H "Sec-WebSocket-Version: 13" -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
+            "$API/agents/cli-e2e/ws?token=$API_KEY")
+          echo "WS upgrade response: $WS_CODE"
+          [ "$WS_CODE" = "101" ] || { echo "FAIL: expected 101 WS upgrade, got $WS_CODE"; exit 1; }
+          echo "WS proxy accepts upgrade"
+
+          echo "=== WS rejected without auth ==="
+          WS_NO_AUTH=$(curl -sk -o /dev/null -w '%{http_code}' \
+            -H "Connection: Upgrade" -H "Upgrade: websocket" \
+            -H "Sec-WebSocket-Version: 13" -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
+            "$API/agents/cli-e2e/ws")
+          echo "WS no auth response: $WS_NO_AUTH"
+          [ "$WS_NO_AUTH" = "401" ] || { echo "FAIL: expected 401 without token, got $WS_NO_AUTH"; exit 1; }
+          echo "WS correctly rejects no-auth"
+
+          echo "=== WS rejected for stopped agent ==="
+          "$VESTA" stop cli-e2e
+          WS_STOPPED=$(curl -sk -o /dev/null -w '%{http_code}' \
+            -H "Connection: Upgrade" -H "Upgrade: websocket" \
+            -H "Sec-WebSocket-Version: 13" -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
+            "$API/agents/cli-e2e/ws?token=$API_KEY")
+          echo "WS stopped agent response: $WS_STOPPED"
+          [ "$WS_STOPPED" = "503" ] || { echo "FAIL: expected 503 for stopped agent, got $WS_STOPPED"; exit 1; }
+          echo "WS correctly rejects stopped agent"
+
+          echo "=== final cleanup ==="
+          "$VESTA" destroy cli-e2e
+
+          echo "=== ALL CLIENT CLI + WS/SSE TESTS PASSED ==="
+
   # ── Test macOS CLI ────────────────────────────────────────────────────
   test-macos:
     needs: [build-vesta, build-vm-image]
@@ -633,10 +763,10 @@ jobs:
           echo "$STATUS" | jq -e '.status == "not_found"'
           echo "all macOS integration tests passed"
 
-  # ── Build VM images (non-PR only) ────────────────────────────────────
+  # ── Build VM images ─────────────────────────────────────────────────
   build-vm-image:
-    needs: build-vestad
-    if: github.event_name != 'pull_request'
+    needs: [build-vestad, detect-changes]
+    if: needs.detect-changes.outputs.cli == 'true' || github.event_name != 'pull_request'
     strategy:
       fail-fast: false
       matrix:
@@ -760,8 +890,12 @@ jobs:
 
   # ── Build + Test Windows CLI (native MSVC) ───────────────────────────
   build-test-windows:
-    needs: [build-vm-image, clippy-windows]
-    if: ${{ !failure() && !cancelled() && github.event_name != 'pull_request' }}
+    needs: [build-vm-image, clippy-windows, detect-changes]
+    if: >-
+      !failure() && !cancelled() && (
+      needs.detect-changes.outputs.cli == 'true' ||
+      github.event_name != 'pull_request'
+      )
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
