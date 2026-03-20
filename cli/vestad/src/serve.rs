@@ -192,14 +192,29 @@ async fn auth_middleware(
         return next.run(request).await;
     }
 
-    let authorized = headers
+    // Check Bearer header first, then query param ?token= (for WebSocket)
+    let bearer_ok = headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .map(|token| token == state.api_key)
         .unwrap_or(false);
 
-    if !authorized {
+    let query_ok = if !bearer_ok {
+        request
+            .uri()
+            .query()
+            .and_then(|q| {
+                q.split('&')
+                    .find_map(|p| p.strip_prefix("token="))
+            })
+            .map(|t| t == state.api_key)
+            .unwrap_or(false)
+    } else {
+        false
+    };
+
+    if !bearer_ok && !query_ok {
         return (
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({"error": "unauthorized"})),
