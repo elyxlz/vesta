@@ -9,6 +9,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -771,6 +772,62 @@ func (wac *WhatsAppClient) prepareNotificationInfo(info types.MessageSource) (
 	return
 }
 
+// mentionPattern matches @word patterns in message text.
+var mentionPattern = regexp.MustCompile(`@(\+?\w+)`)
+
+// parseMentions finds @mention patterns in text, resolves them to JIDs,
+// and returns the modified text (with @phone format) and list of mentioned JIDs.
+func (wac *WhatsAppClient) parseMentions(text string) (string, []string) {
+	matches := mentionPattern.FindAllStringSubmatchIndex(text, -1)
+	if len(matches) == 0 {
+		return text, nil
+	}
+
+	var mentionedJIDs []string
+	seen := map[string]bool{}
+	// Process matches in reverse so indices stay valid as we modify the string
+	for i := len(matches) - 1; i >= 0; i-- {
+		fullStart, fullEnd := matches[i][0], matches[i][1]
+		captureStart, captureEnd := matches[i][2], matches[i][3]
+		identifier := text[captureStart:captureEnd]
+
+		jid, err := wac.ResolveRecipient(identifier)
+		if err != nil {
+			continue
+		}
+		if jid.Server != types.DefaultUserServer {
+			continue
+		}
+
+		jidStr := jid.String()
+		if !seen[jidStr] {
+			mentionedJIDs = append(mentionedJIDs, jidStr)
+			seen[jidStr] = true
+		}
+		text = text[:fullStart] + "@" + jid.User + text[fullEnd:]
+	}
+
+	return text, mentionedJIDs
+}
+
+// buildMessage creates a waProto.Message, using ExtendedTextMessage with
+// ContextInfo if mentions are present, or simple Conversation otherwise.
+func buildMessage(text string, mentionedJIDs []string) *waProto.Message {
+	if len(mentionedJIDs) > 0 {
+		return &waProto.Message{
+			ExtendedTextMessage: &waProto.ExtendedTextMessage{
+				Text: proto.String(text),
+				ContextInfo: &waProto.ContextInfo{
+					MentionedJID: mentionedJIDs,
+				},
+			},
+		}
+	}
+	return &waProto.Message{
+		Conversation: proto.String(text),
+	}
+}
+
 func (wac *WhatsAppClient) SendMessageWithPresence(recipient, message string) (bool, string) {
 	if recipient == "" || message == "" {
 		return false, "Recipient and message are required. Provide a contact name, phone number, or group name plus the message text"
@@ -853,10 +910,9 @@ func (wac *WhatsAppClient) SendMessageWithPresence(recipient, message string) (b
 		time.Sleep(sendDelay)
 	}
 
-	// Actually send the message
-	msg := &waProto.Message{
-		Conversation: proto.String(message),
-	}
+	// Parse @mentions and build message
+	resolvedText, mentionedJIDs := wac.parseMentions(message)
+	msg := buildMessage(resolvedText, mentionedJIDs)
 
 	resp, err := wac.client.SendMessage(context.Background(), jid, msg)
 	if err != nil {
@@ -895,10 +951,9 @@ func (wac *WhatsAppClient) SendMessage(recipient, message string) (bool, string)
 		return false, err.Error()
 	}
 
-	// Send message
-	msg := &waProto.Message{
-		Conversation: proto.String(message),
-	}
+	// Parse @mentions and build message
+	resolvedText, mentionedJIDs := wac.parseMentions(message)
+	msg := buildMessage(resolvedText, mentionedJIDs)
 
 	resp, err := wac.client.SendMessage(context.Background(), jid, msg)
 	if err != nil {
@@ -1546,6 +1601,24 @@ func (wac *WhatsAppClient) SendReaction(messageID, emoji, chatIdentifier string)
 	return true, fmt.Sprintf("Reaction %s successfully", action)
 }
 
+func (wac *WhatsAppClient) RevokeMessage(messageID, chatIdentifier string) (bool, string) {
+	jid, err := wac.ResolveRecipient(chatIdentifier)
+	if err != nil {
+		return false, fmt.Sprintf("Failed to resolve chat: %v", err)
+	}
+
+	if err := wac.EnsureConnected(); err != nil {
+		return false, err.Error()
+	}
+
+	resp, err := wac.client.RevokeMessage(context.Background(), jid, types.MessageID(messageID))
+	if err != nil {
+		return false, fmt.Sprintf("Failed to revoke message: %v", err)
+	}
+
+	return true, fmt.Sprintf("Message revoked successfully (revocation ID: %s)", resp.ID)
+}
+
 func (wac *WhatsAppClient) CreateGroup(name string, participants []string) (bool, string) {
 	if name == "" || len(participants) == 0 {
 		return false, "Group name and participants are required"
@@ -1615,6 +1688,36 @@ func (wac *WhatsAppClient) RenameGroup(groupIdentifier, newName string) (bool, s
 		return false, fmt.Sprintf("Group renamed on WhatsApp but failed to update local store: %v", err)
 	}
 	return true, fmt.Sprintf("Group renamed to '%s'", newName)
+}
+
+func (wac *WhatsAppClient) SetGroupPhoto(groupIdentifier, filePath string) (bool, string) {
+	if groupIdentifier == "" || filePath == "" {
+		return false, "Group identifier and file path are required"
+	}
+
+	jid, err := wac.ResolveRecipient(groupIdentifier)
+	if err != nil {
+		return false, fmt.Sprintf("Failed to resolve group: %v", err)
+	}
+	if jid.Server != types.GroupServer {
+		return false, "The specified identifier is not a WhatsApp group"
+	}
+
+	imageBytes, err := os.ReadFile(filePath)
+	if err != nil {
+		return false, fmt.Sprintf("Failed to read image file: %v", err)
+	}
+
+	if err := wac.EnsureConnected(); err != nil {
+		return false, err.Error()
+	}
+
+	_, err = wac.client.SetGroupPhoto(context.Background(), jid, imageBytes)
+	if err != nil {
+		return false, fmt.Sprintf("Failed to set group photo: %v", err)
+	}
+
+	return true, "Group photo updated successfully"
 }
 
 func (wac *WhatsAppClient) GetGroupInviteLink(groupIdentifier string) (bool, string, string) {
