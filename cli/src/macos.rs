@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 const VFKIT_BIN: &str = "vfkit";
 const VM_CPUS: u32 = 2;
-const VM_MEMORY_MIB: u32 = 4096;
+const VM_MEMORY_MIB: u32 = 8192;
 const VM_MAC: &str = "52:54:00:fe:57:a1";
 const VSOCK_PORT: u32 = 2222;
 const LAUNCH_AGENT_LABEL: &str = "com.vesta.autostart";
