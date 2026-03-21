@@ -1,8 +1,10 @@
 import asyncio
 import datetime as dt
+import hashlib
 import json
 import os
 import signal
+import time
 import typing as tp
 
 from claude_agent_sdk import (
@@ -162,13 +164,45 @@ def _subagent_prefix(input_data: dict[str, object]) -> tuple[str, bool]:
     return prefix, True
 
 
+_DEDUP_WINDOW = 60.0  # seconds — block identical whatsapp sends within this window
+_sent_bash_hashes: dict[str, float] = {}
+
+
+def _bash_dedup_hash(tool_input: dict[str, tp.Any]) -> str | None:
+    """Return a hash if this is a whatsapp send command, else None."""
+    cmd = tool_input.get("command", "")
+    if not isinstance(cmd, str) or "whatsapp send" not in cmd:
+        return None
+    return hashlib.md5(cmd.strip().encode()).hexdigest()
+
+
 def _make_hooks(
     state: vm.State,
 ) -> tuple[HookCallback, HookCallback, HookCallback, HookCallback]:
     async def log_tool_start(input_data: PreToolUseHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
         name = input_data["tool_name"]
-        summary = _tool_summary(name, input_data["tool_input"])
+        tool_input = input_data["tool_input"]
+        summary = _tool_summary(name, tool_input)
         prefix, is_sub = _subagent_prefix(input_data)  # type: ignore[arg-type]
+
+        # Dedup: block identical whatsapp sends within the window
+        if name == "Bash":
+            h = _bash_dedup_hash(tool_input)
+            if h is not None:
+                now = time.time()
+                # Expire old entries
+                expired = [k for k, v in _sent_bash_hashes.items() if now - v > _DEDUP_WINDOW]
+                for k in expired:
+                    del _sent_bash_hashes[k]
+                if h in _sent_bash_hashes:
+                    age = now - _sent_bash_hashes[h]
+                    logger.warning(f"Duplicate whatsapp send blocked (identical command {age:.0f}s ago)")
+                    return tp.cast(
+                        HookJSONOutput,
+                        {"decision": "block", "reason": f"Duplicate send blocked: identical whatsapp command was already sent {age:.0f}s ago"},
+                    )
+                _sent_bash_hashes[h] = now
+
         logger.tool(f"{prefix}{summary}")
         state.event_bus.set_state("tool_use")
         state.event_bus.emit({"type": "tool_start", "tool": name, "input": summary, "subagent": is_sub})
