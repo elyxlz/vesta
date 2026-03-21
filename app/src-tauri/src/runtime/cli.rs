@@ -559,25 +559,9 @@ pub async fn restore_agent(
     Ok(())
 }
 
-pub async fn wait_for_ready(name: &str, timeout: u64) -> Result<(), VestaError> {
-    let start = std::time::Instant::now();
-    let deadline = std::time::Duration::from_secs(timeout);
-
-    loop {
-        if start.elapsed() > deadline {
-            return Err(VestaError::new(
-                ErrorCode::Timeout,
-                format!("agent not ready after {}s", timeout),
-            ));
-        }
-
-        match agent_status(name).await {
-            Ok(info) if info.agent_ready => return Ok(()),
-            _ => {}
-        }
-
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-    }
+pub async fn wait_for_ready(name: &str, timeout_secs: u64) -> Result<(), VestaError> {
+    api_get::<serde_json::Value>(&format!("/agents/{}/wait-ready?timeout={}", name, timeout_secs)).await?;
+    Ok(())
 }
 
 // ── Agent host ──────────────────────────────────────────────────

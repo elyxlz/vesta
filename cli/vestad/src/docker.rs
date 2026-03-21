@@ -186,10 +186,25 @@ pub fn ensure_docker() -> Result<(), DockerError> {
 
 // --- Container query operations ---
 
-struct ContainerInfo {
-    status: ContainerStatus,
-    port: u16,
-    id: Option<String>,
+pub struct ContainerInfo {
+    pub status: ContainerStatus,
+    pub port: u16,
+    pub id: Option<String>,
+}
+
+pub struct AgentDerivedState {
+    pub authenticated: bool,
+    pub agent_ready: bool,
+    pub alive: bool,
+    pub friendly_status: &'static str,
+}
+
+pub fn compute_agent_state(cname: &str, info: &ContainerInfo) -> AgentDerivedState {
+    let authenticated = info.status != ContainerStatus::NotFound && is_authenticated(cname);
+    let agent_ready = info.status == ContainerStatus::Running && is_agent_ready(cname, info.port);
+    let alive = info.status == ContainerStatus::Running && authenticated;
+    let friendly_status = friendly_status(&info.status, authenticated, agent_ready);
+    AgentDerivedState { authenticated, agent_ready, alive, friendly_status }
 }
 
 fn inspect_container(cname: &str) -> ContainerInfo {
@@ -339,10 +354,21 @@ pub fn resolve_image(build: bool) -> Result<&'static str, DockerError> {
 }
 
 pub fn allocate_port() -> u16 {
-    let used: Vec<u16> = list_managed_containers()
-        .iter()
-        .map(|cname| get_container_port(cname))
-        .collect();
+    let containers = list_managed_containers();
+    let used: Vec<u16> = if containers.is_empty() {
+        vec![]
+    } else {
+        let args: Vec<&str> = ["inspect", "--format", "{{index .Config.Labels \"vesta.ws_port\"}}"]
+            .iter()
+            .copied()
+            .chain(containers.iter().map(|s| s.as_str()))
+            .collect();
+        docker_output(&args)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|s| s.trim().parse().ok())
+            .collect()
+    };
     let mut port = BASE_WS_PORT;
     while used.contains(&port) {
         port += 1;
@@ -432,10 +458,6 @@ pub fn inject_credentials(container: &str, credentials: &str) -> Result<(), Dock
 
 // --- Auth flow (split for HTTP API) ---
 
-fn base64url(b64: &str) -> String {
-    b64.replace('+', "-").replace('/', "_").replace('=', "")
-}
-
 fn urlencod(s: &str) -> String {
     let mut out = String::with_capacity(s.len() * 3);
     for b in s.bytes() {
@@ -453,32 +475,44 @@ fn urlencod(s: &str) -> String {
     out
 }
 
-fn generate_pkce() -> (String, String) {
-    let raw = process::Command::new("openssl")
-        .args(["rand", "-base64", "32"])
-        .output()
-        .expect("openssl not found");
-    let verifier = base64url(String::from_utf8_lossy(&raw.stdout).trim());
+fn base64url_encode(data: &[u8]) -> String {
+    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut out = String::with_capacity((data.len() * 4).div_ceil(3));
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0] as usize;
+        let b1 = if chunk.len() > 1 { chunk[1] as usize } else { 0 };
+        let b2 = if chunk.len() > 2 { chunk[2] as usize } else { 0 };
+        out.push(CHARS[b0 >> 2] as char);
+        out.push(CHARS[((b0 & 3) << 4) | (b1 >> 4)] as char);
+        if chunk.len() > 1 {
+            out.push(CHARS[((b1 & 0xf) << 2) | (b2 >> 6)] as char);
+        }
+        if chunk.len() > 2 {
+            out.push(CHARS[b2 & 0x3f] as char);
+        }
+    }
+    out
+}
 
-    let sha_cmd = format!(
-        "printf '%s' '{}' | openssl dgst -sha256 -binary | openssl base64 -A",
-        verifier
-    );
-    let raw = process::Command::new("sh")
-        .args(["-c", &sha_cmd])
-        .output()
-        .expect("failed to compute code challenge");
-    let challenge = base64url(String::from_utf8_lossy(&raw.stdout).trim());
+use ring::rand::SecureRandom;
+
+fn generate_pkce() -> (String, String) {
+    let rng = ring::rand::SystemRandom::new();
+    let mut verifier_bytes = [0u8; 32];
+    rng.fill(&mut verifier_bytes).expect("random failed");
+    let verifier = base64url_encode(&verifier_bytes);
+
+    let challenge_hash = ring::digest::digest(&ring::digest::SHA256, verifier.as_bytes());
+    let challenge = base64url_encode(challenge_hash.as_ref());
 
     (verifier, challenge)
 }
 
 fn generate_state() -> String {
-    let raw = process::Command::new("openssl")
-        .args(["rand", "-base64", "32"])
-        .output()
-        .expect("openssl not found");
-    base64url(String::from_utf8_lossy(&raw.stdout).trim())
+    let rng = ring::rand::SystemRandom::new();
+    let mut state_bytes = [0u8; 32];
+    rng.fill(&mut state_bytes).expect("random failed");
+    base64url_encode(&state_bytes)
 }
 
 /// Start the OAuth PKCE flow. Returns (auth_url, session_id, code_verifier, state).
@@ -596,20 +630,17 @@ pub fn get_status(name: &str) -> Result<StatusJson, DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
     let info = inspect_container(&cname);
-    let authed = info.status != ContainerStatus::NotFound && is_authenticated(&cname);
-    let ready = info.status == ContainerStatus::Running && is_agent_ready(&cname, info.port);
-    let alive = info.status == ContainerStatus::Running && authed;
-    let friendly = friendly_status(&info.status, authed, ready);
+    let derived = compute_agent_state(&cname, &info);
 
     Ok(StatusJson {
         name: name.to_string(),
         status: status_label(&info.status),
         id: info.id,
-        authenticated: authed,
-        agent_ready: ready,
+        authenticated: derived.authenticated,
+        agent_ready: derived.agent_ready,
         ws_port: info.port,
-        alive,
-        friendly_status: friendly,
+        alive: derived.alive,
+        friendly_status: derived.friendly_status,
     })
 }
 
@@ -619,18 +650,15 @@ pub fn list_agents() -> Vec<ListEntry> {
         .iter()
         .map(|cname| {
             let info = inspect_container(cname);
-            let authed = info.status != ContainerStatus::NotFound && is_authenticated(cname);
-            let ready = info.status == ContainerStatus::Running && is_agent_ready(cname, info.port);
-            let alive = info.status == ContainerStatus::Running && authed;
-            let friendly = friendly_status(&info.status, authed, ready);
+            let derived = compute_agent_state(cname, &info);
             ListEntry {
                 name: name_from_cname(cname),
                 status: status_label(&info.status),
-                authenticated: authed,
-                agent_ready: ready,
+                authenticated: derived.authenticated,
+                agent_ready: derived.agent_ready,
                 ws_port: info.port,
-                alive,
-                friendly_status: friendly,
+                alive: derived.alive,
+                friendly_status: derived.friendly_status,
             }
         })
         .collect()

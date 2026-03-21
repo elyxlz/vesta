@@ -343,10 +343,13 @@ async fn destroy_agent_handler(
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
-    tokio::task::spawn_blocking(move || docker::destroy_agent(&name))
+    let name_clone = name.clone();
+    tokio::task::spawn_blocking(move || docker::destroy_agent(&name_clone))
         .await
         .unwrap()
         .map_err(map_docker_err)?;
+
+    state.agent_locks.lock().await.remove(&name);
     Ok(ok_json())
 }
 
