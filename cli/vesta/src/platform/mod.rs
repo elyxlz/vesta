@@ -15,6 +15,7 @@ pub struct ServerConfig {
     pub url: String,
     pub api_key: String,
     pub cert_fingerprint: Option<String>,
+    pub cert_pem: Option<String>,
 }
 
 fn config_dir() -> PathBuf {
@@ -34,6 +35,7 @@ pub fn load_server_config(host_flag: Option<&str>, token_flag: Option<&str>) -> 
             url: normalize_url(host),
             api_key: token.to_string(),
             cert_fingerprint: None,
+            cert_pem: None,
         });
     }
 
@@ -45,6 +47,7 @@ pub fn load_server_config(host_flag: Option<&str>, token_flag: Option<&str>) -> 
             url: normalize_url(host),
             api_key: token.to_string(),
             cert_fingerprint: None,
+            cert_pem: None,
         });
     }
 
@@ -56,6 +59,7 @@ pub fn load_server_config(host_flag: Option<&str>, token_flag: Option<&str>) -> 
                     url: url.to_string(),
                     api_key: key.to_string(),
                     cert_fingerprint: v["cert_fingerprint"].as_str().map(|s| s.to_string()),
+                    cert_pem: v["cert_pem"].as_str().map(|s| s.to_string()),
                 });
             }
         }
@@ -72,10 +76,13 @@ pub fn load_server_config(host_flag: Option<&str>, token_flag: Option<&str>) -> 
                 let fingerprint = std::fs::read_to_string(format!("{}/.config/vesta/tls/fingerprint", home))
                     .ok()
                     .map(|s| s.trim().to_string());
+                let cert_pem = std::fs::read_to_string(format!("{}/.config/vesta/tls/cert.pem", home))
+                    .ok();
                 return Some(ServerConfig {
                     url: "https://localhost:7860".to_string(),
                     api_key: key,
                     cert_fingerprint: fingerprint,
+                    cert_pem,
                 });
             }
         }
@@ -94,6 +101,9 @@ pub fn save_server_config(config: &ServerConfig) {
     });
     if let Some(ref fp) = config.cert_fingerprint {
         json["cert_fingerprint"] = serde_json::json!(fp);
+    }
+    if let Some(ref pem) = config.cert_pem {
+        json["cert_pem"] = serde_json::json!(pem);
     }
 
     let path = server_json_path();

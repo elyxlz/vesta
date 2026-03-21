@@ -170,14 +170,20 @@ fn map_error(e: ureq::Error) -> String {
 }
 
 impl Client {
-    pub fn new(base_url: String, api_key: String, cert_fingerprint: Option<String>) -> Self {
+    pub fn new(base_url: String, api_key: String, cert_fingerprint: Option<String>, cert_pem: Option<String>) -> Self {
+        let tls_config = if let Some(ref pem) = cert_pem {
+            let cert = ureq::tls::Certificate::from_pem(pem.as_bytes())
+                .expect("invalid cert PEM in server config");
+            ureq::tls::TlsConfig::builder()
+                .root_certs(ureq::tls::RootCerts::Specific(std::sync::Arc::new(vec![cert])))
+                .build()
+        } else {
+            // No cert available — fall back to platform roots (will fail for self-signed)
+            ureq::tls::TlsConfig::builder().build()
+        };
         let agent = ureq::Agent::config_builder()
             .http_status_as_error(false)
-            .tls_config(
-                ureq::tls::TlsConfig::builder()
-                    .disable_verification(true)
-                    .build(),
-            )
+            .tls_config(tls_config)
             .build()
             .new_agent();
         Self {

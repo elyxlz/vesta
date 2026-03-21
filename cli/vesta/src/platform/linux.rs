@@ -81,6 +81,8 @@ pub fn extract_credentials() -> Option<ServerConfig> {
         std::fs::read_to_string(format!("{}/.config/vesta/tls/fingerprint", home))
             .ok()
             .map(|s| s.trim().to_string());
+    let cert_pem =
+        std::fs::read_to_string(format!("{}/.config/vesta/tls/cert.pem", home)).ok();
 
     if api_key.is_empty() {
         return None;
@@ -90,6 +92,7 @@ pub fn extract_credentials() -> Option<ServerConfig> {
         url: server_url(),
         api_key,
         cert_fingerprint: fingerprint,
+        cert_pem,
     })
 }
 

@@ -28,7 +28,7 @@ enum Command {
     Update,
 }
 
-fn die(msg: &str) -> ! {
+fn die(msg: impl std::fmt::Display) -> ! {
     eprintln!("error: {}", msg);
     std::process::exit(1);
 }
@@ -86,7 +86,7 @@ fn main() {
                 .stdout(std::process::Stdio::inherit())
                 .stderr(std::process::Stdio::inherit())
                 .status()
-                .unwrap_or_else(|e| die(&format!("docker exec failed: {}", e)));
+                .unwrap_or_else(|e| die(format!("docker exec failed: {}", e)));
             if !status.success() {
                 std::process::exit(status.code().unwrap_or(1));
             }
@@ -96,7 +96,7 @@ fn main() {
             let target = match std::env::consts::ARCH {
                 "x86_64" => "x86_64-unknown-linux-gnu",
                 "aarch64" => "aarch64-unknown-linux-gnu",
-                other => die(&format!("unsupported architecture: {}", other)),
+                other => die(format!("unsupported architecture: {}", other)),
             };
 
             let archive = format!("vestad-{}.tar.gz", target);
@@ -124,7 +124,7 @@ fn main() {
 
             let new_binary = format!("{}/vestad", tmp);
             self_replace::self_replace(&new_binary)
-                .unwrap_or_else(|e| die(&format!("failed to replace binary: {}", e)));
+                .unwrap_or_else(|e| die(format!("failed to replace binary: {}", e)));
 
             std::fs::remove_dir_all(&tmp).ok();
             eprintln!("updated. restart vestad to use new version.");

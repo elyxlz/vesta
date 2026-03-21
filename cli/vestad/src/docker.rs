@@ -1,6 +1,27 @@
 use serde::Serialize;
 use std::process;
 
+#[derive(Debug)]
+pub enum DockerError {
+    NotFound(String),
+    AlreadyExists(String),
+    NotRunning(String),
+    BrokenState(String),
+    InvalidName(String),
+    BuildRequired(String),
+    Failed(String),
+}
+
+impl std::fmt::Display for DockerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotFound(s) | Self::AlreadyExists(s) | Self::NotRunning(s)
+            | Self::BrokenState(s) | Self::InvalidName(s) | Self::BuildRequired(s)
+            | Self::Failed(s) => write!(f, "{}", s),
+        }
+    }
+}
+
 pub const VESTA_IMAGE: &str = "ghcr.io/elyxlz/vesta:latest";
 pub const VESTA_LOG_PATH: &str = "/root/vesta/logs/vesta.log";
 pub const LOCAL_IMAGE_TAG: &str = "vesta:local";
@@ -85,9 +106,9 @@ pub fn normalize_name(raw: &str) -> String {
     result
 }
 
-pub fn validate_name(name: &str) -> Result<(), String> {
+pub fn validate_name(name: &str) -> Result<(), DockerError> {
     if name.is_empty() || name.len() > NAME_MAX_LEN {
-        return Err("agent name must be 1-32 characters".into());
+        return Err(DockerError::InvalidName("agent name must be 1-32 characters".into()));
     }
     let valid = if name.len() == 1 {
         name.chars()
@@ -103,7 +124,7 @@ pub fn validate_name(name: &str) -> Result<(), String> {
         first_last_ok && middle_ok
     };
     if !valid {
-        return Err("agent name must match [a-z0-9][a-z0-9-]*[a-z0-9]".into());
+        return Err(DockerError::InvalidName("agent name must match [a-z0-9][a-z0-9-]*[a-z0-9]".into()));
     }
     Ok(())
 }
@@ -150,9 +171,9 @@ pub fn docker_quiet(args: &[&str]) -> bool {
         .unwrap_or(false)
 }
 
-pub fn ensure_docker() -> Result<(), String> {
+pub fn ensure_docker() -> Result<(), DockerError> {
     if !docker_quiet(&["--version"]) {
-        return Err("docker is not installed".into());
+        return Err(DockerError::Failed("docker is not installed".into()));
     }
     for _ in 0..10 {
         if docker_quiet(&["info"]) {
@@ -160,21 +181,51 @@ pub fn ensure_docker() -> Result<(), String> {
         }
         std::thread::sleep(std::time::Duration::from_secs(1));
     }
-    Err("docker daemon is not running".into())
+    Err(DockerError::Failed("docker daemon is not running".into()))
 }
 
 // --- Container query operations ---
 
-pub fn container_status(cname: &str) -> ContainerStatus {
-    match docker_output(&["inspect", "--format", "{{.State.Status}}", cname]) {
-        Some(s) => match s.as_str() {
-            "running" | "restarting" | "paused" => ContainerStatus::Running,
-            "exited" | "created" => ContainerStatus::Stopped,
-            "dead" | "removing" => ContainerStatus::Dead,
-            _ => ContainerStatus::Stopped,
+struct ContainerInfo {
+    status: ContainerStatus,
+    port: u16,
+    id: Option<String>,
+}
+
+fn inspect_container(cname: &str) -> ContainerInfo {
+    match docker_output(&[
+        "inspect",
+        "--format",
+        "{{.State.Status}}|{{index .Config.Labels \"vesta.ws_port\"}}|{{.Id}}",
+        cname,
+    ]) {
+        Some(s) => {
+            let parts: Vec<&str> = s.splitn(3, '|').collect();
+            let status = match parts.first().map(|p| p.trim()) {
+                Some("running" | "restarting" | "paused") => ContainerStatus::Running,
+                Some("exited" | "created") => ContainerStatus::Stopped,
+                Some("dead" | "removing") => ContainerStatus::Dead,
+                _ => ContainerStatus::Stopped,
+            };
+            let port = parts
+                .get(1)
+                .and_then(|p| p.trim().parse().ok())
+                .unwrap_or(BASE_WS_PORT);
+            let id = parts
+                .get(2)
+                .map(|p| p.trim().chars().take(12).collect::<String>());
+            ContainerInfo { status, port, id }
+        }
+        None => ContainerInfo {
+            status: ContainerStatus::NotFound,
+            port: BASE_WS_PORT,
+            id: None,
         },
-        None => ContainerStatus::NotFound,
     }
+}
+
+pub fn container_status(cname: &str) -> ContainerStatus {
+    inspect_container(cname).status
 }
 
 pub fn read_container_file(cname: &str, container_path: &str) -> Option<String> {
@@ -221,33 +272,35 @@ pub fn is_agent_ready(cname: &str, port: u16) -> bool {
     ])
 }
 
-pub fn ensure_exists(cname: &str) -> Result<(), String> {
+pub fn ensure_exists(cname: &str) -> Result<(), DockerError> {
     match container_status(cname) {
-        ContainerStatus::NotFound => Err(format!("agent '{}' not found", name_from_cname(cname))),
-        ContainerStatus::Dead => Err(format!("agent '{}' is in a broken state", name_from_cname(cname))),
+        ContainerStatus::NotFound => Err(DockerError::NotFound(format!("agent '{}' not found", name_from_cname(cname)))),
+        ContainerStatus::Dead => Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name_from_cname(cname)))),
         _ => Ok(()),
     }
 }
 
-pub fn ensure_running(cname: &str) -> Result<(), String> {
-    ensure_exists(cname)?;
-    if container_status(cname) != ContainerStatus::Running {
-        return Err(format!("agent '{}' is not running", name_from_cname(cname)));
+pub fn ensure_running(cname: &str) -> Result<(), DockerError> {
+    let cs = container_status(cname);
+    match cs {
+        ContainerStatus::NotFound => Err(DockerError::NotFound(format!("agent '{}' not found", name_from_cname(cname)))),
+        ContainerStatus::Dead => Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name_from_cname(cname)))),
+        ContainerStatus::Running => Ok(()),
+        ContainerStatus::Stopped => Err(DockerError::NotRunning(format!("agent '{}' is not running", name_from_cname(cname)))),
     }
-    Ok(())
 }
 
 // --- Image and port operations ---
 
-pub fn find_dockerfile() -> Result<std::path::PathBuf, String> {
+pub fn find_dockerfile() -> Result<std::path::PathBuf, DockerError> {
     let cwd = std::env::current_dir()
-        .map_err(|_| "cannot determine working directory".to_string())?;
+        .map_err(|_| DockerError::BuildRequired("cannot determine working directory".into()))?;
     if cwd.join("Dockerfile").exists() {
         return Ok(cwd);
     }
 
     let exe = std::env::current_exe()
-        .map_err(|_| "cannot determine executable path".to_string())?;
+        .map_err(|_| DockerError::BuildRequired("cannot determine executable path".into()))?;
     let mut dir = exe.parent().map(std::path::Path::to_path_buf);
     let mut depth = 0;
     while let Some(d) = dir {
@@ -260,10 +313,10 @@ pub fn find_dockerfile() -> Result<std::path::PathBuf, String> {
         dir = d.parent().map(std::path::Path::to_path_buf);
         depth += 1;
     }
-    Err("--build requires vestad to have access to the Vesta source code (run vestad from the repo root)".into())
+    Err(DockerError::BuildRequired("--build requires vestad to have access to the Vesta source code (run vestad from the repo root)".into()))
 }
 
-pub fn resolve_image(build: bool) -> Result<&'static str, String> {
+pub fn resolve_image(build: bool) -> Result<&'static str, DockerError> {
     if build {
         let context = find_dockerfile()?;
         let status = process::Command::new("docker")
@@ -272,14 +325,14 @@ pub fn resolve_image(build: bool) -> Result<&'static str, String> {
             .stdout(process::Stdio::null())
             .stderr(process::Stdio::inherit())
             .status()
-            .map_err(|e| format!("docker build failed: {}", e))?;
+            .map_err(|e| DockerError::Failed(format!("docker build failed: {}", e)))?;
         if !status.success() {
-            return Err("image build failed".into());
+            return Err(DockerError::Failed("image build failed".into()));
         }
         Ok(LOCAL_IMAGE_TAG)
     } else {
         if !docker_quiet(&["pull", VESTA_IMAGE]) {
-            return Err("failed to pull image".into());
+            return Err(DockerError::Failed("failed to pull image".into()));
         }
         Ok(VESTA_IMAGE)
     }
@@ -326,7 +379,7 @@ pub fn list_managed_containers() -> Vec<String> {
 
 // --- Container creation ---
 
-pub fn create_container(cname: &str, image: &str, port: u16, agent_name: &str) -> Result<(), String> {
+pub fn create_container(cname: &str, image: &str, port: u16, agent_name: &str) -> Result<(), DockerError> {
     let ws_port_env = format!("WS_PORT={}", port);
     let agent_name_env = format!("AGENT_NAME={}", agent_name);
     let port_label = format!("vesta.ws_port={}", port);
@@ -340,38 +393,38 @@ pub fn create_container(cname: &str, image: &str, port: u16, agent_name: &str) -
         image,
     ];
     if !docker_ok(&args) {
-        return Err("failed to create container".into());
+        return Err(DockerError::Failed("failed to create container".into()));
     }
     Ok(())
 }
 
 // --- Credential injection ---
 
-fn docker_cp_content(container: &str, content: &str, dest: &str) -> Result<(), String> {
+fn docker_cp_content(container: &str, content: &str, dest: &str) -> Result<(), DockerError> {
     let tmp = std::env::temp_dir().join(format!("vesta_{}", std::process::id()));
     std::fs::write(&tmp, content)
-        .map_err(|e| format!("failed to write temp file: {}", e))?;
+        .map_err(|e| DockerError::Failed(format!("failed to write temp file: {}", e)))?;
     let target = format!("{}:{}", container, dest);
     let ok = docker_ok(&["cp", tmp.to_str().unwrap(), &target]);
     std::fs::remove_file(&tmp).ok();
     if !ok {
-        return Err(format!("failed to copy to {}", dest));
+        return Err(DockerError::Failed(format!("failed to copy to {}", dest)));
     }
     Ok(())
 }
 
-pub fn inject_credentials(container: &str, credentials: &str) -> Result<(), String> {
+pub fn inject_credentials(container: &str, credentials: &str) -> Result<(), DockerError> {
     let tmp_dir = std::env::temp_dir().join(format!("vesta_claude_{}", std::process::id()));
     std::fs::create_dir_all(&tmp_dir)
-        .map_err(|e| format!("failed to create temp dir: {}", e))?;
+        .map_err(|e| DockerError::Failed(format!("failed to create temp dir: {}", e)))?;
     std::fs::write(tmp_dir.join(".credentials.json"), credentials)
-        .map_err(|e| format!("failed to write temp credentials: {}", e))?;
+        .map_err(|e| DockerError::Failed(format!("failed to write temp credentials: {}", e)))?;
     let src = format!("{}/.", tmp_dir.to_str().unwrap());
     let target = format!("{}:/root/.claude/", container);
     let ok = docker_ok(&["cp", &src, &target]);
     std::fs::remove_dir_all(&tmp_dir).ok();
     if !ok {
-        return Err("failed to copy credentials to container".into());
+        return Err(DockerError::Failed("failed to copy credentials to container".into()));
     }
     docker_cp_content(container, "{\"hasCompletedOnboarding\":true}", CLAUDE_JSON_PATH)?;
     Ok(())
@@ -448,7 +501,7 @@ pub fn start_auth_flow() -> (String, String, String) {
 
 /// Complete the OAuth flow by exchanging the auth code for tokens.
 /// Returns the credentials JSON string.
-pub fn complete_auth_flow(input: &str, code_verifier: &str, expected_state: &str) -> Result<String, String> {
+pub fn complete_auth_flow(input: &str, code_verifier: &str, expected_state: &str) -> Result<String, DockerError> {
     let (auth_code, pasted_state) = match input.split_once('#') {
         Some((code, st)) => (code, st),
         None => (input, expected_state),
@@ -466,25 +519,25 @@ pub fn complete_auth_flow(input: &str, code_verifier: &str, expected_state: &str
             "-d", &body,
         ])
         .output()
-        .map_err(|_| "curl not found".to_string())?;
+        .map_err(|_| DockerError::Failed("curl not found".into()))?;
 
     let response_str = String::from_utf8_lossy(&response.stdout);
     let token_data: serde_json::Value = serde_json::from_str(&response_str)
-        .map_err(|_| format!("token exchange failed: {}", response_str))?;
+        .map_err(|_| DockerError::Failed(format!("token exchange failed: {}", response_str)))?;
 
     if let Some(error) = token_data.get("error") {
-        return Err(format!(
+        return Err(DockerError::Failed(format!(
             "auth failed: {} — {}",
             error,
             token_data
                 .get("error_description")
                 .unwrap_or(error)
-        ));
+        )));
     }
 
     let access_token = token_data["access_token"]
         .as_str()
-        .ok_or("no access_token in response")?;
+        .ok_or(DockerError::Failed("no access_token in response".into()))?;
     let refresh_token = token_data.get("refresh_token").and_then(|v| v.as_str());
     let expires_in = token_data["expires_in"].as_u64().unwrap_or(28800);
 
@@ -539,35 +592,22 @@ pub fn friendly_status(
 
 // --- High-level operations (used by serve.rs handlers) ---
 
-pub fn get_status(name: &str) -> Result<StatusJson, String> {
+pub fn get_status(name: &str) -> Result<StatusJson, DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
-    let cs = container_status(&cname);
-    let port = if cs != ContainerStatus::NotFound {
-        get_container_port(&cname)
-    } else {
-        BASE_WS_PORT
-    };
-    let (status_str, id) = match cs {
-        ContainerStatus::NotFound => ("not_found", None),
-        _ => {
-            let id = docker_output(&["inspect", "--format", "{{.Id}}", &cname])
-                .map(|s| s.chars().take(12).collect::<String>());
-            (status_label(&cs), id)
-        }
-    };
-    let authed = cs != ContainerStatus::NotFound && is_authenticated(&cname);
-    let ready = cs == ContainerStatus::Running && is_agent_ready(&cname, port);
-    let alive = cs == ContainerStatus::Running && authed;
-    let friendly = friendly_status(&cs, authed, ready);
+    let info = inspect_container(&cname);
+    let authed = info.status != ContainerStatus::NotFound && is_authenticated(&cname);
+    let ready = info.status == ContainerStatus::Running && is_agent_ready(&cname, info.port);
+    let alive = info.status == ContainerStatus::Running && authed;
+    let friendly = friendly_status(&info.status, authed, ready);
 
     Ok(StatusJson {
         name: name.to_string(),
-        status: status_str,
-        id,
+        status: status_label(&info.status),
+        id: info.id,
         authenticated: authed,
         agent_ready: ready,
-        ws_port: port,
+        ws_port: info.port,
         alive,
         friendly_status: friendly,
     })
@@ -578,18 +618,17 @@ pub fn list_agents() -> Vec<ListEntry> {
     containers
         .iter()
         .map(|cname| {
-            let cs = container_status(cname);
-            let port = get_container_port(cname);
-            let authed = cs != ContainerStatus::NotFound && is_authenticated(cname);
-            let ready = cs == ContainerStatus::Running && is_agent_ready(cname, port);
-            let alive = cs == ContainerStatus::Running && authed;
-            let friendly = friendly_status(&cs, authed, ready);
+            let info = inspect_container(cname);
+            let authed = info.status != ContainerStatus::NotFound && is_authenticated(cname);
+            let ready = info.status == ContainerStatus::Running && is_agent_ready(cname, info.port);
+            let alive = info.status == ContainerStatus::Running && authed;
+            let friendly = friendly_status(&info.status, authed, ready);
             ListEntry {
                 name: name_from_cname(cname),
-                status: status_label(&cs),
+                status: status_label(&info.status),
                 authenticated: authed,
                 agent_ready: ready,
-                ws_port: port,
+                ws_port: info.port,
                 alive,
                 friendly_status: friendly,
             }
@@ -597,12 +636,12 @@ pub fn list_agents() -> Vec<ListEntry> {
         .collect()
 }
 
-pub fn create_agent(name: &str, build: bool) -> Result<String, String> {
+pub fn create_agent(name: &str, build: bool) -> Result<String, DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
 
     if container_status(&cname) != ContainerStatus::NotFound {
-        return Err(format!("agent '{}' already exists", name));
+        return Err(DockerError::AlreadyExists(format!("agent '{}' already exists", name)));
     }
 
     let image = resolve_image(build)?;
@@ -611,15 +650,18 @@ pub fn create_agent(name: &str, build: bool) -> Result<String, String> {
     Ok(name.to_string())
 }
 
-pub fn start_agent(name: &str) -> Result<(), String> {
+pub fn start_agent(name: &str) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
-    ensure_exists(&cname)?;
-    if container_status(&cname) == ContainerStatus::Running {
-        return Ok(());
+    let cs = container_status(&cname);
+    match cs {
+        ContainerStatus::NotFound => return Err(DockerError::NotFound(format!("agent '{}' not found", name))),
+        ContainerStatus::Dead => return Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name))),
+        ContainerStatus::Running => return Ok(()),
+        ContainerStatus::Stopped => {}
     }
     if !docker_ok(&["start", &cname]) {
-        return Err(format!("failed to start '{}'", name));
+        return Err(DockerError::Failed(format!("failed to start '{}'", name)));
     }
     Ok(())
 }
@@ -654,47 +696,57 @@ pub fn start_all_agents() -> Vec<StartAllResult> {
     results
 }
 
-pub fn stop_agent(name: &str) -> Result<(), String> {
+pub fn stop_agent(name: &str) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
-    ensure_exists(&cname)?;
-    if container_status(&cname) != ContainerStatus::Running {
-        return Ok(());
+    let cs = container_status(&cname);
+    match cs {
+        ContainerStatus::NotFound => return Err(DockerError::NotFound(format!("agent '{}' not found", name))),
+        ContainerStatus::Dead => return Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name))),
+        ContainerStatus::Stopped => return Ok(()),
+        ContainerStatus::Running => {}
     }
     if !docker_ok(&["stop", &cname]) {
-        return Err("failed to stop".into());
+        return Err(DockerError::Failed("failed to stop".into()));
     }
     Ok(())
 }
 
-pub fn restart_agent(name: &str) -> Result<(), String> {
+pub fn restart_agent(name: &str) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
     ensure_exists(&cname)?;
     if !docker_ok(&["restart", &cname]) {
-        return Err("failed to restart".into());
+        return Err(DockerError::Failed("failed to restart".into()));
     }
     Ok(())
 }
 
-pub fn destroy_agent(name: &str) -> Result<(), String> {
+pub fn destroy_agent(name: &str) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
-    ensure_exists(&cname)?;
-    if container_status(&cname) == ContainerStatus::Running {
-        docker_ok(&["stop", &cname]);
+    let cs = container_status(&cname);
+    match cs {
+        ContainerStatus::NotFound => return Err(DockerError::NotFound(format!("agent '{}' not found", name))),
+        ContainerStatus::Dead => return Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name))),
+        ContainerStatus::Running => { docker_ok(&["stop", &cname]); }
+        ContainerStatus::Stopped => {}
     }
     if !docker_ok(&["rm", "-f", &cname]) {
-        return Err("failed to destroy".into());
+        return Err(DockerError::Failed("failed to destroy".into()));
     }
     Ok(())
 }
 
-pub fn rebuild_agent(name: &str) -> Result<(), String> {
+pub fn rebuild_agent(name: &str) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
-    ensure_exists(&cname)?;
-    let port = get_container_port(&cname);
+    let info = inspect_container(&cname);
+    match info.status {
+        ContainerStatus::NotFound => return Err(DockerError::NotFound(format!("agent '{}' not found", name))),
+        ContainerStatus::Dead => return Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name))),
+        _ => {}
+    }
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -702,21 +754,21 @@ pub fn rebuild_agent(name: &str) -> Result<(), String> {
     let backup_tag = format!("vesta-rebuild:{}_{}", name, ts);
 
     if !docker_ok(&["commit", &cname, &backup_tag]) {
-        return Err("backup failed".into());
+        return Err(DockerError::Failed("backup failed".into()));
     }
 
     docker_ok(&["rm", "-f", &cname]);
 
-    create_container(&cname, &backup_tag, port, name)?;
+    create_container(&cname, &backup_tag, info.port, name)?;
 
     if !docker_ok(&["start", &cname]) {
-        return Err("failed to start".into());
+        return Err(DockerError::Failed("failed to start".into()));
     }
     docker_ok(&["rmi", &backup_tag]);
     Ok(())
 }
 
-pub fn wait_ready(name: &str, timeout_secs: u64) -> Result<(), String> {
+pub fn wait_ready(name: &str, timeout_secs: u64) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
     ensure_running(&cname)?;
@@ -728,17 +780,22 @@ pub fn wait_ready(name: &str, timeout_secs: u64) -> Result<(), String> {
         }
         std::thread::sleep(std::time::Duration::from_secs(1));
     }
-    Err(format!("{}: not ready after {}s", name, timeout_secs))
+    Err(DockerError::Failed(format!("{}: not ready after {}s", name, timeout_secs)))
 }
 
 /// Backup: stops container, commits, saves as gzip stream.
 /// Returns (backup_tag, was_running) for cleanup after streaming.
-pub fn backup_prepare(name: &str) -> Result<(String, bool), String> {
+pub fn backup_prepare(name: &str) -> Result<(String, bool), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
-    ensure_exists(&cname)?;
+    let cs = container_status(&cname);
+    match cs {
+        ContainerStatus::NotFound => return Err(DockerError::NotFound(format!("agent '{}' not found", name))),
+        ContainerStatus::Dead => return Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name))),
+        _ => {}
+    }
 
-    let was_running = container_status(&cname) == ContainerStatus::Running;
+    let was_running = cs == ContainerStatus::Running;
     if was_running {
         docker_ok(&["stop", &cname]);
     }
@@ -754,7 +811,7 @@ pub fn backup_prepare(name: &str) -> Result<(String, bool), String> {
         if was_running {
             docker_ok(&["start", &cname]);
         }
-        return Err("backup commit failed".into());
+        return Err(DockerError::Failed("backup commit failed".into()));
     }
 
     Ok((backup_tag, was_running))
@@ -770,7 +827,7 @@ pub fn backup_cleanup(name: &str, backup_tag: &str, was_running: bool) {
 }
 
 /// Restore from a loaded docker image tag.
-pub fn restore_agent(loaded_image: &str, name_override: Option<&str>, replace: bool) -> Result<String, String> {
+pub fn restore_agent(loaded_image: &str, name_override: Option<&str>, replace: bool) -> Result<String, DockerError> {
     let name_from_backup = docker_output(&[
         "inspect",
         "--format",
@@ -782,7 +839,7 @@ pub fn restore_agent(loaded_image: &str, name_override: Option<&str>, replace: b
         Some(n) => n.to_string(),
         None => name_from_backup
             .filter(|n| !n.is_empty() && n != "<no value>")
-            .ok_or("backup has no agent name label. use ?name= to specify one.")?,
+            .ok_or(DockerError::Failed("backup has no agent name label. use ?name= to specify one.".into()))?,
     };
     validate_name(&name)?;
     let cname = container_name(&name);
@@ -790,10 +847,10 @@ pub fn restore_agent(loaded_image: &str, name_override: Option<&str>, replace: b
     if container_status(&cname) != ContainerStatus::NotFound {
         if !replace {
             docker_ok(&["rmi", loaded_image]);
-            return Err(format!(
+            return Err(DockerError::AlreadyExists(format!(
                 "agent '{}' already exists. use ?replace=true to overwrite, or ?name= to pick a different name.",
                 name
-            ));
+            )));
         }
         docker_ok(&["rm", "-f", &cname]);
     }

@@ -175,7 +175,7 @@ fn prompt_name() -> String {
 fn get_client(host: Option<&str>, token: Option<&str>) -> client::Client {
     let config = platform::load_server_config(host, token)
         .unwrap_or_else(|| platform::die("no server configured. run: vesta setup"));
-    client::Client::new(config.url, config.api_key, config.cert_fingerprint)
+    client::Client::new(config.url, config.api_key, config.cert_fingerprint, config.cert_pem)
 }
 
 fn version_less_than(a: &str, b: &str) -> bool {
@@ -386,6 +386,7 @@ fn run(cli: Cli) {
                         let c = client::Client::new(
                             "https://localhost:7860".to_string(),
                             String::new(),
+                            None,
                             None,
                         );
                         if c.health().is_ok() {
@@ -696,10 +697,11 @@ fn run(cli: Cli) {
                 url: url.clone(),
                 api_key: key,
                 cert_fingerprint: None,
+                cert_pem: None,
             };
 
             // Verify connection
-            let c = client::Client::new(config.url.clone(), config.api_key.clone(), config.cert_fingerprint.clone());
+            let c = client::Client::new(config.url.clone(), config.api_key.clone(), config.cert_fingerprint.clone(), config.cert_pem.clone());
             c.health()
                 .unwrap_or_else(|e| platform::die(&format!("cannot reach server: {}", e)));
 

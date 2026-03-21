@@ -41,6 +41,15 @@ pub fn ensure_tls(config_dir: &std::path::Path) -> (String, String, String) {
         .push(rcgen::SanType::IpAddress(std::net::IpAddr::V4(
             std::net::Ipv4Addr::new(127, 0, 0, 1),
         )));
+    // Add all local IP addresses as SANs for VM/WSL connections
+    if let Ok(output) = std::process::Command::new("hostname").arg("-I").output() {
+        let ips = String::from_utf8_lossy(&output.stdout);
+        for ip_str in ips.split_whitespace() {
+            if let Ok(ip) = ip_str.parse::<std::net::IpAddr>() {
+                params.subject_alt_names.push(rcgen::SanType::IpAddress(ip));
+            }
+        }
+    }
     // 10 year validity
     params.not_after = rcgen::date_time_ymd(2036, 1, 1);
 
@@ -196,17 +205,17 @@ fn err_response(status: StatusCode, msg: &str) -> (StatusCode, Json<serde_json::
     (status, Json(serde_json::json!({"error": msg})))
 }
 
-fn map_err(e: String) -> (StatusCode, Json<serde_json::Value>) {
-    let status = if e.contains("not found") {
-        StatusCode::NOT_FOUND
-    } else if e.contains("already exists") {
-        StatusCode::CONFLICT
-    } else if e.contains("not running") {
-        StatusCode::SERVICE_UNAVAILABLE
-    } else {
-        StatusCode::INTERNAL_SERVER_ERROR
+fn map_docker_err(e: docker::DockerError) -> (StatusCode, Json<serde_json::Value>) {
+    use docker::DockerError::*;
+    let status = match &e {
+        NotFound(_) => StatusCode::NOT_FOUND,
+        AlreadyExists(_) => StatusCode::CONFLICT,
+        NotRunning(_) => StatusCode::SERVICE_UNAVAILABLE,
+        BrokenState(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        InvalidName(_) | BuildRequired(_) => StatusCode::BAD_REQUEST,
+        Failed(_) => StatusCode::INTERNAL_SERVER_ERROR,
     };
-    err_response(status, &e)
+    err_response(status, &e.to_string())
 }
 
 // --- Handlers ---
@@ -253,7 +262,7 @@ async fn create_agent_handler(
         tokio::task::spawn_blocking(move || docker::create_agent(&name, build))
             .await
             .unwrap()
-            .map_err(map_err)?;
+            .map_err(map_docker_err)?;
 
     Ok((StatusCode::CREATED, Json(serde_json::json!({"name": name}))))
 }
@@ -264,7 +273,7 @@ async fn agent_status_handler(
     let status = tokio::task::spawn_blocking(move || docker::get_status(&name))
         .await
         .unwrap()
-        .map_err(map_err)?;
+        .map_err(map_docker_err)?;
     Ok(Json(status))
 }
 
@@ -278,7 +287,7 @@ async fn start_agent_handler(
     tokio::task::spawn_blocking(move || docker::start_agent(&name))
         .await
         .unwrap()
-        .map_err(map_err)?;
+        .map_err(map_docker_err)?;
     Ok(ok_json())
 }
 
@@ -309,7 +318,7 @@ async fn stop_agent_handler(
     tokio::task::spawn_blocking(move || docker::stop_agent(&name))
         .await
         .unwrap()
-        .map_err(map_err)?;
+        .map_err(map_docker_err)?;
     Ok(ok_json())
 }
 
@@ -323,7 +332,7 @@ async fn restart_agent_handler(
     tokio::task::spawn_blocking(move || docker::restart_agent(&name))
         .await
         .unwrap()
-        .map_err(map_err)?;
+        .map_err(map_docker_err)?;
     Ok(ok_json())
 }
 
@@ -337,7 +346,7 @@ async fn destroy_agent_handler(
     tokio::task::spawn_blocking(move || docker::destroy_agent(&name))
         .await
         .unwrap()
-        .map_err(map_err)?;
+        .map_err(map_docker_err)?;
     Ok(ok_json())
 }
 
@@ -351,7 +360,7 @@ async fn rebuild_agent_handler(
     tokio::task::spawn_blocking(move || docker::rebuild_agent(&name))
         .await
         .unwrap()
-        .map_err(map_err)?;
+        .map_err(map_docker_err)?;
     Ok(ok_json())
 }
 
@@ -368,7 +377,7 @@ async fn wait_ready_handler(
     tokio::task::spawn_blocking(move || docker::wait_ready(&name, timeout))
         .await
         .unwrap()
-        .map_err(|e| err_response(StatusCode::SERVICE_UNAVAILABLE, &e))?;
+        .map_err(|e| err_response(StatusCode::SERVICE_UNAVAILABLE, &e.to_string()))?;
     Ok(ok_json())
 }
 
@@ -384,9 +393,9 @@ async fn start_auth_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
 ) -> Result<Json<AuthFlowResponse>, (StatusCode, Json<serde_json::Value>)> {
-    docker::validate_name(&name).map_err(|e| err_response(StatusCode::BAD_REQUEST, &e))?;
+    docker::validate_name(&name).map_err(map_docker_err)?;
     let cname = docker::container_name(&name);
-    docker::ensure_exists(&cname).map_err(map_err)?;
+    docker::ensure_exists(&cname).map_err(map_docker_err)?;
 
     let (auth_url, code_verifier, auth_state) = docker::start_auth_flow();
     let session_id: String = (0..16)
@@ -424,9 +433,9 @@ async fn complete_auth_handler(
     Path(name): Path<String>,
     Json(body): Json<AuthCodeBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    docker::validate_name(&name).map_err(|e| err_response(StatusCode::BAD_REQUEST, &e))?;
+    docker::validate_name(&name).map_err(map_docker_err)?;
     let cname = docker::container_name(&name);
-    docker::ensure_exists(&cname).map_err(map_err)?;
+    docker::ensure_exists(&cname).map_err(map_docker_err)?;
 
     let session = {
         let mut sessions = state.auth_sessions.lock().await;
@@ -441,13 +450,13 @@ async fn complete_auth_handler(
     })
     .await
     .unwrap()
-    .map_err(|e| err_response(StatusCode::BAD_REQUEST, &e))?;
+    .map_err(|e| err_response(StatusCode::BAD_REQUEST, &e.to_string()))?;
 
     let cname_clone = cname.clone();
     tokio::task::spawn_blocking(move || docker::inject_credentials(&cname_clone, &credentials))
         .await
         .unwrap()
-        .map_err(map_err)?;
+        .map_err(map_docker_err)?;
 
     Ok(ok_json())
 }
@@ -461,15 +470,15 @@ async fn inject_token_handler(
     Path(name): Path<String>,
     Json(body): Json<AuthTokenBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    docker::validate_name(&name).map_err(|e| err_response(StatusCode::BAD_REQUEST, &e))?;
+    docker::validate_name(&name).map_err(map_docker_err)?;
     let cname = docker::container_name(&name);
-    docker::ensure_exists(&cname).map_err(map_err)?;
+    docker::ensure_exists(&cname).map_err(map_docker_err)?;
 
     let credentials = body.token.to_string();
     tokio::task::spawn_blocking(move || docker::inject_credentials(&cname, &credentials))
         .await
         .unwrap()
-        .map_err(map_err)?;
+        .map_err(map_docker_err)?;
 
     Ok(ok_json())
 }
@@ -480,10 +489,10 @@ async fn logs_handler(
     Path(name): Path<String>,
 ) -> Result<Sse<impl futures_core::Stream<Item = Result<Event, std::io::Error>>>, (StatusCode, Json<serde_json::Value>)>
 {
-    docker::validate_name(&name).map_err(|e| err_response(StatusCode::BAD_REQUEST, &e))?;
+    docker::validate_name(&name).map_err(map_docker_err)?;
     let cname = docker::container_name(&name);
     docker::ensure_running(&cname)
-        .map_err(|e| err_response(StatusCode::BAD_REQUEST, &e))?;
+        .map_err(|e| err_response(StatusCode::BAD_REQUEST, &e.to_string()))?;
 
     let stream = async_stream::stream! {
         let mut child = match tokio::process::Command::new("docker")
@@ -532,9 +541,9 @@ async fn ws_handler(
     Path(name): Path<String>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
-    docker::validate_name(&name).map_err(|e| err_response(StatusCode::BAD_REQUEST, &e))?;
+    docker::validate_name(&name).map_err(map_docker_err)?;
     let cname = docker::container_name(&name);
-    docker::ensure_running(&cname).map_err(map_err)?;
+    docker::ensure_running(&cname).map_err(map_docker_err)?;
 
     let port = docker::get_container_port(&cname);
 
@@ -606,7 +615,7 @@ async fn backup_handler(
         tokio::task::spawn_blocking(move || docker::backup_prepare(&name_clone))
             .await
             .unwrap()
-            .map_err(map_err)?;
+            .map_err(map_docker_err)?;
 
     // Stream docker save | gzip
     let tag = backup_tag.clone();
@@ -702,17 +711,17 @@ async fn restore_handler(
     let name_override = query.name.clone();
     let replace = query.replace.unwrap_or(false);
 
-    let result = tokio::task::spawn_blocking(move || {
+    let result = tokio::task::spawn_blocking(move || -> Result<String, docker::DockerError> {
         // gunzip | docker load
         let file = std::fs::File::open(&gz_path)
-            .map_err(|e| format!("failed to open backup: {}", e))?;
+            .map_err(|e| docker::DockerError::Failed(format!("failed to open backup: {}", e)))?;
         let mut gunzip = std::process::Command::new("gunzip")
             .arg("-c")
             .stdin(file)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::inherit())
             .spawn()
-            .map_err(|_| "failed to run gunzip".to_string())?;
+            .map_err(|_| docker::DockerError::Failed("failed to run gunzip".into()))?;
 
         let load_output = std::process::Command::new("docker")
             .args(["load"])
@@ -720,18 +729,19 @@ async fn restore_handler(
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::inherit())
             .output()
-            .map_err(|_| "failed to run docker load".to_string())?;
+            .map_err(|_| docker::DockerError::Failed("failed to run docker load".into()))?;
 
-        let gunzip_status = gunzip.wait().map_err(|_| "gunzip failed".to_string())?;
+        let gunzip_status = gunzip.wait()
+            .map_err(|_| docker::DockerError::Failed("gunzip failed".into()))?;
         if !gunzip_status.success() || !load_output.status.success() {
-            return Err("failed to load backup".to_string());
+            return Err(docker::DockerError::Failed("failed to load backup".into()));
         }
 
         let load_stdout = String::from_utf8_lossy(&load_output.stdout);
         let loaded_image = load_stdout
             .lines()
             .find_map(|l| l.strip_prefix("Loaded image: "))
-            .ok_or("could not determine loaded image")?
+            .ok_or(docker::DockerError::Failed("could not determine loaded image".into()))?
             .trim()
             .to_string();
 
@@ -739,7 +749,7 @@ async fn restore_handler(
     })
     .await
     .unwrap()
-    .map_err(map_err)?;
+    .map_err(map_docker_err)?;
 
     // Cleanup temp
     let _ = std::fs::remove_dir_all(&tmp_dir);

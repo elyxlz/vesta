@@ -466,6 +466,7 @@ pub fn extract_credentials() -> Option<ServerConfig> {
     ensure_vm();
     let api_key = ssh_run_output(&["cat", "/root/.config/vesta/api-key"])?;
     let fingerprint = ssh_run_output(&["cat", "/root/.config/vesta/tls/fingerprint"]);
+    let cert_pem = ssh_run_output(&["cat", "/root/.config/vesta/tls/cert.pem"]);
 
     if api_key.trim().is_empty() {
         return None;
@@ -475,6 +476,7 @@ pub fn extract_credentials() -> Option<ServerConfig> {
         url: server_url(),
         api_key: api_key.trim().to_string(),
         cert_fingerprint: fingerprint.map(|s| s.trim().to_string()),
+        cert_pem,
     })
 }
 
