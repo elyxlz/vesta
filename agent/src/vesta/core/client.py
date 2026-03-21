@@ -3,6 +3,7 @@ import datetime as dt
 import json
 import os
 import signal
+import time
 import typing as tp
 
 from claude_agent_sdk import (
@@ -67,7 +68,9 @@ def filter_tool_lines(text: str) -> str:
     return "\n".join(s for line in text.split("\n") if (s := line.strip()) and not s.startswith("[TOOL]") and not s.startswith("[TASK]"))
 
 
-def _parse_sdk_message(msg: Message, *, sub_agent_context: str | None) -> tuple[list[str], str | None, str | None, bool]:
+def _parse_sdk_message(
+    msg: Message, *, sub_agent_context: str | None, turn_start: float | None = None
+) -> tuple[list[str], str | None, str | None, bool]:
     if isinstance(msg, ResultMessage):
         session_id: str | None = None
         try:
@@ -90,6 +93,9 @@ def _parse_sdk_message(msg: Message, *, sub_agent_context: str | None) -> tuple[
                 parts.append(f"cost=${cost:.4f}")
             if duration_s is not None:
                 parts.append(f"duration={duration_s:.1f}s")
+            if turn_start is not None:
+                wall_s = time.time() - turn_start
+                parts.append(f"wall={wall_s:.1f}s")
             if parts:
                 logger.usage(" | ".join(parts))
         except (AttributeError, TypeError, KeyError):
@@ -230,7 +236,7 @@ async def _cancel_task(task: asyncio.Task[tp.Any]) -> None:
         pass
 
 
-async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show_output: bool) -> list[str]:
+async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show_output: bool, turn_start: float | None = None) -> list[str]:
     assert state.client is not None
     client = state.client
 
@@ -280,7 +286,9 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
                 try:
                     drain = client.receive_response().__aiter__()
                     while (leftover := await asyncio.wait_for(anext(drain, None), timeout=5.0)) is not None:
-                        texts, _, _, _ = _parse_sdk_message(tp.cast(Message, leftover), sub_agent_context=sub_agent_context)
+                        texts, _, _, _ = _parse_sdk_message(
+                            tp.cast(Message, leftover), sub_agent_context=sub_agent_context, turn_start=turn_start
+                        )
                         text = "\n".join(texts) if texts else None
                         if text and show_output:
                             filtered = filter_tool_lines(text)
@@ -295,7 +303,7 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
                 break
 
             msg = tp.cast(Message, result)
-            texts, sub_agent_context, session_id, _ = _parse_sdk_message(msg, sub_agent_context=sub_agent_context)
+            texts, sub_agent_context, session_id, _ = _parse_sdk_message(msg, sub_agent_context=sub_agent_context, turn_start=turn_start)
             if session_id and session_id != state.session_id:
                 persist_session_id(session_id, state=state, config=config)
             text = "\n".join(texts) if texts else None
@@ -320,10 +328,11 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
 
 
 async def process_message(msg: str, *, state: vm.State, config: vm.VestaConfig, is_user: bool) -> tuple[list[str], vm.State]:
+    turn_start = time.time()
     if state.history is not None:
         role = "user" if is_user else "system"
         history_save(state.history, role, msg, session_id=state.session_id)
-    responses = await converse(msg, state=state, config=config, show_output=True)
+    responses = await converse(msg, state=state, config=config, show_output=True, turn_start=turn_start)
     return responses, state
 
 
