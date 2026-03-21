@@ -39,3 +39,16 @@ class Notification(pyd.BaseModel):
         data = self.model_dump(exclude={"file_path", "type", "source"})
         parts = [f"{k}={v}" for k, v in data.items() if v is not None]
         return f"[{self.type} from {self.source}] {', '.join(parts)}"
+
+    def is_urgent(self, urgent_phones: list[str]) -> bool:
+        """Return True if this notification should interrupt current processing.
+
+        A notification is urgent when it is a direct WhatsApp message (no group
+        chat) from one of the configured urgent phone numbers.
+        """
+        if not urgent_phones or self.source != "whatsapp":
+            return False
+        extra = self.model_extra or {}
+        contact_phone: str = extra.get("contact_phone", "") or ""
+        chat_name = extra.get("chat_name")  # absent / None for direct chats
+        return not chat_name and contact_phone in urgent_phones
