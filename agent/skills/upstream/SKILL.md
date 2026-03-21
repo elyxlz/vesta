@@ -12,7 +12,7 @@ Local fork: `~/vesta` (this is a fork — it diverges from upstream as local cha
 
 1. `git -C ~/vesta fetch origin`
 2. `git -C ~/vesta log HEAD..origin/master --oneline` — see what's new
-3. Only look at changes under `agent/`
+3. Only look at changes under `agent/` (source, skills, prompts, tools)
 4. For each interesting commit: `git -C ~/vesta show <hash>` — understand what it does
 5. Manually apply the relevant changes to `~/vesta` source (don't paste diffs blindly — local may have diverged, adapt the intent)
 6. Track the last processed commit hash in MEMORY.md so you don't redo it next time
@@ -43,16 +43,6 @@ uv run ~/vesta/skills/upstream/pr.py --token-only
 ## What to PR
 - Tool improvements, bug fixes, new skills, prompt upgrades that any vesta instance would benefit from
 - Don't PR: personal config, memory files, credentials, user-specific customizations
-
-## Skill registry sync
-
-When syncing upstream, also check for skill updates under `agent/skills/`:
-
-- For each installed skill (`ls ~/vesta/skills/`) check if there are new commits touching `agent/skills/<name>/`
-- Read the diff and apply useful generic improvements to `~/vesta/skills/<name>/`
-- Track the last processed commit hash in MEMORY.md (same as core upstream sync)
-
-When contributing a skill improvement back upstream, use the same worktree flow. All skill changes — core or not — go in `agent/skills/<name>/`.
 
 ## How it works
 - Authenticates via the `vesta-upstream` GitHub App (ID 2990557)
