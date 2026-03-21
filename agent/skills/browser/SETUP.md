@@ -62,3 +62,10 @@ the user to let you connect to their browser remotely** instead of retrying loca
 4. Now you control their actual browser — with all their cookies, logins, and extensions
 
 This is the preferred fallback for any authentication or profile issue.
+
+## Restart
+
+Add to `~/vesta/prompts/restart.md`:
+```
+screen -dmS xvfb Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp
+```

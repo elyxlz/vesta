@@ -39,3 +39,7 @@
    **NEVER restart the daemon after the user has scanned** — restarting invalidates the session. If `authenticate` still says not authenticated, wait longer and check again (up to 30 seconds). Only restart the daemon if the user confirms they didn't scan in time or the QR visually expired.
 
    Kill the HTTP server once authenticated: `screen -S qr-server -X quit`
+5. Add to `~/vesta/prompts/restart.md`:
+   ```
+   screen -dmS whatsapp whatsapp serve --notifications-dir ~/vesta/notifications
+   ```

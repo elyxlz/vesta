@@ -8,6 +8,10 @@
 4. Place the credentials file at `~/vesta/data/google/credentials.json`
 5. Install: `uv tool install ~/vesta/skills/google/cli`
 6. Start background daemon: `screen -dmS google google serve`
+7. Add to `~/vesta/prompts/restart.md`:
+   ```
+   screen -dmS google google serve --notifications-dir ~/vesta/notifications
+   ```
 
 ## Authentication
 
