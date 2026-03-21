@@ -177,7 +177,10 @@ def _make_hooks(
                 if h in _sent_bash_hashes:
                     age = now - _sent_bash_hashes[h]
                     logger.warning(f"Duplicate whatsapp send blocked (identical command {age:.0f}s ago)")
-                    return tp.cast(HookJSONOutput, {"decision": "block", "reason": f"Duplicate send blocked: identical whatsapp command was already sent {age:.0f}s ago"})
+                    return tp.cast(
+                        HookJSONOutput,
+                        {"decision": "block", "reason": f"Duplicate send blocked: identical whatsapp command was already sent {age:.0f}s ago"},
+                    )
                 _sent_bash_hashes[h] = now
 
         logger.tool(f"{prefix}{summary}")
