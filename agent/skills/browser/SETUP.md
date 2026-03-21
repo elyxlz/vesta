@@ -46,11 +46,24 @@ The browser CLI applies multiple layers automatically:
    the fingerprinting differences between headless and headed Chrome (screen dimensions,
    WebGL renderer, missing plugins, etc.)
 
-## Troubleshooting — Remote Control
+## Remote Assist Setup (noVNC)
 
-If something doesn't work with the local browser (login walls, CAPTCHAs, 2FA, missing
-cookies, profile lock errors, or anything requiring the user's authenticated session), **ask
-the user to let you connect to their browser remotely** instead of retrying locally:
+When the automated browser gets stuck on CAPTCHAs, sign-in blocks, or fingerprint detection,
+you can hand control to the user via noVNC — they get a link, interact with the browser from
+their phone/laptop, and you take back over. This is the preferred approach when vesta runs on
+the same network as the user.
+
+```bash
+# Install noVNC dependencies (first time only)
+apt-get install -y novnc x11vnc scrot
+```
+
+See the "Remote Assist" section in SKILL.md for the full flow.
+
+## Troubleshooting — Remote Control (Alternative)
+
+If noVNC isn't suitable (e.g. vesta is on a remote server, not the user's LAN), you can
+connect to the user's own browser remotely instead:
 
 1. Ask the user to open their browser with remote debugging:
    - **Brave**: `brave --remote-debugging-port=9222`
@@ -60,8 +73,6 @@ the user to let you connect to their browser remotely** instead of retrying loca
 2. Ask the user for their machine's IP address (or `localhost` if Vesta runs on the same machine)
 3. Connect: `browser connect http://<ip>:9222`
 4. Now you control their actual browser — with all their cookies, logins, and extensions
-
-This is the preferred fallback for any authentication or profile issue.
 
 ## Restart
 

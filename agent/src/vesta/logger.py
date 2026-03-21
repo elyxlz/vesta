@@ -63,7 +63,10 @@ def _strip_markup(msg: str) -> str:
 def _log(msg: str, *, level: int = logging.INFO) -> None:
     record = _logger.makeRecord(_logger.name, level, "", 0, msg, (), None)
     _console_handler.emit(record)
-    sys.stdout.flush()
+    try:
+        sys.stdout.flush()
+    except BlockingIOError:
+        pass
 
     if _file_handler:
         clean_record = _logger.makeRecord(_logger.name, level, "", 0, _strip_markup(msg), (), None)
@@ -129,6 +132,10 @@ def subagent(msg: tp.Any) -> None:
 
 def sdk(msg: tp.Any) -> None:
     _cat("~", "dim", "SDK", msg, level=logging.DEBUG)
+
+
+def usage(msg: tp.Any) -> None:
+    _cat("$", "green", "USAGE", msg)
 
 
 def debug(msg: tp.Any) -> None:

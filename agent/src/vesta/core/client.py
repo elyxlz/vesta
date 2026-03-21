@@ -74,6 +74,26 @@ def _parse_sdk_message(msg: Message, *, sub_agent_context: str | None) -> tuple[
             session_id = msg.session_id
         except AttributeError:
             pass
+        # Log token usage and cost
+        try:
+            usage_data = msg.usage or {}
+            cost = msg.total_cost_usd
+            duration_s = msg.duration_ms / 1000 if msg.duration_ms else None
+            parts = []
+            if usage_data:
+                input_tok = usage_data.get("input_tokens", 0)
+                output_tok = usage_data.get("output_tokens", 0)
+                cache_read = usage_data.get("cache_read_input_tokens", 0)
+                cache_create = usage_data.get("cache_creation_input_tokens", 0)
+                parts.append(f"in={input_tok} out={output_tok} cache_read={cache_read} cache_write={cache_create}")
+            if cost is not None:
+                parts.append(f"cost=${cost:.4f}")
+            if duration_s is not None:
+                parts.append(f"duration={duration_s:.1f}s")
+            if parts:
+                logger.usage(" | ".join(parts))
+        except (AttributeError, TypeError, KeyError):
+            pass
         return ([], sub_agent_context, session_id, False)
 
     if not isinstance(msg, AssistantMessage):
