@@ -17,6 +17,8 @@ pub struct ServerConfig {
     pub api_key: String,
     #[serde(default)]
     pub cert_fingerprint: String,
+    #[serde(default)]
+    pub cert_pem: String,
 }
 
 fn config_path() -> Result<PathBuf, VestaError> {
@@ -50,10 +52,20 @@ fn http_client() -> reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT
         .get_or_init(|| {
-            reqwest::Client::builder()
-                .danger_accept_invalid_certs(true)
-                .build()
-                .expect("failed to create HTTP client")
+            let mut builder = reqwest::Client::builder();
+
+            // Use the server's self-signed cert as a trusted root (from server.json)
+            if let Ok(config) = load_config() {
+                if !config.cert_pem.is_empty() {
+                    if let Ok(cert) = reqwest::Certificate::from_pem(config.cert_pem.as_bytes()) {
+                        builder = builder
+                            .add_root_certificate(cert)
+                            .tls_built_in_root_certs(false);
+                    }
+                }
+            }
+
+            builder.build().expect("failed to create HTTP client")
         })
         .clone()
 }

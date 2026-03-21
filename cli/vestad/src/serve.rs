@@ -620,8 +620,10 @@ async fn backup_handler(
             .unwrap()
             .map_err(map_docker_err)?;
 
-    // Stream docker save | gzip
+    // Stream docker save | gzip, then cleanup after stream completes
     let tag = backup_tag.clone();
+    let name_for_cleanup = name.clone();
+    let tag_for_cleanup = backup_tag.clone();
     let stream = async_stream::stream! {
         let mut docker_save = match tokio::process::Command::new("docker")
             .args(["save", &tag])
@@ -632,6 +634,10 @@ async fn backup_handler(
             Ok(c) => c,
             Err(e) => {
                 yield Err(std::io::Error::other(e));
+                // Cleanup on error
+                tokio::task::spawn_blocking(move || {
+                    docker::backup_cleanup(&name_for_cleanup, &tag_for_cleanup, was_running);
+                }).await.ok();
                 return;
             }
         };
@@ -646,6 +652,10 @@ async fn backup_handler(
             Ok(c) => c,
             Err(e) => {
                 yield Err(std::io::Error::other(e));
+                let n = name_for_cleanup; let t = tag_for_cleanup;
+                tokio::task::spawn_blocking(move || {
+                    docker::backup_cleanup(&n, &t, was_running);
+                }).await.ok();
                 return;
             }
         };
@@ -667,20 +677,13 @@ async fn backup_handler(
 
         docker_save.wait().await.ok();
         gzip.wait().await.ok();
-    };
 
-    // Cleanup after response is sent
-    let name_for_cleanup = name.clone();
-    let tag_for_cleanup = backup_tag.clone();
-    tokio::spawn(async move {
-        // Give the stream a moment to fully flush
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        // Cleanup after stream is fully consumed
+        let n = name_for_cleanup; let t = tag_for_cleanup;
         tokio::task::spawn_blocking(move || {
-            docker::backup_cleanup(&name_for_cleanup, &tag_for_cleanup, was_running);
-        })
-        .await
-        .ok();
-    });
+            docker::backup_cleanup(&n, &t, was_running);
+        }).await.ok();
+    };
 
     let body = Body::from_stream(stream);
     Ok(Response::builder()
