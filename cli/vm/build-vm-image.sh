@@ -7,8 +7,8 @@ OUTPUT_DIR="${2:-$SCRIPT_DIR}"
 
 echo "building VM image for $ARCH..."
 
-# Build the Docker image
-docker build --platform "linux/$ARCH" -t vesta-vm -f "$SCRIPT_DIR/Dockerfile" "$SCRIPT_DIR"
+# Build the Docker image (with kernel for VM boot)
+docker build --platform "linux/$ARCH" --build-arg INCLUDE_KERNEL=true -t vesta-vm -f "$SCRIPT_DIR/Dockerfile" "$SCRIPT_DIR"
 
 # Export rootfs
 echo "exporting rootfs..."
@@ -27,7 +27,7 @@ MOUNT_DIR=$(mktemp -d)
 sudo mount "$DISK" "$MOUNT_DIR"
 sudo tar -xf /tmp/vesta-rootfs.tar -C "$MOUNT_DIR"
 
-# Extract kernel + initrd (Alpine linux-virt uses fixed names)
+# Extract kernel + initrd (symlinked to vmlinuz-virt / initramfs-virt in Dockerfile)
 VMLINUZ="$MOUNT_DIR/boot/vmlinuz-virt"
 INITRD="$MOUNT_DIR/boot/initramfs-virt"
 if [ ! -f "$VMLINUZ" ] || [ ! -f "$INITRD" ]; then
@@ -40,7 +40,7 @@ fi
 # ARM64 requires uncompressed kernel for Virtualization.framework
 if [ "$ARCH" = "arm64" ]; then
     echo "decompressing kernel for arm64..."
-    # Alpine ARM64 vmlinuz-virt is a PE32+ EFI stub with gzip-compressed kernel inside.
+    # ARM64 vmlinuz is a PE32+ EFI stub with gzip-compressed kernel inside.
     # Find the gzip magic bytes and decompress to get the raw Image.
     python3 -c "
 import zlib

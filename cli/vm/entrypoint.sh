@@ -23,7 +23,7 @@ for iface in /sys/class/net/eth*; do
     [ -e "$iface" ] || continue
     iface_name="$(basename "$iface")"
     ip link set "$iface_name" up 2>/dev/null || true
-    udhcpc -i "$iface_name" -q -n 2>/dev/null || true &
+    dhclient -1 "$iface_name" 2>/dev/null || true &
 done
 
 # Mount cgroup v2 (unified hierarchy)
@@ -58,6 +58,11 @@ fi
 
 # Start NTP (handles clock drift after host sleep/wake)
 chronyd 2>/dev/null || true
+
+# Configure NVIDIA container runtime if toolkit is installed
+if command -v nvidia-ctk >/dev/null 2>&1; then
+    nvidia-ctk runtime configure --runtime=docker 2>/dev/null || true
+fi
 
 # Start Docker
 rm -f /var/run/docker.pid /var/run/containerd/containerd.pid
