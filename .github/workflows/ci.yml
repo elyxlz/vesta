@@ -567,13 +567,14 @@ jobs:
           cp /tmp/cli-extract/vesta cli/vm/vesta
 
       - name: Build VM Docker image
-        run: docker build --platform linux/${{ matrix.arch }} -t vesta-vm -f cli/vm/Dockerfile cli/vm
+        run: docker build --platform linux/${{ matrix.arch }} --build-arg INCLUDE_KERNEL=true -t vesta-vm -f cli/vm/Dockerfile cli/vm
 
-      - name: Export rootfs and create disk image
+      - name: Export rootfs and create VM disk image
         run: |
           CONTAINER=$(docker create --platform linux/${{ matrix.arch }} vesta-vm)
 
           docker export "$CONTAINER" > /tmp/rootfs.tar
+          docker rm "$CONTAINER" > /dev/null
 
           truncate -s 2G /tmp/vm-disk.raw
           mkfs.ext4 -q /tmp/vm-disk.raw
@@ -586,7 +587,7 @@ jobs:
           INITRD="$MOUNT_DIR/boot/initramfs-virt"
 
           if [ "${{ matrix.arch }}" = "arm64" ]; then
-            # ARM64 Alpine vmlinuz is an EFI stub wrapping a gzip kernel;
+            # ARM64 vmlinuz is an EFI stub wrapping a gzip kernel;
             # vfkit needs the raw uncompressed kernel image
             sudo python3 -c "
           import zlib
@@ -607,7 +608,6 @@ jobs:
           sudo umount "$MOUNT_DIR"
           rmdir "$MOUNT_DIR"
           trap - EXIT
-          docker rm "$CONTAINER" > /dev/null
           sudo chown "$(id -u):$(id -g)" /tmp/vm-kernel /tmp/vm-initrd /tmp/vm-disk.raw
           for f in /tmp/vm-kernel /tmp/vm-initrd /tmp/vm-disk.raw; do
             test -s "$f" || { echo "FATAL: $f is empty"; exit 1; }
@@ -615,9 +615,15 @@ jobs:
 
           cd /tmp
           tar --zstd -cf vesta-vm-${{ matrix.arch }}.tar.zst vm-kernel vm-initrd vm-disk.raw
-          gzip -c /tmp/rootfs.tar > /tmp/vesta-wsl-rootfs.tar.gz
-
           rm -f /tmp/rootfs.tar /tmp/vm-kernel /tmp/vm-initrd /tmp/vm-disk.raw
+
+      - name: Build and export WSL rootfs
+        if: matrix.arch == 'amd64'
+        run: |
+          docker build --build-arg INCLUDE_NVIDIA=true -t vesta-wsl -f cli/vm/Dockerfile cli/vm
+          CONTAINER=$(docker create vesta-wsl)
+          docker export "$CONTAINER" | gzip > /tmp/vesta-wsl-rootfs.tar.gz
+          docker rm "$CONTAINER" > /dev/null
 
       - uses: actions/upload-artifact@v7
         with:

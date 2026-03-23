@@ -465,17 +465,19 @@ fn wslpath(win_path: &std::path::Path) -> String {
 
 fn command_args(command: &Command) -> Vec<String> {
     match command {
-        Command::Setup { build, yes, ref name } => {
+        Command::Setup { build, yes, ref name, no_gpu } => {
             let mut args = vec!["setup".into()];
             if *yes { args.push("-y".into()); }
             if *build { args.push("--build".into()); }
             if let Some(n) = name { args.push("--name".into()); args.push(n.clone()); }
+            if *no_gpu { args.push("--no-gpu".into()); }
             args
         }
-        Command::Create { build, ref name } => {
+        Command::Create { build, ref name, no_gpu } => {
             let mut args = vec!["create".into()];
             if *build { args.push("--build".into()); }
             if let Some(n) = name { args.push("--name".into()); args.push(n.clone()); }
+            if *no_gpu { args.push("--no-gpu".into()); }
             args
         }
         Command::Start { ref name } => {

@@ -321,19 +321,60 @@ fn list_managed_containers() -> Vec<String> {
     .collect()
 }
 
-fn create_container(cname: &str, image: &str, port: u16, agent_name: &str) {
+enum GpuStatus {
+    Ready,
+    NoRuntime,
+    NoGpu,
+}
+
+fn gpu_available() -> GpuStatus {
+    let has_gpu = process::Command::new("nvidia-smi")
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    if !has_gpu {
+        return GpuStatus::NoGpu;
+    }
+
+    let has_runtime = docker_output(&["info", "--format", "{{json .Runtimes}}"])
+        .map(|s| s.contains("nvidia"))
+        .unwrap_or(false);
+
+    if has_runtime { GpuStatus::Ready } else { GpuStatus::NoRuntime }
+}
+
+fn create_container(cname: &str, image: &str, port: u16, agent_name: &str, no_gpu: bool) {
     let ws_port_env = format!("WS_PORT={}", port);
     let agent_name_env = format!("AGENT_NAME={}", agent_name);
     let port_label = format!("vesta.ws_port={}", port);
-    let args = vec![
+    let mut args = vec![
         "create", "--name", cname, "-it", "--privileged",
         "--restart", "unless-stopped", "--network", "host",
         "--label", "vesta.managed=true",
         "--label", &port_label,
         "-e", &ws_port_env,
         "-e", &agent_name_env,
-        image,
     ];
+
+    if !no_gpu {
+        match gpu_available() {
+            GpuStatus::Ready => {
+                args.extend(["--gpus", "all"]);
+                eprintln!("GPU detected, enabling passthrough");
+            }
+            GpuStatus::NoRuntime => {
+                eprintln!("warning: NVIDIA GPU detected but nvidia-container-toolkit is not installed.");
+                eprintln!("         install it to enable GPU passthrough:");
+                eprintln!("         https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html");
+            }
+            GpuStatus::NoGpu => {}
+        }
+    }
+
+    args.push(image);
     if !docker_ok(&args) {
         die("failed to create container");
     }
@@ -544,7 +585,7 @@ fn maybe_migrate_legacy() {
 
     docker_ok(&["rm", "-f", "vesta"]);
 
-    create_container(&cname, migrate_tag, BASE_WS_PORT, &name);
+    create_container(&cname, migrate_tag, BASE_WS_PORT, &name, false);
 
     if was_running {
         docker_ok(&["start", &cname]);
@@ -583,7 +624,7 @@ pub fn run(command: Command) {
     maybe_migrate_legacy();
 
     match command {
-        Command::Setup { build, yes, name } => {
+        Command::Setup { build, yes, name, no_gpu } => {
             let name = name.map(|n| normalize_name(&n)).unwrap_or_else(prompt_name);
             validate_name(&name);
             let cname = container_name(&name);
@@ -602,7 +643,7 @@ pub fn run(command: Command) {
             let port = allocate_port();
 
             eprintln!("creating agent '{}'...", name);
-            create_container(&cname, image, port, &name);
+            create_container(&cname, image, port, &name, no_gpu);
             inject_credentials(&cname, &credentials);
 
             if !docker_ok(&["start", &cname]) {
@@ -614,7 +655,7 @@ pub fn run(command: Command) {
             docker_interactive(&["attach", "--detach-keys=ctrl-q", &cname]);
         }
 
-        Command::Create { build, name } => {
+        Command::Create { build, name, no_gpu } => {
             let name = name.map(|n| normalize_name(&n)).unwrap_or_else(prompt_name);
             validate_name(&name);
             let cname = container_name(&name);
@@ -627,7 +668,7 @@ pub fn run(command: Command) {
             let port = allocate_port();
 
             eprintln!("creating agent '{}'...", name);
-            create_container(&cname, image, port, &name);
+            create_container(&cname, image, port, &name, no_gpu);
             eprintln!("created (run 'vesta auth {}' to authenticate, then 'vesta start {}')", name, name);
         }
 
@@ -967,7 +1008,7 @@ pub fn run(command: Command) {
             }
 
             let port = allocate_port();
-            create_container(&cname, &loaded_image, port, &name);
+            create_container(&cname, &loaded_image, port, &name, false);
 
             docker_ok(&["rmi", &loaded_image]);
 
@@ -1041,7 +1082,7 @@ pub fn run(command: Command) {
             docker_ok(&["rm", "-f", &cname]);
 
             eprintln!("recreating from backup...");
-            create_container(&cname, &backup_tag, port, &name);
+            create_container(&cname, &backup_tag, port, &name, false);
 
             if !docker_ok(&["start", &cname]) {
                 die("failed to start");

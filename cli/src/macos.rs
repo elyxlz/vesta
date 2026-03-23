@@ -465,7 +465,7 @@ fn download_vm_image() {
 
 pub fn run(command: Command) {
     match command {
-        Command::Setup { build, yes, name } => {
+        Command::Setup { build, yes, name, .. } => {
             if !vm_image_ready() {
                 download_vm_image();
             }
@@ -491,7 +491,7 @@ pub fn run(command: Command) {
             }
         }
 
-        Command::Create { build, name } => {
+        Command::Create { build, name, .. } => {
             ensure_vm();
             let mut args = vec!["vesta", "create"];
             if build { args.push("--build"); }

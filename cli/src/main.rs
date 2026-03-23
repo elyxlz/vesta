@@ -102,6 +102,9 @@ enum Command {
         /// Agent name (prompted interactively if omitted)
         #[arg(long)]
         name: Option<String>,
+        /// Disable GPU passthrough (overrides auto-detection)
+        #[arg(long)]
+        no_gpu: bool,
     },
     /// Create an agent container (without starting or authenticating)
     Create {
@@ -111,6 +114,9 @@ enum Command {
         /// Agent name (prompted interactively if omitted)
         #[arg(long)]
         name: Option<String>,
+        /// Disable GPU passthrough (overrides auto-detection)
+        #[arg(long)]
+        no_gpu: bool,
     },
     /// Start an agent (or all agents if no name given)
     Start {

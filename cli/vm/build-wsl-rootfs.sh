@@ -10,13 +10,13 @@ cd "$CLI_DIR"
 cargo build --release --target x86_64-unknown-linux-gnu
 cp target/x86_64-unknown-linux-gnu/release/vesta "$SCRIPT_DIR/vesta"
 
-# Build VM image
-echo "building VM image..."
-docker build -t vesta-vm -f "$SCRIPT_DIR/Dockerfile" "$SCRIPT_DIR"
+# Build WSL image (with NVIDIA toolkit for GPU passthrough)
+echo "building WSL image..."
+docker build --build-arg INCLUDE_NVIDIA=true -t vesta-wsl -f "$SCRIPT_DIR/Dockerfile" "$SCRIPT_DIR"
 
 # Export as rootfs tarball
 echo "exporting rootfs..."
-CONTAINER=$(docker create vesta-vm)
+CONTAINER=$(docker create vesta-wsl)
 docker export "$CONTAINER" | gzip > "$SCRIPT_DIR/vesta-wsl-rootfs.tar.gz"
 docker rm "$CONTAINER" > /dev/null
 
