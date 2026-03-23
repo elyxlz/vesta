@@ -13,6 +13,7 @@ import vesta.models as vm
 from vesta import logger
 from vesta.core.client import process_message, build_client_options, attempt_interrupt, filter_tool_lines, persist_session_id, _cancel_task
 from vesta.core.init import load_prompt, build_restart_context
+from vesta.core.ledger import filter_and_record
 
 
 def _now() -> dt.datetime:
@@ -87,8 +88,23 @@ async def process_batch(
     if not notifications:
         return
 
+    # Phase 2 & 3: record in ledger; suppress exact duplicates if enabled
+    db_path = config.data_dir / "event-ledger.db"
+    novel, suppressed = filter_and_record(
+        notifications,
+        db_path=db_path,
+        invocation_id=state.session_id,
+        suppress=config.suppress_exact_duplicates,
+    )
+    if suppressed:
+        eids = ", ".join(n.model_dump().get("event_id", "?") for n in suppressed)
+        logger.warning(f"Suppressed {len(suppressed)} exact duplicate(s): {eids}")
+    if not novel:
+        await delete_notification_files(notifications)
+        return
+
     suffix = load_prompt("notification_suffix", config) or ""
-    prompt = format_notification_batch(notifications, suffix=suffix)
+    prompt = format_notification_batch(novel, suffix=suffix)
 
     if state.client:
         await attempt_interrupt(state, config=config, reason="Notification interrupt")
