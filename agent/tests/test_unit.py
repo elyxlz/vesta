@@ -213,7 +213,8 @@ async def _run_processor_test(
     queue: asyncio.Queue = asyncio.Queue()
 
     for item in initial_queue or []:
-        await queue.put(item)
+        # Ensure 3-element queue items (msg, is_user, task_ids) — Phase 5 format
+        await queue.put((item[0], item[1], []) if len(item) == 2 else item)
 
     session_count = 0
     processed_messages: list[str] = []
@@ -445,7 +446,7 @@ async def test_message_processor_interrupts_on_new_message(tmp_path):
     state.shutdown_event = asyncio.Event()
     queue: asyncio.Queue = asyncio.Queue()
 
-    await queue.put(("slow processing message", True))
+    await queue.put(("slow processing message", True, []))
 
     processed: list[str] = []
     original = slow_side_effect
@@ -460,7 +461,7 @@ async def test_message_processor_interrupts_on_new_message(tmp_path):
 
     async def inject_message_and_shutdown():
         await processing_started.wait()
-        await queue.put(("urgent message", True))
+        await queue.put(("urgent message", True, []))
         await interrupt_seen.wait()
         await asyncio.sleep(0.1)
         assert state.shutdown_event is not None
