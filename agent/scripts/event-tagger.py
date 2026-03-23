@@ -37,12 +37,14 @@ def compute_event_id(data: dict) -> str:
         msg_id = data.get("message_id")
         if msg_id:
             return f"wa:msg:{msg_id}"
-        key = ":".join([
-            data.get("instance", ""),
-            data.get("contact_phone", ""),
-            data.get("chat_name", ""),
-            data.get("message", "")[:64],
-        ])
+        key = ":".join(
+            [
+                data.get("instance", ""),
+                data.get("contact_phone", ""),
+                data.get("chat_name", ""),
+                data.get("message", "")[:64],
+            ]
+        )
         return f"wa:msg:h:{_hash(key)}"
 
     # --- WhatsApp reaction ---
@@ -61,12 +63,14 @@ def compute_event_id(data: dict) -> str:
         email_id = data.get("email_id") or data.get("id")
         if email_id:
             return f"email:{email_id}"
-        key = ":".join([
-            data.get("sender_address", ""),
-            data.get("subject", ""),
-            data.get("received_at", ""),
-            data.get("account", ""),
-        ])
+        key = ":".join(
+            [
+                data.get("sender_address", ""),
+                data.get("subject", ""),
+                data.get("received_at", ""),
+                data.get("account", ""),
+            ]
+        )
         return f"email:h:{_hash(key)}"
 
     # --- Calendar ---
@@ -74,11 +78,13 @@ def compute_event_id(data: dict) -> str:
         cal_id = data.get("event_id") or data.get("id")
         if cal_id:
             return f"cal:{cal_id}"
-        key = ":".join([
-            data.get("subject", ""),
-            data.get("start_time", ""),
-            data.get("account", ""),
-        ])
+        key = ":".join(
+            [
+                data.get("subject", ""),
+                data.get("start_time", ""),
+                data.get("account", ""),
+            ]
+        )
         return f"cal:h:{_hash(key)}"
 
     # --- Reminder ---
