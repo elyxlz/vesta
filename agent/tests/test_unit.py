@@ -370,7 +370,7 @@ async def test_dreamer_queues_prompt_and_archives(tmp_path):
         await process_nightly_memory(queue, state=state, config=config)
 
     assert not queue.empty()
-    msg, is_user = await queue.get()
+    msg, is_user, task_ids = await queue.get()
     assert msg == "dreamer prompt"
     assert is_user is False
     assert state.last_dreamer_run == fake_now
@@ -497,7 +497,7 @@ async def test_process_interruptible_cancels_process_task(tmp_path):
     task_started = asyncio.Event()
     task_cancelled = False
 
-    async def hanging_process(msg, *, state, config, is_user):
+    async def hanging_process(msg, *, state, config, is_user, task_ids):
         nonlocal task_cancelled
         task_started.set()
         try:
