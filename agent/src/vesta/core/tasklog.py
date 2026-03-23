@@ -19,11 +19,16 @@ For binding workflows, open_tasks() injects a brief task context string into
 the prompt so Claude knows which task it is serving.
 
 Task types and their expected outputs:
-    user_request     — direct WhatsApp/LinkedIn message or console input
+    user_request     — direct message to okami (main WhatsApp instance or console)
+    wa_personal      — event from personal WhatsApp monitoring instance (groups, contacts)
     email_action     — actionable email (non-newsletter)
     reminder_action  — reminder from the reminder daemon  ← binding pilot
     calendar_alert   — calendar event notification
     linkedin_message — direct LinkedIn message
+
+Note: wa_personal is differentiated from user_request because personal WhatsApp events
+are observational (monitor and surface if relevant) rather than direct requests to okami.
+This distinction enables future priority routing between the two task classes.
 
 Fail-open everywhere: task failures must never affect the main execution path.
 """
@@ -58,8 +63,10 @@ CREATE INDEX IF NOT EXISTS idx_tasks_work_item   ON tasks (work_item_id);
 """
 
 # Maps (source, notification_type) → (task_type, expected_outputs)
+# Note: ("whatsapp", "message") is handled specially in classify() to distinguish
+# between the main okami instance (user_request) and the personal monitoring
+# instance (wa_personal).  All other sources are a direct lookup here.
 _CLASSIFIERS: dict[tuple[str, str], tuple[str, str]] = {
-    ("whatsapp", "message"): ("user_request", "reply via whatsapp"),
     ("linkedin", "message"): ("linkedin_message", "reply via linkedin"),
     ("microsoft", "email"): ("email_action", "email reply or flag"),
     ("reminder", "reminder"): ("reminder_action", "act on reminder"),
@@ -114,7 +121,19 @@ def _migrate(conn: sqlite3.Connection) -> None:
 
 
 def classify(notif: "vm.Notification") -> "tuple[str, str] | None":
-    """Return (task_type, expected_outputs) for a notification, or None if not qualifying."""
+    """Return (task_type, expected_outputs) for a notification, or None if not qualifying.
+
+    WhatsApp messages are split by instance:
+      - main (okami) instance  → user_request   (direct request, requires reply)
+      - personal instance      → wa_personal    (monitoring event, surface if relevant)
+    All other sources use the _CLASSIFIERS table directly.
+    """
+    if notif.source == "whatsapp" and notif.type == "message":
+        # Extra fields (including `instance`) are preserved on the model via extra="allow".
+        instance = notif.model_dump().get("instance")
+        if instance == "personal":
+            return ("wa_personal", "monitor and surface if relevant")
+        return ("user_request", "reply via whatsapp")
     return _CLASSIFIERS.get((notif.source, notif.type))
 
 
