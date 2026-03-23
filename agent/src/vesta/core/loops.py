@@ -13,6 +13,7 @@ import vesta.models as vm
 from vesta import logger
 from vesta.core.client import process_message, build_client_options, attempt_interrupt, filter_tool_lines, persist_session_id, _cancel_task
 from vesta.core.init import load_prompt, build_restart_context
+from vesta.core.ledger import record_events
 
 
 def _now() -> dt.datetime:
@@ -86,6 +87,9 @@ async def process_batch(
 ) -> None:
     if not notifications:
         return
+
+    # Phase 2: record events in the ledger before processing (observe-only, never blocks)
+    record_events(notifications, db_path=config.data_dir / "event-ledger.db", invocation_id=state.session_id)
 
     suffix = load_prompt("notification_suffix", config) or ""
     prompt = format_notification_batch(notifications, suffix=suffix)
