@@ -150,6 +150,31 @@ def query_recent(
         return []
 
 
+def open_console_task(msg: str, *, db_path: pl.Path, invocation_id: str | None) -> "str | None":
+    """Create an open user_request task for a direct console message.
+
+    Returns the task_id so the caller can close it, or None on error.
+    """
+    import hashlib  # noqa: PLC0415
+
+    try:
+        conn = _open(db_path)
+        tid = str(uuid.uuid4())
+        # Derive a stable event_id from the message content (no upstream ID available)
+        eid = "console:" + hashlib.sha256(msg.encode()).hexdigest()[:16]
+        now = dt.datetime.now().isoformat()
+        conn.execute(
+            "INSERT INTO tasks (task_id, event_id, task_type, created_at, status, expected_outputs) "
+            "VALUES (?, ?, 'user_request', ?, 'open', 'reply via console')",
+            (tid, eid, now),
+        )
+        conn.commit()
+        conn.close()
+        return tid
+    except Exception:
+        return None
+
+
 def task_stats(db_path: pl.Path) -> "dict[str, int]":
     """Return total, open, and closed task counts."""
     try:
