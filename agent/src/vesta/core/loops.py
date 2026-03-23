@@ -13,6 +13,8 @@ import vesta.models as vm
 from vesta import logger
 from vesta.core.client import process_message, build_client_options, attempt_interrupt, filter_tool_lines, persist_session_id, _cancel_task
 from vesta.core.init import load_prompt, build_restart_context
+from vesta.core.ledger import filter_and_record
+from vesta.core.tasklog import close_tasks, open_console_task, open_tasks
 
 
 def _now() -> dt.datetime:
@@ -87,14 +89,36 @@ async def process_batch(
     if not notifications:
         return
 
+    # Phase 2 & 3: record in ledger; suppress exact duplicates if enabled
+    db_path = config.data_dir / "event-ledger.db"
+    novel, suppressed = filter_and_record(
+        notifications,
+        db_path=db_path,
+        invocation_id=state.session_id,
+        suppress=config.suppress_exact_duplicates,
+    )
+    if suppressed:
+        eids = ", ".join(n.model_dump().get("event_id", "?") for n in suppressed)
+        logger.warning(f"Suppressed {len(suppressed)} exact duplicate(s): {eids}")
+    if not novel:
+        await delete_notification_files(notifications)
+        return
+
+    # Phase 4: open shadow task records for qualifying novel events
+    task_db = config.data_dir / "task-log.db"
+    task_ids = open_tasks(novel, db_path=task_db, invocation_id=state.session_id)
+
     suffix = load_prompt("notification_suffix", config) or ""
-    prompt = format_notification_batch(notifications, suffix=suffix)
+    prompt = format_notification_batch(novel, suffix=suffix)
 
     if state.client:
         await attempt_interrupt(state, config=config, reason="Notification interrupt")
 
     await queue.put((prompt, False))
     await delete_notification_files(notifications)
+
+    # Close tasks optimistically after handing off to the queue
+    close_tasks(task_ids, db_path=task_db)
 
 
 async def queue_greeting(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.VestaConfig, reason: str) -> None:
@@ -115,6 +139,10 @@ async def queue_greeting(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.V
 
 
 async def _process_message_safely(msg: str, *, is_user: bool, state: vm.State, config: vm.VestaConfig) -> None:
+    # Phase 4: create a user_request task for direct console input
+    console_task_id: str | None = None
+    if is_user:
+        console_task_id = open_console_task(msg, db_path=config.data_dir / "task-log.db", invocation_id=state.session_id)
     try:
         if is_user:
             logger.user(msg)
@@ -148,6 +176,8 @@ async def _process_message_safely(msg: str, *, is_user: bool, state: vm.State, c
         state.pending_context = f"[System: Previous request failed with error: {error_msg}. Session was reset.]"
     finally:
         state.event_bus.set_state("idle")
+        if console_task_id:
+            close_tasks([console_task_id], db_path=config.data_dir / "task-log.db")
 
 
 async def _process_interruptible(
