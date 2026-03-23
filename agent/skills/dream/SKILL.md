@@ -14,7 +14,7 @@ description: Self-improvement and memory curation. Used by the nightly dreamer, 
 
 ## Order of operations
 
-1. **Self-improvement** — retrospective, review, fix, validate, upstream
+1. **Self-improvement** — retrospective, review, fix, validate, upstream sync
 2. **User State** — update the snapshot in MEMORY.md
 3. **Memory curation** — prune, consolidate, move things out
 4. **Summary** — write tonight's dreamer summary
@@ -49,9 +49,9 @@ You can change anything. If a fix requires code, write the code.
 
 Re-read the failing exchange and simulate: would the updated version have changed the outcome? If no or unclear, revise further or note it as unresolved. Don't mark something fixed if you can't convince yourself it would have helped.
 
-### 5. Upstream
+### 5. Upstream sync
 
-If you fixed something generic — something that would help any fresh Vesta, not just your instance — use the `upstream` skill to PR it back to the source repo.
+Use the `upstream` skill to both pull and push. Don't skip this just because nothing broke today.
 
 ## User State (in MEMORY.md)
 
