@@ -78,7 +78,11 @@ def open_tasks(
     Returns the list of created task_ids so the caller can close them later.
     Returns [] on any error (fail open — never blocks processing).
     """
-    qualifying = [(n, classify(n)) for n in notifications if classify(n) is not None]
+    qualifying: list[tuple[vm.Notification, tuple[str, str]]] = []
+    for n in notifications:
+        c = classify(n)
+        if c is not None:
+            qualifying.append((n, c))
     if not qualifying:
         return []
     try:
