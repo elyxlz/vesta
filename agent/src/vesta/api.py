@@ -12,7 +12,7 @@ from vesta.events import EventBus, HistoryEvent, VestaEvent
 
 async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
     event_bus: EventBus = request.app["event_bus"]
-    message_queue: asyncio.Queue[tuple[str, bool]] = request.app["message_queue"]
+    message_queue: asyncio.Queue[tuple[str, bool, list[str]]] = request.app["message_queue"]
     state: vm.State = request.app["state"]
     config: vm.VestaConfig = request.app["config"]
 
@@ -40,7 +40,7 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
 
 async def _recv_loop(
     ws: web.WebSocketResponse,
-    message_queue: asyncio.Queue[tuple[str, bool]],
+    message_queue: asyncio.Queue[tuple[str, bool, list[str]]],
     state: vm.State,
     config: vm.VestaConfig,
 ) -> None:
@@ -58,7 +58,7 @@ async def _recv_loop(
             if msg_type == "message":
                 text = data["text"].strip()
                 if text:
-                    await message_queue.put((text, True))
+                    await message_queue.put((text, True, []))
             elif msg_type == "interrupt":
                 from vesta.core.client import attempt_interrupt
 
@@ -78,7 +78,7 @@ async def _send_loop(ws: web.WebSocketResponse, sub: asyncio.Queue[VestaEvent]) 
 
 async def start_ws_server(
     event_bus: EventBus,
-    message_queue: asyncio.Queue[tuple[str, bool]],
+    message_queue: asyncio.Queue[tuple[str, bool, list[str]]],
     state: vm.State,
     config: vm.VestaConfig,
     *,

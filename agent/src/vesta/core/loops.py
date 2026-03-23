@@ -13,6 +13,14 @@ import vesta.models as vm
 from vesta import logger
 from vesta.core.client import process_message, build_client_options, attempt_interrupt, filter_tool_lines, persist_session_id, _cancel_task
 from vesta.core.init import load_prompt, build_restart_context
+from vesta.core.ledger import filter_and_record
+from vesta.core.tasklog import mark_abandoned, open_console_task, open_tasks, set_completed, set_failed, set_running
+
+# Queue item: (prompt, is_user, task_ids)
+# task_ids is the list of task-log IDs that should be driven through the
+# queued → running → completed/failed lifecycle as this prompt is processed.
+# Empty list for system/proactive prompts that have no associated task record.
+_QueueItem = tuple[str, bool, list[str]]
 
 
 def _now() -> dt.datetime:
@@ -82,22 +90,46 @@ async def load_and_display_new_notifications(
 
 
 async def process_batch(
-    notifications: list[vm.Notification], *, queue: asyncio.Queue[tuple[str, bool]], state: vm.State, config: vm.VestaConfig
+    notifications: list[vm.Notification], *, queue: asyncio.Queue[_QueueItem], state: vm.State, config: vm.VestaConfig
 ) -> None:
     if not notifications:
         return
 
+    # Phase 2 & 3: record in ledger; suppress exact duplicates if enabled
+    db_path = config.data_dir / "event-ledger.db"
+    novel, suppressed = filter_and_record(
+        notifications,
+        db_path=db_path,
+        invocation_id=state.session_id,
+        suppress=config.suppress_exact_duplicates,
+    )
+    if suppressed:
+        eids = ", ".join(n.model_dump().get("event_id", "?") for n in suppressed)
+        logger.warning(f"Suppressed {len(suppressed)} exact duplicate(s): {eids}")
+    if not novel:
+        await delete_notification_files(notifications)
+        return
+
+    # Phase 4+5: open task records; get prompt context for binding workflows
+    task_db = config.data_dir / "task-log.db"
+    task_ids, task_context = open_tasks(novel, db_path=task_db, invocation_id=state.session_id)
+
     suffix = load_prompt("notification_suffix", config) or ""
-    prompt = format_notification_batch(notifications, suffix=suffix)
+    prompt = format_notification_batch(novel, suffix=suffix)
+
+    # Phase 5: inject task context into prompt for binding workflows
+    if task_context:
+        prompt = prompt + "\n\n" + task_context
 
     if state.client:
         await attempt_interrupt(state, config=config, reason="Notification interrupt")
 
-    await queue.put((prompt, False))
+    # Pass task_ids through the queue so _process_message_safely can drive the lifecycle
+    await queue.put((prompt, False, task_ids))
     await delete_notification_files(notifications)
 
 
-async def queue_greeting(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.VestaConfig, reason: str) -> None:
+async def queue_greeting(queue: asyncio.Queue[_QueueItem], *, config: vm.VestaConfig, reason: str) -> None:
     if reason == "first_start":
         prompt = load_prompt("first_start", config)
         if prompt:
@@ -107,14 +139,39 @@ async def queue_greeting(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.V
     if not prompt or not prompt.strip():
         return
 
-    await queue.put((prompt.strip(), False))
+    await queue.put((prompt.strip(), False, []))
     logger.startup(f"Queued {reason} greeting")
 
 
 # --- Message processing ---
 
 
-async def _process_message_safely(msg: str, *, is_user: bool, state: vm.State, config: vm.VestaConfig) -> None:
+async def _process_message_safely(
+    msg: str,
+    *,
+    is_user: bool,
+    task_ids: list[str],
+    state: vm.State,
+    config: vm.VestaConfig,
+) -> None:
+    task_db = config.data_dir / "task-log.db"
+    all_task_ids = list(task_ids)
+
+    # Phase 5: console messages get their own task record
+    if is_user:
+        console_tid = open_console_task(msg, db_path=task_db, invocation_id=state.session_id)
+        if console_tid:
+            all_task_ids.append(console_tid)
+
+    # Phase 5: transition all tasks to running now that Claude is starting.
+    # invocation_id is written here — not at queue time — so the trace chain
+    # (event_id → task_id → invocation_id) only materialises once execution
+    # actually begins.  If all_task_ids is empty (legacy path or open_tasks
+    # failed), this is a no-op and execution continues unaffected.
+    if all_task_ids:
+        set_running(all_task_ids, invocation_id=state.session_id, db_path=task_db)
+
+    task_succeeded = False
     try:
         if is_user:
             logger.user(msg)
@@ -131,6 +188,7 @@ async def _process_message_safely(msg: str, *, is_user: bool, state: vm.State, c
             if filtered:
                 logger.assistant(filtered)
                 state.event_bus.emit({"type": "assistant", "text": filtered})
+        task_succeeded = True
     except (ClaudeSDKError, OSError, RuntimeError, ValueError, TimeoutError) as e:
         if isinstance(e, TimeoutError):
             error_msg = "Response timed out"
@@ -148,13 +206,19 @@ async def _process_message_safely(msg: str, *, is_user: bool, state: vm.State, c
         state.pending_context = f"[System: Previous request failed with error: {error_msg}. Session was reset.]"
     finally:
         state.event_bus.set_state("idle")
+        # Phase 5: drive tasks to terminal state
+        if all_task_ids:
+            if task_succeeded:
+                set_completed(all_task_ids, db_path=task_db)
+            else:
+                set_failed(all_task_ids, db_path=task_db)
 
 
 async def _process_interruptible(
-    msg: str, *, is_user: bool, queue: asyncio.Queue[tuple[str, bool]], state: vm.State, config: vm.VestaConfig
+    msg: str, *, is_user: bool, task_ids: list[str], queue: asyncio.Queue[_QueueItem], state: vm.State, config: vm.VestaConfig
 ) -> None:
     """Process a message while monitoring the queue for new messages that should interrupt."""
-    pending: collections.deque[tuple[str, bool]] = collections.deque([(msg, is_user)])
+    pending: collections.deque[_QueueItem] = collections.deque([(msg, is_user, task_ids)])
     process_task: asyncio.Task[None] | None = None
 
     try:
@@ -164,12 +228,14 @@ async def _process_interruptible(
                     await queue.put(remaining)
                 break
 
-            current_msg, current_is_user = pending.popleft()
+            current_msg, current_is_user, current_task_ids = pending.popleft()
             state.interrupt_event = asyncio.Event()
-            process_task = asyncio.create_task(_process_message_safely(current_msg, is_user=current_is_user, state=state, config=config))
+            process_task = asyncio.create_task(
+                _process_message_safely(current_msg, is_user=current_is_user, task_ids=current_task_ids, state=state, config=config)
+            )
 
             while not process_task.done():
-                queue_task: asyncio.Task[tuple[str, bool]] = asyncio.create_task(queue.get())
+                queue_task: asyncio.Task[_QueueItem] = asyncio.create_task(queue.get())
                 done, _ = await asyncio.wait({process_task, queue_task}, return_when=asyncio.FIRST_COMPLETED)
 
                 if queue_task in done:
@@ -191,7 +257,7 @@ async def _process_interruptible(
         raise
 
 
-async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig) -> None:
+async def message_processor(queue: asyncio.Queue[_QueueItem], *, state: vm.State, config: vm.VestaConfig) -> None:
     while state.shutdown_event and not state.shutdown_event.is_set():
         logger.client("Creating new client session...")
         options = build_client_options(config, state)
@@ -201,16 +267,16 @@ async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm
 
             try:
                 if state.pending_context:
-                    await queue.put((state.pending_context, False))
+                    await queue.put((state.pending_context, False, []))
                     state.pending_context = None
 
                 while not state.shutdown_event.is_set() and state.pending_context is None:
                     try:
-                        msg, is_user = await asyncio.wait_for(queue.get(), timeout=1.0)
+                        msg, is_user, task_ids = await asyncio.wait_for(queue.get(), timeout=1.0)
                     except TimeoutError:
                         continue
 
-                    await _process_interruptible(msg, is_user=is_user, queue=queue, state=state, config=config)
+                    await _process_interruptible(msg, is_user=is_user, task_ids=task_ids, queue=queue, state=state, config=config)
 
                     if state.dreamer_active:
                         state.dreamer_active = False
@@ -225,12 +291,12 @@ async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm
 # --- Proactive & dreamer ---
 
 
-async def check_proactive_task(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.VestaConfig) -> None:
+async def check_proactive_task(queue: asyncio.Queue[_QueueItem], *, config: vm.VestaConfig) -> None:
     prompt = load_prompt("proactive_check", config)
     if not prompt:
         return
     logger.proactive(f"Running {config.proactive_check_interval}-minute check...")
-    await queue.put((prompt, False))
+    await queue.put((prompt, False, []))
 
 
 def _trigger_nightly_restart(*, state: vm.State, config: vm.VestaConfig) -> None:
@@ -247,7 +313,7 @@ def _trigger_nightly_restart(*, state: vm.State, config: vm.VestaConfig) -> None
     state.pending_context = build_restart_context("new day — conversation history reset, nightly dreamer ran", config, extras=extras)
 
 
-async def process_nightly_memory(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig) -> None:
+async def process_nightly_memory(queue: asyncio.Queue[_QueueItem], *, state: vm.State, config: vm.VestaConfig) -> None:
     if config.ephemeral:
         return
 
@@ -257,7 +323,7 @@ async def process_nightly_memory(queue: asyncio.Queue[tuple[str, bool]], *, stat
             logger.dreamer("Nightly dreamer starting...")
             prompt = load_prompt("dream", config) or ""
             state.dreamer_active = True
-            await queue.put((prompt, False))
+            await queue.put((prompt, False, []))
             state.last_dreamer_run = now
             try:
                 (config.data_dir / "last_dreamer_run").write_text(now.isoformat())
@@ -268,9 +334,12 @@ async def process_nightly_memory(queue: asyncio.Queue[tuple[str, bool]], *, stat
 
 # --- Monitor loop ---
 
+_WATCHDOG_INTERVAL_SECONDS = 300  # run watchdog every 5 minutes
 
-async def monitor_loop(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig) -> None:
+
+async def monitor_loop(queue: asyncio.Queue[_QueueItem], *, state: vm.State, config: vm.VestaConfig) -> None:
     last_proactive = _now()
+    last_watchdog = _now()
     notification_buffer: list[vm.Notification] = []
     buffer_start_time: dt.datetime | None = None
 
@@ -288,6 +357,16 @@ async def monitor_loop(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.Stat
                 last_proactive = now
 
             await process_nightly_memory(queue, state=state, config=config)
+
+            # Phase 5: watchdog — reclassify abandoned running tasks
+            if (now - last_watchdog).total_seconds() >= _WATCHDOG_INTERVAL_SECONDS:
+                task_db = config.data_dir / "task-log.db"
+                # A task is abandoned if it has been running longer than response_timeout + 60s buffer
+                timeout = config.response_timeout + 60
+                abandoned = mark_abandoned(timeout, db_path=task_db)
+                if abandoned:
+                    logger.warning(f"Watchdog: reclassified {abandoned} abandoned task(s) as failed")
+                last_watchdog = now
 
             notification_buffer, buffer_start_time = await load_and_display_new_notifications(
                 notification_buffer, buffer_start_time=buffer_start_time, state=state, config=config
