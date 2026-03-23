@@ -198,9 +198,7 @@ def open_tasks(
                 existing_tid = _find_active_task_by_work_item(wid, conn=conn)
                 if existing_tid:
                     task_ids.append(existing_tid)
-                    context_lines.append(
-                        f"[Task: id={existing_tid}, type={task_type}, work_item_id={wid}]"
-                    )
+                    context_lines.append(f"[Task: id={existing_tid}, type={task_type}, work_item_id={wid}]")
                     continue
 
             tid = str(uuid.uuid4())
@@ -213,9 +211,7 @@ def open_tasks(
             if wid is not None:
                 # Only binding workflows (wid is not None) get context injected into
                 # the prompt.  Unbound tasks are tracked silently.
-                context_lines.append(
-                    f"[Task: id={tid}, type={task_type}, work_item_id={wid}]"
-                )
+                context_lines.append(f"[Task: id={tid}, type={task_type}, work_item_id={wid}]")
 
         conn.commit()
         conn.close()
@@ -242,8 +238,7 @@ def set_running(task_ids: list[str], *, invocation_id: str | None, db_path: pl.P
         now = dt.datetime.now().isoformat()
         placeholders = ",".join("?" * len(task_ids))
         conn.execute(
-            f"UPDATE tasks SET status = 'running', invocation_id = ?, started_at = ? "
-            f"WHERE task_id IN ({placeholders}) AND status = 'queued'",
+            f"UPDATE tasks SET status = 'running', invocation_id = ?, started_at = ? WHERE task_id IN ({placeholders}) AND status = 'queued'",
             [invocation_id, now, *task_ids],
         )
         conn.commit()
@@ -299,8 +294,7 @@ def mark_abandoned(timeout_seconds: float, *, db_path: pl.Path) -> int:
         conn = _open(db_path)
         cutoff = (dt.datetime.now() - dt.timedelta(seconds=timeout_seconds)).isoformat()
         result = conn.execute(
-            "UPDATE tasks SET status = 'failed', closed_at = ? "
-            "WHERE status = 'running' AND started_at < ?",
+            "UPDATE tasks SET status = 'failed', closed_at = ? WHERE status = 'running' AND started_at < ?",
             (dt.datetime.now().isoformat(), cutoff),
         )
         count = result.rowcount
@@ -340,7 +334,18 @@ def query_recent(
                 (limit,),
             ).fetchall()
         conn.close()
-        keys = ("task_id", "event_id", "task_type", "created_at", "status", "expected_outputs", "invocation_id", "work_item_id", "started_at", "closed_at")
+        keys = (
+            "task_id",
+            "event_id",
+            "task_type",
+            "created_at",
+            "status",
+            "expected_outputs",
+            "invocation_id",
+            "work_item_id",
+            "started_at",
+            "closed_at",
+        )
         return [dict(zip(keys, row)) for row in rows]
     except Exception:
         return []
