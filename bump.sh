@@ -19,8 +19,8 @@ echo "${CURRENT} -> ${NEW}"
 # agent/pyproject.toml
 sed -i "s/^version = \"${CURRENT}\"/version = \"${NEW}\"/" agent/pyproject.toml
 
-# cli/Cargo.toml (first occurrence)
-sed -i "0,/^version = \"${CURRENT}\"/s//version = \"${NEW}\"/" cli/Cargo.toml
+# cli/Cargo.toml (workspace version)
+sed -i "s/^version = \"${CURRENT}\"/version = \"${NEW}\"/" cli/Cargo.toml
 
 # app/src-tauri/Cargo.toml (first occurrence)
 sed -i "0,/^version = \"${CURRENT}\"/s//version = \"${NEW}\"/" app/src-tauri/Cargo.toml

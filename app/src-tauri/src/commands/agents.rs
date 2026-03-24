@@ -1,5 +1,5 @@
 use crate::error::VestaError;
-use crate::runtime::cli::{self, AgentInfo, ListEntry};
+use crate::runtime::cli::{self, AgentInfo, ListEntry, ServerConfig};
 
 #[tauri::command]
 pub async fn list_agents() -> Result<Vec<ListEntry>, VestaError> {
@@ -59,4 +59,9 @@ pub async fn wait_for_ready(name: String, timeout: u64) -> Result<(), VestaError
 #[tauri::command]
 pub async fn agent_host() -> String {
     cli::agent_host().await
+}
+
+#[tauri::command]
+pub async fn get_server_config() -> Result<ServerConfig, VestaError> {
+    cli::get_server_config()
 }
