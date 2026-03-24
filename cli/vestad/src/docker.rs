@@ -1,0 +1,1096 @@
+use serde::Serialize;
+use std::process;
+
+#[derive(Debug)]
+pub enum DockerError {
+    NotFound(String),
+    AlreadyExists(String),
+    NotRunning(String),
+    BrokenState(String),
+    InvalidName(String),
+    BuildRequired(String),
+    Failed(String),
+}
+
+impl std::fmt::Display for DockerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotFound(s) | Self::AlreadyExists(s) | Self::NotRunning(s)
+            | Self::BrokenState(s) | Self::InvalidName(s) | Self::BuildRequired(s)
+            | Self::Failed(s) => write!(f, "{}", s),
+        }
+    }
+}
+
+pub const VESTA_IMAGE: &str = "ghcr.io/elyxlz/vesta:latest";
+pub const VESTA_LOG_PATH: &str = "/root/vesta/logs/vesta.log";
+pub const LOCAL_IMAGE_TAG: &str = "vesta:local";
+const MAX_DOCKERFILE_SEARCH_DEPTH: usize = 5;
+pub const CREDENTIALS_PATH: &str = "/root/.claude/.credentials.json";
+const CLAUDE_JSON_PATH: &str = "/root/.claude.json";
+pub const BASE_WS_PORT: u16 = 7865;
+const NAME_MAX_LEN: usize = 32;
+
+
+pub const OAUTH_CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+pub const OAUTH_REDIRECT_URI: &str = "https://console.anthropic.com/oauth/code/callback";
+pub const OAUTH_TOKEN_URL: &str = "https://console.anthropic.com/v1/oauth/token";
+pub const OAUTH_AUTHORIZE_URL: &str = "https://claude.ai/oauth/authorize";
+
+#[derive(PartialEq, Clone, Copy)]
+pub enum ContainerStatus {
+    Running,
+    Stopped,
+    NotFound,
+    Dead,
+}
+
+#[derive(Serialize, Clone)]
+pub struct StatusJson {
+    pub name: String,
+    pub status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    pub authenticated: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub agent_ready: bool,
+    pub ws_port: u16,
+    pub alive: bool,
+    pub friendly_status: &'static str,
+}
+
+#[derive(Serialize, Clone)]
+pub struct ListEntry {
+    pub name: String,
+    pub status: &'static str,
+    pub authenticated: bool,
+    pub agent_ready: bool,
+    pub ws_port: u16,
+    pub alive: bool,
+    pub friendly_status: &'static str,
+}
+
+pub fn container_name(name: &str) -> String {
+    format!("vesta-{}", name)
+}
+
+pub fn name_from_cname(cname: &str) -> String {
+    cname.strip_prefix("vesta-").unwrap_or(cname).to_string()
+}
+
+pub fn normalize_name(raw: &str) -> String {
+    let s: String = raw
+        .trim()
+        .to_lowercase()
+        .replace(|c: char| c.is_whitespace() || c == '_', "-")
+        .chars()
+        .filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '-')
+        .collect();
+    let s = s.trim_matches('-').to_string();
+    let mut result = String::new();
+    let mut prev_hyphen = false;
+    for c in s.chars() {
+        if c == '-' {
+            if !prev_hyphen {
+                result.push(c);
+            }
+            prev_hyphen = true;
+        } else {
+            result.push(c);
+            prev_hyphen = false;
+        }
+    }
+    if result.len() > NAME_MAX_LEN {
+        result.truncate(NAME_MAX_LEN);
+        result = result.trim_end_matches('-').to_string();
+    }
+    result
+}
+
+pub fn validate_name(name: &str) -> Result<(), DockerError> {
+    if name.is_empty() || name.len() > NAME_MAX_LEN {
+        return Err(DockerError::InvalidName("agent name must be 1-32 characters".into()));
+    }
+    let valid = if name.len() == 1 {
+        name.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+    } else {
+        let chars: Vec<char> = name.chars().collect();
+        let first_last_ok = (chars[0].is_ascii_lowercase() || chars[0].is_ascii_digit())
+            && (chars[chars.len() - 1].is_ascii_lowercase()
+                || chars[chars.len() - 1].is_ascii_digit());
+        let middle_ok = chars
+            .iter()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '-');
+        first_last_ok && middle_ok
+    };
+    if !valid {
+        return Err(DockerError::InvalidName("agent name must match [a-z0-9][a-z0-9-]*[a-z0-9]".into()));
+    }
+    Ok(())
+}
+
+// --- Docker helpers ---
+
+pub fn docker(args: &[&str]) -> process::ExitStatus {
+    process::Command::new("docker")
+        .args(args)
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::inherit())
+        .status()
+        .unwrap_or_else(|e| panic!("failed to run docker: {}", e))
+}
+
+pub fn docker_ok(args: &[&str]) -> bool {
+    docker(args).success()
+}
+
+pub fn docker_output(args: &[&str]) -> Option<String> {
+    let output = process::Command::new("docker")
+        .args(args)
+        .stdout(process::Stdio::piped())
+        .stderr(process::Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(
+        String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .to_string(),
+    )
+}
+
+pub fn docker_quiet(args: &[&str]) -> bool {
+    process::Command::new("docker")
+        .args(args)
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+pub fn ensure_docker() -> Result<(), DockerError> {
+    if !docker_quiet(&["--version"]) {
+        return Err(DockerError::Failed("docker is not installed".into()));
+    }
+    for _ in 0..10 {
+        if docker_quiet(&["info"]) {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+    Err(DockerError::Failed("docker daemon is not running".into()))
+}
+
+// --- Container query operations ---
+
+pub struct ContainerInfo {
+    pub status: ContainerStatus,
+    pub port: u16,
+    pub id: Option<String>,
+}
+
+pub struct AgentDerivedState {
+    pub authenticated: bool,
+    pub agent_ready: bool,
+    pub alive: bool,
+    pub friendly_status: &'static str,
+}
+
+pub fn compute_agent_state(cname: &str, info: &ContainerInfo) -> AgentDerivedState {
+    let authenticated = info.status != ContainerStatus::NotFound && is_authenticated(cname);
+    let agent_ready = info.status == ContainerStatus::Running && is_agent_ready(cname, info.port);
+    let alive = info.status == ContainerStatus::Running && authenticated;
+    let friendly_status = friendly_status(&info.status, authenticated, agent_ready);
+    AgentDerivedState { authenticated, agent_ready, alive, friendly_status }
+}
+
+fn inspect_container(cname: &str) -> ContainerInfo {
+    match docker_output(&[
+        "inspect",
+        "--format",
+        "{{.State.Status}}|{{index .Config.Labels \"vesta.ws_port\"}}|{{.Id}}",
+        cname,
+    ]) {
+        Some(s) => {
+            let parts: Vec<&str> = s.splitn(3, '|').collect();
+            let status = match parts.first().map(|p| p.trim()) {
+                Some("running" | "restarting" | "paused") => ContainerStatus::Running,
+                Some("exited" | "created") => ContainerStatus::Stopped,
+                Some("dead" | "removing") => ContainerStatus::Dead,
+                _ => ContainerStatus::Stopped,
+            };
+            let port = parts
+                .get(1)
+                .and_then(|p| p.trim().parse().ok())
+                .unwrap_or(BASE_WS_PORT);
+            let id = parts
+                .get(2)
+                .map(|p| p.trim().chars().take(12).collect::<String>());
+            ContainerInfo { status, port, id }
+        }
+        None => ContainerInfo {
+            status: ContainerStatus::NotFound,
+            port: BASE_WS_PORT,
+            id: None,
+        },
+    }
+}
+
+pub fn container_status(cname: &str) -> ContainerStatus {
+    inspect_container(cname).status
+}
+
+pub fn read_container_file(cname: &str, container_path: &str) -> Option<String> {
+    let tmp = std::env::temp_dir().join(format!(
+        "vesta_read_{}_{}",
+        std::process::id(),
+        cname
+    ));
+    let src = format!("{}:{}", cname, container_path);
+    if !docker_quiet(&["cp", &src, tmp.to_str().unwrap()]) {
+        return None;
+    }
+    let content = std::fs::read_to_string(&tmp).ok();
+    std::fs::remove_file(&tmp).ok();
+    content
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+pub fn is_authenticated(cname: &str) -> bool {
+    let Some(content) = read_container_file(cname, CREDENTIALS_PATH) else {
+        return false;
+    };
+    let Ok(creds) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return false;
+    };
+    let Some(expires_at) = creds["claudeAiOauth"]["expiresAt"].as_u64() else {
+        return false;
+    };
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    expires_at > now_ms
+}
+
+pub fn is_agent_ready(cname: &str, port: u16) -> bool {
+    docker_quiet(&[
+        "exec",
+        cname,
+        "bash",
+        "-c",
+        &format!("echo > /dev/tcp/localhost/{}", port),
+    ])
+}
+
+pub fn ensure_exists(cname: &str) -> Result<(), DockerError> {
+    match container_status(cname) {
+        ContainerStatus::NotFound => Err(DockerError::NotFound(format!("agent '{}' not found", name_from_cname(cname)))),
+        ContainerStatus::Dead => Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name_from_cname(cname)))),
+        _ => Ok(()),
+    }
+}
+
+pub fn ensure_running(cname: &str) -> Result<(), DockerError> {
+    let cs = container_status(cname);
+    match cs {
+        ContainerStatus::NotFound => Err(DockerError::NotFound(format!("agent '{}' not found", name_from_cname(cname)))),
+        ContainerStatus::Dead => Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name_from_cname(cname)))),
+        ContainerStatus::Running => Ok(()),
+        ContainerStatus::Stopped => Err(DockerError::NotRunning(format!("agent '{}' is not running", name_from_cname(cname)))),
+    }
+}
+
+// --- Image and port operations ---
+
+pub fn find_dockerfile() -> Result<std::path::PathBuf, DockerError> {
+    let cwd = std::env::current_dir()
+        .map_err(|_| DockerError::BuildRequired("cannot determine working directory".into()))?;
+    if cwd.join("Dockerfile").exists() {
+        return Ok(cwd);
+    }
+
+    let exe = std::env::current_exe()
+        .map_err(|_| DockerError::BuildRequired("cannot determine executable path".into()))?;
+    let mut dir = exe.parent().map(std::path::Path::to_path_buf);
+    let mut depth = 0;
+    while let Some(d) = dir {
+        if depth >= MAX_DOCKERFILE_SEARCH_DEPTH {
+            break;
+        }
+        if d.join("Dockerfile").exists() {
+            return Ok(d);
+        }
+        dir = d.parent().map(std::path::Path::to_path_buf);
+        depth += 1;
+    }
+    Err(DockerError::BuildRequired("--build requires vestad to have access to the Vesta source code (run vestad from the repo root)".into()))
+}
+
+pub fn resolve_image(build: bool) -> Result<&'static str, DockerError> {
+    if build {
+        let context = find_dockerfile()?;
+        let status = process::Command::new("docker")
+            .args(["build", "-t", LOCAL_IMAGE_TAG, "."])
+            .current_dir(&context)
+            .stdout(process::Stdio::null())
+            .stderr(process::Stdio::inherit())
+            .status()
+            .map_err(|e| DockerError::Failed(format!("docker build failed: {}", e)))?;
+        if !status.success() {
+            return Err(DockerError::Failed("image build failed".into()));
+        }
+        Ok(LOCAL_IMAGE_TAG)
+    } else {
+        if !docker_quiet(&["pull", VESTA_IMAGE]) {
+            return Err(DockerError::Failed("failed to pull image".into()));
+        }
+        Ok(VESTA_IMAGE)
+    }
+}
+
+pub fn allocate_port() -> u16 {
+    let containers = list_managed_containers();
+    let used: Vec<u16> = if containers.is_empty() {
+        vec![]
+    } else {
+        let args: Vec<&str> = ["inspect", "--format", "{{index .Config.Labels \"vesta.ws_port\"}}"]
+            .iter()
+            .copied()
+            .chain(containers.iter().map(|s| s.as_str()))
+            .collect();
+        docker_output(&args)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|s| s.trim().parse().ok())
+            .collect()
+    };
+    let mut port = BASE_WS_PORT;
+    while used.contains(&port) {
+        port += 1;
+    }
+    port
+}
+
+pub fn get_container_port(cname: &str) -> u16 {
+    docker_output(&[
+        "inspect",
+        "--format",
+        "{{index .Config.Labels \"vesta.ws_port\"}}",
+        cname,
+    ])
+    .and_then(|s| s.parse().ok())
+    .unwrap_or(BASE_WS_PORT)
+}
+
+pub fn list_managed_containers() -> Vec<String> {
+    docker_output(&[
+        "ps",
+        "-a",
+        "--filter",
+        "label=vesta.managed=true",
+        "--format",
+        "{{.Names}}",
+    ])
+    .unwrap_or_default()
+    .lines()
+    .filter(|l| !l.trim().is_empty())
+    .map(|l| l.trim().to_string())
+    .collect()
+}
+
+// --- GPU detection ---
+
+enum GpuStatus {
+    Ready,
+    NoRuntime,
+    NoGpu,
+}
+
+fn gpu_available() -> GpuStatus {
+    let has_gpu = std::process::Command::new("nvidia-smi")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    if !has_gpu {
+        return GpuStatus::NoGpu;
+    }
+
+    let has_runtime = docker_output(&["info", "--format", "{{json .Runtimes}}"])
+        .map(|s| s.contains("nvidia"))
+        .unwrap_or(false);
+
+    if has_runtime { GpuStatus::Ready } else { GpuStatus::NoRuntime }
+}
+
+// --- Container creation ---
+
+pub fn create_container(cname: &str, image: &str, port: u16, agent_name: &str) -> Result<(), DockerError> {
+    let ws_port_env = format!("WS_PORT={}", port);
+    let agent_name_env = format!("AGENT_NAME={}", agent_name);
+    let port_label = format!("vesta.ws_port={}", port);
+    let mut args = vec![
+        "create", "--name", cname, "-it",
+        "--restart", "unless-stopped", "--network", "host",
+        "--label", "vesta.managed=true",
+        "--label", &port_label,
+        "-e", &ws_port_env,
+        "-e", &agent_name_env,
+    ];
+
+    match gpu_available() {
+        GpuStatus::Ready => {
+            args.extend(["--gpus", "all"]);
+            eprintln!("GPU detected, enabling passthrough");
+        }
+        GpuStatus::NoRuntime => {
+            eprintln!("warning: NVIDIA GPU detected but nvidia-container-toolkit is not installed.");
+            eprintln!("         install it to enable GPU passthrough:");
+            eprintln!("         https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html");
+        }
+        GpuStatus::NoGpu => {}
+    }
+
+    args.push(image);
+    if !docker_ok(&args) {
+        return Err(DockerError::Failed("failed to create container".into()));
+    }
+    Ok(())
+}
+
+// --- Credential injection ---
+
+fn docker_cp_content(container: &str, content: &str, dest: &str) -> Result<(), DockerError> {
+    let tmp = std::env::temp_dir().join(format!("vesta_{}", std::process::id()));
+    std::fs::write(&tmp, content)
+        .map_err(|e| DockerError::Failed(format!("failed to write temp file: {}", e)))?;
+    let target = format!("{}:{}", container, dest);
+    let ok = docker_ok(&["cp", tmp.to_str().unwrap(), &target]);
+    std::fs::remove_file(&tmp).ok();
+    if !ok {
+        return Err(DockerError::Failed(format!("failed to copy to {}", dest)));
+    }
+    Ok(())
+}
+
+pub fn inject_credentials(container: &str, credentials: &str) -> Result<(), DockerError> {
+    let tmp_dir = std::env::temp_dir().join(format!("vesta_claude_{}", std::process::id()));
+    std::fs::create_dir_all(&tmp_dir)
+        .map_err(|e| DockerError::Failed(format!("failed to create temp dir: {}", e)))?;
+    std::fs::write(tmp_dir.join(".credentials.json"), credentials)
+        .map_err(|e| DockerError::Failed(format!("failed to write temp credentials: {}", e)))?;
+    let src = format!("{}/.", tmp_dir.to_str().unwrap());
+    let target = format!("{}:/root/.claude/", container);
+    let ok = docker_ok(&["cp", &src, &target]);
+    std::fs::remove_dir_all(&tmp_dir).ok();
+    if !ok {
+        return Err(DockerError::Failed("failed to copy credentials to container".into()));
+    }
+    docker_cp_content(container, "{\"hasCompletedOnboarding\":true}", CLAUDE_JSON_PATH)?;
+    Ok(())
+}
+
+// --- Auth flow (split for HTTP API) ---
+
+fn urlencod(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() * 3);
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            _ => {
+                out.push('%');
+                out.push(char::from(b"0123456789ABCDEF"[(b >> 4) as usize]));
+                out.push(char::from(b"0123456789ABCDEF"[(b & 0xf) as usize]));
+            }
+        }
+    }
+    out
+}
+
+fn base64url_encode(data: &[u8]) -> String {
+    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut out = String::with_capacity((data.len() * 4).div_ceil(3));
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0] as usize;
+        let b1 = if chunk.len() > 1 { chunk[1] as usize } else { 0 };
+        let b2 = if chunk.len() > 2 { chunk[2] as usize } else { 0 };
+        out.push(CHARS[b0 >> 2] as char);
+        out.push(CHARS[((b0 & 3) << 4) | (b1 >> 4)] as char);
+        if chunk.len() > 1 {
+            out.push(CHARS[((b1 & 0xf) << 2) | (b2 >> 6)] as char);
+        }
+        if chunk.len() > 2 {
+            out.push(CHARS[b2 & 0x3f] as char);
+        }
+    }
+    out
+}
+
+use ring::rand::SecureRandom;
+
+fn generate_pkce() -> (String, String) {
+    let rng = ring::rand::SystemRandom::new();
+    let mut verifier_bytes = [0u8; 32];
+    rng.fill(&mut verifier_bytes).expect("random failed");
+    let verifier = base64url_encode(&verifier_bytes);
+
+    let challenge_hash = ring::digest::digest(&ring::digest::SHA256, verifier.as_bytes());
+    let challenge = base64url_encode(challenge_hash.as_ref());
+
+    (verifier, challenge)
+}
+
+fn generate_state() -> String {
+    let rng = ring::rand::SystemRandom::new();
+    let mut state_bytes = [0u8; 32];
+    rng.fill(&mut state_bytes).expect("random failed");
+    base64url_encode(&state_bytes)
+}
+
+/// Start the OAuth PKCE flow. Returns (auth_url, session_id, code_verifier, state).
+pub fn start_auth_flow() -> (String, String, String) {
+    let (code_verifier, code_challenge) = generate_pkce();
+    let state = generate_state();
+
+    let auth_url = format!(
+        "{}?code=true&client_id={}&redirect_uri={}&response_type=code&scope={}&code_challenge={}&code_challenge_method=S256&state={}",
+        OAUTH_AUTHORIZE_URL,
+        OAUTH_CLIENT_ID,
+        urlencod(OAUTH_REDIRECT_URI),
+        urlencod("user:inference user:profile"),
+        code_challenge,
+        state,
+    );
+
+    (auth_url, code_verifier, state)
+}
+
+/// Complete the OAuth flow by exchanging the auth code for tokens.
+/// Returns the credentials JSON string.
+pub fn complete_auth_flow(input: &str, code_verifier: &str, expected_state: &str) -> Result<String, DockerError> {
+    let (auth_code, pasted_state) = match input.split_once('#') {
+        Some((code, st)) => (code, st),
+        None => (input, expected_state),
+    };
+
+    let body = format!(
+        r#"{{"grant_type":"authorization_code","code":"{}","client_id":"{}","redirect_uri":"{}","code_verifier":"{}","state":"{}"}}"#,
+        auth_code, OAUTH_CLIENT_ID, OAUTH_REDIRECT_URI, code_verifier, pasted_state,
+    );
+
+    let response = process::Command::new("curl")
+        .args([
+            "-s", "-X", "POST", OAUTH_TOKEN_URL,
+            "-H", "Content-Type: application/json",
+            "-d", &body,
+        ])
+        .output()
+        .map_err(|_| DockerError::Failed("curl not found".into()))?;
+
+    let response_str = String::from_utf8_lossy(&response.stdout);
+    let token_data: serde_json::Value = serde_json::from_str(&response_str)
+        .map_err(|_| DockerError::Failed(format!("token exchange failed: {}", response_str)))?;
+
+    if let Some(error) = token_data.get("error") {
+        return Err(DockerError::Failed(format!(
+            "auth failed: {} — {}",
+            error,
+            token_data
+                .get("error_description")
+                .unwrap_or(error)
+        )));
+    }
+
+    let access_token = token_data["access_token"]
+        .as_str()
+        .ok_or(DockerError::Failed("no access_token in response".into()))?;
+    let refresh_token = token_data.get("refresh_token").and_then(|v| v.as_str());
+    let expires_in = token_data["expires_in"].as_u64().unwrap_or(28800);
+
+    let expires_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis()
+        + (expires_in as u128) * 1000;
+
+    let mut creds = serde_json::json!({
+        "claudeAiOauth": {
+            "accessToken": access_token,
+            "expiresAt": expires_at as u64,
+        }
+    });
+    if let Some(rt) = refresh_token {
+        creds["claudeAiOauth"]["refreshToken"] = serde_json::json!(rt);
+    }
+    if let Some(scopes) = token_data.get("scope").and_then(|v| v.as_str()) {
+        let scope_list: Vec<&str> = scopes.split_whitespace().collect();
+        creds["claudeAiOauth"]["scopes"] = serde_json::json!(scope_list);
+    }
+
+    Ok(creds.to_string())
+}
+
+// --- Status helpers ---
+
+pub fn status_label(cs: &ContainerStatus) -> &'static str {
+    match cs {
+        ContainerStatus::Running => "running",
+        ContainerStatus::Dead => "dead",
+        ContainerStatus::NotFound => "not_found",
+        ContainerStatus::Stopped => "stopped",
+    }
+}
+
+pub fn friendly_status(
+    status: &ContainerStatus,
+    authenticated: bool,
+    agent_ready: bool,
+) -> &'static str {
+    match status {
+        ContainerStatus::Running if !authenticated => "not signed in",
+        ContainerStatus::Running if agent_ready => "alive",
+        ContainerStatus::Running => "starting...",
+        ContainerStatus::Dead => "broken",
+        ContainerStatus::Stopped => "stopped",
+        ContainerStatus::NotFound => "not found",
+    }
+}
+
+// --- High-level operations (used by serve.rs handlers) ---
+
+pub fn get_status(name: &str) -> Result<StatusJson, DockerError> {
+    validate_name(name)?;
+    let cname = container_name(name);
+    let info = inspect_container(&cname);
+    let derived = compute_agent_state(&cname, &info);
+
+    Ok(StatusJson {
+        name: name.to_string(),
+        status: status_label(&info.status),
+        id: info.id,
+        authenticated: derived.authenticated,
+        agent_ready: derived.agent_ready,
+        ws_port: info.port,
+        alive: derived.alive,
+        friendly_status: derived.friendly_status,
+    })
+}
+
+pub fn list_agents() -> Vec<ListEntry> {
+    let containers = list_managed_containers();
+    containers
+        .iter()
+        .map(|cname| {
+            let info = inspect_container(cname);
+            let derived = compute_agent_state(cname, &info);
+            ListEntry {
+                name: name_from_cname(cname),
+                status: status_label(&info.status),
+                authenticated: derived.authenticated,
+                agent_ready: derived.agent_ready,
+                ws_port: info.port,
+                alive: derived.alive,
+                friendly_status: derived.friendly_status,
+            }
+        })
+        .collect()
+}
+
+pub fn create_agent(name: &str, build: bool) -> Result<String, DockerError> {
+    validate_name(name)?;
+    let cname = container_name(name);
+
+    if container_status(&cname) != ContainerStatus::NotFound {
+        return Err(DockerError::AlreadyExists(format!("agent '{}' already exists", name)));
+    }
+
+    let image = resolve_image(build)?;
+    let port = allocate_port();
+    create_container(&cname, image, port, name)?;
+    Ok(name.to_string())
+}
+
+pub fn start_agent(name: &str) -> Result<(), DockerError> {
+    validate_name(name)?;
+    let cname = container_name(name);
+    let cs = container_status(&cname);
+    match cs {
+        ContainerStatus::NotFound => return Err(DockerError::NotFound(format!("agent '{}' not found", name))),
+        ContainerStatus::Dead => return Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name))),
+        ContainerStatus::Running => return Ok(()),
+        ContainerStatus::Stopped => {}
+    }
+    if !docker_ok(&["start", &cname]) {
+        return Err(DockerError::Failed(format!("failed to start '{}'", name)));
+    }
+    Ok(())
+}
+
+#[derive(Serialize)]
+pub struct StartAllResult {
+    pub name: String,
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+pub fn start_all_agents() -> Vec<StartAllResult> {
+    let containers = list_managed_containers();
+    let mut results = Vec::new();
+    for cname in &containers {
+        let name = name_from_cname(cname);
+        if container_status(cname) != ContainerStatus::Running {
+            if docker_ok(&["start", cname]) {
+                results.push(StartAllResult { name, ok: true, error: None });
+            } else {
+                results.push(StartAllResult {
+                    name,
+                    ok: false,
+                    error: Some("failed to start".into()),
+                });
+            }
+        } else {
+            results.push(StartAllResult { name, ok: true, error: None });
+        }
+    }
+    results
+}
+
+pub fn stop_agent(name: &str) -> Result<(), DockerError> {
+    validate_name(name)?;
+    let cname = container_name(name);
+    let cs = container_status(&cname);
+    match cs {
+        ContainerStatus::NotFound => return Err(DockerError::NotFound(format!("agent '{}' not found", name))),
+        ContainerStatus::Dead => return Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name))),
+        ContainerStatus::Stopped => return Ok(()),
+        ContainerStatus::Running => {}
+    }
+    if !docker_ok(&["stop", &cname]) {
+        return Err(DockerError::Failed("failed to stop".into()));
+    }
+    Ok(())
+}
+
+pub fn restart_agent(name: &str) -> Result<(), DockerError> {
+    validate_name(name)?;
+    let cname = container_name(name);
+    ensure_exists(&cname)?;
+    if !docker_ok(&["restart", &cname]) {
+        return Err(DockerError::Failed("failed to restart".into()));
+    }
+    Ok(())
+}
+
+pub fn destroy_agent(name: &str) -> Result<(), DockerError> {
+    validate_name(name)?;
+    let cname = container_name(name);
+    let cs = container_status(&cname);
+    match cs {
+        ContainerStatus::NotFound => return Err(DockerError::NotFound(format!("agent '{}' not found", name))),
+        ContainerStatus::Dead => return Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name))),
+        ContainerStatus::Running => { docker_ok(&["stop", &cname]); }
+        ContainerStatus::Stopped => {}
+    }
+    if !docker_ok(&["rm", "-f", &cname]) {
+        return Err(DockerError::Failed("failed to destroy".into()));
+    }
+    Ok(())
+}
+
+pub fn rebuild_agent(name: &str) -> Result<(), DockerError> {
+    validate_name(name)?;
+    let cname = container_name(name);
+    let info = inspect_container(&cname);
+    match info.status {
+        ContainerStatus::NotFound => return Err(DockerError::NotFound(format!("agent '{}' not found", name))),
+        ContainerStatus::Dead => return Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name))),
+        _ => {}
+    }
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let backup_tag = format!("vesta-rebuild:{}_{}", name, ts);
+
+    // Ensure base image layers are present so commit succeeds
+    docker_ok(&["pull", VESTA_IMAGE]);
+
+    if !docker_ok(&["commit", &cname, &backup_tag]) {
+        return Err(DockerError::Failed("backup failed".into()));
+    }
+
+    docker_ok(&["rm", "-f", &cname]);
+
+    create_container(&cname, &backup_tag, info.port, name)?;
+
+    if !docker_ok(&["start", &cname]) {
+        return Err(DockerError::Failed("failed to start".into()));
+    }
+    docker_ok(&["rmi", &backup_tag]);
+    Ok(())
+}
+
+pub fn wait_ready(name: &str, timeout_secs: u64) -> Result<(), DockerError> {
+    validate_name(name)?;
+    let cname = container_name(name);
+    ensure_running(&cname)?;
+    let port = get_container_port(&cname);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+    while std::time::Instant::now() < deadline {
+        if is_agent_ready(&cname, port) {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+    Err(DockerError::Failed(format!("{}: not ready after {}s", name, timeout_secs)))
+}
+
+/// Backup: stops container, commits to image, returns (backup_tag, was_running).
+/// Pulls the base image first to ensure parent layers are present.
+pub fn backup_prepare(name: &str) -> Result<(String, bool), DockerError> {
+    validate_name(name)?;
+    let cname = container_name(name);
+    let cs = container_status(&cname);
+    match cs {
+        ContainerStatus::NotFound => return Err(DockerError::NotFound(format!("agent '{}' not found", name))),
+        ContainerStatus::Dead => return Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name))),
+        _ => {}
+    }
+
+    let was_running = cs == ContainerStatus::Running;
+    if was_running {
+        docker_ok(&["stop", &cname]);
+    }
+
+    // Ensure base image layers are present so commit succeeds
+    docker_ok(&["pull", VESTA_IMAGE]);
+
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let backup_tag = format!("vesta-backup:{}_{}", name, ts);
+    let commit_label = format!("LABEL vesta.agent_name={}", name);
+
+    if !docker_ok(&["commit", "--change", &commit_label, &cname, &backup_tag]) {
+        if was_running {
+            docker_ok(&["start", &cname]);
+        }
+        return Err(DockerError::Failed("backup commit failed".into()));
+    }
+
+    Ok((backup_tag, was_running))
+}
+
+/// Cleanup after backup streaming completes.
+pub fn backup_cleanup(name: &str, backup_tag: &str, was_running: bool) {
+    let cname = container_name(name);
+    docker_ok(&["rmi", backup_tag]);
+    if was_running {
+        docker_ok(&["start", &cname]);
+    }
+}
+
+/// Restore from a loaded docker image tag.
+pub fn restore_agent(loaded_image: &str, name_override: Option<&str>, replace: bool) -> Result<String, DockerError> {
+    let name_from_backup = docker_output(&[
+        "inspect",
+        "--format",
+        "{{index .Config.Labels \"vesta.agent_name\"}}",
+        loaded_image,
+    ]);
+
+    let name = match name_override {
+        Some(n) => n.to_string(),
+        None => name_from_backup
+            .filter(|n| !n.is_empty() && n != "<no value>")
+            .ok_or(DockerError::Failed("backup has no agent name label. use ?name= to specify one.".into()))?,
+    };
+    validate_name(&name)?;
+    let cname = container_name(&name);
+
+    if container_status(&cname) != ContainerStatus::NotFound {
+        if !replace {
+            docker_ok(&["rmi", loaded_image]);
+            return Err(DockerError::AlreadyExists(format!(
+                "agent '{}' already exists. use ?replace=true to overwrite, or ?name= to pick a different name.",
+                name
+            )));
+        }
+        docker_ok(&["rm", "-f", &cname]);
+    }
+
+    let port = allocate_port();
+    create_container(&cname, loaded_image, port, &name)?;
+    docker_ok(&["rmi", loaded_image]);
+
+    Ok(name)
+}
+
+/// Migrate legacy `vesta` container to new naming scheme.
+pub fn maybe_migrate_legacy() {
+    if docker_output(&["inspect", "--format", "{{.State.Status}}", "vesta"]).is_none() {
+        return;
+    }
+
+    let managed = list_managed_containers();
+    if !managed.is_empty() {
+        return;
+    }
+
+    let cs = container_status("vesta");
+    if cs == ContainerStatus::Dead {
+        docker_ok(&["rm", "-f", "vesta"]);
+        return;
+    }
+
+    let was_running = cs == ContainerStatus::Running;
+    let name = read_container_file("vesta", "/root/.vesta-name").unwrap_or_else(|| "default".to_string());
+    if validate_name(&name).is_err() {
+        return;
+    }
+    let cname = container_name(&name);
+
+    let migrate_tag = "vesta-migrate:temp";
+    if !docker_ok(&[
+        "commit",
+        "--change", "LABEL vesta.managed=true",
+        "--change", &format!("LABEL vesta.ws_port={}", BASE_WS_PORT),
+        "vesta",
+        migrate_tag,
+    ]) {
+        return;
+    }
+
+    docker_ok(&["rm", "-f", "vesta"]);
+    let _ = create_container(&cname, migrate_tag, BASE_WS_PORT, &name);
+
+    if was_running {
+        docker_ok(&["start", &cname]);
+    }
+
+    docker_ok(&["rmi", migrate_tag]);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_simple() {
+        assert_eq!(normalize_name("MyAgent"), "myagent");
+    }
+
+    #[test]
+    fn normalize_spaces_and_underscores() {
+        assert_eq!(normalize_name("My Agent_Name"), "my-agent-name");
+    }
+
+    #[test]
+    fn normalize_special_chars() {
+        assert_eq!(normalize_name("hello!@#world"), "helloworld");
+    }
+
+    #[test]
+    fn normalize_leading_trailing_hyphens() {
+        assert_eq!(normalize_name("--test--"), "test");
+    }
+
+    #[test]
+    fn normalize_multiple_hyphens() {
+        assert_eq!(normalize_name("a---b"), "a-b");
+    }
+
+    #[test]
+    fn normalize_whitespace() {
+        assert_eq!(normalize_name("  hello  "), "hello");
+    }
+
+    #[test]
+    fn normalize_empty() {
+        assert_eq!(normalize_name(""), "");
+    }
+
+    #[test]
+    fn normalize_all_special() {
+        assert_eq!(normalize_name("!!!"), "");
+    }
+
+    #[test]
+    fn normalize_truncates_long_name() {
+        let long = "a".repeat(50);
+        let result = normalize_name(&long);
+        assert_eq!(result.len(), 32);
+    }
+
+    #[test]
+    fn normalize_truncate_strips_trailing_hyphen() {
+        let input = format!("{}--b", "a".repeat(31));
+        let result = normalize_name(&input);
+        assert!(!result.ends_with('-'));
+        assert!(result.len() <= 32);
+    }
+
+    #[test]
+    fn validate_ok() {
+        assert!(validate_name("hello").is_ok());
+        assert!(validate_name("a").is_ok());
+        assert!(validate_name("test-agent").is_ok());
+        assert!(validate_name("a1").is_ok());
+        assert!(validate_name("123").is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_empty() {
+        assert!(validate_name("").is_err());
+    }
+
+    #[test]
+    fn validate_rejects_uppercase() {
+        assert!(validate_name("Hello").is_err());
+    }
+
+    #[test]
+    fn validate_rejects_leading_hyphen() {
+        assert!(validate_name("-hello").is_err());
+    }
+
+    #[test]
+    fn validate_rejects_trailing_hyphen() {
+        assert!(validate_name("hello-").is_err());
+    }
+
+    #[test]
+    fn validate_rejects_too_long() {
+        let long = "a".repeat(33);
+        assert!(validate_name(&long).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_special_chars() {
+        assert!(validate_name("hello world").is_err());
+        assert!(validate_name("hello_world").is_err());
+    }
+
+    #[test]
+    fn container_name_roundtrip() {
+        assert_eq!(name_from_cname(&container_name("test")), "test");
+        assert_eq!(name_from_cname(&container_name("my-agent")), "my-agent");
+    }
+
+    #[test]
+    fn name_from_cname_no_prefix() {
+        assert_eq!(name_from_cname("random"), "random");
+    }
+}

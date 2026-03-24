@@ -35,7 +35,7 @@ export interface PlatformStatus {
 
 export type BoxActivityState = "idle" | "thinking" | "tool_use";
 
-export type OnboardingStep = "platform" | "name" | "creating" | "auth" | "done";
+export type OnboardingStep = "platform" | "name" | "connect" | "creating" | "auth" | "done";
 
 type BaseEvent = { ts?: string };
 

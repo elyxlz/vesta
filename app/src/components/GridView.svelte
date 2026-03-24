@@ -46,7 +46,7 @@
     for (const box of boxes) {
       const key = `${box.name}:${box.ws_port}`;
       if (box.alive && !connections.has(key)) {
-        const conn = createBoxConnection(box.ws_port);
+        const conn = createBoxConnection(box.name);
         const unsub = conn.boxState.subscribe((v: BoxActivityState) => {
           if (activityStates[box.name] !== v) activityStates[box.name] = v;
         });

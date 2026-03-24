@@ -1,0 +1,20 @@
+[package]
+name = "vesta-common"
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+edition.workspace = true
+description = "Shared types, config, and platform setup for Vesta"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+dirs = "6"
+ureq = { version = "3", features = ["json", "rustls"] }
+rustls = "0.23"
+ring = "0.17"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+zstd = "0.13"
+tar = "0.4"
