@@ -55,12 +55,15 @@ pub fn run() {
             commands::agents::restore_agent,
             commands::agents::wait_for_ready,
             commands::agents::agent_host,
+            commands::agents::get_server_config,
             commands::logs::stream_logs,
             commands::logs::stop_logs,
             commands::auth::authenticate,
             commands::auth::submit_auth_code,
+            commands::platform::auto_setup,
             commands::platform::platform_check,
             commands::platform::platform_setup,
+            commands::platform::connect_to_server,
             commands::platform::run_install_script,
         ])
         .build(tauri::generate_context!())

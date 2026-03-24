@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { open } from "@tauri-apps/plugin-dialog";
-  import { createBox, boxStatus, authenticate, startBox, waitForReady, checkPlatform, setupPlatform, restoreBox, listBoxes } from "../lib/api";
+  import { createBox, boxStatus, authenticate, startBox, waitForReady, checkPlatform, setupPlatform, restoreBox, listBoxes, connectToServer } from "../lib/api";
   import type { PlatformStatus, OnboardingStep } from "../lib/types";
   import ProgressBar from "./ProgressBar.svelte";
   import AuthFlow from "./AuthFlow.svelte";
@@ -19,6 +19,8 @@
   let transitioning = $state(false);
   let msgTimer: ReturnType<typeof setInterval> | null = null;
   let cancelled = $state(false);
+  let serverUrl = $state("");
+  let serverKey = $state("");
 
   const CREATE_MESSAGES = [
     "setting things up...",
@@ -248,6 +250,31 @@
     }
   }
 
+  async function handleConnect() {
+    const url = serverUrl.trim();
+    const key = serverKey.trim();
+    if (!url || !key || busy) return;
+    busy = true;
+    error = null;
+    try {
+      await connectToServer(url, key);
+      // Connected — check if agents already exist on this server
+      const agents = await listBoxes().catch(() => []);
+      if (agents.length > 0) {
+        const agent = agents.find((a) => a.authenticated) ?? agents[0];
+        boxName = agent.name;
+        busy = false;
+        await goTo("done");
+      } else {
+        busy = false;
+        await goTo("name");
+      }
+    } catch (e) {
+      busy = false;
+      setError(e, "failed to connect");
+    }
+  }
+
   function handleComplete() {
     onComplete(normalizedPreview);
   }
@@ -348,7 +375,43 @@
           {/if}
           <button class="btn primary full" type="submit" disabled={!normalizedPreview || busy}>create</button>
         </form>
-        <button class="btn cancel" onclick={handleRestore} disabled={busy}>restore from backup</button>
+        <div class="secondary-actions">
+          <button class="btn cancel" onclick={handleRestore} disabled={busy}>restore from backup</button>
+          <button class="btn cancel" onclick={() => goTo("connect")} disabled={busy}>connect to server</button>
+        </div>
+      </div>
+
+    {:else if step === "connect"}
+      <div class="step step-anim">
+        <h1>connect</h1>
+        <p class="sub">connect to a remote vesta server.</p>
+        <form onsubmit={(e) => { e.preventDefault(); handleConnect(); }}>
+          <!-- svelte-ignore a11y_autofocus -->
+          <input
+            type="text"
+            class="name-input"
+            placeholder="host:port"
+            value={serverUrl}
+            oninput={(e) => { serverUrl = (e.target as HTMLInputElement).value; }}
+            autofocus
+          />
+          <input
+            type="password"
+            class="name-input"
+            placeholder="API key"
+            value={serverKey}
+            oninput={(e) => { serverKey = (e.target as HTMLInputElement).value; }}
+          />
+          {#if error}
+            <p class="error">{error.friendly ?? "something went wrong."}</p>
+            {#if error.raw.length > 80 || !error.friendly}
+              <button type="button" class="btn details-toggle" onclick={() => { showRawError = !showRawError; }}>{showRawError ? "hide details" : "show details"}</button>
+              {#if showRawError}<pre class="error-details">{error.raw}</pre>{/if}
+            {/if}
+          {/if}
+          <button class="btn primary full" type="submit" disabled={!serverUrl.trim() || !serverKey.trim() || busy}>connect</button>
+        </form>
+        <button class="btn cancel" onclick={() => { error = null; goTo("name"); }}>back</button>
       </div>
 
     {:else if step === "creating"}
@@ -624,6 +687,12 @@
 
   .auth-link:hover {
     color: #1a1816;
+  }
+
+  .secondary-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
   }
 
   .btn.cancel {

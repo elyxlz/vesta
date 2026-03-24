@@ -3,9 +3,9 @@
   "version": "0.1.104",
   "identifier": "com.vesta.app",
   "build": {
-    "beforeDevCommand": "cargo build --manifest-path ../cli/Cargo.toml && npm run dev",
+    "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "cargo build --release --manifest-path ../cli/Cargo.toml && npm run build",
+    "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -43,9 +43,6 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ],
-    "externalBin": [
-      "binaries/vesta"
     ],
     "resources": [
       "resources/*"

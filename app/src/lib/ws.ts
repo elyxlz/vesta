@@ -1,10 +1,16 @@
 import { writable, type Writable, type Readable } from "svelte/store";
 import type { VestaEvent, BoxActivityState } from "./types";
-import { boxHost } from "./api";
+import { invoke } from "@tauri-apps/api/core";
 
 const RECONNECT_BASE = 1000;
 const RECONNECT_MAX = 30000;
 const MAX_MESSAGES = 5000;
+
+interface ServerConfig {
+  url: string;
+  api_key: string;
+  cert_fingerprint: string;
+}
 
 export interface BoxConnection {
   messages: Readable<VestaEvent[]>;
@@ -16,7 +22,7 @@ export interface BoxConnection {
   resetReconnect(): void;
 }
 
-export function createBoxConnection(port: number): BoxConnection {
+export function createBoxConnection(name: string): BoxConnection {
   const _messages: Writable<VestaEvent[]> = writable([]);
   const _boxState: Writable<BoxActivityState> = writable("idle");
   const _connected: Writable<boolean> = writable(false);
@@ -51,21 +57,30 @@ export function createBoxConnection(port: number): BoxConnection {
     socket.close();
   }
 
-  let cachedHost: string | null = null;
+  let cachedConfig: ServerConfig | null = null;
 
   async function doConnect() {
     if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
       return;
     }
 
-    if (!cachedHost) {
+    if (!cachedConfig) {
       try {
-        cachedHost = await boxHost();
+        cachedConfig = await invoke<ServerConfig>("get_server_config");
       } catch {
-        cachedHost = "localhost";
+        console.warn("ws: failed to load server config");
+        if (active) {
+          reconnectTimer = setTimeout(doConnect, reconnectDelay);
+          reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX);
+        }
+        return;
       }
     }
-    const wsUrl = `ws://${cachedHost}:${port}/ws`;
+
+    // Convert https:// URL to wss://
+    const serverUrl = cachedConfig.url.replace(/^https:\/\//, "").replace(/^http:\/\//, "");
+    const protocol = cachedConfig.url.startsWith("https") ? "wss" : "ws";
+    const wsUrl = `${protocol}://${serverUrl}/agents/${name}/ws?token=${encodeURIComponent(cachedConfig.api_key)}`;
 
     if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
       return;

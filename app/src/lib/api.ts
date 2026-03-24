@@ -73,12 +73,20 @@ export async function boxHost(): Promise<string> {
   return invoke("agent_host");
 }
 
+export async function autoSetup(): Promise<boolean> {
+  return invoke("auto_setup");
+}
+
 export async function checkPlatform(): Promise<PlatformStatus> {
   return invoke("platform_check");
 }
 
 export async function setupPlatform(): Promise<PlatformStatus> {
   return invoke("platform_setup");
+}
+
+export async function connectToServer(url: string, apiKey: string): Promise<void> {
+  return invoke("connect_to_server", { url, apiKey });
 }
 
 export async function runInstallScript(version: string): Promise<void> {
