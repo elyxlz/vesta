@@ -73,3 +73,10 @@ connect to the user's own browser remotely instead:
 2. Ask the user for their machine's IP address (or `localhost` if Vesta runs on the same machine)
 3. Connect: `browser connect http://<ip>:9222`
 4. Now you control their actual browser — with all their cookies, logins, and extensions
+
+## Restart
+
+Add to `~/vesta/prompts/restart.md`:
+```
+screen -dmS xvfb Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp
+```
