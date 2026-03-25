@@ -857,25 +857,25 @@ jobs:
           INITRD="$MOUNT_DIR/boot/initramfs-virt"
 
           if [ "${{ matrix.arch }}" = "arm64" ]; then
-            # ARM64 vmlinuz is an EFI stub wrapping a gzip kernel;
-            # vfkit needs the raw uncompressed kernel image.
-            # Scan for all gzip offsets — first match may be a false positive.
+            # ARM64: vfkit needs an uncompressed kernel Image.
+            # Debian ARM64 vmlinuz may be uncompressed already or gzip-wrapped in an EFI stub.
             sudo python3 -c "
-          import zlib
+          import zlib, shutil
           d = open('$VMLINUZ', 'rb').read()
           off = 0
           while True:
               off = d.find(b'\x1f\x8b\x08', off)
               if off < 0:
-                  raise RuntimeError('no valid gzip kernel data found in vmlinuz')
+                  break
               try:
                   raw = zlib.decompressobj(zlib.MAX_WBITS | 16).decompress(d[off:])
                   if len(raw) > 1024 * 1024:
                       open('/tmp/vm-kernel', 'wb').write(raw)
-                      break
+                      raise SystemExit(0)
               except zlib.error:
                   pass
               off += 1
+          shutil.copy('$VMLINUZ', '/tmp/vm-kernel')
           "
           else
             sudo cp "$VMLINUZ" /tmp/vm-kernel
