@@ -858,17 +858,24 @@ jobs:
 
           if [ "${{ matrix.arch }}" = "arm64" ]; then
             # ARM64 vmlinuz is an EFI stub wrapping a gzip kernel;
-            # vfkit needs the raw uncompressed kernel image
+            # vfkit needs the raw uncompressed kernel image.
+            # Scan for all gzip offsets — first match may be a false positive.
             sudo python3 -c "
           import zlib
           d = open('$VMLINUZ', 'rb').read()
-          off = d.find(b'\x1f\x8b\x08')
-          if off >= 0:
-              raw = zlib.decompressobj(zlib.MAX_WBITS | 16).decompress(d[off:])
-              open('/tmp/vm-kernel', 'wb').write(raw)
-          else:
-              import shutil
-              shutil.copy('$VMLINUZ', '/tmp/vm-kernel')
+          off = 0
+          while True:
+              off = d.find(b'\x1f\x8b\x08', off)
+              if off < 0:
+                  raise RuntimeError('no valid gzip kernel data found in vmlinuz')
+              try:
+                  raw = zlib.decompressobj(zlib.MAX_WBITS | 16).decompress(d[off:])
+                  if len(raw) > 1024 * 1024:
+                      open('/tmp/vm-kernel', 'wb').write(raw)
+                      break
+              except zlib.error:
+                  pass
+              off += 1
           "
           else
             sudo cp "$VMLINUZ" /tmp/vm-kernel
