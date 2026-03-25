@@ -15,7 +15,7 @@ crate-type = ["lib", "cdylib", "staticlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-vesta-common = { path = "../../cli/vesta-common" }
+vesta-common = { path = "../../vesta-common" }
 tauri = { version = "2", features = ["macos-private-api"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util", "process", "fs", "time"] }
 tokio-util = "0.7"

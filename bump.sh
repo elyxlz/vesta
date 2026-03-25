@@ -19,8 +19,8 @@ echo "${CURRENT} -> ${NEW}"
 # agent/pyproject.toml
 sed -i "s/^version = \"${CURRENT}\"/version = \"${NEW}\"/" agent/pyproject.toml
 
-# cli/Cargo.toml (workspace version)
-sed -i "s/^version = \"${CURRENT}\"/version = \"${NEW}\"/" cli/Cargo.toml
+# Cargo.toml (workspace version)
+sed -i "s/^version = \"${CURRENT}\"/version = \"${NEW}\"/" Cargo.toml
 
 # app/src-tauri/Cargo.toml (first occurrence)
 sed -i "0,/^version = \"${CURRENT}\"/s//version = \"${NEW}\"/" app/src-tauri/Cargo.toml
@@ -32,7 +32,7 @@ sed -i "s/\"version\": \"${CURRENT}\"/\"version\": \"${NEW}\"/" app/src-tauri/ta
 sed -i "s/\"version\": \"${CURRENT}\"/\"version\": \"${NEW}\"/" app/package.json
 
 # Update Cargo.lock files
-(cd cli && cargo check --quiet 2>/dev/null) || true
+cargo check --quiet 2>/dev/null || true
 (cd app/src-tauri && cargo check --quiet 2>/dev/null) || true
 
 # Update uv.lock

@@ -18,4 +18,10 @@ agent/skills/whisper
 agent/skills/zoom
 app/
 cli/
+vestad/
+vesta-common/
+vm/
+target/
+Cargo.toml
+Cargo.lock
 .github/
