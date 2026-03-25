@@ -40,27 +40,29 @@ fi
 # ARM64 requires uncompressed kernel for Virtualization.framework
 if [ "$ARCH" = "arm64" ]; then
     echo "decompressing kernel for arm64..."
-    # ARM64 vmlinuz is a PE32+ EFI stub with gzip-compressed kernel inside.
-    # Scan for all gzip offsets — first match may be a false positive.
+    # ARM64: vfkit needs an uncompressed kernel Image.
+    # Debian ARM64 vmlinuz may be uncompressed already or gzip-wrapped in an EFI stub.
     python3 -c "
-import zlib
+import zlib, shutil
 with open('$VMLINUZ', 'rb') as f:
     data = f.read()
 off = 0
 while True:
     off = data.find(b'\x1f\x8b\x08', off)
     if off < 0:
-        raise RuntimeError('no valid gzip kernel data found in vmlinuz')
+        break
     try:
         raw = zlib.decompressobj(zlib.MAX_WBITS | 16).decompress(data[off:])
         if len(raw) > 1024 * 1024:
             with open('$OUTPUT_DIR/vm-kernel', 'wb') as f:
                 f.write(raw)
             print(f'decompressed kernel: {len(raw)} bytes (gzip at offset {off})')
-            break
+            raise SystemExit(0)
     except zlib.error:
         pass
     off += 1
+shutil.copy('$VMLINUZ', '$OUTPUT_DIR/vm-kernel')
+print('kernel is already uncompressed')
 "
 else
     cp "$VMLINUZ" "$OUTPUT_DIR/vm-kernel"
