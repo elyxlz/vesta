@@ -2,13 +2,13 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CLI_DIR="$(dirname "$SCRIPT_DIR")"
+REPO_DIR="$(dirname "$SCRIPT_DIR")"
 
-# Build Linux CLI
-echo "building linux CLI..."
-cd "$CLI_DIR"
-cargo build --release --target x86_64-unknown-linux-gnu
-cp target/x86_64-unknown-linux-gnu/release/vesta "$SCRIPT_DIR/vesta"
+# Build vestad
+echo "building vestad..."
+cd "$REPO_DIR"
+cargo build --release --target x86_64-unknown-linux-gnu -p vestad
+cp target/x86_64-unknown-linux-gnu/release/vestad "$SCRIPT_DIR/vestad"
 
 # Build WSL image (with NVIDIA toolkit for GPU passthrough)
 echo "building WSL image..."
@@ -21,6 +21,6 @@ docker export "$CONTAINER" | gzip > "$SCRIPT_DIR/vesta-wsl-rootfs.tar.gz"
 docker rm "$CONTAINER" > /dev/null
 
 # Clean up
-rm -f "$SCRIPT_DIR/vesta"
+rm -f "$SCRIPT_DIR/vestad"
 
 echo "done: $SCRIPT_DIR/vesta-wsl-rootfs.tar.gz"

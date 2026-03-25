@@ -36,6 +36,11 @@ jobs:
           filters: |
             cli:
               - 'cli/**'
+              - 'vestad/**'
+              - 'vesta-common/**'
+              - 'vm/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
             app:
               - 'app/**'
 
@@ -48,7 +53,7 @@ jobs:
       - name: Check version sync across sources
         run: |
           AGENT=$(grep '^version = ' agent/pyproject.toml | cut -d'"' -f2)
-          CLI=$(grep '^version = ' cli/Cargo.toml | head -1 | cut -d'"' -f2)
+          CLI=$(grep '^version = ' Cargo.toml | head -1 | cut -d'"' -f2)
           TAURI_CONF=$(python3 -c "import json; print(json.load(open('app/src-tauri/tauri.conf.json'))['version'])")
           TAURI_CARGO=$(grep '^version = ' app/src-tauri/Cargo.toml | head -1 | cut -d'"' -f2)
           APP=$(python3 -c "import json; print(json.load(open('app/package.json'))['version'])")
@@ -161,7 +166,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: cli
+          workspaces: .
           key: ${{ matrix.target }}
 
       - name: Install Linux cross-compile deps
@@ -169,22 +174,22 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu
-          mkdir -p cli/.cargo
-          echo '[target.aarch64-unknown-linux-gnu]' >> cli/.cargo/config.toml
-          echo 'linker = "aarch64-linux-gnu-gcc"' >> cli/.cargo/config.toml
+          mkdir -p .cargo
+          echo '[target.aarch64-unknown-linux-gnu]' >> .cargo/config.toml
+          echo 'linker = "aarch64-linux-gnu-gcc"' >> .cargo/config.toml
 
       - name: Clippy
         if: "!matrix.cross"
-        working-directory: cli
+        working-directory: .
         run: cargo clippy --workspace --target ${{ matrix.target }} -- -D warnings
 
       - name: Test
         if: "!matrix.cross"
-        working-directory: cli
+        working-directory: .
         run: cargo test --workspace --target ${{ matrix.target }}
 
       - name: Build vesta
-        working-directory: cli
+        working-directory: .
         run: cargo build --release -p vesta --target ${{ matrix.target }}
 
       - name: Download vfkit
@@ -197,7 +202,7 @@ jobs:
       - name: Package
         run: |
           mkdir staging
-          cp cli/target/${{ matrix.target }}/release/vesta staging/
+          cp target/${{ matrix.target }}/release/vesta staging/
           if [ -f /tmp/vfkit ]; then
             cp /tmp/vfkit staging/
           fi
@@ -235,7 +240,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: cli
+          workspaces: .
           key: vestad-${{ matrix.target }}
 
       - name: Install musl toolchain
@@ -249,7 +254,7 @@ jobs:
         run: cargo install cross --locked
 
       - name: Build vestad
-        working-directory: cli
+        working-directory: .
         run: |
           if [ "${{ matrix.cross }}" = "true" ]; then
             cross build --release -p vestad --target ${{ matrix.target }}
@@ -260,7 +265,7 @@ jobs:
       - name: Package
         run: |
           mkdir staging
-          cp cli/target/${{ matrix.target }}/release/vestad staging/
+          cp target/${{ matrix.target }}/release/vestad staging/
           tar -czf ${{ matrix.artifact }}.tar.gz -C staging .
 
       - uses: actions/upload-artifact@v7
@@ -829,10 +834,10 @@ jobs:
         run: |
           mkdir -p /tmp/vestad-extract
           tar -xzf ${{ matrix.vestad-artifact }}.tar.gz -C /tmp/vestad-extract
-          cp /tmp/vestad-extract/vestad cli/vm/vestad
+          cp /tmp/vestad-extract/vestad vm/vestad
 
       - name: Build VM Docker image
-        run: docker build --platform linux/${{ matrix.arch }} --build-arg INCLUDE_KERNEL=true -t vesta-vm -f cli/vm/Dockerfile cli/vm
+        run: docker build --platform linux/${{ matrix.arch }} --build-arg INCLUDE_KERNEL=true -t vesta-vm -f vm/Dockerfile vm
 
       - name: Export rootfs and create VM disk image
         run: |
@@ -885,7 +890,7 @@ jobs:
       - name: Build and export WSL rootfs
         if: matrix.arch == 'amd64'
         run: |
-          docker build --build-arg INCLUDE_NVIDIA=true -t vesta-wsl -f cli/vm/Dockerfile cli/vm
+          docker build --build-arg INCLUDE_NVIDIA=true -t vesta-wsl -f vm/Dockerfile vm
           CONTAINER=$(docker create vesta-wsl)
           docker export "$CONTAINER" | gzip > /tmp/vesta-wsl-rootfs.tar.gz
           docker rm "$CONTAINER" > /dev/null
@@ -902,7 +907,7 @@ jobs:
           path: /tmp/vesta-wsl-rootfs.tar.gz
 
       - name: Clean up
-        run: rm -f cli/vm/vestad
+        run: rm -f vm/vestad
 
   # ── Windows Clippy (runs on PRs too) ─────────────────────────────────
   clippy-windows:
@@ -923,11 +928,11 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: cli
+          workspaces: .
           key: x86_64-pc-windows-msvc
 
       - name: Clippy
-        working-directory: cli
+        working-directory: .
         run: cargo clippy -p vesta --target x86_64-pc-windows-msvc -- -D warnings
 
   # ── Build + Test Windows CLI (native MSVC) ───────────────────────────
@@ -951,11 +956,11 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: cli
+          workspaces: .
           key: x86_64-pc-windows-msvc
 
       - name: Build vesta
-        working-directory: cli
+        working-directory: .
         run: cargo build --release -p vesta --target x86_64-pc-windows-msvc
 
       - name: Download rootfs
@@ -969,7 +974,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          CLI="cli/target/x86_64-pc-windows-msvc/release/vesta.exe"
+          CLI="target/x86_64-pc-windows-msvc/release/vesta.exe"
           VESTAD="/usr/local/bin/vestad"
 
           cleanup() {
@@ -1026,7 +1031,7 @@ jobs:
         shell: bash
         run: |
           mkdir vesta-windows
-          cp cli/target/x86_64-pc-windows-msvc/release/vesta.exe vesta-windows/
+          cp target/x86_64-pc-windows-msvc/release/vesta.exe vesta-windows/
           7z a vesta-x86_64-pc-windows-msvc.zip vesta-windows/
 
       - uses: actions/upload-artifact@v7
@@ -1037,7 +1042,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: windows-cli-exe
-          path: cli/target/x86_64-pc-windows-msvc/release/vesta.exe
+          path: target/x86_64-pc-windows-msvc/release/vesta.exe
 
   # ── Build Tauri app (unix) ────────────────────────────────────────────
   build-tauri:
