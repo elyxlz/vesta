@@ -1,216 +1,50 @@
-use std::path::PathBuf;
-use std::sync::OnceLock;
-use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::Command;
+use tauri::ipc::Channel;
 use tokio_util::sync::CancellationToken;
 
 use crate::error::{ErrorCode, VestaError};
 
-const DEFAULT_TIMEOUT_SECS: u64 = 120;
-const SETUP_TIMEOUT_SECS: u64 = 600;
-const AUTH_TIMEOUT_SECS: u64 = 600;
+pub use vesta_common::{AgentStatus, ListEntry, ServerConfig};
 
-#[cfg(target_os = "windows")]
-const CREATE_NO_WINDOW: u32 = 0x08000000;
-
-fn is_valid_binary(path: &std::path::Path) -> bool {
-    path.exists() && std::fs::metadata(path).map(|m| m.len() > 0).unwrap_or(false)
+fn map_err(e: String) -> VestaError {
+    VestaError::new(ErrorCode::Internal, e)
 }
 
-static CLI_PATH: OnceLock<PathBuf> = OnceLock::new();
-
-fn cli_path() -> &'static PathBuf {
-    CLI_PATH.get_or_init(|| {
-        let exe = std::env::current_exe().expect("cannot determine executable path");
-        let dir = exe.parent().unwrap();
-
-        #[cfg(target_os = "windows")]
-        let name = "vesta.exe";
-        #[cfg(not(target_os = "windows"))]
-        let name = "vesta";
-
-        let cli_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("..")
-            .join("cli")
-            .join("target");
-
-        if cfg!(debug_assertions) {
-            let debug = cli_dir.join("debug").join(name);
-            if is_valid_binary(&debug) {
-                return debug;
-            }
-        }
-
-        let candidate = dir.join(name);
-        if is_valid_binary(&candidate) {
-            return candidate;
-        }
-
-        let release = cli_dir.join("release").join(name);
-        if is_valid_binary(&release) {
-            return release;
-        }
-
-        candidate
-    })
+fn client() -> Result<vesta_common::client::Client, VestaError> {
+    let config = vesta_common::load_server_config()
+        .ok_or_else(|| VestaError::new(ErrorCode::Internal, "server not configured. run setup first"))?;
+    Ok(vesta_common::client::Client::new(&config))
 }
 
-fn cli_command(args: &[&str]) -> Command {
-    let path = cli_path();
-    eprintln!("[vesta] exec: {} {}", path.display(), args.join(" "));
-    let mut cmd = Command::new(path.as_os_str());
-    cmd.args(args);
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-    cmd
+// ── Server config ───────────────────────────────────────────────
+
+pub fn get_server_config() -> Result<ServerConfig, VestaError> {
+    vesta_common::load_server_config()
+        .ok_or_else(|| VestaError::new(ErrorCode::Internal, "server not configured. run setup first"))
 }
 
-fn strip_ansi(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '\x1b' {
-            match chars.peek() {
-                // CSI: \x1b[...letter
-                Some('[') => {
-                    chars.next();
-                    for c in chars.by_ref() {
-                        if c.is_ascii_alphabetic() {
-                            break;
-                        }
-                    }
-                }
-                // OSC: \x1b]...(\x07 | \x1b\\)
-                Some(']') => {
-                    chars.next();
-                    while let Some(c) = chars.next() {
-                        if c == '\x07' {
-                            break;
-                        }
-                        if c == '\x1b' && chars.peek() == Some(&'\\') {
-                            chars.next();
-                            break;
-                        }
-                    }
-                }
-                // Charset designator: \x1b(X
-                Some('(') => {
-                    chars.next();
-                    chars.next();
-                }
-                // Other two-byte escape
-                Some(_) => {
-                    chars.next();
-                }
-                None => {}
-            }
-        } else {
-            out.push(c);
-        }
-    }
-    out
-}
+pub async fn connect_to_server(url: String, api_key: String) -> Result<ServerConfig, VestaError> {
+    let url = vesta_common::normalize_url(&url);
 
-fn collect_lines(
-    reader: impl tokio::io::AsyncRead + Unpin + Send + 'static,
-    on_line: impl Fn(&str) + Send + 'static,
-) -> tokio::task::JoinHandle<String> {
-    tokio::spawn(async move {
-        let mut lines = BufReader::new(reader).lines();
-        let mut buf = String::new();
-        while let Ok(Some(raw_line)) = lines.next_line().await {
-            let line = strip_ansi(&raw_line);
-            eprintln!("[vesta] {}", line);
-            on_line(&line);
-            if !buf.is_empty() {
-                buf.push('\n');
-            }
-            buf.push_str(&line);
-        }
-        buf
-    })
-}
-
-fn extract_error(stderr: &str) -> String {
-    let last_error = stderr
-        .lines()
-        .rev()
-        .find(|l| l.trim().starts_with("error: "))
-        .map(|l| l.trim().strip_prefix("error: ").unwrap().to_string());
-
-    if let Some(msg) = last_error {
-        return msg;
-    }
-
-    let last_line = stderr
-        .lines()
-        .rev()
-        .find(|l| !l.trim().is_empty())
-        .map(|l| l.trim().to_string());
-
-    last_line.unwrap_or_else(|| "command failed with no output".to_string())
-}
-
-async fn run_with_timeout(args: &[&str], timeout_secs: u64) -> Result<String, VestaError> {
-    let mut cmd = cli_command(args);
-    cmd.stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-
-    let mut child = cmd.spawn()
-        .map_err(|e| {
-            eprintln!("[vesta] spawn failed: {}", e);
-            VestaError::new(ErrorCode::ExecFailed, format!("failed to run cli: {}", e))
-        })?;
-
-    let stdout_task = collect_lines(child.stdout.take().unwrap(), |_| {});
-    let stderr_task = collect_lines(child.stderr.take().unwrap(), |_| {});
-
-    let timeout = tokio::time::Duration::from_secs(timeout_secs);
-    let status = match tokio::time::timeout(timeout, child.wait()).await {
-        Ok(result) => result.map_err(|e| {
-            VestaError::new(ErrorCode::Internal, format!("failed to run cli: {}", e))
-        })?,
-        Err(_) => {
-            let _ = child.kill().await;
-            let label = args.first().unwrap_or(&"cli");
-            return Err(VestaError::new(
-                ErrorCode::Timeout,
-                format!("{} timed out after {}s", label, timeout_secs),
-            ));
-        }
+    // Validate with a temp client
+    let config = ServerConfig {
+        url,
+        api_key,
+        cert_fingerprint: None,
+        cert_pem: None,
     };
 
-    let stdout_str = stdout_task.await.unwrap_or_default();
-    let stderr_str = stderr_task.await.unwrap_or_default();
+    let c = vesta_common::client::Client::new(&config);
+    tokio::task::spawn_blocking(move || {
+        c.health().map_err(|e| format!("cannot reach server: {}", e))?;
+        c.list_agents().map_err(|_| "invalid API key".to_string())?;
+        Ok::<_, String>(())
+    })
+    .await
+    .map_err(|e| VestaError::new(ErrorCode::Internal, e.to_string()))?
+    .map_err(map_err)?;
 
-    if !status.success() {
-        return Err(VestaError::new(ErrorCode::Internal, extract_error(&stderr_str)));
-    }
-
-    eprintln!("[vesta] ok: {}", args.join(" "));
-    Ok(stdout_str)
-}
-
-async fn run(args: &[&str]) -> Result<String, VestaError> {
-    run_with_timeout(args, DEFAULT_TIMEOUT_SECS).await
-}
-
-async fn run_json<T: serde::de::DeserializeOwned>(args: &[&str]) -> Result<T, VestaError> {
-    run_json_with_timeout(args, DEFAULT_TIMEOUT_SECS).await
-}
-
-async fn run_json_with_timeout<T: serde::de::DeserializeOwned>(args: &[&str], timeout_secs: u64) -> Result<T, VestaError> {
-    let stdout = run_with_timeout(args, timeout_secs).await?;
-    let trimmed = stdout.trim();
-    if trimmed.is_empty() {
-        return Err(VestaError::new(ErrorCode::Internal, "cli returned no output"));
-    }
-    serde_json::from_str(trimmed)
-        .map_err(|e| VestaError::new(ErrorCode::Internal, format!("failed to parse cli output: {} (got: {:?})", e, trimmed)))
+    vesta_common::save_server_config(&config).map_err(map_err)?;
+    Ok(config)
 }
 
 // ── Platform operations ─────────────────────────────────────────
@@ -235,12 +69,60 @@ pub struct PlatformStatus {
     pub message: String,
 }
 
+fn not_configured_status(message: &str) -> PlatformStatus {
+    PlatformStatus {
+        ready: false,
+        platform: std::env::consts::OS.to_string(),
+        wsl_installed: false,
+        virtualization_enabled: None,
+        distro_registered: false,
+        distro_healthy: false,
+        services_ready: false,
+        needs_reboot: false,
+        message: message.to_string(),
+    }
+}
+
+pub async fn auto_setup() -> Result<bool, VestaError> {
+    let did_setup = tokio::task::spawn_blocking(vesta_common::ensure_server)
+        .await
+        .map_err(|e| VestaError::new(ErrorCode::Internal, format!("setup task failed: {}", e)))?
+        .map_err(map_err)?;
+    Ok(did_setup)
+}
+
 pub async fn platform_check() -> Result<PlatformStatus, VestaError> {
-    run_json(&["platform-check"]).await
+    let c = match client() {
+        Ok(c) => c,
+        Err(_) => return Ok(not_configured_status("server not configured. run setup first")),
+    };
+
+    let result = tokio::task::spawn_blocking(move || c.health())
+        .await
+        .map_err(|e| VestaError::new(ErrorCode::Internal, e.to_string()))?;
+
+    match result {
+        Ok(()) => Ok(PlatformStatus {
+            ready: true,
+            platform: std::env::consts::OS.to_string(),
+            wsl_installed: true,
+            virtualization_enabled: Some(true),
+            distro_registered: true,
+            distro_healthy: true,
+            services_ready: true,
+            needs_reboot: false,
+            message: String::new(),
+        }),
+        Err(e) => Ok(not_configured_status(&e)),
+    }
 }
 
 pub async fn platform_setup() -> Result<PlatformStatus, VestaError> {
-    run_json_with_timeout(&["platform-setup"], SETUP_TIMEOUT_SECS).await
+    tokio::task::spawn_blocking(vesta_common::ensure_server)
+        .await
+        .map_err(|e| VestaError::new(ErrorCode::Internal, format!("setup task failed: {}", e)))?
+        .map_err(map_err)?;
+    platform_check().await
 }
 
 // ── Agent operations ────────────────────────────────────────────
@@ -263,202 +145,199 @@ pub struct AgentInfo {
     pub friendly_status: String,
 }
 
-fn default_ws_port() -> u16 { 7865 }
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ListEntry {
-    pub name: String,
-    pub status: String,
-    pub authenticated: bool,
-    pub agent_ready: bool,
-    pub ws_port: u16,
-    #[serde(default)]
-    pub alive: bool,
-    #[serde(default)]
-    pub friendly_status: String,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentStatus {
-    Running,
-    Stopped,
-    Dead,
-    NotFound,
-    Unknown,
+fn default_ws_port() -> u16 {
+    vesta_common::DEFAULT_WS_PORT
 }
 
 pub async fn list_agents() -> Result<Vec<ListEntry>, VestaError> {
-    run_json(&["list", "--json"]).await
+    let c = client()?;
+    tokio::task::spawn_blocking(move || c.list_agents())
+        .await
+        .map_err(|e| VestaError::new(ErrorCode::Internal, e.to_string()))?
+        .map_err(map_err)
 }
 
 pub async fn agent_status(name: &str) -> Result<AgentInfo, VestaError> {
-    run_json(&["status", name, "--json"]).await
+    let c = client()?;
+    let name = name.to_string();
+    let json: vesta_common::StatusJson = tokio::task::spawn_blocking(move || c.agent_status(&name))
+        .await
+        .map_err(|e| VestaError::new(ErrorCode::Internal, e.to_string()))?
+        .map_err(map_err)?;
+
+    // Convert StatusJson to AgentInfo (with enum status)
+    let status = match json.status.as_str() {
+        "running" => AgentStatus::Running,
+        "stopped" | "exited" | "created" => AgentStatus::Stopped,
+        "dead" => AgentStatus::Dead,
+        _ => AgentStatus::Unknown,
+    };
+
+    Ok(AgentInfo {
+        status,
+        id: json.id.unwrap_or_default(),
+        authenticated: json.authenticated,
+        name: json.name,
+        agent_ready: json.agent_ready,
+        ws_port: json.ws_port,
+        alive: json.alive,
+        friendly_status: json.friendly_status,
+    })
 }
 
 pub async fn create_agent(name: Option<String>) -> Result<(), VestaError> {
-    let mut args = vec!["create"];
-    if cfg!(debug_assertions) {
-        args.push("--build");
-    }
-    let name_val;
-    if let Some(ref n) = name {
-        name_val = n.clone();
-        args.push("--name");
-        args.push(&name_val);
-    }
-    run_with_timeout(&args, SETUP_TIMEOUT_SECS).await?;
+    let c = client()?;
+    let agent_name = name.unwrap_or_else(|| "default".to_string());
+    tokio::task::spawn_blocking(move || c.create_agent(&agent_name, false))
+        .await
+        .map_err(|e| VestaError::new(ErrorCode::Internal, e.to_string()))?
+        .map_err(map_err)?;
     Ok(())
 }
 
 pub async fn start_agent(name: &str) -> Result<(), VestaError> {
-    run(&["start", name]).await?;
-    Ok(())
+    let c = client()?;
+    let name = name.to_string();
+    tokio::task::spawn_blocking(move || c.start_agent(&name))
+        .await
+        .map_err(|e| VestaError::new(ErrorCode::Internal, e.to_string()))?
+        .map_err(map_err)
 }
 
 pub async fn stop_agent(name: &str) -> Result<(), VestaError> {
-    run(&["stop", name]).await?;
-    Ok(())
+    let c = client()?;
+    let name = name.to_string();
+    tokio::task::spawn_blocking(move || c.stop_agent(&name))
+        .await
+        .map_err(|e| VestaError::new(ErrorCode::Internal, e.to_string()))?
+        .map_err(map_err)
 }
 
 pub async fn restart_agent(name: &str) -> Result<(), VestaError> {
-    run(&["restart", name]).await?;
-    Ok(())
+    let c = client()?;
+    let name = name.to_string();
+    tokio::task::spawn_blocking(move || c.restart_agent(&name))
+        .await
+        .map_err(|e| VestaError::new(ErrorCode::Internal, e.to_string()))?
+        .map_err(map_err)
 }
 
 pub async fn delete_agent(name: &str) -> Result<(), VestaError> {
-    run(&["destroy", name, "--yes"]).await?;
-    Ok(())
+    let c = client()?;
+    let name = name.to_string();
+    tokio::task::spawn_blocking(move || c.destroy_agent(&name))
+        .await
+        .map_err(|e| VestaError::new(ErrorCode::Internal, e.to_string()))?
+        .map_err(map_err)
 }
 
 pub async fn rebuild_agent(name: &str) -> Result<(), VestaError> {
-    run_with_timeout(&["rebuild", name], SETUP_TIMEOUT_SECS).await?;
-    Ok(())
+    let c = client()?;
+    let name = name.to_string();
+    tokio::task::spawn_blocking(move || c.rebuild_agent(&name))
+        .await
+        .map_err(|e| VestaError::new(ErrorCode::Internal, e.to_string()))?
+        .map_err(map_err)
 }
 
-// ── Auth operations ────────────────────────────────────────────
+// ── Auth operations ─────────────────────────────────────────────
 
 pub async fn obtain_and_inject_credentials(
     name: &str,
     on_event: impl Fn(&str, Option<&str>) + Send + Sync + 'static,
     code_rx: tokio::sync::oneshot::Receiver<String>,
 ) -> Result<(), VestaError> {
-    let mut cmd = cli_command(&["auth", name]);
-    cmd.stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
+    let c = client()?;
+    let name_str = name.to_string();
+    let auth = tokio::task::spawn_blocking(move || c.start_auth(&name_str))
+        .await
+        .map_err(|e| VestaError::new(ErrorCode::Internal, e.to_string()))?
+        .map_err(map_err)?;
 
-    let mut child = cmd.spawn().map_err(|e| {
-        VestaError::new(ErrorCode::ExecFailed, format!("failed to run cli: {}", e))
-    })?;
+    on_event("auth-url", Some(&auth.auth_url));
+    on_event("auth-code-needed", None);
 
-    let cli_stdin = child.stdin.take();
-
-    let on_event: std::sync::Arc<Box<dyn Fn(&str, Option<&str>) + Send + Sync>> =
-        std::sync::Arc::new(Box::new(on_event));
-
-    let make_auth_handler = |cb: std::sync::Arc<Box<dyn Fn(&str, Option<&str>) + Send + Sync>>| {
-        move |line: &str| {
-            if let Some(url) = line.strip_prefix("auth-url: ") {
-                cb("auth-url", Some(url));
-            } else if line == "auth-code-needed" {
-                cb("auth-code-needed", None);
-            } else if line == "auth-code-invalid" {
-                cb("auth-code-invalid", None);
-            }
-        }
-    };
-
-    let stdout_task = collect_lines(child.stdout.take().unwrap(), make_auth_handler(on_event.clone()));
-    let stderr_task = collect_lines(child.stderr.take().unwrap(), make_auth_handler(on_event));
-
-    // Wait for code from frontend and pipe to CLI stdin
-    tokio::spawn(async move {
-        if let Ok(code) = code_rx.await {
-            if let Some(mut stdin) = cli_stdin {
-                use tokio::io::AsyncWriteExt;
-                let _ = stdin.write_all(format!("{}\n", code).as_bytes()).await;
-                let _ = stdin.flush().await;
-            }
-        }
-    });
-
-    let timeout = tokio::time::Duration::from_secs(AUTH_TIMEOUT_SECS);
-    let status = match tokio::time::timeout(timeout, child.wait()).await {
-        Ok(result) => result.map_err(|e| {
-            VestaError::new(ErrorCode::Internal, format!("failed to run cli: {}", e))
-        })?,
+    let code = match tokio::time::timeout(
+        tokio::time::Duration::from_secs(600),
+        code_rx,
+    )
+    .await
+    {
+        Ok(Ok(code)) => code,
+        Ok(Err(_)) => return Err(VestaError::new(ErrorCode::Internal, "auth cancelled")),
         Err(_) => {
-            let _ = child.kill().await;
             return Err(VestaError::new(
                 ErrorCode::Timeout,
                 "authentication timed out after 10 minutes",
-            ));
+            ))
         }
     };
 
-    let _ = stdout_task.await;
-    let stderr_str = stderr_task.await.unwrap_or_default();
-
-    if !status.success() {
-        return Err(VestaError::new(ErrorCode::Internal, extract_error(&stderr_str)));
-    }
-
-    Ok(())
+    let c = client()?;
+    let name_str = name.to_string();
+    tokio::task::spawn_blocking(move || c.complete_auth(&name_str, &auth.session_id, &code))
+        .await
+        .map_err(|e| VestaError::new(ErrorCode::Internal, e.to_string()))?
+        .map_err(map_err)
 }
 
 // ── Backup/Restore operations ───────────────────────────────────
 
 pub async fn backup_agent(name: &str, output: &str) -> Result<(), VestaError> {
-    run_with_timeout(&["backup", name, output], SETUP_TIMEOUT_SECS).await?;
+    let c = client()?;
+    let name = name.to_string();
+    let output = std::path::PathBuf::from(output);
+    tokio::task::spawn_blocking(move || c.backup(&name, &output))
+        .await
+        .map_err(|e| VestaError::new(ErrorCode::Internal, e.to_string()))?
+        .map_err(map_err)
+}
+
+pub async fn restore_agent(
+    input: &str,
+    name: Option<&str>,
+    replace: bool,
+) -> Result<(), VestaError> {
+    let c = client()?;
+    let input = std::path::PathBuf::from(input);
+    let name = name.map(|n| n.to_string());
+    tokio::task::spawn_blocking(move || c.restore(&input, name.as_deref(), replace))
+        .await
+        .map_err(|e| VestaError::new(ErrorCode::Internal, e.to_string()))?
+        .map_err(map_err)?;
     Ok(())
 }
 
-pub async fn restore_agent(input: &str, name: Option<&str>, replace: bool) -> Result<(), VestaError> {
-    let mut args = vec!["restore", input];
-    let name_val;
-    if let Some(n) = name {
-        name_val = n.to_string();
-        args.push("--name");
-        args.push(&name_val);
-    }
-    if replace {
-        args.push("--replace");
-    }
-    run_with_timeout(&args, SETUP_TIMEOUT_SECS).await?;
-    Ok(())
-}
-
-pub async fn wait_for_ready(name: &str, timeout: u64) -> Result<(), VestaError> {
-    run_with_timeout(
-        &["wait-ready", name, "--timeout", &timeout.to_string()],
-        timeout + 10,
-    ).await?;
-    Ok(())
+pub async fn wait_for_ready(name: &str, timeout_secs: u64) -> Result<(), VestaError> {
+    let c = client()?;
+    let name = name.to_string();
+    tokio::task::spawn_blocking(move || c.wait_ready(&name, timeout_secs))
+        .await
+        .map_err(|e| VestaError::new(ErrorCode::Internal, e.to_string()))?
+        .map_err(map_err)
 }
 
 // ── Agent host ──────────────────────────────────────────────────
 
 pub async fn agent_host() -> String {
-    #[cfg(target_os = "macos")]
-    {
-        let path = dirs::data_dir()
-            .unwrap_or_default()
-            .join("vesta")
-            .join("vm_ip");
-        if let Ok(content) = tokio::fs::read_to_string(&path).await {
-            let ip = content.trim().to_string();
-            if !ip.is_empty() {
-                return ip;
-            }
+    match vesta_common::load_server_config() {
+        Some(config) => {
+            let stripped = config
+                .url
+                .strip_prefix("https://")
+                .or_else(|| config.url.strip_prefix("http://"))
+                .unwrap_or(&config.url);
+            stripped
+                .split(':')
+                .next()
+                .unwrap_or("localhost")
+                .to_string()
         }
+        None => "localhost".to_string(),
     }
-    "localhost".to_string()
 }
 
 // ── Streaming operations ────────────────────────────────────────
-
-use tauri::ipc::Channel;
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(tag = "kind")]
@@ -473,67 +352,77 @@ pub async fn stream_agent_logs(
     channel: Channel<LogEvent>,
     cancel: CancellationToken,
 ) -> Result<(), VestaError> {
-    let mut cmd = cli_command(&["logs", name]);
-    cmd.stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
+    let config = vesta_common::load_server_config()
+        .ok_or_else(|| VestaError::new(ErrorCode::Internal, "server not configured"))?;
+    let url = format!("{}/agents/{}/logs", config.url, name);
 
-    let mut child = cmd.spawn()
-        .map_err(|e| {
-            VestaError::new(ErrorCode::ExecFailed, format!("failed to spawn cli: {}", e))
-        })?;
-
-    let stdout = match child.stdout.take() {
-        Some(s) => s,
-        None => {
-            let _ = channel.send(LogEvent::Error { message: "no stdout".to_string() });
-            return Ok(());
+    // Streaming logs needs async reqwest — can't do this with sync ureq
+    let mut builder = reqwest::Client::builder();
+    if let Some(ref pem) = config.cert_pem {
+        if let Ok(cert) = reqwest::Certificate::from_pem(pem.as_bytes()) {
+            builder = builder
+                .add_root_certificate(cert)
+                .tls_built_in_root_certs(false);
         }
-    };
+    }
+    let http = builder.build().map_err(|e| VestaError::new(ErrorCode::Internal, e.to_string()))?;
 
-    if let Some(stderr) = child.stderr.take() {
-        tokio::spawn(async move {
-            let mut lines = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                eprintln!("[vesta:logs] {}", line);
-            }
-        });
+    let resp = http
+        .get(&url)
+        .bearer_auth(&config.api_key)
+        .send()
+        .await
+        .map_err(|e| VestaError::new(ErrorCode::Internal, format!("failed to connect to log stream: {}", e)))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        let msg = vesta_common::client::extract_server_error(&body)
+            .unwrap_or_else(|| format!("server returned {}", status));
+        return Err(VestaError::new(ErrorCode::Internal, msg));
     }
 
-    let cancel_read = cancel.clone();
     let ch = channel.clone();
     tokio::spawn(async move {
-        let reader = BufReader::new(stdout);
-        let mut lines = reader.lines();
+        use futures_util::StreamExt;
+
+        let mut stream = resp.bytes_stream();
+        let mut buffer = String::new();
+
         loop {
             tokio::select! {
-                _ = cancel_read.cancelled() => break,
-                line = lines.next_line() => {
-                    match line {
-                        Ok(Some(text)) => {
-                            let _ = ch.send(LogEvent::Line { text });
+                _ = cancel.cancelled() => break,
+                chunk = stream.next() => {
+                    match chunk {
+                        Some(Ok(bytes)) => {
+                            let text = String::from_utf8_lossy(&bytes);
+                            buffer.push_str(&text);
+
+                            while let Some(pos) = buffer.find('\n') {
+                                let line = buffer[..pos].trim_end().to_string();
+                                buffer = buffer[pos + 1..].to_string();
+
+                                if line.is_empty() || line.starts_with(':') {
+                                    continue;
+                                }
+
+                                if let Some(data) = line.strip_prefix("data: ") {
+                                    let _ = ch.send(LogEvent::Line { text: data.to_string() });
+                                } else {
+                                    let _ = ch.send(LogEvent::Line { text: line });
+                                }
+                            }
                         }
-                        Ok(None) | Err(_) => break,
+                        Some(Err(e)) => {
+                            let _ = ch.send(LogEvent::Error { message: e.to_string() });
+                            break;
+                        }
+                        None => break,
                     }
                 }
             }
         }
         let _ = ch.send(LogEvent::End);
-    });
-
-    let cancel_wait = cancel.clone();
-    let ch_timeout = channel.clone();
-    tokio::spawn(async move {
-        let timeout = tokio::time::Duration::from_secs(300);
-        let timed_out = tokio::time::timeout(timeout, async {
-            tokio::select! {
-                _ = cancel_wait.cancelled() => { let _ = child.kill().await; }
-                _ = child.wait() => { cancel_wait.cancel(); }
-            }
-        }).await.is_err();
-        if timed_out {
-            let _ = ch_timeout.send(LogEvent::Error { message: "stream timed out after 5 minutes".to_string() });
-            let _ = child.kill().await;
-        }
     });
 
     Ok(())

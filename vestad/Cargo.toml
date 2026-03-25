@@ -1,0 +1,33 @@
+[package]
+name = "vestad"
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+edition.workspace = true
+description = "Vesta API server daemon (Linux only)"
+
+[[bin]]
+name = "vestad"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+axum = { version = "0.8", features = ["ws"] }
+axum-server = { version = "0.7", features = ["tls-rustls"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "io-util", "process", "sync", "time", "fs"] }
+tokio-tungstenite = "0.26"
+tower-http = { version = "0.6", features = ["cors"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
+rcgen = "0.13"
+ring = "0.17"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rand = "0.9"
+self-replace = "1"
+libc = "0.2"
+futures-core = "0.3"
+futures-util = "0.3"
+async-stream = "0.3"
+bytes = "1"
+

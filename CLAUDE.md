@@ -8,11 +8,14 @@ Vesta is a personal AI assistant that runs as a persistent daemon in Docker, pow
 
 ## Architecture
 
-Rust CLI on host manages a Docker container. On Linux the CLI talks to Docker directly, on macOS Docker runs behind a vfkit VM, on Windows behind WSL2. Python agent runs inside the container. Tauri desktop app connects to the agent via WebSocket.
+Client/server architecture. `vestad` daemon runs on the host (manages Docker containers, serves HTTP+WS API). `vesta` CLI and Tauri desktop app connect to vestad. On macOS Docker runs behind a vfkit VM, on Windows behind WSL2. Python agent runs inside the container.
 
 - **Agent** (`agent/src/vesta/`): Async Python. Entry point `main.py`. Core loop in `core/loops.py` (message processing, notification monitoring). WebSocket server in `api.py`.
-- **CLI** (`cli/src/`): Rust binary with subcommands. Platform-specific: `linux.rs`, `macos.rs`, `windows.rs`.
-- **Desktop App** (`app/`): Tauri + Svelte. Embeds CLI as sidecar.
+- **CLI** (`cli/`): Rust `vesta` client binary. Connects to vestad over HTTPS.
+- **Server** (`vestad/`): Rust `vestad` daemon. Manages Docker containers, serves API.
+- **Common** (`vesta-common/`): Shared Rust library (types, config, platform setup).
+- **Desktop App** (`app/`): Tauri + Svelte. Uses `vesta-common` to connect to vestad.
+- **VM** (`vm/`): Dockerfile and scripts for macOS VM and WSL2 images.
 - **Tools** (`agent/tools/`): Independent CLI tools. **Never share code between CLIs.**
 - **Skills** (`agent/memory/skills/`): Templates also in `agent/src/vesta/templates/skills/`. Each has `SKILL.md` + scripts. No MCP servers.
 
@@ -27,11 +30,14 @@ uv run ruff check                          # Lint
 uv run ty check                            # Type check
 ```
 
-### CLI (run from `cli/`)
+### Rust (run from repo root)
 
 ```bash
-cargo build                                # Build
+cargo build                                # Build all crates
+cargo build -p vesta                       # Build CLI only
+cargo build -p vestad                      # Build server only
 cargo clippy                               # Lint
+cargo test                                 # Test
 ```
 
 ### Releasing
@@ -58,4 +64,4 @@ Triggers a GitHub Actions workflow that bumps version, commits to master, tags, 
 
 ## CI
 
-Runs on push to `master` and PRs. Checks: version sync across 5 sources (`agent/pyproject.toml`, `cli/Cargo.toml`, `app/src-tauri/Cargo.toml`, `app/src-tauri/tauri.conf.json`, `app/package.json`), ruff, ty, cargo clippy, pytest, `uv.lock` freshness. Releases are triggered by `gh release create` (via `./release.sh`).
+Runs on push to `master` and PRs. Checks: version sync across 5 sources (`agent/pyproject.toml`, `Cargo.toml`, `app/src-tauri/Cargo.toml`, `app/src-tauri/tauri.conf.json`, `app/package.json`), ruff, ty, cargo clippy, pytest, `uv.lock` freshness. Releases are triggered by `gh release create` (via `./release.sh`).

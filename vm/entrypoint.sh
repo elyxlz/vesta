@@ -84,6 +84,9 @@ done
 # Start SSH
 /usr/sbin/sshd -e
 
+# Start vestad API server
+vestad serve &
+
 # Bridge vsock port 2222 to SSH (macOS vfkit only, silently skipped on WSL2)
 # Load virtio vsock transport (creates /dev/vsock); silently skip if not available
 modprobe vmw_vsock_virtio_transport 2>/dev/null || true

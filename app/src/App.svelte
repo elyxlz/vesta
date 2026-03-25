@@ -55,7 +55,7 @@
       hasBoxes = boxes.length > 0;
       if (boxes.length === 1 && boxes[0].authenticated) {
         selectedBox = { name: boxes[0].name, wsPort: boxes[0].ws_port };
-        boxConnection = createBoxConnection(boxes[0].ws_port);
+        boxConnection = createBoxConnection(boxes[0].name);
         boxConnection.connect();
         view = "box-home";
       } else if (boxes.length > 1) {
@@ -86,7 +86,7 @@
   function handleSelectBox(name: string, wsPort: number) {
     boxConnection?.disconnect();
     selectedBox = { name, wsPort };
-    boxConnection = createBoxConnection(wsPort);
+    boxConnection = createBoxConnection(name);
     boxConnection.connect();
     setView("box-home");
   }
@@ -116,7 +116,7 @@
     if (box) {
       boxConnection?.disconnect();
       selectedBox = { name: box.name, wsPort: box.ws_port };
-      boxConnection = createBoxConnection(box.ws_port);
+      boxConnection = createBoxConnection(box.name);
       boxConnection.connect();
       await setView("box-chat");
     } else {
