@@ -21,7 +21,7 @@ from vesta.core.loops import message_processor, monitor_loop, queue_greeting
 SignalHandler = tp.Callable[[int, types.FrameType | None], None]
 
 
-async def input_handler(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State) -> None:
+async def input_handler(queue: asyncio.Queue[tuple[str, bool, bool]], *, state: vm.State) -> None:
     while not state.shutdown_event.is_set():
         try:
             user_msg = await aioconsole.ainput("")
@@ -31,7 +31,7 @@ async def input_handler(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.Sta
                 continue
 
             logger.user(user_msg.strip())
-            await queue.put((user_msg.strip(), True))
+            await queue.put((user_msg.strip(), True, True))
         except (KeyboardInterrupt, EOFError):
             state.shutdown_event.set()
             break
@@ -69,7 +69,7 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
     logger.init(f"{config.agent_name.upper()} started")
     (config.data_dir / "run_marker").touch()
 
-    message_queue: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()
+    message_queue: asyncio.Queue[tuple[str, bool, bool]] = asyncio.Queue()
 
     ws_runner = await start_ws_server(state.event_bus, message_queue, state, config)
     logger.init(f"WebSocket server started on port {config.ws_port}")
