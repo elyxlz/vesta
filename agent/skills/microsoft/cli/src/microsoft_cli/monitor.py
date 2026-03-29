@@ -140,6 +140,7 @@ def run(ctx: MicrosoftContext):
                             logger.warning(f"Email sender missing address: {email['id'] if 'id' in email else '?'}")
                             continue
 
+                        email_id = email["id"] if "id" in email else None
                         logger.info(f"Writing notification for email from {sender_addr}")
                         notifications.write_notification(
                             ctx.notif_dir,
@@ -151,6 +152,7 @@ def run(ctx: MicrosoftContext):
                             account=acc.username,
                             received_at=email["receivedDateTime"] if "receivedDateTime" in email else None,
                             missed=catching_up or None,
+                            event_id=f"ms:email:{email_id}" if email_id else None,
                         )
                 except Exception as e:
                     logger.error(f"Error fetching emails for {acc.username}: {e}")
@@ -201,6 +203,7 @@ def run(ctx: MicrosoftContext):
                             label = _format_threshold_label(threshold_mins)
                             logger.info(f"Writing {label} reminder for calendar event: {subject}")
 
+                            cal_event_id = event["id"] if "id" in event else None
                             notifications.write_notification(
                                 ctx.notif_dir,
                                 "calendar",
@@ -211,6 +214,7 @@ def run(ctx: MicrosoftContext):
                                 location=loc,
                                 account=acc.username,
                                 missed=(catching_up and event_time < new_check_time) or None,
+                                event_id=f"ms:calendar:{cal_event_id}" if cal_event_id else None,
                             )
                 except Exception as e:
                     logger.error(f"Error fetching calendar for {acc.username}: {e}")

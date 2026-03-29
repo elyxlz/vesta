@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,6 +28,7 @@ type messageNotif struct {
 	MessageID       string `json:"message_id,omitempty"`
 	ContactSaved    bool   `json:"contact_saved"`
 	Note            string `json:"note,omitempty"`
+	EventID         string `json:"event_id,omitempty"`
 }
 
 type reactionNotif struct {
@@ -43,6 +45,7 @@ type reactionNotif struct {
 	TargetMessageID string `json:"target_message_id"`
 	ContactSaved    bool   `json:"contact_saved"`
 	Note            string `json:"note,omitempty"`
+	EventID         string `json:"event_id,omitempty"`
 }
 
 func WriteNotification(
@@ -59,6 +62,13 @@ func WriteNotification(
 		return fmt.Errorf("failed to create notifications dir: %v", err)
 	}
 
+	// Build event_id: wa:msg:<id> for main, wa.<instance>:msg:<id> for named instances
+	prefix := "wa"
+	if instance != "" {
+		prefix = "wa." + instance
+	}
+	eventID := fmt.Sprintf("%s:msg:%s", prefix, messageID)
+
 	n := messageNotif{
 		Source:          "whatsapp",
 		Type:            "message",
@@ -73,6 +83,7 @@ func WriteNotification(
 		Timestamp:       time.Now().Format(time.RFC3339),
 		MessageID:       messageID,
 		ContactSaved:    contactSaved,
+		EventID:         eventID,
 	}
 	if !isDirectChat {
 		n.Sender = sender
@@ -104,6 +115,13 @@ func WriteReactionNotification(
 		return fmt.Errorf("failed to create notifications dir: %v", err)
 	}
 
+	// Build event_id: wa:react:<target_id>:<emoji>:<sender> for main, wa.<instance>:react:... for named instances
+	prefix := "wa"
+	if instance != "" {
+		prefix = "wa." + instance
+	}
+	eventID := fmt.Sprintf("%s:react:%s:%s:%s", prefix, targetMessageID, emoji, strings.TrimPrefix(contactPhone, "+"))
+
 	n := reactionNotif{
 		Source:          "whatsapp",
 		Type:            "reaction",
@@ -115,6 +133,7 @@ func WriteReactionNotification(
 		Timestamp:       time.Now().Format(time.RFC3339),
 		TargetMessageID: targetMessageID,
 		ContactSaved:    contactSaved,
+		EventID:         eventID,
 	}
 	if !isDirectChat {
 		n.Sender = sender
