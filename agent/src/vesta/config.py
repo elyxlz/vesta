@@ -65,3 +65,4 @@ class VestaConfig(pyd_settings.BaseSettings):
         return self.data_dir / "session_id"
 
     agent_name: str = "vesta"
+    agent_model: str = "opus"

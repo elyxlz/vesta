@@ -3,6 +3,7 @@ import datetime as dt
 import json
 import os
 import signal
+import time
 import typing as tp
 
 from claude_agent_sdk import (
@@ -67,7 +68,9 @@ def filter_tool_lines(text: str) -> str:
     return "\n".join(s for line in text.split("\n") if (s := line.strip()) and not s.startswith("[TOOL]") and not s.startswith("[TASK]"))
 
 
-def _parse_sdk_message(msg: Message, *, sub_agent_context: str | None) -> tuple[list[str], str | None, str | None, bool]:
+def _parse_sdk_message(
+    msg: Message, *, sub_agent_context: str | None, turn_start: float | None = None, model: str | None = None
+) -> tuple[list[str], str | None, str | None, bool]:
     if isinstance(msg, ResultMessage):
         session_id: str | None = None
         try:
@@ -80,6 +83,8 @@ def _parse_sdk_message(msg: Message, *, sub_agent_context: str | None) -> tuple[
             cost = msg.total_cost_usd
             duration_s = msg.duration_ms / 1000 if msg.duration_ms else None
             parts = []
+            if model:
+                parts.append(f"model={model}")
             if usage_data:
                 input_tok = usage_data.get("input_tokens", 0)
                 output_tok = usage_data.get("output_tokens", 0)
@@ -90,6 +95,9 @@ def _parse_sdk_message(msg: Message, *, sub_agent_context: str | None) -> tuple[
                 parts.append(f"cost=${cost:.4f}")
             if duration_s is not None:
                 parts.append(f"duration={duration_s:.1f}s")
+            if turn_start is not None:
+                wall_s = time.time() - turn_start
+                parts.append(f"wall={wall_s:.1f}s")
             if parts:
                 logger.usage(" | ".join(parts))
         except (AttributeError, TypeError, KeyError):
@@ -234,6 +242,7 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
     assert state.client is not None
     client = state.client
 
+    turn_start = time.time()
     query = _build_query(prompt, timestamp=dt.datetime.now())
     try:
         await asyncio.wait_for(client.query(query), timeout=config.query_timeout)
@@ -280,7 +289,9 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
                 try:
                     drain = client.receive_response().__aiter__()
                     while (leftover := await asyncio.wait_for(anext(drain, None), timeout=5.0)) is not None:
-                        texts, _, _, _ = _parse_sdk_message(tp.cast(Message, leftover), sub_agent_context=sub_agent_context)
+                        texts, _, _, _ = _parse_sdk_message(
+                            tp.cast(Message, leftover), sub_agent_context=sub_agent_context, turn_start=turn_start, model=config.agent_model
+                        )
                         text = "\n".join(texts) if texts else None
                         if text and show_output:
                             filtered = filter_tool_lines(text)
@@ -295,7 +306,9 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
                 break
 
             msg = tp.cast(Message, result)
-            texts, sub_agent_context, session_id, _ = _parse_sdk_message(msg, sub_agent_context=sub_agent_context)
+            texts, sub_agent_context, session_id, _ = _parse_sdk_message(
+                msg, sub_agent_context=sub_agent_context, turn_start=turn_start, model=config.agent_model
+            )
             if session_id and session_id != state.session_id:
                 persist_session_id(session_id, state=state, config=config)
             text = "\n".join(texts) if texts else None
@@ -389,6 +402,7 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
 
     return ClaudeAgentOptions(
         system_prompt=system_prompt,
+        model=config.agent_model,
         hooks={
             "PreToolUse": [HookMatcher(hooks=[pre_hook])],
             "PostToolUse": [HookMatcher(hooks=[post_hook])],
