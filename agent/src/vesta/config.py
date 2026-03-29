@@ -13,8 +13,7 @@ class VestaConfig(pyd_settings.BaseSettings):
 
     ephemeral: bool = False
     log_level: tp.Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
-    notification_check_interval: int = pyd.Field(default=2, ge=1)
-    notification_buffer_delay: int = pyd.Field(default=3, ge=0)
+    notification_check_interval: int = pyd.Field(default=1, ge=1)
     proactive_check_interval: int = pyd.Field(default=60, ge=1)
     query_timeout: int = pyd.Field(default=120, ge=1)
     response_timeout: int = pyd.Field(default=600, ge=1)

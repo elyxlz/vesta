@@ -28,6 +28,7 @@ def write_notification(
         "reminder_window": reminder_window,
         "task_id": task_id,
         "timestamp": datetime.now(UTC).isoformat(),
+        "event_id": f"task:due:{task_id}",
     }
 
     filename = f"{int(time.time() * 1e6)}-tasks-due.json"
