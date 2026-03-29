@@ -68,7 +68,9 @@ def filter_tool_lines(text: str) -> str:
     return "\n".join(s for line in text.split("\n") if (s := line.strip()) and not s.startswith("[TOOL]") and not s.startswith("[TASK]"))
 
 
-def _parse_sdk_message(msg: Message, *, sub_agent_context: str | None, turn_start: float | None = None, model: str | None = None) -> tuple[list[str], str | None, str | None, bool]:
+def _parse_sdk_message(
+    msg: Message, *, sub_agent_context: str | None, turn_start: float | None = None, model: str | None = None
+) -> tuple[list[str], str | None, str | None, bool]:
     if isinstance(msg, ResultMessage):
         session_id: str | None = None
         try:
@@ -287,7 +289,9 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
                 try:
                     drain = client.receive_response().__aiter__()
                     while (leftover := await asyncio.wait_for(anext(drain, None), timeout=5.0)) is not None:
-                        texts, _, _, _ = _parse_sdk_message(tp.cast(Message, leftover), sub_agent_context=sub_agent_context, turn_start=turn_start, model=config.agent_model)
+                        texts, _, _, _ = _parse_sdk_message(
+                            tp.cast(Message, leftover), sub_agent_context=sub_agent_context, turn_start=turn_start, model=config.agent_model
+                        )
                         text = "\n".join(texts) if texts else None
                         if text and show_output:
                             filtered = filter_tool_lines(text)
@@ -302,7 +306,9 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
                 break
 
             msg = tp.cast(Message, result)
-            texts, sub_agent_context, session_id, _ = _parse_sdk_message(msg, sub_agent_context=sub_agent_context, turn_start=turn_start, model=config.agent_model)
+            texts, sub_agent_context, session_id, _ = _parse_sdk_message(
+                msg, sub_agent_context=sub_agent_context, turn_start=turn_start, model=config.agent_model
+            )
             if session_id and session_id != state.session_id:
                 persist_session_id(session_id, state=state, config=config)
             text = "\n".join(texts) if texts else None

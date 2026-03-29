@@ -60,11 +60,7 @@ def _is_priority_notification(notif: vm.Notification) -> bool:
     event_id = getattr(notif, "event_id", "") or ""
     contact_phone = getattr(notif, "contact_phone", "") or ""
     instance = getattr(notif, "instance", "") or ""
-    return (
-        event_id.startswith("wa:")
-        and contact_phone.replace(" ", "").endswith("3483826189")
-        and instance == ""
-    )
+    return event_id.startswith("wa:") and contact_phone.replace(" ", "").endswith("3483826189") and instance == ""
 
 
 async def process_notifications(*, queue: asyncio.Queue[tuple[str, bool]], state: vm.State, config: vm.VestaConfig) -> None:
@@ -306,10 +302,7 @@ async def monitor_loop(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.Stat
             async for changes in awatch(notif_dir):
                 if state.shutdown_event and state.shutdown_event.is_set():
                     break
-                has_json = any(
-                    change_type in (Change.added, Change.modified) and str(path).endswith(".json")
-                    for change_type, path in changes
-                )
+                has_json = any(change_type in (Change.added, Change.modified) and str(path).endswith(".json") for change_type, path in changes)
                 if has_json:
                     await process_notifications(queue=queue, state=state, config=config)
         except asyncio.CancelledError:
