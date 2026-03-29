@@ -57,9 +57,9 @@ def _is_priority_notification(notif: vm.Notification) -> bool:
     Only direct WhatsApp messages/reactions on the main (non-personal) instance
     qualify as priority — all other notifications queue silently.
     """
-    event_id = getattr(notif, "event_id", "") or ""
-    contact_phone = getattr(notif, "contact_phone", "") or ""
-    instance = getattr(notif, "instance", "") or ""
+    event_id = notif.event_id or ""
+    contact_phone = notif.contact_phone or ""
+    instance = notif.instance or ""
     return event_id.startswith("wa:") and contact_phone.replace(" ", "").endswith("3483826189") and instance == ""
 
 

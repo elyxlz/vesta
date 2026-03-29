@@ -35,6 +35,10 @@ class Notification(pyd.BaseModel):
     source: str
     type: str
     file_path: str | None = pyd.Field(default=None, exclude=True)
+    # Common optional fields used by various notification sources
+    event_id: str | None = None
+    contact_phone: str | None = None
+    instance: str | None = None
 
     def format_for_display(self) -> str:
         data = self.model_dump(exclude={"file_path", "type", "source"})
