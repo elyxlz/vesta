@@ -90,7 +90,14 @@ async def process_batch(
     suffix = load_prompt("notification_suffix", config) or ""
     prompt = format_notification_batch(notifications, suffix=suffix)
 
-    if state.client:
+    # Only interrupt for Lucio's messages/reactions on the main WhatsApp instance
+    should_interrupt = any(
+        (getattr(n, "event_id", "") or "").startswith("wa:")
+        and (getattr(n, "contact_phone", "") or "").replace(" ", "").endswith("3483826189")
+        and not (getattr(n, "instance", "") or "")
+        for n in notifications
+    )
+    if should_interrupt and state.client:
         await attempt_interrupt(state, config=config, reason="Notification interrupt")
 
     await queue.put((prompt, False))
