@@ -137,21 +137,37 @@ pub fn wait_for_server(timeout_secs: u64) -> bool {
 pub fn ensure_server() -> Result<bool, String> {
     let server_reachable = wait_for_server(1);
 
-    // Already configured and reachable?
-    if load_server_config().is_some() && server_reachable {
-        return Ok(false);
-    }
-
-    // Platform-specific setup
     #[cfg(target_os = "linux")]
     {
-        if !server_reachable {
+        #[cfg(debug_assertions)]
+        {
+            // Dev: always rebuild and restart vestad so code changes take effect
             let vestad_path = platform::linux::install_vestad()?;
             platform::linux::install_autostart(&vestad_path)?;
+            if server_reachable {
+                platform::linux::shutdown();
+            }
             platform::linux::boot()?;
 
             if !wait_for_server(30) {
                 return Err("server did not start within 30s".into());
+            }
+        }
+
+        #[cfg(not(debug_assertions))]
+        {
+            // Release: only install and boot if not already running
+            if load_server_config().is_some() && server_reachable {
+                return Ok(false);
+            }
+            if !server_reachable {
+                let vestad_path = platform::linux::install_vestad()?;
+                platform::linux::install_autostart(&vestad_path)?;
+                platform::linux::boot()?;
+
+                if !wait_for_server(30) {
+                    return Err("server did not start within 30s".into());
+                }
             }
         }
 
