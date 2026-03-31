@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onDestroy, tick } from "svelte";
-  import { get } from "svelte/store";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import type { BoxConnection } from "../lib/ws";
   import { linkify } from "../lib/linkify";
@@ -9,6 +8,15 @@
   import type { VestaEvent, BoxActivityState } from "../lib/types";
 
   let { name, connection, onBack }: { name: string; connection: BoxConnection; onBack: () => void } = $props();
+
+  function linkClicks(node: HTMLElement) {
+    function handle(e: MouseEvent) {
+      const a = (e.target as HTMLElement).closest("a");
+      if (a?.href) { e.preventDefault(); openUrl(a.href); }
+    }
+    node.addEventListener("click", handle);
+    return { destroy: () => node.removeEventListener("click", handle) };
+  }
 
   type Line = { id: number; text: string; kind: string; time: string };
   const MAX_MESSAGES = 5000;
@@ -23,8 +31,8 @@
   let suppressAnim = $state(false);
   const scroller = createAutoScroller(() => outputEl);
 
-  let connectedVal = $state(get(connection.connected));
-  let boxStateVal = $state<BoxActivityState>(get(connection.boxState));
+  let connectedVal = $state(false);
+  let boxStateVal = $state<BoxActivityState>("idle");
 
   $effect(() => {
     const u1 = connection.connected.subscribe((v: boolean) => { connectedVal = v; });
@@ -154,7 +162,7 @@
     </button>
   </div>
 
-  <div class="output" class:no-anim={suppressAnim} bind:this={outputEl} onscroll={scroller.check} onclick={(e) => { const a = (e.target as HTMLElement).closest("a"); if (a?.href) { e.preventDefault(); openUrl(a.href); } }}>
+  <div class="output" class:no-anim={suppressAnim} bind:this={outputEl} onscroll={scroller.check} use:linkClicks>
     {#each lines as line (line.id)}
       {#if (line.kind !== "tool" && line.kind !== "notification") || showTools}
         <div class="line {line.kind}"><span class="ts">{line.time}</span>{@html linkify(line.text)}</div>

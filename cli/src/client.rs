@@ -4,11 +4,12 @@ pub use vesta_common::client::{make_ws_rustls_config, Client};
 
 /// Connect to WebSocket and run interactive chat (CLI-only).
 pub fn chat(client: &Client, name: &str) -> Result<(), String> {
-    let ws_url = client
-        .base_url()
-        .replace("https://", "wss://")
-        .replace("http://", "ws://");
-    let url = format!("{}/agents/{}/ws?token={}", ws_url, name, client.api_key());
+    let url = format!(
+        "{}/agents/{}/ws?token={}",
+        vesta_common::client::ws_base_url(client.base_url()),
+        name,
+        client.api_key()
+    );
 
     let parsed: url::Url =
         url.parse().map_err(|e| format!("invalid ws url: {}", e))?;

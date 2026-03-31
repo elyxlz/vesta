@@ -4,6 +4,16 @@ import { check } from "@tauri-apps/plugin-updater";
 import { detectPlatform } from "./platform";
 import type { BoxInfo, ListEntry, LogEvent, PlatformStatus } from "./types";
 
+function isNewer(latest: string, current: string): boolean {
+  const a = latest.split(".").map(Number);
+  const b = current.split(".").map(Number);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    if ((a[i] ?? 0) > (b[i] ?? 0)) return true;
+    if ((a[i] ?? 0) < (b[i] ?? 0)) return false;
+  }
+  return false;
+}
+
 export async function listBoxes(): Promise<ListEntry[]> {
   return invoke("list_agents");
 }
@@ -101,7 +111,7 @@ export async function checkAndInstallUpdate(): Promise<{ version: string; instal
       if (!resp.ok) return null;
       const data = await resp.json();
       const latest = (data.tag_name as string).replace(/^v/, "");
-      if (latest === current) return null;
+      if (!isNewer(latest, current)) return null;
       return { version: latest, installing: false };
     }
     const update = await check();

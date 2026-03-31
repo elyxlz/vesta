@@ -6,9 +6,11 @@
   import ProgressBar from "./ProgressBar.svelte";
   import AuthFlow from "./AuthFlow.svelte";
 
-  let { onComplete, onCancel, initialName }: { onComplete: (name: string) => void; onCancel?: () => void; initialName?: string } = $props();
+  const { onComplete, onCancel, initialName }: { onComplete: (name: string) => void; onCancel?: () => void; initialName?: string } = $props();
 
+  // svelte-ignore state_referenced_locally — intentional one-time capture
   let step = $state<OnboardingStep>(initialName ? "name" : "platform");
+  // svelte-ignore state_referenced_locally
   let boxName = $state(initialName ?? "");
   let error = $state<{ friendly: string | null; raw: string } | null>(null);
   let showRawError = $state(false);
@@ -674,21 +676,6 @@
     width: 100%;
   }
 
-  .auth-link {
-    font-size: 11px;
-    color: #7a726a;
-    word-break: break-all;
-    margin-bottom: 16px;
-    text-decoration: underline;
-    text-underline-offset: 2px;
-    cursor: pointer;
-    transition: color 0.15s;
-  }
-
-  .auth-link:hover {
-    color: #1a1816;
-  }
-
   .secondary-actions {
     display: flex;
     flex-direction: column;
@@ -776,14 +763,6 @@
     .btn.primary:hover {
       background: #f0ece7;
       box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
-    }
-
-    .auth-link {
-      color: #8a8078;
-    }
-
-    .auth-link:hover {
-      color: #e8e0d8;
     }
 
     .btn.cancel {

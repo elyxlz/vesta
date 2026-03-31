@@ -1,4 +1,5 @@
 use tauri::ipc::Channel;
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::error::{ErrorCode, VestaError};
@@ -426,4 +427,101 @@ pub async fn stream_agent_logs(
     });
 
     Ok(())
+}
+
+// ── WebSocket proxy ────────────────────────────────────────────
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(tag = "kind")]
+pub enum WsEvent {
+    Message { text: String },
+    Open,
+    Close,
+    Error { message: String },
+}
+
+pub async fn connect_agent_ws(
+    name: &str,
+    channel: Channel<WsEvent>,
+    cancel: CancellationToken,
+) -> Result<mpsc::Sender<String>, VestaError> {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite;
+
+    let config = vesta_common::load_server_config()
+        .ok_or_else(|| VestaError::new(ErrorCode::Internal, "server not configured"))?;
+
+    let ws_url = format!(
+        "{}/agents/{}/ws?token={}",
+        vesta_common::client::ws_base_url(&config.url),
+        name,
+        config.api_key
+    );
+
+    let tls_config = vesta_common::client::make_ws_rustls_config(
+        config.cert_fingerprint.clone(),
+    );
+    let connector = tokio_tungstenite::Connector::Rustls(tls_config);
+
+    let (ws_stream, _) = tokio_tungstenite::connect_async_tls_with_config(
+        &ws_url,
+        None,
+        false,
+        Some(connector),
+    )
+    .await
+    .map_err(|e| VestaError::new(ErrorCode::Internal, format!("ws connect failed: {}", e)))?;
+
+    let (mut sink, mut stream) = ws_stream.split();
+    let (tx, mut rx) = mpsc::channel::<String>(64);
+
+    let ch = channel.clone();
+    let _ = ch.send(WsEvent::Open);
+
+    let cancel_read = cancel.clone();
+    let ch_read = channel.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = cancel_read.cancelled() => break,
+                msg = stream.next() => {
+                    match msg {
+                        Some(Ok(tungstenite::Message::Text(text))) => {
+                            let _ = ch_read.send(WsEvent::Message { text: text.to_string() });
+                        }
+                        Some(Ok(tungstenite::Message::Close(_))) | None => break,
+                        Some(Err(e)) => {
+                            let _ = ch_read.send(WsEvent::Error { message: e.to_string() });
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        let _ = ch_read.send(WsEvent::Close);
+        cancel_read.cancel();
+    });
+
+    let cancel_write = cancel;
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = cancel_write.cancelled() => break,
+                msg = rx.recv() => {
+                    match msg {
+                        Some(text) => {
+                            if sink.send(tungstenite::Message::Text(text.into())).await.is_err() {
+                                break;
+                            }
+                        }
+                        None => break,
+                    }
+                }
+            }
+        }
+        let _ = sink.close().await;
+    });
+
+    Ok(tx)
 }

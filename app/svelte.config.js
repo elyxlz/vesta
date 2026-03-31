@@ -2,8 +2,8 @@ import { vitePreprocess } from "@sveltejs/vite-plugin-svelte";
 
 export default {
   preprocess: vitePreprocess(),
-  onwarn: (warning, handler) => {
-    if (warning.message.includes("corner-shape")) return;
-    handler(warning);
+  warningFilter: (warning) => {
+    if (warning.code === "css_unknown_property" && warning.message.includes("corner-shape")) return false;
+    return true;
   },
 };

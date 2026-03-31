@@ -90,6 +90,12 @@ pub fn make_ws_rustls_config(fingerprint: Option<String>) -> Arc<rustls::ClientC
     make_rustls_config(fingerprint)
 }
 
+/// Convert an HTTP(S) base URL to a WS(S) base URL.
+pub fn ws_base_url(url: &str) -> String {
+    url.replace("https://", "wss://")
+        .replace("http://", "ws://")
+}
+
 // ── HTTP client ─────────────────────────────────────────────────
 
 #[derive(serde::Deserialize)]

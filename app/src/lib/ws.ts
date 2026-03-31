@@ -1,15 +1,15 @@
 import { writable, type Writable, type Readable } from "svelte/store";
 import type { VestaEvent, BoxActivityState } from "./types";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, Channel } from "@tauri-apps/api/core";
 
 const RECONNECT_BASE = 1000;
 const RECONNECT_MAX = 30000;
 const MAX_MESSAGES = 5000;
 
-interface ServerConfig {
-  url: string;
-  api_key: string;
-  cert_fingerprint: string;
+interface WsEvent {
+  kind: "Message" | "Open" | "Close" | "Error";
+  text?: string;
+  message?: string;
 }
 
 export interface BoxConnection {
@@ -27,10 +27,10 @@ export function createBoxConnection(name: string): BoxConnection {
   const _boxState: Writable<BoxActivityState> = writable("idle");
   const _connected: Writable<boolean> = writable(false);
 
-  let ws: WebSocket | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let reconnectDelay = RECONNECT_BASE;
   let active = false;
+  let isConnected = false;
 
   function handleEvent(event: VestaEvent) {
     if (event.type === "history") {
@@ -49,73 +49,50 @@ export function createBoxConnection(name: string): BoxConnection {
     }
   }
 
-  function killSocket(socket: WebSocket) {
-    socket.onopen = null;
-    socket.onmessage = null;
-    socket.onclose = null;
-    socket.onerror = null;
-    socket.close();
-  }
-
-  let cachedConfig: ServerConfig | null = null;
-
   async function doConnect() {
-    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
-      return;
-    }
+    if (isConnected) return;
 
-    if (!cachedConfig) {
-      try {
-        cachedConfig = await invoke<ServerConfig>("get_server_config");
-      } catch {
-        console.warn("ws: failed to load server config");
-        if (active) {
-          reconnectTimer = setTimeout(doConnect, reconnectDelay);
-          reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX);
-        }
-        return;
-      }
-    }
-
-    // Convert https:// URL to wss://
-    const serverUrl = cachedConfig.url.replace(/^https:\/\//, "").replace(/^http:\/\//, "");
-    const protocol = cachedConfig.url.startsWith("https") ? "wss" : "ws";
-    const wsUrl = `${protocol}://${serverUrl}/agents/${name}/ws?token=${encodeURIComponent(cachedConfig.api_key)}`;
-
-    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
-      return;
-    }
-
-    const socket = new WebSocket(wsUrl);
-    ws = socket;
-
-    socket.onopen = () => {
-      reconnectDelay = RECONNECT_BASE;
-      _connected.set(true);
-      _messages.set([]);
-    };
-
-    socket.onmessage = (ev) => {
-      try {
-        handleEvent(JSON.parse(ev.data) as VestaEvent);
-      } catch (e) {
-        console.warn("ws: bad message", e);
+    const channel = new Channel<WsEvent>();
+    channel.onmessage = (event) => {
+      switch (event.kind) {
+        case "Open":
+          isConnected = true;
+          reconnectDelay = RECONNECT_BASE;
+          _connected.set(true);
+          _messages.set([]);
+          break;
+        case "Message":
+          if (event.text) {
+            try {
+              handleEvent(JSON.parse(event.text) as VestaEvent);
+            } catch (e) {
+              console.warn("ws: bad message", e);
+            }
+          }
+          break;
+        case "Close":
+          isConnected = false;
+          _connected.set(false);
+          if (active) {
+            reconnectTimer = setTimeout(doConnect, reconnectDelay);
+            reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX);
+          }
+          break;
+        case "Error":
+          console.warn("ws error:", event.message);
+          break;
       }
     };
 
-    socket.onclose = () => {
-      if (ws !== socket) return;
-      _connected.set(false);
-      ws = null;
+    try {
+      await invoke("connect_ws", { name, onEvent: channel });
+    } catch (e) {
+      console.warn("ws: connect failed", e);
       if (active) {
         reconnectTimer = setTimeout(doConnect, reconnectDelay);
         reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX);
       }
-    };
-
-    socket.onerror = () => {
-      socket.close();
-    };
+    }
   }
 
   function connect() {
@@ -131,16 +108,14 @@ export function createBoxConnection(name: string): BoxConnection {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
     }
-    if (ws) {
-      killSocket(ws);
-      ws = null;
-    }
+    isConnected = false;
     _connected.set(false);
+    invoke("disconnect_ws", { name }).catch(() => {});
   }
 
   function resetReconnect() {
     reconnectDelay = RECONNECT_BASE;
-    if (active && !ws) {
+    if (active && !isConnected) {
       if (reconnectTimer) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
@@ -150,11 +125,9 @@ export function createBoxConnection(name: string): BoxConnection {
   }
 
   function send(text: string): boolean {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "message", text }));
-      return true;
-    }
-    return false;
+    if (!isConnected) return false;
+    invoke("send_ws", { name, text: JSON.stringify({ type: "message", text }) }).catch(() => {});
+    return true;
   }
 
   return {

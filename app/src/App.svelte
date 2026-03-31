@@ -210,7 +210,7 @@
     {/if}
   </main>
 
-  {#if updateInfo && view === "box-home"}
+  {#if updateInfo && (view === "box-home" || view === "grid")}
     <div class="update-bar">
       {#if updateInfo.installing}
         v{updateInfo.version} installed — restart to apply

@@ -62,10 +62,9 @@ fn main() {
 
             // Generate/load API key and TLS cert
             let api_key = serve::ensure_api_key(&config);
-            let (cert_pem, key_pem, fingerprint) = serve::ensure_tls(&config);
+            let (cert_pem, key_pem, _fingerprint) = serve::ensure_tls(&config);
 
-            eprintln!("api key: {}", config.join("api-key").display());
-            eprintln!("tls cert fingerprint: {}", fingerprint);
+            eprintln!("connect with: vesta connect https://<host>:{}#{}", port, api_key);
 
             // Start async runtime and server
             tokio::runtime::Builder::new_multi_thread()

@@ -147,9 +147,9 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Connect to a remote server
+    /// Connect to a remote server (e.g. vesta connect https://host:7860#apikey)
     Connect {
-        /// Server host:port
+        /// Server URL, optionally with API key after #
         host: String,
     },
     /// Start the server (platform-specific)
@@ -344,7 +344,7 @@ fn check_update_cached() -> Option<std::thread::JoinHandle<Option<String>>> {
         let latest = fetch_latest_version(Some(5))?;
         let _ = std::fs::create_dir_all(&cache_dir);
         let _ = std::fs::write(&cache_file, &latest);
-        if latest != env!("CARGO_PKG_VERSION") {
+        if version_less_than(env!("CARGO_PKG_VERSION"), &latest) {
             Some(latest)
         } else {
             None
@@ -635,19 +635,21 @@ fn run(cli: Cli) {
         }
 
         Command::Connect { host } => {
-            let url = if host.starts_with("https://") || host.starts_with("http://") {
-                host.clone()
+            // Parse URL#apikey format, or prompt for key
+            let (url, key) = if let Some((u, k)) = host.split_once('#') {
+                (u.to_string(), k.to_string())
             } else {
-                format!("https://{}", host)
+                let u = host.clone();
+                eprint!("API key: ");
+                io::stderr().flush().ok();
+                let mut k = String::new();
+                io::stdin()
+                    .read_line(&mut k)
+                    .unwrap_or_else(|_| platform::die("failed to read API key"));
+                (u, k.trim().to_string())
             };
 
-            eprint!("API key: ");
-            io::stderr().flush().ok();
-            let mut key = String::new();
-            io::stdin()
-                .read_line(&mut key)
-                .unwrap_or_else(|_| platform::die("failed to read API key"));
-            let key = key.trim().to_string();
+            let url = vesta_common::normalize_url(&url);
             if key.is_empty() {
                 platform::die("API key is required");
             }
@@ -659,7 +661,6 @@ fn run(cli: Cli) {
                 cert_pem: None,
             };
 
-            // Verify connection
             let c = client::Client::new(&config);
             c.health()
                 .unwrap_or_else(|e| platform::die(&format!("cannot reach server: {}", e)));

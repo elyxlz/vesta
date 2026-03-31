@@ -6,6 +6,10 @@ mod state;
 use state::AppState;
 
 pub fn run() {
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("failed to install rustls crypto provider");
+
     let app_state = AppState::new();
 
     let builder = tauri::Builder::default()
@@ -65,6 +69,9 @@ pub fn run() {
             commands::platform::platform_setup,
             commands::platform::connect_to_server,
             commands::platform::run_install_script,
+            commands::ws::connect_ws,
+            commands::ws::send_ws,
+            commands::ws::disconnect_ws,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

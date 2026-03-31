@@ -132,6 +132,36 @@ jobs:
         working-directory: app
         run: npm test
 
+  # ── Integration tests (real vestad + real client, Docker required) ─────
+  test-integration:
+    needs: [version-check, detect-changes]
+    if: github.event_name != 'pull_request' || needs.detect-changes.outputs.cli == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Login to ghcr.io
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull agent image
+        run: docker pull ghcr.io/elyxlz/vesta:latest
+
+      - name: Build vestad
+        run: cargo build -p vestad
+
+      - name: Run integration tests
+        run: cargo test -p vesta-common -- --test-threads=1
+
   # ── Build vesta client (all unix targets) ─────────────────────────────
   build-vesta:
     needs: [version-check]
@@ -1267,7 +1297,7 @@ jobs:
 
   # ── Upload artifacts to release and publish ──────────────────────────
   release:
-    needs: [build-vesta, build-vestad, test-frontend, test-linux, test-macos, build-vm-image, build-test-windows, build-tauri, build-tauri-windows, push-image]
+    needs: [build-vesta, build-vestad, test-frontend, test-integration, test-linux, test-macos, build-vm-image, build-test-windows, build-tauri, build-tauri-windows, push-image]
     if: ${{ !failure() && !cancelled() && github.event_name == 'release' }}
     runs-on: ubuntu-latest
     steps:

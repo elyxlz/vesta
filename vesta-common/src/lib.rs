@@ -115,8 +115,7 @@ pub fn save_server_config(config: &ServerConfig) -> Result<(), String> {
 
 /// Wait for vestad to become reachable (TCP connect to API port).
 pub fn wait_for_server(timeout_secs: u64) -> bool {
-    let addr = format!("localhost:{}", DEFAULT_API_PORT);
-    let addr: std::net::SocketAddr = addr.parse().unwrap();
+    let addr: std::net::SocketAddr = ([127, 0, 0, 1], DEFAULT_API_PORT).into();
     for _ in 0..timeout_secs {
         if std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(1)).is_ok() {
             return true;
