@@ -78,8 +78,9 @@ def _sync_jobs(config: Config, scheduler, notif_dir: Path):
         except Exception:
             pass
 
-    if db_ids - scheduled_ids:
-        commands.restore_all_jobs(config, scheduler, notif_dir=notif_dir)
+    missing = db_ids - scheduled_ids
+    if missing:
+        commands.restore_jobs_by_ids(config, scheduler, missing, notif_dir=notif_dir)
 
 
 def _build_remind_set_parser():
@@ -243,11 +244,6 @@ def _main_remind():
     except ValueError as e:
         print(json.dumps({"error": str(e)}), file=sys.stderr)
         sys.exit(1)
-    except SystemExit:
-        raise
-    except Exception as e:
-        print(json.dumps({"error": str(e)}), file=sys.stderr)
-        sys.exit(1)
 
 
 def _print_remind_help():
@@ -300,22 +296,14 @@ def _do_remind_set(config, args):
 
 
 def _do_remind_list(config, args):
-    scheduler = _init_scheduler(config)
-    try:
-        return commands.remind_list(config, scheduler, task_id=args.task_id, limit=args.limit)
-    finally:
-        scheduler.shutdown(wait=False)
+    return commands.remind_list_db(config, task_id=args.task_id, limit=args.limit)
 
 
 def _do_remind_delete(config, args):
-    scheduler = _init_scheduler(config)
-    try:
-        reminder_id = args.id_pos or args.reminder_id
-        if not reminder_id:
-            raise ValueError("id is required: tasks remind delete <id> or tasks remind delete --id <id>")
-        return commands.remind_delete(config, scheduler, reminder_id=reminder_id)
-    finally:
-        scheduler.shutdown(wait=False)
+    reminder_id = args.id_pos or args.reminder_id
+    if not reminder_id:
+        raise ValueError("id is required: tasks remind delete <id> or tasks remind delete --id <id>")
+    return commands.remind_delete_db(config, reminder_id=reminder_id)
 
 
 def _do_remind_update(config, args):
@@ -404,7 +392,7 @@ def _run_serve(config: Config, notif_dir: Path):
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
 
-    sync_interval = int(os.environ.get("TASKS_SYNC_INTERVAL", "5"))
+    sync_interval = int(os.environ["TASKS_SYNC_INTERVAL"]) if "TASKS_SYNC_INTERVAL" in os.environ else 5
 
     _write_pid(config)
 

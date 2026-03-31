@@ -159,7 +159,7 @@ def _migrate_v1_to_v2(data_dir: Path, conn: sqlite3.Connection):
     logger.info("Migrated schema v1 -> v2")
 
 
-_AUTO_WINDOWS = [
+AUTO_REMINDER_WINDOWS = [
     ("1 week", timedelta(weeks=1)),
     ("1 day", timedelta(days=1)),
     ("1 hour", timedelta(hours=1)),
@@ -177,7 +177,7 @@ def _create_auto_reminders_for_existing(conn: sqlite3.Connection):
         parsed = datetime.fromisoformat(due_str.replace("Z", "+00:00"))
         if not parsed.tzinfo:
             parsed = parsed.replace(tzinfo=UTC)
-        for label, delta in _AUTO_WINDOWS:
+        for label, delta in AUTO_REMINDER_WINDOWS:
             fire_time = parsed - delta
             if fire_time <= now:
                 continue

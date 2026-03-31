@@ -35,12 +35,7 @@ class TriggerData(TypedDict, total=False):
     hours: int
 
 
-AUTO_REMINDER_WINDOWS = [
-    ("1 week", timedelta(weeks=1)),
-    ("1 day", timedelta(days=1)),
-    ("1 hour", timedelta(hours=1)),
-    ("15 minutes", timedelta(minutes=15)),
-]
+AUTO_REMINDER_WINDOWS = db.AUTO_REMINDER_WINDOWS
 
 
 def _now_utc() -> datetime:
@@ -78,10 +73,10 @@ def normalize_priority(priority: int | str) -> int:
     if isinstance(priority, str) and priority.isdigit():
         return normalize_priority(int(priority))
     priority_map = {"low": 1, "normal": 2, "high": 3}
-    normalized = priority_map.get(priority.lower())
-    if normalized is None:
+    key = priority.lower()
+    if key not in priority_map:
         raise ValueError(f"Priority must be 1-3 or 'low'/'normal'/'high', got '{priority}'")
-    return normalized
+    return priority_map[key]
 
 
 def _compute_due_date(
@@ -343,7 +338,7 @@ def send_reminder_job(reminder_id: str, *, message: str, data_dir: str, notif_di
                 )
 
                 # Mark one-time (date) reminders as completed
-                if trigger_data.get("type") == "date":
+                if "type" in trigger_data and trigger_data["type"] == "date":
                     conn.execute("UPDATE reminders SET completed = 1 WHERE id = ?", (reminder_id,))
                     conn.commit()
 
@@ -364,14 +359,13 @@ def restore_all_jobs(config: Config, scheduler: BackgroundScheduler, *, notif_di
             reminder_id = row["id"]
             try:
                 trigger_data: TriggerData = json.loads(row["trigger_data"])
-                trigger_type = trigger_data.get("type")
+                trigger_type = trigger_data["type"] if "type" in trigger_data else None
 
                 if trigger_type == "date":
-                    run_date_str = trigger_data.get("run_date")
-                    if not run_date_str:
+                    if "run_date" not in trigger_data:
                         logger.warning(f"Reminder {reminder_id}: date trigger missing 'run_date', skipping")
                         continue
-                    run_date = _parse_datetime(run_date_str)
+                    run_date = _parse_datetime(trigger_data["run_date"])
                     if run_date < now:
                         logger.info(f"Reminder {reminder_id}: past due, sending missed notification")
                         if notif_dir:
@@ -388,15 +382,86 @@ def restore_all_jobs(config: Config, scheduler: BackgroundScheduler, *, notif_di
 
                 elif trigger_type == "cron":
                     trigger = CronTrigger(
-                        month=trigger_data.get("month"),
-                        day=trigger_data.get("day"),
-                        day_of_week=trigger_data.get("day_of_week"),
-                        hour=trigger_data.get("hour"),
-                        minute=trigger_data.get("minute"),
+                        month=trigger_data["month"] if "month" in trigger_data else None,
+                        day=trigger_data["day"] if "day" in trigger_data else None,
+                        day_of_week=trigger_data["day_of_week"] if "day_of_week" in trigger_data else None,
+                        hour=trigger_data["hour"] if "hour" in trigger_data else None,
+                        minute=trigger_data["minute"] if "minute" in trigger_data else None,
                     )
 
                 elif trigger_type == "interval":
-                    trigger = IntervalTrigger(hours=trigger_data.get("hours", 1))
+                    trigger = IntervalTrigger(hours=trigger_data["hours"] if "hours" in trigger_data else 1)
+
+                else:
+                    logger.warning(f"Reminder {reminder_id}: unknown trigger type '{trigger_type}', skipping")
+                    continue
+
+                scheduler.add_job(
+                    func=send_reminder_job,
+                    trigger=trigger,
+                    args=[reminder_id],
+                    kwargs={
+                        "message": row["message"],
+                        "data_dir": str(config.data_dir),
+                        "notif_dir": str(notif_dir) if notif_dir else "",
+                    },
+                    id=reminder_id,
+                    replace_existing=True,
+                )
+                logger.info(f"Restored reminder {reminder_id} ({trigger_type})")
+
+            except (json.JSONDecodeError, KeyError, ValueError) as e:
+                logger.error(f"Failed to restore reminder {reminder_id}: {e}")
+
+        conn.commit()
+
+
+def restore_jobs_by_ids(config: Config, scheduler: BackgroundScheduler, ids: set[str], *, notif_dir: Path | None = None):
+    """Restore specific reminder IDs from DB into the scheduler."""
+    now = _now_utc()
+    placeholders = ",".join("?" for _ in ids)
+    with closing(db.get_db(config.data_dir)) as conn:
+        cursor = conn.execute(
+            f"SELECT id, task_id, message, trigger_data FROM reminders WHERE completed = 0 AND trigger_data IS NOT NULL AND id IN ({placeholders})",
+            list(ids),
+        )
+
+        for row in cursor:
+            reminder_id = row["id"]
+            try:
+                trigger_data: TriggerData = json.loads(row["trigger_data"])
+                trigger_type = trigger_data["type"] if "type" in trigger_data else None
+
+                if trigger_type == "date":
+                    if "run_date" not in trigger_data:
+                        logger.warning(f"Reminder {reminder_id}: date trigger missing 'run_date', skipping")
+                        continue
+                    run_date = _parse_datetime(trigger_data["run_date"])
+                    if run_date < now:
+                        logger.info(f"Reminder {reminder_id}: past due, sending missed notification")
+                        if notif_dir:
+                            write_reminder_notification(
+                                notif_dir,
+                                reminder_id,
+                                row["message"],
+                                task_id=row["task_id"],
+                                extra={"missed": True},
+                            )
+                        conn.execute("UPDATE reminders SET completed = 1 WHERE id = ?", (reminder_id,))
+                        continue
+                    trigger = DateTrigger(run_date=run_date)
+
+                elif trigger_type == "cron":
+                    trigger = CronTrigger(
+                        month=trigger_data["month"] if "month" in trigger_data else None,
+                        day=trigger_data["day"] if "day" in trigger_data else None,
+                        day_of_week=trigger_data["day_of_week"] if "day_of_week" in trigger_data else None,
+                        hour=trigger_data["hour"] if "hour" in trigger_data else None,
+                        minute=trigger_data["minute"] if "minute" in trigger_data else None,
+                    )
+
+                elif trigger_type == "interval":
+                    trigger = IntervalTrigger(hours=trigger_data["hours"] if "hours" in trigger_data else 1)
 
                 else:
                     logger.warning(f"Reminder {reminder_id}: unknown trigger type '{trigger_type}', skipping")
@@ -558,10 +623,11 @@ def remind_list(config: Config, scheduler: BackgroundScheduler, *, task_id: str 
             )
         reminders = []
         for row in cursor:
-            job = jobs.get(row["id"])
+            rid = row["id"]
+            job = jobs[rid] if rid in jobs else None
             reminders.append(
                 {
-                    "id": row["id"],
+                    "id": rid,
                     "task_id": row["task_id"],
                     "message": row["message"],
                     "schedule": row["schedule_type"],
@@ -572,6 +638,34 @@ def remind_list(config: Config, scheduler: BackgroundScheduler, *, task_id: str 
                 }
             )
     return reminders
+
+
+def remind_list_db(config: Config, *, task_id: str | None = None, limit: int = 50) -> list[dict]:
+    """List reminders using only the DB (no scheduler needed)."""
+    with closing(db.get_db(config.data_dir)) as conn:
+        if task_id is not None:
+            cursor = conn.execute(
+                "SELECT * FROM reminders WHERE completed = 0 AND task_id = ? ORDER BY created_at DESC LIMIT ?",
+                (task_id, limit),
+            )
+        else:
+            cursor = conn.execute(
+                "SELECT * FROM reminders WHERE completed = 0 ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            )
+        return [
+            {
+                "id": row["id"],
+                "task_id": row["task_id"],
+                "message": row["message"],
+                "schedule": row["schedule_type"],
+                "next_run": row["scheduled_time"],
+                "created_at": row["created_at"],
+                "auto_generated": bool(row["auto_generated"]),
+                "status": "pending",
+            }
+            for row in cursor
+        ]
 
 
 def remind_delete(config: Config, scheduler: BackgroundScheduler, *, reminder_id: str) -> dict:
@@ -586,6 +680,19 @@ def remind_delete(config: Config, scheduler: BackgroundScheduler, *, reminder_id
         scheduler.remove_job(reminder_id)
     except JobLookupError:
         pass
+
+    return {"status": "deleted", "id": reminder_id}
+
+
+def remind_delete_db(config: Config, *, reminder_id: str) -> dict:
+    """Delete a reminder using only the DB (no scheduler needed).
+    The daemon's sync loop will notice the job is gone."""
+    with closing(db.get_db(config.data_dir)) as conn:
+        cursor = conn.execute("SELECT 1 FROM reminders WHERE id = ? AND completed = 0", (reminder_id,))
+        if not cursor.fetchone():
+            raise ValueError(f"Reminder '{reminder_id}' not found")
+        conn.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))
+        conn.commit()
 
     return {"status": "deleted", "id": reminder_id}
 
