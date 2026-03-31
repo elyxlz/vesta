@@ -61,6 +61,29 @@ fn server_config_file_roundtrip() {
 }
 
 #[test]
+fn vesta_config_embeds_server() {
+    let config = vesta_common::VestaConfig {
+        server: Some(vesta_common::ServerConfig {
+            url: "https://test:7860".into(),
+            api_key: "key".into(),
+            cert_fingerprint: None,
+            cert_pem: None,
+        }),
+    };
+    let json = serde_json::to_string_pretty(&config).unwrap();
+    let loaded: vesta_common::VestaConfig = serde_json::from_str(&json).unwrap();
+    assert_eq!(loaded.server.unwrap().url, "https://test:7860");
+}
+
+#[test]
+fn vesta_config_empty_has_no_server() {
+    let config = vesta_common::VestaConfig::default();
+    assert!(config.server.is_none());
+    let json = serde_json::to_string(&config).unwrap();
+    assert!(!json.contains("server"), "empty config should omit server");
+}
+
+#[test]
 fn url_hash_key_parsing() {
     let (url, key) = "https://host:7860#my-api-key".split_once('#').unwrap();
     assert_eq!(url, "https://host:7860");
