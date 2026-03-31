@@ -388,6 +388,12 @@ fn ensure_server_detects_running_and_saves_config() {
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
+    // Verify creds were written by vestad
+    let config_dir = home.join(".config/vesta");
+    let api_key = std::fs::read_to_string(config_dir.join("api-key"))
+        .expect("api-key should exist");
+    assert!(!api_key.trim().is_empty(), "api-key should not be empty");
+
     // Point HOME to tmpdir so ensure_server reads/writes creds there
     std::env::set_var("HOME", home);
     let result = vesta_common::ensure_server();
@@ -397,8 +403,8 @@ fn ensure_server_detects_running_and_saves_config() {
     let did_setup = result.expect("ensure_server failed");
     assert!(did_setup, "should have performed setup (config was missing)");
 
-    let config_path = home.join(".config/vesta/server.json");
-    assert!(config_path.exists(), "server.json should be created");
+    let config_path = config_dir.join("server.json");
+    assert!(config_path.exists(), "server.json should be created: extract_credentials may have returned None. api-key={:?}, tls exists={}", api_key.trim(), config_dir.join("tls/cert.pem").exists());
 
     // Idempotent: second call with config + server running
     std::env::set_var("HOME", home);
