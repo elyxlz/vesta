@@ -22,7 +22,7 @@
   }
 
   onMount(() => {
-    listen<string>("auth-url", (e) => { authUrl = e.payload; }).then((fn) => unlisteners.push(fn));
+    listen<string>("auth-url", (e) => { authUrl = e.payload; openUrl(e.payload); }).then((fn) => unlisteners.push(fn));
     listen<string>("auth-code-needed", () => { authCodeNeeded = true; }).then((fn) => unlisteners.push(fn));
     listen<string>("auth-code-invalid", () => {
       authCodeNeeded = true;
