@@ -8,7 +8,7 @@ use vesta_common::client::Client;
 use vesta_common::ServerConfig;
 
 pub static SERVER: LazyLock<TestServer> = LazyLock::new(|| {
-    TestServer::start().expect("failed to start test server")
+    TestServer::start().unwrap_or_else(|e| panic!("failed to start test server: {e}"))
 });
 
 pub struct TestServer {

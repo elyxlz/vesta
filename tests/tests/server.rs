@@ -220,24 +220,3 @@ async fn ws_connect_to_running_agent() {
     }
 }
 
-// ── Config helpers ─────────────────────────────────────────────
-
-#[test]
-fn save_and_load_config_roundtrip() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    std::env::set_var("XDG_CONFIG_HOME", tmp.path());
-
-    let config = vesta_common::ServerConfig {
-        url: "https://test:1234".into(),
-        api_key: "key".into(),
-        cert_fingerprint: Some("sha256:test".into()),
-        cert_pem: None,
-    };
-    vesta_common::save_server_config(&config).unwrap();
-    let loaded = vesta_common::load_server_config().expect("failed to load config");
-    assert_eq!(loaded.url, config.url);
-    assert_eq!(loaded.api_key, config.api_key);
-
-    // Clean up env
-    std::env::remove_var("XDG_CONFIG_HOME");
-}

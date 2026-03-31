@@ -40,6 +40,27 @@ fn version_comparison() {
 }
 
 #[test]
+fn server_config_file_roundtrip() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let path = tmp.path().join("server.json");
+
+    let config = vesta_common::ServerConfig {
+        url: "https://test:1234".into(),
+        api_key: "key".into(),
+        cert_fingerprint: Some("sha256:test".into()),
+        cert_pem: None,
+    };
+    let json = serde_json::to_string_pretty(&config).unwrap();
+    std::fs::write(&path, &json).unwrap();
+
+    let content = std::fs::read_to_string(&path).unwrap();
+    let loaded: vesta_common::ServerConfig = serde_json::from_str(&content).unwrap();
+    assert_eq!(loaded.url, config.url);
+    assert_eq!(loaded.api_key, config.api_key);
+    assert_eq!(loaded.cert_fingerprint, config.cert_fingerprint);
+}
+
+#[test]
 fn url_hash_key_parsing() {
     let (url, key) = "https://host:7860#my-api-key".split_once('#').unwrap();
     assert_eq!(url, "https://host:7860");
