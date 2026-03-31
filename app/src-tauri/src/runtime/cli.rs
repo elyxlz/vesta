@@ -171,6 +171,7 @@ pub async fn agent_status(name: &str) -> Result<AgentInfo, VestaError> {
         "running" => AgentStatus::Running,
         "stopped" | "exited" | "created" => AgentStatus::Stopped,
         "dead" => AgentStatus::Dead,
+        "not_found" => AgentStatus::NotFound,
         _ => AgentStatus::Unknown,
     };
 
