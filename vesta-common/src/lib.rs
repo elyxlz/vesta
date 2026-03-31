@@ -55,7 +55,7 @@ pub struct AuthFlowResponse {
     pub session_id: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct StartAllResult {
     pub name: String,
     pub ok: bool,
@@ -113,9 +113,9 @@ pub fn save_server_config(config: &ServerConfig) -> Result<(), String> {
     Ok(())
 }
 
-/// Wait for vestad to become reachable (TCP connect to API port).
-pub fn wait_for_server(timeout_secs: u64) -> bool {
-    let addr: std::net::SocketAddr = ([127, 0, 0, 1], DEFAULT_API_PORT).into();
+/// Wait for vestad to become reachable on the given port.
+pub fn wait_for_server_port(port: u16, timeout_secs: u64) -> bool {
+    let addr: std::net::SocketAddr = ([127, 0, 0, 1], port).into();
     for _ in 0..timeout_secs {
         if std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(1)).is_ok() {
             return true;
@@ -123,6 +123,11 @@ pub fn wait_for_server(timeout_secs: u64) -> bool {
         std::thread::sleep(std::time::Duration::from_secs(1));
     }
     false
+}
+
+/// Wait for vestad on the default API port.
+pub fn wait_for_server(timeout_secs: u64) -> bool {
+    wait_for_server_port(DEFAULT_API_PORT, timeout_secs)
 }
 
 /// Ensure vestad is installed, running, and configured.

@@ -1,5 +1,11 @@
 use vesta_tests::{TestAgent, SERVER};
 
+const FAKE_TOKEN: &str = r#"{"claudeAiOauth":{"accessToken":"test","refreshToken":"test","expiresAt":4102444800000}}"#;
+
+fn inject_fake_token(c: &vesta_common::client::Client, name: &str) {
+    c.inject_token(name, FAKE_TOKEN).unwrap();
+}
+
 // ── Health & Auth ──────────────────────────────────────────────
 
 #[test]
@@ -127,15 +133,7 @@ fn inject_token_marks_authenticated() {
     let c = SERVER.client();
     let agent = TestAgent::create(&c, "test-inject-tok").unwrap();
 
-    let token = serde_json::json!({
-        "claudeAiOauth": {
-            "accessToken": "test",
-            "refreshToken": "test",
-            "expiresAt": 4102444800000_u64
-        }
-    });
-    c.inject_token(&agent.name, &token.to_string()).unwrap();
-
+    inject_fake_token(&c, &agent.name);
     let st = c.agent_status(&agent.name).unwrap();
     assert!(st.authenticated);
 }
@@ -173,19 +171,130 @@ fn restore_conflict_without_replace_fails() {
 
 // ── WebSocket ──────────────────────────────────────────────────
 
+// ── Rebuild ────────────────────────────────────────────────────
+
+#[test]
+fn rebuild_preserves_auth() {
+    let c = SERVER.client();
+    let agent = TestAgent::create(&c, "test-rebuild").unwrap();
+    inject_fake_token(&c, &agent.name);
+    c.start_agent(&agent.name).unwrap();
+
+    c.rebuild_agent(&agent.name).unwrap();
+
+    let st = c.agent_status(&agent.name).unwrap();
+    assert_eq!(st.status, "running");
+    assert!(st.authenticated);
+}
+
+// ── Restore with replace ───────────────────────────────────────
+
+#[test]
+fn restore_with_replace() {
+    let c = SERVER.client();
+    let agent = TestAgent::create(&c, "test-restore-replace").unwrap();
+
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    c.backup(&agent.name, tmp.path()).unwrap();
+
+    // Restore over existing — should succeed with replace=true
+    c.restore(tmp.path(), Some(&agent.name), true).unwrap();
+    let st = c.agent_status(&agent.name).unwrap();
+    assert_ne!(st.status, "not_found");
+}
+
+#[test]
+fn restore_with_different_name() {
+    let c = SERVER.client();
+    let agent = TestAgent::create(&c, "test-restore-src").unwrap();
+
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    c.backup(&agent.name, tmp.path()).unwrap();
+
+    let restored_name = c.restore(tmp.path(), Some("test-restore-dst"), false).unwrap();
+    assert_eq!(restored_name, "test-restore-dst");
+
+    let st = c.agent_status("test-restore-dst").unwrap();
+    assert_ne!(st.status, "not_found");
+
+    // Cleanup
+    let _ = c.destroy_agent("test-restore-dst");
+}
+
+// ── Multi-agent ────────────────────────────────────────────────
+
+#[test]
+fn multi_agent_unique_ports() {
+    let c = SERVER.client();
+    let a1 = TestAgent::create(&c, "test-multi-1").unwrap();
+    let a2 = TestAgent::create(&c, "test-multi-2").unwrap();
+    let a3 = TestAgent::create(&c, "test-multi-3").unwrap();
+
+    let list = c.list_agents().unwrap();
+    let ports: Vec<u16> = [&a1.name, &a2.name, &a3.name]
+        .iter()
+        .filter_map(|n| list.iter().find(|a| &a.name == *n))
+        .map(|a| a.ws_port)
+        .collect();
+
+    assert_eq!(ports.len(), 3);
+    assert_ne!(ports[0], ports[1]);
+    assert_ne!(ports[0], ports[2]);
+    assert_ne!(ports[1], ports[2]);
+}
+
+#[test]
+fn start_all_starts_authenticated_agents() {
+    let c = SERVER.client();
+    let a1 = TestAgent::create(&c, "test-startall-1").unwrap();
+    let a2 = TestAgent::create(&c, "test-startall-2").unwrap();
+    inject_fake_token(&c, &a1.name);
+    inject_fake_token(&c, &a2.name);
+
+    let results = c.start_all().unwrap();
+    assert!(results.iter().all(|r| r.ok), "start_all had failures: {:?}", results);
+
+    let s1 = c.agent_status(&a1.name).unwrap();
+    let s2 = c.agent_status(&a2.name).unwrap();
+    assert_eq!(s1.status, "running");
+    assert_eq!(s2.status, "running");
+}
+
+// ── Destroy auto-stops ─────────────────────────────────────────
+
+#[test]
+fn destroy_stops_running_agent() {
+    let c = SERVER.client();
+    let name = c.create_agent("test-destroy-running", false).unwrap();
+    inject_fake_token(&c, &name);
+    c.start_agent(&name).unwrap();
+    assert_eq!(c.agent_status(&name).unwrap().status, "running");
+
+    c.destroy_agent(&name).unwrap();
+    assert_eq!(c.agent_status(&name).unwrap().status, "not_found");
+}
+
+// ── Error message content ──────────────────────────────────────
+
+#[test]
+fn start_nonexistent_error_message() {
+    let err = SERVER.client().start_agent("no-such-agent").unwrap_err();
+    assert!(err.contains("not found") || err.contains("not_found"), "error should mention not found: {err}");
+}
+
+#[test]
+fn destroy_nonexistent_error_message() {
+    let err = SERVER.client().destroy_agent("no-such-agent").unwrap_err();
+    assert!(err.contains("not found") || err.contains("not_found"), "error should mention not found: {err}");
+}
+
+// ── WebSocket ──────────────────────────────────────────────────
+
 #[tokio::test]
 async fn ws_connect_to_running_agent() {
     let c = SERVER.client();
     let agent = TestAgent::create(&c, "test-ws").unwrap();
-
-    let token = serde_json::json!({
-        "claudeAiOauth": {
-            "accessToken": "test",
-            "refreshToken": "test",
-            "expiresAt": 4102444800000_u64
-        }
-    });
-    c.inject_token(&agent.name, &token.to_string()).unwrap();
+    inject_fake_token(&c, &agent.name);
     c.start_agent(&agent.name).unwrap();
 
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -201,12 +310,8 @@ async fn ws_connect_to_running_agent() {
     let connector = tokio_tungstenite::Connector::Rustls(tls);
 
     let result = tokio_tungstenite::connect_async_tls_with_config(
-        &ws_url,
-        None,
-        false,
-        Some(connector),
-    )
-    .await;
+        &ws_url, None, false, Some(connector),
+    ).await;
 
     match result {
         Ok((ws, _)) => { drop(ws); }
@@ -218,5 +323,34 @@ async fn ws_connect_to_running_agent() {
             );
         }
     }
+}
+
+#[tokio::test]
+async fn ws_rejected_without_auth() {
+    let ws_url = format!(
+        "{}/agents/test-ws-noauth/ws",
+        vesta_common::client::ws_base_url(&SERVER.config.url),
+    );
+
+    let tls = vesta_common::client::make_ws_rustls_config(SERVER.config.cert_fingerprint.clone());
+    let connector = tokio_tungstenite::Connector::Rustls(tls);
+
+    let result = tokio_tungstenite::connect_async_tls_with_config(
+        &ws_url, None, false, Some(connector),
+    ).await;
+
+    assert!(result.is_err(), "WS without auth should be rejected");
+}
+
+// ── Server detection ───────────────────────────────────────────
+
+#[test]
+fn wait_for_server_port_detects_running() {
+    assert!(vesta_common::wait_for_server_port(SERVER.port, 1));
+}
+
+#[test]
+fn wait_for_server_port_fails_on_closed_port() {
+    assert!(!vesta_common::wait_for_server_port(1, 1));
 }
 
