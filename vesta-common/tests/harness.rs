@@ -30,9 +30,14 @@ impl TestServer {
         let port = free_port()?;
         let vestad = find_vestad()?;
 
+        // Preserve real HOME's Docker config so vestad can pull images
+        let real_home = std::env::var("HOME").unwrap_or_default();
+        let docker_config = format!("{}/.docker", real_home);
+
         let process = Command::new(&vestad)
             .args(["serve", "--port", &port.to_string()])
             .env("HOME", &home)
+            .env("DOCKER_CONFIG", &docker_config)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
