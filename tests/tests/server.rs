@@ -251,13 +251,11 @@ fn start_all_starts_authenticated_agents() {
     inject_fake_token(&c, &a1.name);
     inject_fake_token(&c, &a2.name);
 
-    let results = c.start_all().unwrap();
-    assert!(results.iter().all(|r| r.ok), "start_all had failures: {:?}", results);
+    c.start_all().unwrap();
 
-    let s1 = c.agent_status(&a1.name).unwrap();
-    let s2 = c.agent_status(&a2.name).unwrap();
-    assert_eq!(s1.status, "running");
-    assert_eq!(s2.status, "running");
+    // Verify our agents specifically are running (other agents from other tests may also be affected)
+    assert_eq!(c.agent_status(&a1.name).unwrap().status, "running");
+    assert_eq!(c.agent_status(&a2.name).unwrap().status, "running");
 }
 
 // ── Destroy auto-stops ─────────────────────────────────────────
@@ -352,5 +350,58 @@ fn wait_for_server_port_detects_running() {
 #[test]
 fn wait_for_server_port_fails_on_closed_port() {
     assert!(!vesta_common::wait_for_server_port(1, 1));
+}
+
+// ── ensure_server detection ────────────────────────────────────
+// Tests the "server already running, just extract creds" path of ensure_server.
+// This is the code path that broke twice (SocketAddr parse panic, migration flow).
+// Skips if port 7860 is in use (local dev).
+
+#[test]
+fn ensure_server_detects_running_and_saves_config() {
+    // Skip if port 7860 is already in use
+    if vesta_common::wait_for_server(1) {
+        eprintln!("SKIPPED: port 7860 already in use");
+        return;
+    }
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let home = tmp.path();
+    let real_home = std::env::var("HOME").unwrap();
+
+    // Start vestad on port 7860 with HOME in tmpdir
+    let vestad = vesta_tests::find_vestad().unwrap();
+    let mut child = std::process::Command::new(&vestad)
+        .args(["serve", "--port", "7860"])
+        .env("HOME", home)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("failed to start vestad");
+
+    // Wait for it
+    assert!(vesta_common::wait_for_server(30), "vestad didn't start on 7860");
+
+    // Point HOME to tmpdir so ensure_server reads/writes creds there
+    std::env::set_var("HOME", home);
+    let result = vesta_common::ensure_server();
+    std::env::set_var("HOME", &real_home);
+
+    // Verify
+    let did_setup = result.expect("ensure_server failed");
+    assert!(did_setup, "should have performed setup (config was missing)");
+
+    let config_path = home.join(".config/vesta/server.json");
+    assert!(config_path.exists(), "server.json should be created");
+
+    // Idempotent: second call with config + server running
+    std::env::set_var("HOME", home);
+    let second = vesta_common::ensure_server();
+    std::env::set_var("HOME", &real_home);
+    assert_eq!(second.unwrap(), false, "second call should be no-op");
+
+    // Cleanup
+    let _ = child.kill();
+    let _ = child.wait();
 }
 

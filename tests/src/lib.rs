@@ -120,7 +120,7 @@ fn free_port() -> Result<u16, String> {
     Ok(listener.local_addr().map_err(|e| format!("addr: {e}"))?.port())
 }
 
-fn find_vestad() -> Result<PathBuf, String> {
+pub fn find_vestad() -> Result<PathBuf, String> {
     if let Ok(p) = std::env::var("VESTAD_BIN") {
         return Ok(PathBuf::from(p));
     }
