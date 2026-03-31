@@ -1,23 +1,25 @@
-#[macro_use]
 mod harness;
-use harness::TestAgent;
+use harness::{TestAgent, SERVER};
+
+// All tests are #[ignore] because they require a running vestad + Docker.
+// Run with: cargo test -p vesta-common --test server -- --ignored --test-threads=1
 
 // ── Health & Auth ──────────────────────────────────────────────
 
 #[test]
+#[ignore]
 fn health() {
-    let s = server!();
-    s.client().health().expect("health failed");
+    SERVER.client().health().expect("health failed");
 }
 
 #[test]
+#[ignore]
 fn wrong_token_rejected() {
-    let s = server!();
     let bad = vesta_common::client::Client::new(&vesta_common::ServerConfig {
-        url: s.config.url.clone(),
+        url: SERVER.config.url.clone(),
         api_key: "wrong".into(),
-        cert_fingerprint: s.config.cert_fingerprint.clone(),
-        cert_pem: s.config.cert_pem.clone(),
+        cert_fingerprint: SERVER.config.cert_fingerprint.clone(),
+        cert_pem: SERVER.config.cert_pem.clone(),
     });
     assert!(bad.list_agents().is_err());
 }
@@ -25,18 +27,18 @@ fn wrong_token_rejected() {
 // ── Agent lifecycle ────────────────────────────────────────────
 
 #[test]
+#[ignore]
 fn create_and_list() {
-    let s = server!();
-    let c = s.client();
+    let c = SERVER.client();
     let agent = TestAgent::create(&c, "test-create-list").unwrap();
     let list = c.list_agents().unwrap();
     assert!(list.iter().any(|a| a.name == agent.name));
 }
 
 #[test]
+#[ignore]
 fn create_duplicate_fails() {
-    let s = server!();
-    let c = s.client();
+    let c = SERVER.client();
     let _agent = TestAgent::create(&c, "test-dup").unwrap();
     let result = c.create_agent("test-dup", false);
     assert!(result.is_err());
@@ -45,17 +47,17 @@ fn create_duplicate_fails() {
 }
 
 #[test]
+#[ignore]
 fn status_not_found() {
-    let s = server!();
-    let c = s.client();
+    let c = SERVER.client();
     let status = c.agent_status("nonexistent-agent-xyz").unwrap();
     assert_eq!(status.status, "not_found");
 }
 
 #[test]
+#[ignore]
 fn start_stop_restart() {
-    let s = server!();
-    let c = s.client();
+    let c = SERVER.client();
     let agent = TestAgent::create(&c, "test-start-stop").unwrap();
 
     c.start_agent(&agent.name).unwrap();
@@ -73,9 +75,9 @@ fn start_stop_restart() {
 }
 
 #[test]
+#[ignore]
 fn destroy_removes_agent() {
-    let s = server!();
-    let c = s.client();
+    let c = SERVER.client();
     let name = c.create_agent("test-destroy", false).unwrap();
     c.destroy_agent(&name).unwrap();
     let st = c.agent_status(&name).unwrap();
@@ -83,46 +85,46 @@ fn destroy_removes_agent() {
 }
 
 #[test]
+#[ignore]
 fn start_nonexistent_fails() {
-    let s = server!();
-    assert!(s.client().start_agent("does-not-exist").is_err());
+    assert!(SERVER.client().start_agent("does-not-exist").is_err());
 }
 
 #[test]
+#[ignore]
 fn stop_nonexistent_fails() {
-    let s = server!();
-    assert!(s.client().stop_agent("does-not-exist").is_err());
+    assert!(SERVER.client().stop_agent("does-not-exist").is_err());
 }
 
 // ── Name handling ──────────────────────────────────────────────
 
 #[test]
+#[ignore]
 fn name_normalization() {
-    let s = server!();
-    let c = s.client();
+    let c = SERVER.client();
     let name = c.create_agent("My Test Agent", false).unwrap();
     assert_eq!(name, "my-test-agent");
     let _ = c.destroy_agent(&name);
 }
 
 #[test]
+#[ignore]
 fn empty_name_fails() {
-    let s = server!();
-    assert!(s.client().create_agent("", false).is_err());
+    assert!(SERVER.client().create_agent("", false).is_err());
 }
 
 #[test]
+#[ignore]
 fn special_chars_name_normalized() {
-    let s = server!();
-    assert!(s.client().create_agent("!!!", false).is_err(), "name normalizing to empty should fail");
+    assert!(SERVER.client().create_agent("!!!", false).is_err(), "name normalizing to empty should fail");
 }
 
 // ── Auth flow ──────────────────────────────────────────────────
 
 #[test]
+#[ignore]
 fn start_auth_returns_url() {
-    let s = server!();
-    let c = s.client();
+    let c = SERVER.client();
     let agent = TestAgent::create(&c, "test-auth-flow").unwrap();
     let auth = c.start_auth(&agent.name).unwrap();
     assert!(!auth.auth_url.is_empty());
@@ -131,18 +133,17 @@ fn start_auth_returns_url() {
 }
 
 #[test]
+#[ignore]
 fn complete_auth_bad_session_fails() {
-    let s = server!();
-    let c = s.client();
+    let c = SERVER.client();
     let agent = TestAgent::create(&c, "test-auth-bad").unwrap();
-    let result = c.complete_auth(&agent.name, "bogus-session", "bogus-code");
-    assert!(result.is_err());
+    assert!(c.complete_auth(&agent.name, "bogus-session", "bogus-code").is_err());
 }
 
 #[test]
+#[ignore]
 fn inject_token_marks_authenticated() {
-    let s = server!();
-    let c = s.client();
+    let c = SERVER.client();
     let agent = TestAgent::create(&c, "test-inject-tok").unwrap();
 
     let token = serde_json::json!({
@@ -161,9 +162,9 @@ fn inject_token_marks_authenticated() {
 // ── Backup & Restore ───────────────────────────────────────────
 
 #[test]
+#[ignore]
 fn backup_restore_roundtrip() {
-    let s = server!();
-    let c = s.client();
+    let c = SERVER.client();
     let agent = TestAgent::create(&c, "test-backup").unwrap();
 
     let tmp = tempfile::NamedTempFile::new().unwrap();
@@ -180,27 +181,23 @@ fn backup_restore_roundtrip() {
 }
 
 #[test]
+#[ignore]
 fn restore_conflict_without_replace_fails() {
-    let s = server!();
-    let c = s.client();
+    let c = SERVER.client();
     let agent = TestAgent::create(&c, "test-restore-conflict").unwrap();
 
     let tmp = tempfile::NamedTempFile::new().unwrap();
     c.backup(&agent.name, tmp.path()).unwrap();
 
-    let result = c.restore(tmp.path(), Some(&agent.name), false);
-    assert!(result.is_err());
+    assert!(c.restore(tmp.path(), Some(&agent.name), false).is_err());
 }
 
 // ── WebSocket ──────────────────────────────────────────────────
 
 #[tokio::test]
+#[ignore]
 async fn ws_connect_to_running_agent() {
-    let s = match harness::SERVER.as_ref() {
-        Some(s) => s,
-        None => { eprintln!("SKIPPED: vestad not available"); return; }
-    };
-    let c = s.client();
+    let c = SERVER.client();
     let agent = TestAgent::create(&c, "test-ws").unwrap();
 
     let token = serde_json::json!({
@@ -217,12 +214,12 @@ async fn ws_connect_to_running_agent() {
 
     let ws_url = format!(
         "{}/agents/{}/ws?token={}",
-        vesta_common::client::ws_base_url(&s.config.url),
+        vesta_common::client::ws_base_url(&SERVER.config.url),
         agent.name,
-        s.config.api_key
+        SERVER.config.api_key
     );
 
-    let tls = vesta_common::client::make_ws_rustls_config(s.config.cert_fingerprint.clone());
+    let tls = vesta_common::client::make_ws_rustls_config(SERVER.config.cert_fingerprint.clone());
     let connector = tokio_tungstenite::Connector::Rustls(tls);
 
     let result = tokio_tungstenite::connect_async_tls_with_config(
@@ -234,9 +231,7 @@ async fn ws_connect_to_running_agent() {
     .await;
 
     match result {
-        Ok((ws, _)) => {
-            drop(ws);
-        }
+        Ok((ws, _)) => { drop(ws); }
         Err(e) => {
             let err = e.to_string();
             assert!(

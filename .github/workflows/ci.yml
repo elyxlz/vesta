@@ -160,7 +160,7 @@ jobs:
         run: cargo build -p vestad
 
       - name: Run integration tests
-        run: cargo test -p vesta-common -- --test-threads=1
+        run: cargo test -p vesta-common --test server -- --ignored --test-threads=1
 
   # ── Build vesta client (all unix targets) ─────────────────────────────
   build-vesta:

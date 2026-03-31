@@ -7,29 +7,9 @@ use std::time::Duration;
 use vesta_common::client::Client;
 use vesta_common::ServerConfig;
 
-pub static SERVER: LazyLock<Option<TestServer>> = LazyLock::new(|| {
-    match TestServer::start() {
-        Ok(s) => Some(s),
-        Err(e) => {
-            eprintln!("skipping server tests: {e}");
-            None
-        }
-    }
+pub static SERVER: LazyLock<TestServer> = LazyLock::new(|| {
+    TestServer::start().expect("failed to start test server")
 });
-
-/// Get the test server or skip the test if unavailable.
-#[macro_export]
-macro_rules! server {
-    () => {
-        match harness::SERVER.as_ref() {
-            Some(s) => s,
-            None => {
-                eprintln!("SKIPPED: vestad not available");
-                return;
-            }
-        }
-    };
-}
 
 pub struct TestServer {
     process: Option<Child>,
