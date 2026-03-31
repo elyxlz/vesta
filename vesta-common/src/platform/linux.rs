@@ -135,6 +135,27 @@ fn obtain_vestad() -> Result<std::path::PathBuf, String> {
 
 #[cfg(not(debug_assertions))]
 fn obtain_vestad() -> Result<std::path::PathBuf, String> {
+    // Check for bundled binary (set by Tauri app via resource path)
+    if let Ok(bundled) = std::env::var("VESTAD_BUNDLE_PATH") {
+        let path = std::path::PathBuf::from(&bundled);
+        if path.exists() {
+            eprintln!("using bundled vestad");
+            return Ok(path);
+        }
+    }
+
+    // Check next to current executable
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let adjacent = dir.join("vestad");
+            if adjacent.exists() {
+                eprintln!("using adjacent vestad");
+                return Ok(adjacent);
+            }
+        }
+    }
+
+    // Fall back to downloading from releases
     let target = match std::env::consts::ARCH {
         "x86_64" => "x86_64-unknown-linux-gnu",
         "aarch64" => "aarch64-unknown-linux-gnu",

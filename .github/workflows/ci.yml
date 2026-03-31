@@ -651,7 +651,7 @@ jobs:
 
   # ── Build Tauri app (unix) ────────────────────────────────────────────
   build-tauri:
-    needs: [test-frontend, detect-changes]
+    needs: [test-frontend, detect-changes, build-vestad]
     if: >-
       !failure() && !cancelled() && (
       github.event_name != 'pull_request' ||
@@ -711,6 +711,21 @@ jobs:
             "https://github.com/crc-org/vfkit/releases/download/v${VFKIT_VERSION}/vfkit"
           chmod +x app/src-tauri/resources/vfkit
           codesign --force --sign - app/src-tauri/resources/vfkit
+
+      - name: Bundle vestad (Linux)
+        if: runner.os == 'Linux'
+        uses: actions/download-artifact@v8
+        with:
+          name: vestad-${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'aarch64-unknown-linux-gnu' || 'x86_64-unknown-linux-gnu' }}
+          path: /tmp/vestad-artifact
+
+      - name: Install vestad into resources (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          tar -xzf /tmp/vestad-artifact/vestad-*.tar.gz -C /tmp/vestad-artifact/
+          mkdir -p app/src-tauri/resources
+          cp /tmp/vestad-artifact/vestad app/src-tauri/resources/vestad
+          chmod +x app/src-tauri/resources/vestad
 
       - name: Install frontend deps
         working-directory: app

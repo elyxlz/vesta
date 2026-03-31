@@ -1,8 +1,17 @@
+use tauri::Manager;
+
 use crate::error::{ErrorCode, VestaError};
 use crate::runtime::cli;
 
 #[tauri::command]
-pub async fn auto_setup() -> Result<bool, VestaError> {
+pub async fn auto_setup(app: tauri::AppHandle) -> Result<bool, VestaError> {
+    // Point ensure_server at the bundled vestad binary if available
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        let bundled = resource_dir.join("resources").join("vestad");
+        if bundled.exists() {
+            std::env::set_var("VESTAD_BUNDLE_PATH", &bundled);
+        }
+    }
     cli::auto_setup().await
 }
 
