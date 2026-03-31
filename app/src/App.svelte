@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
-  import { listBoxes, checkAndInstallUpdate, runInstallScript } from "./lib/api";
+  import { autoSetup, listBoxes, checkAndInstallUpdate, runInstallScript } from "./lib/api";
   import { createBoxConnection, type BoxConnection } from "./lib/ws";
   import { removeBoxState } from "./lib/store.svelte";
   import { detectPlatform } from "./lib/platform";
@@ -45,11 +45,13 @@
   }
 
   onMount(async () => {
-    const [, , boxes] = await Promise.all([
+    // autoSetup must finish before listBoxes (it creates server.json on first run)
+    await Promise.all([
+      autoSetup().catch((e: unknown) => console.warn("auto-setup failed:", e)),
       scaleToMonitor(),
       new Promise((r) => setTimeout(r, 400)),
-      listBoxes().catch(() => null),
     ]);
+    const boxes = await listBoxes().catch(() => null);
     try {
       if (!boxes) throw new Error();
       hasBoxes = boxes.length > 0;

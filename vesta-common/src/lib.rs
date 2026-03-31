@@ -131,20 +131,24 @@ pub fn wait_for_server(timeout_secs: u64) -> bool {
 /// Otherwise, runs platform-specific setup (download vestad, install, boot, extract creds).
 /// Returns Ok(true) if setup was performed, Ok(false) if already configured.
 pub fn ensure_server() -> Result<bool, String> {
+    let server_reachable = wait_for_server(1);
+
     // Already configured and reachable?
-    if load_server_config().is_some() && wait_for_server(1) {
+    if load_server_config().is_some() && server_reachable {
         return Ok(false);
     }
 
     // Platform-specific setup
     #[cfg(target_os = "linux")]
     {
-        let vestad_path = platform::linux::download_vestad()?;
-        platform::linux::install_autostart(&vestad_path)?;
-        platform::linux::boot()?;
+        if !server_reachable {
+            let vestad_path = platform::linux::install_vestad()?;
+            platform::linux::install_autostart(&vestad_path)?;
+            platform::linux::boot()?;
 
-        if !wait_for_server(30) {
-            return Err("server did not start within 30s".into());
+            if !wait_for_server(30) {
+                return Err("server did not start within 30s".into());
+            }
         }
 
         if let Some(creds) = platform::linux::extract_credentials() {

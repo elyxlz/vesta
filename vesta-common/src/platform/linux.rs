@@ -96,16 +96,50 @@ pub fn extract_credentials() -> Option<ServerConfig> {
     })
 }
 
-pub fn download_vestad() -> Result<String, String> {
+pub fn install_vestad() -> Result<String, String> {
+    let home = std::env::var("HOME").map_err(|_| "HOME not set".to_string())?;
+    let bin_dir = format!("{}/.local/bin", home);
+    let dest = format!("{}/vestad", bin_dir);
+    std::fs::create_dir_all(&bin_dir).map_err(|e| format!("failed to create {}: {}", bin_dir, e))?;
+
+    let source = obtain_vestad()?;
+
+    std::fs::copy(&source, &dest).map_err(|e| format!("failed to install vestad: {}", e))?;
+    if let Some(parent) = source.parent().filter(|p| p.starts_with("/tmp/")) {
+        let _ = std::fs::remove_dir_all(parent);
+    }
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755)).ok();
+    eprintln!("installed vestad to {}", dest);
+    Ok(dest)
+}
+
+#[cfg(debug_assertions)]
+fn obtain_vestad() -> Result<std::path::PathBuf, String> {
+    let workspace_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or("cannot determine workspace root")?;
+
+    eprintln!("building vestad from source...");
+    let status = process::Command::new("cargo")
+        .args(["build", "-p", "vestad"])
+        .current_dir(workspace_root)
+        .stderr(process::Stdio::inherit())
+        .status();
+    if !status.map(|s| s.success()).unwrap_or(false) {
+        return Err("cargo build -p vestad failed".into());
+    }
+
+    Ok(workspace_root.join("target/debug/vestad"))
+}
+
+#[cfg(not(debug_assertions))]
+fn obtain_vestad() -> Result<std::path::PathBuf, String> {
     let target = match std::env::consts::ARCH {
         "x86_64" => "x86_64-unknown-linux-gnu",
         "aarch64" => "aarch64-unknown-linux-gnu",
         other => return Err(format!("unsupported architecture: {}", other)),
     };
-
-    let home = std::env::var("HOME").map_err(|_| "HOME not set".to_string())?;
-    let dest = format!("{}/.local/bin/vestad", home);
-    std::fs::create_dir_all(format!("{}/.local/bin", home)).ok();
 
     let archive = format!("vestad-{}.tar.gz", target);
     let url = format!(
@@ -113,7 +147,7 @@ pub fn download_vestad() -> Result<String, String> {
         archive
     );
     let tmp = format!("/tmp/vestad-download-{}", std::process::id());
-    std::fs::create_dir_all(&tmp).ok();
+    std::fs::create_dir_all(&tmp).map_err(|e| format!("failed to create temp dir: {}", e))?;
 
     eprintln!("downloading vestad...");
     let status = process::Command::new("curl")
@@ -130,16 +164,5 @@ pub fn download_vestad() -> Result<String, String> {
         return Err("failed to extract vestad".into());
     }
 
-    std::fs::copy(format!("{}/vestad", tmp), &dest)
-        .map_err(|e| format!("failed to install vestad: {}", e))?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755)).ok();
-    }
-
-    std::fs::remove_dir_all(&tmp).ok();
-    eprintln!("installed vestad to {}", dest);
-    Ok(dest)
+    Ok(std::path::PathBuf::from(format!("{}/vestad", tmp)))
 }
