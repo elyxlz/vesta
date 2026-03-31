@@ -96,13 +96,13 @@ pub fn extract_credentials() -> Option<ServerConfig> {
     })
 }
 
-pub fn install_vestad() -> Result<String, String> {
+pub fn install_vestad_from(bundled: Option<&std::path::Path>) -> Result<String, String> {
     let home = std::env::var("HOME").map_err(|_| "HOME not set".to_string())?;
     let bin_dir = format!("{}/.local/bin", home);
     let dest = format!("{}/vestad", bin_dir);
     std::fs::create_dir_all(&bin_dir).map_err(|e| format!("failed to create {}: {}", bin_dir, e))?;
 
-    let source = obtain_vestad()?;
+    let source = obtain_vestad(bundled)?;
 
     std::fs::copy(&source, &dest).map_err(|e| format!("failed to install vestad: {}", e))?;
     if let Some(parent) = source.parent().filter(|p| p.starts_with("/tmp/")) {
@@ -115,7 +115,7 @@ pub fn install_vestad() -> Result<String, String> {
 }
 
 #[cfg(debug_assertions)]
-fn obtain_vestad() -> Result<std::path::PathBuf, String> {
+fn obtain_vestad(_bundled: Option<&std::path::Path>) -> Result<std::path::PathBuf, String> {
     let workspace_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .ok_or("cannot determine workspace root")?;
@@ -134,12 +134,11 @@ fn obtain_vestad() -> Result<std::path::PathBuf, String> {
 }
 
 #[cfg(not(debug_assertions))]
-fn obtain_vestad() -> Result<std::path::PathBuf, String> {
-    // Check for bundled binary (set by Tauri app via resource path)
-    if let Ok(bundled) = std::env::var("VESTAD_BUNDLE_PATH") {
-        let path = std::path::PathBuf::from(&bundled);
+fn obtain_vestad(bundled: Option<&std::path::Path>) -> Result<std::path::PathBuf, String> {
+    // Check for bundled binary (passed by Tauri app from its resource dir)
+    if let Some(path) = bundled {
         if path.exists() {
-            return Ok(path);
+            return Ok(path.to_path_buf());
         }
     }
 

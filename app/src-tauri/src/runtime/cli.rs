@@ -85,10 +85,17 @@ fn not_configured_status(message: &str) -> PlatformStatus {
 }
 
 pub async fn auto_setup() -> Result<bool, VestaError> {
-    let did_setup = tokio::task::spawn_blocking(vesta_common::ensure_server)
-        .await
-        .map_err(|e| VestaError::new(ErrorCode::Internal, format!("setup task failed: {}", e)))?
-        .map_err(map_err)?;
+    auto_setup_with(None).await
+}
+
+pub async fn auto_setup_with(vestad_path: Option<&std::path::Path>) -> Result<bool, VestaError> {
+    let path = vestad_path.map(|p| p.to_path_buf());
+    let did_setup = tokio::task::spawn_blocking(move || {
+        vesta_common::ensure_server_with(path.as_deref())
+    })
+    .await
+    .map_err(|e| VestaError::new(ErrorCode::Internal, format!("setup task failed: {}", e)))?
+    .map_err(map_err)?;
     Ok(did_setup)
 }
 

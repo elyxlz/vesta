@@ -166,10 +166,9 @@ pub fn wait_for_server(timeout_secs: u64) -> bool {
 }
 
 /// Ensure vestad is installed, running, and configured.
-/// If server.json already exists and the server is reachable, this is a no-op.
-/// Otherwise, runs platform-specific setup (download vestad, install, boot, extract creds).
+/// `vestad_path` is an optional hint to a bundled vestad binary (e.g. from Tauri resources).
 /// Returns Ok(true) if setup was performed, Ok(false) if already configured.
-pub fn ensure_server() -> Result<bool, String> {
+pub fn ensure_server_with(vestad_path: Option<&std::path::Path>) -> Result<bool, String> {
     #[cfg(target_os = "linux")]
     let server_reachable = wait_for_server(1);
 
@@ -177,48 +176,26 @@ pub fn ensure_server() -> Result<bool, String> {
     {
         #[cfg(debug_assertions)]
         {
-            // Dev: always rebuild and restart vestad so code changes take effect
-            let vestad_path = platform::linux::install_vestad()?;
-            platform::linux::install_autostart(&vestad_path)?;
-            if server_reachable {
-                platform::linux::shutdown();
-            }
-            platform::linux::boot()?;
-
-            if !wait_for_server(30) {
-                return Err("server did not start within 30s".into());
-            }
+            install_and_boot(server_reachable, vestad_path)?;
         }
 
         #[cfg(not(debug_assertions))]
         {
             if server_reachable {
-                // Check if local vestad needs updating
                 if let Some(config) = load_server_config() {
                     if is_local_server(&config) {
-                        let client = client::Client::new(&config);
-                        let server_ver = client.server_version().unwrap_or_default();
+                        let c = client::Client::new(&config);
+                        let server_ver = c.server_version().unwrap_or_default();
                         let app_ver = env!("CARGO_PKG_VERSION");
                         if version_less_than(&server_ver, app_ver) {
                             eprintln!("updating vestad {} → {}...", server_ver, app_ver);
-                            let vestad_path = platform::linux::install_vestad()?;
-                            platform::linux::install_autostart(&vestad_path)?;
-                            platform::linux::shutdown();
-                            platform::linux::boot()?;
-                            if !wait_for_server(30) {
-                                return Err("server did not start after update".into());
-                            }
+                            install_and_boot(true, vestad_path)?;
                         }
                     }
                     return Ok(false);
                 }
             } else {
-                let vestad_path = platform::linux::install_vestad()?;
-                platform::linux::install_autostart(&vestad_path)?;
-                platform::linux::boot()?;
-                if !wait_for_server(30) {
-                    return Err("server did not start within 30s".into());
-                }
+                install_and_boot(false, vestad_path)?;
             }
         }
 
@@ -252,6 +229,25 @@ pub fn normalize_url(host: &str) -> String {
     } else {
         format!("https://{}", host)
     }
+}
+
+/// Convenience wrapper that calls `ensure_server_with(None)`.
+pub fn ensure_server() -> Result<bool, String> {
+    ensure_server_with(None)
+}
+
+#[cfg(target_os = "linux")]
+fn install_and_boot(shutdown_first: bool, vestad_hint: Option<&std::path::Path>) -> Result<(), String> {
+    let vestad_path = platform::linux::install_vestad_from(vestad_hint)?;
+    platform::linux::install_autostart(&vestad_path)?;
+    if shutdown_first {
+        platform::linux::shutdown();
+    }
+    platform::linux::boot()?;
+    if !wait_for_server(30) {
+        return Err("server did not start within 30s".into());
+    }
+    Ok(())
 }
 
 pub fn is_local_server(config: &ServerConfig) -> bool {
