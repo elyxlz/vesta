@@ -1820,17 +1820,26 @@ name = "vesta-common"
 version = "0.1.105"
 dependencies = [
  "dirs",
- "futures-util",
  "ring",
  "rustls",
  "serde",
  "serde_json",
  "tar",
+ "ureq",
+ "zstd",
+]
+
+[[package]]
+name = "vesta-tests"
+version = "0.1.105"
+dependencies = [
+ "ring",
+ "rustls",
+ "serde_json",
  "tempfile",
  "tokio",
  "tokio-tungstenite 0.29.0",
- "ureq",
- "zstd",
+ "vesta-common",
 ]
 
 [[package]]

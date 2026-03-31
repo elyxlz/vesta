@@ -1,5 +1,5 @@
 [workspace]
-members = ["cli", "vestad", "vesta-common"]
+members = ["cli", "vestad", "vesta-common", "tests"]
 exclude = ["app/src-tauri"]
 resolver = "2"
 

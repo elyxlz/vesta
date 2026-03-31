@@ -160,7 +160,7 @@ jobs:
         run: cargo build -p vestad
 
       - name: Run integration tests
-        run: cargo test -p vesta-common --features integration -- --test-threads=1
+        run: cargo test -p vesta-tests -- --test-threads=1
 
   # ── Build vesta client (all unix targets) ─────────────────────────────
   build-vesta:
@@ -211,12 +211,12 @@ jobs:
       - name: Clippy
         if: "!matrix.cross"
         working-directory: .
-        run: cargo clippy --workspace --target ${{ matrix.target }} -- -D warnings
+        run: cargo clippy --workspace --exclude vesta-tests --target ${{ matrix.target }} -- -D warnings
 
       - name: Test
         if: "!matrix.cross"
         working-directory: .
-        run: cargo test --workspace --target ${{ matrix.target }}
+        run: cargo test --workspace --exclude vesta-tests --target ${{ matrix.target }}
 
       - name: Build vesta
         working-directory: .

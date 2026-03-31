@@ -1,7 +1,4 @@
-#![cfg(feature = "integration")]
-
-mod harness;
-use harness::{TestAgent, SERVER};
+use vesta_tests::{TestAgent, SERVER};
 
 // ── Health & Auth ──────────────────────────────────────────────
 
