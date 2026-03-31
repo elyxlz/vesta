@@ -6,10 +6,10 @@
   import ProgressBar from "./ProgressBar.svelte";
   import AuthFlow from "./AuthFlow.svelte";
 
-  const { onComplete, onCancel, initialName }: { onComplete: (name: string) => void; onCancel?: () => void; initialName?: string } = $props();
+  const { onComplete, onCancel, initialName, serverConfigured }: { onComplete: (name: string) => void; onCancel?: () => void; initialName?: string; serverConfigured?: boolean } = $props();
 
   // svelte-ignore state_referenced_locally — intentional one-time capture
-  let step = $state<OnboardingStep>(initialName ? "name" : "platform");
+  let step = $state<OnboardingStep>(initialName || serverConfigured ? "name" : "platform");
   // svelte-ignore state_referenced_locally
   let boxName = $state(initialName ?? "");
   let error = $state<{ friendly: string | null; raw: string } | null>(null);
@@ -379,7 +379,9 @@
         </form>
         <div class="secondary-actions">
           <button class="btn cancel" onclick={handleRestore} disabled={busy}>restore from backup</button>
-          <button class="btn cancel" onclick={() => goTo("connect")} disabled={busy}>connect to server</button>
+          {#if !serverConfigured}
+            <button class="btn cancel" onclick={() => goTo("connect")} disabled={busy}>connect to server</button>
+          {/if}
         </div>
       </div>
 

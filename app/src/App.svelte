@@ -184,7 +184,7 @@
         onConsole={(name, wsPort) => { handleSelectBox(name, wsPort); setView("box-console"); }}
       />
     {:else if view === "onboarding"}
-      <Onboarding onComplete={handleOnboardingComplete} onCancel={hasBoxes ? () => setView("grid") : undefined} initialName={onboardingInitialName} />
+      <Onboarding onComplete={handleOnboardingComplete} onCancel={hasBoxes ? () => setView("grid") : undefined} initialName={onboardingInitialName} serverConfigured={hasBoxes} />
     {:else if (view === "box-home" || view === "box-chat" || view === "box-console") && selectedBox && boxConnection}
       <div class="box-stack">
         <div class="box-layer" class:box-hidden={view !== "box-home"} inert={view !== "box-home"}>
