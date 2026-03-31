@@ -396,21 +396,23 @@ fn ensure_server_detects_running_and_saves_config() {
 
     // Point HOME to tmpdir so ensure_server reads/writes creds there
     std::env::set_var("HOME", home);
-    let result = vesta_common::ensure_server();
-    std::env::set_var("HOME", &real_home);
 
-    // Verify
+    let result = vesta_common::ensure_server();
     let did_setup = result.expect("ensure_server failed");
     assert!(did_setup, "should have performed setup (config was missing)");
 
-    let config_path = config_dir.join("server.json");
-    assert!(config_path.exists(), "server.json should be created: extract_credentials may have returned None. api-key={:?}, tls exists={}", api_key.trim(), config_dir.join("tls/cert.pem").exists());
+    // Check server.json while HOME is still set to tmpdir
+    let config_path = vesta_common::server_json_path();
+    assert!(config_path.exists(), "server.json not at {:?}", config_path);
 
-    // Idempotent: second call with config + server running
-    std::env::set_var("HOME", home);
-    let second = vesta_common::ensure_server();
+    // Verify config is loadable
+    assert!(vesta_common::load_server_config().is_some(), "config should be loadable");
+
+    // Idempotent: second call should be no-op
+    let second = vesta_common::ensure_server().unwrap();
+    assert!(!second, "second call should be no-op");
+
     std::env::set_var("HOME", &real_home);
-    assert_eq!(second.unwrap(), false, "second call should be no-op");
 
     // Cleanup
     let _ = child.kill();
