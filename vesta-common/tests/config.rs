@@ -1,5 +1,5 @@
 use vesta_common::client::ws_base_url;
-use vesta_common::normalize_url;
+use vesta_common::{normalize_url, version_less_than};
 
 #[test]
 fn normalize_url_adds_https() {
@@ -27,6 +27,16 @@ fn server_config_json_roundtrip() {
     assert_eq!(parsed.url, config.url);
     assert_eq!(parsed.api_key, config.api_key);
     assert_eq!(parsed.cert_fingerprint, config.cert_fingerprint);
+}
+
+#[test]
+fn version_comparison() {
+    assert!(version_less_than("0.1.104", "0.1.105"));
+    assert!(!version_less_than("0.1.105", "0.1.104"));
+    assert!(!version_less_than("0.1.105", "0.1.105"));
+    assert!(version_less_than("0.1.9", "0.1.10"));
+    assert!(version_less_than("0.1.0", "0.2.0"));
+    assert!(version_less_than("0.9.0", "1.0.0"));
 }
 
 #[test]

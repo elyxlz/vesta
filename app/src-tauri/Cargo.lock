@@ -5149,7 +5149,7 @@ dependencies = [
 
 [[package]]
 name = "vesta-common"
-version = "0.1.104"
+version = "0.1.105"
 dependencies = [
  "dirs",
  "ring",

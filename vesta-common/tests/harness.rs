@@ -100,6 +100,9 @@ pub struct TestAgent<'a> {
 
 impl<'a> TestAgent<'a> {
     pub fn create(client: &'a Client, name: &str) -> Result<Self, String> {
+        // Ensure idempotent — clean up leftover from previous runs
+        let _ = client.stop_agent(name);
+        let _ = client.destroy_agent(name);
         let name = client.create_agent(name, false)?;
         Ok(Self { name, client })
     }

@@ -4,7 +4,7 @@ import { check } from "@tauri-apps/plugin-updater";
 import { detectPlatform } from "./platform";
 import type { BoxInfo, ListEntry, LogEvent, PlatformStatus } from "./types";
 
-function isNewer(latest: string, current: string): boolean {
+export function isNewer(latest: string, current: string): boolean {
   const a = latest.split(".").map(Number);
   const b = current.split(".").map(Number);
   for (let i = 0; i < Math.max(a.length, b.length); i++) {

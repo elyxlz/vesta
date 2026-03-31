@@ -190,14 +190,7 @@ fn try_migrate_linux() -> Option<platform::ServerConfig> {
     vesta_common::load_server_config()
 }
 
-fn version_less_than(a: &str, b: &str) -> bool {
-    let parse = |v: &str| -> Vec<u64> {
-        v.split('.')
-            .filter_map(|s| s.parse().ok())
-            .collect()
-    };
-    parse(a) < parse(b)
-}
+use vesta_common::version_less_than;
 
 fn fetch_latest_version(timeout: Option<u64>) -> Option<String> {
     let mut args = vec!["-fsSL"];

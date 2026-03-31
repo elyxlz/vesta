@@ -181,3 +181,10 @@ pub fn normalize_url(host: &str) -> String {
         format!("https://{}", host)
     }
 }
+
+pub fn version_less_than(a: &str, b: &str) -> bool {
+    let parse = |v: &str| -> Vec<u64> {
+        v.split('.').filter_map(|s| s.parse().ok()).collect()
+    };
+    parse(a) < parse(b)
+}

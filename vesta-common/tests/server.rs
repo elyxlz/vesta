@@ -1,19 +1,16 @@
+#![cfg(feature = "integration")]
+
 mod harness;
 use harness::{TestAgent, SERVER};
-
-// All tests are #[ignore] because they require a running vestad + Docker.
-// Run with: cargo test -p vesta-common --test server -- --ignored --test-threads=1
 
 // ── Health & Auth ──────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn health() {
     SERVER.client().health().expect("health failed");
 }
 
 #[test]
-#[ignore]
 fn wrong_token_rejected() {
     let bad = vesta_common::client::Client::new(&vesta_common::ServerConfig {
         url: SERVER.config.url.clone(),
@@ -27,7 +24,6 @@ fn wrong_token_rejected() {
 // ── Agent lifecycle ────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn create_and_list() {
     let c = SERVER.client();
     let agent = TestAgent::create(&c, "test-create-list").unwrap();
@@ -36,7 +32,6 @@ fn create_and_list() {
 }
 
 #[test]
-#[ignore]
 fn create_duplicate_fails() {
     let c = SERVER.client();
     let _agent = TestAgent::create(&c, "test-dup").unwrap();
@@ -47,7 +42,6 @@ fn create_duplicate_fails() {
 }
 
 #[test]
-#[ignore]
 fn status_not_found() {
     let c = SERVER.client();
     let status = c.agent_status("nonexistent-agent-xyz").unwrap();
@@ -55,7 +49,6 @@ fn status_not_found() {
 }
 
 #[test]
-#[ignore]
 fn start_stop_restart() {
     let c = SERVER.client();
     let agent = TestAgent::create(&c, "test-start-stop").unwrap();
@@ -75,7 +68,6 @@ fn start_stop_restart() {
 }
 
 #[test]
-#[ignore]
 fn destroy_removes_agent() {
     let c = SERVER.client();
     let name = c.create_agent("test-destroy", false).unwrap();
@@ -85,13 +77,11 @@ fn destroy_removes_agent() {
 }
 
 #[test]
-#[ignore]
 fn start_nonexistent_fails() {
     assert!(SERVER.client().start_agent("does-not-exist").is_err());
 }
 
 #[test]
-#[ignore]
 fn stop_nonexistent_fails() {
     assert!(SERVER.client().stop_agent("does-not-exist").is_err());
 }
@@ -99,7 +89,6 @@ fn stop_nonexistent_fails() {
 // ── Name handling ──────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn name_normalization() {
     let c = SERVER.client();
     let name = c.create_agent("My Test Agent", false).unwrap();
@@ -108,13 +97,11 @@ fn name_normalization() {
 }
 
 #[test]
-#[ignore]
 fn empty_name_fails() {
     assert!(SERVER.client().create_agent("", false).is_err());
 }
 
 #[test]
-#[ignore]
 fn special_chars_name_normalized() {
     assert!(SERVER.client().create_agent("!!!", false).is_err(), "name normalizing to empty should fail");
 }
@@ -122,7 +109,6 @@ fn special_chars_name_normalized() {
 // ── Auth flow ──────────────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn start_auth_returns_url() {
     let c = SERVER.client();
     let agent = TestAgent::create(&c, "test-auth-flow").unwrap();
@@ -133,7 +119,6 @@ fn start_auth_returns_url() {
 }
 
 #[test]
-#[ignore]
 fn complete_auth_bad_session_fails() {
     let c = SERVER.client();
     let agent = TestAgent::create(&c, "test-auth-bad").unwrap();
@@ -141,7 +126,6 @@ fn complete_auth_bad_session_fails() {
 }
 
 #[test]
-#[ignore]
 fn inject_token_marks_authenticated() {
     let c = SERVER.client();
     let agent = TestAgent::create(&c, "test-inject-tok").unwrap();
@@ -162,7 +146,6 @@ fn inject_token_marks_authenticated() {
 // ── Backup & Restore ───────────────────────────────────────────
 
 #[test]
-#[ignore]
 fn backup_restore_roundtrip() {
     let c = SERVER.client();
     let agent = TestAgent::create(&c, "test-backup").unwrap();
@@ -181,7 +164,6 @@ fn backup_restore_roundtrip() {
 }
 
 #[test]
-#[ignore]
 fn restore_conflict_without_replace_fails() {
     let c = SERVER.client();
     let agent = TestAgent::create(&c, "test-restore-conflict").unwrap();
@@ -195,7 +177,6 @@ fn restore_conflict_without_replace_fails() {
 // ── WebSocket ──────────────────────────────────────────────────
 
 #[tokio::test]
-#[ignore]
 async fn ws_connect_to_running_agent() {
     let c = SERVER.client();
     let agent = TestAgent::create(&c, "test-ws").unwrap();
@@ -240,4 +221,26 @@ async fn ws_connect_to_running_agent() {
             );
         }
     }
+}
+
+// ── Config helpers ─────────────────────────────────────────────
+
+#[test]
+fn save_and_load_config_roundtrip() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::env::set_var("XDG_CONFIG_HOME", tmp.path());
+
+    let config = vesta_common::ServerConfig {
+        url: "https://test:1234".into(),
+        api_key: "key".into(),
+        cert_fingerprint: Some("sha256:test".into()),
+        cert_pem: None,
+    };
+    vesta_common::save_server_config(&config).unwrap();
+    let loaded = vesta_common::load_server_config().expect("failed to load config");
+    assert_eq!(loaded.url, config.url);
+    assert_eq!(loaded.api_key, config.api_key);
+
+    // Clean up env
+    std::env::remove_var("XDG_CONFIG_HOME");
 }
