@@ -156,15 +156,30 @@ pub fn ensure_server() -> Result<bool, String> {
 
         #[cfg(not(debug_assertions))]
         {
-            // Release: only install and boot if not already running
-            if load_server_config().is_some() && server_reachable {
-                return Ok(false);
-            }
-            if !server_reachable {
+            if server_reachable {
+                // Check if local vestad needs updating
+                if let Some(config) = load_server_config() {
+                    if is_local_server(&config) {
+                        let client = client::Client::new(&config);
+                        let server_ver = client.server_version().unwrap_or_default();
+                        let app_ver = env!("CARGO_PKG_VERSION");
+                        if version_less_than(&server_ver, app_ver) {
+                            eprintln!("updating vestad {} → {}...", server_ver, app_ver);
+                            let vestad_path = platform::linux::install_vestad()?;
+                            platform::linux::install_autostart(&vestad_path)?;
+                            platform::linux::shutdown();
+                            platform::linux::boot()?;
+                            if !wait_for_server(30) {
+                                return Err("server did not start after update".into());
+                            }
+                        }
+                    }
+                    return Ok(false);
+                }
+            } else {
                 let vestad_path = platform::linux::install_vestad()?;
                 platform::linux::install_autostart(&vestad_path)?;
                 platform::linux::boot()?;
-
                 if !wait_for_server(30) {
                     return Err("server did not start within 30s".into());
                 }
@@ -201,6 +216,11 @@ pub fn normalize_url(host: &str) -> String {
     } else {
         format!("https://{}", host)
     }
+}
+
+pub fn is_local_server(config: &ServerConfig) -> bool {
+    let url = &config.url;
+    url.contains("localhost") || url.contains("127.0.0.1") || url.contains("[::1]")
 }
 
 pub fn version_less_than(a: &str, b: &str) -> bool {

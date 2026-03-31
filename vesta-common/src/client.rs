@@ -221,6 +221,15 @@ impl Client {
         Ok(())
     }
 
+    pub fn server_version(&self) -> Result<String, String> {
+        let resp = self.get("/version")?;
+        let v: serde_json::Value = resp
+            .into_body()
+            .read_json()
+            .map_err(|e| format!("parse error: {}", e))?;
+        Ok(v["version"].as_str().unwrap_or("unknown").to_string())
+    }
+
     pub fn list_agents(&self) -> Result<Vec<ListEntry>, String> {
         let resp = self.get("/agents")?;
         resp.into_body()
