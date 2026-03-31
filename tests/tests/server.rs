@@ -379,8 +379,14 @@ fn ensure_server_detects_running_and_saves_config() {
         .spawn()
         .expect("failed to start vestad");
 
-    // Wait for it
+    // Wait for TCP + credential files to be ready
     assert!(vesta_common::wait_for_server(30), "vestad didn't start on 7860");
+    let api_key_path = home.join(".config/vesta/api-key");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !api_key_path.exists() {
+        assert!(std::time::Instant::now() < deadline, "vestad didn't write api-key");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
 
     // Point HOME to tmpdir so ensure_server reads/writes creds there
     std::env::set_var("HOME", home);

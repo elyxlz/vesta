@@ -310,11 +310,12 @@
   }
 
   .grid {
-    display: grid;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
     gap: 8px;
     width: 100%;
     padding-top: 40px;
-    grid-template-columns: repeat(3, 1fr);
   }
 
   .grid.few {
@@ -322,19 +323,26 @@
   }
 
   .grid.cols-1 {
-    grid-template-columns: 1fr;
     max-width: 220px;
     margin: 0 auto;
   }
 
   .grid.cols-2 {
-    grid-template-columns: repeat(2, 1fr);
     max-width: 440px;
     margin: 0 auto;
   }
 
   .card-wrapper {
     position: relative;
+    width: calc((100% - 16px) / 3);
+  }
+
+  .grid.cols-1 .card-wrapper {
+    width: 100%;
+  }
+
+  .grid.cols-2 .card-wrapper {
+    width: calc((100% - 8px) / 2);
   }
 
   .card {
