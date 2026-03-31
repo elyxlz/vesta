@@ -612,13 +612,10 @@ class TestDaemonNotifications:
 
 
 class TestMissedReminders:
-    def test_missed_reminder_on_restart(self, test_home):
-        """Past-due reminders fire missed notifications when daemon starts."""
-        home, notif_dir = test_home
+    def _setup_db(self, home):
+        """Create a fresh tasks DB with schema v2 for manual insertion tests."""
         data_dir = home / ".tasks"
         data_dir.mkdir(parents=True, exist_ok=True)
-
-        # Manually create the DB with a past-due reminder
         conn = sqlite3.connect(data_dir / "tasks.db")
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY)")
@@ -640,6 +637,12 @@ class TestMissedReminders:
                 FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
             )
         """)
+        return conn
+
+    def test_missed_reminder_on_restart(self, test_home):
+        """Past-due one-time reminders fire missed notifications when daemon starts."""
+        home, notif_dir = test_home
+        conn = self._setup_db(home)
         past = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
         conn.execute(
             "INSERT INTO reminders (id, message, schedule_type, completed, trigger_data) VALUES (?, ?, ?, 0, ?)",
@@ -659,6 +662,30 @@ class TestMissedReminders:
 
             items = parse(tasks_cli(home, "remind", "list"))
             assert not any(i["id"] == "pastdue01" for i in items)
+        finally:
+            stop_daemon(proc)
+
+    def test_recurring_survives_restart(self, test_home):
+        """Recurring reminders are restored on restart and keep scheduling (missed firings are skipped)."""
+        home, notif_dir = test_home
+        conn = self._setup_db(home)
+        conn.execute(
+            "INSERT INTO reminders (id, message, schedule_type, completed, trigger_data) VALUES (?, ?, ?, 0, ?)",
+            ("recur01", "hourly check", "hourly", json.dumps({"type": "interval", "hours": 1})),
+        )
+        conn.commit()
+        conn.close()
+
+        proc = start_daemon(home, notif_dir)
+        try:
+            time.sleep(3)
+            # Recurring reminder should be active, not marked completed or missed
+            items = parse(tasks_cli(home, "remind", "list"))
+            assert any(i["id"] == "recur01" for i in items)
+            # No missed notification should be written for recurring reminders
+            notif_files = list(notif_dir.glob("*-tasks-reminder.json"))
+            missed = [f for f in notif_files if json.loads(f.read_text()).get("reminder_id") == "recur01"]
+            assert len(missed) == 0
         finally:
             stop_daemon(proc)
 
