@@ -139,51 +139,19 @@ fn obtain_vestad() -> Result<std::path::PathBuf, String> {
     if let Ok(bundled) = std::env::var("VESTAD_BUNDLE_PATH") {
         let path = std::path::PathBuf::from(&bundled);
         if path.exists() {
-            eprintln!("using bundled vestad");
             return Ok(path);
         }
     }
 
-    // Check next to current executable
+    // Check next to current executable (CLI install puts both in ~/.local/bin/)
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             let adjacent = dir.join("vestad");
             if adjacent.exists() {
-                eprintln!("using adjacent vestad");
                 return Ok(adjacent);
             }
         }
     }
 
-    // Fall back to downloading from releases
-    let target = match std::env::consts::ARCH {
-        "x86_64" => "x86_64-unknown-linux-gnu",
-        "aarch64" => "aarch64-unknown-linux-gnu",
-        other => return Err(format!("unsupported architecture: {}", other)),
-    };
-
-    let archive = format!("vestad-{}.tar.gz", target);
-    let url = format!(
-        "https://github.com/elyxlz/vesta/releases/latest/download/{}",
-        archive
-    );
-    let tmp = format!("/tmp/vestad-download-{}", std::process::id());
-    std::fs::create_dir_all(&tmp).map_err(|e| format!("failed to create temp dir: {}", e))?;
-
-    eprintln!("downloading vestad...");
-    let status = process::Command::new("curl")
-        .args(["-fsSL", "-o", &format!("{}/{}", tmp, archive), &url])
-        .status();
-    if !status.map(|s| s.success()).unwrap_or(false) {
-        return Err("failed to download vestad".into());
-    }
-
-    let status = process::Command::new("tar")
-        .args(["-xzf", &format!("{}/{}", tmp, archive), "-C", &tmp])
-        .status();
-    if !status.map(|s| s.success()).unwrap_or(false) {
-        return Err("failed to extract vestad".into());
-    }
-
-    Ok(std::path::PathBuf::from(format!("{}/vestad", tmp)))
+    Err("vestad not found. reinstall vesta or place vestad next to the vesta binary".into())
 }

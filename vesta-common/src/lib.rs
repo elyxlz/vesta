@@ -170,6 +170,7 @@ pub fn wait_for_server(timeout_secs: u64) -> bool {
 /// Otherwise, runs platform-specific setup (download vestad, install, boot, extract creds).
 /// Returns Ok(true) if setup was performed, Ok(false) if already configured.
 pub fn ensure_server() -> Result<bool, String> {
+    #[cfg(target_os = "linux")]
     let server_reachable = wait_for_server(1);
 
     #[cfg(target_os = "linux")]
