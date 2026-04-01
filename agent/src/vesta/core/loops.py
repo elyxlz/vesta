@@ -103,7 +103,14 @@ async def queue_greeting(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.V
         if prompt:
             prompt = f"[System: your name is {config.agent_name}]\n\n{prompt}"
     else:
-        prompt = build_restart_context(reason, config)
+        extras = []
+        today = _now().strftime("%Y-%m-%d")
+        try:
+            summary = (config.dreamer_dir / f"{today}.md").read_text().strip()
+            extras.append(f"[Dreamer Summary]\n{summary}")
+        except FileNotFoundError:
+            pass
+        prompt = build_restart_context(reason, config, extras=extras)
     if not prompt or not prompt.strip():
         return
 
@@ -143,9 +150,10 @@ async def _process_message_safely(msg: str, *, is_user: bool, state: vm.State, c
                     persist_session_id(sid, state=state, config=config)
             except (AttributeError, TypeError):
                 pass
-        logger.error(f"Error processing message: {error_msg}")
+        logger.error(f"Error processing message: {error_msg} — triggering restart")
         state.event_bus.emit({"type": "error", "text": error_msg})
-        state.pending_context = f"[System: Previous request failed with error: {error_msg}. Session was reset.]"
+        state.restart_reason = f"error — {error_msg}"
+        state.graceful_shutdown.set()
     finally:
         state.event_bus.set_state("idle")
 
@@ -159,7 +167,7 @@ async def _process_interruptible(
 
     try:
         while pending:
-            if state.pending_context is not None:
+            if state.graceful_shutdown.is_set():
                 for remaining in pending:
                     await queue.put(remaining)
                 break
@@ -192,34 +200,29 @@ async def _process_interruptible(
 
 
 async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig) -> None:
-    while state.shutdown_event and not state.shutdown_event.is_set():
-        logger.client("Creating new client session...")
-        options = build_client_options(config, state)
-        async with ClaudeSDKClient(options=options) as client:
-            state.client = client
-            logger.client("Client session started")
+    logger.client("Creating new client session...")
+    options = build_client_options(config, state)
+    async with ClaudeSDKClient(options=options) as client:
+        state.client = client
+        logger.client("Client session started")
 
-            try:
-                if state.pending_context:
-                    await queue.put((state.pending_context, False))
-                    state.pending_context = None
+        try:
+            while not state.shutdown_event.is_set():
+                try:
+                    msg, is_user = await asyncio.wait_for(queue.get(), timeout=1.0)
+                except TimeoutError:
+                    continue
 
-                while not state.shutdown_event.is_set() and state.pending_context is None:
-                    try:
-                        msg, is_user = await asyncio.wait_for(queue.get(), timeout=1.0)
-                    except TimeoutError:
-                        continue
+                await _process_interruptible(msg, is_user=is_user, queue=queue, state=state, config=config)
 
-                    await _process_interruptible(msg, is_user=is_user, queue=queue, state=state, config=config)
-
-                    if state.dreamer_active:
-                        state.dreamer_active = False
-                        state.event_bus.clear_history()
-                        _trigger_nightly_restart(state=state, config=config)
-            finally:
-                state.client = None
-                state.interrupt_event = None
-                logger.client("Client session closed")
+                if state.dreamer_active:
+                    state.dreamer_active = False
+                    state.event_bus.clear_history()
+                    _trigger_nightly_restart(state=state, config=config)
+        finally:
+            state.client = None
+            state.interrupt_event = None
+            logger.client("Client session closed")
 
 
 # --- Proactive & dreamer ---
@@ -237,14 +240,8 @@ def _trigger_nightly_restart(*, state: vm.State, config: vm.VestaConfig) -> None
     logger.dreamer("Dreamer complete, triggering nightly restart...")
     state.session_id = None
     config.session_file.unlink(missing_ok=True)
-
-    today = _now().strftime("%Y-%m-%d")
-    summary_path = config.dreamer_dir / f"{today}.md"
-    extras = []
-    if summary_path.exists():
-        extras.append(f"[Dreamer Summary]\n{summary_path.read_text().strip()}")
-
-    state.pending_context = build_restart_context("new day — conversation history reset, nightly dreamer ran", config, extras=extras)
+    state.restart_reason = "nightly — conversation history reset, dreamer ran"
+    state.graceful_shutdown.set()
 
 
 async def process_nightly_memory(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig) -> None:
