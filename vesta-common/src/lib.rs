@@ -177,7 +177,11 @@ pub fn ensure_server_with(vestad_path: Option<&std::path::Path>) -> Result<bool,
     {
         #[cfg(debug_assertions)]
         {
-            if !server_reachable {
+            if server_reachable {
+                if load_server_config().is_some() {
+                    return Ok(false);
+                }
+            } else {
                 install_and_boot(false, vestad_path)?;
             }
         }

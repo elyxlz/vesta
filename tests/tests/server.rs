@@ -401,9 +401,9 @@ fn ensure_server_detects_running_and_saves_config() {
     let did_setup = result.expect("ensure_server failed");
     assert!(did_setup, "should have performed setup (config was missing)");
 
-    // Check server.json while HOME is still set to tmpdir
-    let config_path = vesta_common::server_json_path();
-    assert!(config_path.exists(), "server.json not at {:?}", config_path);
+    // Check config.json while HOME is still set to tmpdir
+    let config_path = vesta_common::config_path();
+    assert!(config_path.exists(), "config.json not at {:?}", config_path);
 
     // Verify config is loadable
     assert!(vesta_common::load_server_config().is_some(), "config should be loadable");
