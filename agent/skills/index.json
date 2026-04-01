@@ -13,7 +13,7 @@
   },
   {
     "name": "home-assistant",
-    "description": "This skill should be used when the user asks about \"home\", \"house\", \"energy\", \"power\", \"temperature\", \"climate\", \"weather\", \"security\", \"cameras\", \"motion\", \"alarm\", \"location\", \"where am I\", \"battery\", or needs to interact with Home Assistant devices, sensors, or automations. Also use for morning briefings (home overview). No daemon required \u2014 queries HA API on demand."
+    "description": "This skill should be used when the user asks about \"home\", \"house\", \"energy\", \"power\", \"temperature\", \"climate\", \"weather\", \"security\", \"cameras\", \"motion\", \"alarm\", \"location\", \"where am I\", \"battery\", or needs to interact with Home Assistant devices, sensors, or automations. No daemon required \u2014 queries HA API on demand."
   },
   {
     "name": "keeper",
@@ -21,7 +21,7 @@
   },
   {
     "name": "microsoft",
-    "description": "This skill should be used when the user asks about \"email\", \"emails\", \"inbox\", \"messages\", \"calendar\", \"schedule\", \"scheduling\", \"meetings\", \"appointments\", \"events\", \"outlook\", or needs to read/send emails, manage calendar events, or handle time-based tasks via Microsoft/Outlook. IMPORTANT \u2014 this skill requires a background daemon. Before doing anything, immediately make sure the daemon is running. Read this skill to learn how."
+    "description": "This skill should be used when the user asks about \"email\", \"emails\", \"inbox\", \"messages\", \"calendar\", \"schedule\", \"scheduling\", \"meetings\", \"appointments\", \"events\", \"outlook\", or needs to read/send emails, manage calendar events, or handle time-based tasks via Microsoft/Outlook. Requires a background daemon."
   },
   {
     "name": "onedrive",
