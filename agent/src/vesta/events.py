@@ -102,7 +102,7 @@ class EventBus:
         self._subscribers.discard(q)
 
     def emit(self, event: StreamEvent) -> None:
-        event["ts"] = dt.datetime.now().isoformat()
+        event["ts"] = dt.datetime.now(dt.UTC).isoformat()
         if event["type"] != "status":
             self.history.append(event)
         for q in self._subscribers:

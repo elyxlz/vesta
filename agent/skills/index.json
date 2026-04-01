@@ -12,6 +12,10 @@
     "description": "This skill should be used when the user asks about \"gmail\", \"google email\", \"google calendar\", \"gcal\", \"google meet\", or needs to read/send emails via Gmail, manage Google Calendar events, create Google Meet links, or handle scheduling via Google. Requires a background daemon."
   },
   {
+    "name": "home-assistant",
+    "description": "This skill should be used when the user asks about \"home\", \"house\", \"energy\", \"power\", \"temperature\", \"climate\", \"weather\", \"security\", \"cameras\", \"motion\", \"alarm\", \"location\", \"where am I\", \"battery\", or needs to interact with Home Assistant devices, sensors, or automations. No daemon required \u2014 queries HA API on demand."
+  },
+  {
     "name": "keeper",
     "description": "This skill should be used when the user asks about \"passwords\", \"credentials\", \"vault\", \"secrets\", \"keeper\", \"password manager\", \"logins\", \"TOTP\", \"2FA codes\", or needs to store, retrieve, search, share, or manage passwords and secure records."
   },

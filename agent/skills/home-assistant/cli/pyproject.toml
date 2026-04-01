@@ -1,0 +1,22 @@
+[project]
+name = "ha"
+version = "0.1.0"
+description = "Home Assistant CLI for querying sensors, calling services, and home monitoring"
+readme = {text = "", content-type = "text/plain"}
+authors = [
+    { name = "elyxlz" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27.0",
+]
+
+[project.scripts]
+ha = "ha_cli.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ha_cli"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

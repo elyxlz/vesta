@@ -391,6 +391,7 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
 
     return ClaudeAgentOptions(
         system_prompt=system_prompt,
+        model=config.agent_model,
         hooks={
             "PreToolUse": [HookMatcher(hooks=[pre_hook])],
             "PostToolUse": [HookMatcher(hooks=[post_hook])],
