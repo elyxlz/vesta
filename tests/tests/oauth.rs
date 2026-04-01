@@ -25,7 +25,7 @@ fn oauth_authorize_endpoint_reachable() {
 
 #[test]
 fn oauth_token_endpoint_reachable() {
-    check_endpoint("https://console.anthropic.com/v1/oauth/token");
+    check_endpoint("https://api.anthropic.com/v1/oauth/token");
 }
 
 #[test]

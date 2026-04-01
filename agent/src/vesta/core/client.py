@@ -297,6 +297,8 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
             msg = tp.cast(Message, result)
             texts, sub_agent_context, session_id, _ = _parse_sdk_message(msg, sub_agent_context=sub_agent_context)
             if session_id and session_id != state.session_id:
+                if state.session_id:
+                    logger.warning(f"Session ID changed: {state.session_id[:16]} -> {session_id[:16]} (resume may have failed)")
                 persist_session_id(session_id, state=state, config=config)
             text = "\n".join(texts) if texts else None
             if not text:

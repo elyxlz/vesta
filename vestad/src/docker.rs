@@ -34,7 +34,7 @@ const NAME_MAX_LEN: usize = 32;
 
 pub const OAUTH_CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 pub const OAUTH_REDIRECT_URI: &str = "https://console.anthropic.com/oauth/code/callback";
-pub const OAUTH_TOKEN_URL: &str = "https://console.anthropic.com/v1/oauth/token";
+pub const OAUTH_TOKEN_URL: &str = "https://api.anthropic.com/v1/oauth/token";
 pub const OAUTH_AUTHORIZE_URL: &str = "https://claude.ai/oauth/authorize";
 
 #[derive(PartialEq, Clone, Copy)]
