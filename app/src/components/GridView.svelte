@@ -1,11 +1,11 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { appVersion as appVersionPromise } from "../lib/version";
-  import { listBoxes, startBox, stopBox, restartBox, deleteBox, backupBox, restoreBox } from "../lib/api";
-  import { getBoxOp, busyBoxName, withBoxOp } from "../lib/store.svelte";
+  import { listAgents, startAgent, stopAgent, restartAgent, deleteAgent, backupAgent, restoreAgent } from "../lib/api";
+  import { getAgentOp, busyAgentName, withAgentOp } from "../lib/store.svelte";
   import { save, open } from "@tauri-apps/plugin-dialog";
-  import { createBoxConnection, type BoxConnection } from "../lib/ws";
-  import type { ListEntry, BoxActivityState } from "../lib/types";
+  import { createAgentConnection, type AgentConnection } from "../lib/ws";
+  import type { ListEntry, AgentActivityState } from "../lib/types";
 
   let appVersion = $state("");
 
@@ -21,34 +21,34 @@
     onConsole: (name: string, wsPort: number) => void;
   } = $props();
 
-  let boxes = $state<ListEntry[]>([]);
+  let agents = $state<ListEntry[]>([]);
   let poll: ReturnType<typeof setInterval>;
   let openMenu = $state<string | null>(null);
   let confirming = $state<string | null>(null);
 
-  let connections = new Map<string, { conn: BoxConnection; unsub: () => void }>();
-  let activityStates = $state<Record<string, BoxActivityState>>({});
+  let connections = new Map<string, { conn: AgentConnection; unsub: () => void }>();
+  let activityStates = $state<Record<string, AgentActivityState>>({});
 
   function syncConnections() {
-    const aliveNames = new Set(boxes.filter((b) => b.alive).map((b) => `${b.name}:${b.ws_port}`));
+    const aliveNames = new Set(agents.filter((a) => a.alive).map((a) => `${a.name}:${a.ws_port}`));
 
     for (const [key, entry] of connections) {
       if (!aliveNames.has(key)) {
         entry.unsub();
         entry.conn.disconnect();
         connections.delete(key);
-        const boxName = key.split(":")[0];
-        const { [boxName]: _, ...rest } = activityStates;
+        const agentName = key.split(":")[0];
+        const { [agentName]: _, ...rest } = activityStates;
         activityStates = rest;
       }
     }
 
-    for (const box of boxes) {
-      const key = `${box.name}:${box.ws_port}`;
-      if (box.alive && !connections.has(key)) {
-        const conn = createBoxConnection(box.ws_port);
-        const unsub = conn.boxState.subscribe((v: BoxActivityState) => {
-          if (activityStates[box.name] !== v) activityStates[box.name] = v;
+    for (const agent of agents) {
+      const key = `${agent.name}:${agent.ws_port}`;
+      if (agent.alive && !connections.has(key)) {
+        const conn = createAgentConnection(agent.name);
+        const unsub = conn.agentState.subscribe((v: AgentActivityState) => {
+          if (activityStates[agent.name] !== v) activityStates[agent.name] = v;
         });
         conn.connect();
         connections.set(key, { conn, unsub });
@@ -66,13 +66,13 @@
 
   async function refresh() {
     try {
-      const next = await listBoxes();
-      if (JSON.stringify(next) !== JSON.stringify(boxes)) {
-        boxes = next;
+      const next = await listAgents();
+      if (JSON.stringify(next) !== JSON.stringify(agents)) {
+        agents = next;
         syncConnections();
       }
     } catch (e) {
-      console.warn("failed to list boxes:", e);
+      console.warn("failed to list agents:", e);
     }
   }
 
@@ -105,73 +105,73 @@
     }
   }
 
-  function orbClass(box: ListEntry, activity?: BoxActivityState): string {
-    if (box.status === "dead") return "dead";
-    if (box.status === "running" && box.authenticated && box.agent_ready) {
+  function orbClass(agent: ListEntry, activity?: AgentActivityState): string {
+    if (agent.status === "dead") return "dead";
+    if (agent.status === "running" && agent.authenticated && agent.agent_ready) {
       if (activity === "thinking" || activity === "tool_use") return "active";
       return "alive";
     }
-    if (box.status === "running" && box.authenticated) return "booting";
-    if (box.status === "running" && !box.authenticated) return "auth";
+    if (agent.status === "running" && agent.authenticated) return "booting";
+    if (agent.status === "running" && !agent.authenticated) return "auth";
     return "dead";
   }
 
-  async function handleToggle(box: ListEntry) {
-    if (busyBoxName()) return;
-    const op = box.status === "running" ? "stopping" : "starting";
-    const fallback = box.status === "running" ? "failed to stop" : "failed to start";
-    await withBoxOp(box.name, op, async () => {
-      if (box.status === "running") {
-        await stopBox(box.name);
+  async function handleToggle(agent: ListEntry) {
+    if (busyAgentName()) return;
+    const op = agent.status === "running" ? "stopping" : "starting";
+    const fallback = agent.status === "running" ? "failed to stop" : "failed to start";
+    await withAgentOp(agent.name, op, async () => {
+      if (agent.status === "running") {
+        await stopAgent(agent.name);
       } else {
-        await startBox(box.name);
+        await startAgent(agent.name);
       }
       await refresh();
     }, fallback);
   }
 
-  async function handleRestart(box: ListEntry) {
-    if (busyBoxName()) return;
-    await withBoxOp(box.name, "starting", async () => {
-      await restartBox(box.name);
+  async function handleRestart(agent: ListEntry) {
+    if (busyAgentName()) return;
+    await withAgentOp(agent.name, "starting", async () => {
+      await restartAgent(agent.name);
       await refresh();
     }, "failed to restart");
   }
 
-  async function handleBackup(box: ListEntry) {
+  async function handleBackup(agent: ListEntry) {
     const date = new Date().toISOString().slice(0, 10);
     const path = await save({
-      defaultPath: `${box.name}-backup-${date}.tar.gz`,
+      defaultPath: `${agent.name}-backup-${date}.tar.gz`,
       filters: [{ name: "Backup", extensions: ["tar.gz"] }],
     });
     if (!path) return;
-    await withBoxOp(box.name, "backing-up", async () => {
-      await backupBox(box.name, path);
+    await withAgentOp(agent.name, "backing-up", async () => {
+      await backupAgent(agent.name, path);
       await refresh();
     }, "backup failed");
   }
 
-  async function handleRestore(box: ListEntry) {
+  async function handleRestore(agent: ListEntry) {
     const path = await open({
       filters: [{ name: "Backup", extensions: ["tar.gz"] }],
       multiple: false,
       directory: false,
     });
     if (!path) return;
-    await withBoxOp(box.name, "restoring", async () => {
-      await restoreBox(path, box.name, true);
+    await withAgentOp(agent.name, "restoring", async () => {
+      await restoreAgent(path, agent.name, true);
       await refresh();
     }, "restore failed");
   }
 
-  async function handleDelete(boxName: string) {
-    if (confirming !== boxName) {
-      confirming = boxName;
+  async function handleDelete(agentName: string) {
+    if (confirming !== agentName) {
+      confirming = agentName;
       return;
     }
     confirming = null;
-    await withBoxOp(boxName, "deleting", async () => {
-      await deleteBox(boxName);
+    await withAgentOp(agentName, "deleting", async () => {
+      await deleteAgent(agentName);
       await refresh();
     }, "failed to delete");
   }
@@ -180,38 +180,38 @@
     return (e: MouseEvent) => { e.stopPropagation(); openMenu = null; fn(); };
   }
 
-  let gridCols = $derived(boxes.length === 1 ? 1 : boxes.length === 2 ? 2 : 3);
+  let gridCols = $derived(agents.length === 1 ? 1 : agents.length === 2 ? 2 : 3);
 
-  function isBoxBusy(boxName: string): boolean {
-    return getBoxOp(boxName).operation !== "idle";
+  function isAgentBusy(agentName: string): boolean {
+    return getAgentOp(agentName).operation !== "idle";
   }
 </script>
 
 <div class="grid-view" class:centered={gridCols < 3}>
-  <button class="add-btn" onclick={onCreate} aria-label="new box" data-tip="new box">
+  <button class="add-btn" onclick={onCreate} aria-label="new agent" data-tip="new agent">
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
       <path d="M12 5v14M5 12h14"/>
     </svg>
   </button>
   <div class="grid cols-{gridCols}" class:few={gridCols < 3}>
-    {#each boxes as box}
+    {#each agents as agent}
       <div class="card-wrapper">
-        <button class="card" class:busy={isBoxBusy(box.name)} onclick={() => onSelect(box.name, box.ws_port)}>
-          <div class="mini-orb-container {orbClass(box, activityStates[box.name])}">
+        <button class="card" class:busy={isAgentBusy(agent.name)} onclick={() => onSelect(agent.name, agent.ws_port)}>
+          <div class="mini-orb-container {orbClass(agent, activityStates[agent.name])}">
             <div class="mini-orb-glow"></div>
             <div class="mini-orb-body">
               <div class="mini-orb-highlight"></div>
             </div>
           </div>
-          <span class="card-name">{box.name}</span>
+          <span class="card-name">{agent.name}</span>
         </button>
         <div class="menu-wrapper">
           <!-- svelte-ignore a11y_click_events_have_key_events -->
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div
             class="menu-trigger"
-            class:visible={openMenu === box.name}
-            onclick={(e) => { e.stopPropagation(); openMenu = openMenu === box.name ? null : box.name; confirming = null; }}
+            class:visible={openMenu === agent.name}
+            onclick={(e) => { e.stopPropagation(); openMenu = openMenu === agent.name ? null : agent.name; confirming = null; }}
             aria-label="more options"
             data-tip="actions"
           >
@@ -221,24 +221,24 @@
               <circle cx="8" cy="13" r="1.5"/>
             </svg>
           </div>
-          {#if openMenu === box.name}
+          {#if openMenu === agent.name}
             <div class="menu-dropdown">
-              {#if confirming === box.name}
-                <button class="menu-item danger" onclick={menuAction(() => handleDelete(box.name))}>confirm delete</button>
+              {#if confirming === agent.name}
+                <button class="menu-item danger" onclick={menuAction(() => handleDelete(agent.name))}>confirm delete</button>
                 <button class="menu-item muted" onclick={menuAction(() => { confirming = null; })}>cancel</button>
               {:else}
-                {#if box.alive}
-                  <button class="menu-item" onclick={menuAction(() => onChat(box.name, box.ws_port))}>chat</button>
-                  <button class="menu-item" onclick={menuAction(() => onConsole(box.name, box.ws_port))}>console</button>
+                {#if agent.alive}
+                  <button class="menu-item" onclick={menuAction(() => onChat(agent.name, agent.ws_port))}>chat</button>
+                  <button class="menu-item" onclick={menuAction(() => onConsole(agent.name, agent.ws_port))}>console</button>
                 {/if}
-                <button class="menu-item" disabled={!!busyBoxName()} onclick={menuAction(() => handleToggle(box))}>{box.status === "running" ? "stop" : "start"}</button>
-                {#if box.status === "running"}
-                  <button class="menu-item" disabled={!!busyBoxName()} onclick={menuAction(() => handleRestart(box))}>restart</button>
+                <button class="menu-item" disabled={!!busyAgentName()} onclick={menuAction(() => handleToggle(agent))}>{agent.status === "running" ? "stop" : "start"}</button>
+                {#if agent.status === "running"}
+                  <button class="menu-item" disabled={!!busyAgentName()} onclick={menuAction(() => handleRestart(agent))}>restart</button>
                 {/if}
-                <button class="menu-item" disabled={!!busyBoxName()} onclick={menuAction(() => handleBackup(box))}>backup</button>
-                <button class="menu-item" disabled={!!busyBoxName()} onclick={menuAction(() => handleRestore(box))}>load backup</button>
+                <button class="menu-item" disabled={!!busyAgentName()} onclick={menuAction(() => handleBackup(agent))}>backup</button>
+                <button class="menu-item" disabled={!!busyAgentName()} onclick={menuAction(() => handleRestore(agent))}>load backup</button>
                 <div class="menu-divider"></div>
-                <button class="menu-item danger" disabled={!!busyBoxName()} onclick={(e: MouseEvent) => { e.stopPropagation(); handleDelete(box.name); }}>delete</button>
+                <button class="menu-item danger" disabled={!!busyAgentName()} onclick={(e: MouseEvent) => { e.stopPropagation(); handleDelete(agent.name); }}>delete</button>
               {/if}
             </div>
           {/if}
@@ -310,11 +310,12 @@
   }
 
   .grid {
-    display: grid;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
     gap: 8px;
     width: 100%;
     padding-top: 40px;
-    grid-template-columns: repeat(3, 1fr);
   }
 
   .grid.few {
@@ -322,19 +323,26 @@
   }
 
   .grid.cols-1 {
-    grid-template-columns: 1fr;
     max-width: 220px;
     margin: 0 auto;
   }
 
   .grid.cols-2 {
-    grid-template-columns: repeat(2, 1fr);
     max-width: 440px;
     margin: 0 auto;
   }
 
   .card-wrapper {
     position: relative;
+    width: calc((100% - 16px) / 3);
+  }
+
+  .grid.cols-1 .card-wrapper {
+    width: 100%;
+  }
+
+  .grid.cols-2 .card-wrapper {
+    width: calc((100% - 8px) / 2);
   }
 
   .card {

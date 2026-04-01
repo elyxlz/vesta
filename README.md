@@ -33,3 +33,33 @@ curl -fsSL https://raw.githubusercontent.com/elyxlz/vesta/master/install.sh | ba
 ```powershell
 irm https://raw.githubusercontent.com/elyxlz/vesta/master/install.ps1 | iex
 ```
+
+## Remote Setup
+
+Run vestad on a remote server and connect from your local machine.
+
+### 1. Server
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/elyxlz/vesta/master/install.sh | bash
+vestad serve
+```
+
+On startup, vestad prints a connection string:
+
+```
+connect with: vesta connect https://<host>:7860#<api-key>
+```
+
+Make sure port **7860** is open.
+
+### 2. Client
+
+Copy the connection string and run it locally:
+
+```bash
+vesta connect https://<server-ip>:7860#<api-key>
+vesta setup
+```
+
+Or in the desktop app, click **connect to server** on the onboarding screen.

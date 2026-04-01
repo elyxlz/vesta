@@ -54,10 +54,12 @@ mcps/whatsapp-mcp-go/whatsapp-mcp
 old_vesta/
 .cache
 
-# CLI build artifacts
-cli/target/
-cli/wsl/vesta-wsl-rootfs.tar.gz
-cli/wsl/vesta
+# Rust build artifacts
+target/
+
+# VM build artifacts
+vm/vesta-wsl-rootfs.tar.gz
+vm/vestad
 
 # Runtime memory directories (created at startup, not tracked)
 agent/memory/conversations/
@@ -70,5 +72,6 @@ node_modules/
 app/src-tauri/target/
 app/src-tauri/binaries/vesta-*
 app/src-tauri/resources/*.tar.gz
+app/src-tauri/resources/vestad
 .claude/
 ROADMAP.md

@@ -81,8 +81,11 @@ while ! docker info >/dev/null 2>&1; do
     sleep 0.5
 done
 
-# Start SSH
-/usr/sbin/sshd -e
+# Start SSH (daemon mode, -e logs to stderr)
+/usr/sbin/sshd -D -e &
+
+# Start vestad API server
+vestad serve &
 
 # Bridge vsock port 2222 to SSH (macOS vfkit only, silently skipped on WSL2)
 # Load virtio vsock transport (creates /dev/vsock); silently skip if not available
