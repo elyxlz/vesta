@@ -1,56 +1,56 @@
-// ── Per-box operation state ────────────────────────────────────
+// ── Per-agent operation state ────────────────────────────────────
 
-export type BoxOperation = "idle" | "stopping" | "starting" | "authenticating" | "deleting" | "rebuilding" | "backing-up" | "restoring";
+export type AgentOperation = "idle" | "stopping" | "starting" | "authenticating" | "deleting" | "rebuilding" | "backing-up" | "restoring";
 
-type BoxOpState = {
-  operation: BoxOperation;
+type AgentOpState = {
+  operation: AgentOperation;
   error: string;
 };
 
-let boxStates = $state<Record<string, BoxOpState>>({});
+let agentStates = $state<Record<string, AgentOpState>>({});
 
-export function getBoxOp(name: string): BoxOpState {
-  return boxStates[name] ?? { operation: "idle", error: "" };
+export function getAgentOp(name: string): AgentOpState {
+  return agentStates[name] ?? { operation: "idle", error: "" };
 }
 
-function setBoxOp(name: string, operation: BoxOperation, error = "") {
-  boxStates[name] = { operation, error };
+function setAgentOp(name: string, operation: AgentOperation, error = "") {
+  agentStates[name] = { operation, error };
 }
 
-export function setBoxError(name: string, error: string) {
-  const current = boxStates[name];
+export function setAgentError(name: string, error: string) {
+  const current = agentStates[name];
   if (current) {
-    boxStates[name] = { ...current, error };
+    agentStates[name] = { ...current, error };
   } else {
-    boxStates[name] = { operation: "idle", error };
+    agentStates[name] = { operation: "idle", error };
   }
 }
 
-function clearBoxOp(name: string) {
-  boxStates[name] = { operation: "idle", error: "" };
+function clearAgentOp(name: string) {
+  agentStates[name] = { operation: "idle", error: "" };
 }
 
-export function removeBoxState(name: string) {
-  const { [name]: _, ...rest } = boxStates;
-  boxStates = rest;
+export function removeAgentState(name: string) {
+  const { [name]: _, ...rest } = agentStates;
+  agentStates = rest;
 }
 
-export function busyBoxName(): string | null {
-  for (const [name, state] of Object.entries(boxStates)) {
+export function busyAgentName(): string | null {
+  for (const [name, state] of Object.entries(agentStates)) {
     if (state.operation !== "idle") return name;
   }
   return null;
 }
 
-export async function withBoxOp(name: string, op: BoxOperation, fn: () => Promise<void>, fallback: string): Promise<void> {
-  if (getBoxOp(name).operation !== "idle") return;
-  setBoxError(name, "");
-  setBoxOp(name, op);
+export async function withAgentOp(name: string, op: AgentOperation, fn: () => Promise<void>, fallback: string): Promise<void> {
+  if (getAgentOp(name).operation !== "idle") return;
+  setAgentError(name, "");
+  setAgentOp(name, op);
   try {
     await fn();
   } catch (e: unknown) {
-    setBoxError(name, (e as { message?: string })?.message || fallback);
+    setAgentError(name, (e as { message?: string })?.message || fallback);
   } finally {
-    clearBoxOp(name);
+    clearAgentOp(name);
   }
 }

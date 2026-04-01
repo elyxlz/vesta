@@ -1,5 +1,5 @@
 import { writable, type Writable, type Readable } from "svelte/store";
-import type { VestaEvent, BoxActivityState } from "./types";
+import type { VestaEvent, AgentActivityState } from "./types";
 import { invoke, Channel } from "@tauri-apps/api/core";
 
 const RECONNECT_BASE = 1000;
@@ -12,9 +12,9 @@ interface WsEvent {
   message?: string;
 }
 
-export interface BoxConnection {
+export interface AgentConnection {
   messages: Readable<VestaEvent[]>;
-  boxState: Readable<BoxActivityState>;
+  agentState: Readable<AgentActivityState>;
   connected: Readable<boolean>;
   connect(): void;
   disconnect(): void;
@@ -22,9 +22,9 @@ export interface BoxConnection {
   resetReconnect(): void;
 }
 
-export function createBoxConnection(name: string): BoxConnection {
+export function createAgentConnection(name: string): AgentConnection {
   const _messages: Writable<VestaEvent[]> = writable([]);
-  const _boxState: Writable<BoxActivityState> = writable("idle");
+  const _agentState: Writable<AgentActivityState> = writable("idle");
   const _connected: Writable<boolean> = writable(false);
 
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -36,7 +36,7 @@ export function createBoxConnection(name: string): BoxConnection {
     if (event.type === "history") {
       const evts = event.events;
       _messages.set(evts.length > MAX_MESSAGES ? evts.slice(-MAX_MESSAGES) : evts);
-      if (event.state) _boxState.set(event.state);
+      if (event.state) _agentState.set(event.state);
       return;
     }
     _messages.update((msgs) => {
@@ -45,7 +45,7 @@ export function createBoxConnection(name: string): BoxConnection {
       return updated;
     });
     if (event.type === "status") {
-      _boxState.set(event.state);
+      _agentState.set(event.state);
     }
   }
 
@@ -132,7 +132,7 @@ export function createBoxConnection(name: string): BoxConnection {
 
   return {
     messages: _messages,
-    boxState: _boxState,
+    agentState: _agentState,
     connected: _connected,
     connect,
     disconnect,

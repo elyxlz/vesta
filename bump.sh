@@ -17,25 +17,25 @@ esac
 echo "${CURRENT} -> ${NEW}"
 
 # agent/pyproject.toml
-sed -i "s/^version = \"${CURRENT}\"/version = \"${NEW}\"/" agent/pyproject.toml
+sed -i "s|^version = \"${CURRENT}\"|version = \"${NEW}\"|" agent/pyproject.toml
 
 # Cargo.toml (workspace version)
-sed -i "s/^version = \"${CURRENT}\"/version = \"${NEW}\"/" Cargo.toml
+sed -i "s|^version = \"${CURRENT}\"|version = \"${NEW}\"|" Cargo.toml
 
 # app/src-tauri/Cargo.toml (first occurrence)
-sed -i "0,/^version = \"${CURRENT}\"/s//version = \"${NEW}\"/" app/src-tauri/Cargo.toml
+sed -i "0,/^version = \"${CURRENT}\"/s|^version = \"${CURRENT}\"|version = \"${NEW}\"|" app/src-tauri/Cargo.toml
 
 # app/src-tauri/tauri.conf.json
-sed -i "s/\"version\": \"${CURRENT}\"/\"version\": \"${NEW}\"/" app/src-tauri/tauri.conf.json
+sed -i "s|\"version\": \"${CURRENT}\"|\"version\": \"${NEW}\"|" app/src-tauri/tauri.conf.json
 
 # app/package.json
-sed -i "s/\"version\": \"${CURRENT}\"/\"version\": \"${NEW}\"/" app/package.json
+sed -i "s|\"version\": \"${CURRENT}\"|\"version\": \"${NEW}\"|" app/package.json
 
 # Update Cargo.lock files
-cargo check --quiet 2>/dev/null || true
-(cd app/src-tauri && cargo check --quiet 2>/dev/null) || true
+cargo check --quiet 2>/dev/null || echo "warning: cargo check failed, Cargo.lock may be stale"
+(cd app/src-tauri && cargo check --quiet 2>/dev/null) || echo "warning: tauri cargo check failed"
 
 # Update uv.lock
-(cd agent && uv lock --quiet 2>/dev/null) || true
+(cd agent && uv lock --quiet 2>/dev/null) || echo "warning: uv lock failed"
 
 echo "Bumped to ${NEW}"

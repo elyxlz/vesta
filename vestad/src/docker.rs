@@ -30,6 +30,10 @@ pub const CREDENTIALS_PATH: &str = "/root/.claude/.credentials.json";
 const CLAUDE_JSON_PATH: &str = "/root/.claude.json";
 pub const BASE_WS_PORT: u16 = 7865;
 const NAME_MAX_LEN: usize = 32;
+const DOCKER_DAEMON_WAIT_RETRIES: usize = 10;
+const AGENT_READY_TIMEOUT_MS: u64 = 200;
+const WAIT_READY_POLL_MS: u64 = 500;
+const DEFAULT_TOKEN_EXPIRES_SECS: u64 = 28800;
 
 
 pub const OAUTH_CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
@@ -132,17 +136,17 @@ pub fn validate_name(name: &str) -> Result<(), DockerError> {
 
 // --- Docker helpers ---
 
-pub fn docker(args: &[&str]) -> process::ExitStatus {
+pub fn docker(args: &[&str]) -> Result<process::ExitStatus, DockerError> {
     process::Command::new("docker")
         .args(args)
         .stdout(process::Stdio::null())
         .stderr(process::Stdio::inherit())
         .status()
-        .unwrap_or_else(|e| panic!("failed to run docker: {}", e))
+        .map_err(|e| DockerError::Failed(format!("failed to run docker: {e}")))
 }
 
 pub fn docker_ok(args: &[&str]) -> bool {
-    docker(args).success()
+    docker(args).map(|s| s.success()).unwrap_or(false)
 }
 
 pub fn docker_output(args: &[&str]) -> Option<String> {
@@ -176,7 +180,7 @@ pub fn ensure_docker() -> Result<(), DockerError> {
     if !docker_quiet(&["--version"]) {
         return Err(DockerError::Failed("docker is not installed".into()));
     }
-    for _ in 0..10 {
+    for _ in 0..DOCKER_DAEMON_WAIT_RETRIES {
         if docker_quiet(&["info"]) {
             return Ok(());
         }
@@ -202,7 +206,7 @@ pub struct AgentDerivedState {
 
 pub fn compute_agent_state(cname: &str, info: &ContainerInfo) -> AgentDerivedState {
     let authenticated = info.status != ContainerStatus::NotFound && is_authenticated(cname);
-    let agent_ready = info.status == ContainerStatus::Running && is_agent_ready(cname, info.port);
+    let agent_ready = info.status == ContainerStatus::Running && is_agent_ready(info.port);
     let alive = info.status == ContainerStatus::Running && authenticated;
     let friendly_status = friendly_status(&info.status, authenticated, agent_ready);
     AgentDerivedState { authenticated, agent_ready, alive, friendly_status }
@@ -278,10 +282,10 @@ pub fn is_authenticated(cname: &str) -> bool {
     expires_at > now_ms
 }
 
-pub fn is_agent_ready(_cname: &str, port: u16) -> bool {
+pub fn is_agent_ready(port: u16) -> bool {
     std::net::TcpStream::connect_timeout(
         &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
-        std::time::Duration::from_millis(200),
+        std::time::Duration::from_millis(AGENT_READY_TIMEOUT_MS),
     )
     .is_ok()
 }
@@ -613,7 +617,7 @@ pub fn complete_auth_flow(input: &str, code_verifier: &str, expected_state: &str
         .as_str()
         .ok_or(DockerError::Failed("no access_token in response".into()))?;
     let refresh_token = token_data.get("refresh_token").and_then(|v| v.as_str());
-    let expires_in = token_data["expires_in"].as_u64().unwrap_or(28800);
+    let expires_in = token_data["expires_in"].as_u64().unwrap_or(DEFAULT_TOKEN_EXPIRES_SECS);
 
     let expires_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -862,7 +866,7 @@ pub async fn wait_ready_async(name: &str, timeout_secs: u64) -> Result<(), Docke
                 "{name}: not ready after {timeout_secs}s"
             )));
         }
-        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(WAIT_READY_POLL_MS)).await;
     }
 }
 

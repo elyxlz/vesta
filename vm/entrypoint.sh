@@ -81,8 +81,8 @@ while ! docker info >/dev/null 2>&1; do
     sleep 0.5
 done
 
-# Start SSH
-/usr/sbin/sshd -e
+# Start SSH (daemon mode, -e logs to stderr)
+/usr/sbin/sshd -D -e &
 
 # Start vestad API server
 vestad serve &

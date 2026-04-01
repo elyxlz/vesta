@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { open } from "@tauri-apps/plugin-dialog";
-  import { createBox, boxStatus, authenticate, startBox, waitForReady, checkPlatform, setupPlatform, restoreBox, listBoxes, connectToServer } from "../lib/api";
+  import { createAgent, agentStatus, authenticate, startAgent, waitForReady, checkPlatform, setupPlatform, restoreAgent, listAgents, connectToServer } from "../lib/api";
   import type { PlatformStatus, OnboardingStep } from "../lib/types";
   import ProgressBar from "./ProgressBar.svelte";
   import AuthFlow from "./AuthFlow.svelte";
@@ -11,7 +11,7 @@
   // svelte-ignore state_referenced_locally — intentional one-time capture
   let step = $state<OnboardingStep>(initialName || serverConfigured ? "name" : "platform");
   // svelte-ignore state_referenced_locally
-  let boxName = $state(initialName ?? "");
+  let agentName = $state(initialName ?? "");
   let error = $state<{ friendly: string | null; raw: string } | null>(null);
   let showRawError = $state(false);
   let busy = $state(false);
@@ -69,7 +69,7 @@
     return raw.trim().toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "").replace(/-{2,}/g, "-").replace(/^-|-$/g, "");
   }
 
-  let normalizedPreview = $derived(normalizeName(boxName));
+  let normalizedPreview = $derived(normalizeName(agentName));
 
   async function goTo(next: OnboardingStep) {
     transitioning = true;
@@ -155,7 +155,7 @@
     await goTo("creating");
 
     try {
-      const info = await boxStatus(name);
+      const info = await agentStatus(name);
       if (cancelled) return;
       if (info.status !== "not_found") {
         if (info.status === "running" && info.authenticated && info.agent_ready) {
@@ -167,12 +167,12 @@
 
         if (info.status === "stopped" || info.status === "dead") {
           try {
-            await startBox(name);
+            await startAgent(name);
           } catch (e) {
             if (cancelled) return;
             stopMessages();
             busy = false;
-            setError(e, "failed to start box");
+            setError(e, "failed to start agent");
             await goTo("name");
             return;
           }
@@ -186,13 +186,13 @@
         return;
       }
     } catch (e) {
-      console.warn("boxStatus check failed:", e);
+      console.warn("agentStatus check failed:", e);
     }
 
     if (cancelled) return;
 
     try {
-      await createBox(name);
+      await createAgent(name);
       if (cancelled) return;
       stopMessages();
       await goTo("auth");
@@ -213,7 +213,7 @@
     error = null;
     try {
       await authenticate(name);
-      await startBox(name);
+      await startAgent(name);
       await waitForReady(name, 30);
       busy = false;
       await goTo("done");
@@ -231,16 +231,16 @@
       directory: false,
     });
     if (!path) return;
-    const before = new Set((await listBoxes().catch(() => [])).map((b) => b.name));
+    const before = new Set((await listAgents().catch(() => [])).map((b) => b.name));
     busy = true;
     error = null;
     startMessages();
     await goTo("creating");
     try {
-      await restoreBox(path);
-      const after = await listBoxes().catch(() => []);
+      await restoreAgent(path);
+      const after = await listAgents().catch(() => []);
       const restored = after.find((b) => !before.has(b.name));
-      if (restored) boxName = restored.name;
+      if (restored) agentName = restored.name;
       stopMessages();
       busy = false;
       await goTo("done");
@@ -261,10 +261,10 @@
     try {
       await connectToServer(url, key);
       // Connected — check if agents already exist on this server
-      const agents = await listBoxes().catch(() => []);
+      const agents = await listAgents().catch(() => []);
       if (agents.length > 0) {
         const agent = agents.find((a) => a.authenticated) ?? agents[0];
-        boxName = agent.name;
+        agentName = agent.name;
         busy = false;
         await goTo("done");
       } else {
@@ -356,16 +356,16 @@
 
     {:else if step === "name"}
       <div class="step step-anim">
-        <h1>new box</h1>
+        <h1>new agent</h1>
         <p class="sub">give it a name to get started.</p>
         <form onsubmit={(e) => { e.preventDefault(); handleCreate(); }}>
           <!-- svelte-ignore a11y_autofocus -->
           <input
             type="text"
             class="name-input"
-            placeholder="name your box"
-            value={boxName}
-            oninput={(e) => { boxName = (e.target as HTMLInputElement).value; }}
+            placeholder="name your agent"
+            value={agentName}
+            oninput={(e) => { agentName = (e.target as HTMLInputElement).value; }}
             autofocus
           />
           {#if error}
@@ -456,7 +456,7 @@
             <polyline points="22 4 12 14.01 9 11.01"/>
           </svg>
         </div>
-        <h1>{normalizedPreview || "your box"} is ready</h1>
+        <h1>{normalizedPreview || "your agent"} is ready</h1>
         <p class="sub">say hi.</p>
         <button class="btn primary" onclick={handleComplete}>continue</button>
       </div>

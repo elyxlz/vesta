@@ -1,27 +1,27 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
-  import { autoSetup, listBoxes, checkAndInstallUpdate, runInstallScript } from "./lib/api";
-  import { createBoxConnection, type BoxConnection } from "./lib/ws";
-  import { removeBoxState } from "./lib/store.svelte";
+  import { autoSetup, listAgents, checkAndInstallUpdate, runInstallScript } from "./lib/api";
+  import { createAgentConnection, type AgentConnection } from "./lib/ws";
+  import { removeAgentState } from "./lib/store.svelte";
   import { detectPlatform } from "./lib/platform";
   import Onboarding from "./components/Onboarding.svelte";
-  import BoxView from "./components/BoxView.svelte";
+  import AgentView from "./components/AgentView.svelte";
   import Chat from "./components/Chat.svelte";
   import Console from "./components/Console.svelte";
   import GridView from "./components/GridView.svelte";
 
   const platform = detectPlatform();
 
-  type View = "loading" | "grid" | "onboarding" | "box-home" | "box-chat" | "box-console";
+  type View = "loading" | "grid" | "onboarding" | "agent-home" | "agent-chat" | "agent-console";
 
   let view = $state<View>("loading");
   let ready = $state(false);
   let transitioning = $state(false);
-  let selectedBox = $state<{ name: string; wsPort: number } | null>(null);
-  let boxConnection = $state<BoxConnection | null>(null);
+  let selectedAgent = $state<{ name: string; wsPort: number } | null>(null);
+  let agentConnection = $state<AgentConnection | null>(null);
   let onboardingInitialName = $state("");
-  let hasBoxes = $state(false);
+  let hasAgents = $state(false);
   let updateInfo = $state<{ version: string; installing: boolean } | null>(null);
 
   async function setView(next: View) {
@@ -45,25 +45,25 @@
   }
 
   onMount(async () => {
-    // autoSetup must finish before listBoxes (it creates server.json on first run)
+    // autoSetup must finish before listAgents (it creates server.json on first run)
     await Promise.all([
       autoSetup().catch((e: unknown) => console.warn("auto-setup failed:", e)),
       scaleToMonitor(),
       new Promise((r) => setTimeout(r, 400)),
     ]);
-    const boxes = await listBoxes().catch(() => null);
+    const agents = await listAgents().catch(() => null);
     try {
-      if (!boxes) throw new Error();
-      hasBoxes = boxes.length > 0;
-      if (boxes.length === 1 && boxes[0].authenticated) {
-        selectedBox = { name: boxes[0].name, wsPort: boxes[0].ws_port };
-        boxConnection = createBoxConnection(boxes[0].name);
-        boxConnection.connect();
-        view = "box-home";
-      } else if (boxes.length > 1) {
+      if (!agents) throw new Error();
+      hasAgents = agents.length > 0;
+      if (agents.length === 1 && agents[0].authenticated) {
+        selectedAgent = { name: agents[0].name, wsPort: agents[0].ws_port };
+        agentConnection = createAgentConnection(agents[0].name);
+        agentConnection.connect();
+        view = "agent-home";
+      } else if (agents.length > 1) {
         view = "grid";
-      } else if (boxes.length === 1 && !boxes[0].authenticated) {
-        onboardingInitialName = boxes[0].name;
+      } else if (agents.length === 1 && !agents[0].authenticated) {
+        onboardingInitialName = agents[0].name;
         view = "onboarding";
       } else {
         view = "onboarding";
@@ -78,19 +78,19 @@
   });
 
   function clearConnection() {
-    boxConnection?.disconnect();
-    boxConnection = null;
-    selectedBox = null;
+    agentConnection?.disconnect();
+    agentConnection = null;
+    selectedAgent = null;
   }
 
   onDestroy(clearConnection);
 
-  function handleSelectBox(name: string, wsPort: number) {
-    boxConnection?.disconnect();
-    selectedBox = { name, wsPort };
-    boxConnection = createBoxConnection(name);
-    boxConnection.connect();
-    setView("box-home");
+  function handleSelectAgent(name: string, wsPort: number) {
+    agentConnection?.disconnect();
+    selectedAgent = { name, wsPort };
+    agentConnection = createAgentConnection(name);
+    agentConnection.connect();
+    setView("agent-home");
   }
 
   function handleBackToGrid() {
@@ -99,11 +99,11 @@
   }
 
   async function handleDestroyed() {
-    if (selectedBox) removeBoxState(selectedBox.name);
+    if (selectedAgent) removeAgentState(selectedAgent.name);
     clearConnection();
-    const remaining = await listBoxes().catch(() => []);
+    const remaining = await listAgents().catch(() => []);
     if (remaining.length === 0) {
-      hasBoxes = false;
+      hasAgents = false;
       view = "onboarding";
     } else {
       view = "grid";
@@ -111,22 +111,22 @@
   }
 
   async function handleOnboardingComplete(name: string) {
-    hasBoxes = true;
+    hasAgents = true;
     onboardingInitialName = "";
-    const boxes = await listBoxes().catch(() => []);
-    const box = boxes.find((b) => b.name === name);
-    if (box) {
-      boxConnection?.disconnect();
-      selectedBox = { name: box.name, wsPort: box.ws_port };
-      boxConnection = createBoxConnection(box.name);
-      boxConnection.connect();
-      await setView("box-chat");
+    const agents = await listAgents().catch(() => []);
+    const agent = agents.find((b) => b.name === name);
+    if (agent) {
+      agentConnection?.disconnect();
+      selectedAgent = { name: agent.name, wsPort: agent.ws_port };
+      agentConnection = createAgentConnection(agent.name);
+      agentConnection.connect();
+      await setView("agent-chat");
     } else {
       await setView("grid");
     }
   }
 
-  let isDark = $derived(view === "box-console" || view === "box-chat");
+  let isDark = $derived(view === "agent-console" || view === "agent-chat");
 
   let tipText = $state("");
   let tipX = $state(0);
@@ -178,39 +178,39 @@
       </div>
     {:else if view === "grid"}
       <GridView
-        onSelect={handleSelectBox}
+        onSelect={handleSelectAgent}
         onCreate={() => { onboardingInitialName = ""; setView("onboarding"); }}
-        onChat={(name, wsPort) => { handleSelectBox(name, wsPort); setView("box-chat"); }}
-        onConsole={(name, wsPort) => { handleSelectBox(name, wsPort); setView("box-console"); }}
+        onChat={(name, wsPort) => { handleSelectAgent(name, wsPort); setView("agent-chat"); }}
+        onConsole={(name, wsPort) => { handleSelectAgent(name, wsPort); setView("agent-console"); }}
       />
     {:else if view === "onboarding"}
-      <Onboarding onComplete={handleOnboardingComplete} onCancel={hasBoxes ? () => setView("grid") : undefined} initialName={onboardingInitialName} serverConfigured={hasBoxes} />
-    {:else if (view === "box-home" || view === "box-chat" || view === "box-console") && selectedBox && boxConnection}
-      <div class="box-stack">
-        <div class="box-layer" class:box-hidden={view !== "box-home"} inert={view !== "box-home"}>
-          <BoxView
-            name={selectedBox.name}
-            connection={boxConnection}
-            onChat={() => setView("box-chat")}
-            onConsole={() => setView("box-console")}
+      <Onboarding onComplete={handleOnboardingComplete} onCancel={hasAgents ? () => setView("grid") : undefined} initialName={onboardingInitialName} serverConfigured={hasAgents} />
+    {:else if (view === "agent-home" || view === "agent-chat" || view === "agent-console") && selectedAgent && agentConnection}
+      <div class="agent-stack">
+        <div class="agent-layer" class:agent-hidden={view !== "agent-home"} inert={view !== "agent-home"}>
+          <AgentView
+            name={selectedAgent.name}
+            connection={agentConnection}
+            onChat={() => setView("agent-chat")}
+            onConsole={() => setView("agent-console")}
             onDestroyed={handleDestroyed}
             onBack={handleBackToGrid}
           />
         </div>
-        {#if view === "box-chat"}
+        {#if view === "agent-chat"}
           <div class="overlay-layer">
-            <Chat name={selectedBox.name} connection={boxConnection} onBack={() => setView("box-home")} />
+            <Chat name={selectedAgent.name} connection={agentConnection} onBack={() => setView("agent-home")} />
           </div>
-        {:else if view === "box-console"}
+        {:else if view === "agent-console"}
           <div class="overlay-layer">
-            <Console name={selectedBox.name} onBack={() => setView("box-home")} />
+            <Console name={selectedAgent.name} onBack={() => setView("agent-home")} />
           </div>
         {/if}
       </div>
     {/if}
   </main>
 
-  {#if updateInfo && (view === "box-home" || view === "grid")}
+  {#if updateInfo && (view === "agent-home" || view === "grid")}
     <div class="update-bar">
       {#if updateInfo.installing}
         v{updateInfo.version} installed — restart to apply
@@ -333,7 +333,7 @@
     :global(.actions.visible) { transform: none !important; }
     :global(.step-anim) { animation: none !important; }
     :global(.panel) { animation: none !important; }
-    :global(.box-view) { animation: none !important; }
+    :global(.agent-view) { animation: none !important; }
     :global(.grid-view) { animation: none !important; }
     :global(.menu-dropdown) { animation: none !important; }
     :global(.msg) { animation: none !important; }
@@ -479,7 +479,7 @@
     min-height: 0;
   }
 
-  .box-stack {
+  .agent-stack {
     position: relative;
     display: flex;
     flex-direction: column;
@@ -487,14 +487,14 @@
     min-height: 0;
   }
 
-  .box-layer {
+  .agent-layer {
     display: flex;
     flex-direction: column;
     flex: 1;
     min-height: 0;
   }
 
-  .box-layer.box-hidden {
+  .agent-layer.agent-hidden {
     visibility: hidden;
     pointer-events: none;
   }

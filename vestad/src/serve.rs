@@ -17,6 +17,12 @@ use tokio::sync::Mutex;
 
 use crate::docker;
 
+const API_KEY_BYTES: usize = 32;
+const AUTH_SESSION_TIMEOUT_SECS: u64 = 600;
+const LOG_TAIL_LINES: &str = "500";
+const BACKUP_BUFFER_SIZE: usize = 64 * 1024;
+const MAX_RESTORE_SIZE: usize = 4 * 1024 * 1024 * 1024; // 4 GB
+
 // --- TLS cert generation ---
 
 pub fn ensure_tls(config_dir: &std::path::Path) -> (String, String, String) {
@@ -100,7 +106,7 @@ pub fn ensure_api_key(config_dir: &std::path::Path) -> String {
 
     std::fs::create_dir_all(config_dir).expect("failed to create config dir");
 
-    let key: String = (0..32)
+    let key: String = (0..API_KEY_BYTES)
         .map(|_| format!("{:02x}", rand::random::<u8>()))
         .collect();
 
@@ -147,7 +153,7 @@ impl AppState {
     async fn clean_expired_sessions(&self) {
         let mut sessions = self.auth_sessions.lock().await;
         let now = std::time::Instant::now();
-        sessions.retain(|_, s| now.duration_since(s.created) < std::time::Duration::from_secs(600));
+        sessions.retain(|_, s| now.duration_since(s.created) < std::time::Duration::from_secs(AUTH_SESSION_TIMEOUT_SECS));
     }
 }
 
@@ -349,8 +355,7 @@ async fn destroy_agent_handler(
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
-    let name_clone = name.clone();
-    tokio::task::spawn_blocking(move || docker::destroy_agent(&name_clone))
+    tokio::task::spawn_blocking(move || docker::destroy_agent(&name))
         .await
         .unwrap()
         .map_err(map_docker_err)?;
@@ -452,7 +457,7 @@ async fn complete_auth_handler(
             .ok_or_else(|| err_response(StatusCode::BAD_REQUEST, "invalid or expired session"))?
     };
 
-    let code = body.code.clone();
+    let code = body.code;
     let credentials = tokio::task::spawn_blocking(move || {
         docker::complete_auth_flow(&code, &session.code_verifier, &session.state)
     })
@@ -460,8 +465,7 @@ async fn complete_auth_handler(
     .unwrap()
     .map_err(|e| err_response(StatusCode::BAD_REQUEST, &e.to_string()))?;
 
-    let cname_clone = cname.clone();
-    tokio::task::spawn_blocking(move || docker::inject_credentials(&cname_clone, &credentials))
+    tokio::task::spawn_blocking(move || docker::inject_credentials(&cname, &credentials))
         .await
         .unwrap()
         .map_err(map_docker_err)?;
@@ -504,7 +508,7 @@ async fn logs_handler(
 
     let stream = async_stream::stream! {
         let mut child = match tokio::process::Command::new("docker")
-            .args(["exec", &cname, "tail", "-n", "500", "-f", docker::VESTA_LOG_PATH])
+            .args(["exec", &cname, "tail", "-n", LOG_TAIL_LINES, "-f", docker::VESTA_LOG_PATH])
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
             .spawn()
@@ -675,9 +679,9 @@ async fn backup_handler(
             Ok(c) => c,
             Err(e) => {
                 yield Err(std::io::Error::other(e));
-                let n = name_for_cleanup; let t = tag_for_cleanup;
+                let name = name_for_cleanup; let tag = tag_for_cleanup;
                 tokio::task::spawn_blocking(move || {
-                    docker::backup_cleanup(&n, &t, was_running);
+                    docker::backup_cleanup(&name, &tag, was_running);
                 }).await.ok();
                 return;
             }
@@ -685,7 +689,7 @@ async fn backup_handler(
 
         let stdout = gzip.stdout.take().unwrap();
         let mut reader = tokio::io::BufReader::new(stdout);
-        let mut buf = vec![0u8; 65536];
+        let mut buf = vec![0u8; BACKUP_BUFFER_SIZE];
 
         loop {
             match tokio::io::AsyncReadExt::read(&mut reader, &mut buf).await {
@@ -828,7 +832,7 @@ pub fn build_router(api_key: String) -> Router {
         .route("/agents/start", post(start_all_handler))
         .route(
             "/agents/restore",
-            post(restore_handler).layer(axum::extract::DefaultBodyLimit::max(4 * 1024 * 1024 * 1024)), // 4GB
+            post(restore_handler).layer(axum::extract::DefaultBodyLimit::max(MAX_RESTORE_SIZE)),
         )
         .route("/agents/{name}", get(agent_status_handler))
         .route("/agents/{name}/start", post(start_agent_handler))

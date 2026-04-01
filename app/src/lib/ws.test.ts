@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { get } from "svelte/store";
-import { createBoxConnection } from "./ws";
+import { createAgentConnection } from "./ws";
 
 let channelCallback: ((event: any) => void) | null = null;
 let invokeImpl: (...args: any[]) => Promise<any>;
@@ -41,9 +41,9 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("createBoxConnection", () => {
+describe("createAgentConnection", () => {
   it("calls connect_ws on connect", async () => {
-    const conn = createBoxConnection("test-agent");
+    const conn = createAgentConnection("test-agent");
     conn.connect();
     await vi.advanceTimersByTimeAsync(0);
     const { invoke } = await import("@tauri-apps/api/core");
@@ -52,7 +52,7 @@ describe("createBoxConnection", () => {
   });
 
   it("sets connected to true on open", async () => {
-    const conn = createBoxConnection("agent1");
+    const conn = createAgentConnection("agent1");
     conn.connect();
     await vi.advanceTimersByTimeAsync(0);
     simulateOpen();
@@ -61,7 +61,7 @@ describe("createBoxConnection", () => {
   });
 
   it("sets connected to false on disconnect", async () => {
-    const conn = createBoxConnection("agent2");
+    const conn = createAgentConnection("agent2");
     conn.connect();
     await vi.advanceTimersByTimeAsync(0);
     simulateOpen();
@@ -70,12 +70,12 @@ describe("createBoxConnection", () => {
   });
 
   it("send returns false when not connected", () => {
-    const conn = createBoxConnection("agent3");
+    const conn = createAgentConnection("agent3");
     expect(conn.send("hello")).toBe(false);
   });
 
   it("send returns true and sends via invoke when connected", async () => {
-    const conn = createBoxConnection("agent4");
+    const conn = createAgentConnection("agent4");
     conn.connect();
     await vi.advanceTimersByTimeAsync(0);
     simulateOpen();
@@ -89,7 +89,7 @@ describe("createBoxConnection", () => {
   });
 
   it("handles history events", async () => {
-    const conn = createBoxConnection("agent5");
+    const conn = createAgentConnection("agent5");
     conn.connect();
     await vi.advanceTimersByTimeAsync(0);
     simulateOpen();
@@ -107,20 +107,20 @@ describe("createBoxConnection", () => {
     conn.disconnect();
   });
 
-  it("updates boxState on status event", async () => {
-    const conn = createBoxConnection("agent6");
+  it("updates agentState on status event", async () => {
+    const conn = createAgentConnection("agent6");
     conn.connect();
     await vi.advanceTimersByTimeAsync(0);
     simulateOpen();
     simulateMessage({ type: "status", state: "thinking" });
-    expect(get(conn.boxState)).toBe("thinking");
+    expect(get(conn.agentState)).toBe("thinking");
     conn.disconnect();
   });
 
   it("does not reconnect after disconnect", async () => {
     const { invoke } = await import("@tauri-apps/api/core");
     const callsBefore = (invoke as any).mock.calls.filter((c: any) => c[0] === "connect_ws").length;
-    const conn = createBoxConnection("agent7");
+    const conn = createAgentConnection("agent7");
     conn.connect();
     await vi.advanceTimersByTimeAsync(0);
     simulateOpen();
@@ -132,7 +132,7 @@ describe("createBoxConnection", () => {
   });
 
   it("reconnects on unexpected close", async () => {
-    const conn = createBoxConnection("agent8");
+    const conn = createAgentConnection("agent8");
     conn.connect();
     await vi.advanceTimersByTimeAsync(0);
     simulateOpen();
@@ -145,7 +145,7 @@ describe("createBoxConnection", () => {
   });
 
   it("resetReconnect triggers immediate reconnect", async () => {
-    const conn = createBoxConnection("agent9");
+    const conn = createAgentConnection("agent9");
     conn.connect();
     await vi.advanceTimersByTimeAsync(0);
     simulateOpen();

@@ -9,5 +9,5 @@ case "$BUMP" in
 esac
 
 echo "Triggering $BUMP release..."
-gh workflow run release.yml -f bump="$BUMP"
+gh workflow run release.yml -f bump="$BUMP" || { echo "Failed to trigger workflow"; exit 1; }
 echo "Release workflow started. Watch progress: gh run watch"

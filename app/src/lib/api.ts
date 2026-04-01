@@ -2,7 +2,7 @@ import { invoke, Channel } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { check } from "@tauri-apps/plugin-updater";
 import { detectPlatform } from "./platform";
-import type { BoxInfo, ListEntry, LogEvent, PlatformStatus } from "./types";
+import type { AgentInfo, ListEntry, LogEvent, PlatformStatus } from "./types";
 
 export function isNewer(latest: string, current: string): boolean {
   const a = latest.split(".").map(Number);
@@ -14,43 +14,43 @@ export function isNewer(latest: string, current: string): boolean {
   return false;
 }
 
-export async function listBoxes(): Promise<ListEntry[]> {
+export async function listAgents(): Promise<ListEntry[]> {
   return invoke("list_agents");
 }
 
-export async function boxStatus(name: string): Promise<BoxInfo> {
+export async function agentStatus(name: string): Promise<AgentInfo> {
   return invoke("agent_status", { name });
 }
 
-export async function createBox(name: string): Promise<void> {
+export async function createAgent(name: string): Promise<void> {
   return invoke("create_agent", { name });
 }
 
-export async function startBox(name: string): Promise<void> {
+export async function startAgent(name: string): Promise<void> {
   return invoke("start_agent", { name });
 }
 
-export async function stopBox(name: string): Promise<void> {
+export async function stopAgent(name: string): Promise<void> {
   return invoke("stop_agent", { name });
 }
 
-export async function restartBox(name: string): Promise<void> {
+export async function restartAgent(name: string): Promise<void> {
   return invoke("restart_agent", { name });
 }
 
-export async function deleteBox(name: string): Promise<void> {
+export async function deleteAgent(name: string): Promise<void> {
   return invoke("delete_agent", { name });
 }
 
-export async function rebuildBox(name: string): Promise<void> {
+export async function rebuildAgent(name: string): Promise<void> {
   return invoke("rebuild_agent", { name });
 }
 
-export async function backupBox(name: string, output: string): Promise<void> {
+export async function backupAgent(name: string, output: string): Promise<void> {
   return invoke("backup_agent", { name, output });
 }
 
-export async function restoreBox(input: string, name?: string, replace?: boolean): Promise<void> {
+export async function restoreAgent(input: string, name?: string, replace?: boolean): Promise<void> {
   return invoke("restore_agent", { input, name: name ?? null, replace: replace ?? false });
 }
 
@@ -79,7 +79,7 @@ export async function submitAuthCode(code: string): Promise<void> {
   return invoke("submit_auth_code", { code });
 }
 
-export async function boxHost(): Promise<string> {
+export async function agentHost(): Promise<string> {
   return invoke("agent_host");
 }
 

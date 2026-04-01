@@ -2,30 +2,35 @@ use clap::{Parser, Subcommand};
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process;
+use vesta_common::version_less_than;
 
 mod client;
 mod platform;
 
+const GITHUB_RELEASES_URL: &str = "https://api.github.com/repos/elyxlz/vesta/releases/latest";
+const VERSION_CACHE_TTL_SECS: u64 = 3600;
+const UPDATE_CHECK_TIMEOUT_MS: u64 = 100;
+const UPDATE_CHECK_POLL_MS: u64 = 10;
+
 fn try_open_browser(url: &str) {
     #[cfg(target_os = "linux")]
-    let r = process::Command::new("xdg-open")
+    let _child = process::Command::new("xdg-open")
         .arg(url)
         .stdout(process::Stdio::null())
         .stderr(process::Stdio::null())
         .spawn();
     #[cfg(target_os = "macos")]
-    let r = process::Command::new("open")
+    let _child = process::Command::new("open")
         .arg(url)
         .stdout(process::Stdio::null())
         .stderr(process::Stdio::null())
         .spawn();
     #[cfg(target_os = "windows")]
-    let r = process::Command::new("cmd")
+    let _child = process::Command::new("cmd")
         .args(["/c", "start", "", url])
         .stdout(process::Stdio::null())
         .stderr(process::Stdio::null())
         .spawn();
-    let _ = r;
 }
 
 #[derive(Parser)]
@@ -160,16 +165,35 @@ enum Command {
     Update,
 }
 
-fn prompt_name() -> String {
-    eprint!("agent name: ");
+fn prompt(label: &str) -> String {
+    eprint!("{}: ", label);
     io::stderr().flush().ok();
     let mut input = String::new();
-    io::stdin().read_line(&mut input).ok();
-    let name = input.trim().to_string();
-    if name.is_empty() {
-        platform::die("agent name is required");
+    io::stdin()
+        .read_line(&mut input)
+        .unwrap_or_else(|_| platform::die(&format!("failed to read {label}")));
+    let value = input.trim().to_string();
+    if value.is_empty() {
+        platform::die(&format!("{label} is required"));
     }
-    name
+    value
+}
+
+fn prompt_name() -> String {
+    prompt("agent name")
+}
+
+fn authenticate_agent(client: &client::Client, name: &str) {
+    let auth = client.start_auth(name).unwrap_or_else(|e| platform::die(&e));
+    eprintln!("open this URL to authenticate:");
+    eprintln!("  {}", auth.auth_url);
+    try_open_browser(&auth.auth_url);
+
+    let code = prompt("paste the auth code");
+    client
+        .complete_auth(name, &auth.session_id, &code)
+        .unwrap_or_else(|e| platform::die(&e));
+    eprintln!("authenticated!");
 }
 
 fn get_client(host: Option<&str>, token: Option<&str>) -> client::Client {
@@ -190,15 +214,13 @@ fn try_migrate_linux() -> Option<platform::ServerConfig> {
     vesta_common::load_server_config()
 }
 
-use vesta_common::version_less_than;
-
 fn fetch_latest_version(timeout: Option<u64>) -> Option<String> {
     let mut args = vec!["-fsSL"];
     let timeout_connect;
     let timeout_max;
     if let Some(t) = timeout {
-        timeout_connect = format!("{}", t);
-        timeout_max = format!("{}", t);
+        timeout_connect = t.to_string();
+        timeout_max = t.to_string();
         args.extend([
             "--connect-timeout",
             &timeout_connect,
@@ -206,7 +228,7 @@ fn fetch_latest_version(timeout: Option<u64>) -> Option<String> {
             &timeout_max,
         ]);
     }
-    args.push("https://api.github.com/repos/elyxlz/vesta/releases/latest");
+    args.push(GITHUB_RELEASES_URL);
 
     let output = process::Command::new("curl")
         .args(&args)
@@ -308,13 +330,13 @@ fn cli_self_update(rust_target: &str, is_zip: bool, binary_subpath: &str) -> Opt
 }
 
 fn check_update_cached() -> Option<std::thread::JoinHandle<Option<String>>> {
-    let cache_dir = dirs::cache_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
+    let cache_dir = dirs::cache_dir().unwrap_or_else(std::env::temp_dir);
     let cache_file = cache_dir.join("vesta-version-check");
 
     if let Ok(contents) = std::fs::read_to_string(&cache_file) {
         if let Ok(meta) = std::fs::metadata(&cache_file) {
             if let Ok(modified) = meta.modified() {
-                if modified.elapsed().unwrap_or_default() < std::time::Duration::from_secs(3600) {
+                if modified.elapsed().unwrap_or_default() < std::time::Duration::from_secs(VERSION_CACHE_TTL_SECS) {
                     let latest = contents.trim();
                     if !latest.is_empty() && latest != env!("CARGO_PKG_VERSION") {
                         if version_less_than(latest, env!("CARGO_PKG_VERSION")) {
@@ -380,7 +402,7 @@ fn run(cli: Cli) {
             let c = get_client(host_ref, token_ref);
 
             let name = name
-                .map(|n| n.trim().to_string())
+                .map(|name| name.trim().to_string())
                 .unwrap_or_else(prompt_name);
 
             // Create agent
@@ -395,36 +417,13 @@ fn run(cli: Cli) {
                 Err(e) => platform::die(&e),
             }
 
-            // Auth
             eprintln!("authenticating claude...");
-            let auth = c.start_auth(&name).unwrap_or_else(|e| platform::die(&e));
-            eprintln!("open this URL to authenticate:");
-            eprintln!("  {}", auth.auth_url);
-            try_open_browser(&auth.auth_url);
-
-            eprint!("paste the auth code: ");
-            io::stderr().flush().ok();
-            let mut code = String::new();
-            io::stdin()
-                .read_line(&mut code)
-                .unwrap_or_else(|_| platform::die("failed to read auth code"));
-            let code = code.trim();
-            if code.is_empty() {
-                platform::die("no auth code provided");
-            }
-            c.complete_auth(&name, &auth.session_id, code)
-                .unwrap_or_else(|e| platform::die(&e));
-            eprintln!("authenticated!");
+            authenticate_agent(&c, &name);
 
             // Start
             c.start_agent(&name).unwrap_or_else(|e| platform::die(&e));
             eprintln!("agent '{}' is running.", name);
 
-            // Install autostart
-            #[cfg(target_os = "linux")]
-            {
-                // Already installed above
-            }
             #[cfg(target_os = "macos")]
             platform::macos::install_autostart()
                 .unwrap_or_else(|e| platform::die(&e));
@@ -436,7 +435,7 @@ fn run(cli: Cli) {
         Command::Create { build, name } => {
             let c = get_client(host_ref, token_ref);
             let name = name
-                .map(|n| n.trim().to_string())
+                .map(|name| name.trim().to_string())
                 .unwrap_or_else(prompt_name);
             let name = c.create_agent(&name, build).unwrap_or_else(|e| platform::die(&e));
             eprintln!(
@@ -492,24 +491,7 @@ fn run(cli: Cli) {
                     .unwrap_or_else(|e| platform::die(&e));
                 eprintln!("{}: authenticated", name);
             } else {
-                let auth = c.start_auth(&name).unwrap_or_else(|e| platform::die(&e));
-                eprintln!("open this URL to authenticate:");
-                eprintln!("  {}", auth.auth_url);
-                try_open_browser(&auth.auth_url);
-
-                eprint!("paste the auth code: ");
-                io::stderr().flush().ok();
-                let mut code = String::new();
-                io::stdin()
-                    .read_line(&mut code)
-                    .unwrap_or_else(|_| platform::die("failed to read auth code"));
-                let code = code.trim();
-                if code.is_empty() {
-                    platform::die("no auth code provided");
-                }
-                c.complete_auth(&name, &auth.session_id, code)
-                    .unwrap_or_else(|e| platform::die(&e));
-                eprintln!("{}: authenticated", name);
+                authenticate_agent(&c, &name);
             }
         }
 
@@ -533,7 +515,7 @@ fn run(cli: Cli) {
                             "name": name,
                             "status": "not_found",
                             "authenticated": false,
-                            "ws_port": 7865,
+                            "ws_port": vesta_common::DEFAULT_WS_PORT,
                             "alive": false,
                             "friendly_status": "not found"
                         })
@@ -543,7 +525,7 @@ fn run(cli: Cli) {
                 platform::die(&e);
             });
             if json {
-                println!("{}", serde_json::to_string(&status).unwrap());
+                println!("{}", serde_json::to_string(&status).unwrap_or_else(|e| platform::die(&format!("failed to serialize: {e}"))));
             } else {
                 println!("name:   {}", status.name);
                 println!("status: {}", status.status);
@@ -568,7 +550,7 @@ fn run(cli: Cli) {
             let c = get_client(host_ref, token_ref);
             let agents = c.list_agents().unwrap_or_else(|e| platform::die(&e));
             if json {
-                println!("{}", serde_json::to_string(&agents).unwrap());
+                println!("{}", serde_json::to_string(&agents).unwrap_or_else(|e| platform::die(&format!("failed to serialize: {e}"))));
             } else if agents.is_empty() {
                 println!("no agents. run: vesta setup");
             } else {
@@ -628,18 +610,11 @@ fn run(cli: Cli) {
         }
 
         Command::Connect { host } => {
-            // Parse URL#apikey format, or prompt for key
-            let (url, key) = if let Some((u, k)) = host.split_once('#') {
-                (u.to_string(), k.to_string())
+            let (url, key) = if let Some((url, key)) = host.split_once('#') {
+                (url.to_string(), key.to_string())
             } else {
-                let u = host.clone();
-                eprint!("API key: ");
-                io::stderr().flush().ok();
-                let mut k = String::new();
-                io::stdin()
-                    .read_line(&mut k)
-                    .unwrap_or_else(|_| platform::die("failed to read API key"));
-                (u, k.trim().to_string())
+                let key = prompt("API key");
+                (host, key)
             };
 
             let url = vesta_common::normalize_url(&url);
@@ -654,13 +629,14 @@ fn run(cli: Cli) {
                 cert_pem: None,
             };
 
-            let c = client::Client::new(&config);
-            c.health()
-                .unwrap_or_else(|e| platform::die(&format!("cannot reach server: {}", e)));
+            let client = client::Client::new(&config);
+            client
+                .health()
+                .unwrap_or_else(|e| platform::die(&format!("cannot reach server: {e}")));
 
             platform::save_server_config(&config)
                 .unwrap_or_else(|e| platform::die(&e));
-            eprintln!("connected to {}", url);
+            eprintln!("connected to {url}");
         }
 
         Command::Boot => {
@@ -722,9 +698,9 @@ fn run(cli: Cli) {
 
     // Check update notification
     if let Some(handle) = bg_handle {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(100);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(UPDATE_CHECK_TIMEOUT_MS);
         while !handle.is_finished() && std::time::Instant::now() < deadline {
-            std::thread::sleep(std::time::Duration::from_millis(10));
+            std::thread::sleep(std::time::Duration::from_millis(UPDATE_CHECK_POLL_MS));
         }
         if handle.is_finished() {
             if let Ok(Some(latest)) = handle.join() {
