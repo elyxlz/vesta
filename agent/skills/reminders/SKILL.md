@@ -1,40 +1,33 @@
 ---
 name: reminders
-description: This skill should be used when the user asks about "reminders", "remind me", "alert", "notify", or needs to set, manage, or check reminders and time-based notifications. Reminders are for the user, but also for yourself — use them to follow up, check in, or bring something up later. Tasks are the ground truth of what needs doing; reminders are nudges about when to think about it. Requires a background daemon.
+description: Reminders are now part of the tasks CLI. Use `tasks remind` instead. This skill redirects to the tasks skill for all reminder functionality.
 ---
 
-# Reminders — CLI: reminder
+# Reminders — now part of Tasks CLI
+
+Reminders have been unified into the tasks CLI. Use `tasks remind` instead of the old `reminder` command.
 
 ## Quick Reference
 ```bash
-reminder set "Call the dentist" --in-minutes 30
-reminder set "Submit report" --in-hours 2
-reminder set "Meeting" --scheduled-datetime "2025-11-15T10:00:00" --tz "Europe/London"
-reminder set "Take meds" --in-hours 1 --recurring daily
-reminder list --limit 20
-reminder cancel <id>
-reminder update <id> --message "Updated"
+tasks remind "Call mom" --in-minutes 30
+tasks remind "Check report" --task <id> --in-hours 1
+tasks remind "Standup" --recurring daily --at "2025-12-01T10:30:00" --tz "UTC"
+tasks remind list
+tasks remind list --task <id>
+tasks remind delete <id>
+tasks remind update <id> --message "Updated"
 ```
 
-## Time Options
-- Relative: `--in-minutes`, `--in-hours`, `--in-days`
-- Absolute: `--scheduled-datetime` + `--tz` (both required together)
-- Recurring: `--recurring` hourly|daily|weekly|monthly|yearly
-  - hourly: no datetime needed; others: require `--scheduled-datetime` + `--tz`
-  - Fires repeatedly at the interval from the scheduled time
+## Full Documentation
+See the tasks skill: `~/vesta/skills/tasks/SKILL.md`
 
-## Recurring Automations
-Recurring reminders double as scheduled automations. The reminder message is delivered as a notification, so use it to trigger any repeating workflow:
-- `reminder set "Summarize my week ahead" --scheduled-datetime "2025-11-17T08:00:00" --tz "Europe/London" --recurring weekly` — every Monday morning briefing
-- `reminder set "Archive completed tasks" --scheduled-datetime "2025-11-14T17:00:00" --tz "Europe/London" --recurring weekly` — Friday cleanup
-- `reminder set "Check inbox" --recurring hourly` — periodic email check
-- `reminder set "Review budget spreadsheet" --scheduled-datetime "2025-11-01T09:00:00" --tz "Europe/London" --recurring monthly`
+## Daemon
+The tasks daemon handles reminders. No separate reminder daemon needed:
+```bash
+screen -dmS tasks tasks serve --notifications-dir ~/vesta/notifications
+```
 
-When a recurring reminder fires, treat the message as an instruction and act on it.
-
-## Setup: `uv tool install ~/vesta/skills/reminders/cli`
-## Background: `screen -dmS reminder reminder serve --notifications-dir ~/vesta/notifications`
-## Restart: add to `~/vesta/prompts/restart.md`: `screen -dmS reminder reminder serve --notifications-dir ~/vesta/notifications`
-
-### Reminder Patterns
-[User's common reminder types and preferences]
+Stop the old reminder daemon if still running:
+```bash
+screen -XS reminder quit
+```
