@@ -305,9 +305,7 @@ def send_reminder_job(reminder_id: str, *, message: str, data_dir: str, notif_di
 # ---------------------------------------------------------------------------
 
 
-def _restore_row(
-    scheduler: BackgroundScheduler, row, now: datetime, notif_dir: Path | None, conn, config: Config
-) -> bool:
+def _restore_row(scheduler: BackgroundScheduler, row, now: datetime, notif_dir: Path | None, conn, config: Config) -> bool:
     """Restore a single reminder row into the scheduler. Returns True if handled, False to skip."""
     reminder_id = row["id"]
     try:
