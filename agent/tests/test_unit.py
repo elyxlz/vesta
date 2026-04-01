@@ -15,7 +15,6 @@ from vesta.core.client import _format_tool_call, _parse_agent_input, _tool_summa
 from vesta.core.history import format_results, history_get_range, history_save, history_search, open_history
 from vesta.events import EventBus, SubagentStartEvent, SubagentStopEvent
 from vesta.core.init import get_memory_path
-from vesta.core.loops import format_notification_batch
 
 
 def _make_config(tmp_path: Path) -> vm.VestaConfig:
@@ -109,21 +108,6 @@ async def test_subagent_hook_emits_event(verb, event_type, agent_id, agent_type)
     assert received["agent_type"] == agent_type
 
 
-def test_format_notification_batch_single():
-    notif = vm.Notification(timestamp=dt.datetime(2025, 1, 1), source="test", type="message")
-    formatted = format_notification_batch([notif])
-    assert "[NOTIFICATIONS]" not in formatted
-
-
-def test_format_notification_batch_multiple():
-    notifs = [
-        vm.Notification(timestamp=dt.datetime(2025, 1, 1), source="test", type="message"),
-        vm.Notification(timestamp=dt.datetime(2025, 1, 1, 0, 0, 1), source="test", type="message"),
-    ]
-    formatted = format_notification_batch(notifs)
-    assert "[NOTIFICATIONS]" in formatted
-
-
 # --- Deployment validation ---
 
 
@@ -201,7 +185,7 @@ async def _run_processor_test(
     *,
     message_side_effect,
     pre_state: vm.State | None = None,
-    initial_queue: list[tuple[str, bool]] | None = None,
+    initial_queue: list[tuple[str, bool, bool]] | None = None,
     extra_patches: dict | None = None,
 ):
     """Shared helper for message_processor tests."""
@@ -272,7 +256,7 @@ async def test_message_processor_resets_on_error(tmp_path):
         return (["OK"], state)
 
     state, session_count, messages = await _run_processor_test(
-        tmp_path, message_side_effect=side_effect, initial_queue=[("first message - will fail", True)]
+        tmp_path, message_side_effect=side_effect, initial_queue=[("first message - will fail", True, True)]
     )
     assert session_count >= 2
     assert any("Previous request failed" in msg for msg in messages)
@@ -291,7 +275,7 @@ async def test_message_processor_restart_preserves_session(tmp_path):
         return (["OK"], state)
 
     state, session_count, messages = await _run_processor_test(
-        tmp_path, message_side_effect=side_effect, initial_queue=[("edit some config", True)]
+        tmp_path, message_side_effect=side_effect, initial_queue=[("edit some config", True, True)]
     )
     assert state.session_id == "test-session-123"
     assert session_count >= 2
@@ -312,7 +296,7 @@ async def test_response_timeout_triggers_session_reset(tmp_path):
     pre_state = vm.State()
     pre_state.session_id = "timeout-session"
     state, session_count, messages = await _run_processor_test(
-        tmp_path, message_side_effect=side_effect, pre_state=pre_state, initial_queue=[("slow request", True)]
+        tmp_path, message_side_effect=side_effect, pre_state=pre_state, initial_queue=[("slow request", True, True)]
     )
     assert session_count >= 2
     assert state.session_id == "timeout-session"
@@ -369,9 +353,10 @@ async def test_dreamer_queues_prompt_and_archives(tmp_path):
         await process_nightly_memory(queue, state=state, config=config)
 
     assert not queue.empty()
-    msg, is_user = await queue.get()
+    msg, is_user, user_initiated = await queue.get()
     assert msg == "dreamer prompt"
     assert is_user is False
+    assert user_initiated is False
     assert state.last_dreamer_run == fake_now
     assert state.dreamer_active is True
 
@@ -412,7 +397,7 @@ async def test_dreamer_triggers_automatic_restart(tmp_path):
         tmp_path,
         message_side_effect=side_effect,
         pre_state=pre_state,
-        initial_queue=[("dreamer prompt content", False)],
+        initial_queue=[("dreamer prompt content", False, False)],
         extra_patches={"vesta.core.loops._now": lambda: fake_now},
     )
     assert state.session_id is None
@@ -445,7 +430,7 @@ async def test_message_processor_interrupts_on_new_message(tmp_path):
     state.shutdown_event = asyncio.Event()
     queue: asyncio.Queue = asyncio.Queue()
 
-    await queue.put(("slow processing message", True))
+    await queue.put(("slow processing message", True, True))
 
     processed: list[str] = []
     original = slow_side_effect
@@ -460,7 +445,7 @@ async def test_message_processor_interrupts_on_new_message(tmp_path):
 
     async def inject_message_and_shutdown():
         await processing_started.wait()
-        await queue.put(("urgent message", True))
+        await queue.put(("urgent message", True, True))
         await interrupt_seen.wait()
         await asyncio.sleep(0.1)
         assert state.shutdown_event is not None
@@ -496,7 +481,7 @@ async def test_process_interruptible_cancels_process_task(tmp_path):
     task_started = asyncio.Event()
     task_cancelled = False
 
-    async def hanging_process(msg, *, state, config, is_user):
+    async def hanging_process(msg, *, state, config, is_user, user_initiated=False):
         nonlocal task_cancelled
         task_started.set()
         try:
@@ -507,7 +492,7 @@ async def test_process_interruptible_cancels_process_task(tmp_path):
         return (["OK"], state)
 
     with patch("vesta.core.loops._process_message_safely", hanging_process):
-        interruptible_task = asyncio.create_task(_process_interruptible("test msg", is_user=True, queue=queue, state=state, config=config))
+        interruptible_task = asyncio.create_task(_process_interruptible("test msg", is_user=True, user_initiated=True, queue=queue, state=state, config=config))
         await task_started.wait()
         interruptible_task.cancel()
         with pytest.raises(asyncio.CancelledError):

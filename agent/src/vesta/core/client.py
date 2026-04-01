@@ -203,7 +203,7 @@ def _subagent_hook(state: vm.State, *, verb: str, event_type: str) -> HookCallba
         else:
             event = SubagentStopEvent(type="subagent_stop", agent_id=agent_id, agent_type=agent_type)
             # Parse transcript for per-subagent usage
-            transcript_path = input_data.get("agent_transcript_path", "")  # type: ignore[union-attr]
+            transcript_path = input_data.get("agent_transcript_path", "")
             if transcript_path:
                 model, totals = _parse_subagent_transcript(transcript_path)
                 if any(totals.values()):
