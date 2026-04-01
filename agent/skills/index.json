@@ -36,6 +36,10 @@
     "description": "Discover and install new capabilities from the skill registry. Use this when asked to add a new feature, when you want to explore what you could do, or when a user asks if you can do something you don't have a skill for yet. The registry lives on GitHub \u2014 search it to find skills, then install them to give yourself new abilities."
   },
   {
+    "name": "telegram",
+    "description": "This skill should be used when the user asks about \"telegram\", \"tg\", \"telegram message\", or needs to send/receive messages via Telegram. Requires a background daemon."
+  },
+  {
     "name": "tasks",
     "description": "This skill should be used when the user asks about \"tasks\", \"to-do\", \"todo\", \"task list\", \"reminders\", \"remind me\", \"alert\", \"notify\", or needs to create, manage, track, or organize tasks, to-do items, reminders, and time-based notifications. Everything actionable becomes a task immediately. All work, progress, drafts go in task metadata. Reminders are nudges about when to think about something \u2014 standalone or linked to a task. IMPORTANT \u2014 this skill requires a background daemon. Before doing anything, immediately make sure the daemon is running. Read this skill to learn how."
   },
