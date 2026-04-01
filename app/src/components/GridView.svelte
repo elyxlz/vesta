@@ -30,7 +30,7 @@
   let activityStates = $state<Record<string, AgentActivityState>>({});
 
   function syncConnections() {
-    const aliveNames = new Set(agents.filter((b) => b.alive).map((b) => `${b.name}:${b.ws_port}`));
+    const aliveNames = new Set(agents.filter((a) => a.alive).map((a) => `${a.name}:${a.ws_port}`));
 
     for (const [key, entry] of connections) {
       if (!aliveNames.has(key)) {

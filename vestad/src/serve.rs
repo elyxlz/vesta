@@ -694,7 +694,7 @@ async fn backup_handler(
         loop {
             match tokio::io::AsyncReadExt::read(&mut reader, &mut buf).await {
                 Ok(0) => break,
-                Ok(n) => yield Ok(bytes::Bytes::copy_from_slice(&buf[..n])),
+                Ok(bytes_read) => yield Ok(bytes::Bytes::copy_from_slice(&buf[..bytes_read])),
                 Err(e) => {
                     yield Err(e);
                     break;
@@ -705,9 +705,9 @@ async fn backup_handler(
         docker_save.wait().await.ok();
         gzip.wait().await.ok();
 
-        let n = name_for_cleanup; let t = tag_for_cleanup;
+        let name = name_for_cleanup; let tag = tag_for_cleanup;
         tokio::task::spawn_blocking(move || {
-            docker::backup_cleanup(&n, &t, was_running);
+            docker::backup_cleanup(&name, &tag, was_running);
         }).await.ok();
     };
 

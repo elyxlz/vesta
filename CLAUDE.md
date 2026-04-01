@@ -54,6 +54,7 @@ Triggers a GitHub Actions workflow that bumps version, commits to master, tags, 
 
 ## Code Conventions
 
+### Python (agent/)
 - **Always `uv run`**, never bare `python`
 - **`getattr`, `.get()` (dict), `hasattr` are banned** — use direct access, `in` checks, or try/except
 - **No silent exception swallowing** — prefer explicit checks (`if path.exists()`) or log the error
@@ -61,6 +62,17 @@ Triggers a GitHub Actions workflow that bumps version, commits to master, tags, 
 - Line length: 144 (ruff)
 - `effects.py` exports `get_current_time` as a test seam for time mocking
 - `state_dir` defaults to `Path.home()` — the container's home IS the state dir
+
+### Rust (cli/, vestad/, vesta-common/)
+- **No panics in library/server code** — return `Result`, never `panic!()` or `.unwrap()` on fallible operations. `.expect()` only where failure is truly impossible.
+- **Named constants for magic numbers** — timeouts, buffer sizes, port numbers, retry counts go in `const` at the top of the file.
+- **Descriptive variable names** — no single-letter vars (`n`, `t`, `c`). Use `name`, `tag`, `client`.
+- **Minimize `.clone()`** — move values into closures when possible, only clone when the value is genuinely needed afterward.
+- **Extract repeated patterns** — if 3+ lines appear twice, extract a helper function.
+
+### Frontend (app/src/)
+- **"Agent" terminology everywhere** — never "box". Types: `AgentInfo`, `AgentConnection`, `AgentActivityState`. Component: `AgentView.svelte`.
+- **Tauri invoke() names must match Rust backend** — the invoke command strings are the contract, don't rename them.
 
 ## CI
 
