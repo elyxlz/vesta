@@ -15,7 +15,7 @@ path = "src/main.rs"
 clap = { version = "4", features = ["derive"] }
 axum = { version = "0.8", features = ["ws"] }
 axum-server = { version = "0.7", features = ["tls-rustls"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "io-util", "process", "sync", "time", "fs"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "io-util", "process", "sync", "time", "fs", "net"] }
 tokio-tungstenite = "0.26"
 tower-http = { version = "0.6", features = ["cors"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
