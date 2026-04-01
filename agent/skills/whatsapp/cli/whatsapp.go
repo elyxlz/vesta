@@ -758,6 +758,25 @@ func (wac *WhatsAppClient) prepareNotificationInfo(info types.MessageSource) (
 		contactPhone = contact.PhoneNumber
 		contactSaved = true
 	}
+
+	// Fallback: if chat was a LID that couldn't be resolved, try resolvedSender
+	if !contactSaved && resolvedSender.Server == types.DefaultUserServer {
+		if contact, err := wac.store.GetManualContact(resolvedSender.String()); err == nil && contact != nil {
+			contactName = contact.Name
+			contactPhone = contact.PhoneNumber
+			contactSaved = true
+		}
+	}
+
+	// Fallback: try SenderAlt directly (may be a phone-number JID even when Chat is a LID)
+	if !contactSaved && !info.SenderAlt.IsEmpty() && info.SenderAlt.Server == types.DefaultUserServer {
+		if contact, err := wac.store.GetManualContact(info.SenderAlt.String()); err == nil && contact != nil {
+			contactName = contact.Name
+			contactPhone = contact.PhoneNumber
+			contactSaved = true
+		}
+	}
+
 	if contactPhone == "" && resolvedChat.User != "" {
 		contactPhone = "+" + resolvedChat.User
 	}
