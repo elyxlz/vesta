@@ -29,7 +29,7 @@
   },
   {
     "name": "reminders",
-    "description": "This skill should be used when the user asks about \"reminders\", \"remind me\", \"alert\", \"notify\", or needs to set, manage, or check reminders and time-based notifications. Reminders are for the user, but also for yourself \u2014 use them to follow up, check in, or bring something up later. Tasks are the ground truth of what needs doing; reminders are nudges about when to think about it. IMPORTANT \u2014 this skill requires a background daemon. Before doing anything, immediately make sure the daemon is running. Read this skill to learn how."
+    "description": "Reminders are now part of the tasks CLI. Use `tasks remind` instead. This skill redirects to the tasks skill for all reminder functionality."
   },
   {
     "name": "skills-registry",
@@ -37,7 +37,7 @@
   },
   {
     "name": "tasks",
-    "description": "This skill should be used when the user asks about \"tasks\", \"to-do\", \"todo\", \"task list\", or needs to create, manage, track, or organize tasks and to-do items. Everything actionable becomes a task immediately. All work, progress, drafts go in task metadata. IMPORTANT \u2014 this skill requires a background daemon. Before doing anything, immediately make sure the daemon is running. Read this skill to learn how."
+    "description": "This skill should be used when the user asks about \"tasks\", \"to-do\", \"todo\", \"task list\", \"reminders\", \"remind me\", \"alert\", \"notify\", or needs to create, manage, track, or organize tasks, to-do items, reminders, and time-based notifications. Everything actionable becomes a task immediately. All work, progress, drafts go in task metadata. Reminders are nudges about when to think about something \u2014 standalone or linked to a task. IMPORTANT \u2014 this skill requires a background daemon. Before doing anything, immediately make sure the daemon is running. Read this skill to learn how."
   },
   {
     "name": "upstream",
