@@ -14,7 +14,6 @@ dependencies = [
     "pydantic>=2.10.4",
     "pydantic-settings>=2.7.0",
     "rich>=14.2.0",
-    "watchfiles>=1.0.0",
 ]
 
 [project.urls]

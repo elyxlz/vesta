@@ -33,7 +33,6 @@ class ToolEndEvent(_BaseEvent):
 class AssistantEvent(_BaseEvent):
     type: tp.Literal["assistant"]
     text: str
-    user_initiated: bool
 
 
 class UserEvent(_BaseEvent):

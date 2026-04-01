@@ -344,7 +344,7 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
 
     def _emit(t: str) -> None:
         logger.assistant(t)
-        state.event_bus.emit({"type": "assistant", "text": t, "user_initiated": state.user_initiated_turn})
+        state.event_bus.emit({"type": "assistant", "text": t})
         assistant_texts.append(t)
 
     response_iter = client.receive_response().__aiter__()

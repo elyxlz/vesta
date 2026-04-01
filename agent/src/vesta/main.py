@@ -4,9 +4,7 @@ import asyncio
 import datetime as dt
 import errno
 import os
-import re
 import signal
-import subprocess
 import types
 import typing as tp
 
@@ -23,7 +21,7 @@ from vesta.core.loops import message_processor, monitor_loop, queue_greeting
 SignalHandler = tp.Callable[[int, types.FrameType | None], None]
 
 
-async def input_handler(queue: asyncio.Queue[tuple[str, bool, bool]], *, state: vm.State) -> None:
+async def input_handler(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State) -> None:
     while not state.shutdown_event.is_set():
         try:
             user_msg = await aioconsole.ainput("")
@@ -32,7 +30,7 @@ async def input_handler(queue: asyncio.Queue[tuple[str, bool, bool]], *, state: 
             if not user_msg.strip():
                 continue
 
-            await queue.put((user_msg.strip(), True, False))
+            await queue.put((user_msg.strip(), True))
         except (KeyboardInterrupt, EOFError):
             state.shutdown_event.set()
             break
@@ -62,55 +60,6 @@ def _make_signal_handler(state: vm.State, *, allow_force_exit: bool = False) -> 
     return handler
 
 
-_WA_MIRROR_TO = "+393483826189"
-
-# Noise patterns — assistant text ending with these is a dismissal, don't mirror.
-_NOISE_TAIL = re.compile(
-    r"(ignored|not actionable\b.*|nothing actionable|monitoring silently|not urgent)\s*\.?\s*$",
-    re.IGNORECASE,
-)
-
-
-async def whatsapp_mirror(state: vm.State, config: vm.VestaConfig | None = None) -> None:
-    """Auto-mirror assistant messages to WhatsApp so both channels stay in sync.
-
-    Filters out noise — dismissals of newsletters, group chats, tweets, etc.
-    Only mirrors substantive responses.
-    """
-    sub = state.event_bus.subscribe()
-    first_message = True
-    try:
-        while not state.shutdown_event.is_set():
-            try:
-                event = await asyncio.wait_for(sub.get(), timeout=1.0)
-            except TimeoutError:
-                continue
-            if event.get("type") != "assistant":
-                continue
-            if not event.get("user_initiated", False) and not first_message:
-                continue
-            if first_message:
-                first_message = False
-            text = event.get("text", "").strip()
-            if not text or (len(text) < 120 and _NOISE_TAIL.search(text)):
-                continue
-            try:
-                await asyncio.get_running_loop().run_in_executor(
-                    None,
-                    lambda t=text: subprocess.run(
-                        ["/usr/local/bin/whatsapp", "send", "--to", config.mirror_phone if config else _WA_MIRROR_TO, "--message", t],
-                        capture_output=True,
-                        timeout=15,
-                    ),
-                )
-            except Exception:
-                pass  # don't crash the mirror on send failure
-    except asyncio.CancelledError:
-        pass
-    finally:
-        state.event_bus.unsubscribe(sub)
-
-
 async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: bool = False, crashed: bool = False) -> None:
     signal.signal(signal.SIGHUP, signal.SIG_IGN)
     signal.signal(signal.SIGINT, _make_signal_handler(state, allow_force_exit=True))
@@ -119,9 +68,9 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
     logger.init(f"{config.agent_name.upper()} started")
     (config.data_dir / "run_marker").touch()
 
-    message_queue: asyncio.Queue[tuple[str, bool, bool]] = asyncio.Queue()
+    message_queue: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()
 
-    # Bridge logger → event bus so webapp log panel mirrors console
+    # Bridge logger -> event bus so log panel mirrors console
     from vesta.events import LogEvent
 
     def _log_sink(text: str, category: str) -> None:
@@ -136,7 +85,6 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
         asyncio.create_task(input_handler(message_queue, state=state)),
         asyncio.create_task(message_processor(message_queue, state=state, config=config)),
         asyncio.create_task(monitor_loop(message_queue, state=state, config=config)),
-        asyncio.create_task(whatsapp_mirror(state, config)),
     ]
 
     reason = "first_start" if first_start else ("crash — restarted after unexpected exit" if crashed else "restart — clean restart")

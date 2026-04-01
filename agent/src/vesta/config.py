@@ -64,6 +64,5 @@ class VestaConfig(pyd_settings.BaseSettings):
     def session_file(self) -> pl.Path:
         return self.data_dir / "session_id"
 
-    mirror_phone: str = "+393483826189"
     agent_name: str = "vesta"
     agent_model: str = "opus"
