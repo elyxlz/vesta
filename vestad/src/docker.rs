@@ -33,9 +33,9 @@ const NAME_MAX_LEN: usize = 32;
 
 
 pub const OAUTH_CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
-pub const OAUTH_REDIRECT_URI: &str = "https://platform.claude.com/oauth/code/callback";
-pub const OAUTH_TOKEN_URL: &str = "https://platform.claude.com/v1/oauth/token";
-pub const OAUTH_AUTHORIZE_URL: &str = "https://platform.claude.com/oauth/authorize";
+pub const OAUTH_REDIRECT_URI: &str = "https://console.anthropic.com/oauth/code/callback";
+pub const OAUTH_TOKEN_URL: &str = "https://console.anthropic.com/v1/oauth/token";
+pub const OAUTH_AUTHORIZE_URL: &str = "https://claude.ai/oauth/authorize";
 
 #[derive(PartialEq, Clone, Copy)]
 pub enum ContainerStatus {
@@ -567,7 +567,7 @@ pub fn start_auth_flow() -> (String, String, String) {
         OAUTH_AUTHORIZE_URL,
         OAUTH_CLIENT_ID,
         urlencod(OAUTH_REDIRECT_URI),
-        urlencod("user:inference user:profile"),
+        urlencod("org:create_api_key user:profile user:inference"),
         code_challenge,
         state,
     );

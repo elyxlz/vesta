@@ -1,5 +1,5 @@
 /// Verify Anthropic's OAuth endpoints are reachable.
-/// Catches endpoint migrations (e.g. console.anthropic.com → platform.claude.com).
+/// Catches endpoint migrations.
 
 fn check_endpoint(url: &str) {
     let agent = ureq::Agent::new_with_defaults();
@@ -20,15 +20,15 @@ fn check_endpoint(url: &str) {
 
 #[test]
 fn oauth_authorize_endpoint_reachable() {
-    check_endpoint("https://platform.claude.com/oauth/authorize");
+    check_endpoint("https://claude.ai/oauth/authorize");
 }
 
 #[test]
 fn oauth_token_endpoint_reachable() {
-    check_endpoint("https://platform.claude.com/v1/oauth/token");
+    check_endpoint("https://console.anthropic.com/v1/oauth/token");
 }
 
 #[test]
 fn oauth_callback_endpoint_reachable() {
-    check_endpoint("https://platform.claude.com/oauth/code/callback");
+    check_endpoint("https://console.anthropic.com/oauth/code/callback");
 }
