@@ -11,7 +11,7 @@ from claude_agent_sdk import ClaudeSDKClient, ClaudeSDKError
 
 import vesta.models as vm
 from vesta import logger
-from vesta.core.client import process_message, build_client_options, attempt_interrupt, persist_session_id, _cancel_task
+from vesta.core.client import process_message, build_client_options, attempt_interrupt, filter_tool_lines, persist_session_id, _cancel_task
 from vesta.core.init import load_prompt, build_restart_context
 
 
@@ -123,7 +123,14 @@ async def _process_message_safely(msg: str, *, is_user: bool, state: vm.State, c
             preview = msg[:200] + "..." if len(msg) > 200 else msg
             logger.system(preview.replace("\n", " "))
         state.event_bus.set_state("thinking")
-        await process_message(msg, state=state, config=config, is_user=is_user)
+        responses, _ = await process_message(msg, state=state, config=config, is_user=is_user)
+        for response in responses:
+            if not response or not response.strip():
+                continue
+            filtered = filter_tool_lines(response)
+            if filtered:
+                logger.assistant(filtered)
+                state.event_bus.emit({"type": "assistant", "text": filtered})
     except (ClaudeSDKError, OSError, RuntimeError, ValueError, TimeoutError) as e:
         if isinstance(e, TimeoutError):
             error_msg = "Response timed out"
@@ -144,12 +151,7 @@ async def _process_message_safely(msg: str, *, is_user: bool, state: vm.State, c
 
 
 async def _process_interruptible(
-    msg: str,
-    *,
-    is_user: bool,
-    queue: asyncio.Queue[tuple[str, bool]],
-    state: vm.State,
-    config: vm.VestaConfig,
+    msg: str, *, is_user: bool, queue: asyncio.Queue[tuple[str, bool]], state: vm.State, config: vm.VestaConfig
 ) -> None:
     """Process a message while monitoring the queue for new messages that should interrupt."""
     pending: collections.deque[tuple[str, bool]] = collections.deque([(msg, is_user)])
@@ -164,27 +166,22 @@ async def _process_interruptible(
 
             current_msg, current_is_user = pending.popleft()
             state.interrupt_event = asyncio.Event()
-            process_task = asyncio.create_task(
-                _process_message_safely(current_msg, is_user=current_is_user, state=state, config=config)
-            )
+            process_task = asyncio.create_task(_process_message_safely(current_msg, is_user=current_is_user, state=state, config=config))
 
             while not process_task.done():
                 queue_task: asyncio.Task[tuple[str, bool]] = asyncio.create_task(queue.get())
                 done, _ = await asyncio.wait({process_task, queue_task}, return_when=asyncio.FIRST_COMPLETED)
 
                 if queue_task in done:
-                    new_item = queue_task.result()
-                    pending.append(new_item)
-                    # Always interrupt on any new message
+                    pending.append(queue_task.result())
                     state.interrupt_event.set()
                     logger.interrupt(f"New message queued, interrupting current processing ({len(pending)} pending)")
                     await process_task
                     break
                 else:
                     await _cancel_task(queue_task)
-            else:
-                # Normal completion (not interrupted) — propagate any exception
-                await process_task
+
+            await process_task
             process_task = None
             state.interrupt_event = None
     except asyncio.CancelledError:
@@ -197,12 +194,7 @@ async def _process_interruptible(
 async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig) -> None:
     while state.shutdown_event and not state.shutdown_event.is_set():
         logger.client("Creating new client session...")
-        try:
-            options = build_client_options(config, state)
-        except FileNotFoundError as e:
-            logger.shutdown(f"Fatal: could not build client options — {e}")
-            state.shutdown_event.set()
-            return
+        options = build_client_options(config, state)
         async with ClaudeSDKClient(options=options) as client:
             state.client = client
             logger.client("Client session started")
@@ -264,9 +256,6 @@ async def process_nightly_memory(queue: asyncio.Queue[tuple[str, bool]], *, stat
         if state.last_dreamer_run is None or now.date() > state.last_dreamer_run.date():
             logger.dreamer("Nightly dreamer starting...")
             prompt = load_prompt("dream", config) or ""
-            if not prompt.strip():
-                logger.dreamer("Empty dream prompt — skipping")
-                return
             state.dreamer_active = True
             await queue.put((prompt, False))
             state.last_dreamer_run = now
