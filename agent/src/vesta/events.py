@@ -118,6 +118,7 @@ class EventBus:
                 q.put_nowait(event)
             except asyncio.QueueFull:
                 import logging
+
                 logging.getLogger("vesta").warning(
                     f"EventBus: dropped {event.get('type', '?')} event — subscriber queue full ({len(self._subscribers)} subs)"
                 )
@@ -131,6 +132,7 @@ class EventBus:
             return
         self._state = state
         from vesta import logger
+
         logger.state(state)
         self.emit(StatusEvent(type="status", state=state))
 

@@ -9,6 +9,7 @@ import vobject
 @dataclass
 class ParsedContact:
     """A parsed contact from a vCard."""
+
     full_name: str = ""
     first_name: str = ""
     last_name: str = ""
@@ -134,7 +135,7 @@ def parse_vcf_file(filepath: str | Path) -> list[ParsedContact]:
             try:
                 parsed = _parse_single_vcard(vcard)
                 contacts.append(parsed)
-            except Exception as e:
+            except Exception:
                 # Skip individual cards that fail to parse but continue
                 continue
     except Exception as e:
@@ -162,6 +163,7 @@ def contact_to_vcf(contact: dict) -> str:
     phones = contact.get("phones", [])
     if isinstance(phones, str):
         import json
+
         phones = json.loads(phones)
     for phone in phones:
         tel = vcard.add("tel")
@@ -171,6 +173,7 @@ def contact_to_vcf(contact: dict) -> str:
     emails = contact.get("emails", [])
     if isinstance(emails, str):
         import json
+
         emails = json.loads(emails)
     for email in emails:
         e = vcard.add("email")
@@ -198,6 +201,7 @@ def contact_to_vcf(contact: dict) -> str:
     addresses = contact.get("addresses", [])
     if isinstance(addresses, str):
         import json
+
         addresses = json.loads(addresses)
     for addr_str in addresses:
         adr = vcard.add("adr")

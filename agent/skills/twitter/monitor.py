@@ -13,7 +13,6 @@ import json
 import logging
 import os
 import re
-import sys
 import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, UTC
@@ -41,7 +40,7 @@ CONFIG_FILE = DATA_DIR / "config.json"
 STATE_FILE = DATA_DIR / "state.json"
 
 POLL_INTERVAL = 20 * 60  # 20 minutes
-MAX_SEEN = 2000          # cap seen GUIDs to avoid unbounded growth
+MAX_SEEN = 2000  # cap seen GUIDs to avoid unbounded growth
 
 logging.basicConfig(
     level=logging.INFO,
@@ -53,6 +52,7 @@ logger = logging.getLogger("twitter.monitor")
 # ---------------------------------------------------------------------------
 # Config file (list of handles)
 # ---------------------------------------------------------------------------
+
 
 def _load_config() -> dict:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -74,6 +74,7 @@ def _save_config(config: dict) -> None:
 # ---------------------------------------------------------------------------
 # State file (seen tweet GUIDs)
 # ---------------------------------------------------------------------------
+
 
 def _load_state() -> dict:
     if STATE_FILE.exists():
@@ -97,6 +98,7 @@ def _save_state(state: dict) -> None:
 # ---------------------------------------------------------------------------
 # Nitter RSS fetcher
 # ---------------------------------------------------------------------------
+
 
 def _fetch_rss(handle: str) -> list[dict]:
     """Fetch recent tweets for a handle. Returns list of tweet dicts."""
@@ -152,13 +154,15 @@ def _parse_rss(xml_text: str, handle: str) -> list[dict]:
         link = link_el.text if link_el is not None else ""
         pub_date = pub_el.text if pub_el is not None else ""
 
-        tweets.append({
-            "guid": guid,
-            "handle": handle,
-            "text": title,
-            "url": link,
-            "published": pub_date,
-        })
+        tweets.append(
+            {
+                "guid": guid,
+                "handle": handle,
+                "text": title,
+                "url": link,
+                "published": pub_date,
+            }
+        )
 
     return tweets
 
@@ -166,6 +170,7 @@ def _parse_rss(xml_text: str, handle: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Notification writer
 # ---------------------------------------------------------------------------
+
 
 def _write_notification(notif_dir: Path, tweet: dict) -> None:
     notif_dir.mkdir(parents=True, exist_ok=True)
@@ -190,10 +195,12 @@ def _write_notification(notif_dir: Path, tweet: dict) -> None:
 # Monitor loop
 # ---------------------------------------------------------------------------
 
+
 def _parse_pub_date(pub_date: str) -> "datetime | None":
     """Parse RSS pubDate string to datetime, or None on failure."""
     try:
         from email.utils import parsedate_to_datetime
+
         return parsedate_to_datetime(pub_date)
     except Exception:
         return None
@@ -201,7 +208,8 @@ def _parse_pub_date(pub_date: str) -> "datetime | None":
 
 def _poll_once(handles: list[str], notif_dir: Path, state: dict, seed_only: bool = False) -> int:
     """Poll all handles. Returns number of new tweets found."""
-    from datetime import timezone, timedelta
+    from datetime import timedelta
+
     seen = set(state.get("seen_guids", []))
     new_guids = list(seen)
     new_count = 0
@@ -241,7 +249,9 @@ def _poll_once(handles: list[str], notif_dir: Path, state: dict, seed_only: bool
                     _write_notification(notif_dir, tweet)
                     logger.info(f"New tweet from {handle}: {tweet['text'][:80]}")
             if tweets:
-                logger.debug(f"{handle}: fetched {len(tweets)} tweets, {sum(1 for t in tweets if t['guid'] not in (set(state.get('seen_guids',[])) - set(new_guids)))} new")
+                logger.debug(
+                    f"{handle}: fetched {len(tweets)} tweets, {sum(1 for t in tweets if t['guid'] not in (set(state.get('seen_guids', [])) - set(new_guids)))} new"
+                )
         except Exception as e:
             logger.error(f"Error polling {handle}: {e}")
 
@@ -285,6 +295,7 @@ def serve(notif_dir: Path) -> None:
 # ---------------------------------------------------------------------------
 # CLI commands
 # ---------------------------------------------------------------------------
+
 
 def cmd_follow(args: argparse.Namespace) -> None:
     config = _load_config()
@@ -346,6 +357,7 @@ def cmd_test(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Twitter/X monitor via Nitter RSS")

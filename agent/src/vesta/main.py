@@ -83,7 +83,7 @@ async def whatsapp_mirror(state: vm.State, config: vm.VestaConfig | None = None)
         while not state.shutdown_event.is_set():
             try:
                 event = await asyncio.wait_for(sub.get(), timeout=1.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
             if event.get("type") != "assistant":
                 continue
@@ -99,7 +99,8 @@ async def whatsapp_mirror(state: vm.State, config: vm.VestaConfig | None = None)
                     None,
                     lambda t=text: subprocess.run(
                         ["/usr/local/bin/whatsapp", "send", "--to", config.mirror_phone if config else _WA_MIRROR_TO, "--message", t],
-                        capture_output=True, timeout=15,
+                        capture_output=True,
+                        timeout=15,
                     ),
                 )
             except Exception:

@@ -139,9 +139,7 @@ def upsert_contact(
         if not norm_phone:
             continue
         for variant in phone_variants(norm_phone):
-            cursor = conn.execute(
-                "SELECT id, phones_normalized FROM contacts"
-            )
+            cursor = conn.execute("SELECT id, phones_normalized FROM contacts")
             for row in cursor:
                 stored_phones = json.loads(row["phones_normalized"]) if row["phones_normalized"] else []
                 for sp in stored_phones:
@@ -189,11 +187,18 @@ def upsert_contact(
                 notes = ?, raw_vcf = ?, updated_at = ?
             WHERE id = ?""",
             (
-                full_name, first_name, last_name,
-                organization, title,
-                phones_json, phones_norm_json,
-                emails_json, addresses_json,
-                notes, raw_vcf, now,
+                full_name,
+                first_name,
+                last_name,
+                organization,
+                title,
+                phones_json,
+                phones_norm_json,
+                emails_json,
+                addresses_json,
+                notes,
+                raw_vcf,
+                now,
                 existing_id,
             ),
         )
@@ -207,9 +212,19 @@ def upsert_contact(
              notes, raw_vcf, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
-            full_name, first_name, last_name, organization, title,
-            phones_json, phones_norm_json, emails_json, addresses_json,
-            notes, raw_vcf, now, now,
+            full_name,
+            first_name,
+            last_name,
+            organization,
+            title,
+            phones_json,
+            phones_norm_json,
+            emails_json,
+            addresses_json,
+            notes,
+            raw_vcf,
+            now,
+            now,
         ),
     )
     conn.commit()

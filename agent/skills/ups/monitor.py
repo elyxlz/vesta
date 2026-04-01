@@ -11,7 +11,7 @@ NUT_HOST = "localhost"
 NUT_PORT = 3493
 UPS_NAME = "ecoflow"
 WA_NUMBER = "+393483826189"
-CHECK_INTERVAL = 30        # seconds (normal, on mains)
+CHECK_INTERVAL = 30  # seconds (normal, on mains)
 BATTERY_REPORT_INTERVAL = 60  # seconds between status messages while on battery
 BATTERY_LOW_THRESHOLD = 20
 
@@ -42,7 +42,7 @@ def get_var(var):
     result = query_nut(f"GET VAR {UPS_NAME} {var}")
     try:
         return result.split('"')[1]
-    except:
+    except (IndexError, ValueError):
         return None
 
 
@@ -60,10 +60,7 @@ def get_all_vars():
 
 
 def send_whatsapp(msg):
-    subprocess.run(
-        ["whatsapp", "send", "--to", WA_NUMBER, "--message", msg],
-        capture_output=True
-    )
+    subprocess.run(["whatsapp", "send", "--to", WA_NUMBER, "--message", msg], capture_output=True)
 
 
 def battery_report(vars):
@@ -88,7 +85,7 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] == "serve":
         pass  # fall through to monitoring loop
 
-    print(f"[UPS monitor] starting")
+    print("[UPS monitor] starting")
     send_whatsapp("🔌 UPS monitor started — watching EcoFlow River 3 Plus")
 
     while True:
@@ -106,7 +103,7 @@ def main():
         if last_status == "OL" and on_battery:
             charge = vars.get("battery.charge", "?")
             runtime_s = vars.get("battery.runtime", None)
-            runtime_str = f" (~{int(runtime_s)//60} min)" if runtime_s and runtime_s.isdigit() else ""
+            runtime_str = f" (~{int(runtime_s) // 60} min)" if runtime_s and runtime_s.isdigit() else ""
             msg = f"⚡ POWER CUT — switched to battery. {charge}%{runtime_str}"
             print(f"[UPS] ALERT: {msg}")
             send_whatsapp(msg)
@@ -133,7 +130,7 @@ def main():
             charge = vars.get("battery.charge", "100")
             if charge.isdigit() and int(charge) <= BATTERY_LOW_THRESHOLD and not alerted_low:
                 runtime_s = vars.get("battery.runtime", None)
-                runtime_str = f" ~{int(runtime_s)//60} min left" if runtime_s and runtime_s.isdigit() else ""
+                runtime_str = f" ~{int(runtime_s) // 60} min left" if runtime_s and runtime_s.isdigit() else ""
                 msg = f"🔋 Battery LOW: {charge}%{runtime_str} — shutting down soon"
                 print(f"[UPS] ALERT: {msg}")
                 send_whatsapp(msg)

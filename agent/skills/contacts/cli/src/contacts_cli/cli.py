@@ -132,13 +132,15 @@ def _cmd_lookup(query: str) -> dict:
 
     compact = []
     for c in results:
-        compact.append({
-            "id": c["id"],
-            "name": c["full_name"],
-            "phones": c.get("phones", []),
-            "emails": c.get("emails", []),
-            "organization": c.get("organization") or None,
-        })
+        compact.append(
+            {
+                "id": c["id"],
+                "name": c["full_name"],
+                "phones": c.get("phones", []),
+                "emails": c.get("emails", []),
+                "organization": c.get("organization") or None,
+            }
+        )
 
     return {"results": compact, "count": len(compact)}
 
@@ -163,13 +165,15 @@ def _cmd_search(term: str) -> dict:
 
     compact = []
     for c in results:
-        compact.append({
-            "id": c["id"],
-            "name": c["full_name"],
-            "phones": c.get("phones", []),
-            "emails": c.get("emails", []),
-            "organization": c.get("organization") or None,
-        })
+        compact.append(
+            {
+                "id": c["id"],
+                "name": c["full_name"],
+                "phones": c.get("phones", []),
+                "emails": c.get("emails", []),
+                "organization": c.get("organization") or None,
+            }
+        )
 
     return {"results": compact, "count": len(compact)}
 

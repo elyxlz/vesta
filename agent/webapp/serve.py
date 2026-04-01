@@ -8,6 +8,7 @@ block mic access (secure context) or websockets (mixed content).
 Also supports pushing audio responses to connected browsers via
 POST /api/play — used by okami to send TTS voice replies.
 """
+
 import asyncio
 import base64
 import json
@@ -89,11 +90,13 @@ async def play_audio(request: web.Request) -> web.Response:
         mime_map = {".ogg": "audio/ogg", ".mp3": "audio/mpeg", ".wav": "audio/wav", ".m4a": "audio/mp4"}
         mime = mime_map.get(ext, "audio/ogg")
 
-        event = json.dumps({
-            "type": "audio_response",
-            "data": audio_b64,
-            "mime": mime,
-        })
+        event = json.dumps(
+            {
+                "type": "audio_response",
+                "data": audio_b64,
+                "mime": mime,
+            }
+        )
 
         sent = 0
         for ws in list(connected_clients):

@@ -189,10 +189,12 @@ def get_history(config: Config, entity_id: str, hours: int = 24) -> list[dict]:
     # return compact history
     entries = []
     for entry in history[0]:
-        entries.append({
-            "state": entry.get("state", ""),
-            "last_changed": entry.get("last_changed", ""),
-        })
+        entries.append(
+            {
+                "state": entry.get("state", ""),
+                "last_changed": entry.get("last_changed", ""),
+            }
+        )
     return entries
 
 

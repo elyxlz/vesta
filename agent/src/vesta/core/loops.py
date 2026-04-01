@@ -11,7 +11,7 @@ from claude_agent_sdk import ClaudeSDKClient, ClaudeSDKError
 
 import vesta.models as vm
 from vesta import logger
-from vesta.core.client import process_message, build_client_options, attempt_interrupt, filter_tool_lines, persist_session_id, _cancel_task
+from vesta.core.client import process_message, build_client_options, attempt_interrupt, persist_session_id, _cancel_task
 from vesta.core.init import load_prompt, build_restart_context
 
 
@@ -51,7 +51,6 @@ async def delete_notification_files(notifications: list[vm.Notification]) -> Non
         pl.Path(path_str).unlink(missing_ok=True)
 
 
-
 async def process_notifications(*, queue: asyncio.Queue[tuple[str, bool, bool]], state: vm.State, config: vm.VestaConfig) -> None:
     new_notifs = await load_notifications(config=config)
     if not new_notifs:
@@ -81,11 +80,7 @@ async def process_notifications(*, queue: asyncio.Queue[tuple[str, bool, bool]],
         # Only interrupt for Lucio's messages/reactions on the main WhatsApp instance
         contact_phone = getattr(notif, "contact_phone", "") or ""
         instance = getattr(notif, "instance", "") or ""
-        is_interrupt = (
-            event_id.startswith("wa:")
-            and contact_phone.replace(" ", "").endswith("3483826189")
-            and instance == ""
-        )
+        is_interrupt = event_id.startswith("wa:") and contact_phone.replace(" ", "").endswith("3483826189") and instance == ""
 
         if is_interrupt:
             state.interrupt_requested = True
@@ -171,7 +166,13 @@ async def _process_message_safely(msg: str, *, is_user: bool, user_initiated: bo
 
 
 async def _process_interruptible(
-    msg: str, *, is_user: bool, user_initiated: bool = False, queue: asyncio.Queue[tuple[str, bool, bool]], state: vm.State, config: vm.VestaConfig
+    msg: str,
+    *,
+    is_user: bool,
+    user_initiated: bool = False,
+    queue: asyncio.Queue[tuple[str, bool, bool]],
+    state: vm.State,
+    config: vm.VestaConfig,
 ) -> None:
     """Process a message while monitoring the queue for new messages that should interrupt."""
     pending: collections.deque[tuple[str, bool, bool]] = collections.deque([(msg, is_user, user_initiated)])
@@ -186,7 +187,9 @@ async def _process_interruptible(
 
             current_msg, current_is_user, current_user_initiated = pending.popleft()
             state.interrupt_event = asyncio.Event()
-            process_task = asyncio.create_task(_process_message_safely(current_msg, is_user=current_is_user, user_initiated=current_user_initiated, state=state, config=config))
+            process_task = asyncio.create_task(
+                _process_message_safely(current_msg, is_user=current_is_user, user_initiated=current_user_initiated, state=state, config=config)
+            )
 
             while not process_task.done():
                 queue_task: asyncio.Task[tuple[str, bool, bool]] = asyncio.create_task(queue.get())
@@ -328,10 +331,7 @@ async def monitor_loop(queue: asyncio.Queue[tuple[str, bool, bool]], *, state: v
             async for changes in awatch(notif_dir):
                 if state.shutdown_event and state.shutdown_event.is_set():
                     break
-                has_json = any(
-                    change_type in (Change.added, Change.modified) and str(path).endswith(".json")
-                    for change_type, path in changes
-                )
+                has_json = any(change_type in (Change.added, Change.modified) and str(path).endswith(".json") for change_type, path in changes)
                 if has_json:
                     await process_notifications(queue=queue, state=state, config=config)
         except asyncio.CancelledError:

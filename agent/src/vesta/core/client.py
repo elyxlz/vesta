@@ -69,7 +69,9 @@ def filter_tool_lines(text: str) -> str:
     return "\n".join(s for line in text.split("\n") if (s := line.strip()) and not s.startswith("[TOOL]") and not s.startswith("[TASK]"))
 
 
-def _parse_sdk_message(msg: Message, *, sub_agent_context: str | None, turn_start: float | None = None, model: str | None = None, state: vm.State | None = None) -> tuple[list[str], str | None, str | None, bool]:
+def _parse_sdk_message(
+    msg: Message, *, sub_agent_context: str | None, turn_start: float | None = None, model: str | None = None, state: vm.State | None = None
+) -> tuple[list[str], str | None, str | None, bool]:
     if isinstance(msg, ResultMessage):
         session_id: str | None = None
         try:
@@ -205,7 +207,9 @@ def _subagent_hook(state: vm.State, *, verb: str, event_type: str) -> HookCallba
             if transcript_path:
                 model, totals = _parse_subagent_transcript(transcript_path)
                 if any(totals.values()):
-                    logger.usage(f"[sub:{agent_type}] model={model} | in={totals['input']} out={totals['output']} cache_read={totals['cache_read']} cache_write={totals['cache_write']}")
+                    logger.usage(
+                        f"[sub:{agent_type}] model={model} | in={totals['input']} out={totals['output']} cache_read={totals['cache_read']} cache_write={totals['cache_write']}"
+                    )
                     state.subagent_usage.append({"agent_type": agent_type, "model": model, **totals})
         state.event_bus.emit(event)
         return tp.cast(HookJSONOutput, {})
@@ -255,7 +259,10 @@ def _make_hooks(
                 if h in _sent_bash_hashes:
                     age = now - _sent_bash_hashes[h]
                     logger.warning(f"Duplicate whatsapp send blocked (identical command {age:.0f}s ago)")
-                    return tp.cast(HookJSONOutput, {"decision": "block", "reason": f"Duplicate send blocked: identical whatsapp command was already sent {age:.0f}s ago"})
+                    return tp.cast(
+                        HookJSONOutput,
+                        {"decision": "block", "reason": f"Duplicate send blocked: identical whatsapp command was already sent {age:.0f}s ago"},
+                    )
                 _sent_bash_hashes[h] = now
 
         logger.tool(f"{prefix}{summary}")
@@ -373,7 +380,13 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
                 try:
                     drain = client.receive_response().__aiter__()
                     while (leftover := await asyncio.wait_for(anext(drain, None), timeout=5.0)) is not None:
-                        texts, _, _, _ = _parse_sdk_message(tp.cast(Message, leftover), sub_agent_context=sub_agent_context, turn_start=turn_start, model=config.agent_model, state=state)
+                        texts, _, _, _ = _parse_sdk_message(
+                            tp.cast(Message, leftover),
+                            sub_agent_context=sub_agent_context,
+                            turn_start=turn_start,
+                            model=config.agent_model,
+                            state=state,
+                        )
                         text = "\n".join(texts) if texts else None
                         if text and show_output:
                             filtered = filter_tool_lines(text)
@@ -389,7 +402,9 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
 
             got_first_token = True
             msg = tp.cast(Message, result)
-            texts, sub_agent_context, session_id, _ = _parse_sdk_message(msg, sub_agent_context=sub_agent_context, turn_start=turn_start, model=config.agent_model, state=state)
+            texts, sub_agent_context, session_id, _ = _parse_sdk_message(
+                msg, sub_agent_context=sub_agent_context, turn_start=turn_start, model=config.agent_model, state=state
+            )
             if session_id and session_id != state.session_id:
                 persist_session_id(session_id, state=state, config=config)
             text = "\n".join(texts) if texts else None

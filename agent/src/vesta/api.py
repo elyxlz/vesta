@@ -66,18 +66,16 @@ async def _recv_loop(
                     asyncio.get_running_loop().run_in_executor(
                         None,
                         lambda t=text: subprocess.run(
-                            ["/usr/local/bin/whatsapp", "send", "--to", config.mirror_phone,
-                             "--message", f"You (via web): {t}"],
-                            capture_output=True, timeout=15,
+                            ["/usr/local/bin/whatsapp", "send", "--to", config.mirror_phone, "--message", f"You (via web): {t}"],
+                            capture_output=True,
+                            timeout=15,
                         ),
                     )
             elif msg_type == "audio":
                 audio_b64 = data.get("data", "")
                 mime = data.get("mime", "audio/webm")
                 if audio_b64:
-                    asyncio.create_task(
-                        _handle_audio(audio_b64, mime, message_queue, state.event_bus, config.mirror_phone)
-                    )
+                    asyncio.create_task(_handle_audio(audio_b64, mime, message_queue, state.event_bus, config.mirror_phone))
             elif msg_type == "interrupt":
                 from vesta.core.client import attempt_interrupt
 
@@ -109,7 +107,8 @@ async def _handle_audio(
 
         # Try GPU transcription first, fall back to ffmpeg+whisper CPU
         proc = await asyncio.create_subprocess_exec(
-            "transcribe-gpu", tmp_path,
+            "transcribe-gpu",
+            tmp_path,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -129,13 +128,13 @@ async def _handle_audio(
         asyncio.get_running_loop().run_in_executor(
             None,
             lambda t=text: subprocess.run(
-                ["/usr/local/bin/whatsapp", "send", "--to", mirror_phone,
-                 "--message", f"You (via web, voice): {t}"],
-                capture_output=True, timeout=15,
+                ["/usr/local/bin/whatsapp", "send", "--to", mirror_phone, "--message", f"You (via web, voice): {t}"],
+                capture_output=True,
+                timeout=15,
             ),
         )
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning("Audio transcription timed out")
         event_bus.emit({"type": "error", "text": "transcription timed out"})
     except Exception as e:

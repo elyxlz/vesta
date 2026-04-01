@@ -4,7 +4,6 @@
 import socket
 import time
 import subprocess
-import os
 
 NUT_HOST = "localhost"
 NUT_PORT = 3493
@@ -41,15 +40,12 @@ def get_var(var):
     # VAR ecoflow ups.status "OL"
     try:
         return result.split('"')[1]
-    except:
+    except (IndexError, ValueError):
         return None
 
 
 def send_whatsapp(msg):
-    subprocess.run(
-        ["whatsapp", "send", "--to", WA_NUMBER, "--message", msg],
-        capture_output=True
-    )
+    subprocess.run(["whatsapp", "send", "--to", WA_NUMBER, "--message", msg], capture_output=True)
 
 
 def main():

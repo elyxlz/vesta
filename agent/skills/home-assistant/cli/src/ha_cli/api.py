@@ -30,12 +30,16 @@ class HAClient:
 
     def get_history(self, entity_id: str, hours: int = 24) -> list[list[dict]]:
         from datetime import datetime, timedelta, UTC
+
         start = (datetime.now(UTC) - timedelta(hours=hours)).isoformat()
-        r = self._client.get(f"/api/history/period/{start}", params={
-            "filter_entity_id": entity_id,
-            "minimal_response": "",
-            "significant_changes_only": "",
-        })
+        r = self._client.get(
+            f"/api/history/period/{start}",
+            params={
+                "filter_entity_id": entity_id,
+                "minimal_response": "",
+                "significant_changes_only": "",
+            },
+        )
         r.raise_for_status()
         return r.json()
 
