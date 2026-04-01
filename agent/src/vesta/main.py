@@ -30,6 +30,7 @@ async def input_handler(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.Sta
             if not user_msg.strip():
                 continue
 
+            logger.user(user_msg.strip())
             await queue.put((user_msg.strip(), True))
         except (KeyboardInterrupt, EOFError):
             state.shutdown_event.set()
@@ -69,14 +70,6 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
     (config.data_dir / "run_marker").touch()
 
     message_queue: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()
-
-    # Bridge logger -> event bus so log panel mirrors console
-    from vesta.events import LogEvent
-
-    def _log_sink(text: str, category: str) -> None:
-        state.event_bus.emit(LogEvent(type="log", text=text, category=category))
-
-    logger.set_event_sink(_log_sink)
 
     ws_runner = await start_ws_server(state.event_bus, message_queue, state, config)
     logger.init(f"WebSocket server started on port {config.ws_port}")
@@ -160,10 +153,7 @@ async def async_main() -> None:
     logger.init(f"{config.agent_name} starting")
 
     memory_path = get_memory_path(config)
-    try:
-        first_start = not memory_path.exists() or "[Unknown - need to ask]" in memory_path.read_text()
-    except (OSError, UnicodeDecodeError):
-        first_start = True
+    first_start = not memory_path.exists() or "[Unknown - need to ask]" in memory_path.read_text()
     initial_state, crashed = init_state(config=config)
     initial_state.history = open_history(config.history_db)
     logger.init("Starting main loop...")
