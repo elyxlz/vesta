@@ -29,6 +29,7 @@ def write_notification(notif_dir: Path, reminder_id: str, message: str, *, data:
         "reminder_id": reminder_id,
         **(data or {}),
         "timestamp": datetime.now(UTC).isoformat(),
+        "event_id": f"reminder:due:{reminder_id}",
     }
 
     filename = f"{int(time.time() * 1e6)}-reminder-reminder.json"

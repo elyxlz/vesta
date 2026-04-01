@@ -51,53 +51,79 @@ async def delete_notification_files(notifications: list[vm.Notification]) -> Non
         pl.Path(path_str).unlink(missing_ok=True)
 
 
-def format_notification_batch(notifications: list[vm.Notification], *, suffix: str = "") -> str:
-    suffix_str = f"\n\n{suffix}" if suffix else ""
-    if len(notifications) == 1:
-        return notifications[0].format_for_display() + suffix_str
 
-    prompts = [n.format_for_display() for n in notifications]
-    return "[NOTIFICATIONS]\n" + "\n".join(prompts) + suffix_str
-
-
-async def load_and_display_new_notifications(
-    notification_buffer: list[vm.Notification], *, buffer_start_time: dt.datetime | None, state: vm.State, config: vm.VestaConfig
-) -> tuple[list[vm.Notification], dt.datetime | None]:
+async def process_notifications(*, queue: asyncio.Queue[tuple[str, bool, bool]], state: vm.State, config: vm.VestaConfig) -> None:
     new_notifs = await load_notifications(config=config)
-
-    if new_notifs:
-        existing_paths = {n.file_path for n in notification_buffer if n.file_path}
-        truly_new = [n for n in new_notifs if n.file_path not in existing_paths]
-
-        if truly_new:
-            notification_buffer.extend(truly_new)
-            if buffer_start_time is None:
-                buffer_start_time = dt.datetime.now()
-
-            for notif in truly_new:
-                logger.notification(notif.model_dump_json(indent=2))
-                state.event_bus.emit({"type": "notification", "source": notif.source, "summary": notif.format_for_display()})
-
-    return notification_buffer, buffer_start_time
-
-
-async def process_batch(
-    notifications: list[vm.Notification], *, queue: asyncio.Queue[tuple[str, bool]], state: vm.State, config: vm.VestaConfig
-) -> None:
-    if not notifications:
+    if not new_notifs:
         return
 
     suffix = load_prompt("notification_suffix", config) or ""
-    prompt = format_notification_batch(notifications, suffix=suffix)
 
-    if state.client:
-        await attempt_interrupt(state, config=config, reason="Notification interrupt")
+    for notif in new_notifs:
+        logger.notification(notif.model_dump_json(indent=2))
+        state.event_bus.emit({"type": "notification", "source": notif.source, "summary": notif.format_for_display()})
 
-    await queue.put((prompt, False))
-    await delete_notification_files(notifications)
+        # Drop WhatsApp status updates silently — zero cost
+        chat_name = getattr(notif, "chat_name", "") or ""
+        if chat_name == "status":
+            continue
+
+        # Buffer email notifications for batched processing
+        if notif.source == "microsoft" and notif.type == "email":
+            state.email_buffer.append(notif)
+            continue
+
+        prompt = notif.format_for_display()
+        if suffix:
+            prompt += f"\n\n{suffix}"
+
+        event_id = getattr(notif, "event_id", "") or ""
+        # Only interrupt for Lucio's messages/reactions on the main WhatsApp instance
+        contact_phone = getattr(notif, "contact_phone", "") or ""
+        instance = getattr(notif, "instance", "") or ""
+        is_interrupt = (
+            event_id.startswith("wa:")
+            and contact_phone.replace(" ", "").endswith("3483826189")
+            and instance == ""
+        )
+
+        if is_interrupt:
+            state.interrupt_requested = True
+            if state.client:
+                await attempt_interrupt(state, config=config, reason="Notification interrupt")
+            # Emit clean user message for webchat display
+            wa_message = getattr(notif, "message", "") or ""
+            if wa_message.strip():
+                state.event_bus.emit({"type": "user", "text": wa_message.strip()})
+            await queue.put((prompt, False, True))
+        else:
+            await queue.put((prompt, False, False))
+
+    await delete_notification_files(new_notifs)
 
 
-async def queue_greeting(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.VestaConfig, reason: str) -> None:
+async def flush_email_buffer(*, queue: asyncio.Queue[tuple[str, bool, bool]], state: vm.State, config: vm.VestaConfig) -> None:
+    """Flush buffered email notifications as a single batched prompt."""
+    if not state.email_buffer:
+        return
+
+    emails = list(state.email_buffer)
+    state.email_buffer.clear()
+
+    suffix = load_prompt("notification_suffix", config) or ""
+
+    lines = [f"[{len(emails)} email(s) received]"]
+    for email in emails:
+        lines.append(email.format_for_display())
+    prompt = "\n".join(lines)
+    if suffix:
+        prompt += f"\n\n{suffix}"
+
+    logger.notification(f"Flushing {len(emails)} batched email(s)")
+    await queue.put((prompt, False, False))
+
+
+async def queue_greeting(queue: asyncio.Queue[tuple[str, bool, bool]], *, config: vm.VestaConfig, reason: str) -> None:
     if reason == "first_start":
         prompt = load_prompt("first_start", config)
         if prompt:
@@ -107,15 +133,16 @@ async def queue_greeting(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.V
     if not prompt or not prompt.strip():
         return
 
-    await queue.put((prompt.strip(), False))
+    await queue.put((prompt.strip(), False, False))
     logger.startup(f"Queued {reason} greeting")
 
 
 # --- Message processing ---
 
 
-async def _process_message_safely(msg: str, *, is_user: bool, state: vm.State, config: vm.VestaConfig) -> None:
+async def _process_message_safely(msg: str, *, is_user: bool, user_initiated: bool = False, state: vm.State, config: vm.VestaConfig) -> None:
     try:
+        state.user_initiated_turn = is_user or user_initiated
         if is_user:
             logger.user(msg)
             state.event_bus.emit({"type": "user", "text": msg})
@@ -123,14 +150,7 @@ async def _process_message_safely(msg: str, *, is_user: bool, state: vm.State, c
             preview = msg[:200] + "..." if len(msg) > 200 else msg
             logger.system(preview.replace("\n", " "))
         state.event_bus.set_state("thinking")
-        responses, _ = await process_message(msg, state=state, config=config, is_user=is_user)
-        for response in responses:
-            if not response or not response.strip():
-                continue
-            filtered = filter_tool_lines(response)
-            if filtered:
-                logger.assistant(filtered)
-                state.event_bus.emit({"type": "assistant", "text": filtered})
+        await process_message(msg, state=state, config=config, is_user=is_user)
     except (ClaudeSDKError, OSError, RuntimeError, ValueError, TimeoutError) as e:
         if isinstance(e, TimeoutError):
             error_msg = "Response timed out"
@@ -151,10 +171,10 @@ async def _process_message_safely(msg: str, *, is_user: bool, state: vm.State, c
 
 
 async def _process_interruptible(
-    msg: str, *, is_user: bool, queue: asyncio.Queue[tuple[str, bool]], state: vm.State, config: vm.VestaConfig
+    msg: str, *, is_user: bool, user_initiated: bool = False, queue: asyncio.Queue[tuple[str, bool, bool]], state: vm.State, config: vm.VestaConfig
 ) -> None:
     """Process a message while monitoring the queue for new messages that should interrupt."""
-    pending: collections.deque[tuple[str, bool]] = collections.deque([(msg, is_user)])
+    pending: collections.deque[tuple[str, bool, bool]] = collections.deque([(msg, is_user, user_initiated)])
     process_task: asyncio.Task[None] | None = None
 
     try:
@@ -164,24 +184,30 @@ async def _process_interruptible(
                     await queue.put(remaining)
                 break
 
-            current_msg, current_is_user = pending.popleft()
+            current_msg, current_is_user, current_user_initiated = pending.popleft()
             state.interrupt_event = asyncio.Event()
-            process_task = asyncio.create_task(_process_message_safely(current_msg, is_user=current_is_user, state=state, config=config))
+            process_task = asyncio.create_task(_process_message_safely(current_msg, is_user=current_is_user, user_initiated=current_user_initiated, state=state, config=config))
 
             while not process_task.done():
-                queue_task: asyncio.Task[tuple[str, bool]] = asyncio.create_task(queue.get())
+                queue_task: asyncio.Task[tuple[str, bool, bool]] = asyncio.create_task(queue.get())
                 done, _ = await asyncio.wait({process_task, queue_task}, return_when=asyncio.FIRST_COMPLETED)
 
                 if queue_task in done:
-                    pending.append(queue_task.result())
-                    state.interrupt_event.set()
-                    logger.interrupt(f"New message queued, interrupting current processing ({len(pending)} pending)")
-                    await process_task
-                    break
+                    new_item = queue_task.result()
+                    pending.append(new_item)
+                    _, new_is_user, _ = new_item
+                    if new_is_user or state.interrupt_requested:
+                        state.interrupt_requested = False
+                        state.interrupt_event.set()
+                        logger.interrupt(f"New message queued, interrupting current processing ({len(pending)} pending)")
+                        await process_task
+                        break
+                    # Non-interrupt notification: keep processing, handle after current finishes
                 else:
                     await _cancel_task(queue_task)
-
-            await process_task
+            else:
+                # Normal completion (not interrupted) — propagate any exception
+                await process_task
             process_task = None
             state.interrupt_event = None
     except asyncio.CancelledError:
@@ -191,26 +217,31 @@ async def _process_interruptible(
         raise
 
 
-async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig) -> None:
+async def message_processor(queue: asyncio.Queue[tuple[str, bool, bool]], *, state: vm.State, config: vm.VestaConfig) -> None:
     while state.shutdown_event and not state.shutdown_event.is_set():
         logger.client("Creating new client session...")
-        options = build_client_options(config, state)
+        try:
+            options = build_client_options(config, state)
+        except FileNotFoundError as e:
+            logger.shutdown(f"Fatal: could not build client options — {e}")
+            state.shutdown_event.set()
+            return
         async with ClaudeSDKClient(options=options) as client:
             state.client = client
             logger.client("Client session started")
 
             try:
                 if state.pending_context:
-                    await queue.put((state.pending_context, False))
+                    await queue.put((state.pending_context, False, False))
                     state.pending_context = None
 
                 while not state.shutdown_event.is_set() and state.pending_context is None:
                     try:
-                        msg, is_user = await asyncio.wait_for(queue.get(), timeout=1.0)
+                        msg, is_user, user_initiated = await asyncio.wait_for(queue.get(), timeout=1.0)
                     except TimeoutError:
                         continue
 
-                    await _process_interruptible(msg, is_user=is_user, queue=queue, state=state, config=config)
+                    await _process_interruptible(msg, is_user=is_user, user_initiated=user_initiated, queue=queue, state=state, config=config)
 
                     if state.dreamer_active:
                         state.dreamer_active = False
@@ -225,12 +256,12 @@ async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm
 # --- Proactive & dreamer ---
 
 
-async def check_proactive_task(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.VestaConfig) -> None:
+async def check_proactive_task(queue: asyncio.Queue[tuple[str, bool, bool]], *, config: vm.VestaConfig) -> None:
     prompt = load_prompt("proactive_check", config)
     if not prompt:
         return
     logger.proactive(f"Running {config.proactive_check_interval}-minute check...")
-    await queue.put((prompt, False))
+    await queue.put((prompt, False, False))
 
 
 def _trigger_nightly_restart(*, state: vm.State, config: vm.VestaConfig) -> None:
@@ -247,7 +278,7 @@ def _trigger_nightly_restart(*, state: vm.State, config: vm.VestaConfig) -> None
     state.pending_context = build_restart_context("new day — conversation history reset, nightly dreamer ran", config, extras=extras)
 
 
-async def process_nightly_memory(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig) -> None:
+async def process_nightly_memory(queue: asyncio.Queue[tuple[str, bool, bool]], *, state: vm.State, config: vm.VestaConfig) -> None:
     if config.ephemeral:
         return
 
@@ -256,8 +287,11 @@ async def process_nightly_memory(queue: asyncio.Queue[tuple[str, bool]], *, stat
         if state.last_dreamer_run is None or now.date() > state.last_dreamer_run.date():
             logger.dreamer("Nightly dreamer starting...")
             prompt = load_prompt("dream", config) or ""
+            if not prompt.strip():
+                logger.dreamer("Empty dream prompt — skipping")
+                return
             state.dreamer_active = True
-            await queue.put((prompt, False))
+            await queue.put((prompt, False, False))
             state.last_dreamer_run = now
             try:
                 (config.data_dir / "last_dreamer_run").write_text(now.isoformat())
@@ -269,33 +303,78 @@ async def process_nightly_memory(queue: asyncio.Queue[tuple[str, bool]], *, stat
 # --- Monitor loop ---
 
 
-async def monitor_loop(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig) -> None:
-    last_proactive = _now()
-    notification_buffer: list[vm.Notification] = []
-    buffer_start_time: dt.datetime | None = None
+async def monitor_loop(queue: asyncio.Queue[tuple[str, bool, bool]], *, state: vm.State, config: vm.VestaConfig) -> None:
+    notif_dir = config.notifications_dir
+    notif_dir.mkdir(parents=True, exist_ok=True)
 
-    while state.shutdown_event and not state.shutdown_event.is_set():
+    # Process any pre-existing notifications before watching
+    await process_notifications(queue=queue, state=state, config=config)
+
+    last_proactive = _now()
+
+    async def _watch_notifications() -> None:
+        """Watch for new notification files via inotify (instant detection)."""
         try:
-            await asyncio.sleep(config.notification_check_interval)
+            from watchfiles import awatch, Change
+        except ImportError:
+            logger.warning("watchfiles not available, falling back to polling")
+            while state.shutdown_event and not state.shutdown_event.is_set():
+                await asyncio.sleep(config.notification_check_interval)
+                await process_notifications(queue=queue, state=state, config=config)
+            return
+
+        logger.startup("Notification watcher started (inotify)")
+        try:
+            async for changes in awatch(notif_dir):
+                if state.shutdown_event and state.shutdown_event.is_set():
+                    break
+                has_json = any(
+                    change_type in (Change.added, Change.modified) and str(path).endswith(".json")
+                    for change_type, path in changes
+                )
+                if has_json:
+                    await process_notifications(queue=queue, state=state, config=config)
+        except asyncio.CancelledError:
+            return
+
+    async def _periodic_checks() -> None:
+        """Run proactive and dreamer checks on a timer."""
+        nonlocal last_proactive
+        while state.shutdown_event and not state.shutdown_event.is_set():
+            try:
+                await asyncio.sleep(30)
+            except asyncio.CancelledError:
+                return
 
             if state.shutdown_event and state.shutdown_event.is_set():
                 break
 
             now = _now()
-
             if (now - last_proactive).total_seconds() >= config.proactive_check_interval * 60:
                 await check_proactive_task(queue, config=config)
                 last_proactive = now
 
             await process_nightly_memory(queue, state=state, config=config)
 
-            notification_buffer, buffer_start_time = await load_and_display_new_notifications(
-                notification_buffer, buffer_start_time=buffer_start_time, state=state, config=config
-            )
+    async def _email_flush_loop() -> None:
+        """Flush batched email notifications every 60 seconds."""
+        while state.shutdown_event and not state.shutdown_event.is_set():
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                return
+            if state.shutdown_event and state.shutdown_event.is_set():
+                break
+            await flush_email_buffer(queue=queue, state=state, config=config)
 
-            if notification_buffer and buffer_start_time and (now - buffer_start_time).total_seconds() >= config.notification_buffer_delay:
-                await process_batch(notification_buffer, queue=queue, state=state, config=config)
-                notification_buffer = []
-                buffer_start_time = None
-        except asyncio.CancelledError:
-            break
+    watch_task = asyncio.create_task(_watch_notifications())
+    timer_task = asyncio.create_task(_periodic_checks())
+    email_task = asyncio.create_task(_email_flush_loop())
+
+    try:
+        await asyncio.gather(watch_task, timer_task, email_task)
+    except asyncio.CancelledError:
+        watch_task.cancel()
+        timer_task.cancel()
+        email_task.cancel()
+        await asyncio.gather(watch_task, timer_task, email_task, return_exceptions=True)

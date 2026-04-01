@@ -4,6 +4,10 @@
     "description": "Use for \"browse\", \"open a website\", \"navigate to\", \"click\", \"fill form\","
   },
   {
+    "name": "contacts",
+    "description": "This skill should be used when the user asks about \"contacts\", \"contact\", \"who is\", \"phone number\", \"email address\", \"vcard\", \"vcf\", \"address book\", or needs to look up, import, or manage contacts. Also use when encountering an unknown phone number or name that might be in the address book. No daemon required \u2014 queries local SQLite database on demand."
+  },
+  {
     "name": "dream",
     "description": "Self-improvement and memory curation. Used by the nightly dreamer, but can also be used anytime."
   },
@@ -12,12 +16,16 @@
     "description": "This skill should be used when the user asks about \"gmail\", \"google email\", \"google calendar\", \"gcal\", \"google meet\", or needs to read/send emails via Gmail, manage Google Calendar events, create Google Meet links, or handle scheduling via Google. Requires a background daemon."
   },
   {
+    "name": "home-assistant",
+    "description": "This skill should be used when the user asks about \"home\", \"house\", \"energy\", \"power\", \"temperature\", \"climate\", \"weather\", \"security\", \"cameras\", \"motion\", \"alarm\", \"location\", \"where am I\", \"battery\", or needs to interact with Home Assistant devices, sensors, or automations. Also use for morning briefings (home overview). No daemon required \u2014 queries HA API on demand."
+  },
+  {
     "name": "keeper",
     "description": "This skill should be used when the user asks about \"passwords\", \"credentials\", \"vault\", \"secrets\", \"keeper\", \"password manager\", \"logins\", \"TOTP\", \"2FA codes\", or needs to store, retrieve, search, share, or manage passwords and secure records."
   },
   {
     "name": "microsoft",
-    "description": "This skill should be used when the user asks about \"email\", \"emails\", \"inbox\", \"messages\", \"calendar\", \"schedule\", \"scheduling\", \"meetings\", \"appointments\", \"events\", \"outlook\", or needs to read/send emails, manage calendar events, or handle time-based tasks via Microsoft/Outlook. Requires a background daemon."
+    "description": "This skill should be used when the user asks about \"email\", \"emails\", \"inbox\", \"messages\", \"calendar\", \"schedule\", \"scheduling\", \"meetings\", \"appointments\", \"events\", \"outlook\", or needs to read/send emails, manage calendar events, or handle time-based tasks via Microsoft/Outlook. IMPORTANT \u2014 this skill requires a background daemon. Before doing anything, immediately make sure the daemon is running. Read this skill to learn how."
   },
   {
     "name": "onedrive",
@@ -25,7 +33,7 @@
   },
   {
     "name": "reminders",
-    "description": "This skill should be used when the user asks about \"reminders\", \"remind me\", \"alert\", \"notify\", or needs to set, manage, or check reminders and time-based notifications. Reminders are for the user, but also for yourself \u2014 use them to follow up, check in, or bring something up later. Tasks are the ground truth of what needs doing; reminders are nudges about when to think about it. Requires a background daemon."
+    "description": "This skill should be used when the user asks about \"reminders\", \"remind me\", \"alert\", \"notify\", or needs to set, manage, or check reminders and time-based notifications. Reminders are for the user, but also for yourself \u2014 use them to follow up, check in, or bring something up later. Tasks are the ground truth of what needs doing; reminders are nudges about when to think about it. IMPORTANT \u2014 this skill requires a background daemon. Before doing anything, immediately make sure the daemon is running. Read this skill to learn how."
   },
   {
     "name": "skills-registry",
@@ -33,7 +41,11 @@
   },
   {
     "name": "tasks",
-    "description": "This skill should be used when the user asks about \"tasks\", \"to-do\", \"todo\", \"task list\", or needs to create, manage, track, or organize tasks and to-do items. Everything actionable becomes a task immediately. All work, progress, drafts go in task metadata. Requires a background daemon."
+    "description": "This skill should be used when the user asks about \"tasks\", \"to-do\", \"todo\", \"task list\", or needs to create, manage, track, or organize tasks and to-do items. Everything actionable becomes a task immediately. All work, progress, drafts go in task metadata. IMPORTANT \u2014 this skill requires a background daemon. Before doing anything, immediately make sure the daemon is running. Read this skill to learn how."
+  },
+  {
+    "name": "ups",
+    "description": "\"This skill should be used when the user asks about \\\"UPS\\\", \\\"battery\\\", \\\"power outage\\\", \\\"mains power\\\", or needs to check UPS status or battery level. Monitors UPS via NUT and alerts on power events. Requires a background daemon.\""
   },
   {
     "name": "upstream",

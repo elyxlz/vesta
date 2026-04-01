@@ -1,0 +1,22 @@
+[project]
+name = "contacts"
+version = "0.1.0"
+description = "Contact management CLI with vCard import and phone/email lookup"
+readme = {text = "", content-type = "text/plain"}
+authors = [
+    { name = "elyxlz" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "vobject>=0.9.8",
+]
+
+[project.scripts]
+contacts = "contacts_cli.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/contacts_cli"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

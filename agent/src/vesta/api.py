@@ -1,18 +1,22 @@
 """WebSocket API server for agent ↔ app communication."""
 
 import asyncio
+import base64
 import json
+import os
+import subprocess
+import tempfile
 
 from aiohttp import web
 
 import vesta.models as vm
 from vesta import logger
-from vesta.events import EventBus, HistoryEvent, VestaEvent
+from vesta.events import EventBus, HistoryEvent, UserEvent, VestaEvent
 
 
 async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
     event_bus: EventBus = request.app["event_bus"]
-    message_queue: asyncio.Queue[tuple[str, bool]] = request.app["message_queue"]
+    message_queue: asyncio.Queue[tuple[str, bool, bool]] = request.app["message_queue"]
     state: vm.State = request.app["state"]
     config: vm.VestaConfig = request.app["config"]
 
@@ -29,10 +33,9 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
         send_task = asyncio.create_task(_send_loop(ws, sub))
         await asyncio.wait([recv_task, send_task], return_when=asyncio.FIRST_COMPLETED)
     finally:
-        if recv_task:
-            recv_task.cancel()
-        if send_task:
-            send_task.cancel()
+        recv_task and recv_task.cancel()
+        send_task and send_task.cancel()
+        await asyncio.gather(recv_task, send_task, return_exceptions=True)
         event_bus.unsubscribe(sub)
 
     return ws
@@ -40,7 +43,7 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
 
 async def _recv_loop(
     ws: web.WebSocketResponse,
-    message_queue: asyncio.Queue[tuple[str, bool]],
+    message_queue: asyncio.Queue[tuple[str, bool, bool]],
     state: vm.State,
     config: vm.VestaConfig,
 ) -> None:
@@ -58,13 +61,92 @@ async def _recv_loop(
             if msg_type == "message":
                 text = data["text"].strip()
                 if text:
-                    await message_queue.put((text, True))
+                    await message_queue.put((text, True, False))
+                    # Echo to WhatsApp so the conversation stays in sync
+                    asyncio.get_running_loop().run_in_executor(
+                        None,
+                        lambda t=text: subprocess.run(
+                            ["/usr/local/bin/whatsapp", "send", "--to", config.mirror_phone,
+                             "--message", f"You (via web): {t}"],
+                            capture_output=True, timeout=15,
+                        ),
+                    )
+            elif msg_type == "audio":
+                audio_b64 = data.get("data", "")
+                mime = data.get("mime", "audio/webm")
+                if audio_b64:
+                    asyncio.create_task(
+                        _handle_audio(audio_b64, mime, message_queue, state.event_bus, config.mirror_phone)
+                    )
             elif msg_type == "interrupt":
                 from vesta.core.client import attempt_interrupt
 
                 await attempt_interrupt(state, config=config, reason="WS interrupt")
         elif msg.type in (web.WSMsgType.ERROR, web.WSMsgType.CLOSE):
             break
+
+
+async def _handle_audio(
+    audio_b64: str,
+    mime: str,
+    message_queue: asyncio.Queue[tuple[str, bool, bool]],
+    event_bus: EventBus,
+    mirror_phone: str = "+393483826189",
+) -> None:
+    """Decode base64 audio, transcribe it, and enqueue as a text message."""
+    ext = ".webm"
+    if "ogg" in mime:
+        ext = ".ogg"
+    elif "mp4" in mime:
+        ext = ".m4a"
+
+    tmp_path = ""
+    try:
+        audio_bytes = base64.b64decode(audio_b64)
+        fd, tmp_path = tempfile.mkstemp(suffix=ext, prefix="ws_audio_")
+        os.write(fd, audio_bytes)
+        os.close(fd)
+
+        # Try GPU transcription first, fall back to ffmpeg+whisper CPU
+        proc = await asyncio.create_subprocess_exec(
+            "transcribe-gpu", tmp_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
+
+        text = stdout.decode().strip() if proc.returncode == 0 else ""
+
+        if not text:
+            logger.warning(f"Audio transcription failed (rc={proc.returncode}): {stderr.decode()[:200]}")
+            event_bus.emit({"type": "error", "text": "could not transcribe audio"})
+            return
+
+        logger.client(f"Transcribed webapp audio: {text[:100]}")
+        event_bus.emit(UserEvent(type="user", text=f"[voice] {text}"))
+        await message_queue.put((text, True, False))
+        # Echo transcribed voice to WhatsApp
+        asyncio.get_running_loop().run_in_executor(
+            None,
+            lambda t=text: subprocess.run(
+                ["/usr/local/bin/whatsapp", "send", "--to", mirror_phone,
+                 "--message", f"You (via web, voice): {t}"],
+                capture_output=True, timeout=15,
+            ),
+        )
+
+    except asyncio.TimeoutError:
+        logger.warning("Audio transcription timed out")
+        event_bus.emit({"type": "error", "text": "transcription timed out"})
+    except Exception as e:
+        logger.warning(f"Audio handling error: {e}")
+        event_bus.emit({"type": "error", "text": f"audio error: {e}"})
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
 
 async def _send_loop(ws: web.WebSocketResponse, sub: asyncio.Queue[VestaEvent]) -> None:
@@ -78,7 +160,7 @@ async def _send_loop(ws: web.WebSocketResponse, sub: asyncio.Queue[VestaEvent]) 
 
 async def start_ws_server(
     event_bus: EventBus,
-    message_queue: asyncio.Queue[tuple[str, bool]],
+    message_queue: asyncio.Queue[tuple[str, bool, bool]],
     state: vm.State,
     config: vm.VestaConfig,
     *,

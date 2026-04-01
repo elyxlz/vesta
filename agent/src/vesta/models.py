@@ -23,8 +23,15 @@ class State:
     last_dreamer_run: dt.datetime | None = None
     dreamer_active: bool = False
     interrupt_event: asyncio.Event | None = None
+    interrupt_requested: bool = False
     event_bus: EventBus = dc.field(default_factory=EventBus)
     history: HistoryDB | None = None
+    user_initiated_turn: bool = False
+    subagent_usage: list[dict] = dc.field(default_factory=list)
+    email_buffer: list["Notification"] = dc.field(default_factory=list)
+    context_percentage: float = 0.0
+    context_nap_needed: bool = False
+    context_nap_warned: bool = False
 
 
 class Notification(pyd.BaseModel):
