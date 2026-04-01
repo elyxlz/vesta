@@ -168,6 +168,7 @@ pub fn wait_for_server(timeout_secs: u64) -> bool {
 /// Ensure vestad is installed, running, and configured.
 /// `vestad_path` is an optional hint to a bundled vestad binary (e.g. from Tauri resources).
 /// Returns Ok(true) if setup was performed, Ok(false) if already configured.
+#[allow(unused_variables)]
 pub fn ensure_server_with(vestad_path: Option<&std::path::Path>) -> Result<bool, String> {
     #[cfg(target_os = "linux")]
     let server_reachable = wait_for_server(1);
