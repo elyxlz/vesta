@@ -1010,6 +1010,20 @@ def test_history_format_results():
     assert "user" in formatted
 
 
+def test_history_search_recency_ranking(tmp_path):
+    store = open_history(tmp_path / "test.db")
+    old = dt.datetime(2024, 1, 1, 10, 0, 0)
+    recent = dt.datetime(2026, 3, 30, 10, 0, 0)
+    history_save(store, "user", "deploy the backend service", timestamp=old)
+    history_save(store, "user", "deploy the backend service", timestamp=recent)
+
+    results = history_search(store, "deploy", limit=2)
+    assert len(results) == 2
+    # Recent message should rank first (lower combined score)
+    assert results[0]["timestamp"] == recent.isoformat()
+    assert results[1]["timestamp"] == old.isoformat()
+
+
 def test_history_store_session_id(tmp_path):
     store = open_history(tmp_path / "test.db")
     history_save(store, "user", "msg one", session_id="session-abc")
