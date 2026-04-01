@@ -15,6 +15,7 @@ from vesta.core.client import _format_tool_call, _parse_agent_input, _tool_summa
 from vesta.core.history import format_results, history_get_range, history_save, history_search, open_history
 from vesta.events import EventBus, SubagentStartEvent, SubagentStopEvent
 from vesta.core.init import get_memory_path
+from vesta.core.loops import format_notification_batch
 
 
 def _make_config(tmp_path: Path) -> vm.VestaConfig:
@@ -106,6 +107,21 @@ async def test_subagent_hook_emits_event(verb, event_type, agent_id, agent_type)
     assert received["type"] == event_type
     assert received["agent_id"] == agent_id
     assert received["agent_type"] == agent_type
+
+
+def test_format_notification_batch_single():
+    notif = vm.Notification(timestamp=dt.datetime(2025, 1, 1), source="test", type="message")
+    formatted = format_notification_batch([notif])
+    assert "[NOTIFICATIONS]" not in formatted
+
+
+def test_format_notification_batch_multiple():
+    notifs = [
+        vm.Notification(timestamp=dt.datetime(2025, 1, 1), source="test", type="message"),
+        vm.Notification(timestamp=dt.datetime(2025, 1, 1, 0, 0, 1), source="test", type="message"),
+    ]
+    formatted = format_notification_batch(notifs)
+    assert "[NOTIFICATIONS]" in formatted
 
 
 # --- Deployment validation ---

@@ -4,10 +4,6 @@
     "description": "Use for \"browse\", \"open a website\", \"navigate to\", \"click\", \"fill form\","
   },
   {
-    "name": "contacts",
-    "description": "This skill should be used when the user asks about \"contacts\", \"contact\", \"who is\", \"phone number\", \"email address\", \"vcard\", \"vcf\", \"address book\", or needs to look up, import, or manage contacts. Also use when encountering an unknown phone number or name that might be in the address book. No daemon required \u2014 queries local SQLite database on demand."
-  },
-  {
     "name": "dream",
     "description": "Self-improvement and memory curation. Used by the nightly dreamer, but can also be used anytime."
   },

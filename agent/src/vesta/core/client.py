@@ -1,6 +1,5 @@
 import asyncio
 import datetime as dt
-import hashlib
 import json
 import os
 import signal
@@ -226,18 +225,6 @@ def _subagent_prefix(input_data: dict[str, object]) -> tuple[str, bool]:
     return prefix, True
 
 
-_DEDUP_WINDOW = 60.0  # seconds — block identical whatsapp sends within this window
-_sent_bash_hashes: dict[str, float] = {}
-
-
-def _bash_dedup_hash(tool_input: dict[str, tp.Any]) -> str | None:
-    """Return a hash if this is a whatsapp send command, else None."""
-    cmd = tool_input.get("command", "")
-    if not isinstance(cmd, str) or "whatsapp send" not in cmd:
-        return None
-    return hashlib.md5(cmd.strip().encode()).hexdigest()
-
-
 def _make_hooks(
     state: vm.State,
 ) -> tuple[HookCallback, HookCallback, HookCallback, HookCallback]:
@@ -246,25 +233,6 @@ def _make_hooks(
         tool_input = input_data["tool_input"]
         summary = _tool_summary(name, tool_input)
         prefix, is_sub = _subagent_prefix(input_data)  # type: ignore[arg-type]
-
-        # Dedup: block identical whatsapp sends within the window
-        if name == "Bash":
-            h = _bash_dedup_hash(tool_input)
-            if h is not None:
-                now = time.time()
-                # Expire old entries
-                expired = [k for k, v in _sent_bash_hashes.items() if now - v > _DEDUP_WINDOW]
-                for k in expired:
-                    del _sent_bash_hashes[k]
-                if h in _sent_bash_hashes:
-                    age = now - _sent_bash_hashes[h]
-                    logger.warning(f"Duplicate whatsapp send blocked (identical command {age:.0f}s ago)")
-                    return tp.cast(
-                        HookJSONOutput,
-                        {"decision": "block", "reason": f"Duplicate send blocked: identical whatsapp command was already sent {age:.0f}s ago"},
-                    )
-                _sent_bash_hashes[h] = now
-
         logger.tool(f"{prefix}{summary}")
         state.event_bus.set_state("tool_use")
         state.event_bus.emit({"type": "tool_start", "tool": name, "input": summary, "subagent": is_sub})
@@ -353,7 +321,6 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
     if state.interrupt_event and not state.interrupt_event.is_set():
         interrupt_task = asyncio.create_task(state.interrupt_event.wait())
 
-    got_first_token = False
     try:
         while True:
             anext_task = asyncio.create_task(anext(response_iter, _STOP))
@@ -361,13 +328,11 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
             if interrupt_task and not interrupt_task.done():
                 waitables.add(interrupt_task)
 
-            timeout = config.response_timeout if got_first_token else config.first_token_timeout
-            done, pending = await asyncio.wait(waitables, return_when=asyncio.FIRST_COMPLETED, timeout=timeout)
+            done, pending = await asyncio.wait(waitables, return_when=asyncio.FIRST_COMPLETED, timeout=config.response_timeout)
 
             if not done:
                 await _cancel_task(anext_task)
-                reason = "Response timeout" if got_first_token else f"First token timeout ({config.first_token_timeout}s)"
-                await attempt_interrupt(state, config=config, reason=reason)
+                await attempt_interrupt(state, config=config, reason="Response timeout")
                 raise TimeoutError
 
             if interrupt_task and interrupt_task in done:
@@ -400,7 +365,6 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
             if result is _STOP:
                 break
 
-            got_first_token = True
             msg = tp.cast(Message, result)
             texts, sub_agent_context, session_id, _ = _parse_sdk_message(
                 msg, sub_agent_context=sub_agent_context, turn_start=turn_start, model=config.agent_model, state=state

@@ -26,7 +26,6 @@ class State:
     event_bus: EventBus = dc.field(default_factory=EventBus)
     history: HistoryDB | None = None
     subagent_usage: list[dict] = dc.field(default_factory=list)
-    email_buffer: list["Notification"] = dc.field(default_factory=list)
     context_percentage: float = 0.0
     context_nap_needed: bool = False
     context_nap_warned: bool = False
