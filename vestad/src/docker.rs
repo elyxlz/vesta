@@ -278,14 +278,12 @@ pub fn is_authenticated(cname: &str) -> bool {
     expires_at > now_ms
 }
 
-pub fn is_agent_ready(cname: &str, port: u16) -> bool {
-    docker_quiet(&[
-        "exec",
-        cname,
-        "bash",
-        "-c",
-        &format!("echo > /dev/tcp/localhost/{}", port),
-    ])
+pub fn is_agent_ready(_cname: &str, port: u16) -> bool {
+    std::net::TcpStream::connect_timeout(
+        &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+        std::time::Duration::from_millis(200),
+    )
+    .is_ok()
 }
 
 pub fn ensure_exists(cname: &str) -> Result<(), DockerError> {
@@ -841,19 +839,31 @@ pub fn rebuild_agent(name: &str) -> Result<(), DockerError> {
     Ok(())
 }
 
-pub fn wait_ready(name: &str, timeout_secs: u64) -> Result<(), DockerError> {
+pub async fn wait_ready_async(name: &str, timeout_secs: u64) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
-    ensure_running(&cname)?;
-    let port = get_container_port(&cname);
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
-    while std::time::Instant::now() < deadline {
-        if is_agent_ready(&cname, port) {
+    let port = {
+        let cname = cname.clone();
+        tokio::task::spawn_blocking(move || {
+            ensure_running(&cname)?;
+            Ok::<_, DockerError>(get_container_port(&cname))
+        })
+        .await
+        .unwrap()?
+    };
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(timeout_secs);
+    loop {
+        if tokio::net::TcpStream::connect(addr).await.is_ok() {
             return Ok(());
         }
-        std::thread::sleep(std::time::Duration::from_secs(1));
+        if tokio::time::Instant::now() >= deadline {
+            return Err(DockerError::Failed(format!(
+                "{name}: not ready after {timeout_secs}s"
+            )));
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     }
-    Err(DockerError::Failed(format!("{}: not ready after {}s", name, timeout_secs)))
 }
 
 /// Backup: stops container, commits to image, returns (backup_tag, was_running).

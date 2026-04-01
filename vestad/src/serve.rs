@@ -143,6 +143,12 @@ impl AppState {
             .or_insert_with(|| Arc::new(tokio::sync::RwLock::new(())))
             .clone()
     }
+
+    async fn clean_expired_sessions(&self) {
+        let mut sessions = self.auth_sessions.lock().await;
+        let now = std::time::Instant::now();
+        sessions.retain(|_, s| now.duration_since(s.created) < std::time::Duration::from_secs(600));
+    }
 }
 
 type SharedState = Arc<AppState>;
@@ -349,7 +355,6 @@ async fn destroy_agent_handler(
         .unwrap()
         .map_err(map_docker_err)?;
 
-    state.agent_locks.lock().await.remove(&name);
     Ok(ok_json())
 }
 
@@ -377,9 +382,8 @@ async fn wait_ready_handler(
     Query(query): Query<WaitReadyQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let timeout = query.timeout.unwrap_or(30);
-    tokio::task::spawn_blocking(move || docker::wait_ready(&name, timeout))
+    docker::wait_ready_async(&name, timeout)
         .await
-        .unwrap()
         .map_err(|e| err_response(StatusCode::SERVICE_UNAVAILABLE, &e.to_string()))?;
     Ok(ok_json())
 }
@@ -405,11 +409,10 @@ async fn start_auth_handler(
         .map(|_| format!("{:02x}", rand::random::<u8>()))
         .collect();
 
-    let mut sessions = state.auth_sessions.lock().await;
-    // Clean expired sessions (older than 10 minutes)
-    let now = std::time::Instant::now();
-    sessions.retain(|_, s| now.duration_since(s.created) < std::time::Duration::from_secs(600));
+    state.clean_expired_sessions().await;
 
+    let mut sessions = state.auth_sessions.lock().await;
+    let now = std::time::Instant::now();
     sessions.insert(
         session_id.clone(),
         AuthSession {
@@ -439,6 +442,8 @@ async fn complete_auth_handler(
     docker::validate_name(&name).map_err(map_docker_err)?;
     let cname = docker::container_name(&name);
     docker::ensure_exists(&cname).map_err(map_docker_err)?;
+
+    state.clean_expired_sessions().await;
 
     let session = {
         let mut sessions = state.auth_sessions.lock().await;
@@ -541,16 +546,23 @@ async fn logs_handler(
 // --- WebSocket proxy ---
 
 async fn ws_handler(
+    State(state): State<SharedState>,
     Path(name): Path<String>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
     docker::validate_name(&name).map_err(map_docker_err)?;
     let cname = docker::container_name(&name);
-    docker::ensure_running(&cname).map_err(map_docker_err)?;
 
+    let lock = state.agent_lock(&name).await;
+    let guard = lock.read_owned().await;
+
+    docker::ensure_running(&cname).map_err(map_docker_err)?;
     let port = docker::get_container_port(&cname);
 
-    Ok(ws.on_upgrade(move |socket| ws_proxy(socket, port)))
+    Ok(ws.on_upgrade(move |socket| async move {
+        drop(guard);
+        ws_proxy(socket, port).await;
+    }))
 }
 
 async fn ws_proxy(client_ws: axum::extract::ws::WebSocket, agent_port: u16) {
@@ -561,7 +573,16 @@ async fn ws_proxy(client_ws: axum::extract::ws::WebSocket, agent_port: u16) {
     let url = format!("ws://localhost:{}/ws", agent_port);
     let agent_ws = match tokio_tungstenite::connect_async(&url).await {
         Ok((ws, _)) => ws,
-        Err(_) => return,
+        Err(e) => {
+            let mut client_ws = client_ws;
+            let _ = client_ws
+                .send(AxumMsg::Close(Some(axum::extract::ws::CloseFrame {
+                    code: 1011,
+                    reason: format!("agent not reachable: {e}").into(),
+                })))
+                .await;
+            return;
+        }
     };
 
     let (mut client_tx, mut client_rx) = client_ws.split();
@@ -611,7 +632,7 @@ async fn backup_handler(
     Path(name): Path<String>,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
     let lock = state.agent_lock(&name).await;
-    let _guard = lock.write().await;
+    let guard = lock.write_owned().await;
 
     let name_clone = name.clone();
     let (backup_tag, was_running) =
@@ -625,6 +646,9 @@ async fn backup_handler(
     let name_for_cleanup = name.clone();
     let tag_for_cleanup = backup_tag.clone();
     let stream = async_stream::stream! {
+        // Hold write lock for entire stream duration to prevent container modification
+        let _guard = guard;
+
         let mut docker_save = match tokio::process::Command::new("docker")
             .args(["save", &tag])
             .stdout(std::process::Stdio::piped())
@@ -634,7 +658,6 @@ async fn backup_handler(
             Ok(c) => c,
             Err(e) => {
                 yield Err(std::io::Error::other(e));
-                // Cleanup on error
                 tokio::task::spawn_blocking(move || {
                     docker::backup_cleanup(&name_for_cleanup, &tag_for_cleanup, was_running);
                 }).await.ok();
@@ -678,7 +701,6 @@ async fn backup_handler(
         docker_save.wait().await.ok();
         gzip.wait().await.ok();
 
-        // Cleanup after stream is fully consumed
         let n = name_for_cleanup; let t = tag_for_cleanup;
         tokio::task::spawn_blocking(move || {
             docker::backup_cleanup(&n, &t, was_running);
