@@ -23,7 +23,7 @@ description: Self-improvement and memory curation. Used by the nightly dreamer, 
 
 ### 1. Retrospective
 
-Read the most recent file in `~/vesta/dreamer/`. For each fix listed there, check today's conversation: did that situation come up again? Did it go better? If a fix didn't help or made things worse, revisit it now. If it worked, note it in tonight's summary. Use `search_history` to check whether a fix has held up across multiple days.
+Read the last 5–7 files in `~/vesta/dreamer/` (sorted by date) to spot recurring patterns — fixes that keep resurfacing, problems marked "resolved" that came back, and improvements that actually stuck. For each fix in the recent summaries, check today's conversation: did that situation come up again? Did it go better? If a fix didn't help or made things worse, revisit it now. If it worked, note it in tonight's summary.
 
 ### 2. Review the conversation
 
