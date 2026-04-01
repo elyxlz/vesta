@@ -121,7 +121,7 @@ async def _run_test_scenario(state_dir: Path, test_fn, **config_overrides):
     vmain.input_handler = _noop_input_handler  # type: ignore[assignment]
 
     try:
-        state, _ = vmain.init_state(config=config)
+        state = vmain.init_state(config=config)
 
         async def run_test():
             await asyncio.sleep(2)
@@ -152,7 +152,7 @@ async def _run_test_scenario(state_dir: Path, test_fn, **config_overrides):
 def test_client_lifecycle_with_async_with(state_dir):
     """Client should work correctly with async with context manager."""
     config = _make_config(state_dir)
-    state, _ = vmain.init_state(config=config)
+    state = vmain.init_state(config=config)
 
     async def test_fn():
         options = build_client_options(config, state)
@@ -168,18 +168,18 @@ def test_client_lifecycle_with_async_with(state_dir):
     _run(test_fn())
 
 
-def test_pending_context_flag(state_dir):
-    """Setting pending_context should work correctly."""
+def test_restart_reason_flag(state_dir):
+    """Setting restart_reason should work correctly."""
     config = _make_config(state_dir)
-    state, _ = vmain.init_state(config=config)
+    state = vmain.init_state(config=config)
 
     async def test_fn():
-        assert state.pending_context is None
-        state.pending_context = "[System: test reset]"
+        assert state.restart_reason is None
+        state.restart_reason = "error — test error"
         state.session_id = None
-        assert state.pending_context is not None
-        state.pending_context = None
-        assert state.pending_context is None
+        assert state.restart_reason is not None
+        state.restart_reason = None
+        assert state.restart_reason is None
 
     _run(test_fn())
 
@@ -187,7 +187,7 @@ def test_pending_context_flag(state_dir):
 def test_multiple_client_sessions(state_dir):
     """Should be able to create multiple client sessions sequentially."""
     config = _make_config(state_dir)
-    state, _ = vmain.init_state(config=config)
+    state = vmain.init_state(config=config)
 
     async def test_fn():
         options = build_client_options(config, state)
@@ -215,9 +215,9 @@ def test_multiple_client_sessions(state_dir):
 
 
 def test_full_reset_flow(state_dir):
-    """Full flow: pending_context triggers client recreation."""
+    """Full flow: restart_reason triggers graceful shutdown for container restart."""
     config = _make_config(state_dir)
-    state, _ = vmain.init_state(config=config)
+    state = vmain.init_state(config=config)
 
     async def test_fn():
         options = build_client_options(config, state)
@@ -225,12 +225,10 @@ def test_full_reset_flow(state_dir):
             state.client = client
 
         state.client = None
-        state.pending_context = "[System: Reset needed]"
+        state.restart_reason = "error — Reset needed"
+        assert state.restart_reason is not None
 
-        context = state.pending_context
-        state.pending_context = None
-        assert context is not None
-
+        state.restart_reason = None
         options = build_client_options(config, state)
         async with ClaudeSDKClient(options=options) as client:
             state.client = client
