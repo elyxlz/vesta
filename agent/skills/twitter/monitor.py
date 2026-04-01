@@ -59,8 +59,8 @@ def _load_config() -> dict:
     if CONFIG_FILE.exists():
         try:
             return json.loads(CONFIG_FILE.read_text())
-        except Exception:
-            pass
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning(f"Failed to load config: {e}")
     return {"handles": []}
 
 
@@ -80,8 +80,8 @@ def _load_state() -> dict:
     if STATE_FILE.exists():
         try:
             return json.loads(STATE_FILE.read_text())
-        except Exception:
-            pass
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning(f"Failed to load state: {e}")
     return {"seen_guids": [], "last_check": None}
 
 
@@ -202,7 +202,8 @@ def _parse_pub_date(pub_date: str) -> "datetime | None":
         from email.utils import parsedate_to_datetime
 
         return parsedate_to_datetime(pub_date)
-    except Exception:
+    except (ValueError, TypeError) as e:
+        logger.debug(f"Failed to parse pubDate '{pub_date}': {e}")
         return None
 
 
@@ -222,7 +223,8 @@ def _poll_once(handles: list[str], notif_dir: Path, state: dict, seed_only: bool
             last_check_dt = datetime.fromisoformat(last_check_str)
             # Add buffer: notify if published within POLL_INTERVAL + 30min before last check
             min_pub_dt = last_check_dt - timedelta(seconds=POLL_INTERVAL + 1800)
-        except Exception:
+        except ValueError as e:
+            logger.debug(f"Failed to parse last_check: {e}")
             min_pub_dt = None
     else:
         min_pub_dt = None
@@ -249,9 +251,7 @@ def _poll_once(handles: list[str], notif_dir: Path, state: dict, seed_only: bool
                     _write_notification(notif_dir, tweet)
                     logger.info(f"New tweet from {handle}: {tweet['text'][:80]}")
             if tweets:
-                logger.debug(
-                    f"{handle}: fetched {len(tweets)} tweets, {sum(1 for t in tweets if t['guid'] not in (set(state.get('seen_guids', [])) - set(new_guids)))} new"
-                )
+                logger.debug(f"{handle}: fetched {len(tweets)} tweets")
         except Exception as e:
             logger.error(f"Error polling {handle}: {e}")
 

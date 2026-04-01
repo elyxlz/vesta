@@ -3,18 +3,16 @@ from .config import Config
 
 
 def _slim_state(s: dict) -> dict:
-    """Compact state representation."""
+    attrs = s["attributes"]
     out = {
         "entity_id": s["entity_id"],
         "state": s["state"],
-        "friendly_name": s["attributes"].get("friendly_name", ""),
+        "friendly_name": attrs.get("friendly_name", ""),
     }
-    # include unit if present
-    unit = s["attributes"].get("unit_of_measurement")
+    unit = attrs.get("unit_of_measurement")
     if unit:
         out["unit"] = unit
-    # include device class if present
-    dc = s["attributes"].get("device_class")
+    dc = attrs.get("device_class")
     if dc:
         out["device_class"] = dc
     out["last_changed"] = s.get("last_changed", "")
@@ -22,7 +20,6 @@ def _slim_state(s: dict) -> dict:
 
 
 def _full_state(s: dict) -> dict:
-    """Full state with all attributes."""
     return {
         "entity_id": s["entity_id"],
         "state": s["state"],
@@ -81,15 +78,7 @@ def get_history(config: Config, entity_id: str, hours: int = 24) -> list[dict]:
     history = client.get_history(entity_id, hours)
     if not history or not history[0]:
         return []
-    entries = []
-    for entry in history[0]:
-        entries.append(
-            {
-                "state": entry.get("state", ""),
-                "last_changed": entry.get("last_changed", ""),
-            }
-        )
-    return entries
+    return [{"state": entry.get("state", ""), "last_changed": entry.get("last_changed", "")} for entry in history[0]]
 
 
 def check_api(config: Config) -> dict:
