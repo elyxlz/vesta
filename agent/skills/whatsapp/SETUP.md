@@ -21,7 +21,9 @@
    sleep 3
    whatsapp authenticate
    ```
-   **Before showing the QR code**, confirm with the user that they should scan it from a dedicated WhatsApp account for the assistant — NOT their personal WhatsApp. This can be a throwaway phone with a new SIM, a work profile (Android) WhatsApp with an eSIM, or any separate number. Scanning from their personal account would link their own WhatsApp to Vesta and she'd be reading/sending from their personal chats.
+   **Before showing the QR code**, confirm with the user that they should scan it from a dedicated WhatsApp account for the assistant — NOT their personal WhatsApp. Scanning from their personal account would link their own WhatsApp to Vesta and she'd be reading/sending from their personal chats.
+
+   If the user doesn't have a separate number yet, read [PHONE_NUMBER.md](PHONE_NUMBER.md) and guide them through getting a cheap prepaid SIM/eSIM and setting up a second WhatsApp account on their phone.
 
    If not authenticated, a QR code image is saved to `~/vesta/data/whatsapp/qr-code.png`.
    Serve it on any available port (host network is shared):
