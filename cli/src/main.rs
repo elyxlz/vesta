@@ -206,12 +206,11 @@ fn get_client(host: Option<&str>, token: Option<&str>) -> client::Client {
     client::Client::new(&config)
 }
 
-/// On Linux, auto-migrate to client/server if no config exists.
+/// On Linux, try to pick up credentials from a running local vestad.
+/// Does NOT install or start vestad — only `vesta setup` does that.
 #[cfg(target_os = "linux")]
 fn try_migrate_linux() -> Option<platform::ServerConfig> {
-    eprintln!("setting up vestad...");
-    vesta_common::ensure_server().ok()?;
-    vesta_common::load_server_config()
+    vesta_common::platform::linux::extract_credentials()
 }
 
 fn fetch_latest_version(timeout: Option<u64>) -> Option<String> {

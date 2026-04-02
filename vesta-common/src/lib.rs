@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_WS_PORT: u16 = 7865;
 pub const DEFAULT_API_PORT: u16 = 7860;
+const SERVER_START_TIMEOUT_SECS: u64 = 30;
 
 // ── Types ───────────────────────────────────────────────────────
 
@@ -245,14 +246,19 @@ pub fn ensure_server() -> Result<bool, String> {
 
 #[cfg(target_os = "linux")]
 fn install_and_boot(shutdown_first: bool, vestad_hint: Option<&std::path::Path>) -> Result<(), String> {
-    let vestad_path = platform::linux::install_vestad_from(vestad_hint)?;
-    platform::linux::install_autostart(&vestad_path)?;
+    let _vestad_path = platform::linux::install_vestad_from(vestad_hint)?;
+    // systemd service is installed by vestad itself on first run
     if shutdown_first {
         platform::linux::shutdown();
     }
     platform::linux::boot()?;
-    if !wait_for_server(30) {
-        return Err("server did not start within 30s".into());
+    if !wait_for_server(SERVER_START_TIMEOUT_SECS) {
+        let detail = platform::linux::boot_log_summary();
+        return Err(if detail.is_empty() {
+            "server did not start within 30s".to_string()
+        } else {
+            format!("server failed to start:\n{}", detail)
+        });
     }
     Ok(())
 }
