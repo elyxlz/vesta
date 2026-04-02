@@ -44,6 +44,10 @@
     "description": "This skill should be used when the user asks about \"telegram\", \"tg\", \"telegram message\", or needs to send/receive messages via Telegram. Requires a background daemon."
   },
   {
+    "name": "tv",
+    "description": "Use for \"TV\", \"Samsung TV\", \"television\", \"watch\", \"play on TV\", \"YouTube on TV\", \"volume\", \"turn on TV\", \"turn off TV\", or any Samsung Smart TV control."
+  },
+  {
     "name": "upstream",
     "description": "Use when you need to contribute code, push a branch, open a pull request, submit a PR, sync with upstream, or do any git/GitHub operations on the vesta repo (elyxlz/vesta). IMPORTANT \u2014 always use this skill for GitHub access. Never use personal tokens or manual git push. Authentication is handled via the vesta-upstream GitHub App \u2014 no credentials needed from the user."
   },
