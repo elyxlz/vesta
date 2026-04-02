@@ -41,15 +41,17 @@ def _flight_to_dict(flight) -> dict:
     """Convert a FlightResult to a plain dict."""
     legs = []
     for leg in flight.legs:
-        legs.append({
-            "airline": leg.airline.value,
-            "flight_number": leg.flight_number,
-            "from": leg.departure_airport.name,
-            "to": leg.arrival_airport.name,
-            "departs": _fmt_datetime(leg.departure_datetime),
-            "arrives": _fmt_datetime(leg.arrival_datetime),
-            "duration_min": leg.duration,
-        })
+        legs.append(
+            {
+                "airline": leg.airline.value,
+                "flight_number": leg.flight_number,
+                "from": leg.departure_airport.name,
+                "to": leg.arrival_airport.name,
+                "departs": _fmt_datetime(leg.departure_datetime),
+                "arrives": _fmt_datetime(leg.arrival_datetime),
+                "duration_min": leg.duration,
+            }
+        )
     return {
         "price_usd": round(flight.price, 2),
         "total_duration": _fmt_duration(flight.duration),
@@ -68,12 +70,16 @@ def _roundtrip_to_dict(outbound, inbound) -> dict:
     }
 
 
-def _search_flights(origin: str, destination: str, date: str,
-                    return_date: str | None = None,
-                    stops: str = DEFAULT_STOPS,
-                    cabin: str = DEFAULT_CABIN,
-                    sort: str = DEFAULT_SORT,
-                    max_results: int = 10) -> list[dict]:
+def _search_flights(
+    origin: str,
+    destination: str,
+    date: str,
+    return_date: str | None = None,
+    stops: str = DEFAULT_STOPS,
+    cabin: str = DEFAULT_CABIN,
+    sort: str = DEFAULT_SORT,
+    max_results: int = 10,
+) -> list[dict]:
     """Run a flight search for a single origin and return list of result dicts."""
     from fli.models import FlightSearchFilters, PassengerInfo
     from fli.core import build_flight_segments, resolve_airport, parse_max_stops, parse_cabin_class, parse_sort_by
@@ -118,10 +124,17 @@ def _search_flights(origin: str, destination: str, date: str,
         return [{"error": str(e), "origin": origin}]
 
 
-def _search_dates(origin: str, destination: str, from_date: str, to_date: str,
-                  round_trip: bool = False, duration: int = 3,
-                  stops: str = DEFAULT_STOPS, cabin: str = DEFAULT_CABIN,
-                  max_results: int = 20) -> list[dict]:
+def _search_dates(
+    origin: str,
+    destination: str,
+    from_date: str,
+    to_date: str,
+    round_trip: bool = False,
+    duration: int = 3,
+    stops: str = DEFAULT_STOPS,
+    cabin: str = DEFAULT_CABIN,
+    max_results: int = 20,
+) -> list[dict]:
     """Search cheapest dates for a single origin."""
     from fli.models import DateSearchFilters, PassengerInfo
     from fli.core import build_date_search_segments, resolve_airport, parse_max_stops, parse_cabin_class
@@ -185,6 +198,7 @@ def _search_dates(origin: str, destination: str, from_date: str, to_date: str,
 # Google Flights commands
 # ===========================================================================
 
+
 def cmd_search(args):
     """flights search — search specific date(s)."""
     origins = args.origin if isinstance(args.origin, list) else [args.origin]
@@ -210,7 +224,7 @@ def cmd_search(args):
         valid = [r for r in all_results if "error" not in r]
         errors = [r for r in all_results if "error" in r]
         valid.sort(key=lambda x: x.get("price_usd", float("inf")))
-        all_results = valid[:args.max_results] + errors
+        all_results = valid[: args.max_results] + errors
 
     print(json.dumps(all_results, indent=2))
 
@@ -241,7 +255,7 @@ def cmd_dates(args):
         valid = [r for r in all_results if "error" not in r]
         errors = [r for r in all_results if "error" in r]
         valid.sort(key=lambda x: x.get("price_usd", float("inf")))
-        all_results = valid[:args.max_results] + errors
+        all_results = valid[: args.max_results] + errors
 
     print(json.dumps(all_results, indent=2))
 
@@ -271,7 +285,7 @@ def cmd_cheapest(args):
         all_results.extend(r for r in results if "error" not in r)
 
     all_results.sort(key=lambda x: x.get("price_usd", float("inf")))
-    top = all_results[:args.top]
+    top = all_results[: args.top]
 
     print(json.dumps(top, indent=2))
 
@@ -279,6 +293,7 @@ def cmd_cheapest(args):
 # ===========================================================================
 # Duffel API commands (booking)
 # ===========================================================================
+
 
 def _fmt_duffel_offer(offer: dict, idx: int) -> dict:
     """Format a Duffel offer into a readable dict."""
@@ -289,29 +304,30 @@ def _fmt_duffel_offer(offer: dict, idx: int) -> dict:
             carrier = (seg.get("operating_carrier") or seg.get("marketing_carrier")) or {}
             pax_list = seg.get("passengers") or []
             pax_info = pax_list[0] if pax_list else {}
-            baggages = (pax_info.get("baggages") or [])
-            bag_str = ", ".join(
-                f"{b.get('type', '?')}:{b.get('quantity', 0)}"
-                for b in baggages
-            ) if baggages else "none"
+            baggages = pax_info.get("baggages") or []
+            bag_str = ", ".join(f"{b.get('type', '?')}:{b.get('quantity', 0)}" for b in baggages) if baggages else "none"
 
             aircraft_obj = seg.get("aircraft")
-            segments.append({
-                "airline": carrier.get("name", "?"),
-                "iata": carrier.get("iata_code", "?"),
-                "flight": f"{seg.get('marketing_carrier_flight_number') or seg.get('operating_carrier_flight_number') or '?'}",
-                "from": (seg.get("origin") or {}).get("iata_code", "?"),
-                "to": (seg.get("destination") or {}).get("iata_code", "?"),
-                "departs": seg.get("departing_at", "?"),
-                "arrives": seg.get("arriving_at", "?"),
-                "duration": seg.get("duration", "?"),
-                "aircraft": aircraft_obj.get("name", "?") if aircraft_obj else "?",
-                "bags": bag_str,
-            })
-        slices_out.append({
-            "duration": sl.get("duration", "?"),
-            "segments": segments,
-        })
+            segments.append(
+                {
+                    "airline": carrier.get("name", "?"),
+                    "iata": carrier.get("iata_code", "?"),
+                    "flight": f"{seg.get('marketing_carrier_flight_number') or seg.get('operating_carrier_flight_number') or '?'}",
+                    "from": (seg.get("origin") or {}).get("iata_code", "?"),
+                    "to": (seg.get("destination") or {}).get("iata_code", "?"),
+                    "departs": seg.get("departing_at", "?"),
+                    "arrives": seg.get("arriving_at", "?"),
+                    "duration": seg.get("duration", "?"),
+                    "aircraft": aircraft_obj.get("name", "?") if aircraft_obj else "?",
+                    "bags": bag_str,
+                }
+            )
+        slices_out.append(
+            {
+                "duration": sl.get("duration", "?"),
+                "segments": segments,
+            }
+        )
 
     conditions = offer.get("conditions") or {}
     refund_info = conditions.get("refund_before_departure") or {}
@@ -337,18 +353,22 @@ def cmd_offer(args):
     """flights offer — search bookable offers via Duffel."""
     from . import duffel
 
-    slices = [{
-        "origin": args.origin.upper(),
-        "destination": args.destination.upper(),
-        "departure_date": args.date,
-    }]
+    slices = [
+        {
+            "origin": args.origin.upper(),
+            "destination": args.destination.upper(),
+            "departure_date": args.date,
+        }
+    ]
 
     if args.return_date:
-        slices.append({
-            "origin": args.destination.upper(),
-            "destination": args.origin.upper(),
-            "departure_date": args.return_date,
-        })
+        slices.append(
+            {
+                "origin": args.destination.upper(),
+                "destination": args.origin.upper(),
+                "departure_date": args.return_date,
+            }
+        )
 
     cabin = args.cabin.lower().replace("_", " ") if args.cabin != "ANY" else None
     passengers = [{"type": "adult"}] * args.passengers
@@ -368,7 +388,7 @@ def cmd_offer(args):
         offers.sort(key=lambda o: float(o.get("total_amount", "999999")))
 
         # Limit results
-        offers = offers[:args.max_results]
+        offers = offers[: args.max_results]
 
         formatted = []
         for i, offer in enumerate(offers):
@@ -403,10 +423,15 @@ def cmd_book(args):
         passengers.append(profile)
     else:
         if not all([args.given_name, args.family_name, args.born_on, args.email, args.phone]):
-            print(json.dumps({
-                "error": "Must provide --given-name, --family-name, --born-on, --email, --phone "
-                         "OR --profile <name>. Use 'flights passenger save' to create a profile."
-            }), file=sys.stderr)
+            print(
+                json.dumps(
+                    {
+                        "error": "Must provide --given-name, --family-name, --born-on, --email, --phone "
+                        "OR --profile <name>. Use 'flights passenger save' to create a profile."
+                    }
+                ),
+                file=sys.stderr,
+            )
             sys.exit(1)
 
         pax = {
@@ -444,13 +469,15 @@ def cmd_book(args):
             segs = []
             for seg in sl.get("segments", []):
                 carrier = seg.get("operating_carrier", {}) or seg.get("marketing_carrier", {})
-                segs.append({
-                    "flight": f"{carrier.get('iata_code', '?')}{seg.get('operating_carrier_flight_number', seg.get('marketing_carrier_flight_number', '?'))}",
-                    "from": seg.get("origin", {}).get("iata_code", "?"),
-                    "to": seg.get("destination", {}).get("iata_code", "?"),
-                    "departs": seg.get("departing_at", "?"),
-                    "arrives": seg.get("arriving_at", "?"),
-                })
+                segs.append(
+                    {
+                        "flight": f"{carrier.get('iata_code', '?')}{seg.get('operating_carrier_flight_number', seg.get('marketing_carrier_flight_number', '?'))}",
+                        "from": seg.get("origin", {}).get("iata_code", "?"),
+                        "to": seg.get("destination", {}).get("iata_code", "?"),
+                        "departs": seg.get("departing_at", "?"),
+                        "arrives": seg.get("arriving_at", "?"),
+                    }
+                )
             slices.append({"segments": segs})
         output["slices"] = slices
 
@@ -538,9 +565,7 @@ def cmd_passenger(args):
 
     if args.passenger_action == "save":
         if not all([args.given_name, args.family_name, args.born_on, args.email, args.phone]):
-            print(json.dumps({
-                "error": "Must provide --given-name, --family-name, --born-on, --email, --phone"
-            }), file=sys.stderr)
+            print(json.dumps({"error": "Must provide --given-name, --family-name, --born-on, --email, --phone"}), file=sys.stderr)
             sys.exit(1)
 
         profile = {
@@ -582,6 +607,7 @@ def cmd_passenger(args):
 # Main parser
 # ===========================================================================
 
+
 def main():
     parser = argparse.ArgumentParser(
         prog="flights",
@@ -609,16 +635,11 @@ def main():
     )
     p_search.add_argument("destination", help="Destination IATA code (e.g. LAX)")
     p_search.add_argument("date", help="Departure date YYYY-MM-DD")
-    p_search.add_argument("--return-date", dest="return_date", default=None,
-                          help="Return date YYYY-MM-DD (makes it round-trip)")
-    p_search.add_argument("--stops", default=DEFAULT_STOPS,
-                          help="Max stops: ANY, 0 (non-stop), 1, 2 (default: ANY)")
-    p_search.add_argument("--cabin", default=DEFAULT_CABIN,
-                          help="Cabin class: ECONOMY, PREMIUM_ECONOMY, BUSINESS, FIRST")
-    p_search.add_argument("--sort", default=DEFAULT_SORT,
-                          help="Sort by: CHEAPEST, DURATION, DEPARTURE_TIME, ARRIVAL_TIME")
-    p_search.add_argument("--max-results", type=int, default=10, dest="max_results",
-                          help="Max results to return per origin (default: 10)")
+    p_search.add_argument("--return-date", dest="return_date", default=None, help="Return date YYYY-MM-DD (makes it round-trip)")
+    p_search.add_argument("--stops", default=DEFAULT_STOPS, help="Max stops: ANY, 0 (non-stop), 1, 2 (default: ANY)")
+    p_search.add_argument("--cabin", default=DEFAULT_CABIN, help="Cabin class: ECONOMY, PREMIUM_ECONOMY, BUSINESS, FIRST")
+    p_search.add_argument("--sort", default=DEFAULT_SORT, help="Sort by: CHEAPEST, DURATION, DEPARTURE_TIME, ARRIVAL_TIME")
+    p_search.add_argument("--max-results", type=int, default=10, dest="max_results", help="Max results to return per origin (default: 10)")
     p_search.set_defaults(func=cmd_search)
 
     # --- dates (Google Flights) ---
@@ -641,25 +662,22 @@ def main():
     )
     p_dates.add_argument("destination", help="Destination IATA code")
     p_dates.add_argument(
-        "--from", dest="from_date",
+        "--from",
+        dest="from_date",
         default=(datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d"),
         help="Start of date range YYYY-MM-DD (default: tomorrow)",
     )
     p_dates.add_argument(
-        "--to", dest="to_date",
+        "--to",
+        dest="to_date",
         default=(datetime.now() + timedelta(days=60)).strftime("%Y-%m-%d"),
         help="End of date range YYYY-MM-DD (default: 60 days from now)",
     )
-    p_dates.add_argument("--round-trip", action="store_true", dest="round_trip",
-                         help="Search round-trip dates")
-    p_dates.add_argument("--duration", type=int, default=3,
-                         help="Trip duration in days for round-trip (default: 3)")
-    p_dates.add_argument("--stops", default=DEFAULT_STOPS,
-                         help="Max stops: ANY, 0, 1, 2 (default: ANY)")
-    p_dates.add_argument("--cabin", default=DEFAULT_CABIN,
-                         help="Cabin class (default: ECONOMY)")
-    p_dates.add_argument("--max-results", type=int, default=20, dest="max_results",
-                         help="Max results (default: 20)")
+    p_dates.add_argument("--round-trip", action="store_true", dest="round_trip", help="Search round-trip dates")
+    p_dates.add_argument("--duration", type=int, default=3, help="Trip duration in days for round-trip (default: 3)")
+    p_dates.add_argument("--stops", default=DEFAULT_STOPS, help="Max stops: ANY, 0, 1, 2 (default: ANY)")
+    p_dates.add_argument("--cabin", default=DEFAULT_CABIN, help="Cabin class (default: ECONOMY)")
+    p_dates.add_argument("--max-results", type=int, default=20, dest="max_results", help="Max results (default: 20)")
     p_dates.set_defaults(func=cmd_dates)
 
     # --- cheapest (Google Flights) ---
@@ -678,19 +696,20 @@ def main():
     )
     p_cheapest.add_argument("destination", help="Destination IATA code")
     p_cheapest.add_argument(
-        "--from", dest="from_date", default=None,
+        "--from",
+        dest="from_date",
+        default=None,
         help="Start of date range YYYY-MM-DD (default: tomorrow)",
     )
     p_cheapest.add_argument(
-        "--to", dest="to_date", default=None,
+        "--to",
+        dest="to_date",
+        default=None,
         help="End of date range YYYY-MM-DD (default: 60 days from now)",
     )
-    p_cheapest.add_argument("--round-trip", action="store_true", dest="round_trip",
-                            help="Search round-trip dates")
-    p_cheapest.add_argument("--duration", type=int, default=3,
-                            help="Trip duration in days for round-trip (default: 3)")
-    p_cheapest.add_argument("--top", type=int, default=10,
-                            help="Number of cheapest options to return (default: 10)")
+    p_cheapest.add_argument("--round-trip", action="store_true", dest="round_trip", help="Search round-trip dates")
+    p_cheapest.add_argument("--duration", type=int, default=3, help="Trip duration in days for round-trip (default: 3)")
+    p_cheapest.add_argument("--top", type=int, default=10, help="Number of cheapest options to return (default: 10)")
     p_cheapest.set_defaults(func=cmd_cheapest)
 
     # --- offer (Duffel search) ---
@@ -710,16 +729,13 @@ def main():
     p_offer.add_argument("origin", help="Origin IATA code (e.g. JFK)")
     p_offer.add_argument("destination", help="Destination IATA code (e.g. LAX)")
     p_offer.add_argument("date", help="Departure date YYYY-MM-DD")
-    p_offer.add_argument("--return-date", dest="return_date", default=None,
-                         help="Return date YYYY-MM-DD (makes it round-trip)")
-    p_offer.add_argument("--passengers", type=int, default=1,
-                         help="Number of adult passengers (default: 1)")
-    p_offer.add_argument("--cabin", default="ECONOMY",
-                         help="Cabin: ECONOMY, PREMIUM_ECONOMY, BUSINESS, FIRST, ANY (default: ECONOMY)")
-    p_offer.add_argument("--max-connections", type=int, default=-1, dest="max_connections",
-                         help="Max connections per slice (-1 = any, 0 = direct only)")
-    p_offer.add_argument("--max-results", type=int, default=10, dest="max_results",
-                         help="Max offers to show (default: 10)")
+    p_offer.add_argument("--return-date", dest="return_date", default=None, help="Return date YYYY-MM-DD (makes it round-trip)")
+    p_offer.add_argument("--passengers", type=int, default=1, help="Number of adult passengers (default: 1)")
+    p_offer.add_argument("--cabin", default="ECONOMY", help="Cabin: ECONOMY, PREMIUM_ECONOMY, BUSINESS, FIRST, ANY (default: ECONOMY)")
+    p_offer.add_argument(
+        "--max-connections", type=int, default=-1, dest="max_connections", help="Max connections per slice (-1 = any, 0 = direct only)"
+    )
+    p_offer.add_argument("--max-results", type=int, default=10, dest="max_results", help="Max offers to show (default: 10)")
     p_offer.set_defaults(func=cmd_offer)
 
     # --- book (Duffel booking) ---
@@ -737,10 +753,8 @@ def main():
         ),
     )
     p_book.add_argument("offer_id", help="Offer ID from 'flights offer' (off_...)")
-    p_book.add_argument("--passenger-id", required=True, dest="passenger_id",
-                        help="Passenger ID from offer response (pas_...)")
-    p_book.add_argument("--profile", default=None,
-                        help="Use saved passenger profile (e.g. 'myprofile')")
+    p_book.add_argument("--passenger-id", required=True, dest="passenger_id", help="Passenger ID from offer response (pas_...)")
+    p_book.add_argument("--profile", default=None, help="Use saved passenger profile (e.g. 'myprofile')")
     p_book.add_argument("--given-name", dest="given_name", default=None)
     p_book.add_argument("--family-name", dest="family_name", default=None)
     p_book.add_argument("--title", default="mr", help="mr, mrs, ms, miss, dr (default: mr)")
@@ -763,8 +777,7 @@ def main():
     # --- cancel ---
     p_cancel = sub.add_parser("cancel", help="Cancel an order")
     p_cancel.add_argument("order_id", help="Order ID to cancel (ord_...)")
-    p_cancel.add_argument("--no-confirm", action="store_true", dest="no_confirm",
-                          help="Create cancellation without confirming (pending state)")
+    p_cancel.add_argument("--no-confirm", action="store_true", dest="no_confirm", help="Create cancellation without confirming (pending state)")
     p_cancel.set_defaults(func=cmd_cancel)
 
     # --- passenger ---
@@ -782,10 +795,8 @@ def main():
             "  flights passenger delete myprofile\n"
         ),
     )
-    p_passenger.add_argument("passenger_action", choices=["save", "list", "show", "delete"],
-                             help="Action: save, list, show, delete")
-    p_passenger.add_argument("name", nargs="?", default=None,
-                             help="Profile name (required for save/show/delete)")
+    p_passenger.add_argument("passenger_action", choices=["save", "list", "show", "delete"], help="Action: save, list, show, delete")
+    p_passenger.add_argument("name", nargs="?", default=None, help="Profile name (required for save/show/delete)")
     p_passenger.add_argument("--given-name", dest="given_name", default=None)
     p_passenger.add_argument("--family-name", dest="family_name", default=None)
     p_passenger.add_argument("--title", default="mr")

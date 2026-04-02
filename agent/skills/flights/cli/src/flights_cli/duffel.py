@@ -22,9 +22,7 @@ def _get_token() -> str:
         return token.strip()
     if TOKEN_FILE.exists():
         return TOKEN_FILE.read_text().strip()
-    raise RuntimeError(
-        "No Duffel API token found. Set DUFFEL_TOKEN env var or write token to ~/.config/duffel/token"
-    )
+    raise RuntimeError("No Duffel API token found. Set DUFFEL_TOKEN env var or write token to ~/.config/duffel/token")
 
 
 def _headers() -> dict:
@@ -53,6 +51,7 @@ def _check(resp: requests.Response) -> dict:
 # ---------------------------------------------------------------------------
 # Offer Requests (Search)
 # ---------------------------------------------------------------------------
+
 
 def create_offer_request(
     slices: list[dict],
@@ -131,6 +130,7 @@ def get_offer(offer_id: str, return_services: bool = True) -> dict:
 # ---------------------------------------------------------------------------
 # Orders (Booking)
 # ---------------------------------------------------------------------------
+
 
 def create_order(
     offer_id: str,
@@ -213,6 +213,7 @@ def list_orders(limit: int = 20) -> list[dict]:
 # Cancellations
 # ---------------------------------------------------------------------------
 
+
 def cancel_order(order_id: str, confirm: bool = True) -> dict:
     """Cancel an order. If confirm=True, confirms immediately."""
     # Step 1: Create cancellation
@@ -260,7 +261,5 @@ def get_profile(name: str) -> dict:
     """Get a saved passenger profile by name."""
     profiles = load_profiles()
     if name not in profiles:
-        raise RuntimeError(
-            f"No passenger profile '{name}'. Available: {', '.join(profiles.keys()) or 'none'}"
-        )
+        raise RuntimeError(f"No passenger profile '{name}'. Available: {', '.join(profiles.keys()) or 'none'}")
     return profiles[name]
