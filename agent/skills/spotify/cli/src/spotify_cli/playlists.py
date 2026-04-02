@@ -1,6 +1,5 @@
 """Playlist operations."""
 
-import spotipy
 
 from .config import Config
 from .auth import get_client

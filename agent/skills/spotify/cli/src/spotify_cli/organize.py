@@ -3,7 +3,7 @@
 import json
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 
 from .config import Config
@@ -237,7 +237,7 @@ def _write_notification(data: dict) -> None:
     """Write a notification JSON file to the notifications directory."""
     NOTIFICATIONS_DIR.mkdir(parents=True, exist_ok=True)
     data.setdefault("source", "spotify")
-    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     filename = NOTIFICATIONS_DIR / f"spotify_liked_{ts}.json"
     with open(filename, "w") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
@@ -245,7 +245,7 @@ def _write_notification(data: dict) -> None:
 
 def _log(msg: str) -> None:
     """Log to stderr with timestamp."""
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     print(f"[{ts}] {msg}", file=sys.stderr, flush=True)
 
 
@@ -470,7 +470,7 @@ def init_watch(config: Config) -> dict:
         time.sleep(0.1)
         resp = sp.current_user_saved_tracks(limit=50, offset=offset)
 
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     state = {
         "known_liked_ids": liked_ids,
         "last_poll": now,
@@ -513,7 +513,7 @@ def watch_daemon(config: Config, interval: int = 60) -> None:
 def _poll_cycle(config: Config, state: dict) -> None:
     """Single poll cycle: fetch recent liked songs, detect new ones, notify."""
     sp = get_client(config)
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     _log("Polling liked songs (most recent 20)...")
     resp = sp.current_user_saved_tracks(limit=20, offset=0)
@@ -572,7 +572,7 @@ def _poll_cycle(config: Config, state: dict) -> None:
             },
         }
         _write_notification(notification)
-        _log(f"  Notification written.")
+        _log("  Notification written.")
 
         known_ids.add(track_id)
 

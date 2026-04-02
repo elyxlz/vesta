@@ -6,10 +6,8 @@ Credentials (client_id, client_secret) stored in ~/.spotify/credentials.json.
 
 import json
 import sys
-import webbrowser
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
-from pathlib import Path
 
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
@@ -25,7 +23,7 @@ def _load_credentials(config: Config) -> tuple[str, str]:
         print(
             json.dumps({
                 "error": "no_credentials",
-                "message": f"No credentials found. Run: spotify auth setup --client-id <ID> --client-secret <SECRET>",
+                "message": "No credentials found. Run: spotify auth setup --client-id <ID> --client-secret <SECRET>",
             }),
             file=sys.stderr,
         )
