@@ -57,6 +57,8 @@ Use the `upstream` skill to both pull and push. Don't skip this just because not
 
 Update the "User State" section — your working model of where they're at. Write what tomorrow's you needs to know to not start from zero.
 
+**CRITICAL: Never use relative dates or timing in the User State.** No "tonight", "tomorrow", "yesterday", "this weekend", "next week". Always use absolute dates (e.g., "Mar 19" not "yesterday", "Mar 22 5:15pm" not "tomorrow evening"). Relative references become wrong the moment a new day starts, causing cascading confusion.
+
 - What they're working on right now
 - What's going well and what isn't, reading between the lines
 - What's coming that they might need help with
