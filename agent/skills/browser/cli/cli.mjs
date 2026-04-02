@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { BrowserClaw } from './dist/index.js';
-import { readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'fs';
+import { BrowserClaw, findFreePort } from './dist/index.js';
+import { readFileSync, writeFileSync, mkdirSync, unlinkSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { execSync } from 'child_process';
@@ -8,7 +8,17 @@ import { execSync } from 'child_process';
 // ── Paths ──
 
 const SESSION_DIR = join(homedir(), '.browser');
-const SESSION_FILE = join(SESSION_DIR, 'session.json');
+
+// Session file resolution:
+// - BROWSER_SESSION env var: explicit session file name for multi-agent isolation
+//   Each subagent sets a unique value (e.g. "agent-1", "agent-2") to get its own session.
+// - Default: 'session.json' (backwards compatible with single-agent use)
+function sessionFileName() {
+  const id = process.env.BROWSER_SESSION;
+  if (id) return `session-${id}.json`;
+  return 'session.json';
+}
+const SESSION_FILE = join(SESSION_DIR, sessionFileName());
 
 // ── Output ──
 
@@ -183,8 +193,22 @@ async function cmdLaunch(args) {
   const inDocker = process.env.IS_SANDBOX === '1';
   const stealth = Boolean(args.flags.stealth);
   const headless = args.flags.headless !== undefined ? Boolean(args.flags.headless) : inDocker;
-  const port = args.flags.port ? Number(args.flags.port) : 9222;
   const userDataDir = args.flags['user-data-dir'] || join(SESSION_DIR, 'profile');
+
+  // Port resolution:
+  // 1. --port flag: use exactly that port (explicit override)
+  // 2. No --port: auto-find a free port starting from 9222
+  //    This allows multiple subagents to each get their own Chrome instance.
+  let port;
+  if (args.flags.port) {
+    port = Number(args.flags.port);
+  } else {
+    try {
+      port = await findFreePort(9222, 100);
+    } catch (e) {
+      fail(`Could not find a free port for Chrome: ${e.message}`);
+    }
+  }
 
   const chromeArgs = [];
   if (args.flags.proxy) chromeArgs.push(`--proxy-server=${args.flags.proxy}`);
@@ -199,8 +223,48 @@ async function cmdLaunch(args) {
   });
 
   writeSession(browser.url, browser.pid, stealth);
-  out({ status: 'launched', cdpUrl: browser.url, pid: browser.pid, headless, stealth });
+  out({ status: 'launched', cdpUrl: browser.url, pid: browser.pid, headless, stealth, port });
   process.exit(0);
+}
+
+async function cmdSessions() {
+  mkdirSync(SESSION_DIR, { recursive: true });
+  const files = readdirSync(SESSION_DIR).filter(f => f.startsWith('session') && f.endsWith('.json'));
+  const sessions = [];
+  for (const file of files) {
+    try {
+      const data = JSON.parse(readFileSync(join(SESSION_DIR, file), 'utf8'));
+      let alive = false;
+      if (data.pid) {
+        try { process.kill(data.pid, 0); alive = true; } catch {}
+      }
+      sessions.push({ file, ...data, alive });
+    } catch {}
+  }
+  out({ sessions });
+}
+
+async function cmdStopAll() {
+  mkdirSync(SESSION_DIR, { recursive: true });
+  const files = readdirSync(SESSION_DIR).filter(f => f.startsWith('session') && f.endsWith('.json'));
+  const stopped = [];
+  for (const file of files) {
+    try {
+      const data = JSON.parse(readFileSync(join(SESSION_DIR, file), 'utf8'));
+      if (data.cdpUrl) {
+        try {
+          const b = await BrowserClaw.connect(data.cdpUrl);
+          await b.stop();
+        } catch {}
+      }
+      if (data.pid) {
+        try { process.kill(data.pid, 'SIGTERM'); } catch {}
+      }
+      try { unlinkSync(join(SESSION_DIR, file)); } catch {}
+      stopped.push(file);
+    } catch {}
+  }
+  out({ status: 'stopped_all', stopped });
 }
 
 async function cmdConnect(args) {
@@ -539,6 +603,8 @@ const COMMANDS = {
   launch: cmdLaunch,
   connect: cmdConnect,
   stop: cmdStop,
+  'stop-all': cmdStopAll,
+  sessions: cmdSessions,
   tabs: cmdTabs,
   open: cmdOpen,
   navigate: cmdNavigate,

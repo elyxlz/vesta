@@ -265,6 +265,27 @@ async function ensurePortAvailable(port: number): Promise<void> {
   });
 }
 
+async function isPortAvailable(port: number): Promise<boolean> {
+  try {
+    await ensurePortAvailable(port);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Find a free port in the given range [startPort, startPort + range).
+ * Scans sequentially from startPort until a free port is found.
+ * Throws if no port is available in the range.
+ */
+export async function findFreePort(startPort: number = DEFAULT_CDP_PORT, range: number = 100): Promise<number> {
+  for (let port = startPort; port < startPort + range; port++) {
+    if (await isPortAvailable(port)) return port;
+  }
+  throw new Error(`No free port found in range ${startPort}-${startPort + range - 1}`);
+}
+
 // ── Profile Decoration ──
 
 function safeReadJson(filePath: string): Record<string, any> | null {
