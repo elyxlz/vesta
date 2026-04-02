@@ -28,7 +28,7 @@ jobs:
           node-version: 22
 
       - name: Build
-        run: cd app && yarn install --frozen-lockfile && yarn build
+        run: cd app && yarn install && yarn build
 
       - name: Deploy (production)
         if: github.event_name == 'push' || github.event_name == 'release'
