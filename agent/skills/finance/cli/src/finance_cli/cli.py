@@ -109,13 +109,15 @@ def cmd_auth_login(args) -> dict:
     auth_url, state = eb.initiate_auth(conf)
 
     print(
-        json.dumps({
-            "action": "visit_url",
-            "message": "Open this URL in your browser to authorise bank access:",
-            "url": auth_url,
-            "waiting": f"Listening on https://localhost:{eb.CALLBACK_PORT}{eb.CALLBACK_PATH} for the callback...",
-            "fallback": "If the browser shows an SSL error, copy the full URL from the address bar and run: finance auth callback --url '<url>'",
-        }),
+        json.dumps(
+            {
+                "action": "visit_url",
+                "message": "Open this URL in your browser to authorise bank access:",
+                "url": auth_url,
+                "waiting": f"Listening on https://localhost:{eb.CALLBACK_PORT}{eb.CALLBACK_PATH} for the callback...",
+                "fallback": "If the browser shows an SSL error, copy the full URL from the address bar and run: finance auth callback --url '<url>'",
+            }
+        ),
         flush=True,
     )
 
@@ -132,11 +134,13 @@ def cmd_auth_login(args) -> dict:
     # Normalise account list for storage
     accounts = []
     for acc in raw_accounts:
-        accounts.append({
-            "uid": acc.get("uid", acc.get("account_uid", "")),
-            "name": acc.get("name", acc.get("account_id", {}).get("iban", "unknown")),
-            "currency": acc.get("currency", ""),
-        })
+        accounts.append(
+            {
+                "uid": acc.get("uid", acc.get("account_uid", "")),
+                "name": acc.get("name", acc.get("account_id", {}).get("iban", "unknown")),
+                "currency": acc.get("currency", ""),
+            }
+        )
 
     conf["session_id"] = session_id
     conf["accounts"] = accounts
@@ -156,6 +160,7 @@ def cmd_auth_callback(args) -> dict:
     cfg.require_credentials(conf)
 
     import urllib.parse
+
     parsed = urllib.parse.urlparse(args.url)
     qs = urllib.parse.parse_qs(parsed.query)
 
@@ -173,11 +178,13 @@ def cmd_auth_callback(args) -> dict:
 
     accounts = []
     for acc in raw_accounts:
-        accounts.append({
-            "uid": acc.get("uid", acc.get("account_uid", "")),
-            "name": acc.get("name", acc.get("account_id", {}).get("iban", "unknown")),
-            "currency": acc.get("currency", ""),
-        })
+        accounts.append(
+            {
+                "uid": acc.get("uid", acc.get("account_uid", "")),
+                "name": acc.get("name", acc.get("account_id", {}).get("iban", "unknown")),
+                "currency": acc.get("currency", ""),
+            }
+        )
 
     conf["session_id"] = session_id
     conf["accounts"] = accounts
@@ -251,12 +258,14 @@ def cmd_balances(args) -> list:
             balances = eb.get_balances(conf, uid)
         except SystemExit:
             balances = [{"error": "could not fetch balance"}]
-        results.append({
-            "uid": uid,
-            "name": acc.get("name", ""),
-            "currency": acc.get("currency", ""),
-            "balances": balances,
-        })
+        results.append(
+            {
+                "uid": uid,
+                "name": acc.get("name", ""),
+                "currency": acc.get("currency", ""),
+                "balances": balances,
+            }
+        )
     return results
 
 

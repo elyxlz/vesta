@@ -69,11 +69,13 @@ def _raise_for_status(resp: httpx.Response, context: str) -> None:
         except Exception:
             body = resp.text
         print(
-            json.dumps({
-                "error": f"Enable Banking API error ({context})",
-                "status": resp.status_code,
-                "body": body,
-            }),
+            json.dumps(
+                {
+                    "error": f"Enable Banking API error ({context})",
+                    "status": resp.status_code,
+                    "body": body,
+                }
+            ),
             file=sys.stderr,
         )
         sys.exit(1)
@@ -117,9 +119,7 @@ def initiate_auth(conf: dict) -> tuple[str, str]:
     Use the Enable Banking portal to find available ASPSPs for your country.
     """
     state = str(uuid.uuid4())
-    valid_until = (datetime.now(UTC) + timedelta(days=CONSENT_DAYS)).strftime(
-        "%Y-%m-%dT%H:%M:%S.000Z"
-    )
+    valid_until = (datetime.now(UTC) + timedelta(days=CONSENT_DAYS)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
     body = {
         "access": {"valid_until": valid_until},
         "aspsp": {"name": ASPSP_NAME, "country": ASPSP_COUNTRY},
@@ -309,9 +309,11 @@ def _generate_self_signed_cert() -> tuple[str, str]:
     from cryptography.hazmat.primitives.asymmetric import rsa
 
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    subject = issuer = x509.Name([
-        x509.NameAttribute(NameOID.COMMON_NAME, "localhost"),
-    ])
+    subject = issuer = x509.Name(
+        [
+            x509.NameAttribute(NameOID.COMMON_NAME, "localhost"),
+        ]
+    )
     cert = (
         x509.CertificateBuilder()
         .subject_name(subject)
@@ -332,11 +334,13 @@ def _generate_self_signed_cert() -> tuple[str, str]:
     cert_file.close()
 
     key_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pem")
-    key_file.write(key.private_bytes(
-        serialization.Encoding.PEM,
-        serialization.PrivateFormat.TraditionalOpenSSL,
-        serialization.NoEncryption(),
-    ))
+    key_file.write(
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.TraditionalOpenSSL,
+            serialization.NoEncryption(),
+        )
+    )
     key_file.close()
 
     return cert_file.name, key_file.name
@@ -385,9 +389,7 @@ def wait_for_callback(port: int = CALLBACK_PORT) -> str:
             self.send_header("Content-Type", "text/html")
             self.end_headers()
             self.wfile.write(
-                b"<html><body><h2>Authorization successful!</h2>"
-                b"<p>You can close this tab and return to the terminal.</p>"
-                b"</body></html>"
+                b"<html><body><h2>Authorization successful!</h2><p>You can close this tab and return to the terminal.</p></body></html>"
             )
 
         def log_message(self, format, *args):  # noqa: A002

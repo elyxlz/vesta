@@ -111,7 +111,7 @@ def write_notification(tx: dict) -> None:
             "debtor": (tx.get("debtor", {}) or {}).get("name", "") if isinstance(tx.get("debtor"), dict) else tx.get("debtor_name", ""),
             "date": tx.get("booking_date", ""),
             "credit_debit": tx.get("credit_debit_indicator", ""),
-        }
+        },
     }
 
     filename = f"finance_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}_{hash(formatted) % 10000:04d}.json"
@@ -172,5 +172,5 @@ if __name__ == "__main__":
     elif cmd == "serve":
         serve()
     else:
-        print(f"Usage: python -m finance_cli.transaction_watcher [serve|seed]", file=sys.stderr)
+        print("Usage: python -m finance_cli.transaction_watcher [serve|seed]", file=sys.stderr)
         sys.exit(1)

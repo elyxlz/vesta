@@ -38,12 +38,7 @@ def require_credentials(cfg: dict) -> None:
     """Exit with error if app_id / key_path are not set."""
     if not cfg.get("app_id") or not cfg.get("key_path"):
         print(
-            json.dumps(
-                {
-                    "error": "app_id and key_path are not configured. "
-                    "Run: finance config set --app-id <uuid> --key-path <path-to-pem>"
-                }
-            ),
+            json.dumps({"error": "app_id and key_path are not configured. Run: finance config set --app-id <uuid> --key-path <path-to-pem>"}),
             file=sys.stderr,
         )
         sys.exit(1)
@@ -54,11 +49,7 @@ def require_session(cfg: dict) -> None:
     require_credentials(cfg)
     if not cfg.get("session_id"):
         print(
-            json.dumps(
-                {
-                    "error": "No active session. Run: finance auth login"
-                }
-            ),
+            json.dumps({"error": "No active session. Run: finance auth login"}),
             file=sys.stderr,
         )
         sys.exit(1)
