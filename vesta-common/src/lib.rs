@@ -91,11 +91,6 @@ pub fn config_path() -> PathBuf {
     config_dir().join("config.json")
 }
 
-/// Legacy server.json path — used for migration only.
-pub fn server_json_path() -> PathBuf {
-    config_dir().join("server.json")
-}
-
 pub fn default_server_url() -> String {
     format!("https://localhost:{}", DEFAULT_API_PORT)
 }
@@ -105,13 +100,6 @@ pub fn load_config() -> VestaConfig {
         if let Ok(config) = serde_json::from_str(&content) {
             return config;
         }
-    }
-    // Migrate from legacy server.json
-    if let Some(server) = load_legacy_server_config() {
-        let config = VestaConfig { server: Some(server) };
-        let _ = save_config(&config);
-        let _ = std::fs::remove_file(server_json_path());
-        return config;
     }
     VestaConfig::default()
 }
@@ -138,15 +126,6 @@ pub fn save_server_config(config: &ServerConfig) -> Result<(), String> {
     let mut full = load_config();
     full.server = Some(config.clone());
     save_config(&full)
-}
-
-fn load_legacy_server_config() -> Option<ServerConfig> {
-    let content = std::fs::read_to_string(server_json_path()).ok()?;
-    let config: ServerConfig = serde_json::from_str(&content).ok()?;
-    if config.url.is_empty() || config.api_key.is_empty() {
-        return None;
-    }
-    Some(config)
 }
 
 /// Wait for vestad to become reachable on the given port.

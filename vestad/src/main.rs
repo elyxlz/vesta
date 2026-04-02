@@ -58,9 +58,6 @@ fn main() {
             // Ensure Docker is available
             docker::ensure_docker().unwrap_or_else(|e| die(&e));
 
-            // Migrate legacy containers
-            docker::maybe_migrate_legacy();
-
             // Pre-flight port check for a better error message than the raw bind failure
             if let Err(e) = std::net::TcpListener::bind(("0.0.0.0", port)) {
                 die(format!(

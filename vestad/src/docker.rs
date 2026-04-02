@@ -1003,50 +1003,6 @@ pub fn restore_agent(loaded_image: &str, name_override: Option<&str>, replace: b
     Ok(name)
 }
 
-/// Migrate legacy `vesta` container to new naming scheme.
-pub fn maybe_migrate_legacy() {
-    if docker_output(&["inspect", "--format", "{{.State.Status}}", "vesta"]).is_none() {
-        return;
-    }
-
-    let managed = list_managed_containers();
-    if !managed.is_empty() {
-        return;
-    }
-
-    let cs = container_status("vesta");
-    if cs == ContainerStatus::Dead {
-        docker_ok(&["rm", "-f", "vesta"]);
-        return;
-    }
-
-    let was_running = cs == ContainerStatus::Running;
-    let name = read_container_file("vesta", "/root/.vesta-name").unwrap_or_else(|| "default".to_string());
-    if validate_name(&name).is_err() {
-        return;
-    }
-    let cname = container_name(&name);
-
-    let migrate_tag = "vesta-migrate:temp";
-    if !docker_ok(&[
-        "commit",
-        "--change", "LABEL vesta.managed=true",
-        "--change", &format!("LABEL vesta.ws_port={}", BASE_WS_PORT),
-        "vesta",
-        migrate_tag,
-    ]) {
-        return;
-    }
-
-    docker_ok(&["rm", "-f", "vesta"]);
-    let _ = create_container(&cname, migrate_tag, BASE_WS_PORT, &name);
-
-    if was_running {
-        docker_ok(&["start", &cname]);
-    }
-
-    docker_ok(&["rmi", migrate_tag]);
-}
 
 #[cfg(test)]
 mod tests {
