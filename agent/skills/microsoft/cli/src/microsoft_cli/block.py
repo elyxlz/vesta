@@ -172,10 +172,7 @@ def unblock_sender(
 
     rules = _get_inbox_rules(config, client, account_id, settings, account_email=account_email)
 
-    matching_rules = [
-        r for r in rules
-        if sender.lower() in [s.lower() for s in r.get("conditions", {}).get("senderContains", [])]
-    ]
+    matching_rules = [r for r in rules if sender.lower() in [s.lower() for s in r.get("conditions", {}).get("senderContains", [])]]
 
     if not matching_rules:
         return {"status": "not_found", "sender": sender, "message": f"No block rule found for sender '{sender}'"}
