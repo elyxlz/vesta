@@ -135,15 +135,9 @@ def _migrate_v1_to_v2(data_dir: Path, conn: sqlite3.Connection):
                         """INSERT OR IGNORE INTO reminders
                            (id, task_id, message, schedule_type, scheduled_time, completed, created_at, trigger_data, auto_generated)
                            VALUES (?, NULL, ?, ?, ?, ?, ?, ?, 0)""",
-                        (
-                            row["id"],
-                            row["message"],
-                            row["schedule_type"],
-                            row["scheduled_time"],
-                            row["completed"],
-                            row["created_at"],
-                            row["trigger_data"],
-                        ),
+                        (row["id"], row["message"], row["schedule_type"],
+                         row["scheduled_time"], row["completed"], row["created_at"],
+                         row["trigger_data"]),
                     )
                     imported += 1
                 except (KeyError, sqlite3.Error) as e:
@@ -159,7 +153,7 @@ def _migrate_v1_to_v2(data_dir: Path, conn: sqlite3.Connection):
     logger.info("Migrated schema v1 -> v2")
 
 
-AUTO_REMINDER_WINDOWS = [
+_AUTO_WINDOWS = [
     ("1 week", timedelta(weeks=1)),
     ("1 day", timedelta(days=1)),
     ("1 hour", timedelta(hours=1)),
@@ -167,44 +161,33 @@ AUTO_REMINDER_WINDOWS = [
 ]
 
 
-def parse_datetime(s: str) -> datetime:
-    parsed = datetime.fromisoformat(s.replace("Z", "+00:00"))
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
-
-
-def create_auto_reminders(conn: sqlite3.Connection, task_id: str, title: str, due_date_str: str, priority: int):
-    now = datetime.now(UTC)
-    due_dt = parse_datetime(due_date_str)
-
-    for label, delta in AUTO_REMINDER_WINDOWS:
-        fire_time = due_dt - delta
-        if fire_time <= now:
-            continue
-
-        reminder_id = str(uuid.uuid4())[:8]
-        trigger_data = {"type": "date", "run_date": fire_time.isoformat()}
-        message = f"Task due in {label}: {title}"
-
-        conn.execute(
-            """INSERT INTO reminders (id, task_id, message, schedule_type, scheduled_time, completed, trigger_data, auto_generated)
-               VALUES (?, ?, ?, ?, ?, 0, ?, 1)""",
-            (reminder_id, task_id, message, f"auto: {label} before due", fire_time.isoformat(), json.dumps(trigger_data)),
-        )
-
-
-def delete_auto_reminders(conn: sqlite3.Connection, task_id: str):
-    conn.execute("DELETE FROM reminders WHERE task_id = ? AND auto_generated = 1", (task_id,))
-
-
 def _create_auto_reminders_for_existing(conn: sqlite3.Connection):
     """Create auto-generated reminders for all pending tasks with due dates."""
-    tasks = conn.execute("SELECT id, title, due_date, priority FROM tasks WHERE due_date IS NOT NULL AND status='pending'").fetchall()
+    now = datetime.now(UTC)
+    tasks = conn.execute(
+        "SELECT id, title, due_date, priority FROM tasks WHERE due_date IS NOT NULL AND status='pending'"
+    ).fetchall()
     created = 0
     for task in tasks:
-        create_auto_reminders(conn, task["id"], task["title"], task["due_date"], task["priority"])
-        created += 1
+        due_str = task["due_date"]
+        parsed = datetime.fromisoformat(due_str.replace("Z", "+00:00"))
+        if not parsed.tzinfo:
+            parsed = parsed.replace(tzinfo=UTC)
+        for label, delta in _AUTO_WINDOWS:
+            fire_time = parsed - delta
+            if fire_time <= now:
+                continue
+            rid = str(uuid.uuid4())[:8]
+            trigger_data = {"type": "date", "run_date": fire_time.isoformat()}
+            conn.execute(
+                """INSERT INTO reminders (id, task_id, message, schedule_type, scheduled_time, completed, trigger_data, auto_generated)
+                   VALUES (?, ?, ?, ?, ?, 0, ?, 1)""",
+                (rid, task["id"], f"Task due in {label}: {task['title']}",
+                 f"auto: {label} before due", fire_time.isoformat(), json.dumps(trigger_data)),
+            )
+            created += 1
     if created:
-        logger.info(f"Created auto-generated reminders for {created} tasks")
+        logger.info(f"Created {created} auto-generated reminders for {len(tasks)} tasks")
 
 
 def init_db(data_dir: Path):

@@ -37,24 +37,21 @@ def _write_death_notification(notif_dir: Path, reason: str):
 def _require_daemon(config):
     pid_file = config.data_dir / "serve.pid"
     if not pid_file.exists():
-        print(
-            json.dumps({"error": "daemon not running — start with: screen -dmS tasks tasks serve --notifications-dir ~/vesta/notifications"}),
-            file=sys.stderr,
-        )
+        print(json.dumps({"error": "daemon not running — start with: screen -dmS tasks tasks serve --notifications-dir ~/vesta/notifications"}), file=sys.stderr)
         sys.exit(1)
     try:
         os.kill(int(pid_file.read_text().strip()), 0)
     except (ValueError, ProcessLookupError, OSError):
         pid_file.unlink(missing_ok=True)
-        print(
-            json.dumps(
-                {
-                    "error": "daemon not running (stale pid file) — start with: screen -dmS tasks tasks serve --notifications-dir ~/vesta/notifications"
-                }
-            ),
-            file=sys.stderr,
-        )
+        print(json.dumps({"error": "daemon not running (stale pid file) — start with: screen -dmS tasks tasks serve --notifications-dir ~/vesta/notifications"}), file=sys.stderr)
         sys.exit(1)
+
+
+def _init_scheduler(config: Config, notif_dir: Path | None = None):
+    scheduler = create_scheduler()
+    scheduler.start()
+    commands.restore_all_jobs(config, scheduler, notif_dir=notif_dir)
+    return scheduler
 
 
 def _sync_jobs(config: Config, scheduler, notif_dir: Path):
@@ -68,12 +65,11 @@ def _sync_jobs(config: Config, scheduler, notif_dir: Path):
     for sid in scheduled_ids - db_ids:
         try:
             scheduler.remove_job(sid)
-        except Exception as e:
-            logging.getLogger(__name__).warning(f"Failed to remove stale job {sid}: {e}")
+        except Exception:
+            pass
 
-    missing = db_ids - scheduled_ids
-    if missing:
-        commands.restore_jobs_by_ids(config, scheduler, missing, notif_dir=notif_dir)
+    if db_ids - scheduled_ids:
+        commands.restore_all_jobs(config, scheduler, notif_dir=notif_dir)
 
 
 def _build_remind_set_parser():
@@ -118,6 +114,7 @@ def main():
     # positional arguments with subparsers on the same parser level.
     # Everything else goes through standard argparse.
 
+    # Check if this is a `tasks remind` call
     if len(sys.argv) >= 2 and sys.argv[1] == "remind":
         return _main_remind()
 
@@ -199,12 +196,15 @@ def _main_remind():
     config.log_dir.mkdir(parents=True, exist_ok=True)
     db.init_db(config.data_dir)
 
+    # argv after "remind": sys.argv[2:]
     remind_args = sys.argv[2:]
 
+    # Show help
     if not remind_args or remind_args == ["-h"] or remind_args == ["--help"]:
         _print_remind_help()
         return
 
+    # Determine subcommand vs. set
     subcmd = remind_args[0]
     subcommands = {"list", "delete", "update"}
 
@@ -224,12 +224,18 @@ def _main_remind():
                 args = _build_remind_update_parser().parse_args(rest)
                 result = _do_remind_update(config, args)
         else:
+            # It's a set (the default). Parse all remind_args.
             args = _build_remind_set_parser().parse_args(remind_args)
             result = _do_remind_set(config, args)
 
         print(json.dumps(result, indent=2))
 
     except ValueError as e:
+        print(json.dumps({"error": str(e)}), file=sys.stderr)
+        sys.exit(1)
+    except SystemExit:
+        raise
+    except Exception as e:
         print(json.dumps({"error": str(e)}), file=sys.stderr)
         sys.exit(1)
 
@@ -262,38 +268,54 @@ subcommands:
 
 
 def _do_remind_set(config, args):
-    message = args.message_pos or args.message
-    if not message:
-        raise ValueError('message is required: tasks remind "message" or tasks remind --message "message"')
-    return commands.remind_set(
-        config,
-        message=message,
-        task_id=args.task_id,
-        scheduled_datetime=args.scheduled_datetime,
-        tz=args.tz,
-        in_minutes=args.in_minutes,
-        in_hours=args.in_hours,
-        in_days=args.in_days,
-        recurring=args.recurring,
-    )
+    scheduler = _init_scheduler(config)
+    try:
+        message = args.message_pos or args.message
+        if not message:
+            raise ValueError('message is required: tasks remind "message" or tasks remind --message "message"')
+        return commands.remind_set(
+            config, scheduler,
+            message=message,
+            task_id=args.task_id,
+            scheduled_datetime=args.scheduled_datetime,
+            tz=args.tz,
+            in_minutes=args.in_minutes,
+            in_hours=args.in_hours,
+            in_days=args.in_days,
+            recurring=args.recurring,
+        )
+    finally:
+        scheduler.shutdown(wait=False)
 
 
 def _do_remind_list(config, args):
-    return commands.remind_list(config, task_id=args.task_id, limit=args.limit)
+    scheduler = _init_scheduler(config)
+    try:
+        return commands.remind_list(config, scheduler, task_id=args.task_id, limit=args.limit)
+    finally:
+        scheduler.shutdown(wait=False)
 
 
 def _do_remind_delete(config, args):
-    reminder_id = args.id_pos or args.reminder_id
-    if not reminder_id:
-        raise ValueError("id is required: tasks remind delete <id> or tasks remind delete --id <id>")
-    return commands.remind_delete(config, reminder_id=reminder_id)
+    scheduler = _init_scheduler(config)
+    try:
+        reminder_id = args.id_pos or args.reminder_id
+        if not reminder_id:
+            raise ValueError("id is required: tasks remind delete <id> or tasks remind delete --id <id>")
+        return commands.remind_delete(config, scheduler, reminder_id=reminder_id)
+    finally:
+        scheduler.shutdown(wait=False)
 
 
 def _do_remind_update(config, args):
-    reminder_id = args.id_pos or args.reminder_id
-    if not reminder_id:
-        raise ValueError("id is required: tasks remind update <id> or tasks remind update --id <id>")
-    return commands.remind_update(config, reminder_id=reminder_id, message=args.message)
+    scheduler = _init_scheduler(config)
+    try:
+        reminder_id = args.id_pos or args.reminder_id
+        if not reminder_id:
+            raise ValueError("id is required: tasks remind update <id> or tasks remind update --id <id>")
+        return commands.remind_update(config, scheduler, reminder_id=reminder_id, message=args.message)
+    finally:
+        scheduler.shutdown(wait=False)
 
 
 def _handle_task(args, config: Config):
@@ -358,9 +380,7 @@ def _run_serve(config: Config, notif_dir: Path):
         ],
     )
 
-    scheduler = create_scheduler()
-    scheduler.start()
-    commands.restore_all_jobs(config, scheduler, notif_dir=notif_dir)
+    scheduler = _init_scheduler(config, notif_dir=notif_dir)
     stop = False
     shutdown_reason = "unknown"
 
@@ -373,7 +393,7 @@ def _run_serve(config: Config, notif_dir: Path):
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
 
-    sync_interval = int(os.environ["TASKS_SYNC_INTERVAL"]) if "TASKS_SYNC_INTERVAL" in os.environ else 5
+    sync_interval = int(os.environ.get("TASKS_SYNC_INTERVAL", "5"))
 
     _write_pid(config)
 
