@@ -82,7 +82,8 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
         asyncio.create_task(monitor_loop(message_queue, state=state, config=config)),
     ]
 
-    await queue_greeting(message_queue, config=config, reason=restart_reason)
+    greeting_reason = "first_start" if first_start else restart_reason
+    await queue_greeting(message_queue, config=config, reason=greeting_reason)
 
     try:
         await state.graceful_shutdown.wait()
