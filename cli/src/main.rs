@@ -635,19 +635,23 @@ fn run(cli: Cli) {
 
         Command::Boot => {
             #[cfg(target_os = "linux")]
-            platform::linux::boot()
-                .unwrap_or_else(|e| platform::die(&e));
+            {
+                platform::linux::boot()
+                    .unwrap_or_else(|e| platform::die(&e));
+                eprintln!("server started");
+            }
             #[cfg(not(target_os = "linux"))]
             platform::die("boot is only supported on Linux. use 'vesta connect' to connect to a remote server.");
-            eprintln!("server started");
         }
 
         Command::Shutdown => {
             #[cfg(target_os = "linux")]
-            platform::linux::shutdown();
+            {
+                platform::linux::shutdown();
+                eprintln!("server stopped");
+            }
             #[cfg(not(target_os = "linux"))]
             platform::die("shutdown is only supported on Linux.");
-            eprintln!("server stopped");
         }
 
         Command::Update => {

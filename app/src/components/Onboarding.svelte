@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from "svelte";
+  import { onDestroy } from "svelte";
   import { open } from "@tauri-apps/plugin-dialog";
   import { createAgent, agentStatus, authenticate, startAgent, waitForReady, restoreAgent, listAgents, connectToServer } from "../lib/api";
   import type { OnboardingStep } from "../lib/types";

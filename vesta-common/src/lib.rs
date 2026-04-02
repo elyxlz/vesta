@@ -213,12 +213,10 @@ pub fn ensure_server_with(vestad_path: Option<&std::path::Path>) -> Result<bool,
 
     #[cfg(not(target_os = "linux"))]
     {
-        // On non-Linux platforms, local bootstrap is not supported.
-        // Users must connect to a remote server via `vesta connect`.
         if load_server_config().is_some() {
             return Ok(false);
         }
-        return Ok(false);
+        return Err("no server configured. use 'vesta connect' to connect to a remote server.".into());
     }
 
     #[cfg(target_os = "linux")]

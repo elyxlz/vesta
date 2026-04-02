@@ -18,6 +18,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  NSIS_VERSION: "3.11"
 
 jobs:
   # ── Detect what changed (for smart PR filtering) ────────────────────────
