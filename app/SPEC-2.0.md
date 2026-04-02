@@ -1,4 +1,4 @@
-# Vesta Desktop App — Spec Sheet 2.0
+# Vesta Desktop App — Spec Sheet
 
 ## Overview
 
@@ -64,8 +64,6 @@ Vesta is a Tauri + Svelte desktop app for managing personal AI agents that run a
 
 **View type:** `loading` | `connect` | `home` | `agent-detail` | `agent-chat` | `agent-console`
 
-**Key change from v1:** There is no separate "grid", "onboarding", or "agent-home" branching. After connecting, the app always goes to `home`. Home shows all agents and handles creation. Agent count doesn't change routing.
-
 **Transitions:** 150ms opacity fade between views. Chat and Console render as absolute overlays on top of the always-mounted AgentDetail.
 
 ---
@@ -129,14 +127,14 @@ No back button — this is the entry point when unauthenticated.
 
 ## Home (`Home.svelte`)
 
-The central hub. Always shown after successful connection. Combines what was previously the grid view and the "new agent" entry point.
+The central hub. Always shown after successful connection.
 
 ### Layout
 
 Two states based on whether agents exist:
 
 #### When agents exist
-- Agent grid at top (same responsive layout as v1 grid: 1 col for 1, 2 cols for 2, 3 cols for 3+).
+- Agent grid at top. Responsive layout: 1 agent → 1 column (centered), 2 → 2 columns (centered), 3+ → 3 columns.
 - **[+] New agent** button in top-right corner. Tooltip: "new agent".
 - Clicking [+] opens the **create agent** inline flow (see below) — either a modal/panel over the grid or replaces the grid content.
 - Clicking an agent card → navigates to `agent-detail`.
@@ -240,7 +238,7 @@ OAuth-style code-paste flow for Claude authentication.
 
 ## Agent Detail (`AgentDetail.svelte`)
 
-Single-agent detail view with animated orb and context-sensitive controls. Replaces `AgentView` from v1.
+Single-agent detail view with animated orb and context-sensitive controls.
 
 ### Navigation
 - **[← back]** button top-left. Returns to `home`.
@@ -577,18 +575,3 @@ All animations respect `prefers-reduced-motion: reduce`.
 | SSE (Console) | Persistent | Real-time log streaming |
 | Reconnect backoff | 1s → 30s (×2) | WebSocket and SSE reconnection |
 
----
-
-## Summary of Changes from v1
-
-| Area | v1 | v2 |
-|------|----|----|
-| **Post-connection routing** | Branch on agent count: 1+auth → agent-home, >1 → grid, 0 or unauth → onboarding | Always → `home` |
-| **Views** | `loading`, `connect`, `grid`, `onboarding`, `agent-home`, `agent-chat`, `agent-console` | `loading`, `connect`, `home`, `agent-detail`, `agent-chat`, `agent-console` |
-| **Agent list + create** | Separate views (grid vs onboarding wizard) | Unified `home` view — grid with inline create |
-| **Empty state** | Full-screen onboarding wizard | Home page shows centered create-agent UI |
-| **Stale credentials** | Went to connect view | Tries to validate first, clears + shows connect on failure |
-| **Create agent** | Standalone multi-step wizard (`Onboarding.svelte`) | Inline flow within home (name → creating → auth → done) |
-| **Component names** | `GridView`, `AgentView`, `Onboarding` | `Home`, `AgentDetail`, inline create flow |
-| **Post-create navigation** | Chat for single agent, grid for multiple | Always → `agent-chat` for the new agent |
-| **Post-delete navigation** | Grid or onboarding depending on remaining count | Always → `home` |

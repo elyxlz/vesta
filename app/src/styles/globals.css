@@ -1,0 +1,265 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: rgba(248, 246, 243, 0.96);
+  --color-foreground: #1a1a1a;
+  --color-muted: #6b6b6b;
+  --color-muted-foreground: #999;
+  --color-border: rgba(0, 0, 0, 0.08);
+  --color-input: rgba(0, 0, 0, 0.08);
+  --color-ring: rgba(0, 0, 0, 0.12);
+  --color-primary: #1a1a1a;
+  --color-primary-foreground: #fff;
+  --color-destructive: #dc2626;
+  --color-destructive-foreground: #fff;
+  --color-accent: rgba(0, 0, 0, 0.04);
+  --color-accent-foreground: #1a1a1a;
+
+  --color-orb-alive-1: #b8ceb0;
+  --color-orb-alive-2: #7a9e70;
+  --color-orb-alive-3: #5a7e50;
+  --color-orb-thinking-1: #e8d0a0;
+  --color-orb-thinking-2: #c4a060;
+  --color-orb-thinking-3: #a08040;
+  --color-orb-booting-1: #c4deb8;
+  --color-orb-booting-2: #8ab880;
+  --color-orb-booting-3: #6a9e5a;
+  --color-orb-auth-1: #c0d0e8;
+  --color-orb-auth-2: #80a0c4;
+  --color-orb-auth-3: #6080a4;
+  --color-orb-dead-1: #c4bdb5;
+  --color-orb-dead-2: #a09890;
+  --color-orb-dead-3: #8b7e74;
+
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+}
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background: transparent;
+    overflow: hidden;
+    height: 100vh;
+    -webkit-font-smoothing: antialiased;
+    color: var(--color-foreground);
+  }
+
+  #root {
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+}
+
+/* ── Spring easing functions ── */
+:root {
+  --spring: linear(
+    0, 0.006, 0.025 2.8%, 0.101 6.1%, 0.539 18.9%, 0.721 25.3%, 0.849 31.5%,
+    0.937 38.1%, 0.968 41.8%, 0.991 45.7%, 1.006 50.1%, 1.015 55%, 1.017 63.9%,
+    1.001 85.9%, 1
+  );
+  --spring-bouncy: linear(
+    0, 0.004, 0.016 2.5%, 0.063 5.2%, 0.247 10.8%, 0.358 13.7%, 0.455 16.4%,
+    0.541 19%, 0.616 21.5%, 0.681 24%, 0.792 29.5%, 0.857 34%, 0.905 39%,
+    0.943 44.8%, 0.965 50%, 0.982 57.2%, 0.992 65%, 0.998 79%, 1
+  );
+  --spring-snappy: linear(
+    0, 0.066 3%, 0.359 12%, 0.63 19.3%, 0.819 25.9%, 0.915 31.3%, 0.963 36%,
+    0.99 41%, 1.004 47%, 1.009 55%, 1.003 73%, 1
+  );
+}
+
+/* ── Orb animations ── */
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+
+@keyframes glow-pulse {
+  0%, 100% { opacity: 0.5; transform: scale(1); }
+  50% { opacity: 0.8; transform: scale(1.06); }
+}
+
+@keyframes orb-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.03); }
+}
+
+@keyframes glow-swell {
+  0%, 100% { opacity: 0.4; transform: scale(0.96); }
+  50% { opacity: 0.9; transform: scale(1.08); }
+}
+
+@keyframes orb-wind-down {
+  from { transform: scale(1); }
+  to { transform: scale(0.92); }
+}
+
+@keyframes orb-wake-up {
+  from { transform: scale(0.92); }
+  60% { transform: scale(1.03); }
+  to { transform: scale(1); }
+}
+
+@keyframes shrink-away {
+  from { transform: scale(1); opacity: 1; }
+  to { transform: scale(0.7); opacity: 0.3; }
+}
+
+@keyframes fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+/* ── UI animations ── */
+@keyframes breathe {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
+@keyframes view-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes menu-in {
+  from { opacity: 0; transform: scale(0.95) translateY(4px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes fade-slide-in {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fade-slide-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pop-in {
+  from { opacity: 0; transform: scale(0.6); }
+  60% { transform: scale(1.1); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-4px); }
+  40% { transform: translateX(4px); }
+  60% { transform: translateX(-3px); }
+  80% { transform: translateX(2px); }
+}
+
+@keyframes dot-pulse {
+  0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
+  40% { opacity: 1; transform: scale(1); }
+}
+
+@keyframes progress-slide {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(200%); }
+}
+
+/* ── Animation utility classes ── */
+.animate-float { animation: float 4s ease-in-out infinite; }
+.animate-float-fast { animation: float 2s ease-in-out infinite; }
+.animate-float-medium { animation: float 3s ease-in-out infinite; }
+.animate-glow-pulse { animation: glow-pulse 3s ease-in-out infinite; }
+.animate-glow-pulse-fast { animation: glow-pulse 1.2s ease-in-out infinite; }
+.animate-orb-breathe { animation: orb-breathe 3s ease-in-out infinite; }
+.animate-orb-breathe-fast { animation: orb-breathe 1.2s ease-in-out infinite; }
+.animate-glow-swell { animation: glow-swell 1.5s ease-in-out infinite; }
+.animate-glow-swell-fast { animation: glow-swell 0.8s ease-in-out infinite; }
+.animate-orb-wind-down { animation: orb-wind-down 0.8s var(--spring) forwards; }
+.animate-orb-wake-up { animation: orb-wake-up 0.8s var(--spring) forwards; }
+.animate-shrink-away { animation: shrink-away 0.6s var(--spring) forwards; }
+.animate-glow-fade { animation: fade-out 0.5s ease forwards; }
+.animate-breathe { animation: breathe 2.5s ease-in-out infinite; }
+.animate-view-in { animation: view-in 0.6s var(--spring); }
+.animate-menu-in { animation: menu-in 0.15s var(--spring); }
+.animate-fade-slide-in { animation: fade-slide-in 0.5s var(--spring); }
+.animate-fade-slide-up { animation: fade-slide-up 0.3s var(--spring); }
+.animate-pop-in { animation: pop-in 0.4s var(--spring-bouncy); }
+.animate-shake { animation: shake 0.3s ease; }
+.animate-progress { animation: progress-slide 1.5s ease-in-out infinite; }
+
+.animate-dot-pulse { animation: dot-pulse 1.4s ease-in-out infinite; }
+.animate-dot-pulse-1 { animation: dot-pulse 1.4s ease-in-out infinite; }
+.animate-dot-pulse-2 { animation: dot-pulse 1.4s ease-in-out infinite 0.2s; }
+.animate-dot-pulse-3 { animation: dot-pulse 1.4s ease-in-out infinite 0.4s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-float,
+  .animate-float-fast,
+  .animate-float-medium,
+  .animate-glow-pulse,
+  .animate-glow-pulse-fast,
+  .animate-orb-breathe,
+  .animate-orb-breathe-fast,
+  .animate-glow-swell,
+  .animate-glow-swell-fast,
+  .animate-breathe,
+  .animate-dot-pulse,
+  .animate-dot-pulse-1,
+  .animate-dot-pulse-2,
+  .animate-dot-pulse-3 {
+    animation: none !important;
+  }
+
+  .animate-orb-wind-down,
+  .animate-orb-wake-up,
+  .animate-shrink-away,
+  .animate-glow-fade,
+  .animate-view-in,
+  .animate-menu-in,
+  .animate-fade-slide-in,
+  .animate-fade-slide-up,
+  .animate-pop-in,
+  .animate-shake,
+  .animate-progress {
+    animation-duration: 0.01ms !important;
+  }
+}
+
+/* ── Dark mode overrides ── */
+.dark {
+  --color-background: #1a1a1a;
+  --color-foreground: #e8e8e8;
+  --color-muted: #888;
+  --color-muted-foreground: #666;
+  --color-border: rgba(255, 255, 255, 0.1);
+  --color-input: rgba(255, 255, 255, 0.1);
+  --color-accent: rgba(255, 255, 255, 0.06);
+}
+
+/* ── View transitions ── */
+.view-transition {
+  transition: opacity 150ms ease;
+}
+
+/* ── Scrollbar styling for dark overlay views ── */
+.dark-overlay ::-webkit-scrollbar {
+  width: 6px;
+}
+.dark-overlay ::-webkit-scrollbar-track {
+  background: transparent;
+}
+.dark-overlay ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
