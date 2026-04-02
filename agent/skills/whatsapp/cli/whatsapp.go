@@ -18,6 +18,7 @@ import (
 	"github.com/skip2/go-qrcode"
 	"go.mau.fi/whatsmeow"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
+	waStore "go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
@@ -88,6 +89,13 @@ func NewWhatsAppClient(dataDir, notificationsDir, instance string, readOnly bool
 			return nil, fmt.Errorf("failed to get device: %v", err)
 		}
 	}
+
+	// Enable full history sync (up to 2 years) for deeper backfill on new QR pairing
+	waStore.DeviceProps.RequireFullSync = proto.Bool(true)
+	waStore.DeviceProps.HistorySyncConfig.FullSyncDaysLimit = proto.Uint32(730)
+	waStore.DeviceProps.HistorySyncConfig.FullSyncSizeMbLimit = proto.Uint32(2048)
+	waStore.DeviceProps.HistorySyncConfig.RecentSyncDaysLimit = proto.Uint32(730)
+	waStore.DeviceProps.HistorySyncConfig.SupportGroupHistory = proto.Bool(true)
 
 	// Create WhatsApp client
 	client := whatsmeow.NewClient(deviceStore, logger)
