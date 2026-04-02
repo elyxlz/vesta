@@ -212,11 +212,10 @@ pub fn ensure_server_with(vestad_path: Option<&std::path::Path>) -> Result<bool,
     }
 
     #[cfg(not(target_os = "linux"))]
-    {
-        if load_server_config().is_some() {
-            return Ok(false);
-        }
-        return Err("no server configured. use 'vesta connect' to connect to a remote server.".into());
+    if load_server_config().is_some() {
+        Ok(false)
+    } else {
+        Err("no server configured. use 'vesta connect' to connect to a remote server.".into())
     }
 
     #[cfg(target_os = "linux")]
