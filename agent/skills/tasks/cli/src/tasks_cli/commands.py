@@ -14,7 +14,7 @@ from apscheduler.jobstores.base import JobLookupError
 
 from .config import Config
 from . import db
-from .scheduler import write_reminder_notification, write_task_due_notification
+from .scheduler import write_reminder_notification
 
 logger = logging.getLogger(__name__)
 
