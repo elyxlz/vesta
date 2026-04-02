@@ -1,6 +1,5 @@
 """Playlist operations."""
 
-
 from .config import Config
 from .auth import get_client
 
@@ -13,14 +12,16 @@ def list_playlists(config: Config, limit: int = 50) -> dict:
     playlists = []
     while results:
         for item in results["items"]:
-            playlists.append({
-                "id": item["id"],
-                "name": item["name"],
-                "tracks": item["tracks"]["total"],
-                "public": item["public"],
-                "owner": item["owner"]["display_name"],
-                "uri": item["uri"],
-            })
+            playlists.append(
+                {
+                    "id": item["id"],
+                    "name": item["name"],
+                    "tracks": item["tracks"]["total"],
+                    "public": item["public"],
+                    "owner": item["owner"]["display_name"],
+                    "uri": item["uri"],
+                }
+            )
         results = sp.next(results) if results.get("next") else None
 
     return {"playlists": playlists, "total": len(playlists)}
@@ -38,14 +39,16 @@ def show_playlist(config: Config, playlist_id: str, limit: int = 50) -> dict:
             track = item.get("track")
             if not track:
                 continue
-            tracks.append({
-                "id": track.get("id"),
-                "name": track.get("name"),
-                "artists": ", ".join(a["name"] for a in track.get("artists", [])),
-                "album": track.get("album", {}).get("name"),
-                "duration_ms": track.get("duration_ms"),
-                "uri": track.get("uri"),
-            })
+            tracks.append(
+                {
+                    "id": track.get("id"),
+                    "name": track.get("name"),
+                    "artists": ", ".join(a["name"] for a in track.get("artists", [])),
+                    "album": track.get("album", {}).get("name"),
+                    "duration_ms": track.get("duration_ms"),
+                    "uri": track.get("uri"),
+                }
+            )
         results = sp.next(results) if results.get("next") else None
 
     return {
@@ -116,14 +119,16 @@ def liked_songs(config: Config, limit: int = 50, offset: int = 0) -> dict:
     tracks = []
     for item in results["items"]:
         track = item["track"]
-        tracks.append({
-            "id": track.get("id"),
-            "name": track.get("name"),
-            "artists": ", ".join(a["name"] for a in track.get("artists", [])),
-            "album": track.get("album", {}).get("name"),
-            "added_at": item.get("added_at"),
-            "uri": track.get("uri"),
-        })
+        tracks.append(
+            {
+                "id": track.get("id"),
+                "name": track.get("name"),
+                "artists": ", ".join(a["name"] for a in track.get("artists", [])),
+                "album": track.get("album", {}).get("name"),
+                "added_at": item.get("added_at"),
+                "uri": track.get("uri"),
+            }
+        )
 
     return {
         "tracks": tracks,

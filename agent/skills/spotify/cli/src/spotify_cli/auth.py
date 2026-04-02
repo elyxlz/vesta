@@ -21,10 +21,12 @@ def _load_credentials(config: Config) -> tuple[str, str]:
     creds_file = config.credentials_file
     if not creds_file.exists():
         print(
-            json.dumps({
-                "error": "no_credentials",
-                "message": "No credentials found. Run: spotify auth setup --client-id <ID> --client-secret <SECRET>",
-            }),
+            json.dumps(
+                {
+                    "error": "no_credentials",
+                    "message": "No credentials found. Run: spotify auth setup --client-id <ID> --client-secret <SECRET>",
+                }
+            ),
             file=sys.stderr,
         )
         sys.exit(1)
@@ -34,10 +36,12 @@ def _load_credentials(config: Config) -> tuple[str, str]:
     client_secret = data.get("client_secret", "")
     if not client_id or not client_secret:
         print(
-            json.dumps({
-                "error": "invalid_credentials",
-                "message": "credentials.json missing client_id or client_secret",
-            }),
+            json.dumps(
+                {
+                    "error": "invalid_credentials",
+                    "message": "credentials.json missing client_id or client_secret",
+                }
+            ),
             file=sys.stderr,
         )
         sys.exit(1)
@@ -79,10 +83,12 @@ def get_client(config: Config) -> spotipy.Spotify:
     token_info = auth_manager.cache_handler.get_cached_token()
     if not token_info:
         print(
-            json.dumps({
-                "error": "not_authenticated",
-                "message": "No token found. Run: spotify auth login",
-            }),
+            json.dumps(
+                {
+                    "error": "not_authenticated",
+                    "message": "No token found. Run: spotify auth login",
+                }
+            ),
             file=sys.stderr,
         )
         sys.exit(1)

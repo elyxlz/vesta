@@ -28,73 +28,148 @@ DEFAULT_SKIP = [
 # Songs whose artist genres contain any keyword will be added to that playlist.
 DEFAULT_GENRE_RULES = [
     {
-        "keywords": ["idm", "intelligent dance", "glitch", "drill and bass",
-                     "breakcore", "leftfield", "electronica"],
+        "keywords": ["idm", "intelligent dance", "glitch", "drill and bass", "breakcore", "leftfield", "electronica"],
         "playlist": "IDM",
     },
     {
-        "keywords": ["house", "techno", "tech house", "deep house", "minimal techno",
-                     "acid house", "trance", "progressive house", "electro house",
-                     "big room", "chicago house", "detroit techno", "uk garage",
-                     "garage house", "eurodance", "dance", "nu-disco", "disco house"],
+        "keywords": [
+            "house",
+            "techno",
+            "tech house",
+            "deep house",
+            "minimal techno",
+            "acid house",
+            "trance",
+            "progressive house",
+            "electro house",
+            "big room",
+            "chicago house",
+            "detroit techno",
+            "uk garage",
+            "garage house",
+            "eurodance",
+            "dance",
+            "nu-disco",
+            "disco house",
+        ],
         "playlist": "House & Techno",
     },
     {
-        "keywords": ["ambient", "drone", "dark ambient", "space ambient", "new age",
-                     "atmospheric", "chillout", "downtempo", "lo-fi", "lo fi"],
+        "keywords": ["ambient", "drone", "dark ambient", "space ambient", "new age", "atmospheric", "chillout", "downtempo", "lo-fi", "lo fi"],
         "playlist": "Ambient",
     },
     {
-        "keywords": ["jazz", "bossa nova", "smooth jazz", "bebop", "hard bop",
-                     "cool jazz", "modal jazz", "free jazz", "swing", "big band",
-                     "nu jazz", "jazz fusion"],
+        "keywords": [
+            "jazz",
+            "bossa nova",
+            "smooth jazz",
+            "bebop",
+            "hard bop",
+            "cool jazz",
+            "modal jazz",
+            "free jazz",
+            "swing",
+            "big band",
+            "nu jazz",
+            "jazz fusion",
+        ],
         "playlist": "Jazz",
     },
     {
-        "keywords": ["blues", "delta blues", "chicago blues", "electric blues",
-                     "soul blues", "rhythm and blues", "swamp blues"],
+        "keywords": ["blues", "delta blues", "chicago blues", "electric blues", "soul blues", "rhythm and blues", "swamp blues"],
         "playlist": "Blues",
     },
     {
-        "keywords": ["funk", "soul", "neo soul", "p funk", "g funk", "classic soul",
-                     "northern soul", "blue-eyed soul", "rnb", "r&b",
-                     "contemporary r&b"],
+        "keywords": [
+            "funk",
+            "soul",
+            "neo soul",
+            "p funk",
+            "g funk",
+            "classic soul",
+            "northern soul",
+            "blue-eyed soul",
+            "rnb",
+            "r&b",
+            "contemporary r&b",
+        ],
         "playlist": "Funk & Soul",
     },
     {
-        "keywords": ["hip hop", "rap", "trap", "underground hip hop",
-                     "east coast hip hop", "west coast rap", "southern hip hop",
-                     "conscious hip hop", "boom bap", "gangsta rap", "dirty south",
-                     "memphis rap"],
+        "keywords": [
+            "hip hop",
+            "rap",
+            "trap",
+            "underground hip hop",
+            "east coast hip hop",
+            "west coast rap",
+            "southern hip hop",
+            "conscious hip hop",
+            "boom bap",
+            "gangsta rap",
+            "dirty south",
+            "memphis rap",
+        ],
         "playlist": "Hip Hop",
     },
     {
-        "keywords": ["grunge", "noise rock", "post-grunge", "hardcore", "heavy metal",
-                     "metal", "punk", "post-punk", "hard rock", "stoner rock",
-                     "doom metal", "sludge metal"],
+        "keywords": [
+            "grunge",
+            "noise rock",
+            "post-grunge",
+            "hardcore",
+            "heavy metal",
+            "metal",
+            "punk",
+            "post-punk",
+            "hard rock",
+            "stoner rock",
+            "doom metal",
+            "sludge metal",
+        ],
         "playlist": "Heavy",
     },
     {
-        "keywords": ["rock", "alternative", "indie rock", "indie pop", "indie",
-                     "psychedelic rock", "classic rock", "garage rock", "surf",
-                     "power pop", "britpop", "shoegaze", "dream pop", "post-rock",
-                     "art rock", "folk rock"],
+        "keywords": [
+            "rock",
+            "alternative",
+            "indie rock",
+            "indie pop",
+            "indie",
+            "psychedelic rock",
+            "classic rock",
+            "garage rock",
+            "surf",
+            "power pop",
+            "britpop",
+            "shoegaze",
+            "dream pop",
+            "post-rock",
+            "art rock",
+            "folk rock",
+        ],
         "playlist": "Rock",
     },
     {
-        "keywords": ["folk", "singer-songwriter", "acoustic", "country", "americana",
-                     "bluegrass", "roots", "chamber folk", "anti-folk"],
+        "keywords": ["folk", "singer-songwriter", "acoustic", "country", "americana", "bluegrass", "roots", "chamber folk", "anti-folk"],
         "playlist": "Folk",
     },
     {
-        "keywords": ["classical", "piano", "neo-classical", "neoclassical",
-                     "contemporary classical", "post-romantic", "minimalism",
-                     "modern classical", "chamber music"],
+        "keywords": [
+            "classical",
+            "piano",
+            "neo-classical",
+            "neoclassical",
+            "contemporary classical",
+            "post-romantic",
+            "minimalism",
+            "modern classical",
+            "chamber music",
+        ],
         "playlist": "Classical",
     },
     {
-        "keywords": ["mpb", "brazilian", "samba", "pagode", "axe", "baile funk",
-                     "forro", "tropicalia", "bossa"],
+        "keywords": ["mpb", "brazilian", "samba", "pagode", "axe", "baile funk", "forro", "tropicalia", "bossa"],
         "playlist": "Brazilian",
     },
     {
@@ -157,12 +232,14 @@ def _get_playlist_tracks(sp, playlist_id: str) -> list[tuple]:
             t = item.get("track")
             if not t or not t.get("id"):
                 continue
-            tracks.append((
-                t["id"],
-                t["uri"],
-                t["name"],
-                [a["id"] for a in t.get("artists", []) if a.get("id")],
-            ))
+            tracks.append(
+                (
+                    t["id"],
+                    t["uri"],
+                    t["name"],
+                    [a["id"] for a in t.get("artists", []) if a.get("id")],
+                )
+            )
         total = resp.get("total", 0)
         offset += 100
         if offset >= total:
@@ -270,10 +347,7 @@ def show_config(config: Config) -> dict:
     return {
         "path": str(ORGANIZE_CONFIG),
         "skip_playlists": cfg.get("skip_playlists", []),
-        "genre_rules": [
-            {"playlist": r["playlist"], "keyword_count": len(r["keywords"])}
-            for r in cfg.get("genre_rules", [])
-        ],
+        "genre_rules": [{"playlist": r["playlist"], "keyword_count": len(r["keywords"])} for r in cfg.get("genre_rules", [])],
     }
 
 

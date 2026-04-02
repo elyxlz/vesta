@@ -83,6 +83,7 @@ def _dispatch_organize(args, config: Config) -> dict:
                 organize.watch_daemon(config, interval=args.interval)
             except KeyboardInterrupt:
                 from . import organize as _org
+
                 _org._log("Watch daemon stopped by user.")
                 sys.exit(0)
             return {}  # unreachable

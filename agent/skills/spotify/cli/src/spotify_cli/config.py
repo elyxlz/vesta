@@ -2,17 +2,19 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-ALL_SCOPES = " ".join([
-    "playlist-read-private",
-    "playlist-read-collaborative",
-    "playlist-modify-public",
-    "playlist-modify-private",
-    "user-read-playback-state",
-    "user-modify-playback-state",
-    "user-read-currently-playing",
-    "user-library-read",
-    "user-library-modify",
-])
+ALL_SCOPES = " ".join(
+    [
+        "playlist-read-private",
+        "playlist-read-collaborative",
+        "playlist-modify-public",
+        "playlist-modify-private",
+        "user-read-playback-state",
+        "user-modify-playback-state",
+        "user-read-currently-playing",
+        "user-library-read",
+        "user-library-modify",
+    ]
+)
 
 REDIRECT_URI = "https://example.com"
 
