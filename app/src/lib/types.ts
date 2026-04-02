@@ -24,18 +24,12 @@ export interface ListEntry {
 export interface PlatformStatus {
   ready: boolean;
   platform: string;
-  wsl_installed: boolean;
-  virtualization_enabled: boolean | null;
-  distro_registered: boolean;
-  distro_healthy: boolean;
-  services_ready: boolean;
-  needs_reboot: boolean;
   message: string;
 }
 
 export type AgentActivityState = "idle" | "thinking" | "tool_use";
 
-export type OnboardingStep = "platform" | "name" | "connect" | "creating" | "auth" | "done";
+export type OnboardingStep = "name" | "connect" | "creating" | "auth" | "done";
 
 type BaseEvent = { ts?: string };
 

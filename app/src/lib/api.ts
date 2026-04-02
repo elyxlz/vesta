@@ -2,7 +2,7 @@ import { invoke, Channel } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { check } from "@tauri-apps/plugin-updater";
 import { detectPlatform } from "./platform";
-import type { AgentInfo, ListEntry, LogEvent, PlatformStatus } from "./types";
+import type { AgentInfo, ListEntry, LogEvent } from "./types";
 
 export function isNewer(latest: string, current: string): boolean {
   const a = latest.split(".").map(Number);
@@ -87,13 +87,6 @@ export async function autoSetup(): Promise<boolean> {
   return invoke("auto_setup");
 }
 
-export async function checkPlatform(): Promise<PlatformStatus> {
-  return invoke("platform_check");
-}
-
-export async function setupPlatform(): Promise<PlatformStatus> {
-  return invoke("platform_setup");
-}
 
 export async function connectToServer(url: string, apiKey: string): Promise<void> {
   return invoke("connect_to_server", { url, apiKey });

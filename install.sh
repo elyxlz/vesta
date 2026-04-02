@@ -80,30 +80,9 @@ main() {
 
   case "$OS" in
     darwin)
-      if [ "$CLI_ONLY" = true ]; then
-        ARTIFACT="vesta-${ARCH}-apple-darwin.tar.gz"
-        echo "Downloading CLI..."
-        curl -fsSL -o "$WORK_DIR/vesta.tar.gz" "https://github.com/${REPO}/releases/download/v${VERSION}/${ARTIFACT}"
-        verify_checksum "$WORK_DIR/vesta.tar.gz" "$ARTIFACT"
-        tar -xzf "$WORK_DIR/vesta.tar.gz" -C "$WORK_DIR"
-        install_cli_to_path "$WORK_DIR/vesta"
-        if [ -f "$WORK_DIR/vfkit" ]; then
-          install -m 755 "$WORK_DIR/vfkit" "$HOME/.local/bin/vfkit"
-        fi
-      else
-        if [ "$ARCH" = "aarch64" ]; then
-          DMG="Vesta_${VERSION}_aarch64.dmg"
-        else
-          DMG="Vesta_${VERSION}_x64.dmg"
-        fi
-        echo "Downloading desktop app..."
-        curl -fsSL -o "$WORK_DIR/${DMG}" "https://github.com/${REPO}/releases/download/v${VERSION}/${DMG}"
-        verify_checksum "$WORK_DIR/${DMG}" "$DMG"
-        xattr -cr "$WORK_DIR/${DMG}"
-        echo "Opening installer..."
-        open "$WORK_DIR/${DMG}"
-        echo "Drag Vesta to Applications to complete installation."
-      fi
+      echo "This install script is for Linux only."
+      echo "On macOS, download the app from: https://github.com/${REPO}/releases/latest"
+      exit 1
       ;;
     linux)
       if [ "$CLI_ONLY" = false ] && [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
