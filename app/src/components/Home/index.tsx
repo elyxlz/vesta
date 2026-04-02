@@ -7,7 +7,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { listAgents } from "@/lib/api";
+import { listAgents } from "@/api";
 import { wsUrl } from "@/lib/connection";
 import type { AgentActivityState, ListEntry } from "@/lib/types";
 import { useAppStore } from "@/stores/use-app-store";

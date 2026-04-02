@@ -7,15 +7,18 @@ import { Home } from "@/components/Home";
 import { AgentDetail } from "@/components/AgentDetail";
 import { Chat } from "@/components/Chat";
 import { Console } from "@/components/Console";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { useAppStore } from "@/stores/use-app-store";
+import { useNavigation } from "@/stores/use-navigation";
 import { useVersion } from "@/hooks/use-version";
-import { autoSetup } from "@/lib/api";
+import "@/stores/use-theme";
+import { autoSetup } from "@/api";
 import { getConnection } from "@/lib/connection";
 import { isTauri } from "@/lib/env";
 
 function AppContent() {
-  const view = useAppStore((s) => s.view);
-  const setView = useAppStore((s) => s.setView);
+  const view = useNavigation((s) => s.view);
+  const setView = useNavigation((s) => s.setView);
   const setConnected = useAppStore((s) => s.setConnected);
   const connected = useAppStore((s) => s.connected);
 
@@ -89,7 +92,7 @@ function AppContent() {
       <Titlebar />
       {showUpdateBar && <UpdateBar />}
 
-      <div className="flex-1 relative overflow-hidden">
+      <div className="flex-1 relative overflow-hidden h-0">
         {view === "loading" && <LoadingView />}
         {view === "connect" && <Connect />}
         {view === "home" && <Home />}
@@ -101,6 +104,12 @@ function AppContent() {
             {view === "agent-chat" && <Chat />}
             {view === "agent-console" && <Console />}
           </>
+        )}
+
+        {view !== "agent-chat" && view !== "agent-console" && (
+          <div className="absolute bottom-3 right-3 z-20">
+            <ThemeToggle />
+          </div>
         )}
       </div>
     </div>

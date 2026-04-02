@@ -21,8 +21,8 @@ import {
   backupAgent,
   restoreAgent,
   deleteAgent,
-} from "@/lib/api";
-import { useAppStore } from "@/stores/use-app-store";
+} from "@/api";
+import { useNavigation } from "@/stores/use-navigation";
 import { useAgentOps } from "@/stores/use-agent-ops";
 import { getOrbVisualState } from "@/components/Orb/styles";
 
@@ -32,9 +32,9 @@ interface AgentCardProps {
 }
 
 export function AgentCard({ agent, activityState }: AgentCardProps) {
-  const navigateToAgent = useAppStore((s) => s.navigateToAgent);
-  const navigateToChat = useAppStore((s) => s.navigateToChat);
-  const navigateToConsole = useAppStore((s) => s.navigateToConsole);
+  const navigateToAgent = useNavigation((s) => s.navigateToAgent);
+  const navigateToChat = useNavigation((s) => s.navigateToChat);
+  const navigateToConsole = useNavigation((s) => s.navigateToConsole);
   const withOp = useAgentOps((s) => s.withOp);
   const busyAgentName = useAgentOps((s) => s.busyAgentName);
   const getOp = useAgentOps((s) => s.getOp);

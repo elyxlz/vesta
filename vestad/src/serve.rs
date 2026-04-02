@@ -886,7 +886,6 @@ pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: S
     .expect("failed to configure TLS");
 
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
-    eprintln!("vestad listening on https://0.0.0.0:{}", port);
 
     axum_server::bind_rustls(addr, rustls_config)
         .serve(app.into_make_service())

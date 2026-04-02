@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isNewer } from "./api";
+import { isNewer } from "@/api";
 
 describe("isNewer", () => {
   it("detects newer versions", () => {

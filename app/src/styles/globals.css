@@ -244,7 +244,12 @@
   --color-muted-foreground: #666;
   --color-border: rgba(255, 255, 255, 0.1);
   --color-input: rgba(255, 255, 255, 0.1);
+  --color-ring: rgba(255, 255, 255, 0.15);
+  --color-primary: #e8e8e8;
+  --color-primary-foreground: #1a1a1a;
+  --color-destructive: #ef4444;
   --color-accent: rgba(255, 255, 255, 0.06);
+  --color-accent-foreground: #e8e8e8;
 }
 
 /* ── View transitions ── */

@@ -102,11 +102,19 @@ fn main() {
                 None
             };
 
+            let local_url = format!("https://0.0.0.0:{}", port);
+
+            eprintln!();
+            eprintln!("  \x1b[1;35mvestad\x1b[0m v{}", env!("CARGO_PKG_VERSION"));
+            eprintln!();
             if let Some(ref url) = tunnel_url {
-                eprintln!("connect with: {} (key: {})", url, api_key);
+                eprintln!("  \x1b[36mhost\x1b[0m    \x1b[1m{}\x1b[0m", url);
+                eprintln!("  \x1b[36mlocal\x1b[0m   \x1b[2m{}\x1b[0m", local_url);
             } else {
-                eprintln!("connect with: vesta connect https://<host>:{}#{}", port, api_key);
+                eprintln!("  \x1b[36mhost\x1b[0m    \x1b[1m{}\x1b[0m", local_url);
             }
+            eprintln!("  \x1b[36mkey\x1b[0m     \x1b[33m{}\x1b[0m", api_key);
+            eprintln!();
 
             tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
@@ -116,7 +124,7 @@ fn main() {
                     let tunnel_child = if tunnel_url.is_some() {
                         match tunnel::start_tunnel(&config, port).await {
                             Ok((child, url)) => {
-                                eprintln!("tunnel connected: {}", url);
+
                                 Some(child)
                             }
                             Err(e) => {

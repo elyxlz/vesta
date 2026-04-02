@@ -10,10 +10,10 @@ import {
   restoreAgent,
   checkPlatform,
   setupPlatform,
-} from "@/lib/api";
+} from "@/api";
 import { isTauri } from "@/lib/env";
 import { detectPlatform } from "@/lib/platform";
-import { useAppStore } from "@/stores/use-app-store";
+import { useNavigation } from "@/stores/use-navigation";
 import { friendlyError } from "./errors";
 
 type Step = "platform" | "name" | "creating" | "auth" | "done";
@@ -42,7 +42,7 @@ function normalizeName(input: string): string {
 }
 
 export function CreateAgent({ onCancel, onCreated }: CreateAgentProps) {
-  const navigateToChat = useAppStore((s) => s.navigateToChat);
+  const navigateToChat = useNavigation((s) => s.navigateToChat);
 
   const [step, setStep] = useState<Step>("name");
   const [name, setName] = useState("");

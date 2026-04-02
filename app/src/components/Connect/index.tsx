@@ -1,11 +1,12 @@
 import { useCallback, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { connectToServer } from "@/lib/api";
+import { connectToServer } from "@/api";
 import { useAppStore } from "@/stores/use-app-store";
+import { useNavigation } from "@/stores/use-navigation";
 
 export function Connect() {
-  const setView = useAppStore((s) => s.setView);
+  const setView = useNavigation((s) => s.setView);
   const setConnected = useAppStore((s) => s.setConnected);
 
   const [host, setHost] = useState("");

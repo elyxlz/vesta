@@ -33,20 +33,21 @@ import {
   backupAgent,
   restoreAgent,
   deleteAgent,
-} from "@/lib/api";
+} from "@/api";
 import type { AgentInfo, AgentActivityState } from "@/lib/types";
 import { useAppStore } from "@/stores/use-app-store";
+import { useNavigation } from "@/stores/use-navigation";
 import { useAgentOps } from "@/stores/use-agent-ops";
 import { getOrbVisualState } from "@/components/Orb/styles";
 import { useAgentWs } from "@/hooks/use-agent-ws";
 import { cn } from "@/lib/utils";
 
 export function AgentDetail() {
-  const selectedAgent = useAppStore((s) => s.selectedAgent);
-  const view = useAppStore((s) => s.view);
-  const navigateHome = useAppStore((s) => s.navigateHome);
-  const navigateToChat = useAppStore((s) => s.navigateToChat);
-  const navigateToConsole = useAppStore((s) => s.navigateToConsole);
+  const selectedAgent = useNavigation((s) => s.selectedAgent);
+  const view = useNavigation((s) => s.view);
+  const navigateHome = useNavigation((s) => s.navigateHome);
+  const navigateToChat = useNavigation((s) => s.navigateToChat);
+  const navigateToConsole = useNavigation((s) => s.navigateToConsole);
   const version = useAppStore((s) => s.version);
 
   const withOp = useAgentOps((s) => s.withOp);

@@ -12,7 +12,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { useAppStore } from "@/stores/use-app-store";
+import { useNavigation } from "@/stores/use-navigation";
 import { useAgentWs } from "@/hooks/use-agent-ws";
 import { useAutoScroll } from "@/hooks/use-auto-scroll";
 import { linkify } from "@/lib/linkify";
@@ -20,8 +20,8 @@ import type { VestaEvent } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 export function Chat() {
-  const selectedAgent = useAppStore((s) => s.selectedAgent);
-  const navigateToAgent = useAppStore((s) => s.navigateToAgent);
+  const selectedAgent = useNavigation((s) => s.selectedAgent);
+  const navigateToAgent = useNavigation((s) => s.navigateToAgent);
   const name = selectedAgent ?? "";
 
   const { messages, agentState, connected, send } = useAgentWs(name, true);

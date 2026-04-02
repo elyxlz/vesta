@@ -50,10 +50,12 @@ export function Titlebar() {
     getCurrentWindow().close();
   }, []);
 
+  if (!isTauri && !connected) return null;
+
   return (
     <div
       className="flex items-center justify-between h-9 px-3 select-none shrink-0"
-      style={{ paddingLeft: platform === "macos" ? 78 : undefined }}
+      style={{ paddingLeft: isTauri && platform === "macos" ? 78 : undefined }}
       onMouseDown={handleDrag}
     >
       <div className="flex items-center gap-2 min-w-0">

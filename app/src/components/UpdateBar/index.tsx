@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { isTauri } from "@/lib/env";
-import { checkAndInstallUpdate, runInstallScript } from "@/lib/api";
+import { checkAndInstallUpdate, runInstallScript } from "@/api";
 
 export function UpdateBar() {
   const [update, setUpdate] = useState<{

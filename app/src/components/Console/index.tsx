@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ArrowLeft } from "lucide-react";
-import { useAppStore } from "@/stores/use-app-store";
+import { useNavigation } from "@/stores/use-navigation";
 import { useAutoScroll } from "@/hooks/use-auto-scroll";
-import { streamLogs, stopLogs } from "@/lib/api";
+import { streamLogs, stopLogs } from "@/api";
 import { stripAnsi } from "@/lib/ansi";
 import { linkify } from "@/lib/linkify";
 
@@ -11,8 +11,8 @@ const RECONNECT_BASE = 1000;
 const RECONNECT_MAX = 30000;
 
 export function Console() {
-  const selectedAgent = useAppStore((s) => s.selectedAgent);
-  const navigateToAgent = useAppStore((s) => s.navigateToAgent);
+  const selectedAgent = useNavigation((s) => s.selectedAgent);
+  const navigateToAgent = useNavigation((s) => s.navigateToAgent);
   const name = selectedAgent ?? "";
 
   const [lines, setLines] = useState<string[]>([]);
