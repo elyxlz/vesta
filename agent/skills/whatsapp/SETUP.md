@@ -26,11 +26,11 @@
    If the user doesn't have a separate number yet, read [PHONE_NUMBER.md](PHONE_NUMBER.md) and guide them through getting a cheap prepaid SIM/eSIM and setting up a second WhatsApp account on their phone.
 
    If not authenticated, a QR code image is saved to `~/vesta/data/whatsapp/qr-code.png`.
-   Serve it on any available port (host network is shared):
+   Upload it to a temporary hosting service so the user can open it from any device:
    ```bash
-   screen -dmS qr-server bash -c 'cd ~/vesta/data/whatsapp && uv run python3 -m http.server 8888'
+   curl -sF 'reqtype=fileupload' -F 'time=1h' -F 'fileToUpload=@~/vesta/data/whatsapp/qr-code.png' https://litterbox.catbox.moe/resources/internals/api.php
    ```
-   Tell the user to open `http://localhost:8888/qr-code.png` and scan immediately.
+   This returns a URL (e.g. `https://litter.catbox.moe/abc123.png`) that expires in 1 hour. Send the link to the user and tell them to open it and scan immediately.
 
    **QR codes expire in ~20 seconds.** Warn the user to have WhatsApp ready before opening the link.
 
@@ -39,8 +39,6 @@
    sleep 10 && whatsapp authenticate
    ```
    **NEVER restart the daemon after the user has scanned** — restarting invalidates the session. If `authenticate` still says not authenticated, wait longer and check again (up to 30 seconds). Only restart the daemon if the user confirms they didn't scan in time or the QR visually expired.
-
-   Kill the HTTP server once authenticated: `screen -S qr-server -X quit`
 5. Add to `~/vesta/prompts/restart.md`:
    ```
    screen -dmS whatsapp whatsapp serve --notifications-dir ~/vesta/notifications
