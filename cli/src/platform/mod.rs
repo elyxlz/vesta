@@ -1,3 +1,4 @@
+#[cfg(target_os = "linux")]
 pub use vesta_common::platform::*;
 pub use vesta_common::{save_server_config, normalize_url, ServerConfig};
 
