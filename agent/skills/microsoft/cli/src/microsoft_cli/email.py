@@ -490,6 +490,7 @@ def reply_to_email(
     body: str,
     attachments: list[str] | None = None,
     reply_all: bool = False,
+    html: bool = False,
 ) -> dict[str, str]:
     settings = _get_settings()
     account_id = auth.get_account_id_by_email(account_email, config.cache_file, settings=settings)
@@ -521,7 +522,7 @@ def reply_to_email(
             "PATCH",
             f"/me/messages/{draft_id}",
             account_id,
-            json={"body": {"contentType": "Text", "content": body}},
+            json={"body": {"contentType": "HTML" if html else "Text", "content": body}},
         )
 
         for file_path in attachments:
@@ -575,7 +576,7 @@ def reply_to_email(
         return {"status": "sent"}
     else:
         endpoint = f"/me/messages/{email_id}/{reply_endpoint}"
-        payload = {"message": {"body": {"contentType": "Text", "content": body}}}
+        payload = {"message": {"body": {"contentType": "HTML" if html else "Text", "content": body}}}
         graph.request(
             client,
             config.cache_file,

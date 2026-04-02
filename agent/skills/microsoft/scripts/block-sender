@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# block-sender: Convenience wrapper around `microsoft email block`.
+#
+# Usage:
+#   block-sender --account user@example.com --sender bad@spam.com
+#   block-sender --account user@example.com --list
+#   block-sender unblock --account user@example.com --sender bad@spam.com
+#
+# If MailboxSettings.ReadWrite is not in the current token, you will see an
+# error asking you to re-run `microsoft auth add --account <email>`.
+
+set -euo pipefail
+
+SUBCOMMAND="block"
+
+# Allow "unblock" as the first positional argument
+if [[ "${1:-}" == "unblock" ]]; then
+    SUBCOMMAND="unblock"
+    shift
+fi
+
+exec microsoft email "$SUBCOMMAND" "$@"
