@@ -46,7 +46,3 @@
    mkdir -p ~/onedrive
    rclone mount onedrive: ~/onedrive --daemon --vfs-cache-mode full
    ```
-8. Add to `~/vesta/prompts/restart.md`:
-   ```
-   rclone mount onedrive: ~/onedrive --daemon --vfs-cache-mode full
-   ```

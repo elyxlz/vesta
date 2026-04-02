@@ -13,10 +13,6 @@
    ```
 4. Install: `uv tool install ~/vesta/skills/microsoft/cli`
 5. Start background daemon: `screen -dmS microsoft microsoft serve`
-6. Add to `~/vesta/prompts/restart.md`:
-   ```
-   screen -dmS microsoft microsoft serve --notifications-dir ~/vesta/notifications
-   ```
 
 ## Authentication
 
