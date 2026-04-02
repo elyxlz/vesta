@@ -102,19 +102,19 @@ export function Console() {
       <div className="flex items-center px-3 h-9 shrink-0 border-b border-white/5">
         <button
           onClick={handleBack}
-          className="flex items-center gap-1 text-[12px] text-[#888] hover:text-white transition-colors"
+          className="flex items-center gap-1 text-sm text-[#888] hover:text-white transition-colors"
         >
           <ArrowLeft size={14} />
           back
         </button>
-        <span className="text-[13px] font-medium ml-auto mr-auto">{name}</span>
+        <span className="text-sm font-medium ml-auto mr-auto">{name}</span>
         <div className="w-[40px]" />
       </div>
 
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto px-3 py-2 font-mono text-[11px] leading-[1.6] text-white/70"
+        className="flex-1 overflow-y-auto px-3 py-2 font-mono text-xs leading-[1.6] text-white/70"
       >
         {lines.length === 0 && !ended && (
           <div className="flex flex-col items-center justify-center h-full gap-2">
@@ -123,7 +123,7 @@ export function Console() {
               <div className="w-[5px] h-[5px] rounded-full bg-white/30 animate-dot-pulse-2" />
               <div className="w-[5px] h-[5px] rounded-full bg-white/30 animate-dot-pulse-3" />
             </div>
-            <span className="text-[11px] text-[#666]">streaming logs...</span>
+            <span className="text-xs text-[#666]">streaming logs...</span>
           </div>
         )}
 

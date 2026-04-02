@@ -5,8 +5,9 @@ import { connectToServer } from "@/api";
 import { useAppStore } from "@/stores/use-app-store";
 import { useNavigation } from "@/stores/use-navigation";
 
+
 export function Connect() {
-  const setView = useNavigation((s) => s.setView);
+  const navigateHome = useNavigation((s) => s.navigateHome);
   const setConnected = useAppStore((s) => s.setConnected);
 
   const [host, setHost] = useState("");
@@ -26,7 +27,7 @@ export function Connect() {
       const url = host.includes("://") ? host.trim() : `https://${host.trim()}`;
       await connectToServer(url, apiKey.trim());
       setConnected(true);
-      setView("home");
+      navigateHome();
     } catch (e: unknown) {
       const msg = (e as { message?: string })?.message || "connection failed";
       if (msg === "could not reach server") {
@@ -38,7 +39,7 @@ export function Connect() {
     } finally {
       setBusy(false);
     }
-  }, [host, apiKey, busy, setConnected, setView]);
+  }, [host, apiKey, busy, setConnected, navigateHome]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -49,54 +50,55 @@ export function Connect() {
 
   return (
     <div className="flex flex-col items-center justify-center h-full animate-view-in">
-      <div className="flex flex-col items-center gap-4 w-full max-w-[240px] px-4">
+      <div className="flex flex-col items-center gap-3 w-full max-w-[280px] px-4">
         <div className="text-center mb-2">
-          <h1 className="text-[15px] font-semibold text-foreground">connect</h1>
-          <p className="text-[11px] text-muted mt-1">
+          <h1 className="text-2xl font-semibold text-foreground">connect</h1>
+          <p className="text-xs text-muted-foreground mt-1">
             connect to a remote vesta server.
           </p>
         </div>
 
         <Input
-          placeholder="host:port"
+          placeholder="host"
           value={host}
           onChange={(e) => setHost(e.target.value)}
           onKeyDown={handleKeyDown}
           autoFocus
-          className="text-center text-[13px]"
+          className="text-center text-sm"
         />
 
         <Input
           type="password"
-          placeholder="API key"
+          placeholder="key"
           value={apiKey}
           onChange={(e) => setApiKey(e.target.value)}
           onKeyDown={handleKeyDown}
-          className="text-center text-[13px]"
+          className="text-center text-sm"
         />
 
         <Button
           onClick={handleConnect}
           disabled={!host.trim() || !apiKey.trim() || busy}
           className="w-full"
-          size="sm"
+          size="default"
         >
           {busy ? "connecting..." : "connect"}
         </Button>
 
         {error && (
           <div className="text-center animate-shake">
-            <p className="text-[11px] text-destructive">{error}</p>
+            <p className="text-xs text-destructive">{error}</p>
             {details && (
               <>
-                <button
+                <Button
+                  variant="link"
+                  size="xs"
                   onClick={() => setShowDetails(!showDetails)}
-                  className="text-[10px] text-muted hover:text-foreground mt-1"
                 >
                   {showDetails ? "hide details" : "show details"}
-                </button>
+                </Button>
                 {showDetails && (
-                  <p className="text-[10px] text-muted mt-1 break-all">
+                  <p className="text-xs text-muted-foreground mt-1 break-all">
                     {details}
                   </p>
                 )}

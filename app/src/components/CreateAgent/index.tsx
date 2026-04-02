@@ -13,15 +13,11 @@ import {
 } from "@/api";
 import { isTauri } from "@/lib/env";
 import { detectPlatform } from "@/lib/platform";
+import { useAppStore } from "@/stores/use-app-store";
 import { useNavigation } from "@/stores/use-navigation";
 import { friendlyError } from "./errors";
 
 type Step = "platform" | "name" | "creating" | "auth" | "done";
-
-interface CreateAgentProps {
-  onCancel?: () => void;
-  onCreated?: () => void;
-}
 
 const CREATING_MESSAGES = [
   "setting things up...",
@@ -41,8 +37,13 @@ function normalizeName(input: string): string {
     .replace(/^-|-$/g, "");
 }
 
-export function CreateAgent({ onCancel, onCreated }: CreateAgentProps) {
+export function CreateAgent() {
   const navigateToChat = useNavigation((s) => s.navigateToChat);
+  const navigateHome = useNavigation((s) => s.navigateHome);
+  const agents = useAppStore((s) => s.agents);
+  const version = useAppStore((s) => s.version);
+
+  const hasAgents = agents.length > 0;
 
   const [step, setStep] = useState<Step>("name");
   const [name, setName] = useState("");
@@ -107,152 +108,168 @@ export function CreateAgent({ onCancel, onCreated }: CreateAgentProps) {
       setError("");
       try {
         await restoreAgent(file);
-        onCreated?.();
+        navigateHome();
       } catch (e: unknown) {
         setError((e as { message?: string })?.message || "restore failed");
         setStep("name");
       }
     };
     input.click();
-  }, [onCreated]);
+  }, [navigateHome]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === "Enter") handleCreate();
-      if (e.key === "Escape" && onCancel) onCancel();
+      if (e.key === "Escape" && hasAgents) navigateHome();
     },
-    [handleCreate, onCancel],
+    [handleCreate, hasAgents, navigateHome],
   );
 
-  if (step === "platform") {
-    return (
-      <PlatformSetup
-        onReady={() => setStep("name")}
-        onCancel={onCancel}
-      />
-    );
-  }
+  const content = (() => {
+    if (step === "platform") {
+      return (
+        <PlatformSetup
+          onReady={() => setStep("name")}
+          onCancel={hasAgents ? navigateHome : undefined}
+        />
+      );
+    }
 
-  if (step === "creating") {
+    if (step === "creating") {
+      return (
+        <div className="flex flex-col items-center gap-4 w-full max-w-[260px] px-4 animate-fade-slide-in">
+          <h2 className="text-base font-semibold">setting up</h2>
+          <p className="text-xs text-muted-foreground">
+            this may take a couple of mins.
+          </p>
+          <ProgressBar message={CREATING_MESSAGES[creatingMsg]} />
+          {hasAgents && (
+            <Button
+              variant="link"
+              size="xs"
+              onClick={() => {
+                setStep("name");
+                navigateHome();
+              }}
+            >
+              cancel
+            </Button>
+          )}
+        </div>
+      );
+    }
+
+    if (step === "auth") {
+      return (
+        <div className="flex flex-col items-center gap-4 w-full max-w-[260px] px-4 animate-fade-slide-in">
+          <AuthFlow
+            agentName={createdName}
+            onCancel={() => setStep("name")}
+            onComplete={() => setStep("done")}
+          />
+        </div>
+      );
+    }
+
+    if (step === "done") {
+      return (
+        <div className="flex flex-col items-center gap-4 w-full max-w-[260px] px-4 animate-fade-slide-in">
+          <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center animate-pop-in">
+            <Check size={20} className="text-primary" />
+          </div>
+          <h2 className="text-base font-semibold">
+            {createdName} is ready
+          </h2>
+          <p className="text-xs text-muted-foreground">say hi.</p>
+          <Button
+            size="sm"
+            className="w-full"
+            onClick={() => navigateToChat(createdName)}
+          >
+            continue
+          </Button>
+        </div>
+      );
+    }
+
     return (
       <div className="flex flex-col items-center gap-4 w-full max-w-[260px] px-4 animate-fade-slide-in">
-        <h2 className="text-[15px] font-semibold">setting up</h2>
-        <p className="text-[11px] text-muted">
-          this may take a couple of mins.
-        </p>
-        <ProgressBar message={CREATING_MESSAGES[creatingMsg]} />
-        {onCancel && (
-          <button
-            onClick={() => {
-              setStep("name");
-              onCancel?.();
-            }}
-            className="text-[11px] text-muted hover:text-foreground mt-2"
+        <div className="text-center">
+          <h2 className="text-base font-semibold">new agent</h2>
+          <p className="text-xs text-muted-foreground mt-1">
+            give it a name to get started.
+          </p>
+        </div>
+
+        <Input
+          placeholder="name your agent"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={handleKeyDown}
+          autoFocus
+          className="text-center text-sm"
+        />
+
+        <Button
+          onClick={handleCreate}
+          disabled={!normalizeName(name)}
+          size="sm"
+          className="w-full"
+        >
+          create
+        </Button>
+
+        <Button
+          variant="link"
+          size="xs"
+          onClick={handleRestore}
+        >
+          restore from backup
+        </Button>
+
+        {hasAgents && (
+          <Button
+            variant="link"
+            size="xs"
+            onClick={navigateHome}
           >
             cancel
-          </button>
+          </Button>
+        )}
+
+        {error && (
+          <div className="text-center animate-shake">
+            <p className="text-xs text-destructive">{error}</p>
+            {errorDetails && (
+              <>
+                <Button
+                  variant="link"
+                  size="xs"
+                  onClick={() => setShowDetails(!showDetails)}
+                >
+                  {showDetails ? "hide details" : "show details"}
+                </Button>
+                {showDetails && (
+                  <p className="text-xs text-muted-foreground mt-1 break-all">
+                    {errorDetails}
+                  </p>
+                )}
+              </>
+            )}
+          </div>
         )}
       </div>
     );
-  }
-
-  if (step === "auth") {
-    return (
-      <div className="flex flex-col items-center gap-4 w-full max-w-[260px] px-4 animate-fade-slide-in">
-        <AuthFlow
-          agentName={createdName}
-          onCancel={() => setStep("name")}
-          onComplete={() => setStep("done")}
-        />
-      </div>
-    );
-  }
-
-  if (step === "done") {
-    return (
-      <div className="flex flex-col items-center gap-4 w-full max-w-[260px] px-4 animate-fade-slide-in">
-        <div className="w-10 h-10 rounded-full bg-green-500/20 flex items-center justify-center animate-pop-in">
-          <Check size={20} className="text-green-600" />
-        </div>
-        <h2 className="text-[15px] font-semibold">
-          {createdName} is ready
-        </h2>
-        <p className="text-[11px] text-muted">say hi.</p>
-        <Button
-          size="sm"
-          className="w-full"
-          onClick={() => {
-            onCreated?.();
-            navigateToChat(createdName);
-          }}
-        >
-          continue
-        </Button>
-      </div>
-    );
-  }
+  })();
 
   return (
-    <div className="flex flex-col items-center gap-4 w-full max-w-[260px] px-4 animate-fade-slide-in">
-      <div className="text-center">
-        <h2 className="text-[15px] font-semibold">new agent</h2>
-        <p className="text-[11px] text-muted mt-1">
-          give it a name to get started.
-        </p>
+    <div className="flex flex-col h-full animate-view-in">
+      <div className="flex-1 flex items-center justify-center">
+        {content}
       </div>
-
-      <Input
-        placeholder="name your agent"
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        onKeyDown={handleKeyDown}
-        autoFocus
-        className="text-center text-[13px]"
-      />
-
-      <Button
-        onClick={handleCreate}
-        disabled={!normalizeName(name)}
-        size="sm"
-        className="w-full"
-      >
-        create
-      </Button>
-
-      <button
-        onClick={handleRestore}
-        className="text-[11px] text-muted hover:text-foreground"
-      >
-        restore from backup
-      </button>
-
-      {onCancel && (
-        <button
-          onClick={onCancel}
-          className="text-[11px] text-muted hover:text-foreground"
-        >
-          cancel
-        </button>
-      )}
-
-      {error && (
-        <div className="text-center animate-shake">
-          <p className="text-[11px] text-destructive">{error}</p>
-          {errorDetails && (
-            <>
-              <button
-                onClick={() => setShowDetails(!showDetails)}
-                className="text-[10px] text-muted hover:text-foreground mt-1"
-              >
-                {showDetails ? "hide details" : "show details"}
-              </button>
-              {showDetails && (
-                <p className="text-[10px] text-muted mt-1 break-all">
-                  {errorDetails}
-                </p>
-              )}
-            </>
-          )}
+      {version && (
+        <div className="text-center pb-3">
+          <span className="text-xs text-muted-foreground">v{version}</span>
         </div>
       )}
     </div>
@@ -317,8 +334,8 @@ function PlatformSetup({
   if (checking) {
     return (
       <div className="flex flex-col items-center gap-4 w-full max-w-[260px] px-4 animate-fade-slide-in">
-        <h2 className="text-[15px] font-semibold">checking system</h2>
-        <p className="text-[11px] text-muted">
+        <h2 className="text-base font-semibold">checking system</h2>
+        <p className="text-xs text-muted-foreground">
           making sure everything is ready...
         </p>
         <ProgressBar />
@@ -329,8 +346,8 @@ function PlatformSetup({
   if (status?.needs_reboot) {
     return (
       <div className="flex flex-col items-center gap-4 w-full max-w-[260px] px-4 animate-fade-slide-in">
-        <h2 className="text-[15px] font-semibold">restart required</h2>
-        <p className="text-[11px] text-muted text-center">
+        <h2 className="text-base font-semibold">restart required</h2>
+        <p className="text-xs text-muted-foreground text-center">
           restart your computer to finish setup, then reopen vesta.
         </p>
         <Button size="sm" onClick={doCheck}>
@@ -343,8 +360,8 @@ function PlatformSetup({
   if (status?.virtualization_enabled === false) {
     return (
       <div className="flex flex-col items-center gap-4 w-full max-w-[260px] px-4 animate-fade-slide-in">
-        <h2 className="text-[15px] font-semibold">enable virtualization</h2>
-        <div className="text-[11px] text-muted text-left space-y-1">
+        <h2 className="text-base font-semibold">enable virtualization</h2>
+        <div className="text-xs text-muted-foreground text-left space-y-1">
           <p>1. Restart your computer</p>
           <p>2. Enter BIOS/UEFI settings</p>
           <p>3. Enable Intel VT-x or AMD-V</p>
@@ -360,8 +377,8 @@ function PlatformSetup({
   if (!status?.wsl_installed) {
     return (
       <div className="flex flex-col items-center gap-4 w-full max-w-[260px] px-4 animate-fade-slide-in">
-        <h2 className="text-[15px] font-semibold">setting up windows</h2>
-        <p className="text-[11px] text-muted text-center">
+        <h2 className="text-base font-semibold">setting up windows</h2>
+        <p className="text-xs text-muted-foreground text-center">
           WSL2 needs to be installed to run vesta agents.
         </p>
         {busy ? (
@@ -373,15 +390,16 @@ function PlatformSetup({
         )}
         {error && (
           <div className="text-center">
-            <p className="text-[11px] text-destructive">{error}</p>
-            <button
+            <p className="text-xs text-destructive">{error}</p>
+            <Button
+              variant="link"
+              size="xs"
               onClick={() => setShowDetails(!showDetails)}
-              className="text-[10px] text-muted hover:text-foreground mt-1"
             >
               {showDetails ? "hide details" : "show details"}
-            </button>
+            </Button>
             {showDetails && (
-              <p className="text-[10px] text-muted mt-1 break-all">{error}</p>
+              <p className="text-xs text-muted-foreground mt-1 break-all">{error}</p>
             )}
           </div>
         )}
@@ -391,13 +409,13 @@ function PlatformSetup({
 
   return (
     <div className="flex flex-col items-center gap-4 w-full max-w-[260px] px-4 animate-fade-slide-in">
-      <h2 className="text-[15px] font-semibold">setting up</h2>
+      <h2 className="text-base font-semibold">setting up</h2>
       {busy ? (
         <ProgressBar />
       ) : (
         <>
           {error && (
-            <p className="text-[11px] text-destructive animate-shake">
+            <p className="text-xs text-destructive animate-shake">
               {error}
             </p>
           )}
@@ -407,12 +425,13 @@ function PlatformSetup({
         </>
       )}
       {onCancel && (
-        <button
+        <Button
+          variant="link"
+          size="xs"
           onClick={onCancel}
-          className="text-[11px] text-muted hover:text-foreground"
         >
           cancel
-        </button>
+        </Button>
       )}
     </div>
   );

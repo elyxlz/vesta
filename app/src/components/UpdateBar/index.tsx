@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { isTauri } from "@/lib/env";
 import { checkAndInstallUpdate, runInstallScript } from "@/api";
 
@@ -32,25 +33,27 @@ export function UpdateBar() {
   if (!update || dismissed) return null;
 
   return (
-    <div className="flex items-center justify-center gap-2 py-1.5 px-3 text-[11px] text-muted animate-fade-slide-up">
+    <div className="flex items-center justify-center gap-2 py-1.5 px-3 text-xs text-muted-foreground animate-fade-slide-up">
       <span>
         v{update.version} {update.installing ? "installed — restart to apply" : "available —"}
       </span>
       {!update.installing && (
-        <button
+        <Button
+          variant="link"
+          size="xs"
           onClick={handleInstall}
           disabled={busy}
-          className="text-foreground font-medium hover:underline disabled:opacity-50"
         >
           {busy ? "installing..." : "install"}
-        </button>
+        </Button>
       )}
-      <button
+      <Button
+        variant="link"
+        size="xs"
         onClick={() => setDismissed(true)}
-        className="text-muted hover:text-foreground"
       >
         dismiss
-      </button>
+      </Button>
     </div>
   );
 }

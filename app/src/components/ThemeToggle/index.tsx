@@ -1,11 +1,11 @@
 import { Sun, Moon, Monitor } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useTheme, type Theme } from "@/stores/use-theme";
-import { cn } from "@/lib/utils";
 
 const CYCLE: Theme[] = ["system", "light", "dark"];
 
@@ -33,15 +33,13 @@ export function ThemeToggle() {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <button
+        <Button
+          variant="ghost"
+          size="icon-sm"
           onClick={next}
-          className={cn(
-            "p-1.5 rounded-md transition-colors",
-            "text-muted hover:text-foreground hover:bg-accent",
-          )}
         >
           {icon}
-        </button>
+        </Button>
       </TooltipTrigger>
       <TooltipContent side="top">{label}</TooltipContent>
     </Tooltip>

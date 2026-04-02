@@ -4,12 +4,13 @@ import { Titlebar } from "@/components/Titlebar";
 import { UpdateBar } from "@/components/UpdateBar";
 import { Connect } from "@/components/Connect";
 import { Home } from "@/components/Home";
+import { CreateAgent } from "@/components/CreateAgent";
 import { AgentDetail } from "@/components/AgentDetail";
 import { Chat } from "@/components/Chat";
 import { Console } from "@/components/Console";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useAppStore } from "@/stores/use-app-store";
-import { useNavigation } from "@/stores/use-navigation";
+import { useNavigation, parseUrl } from "@/stores/use-navigation";
 import { useVersion } from "@/hooks/use-version";
 import "@/stores/use-theme";
 import { autoSetup } from "@/api";
@@ -18,7 +19,7 @@ import { isTauri } from "@/lib/env";
 
 function AppContent() {
   const view = useNavigation((s) => s.view);
-  const setView = useNavigation((s) => s.setView);
+  const navigateToConnect = useNavigation((s) => s.navigateToConnect);
   const setConnected = useAppStore((s) => s.setConnected);
   const connected = useAppStore((s) => s.connected);
 
@@ -59,7 +60,7 @@ function AppContent() {
 
       const conn = getConnection();
       if (!conn) {
-        setView("connect");
+        navigateToConnect();
         return;
       }
 
@@ -69,33 +70,37 @@ function AppContent() {
         });
         if (resp.ok) {
           setConnected(true);
-          setView("home");
+          const { view: urlView, agent } = parseUrl();
+          if (urlView !== "connect" && urlView !== "loading") {
+            useNavigation.setState({ view: urlView, selectedAgent: agent });
+          } else {
+            useNavigation.getState().navigateHome();
+          }
         } else {
-          setView("connect");
+          navigateToConnect();
         }
       } catch {
-        setView("connect");
+        navigateToConnect();
       }
     };
 
     init();
-  }, [setView, setConnected]);
+  }, [navigateToConnect, setConnected]);
+
+  if (view === "loading") return null;
 
   const showUpdateBar =
-    connected && (view === "home" || view === "agent-detail");
+    connected && (view === "home" || view === "agent-detail" || view === "create-agent");
 
   return (
-    <div
-      className="flex flex-col h-full"
-      style={{ background: "var(--color-background)" }}
-    >
+    <div className="flex flex-col h-full bg-background">
       <Titlebar />
       {showUpdateBar && <UpdateBar />}
 
       <div className="flex-1 relative overflow-hidden h-0">
-        {view === "loading" && <LoadingView />}
         {view === "connect" && <Connect />}
         {view === "home" && <Home />}
+        {view === "create-agent" && <CreateAgent />}
         {(view === "agent-detail" ||
           view === "agent-chat" ||
           view === "agent-console") && (
@@ -112,15 +117,6 @@ function AppContent() {
           </div>
         )}
       </div>
-    </div>
-  );
-}
-
-function LoadingView() {
-  return (
-    <div className="flex flex-col items-center justify-center h-full gap-3 animate-view-in">
-      <div className="w-10 h-10 rounded-full bg-gradient-to-b from-[#b8ceb0] to-[#5a7e50] animate-breathe" />
-      <span className="text-[11px] text-muted">loading...</span>
     </div>
   );
 }

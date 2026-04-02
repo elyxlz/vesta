@@ -1,14 +1,15 @@
 import { useCallback } from "react";
 import { LogOut, Minus, X } from "lucide-react";
-import { isTauri } from "@/lib/env";
-import { detectPlatform } from "@/lib/platform";
-import { getConnection, clearConnection } from "@/lib/connection";
-import { useAppStore } from "@/stores/use-app-store";
+import { Button } from "@/components/ui/button";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { isTauri } from "@/lib/env";
+import { detectPlatform } from "@/lib/platform";
+import { getConnection, clearConnection } from "@/lib/connection";
+import { useAppStore } from "@/stores/use-app-store";
 
 export function Titlebar() {
   const connected = useAppStore((s) => s.connected);
@@ -58,25 +59,25 @@ export function Titlebar() {
       style={{ paddingLeft: isTauri && platform === "macos" ? 78 : undefined }}
       onMouseDown={handleDrag}
     >
-      <div className="flex items-center gap-2 min-w-0">
-        {connected && (
-          <>
-            <div className="w-[6px] h-[6px] rounded-full bg-green-500 shrink-0" />
-            <span className="text-[11px] text-muted truncate">{hostname}</span>
-          </>
-        )}
-      </div>
+      <div className="flex-1" />
 
       <div className="window-controls flex items-center gap-1">
         {connected && (
+          <>
+            <div className="w-[6px] h-[6px] rounded-full bg-primary shrink-0" />
+            <span className="text-xs text-muted-foreground truncate">{hostname}</span>
+          </>
+        )}
+        {connected && (
           <Tooltip>
             <TooltipTrigger asChild>
-              <button
+              <Button
+                variant="ghost"
+                size="icon-xs"
                 onClick={handleDisconnect}
-                className="p-1.5 rounded-md text-muted hover:text-foreground hover:bg-accent transition-colors"
               >
                 <LogOut size={13} />
-              </button>
+              </Button>
             </TooltipTrigger>
             <TooltipContent>disconnect</TooltipContent>
           </Tooltip>
@@ -86,30 +87,33 @@ export function Titlebar() {
           <>
             {platform === "linux" ? (
               <>
-                <button
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
                   onClick={handleMinimize}
-                  className="p-1.5 rounded-md text-muted hover:text-foreground hover:bg-accent transition-colors"
                 >
                   <Minus size={13} />
-                </button>
-                <button
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
                   onClick={handleClose}
-                  className="p-1.5 rounded-md text-muted hover:text-foreground hover:bg-[#c42b1c]/10 hover:text-[#c42b1c] transition-colors"
+                  className="hover:bg-destructive/10 hover:text-destructive"
                 >
                   <X size={13} />
-                </button>
+                </Button>
               </>
             ) : (
               <>
                 <button
                   onClick={handleMinimize}
-                  className="w-[46px] h-[32px] flex items-center justify-center text-muted hover:bg-accent transition-colors"
+                  className="w-[46px] h-[32px] flex items-center justify-center hover:bg-accent transition-colors"
                 >
                   <Minus size={13} />
                 </button>
                 <button
                   onClick={handleClose}
-                  className="w-[46px] h-[32px] flex items-center justify-center text-muted hover:bg-[#c42b1c] hover:text-white transition-colors"
+                  className="w-[46px] h-[32px] flex items-center justify-center hover:bg-destructive hover:text-destructive-foreground transition-colors"
                 >
                   <X size={13} />
                 </button>

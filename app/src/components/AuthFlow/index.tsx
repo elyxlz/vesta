@@ -75,7 +75,7 @@ export function AuthFlow({ agentName, onCancel, onComplete }: AuthFlowProps) {
   if (authState === "starting") {
     return (
       <div className="flex flex-col items-center gap-3 w-full animate-fade-slide-in">
-        <p className="text-[12px] text-muted">starting authentication...</p>
+        <p className="text-sm text-muted-foreground">starting authentication...</p>
         <ProgressBar message="waiting..." />
       </div>
     );
@@ -84,7 +84,7 @@ export function AuthFlow({ agentName, onCancel, onComplete }: AuthFlowProps) {
   if (authState === "submitting") {
     return (
       <div className="flex flex-col items-center gap-3 w-full animate-fade-slide-in">
-        <p className="text-[12px] text-muted">verifying code...</p>
+        <p className="text-sm text-muted-foreground">verifying code...</p>
         <ProgressBar message="verifying..." />
       </div>
     );
@@ -97,12 +97,12 @@ export function AuthFlow({ agentName, onCancel, onComplete }: AuthFlowProps) {
           href={authUrl}
           target="_blank"
           rel="noopener"
-          className="text-[11px] text-muted hover:text-foreground truncate max-w-full"
+          className="text-xs text-muted-foreground hover:text-foreground truncate max-w-full"
         >
           {authUrl.length > 50 ? `${authUrl.slice(0, 50)}...` : authUrl}
         </a>
       )}
-      <p className="text-[11px] text-muted text-center">
+      <p className="text-xs text-muted-foreground text-center">
         paste the code from the browser below
       </p>
       <Input
@@ -111,7 +111,7 @@ export function AuthFlow({ agentName, onCancel, onComplete }: AuthFlowProps) {
         onChange={(e) => setCode(e.target.value)}
         onKeyDown={handleKeyDown}
         autoFocus
-        className="text-center text-[12px]"
+        className="text-center text-sm"
       />
       <Button
         onClick={handleSubmit}
@@ -122,15 +122,16 @@ export function AuthFlow({ agentName, onCancel, onComplete }: AuthFlowProps) {
         submit
       </Button>
       {error && (
-        <p className="text-[11px] text-destructive animate-shake">{error}</p>
+        <p className="text-xs text-destructive animate-shake">{error}</p>
       )}
       {onCancel && (
-        <button
+        <Button
+          variant="link"
+          size="xs"
           onClick={onCancel}
-          className="text-[11px] text-muted hover:text-foreground"
         >
           cancel
-        </button>
+        </Button>
       )}
     </div>
   );

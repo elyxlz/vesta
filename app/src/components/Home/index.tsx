@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Plus } from "lucide-react";
 import { AgentCard } from "@/components/AgentCard";
-import { CreateAgent } from "@/components/CreateAgent";
+import { Button } from "@/components/ui/button";
 import {
   Tooltip,
   TooltipContent,
@@ -9,25 +9,28 @@ import {
 } from "@/components/ui/tooltip";
 import { listAgents } from "@/api";
 import { wsUrl } from "@/lib/connection";
-import type { AgentActivityState, ListEntry } from "@/lib/types";
+import type { AgentActivityState } from "@/lib/types";
 import { useAppStore } from "@/stores/use-app-store";
+import { useNavigation } from "@/stores/use-navigation";
 import { cn } from "@/lib/utils";
 
 export function Home() {
   const agents = useAppStore((s) => s.agents);
   const setAgents = useAppStore((s) => s.setAgents);
   const version = useAppStore((s) => s.version);
+  const navigateToCreate = useNavigation((s) => s.navigateToCreate);
 
-  const [showCreate, setShowCreate] = useState(false);
   const [activityStates, setActivityStates] = useState<
     Record<string, AgentActivityState>
   >({});
+  const [fetched, setFetched] = useState(false);
   const wsRefs = useRef<Map<string, WebSocket>>(new Map());
 
   const fetchAgents = useCallback(async () => {
     try {
       const list = await listAgents();
       setAgents(list);
+      setFetched(true);
     } catch {
       // ignore polling errors
     }
@@ -38,6 +41,12 @@ export function Home() {
     const interval = setInterval(fetchAgents, 5000);
     return () => clearInterval(interval);
   }, [fetchAgents]);
+
+  useEffect(() => {
+    if (fetched && agents.length === 0) {
+      navigateToCreate();
+    }
+  }, [fetched, agents, navigateToCreate]);
 
   useEffect(() => {
     const aliveNames = new Set(
@@ -85,29 +94,7 @@ export function Home() {
     };
   }, [agents]);
 
-  const hasAgents = agents.length > 0;
-  const showCreateInline = !hasAgents || showCreate;
-
-  if (showCreateInline) {
-    return (
-      <div className="flex flex-col h-full animate-view-in">
-        <div className="flex-1 flex items-center justify-center">
-          <CreateAgent
-            onCancel={hasAgents ? () => setShowCreate(false) : undefined}
-            onCreated={() => {
-              setShowCreate(false);
-              fetchAgents();
-            }}
-          />
-        </div>
-        {version && (
-          <div className="text-center pb-3">
-            <span className="text-[10px] text-muted">v{version}</span>
-          </div>
-        )}
-      </div>
-    );
-  }
+  if (!fetched || agents.length === 0) return null;
 
   const gridCols =
     agents.length === 1
@@ -121,18 +108,19 @@ export function Home() {
       <div className="flex items-center justify-end px-4 pt-1 pb-1">
         <Tooltip>
           <TooltipTrigger asChild>
-            <button
-              onClick={() => setShowCreate(true)}
-              className="p-1.5 rounded-md text-muted hover:text-foreground hover:bg-accent transition-colors"
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={navigateToCreate}
             >
               <Plus size={16} />
-            </button>
+            </Button>
           </TooltipTrigger>
           <TooltipContent>new agent</TooltipContent>
         </Tooltip>
       </div>
 
-      <div className="flex-1 flex items-start justify-center overflow-y-auto px-4">
+      <div className="flex-1 flex items-center justify-center overflow-y-auto px-4">
         <div className={cn("grid gap-2 mx-auto", gridCols)}>
           {agents.map((agent) => (
             <AgentCard
@@ -146,7 +134,7 @@ export function Home() {
 
       {version && (
         <div className="text-center pb-3">
-          <span className="text-[10px] text-muted">v{version}</span>
+          <span className="text-xs text-muted-foreground">v{version}</span>
         </div>
       )}
     </div>

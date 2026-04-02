@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import { MoreVertical } from "lucide-react";
 import { Orb } from "@/components/Orb";
+import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -77,7 +78,7 @@ export function AgentCard({ agent, activityState }: AgentCardProps) {
         <Orb state={orbState} size={56} />
       </div>
       <span
-        className="text-[12px] font-medium text-foreground cursor-pointer"
+        className="text-sm font-medium text-foreground cursor-pointer"
         onClick={handleClick}
       >
         {agent.name}
@@ -90,15 +91,15 @@ export function AgentCard({ agent, activityState }: AgentCardProps) {
           }}
         >
           <DropdownMenuTrigger asChild>
-            <button className="p-1 rounded-md text-muted hover:text-foreground hover:bg-accent transition-colors">
+            <Button variant="ghost" size="icon-xs">
               <MoreVertical size={14} />
-            </button>
+            </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="animate-menu-in min-w-[140px]">
             {confirmDelete ? (
               <>
                 <DropdownMenuItem
-                  className="text-destructive text-[12px]"
+                  className="text-destructive text-sm"
                   disabled={isBusy}
                   onClick={() =>
                     withOp(
@@ -112,7 +113,7 @@ export function AgentCard({ agent, activityState }: AgentCardProps) {
                   confirm delete
                 </DropdownMenuItem>
                 <DropdownMenuItem
-                  className="text-muted text-[12px]"
+                  className="text-foreground/60 text-sm"
                   onClick={() => setConfirmDelete(false)}
                 >
                   cancel
@@ -123,13 +124,13 @@ export function AgentCard({ agent, activityState }: AgentCardProps) {
                 {agent.alive && (
                   <>
                     <DropdownMenuItem
-                      className="text-[12px]"
+                      className="text-sm"
                       onClick={() => navigateToChat(agent.name)}
                     >
                       chat
                     </DropdownMenuItem>
                     <DropdownMenuItem
-                      className="text-[12px]"
+                      className="text-sm"
                       onClick={() => navigateToConsole(agent.name)}
                     >
                       console
@@ -137,7 +138,7 @@ export function AgentCard({ agent, activityState }: AgentCardProps) {
                   </>
                 )}
                 <DropdownMenuItem
-                  className="text-[12px]"
+                  className="text-sm"
                   disabled={isBusy}
                   onClick={() => {
                     if (agent.status === "running") {
@@ -151,7 +152,7 @@ export function AgentCard({ agent, activityState }: AgentCardProps) {
                 </DropdownMenuItem>
                 {agent.status === "running" && (
                   <DropdownMenuItem
-                    className="text-[12px]"
+                    className="text-sm"
                     disabled={isBusy}
                     onClick={() =>
                       withOp(agent.name, "starting", () => restartAgent(agent.name), "restart failed")
@@ -163,7 +164,7 @@ export function AgentCard({ agent, activityState }: AgentCardProps) {
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <DropdownMenuItem
-                      className="text-[12px]"
+                      className="text-sm"
                       disabled={isBusy}
                       onClick={() =>
                         withOp(agent.name, "backing-up", () => backupAgent(agent.name), "backup failed")
@@ -175,7 +176,7 @@ export function AgentCard({ agent, activityState }: AgentCardProps) {
                   <TooltipContent>export to file</TooltipContent>
                 </Tooltip>
                 <DropdownMenuItem
-                  className="text-[12px]"
+                  className="text-sm"
                   disabled={isBusy}
                   onClick={handleFileRestore}
                 >
@@ -183,7 +184,7 @@ export function AgentCard({ agent, activityState }: AgentCardProps) {
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
-                  className="text-destructive text-[12px]"
+                  className="text-destructive text-sm"
                   disabled={isBusy}
                   onClick={() => setConfirmDelete(true)}
                 >

@@ -152,24 +152,25 @@ export function AgentDetail() {
       onMouseLeave={() => setHovered(false)}
     >
       <div className="px-3 pt-1">
-        <button
+        <Button
+          variant="ghost"
+          size="xs"
           onClick={navigateHome}
-          className="flex items-center gap-1 text-[12px] text-muted hover:text-foreground transition-colors"
         >
           <ArrowLeft size={14} />
           back
-        </button>
+        </Button>
       </div>
 
       <div className="flex-1 flex flex-col items-center justify-center gap-4">
         <Orb state={orbState} size={140} enableTracking />
 
         <div className="text-center">
-          <p className="text-[16px] font-semibold">{name}</p>
+          <p className="text-lg font-semibold">{name}</p>
           <p
             className={cn(
-              "text-[11px] mt-0.5",
-              opState.error ? "text-destructive animate-shake" : "text-muted",
+              "text-xs mt-0.5",
+              opState.error ? "text-destructive animate-shake" : "text-foreground/60",
             )}
           >
             {statusLabel}
@@ -210,7 +211,7 @@ export function AgentDetail() {
                   size="sm"
                   variant="ghost"
                   onClick={() => setConfirmDelete(false)}
-                  className="text-muted"
+                  className="text-foreground/60"
                 >
                   <X size={14} className="mr-1" />
                   cancel
@@ -276,7 +277,7 @@ export function AgentDetail() {
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <DropdownMenuItem
-                            className="text-[12px]"
+                            className="text-sm"
                             onClick={() => navigateToConsole(name)}
                           >
                             console
@@ -292,7 +293,7 @@ export function AgentDetail() {
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <DropdownMenuItem
-                              className="text-[12px]"
+                              className="text-sm"
                               disabled={isBusy}
                               onClick={handleRestart}
                             >
@@ -306,7 +307,7 @@ export function AgentDetail() {
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <DropdownMenuItem
-                              className="text-[12px]"
+                              className="text-sm"
                               disabled={isBusy}
                               onClick={handleRebuild}
                             >
@@ -321,7 +322,7 @@ export function AgentDetail() {
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <DropdownMenuItem
-                                className="text-[12px]"
+                                className="text-sm"
                                 onClick={() => setShowAuth(true)}
                               >
                                 authenticate
@@ -337,7 +338,7 @@ export function AgentDetail() {
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <DropdownMenuItem
-                          className="text-[12px]"
+                          className="text-sm"
                           disabled={isBusy}
                           onClick={handleBackup}
                         >
@@ -349,7 +350,7 @@ export function AgentDetail() {
                       </TooltipContent>
                     </Tooltip>
                     <DropdownMenuItem
-                      className="text-[12px]"
+                      className="text-sm"
                       disabled={isBusy}
                       onClick={handleRestore}
                     >
@@ -359,7 +360,7 @@ export function AgentDetail() {
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <DropdownMenuItem
-                          className="text-destructive text-[12px]"
+                          className="text-destructive text-sm"
                           disabled={isBusy}
                           onClick={() => setConfirmDelete(true)}
                         >
@@ -380,7 +381,7 @@ export function AgentDetail() {
 
       {version && (
         <div className="text-center pb-3">
-          <span className="text-[10px] text-muted">v{version}</span>
+          <span className="text-xs text-muted-foreground">v{version}</span>
         </div>
       )}
     </div>

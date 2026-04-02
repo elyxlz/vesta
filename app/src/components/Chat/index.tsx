@@ -130,8 +130,8 @@ export function Chat() {
   const statusDot = connected
     ? isThinking
       ? "bg-amber-400"
-      : "bg-green-500"
-    : "bg-gray-400/50";
+      : "bg-primary"
+    : "bg-muted-foreground/50";
   const statusTip = connected
     ? isThinking
       ? agentState === "tool_use"
@@ -146,12 +146,12 @@ export function Chat() {
       <div className="flex items-center justify-between px-3 h-9 shrink-0 border-b border-white/5">
         <button
           onClick={handleBack}
-          className="flex items-center gap-1 text-[12px] text-[#888] hover:text-white transition-colors"
+          className="flex items-center gap-1 text-sm text-[#888] hover:text-white transition-colors"
         >
           <ArrowLeft size={14} />
           back
         </button>
-        <span className="text-[13px] font-medium">{name}</span>
+        <span className="text-sm font-medium">{name}</span>
         <div className="flex items-center gap-2">
           <Tooltip>
             <TooltipTrigger>
@@ -181,7 +181,7 @@ export function Chat() {
       </div>
 
       {showReconnect && (
-        <div className="text-center py-1 bg-amber-500/20 text-amber-300 text-[11px]">
+        <div className="text-center py-1 bg-amber-500/20 text-amber-300 text-xs">
           reconnecting...
         </div>
       )}
@@ -190,12 +190,12 @@ export function Chat() {
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto px-3 py-2 font-mono text-[12px] leading-[1.6]"
+        className="flex-1 overflow-y-auto px-3 py-2 font-mono text-sm leading-[1.6]"
       >
         {filteredMessages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full gap-2">
             <ThinkingDots />
-            <span className="text-[11px] text-[#666]">
+            <span className="text-xs text-[#666]">
               {connected
                 ? `${name} is listening. say something.`
                 : "connecting..."}
@@ -212,7 +212,7 @@ export function Chat() {
 
       {/* Input */}
       <div className="flex items-end gap-2 px-3 py-2 border-t border-white/5">
-        <span className="text-[12px] font-mono text-[#666] leading-[1.6] shrink-0 pb-[2px]">
+        <span className="text-sm font-mono text-[#666] leading-[1.6] shrink-0 pb-[2px]">
           &gt;
         </span>
         <textarea
@@ -223,7 +223,7 @@ export function Chat() {
           placeholder={connected ? "send a message..." : "connecting..."}
           disabled={!connected}
           rows={1}
-          className="flex-1 bg-transparent text-[12px] font-mono leading-[1.6] resize-none outline-none placeholder:text-[#444] disabled:opacity-50"
+          className="flex-1 bg-transparent text-sm font-mono leading-[1.6] resize-none outline-none placeholder:text-[#444] disabled:opacity-50"
         />
       </div>
     </div>
@@ -254,15 +254,15 @@ function MessageLine({ event }: { event: VestaEvent }) {
       content = event.text;
       break;
     case "tool_start":
-      className = "text-white/40 text-[11px]";
+      className = "text-white/40 text-xs";
       content = `[${event.tool}] ${event.input}`;
       break;
     case "tool_end":
-      className = "text-white/40 text-[11px]";
+      className = "text-white/40 text-xs";
       content = `[${event.tool}] done`;
       break;
     case "notification":
-      className = "text-[rgba(200,170,100,0.8)] text-[11px]";
+      className = "text-[rgba(200,170,100,0.8)] text-xs";
       content = `[${event.source}] ${event.summary}`;
       break;
     case "error":
@@ -278,7 +278,7 @@ function MessageLine({ event }: { event: VestaEvent }) {
   return (
     <div className={cn("flex gap-2 py-[1px]", className)}>
       {ts && (
-        <span className="text-[10px] text-white/20 shrink-0 leading-[1.9] select-none">
+        <span className="text-xs text-white/20 shrink-0 leading-[1.9] select-none">
           {ts}
         </span>
       )}
