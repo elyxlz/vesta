@@ -4,7 +4,7 @@
    - Name: anything (e.g. "Vesta")
    - Supported account types: "Accounts in any organizational directory and personal Microsoft accounts"
    - Redirect URI: leave blank (device flow doesn't need one)
-   - Under "API permissions", add: `Mail.ReadWrite`, `Mail.Send`, `Calendars.ReadWrite`
+   - Under "API permissions", add: `Mail.ReadWrite`, `Mail.Send`, `Calendars.ReadWrite`, `MailboxSettings.ReadWrite`
    - Under "Authentication", enable "Allow public client flows"
 2. Copy the **Application (client) ID**
 3. Set environment variable:
