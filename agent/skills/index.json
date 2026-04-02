@@ -20,6 +20,10 @@
     "description": "This skill should be used when the user asks about \"passwords\", \"credentials\", \"vault\", \"secrets\", \"keeper\", \"password manager\", \"logins\", \"TOTP\", \"2FA codes\", or needs to store, retrieve, search, share, or manage passwords and secure records."
   },
   {
+    "name": "media-server",
+    "description": "This skill should be used when the user asks about \"plex\", \"movies\", \"tv shows\", \"torrents\", \"downloads\", \"qbittorrent\", \"media\", \"streaming\", or needs to search for, download, or browse their media library."
+  },
+  {
     "name": "microsoft",
     "description": "This skill should be used when the user asks about \"email\", \"emails\", \"inbox\", \"messages\", \"calendar\", \"schedule\", \"scheduling\", \"meetings\", \"appointments\", \"events\", \"outlook\", or needs to read/send emails, manage calendar events, or handle time-based tasks via Microsoft/Outlook. Requires a background daemon."
   },
