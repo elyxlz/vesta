@@ -12,6 +12,10 @@
     "description": "Use this skill when the user asks about personal finance, spending, transactions, bank balances, budgeting, or wants to see where their money went. Provides access to bank account data via Enable Banking open banking API."
   },
   {
+    "name": "flights",
+    "description": "Use this skill when the user asks about flights, plane tickets, airfare, travel deals, cheap flights, or wants to search for routes between cities/airports. Covers one-way, round-trip, and date-flexible searches. Books via Trip.com (primary, browser automation) or Duffel API (fallback)."
+  },
+  {
     "name": "google",
     "description": "This skill should be used when the user asks about \"gmail\", \"google email\", \"google calendar\", \"gcal\", \"google meet\", or needs to read/send emails via Gmail, manage Google Calendar events, create Google Meet links, or handle scheduling via Google. Requires a background daemon."
   },
