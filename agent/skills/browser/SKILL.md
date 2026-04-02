@@ -136,6 +136,18 @@ DISPLAY=:99 browser launch --stealth
 | Need user's cookies/logins | `browser launch --user-data-dir <path>` |
 | Need user's live session | `browser connect http://<ip>:9222` |
 
+## VNC Usage (Headed Mode)
+
+For visual debugging or CAPTCHA solving, run the browser in headed mode with VNC:
+
+1. Start virtual display: `Xvfb :99 -screen 0 1920x1080x24 &`
+2. Start window manager: `DISPLAY=:99 openbox &`
+3. Launch browser headed: `DISPLAY=:99 browser launch --stealth --no-headless --disable-gpu`
+   - **CRITICAL**: `--disable-gpu` is required — without it, browser content only renders on the left portion of the screen
+4. Maximize window: `DISPLAY=:99 xdotool key super+d` or `DISPLAY=:99 xdotool search --onlyvisible --class chromium windowactivate windowsize 100% 100%`
+5. Start VNC server: `x11vnc -display :99 -nopw -forever &`
+6. Start websockify: `websockify --web /usr/share/novnc <PORT> localhost:5900 &`
+
 ## Remote Assist (User Takeover)
 
 When the automated browser gets stuck — CAPTCHA, sign-in blocks, fingerprint detection — hand control to the user via noVNC. This lets them interact with the browser directly from their phone/laptop, then you take back over.
