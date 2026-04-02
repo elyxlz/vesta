@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_WS_PORT: u16 = 7865;
 pub const DEFAULT_API_PORT: u16 = 7860;
+#[cfg(target_os = "linux")]
 const SERVER_START_TIMEOUT_SECS: u64 = 30;
 
 // ── Types ───────────────────────────────────────────────────────
