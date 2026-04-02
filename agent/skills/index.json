@@ -8,6 +8,10 @@
     "description": "Self-improvement and memory curation. Used by the nightly dreamer, but can also be used anytime."
   },
   {
+    "name": "finance",
+    "description": "Use this skill when the user asks about personal finance, spending, transactions, bank balances, budgeting, or wants to see where their money went. Provides access to bank account data via Enable Banking open banking API."
+  },
+  {
     "name": "google",
     "description": "This skill should be used when the user asks about \"gmail\", \"google email\", \"google calendar\", \"gcal\", \"google meet\", or needs to read/send emails via Gmail, manage Google Calendar events, create Google Meet links, or handle scheduling via Google. Requires a background daemon."
   },
