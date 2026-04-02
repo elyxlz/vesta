@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 # Shared helpers
 # ---------------------------------------------------------------------------
 
+
 class TriggerData(TypedDict, total=False):
     type: str
     run_date: str
@@ -114,6 +115,7 @@ def _compute_due_date(
 # Metadata helpers
 # ---------------------------------------------------------------------------
 
+
 def _get_metadata_path(data_dir: Path, task_id: str) -> Path:
     return data_dir / "metadata" / f"{task_id}.md"
 
@@ -148,6 +150,7 @@ def _task_with_metadata(data_dir: Path, row: dict, include_content: bool = False
 # Auto-reminder helpers
 # ---------------------------------------------------------------------------
 
+
 def _create_auto_reminders(conn, task_id: str, title: str, due_date_str: str, priority: int):
     """Create auto-generated reminders for a task with a due date."""
     now = _now_utc()
@@ -165,8 +168,7 @@ def _create_auto_reminders(conn, task_id: str, title: str, due_date_str: str, pr
         conn.execute(
             """INSERT INTO reminders (id, task_id, message, schedule_type, scheduled_time, completed, trigger_data, auto_generated)
                VALUES (?, ?, ?, ?, ?, 0, ?, 1)""",
-            (reminder_id, task_id, message, f"auto: {label} before due",
-             fire_time.isoformat(), json.dumps(trigger_data)),
+            (reminder_id, task_id, message, f"auto: {label} before due", fire_time.isoformat(), json.dumps(trigger_data)),
         )
 
 
@@ -178,6 +180,7 @@ def _delete_auto_reminders(conn, task_id: str):
 # ---------------------------------------------------------------------------
 # Task commands
 # ---------------------------------------------------------------------------
+
 
 def add_task(
     config: Config,
@@ -314,6 +317,7 @@ def search_tasks(config: Config, *, query: str, show_completed: bool = False) ->
 # Reminder job callback
 # ---------------------------------------------------------------------------
 
+
 def send_reminder_job(reminder_id: str, *, message: str, data_dir: str, notif_dir: str):
     """Called by APScheduler when a reminder fires."""
     data_dir = Path(data_dir)
@@ -332,7 +336,10 @@ def send_reminder_job(reminder_id: str, *, message: str, data_dir: str, notif_di
                 # For auto-generated reminders, write task_due notification
                 # For user reminders, write reminder notification
                 write_reminder_notification(
-                    Path(notif_dir), reminder_id, message, task_id=task_id,
+                    Path(notif_dir),
+                    reminder_id,
+                    message,
+                    task_id=task_id,
                 )
 
                 # Mark one-time (date) reminders as completed
@@ -345,14 +352,13 @@ def send_reminder_job(reminder_id: str, *, message: str, data_dir: str, notif_di
 # Reminder restore (for daemon startup + missed reminder handling)
 # ---------------------------------------------------------------------------
 
+
 def restore_all_jobs(config: Config, scheduler: BackgroundScheduler, *, notif_dir: Path | None = None):
     """Load all active reminders from DB and register as APScheduler jobs.
     Past-due one-time reminders fire missed notifications immediately."""
     now = _now_utc()
     with closing(db.get_db(config.data_dir)) as conn:
-        cursor = conn.execute(
-            "SELECT id, task_id, message, trigger_data FROM reminders WHERE completed = 0 AND trigger_data IS NOT NULL"
-        )
+        cursor = conn.execute("SELECT id, task_id, message, trigger_data FROM reminders WHERE completed = 0 AND trigger_data IS NOT NULL")
 
         for row in cursor:
             reminder_id = row["id"]
@@ -370,8 +376,11 @@ def restore_all_jobs(config: Config, scheduler: BackgroundScheduler, *, notif_di
                         logger.info(f"Reminder {reminder_id}: past due, sending missed notification")
                         if notif_dir:
                             write_reminder_notification(
-                                notif_dir, reminder_id, row["message"],
-                                task_id=row["task_id"], extra={"missed": True},
+                                notif_dir,
+                                reminder_id,
+                                row["message"],
+                                task_id=row["task_id"],
+                                extra={"missed": True},
                             )
                         conn.execute("UPDATE reminders SET completed = 1 WHERE id = ?", (reminder_id,))
                         continue
@@ -416,6 +425,7 @@ def restore_all_jobs(config: Config, scheduler: BackgroundScheduler, *, notif_di
 # ---------------------------------------------------------------------------
 # Reminder commands (CRUD)
 # ---------------------------------------------------------------------------
+
 
 def remind_set(
     config: Config,
@@ -509,9 +519,14 @@ def remind_set(
             """INSERT OR REPLACE INTO reminders
                (id, task_id, message, schedule_type, scheduled_time, completed, trigger_data, auto_generated)
                VALUES (?, ?, ?, ?, ?, 0, ?, 0)""",
-            (reminder_id, task_id, message, schedule_info,
-             next_run.isoformat() if next_run else None,
-             json.dumps(trigger_data) if trigger_data else None),
+            (
+                reminder_id,
+                task_id,
+                message,
+                schedule_info,
+                next_run.isoformat() if next_run else None,
+                json.dumps(trigger_data) if trigger_data else None,
+            ),
         )
         conn.commit()
         cursor = conn.execute("SELECT created_at FROM reminders WHERE id = ?", (reminder_id,))
@@ -544,16 +559,18 @@ def remind_list(config: Config, scheduler: BackgroundScheduler, *, task_id: str 
         reminders = []
         for row in cursor:
             job = jobs.get(row["id"])
-            reminders.append({
-                "id": row["id"],
-                "task_id": row["task_id"],
-                "message": row["message"],
-                "schedule": row["schedule_type"],
-                "next_run": job.next_run_time.isoformat() if job and job.next_run_time else None,
-                "created_at": row["created_at"],
-                "auto_generated": bool(row["auto_generated"]),
-                "status": "active" if job else "pending",
-            })
+            reminders.append(
+                {
+                    "id": row["id"],
+                    "task_id": row["task_id"],
+                    "message": row["message"],
+                    "schedule": row["schedule_type"],
+                    "next_run": job.next_run_time.isoformat() if job and job.next_run_time else None,
+                    "created_at": row["created_at"],
+                    "auto_generated": bool(row["auto_generated"]),
+                    "status": "active" if job else "pending",
+                }
+            )
     return reminders
 
 

@@ -135,9 +135,15 @@ def _migrate_v1_to_v2(data_dir: Path, conn: sqlite3.Connection):
                         """INSERT OR IGNORE INTO reminders
                            (id, task_id, message, schedule_type, scheduled_time, completed, created_at, trigger_data, auto_generated)
                            VALUES (?, NULL, ?, ?, ?, ?, ?, ?, 0)""",
-                        (row["id"], row["message"], row["schedule_type"],
-                         row["scheduled_time"], row["completed"], row["created_at"],
-                         row["trigger_data"]),
+                        (
+                            row["id"],
+                            row["message"],
+                            row["schedule_type"],
+                            row["scheduled_time"],
+                            row["completed"],
+                            row["created_at"],
+                            row["trigger_data"],
+                        ),
                     )
                     imported += 1
                 except (KeyError, sqlite3.Error) as e:
@@ -164,9 +170,7 @@ _AUTO_WINDOWS = [
 def _create_auto_reminders_for_existing(conn: sqlite3.Connection):
     """Create auto-generated reminders for all pending tasks with due dates."""
     now = datetime.now(UTC)
-    tasks = conn.execute(
-        "SELECT id, title, due_date, priority FROM tasks WHERE due_date IS NOT NULL AND status='pending'"
-    ).fetchall()
+    tasks = conn.execute("SELECT id, title, due_date, priority FROM tasks WHERE due_date IS NOT NULL AND status='pending'").fetchall()
     created = 0
     for task in tasks:
         due_str = task["due_date"]
@@ -182,8 +186,14 @@ def _create_auto_reminders_for_existing(conn: sqlite3.Connection):
             conn.execute(
                 """INSERT INTO reminders (id, task_id, message, schedule_type, scheduled_time, completed, trigger_data, auto_generated)
                    VALUES (?, ?, ?, ?, ?, 0, ?, 1)""",
-                (rid, task["id"], f"Task due in {label}: {task['title']}",
-                 f"auto: {label} before due", fire_time.isoformat(), json.dumps(trigger_data)),
+                (
+                    rid,
+                    task["id"],
+                    f"Task due in {label}: {task['title']}",
+                    f"auto: {label} before due",
+                    fire_time.isoformat(),
+                    json.dumps(trigger_data),
+                ),
             )
             created += 1
     if created:

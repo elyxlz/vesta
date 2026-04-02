@@ -37,13 +37,23 @@ def _write_death_notification(notif_dir: Path, reason: str):
 def _require_daemon(config):
     pid_file = config.data_dir / "serve.pid"
     if not pid_file.exists():
-        print(json.dumps({"error": "daemon not running — start with: screen -dmS tasks tasks serve --notifications-dir ~/vesta/notifications"}), file=sys.stderr)
+        print(
+            json.dumps({"error": "daemon not running — start with: screen -dmS tasks tasks serve --notifications-dir ~/vesta/notifications"}),
+            file=sys.stderr,
+        )
         sys.exit(1)
     try:
         os.kill(int(pid_file.read_text().strip()), 0)
     except (ValueError, ProcessLookupError, OSError):
         pid_file.unlink(missing_ok=True)
-        print(json.dumps({"error": "daemon not running (stale pid file) — start with: screen -dmS tasks tasks serve --notifications-dir ~/vesta/notifications"}), file=sys.stderr)
+        print(
+            json.dumps(
+                {
+                    "error": "daemon not running (stale pid file) — start with: screen -dmS tasks tasks serve --notifications-dir ~/vesta/notifications"
+                }
+            ),
+            file=sys.stderr,
+        )
         sys.exit(1)
 
 
@@ -274,7 +284,8 @@ def _do_remind_set(config, args):
         if not message:
             raise ValueError('message is required: tasks remind "message" or tasks remind --message "message"')
         return commands.remind_set(
-            config, scheduler,
+            config,
+            scheduler,
             message=message,
             task_id=args.task_id,
             scheduled_datetime=args.scheduled_datetime,
