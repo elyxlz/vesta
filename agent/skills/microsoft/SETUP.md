@@ -4,7 +4,7 @@
    - Name: anything (e.g. "Vesta")
    - Supported account types: "Accounts in any organizational directory and personal Microsoft accounts"
    - Redirect URI: leave blank (device flow doesn't need one)
-   - Under "API permissions", add: `Mail.ReadWrite`, `Mail.Send`, `Calendars.ReadWrite`
+   - Under "API permissions", add: `Mail.ReadWrite`, `Mail.Send`, `Calendars.ReadWrite`, `MailboxSettings.ReadWrite`
    - Under "Authentication", enable "Allow public client flows"
 2. Copy the **Application (client) ID**
 3. Set environment variable:
@@ -25,6 +25,16 @@ microsoft auth login                         # Start device flow — gives you a
 microsoft auth complete --flow-cache <cache>  # Complete after signing in at the URL
 microsoft auth list                           # List authenticated accounts
 ```
+
+## Troubleshooting: Adding New Azure Permissions
+
+When adding new API permissions (e.g. MailboxSettings.ReadWrite) to an existing app registration:
+
+1. Add the permission in Azure portal → App Registration → API Permissions
+2. Click **"Grant admin consent"** (separate button — easy to miss)
+3. **Delete the MSAL cache**: `rm ~/.microsoft/auth_cache.bin` — cached tokens retain old scopes and won't pick up new permissions
+4. Re-authenticate all accounts: `microsoft auth login` → complete flow
+5. For **multi-tenant apps** (e.g. pascarelli.com + audiogen.co), repeat steps 1-2 in **each tenant's** Azure portal — admin consent is per-tenant
 
 ## First Use — Data Gathering
 
