@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_WS_PORT: u16 = 7865;
 pub const DEFAULT_API_PORT: u16 = 7860;
+#[cfg(target_os = "linux")]
+const SERVER_START_TIMEOUT_SECS: u64 = 30;
 
 // ── Types ───────────────────────────────────────────────────────
 
@@ -90,11 +92,6 @@ pub fn config_path() -> PathBuf {
     config_dir().join("config.json")
 }
 
-/// Legacy server.json path — used for migration only.
-pub fn server_json_path() -> PathBuf {
-    config_dir().join("server.json")
-}
-
 pub fn default_server_url() -> String {
     format!("https://localhost:{}", DEFAULT_API_PORT)
 }
@@ -104,13 +101,6 @@ pub fn load_config() -> VestaConfig {
         if let Ok(config) = serde_json::from_str(&content) {
             return config;
         }
-    }
-    // Migrate from legacy server.json
-    if let Some(server) = load_legacy_server_config() {
-        let config = VestaConfig { server: Some(server) };
-        let _ = save_config(&config);
-        let _ = std::fs::remove_file(server_json_path());
-        return config;
     }
     VestaConfig::default()
 }
@@ -137,15 +127,6 @@ pub fn save_server_config(config: &ServerConfig) -> Result<(), String> {
     let mut full = load_config();
     full.server = Some(config.clone());
     save_config(&full)
-}
-
-fn load_legacy_server_config() -> Option<ServerConfig> {
-    let content = std::fs::read_to_string(server_json_path()).ok()?;
-    let config: ServerConfig = serde_json::from_str(&content).ok()?;
-    if config.url.is_empty() || config.api_key.is_empty() {
-        return None;
-    }
-    Some(config)
 }
 
 /// Wait for vestad to become reachable on the given port.
@@ -245,14 +226,19 @@ pub fn ensure_server() -> Result<bool, String> {
 
 #[cfg(target_os = "linux")]
 fn install_and_boot(shutdown_first: bool, vestad_hint: Option<&std::path::Path>) -> Result<(), String> {
-    let vestad_path = platform::linux::install_vestad_from(vestad_hint)?;
-    platform::linux::install_autostart(&vestad_path)?;
+    let _vestad_path = platform::linux::install_vestad_from(vestad_hint)?;
+    // systemd service is installed by vestad itself on first run
     if shutdown_first {
         platform::linux::shutdown();
     }
     platform::linux::boot()?;
-    if !wait_for_server(30) {
-        return Err("server did not start within 30s".into());
+    if !wait_for_server(SERVER_START_TIMEOUT_SECS) {
+        let detail = platform::linux::boot_log_summary();
+        return Err(if detail.is_empty() {
+            "server did not start within 30s".to_string()
+        } else {
+            format!("server failed to start:\n{}", detail)
+        });
     }
     Ok(())
 }

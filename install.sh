@@ -4,17 +4,20 @@ set -euo pipefail
 main() {
   REPO="elyxlz/vesta"
   CLI_ONLY=false
+  SERVER_ONLY=false
   INSTALL_VERSION=""
 
   for arg in "$@"; do
     case "$arg" in
       --cli) CLI_ONLY=true ;;
+      --server) SERVER_ONLY=true ;;
       --version=*) INSTALL_VERSION="${arg#--version=}" ;;
       --help|-h)
         echo "Usage: curl -fsSL https://raw.githubusercontent.com/elyxlz/vesta/master/install.sh | bash"
         echo ""
         echo "Options:"
-        echo "  --cli              Install CLI only (no desktop app)"
+        echo "  --cli              Install CLI + server (no desktop app)"
+        echo "  --server           Install server only (for remote hosting)"
         echo "  --version=X.Y.Z   Install a specific version"
         echo "  --help             Show this help"
         exit 0
@@ -65,17 +68,50 @@ main() {
     fi
   }
 
+  ensure_path() {
+    local bin_dir="$HOME/.local/bin"
+    case ":$PATH:" in
+      *":$bin_dir:"*) return ;;
+    esac
+
+    local line='export PATH="$HOME/.local/bin:$PATH"'
+    for rc in "$HOME/.bashrc" "$HOME/.zshrc"; do
+      if [ -f "$rc" ] && ! grep -qF '.local/bin' "$rc"; then
+        echo "" >> "$rc"
+        echo "# Added by Vesta installer" >> "$rc"
+        echo "$line" >> "$rc"
+        echo "Added $bin_dir to PATH in $(basename "$rc")"
+      fi
+    done
+
+    # Also add for current session
+    export PATH="$bin_dir:$PATH"
+  }
+
+  install_vestad() {
+    case "$ARCH" in
+      x86_64) local rust_target="x86_64-unknown-linux-gnu" ;;
+      aarch64) local rust_target="aarch64-unknown-linux-gnu" ;;
+    esac
+    local artifact="vestad-${rust_target}.tar.gz"
+    echo "Downloading vestad server..."
+    curl -fsSL -o "$WORK_DIR/vestad.tar.gz" "https://github.com/${REPO}/releases/download/v${VERSION}/${artifact}"
+    verify_checksum "$WORK_DIR/vestad.tar.gz" "$artifact"
+    tar -xzf "$WORK_DIR/vestad.tar.gz" -C "$WORK_DIR"
+    local bin_dir="$HOME/.local/bin"
+    mkdir -p "$bin_dir"
+    install -m 755 "$WORK_DIR/vestad" "$bin_dir/vestad"
+    echo "Installed vestad to $bin_dir/vestad"
+    ensure_path
+  }
+
   install_cli_to_path() {
     local src="$1"
     local bin_dir="$HOME/.local/bin"
     mkdir -p "$bin_dir"
     install -m 755 "$src" "$bin_dir/vesta"
     echo "Installed vesta to $bin_dir/vesta"
-    case ":$PATH:" in
-      *":$bin_dir:"*) ;;
-      *) echo "WARNING: $bin_dir is not in your PATH. Add it with:"
-         echo "  export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
-    esac
+    ensure_path
   }
 
   case "$OS" in
@@ -106,6 +142,15 @@ main() {
       fi
       ;;
     linux)
+      if [ "$SERVER_ONLY" = true ]; then
+        install_vestad
+        echo ""
+        echo "Done! Start the server with: vestad serve"
+        echo "Then connect from a client: vesta connect https://<this-host>:7860#<api-key>"
+        echo "(The API key is printed when vestad starts)"
+        return
+      fi
+
       if [ "$CLI_ONLY" = false ] && [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
         echo "No display detected, installing CLI only. Use --cli to suppress this message."
         CLI_ONLY=true
@@ -124,15 +169,7 @@ main() {
         tar -xzf "$WORK_DIR/vesta.tar.gz" -C "$WORK_DIR"
         install_cli_to_path "$WORK_DIR/vesta"
 
-        VESTAD_ARTIFACT="vestad-${RUST_TARGET}.tar.gz"
-        echo "Downloading vestad server..."
-        curl -fsSL -o "$WORK_DIR/vestad.tar.gz" "https://github.com/${REPO}/releases/download/v${VERSION}/${VESTAD_ARTIFACT}"
-        verify_checksum "$WORK_DIR/vestad.tar.gz" "$VESTAD_ARTIFACT"
-        tar -xzf "$WORK_DIR/vestad.tar.gz" -C "$WORK_DIR"
-        local bin_dir="$HOME/.local/bin"
-        mkdir -p "$bin_dir"
-        install -m 755 "$WORK_DIR/vestad" "$bin_dir/vestad"
-        echo "Installed vestad to $bin_dir/vestad"
+        install_vestad
       else
         if command -v apt-get >/dev/null 2>&1; then
           PKG_TYPE="deb"
@@ -166,7 +203,11 @@ main() {
         fi
 
         echo "Installed Vesta desktop app."
-        echo "Launch it from your app menu or by running: vesta-app"
+
+        # Always install vestad standalone, even with desktop app
+        install_vestad
+
+        echo "Launch the app from your menu or by running: vesta-app"
       fi
       ;;
     *)

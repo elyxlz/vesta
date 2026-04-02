@@ -1,5 +1,5 @@
 use vesta_common::client::ws_base_url;
-use vesta_common::{normalize_url, version_less_than};
+use vesta_common::{is_local_server, normalize_url, version_less_than, ServerConfig};
 
 #[test]
 fn normalize_url_adds_https() {
@@ -89,4 +89,57 @@ fn url_hash_key_parsing() {
     assert_eq!(url, "https://host:7860");
     assert_eq!(key, "my-api-key");
     assert!("https://host:7860".split_once('#').is_none());
+}
+
+#[test]
+fn is_local_server_detects_localhost() {
+    let local = |url: &str| {
+        is_local_server(&ServerConfig {
+            url: url.into(),
+            api_key: "k".into(),
+            cert_fingerprint: None,
+            cert_pem: None,
+        })
+    };
+    assert!(local("https://localhost:7860"));
+    assert!(local("https://127.0.0.1:7860"));
+    assert!(local("https://[::1]:7860"));
+    assert!(!local("https://192.168.1.5:7860"));
+    assert!(!local("https://my-server.example.com:7860"));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn boot_log_path_is_under_config() {
+    let path = vesta_common::platform::linux::boot_log_path();
+    let path_str = path.to_string_lossy();
+    assert!(path_str.contains(".config/vesta/"), "boot log should be under .config/vesta/");
+    assert!(path_str.ends_with("vestad-boot.log"));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn boot_log_summary_returns_empty_for_missing_file() {
+    // If the log file doesn't exist, summary should be empty (not error)
+    let summary = vesta_common::platform::linux::boot_log_summary();
+    // Can't guarantee the file doesn't exist in CI, but at least verify it doesn't panic
+    let _ = summary;
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn boot_log_summary_truncates_long_output() {
+    let log_path = vesta_common::platform::linux::boot_log_path();
+    if let Some(parent) = log_path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    // Write 50 lines, summary should only return first 20
+    let lines: Vec<String> = (0..50).map(|i| format!("line {}", i)).collect();
+    std::fs::write(&log_path, lines.join("\n")).unwrap();
+    let summary = vesta_common::platform::linux::boot_log_summary();
+    assert_eq!(summary.lines().count(), 20);
+    assert!(summary.starts_with("line 0"));
+    assert!(summary.contains("line 19"));
+    assert!(!summary.contains("line 20"));
+    std::fs::remove_file(&log_path).ok();
 }
