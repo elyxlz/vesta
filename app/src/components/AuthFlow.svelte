@@ -1,58 +1,58 @@
 <script lang="ts">
-  import { onMount, onDestroy } from "svelte";
-  import { listen } from "@tauri-apps/api/event";
-  import { openUrl } from "@tauri-apps/plugin-opener";
   import { submitAuthCode } from "../lib/api";
   import ProgressBar from "./ProgressBar.svelte";
 
-  let { onCancel }: { onCancel?: () => void } = $props();
+  let { agentName, authUrl, sessionId, onComplete, onCancel }: {
+    agentName: string;
+    authUrl: string;
+    sessionId: string;
+    onComplete?: () => void;
+    onCancel?: () => void;
+  } = $props();
 
-  let authUrl = $state<string | null>(null);
-  let authCodeNeeded = $state(false);
+  let authCodeNeeded = $state(true);
   let authCodeSubmitted = $state(false);
   let authCode = $state("");
   let error = $state<string | null>(null);
-  let unlisteners: (() => void)[] = [];
+
+  $effect(() => {
+    if (authUrl) {
+      window.open(authUrl, "_blank");
+    }
+  });
 
   async function handleSubmitCode() {
     if (!authCode.trim()) return;
-    await submitAuthCode(authCode.trim());
-    authCodeNeeded = false;
-    authCodeSubmitted = true;
-  }
-
-  onMount(() => {
-    listen<string>("auth-url", (e) => { authUrl = e.payload; openUrl(e.payload); }).then((fn) => unlisteners.push(fn));
-    listen<string>("auth-code-needed", () => { authCodeNeeded = true; }).then((fn) => unlisteners.push(fn));
-    listen<string>("auth-code-invalid", () => {
+    try {
+      authCodeSubmitted = true;
+      authCodeNeeded = false;
+      await submitAuthCode(agentName, sessionId, authCode.trim());
+      onComplete?.();
+    } catch (e) {
       authCodeNeeded = true;
       authCodeSubmitted = false;
       authCode = "";
-      error = "invalid auth code — try again";
-    }).then((fn) => unlisteners.push(fn));
-  });
-
-  onDestroy(() => { for (const fn of unlisteners) fn(); });
+      error = (e as Error).message || "invalid auth code — try again";
+    }
+  }
 </script>
 
 <div class="auth-flow">
   <h1>authenticate claude</h1>
-  {#if authCodeNeeded}
-    <p class="sub">paste the code from the browser below.</p>
+  {#if authCodeSubmitted}
+    <p class="sub">verifying code...</p>
+    <ProgressBar message="verifying..." />
+  {:else if authCodeNeeded && authUrl}
+    <p class="sub">authenticate via the browser window that opened.<br/>if it didn't open, use the link below.</p>
+    <button class="auth-link" onclick={() => window.open(authUrl, "_blank")}>{authUrl.slice(0, 50)}...</button>
+    <p class="sub" style="margin-top: 16px;">paste the code from the browser below.</p>
     <form onsubmit={(e) => { e.preventDefault(); handleSubmitCode(); }}>
       <!-- svelte-ignore a11y_autofocus -->
       <input type="text" class="name-input" placeholder="paste code here" bind:value={authCode} autofocus />
       <button class="btn primary full" type="submit" disabled={!authCode.trim()}>submit</button>
     </form>
-  {:else if authCodeSubmitted}
-    <p class="sub">verifying code...</p>
-    <ProgressBar message="verifying..." />
-  {:else if authUrl}
-    <p class="sub">authenticate via the browser window that opened.<br/>if it didn't open, use the link below.</p>
-    <button class="auth-link" onclick={() => openUrl(authUrl!)}>{authUrl.slice(0, 50)}...</button>
-    <ProgressBar message="waiting for authentication..." />
   {:else}
-    <p class="sub">opening browser...</p>
+    <p class="sub">starting authentication...</p>
     <ProgressBar message="waiting..." />
   {/if}
   {#if error}

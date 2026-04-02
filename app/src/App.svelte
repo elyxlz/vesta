@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
-  import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
+  import { isTauri } from "./lib/env";
+  import { isConnected, getConnection, clearConnection } from "./lib/connection";
   import { autoSetup, listAgents, checkAndInstallUpdate, runInstallScript } from "./lib/api";
   import { createAgentConnection, type AgentConnection } from "./lib/ws";
   import { removeAgentState } from "./lib/store.svelte";
@@ -13,7 +14,7 @@
 
   const platform = detectPlatform();
 
-  type View = "loading" | "grid" | "onboarding" | "agent-home" | "agent-chat" | "agent-console";
+  type View = "loading" | "connect" | "grid" | "onboarding" | "agent-home" | "agent-chat" | "agent-console";
 
   let view = $state<View>("loading");
   let ready = $state(false);
@@ -23,6 +24,7 @@
   let onboardingInitialName = $state("");
   let hasAgents = $state(false);
   let updateInfo = $state<{ version: string; installing: boolean } | null>(null);
+  let connected = $state(false);
 
   async function setView(next: View) {
     if (next === view) return;
@@ -32,11 +34,19 @@
     transitioning = false;
   }
 
+  let connectionHost = $derived(() => {
+    const conn = getConnection();
+    if (!conn) return "";
+    try { return new URL(conn.url).hostname; } catch { return conn.url; }
+  });
+
   const SCREEN_FRACTION = 0.6;
-  const MIN_SIZE = 400; // logical px
-  const MAX_SIZE = 800; // logical px
+  const MIN_SIZE = 400;
+  const MAX_SIZE = 800;
 
   async function scaleToMonitor() {
+    if (!isTauri) return;
+    const { getCurrentWindow, LogicalSize } = await import("@tauri-apps/api/window");
     const appWindow = getCurrentWindow();
     const shortest = Math.min(window.screen.width, window.screen.height);
     const size = Math.round(Math.max(MIN_SIZE, Math.min(MAX_SIZE, shortest * SCREEN_FRACTION)));
@@ -44,13 +54,7 @@
     await appWindow.center();
   }
 
-  onMount(async () => {
-    // autoSetup must finish before listAgents (it creates server.json on first run)
-    await Promise.all([
-      autoSetup().catch((e: unknown) => console.warn("auto-setup failed:", e)),
-      scaleToMonitor(),
-      new Promise((r) => setTimeout(r, 400)),
-    ]);
+  async function loadAgents() {
     const agents = await listAgents().catch(() => null);
     try {
       if (!agents) throw new Error();
@@ -71,19 +75,44 @@
     } catch {
       view = "onboarding";
     }
+  }
+
+  onMount(async () => {
+    await Promise.all([
+      autoSetup().catch((e: unknown) => console.warn("auto-setup failed:", e)),
+      scaleToMonitor(),
+      new Promise((r) => setTimeout(r, 400)),
+    ]);
+
+    if (!isConnected()) {
+      view = "connect";
+      ready = true;
+      return;
+    }
+
+    connected = true;
+    await loadAgents();
     checkAndInstallUpdate().then((result) => {
       if (result) updateInfo = { version: result.version, installing: result.installing };
     });
     ready = true;
   });
 
-  function clearConnection() {
+  function clearAgentConnection() {
     agentConnection?.disconnect();
     agentConnection = null;
     selectedAgent = null;
   }
 
-  onDestroy(clearConnection);
+  onDestroy(clearAgentConnection);
+
+  function handleDisconnect() {
+    clearAgentConnection();
+    clearConnection();
+    connected = false;
+    hasAgents = false;
+    view = "connect";
+  }
 
   function handleSelectAgent(name: string, wsPort: number) {
     agentConnection?.disconnect();
@@ -94,13 +123,13 @@
   }
 
   function handleBackToGrid() {
-    clearConnection();
+    clearAgentConnection();
     setView("grid");
   }
 
   async function handleDestroyed() {
     if (selectedAgent) removeAgentState(selectedAgent.name);
-    clearConnection();
+    clearAgentConnection();
     const remaining = await listAgents().catch(() => []);
     if (remaining.length === 0) {
       hasAgents = false;
@@ -108,6 +137,12 @@
     } else {
       view = "grid";
     }
+  }
+
+  async function handleConnected(_name: string) {
+    connected = true;
+    await loadAgents();
+    ready = true;
   }
 
   async function handleOnboardingComplete(name: string) {
@@ -148,8 +183,10 @@
     });
   }
 
-  function startDrag(e: MouseEvent) {
+  async function startDrag(e: MouseEvent) {
+    if (!isTauri) return;
     if ((e.target as HTMLElement).closest(".window-controls")) return;
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
     getCurrentWindow().startDragging();
   }
 </script>
@@ -157,13 +194,26 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="window" class:dark={isDark} onpointermove={onGlobalMove}>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="titlebar" class:titlebar-macos={platform === "macos"} class:titlebar-right={platform !== "macos"} onmousedown={startDrag}>
-    {#if platform !== "macos"}
+  <div class="titlebar" class:titlebar-macos={isTauri && platform === "macos"} class:titlebar-right={!isTauri || platform !== "macos"} onmousedown={startDrag}>
+    {#if connected}
+      <div class="conn-status">
+        <span class="conn-dot"></span>
+        <span class="conn-label">{connectionHost()}</span>
+        <button class="conn-logout" onclick={handleDisconnect} data-tip="disconnect">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+            <polyline points="16 17 21 12 16 7"/>
+            <line x1="21" y1="12" x2="9" y2="12"/>
+          </svg>
+        </button>
+      </div>
+    {/if}
+    {#if isTauri && platform !== "macos"}
       <div class="window-controls {platform}">
-        <button class="wc" onclick={() => getCurrentWindow().minimize()} aria-label="minimize">
+        <button class="wc" onclick={async () => { const { getCurrentWindow } = await import("@tauri-apps/api/window"); getCurrentWindow().minimize(); }} aria-label="minimize">
           <svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 5h6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
         </button>
-        <button class="wc close" onclick={() => getCurrentWindow().close()} aria-label="close">
+        <button class="wc close" onclick={async () => { const { getCurrentWindow } = await import("@tauri-apps/api/window"); getCurrentWindow().close(); }} aria-label="close">
           <svg width="10" height="10" viewBox="0 0 10 10"><path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
         </button>
       </div>
@@ -176,6 +226,8 @@
         <div class="logo-mark">v</div>
         <span class="loading-label">loading...</span>
       </div>
+    {:else if view === "connect"}
+      <Onboarding onComplete={handleConnected} serverConfigured={false} initialStep="connect" />
     {:else if view === "grid"}
       <GridView
         onSelect={handleSelectAgent}
@@ -210,7 +262,7 @@
     {/if}
   </main>
 
-  {#if updateInfo && (view === "agent-home" || view === "grid")}
+  {#if isTauri && updateInfo && (view === "agent-home" || view === "grid")}
     <div class="update-bar">
       {#if updateInfo.installing}
         v{updateInfo.version} installed — restart to apply
@@ -370,6 +422,7 @@
     height: 40px;
     display: flex;
     align-items: center;
+    justify-content: space-between;
     padding: 0 16px;
     flex-shrink: 0;
     cursor: grab;
@@ -387,6 +440,53 @@
 
   .titlebar:active {
     cursor: grabbing;
+  }
+
+  .conn-status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: 8px;
+    font-size: 11px;
+    font-weight: 450;
+    color: #8a8078;
+    letter-spacing: 0.01em;
+    user-select: none;
+  }
+
+  .conn-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #6abf69;
+    flex-shrink: 0;
+  }
+
+  .conn-label {
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .conn-logout {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 4px;
+    border: none;
+    background: transparent;
+    color: #9a928a;
+    cursor: pointer;
+    padding: 0;
+    transition: all 0.15s ease;
+  }
+
+  .conn-logout:hover {
+    background: rgba(0, 0, 0, 0.06);
+    color: #c45450;
   }
 
   /* --- Linux: flat icon buttons --- */
@@ -617,6 +717,15 @@
 
     .loading-label {
       color: #6a625a;
+    }
+
+    .conn-status {
+      color: #6a625a;
+    }
+
+    .conn-logout:hover {
+      background: rgba(255, 255, 255, 0.08);
+      color: #e07070;
     }
 
     .linux .wc {

@@ -1,15 +1,20 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
-  import { open } from "@tauri-apps/plugin-dialog";
-  import { createAgent, agentStatus, authenticate, startAgent, waitForReady, restoreAgent, listAgents, connectToServer } from "../lib/api";
-  import type { OnboardingStep } from "../lib/types";
+  import { onMount, onDestroy } from "svelte";
+  import { isTauri } from "../lib/env";
+  import { createAgent, agentStatus, authenticate, startAgent, waitForReady, checkPlatform, setupPlatform, restoreAgent, listAgents, connectToServer } from "../lib/api";
+  import type { PlatformStatus, OnboardingStep } from "../lib/types";
   import ProgressBar from "./ProgressBar.svelte";
   import AuthFlow from "./AuthFlow.svelte";
 
-  const { onComplete, onCancel, initialName, serverConfigured }: { onComplete: (name: string) => void; onCancel?: () => void; initialName?: string; serverConfigured?: boolean } = $props();
+  const { onComplete, onCancel, initialName, serverConfigured, initialStep }: { onComplete: (name: string) => void; onCancel?: () => void; initialName?: string; serverConfigured?: boolean; initialStep?: OnboardingStep } = $props();
 
   // svelte-ignore state_referenced_locally — intentional one-time capture
-  let step = $state<OnboardingStep>(initialName || serverConfigured ? "name" : "connect");
+  let step = $state<OnboardingStep>(
+    initialStep ? initialStep :
+    initialName || serverConfigured ? "name" :
+    !isTauri ? "connect" :
+    "platform"
+  );
   // svelte-ignore state_referenced_locally
   let agentName = $state(initialName ?? "");
   let error = $state<{ friendly: string | null; raw: string } | null>(null);
@@ -145,37 +150,60 @@
     }
   }
 
+  let authUrlState = $state("");
+  let authSessionId = $state("");
+
   async function runAuth() {
     const name = normalizedPreview;
     busy = true;
     error = null;
     try {
-      await authenticate(name);
-      await startAgent(name);
-      await waitForReady(name, 30);
-      busy = false;
-      await goTo("done");
+      const result = await authenticate(name);
+      authUrlState = result.auth_url;
+      authSessionId = result.session_id;
     } catch (e) {
       busy = false;
       setError(e, "authentication failed");
     }
   }
 
+  async function handleAuthComplete() {
+    const name = normalizedPreview;
+    try {
+      await startAgent(name);
+      await waitForReady(name, 30);
+      busy = false;
+      await goTo("done");
+    } catch (e) {
+      busy = false;
+      setError(e, "failed to start agent");
+      await goTo("name");
+    }
+  }
+
+  async function onAuthCodeSubmitted() {
+    await handleAuthComplete();
+  }
+
+  let restoreInput: HTMLInputElement;
+
   async function handleRestore() {
     if (busy) return;
-    const path = await open({
-      filters: [{ name: "Backup", extensions: ["tar.gz"] }],
-      multiple: false,
-      directory: false,
-    });
-    if (!path) return;
+    restoreInput.click();
+  }
+
+  async function handleRestoreFile(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = "";
+    if (!file) return;
     const before = new Set((await listAgents().catch(() => [])).map((b) => b.name));
     busy = true;
     error = null;
     startMessages();
     await goTo("creating");
     try {
-      await restoreAgent(path);
+      await restoreAgent(file);
       const after = await listAgents().catch(() => []);
       const restored = after.find((b) => !before.has(b.name));
       if (restored) agentName = restored.name;
@@ -198,17 +226,8 @@
     error = null;
     try {
       await connectToServer(url, key);
-      // Connected — check if agents already exist on this server
-      const agents = await listAgents().catch(() => []);
-      if (agents.length > 0) {
-        const agent = agents.find((a) => a.authenticated) ?? agents[0];
-        agentName = agent.name;
-        busy = false;
-        await goTo("done");
-      } else {
-        busy = false;
-        await goTo("name");
-      }
+      busy = false;
+      onComplete("");
     } catch (e) {
       busy = false;
       setError(e, "failed to connect");
@@ -256,9 +275,6 @@
         </form>
         <div class="secondary-actions">
           <button class="btn cancel" onclick={handleRestore} disabled={busy}>restore from backup</button>
-          {#if !serverConfigured}
-            <button class="btn cancel" onclick={() => goTo("connect")} disabled={busy}>connect to server</button>
-          {/if}
         </div>
       </div>
 
@@ -314,7 +330,7 @@
 
     {:else if step === "auth"}
       <div class="step step-anim">
-        <AuthFlow onCancel={cancelToName} />
+        <AuthFlow agentName={normalizedPreview} authUrl={authUrlState} sessionId={authSessionId} onComplete={onAuthCodeSubmitted} onCancel={cancelToName} />
         {#if error}
           <p class="error">{error.friendly ?? "something went wrong."}</p>
           {#if error.raw.length > 80 || !error.friendly}
@@ -340,6 +356,8 @@
     {/if}
   </div>
 </div>
+
+<input type="file" accept=".tar.gz,.gz" bind:this={restoreInput} onchange={handleRestoreFile} style="display:none" />
 
 <style>
   .onboarding {

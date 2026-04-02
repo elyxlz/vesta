@@ -1,39 +1,46 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { get } from "svelte/store";
-import { createAgentConnection } from "./ws";
 
-let channelCallback: ((event: any) => void) | null = null;
-let invokeImpl: (...args: any[]) => Promise<any>;
-
-vi.mock("@tauri-apps/api/core", () => ({
-  invoke: vi.fn((...args: any[]) => invokeImpl(...args)),
-  Channel: vi.fn().mockImplementation(function (this: any) {
-    Object.defineProperty(this, "onmessage", {
-      set(fn: any) {
-        channelCallback = fn;
-      },
-      get() {
-        return channelCallback;
-      },
-    });
-  }),
+vi.mock("./connection", () => ({
+  wsUrl: vi.fn((name: string) => `ws://localhost:7860/agents/${name}/ws?token=test`),
+  getConnection: vi.fn(() => ({ url: "http://localhost:7860", apiKey: "test" })),
 }));
 
-function simulateOpen() {
-  channelCallback?.({ kind: "Open" });
+let mockWs: any;
+let mockWsInstances: any[] = [];
+
+class MockWebSocket {
+  url: string;
+  readyState = 0;
+  onopen: ((e: any) => void) | null = null;
+  onmessage: ((e: any) => void) | null = null;
+  onclose: ((e: any) => void) | null = null;
+  onerror: ((e: any) => void) | null = null;
+
+  static OPEN = 1;
+  static CLOSED = 3;
+
+  constructor(url: string) {
+    this.url = url;
+    mockWs = this;
+    mockWsInstances.push(this);
+  }
+
+  send = vi.fn();
+
+  close() {
+    this.readyState = 3;
+    if (this.onclose) this.onclose({});
+  }
 }
 
-function simulateMessage(data: any) {
-  channelCallback?.({ kind: "Message", text: JSON.stringify(data) });
-}
+(globalThis as any).WebSocket = MockWebSocket;
 
-function simulateClose() {
-  channelCallback?.({ kind: "Close" });
-}
+import { createAgentConnection } from "./ws";
 
 beforeEach(() => {
-  channelCallback = null;
-  invokeImpl = vi.fn().mockResolvedValue(undefined);
+  mockWs = null;
+  mockWsInstances = [];
   vi.useFakeTimers();
 });
 
@@ -42,20 +49,19 @@ afterEach(() => {
 });
 
 describe("createAgentConnection", () => {
-  it("calls connect_ws on connect", async () => {
+  it("creates a WebSocket on connect", async () => {
     const conn = createAgentConnection("test-agent");
     conn.connect();
-    await vi.advanceTimersByTimeAsync(0);
-    const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("connect_ws", expect.objectContaining({ name: "test-agent" }));
+    expect(mockWs).not.toBeNull();
+    expect(mockWs.url).toContain("test-agent");
     conn.disconnect();
   });
 
   it("sets connected to true on open", async () => {
     const conn = createAgentConnection("agent1");
     conn.connect();
-    await vi.advanceTimersByTimeAsync(0);
-    simulateOpen();
+    mockWs.readyState = 1;
+    mockWs.onopen?.({});
     expect(get(conn.connected)).toBe(true);
     conn.disconnect();
   });
@@ -63,8 +69,8 @@ describe("createAgentConnection", () => {
   it("sets connected to false on disconnect", async () => {
     const conn = createAgentConnection("agent2");
     conn.connect();
-    await vi.advanceTimersByTimeAsync(0);
-    simulateOpen();
+    mockWs.readyState = 1;
+    mockWs.onopen?.({});
     conn.disconnect();
     expect(get(conn.connected)).toBe(false);
   });
@@ -74,32 +80,32 @@ describe("createAgentConnection", () => {
     expect(conn.send("hello")).toBe(false);
   });
 
-  it("send returns true and sends via invoke when connected", async () => {
+  it("send returns true and sends via WebSocket when connected", async () => {
     const conn = createAgentConnection("agent4");
     conn.connect();
-    await vi.advanceTimersByTimeAsync(0);
-    simulateOpen();
+    mockWs.readyState = 1;
+    mockWs.onopen?.({});
     expect(conn.send("hello")).toBe(true);
-    const { invoke } = await import("@tauri-apps/api/core");
-    expect(invoke).toHaveBeenCalledWith("send_ws", {
-      name: "agent4",
-      text: JSON.stringify({ type: "message", text: "hello" }),
-    });
+    expect(mockWs.send).toHaveBeenCalledWith(
+      JSON.stringify({ type: "message", text: "hello" }),
+    );
     conn.disconnect();
   });
 
   it("handles history events", async () => {
     const conn = createAgentConnection("agent5");
     conn.connect();
-    await vi.advanceTimersByTimeAsync(0);
-    simulateOpen();
-    simulateMessage({
-      type: "history",
-      events: [
-        { type: "user", text: "hi" },
-        { type: "assistant", text: "hello" },
-      ],
-      state: "idle",
+    mockWs.readyState = 1;
+    mockWs.onopen?.({});
+    mockWs.onmessage?.({
+      data: JSON.stringify({
+        type: "history",
+        events: [
+          { type: "user", text: "hi" },
+          { type: "assistant", text: "hello" },
+        ],
+        state: "idle",
+      }),
     });
     const msgs = get(conn.messages);
     expect(msgs).toHaveLength(2);
@@ -110,51 +116,47 @@ describe("createAgentConnection", () => {
   it("updates agentState on status event", async () => {
     const conn = createAgentConnection("agent6");
     conn.connect();
-    await vi.advanceTimersByTimeAsync(0);
-    simulateOpen();
-    simulateMessage({ type: "status", state: "thinking" });
+    mockWs.readyState = 1;
+    mockWs.onopen?.({});
+    mockWs.onmessage?.({
+      data: JSON.stringify({ type: "status", state: "thinking" }),
+    });
     expect(get(conn.agentState)).toBe("thinking");
     conn.disconnect();
   });
 
   it("does not reconnect after disconnect", async () => {
-    const { invoke } = await import("@tauri-apps/api/core");
-    const callsBefore = (invoke as any).mock.calls.filter((c: any) => c[0] === "connect_ws").length;
     const conn = createAgentConnection("agent7");
     conn.connect();
-    await vi.advanceTimersByTimeAsync(0);
-    simulateOpen();
+    const initial = mockWsInstances.length;
+    mockWs.readyState = 1;
+    mockWs.onopen?.({});
     conn.disconnect();
-    simulateClose();
     await vi.advanceTimersByTimeAsync(60000);
-    const callsAfter = (invoke as any).mock.calls.filter((c: any) => c[0] === "connect_ws").length;
-    expect(callsAfter - callsBefore).toBe(1);
+    expect(mockWsInstances.length).toBe(initial);
   });
 
   it("reconnects on unexpected close", async () => {
     const conn = createAgentConnection("agent8");
     conn.connect();
-    await vi.advanceTimersByTimeAsync(0);
-    simulateOpen();
-    simulateClose();
+    const initial = mockWsInstances.length;
+    mockWs.readyState = 1;
+    mockWs.onopen?.({});
+    mockWs.onclose?.({});
     await vi.advanceTimersByTimeAsync(1500);
-    const { invoke } = await import("@tauri-apps/api/core");
-    const connectCalls = (invoke as any).mock.calls.filter((c: any) => c[0] === "connect_ws");
-    expect(connectCalls.length).toBeGreaterThan(1);
+    expect(mockWsInstances.length).toBeGreaterThan(initial);
     conn.disconnect();
   });
 
   it("resetReconnect triggers immediate reconnect", async () => {
     const conn = createAgentConnection("agent9");
     conn.connect();
-    await vi.advanceTimersByTimeAsync(0);
-    simulateOpen();
-    simulateClose();
+    mockWs.readyState = 1;
+    mockWs.onopen?.({});
+    mockWs.onclose?.({});
+    const beforeReset = mockWsInstances.length;
     conn.resetReconnect();
-    await vi.advanceTimersByTimeAsync(0);
-    const { invoke } = await import("@tauri-apps/api/core");
-    const connectCalls = (invoke as any).mock.calls.filter((c: any) => c[0] === "connect_ws");
-    expect(connectCalls.length).toBeGreaterThan(1);
+    expect(mockWsInstances.length).toBeGreaterThan(beforeReset);
     conn.disconnect();
   });
 });

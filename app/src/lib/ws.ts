@@ -1,16 +1,10 @@
 import { writable, type Writable, type Readable } from "svelte/store";
 import type { VestaEvent, AgentActivityState } from "./types";
-import { invoke, Channel } from "@tauri-apps/api/core";
+import { wsUrl } from "./connection";
 
 const RECONNECT_BASE = 1000;
 const RECONNECT_MAX = 30000;
 const MAX_MESSAGES = 5000;
-
-interface WsEvent {
-  kind: "Message" | "Open" | "Close" | "Error";
-  text?: string;
-  message?: string;
-}
 
 export interface AgentConnection {
   messages: Readable<VestaEvent[]>;
@@ -30,7 +24,7 @@ export function createAgentConnection(name: string): AgentConnection {
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let reconnectDelay = RECONNECT_BASE;
   let active = false;
-  let isConnected = false;
+  let ws: WebSocket | null = null;
 
   function handleEvent(event: VestaEvent) {
     if (event.type === "history") {
@@ -49,50 +43,51 @@ export function createAgentConnection(name: string): AgentConnection {
     }
   }
 
-  async function doConnect() {
-    if (isConnected) return;
+  function doConnect() {
+    if (ws) return;
 
-    const channel = new Channel<WsEvent>();
-    channel.onmessage = (event) => {
-      switch (event.kind) {
-        case "Open":
-          isConnected = true;
-          reconnectDelay = RECONNECT_BASE;
-          _connected.set(true);
-          _messages.set([]);
-          break;
-        case "Message":
-          if (event.text) {
-            try {
-              handleEvent(JSON.parse(event.text) as VestaEvent);
-            } catch (e) {
-              console.warn("ws: bad message", e);
-            }
-          }
-          break;
-        case "Close":
-          isConnected = false;
-          _connected.set(false);
-          if (active) {
-            reconnectTimer = setTimeout(doConnect, reconnectDelay);
-            reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX);
-          }
-          break;
-        case "Error":
-          console.warn("ws error:", event.message);
-          break;
-      }
-    };
-
+    let url: string;
     try {
-      await invoke("connect_ws", { name, onEvent: channel });
-    } catch (e) {
-      console.warn("ws: connect failed", e);
+      url = wsUrl(name);
+    } catch {
       if (active) {
         reconnectTimer = setTimeout(doConnect, reconnectDelay);
         reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX);
       }
+      return;
     }
+
+    const socket = new WebSocket(url);
+    ws = socket;
+
+    socket.onopen = () => {
+      reconnectDelay = RECONNECT_BASE;
+      _connected.set(true);
+      _messages.set([]);
+    };
+
+    socket.onmessage = (e) => {
+      if (typeof e.data === "string") {
+        try {
+          handleEvent(JSON.parse(e.data) as VestaEvent);
+        } catch (err) {
+          console.warn("ws: bad message", err);
+        }
+      }
+    };
+
+    socket.onclose = () => {
+      ws = null;
+      _connected.set(false);
+      if (active) {
+        reconnectTimer = setTimeout(doConnect, reconnectDelay);
+        reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX);
+      }
+    };
+
+    socket.onerror = (err) => {
+      console.warn("ws error:", err);
+    };
   }
 
   function connect() {
@@ -108,14 +103,16 @@ export function createAgentConnection(name: string): AgentConnection {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
     }
-    isConnected = false;
+    if (ws) {
+      ws.close();
+      ws = null;
+    }
     _connected.set(false);
-    invoke("disconnect_ws", { name }).catch(() => {});
   }
 
   function resetReconnect() {
     reconnectDelay = RECONNECT_BASE;
-    if (active && !isConnected) {
+    if (active && !ws) {
       if (reconnectTimer) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
@@ -125,8 +122,8 @@ export function createAgentConnection(name: string): AgentConnection {
   }
 
   function send(text: string): boolean {
-    if (!isConnected) return false;
-    invoke("send_ws", { name, text: JSON.stringify({ type: "message", text }) }).catch(() => {});
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+    ws.send(JSON.stringify({ type: "message", text }));
     return true;
   }
 

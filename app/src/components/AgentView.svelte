@@ -4,7 +4,6 @@
   import type { AgentConnection } from "../lib/ws";
   import { agentStatus, startAgent, stopAgent, restartAgent, rebuildAgent, deleteAgent, authenticate, backupAgent, restoreAgent } from "../lib/api";
   import { getAgentOp, setAgentError, withAgentOp, type AgentOperation } from "../lib/store.svelte";
-  import { save, open } from "@tauri-apps/plugin-dialog";
   import type { AgentStatus, AgentActivityState } from "../lib/types";
   import AuthFlow from "./AuthFlow.svelte";
 
@@ -186,9 +185,17 @@
     confirming = false;
   }
 
+  let authUrlState = $state("");
+  let authSessionId = $state("");
+  let authResolve: (() => void) | null = null;
+
   async function handleAuth() {
     await withAgentOp(name, "authenticating", async () => {
-      await authenticate(name);
+      const result = await authenticate(name);
+      authUrlState = result.auth_url;
+      authSessionId = result.session_id;
+      await new Promise<void>((resolve) => { authResolve = resolve; });
+      authResolve = null;
       if (running) {
         await restartAgent(name);
       } else {
@@ -197,6 +204,10 @@
       connection.resetReconnect();
       await syncStatus();
     }, "authentication failed");
+  }
+
+  function onAuthComplete() {
+    authResolve?.();
   }
 
   async function handleRestart() {
@@ -218,30 +229,28 @@
   async function handleBackup() {
     if (busy) return;
     setAgentError(name, "");
-    const date = new Date().toISOString().slice(0, 10);
-    const path = await save({
-      defaultPath: `${name}-backup-${date}.tar.gz`,
-      filters: [{ name: "Backup", extensions: ["tar.gz"] }],
-    });
-    if (!path) return;
     await withAgentOp(name, "backing-up", async () => {
-      await backupAgent(name, path);
+      await backupAgent(name);
       connection.resetReconnect();
       await syncStatus();
     }, "backup failed");
   }
 
-  async function handleRestore() {
+  let restoreInput: HTMLInputElement;
+
+  function handleRestoreClick() {
     if (busy) return;
     setAgentError(name, "");
-    const path = await open({
-      filters: [{ name: "Backup", extensions: ["tar.gz"] }],
-      multiple: false,
-      directory: false,
-    });
-    if (!path) return;
+    restoreInput.click();
+  }
+
+  async function handleRestoreFile(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = "";
+    if (!file) return;
     await withAgentOp(name, "restoring", async () => {
-      await restoreAgent(path, name, true);
+      await restoreAgent(file, name, true);
       connection.resetReconnect();
       await syncStatus();
     }, "restore failed");
@@ -306,7 +315,7 @@
 
     {#if authenticating}
       <div class="auth-panel">
-        <AuthFlow />
+        <AuthFlow agentName={name} authUrl={authUrlState} sessionId={authSessionId} onComplete={onAuthComplete} />
       </div>
     {/if}
 
@@ -347,7 +356,7 @@
                 <button class="menu-item" disabled={busy} onclick={() => { menuOpen = false; handleAuth(); }} data-tip="authenticate claude">authenticate</button>
               {/if}
               <button class="menu-item" disabled={busy} onclick={() => { menuOpen = false; handleBackup(); }} data-tip="export to file">backup</button>
-              <button class="menu-item" disabled={busy} onclick={() => { menuOpen = false; handleRestore(); }} data-tip="restore from file">load backup</button>
+              <button class="menu-item" disabled={busy} onclick={() => { menuOpen = false; handleRestoreClick(); }} data-tip="restore from file">load backup</button>
               <div class="menu-divider"></div>
               <button class="menu-item danger" disabled={busy} onclick={() => { menuOpen = false; destroy(); }} data-tip="permanently delete">delete</button>
             </div>
@@ -361,6 +370,8 @@
     <span class="version">v{appVersion}</span>
   {/if}
 </div>
+
+<input type="file" accept=".tar.gz,.gz" bind:this={restoreInput} onchange={handleRestoreFile} style="display:none" />
 
 <style>
   .agent-view {

@@ -131,14 +131,16 @@ pub struct AppState {
     api_key: String,
     auth_sessions: Mutex<HashMap<String, AuthSession>>,
     agent_locks: Mutex<HashMap<String, Arc<tokio::sync::RwLock<()>>>>,
+    tunnel_url: Mutex<Option<String>>,
 }
 
 impl AppState {
-    fn new(api_key: String) -> Self {
+    fn new(api_key: String, tunnel_url: Option<String>) -> Self {
         Self {
             api_key,
             auth_sessions: Mutex::new(HashMap::new()),
             agent_locks: Mutex::new(HashMap::new()),
+            tunnel_url: Mutex::new(tunnel_url),
         }
     }
 
@@ -241,6 +243,16 @@ async fn version() -> Json<serde_json::Value> {
         "version": env!("CARGO_PKG_VERSION"),
         "api_compat": "0.2",
     }))
+}
+
+async fn tunnel_handler(
+    State(state): State<SharedState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let url = state.tunnel_url.lock().await;
+    match url.as_ref() {
+        Some(tunnel_url) => Ok(Json(serde_json::json!({"tunnel_url": tunnel_url}))),
+        None => Err(err_response(StatusCode::NOT_FOUND, "no tunnel configured")),
+    }
 }
 
 async fn list_agents_handler() -> impl IntoResponse {
@@ -821,12 +833,13 @@ pub fn acquire_pid_lock(config_dir: &std::path::Path) -> Result<std::fs::File, S
 
 // --- Router ---
 
-pub fn build_router(api_key: String) -> Router {
-    let state = Arc::new(AppState::new(api_key));
+pub fn build_router(api_key: String, tunnel_url: Option<String>) -> Router {
+    let state = Arc::new(AppState::new(api_key, tunnel_url));
 
     Router::new()
         .route("/health", get(health))
         .route("/version", get(version))
+        .route("/tunnel", get(tunnel_handler))
         .route("/agents", get(list_agents_handler))
         .route("/agents", post(create_agent_handler))
         .route("/agents/start", post(start_all_handler))
@@ -862,8 +875,8 @@ pub fn build_router(api_key: String) -> Router {
 
 // --- Server start ---
 
-pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: String) {
-    let app = build_router(api_key);
+pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: String, tunnel_url: Option<String>) {
+    let app = build_router(api_key, tunnel_url);
 
     let rustls_config = axum_server::tls_rustls::RustlsConfig::from_pem(
         cert_pem.into_bytes(),

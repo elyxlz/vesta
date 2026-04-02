@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onDestroy, tick } from "svelte";
-  import { openUrl } from "@tauri-apps/plugin-opener";
   import type { AgentConnection } from "../lib/ws";
   import { linkify } from "../lib/linkify";
   import { createAutoScroller } from "../lib/scroll";
@@ -12,7 +11,7 @@
   function linkClicks(node: HTMLElement) {
     function handle(e: MouseEvent) {
       const a = (e.target as HTMLElement).closest("a");
-      if (a?.href) { e.preventDefault(); openUrl(a.href); }
+      if (a?.href) { e.preventDefault(); window.open(a.href, "_blank"); }
     }
     node.addEventListener("click", handle);
     return { destroy: () => node.removeEventListener("click", handle) };

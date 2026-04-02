@@ -13,6 +13,9 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "web:dev": "vite",
+    "web:build": "vite build",
+    "web:preview": "vite preview",
     "check": "svelte-check 2>&1 | tee /dev/stderr | grep -v corner-shape | grep -q 'WARNING \"' && exit 1 || true",
     "test": "vitest run",
     "tauri": "tauri"

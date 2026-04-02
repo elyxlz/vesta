@@ -1,9 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
-
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
-vi.mock("@tauri-apps/api/app", () => ({ getVersion: vi.fn() }));
-vi.mock("@tauri-apps/plugin-updater", () => ({ check: vi.fn() }));
-
+import { describe, it, expect } from "vitest";
 import { isNewer } from "./api";
 
 describe("isNewer", () => {

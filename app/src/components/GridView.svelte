@@ -3,7 +3,6 @@
   import { appVersion as appVersionPromise } from "../lib/version";
   import { listAgents, startAgent, stopAgent, restartAgent, deleteAgent, backupAgent, restoreAgent } from "../lib/api";
   import { getAgentOp, busyAgentName, withAgentOp } from "../lib/store.svelte";
-  import { save, open } from "@tauri-apps/plugin-dialog";
   import { createAgentConnection, type AgentConnection } from "../lib/ws";
   import type { ListEntry, AgentActivityState } from "../lib/types";
 
@@ -139,27 +138,30 @@
   }
 
   async function handleBackup(agent: ListEntry) {
-    const date = new Date().toISOString().slice(0, 10);
-    const path = await save({
-      defaultPath: `${agent.name}-backup-${date}.tar.gz`,
-      filters: [{ name: "Backup", extensions: ["tar.gz"] }],
-    });
-    if (!path) return;
     await withAgentOp(agent.name, "backing-up", async () => {
-      await backupAgent(agent.name, path);
+      await backupAgent(agent.name);
       await refresh();
     }, "backup failed");
   }
 
-  async function handleRestore(agent: ListEntry) {
-    const path = await open({
-      filters: [{ name: "Backup", extensions: ["tar.gz"] }],
-      multiple: false,
-      directory: false,
-    });
-    if (!path) return;
+  let restoreInput: HTMLInputElement;
+
+  let restoreTargetAgent = $state<ListEntry | null>(null);
+
+  function handleRestoreClick(agent: ListEntry) {
+    restoreTargetAgent = agent;
+    restoreInput.click();
+  }
+
+  async function handleRestoreFile(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = "";
+    if (!file || !restoreTargetAgent) return;
+    const agent = restoreTargetAgent;
+    restoreTargetAgent = null;
     await withAgentOp(agent.name, "restoring", async () => {
-      await restoreAgent(path, agent.name, true);
+      await restoreAgent(file, agent.name, true);
       await refresh();
     }, "restore failed");
   }
@@ -236,7 +238,7 @@
                   <button class="menu-item" disabled={!!busyAgentName()} onclick={menuAction(() => handleRestart(agent))}>restart</button>
                 {/if}
                 <button class="menu-item" disabled={!!busyAgentName()} onclick={menuAction(() => handleBackup(agent))}>backup</button>
-                <button class="menu-item" disabled={!!busyAgentName()} onclick={menuAction(() => handleRestore(agent))}>load backup</button>
+                <button class="menu-item" disabled={!!busyAgentName()} onclick={menuAction(() => handleRestoreClick(agent))}>load backup</button>
                 <div class="menu-divider"></div>
                 <button class="menu-item danger" disabled={!!busyAgentName()} onclick={(e: MouseEvent) => { e.stopPropagation(); handleDelete(agent.name); }}>delete</button>
               {/if}
@@ -250,6 +252,8 @@
     <span class="version">v{appVersion}</span>
   {/if}
 </div>
+
+<input type="file" accept=".tar.gz,.gz" bind:this={restoreInput} onchange={handleRestoreFile} style="display:none" />
 
 <style>
   .grid-view {
