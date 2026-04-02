@@ -195,6 +195,31 @@ kill $(fuser <PORT>/tcp 2>/dev/null | tr -d ' ') 2>/dev/null
 - After remote assist, switch back to the `browser` CLI tool — the profile cookies are shared
 - This is the escape hatch for any site that defeats stealth mode — let the user handle the auth, then take over
 
+## VNC Usage (Headed Mode)
+
+When using the browser in headed mode with VNC:
+
+**Critical**: Always pass `--disable-gpu` when launching Chrome for VNC — without it, browser content only renders on the left portion of the screen.
+
+**Setup flow**:
+1. Start Xvfb: `Xvfb :99 -screen 0 1920x1080x24 &`
+2. Start window manager: `DISPLAY=:99 openbox &`
+3. Launch Chrome with `--disable-gpu` flag
+4. Use `xdotool` to maximize: `DISPLAY=:99 xdotool key super+Up`
+5. Start VNC server: `x11vnc -display :99 -nopw -forever &`
+6. Start websockify: `websockify <PORT> localhost:5900 &`
+
+**Cleanup**: `pkill -f websockify; pkill -f x11vnc; pkill -f openbox`
+
+## Session Persistence
+
+The browser uses a persistent profile at `/root/.browser/profile` by default. Cookies and SSO sessions survive browser restarts — no need to re-login each time.
+
+- Default profile: `/root/.browser/profile` (automatic, no flags needed)
+- Custom profile: `browser launch --user-data-dir /path/to/profile`
+- SSO tokens typically expire after 8-12 hours — after that you'll need to re-authenticate
+- The `--stealth` flag is safe to use with persistent profiles
+
 ## Troubleshooting
 
 - **Still getting blocked?** Take a screenshot (`browser screenshot`) to see what the site shows. Try `--stealth` if not already using it
