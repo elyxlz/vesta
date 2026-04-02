@@ -77,7 +77,6 @@ def _search_flights(origin: str, destination: str, date: str,
     """Run a flight search for a single origin and return list of result dicts."""
     from fli.models import FlightSearchFilters, PassengerInfo
     from fli.core import build_flight_segments, resolve_airport, parse_max_stops, parse_cabin_class, parse_sort_by
-    from fli.core.parsers import ParseError
     from fli.search import SearchFlights
 
     try:
@@ -124,9 +123,8 @@ def _search_dates(origin: str, destination: str, from_date: str, to_date: str,
                   stops: str = DEFAULT_STOPS, cabin: str = DEFAULT_CABIN,
                   max_results: int = 20) -> list[dict]:
     """Search cheapest dates for a single origin."""
-    from fli.models import DateSearchFilters, PassengerInfo, TripType
+    from fli.models import DateSearchFilters, PassengerInfo
     from fli.core import build_date_search_segments, resolve_airport, parse_max_stops, parse_cabin_class
-    from fli.core.parsers import ParseError
     from fli.search import SearchDates
 
     try:
