@@ -20,19 +20,16 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "chatgpt
 from chatgpt import ask
 
 
-# --- Paths (auto-detect vesta root from skill location) ---
-_SKILL_DIR = pathlib.Path(__file__).resolve().parent
-_VESTA_ROOT = _SKILL_DIR.parent.parent  # skills/<name>/ -> skills/ -> vesta root
-
-MEMORY_PATH = _VESTA_ROOT / "MEMORY.md"
-DREAMER_DIR = _VESTA_ROOT / "dreamer"
-HISTORY_DB = _VESTA_ROOT / "data" / "history.db"
-CORE_DIR = _VESTA_ROOT / "src" / "vesta"
-SKILLS_DIR = _VESTA_ROOT / "skills"
-PYPROJECT = _VESTA_ROOT / "pyproject.toml"
-LOG_FILE = _VESTA_ROOT / "logs" / "vesta.log"
+# --- Paths ---
+MEMORY_PATH = pathlib.Path("/root/vesta/MEMORY.md")
+DREAMER_DIR = pathlib.Path("/root/vesta/dreamer")
+HISTORY_DB = pathlib.Path("/root/vesta/data/history.db")
+CORE_DIR = pathlib.Path("/root/vesta/src/vesta")
+SKILLS_DIR = pathlib.Path("/root/vesta/skills")
+PYPROJECT = pathlib.Path("/root/vesta/pyproject.toml")
+LOG_FILE = pathlib.Path("/root/vesta/logs/vesta.log")
 ENV_FILE = pathlib.Path("/etc/environment")
-CLAUDE_MD = _VESTA_ROOT / "CLAUDE.md"
+CLAUDE_MD = pathlib.Path("/root/vesta/CLAUDE.md")
 
 
 # --- Credential stripping ---
@@ -287,13 +284,17 @@ MEMORY.md file (~16KB budget) as persistent context. A nightly "dreamer" process
 memory. A SQLite database with FTS5 provides searchable conversation history but is NOT loaded
 into context — only available via tool call.
 
-Key constraints you must account for:
+Key constraints and capabilities you must account for:
 - 16KB hard budget for MEMORY.md (currently at ~77%)
 - Cold start every conversation — no carry-over except MEMORY.md
 - No RAG/vector retrieval — just flat file + optional SQLite search
 - Single user, always-on, multi-channel (WhatsApp, webapp, console)
 - Nightly dreamer curates memory: prunes stale data, adds learned patterns, updates user state
 - The agent handles real tasks: email, calendar, WhatsApp, home automation, code, research
+- The agent has ROOT ACCESS inside its Docker container — it can install packages, modify any
+  file, rewrite its own code, edit its own memory, create/delete skills, manage daemons, and
+  restructure anything. It is fully autonomous within the container boundary. The only things
+  it cannot do are act outward (send messages, make purchases, delete data) without user approval.
 
 Analyze what you are given with the rigor of someone who actually understands these systems.
 Be specific. Reference actual code, actual patterns, actual data. No generic advice."""
