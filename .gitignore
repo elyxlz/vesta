@@ -23,6 +23,7 @@ build/
 .DS_Store
 
 # Local development
+.env
 
 # Temporary files
 *.bak

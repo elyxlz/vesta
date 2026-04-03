@@ -31,9 +31,6 @@ pub fn run() {
                             None,
                             None,
                         );
-                        let _ = window.set_decorations(true);
-                        let _ = window
-                            .set_title_bar_style(tauri::TitleBarStyle::Overlay);
                     }
                     #[cfg(target_os = "windows")]
                     {
@@ -47,31 +44,11 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            commands::agents::list_agents,
-            commands::agents::agent_status,
-            commands::agents::create_agent,
-            commands::agents::start_agent,
-            commands::agents::stop_agent,
-            commands::agents::restart_agent,
-            commands::agents::delete_agent,
-            commands::agents::rebuild_agent,
-            commands::agents::backup_agent,
-            commands::agents::restore_agent,
-            commands::agents::wait_for_ready,
-            commands::agents::agent_host,
-            commands::agents::get_server_config,
-            commands::logs::stream_logs,
-            commands::logs::stop_logs,
-            commands::auth::authenticate,
-            commands::auth::submit_auth_code,
             commands::platform::auto_setup,
             commands::platform::platform_check,
             commands::platform::platform_setup,
             commands::platform::connect_to_server,
             commands::platform::run_install_script,
-            commands::ws::connect_ws,
-            commands::ws::send_ws,
-            commands::ws::disconnect_ws,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
@@ -79,14 +56,15 @@ pub fn run() {
     #[cfg(target_os = "macos")]
     {
         use tauri::Manager;
-        let main_window = builder.get_webview_window("main").unwrap();
-        let win = main_window.clone();
-        main_window.on_window_event(move |event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                let _ = win.hide();
-            }
-        });
+        if let Some(main_window) = builder.get_webview_window("main") {
+            let win = main_window.clone();
+            main_window.on_window_event(move |event| {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = win.hide();
+                }
+            });
+        }
     }
 
     builder.run(|app_handle, event| {
