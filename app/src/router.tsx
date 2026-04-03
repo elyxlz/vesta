@@ -54,7 +54,7 @@ function AgentLayout() {
       <div className="flex flex-col flex-1 min-h-0 gap-4 px-3 pb-3 sm:px-5 sm:pb-5">
         <div className="shrink-0">
           <Navbar center={<DynamicIsland />} trailing={connected ? <>
-            <StatusPill showHostname={false} />
+            <StatusPill />
             <Settings />
           </> : undefined} />
           {connected && <UpdateBar />}
