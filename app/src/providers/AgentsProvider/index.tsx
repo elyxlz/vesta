@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useState,
   type Dispatch,
   type ReactNode,
@@ -21,8 +22,10 @@ interface AgentsContextValue {
 
 const AgentsContext = createContext<AgentsContextValue | null>(null);
 
-export function AgentsProvider({ children }: { children: ReactNode }) {
-  const { connected, initialized } = useAuth();
+const noopSetAgents: Dispatch<SetStateAction<ListEntry[]>> = () => {};
+const noopRefresh = async () => [] as ListEntry[];
+
+function ConnectedAgentsProvider({ children }: { children: ReactNode }) {
   const [agents, setAgents] = useState<ListEntry[]>([]);
   const [agentsLoaded, setAgentsLoaded] = useState(false);
 
@@ -40,25 +43,32 @@ export function AgentsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (!initialized) return;
-
-    if (!connected) {
-      setAgents([]);
-      setAgentsLoaded(true);
-      return;
-    }
-
     void refreshAgents();
-  }, [initialized, connected, refreshAgents]);
+  }, [refreshAgents]);
 
-  const value = {
-    agents,
-    agentsLoaded,
-    setAgents,
-    refreshAgents,
-  };
+  const value = useMemo(
+    () => ({ agents, agentsLoaded, setAgents, refreshAgents }),
+    [agents, agentsLoaded, refreshAgents],
+  );
 
   return <AgentsContext.Provider value={value}>{children}</AgentsContext.Provider>;
+}
+
+const disconnectedValue: AgentsContextValue = {
+  agents: [],
+  agentsLoaded: false,
+  setAgents: noopSetAgents,
+  refreshAgents: noopRefresh,
+};
+
+export function AgentsProvider({ children }: { children: ReactNode }) {
+  const { connected, initialized } = useAuth();
+
+  if (initialized && connected) {
+    return <ConnectedAgentsProvider>{children}</ConnectedAgentsProvider>;
+  }
+
+  return <AgentsContext.Provider value={disconnectedValue}>{children}</AgentsContext.Provider>;
 }
 
 export function useAgents() {
