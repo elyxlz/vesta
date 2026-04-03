@@ -1,9 +1,9 @@
 import { Home, Plus } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { getConnection } from "@/lib/connection";
 import { useAgents } from "@/providers/AgentsProvider";
 import { useAuth } from "@/providers/AuthProvider";
 import { Settings } from "@/components/Settings";
+import { StatusPill } from "@/components/StatusPill";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -23,18 +23,8 @@ export function Navbar({ center, trailing }: NavbarProps = {}) {
   const location = useLocation();
   const isHome = location.pathname === "/";
 
-  const hostname = (() => {
-    const conn = getConnection();
-    if (!conn) return "";
-    try {
-      return new URL(conn.url).hostname;
-    } catch {
-      return conn.url;
-    }
-  })();
-
   return (
-    <div className="flex items-center justify-between min-h-11 px-1 py-3 sm:px-2 shrink-0 select-none relative overflow-visible">
+    <div className="flex items-center justify-between min-h-11 shrink-0 select-none relative overflow-visible">
       <div className="flex-1 flex items-center">
         {connected && isHome && (
           <Tooltip>
@@ -68,7 +58,7 @@ export function Navbar({ center, trailing }: NavbarProps = {}) {
       </div>
 
       {center && (
-        <div className="absolute left-1/2 top-0 bottom-0 z-10 -translate-x-1/2 flex overflow-visible">
+        <div className="absolute left-1/2 top-0 bottom-0 z-30 -translate-x-1/2 flex overflow-visible">
           {center}
         </div>
       )}
@@ -76,12 +66,7 @@ export function Navbar({ center, trailing }: NavbarProps = {}) {
       <div className="flex items-center gap-1.5">
         {trailing ?? (
           <>
-            {connected && (
-              <>
-                <div className="size-2 rounded-full bg-green-500 shrink-0 hidden sm:block" />
-                <span className="text-sm text-foreground truncate hidden sm:block">{hostname}</span>
-              </>
-            )}
+            {connected && <StatusPill />}
             {connected && <Settings />}
           </>
         )}

@@ -19,6 +19,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useTheme, type Theme } from "@/stores/use-theme";
 import { useAuth } from "@/providers/AuthProvider";
 import { getConnection } from "@/lib/connection";
+import { StatusPill } from "@/components/StatusPill";
 
 export function Settings() {
   const [open, setOpen] = useState(false);
@@ -60,7 +61,7 @@ export function Settings() {
             </DialogDescription>
           </DialogHeader>
 
-          <Field orientation="horizontal">
+          <Field orientation="vertical" className="sm:flex-row sm:items-center">
             <FieldLabel>Theme</FieldLabel>
             <ToggleGroup
               type="single"
@@ -88,12 +89,13 @@ export function Settings() {
 
           <Separator />
 
-          <Field orientation="horizontal">
-            <FieldDescription className="flex-1">
-              Connected to <span className="font-medium text-foreground">{hostname}</span>
-            </FieldDescription>
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+            <p className="flex-1 flex items-center gap-2 text-sm text-muted-foreground">
+              <StatusPill showHostname={false} /> Connected to <span className="font-medium text-foreground">{hostname}</span>
+            </p>
             <Button
               variant="outline"
+              className="w-full sm:w-auto shrink-0"
               onClick={() => {
                 setOpen(false);
                 disconnect();
@@ -102,7 +104,7 @@ export function Settings() {
               <LogOut data-icon="inline-start" />
               Disconnect
             </Button>
-          </Field>
+          </div>
         </DialogContent>
       </Dialog>
     </>

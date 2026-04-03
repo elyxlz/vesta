@@ -107,7 +107,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   return (
     <Card className={cn(
       "flex flex-col h-full gap-0 py-0 overflow-hidden relative",
-      fullscreen && "border-0 rounded-none shadow-none",
+      fullscreen && "border-0 rounded-none shadow-none bg-background",
     )}>
 
       {!fullscreen && (

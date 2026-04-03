@@ -419,7 +419,7 @@ export function DynamicIsland() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.1 }}
-              className="flex items-center gap-2.5 py-3 px-5 cursor-pointer touch-manipulation"
+              className="flex items-center gap-2.5 py-3 px-12 cursor-pointer touch-manipulation"
               onPointerDown={(e) => {
                 if (e.pointerType === "touch") {
                   setExpanded(true);

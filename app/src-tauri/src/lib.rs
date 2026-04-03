@@ -31,9 +31,6 @@ pub fn run() {
                             None,
                             None,
                         );
-                        let _ = window.set_decorations(true);
-                        let _ = window
-                            .set_title_bar_style(tauri::TitleBarStyle::Overlay);
                     }
                     #[cfg(target_os = "windows")]
                     {
@@ -59,14 +56,15 @@ pub fn run() {
     #[cfg(target_os = "macos")]
     {
         use tauri::Manager;
-        let main_window = builder.get_webview_window("main").unwrap();
-        let win = main_window.clone();
-        main_window.on_window_event(move |event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                let _ = win.hide();
-            }
-        });
+        if let Some(main_window) = builder.get_webview_window("main") {
+            let win = main_window.clone();
+            main_window.on_window_event(move |event| {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = win.hide();
+                }
+            });
+        }
     }
 
     builder.run(|app_handle, event| {

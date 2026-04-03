@@ -27,7 +27,8 @@ export function Titlebar() {
 
   return (
     <div
-      className="flex items-center justify-end h-9 shrink-0 select-none"
+      data-tauri-drag-region
+      className="flex items-center justify-end h-7 shrink-0 select-none"
       style={{ paddingLeft: platform === "macos" ? 78 : undefined }}
       onMouseDown={handleDrag}
     >
