@@ -74,7 +74,7 @@ function ChatFullscreenLayout() {
   return (
     <div className="h-full relative">
       <Titlebar />
-      <div className={cn("absolute top-0 left-0 right-0 z-10 px-3 sm:px-5 pointer-events-none", isTauri && "top-7")}>
+      <div className={cn("absolute top-0 left-0 right-0 z-10 px-3 sm:px-5 pointer-events-none", isTauri ? "top-7" : "top-3 sm:top-4")}>
         <div className="pointer-events-auto">
           <Navbar
             center={<DynamicIsland />}
