@@ -192,22 +192,14 @@ pub fn ensure_server_with(vestad_path: Option<&std::path::Path>) -> Result<bool,
         }
     }
 
-    #[cfg(target_os = "macos")]
-    {
-        platform::macos::setup(None, false, true)?;
-        if let Some(creds) = platform::macos::extract_credentials() {
-            save_server_config(&creds)?;
-        }
+    #[cfg(not(target_os = "linux"))]
+    if load_server_config().is_some() {
+        Ok(false)
+    } else {
+        Err("no server configured. use 'vesta connect' to connect to a remote server.".into())
     }
 
-    #[cfg(target_os = "windows")]
-    {
-        platform::windows::boot()?;
-        if let Some(creds) = platform::windows::extract_credentials() {
-            save_server_config(&creds)?;
-        }
-    }
-
+    #[cfg(target_os = "linux")]
     Ok(true)
 }
 

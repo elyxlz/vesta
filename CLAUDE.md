@@ -8,14 +8,13 @@ Vesta is a personal AI assistant that runs as a persistent daemon in Docker, pow
 
 ## Architecture
 
-Client/server architecture. `vestad` daemon runs on the host (manages Docker containers, serves HTTP+WS API). `vesta` CLI and Tauri desktop app connect to vestad. On macOS Docker runs behind a vfkit VM, on Windows behind WSL2. Python agent runs inside the container.
+Client/server architecture. `vestad` daemon runs on the host (manages Docker containers, serves HTTP+WS API). `vesta` CLI and Tauri desktop app connect to vestad. On Linux, the CLI/app bootstraps vestad locally via systemd. On macOS/Windows, users connect to a remote vestad via `vesta connect`. Python agent runs inside the container.
 
 - **Agent** (`agent/src/vesta/`): Async Python. Entry point `main.py`. Core loop in `core/loops.py` (message processing, notification monitoring). WebSocket server in `api.py`.
 - **CLI** (`cli/`): Rust `vesta` client binary. Connects to vestad over HTTPS.
 - **Server** (`vestad/`): Rust `vestad` daemon. Manages Docker containers, serves API.
 - **Common** (`vesta-common/`): Shared Rust library (types, config, platform setup).
 - **Desktop App** (`app/`): Tauri + Svelte. Uses `vesta-common` to connect to vestad.
-- **VM** (`vm/`): Dockerfile and scripts for macOS VM and WSL2 images.
 - **Tools** (`agent/tools/`): Independent CLI tools. **Never share code between CLIs.**
 - **Skills** (`agent/memory/skills/`): Templates also in `agent/src/vesta/templates/skills/`. Each has `SKILL.md` + scripts. No MCP servers.
 

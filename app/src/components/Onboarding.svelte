@@ -1,22 +1,21 @@
 <script lang="ts">
-  import { onMount, onDestroy } from "svelte";
+  import { onDestroy } from "svelte";
   import { open } from "@tauri-apps/plugin-dialog";
-  import { createAgent, agentStatus, authenticate, startAgent, waitForReady, checkPlatform, setupPlatform, restoreAgent, listAgents, connectToServer } from "../lib/api";
-  import type { PlatformStatus, OnboardingStep } from "../lib/types";
+  import { createAgent, agentStatus, authenticate, startAgent, waitForReady, restoreAgent, listAgents, connectToServer } from "../lib/api";
+  import type { OnboardingStep } from "../lib/types";
   import ProgressBar from "./ProgressBar.svelte";
   import AuthFlow from "./AuthFlow.svelte";
 
   const { onComplete, onCancel, initialName, serverConfigured }: { onComplete: (name: string) => void; onCancel?: () => void; initialName?: string; serverConfigured?: boolean } = $props();
 
   // svelte-ignore state_referenced_locally — intentional one-time capture
-  let step = $state<OnboardingStep>(initialName || serverConfigured ? "name" : "platform");
+  let step = $state<OnboardingStep>(initialName || serverConfigured ? "name" : "connect");
   // svelte-ignore state_referenced_locally
   let agentName = $state(initialName ?? "");
   let error = $state<{ friendly: string | null; raw: string } | null>(null);
   let showRawError = $state(false);
   let busy = $state(false);
   let createMsg = $state("");
-  let platform = $state<PlatformStatus | null>(null);
 
   let transitioning = $state(false);
   let msgTimer: ReturnType<typeof setInterval> | null = null;
@@ -32,25 +31,6 @@
     "almost there...",
   ];
 
-  onMount(async () => {
-    // Only run initial setup if we're on the platform step and haven't loaded platform yet
-    if (step === "platform" && !platform) {
-      try {
-        const status = await checkPlatform();
-        platform = status;
-        if (status.ready || status.platform !== "windows") {
-          step = "name";
-          return;
-        }
-        // auto-run setup for distro/service issues (WSL already installed)
-        if (status.wsl_installed && !status.needs_reboot && status.virtualization_enabled !== false) {
-          await handlePlatformSetup();
-        }
-      } catch (e) {
-        setError(e, "failed to check platform");
-      }
-    }
-  });
 
   function startMessages() {
     let i = 0;
@@ -80,12 +60,6 @@
 
   function formatError(msg: string): { friendly: string | null; raw: string } {
     const lower = msg.toLowerCase();
-    if (lower.includes("reboot")) return { friendly: "restart your computer to finish setup, then reopen vesta.", raw: msg };
-    if (lower.includes("wsl") && lower.includes("not installed")) return { friendly: "WSL2 is required but not installed. open PowerShell as admin and run:\n\nwsl --install --no-distribution\n\nthen restart your computer and reopen vesta.", raw: msg };
-    if (lower.includes("wsl") && (lower.includes("virtualization") || lower.includes("bios"))) return { friendly: "WSL2 needs hardware virtualization enabled. restart your computer, enter BIOS/UEFI settings, enable virtualization (Intel VT-x or AMD-V), then try again.", raw: msg };
-    if (lower.includes("wsl") && lower.includes("failed")) return { friendly: "WSL2 setup failed. open PowerShell as admin and run:\n\nwsl --install --no-distribution\n\nthen restart your computer and reopen vesta.", raw: msg };
-    if (lower.includes("rootfs") && lower.includes("download")) return { friendly: "couldn't download vesta. check your internet connection and try again.", raw: msg };
-    if (lower.includes("services did not start")) return { friendly: "services didn't start in time. try closing vesta and reopening it.", raw: msg };
     if (lower.includes("docker") && lower.includes("not installed")) return { friendly: "docker is required but not installed. install docker and try again.", raw: msg };
     if (lower.includes("docker") && (lower.includes("daemon") || lower.includes("not running"))) return { friendly: "docker isn't running. start docker desktop and try again.", raw: msg };
     if (lower.includes("failed to pull")) return { friendly: "couldn't download. check your internet connection and try again.", raw: msg };
@@ -106,42 +80,6 @@
     error = null;
     showRawError = false;
     step = "name";
-  }
-
-  async function recheckPlatform() {
-    busy = true;
-    error = null;
-    try {
-      const status = await checkPlatform();
-      platform = status;
-      if (status.ready) {
-        await goTo("name");
-      }
-    } catch (e) {
-      setError(e, "failed to check platform");
-    } finally {
-      busy = false;
-    }
-  }
-
-  async function handlePlatformSetup() {
-    busy = true;
-    error = null;
-    try {
-      const result = await setupPlatform();
-      platform = result;
-      if (result.ready) {
-        await goTo("name");
-      } else if (result.needs_reboot) {
-        // stay on platform step, UI will show reboot message
-      } else if (result.message) {
-        error = { friendly: result.message, raw: result.message };
-      }
-    } catch (e) {
-      setError(e, "setup failed");
-    } finally {
-      busy = false;
-    }
   }
 
   async function handleCreate() {
@@ -293,68 +231,7 @@
     </button>
   {/if}
   <div class="card">
-    {#if step === "platform"}
-      <div class="step step-anim">
-        {#if !platform}
-          <h1>checking system</h1>
-          <p class="sub">making sure everything is ready...</p>
-          <ProgressBar message="checking..." />
-        {:else if platform.needs_reboot}
-          <div class="platform-icon">
-            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/>
-              <path d="M21 3v5h-5"/>
-            </svg>
-          </div>
-          <h1>restart required</h1>
-          <p class="sub">WSL2 was installed successfully.<br/>restart your computer to finish setup, then reopen vesta.</p>
-          <button class="btn primary" onclick={recheckPlatform} disabled={busy}>check again</button>
-        {:else if platform.virtualization_enabled === false}
-          <div class="platform-icon warn">
-            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-              <line x1="12" y1="9" x2="12" y2="13"/>
-              <line x1="12" y1="17" x2="12.01" y2="17"/>
-            </svg>
-          </div>
-          <h1>enable virtualization</h1>
-          <p class="sub">
-            WSL2 needs hardware virtualization enabled.<br/><br/>
-            1. restart your computer<br/>
-            2. press the BIOS key during boot<br/>
-            <span class="hint">(usually F2, F10, F12, or Del)</span><br/>
-            3. find and enable <strong>Intel VT-x</strong> or <strong>AMD-V</strong><br/>
-            4. save and exit BIOS, then reopen vesta
-          </p>
-          <button class="btn primary" onclick={recheckPlatform} disabled={busy}>check again</button>
-        {:else if !platform.wsl_installed}
-          <h1>setting up windows</h1>
-          <p class="sub">vesta needs WSL2 to run.<br/>click below to install it automatically.</p>
-          {#if error}
-            <p class="error">{error.friendly ?? "something went wrong."}</p>
-            {#if error.raw.length > 80 || !error.friendly}
-              <button class="btn details-toggle" onclick={() => { showRawError = !showRawError; }}>{showRawError ? "hide details" : "show details"}</button>
-              {#if showRawError}<pre class="error-details">{error.raw}</pre>{/if}
-            {/if}
-          {/if}
-          {#if busy}
-            <ProgressBar message="installing WSL2... you may see a permission prompt." />
-          {:else}
-            <button class="btn primary full" onclick={handlePlatformSetup}>install WSL2</button>
-          {/if}
-        {:else}
-          <h1>setting up</h1>
-          <p class="sub">preparing vesta's environment...</p>
-          {#if error}
-            <p class="error">{error.friendly ?? "something went wrong."}</p>
-            <button class="btn primary" onclick={handlePlatformSetup} disabled={busy}>retry</button>
-          {:else}
-            <ProgressBar message="setting up..." />
-          {/if}
-        {/if}
-      </div>
-
-    {:else if step === "name"}
+    {#if step === "name"}
       <div class="step step-anim">
         <h1>new agent</h1>
         <p class="sub">give it a name to get started.</p>
@@ -546,10 +423,6 @@
     font-weight: 400;
   }
 
-  .sub .hint {
-    font-size: 11px;
-    color: #9a928a;
-  }
 
   .error {
     color: #c45450;
@@ -702,15 +575,6 @@
     animation: popIn 0.4s var(--spring-bouncy);
   }
 
-  .platform-icon {
-    color: #7a726a;
-    margin-bottom: 14px;
-    animation: popIn 0.4s var(--spring-bouncy);
-  }
-
-  .platform-icon.warn {
-    color: #e0a030;
-  }
 
   @keyframes popIn {
     from { opacity: 0; transform: scale(0.5); }
@@ -734,9 +598,6 @@
       color: #8a8078;
     }
 
-    .sub .hint {
-      color: #6a625a;
-    }
 
     .name-input {
       background: rgba(255, 255, 255, 0.06);
@@ -793,12 +654,5 @@
       color: #a09890;
     }
 
-    .platform-icon {
-      color: #8a8078;
-    }
-
-    .platform-icon.warn {
-      color: #e0a030;
-    }
   }
 </style>

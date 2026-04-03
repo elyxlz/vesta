@@ -47,7 +47,7 @@ pub fn ensure_tls(config_dir: &std::path::Path) -> (String, String, String) {
         .push(rcgen::SanType::IpAddress(std::net::IpAddr::V4(
             std::net::Ipv4Addr::new(127, 0, 0, 1),
         )));
-    // Add all local IP addresses as SANs for VM/WSL connections
+    // Add all local IP addresses as SANs for remote connections
     if let Ok(output) = std::process::Command::new("hostname").arg("-I").output() {
         let ips = String::from_utf8_lossy(&output.stdout);
         for ip_str in ips.split_whitespace() {
