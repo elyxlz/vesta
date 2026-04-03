@@ -185,7 +185,7 @@ export function DynamicIsland() {
   return (
     <div
       ref={rootRef}
-      className="relative"
+      className="relative my-auto"
       onPointerEnter={handlePointerEnter}
       onPointerLeave={handlePointerLeave}
     >

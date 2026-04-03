@@ -4,12 +4,6 @@ import type { PlatformStatus } from "@/lib/types";
 const WEB_PLATFORM_STATUS: PlatformStatus = {
   ready: true,
   platform: "web",
-  wsl_installed: false,
-  virtualization_enabled: null,
-  distro_registered: false,
-  distro_healthy: false,
-  services_ready: false,
-  needs_reboot: false,
   message: "",
 };
 

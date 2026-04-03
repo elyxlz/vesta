@@ -18,6 +18,7 @@ import {
   authenticate,
   type AuthStartResult,
 } from "@/api";
+import type { PlatformStatus } from "@/lib/types";
 import { isTauri } from "@/lib/env";
 import { fadeSlide } from "@/lib/motion";
 import { detectPlatform } from "@/lib/platform";
@@ -311,15 +312,9 @@ function PlatformSetup({
   onCancel?: () => void;
 }) {
   const [checking, setChecking] = useState(true);
-  const [status, setStatus] = useState<{
-    needs_reboot: boolean;
-    wsl_installed: boolean;
-    virtualization_enabled: boolean | null;
-    ready: boolean;
-  } | null>(null);
+  const [status, setStatus] = useState<PlatformStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [showDetails, setShowDetails] = useState(false);
 
   const doCheck = async () => {
     setChecking(true);
@@ -370,81 +365,18 @@ function PlatformSetup({
     );
   }
 
-  if (status?.needs_reboot) {
-    return (
-      <div className="flex flex-col items-center gap-3 w-[260px] max-w-full px-4">
-        <h2 className="text-base font-semibold">restart required</h2>
-        <p className="text-xs text-muted-foreground text-center">
-          restart your computer to finish setup, then reopen vesta.
-        </p>
-        <Button size="sm" onClick={doCheck}>
-          check again
-        </Button>
-      </div>
-    );
-  }
-
-  if (status?.virtualization_enabled === false) {
-    return (
-      <div className="flex flex-col items-center gap-3 w-[260px] max-w-full px-4">
-        <h2 className="text-base font-semibold">enable virtualization</h2>
-        <div className="text-xs text-muted-foreground text-left flex flex-col gap-1">
-          <p>1. Restart your computer</p>
-          <p>2. Enter BIOS/UEFI settings</p>
-          <p>3. Enable Intel VT-x or AMD-V</p>
-          <p>4. Save and restart</p>
-        </div>
-        <Button size="sm" onClick={doCheck}>
-          check again
-        </Button>
-      </div>
-    );
-  }
-
-  if (!status?.wsl_installed) {
-    return (
-      <div className="flex flex-col items-center gap-3 w-[260px] max-w-full px-4">
-        <h2 className="text-base font-semibold">setting up windows</h2>
-        <p className="text-xs text-muted-foreground text-center">
-          WSL2 needs to be installed to run vesta agents.
-        </p>
-        {busy ? (
-          <ProgressBar />
-        ) : (
-          <Button size="sm" onClick={handleInstall}>
-            install WSL2
-          </Button>
-        )}
-        {error && (
-          <div className="text-center">
-            <p className="text-xs text-destructive">{error}</p>
-            <Button
-              variant="link"
-              size="sm"
-              onClick={() => setShowDetails(!showDetails)}
-            >
-              {showDetails ? "hide details" : "show details"}
-            </Button>
-            {showDetails && (
-              <p className="text-xs text-muted-foreground break-all">{error}</p>
-            )}
-          </div>
-        )}
-      </div>
-    );
-  }
-
   return (
     <div className="flex flex-col items-center gap-3 w-[260px] max-w-full px-4">
       <h2 className="text-base font-semibold">setting up</h2>
+      <p className="text-xs text-muted-foreground text-center">
+        {status?.message || "platform setup required."}
+      </p>
       {busy ? (
         <ProgressBar />
       ) : (
         <>
           {error && (
-            <p className="text-xs text-destructive ">
-              {error}
-            </p>
+            <p className="text-xs text-destructive">{error}</p>
           )}
           <Button size="sm" onClick={handleInstall}>
             retry
@@ -452,11 +384,7 @@ function PlatformSetup({
         </>
       )}
       {onCancel && (
-        <Button
-          variant="link"
-          size="sm"
-          onClick={onCancel}
-        >
+        <Button variant="link" size="sm" onClick={onCancel}>
           cancel
         </Button>
       )}
