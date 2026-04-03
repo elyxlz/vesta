@@ -111,12 +111,12 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     )}>
 
       {!fullscreen && (
-        <div className="absolute top-2 right-2 z-10 flex items-center gap-0.5">
+        <div className="absolute top-3 right-3 z-10 flex items-center gap-0.5">
           {onCollapse && (
             <Button
               size="icon-sm"
               variant="ghost"
-              className="text-muted-foreground/60 hover:text-foreground"
+              className="text-muted-foreground"
               onClick={onCollapse}
             >
               <PanelRightClose />
@@ -125,7 +125,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
           <Button
             size="icon-sm"
             variant="ghost"
-            className="text-muted-foreground/60 hover:text-foreground"
+            className="text-muted-foreground"
             onClick={() => navigate(`/agent/${name}/chat`)}
           >
             <Maximize2 />
@@ -140,53 +140,56 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="text-center py-1 bg-amber-500/10 text-amber-600 dark:text-amber-400 text-xs overflow-hidden shrink-0"
+            className="text-center py-2 bg-amber-500/10 text-amber-600 dark:text-amber-400 text-xs overflow-hidden shrink-0"
           >
             reconnecting...
           </motion.div>
         )}
       </AnimatePresence>
 
-      <CardContent className="flex-1 overflow-y-auto p-0 px-3 py-2 min-h-0">
+      <CardContent className="flex-1 overflow-y-auto p-0 px-4 py-3 min-h-0">
         <div
           ref={scrollRef}
           onScroll={handleScroll}
-          className="h-full overflow-y-auto font-mono text-sm leading-relaxed flex flex-col"
+          className="h-full overflow-y-auto font-mono text-sm leading-relaxed"
         >
-          {filteredMessages.length === 0 && (
-            <div className="flex flex-col items-center justify-center h-full gap-2">
-              <ThinkingDots />
-              <span className="text-xs text-muted-foreground">
-                {connected
-                  ? `${name} is listening`
-                  : "connecting..."}
-              </span>
-            </div>
-          )}
-
-          <div className="mt-auto">
-            {filteredMessages.map((msg, i) => (
-              <MessageLine key={i} event={msg} />
-            ))}
-
-            <AnimatePresence>
-              {isThinking && filteredMessages.length > 0 && (
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.15 }}
-                >
+          <div className="min-h-full flex flex-col justify-end">
+            <div>
+              {filteredMessages.length === 0 ? (
+                <div className="flex flex-col items-center gap-2 py-2">
                   <ThinkingDots />
-                </motion.div>
+                  <span className="text-xs text-muted-foreground">
+                    {connected
+                      ? `${name} is listening`
+                      : "connecting..."}
+                  </span>
+                </div>
+              ) : (
+                <>
+                  {filteredMessages.map((msg, i) => (
+                    <MessageLine key={i} event={msg} />
+                  ))}
+                  <AnimatePresence>
+                    {isThinking && filteredMessages.length > 0 && (
+                      <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 0.15 }}
+                      >
+                        <ThinkingDots />
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </>
               )}
-            </AnimatePresence>
+            </div>
           </div>
         </div>
       </CardContent>
 
-      <CardFooter className="p-2 px-3 border-t shrink-0">
-        <div className="flex items-end gap-2 w-full">
+      <CardFooter className="border-t shrink-0 p-3 px-4 !pt-3">
+        <div className="flex items-end gap-2.5 w-full">
           <textarea
             ref={textareaRef}
             value={input}
@@ -195,7 +198,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
             placeholder={connected ? "send a message..." : "connecting..."}
             disabled={!connected}
             rows={1}
-            className="flex-1 bg-transparent text-sm font-mono leading-relaxed resize-none outline-none placeholder:text-muted-foreground/50 disabled:opacity-50 py-1"
+            className="m-0 flex-1 min-h-9 max-h-[120px] bg-transparent py-2.5 text-sm font-mono leading-5 resize-none outline-none placeholder:text-muted-foreground/50 disabled:opacity-50"
           />
           <Button
             size="icon-sm"

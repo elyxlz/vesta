@@ -34,7 +34,7 @@ export function Navbar({ center, trailing }: NavbarProps = {}) {
   })();
 
   return (
-    <div className="flex items-center justify-between h-11 shrink-0 select-none relative overflow-visible">
+    <div className="flex items-center justify-between min-h-11 px-1 py-3 sm:px-2 shrink-0 select-none relative overflow-visible">
       <div className="flex-1 flex items-center">
         {connected && isHome && (
           <Tooltip>

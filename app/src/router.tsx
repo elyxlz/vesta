@@ -24,7 +24,7 @@ function RootLayout() {
 
   return (
     <div className="h-full bg-background p-5">
-      <div className="flex flex-col h-full gap-5">
+      <div className="flex flex-col h-full gap-4">
         <div className="shrink-0">
           <Titlebar />
           <Navbar />
@@ -46,7 +46,7 @@ function AgentLayout() {
 
   return (
     <div className="h-full bg-background p-5">
-      <div className="flex flex-col h-full gap-5">
+      <div className="flex flex-col h-full gap-4">
         <div className="shrink-0">
           <Titlebar />
           <Navbar center={<DynamicIsland />} />
@@ -75,7 +75,7 @@ function ChatFullscreenLayout() {
               <Button
                 size="icon"
                 variant="ghost"
-                className="size-7 text-muted-foreground/60 hover:text-foreground"
+                className="size-7 text-foreground"
                 onClick={() => navigate(`/agent/${name}`)}
               >
                 <Minimize2 size={14} />
@@ -98,9 +98,16 @@ function NavigationGuard({ children }: { children: React.ReactNode }) {
   if (!connected) return <Navigate to="/connect" replace />;
   if (!agentsLoaded) return null;
 
-  // Redirect to /new when there are no agents (except if already there)
   if (agents.length === 0 && location.pathname !== "/new") {
     return <Navigate to="/new" replace />;
+  }
+
+  const agentRouteMatch = location.pathname.match(/^\/agent\/([^/]+)/);
+  if (agentRouteMatch) {
+    const routeAgentName = decodeURIComponent(agentRouteMatch[1]);
+    if (!agents.some((a) => a.name === routeAgentName)) {
+      return <Navigate to="/" replace />;
+    }
   }
 
   return children;

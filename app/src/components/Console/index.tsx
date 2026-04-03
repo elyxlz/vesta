@@ -102,16 +102,17 @@ export function Console({ name, onClose }: ConsoleProps) {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between px-3 h-9 shrink-0 border-b border-white/5">
-        <span className="text-sm font-medium">{name}</span>
+      <div className="flex items-center justify-between px-4 py-3 min-h-11 shrink-0 border-b border-white/5">
+        <span className="text-sm font-medium">{name} logs</span>
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
               variant="ghost"
-              size="icon-xs"
+              size="icon-sm"
+              className="size-9"
               onClick={onClose}
             >
-              <X />
+              <X className="size-5" />
             </Button>
           </TooltipTrigger>
           <TooltipContent>close</TooltipContent>
@@ -123,30 +124,34 @@ export function Console({ name, onClose }: ConsoleProps) {
         onScroll={handleScroll}
         className="flex-1 overflow-y-auto px-3 py-2 font-mono text-xs leading-[1.6] text-white/70"
       >
-        {lines.length === 0 && !ended && (
-          <div className="flex flex-col items-center justify-center h-full gap-2">
-            <div className="flex items-center gap-1">
-              <div className="size-[5px] rounded-full bg-white/30 opacity-60" />
-              <div className="size-[5px] rounded-full bg-white/30 opacity-40" />
-              <div className="size-[5px] rounded-full bg-white/30 opacity-20" />
-            </div>
-            <span className="text-xs text-[#666]">streaming logs...</span>
-          </div>
-        )}
+        <div className="min-h-full flex flex-col justify-end">
+          <div>
+            {lines.length === 0 && !ended && (
+              <div className="flex flex-col items-center gap-2 py-1">
+                <div className="flex items-center gap-1">
+                  <div className="size-[5px] rounded-full bg-white/30 opacity-60" />
+                  <div className="size-[5px] rounded-full bg-white/30 opacity-40" />
+                  <div className="size-[5px] rounded-full bg-white/30 opacity-20" />
+                </div>
+                <span className="text-xs text-[#666]">streaming logs...</span>
+              </div>
+            )}
 
-        {lines.map((line, i) => (
-          <div
-            key={i}
-            className="break-all"
-            dangerouslySetInnerHTML={{ __html: linkify(line) }}
-          />
-        ))}
+            {lines.map((line, i) => (
+              <div
+                key={i}
+                className="break-all"
+                dangerouslySetInnerHTML={{ __html: linkify(line) }}
+              />
+            ))}
 
-        {ended && (
-          <div className="text-center text-[#444] py-2">
-            — reconnecting —
+            {ended && (
+              <div className="text-center text-[#444] py-2">
+                — reconnecting —
+              </div>
+            )}
           </div>
-        )}
+        </div>
       </div>
     </div>
   );

@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   MoreVertical,
   Play,
@@ -77,6 +77,7 @@ export function DynamicIsland() {
   const [authError, setAuthError] = useState("");
   const authAttemptRef = useRef(0);
   const leaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
 
   const info = agent ?? listEntry ?? null;
 
@@ -152,20 +153,49 @@ export function DynamicIsland() {
     scheduleCollapse();
   };
 
+  const usesHoverPointer = (pointerType: string) =>
+    pointerType === "mouse" || pointerType === "pen";
+
+  const handlePointerEnter = (e: React.PointerEvent) => {
+    if (usesHoverPointer(e.pointerType)) handleEnter();
+  };
+
+  const handlePointerLeave = (e: React.PointerEvent) => {
+    if (usesHoverPointer(e.pointerType)) handleLeave();
+  };
+
+  useEffect(() => {
+    if (!expanded) return;
+    const onPointerDownCapture = (e: PointerEvent) => {
+      if (e.button !== 0) return;
+      const root = rootRef.current;
+      if (!root) return;
+      const target = e.target;
+      if (!(target instanceof Element)) return;
+      if (root.contains(target)) return;
+      if (target.closest('[data-slot="dropdown-menu-content"]')) return;
+      if (target.closest('[data-slot="alert-dialog-content"]')) return;
+      if (target.closest('[data-slot="alert-dialog-overlay"]')) return;
+      setExpanded(false);
+    };
+    document.addEventListener("pointerdown", onPointerDownCapture, true);
+    return () => document.removeEventListener("pointerdown", onPointerDownCapture, true);
+  }, [expanded]);
+
   return (
     <div
+      ref={rootRef}
       className="relative"
-      onMouseEnter={handleEnter}
-      onMouseLeave={handleLeave}
+      onPointerEnter={handlePointerEnter}
+      onPointerLeave={handlePointerLeave}
     >
       <motion.div
         layout
         className={cn(
-          "bg-card border rounded-2xl shadow-lg overflow-hidden",
+          "origin-top bg-card border rounded-2xl shadow-lg overflow-hidden",
           expanded && "shadow-xl",
         )}
         transition={{ type: "spring", stiffness: 400, damping: 30 }}
-        style={{ originY: 0 }}
       >
         <AnimatePresence mode="wait" initial={false}>
           {expanded ? (
@@ -389,7 +419,12 @@ export function DynamicIsland() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.1 }}
-              className="flex items-center gap-2.5 py-3 px-5 cursor-pointer"
+              className="flex items-center gap-2.5 py-3 px-5 cursor-pointer touch-manipulation"
+              onPointerDown={(e) => {
+                if (e.pointerType === "touch") {
+                  setExpanded(true);
+                }
+              }}
             >
               <motion.div
                 className="rounded-full shrink-0"
