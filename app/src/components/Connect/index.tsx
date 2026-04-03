@@ -103,23 +103,18 @@ export function Connect() {
           <AnimatePresence>
             {error && (
               <motion.div {...fadeSlide} className="flex flex-col items-center gap-1 text-center">
-                <p className="text-xs text-destructive">{error}</p>
-                {details && (
-                  <>
-                    <Button
-                      type="button"
-                      variant="link"
-                      size="sm"
-                      onClick={() => setShowDetails(!showDetails)}
-                    >
-                      {showDetails ? "hide details" : "show details"}
-                    </Button>
-                    {showDetails && (
-                      <p className="text-xs text-muted-foreground break-all">
-                        {details}
-                      </p>
-                    )}
-                  </>
+                <p
+                  className={`text-xs ${details ? "cursor-pointer" : ""}`}
+                  onClick={details ? () => setShowDetails(!showDetails) : undefined}
+                >
+                  <span className="text-destructive">{error}</span>{details && (
+                    <span className="text-foreground"> · {showDetails ? "hide details" : "show details"}</span>
+                  )}
+                </p>
+                {showDetails && details && (
+                  <p className="text-xs text-muted-foreground break-all">
+                    {details}
+                  </p>
                 )}
               </motion.div>
             )}

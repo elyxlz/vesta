@@ -6,7 +6,8 @@ import {
   type ReactNode,
 } from "react";
 import { autoSetup, connectToServer } from "@/api";
-import { clearConnection, getConnection } from "@/lib/connection";
+import { clearConnection, getConnection, authHeaders } from "@/lib/connection";
+import { ensureFreshToken } from "@/lib/token-refresh";
 import { isTauri } from "@/lib/env";
 
 interface AuthContextValue {
@@ -27,7 +28,7 @@ async function fetchVersion(): Promise<string> {
 
   try {
     const resp = await fetch(`${conn.url}/version`, {
-      headers: { Authorization: `Bearer ${conn.apiKey}` },
+      headers: authHeaders(),
     });
     if (!resp.ok) return "";
     const data = await resp.json();
@@ -41,9 +42,12 @@ async function checkStoredConnection(): Promise<boolean> {
   const conn = getConnection();
   if (!conn) return false;
 
+  const ok = await ensureFreshToken();
+  if (!ok) return false;
+
   try {
-    const resp = await fetch(`${conn.url}/health`, {
-      headers: { Authorization: `Bearer ${conn.apiKey}` },
+    const resp = await fetch(`${conn.url}/version`, {
+      headers: authHeaders(),
     });
     return resp.ok;
   } catch {

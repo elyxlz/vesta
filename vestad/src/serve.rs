@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::docker;
+use crate::{docker, jwt};
 
 const API_KEY_BYTES: usize = 32;
 const AUTH_SESSION_TIMEOUT_SECS: u64 = 600;
@@ -169,19 +169,12 @@ async fn auth_middleware(
     request: axum::extract::Request,
     next: Next,
 ) -> Response {
-    let path = request.uri().path();
-
-    // /health requires no auth
-    if path == "/health" {
-        return next.run(request).await;
-    }
-
     // Check Bearer header first, then query param ?token= (for WebSocket)
     let bearer_ok = headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
-        .map(|token| token == state.api_key)
+        .map(|token| verify_token(token, &state.api_key))
         .unwrap_or(false);
 
     let query_ok = if !bearer_ok {
@@ -192,7 +185,7 @@ async fn auth_middleware(
                 q.split('&')
                     .find_map(|p| p.strip_prefix("token="))
             })
-            .map(|t| t == state.api_key)
+            .map(|t| verify_token(t, &state.api_key))
             .unwrap_or(false)
     } else {
         false
@@ -207,6 +200,65 @@ async fn auth_middleware(
     }
 
     next.run(request).await
+}
+
+/// Accept raw API key or JWT access token.
+fn verify_token(token: &str, api_key: &str) -> bool {
+    if token == api_key {
+        return true;
+    }
+    if token.contains('.') {
+        return jwt::validate_token(api_key, token, "access").is_ok();
+    }
+    false
+}
+
+// --- Session endpoints ---
+
+#[derive(Deserialize)]
+struct SessionRequest {
+    api_key: String,
+}
+
+#[derive(Serialize)]
+struct SessionResponse {
+    access_token: String,
+    refresh_token: String,
+    expires_in: u64,
+}
+
+async fn create_session_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<SessionRequest>,
+) -> Result<Json<SessionResponse>, (StatusCode, Json<serde_json::Value>)> {
+    if body.api_key != state.api_key {
+        return Err(err_response(StatusCode::UNAUTHORIZED, "invalid API key"));
+    }
+
+    Ok(Json(SessionResponse {
+        access_token: jwt::create_token(&state.api_key, "access", jwt::ACCESS_TOKEN_TTL),
+        refresh_token: jwt::create_token(&state.api_key, "refresh", jwt::REFRESH_TOKEN_TTL),
+        expires_in: jwt::ACCESS_TOKEN_TTL,
+    }))
+}
+
+async fn refresh_session_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<RefreshRequest>,
+) -> Result<Json<SessionResponse>, (StatusCode, Json<serde_json::Value>)> {
+    jwt::validate_token(&state.api_key, &body.refresh_token, "refresh")
+        .map_err(|e| err_response(StatusCode::UNAUTHORIZED, &e.to_string()))?;
+
+    Ok(Json(SessionResponse {
+        access_token: jwt::create_token(&state.api_key, "access", jwt::ACCESS_TOKEN_TTL),
+        refresh_token: jwt::create_token(&state.api_key, "refresh", jwt::REFRESH_TOKEN_TTL),
+        expires_in: jwt::ACCESS_TOKEN_TTL,
+    }))
+}
+
+#[derive(Deserialize)]
+struct RefreshRequest {
+    refresh_token: String,
 }
 
 // --- Response helpers ---
@@ -836,8 +888,12 @@ pub fn acquire_pid_lock(config_dir: &std::path::Path) -> Result<std::fs::File, S
 pub fn build_router(api_key: String, tunnel_url: Option<String>) -> Router {
     let state = Arc::new(AppState::new(api_key, tunnel_url));
 
-    Router::new()
+    let public = Router::new()
         .route("/health", get(health))
+        .route("/auth/session", post(create_session_handler))
+        .route("/auth/refresh", post(refresh_session_handler));
+
+    let protected = Router::new()
         .route("/version", get(version))
         .route("/tunnel", get(tunnel_handler))
         .route("/agents", get(list_agents_handler))
@@ -863,7 +919,11 @@ pub fn build_router(api_key: String, tunnel_url: Option<String>) -> Router {
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
-        ))
+        ));
+
+    Router::new()
+        .merge(public)
+        .merge(protected)
         .layer(
             tower_http::cors::CorsLayer::new()
                 .allow_origin(tower_http::cors::Any)

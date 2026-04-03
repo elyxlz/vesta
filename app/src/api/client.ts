@@ -1,13 +1,28 @@
 import { apiUrl, authHeaders } from "@/lib/connection";
+import { ensureFreshToken } from "@/lib/token-refresh";
 
 export async function apiFetch(
   path: string,
   init?: RequestInit,
 ): Promise<Response> {
-  const resp = await fetch(apiUrl(path), {
+  await ensureFreshToken();
+
+  let resp = await fetch(apiUrl(path), {
     ...init,
     headers: { ...authHeaders(), ...init?.headers },
   });
+
+  // If 401, try one refresh then retry
+  if (resp.status === 401) {
+    const refreshed = await ensureFreshToken();
+    if (refreshed) {
+      resp = await fetch(apiUrl(path), {
+        ...init,
+        headers: { ...authHeaders(), ...init?.headers },
+      });
+    }
+  }
+
   if (!resp.ok) {
     const body = await resp.text();
     let msg: string;

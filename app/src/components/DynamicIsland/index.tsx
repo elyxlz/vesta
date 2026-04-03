@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { Button } from "@/components/ui/button";
+import { ButtonGroup } from "@/components/ui/button-group";
 import { Spinner } from "@/components/ui/spinner";
 import { ProgressBar } from "@/components/ProgressBar";
 import {
@@ -208,7 +209,10 @@ export function DynamicIsland() {
                         authUrl={authStart.auth_url}
                         sessionId={authStart.session_id}
                         onCancel={clearAuthState}
-                        onComplete={clearAuthState}
+                        onComplete={async () => {
+                          clearAuthState();
+                          await restart();
+                        }}
                       />
                     ) : (
                       <div className="flex flex-col items-center gap-3 w-full max-w-[260px]">
@@ -239,58 +243,59 @@ export function DynamicIsland() {
                         </motion.div>
                       ) : (
                         <motion.div key="normal" {...fadeSlide} className="flex items-center gap-2">
-                          {info?.status === "running" && !info.authenticated && (
-                            <Button
-                              size="sm"
-                              onClick={handleOpenAuth}
-                            >
-                              <KeyRound data-icon="inline-start" />
-                              authenticate
-                            </Button>
-                          )}
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={isBusy}
-                            onClick={
-                              info?.status === "running" ? stop : start
-                            }
-                          >
-                            {info?.status === "running" ? (
-                              <>
-                                <Square data-icon="inline-start" />
-                                stop
-                              </>
-                            ) : (
-                              <>
-                                <Play data-icon="inline-start" />
-                                start
-                              </>
+                          <ButtonGroup>
+                            {info?.status === "running" && !info.authenticated && (
+                              <Button
+                                size="sm"
+                                onClick={handleOpenAuth}
+                              >
+                                <KeyRound data-icon="inline-start" />
+                                authenticate
+                              </Button>
                             )}
-                          </Button>
-
-                          {info?.alive && (
                             <Button
                               size="sm"
                               variant="outline"
-                              onClick={() => {
-                                window.dispatchEvent(new CustomEvent("open-console"));
-                              }}
+                              disabled={isBusy}
+                              onClick={
+                                info?.status === "running" ? stop : start
+                              }
                             >
-                              <ScrollText data-icon="inline-start" />
-                              logs
+                              {info?.status === "running" ? (
+                                <>
+                                  <Square data-icon="inline-start" />
+                                  stop
+                                </>
+                              ) : (
+                                <>
+                                  <Play data-icon="inline-start" />
+                                  start
+                                </>
+                              )}
                             </Button>
-                          )}
 
-                          <DropdownMenu open={menuOpen} onOpenChange={(open) => {
-                            setMenuOpen(open);
-                            if (!open) scheduleCollapse();
-                          }}>
-                            <DropdownMenuTrigger asChild>
-                              <Button size="icon-sm" variant="ghost">
-                                <MoreVertical />
+                            {info?.alive && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => {
+                                  window.dispatchEvent(new CustomEvent("open-console"));
+                                }}
+                              >
+                                <ScrollText data-icon="inline-start" />
+                                logs
                               </Button>
-                            </DropdownMenuTrigger>
+                            )}
+
+                            <DropdownMenu open={menuOpen} onOpenChange={(open) => {
+                              setMenuOpen(open);
+                              if (!open) scheduleCollapse();
+                            }}>
+                              <DropdownMenuTrigger asChild>
+                                <Button size="icon-sm" variant="outline">
+                                  <MoreVertical />
+                                </Button>
+                              </DropdownMenuTrigger>
                             <DropdownMenuContent
                               align="center"
                               side="bottom"
@@ -326,21 +331,6 @@ export function DynamicIsland() {
                                       rebuild container from latest image
                                     </TooltipContent>
                                   </Tooltip>
-                                  {info.authenticated && (
-                                    <Tooltip>
-                                      <TooltipTrigger asChild>
-                                        <DropdownMenuItem
-                                          className="text-sm"
-                                          onClick={() => setShowAuth(true)}
-                                        >
-                                          authenticate
-                                        </DropdownMenuItem>
-                                      </TooltipTrigger>
-                                      <TooltipContent side="left">
-                                        authenticate claude
-                                      </TooltipContent>
-                                    </Tooltip>
-                                  )}
                                 </>
                               )}
                               <Tooltip>
@@ -380,7 +370,8 @@ export function DynamicIsland() {
                                 </TooltipContent>
                               </Tooltip>
                             </DropdownMenuContent>
-                          </DropdownMenu>
+                            </DropdownMenu>
+                          </ButtonGroup>
                         </motion.div>
                       )}
                     </AnimatePresence>
@@ -399,8 +390,11 @@ export function DynamicIsland() {
             >
               <motion.div
                 className="rounded-full shrink-0"
-                style={{ width: 10, height: 10, backgroundColor: orbColors[orbState][1] }}
-                animate={{ backgroundColor: orbColors[orbState][1] }}
+                style={{ width: 14, height: 14, backgroundColor: orbColors[orbState][1] }}
+                animate={{
+                  backgroundColor: orbColors[orbState][1],
+                  boxShadow: `0 0 8px 2px ${orbColors[orbState][1]}`,
+                }}
                 transition={{ duration: 1 }}
               />
               <div className="flex items-center gap-2">

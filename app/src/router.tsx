@@ -3,7 +3,7 @@ import { Minimize2 } from "lucide-react";
 import { Connect } from "@/components/Connect";
 import { Home } from "@/components/Home";
 import { CreateAgent } from "@/components/CreateAgent";
-import { AgentDetail } from "@/components/AgentDetail";
+import { AgentHome } from "@/components/AgentHome";
 import { Chat } from "@/components/Chat";
 import { DynamicIsland } from "@/components/DynamicIsland";
 import { Titlebar } from "@/components/Titlebar";
@@ -52,7 +52,7 @@ function AgentLayout() {
           {connected && <UpdateBar />}
         </div>
         <div className="flex-1 relative overflow-hidden min-h-0">
-          <AgentDetail />
+          <AgentHome />
         </div>
       </div>
     </div>

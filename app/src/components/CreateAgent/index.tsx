@@ -10,6 +10,7 @@ import {
   createAgent,
   deleteAgent,
   startAgent,
+  restartAgent,
   waitForReady,
   restoreAgent,
   checkPlatform,
@@ -25,7 +26,7 @@ import { useAgents } from "@/providers/AgentsProvider";
 import { useNavigate } from "react-router-dom";
 import { friendlyError } from "./errors";
 
-type Step = "platform" | "name" | "creating" | "auth" | "done";
+type Step = "platform" | "name" | "creating" | "auth" | "finalizing" | "done";
 
 const CREATING_MESSAGES = [
   "setting things up...",
@@ -155,7 +156,7 @@ export function CreateAgent() {
 
     if (step === "creating") {
       return (
-        <div className="flex flex-col items-center gap-4 w-full max-w-[260px] px-4 ">
+        <div className="flex flex-col items-center gap-3 w-[260px] max-w-full px-4">
           <h2 className="text-base font-semibold">setting up</h2>
           <p className="text-xs text-muted-foreground">
             this may take a couple of mins.
@@ -165,9 +166,18 @@ export function CreateAgent() {
       );
     }
 
+    if (step === "finalizing") {
+      return (
+        <div className="flex flex-col items-center gap-3 w-[260px] max-w-full px-4">
+          <h2 className="text-base font-semibold">preparing final things</h2>
+          <ProgressBar message="almost ready..." />
+        </div>
+      );
+    }
+
     if (step === "auth") {
       return (
-        <div className="flex flex-col items-center gap-4 w-full max-w-[260px] px-4 ">
+        <div className="flex flex-col items-center gap-3 w-[260px] max-w-full px-4">
           {authStart ? (
             <AuthFlow
               agentName={createdName}
@@ -181,8 +191,12 @@ export function CreateAgent() {
                 await refreshAgents();
                 navigate("/");
               }}
-              onComplete={() => {
+              onComplete={async () => {
                 setAuthStart(null);
+                setStep("finalizing");
+                await restartAgent(createdName);
+                await waitForReady(createdName, 30);
+                await refreshAgents();
                 setStep("done");
               }}
             />
@@ -193,7 +207,7 @@ export function CreateAgent() {
 
     if (step === "done") {
       return (
-        <div className="flex flex-col items-center gap-4 w-full max-w-[260px] px-4 ">
+        <div className="flex flex-col items-center gap-3 w-[260px] max-w-full px-4">
           <div className="size-10 rounded-full bg-primary/20 flex items-center justify-center">
             <Check size={20} className="text-primary" />
           </div>
@@ -212,7 +226,7 @@ export function CreateAgent() {
     }
 
     return (
-      <div className="flex flex-col items-center gap-3 w-[240px] max-w-full px-4">
+      <div className="flex flex-col items-center gap-3 w-[260px] max-w-full px-4">
         <div className="flex flex-col items-center gap-1 text-center">
           <h2 className="text-base font-semibold">new agent</h2>
           <FieldDescription>
@@ -346,7 +360,7 @@ function PlatformSetup({
 
   if (checking) {
     return (
-      <div className="flex flex-col items-center gap-4 w-full max-w-[260px] px-4 ">
+      <div className="flex flex-col items-center gap-3 w-[260px] max-w-full px-4">
         <h2 className="text-base font-semibold">checking system</h2>
         <p className="text-xs text-muted-foreground">
           making sure everything is ready...
@@ -358,7 +372,7 @@ function PlatformSetup({
 
   if (status?.needs_reboot) {
     return (
-      <div className="flex flex-col items-center gap-4 w-full max-w-[260px] px-4 ">
+      <div className="flex flex-col items-center gap-3 w-[260px] max-w-full px-4">
         <h2 className="text-base font-semibold">restart required</h2>
         <p className="text-xs text-muted-foreground text-center">
           restart your computer to finish setup, then reopen vesta.
@@ -372,7 +386,7 @@ function PlatformSetup({
 
   if (status?.virtualization_enabled === false) {
     return (
-      <div className="flex flex-col items-center gap-4 w-full max-w-[260px] px-4 ">
+      <div className="flex flex-col items-center gap-3 w-[260px] max-w-full px-4">
         <h2 className="text-base font-semibold">enable virtualization</h2>
         <div className="text-xs text-muted-foreground text-left flex flex-col gap-1">
           <p>1. Restart your computer</p>
@@ -389,7 +403,7 @@ function PlatformSetup({
 
   if (!status?.wsl_installed) {
     return (
-      <div className="flex flex-col items-center gap-4 w-full max-w-[260px] px-4 ">
+      <div className="flex flex-col items-center gap-3 w-[260px] max-w-full px-4">
         <h2 className="text-base font-semibold">setting up windows</h2>
         <p className="text-xs text-muted-foreground text-center">
           WSL2 needs to be installed to run vesta agents.
@@ -421,7 +435,7 @@ function PlatformSetup({
   }
 
   return (
-    <div className="flex flex-col items-center gap-4 w-full max-w-[260px] px-4 ">
+    <div className="flex flex-col items-center gap-3 w-[260px] max-w-full px-4">
       <h2 className="text-base font-semibold">setting up</h2>
       {busy ? (
         <ProgressBar />

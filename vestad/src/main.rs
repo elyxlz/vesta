@@ -1,6 +1,7 @@
 use clap::Parser;
 
 mod docker;
+mod jwt;
 mod serve;
 mod tunnel;
 

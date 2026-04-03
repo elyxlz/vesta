@@ -14,7 +14,7 @@ export function streamLogs(
       return;
     }
 
-    const url = `${conn.url}/agents/${encodeURIComponent(name)}/logs?token=${encodeURIComponent(conn.apiKey)}`;
+    const url = `${conn.url}/agents/${encodeURIComponent(name)}/logs?token=${encodeURIComponent(conn.accessToken)}`;
     const es = new EventSource(url);
     logSources.set(name, es);
 

@@ -1,5 +1,6 @@
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useState,
@@ -25,13 +26,7 @@ export function AgentsProvider({ children }: { children: ReactNode }) {
   const [agents, setAgents] = useState<ListEntry[]>([]);
   const [agentsLoaded, setAgentsLoaded] = useState(false);
 
-  const refreshAgents = async () => {
-    if (!connected) {
-      setAgents([]);
-      setAgentsLoaded(true);
-      return [];
-    }
-
+  const refreshAgents = useCallback(async () => {
     try {
       const nextAgents = await listAgents();
       setAgents(nextAgents);
@@ -42,7 +37,7 @@ export function AgentsProvider({ children }: { children: ReactNode }) {
       setAgentsLoaded(true);
       return [];
     }
-  };
+  }, []);
 
   useEffect(() => {
     if (!initialized) return;
