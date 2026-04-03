@@ -1,14 +1,17 @@
-import { useCallback, useState } from "react";
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { AnimatePresence, motion } from "motion/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { connectToServer } from "@/api";
-import { useAppStore } from "@/stores/use-app-store";
-import { useNavigation } from "@/stores/use-navigation";
-
+import { FieldGroup, Field, FieldLabel, FieldDescription } from "@/components/ui/field";
+import { fadeSlide } from "@/lib/motion";
+import { useAgents } from "@/providers/AgentsProvider";
+import { useAuth } from "@/providers/AuthProvider";
 
 export function Connect() {
-  const navigateHome = useNavigation((s) => s.navigateHome);
-  const setConnected = useAppStore((s) => s.setConnected);
+  const navigate = useNavigate();
+  const { connect } = useAuth();
+  const { refreshAgents } = useAgents();
 
   const [host, setHost] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -17,7 +20,7 @@ export function Connect() {
   const [showDetails, setShowDetails] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  const handleConnect = useCallback(async () => {
+  const handleConnect = async () => {
     if (!host.trim() || !apiKey.trim() || busy) return;
     setBusy(true);
     setError("");
@@ -25,9 +28,9 @@ export function Connect() {
 
     try {
       const url = host.includes("://") ? host.trim() : `https://${host.trim()}`;
-      await connectToServer(url, apiKey.trim());
-      setConnected(true);
-      navigateHome();
+      await connect(url, apiKey.trim());
+      const agents = await refreshAgents();
+      navigate(agents.length === 0 ? "/new" : "/");
     } catch (e: unknown) {
       const msg = (e as { message?: string })?.message || "connection failed";
       if (msg === "could not reach server") {
@@ -39,73 +42,89 @@ export function Connect() {
     } finally {
       setBusy(false);
     }
-  }, [host, apiKey, busy, setConnected, navigateHome]);
+  };
 
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === "Enter") handleConnect();
-    },
-    [handleConnect],
-  );
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    handleConnect();
+  };
 
   return (
-    <div className="flex flex-col items-center justify-center h-full animate-view-in">
-      <div className="flex flex-col items-center gap-3 w-full max-w-[280px] px-4">
-        <div className="text-center mb-2">
-          <h1 className="text-2xl font-semibold text-foreground">connect</h1>
-          <p className="text-xs text-muted-foreground mt-1">
-            connect to a remote vesta server.
-          </p>
-        </div>
-
-        <Input
-          placeholder="host"
-          value={host}
-          onChange={(e) => setHost(e.target.value)}
-          onKeyDown={handleKeyDown}
-          autoFocus
-          className="text-center text-sm"
-        />
-
-        <Input
-          type="password"
-          placeholder="key"
-          value={apiKey}
-          onChange={(e) => setApiKey(e.target.value)}
-          onKeyDown={handleKeyDown}
-          className="text-center text-sm"
-        />
-
-        <Button
-          onClick={handleConnect}
-          disabled={!host.trim() || !apiKey.trim() || busy}
-          className="w-full"
-          size="default"
+    <div className="flex flex-col h-full">
+      <div className="flex-1 flex items-center justify-center">
+        <form
+          onSubmit={handleSubmit}
+          className="flex flex-col items-center gap-3 w-[240px] max-w-full px-4"
         >
-          {busy ? "connecting..." : "connect"}
-        </Button>
-
-        {error && (
-          <div className="text-center animate-shake">
-            <p className="text-xs text-destructive">{error}</p>
-            {details && (
-              <>
-                <Button
-                  variant="link"
-                  size="xs"
-                  onClick={() => setShowDetails(!showDetails)}
-                >
-                  {showDetails ? "hide details" : "show details"}
-                </Button>
-                {showDetails && (
-                  <p className="text-xs text-muted-foreground mt-1 break-all">
-                    {details}
-                  </p>
-                )}
-              </>
-            )}
+          <div className="flex flex-col items-center gap-1 text-center">
+            <h2 className="text-base font-semibold">connect</h2>
+            <FieldDescription>
+              connect to a remote vesta server.
+            </FieldDescription>
           </div>
-        )}
+
+          <FieldGroup className="gap-3">
+            <Field>
+              <FieldLabel htmlFor="url" className="sr-only">Host</FieldLabel>
+              <Input
+                id="url"
+                name="url"
+                placeholder="host"
+                autoComplete="url"
+                value={host}
+                onChange={(e) => setHost(e.target.value)}
+                className="text-center text-sm"
+              />
+            </Field>
+
+            <Field>
+              <FieldLabel htmlFor="key" className="sr-only">Key</FieldLabel>
+              <Input
+                id="key"
+                name="password"
+                type="password"
+                placeholder="key"
+                autoComplete="current-password"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                className="text-center text-sm"
+              />
+            </Field>
+          </FieldGroup>
+
+          <Button
+            type="submit"
+            disabled={!host.trim() || !apiKey.trim() || busy}
+            className="w-full"
+          >
+            {busy ? "connecting..." : "connect"}
+          </Button>
+
+          <AnimatePresence>
+            {error && (
+              <motion.div {...fadeSlide} className="flex flex-col items-center gap-1 text-center">
+                <p className="text-xs text-destructive">{error}</p>
+                {details && (
+                  <>
+                    <Button
+                      type="button"
+                      variant="link"
+                      size="sm"
+                      onClick={() => setShowDetails(!showDetails)}
+                    >
+                      {showDetails ? "hide details" : "show details"}
+                    </Button>
+                    {showDetails && (
+                      <p className="text-xs text-muted-foreground break-all">
+                        {details}
+                      </p>
+                    )}
+                  </>
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </form>
       </div>
     </div>
   );

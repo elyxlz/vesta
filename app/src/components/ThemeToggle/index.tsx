@@ -33,11 +33,7 @@ export function ThemeToggle() {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          onClick={next}
-        >
+        <Button variant="ghost" size="icon" onClick={next}>
           {icon}
         </Button>
       </TooltipTrigger>

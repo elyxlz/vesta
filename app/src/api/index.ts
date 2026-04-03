@@ -11,6 +11,7 @@ export {
   backupAgent,
   restoreAgent,
   waitForReady,
+  waitForStopped,
 } from "./agents";
 export { authenticate, submitAuthCode, type AuthStartResult } from "./auth";
 export { streamLogs, stopLogs } from "./logs";

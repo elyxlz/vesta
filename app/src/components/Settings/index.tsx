@@ -1,0 +1,110 @@
+import { useState } from "react";
+import { Settings as SettingsIcon, Sun, Moon, Monitor, LogOut } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { Button } from "@/components/ui/button";
+import { Field, FieldContent, FieldDescription, FieldLabel } from "@/components/ui/field";
+import { Separator } from "@/components/ui/separator";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { useTheme, type Theme } from "@/stores/use-theme";
+import { useAuth } from "@/providers/AuthProvider";
+import { getConnection } from "@/lib/connection";
+
+export function Settings() {
+  const [open, setOpen] = useState(false);
+  const theme = useTheme((s) => s.theme);
+  const setTheme = useTheme((s) => s.setTheme);
+  const { disconnect } = useAuth();
+
+  const hostname = (() => {
+    const conn = getConnection();
+    if (!conn) return "";
+    try {
+      return new URL(conn.url).hostname;
+    } catch {
+      return conn.url;
+    }
+  })();
+
+  return (
+    <>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => setOpen(true)}
+          >
+            <SettingsIcon />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>settings</TooltipContent>
+      </Tooltip>
+
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Settings</DialogTitle>
+            <DialogDescription className="sr-only">
+              Application settings
+            </DialogDescription>
+          </DialogHeader>
+
+          <Field orientation="horizontal">
+            <FieldLabel>Theme</FieldLabel>
+            <ToggleGroup
+              type="single"
+              value={theme}
+              onValueChange={(value) => {
+                if (value) setTheme(value as Theme);
+              }}
+              variant="outline"
+              spacing={2}
+            >
+              <ToggleGroupItem value="system">
+                <Monitor />
+                System
+              </ToggleGroupItem>
+              <ToggleGroupItem value="light">
+                <Sun />
+                Light
+              </ToggleGroupItem>
+              <ToggleGroupItem value="dark">
+                <Moon />
+                Dark
+              </ToggleGroupItem>
+            </ToggleGroup>
+          </Field>
+
+          <Separator />
+
+          <Field orientation="horizontal">
+            <FieldDescription className="flex-1">
+              Connected to <span className="font-medium text-foreground">{hostname}</span>
+            </FieldDescription>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setOpen(false);
+                disconnect();
+              }}
+            >
+              <LogOut data-icon="inline-start" />
+              Disconnect
+            </Button>
+          </Field>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}

@@ -1,56 +1,52 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useState } from "react";
+import { Copy, Check } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ProgressBar } from "@/components/ProgressBar";
-import { authenticate, submitAuthCode } from "@/api";
-import { isTauri } from "@/lib/env";
+import { submitAuthCode } from "@/api";
+import { fadeSlide } from "@/lib/motion";
 
 interface AuthFlowProps {
   agentName: string;
+  authUrl: string;
+  sessionId: string;
   onCancel?: () => void;
   onComplete?: () => void;
 }
 
-type AuthState = "starting" | "waiting" | "submitting" | "error";
+type AuthState = "waiting" | "submitting" | "error";
 
-export function AuthFlow({ agentName, onCancel, onComplete }: AuthFlowProps) {
-  const [authState, setAuthState] = useState<AuthState>("starting");
-  const [authUrl, setAuthUrl] = useState("");
-  const [sessionId, setSessionId] = useState("");
+export function AuthFlow({
+  agentName,
+  authUrl,
+  sessionId,
+  onCancel,
+  onComplete,
+}: AuthFlowProps) {
+  const [authState, setAuthState] = useState<AuthState>("waiting");
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
-  const startedRef = useRef(false);
+  const [copied, setCopied] = useState(false);
 
-  useEffect(() => {
-    if (startedRef.current) return;
-    startedRef.current = true;
+  const copyAuthUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(authUrl);
+    } catch {
+      const ta = document.createElement("textarea");
+      ta.value = authUrl;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
-    const startAuth = async () => {
-      try {
-        const result = await authenticate(agentName);
-        setAuthUrl(result.auth_url);
-        setSessionId(result.session_id);
-        setAuthState("waiting");
-
-        if (isTauri) {
-          try {
-            const { openUrl } = await import("@tauri-apps/plugin-opener");
-            await openUrl(result.auth_url);
-          } catch {
-            window.open(result.auth_url, "_blank");
-          }
-        } else {
-          window.open(result.auth_url, "_blank");
-        }
-      } catch (e: unknown) {
-        setError((e as { message?: string })?.message || "authentication failed");
-        setAuthState("error");
-      }
-    };
-    startAuth();
-  }, [agentName]);
-
-  const handleSubmit = useCallback(async () => {
+  const handleSubmit = async () => {
     if (!code.trim() || authState === "submitting") return;
     setAuthState("submitting");
     setError("");
@@ -63,76 +59,83 @@ export function AuthFlow({ agentName, onCancel, onComplete }: AuthFlowProps) {
       setAuthState("error");
       setCode("");
     }
-  }, [code, authState, agentName, sessionId, onComplete]);
+  };
 
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === "Enter") handleSubmit();
-    },
-    [handleSubmit],
-  );
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") handleSubmit();
+  };
 
-  if (authState === "starting") {
+  const content = (() => {
+    if (authState === "submitting") {
+      return (
+        <div className="flex flex-col items-center gap-3 w-full">
+          <p className="text-sm text-muted-foreground">verifying code...</p>
+          <ProgressBar message="verifying..." />
+        </div>
+      );
+    }
+
     return (
-      <div className="flex flex-col items-center gap-3 w-full animate-fade-slide-in">
-        <p className="text-sm text-muted-foreground">starting authentication...</p>
-        <ProgressBar message="waiting..." />
+      <div className="flex flex-col items-center gap-3 w-full max-w-[260px]">
+        {authUrl && (
+          <div className="flex items-center gap-1.5 max-w-full">
+            <a
+              href={authUrl}
+              target="_blank"
+              rel="noopener"
+              className="text-xs text-muted-foreground hover:text-foreground truncate"
+            >
+              {authUrl.length > 50 ? `${authUrl.slice(0, 50)}...` : authUrl}
+            </a>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              onClick={copyAuthUrl}
+            >
+              {copied ? <Check /> : <Copy />}
+            </Button>
+          </div>
+        )}
+        <p className="text-xs text-muted-foreground text-center">
+          paste the code from the browser below
+        </p>
+        <Input
+          placeholder="paste code here"
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+          onKeyDown={handleKeyDown}
+          autoFocus
+          className="text-center text-sm"
+        />
+        <Button
+          onClick={handleSubmit}
+          disabled={!code.trim()}
+          size="sm"
+          className="w-full"
+        >
+          submit
+        </Button>
+        {error && (
+          <p className="text-xs text-destructive">{error}</p>
+        )}
+        {onCancel && (
+          <Button
+            variant="link"
+            onClick={onCancel}
+            className="h-auto px-0 py-0 text-xs font-normal text-muted-foreground underline underline-offset-4 hover:bg-transparent hover:text-foreground"
+          >
+            cancel
+          </Button>
+        )}
       </div>
     );
-  }
-
-  if (authState === "submitting") {
-    return (
-      <div className="flex flex-col items-center gap-3 w-full animate-fade-slide-in">
-        <p className="text-sm text-muted-foreground">verifying code...</p>
-        <ProgressBar message="verifying..." />
-      </div>
-    );
-  }
+  })();
 
   return (
-    <div className="flex flex-col items-center gap-3 w-full max-w-[260px] animate-fade-slide-in">
-      {authUrl && (
-        <a
-          href={authUrl}
-          target="_blank"
-          rel="noopener"
-          className="text-xs text-muted-foreground hover:text-foreground truncate max-w-full"
-        >
-          {authUrl.length > 50 ? `${authUrl.slice(0, 50)}...` : authUrl}
-        </a>
-      )}
-      <p className="text-xs text-muted-foreground text-center">
-        paste the code from the browser below
-      </p>
-      <Input
-        placeholder="paste code here"
-        value={code}
-        onChange={(e) => setCode(e.target.value)}
-        onKeyDown={handleKeyDown}
-        autoFocus
-        className="text-center text-sm"
-      />
-      <Button
-        onClick={handleSubmit}
-        disabled={!code.trim()}
-        size="sm"
-        className="w-full"
-      >
-        submit
-      </Button>
-      {error && (
-        <p className="text-xs text-destructive animate-shake">{error}</p>
-      )}
-      {onCancel && (
-        <Button
-          variant="link"
-          size="xs"
-          onClick={onCancel}
-        >
-          cancel
-        </Button>
-      )}
-    </div>
+    <AnimatePresence mode="wait">
+      <motion.div key={authState} {...fadeSlide}>
+        {content}
+      </motion.div>
+    </AnimatePresence>
   );
 }

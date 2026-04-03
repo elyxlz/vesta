@@ -7,7 +7,14 @@ const host = process.env.TAURI_DEV_HOST;
 const vestad = process.env.VITE_VESTAD_URL || "https://localhost:7860";
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [
+    react({
+      babel: {
+        plugins: [["babel-plugin-react-compiler"]],
+      },
+    }),
+    tailwindcss(),
+  ],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

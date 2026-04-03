@@ -88,3 +88,15 @@ export async function waitForReady(
     `/agents/${encodeURIComponent(name)}/wait-ready?timeout=${t}`,
   );
 }
+
+export async function waitForStopped(
+  name: string,
+  timeout = 30,
+): Promise<void> {
+  const deadline = Date.now() + timeout * 1000;
+  while (Date.now() < deadline) {
+    const info: AgentInfo = await agentStatus(name);
+    if (info.status === "stopped") return;
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+}

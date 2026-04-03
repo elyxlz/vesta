@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
+import { AnimatePresence, motion } from "motion/react";
 import { Button } from "@/components/ui/button";
 import { isTauri } from "@/lib/env";
 import { checkAndInstallUpdate, runInstallScript } from "@/api";
@@ -18,7 +19,7 @@ export function UpdateBar() {
     });
   }, []);
 
-  const handleInstall = useCallback(async () => {
+  const handleInstall = async () => {
     if (!update || busy) return;
     setBusy(true);
     try {
@@ -28,32 +29,44 @@ export function UpdateBar() {
     } finally {
       setBusy(false);
     }
-  }, [update, busy]);
+  };
 
-  if (!update || dismissed) return null;
+  const show = !!update && !dismissed;
 
   return (
-    <div className="flex items-center justify-center gap-2 py-1.5 px-3 text-xs text-muted-foreground animate-fade-slide-up">
-      <span>
-        v{update.version} {update.installing ? "installed — restart to apply" : "available —"}
-      </span>
-      {!update.installing && (
-        <Button
-          variant="link"
-          size="xs"
-          onClick={handleInstall}
-          disabled={busy}
+    <AnimatePresence>
+      {show && (
+        <motion.div
+          initial={{ height: 0, opacity: 0 }}
+          animate={{ height: "auto", opacity: 1 }}
+          exit={{ height: 0, opacity: 0 }}
+          transition={{ duration: 0.2 }}
+          className="overflow-hidden"
         >
-          {busy ? "installing..." : "install"}
-        </Button>
+          <div className="flex items-center justify-center gap-2 py-1.5 px-3 text-xs text-muted-foreground">
+            <span>
+              v{update!.version} {update!.installing ? "installed — restart to apply" : "available —"}
+            </span>
+            {!update!.installing && (
+              <Button
+                variant="link"
+                size="sm"
+                onClick={handleInstall}
+                disabled={busy}
+              >
+                {busy ? "installing..." : "install"}
+              </Button>
+            )}
+            <Button
+              variant="link"
+              size="sm"
+              onClick={() => setDismissed(true)}
+            >
+              dismiss
+            </Button>
+          </div>
+        </motion.div>
       )}
-      <Button
-        variant="link"
-        size="xs"
-        onClick={() => setDismissed(true)}
-      >
-        dismiss
-      </Button>
-    </div>
+    </AnimatePresence>
   );
 }

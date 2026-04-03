@@ -1,6 +1,11 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ArrowLeft } from "lucide-react";
-import { useNavigation } from "@/stores/use-navigation";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { X } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useAutoScroll } from "@/hooks/use-auto-scroll";
 import { streamLogs, stopLogs } from "@/api";
 import { stripAnsi } from "@/lib/ansi";
@@ -10,10 +15,12 @@ const MAX_LINES = 5000;
 const RECONNECT_BASE = 1000;
 const RECONNECT_MAX = 30000;
 
-export function Console() {
-  const selectedAgent = useNavigation((s) => s.selectedAgent);
-  const navigateToAgent = useNavigation((s) => s.navigateToAgent);
-  const name = selectedAgent ?? "";
+interface ConsoleProps {
+  name: string;
+  onClose: () => void;
+}
+
+export function Console({ name, onClose }: ConsoleProps) {
 
   const [lines, setLines] = useState<string[]>([]);
   const [ended, setEnded] = useState(false);
@@ -23,7 +30,7 @@ export function Console() {
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeRef = useRef(true);
 
-  const startStream = useCallback(() => {
+  const startStream = () => {
     if (!name || !activeRef.current) return;
     setEnded(false);
 
@@ -65,7 +72,7 @@ export function Console() {
     }).then(() => {
       reconnectDelayRef.current = RECONNECT_BASE;
     });
-  }, [name]);
+  };
 
   useEffect(() => {
     activeRef.current = true;
@@ -81,34 +88,34 @@ export function Console() {
     scroll(scrollRef.current);
   }, [lines, scroll]);
 
-  const handleScroll = useCallback(() => {
+  const handleScroll = () => {
     check(scrollRef.current);
-  }, [check]);
-
-  const handleBack = useCallback(() => {
-    navigateToAgent(name);
-  }, [navigateToAgent, name]);
+  };
 
   useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
-      if (e.key === "Escape") navigateToAgent(name);
+      if (e.key === "Escape") onClose();
     };
     window.addEventListener("keydown", handleEsc);
     return () => window.removeEventListener("keydown", handleEsc);
-  }, [navigateToAgent, name]);
+  }, [onClose]);
 
   return (
-    <div className="dark dark-overlay absolute inset-0 flex flex-col bg-[#1a1a1a] text-[#e8e8e8] z-10 animate-view-in">
-      <div className="flex items-center px-3 h-9 shrink-0 border-b border-white/5">
-        <button
-          onClick={handleBack}
-          className="flex items-center gap-1 text-sm text-[#888] hover:text-white transition-colors"
-        >
-          <ArrowLeft size={14} />
-          back
-        </button>
-        <span className="text-sm font-medium ml-auto mr-auto">{name}</span>
-        <div className="w-[40px]" />
+    <div className="flex flex-col h-full">
+      <div className="flex items-center justify-between px-3 h-9 shrink-0 border-b border-white/5">
+        <span className="text-sm font-medium">{name}</span>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              onClick={onClose}
+            >
+              <X />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>close</TooltipContent>
+        </Tooltip>
       </div>
 
       <div
@@ -119,9 +126,9 @@ export function Console() {
         {lines.length === 0 && !ended && (
           <div className="flex flex-col items-center justify-center h-full gap-2">
             <div className="flex items-center gap-1">
-              <div className="w-[5px] h-[5px] rounded-full bg-white/30 animate-dot-pulse-1" />
-              <div className="w-[5px] h-[5px] rounded-full bg-white/30 animate-dot-pulse-2" />
-              <div className="w-[5px] h-[5px] rounded-full bg-white/30 animate-dot-pulse-3" />
+              <div className="size-[5px] rounded-full bg-white/30 opacity-60" />
+              <div className="size-[5px] rounded-full bg-white/30 opacity-40" />
+              <div className="size-[5px] rounded-full bg-white/30 opacity-20" />
             </div>
             <span className="text-xs text-[#666]">streaming logs...</span>
           </div>

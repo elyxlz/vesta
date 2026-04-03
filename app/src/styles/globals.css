@@ -3,6 +3,7 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
+  --update-bar-height: 0px;
   --background: oklch(1.0000 0 0);
   --foreground: oklch(0 0 0);
   --card: oklch(1.0000 0 0);
@@ -181,6 +182,11 @@
   --tracking-widest: calc(var(--tracking-normal) + 0.1em);
 }
 
+@keyframes progress-indeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -207,169 +213,4 @@
     display: flex;
     flex-direction: column;
   }
-}
-
-/* ── Orb animations ── */
-@keyframes float {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-6px); }
-}
-
-@keyframes glow-pulse {
-  0%, 100% { opacity: 0.5; transform: scale(1); }
-  50% { opacity: 0.8; transform: scale(1.06); }
-}
-
-@keyframes orb-breathe {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.03); }
-}
-
-@keyframes glow-swell {
-  0%, 100% { opacity: 0.4; transform: scale(0.96); }
-  50% { opacity: 0.9; transform: scale(1.08); }
-}
-
-@keyframes orb-wind-down {
-  from { transform: scale(1); }
-  to { transform: scale(0.92); }
-}
-
-@keyframes orb-wake-up {
-  from { transform: scale(0.92); }
-  60% { transform: scale(1.03); }
-  to { transform: scale(1); }
-}
-
-@keyframes shrink-away {
-  from { transform: scale(1); opacity: 1; }
-  to { transform: scale(0.7); opacity: 0.3; }
-}
-
-@keyframes fade-out {
-  from { opacity: 1; }
-  to { opacity: 0; }
-}
-
-/* ── UI animations ── */
-@keyframes breathe {
-  0%, 100% { opacity: 0.6; }
-  50% { opacity: 1; }
-}
-
-@keyframes view-in {
-  from { opacity: 0; transform: translateY(8px) scale(0.98); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
-}
-
-@keyframes menu-in {
-  from { opacity: 0; transform: scale(0.95) translateY(4px); }
-  to { opacity: 1; transform: scale(1) translateY(0); }
-}
-
-@keyframes fade-slide-in {
-  from { opacity: 0; transform: translateY(12px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-@keyframes fade-slide-up {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-@keyframes pop-in {
-  from { opacity: 0; transform: scale(0.6); }
-  60% { transform: scale(1.1); }
-  to { opacity: 1; transform: scale(1); }
-}
-
-@keyframes shake {
-  0%, 100% { transform: translateX(0); }
-  20% { transform: translateX(-4px); }
-  40% { transform: translateX(4px); }
-  60% { transform: translateX(-3px); }
-  80% { transform: translateX(2px); }
-}
-
-@keyframes dot-pulse {
-  0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
-  40% { opacity: 1; transform: scale(1); }
-}
-
-@keyframes progress-slide {
-  from { transform: translateX(-100%); }
-  to { transform: translateX(200%); }
-}
-
-/* ── Animation utility classes ── */
-.animate-float { animation: float 4s ease-in-out infinite; }
-.animate-float-fast { animation: float 2s ease-in-out infinite; }
-.animate-float-medium { animation: float 3s ease-in-out infinite; }
-.animate-glow-pulse { animation: glow-pulse 3s ease-in-out infinite; }
-.animate-glow-pulse-fast { animation: glow-pulse 1.2s ease-in-out infinite; }
-.animate-orb-breathe { animation: orb-breathe 3s ease-in-out infinite; }
-.animate-orb-breathe-fast { animation: orb-breathe 1.2s ease-in-out infinite; }
-.animate-glow-swell { animation: glow-swell 1.5s ease-in-out infinite; }
-.animate-glow-swell-fast { animation: glow-swell 0.8s ease-in-out infinite; }
-.animate-orb-wind-down { animation: orb-wind-down 0.8s var(--spring) forwards; }
-.animate-orb-wake-up { animation: orb-wake-up 0.8s var(--spring) forwards; }
-.animate-shrink-away { animation: shrink-away 0.6s var(--spring) forwards; }
-.animate-glow-fade { animation: fade-out 0.5s ease forwards; }
-.animate-breathe { animation: breathe 2.5s ease-in-out infinite; }
-.animate-view-in { animation: view-in 0.6s var(--spring); }
-.animate-menu-in { animation: menu-in 0.15s var(--spring); }
-.animate-fade-slide-in { animation: fade-slide-in 0.5s var(--spring); }
-.animate-fade-slide-up { animation: fade-slide-up 0.3s var(--spring); }
-.animate-pop-in { animation: pop-in 0.4s var(--spring-bouncy); }
-.animate-shake { animation: shake 0.3s ease; }
-.animate-progress { animation: progress-slide 1.5s ease-in-out infinite; }
-
-.animate-dot-pulse { animation: dot-pulse 1.4s ease-in-out infinite; }
-.animate-dot-pulse-1 { animation: dot-pulse 1.4s ease-in-out infinite; }
-.animate-dot-pulse-2 { animation: dot-pulse 1.4s ease-in-out infinite 0.2s; }
-.animate-dot-pulse-3 { animation: dot-pulse 1.4s ease-in-out infinite 0.4s; }
-
-@media (prefers-reduced-motion: reduce) {
-  .animate-float,
-  .animate-float-fast,
-  .animate-float-medium,
-  .animate-glow-pulse,
-  .animate-glow-pulse-fast,
-  .animate-orb-breathe,
-  .animate-orb-breathe-fast,
-  .animate-glow-swell,
-  .animate-glow-swell-fast,
-  .animate-breathe,
-  .animate-dot-pulse,
-  .animate-dot-pulse-1,
-  .animate-dot-pulse-2,
-  .animate-dot-pulse-3 {
-    animation: none !important;
-  }
-
-  .animate-orb-wind-down,
-  .animate-orb-wake-up,
-  .animate-shrink-away,
-  .animate-glow-fade,
-  .animate-view-in,
-  .animate-menu-in,
-  .animate-fade-slide-in,
-  .animate-fade-slide-up,
-  .animate-pop-in,
-  .animate-shake,
-  .animate-progress {
-    animation-duration: 0.01ms !important;
-  }
-}
-
-/* ── Scrollbar styling for dark overlay views ── */
-.dark-overlay ::-webkit-scrollbar {
-  width: 6px;
-}
-.dark-overlay ::-webkit-scrollbar-track {
-  background: transparent;
-}
-.dark-overlay ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
-  border-radius: 3px;
 }

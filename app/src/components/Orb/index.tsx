@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { cn } from "@/lib/utils";
-import { orbColors, getOrbClasses, type OrbVisualState } from "./styles";
+import { useEffect, useRef } from "react";
+import { motion, useMotionValue, useSpring, useTransform } from "motion/react";
+import { orbColors, type OrbVisualState } from "./styles";
 
 interface OrbProps {
   state: OrbVisualState;
@@ -8,84 +8,193 @@ interface OrbProps {
   enableTracking?: boolean;
 }
 
+const LIVE_STATES = new Set<OrbVisualState>([
+  "alive",
+  "thinking",
+  "booting",
+  "authenticating",
+  "starting",
+  "loading",
+]);
+
 export function Orb({ state, size = 140, enableTracking = false }: OrbProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [offset, setOffset] = useState({ x: 0, y: 0 });
-  const targetRef = useRef({ x: 0, y: 0 });
-  const rafRef = useRef<number>(0);
-
   const colors = orbColors[state];
-  const classes = getOrbClasses(state);
+  const isLive = LIVE_STATES.has(state);
+  const shouldTrack = enableTracking && isLive;
 
-  const lerp = useCallback(() => {
-    setOffset((prev) => {
-      const nx = prev.x + (targetRef.current.x - prev.x) * 0.015;
-      const ny = prev.y + (targetRef.current.y - prev.y) * 0.015;
-      if (Math.abs(nx - prev.x) < 0.01 && Math.abs(ny - prev.y) < 0.01) {
-        return prev;
-      }
-      return { x: nx, y: ny };
-    });
-    rafRef.current = requestAnimationFrame(lerp);
-  }, []);
+  const mouseX = useMotionValue(0);
+  const mouseY = useMotionValue(0);
+  const springX = useSpring(mouseX, { stiffness: 120, damping: 20 });
+  const springY = useSpring(mouseY, { stiffness: 120, damping: 20 });
+
+  const maxOffset = size * 0.06;
+  const trackX = useTransform(springX, [-1, 1], [-maxOffset, maxOffset]);
+  const trackY = useTransform(springY, [-1, 1], [-maxOffset, maxOffset]);
+
+  const hlBaseLeft = size * 0.18;
+  const hlBaseTop = size * 0.12;
+  const hlShift = size * 0.06;
+  const highlightX = useTransform(
+    springX,
+    [-1, 1],
+    [hlBaseLeft - hlShift, hlBaseLeft + hlShift],
+  );
+  const highlightY = useTransform(
+    springY,
+    [-1, 1],
+    [hlBaseTop - hlShift, hlBaseTop + hlShift],
+  );
 
   useEffect(() => {
-    if (!enableTracking) return;
-    rafRef.current = requestAnimationFrame(lerp);
-    return () => cancelAnimationFrame(rafRef.current);
-  }, [enableTracking, lerp]);
+    if (!shouldTrack) {
+      mouseX.set(0);
+      mouseY.set(0);
+      return;
+    }
 
-  useEffect(() => {
-    if (!enableTracking) return;
-
-    const handleMove = (e: MouseEvent) => {
+    const onMove = (e: MouseEvent) => {
       const el = containerRef.current;
       if (!el) return;
       const rect = el.getBoundingClientRect();
       const cx = rect.left + rect.width / 2;
       const cy = rect.top + rect.height / 2;
-      const range = 14;
-      targetRef.current = {
-        x: ((e.clientX - cx) / (window.innerWidth / 2)) * range,
-        y: ((e.clientY - cy) / (window.innerHeight / 2)) * range,
-      };
+      mouseX.set(
+        Math.max(
+          -1,
+          Math.min(1, (e.clientX - cx) / (window.innerWidth * 0.4)),
+        ),
+      );
+      mouseY.set(
+        Math.max(
+          -1,
+          Math.min(1, (e.clientY - cy) / (window.innerHeight * 0.4)),
+        ),
+      );
     };
 
-    window.addEventListener("mousemove", handleMove);
-    return () => window.removeEventListener("mousemove", handleMove);
-  }, [enableTracking]);
+    window.addEventListener("mousemove", onMove);
+    return () => window.removeEventListener("mousemove", onMove);
+  }, [shouldTrack, mouseX, mouseY]);
 
-  const gradient = `radial-gradient(circle at 35% 30%, ${colors[0]}, ${colors[1]} 50%, ${colors[2]})`;
-  const glowColor = `${colors[1]}80`;
+  const floatY = isLive
+    ? state === "thinking"
+      ? [0, -8, 0]
+      : [0, -6, 0]
+    : 0;
+  const floatDuration = state === "thinking" ? 3 : 4;
+
+  const glowOpacity =
+    state === "thinking" ? [0.3, 0.55, 0.3] : isLive ? 0.4 : 0.08;
+  const glowScale =
+    state === "thinking" ? [1, 1.08, 1] : isLive ? 1 : 0.8;
+  const orbScale = state === "thinking" ? [1, 1.03, 1] : 1;
+
+  const insetD = Math.round(size * 0.15);
+  const blurD = Math.round(size * 0.3);
+  const insetL = Math.round(size * 0.08);
+  const blurL = Math.round(size * 0.25);
+  const glowPad = Math.round(size * 0.25);
+  const glowBlur = Math.round(size * 0.2);
+  const hlW = Math.round(size * 0.35);
+  const hlH = Math.round(size * 0.28);
+  const hlBlur = Math.max(1, Math.round(size * 0.02));
+
+  const colorTransition = { duration: 1.5, ease: "easeInOut" as const };
+  const pulseTransition = {
+    duration: 2.5,
+    repeat: Infinity,
+    ease: "easeInOut" as const,
+  };
 
   return (
     <div
       ref={containerRef}
-      className={cn("relative", classes.float)}
-      style={{ width: size, height: size }}
+      style={{ width: size, height: size, position: "relative" }}
     >
-      {/* Glow */}
-      <div
-        className={cn(
-          "absolute inset-[-15%] rounded-full blur-xl opacity-50",
-          classes.glow,
-        )}
-        style={{ background: glowColor }}
-      />
-      {/* Body */}
-      <div
-        className={cn(
-          "absolute inset-0 rounded-full shadow-lg",
-          classes.breathe,
-          classes.body,
-        )}
-        style={{
-          background: gradient,
-          transform: enableTracking
-            ? `translate(${offset.x}px, ${offset.y}px)`
-            : undefined,
-        }}
-      />
+      <motion.div
+        style={{ x: trackX, y: trackY, position: "absolute", inset: 0 }}
+      >
+        <motion.div
+          initial={false}
+          animate={{ y: floatY }}
+          transition={{
+            y: isLive
+              ? {
+                duration: floatDuration,
+                repeat: Infinity,
+                ease: "easeInOut",
+              }
+              : { duration: 1.2, ease: "easeOut" },
+          }}
+          style={{ position: "relative", width: "100%", height: "100%" }}
+        >
+          <motion.div
+            initial={false}
+            animate={{
+              opacity: glowOpacity,
+              scale: glowScale,
+              backgroundColor: colors[1],
+            }}
+            transition={{
+              opacity:
+                state === "thinking" ? pulseTransition : colorTransition,
+              scale:
+                state === "thinking" ? pulseTransition : colorTransition,
+              backgroundColor: colorTransition,
+            }}
+            style={{
+              position: "absolute",
+              top: -glowPad,
+              left: -glowPad,
+              right: -glowPad,
+              bottom: -glowPad,
+              borderRadius: "50%",
+              filter: `blur(${glowBlur}px)`,
+              pointerEvents: "none",
+            }}
+          />
+
+          <motion.div
+            initial={false}
+            animate={{
+              backgroundColor: colors[1],
+              boxShadow: `inset ${-insetD}px ${-insetD}px ${blurD}px ${colors[2]}, inset ${insetL}px ${insetL}px ${blurL}px ${colors[0]}`,
+              scale: orbScale,
+            }}
+            transition={{
+              backgroundColor: colorTransition,
+              boxShadow: colorTransition,
+              scale:
+                state === "thinking"
+                  ? pulseTransition
+                  : { duration: 0.8, ease: "easeOut" },
+            }}
+            style={{
+              width: size,
+              height: size,
+              borderRadius: "50%",
+              position: "relative",
+              overflow: "hidden",
+            }}
+          >
+            <motion.div
+              style={{
+                position: "absolute",
+                left: highlightX,
+                top: highlightY,
+                width: hlW,
+                height: hlH,
+                borderRadius: "50%",
+                background:
+                  "radial-gradient(ellipse at center, rgba(255,255,255,0.3), transparent 70%)",
+                filter: `blur(${hlBlur}px)`,
+                pointerEvents: "none",
+              }}
+            />
+          </motion.div>
+        </motion.div>
+      </motion.div>
     </div>
   );
 }

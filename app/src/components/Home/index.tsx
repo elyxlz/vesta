@@ -1,40 +1,26 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Plus } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { motion } from "motion/react";
 import { AgentCard } from "@/components/AgentCard";
-import { Button } from "@/components/ui/button";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import { listAgents } from "@/api";
 import { wsUrl } from "@/lib/connection";
+import { staggerContainer, staggerItem } from "@/lib/motion";
 import type { AgentActivityState } from "@/lib/types";
-import { useAppStore } from "@/stores/use-app-store";
-import { useNavigation } from "@/stores/use-navigation";
+import { useAgents } from "@/providers/AgentsProvider";
+import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 
 export function Home() {
-  const agents = useAppStore((s) => s.agents);
-  const setAgents = useAppStore((s) => s.setAgents);
-  const version = useAppStore((s) => s.version);
-  const navigateToCreate = useNavigation((s) => s.navigateToCreate);
+  const { agents, agentsLoaded, refreshAgents, setAgents } = useAgents();
+  const navigate = useNavigate();
 
   const [activityStates, setActivityStates] = useState<
     Record<string, AgentActivityState>
   >({});
-  const [fetched, setFetched] = useState(false);
   const wsRefs = useRef<Map<string, WebSocket>>(new Map());
 
-  const fetchAgents = useCallback(async () => {
-    try {
-      const list = await listAgents();
-      setAgents(list);
-      setFetched(true);
-    } catch {
-      // ignore polling errors
-    }
-  }, [setAgents]);
+  const fetchAgents = async () => {
+    const list = await refreshAgents();
+    setAgents(list);
+  };
 
   useEffect(() => {
     fetchAgents();
@@ -43,10 +29,10 @@ export function Home() {
   }, [fetchAgents]);
 
   useEffect(() => {
-    if (fetched && agents.length === 0) {
-      navigateToCreate();
+    if (agentsLoaded && agents.length === 0) {
+      navigate("/new");
     }
-  }, [fetched, agents, navigateToCreate]);
+  }, [agentsLoaded, agents, navigate]);
 
   useEffect(() => {
     const aliveNames = new Set(
@@ -94,49 +80,34 @@ export function Home() {
     };
   }, [agents]);
 
-  if (!fetched || agents.length === 0) return null;
+  if (!agentsLoaded || agents.length === 0) return null;
 
   const gridCols =
     agents.length === 1
-      ? "grid-cols-1 max-w-[180px]"
+      ? "grid-cols-1 max-w-[300px]"
       : agents.length === 2
-        ? "grid-cols-2 max-w-[320px]"
+        ? "grid-cols-2 max-w-[520px]"
         : "grid-cols-3";
 
   return (
-    <div className="flex flex-col h-full animate-view-in">
-      <div className="flex items-center justify-end px-4 pt-1 pb-1">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={navigateToCreate}
-            >
-              <Plus size={16} />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>new agent</TooltipContent>
-        </Tooltip>
-      </div>
-
+    <div className="flex flex-col h-full">
       <div className="flex-1 flex items-center justify-center overflow-y-auto px-4">
-        <div className={cn("grid gap-2 mx-auto", gridCols)}>
+        <motion.div
+          className={cn("grid gap-6 mx-auto", gridCols)}
+          variants={staggerContainer}
+          initial="hidden"
+          animate="show"
+        >
           {agents.map((agent) => (
-            <AgentCard
-              key={agent.name}
-              agent={agent}
-              activityState={activityStates[agent.name] ?? "idle"}
-            />
+            <motion.div key={agent.name} variants={staggerItem}>
+              <AgentCard
+                agent={agent}
+                activityState={activityStates[agent.name] ?? "idle"}
+              />
+            </motion.div>
           ))}
-        </div>
+        </motion.div>
       </div>
-
-      {version && (
-        <div className="text-center pb-3">
-          <span className="text-xs text-muted-foreground">v{version}</span>
-        </div>
-      )}
     </div>
   );
 }

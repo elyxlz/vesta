@@ -1,20 +1,28 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Field, FieldGroup, FieldLabel, FieldDescription } from "@/components/ui/field";
 import { ProgressBar } from "@/components/ProgressBar";
 import { AuthFlow } from "@/components/AuthFlow";
 import {
   createAgent,
+  deleteAgent,
+  startAgent,
   waitForReady,
   restoreAgent,
   checkPlatform,
   setupPlatform,
+  authenticate,
+  type AuthStartResult,
 } from "@/api";
 import { isTauri } from "@/lib/env";
+import { fadeSlide } from "@/lib/motion";
 import { detectPlatform } from "@/lib/platform";
-import { useAppStore } from "@/stores/use-app-store";
-import { useNavigation } from "@/stores/use-navigation";
+import { openExternalUrl } from "@/lib/open-external-url";
+import { useAgents } from "@/providers/AgentsProvider";
+import { useNavigate } from "react-router-dom";
 import { friendlyError } from "./errors";
 
 type Step = "platform" | "name" | "creating" | "auth" | "done";
@@ -38,10 +46,8 @@ function normalizeName(input: string): string {
 }
 
 export function CreateAgent() {
-  const navigateToChat = useNavigation((s) => s.navigateToChat);
-  const navigateHome = useNavigation((s) => s.navigateHome);
-  const agents = useAppStore((s) => s.agents);
-  const version = useAppStore((s) => s.version);
+  const navigate = useNavigate();
+  const { agents, refreshAgents } = useAgents();
 
   const hasAgents = agents.length > 0;
 
@@ -52,6 +58,7 @@ export function CreateAgent() {
   const [showDetails, setShowDetails] = useState(false);
   const [creatingMsg, setCreatingMsg] = useState(0);
   const [createdName, setCreatedName] = useState("");
+  const [authStart, setAuthStart] = useState<AuthStartResult | null>(null);
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -73,30 +80,44 @@ export function CreateAgent() {
     };
   }, [step]);
 
-  const handleCreate = useCallback(async () => {
+  const handleCreate = async () => {
     const normalized = normalizeName(name);
     if (!normalized) return;
 
     setError("");
     setErrorDetails("");
+    setAuthStart(null);
     setCreatedName(normalized);
     setStep("creating");
     setCreatingMsg(0);
 
+    let created = false;
+
     try {
       await createAgent(normalized);
+      created = true;
+      await refreshAgents();
+      await startAgent(normalized);
+      await refreshAgents();
       await waitForReady(normalized, 180);
+      await refreshAgents();
+      const nextAuthStart = await authenticate(normalized);
+      setAuthStart(nextAuthStart);
       setStep("auth");
+      void openExternalUrl(nextAuthStart.auth_url);
     } catch (e: unknown) {
+      if (created) {
+        await refreshAgents();
+      }
       const raw = (e as { message?: string })?.message || "creation failed";
       const friendly = friendlyError(raw);
       setError(friendly);
       if (friendly !== raw) setErrorDetails(raw);
       setStep("name");
     }
-  }, [name]);
+  };
 
-  const handleRestore = useCallback(() => {
+  const handleRestore = () => {
     const input = document.createElement("input");
     input.type = "file";
     input.accept = ".tar.gz,.gz";
@@ -108,73 +129,72 @@ export function CreateAgent() {
       setError("");
       try {
         await restoreAgent(file);
-        navigateHome();
+        navigate("/");
       } catch (e: unknown) {
         setError((e as { message?: string })?.message || "restore failed");
         setStep("name");
       }
     };
     input.click();
-  }, [navigateHome]);
+  };
 
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === "Enter") handleCreate();
-      if (e.key === "Escape" && hasAgents) navigateHome();
-    },
-    [handleCreate, hasAgents, navigateHome],
-  );
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") handleCreate();
+    if (e.key === "Escape" && hasAgents) navigate("/");
+  };
 
   const content = (() => {
     if (step === "platform") {
       return (
         <PlatformSetup
           onReady={() => setStep("name")}
-          onCancel={hasAgents ? navigateHome : undefined}
+          onCancel={hasAgents ? () => navigate("/") : undefined}
         />
       );
     }
 
     if (step === "creating") {
       return (
-        <div className="flex flex-col items-center gap-4 w-full max-w-[260px] px-4 animate-fade-slide-in">
+        <div className="flex flex-col items-center gap-4 w-full max-w-[260px] px-4 ">
           <h2 className="text-base font-semibold">setting up</h2>
           <p className="text-xs text-muted-foreground">
             this may take a couple of mins.
           </p>
           <ProgressBar message={CREATING_MESSAGES[creatingMsg]} />
-          {hasAgents && (
-            <Button
-              variant="link"
-              size="xs"
-              onClick={() => {
-                setStep("name");
-                navigateHome();
-              }}
-            >
-              cancel
-            </Button>
-          )}
         </div>
       );
     }
 
     if (step === "auth") {
       return (
-        <div className="flex flex-col items-center gap-4 w-full max-w-[260px] px-4 animate-fade-slide-in">
-          <AuthFlow
-            agentName={createdName}
-            onCancel={() => setStep("name")}
-            onComplete={() => setStep("done")}
-          />
+        <div className="flex flex-col items-center gap-4 w-full max-w-[260px] px-4 ">
+          {authStart ? (
+            <AuthFlow
+              agentName={createdName}
+              authUrl={authStart.auth_url}
+              sessionId={authStart.session_id}
+              onCancel={async () => {
+                setAuthStart(null);
+                try {
+                  await deleteAgent(createdName);
+                } catch {}
+                await refreshAgents();
+                navigate("/");
+              }}
+              onComplete={() => {
+                setAuthStart(null);
+                setStep("done");
+              }}
+            />
+          ) : null}
         </div>
       );
     }
 
     if (step === "done") {
       return (
-        <div className="flex flex-col items-center gap-4 w-full max-w-[260px] px-4 animate-fade-slide-in">
-          <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center animate-pop-in">
+        <div className="flex flex-col items-center gap-4 w-full max-w-[260px] px-4 ">
+          <div className="size-10 rounded-full bg-primary/20 flex items-center justify-center">
             <Check size={20} className="text-primary" />
           </div>
           <h2 className="text-base font-semibold">
@@ -182,9 +202,8 @@ export function CreateAgent() {
           </h2>
           <p className="text-xs text-muted-foreground">say hi.</p>
           <Button
-            size="sm"
             className="w-full"
-            onClick={() => navigateToChat(createdName)}
+            onClick={() => navigate(`/agent/${createdName}`, { state: { panel: "chat" } })}
           >
             continue
           </Button>
@@ -193,27 +212,32 @@ export function CreateAgent() {
     }
 
     return (
-      <div className="flex flex-col items-center gap-4 w-full max-w-[260px] px-4 animate-fade-slide-in">
-        <div className="text-center">
+      <div className="flex flex-col items-center gap-3 w-[240px] max-w-full px-4">
+        <div className="flex flex-col items-center gap-1 text-center">
           <h2 className="text-base font-semibold">new agent</h2>
-          <p className="text-xs text-muted-foreground mt-1">
+          <FieldDescription>
             give it a name to get started.
-          </p>
+          </FieldDescription>
         </div>
 
-        <Input
-          placeholder="name your agent"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          onKeyDown={handleKeyDown}
-          autoFocus
-          className="text-center text-sm"
-        />
+        <FieldGroup className="gap-3">
+          <Field>
+            <FieldLabel htmlFor="agent-name" className="sr-only">Name</FieldLabel>
+            <Input
+              id="agent-name"
+              placeholder="name your agent"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={handleKeyDown}
+              autoFocus
+              className="text-center text-sm"
+            />
+          </Field>
+        </FieldGroup>
 
         <Button
           onClick={handleCreate}
           disabled={!normalizeName(name)}
-          size="sm"
           className="w-full"
         >
           create
@@ -221,36 +245,26 @@ export function CreateAgent() {
 
         <Button
           variant="link"
-          size="xs"
           onClick={handleRestore}
+          className="h-auto px-0 py-0 text-xs font-normal text-muted-foreground underline underline-offset-4 hover:bg-transparent hover:text-foreground"
         >
           restore from backup
         </Button>
 
-        {hasAgents && (
-          <Button
-            variant="link"
-            size="xs"
-            onClick={navigateHome}
-          >
-            cancel
-          </Button>
-        )}
-
         {error && (
-          <div className="text-center animate-shake">
+          <div className="text-center">
             <p className="text-xs text-destructive">{error}</p>
             {errorDetails && (
               <>
                 <Button
                   variant="link"
-                  size="xs"
+                  size="sm"
                   onClick={() => setShowDetails(!showDetails)}
                 >
                   {showDetails ? "hide details" : "show details"}
                 </Button>
                 {showDetails && (
-                  <p className="text-xs text-muted-foreground mt-1 break-all">
+                  <p className="text-xs text-muted-foreground break-all">
                     {errorDetails}
                   </p>
                 )}
@@ -263,15 +277,14 @@ export function CreateAgent() {
   })();
 
   return (
-    <div className="flex flex-col h-full animate-view-in">
+    <div className="flex flex-col h-full ">
       <div className="flex-1 flex items-center justify-center">
-        {content}
+        <AnimatePresence mode="wait">
+          <motion.div key={step} {...fadeSlide}>
+            {content}
+          </motion.div>
+        </AnimatePresence>
       </div>
-      {version && (
-        <div className="text-center pb-3">
-          <span className="text-xs text-muted-foreground">v{version}</span>
-        </div>
-      )}
     </div>
   );
 }
@@ -294,7 +307,7 @@ function PlatformSetup({
   const [error, setError] = useState("");
   const [showDetails, setShowDetails] = useState(false);
 
-  const doCheck = useCallback(async () => {
+  const doCheck = async () => {
     setChecking(true);
     try {
       const s = await checkPlatform();
@@ -308,13 +321,13 @@ function PlatformSetup({
     } finally {
       setChecking(false);
     }
-  }, [onReady]);
+  };
 
   useEffect(() => {
     doCheck();
   }, [doCheck]);
 
-  const handleInstall = useCallback(async () => {
+  const handleInstall = async () => {
     setBusy(true);
     setError("");
     try {
@@ -329,11 +342,11 @@ function PlatformSetup({
     } finally {
       setBusy(false);
     }
-  }, [onReady]);
+  };
 
   if (checking) {
     return (
-      <div className="flex flex-col items-center gap-4 w-full max-w-[260px] px-4 animate-fade-slide-in">
+      <div className="flex flex-col items-center gap-4 w-full max-w-[260px] px-4 ">
         <h2 className="text-base font-semibold">checking system</h2>
         <p className="text-xs text-muted-foreground">
           making sure everything is ready...
@@ -345,7 +358,7 @@ function PlatformSetup({
 
   if (status?.needs_reboot) {
     return (
-      <div className="flex flex-col items-center gap-4 w-full max-w-[260px] px-4 animate-fade-slide-in">
+      <div className="flex flex-col items-center gap-4 w-full max-w-[260px] px-4 ">
         <h2 className="text-base font-semibold">restart required</h2>
         <p className="text-xs text-muted-foreground text-center">
           restart your computer to finish setup, then reopen vesta.
@@ -359,9 +372,9 @@ function PlatformSetup({
 
   if (status?.virtualization_enabled === false) {
     return (
-      <div className="flex flex-col items-center gap-4 w-full max-w-[260px] px-4 animate-fade-slide-in">
+      <div className="flex flex-col items-center gap-4 w-full max-w-[260px] px-4 ">
         <h2 className="text-base font-semibold">enable virtualization</h2>
-        <div className="text-xs text-muted-foreground text-left space-y-1">
+        <div className="text-xs text-muted-foreground text-left flex flex-col gap-1">
           <p>1. Restart your computer</p>
           <p>2. Enter BIOS/UEFI settings</p>
           <p>3. Enable Intel VT-x or AMD-V</p>
@@ -376,7 +389,7 @@ function PlatformSetup({
 
   if (!status?.wsl_installed) {
     return (
-      <div className="flex flex-col items-center gap-4 w-full max-w-[260px] px-4 animate-fade-slide-in">
+      <div className="flex flex-col items-center gap-4 w-full max-w-[260px] px-4 ">
         <h2 className="text-base font-semibold">setting up windows</h2>
         <p className="text-xs text-muted-foreground text-center">
           WSL2 needs to be installed to run vesta agents.
@@ -393,13 +406,13 @@ function PlatformSetup({
             <p className="text-xs text-destructive">{error}</p>
             <Button
               variant="link"
-              size="xs"
+              size="sm"
               onClick={() => setShowDetails(!showDetails)}
             >
               {showDetails ? "hide details" : "show details"}
             </Button>
             {showDetails && (
-              <p className="text-xs text-muted-foreground mt-1 break-all">{error}</p>
+              <p className="text-xs text-muted-foreground break-all">{error}</p>
             )}
           </div>
         )}
@@ -408,14 +421,14 @@ function PlatformSetup({
   }
 
   return (
-    <div className="flex flex-col items-center gap-4 w-full max-w-[260px] px-4 animate-fade-slide-in">
+    <div className="flex flex-col items-center gap-4 w-full max-w-[260px] px-4 ">
       <h2 className="text-base font-semibold">setting up</h2>
       {busy ? (
         <ProgressBar />
       ) : (
         <>
           {error && (
-            <p className="text-xs text-destructive animate-shake">
+            <p className="text-xs text-destructive ">
               {error}
             </p>
           )}
@@ -427,7 +440,7 @@ function PlatformSetup({
       {onCancel && (
         <Button
           variant="link"
-          size="xs"
+          size="sm"
           onClick={onCancel}
         >
           cancel

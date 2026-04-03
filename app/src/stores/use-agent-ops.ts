@@ -76,11 +76,33 @@ export const useAgentOps = create<AgentOpsStore>((set, get) => ({
     store.setOp(name, op);
     try {
       await fn();
+      get().clearOp(name);
     } catch (e: unknown) {
       const msg = (e as { message?: string })?.message || fallback;
-      get().setError(name, msg);
-    } finally {
-      get().clearOp(name);
+      set((s) => ({
+        states: { ...s.states, [name]: { operation: "idle", error: msg } },
+      }));
     }
   },
 }));
+
+export function getOpLabel(op: AgentOperation): string {
+  switch (op) {
+    case "starting":
+      return "starting...";
+    case "stopping":
+      return "stopping...";
+    case "deleting":
+      return "deleting...";
+    case "rebuilding":
+      return "rebuilding...";
+    case "backing-up":
+      return "backing up...";
+    case "restoring":
+      return "restoring...";
+    case "authenticating":
+      return "signing in...";
+    default:
+      return "";
+  }
+}

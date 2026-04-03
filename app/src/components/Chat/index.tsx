@@ -1,32 +1,39 @@
 import {
-  useCallback,
   useEffect,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
-import { ArrowLeft, Wrench } from "lucide-react";
+import { Maximize2, PanelRightClose, SendHorizontal } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { AnimatePresence, motion } from "motion/react";
+import { Button } from "@/components/ui/button";
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import { useNavigation } from "@/stores/use-navigation";
+  Card,
+  CardContent,
+  CardFooter,
+} from "@/components/ui/card";
 import { useAgentWs } from "@/hooks/use-agent-ws";
 import { useAutoScroll } from "@/hooks/use-auto-scroll";
+import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { linkify } from "@/lib/linkify";
 import type { VestaEvent } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-export function Chat() {
-  const selectedAgent = useNavigation((s) => s.selectedAgent);
-  const navigateToAgent = useNavigation((s) => s.navigateToAgent);
-  const name = selectedAgent ?? "";
+interface ChatProps {
+  onCollapse?: () => void;
+  fullscreen?: boolean;
+}
 
+export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
+  const { name, setAgentState } = useSelectedAgent();
+  const navigate = useNavigate();
   const { messages, agentState, connected, send } = useAgentWs(name, true);
 
-  const [showTools, setShowTools] = useState(false);
+  useEffect(() => {
+    setAgentState(agentState);
+  }, [agentState, setAgentState]);
+
   const [input, setInput] = useState("");
   const [wasConnected, setWasConnected] = useState(false);
   const [showReconnect, setShowReconnect] = useState(false);
@@ -55,28 +62,22 @@ export function Chat() {
     };
   }, [connected, wasConnected]);
 
-  const filteredMessages = useMemo(
-    () =>
-      showTools
-        ? messages
-        : messages.filter(
-            (m) =>
-              m.type !== "tool_start" &&
-              m.type !== "tool_end" &&
-              m.type !== "notification",
-          ),
-    [messages, showTools],
+  const filteredMessages = messages.filter(
+    (m) =>
+      m.type !== "tool_start" &&
+      m.type !== "tool_end" &&
+      m.type !== "notification",
   );
 
   useLayoutEffect(() => {
     scroll(scrollRef.current);
   }, [filteredMessages, scroll]);
 
-  const handleScroll = useCallback(() => {
+  const handleScroll = () => {
     check(scrollRef.current);
-  }, [check]);
+  };
 
-  const handleSend = useCallback(() => {
+  const handleSend = () => {
     const text = input.trim();
     if (!text) return;
     if (send(text)) {
@@ -84,149 +85,130 @@ export function Chat() {
       const ta = textareaRef.current;
       if (ta) ta.style.height = "auto";
     }
-  }, [input, send]);
+  };
 
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        handleSend();
-      }
-      if (e.key === "Escape") {
-        if (!input && document.activeElement !== textareaRef.current) {
-          navigateToAgent(name);
-        } else if (!input) {
-          navigateToAgent(name);
-        }
-      }
-    },
-    [handleSend, input, navigateToAgent, name],
-  );
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  };
 
-  useEffect(() => {
-    const handleGlobalEsc = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !input) {
-        navigateToAgent(name);
-      }
-    };
-    window.addEventListener("keydown", handleGlobalEsc);
-    return () => window.removeEventListener("keydown", handleGlobalEsc);
-  }, [input, navigateToAgent, name]);
-
-  const handleInput = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+  const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInput(e.target.value);
     const ta = e.target;
     ta.style.height = "auto";
     ta.style.height = `${Math.min(ta.scrollHeight, 120)}px`;
-  }, []);
-
-  const handleBack = useCallback(() => {
-    navigateToAgent(name);
-  }, [navigateToAgent, name]);
+  };
 
   const isThinking =
     agentState === "thinking" || agentState === "tool_use";
 
-  const statusDot = connected
-    ? isThinking
-      ? "bg-amber-400"
-      : "bg-primary"
-    : "bg-muted-foreground/50";
-  const statusTip = connected
-    ? isThinking
-      ? agentState === "tool_use"
-        ? "using a tool"
-        : "thinking"
-      : "connected"
-    : "disconnected";
-
   return (
-    <div className="dark dark-overlay absolute inset-0 flex flex-col bg-[#1a1a1a] text-[#e8e8e8] z-10 animate-view-in">
-      {/* Top bar */}
-      <div className="flex items-center justify-between px-3 h-9 shrink-0 border-b border-white/5">
-        <button
-          onClick={handleBack}
-          className="flex items-center gap-1 text-sm text-[#888] hover:text-white transition-colors"
-        >
-          <ArrowLeft size={14} />
-          back
-        </button>
-        <span className="text-sm font-medium">{name}</span>
-        <div className="flex items-center gap-2">
-          <Tooltip>
-            <TooltipTrigger>
-              <div className={cn("w-[6px] h-[6px] rounded-full", statusDot)} />
-            </TooltipTrigger>
-            <TooltipContent>{statusTip}</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={() => setShowTools(!showTools)}
-                className={cn(
-                  "p-1 rounded transition-colors",
-                  showTools
-                    ? "text-white bg-white/10"
-                    : "text-[#666] hover:text-white",
-                )}
-              >
-                <Wrench size={13} />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent>
-              {showTools ? "hide tools" : "show tools"}
-            </TooltipContent>
-          </Tooltip>
-        </div>
-      </div>
+    <Card className={cn(
+      "flex flex-col h-full gap-0 py-0 overflow-hidden relative",
+      fullscreen && "border-0 rounded-none shadow-none",
+    )}>
 
-      {showReconnect && (
-        <div className="text-center py-1 bg-amber-500/20 text-amber-300 text-xs">
-          reconnecting...
+      {!fullscreen && (
+        <div className="absolute top-2 right-2 z-10 flex items-center gap-0.5">
+          {onCollapse && (
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              className="text-muted-foreground/60 hover:text-foreground"
+              onClick={onCollapse}
+            >
+              <PanelRightClose />
+            </Button>
+          )}
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            className="text-muted-foreground/60 hover:text-foreground"
+            onClick={() => navigate(`/agent/${name}/chat`)}
+          >
+            <Maximize2 />
+          </Button>
         </div>
       )}
 
-      {/* Messages */}
-      <div
-        ref={scrollRef}
-        onScroll={handleScroll}
-        className="flex-1 overflow-y-auto px-3 py-2 font-mono text-sm leading-[1.6]"
-      >
-        {filteredMessages.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full gap-2">
-            <ThinkingDots />
-            <span className="text-xs text-[#666]">
-              {connected
-                ? `${name} is listening. say something.`
-                : "connecting..."}
-            </span>
-          </div>
+      <AnimatePresence>
+        {showReconnect && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="text-center py-1 bg-amber-500/10 text-amber-600 dark:text-amber-400 text-xs overflow-hidden shrink-0"
+          >
+            reconnecting...
+          </motion.div>
         )}
+      </AnimatePresence>
 
-        {filteredMessages.map((msg, i) => (
-          <MessageLine key={i} event={msg} />
-        ))}
+      <CardContent className="flex-1 overflow-y-auto p-0 px-3 py-2 min-h-0">
+        <div
+          ref={scrollRef}
+          onScroll={handleScroll}
+          className="h-full overflow-y-auto font-mono text-sm leading-relaxed flex flex-col"
+        >
+          {filteredMessages.length === 0 && (
+            <div className="flex flex-col items-center justify-center h-full gap-2">
+              <ThinkingDots />
+              <span className="text-xs text-muted-foreground">
+                {connected
+                  ? `${name} is listening`
+                  : "connecting..."}
+              </span>
+            </div>
+          )}
 
-        {isThinking && filteredMessages.length > 0 && <ThinkingDots />}
-      </div>
+          <div className="mt-auto">
+            {filteredMessages.map((msg, i) => (
+              <MessageLine key={i} event={msg} />
+            ))}
 
-      {/* Input */}
-      <div className="flex items-end gap-2 px-3 py-2 border-t border-white/5">
-        <span className="text-sm font-mono text-[#666] leading-[1.6] shrink-0 pb-[2px]">
-          &gt;
-        </span>
-        <textarea
-          ref={textareaRef}
-          value={input}
-          onChange={handleInput}
-          onKeyDown={handleKeyDown}
-          placeholder={connected ? "send a message..." : "connecting..."}
-          disabled={!connected}
-          rows={1}
-          className="flex-1 bg-transparent text-sm font-mono leading-[1.6] resize-none outline-none placeholder:text-[#444] disabled:opacity-50"
-        />
-      </div>
-    </div>
+            <AnimatePresence>
+              {isThinking && filteredMessages.length > 0 && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.15 }}
+                >
+                  <ThinkingDots />
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        </div>
+      </CardContent>
+
+      <CardFooter className="p-2 px-3 border-t shrink-0">
+        <div className="flex items-end gap-2 w-full">
+          <textarea
+            ref={textareaRef}
+            value={input}
+            onChange={handleInput}
+            onKeyDown={handleKeyDown}
+            placeholder={connected ? "send a message..." : "connecting..."}
+            disabled={!connected}
+            rows={1}
+            className="flex-1 bg-transparent text-sm font-mono leading-relaxed resize-none outline-none placeholder:text-muted-foreground/50 disabled:opacity-50 py-1"
+          />
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            className="shrink-0"
+            disabled={!connected || !input.trim()}
+            onClick={handleSend}
+          >
+            <SendHorizontal className="text-muted-foreground" />
+          </Button>
+        </div>
+      </CardFooter>
+    </Card>
   );
 }
 
@@ -235,38 +217,38 @@ function MessageLine({ event }: { event: VestaEvent }) {
 
   const ts = event.ts
     ? new Date(event.ts).toLocaleTimeString("en-US", {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-      })
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    })
     : "";
 
-  let className = "text-[rgba(140,200,130,0.9)]";
+  let colorClass = "text-primary";
   let content = "";
 
   switch (event.type) {
     case "user":
-      className = "text-white";
+      colorClass = "text-foreground font-medium";
       content = `> ${event.text}`;
       break;
     case "assistant":
-      className = "text-[rgba(140,200,130,0.9)]";
+      colorClass = "text-primary/90";
       content = event.text;
       break;
     case "tool_start":
-      className = "text-white/40 text-xs";
+      colorClass = "text-muted-foreground text-xs";
       content = `[${event.tool}] ${event.input}`;
       break;
     case "tool_end":
-      className = "text-white/40 text-xs";
+      colorClass = "text-muted-foreground text-xs";
       content = `[${event.tool}] done`;
       break;
     case "notification":
-      className = "text-[rgba(200,170,100,0.8)] text-xs";
+      colorClass = "text-amber-600 dark:text-amber-400 text-xs";
       content = `[${event.source}] ${event.summary}`;
       break;
     case "error":
-      className = "text-[rgba(224,112,112,0.9)]";
+      colorClass = "text-destructive";
       content = `error: ${event.text}`;
       break;
     case "status":
@@ -276,9 +258,9 @@ function MessageLine({ event }: { event: VestaEvent }) {
   }
 
   return (
-    <div className={cn("flex gap-2 py-[1px]", className)}>
+    <div className={cn("flex gap-2 py-[1px]", colorClass)}>
       {ts && (
-        <span className="text-xs text-white/20 shrink-0 leading-[1.9] select-none">
+        <span className="text-xs text-muted-foreground/40 shrink-0 leading-[1.9] select-none">
           {ts}
         </span>
       )}
@@ -293,9 +275,9 @@ function MessageLine({ event }: { event: VestaEvent }) {
 function ThinkingDots() {
   return (
     <div className="flex items-center gap-1 py-1">
-      <div className="w-[5px] h-[5px] rounded-full bg-[rgba(140,200,130,0.6)] animate-dot-pulse-1" />
-      <div className="w-[5px] h-[5px] rounded-full bg-[rgba(140,200,130,0.6)] animate-dot-pulse-2" />
-      <div className="w-[5px] h-[5px] rounded-full bg-[rgba(140,200,130,0.6)] animate-dot-pulse-3" />
+      <div className="size-[5px] rounded-full bg-primary/60 opacity-60" />
+      <div className="size-[5px] rounded-full bg-primary/60 opacity-40" />
+      <div className="size-[5px] rounded-full bg-primary/60 opacity-20" />
     </div>
   );
 }
