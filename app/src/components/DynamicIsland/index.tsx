@@ -329,80 +329,80 @@ export function DynamicIsland() {
                                   <MoreVertical />
                                 </Button>
                               </DropdownMenuTrigger>
-                            <DropdownMenuContent
-                              align="center"
-                              side="bottom"
-                              className="min-w-[150px]"
-                            >
-                              {info?.status === "running" && (
-                                <>
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <DropdownMenuItem
-                                        className="text-sm"
-                                        disabled={isBusy}
-                                        onClick={restart}
-                                      >
-                                        restart
-                                      </DropdownMenuItem>
-                                    </TooltipTrigger>
-                                    <TooltipContent side="left">
-                                      restart agent
-                                    </TooltipContent>
-                                  </Tooltip>
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <DropdownMenuItem
-                                        className="text-sm"
-                                        disabled={isBusy}
-                                        onClick={rebuild}
-                                      >
-                                        rebuild
-                                      </DropdownMenuItem>
-                                    </TooltipTrigger>
-                                    <TooltipContent side="left">
-                                      rebuild container from latest image
-                                    </TooltipContent>
-                                  </Tooltip>
-                                </>
-                              )}
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <DropdownMenuItem
-                                    className="text-sm"
-                                    disabled={isBusy}
-                                    onClick={backup}
-                                  >
-                                    backup
-                                  </DropdownMenuItem>
-                                </TooltipTrigger>
-                                <TooltipContent side="left">
-                                  export to file
-                                </TooltipContent>
-                              </Tooltip>
-                              <DropdownMenuItem
-                                className="text-sm"
-                                disabled={isBusy}
-                                onClick={restore}
+                              <DropdownMenuContent
+                                align="center"
+                                side="bottom"
+                                className="min-w-[150px]"
                               >
-                                load backup
-                              </DropdownMenuItem>
-                              <DropdownMenuSeparator />
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <DropdownMenuItem
-                                    className="text-destructive text-sm"
-                                    disabled={isBusy}
-                                    onClick={() => setDeleteDialogOpen(true)}
-                                  >
-                                    delete
-                                  </DropdownMenuItem>
-                                </TooltipTrigger>
-                                <TooltipContent side="left">
-                                  permanently delete
-                                </TooltipContent>
-                              </Tooltip>
-                            </DropdownMenuContent>
+                                {info?.status === "running" && (
+                                  <>
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <DropdownMenuItem
+                                          className="text-sm"
+                                          disabled={isBusy}
+                                          onClick={restart}
+                                        >
+                                          restart
+                                        </DropdownMenuItem>
+                                      </TooltipTrigger>
+                                      <TooltipContent side="left">
+                                        restart agent
+                                      </TooltipContent>
+                                    </Tooltip>
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <DropdownMenuItem
+                                          className="text-sm"
+                                          disabled={isBusy}
+                                          onClick={rebuild}
+                                        >
+                                          rebuild
+                                        </DropdownMenuItem>
+                                      </TooltipTrigger>
+                                      <TooltipContent side="left">
+                                        rebuild container from latest image
+                                      </TooltipContent>
+                                    </Tooltip>
+                                  </>
+                                )}
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <DropdownMenuItem
+                                      className="text-sm"
+                                      disabled={isBusy}
+                                      onClick={backup}
+                                    >
+                                      backup
+                                    </DropdownMenuItem>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="left">
+                                    export to file
+                                  </TooltipContent>
+                                </Tooltip>
+                                <DropdownMenuItem
+                                  className="text-sm"
+                                  disabled={isBusy}
+                                  onClick={restore}
+                                >
+                                  load backup
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <DropdownMenuItem
+                                      className="text-destructive text-sm"
+                                      disabled={isBusy}
+                                      onClick={() => setDeleteDialogOpen(true)}
+                                    >
+                                      delete
+                                    </DropdownMenuItem>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="left">
+                                    permanently delete
+                                  </TooltipContent>
+                                </Tooltip>
+                              </DropdownMenuContent>
                             </DropdownMenu>
                           </ButtonGroup>
                         </motion.div>

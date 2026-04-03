@@ -24,7 +24,7 @@ function RootLayout() {
 
   return (
     <div className="h-full bg-background p-5">
-      <div className="flex flex-col h-full gap-4">
+      <div className="flex flex-col h-full gap-2">
         <div className="shrink-0">
           <Titlebar />
           <Navbar />
@@ -46,7 +46,7 @@ function AgentLayout() {
 
   return (
     <div className="h-full bg-background p-5">
-      <div className="flex flex-col h-full gap-4">
+      <div className="flex flex-col h-full gap-3">
         <div className="shrink-0">
           <Titlebar />
           <Navbar center={<DynamicIsland />} />
