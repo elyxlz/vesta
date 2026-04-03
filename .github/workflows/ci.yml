@@ -453,7 +453,7 @@ jobs:
 
       - name: Install frontend deps
         working-directory: app
-        run: npm ci
+        run: npm install
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
@@ -528,7 +528,7 @@ jobs:
 
       - name: Install frontend deps
         working-directory: app
-        run: npm ci
+        run: npm install
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
