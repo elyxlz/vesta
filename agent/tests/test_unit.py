@@ -15,7 +15,7 @@ from vesta.core.client import _format_tool_call, _parse_agent_input, _tool_summa
 from vesta.core.history import format_results, history_get_range, history_save, history_search, open_history
 from vesta.events import EventBus, SubagentStartEvent, SubagentStopEvent
 from vesta.core.init import get_memory_path
-from vesta.core.loops import format_notification_batch
+from vesta.core.loops import flush_email_buffer
 
 
 def _make_config(tmp_path: Path) -> vm.VestaConfig:
@@ -109,19 +109,33 @@ async def test_subagent_hook_emits_event(verb, event_type, agent_id, agent_type)
     assert received["agent_type"] == agent_type
 
 
-def test_format_notification_batch_single():
-    notif = vm.Notification(timestamp=dt.datetime(2025, 1, 1), source="test", type="message")
-    formatted = format_notification_batch([notif])
-    assert "[NOTIFICATIONS]" not in formatted
+@pytest.mark.anyio
+async def test_flush_email_buffer_empty():
+    """flush_email_buffer should be a no-op when the buffer is empty."""
+    state = vm.State()
+    config = vm.VestaConfig()
+    queue: asyncio.Queue[tuple[str, bool, bool]] = asyncio.Queue()
+    await flush_email_buffer(queue=queue, state=state, config=config)
+    assert queue.empty()
 
 
-def test_format_notification_batch_multiple():
-    notifs = [
-        vm.Notification(timestamp=dt.datetime(2025, 1, 1), source="test", type="message"),
-        vm.Notification(timestamp=dt.datetime(2025, 1, 1, 0, 0, 1), source="test", type="message"),
+@pytest.mark.anyio
+async def test_flush_email_buffer_batches():
+    """flush_email_buffer should batch multiple emails into a single prompt."""
+    state = vm.State()
+    state.email_buffer = [
+        vm.Notification(timestamp=dt.datetime(2025, 1, 1), source="microsoft", type="email"),
+        vm.Notification(timestamp=dt.datetime(2025, 1, 1, 0, 0, 1), source="microsoft", type="email"),
     ]
-    formatted = format_notification_batch(notifs)
-    assert "[NOTIFICATIONS]" in formatted
+    config = vm.VestaConfig()
+    queue: asyncio.Queue[tuple[str, bool, bool]] = asyncio.Queue()
+    await flush_email_buffer(queue=queue, state=state, config=config)
+    assert not queue.empty()
+    prompt, is_user, user_initiated = await queue.get()
+    assert "2 email(s) received" in prompt
+    assert not is_user
+    assert not user_initiated
+    assert len(state.email_buffer) == 0
 
 
 # --- Deployment validation ---
@@ -201,7 +215,7 @@ async def _run_processor_test(
     *,
     message_side_effect,
     pre_state: vm.State | None = None,
-    initial_queue: list[tuple[str, bool]] | None = None,
+    initial_queue: list[tuple[str, bool, bool]] | None = None,
     extra_patches: dict | None = None,
 ):
     """Shared helper for message_processor tests."""
@@ -266,7 +280,7 @@ async def test_message_processor_restarts_on_error(tmp_path):
         raise RuntimeError("Simulated SDK buffer overflow")
 
     state, session_count, messages = await _run_processor_test(
-        tmp_path, message_side_effect=side_effect, initial_queue=[("first message - will fail", True)]
+        tmp_path, message_side_effect=side_effect, initial_queue=[("first message - will fail", True, False)]
     )
     assert state.graceful_shutdown.is_set()
     assert state.restart_reason == "error — Simulated SDK buffer overflow"
@@ -421,7 +435,7 @@ async def test_message_processor_interrupts_on_new_message(tmp_path):
     state.shutdown_event = asyncio.Event()
     queue: asyncio.Queue = asyncio.Queue()
 
-    await queue.put(("slow processing message", True))
+    await queue.put(("slow processing message", True, False))
 
     processed: list[str] = []
     original = slow_side_effect
@@ -436,7 +450,7 @@ async def test_message_processor_interrupts_on_new_message(tmp_path):
 
     async def inject_message_and_shutdown():
         await processing_started.wait()
-        await queue.put(("urgent message", True))
+        await queue.put(("urgent message", True, False))
         await interrupt_seen.wait()
         await asyncio.sleep(0.1)
         assert state.shutdown_event is not None

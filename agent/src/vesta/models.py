@@ -20,11 +20,16 @@ class State:
     shutdown_count: int = 0
     session_id: str | None = None
     restart_reason: str | None = None
+    pending_context: str | None = None
     last_dreamer_run: dt.datetime | None = None
     dreamer_active: bool = False
     interrupt_event: asyncio.Event | None = None
+    interrupt_requested: bool = False
     event_bus: EventBus = dc.field(default_factory=EventBus)
     history: HistoryDB | None = None
+    user_initiated_turn: bool = False
+    subagent_usage: list[dict] = dc.field(default_factory=list)
+    email_buffer: list["Notification"] = dc.field(default_factory=list)
 
 
 class Notification(pyd.BaseModel):

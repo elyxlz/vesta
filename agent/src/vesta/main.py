@@ -21,7 +21,7 @@ from vesta.core.loops import message_processor, monitor_loop, queue_greeting
 SignalHandler = tp.Callable[[int, types.FrameType | None], None]
 
 
-async def input_handler(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State) -> None:
+async def input_handler(queue: asyncio.Queue[tuple[str, bool, bool]], *, state: vm.State) -> None:
     while not state.shutdown_event.is_set():
         try:
             user_msg = await aioconsole.ainput("")
@@ -30,8 +30,7 @@ async def input_handler(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.Sta
             if not user_msg.strip():
                 continue
 
-            logger.user(user_msg.strip())
-            await queue.put((user_msg.strip(), True))
+            await queue.put((user_msg.strip(), True, False))
         except (KeyboardInterrupt, EOFError):
             state.shutdown_event.set()
             break
@@ -71,7 +70,15 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
 
     logger.init(f"{config.agent_name.upper()} started")
 
-    message_queue: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()
+    message_queue: asyncio.Queue[tuple[str, bool, bool]] = asyncio.Queue()
+
+    # Bridge logger -> event bus so webapp log panel mirrors console
+    from vesta.events import LogEvent
+
+    def _log_sink(text: str, category: str) -> None:
+        state.event_bus.emit(LogEvent(type="log", text=text, category=category))
+
+    logger.set_event_sink(_log_sink)
 
     ws_runner = await start_ws_server(state.event_bus, message_queue, state, config)
     logger.init(f"WebSocket server started on port {config.ws_port}")
@@ -82,8 +89,8 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
         asyncio.create_task(monitor_loop(message_queue, state=state, config=config)),
     ]
 
-    greeting_reason = "first_start" if first_start else restart_reason
-    await queue_greeting(message_queue, config=config, reason=greeting_reason)
+    reason = "first_start" if first_start else restart_reason
+    await queue_greeting(message_queue, config=config, reason=reason)
 
     try:
         await state.graceful_shutdown.wait()
@@ -164,7 +171,10 @@ async def async_main() -> None:
     logger.init(f"{config.agent_name} starting")
 
     memory_path = get_memory_path(config)
-    first_start = not memory_path.exists() or "[Unknown - need to ask]" in memory_path.read_text()
+    try:
+        first_start = not memory_path.exists() or "[Unknown - need to ask]" in memory_path.read_text()
+    except (OSError, UnicodeDecodeError):
+        first_start = True
     restart_reason = _read_restart_reason(config)
     initial_state = init_state(config=config)
     initial_state.history = open_history(config.history_db)

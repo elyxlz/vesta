@@ -33,6 +33,7 @@ class ToolEndEvent(_BaseEvent):
 class AssistantEvent(_BaseEvent):
     type: tp.Literal["assistant"]
     text: str
+    user_initiated: bool
 
 
 class UserEvent(_BaseEvent):
@@ -63,6 +64,12 @@ class SubagentStopEvent(_BaseEvent):
     agent_type: str
 
 
+class LogEvent(_BaseEvent):
+    type: tp.Literal["log"]
+    text: str
+    category: str
+
+
 type StreamEvent = (
     StatusEvent
     | ToolStartEvent
@@ -73,6 +80,7 @@ type StreamEvent = (
     | NotificationEvent
     | SubagentStartEvent
     | SubagentStopEvent
+    | LogEvent
 )
 
 
@@ -103,13 +111,17 @@ class EventBus:
 
     def emit(self, event: StreamEvent) -> None:
         event["ts"] = dt.datetime.now(dt.UTC).isoformat()
-        if event["type"] != "status":
+        if event["type"] not in ("status", "log"):
             self.history.append(event)
         for q in self._subscribers:
             try:
                 q.put_nowait(event)
             except asyncio.QueueFull:
-                pass
+                import logging
+
+                logging.getLogger("vesta").warning(
+                    f"EventBus: dropped {event.get('type', '?')} event — subscriber queue full ({len(self._subscribers)} subs)"
+                )
 
     @property
     def state(self) -> AgentState:
@@ -119,6 +131,9 @@ class EventBus:
         if state == self._state:
             return
         self._state = state
+        from vesta import logger
+
+        logger.state(state)
         self.emit(StatusEvent(type="status", state=state))
 
     def clear_history(self) -> None:

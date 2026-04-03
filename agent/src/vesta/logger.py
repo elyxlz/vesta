@@ -73,8 +73,19 @@ def _log(msg: str, *, level: int = logging.INFO) -> None:
         _file_handler.emit(clean_record)
 
 
+_event_sink: tp.Callable[[str, str], None] | None = None
+
+
+def set_event_sink(sink: tp.Callable[[str, str], None]) -> None:
+    """Register a callback to receive (stripped_text, category) for each log line."""
+    global _event_sink
+    _event_sink = sink
+
+
 def _cat(symbol: str, color: str, prefix: str, msg: tp.Any, *, level: int = logging.INFO) -> None:
     _log(f"{symbol} [{color}][{prefix}][/{color}] {msg}", level=level)
+    if _event_sink is not None:
+        _event_sink(f"{symbol} [{prefix}] {msg}", prefix)
 
 
 # Category loggers
@@ -138,16 +149,28 @@ def usage(msg: tp.Any) -> None:
     _cat("$", "green", "USAGE", msg)
 
 
+def context(msg: tp.Any) -> None:
+    _cat("$", "blue", "CONTEXT", msg)
+
+
+def state(msg: tp.Any) -> None:
+    _cat("*", "cyan", "STATE", msg)
+
+
 def debug(msg: tp.Any) -> None:
     _log(f"[dim]{msg}[/dim]", level=logging.DEBUG)
 
 
 def warning(msg: tp.Any) -> None:
     _log(f"[yellow]! {msg}[/yellow]", level=logging.WARNING)
+    if _event_sink is not None:
+        _event_sink(f"! {msg}", "WARNING")
 
 
 def error(msg: tp.Any) -> None:
     _log(f"[red]x {msg}[/red]", level=logging.ERROR)
+    if _event_sink is not None:
+        _event_sink(f"x {msg}", "ERROR")
 
 
 def exception(msg: tp.Any) -> None:

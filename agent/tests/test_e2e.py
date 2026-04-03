@@ -93,7 +93,6 @@ def _make_config(state_dir: Path, **overrides: object) -> vm.VestaConfig:
     defaults: dict[str, object] = {
         "state_dir": state_dir,
         "notification_check_interval": 1,
-        "notification_buffer_delay": 0,
         "proactive_check_interval": 100000,
         "ephemeral": True,
     }
@@ -329,7 +328,7 @@ def test_notification_batching(state_dir):
         assert "first" in content1
         assert "second" in content2
 
-    _run(_run_test_scenario(state_dir, test_fn, notification_buffer_delay=3))
+    _run(_run_test_scenario(state_dir, test_fn))
 
 
 def test_client_created_on_notification(state_dir):
