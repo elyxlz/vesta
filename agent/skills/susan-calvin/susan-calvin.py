@@ -20,16 +20,19 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "chatgpt
 from chatgpt import ask
 
 
-# --- Paths ---
-MEMORY_PATH = pathlib.Path("/root/vesta/MEMORY.md")
-DREAMER_DIR = pathlib.Path("/root/vesta/dreamer")
-HISTORY_DB = pathlib.Path("/root/vesta/data/history.db")
-CORE_DIR = pathlib.Path("/root/vesta/src/vesta")
-SKILLS_DIR = pathlib.Path("/root/vesta/skills")
-PYPROJECT = pathlib.Path("/root/vesta/pyproject.toml")
-LOG_FILE = pathlib.Path("/root/vesta/logs/vesta.log")
+# --- Paths (auto-detect vesta root from skill location) ---
+_SKILL_DIR = pathlib.Path(__file__).resolve().parent
+_VESTA_ROOT = _SKILL_DIR.parent.parent  # skills/<name>/ -> skills/ -> vesta root
+
+MEMORY_PATH = _VESTA_ROOT / "MEMORY.md"
+DREAMER_DIR = _VESTA_ROOT / "dreamer"
+HISTORY_DB = _VESTA_ROOT / "data" / "history.db"
+CORE_DIR = _VESTA_ROOT / "src" / "vesta"
+SKILLS_DIR = _VESTA_ROOT / "skills"
+PYPROJECT = _VESTA_ROOT / "pyproject.toml"
+LOG_FILE = _VESTA_ROOT / "logs" / "vesta.log"
 ENV_FILE = pathlib.Path("/etc/environment")
-CLAUDE_MD = pathlib.Path("/root/vesta/CLAUDE.md")
+CLAUDE_MD = _VESTA_ROOT / "CLAUDE.md"
 
 
 # --- Credential stripping ---
@@ -198,7 +201,7 @@ def load_security_surface() -> str:
     sections.append(f"Listening ports:\n{ports}")
 
     # File permissions on sensitive dirs
-    perms = _run("ls -la /etc/environment /root/.whatsapp/ /root/vesta/data/ 2>/dev/null | head -20")
+    perms = _run(f"ls -la /etc/environment {_VESTA_ROOT / 'data'}/ 2>/dev/null | head -20")
     sections.append(f"Sensitive file permissions:\n{perms}")
 
     # Docker info
@@ -257,7 +260,7 @@ def load_resource_usage() -> str:
     sections.append(f"GPU: {gpu}" if gpu else "GPU: [not available]")
 
     # Container size (vesta directory)
-    vesta_size = _run("du -sh /root/vesta/ 2>/dev/null")
+    vesta_size = _run(f"du -sh {_VESTA_ROOT}/ 2>/dev/null")
     sections.append(f"Vesta dir: {vesta_size}")
 
     # History DB size
@@ -266,7 +269,7 @@ def load_resource_usage() -> str:
         sections.append(f"History DB: {db_size:.1f}MB")
 
     # Notification backlog
-    notif_count = _run("ls /root/vesta/notifications/*.json 2>/dev/null | wc -l")
+    notif_count = _run(f"ls {_VESTA_ROOT / 'notifications'}/*.json 2>/dev/null | wc -l")
     sections.append(f"Pending notifications: {notif_count}")
 
     return "\n".join(sections)
