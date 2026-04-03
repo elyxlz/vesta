@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   MoreVertical,
   Play,
@@ -11,6 +12,8 @@ import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
 import { Spinner } from "@/components/ui/spinner";
 import { ProgressBar } from "@/components/ProgressBar";
+import { Console } from "@/components/Console";
+import { isTauri } from "@/lib/env";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -71,6 +74,7 @@ export function DynamicIsland() {
   const [expanded, setExpanded] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [showConsole, setShowConsole] = useState(false);
   const [showAuth, setShowAuth] = useState(false);
   const [authStarting, setAuthStarting] = useState(false);
   const [authStart, setAuthStart] = useState<AuthStartResult | null>(null);
@@ -190,21 +194,15 @@ export function DynamicIsland() {
       onPointerLeave={handlePointerLeave}
     >
       <motion.div
-        layout
         className={cn(
           "origin-top bg-card border rounded-2xl shadow-lg overflow-hidden",
           expanded && "shadow-xl",
         )}
-        transition={{ type: "spring", stiffness: 400, damping: 30 }}
       >
         <AnimatePresence mode="wait" initial={false}>
           {expanded ? (
             <motion.div
               key="expanded"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.1 }}
               className="flex flex-col items-center gap-3 p-9 min-w-[300px]"
             >
               <Orb state={orbState} size={100} enableTracking />
@@ -311,9 +309,7 @@ export function DynamicIsland() {
                               <Button
                                 size="sm"
                                 variant="outline"
-                                onClick={() => {
-                                  window.dispatchEvent(new CustomEvent("open-console"));
-                                }}
+                                onClick={() => setShowConsole(true)}
                               >
                                 <ScrollText data-icon="inline-start" />
                                 logs
@@ -415,10 +411,6 @@ export function DynamicIsland() {
           ) : (
             <motion.div
               key="collapsed"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.1 }}
               className="flex items-center gap-2.5 py-3 px-12 cursor-pointer touch-manipulation"
               onPointerDown={(e) => {
                 if (e.pointerType === "touch") {
@@ -465,6 +457,37 @@ export function DynamicIsland() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {createPortal(
+        <AnimatePresence>
+          {showConsole && info?.alive && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.15 }}
+              className={cn("fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-0 sm:p-5", isTauri && "pt-7")}
+              onClick={(e) => {
+                if (e.target === e.currentTarget) setShowConsole(false);
+              }}
+            >
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.95, opacity: 0 }}
+                transition={{ duration: 0.15 }}
+                className="flex min-h-0 min-w-0 w-full h-full max-w-4xl max-h-[800px] flex-col dark dark-overlay bg-[#1a1a1a] text-[#e8e8e8] rounded-none sm:rounded-xl overflow-hidden shadow-2xl"
+              >
+                <Console
+                  name={name}
+                  onClose={() => setShowConsole(false)}
+                />
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>,
+        document.body,
+      )}
     </div>
   );
 }

@@ -13,6 +13,7 @@ import {
   CardContent,
   CardFooter,
 } from "@/components/ui/card";
+import { ButtonGroup } from "@/components/ui/button-group";
 import { useAgentWs } from "@/hooks/use-agent-ws";
 import { useAutoScroll } from "@/hooks/use-auto-scroll";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
@@ -111,12 +112,12 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     )}>
 
       {!fullscreen && (
-        <div className="absolute top-3 right-3 z-10 flex items-center gap-0.5">
+        <ButtonGroup className="absolute top-2 right-2 z-10">
           {onCollapse && (
             <Button
               size="icon-sm"
-              variant="ghost"
-              className="text-muted-foreground"
+              variant="outline"
+              className="text-muted-foreground dark:bg-card"
               onClick={onCollapse}
             >
               <PanelRightClose />
@@ -124,13 +125,13 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
           )}
           <Button
             size="icon-sm"
-            variant="ghost"
-            className="text-muted-foreground"
+            variant="outline"
+            className="text-muted-foreground dark:bg-card"
             onClick={() => navigate(`/agent/${name}/chat`)}
           >
             <Maximize2 />
           </Button>
-        </div>
+        </ButtonGroup>
       )}
 
       <AnimatePresence>
@@ -147,13 +148,16 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
         )}
       </AnimatePresence>
 
-      <CardContent className="flex-1 overflow-y-auto p-0 px-4 py-3 min-h-0">
+      <CardContent
+        className="flex-1 overflow-y-auto p-0 min-h-0"
+        style={{ maskImage: "linear-gradient(to bottom, transparent, black 80px, black calc(100% - 24px), transparent)" }}
+      >
         <div
           ref={scrollRef}
           onScroll={handleScroll}
-          className="h-full overflow-y-auto font-mono text-sm leading-relaxed"
+          className="h-full overflow-y-auto px-4 py-3 font-mono text-sm leading-relaxed"
         >
-          <div className="min-h-full flex flex-col justify-end">
+          <div className={cn("min-h-full flex flex-col justify-end", fullscreen && "pt-16")}>
             <div>
               {filteredMessages.length === 0 ? (
                 <div className="flex flex-col items-center gap-2 py-2">
@@ -261,7 +265,7 @@ function MessageLine({ event }: { event: VestaEvent }) {
   }
 
   return (
-    <div className={cn("flex gap-2 py-[1px]", colorClass)}>
+    <div className={cn("flex gap-2 py-[1px] max-sm:flex-col max-sm:gap-0 max-sm:mt-2", colorClass)}>
       {ts && (
         <span className="text-xs text-muted-foreground/40 shrink-0 leading-[1.9] select-none">
           {ts}
