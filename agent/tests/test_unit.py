@@ -360,7 +360,7 @@ async def test_dreamer_queues_prompt_and_archives(tmp_path):
         await process_nightly_memory(queue, state=state, config=config)
 
     assert not queue.empty()
-    msg, is_user = await queue.get()
+    msg, is_user, _user_initiated = await queue.get()
     assert msg == "dreamer prompt"
     assert is_user is False
     assert state.last_dreamer_run == fake_now
