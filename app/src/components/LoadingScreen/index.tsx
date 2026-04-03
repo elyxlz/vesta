@@ -34,7 +34,7 @@ export function LoadingScreen({ ready, onFinished }: LoadingScreenProps) {
         initial={{ opacity: 0, scale: 0.8 }}
         animate={{ opacity: 1, scale: 1 }}
       >
-        <Orb state="loading" size={140} />
+        <Orb state="loading" size={96} />
       </motion.div>
     </motion.div>
   );

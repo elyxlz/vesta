@@ -12,6 +12,7 @@ import { UpdateBar } from "@/components/UpdateBar";
 import { Footer } from "@/components/Footer";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/providers/AuthProvider";
+import { useAgents } from "@/providers/AgentsProvider";
 import { SelectedAgentProvider } from "@/providers/SelectedAgentProvider";
 
 function RootLayout() {
@@ -88,24 +89,46 @@ function ChatFullscreenLayout() {
   );
 }
 
-function RequireConnection({ children }: { children: React.ReactNode }) {
+function NavigationGuard({ children }: { children: React.ReactNode }) {
   const { initialized, connected } = useAuth();
+  const { agentsLoaded, agents } = useAgents();
+  const location = useLocation();
+
   if (!initialized) return null;
   if (!connected) return <Navigate to="/connect" replace />;
+  if (!agentsLoaded) return null;
+
+  // Redirect to /new when there are no agents (except if already there)
+  if (agents.length === 0 && location.pathname !== "/new") {
+    return <Navigate to="/new" replace />;
+  }
+
   return children;
+}
+
+function RequireDisconnected({ children }: { children: React.ReactNode }) {
+  const { initialized, connected } = useAuth();
+  const { agentsLoaded, agents } = useAgents();
+
+  if (!initialized) return <>{children}</>;
+  if (!connected) return <>{children}</>;
+
+  // Connected — redirect away from /connect
+  if (!agentsLoaded) return null; // wait for agents before deciding
+  return <Navigate to={agents.length === 0 ? "/new" : "/"} replace />;
 }
 
 export const router = createBrowserRouter([
   {
     element: <RootLayout />,
     children: [
-      { path: "/connect", element: <Connect /> },
+      { path: "/connect", element: <RequireDisconnected><Connect /></RequireDisconnected> },
       {
         path: "/",
         element: (
-          <RequireConnection>
+          <NavigationGuard>
             <Outlet />
-          </RequireConnection>
+          </NavigationGuard>
         ),
         children: [
           { index: true, element: <Home /> },
@@ -118,21 +141,21 @@ export const router = createBrowserRouter([
   {
     path: "/agent/:name",
     element: (
-      <RequireConnection>
+      <NavigationGuard>
         <SelectedAgentProvider>
           <AgentLayout />
         </SelectedAgentProvider>
-      </RequireConnection>
+      </NavigationGuard>
     ),
   },
   {
     path: "/agent/:name/chat",
     element: (
-      <RequireConnection>
+      <NavigationGuard>
         <SelectedAgentProvider>
           <ChatFullscreenLayout />
         </SelectedAgentProvider>
-      </RequireConnection>
+      </NavigationGuard>
     ),
   },
 ]);

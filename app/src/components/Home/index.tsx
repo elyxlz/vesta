@@ -5,12 +5,10 @@ import { wsUrl } from "@/lib/connection";
 import { staggerContainer, staggerItem } from "@/lib/motion";
 import type { AgentActivityState } from "@/lib/types";
 import { useAgents } from "@/providers/AgentsProvider";
-import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 
 export function Home() {
   const { agents, agentsLoaded, refreshAgents, setAgents } = useAgents();
-  const navigate = useNavigate();
 
   const [activityStates, setActivityStates] = useState<
     Record<string, AgentActivityState>
@@ -28,11 +26,7 @@ export function Home() {
     return () => clearInterval(interval);
   }, [fetchAgents]);
 
-  useEffect(() => {
-    if (agentsLoaded && agents.length === 0) {
-      navigate("/new");
-    }
-  }, [agentsLoaded, agents, navigate]);
+  // No-agents redirect is handled by NavigationGuard in router.tsx
 
   useEffect(() => {
     const aliveNames = new Set(

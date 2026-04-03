@@ -92,8 +92,11 @@ export function DynamicIsland() {
 
   const statusLabel = getStatusLabel(info, operation, error);
 
+  const { refreshAgents } = useAgents();
+
   const handleDelete = async () => {
     await remove();
+    await refreshAgents();
     navigate("/");
   };
 

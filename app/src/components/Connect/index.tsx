@@ -1,17 +1,13 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { FieldGroup, Field, FieldLabel, FieldDescription } from "@/components/ui/field";
 import { fadeSlide } from "@/lib/motion";
-import { useAgents } from "@/providers/AgentsProvider";
 import { useAuth } from "@/providers/AuthProvider";
 
 export function Connect() {
-  const navigate = useNavigate();
   const { connect } = useAuth();
-  const { refreshAgents } = useAgents();
 
   const [host, setHost] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -29,8 +25,7 @@ export function Connect() {
     try {
       const url = host.includes("://") ? host.trim() : `https://${host.trim()}`;
       await connect(url, apiKey.trim());
-      const agents = await refreshAgents();
-      navigate(agents.length === 0 ? "/new" : "/");
+      // AgentsProvider effect handles refreshAgents when connected flips
     } catch (e: unknown) {
       const msg = (e as { message?: string })?.message || "connection failed";
       if (msg === "could not reach server") {

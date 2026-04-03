@@ -78,8 +78,8 @@ export function Navbar({ center, trailing }: NavbarProps = {}) {
           <>
             {connected && (
               <>
-                <div className="size-2 rounded-full bg-green-500 shrink-0" />
-                <span className="text-sm text-foreground truncate">{hostname}</span>
+                <div className="size-2 rounded-full bg-green-500 shrink-0 hidden sm:block" />
+                <span className="text-sm text-foreground truncate hidden sm:block">{hostname}</span>
               </>
             )}
             {connected && <Settings />}
