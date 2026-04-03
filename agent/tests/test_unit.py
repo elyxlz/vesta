@@ -292,7 +292,7 @@ async def test_message_processor_restarts_on_timeout(tmp_path):
         raise TimeoutError()
 
     state, session_count, messages = await _run_processor_test(
-        tmp_path, message_side_effect=side_effect, initial_queue=[("slow request", True)]
+        tmp_path, message_side_effect=side_effect, initial_queue=[("slow request", True, False)]
     )
     assert state.graceful_shutdown.is_set()
     assert state.restart_reason == "error — Response timed out"
@@ -403,7 +403,7 @@ async def test_dreamer_triggers_automatic_restart(tmp_path):
         tmp_path,
         message_side_effect=side_effect,
         pre_state=pre_state,
-        initial_queue=[("dreamer prompt content", False)],
+        initial_queue=[("dreamer prompt content", False, False)],
         extra_patches={"vesta.core.loops._now": lambda: fake_now},
     )
     assert state.session_id is None
