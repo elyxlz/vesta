@@ -32,10 +32,13 @@ def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 def get_location(entity: str) -> tuple[float, float] | None:
     """Fetch lat/lon from Home Assistant device tracker."""
     url = f"{HASS_URL}/api/states/{entity}"
-    req = urllib.request.Request(url, headers={
-        "Authorization": f"Bearer {HASS_TOKEN}",
-        "Content-Type": "application/json",
-    })
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Authorization": f"Bearer {HASS_TOKEN}",
+            "Content-Type": "application/json",
+        },
+    )
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read())
