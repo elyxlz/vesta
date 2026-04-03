@@ -27,9 +27,9 @@ function RootLayout() {
   const showUpdateBar = connected && !isConnect;
 
   return (
-    <div className={cn("h-full bg-background flex flex-col", isTauri && "pt-7")}>
+    <div className={cn("h-full bg-background flex flex-col", isTauri ? "pt-7" : "pt-3 sm:pt-4")}>
       <Titlebar />
-      <div className="flex flex-col flex-1 min-h-0 gap-2 px-3 sm:px-5">
+      <div className="flex flex-col flex-1 min-h-0 gap-3 px-3 sm:px-5">
         <div className="shrink-0">
           <Navbar />
           {showUpdateBar && <UpdateBar />}
@@ -49,9 +49,9 @@ function AgentLayout() {
   const { connected } = useAuth();
 
   return (
-    <div className={cn("h-full bg-background flex flex-col", isTauri && "pt-7")}>
+    <div className={cn("h-full bg-background flex flex-col", isTauri ? "pt-7" : "pt-3 sm:pt-4")}>
       <Titlebar />
-      <div className="flex flex-col flex-1 min-h-0 gap-3 px-3 pb-3 sm:px-5 sm:pb-5">
+      <div className="flex flex-col flex-1 min-h-0 gap-4 px-3 pb-3 sm:px-5 sm:pb-5">
         <div className="shrink-0">
           <Navbar center={<DynamicIsland />} trailing={connected ? <>
             <StatusPill showHostname={false} />
