@@ -25,7 +25,7 @@ export function Settings() {
   const [open, setOpen] = useState(false);
   const theme = useTheme((s) => s.theme);
   const setTheme = useTheme((s) => s.setTheme);
-  const { disconnect } = useAuth();
+  const { reachable, disconnect } = useAuth();
 
   const hostname = (() => {
     const conn = getConnection();
@@ -90,9 +90,9 @@ export function Settings() {
           <Separator />
 
           <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-            <p className="flex-1 flex items-center gap-2 text-sm text-muted-foreground">
-              <StatusPill showHostname={false} /> Connected to <span className="font-medium text-foreground">{hostname}</span>
-            </p>
+            <div className="flex-1 flex items-center gap-2 text-sm text-muted-foreground">
+              <StatusPill showHostname={false} /> {reachable ? "Connected to" : "Cannot reach"} <span className="font-medium text-foreground">{hostname}</span>
+            </div>
             <Button
               variant="outline"
               className="w-full sm:w-auto shrink-0"

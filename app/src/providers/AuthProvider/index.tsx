@@ -10,12 +10,16 @@ import { clearConnection, getConnection, authHeaders } from "@/lib/connection";
 import { ensureFreshToken } from "@/lib/token-refresh";
 import { isTauri } from "@/lib/env";
 
+const POLL_INTERVAL_MS = 15_000;
+
 interface AuthContextValue {
   loading: boolean;
   initialized: boolean;
   connected: boolean;
+  reachable: boolean;
   version: string;
   setLoading: (loading: boolean) => void;
+  setReachable: (reachable: boolean) => void;
   connect: (url: string, apiKey: string) => Promise<void>;
   disconnect: () => void;
 }
@@ -59,6 +63,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [initialized, setInitialized] = useState(false);
   const [connected, setConnected] = useState(false);
+  const [reachable, setReachable] = useState(true);
   const [version, setVersion] = useState("");
 
   useEffect(() => {
@@ -115,6 +120,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void loadVersion();
   }, [connected]);
 
+  useEffect(() => {
+    if (!connected) {
+      setReachable(true);
+      return;
+    }
+
+    let cancelled = false;
+
+    const poll = async () => {
+      const ok = await checkStoredConnection();
+      if (!cancelled) setReachable(ok);
+    };
+
+    const id = setInterval(() => void poll(), POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [connected]);
+
   const connect = async (url: string, apiKey: string) => {
     await connectToServer(url, apiKey);
     setConnected(true);
@@ -125,6 +150,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const disconnect = () => {
     clearConnection();
     setConnected(false);
+    setReachable(true);
     setVersion("");
   };
 
@@ -132,8 +158,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     loading,
     initialized,
     connected,
+    reachable,
     version,
     setLoading,
+    setReachable,
     connect,
     disconnect,
   };

@@ -26,6 +26,7 @@ const noopSetAgents: Dispatch<SetStateAction<ListEntry[]>> = () => {};
 const noopRefresh = async () => [] as ListEntry[];
 
 function ConnectedAgentsProvider({ children }: { children: ReactNode }) {
+  const { setReachable } = useAuth();
   const [agents, setAgents] = useState<ListEntry[]>([]);
   const [agentsLoaded, setAgentsLoaded] = useState(false);
 
@@ -34,13 +35,14 @@ function ConnectedAgentsProvider({ children }: { children: ReactNode }) {
       const nextAgents = await listAgents();
       setAgents(nextAgents);
       setAgentsLoaded(true);
+      setReachable(true);
       return nextAgents;
     } catch {
-      setAgents([]);
       setAgentsLoaded(true);
+      setReachable(false);
       return [];
     }
-  }, []);
+  }, [setReachable]);
 
   useEffect(() => {
     void refreshAgents();

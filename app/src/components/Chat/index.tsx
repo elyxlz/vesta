@@ -134,20 +134,6 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
         </ButtonGroup>
       )}
 
-      <AnimatePresence>
-        {showReconnect && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="text-center py-2 bg-amber-500/10 text-amber-600 dark:text-amber-400 text-xs overflow-hidden shrink-0"
-          >
-            reconnecting...
-          </motion.div>
-        )}
-      </AnimatePresence>
-
       <CardContent
         className="flex-1 overflow-y-auto p-0 min-h-0"
         style={{ maskImage: "linear-gradient(to bottom, transparent, black 80px, black calc(100% - 24px), transparent)" }}
@@ -191,6 +177,20 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
           </div>
         </div>
       </CardContent>
+
+      <AnimatePresence>
+        {showReconnect && !connected && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="text-center py-2 bg-amber-500/10 text-amber-600 dark:text-amber-400 text-xs overflow-hidden shrink-0"
+          >
+            reconnecting...
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <CardFooter className="border-t shrink-0 p-3 px-4 !pt-3">
         <div className="flex items-end gap-2.5 w-full">

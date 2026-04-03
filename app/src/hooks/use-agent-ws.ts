@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import type { VestaEvent, AgentActivityState } from "@/lib/types";
 import { wsUrl } from "@/lib/connection";
+import { useAuth } from "@/providers/AuthProvider";
 
 const RECONNECT_BASE = 1000;
 const RECONNECT_MAX = 30000;
 const MAX_MESSAGES = 5000;
 
 export function useAgentWs(name: string | null, active: boolean) {
+  const { setReachable } = useAuth();
   const [messages, setMessages] = useState<VestaEvent[]>([]);
   const [agentState, setAgentState] = useState<AgentActivityState>("idle");
   const [connected, setConnected] = useState(false);
@@ -42,6 +44,7 @@ export function useAgentWs(name: string | null, active: boolean) {
         if (cancelled) return;
         reconnectDelay = RECONNECT_BASE;
         setConnected(true);
+        setReachable(true);
         setMessages([]);
       };
 
@@ -77,6 +80,7 @@ export function useAgentWs(name: string | null, active: boolean) {
         socket = null;
         wsRef.current = null;
         setConnected(false);
+        setReachable(false);
         reconnectTimer = setTimeout(doConnect, reconnectDelay);
         reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX);
       };

@@ -8,25 +8,27 @@ import { useAgents } from "@/providers/AgentsProvider";
 import { cn } from "@/lib/utils";
 
 export function Home() {
-  const { agents, agentsLoaded, refreshAgents, setAgents } = useAgents();
+  const { agents, agentsLoaded, refreshAgents } = useAgents();
 
   const [activityStates, setActivityStates] = useState<
     Record<string, AgentActivityState>
   >({});
   const wsRefs = useRef<Map<string, WebSocket>>(new Map());
 
-  const fetchAgents = async () => {
-    const list = await refreshAgents();
-    setAgents(list);
-  };
-
   useEffect(() => {
-    fetchAgents();
-    const interval = setInterval(fetchAgents, 5000);
+    void refreshAgents();
+    const interval = setInterval(() => void refreshAgents(), 5000);
     return () => clearInterval(interval);
-  }, [fetchAgents]);
+  }, [refreshAgents]);
 
   // No-agents redirect is handled by NavigationGuard in router.tsx
+
+  useEffect(() => {
+    return () => {
+      for (const ws of wsRefs.current.values()) ws.close();
+      wsRefs.current.clear();
+    };
+  }, []);
 
   useEffect(() => {
     const aliveNames = new Set(
@@ -67,11 +69,6 @@ export function Home() {
         // ignore ws errors
       }
     }
-
-    return () => {
-      for (const ws of current.values()) ws.close();
-      current.clear();
-    };
   }, [agents]);
 
   if (!agentsLoaded || agents.length === 0) return null;
