@@ -1,0 +1,4 @@
+#!/bin/bash
+# CLI wrapper for walking-guide skill
+SKILL_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+exec python3 "$SKILL_DIR/guide.py" "$@"

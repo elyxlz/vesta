@@ -40,6 +40,10 @@
     "description": "Use when you need to contribute code, push a branch, open a pull request, submit a PR, sync with upstream, or do any git/GitHub operations on the vesta repo (elyxlz/vesta). IMPORTANT \u2014 always use this skill for GitHub access. Never use personal tokens or manual git push. Authentication is handled via the vesta-upstream GitHub App \u2014 no credentials needed from the user."
   },
   {
+    "name": "walking-guide",
+    "description": "Use this skill when the user asks for a \"walking guide\", \"tour guide\", \"historical tour\", \"what's nearby\", \"points of interest\", or wants location-based historical information while walking. Tracks GPS via Home Assistant and sends WhatsApp messages about nearby historical sites when the user moves. Requires a background daemon."
+  },
+  {
     "name": "what-day",
     "description": "This skill should be used when working with ANY date to determine what day of the week it falls on. Use this skill when the user mentions dates, scheduling, planning events, or needs to know day-of-week information."
   },
