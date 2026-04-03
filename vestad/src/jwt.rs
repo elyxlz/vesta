@@ -64,7 +64,7 @@ fn b64url_decode(s: &str) -> Result<Vec<u8>, JwtError> {
         if (b as usize) < 128 { table[b as usize] } else { 255 }
     }).collect();
 
-    if bytes.iter().any(|&b| b == 255) {
+    if bytes.contains(&255) {
         return Err(JwtError::DecodeFailed);
     }
 

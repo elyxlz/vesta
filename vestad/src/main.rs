@@ -124,7 +124,7 @@ fn main() {
                 .block_on(async {
                     let tunnel_child = if tunnel_url.is_some() {
                         match tunnel::start_tunnel(&config, port).await {
-                            Ok((child, url)) => {
+                            Ok((child, _url)) => {
 
                                 Some(child)
                             }
