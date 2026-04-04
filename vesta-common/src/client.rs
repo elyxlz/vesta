@@ -7,6 +7,7 @@ use crate::{AuthFlowResponse, ListEntry, ServerConfig, StartAllResult, StatusJso
 // ── TLS fingerprint verification ────────────────────────────────
 
 fn make_rustls_config(fingerprint: Option<String>) -> Arc<rustls::ClientConfig> {
+    let _ = rustls::crypto::ring::default_provider().install_default();
     Arc::new(
         rustls::ClientConfig::builder()
             .dangerous()

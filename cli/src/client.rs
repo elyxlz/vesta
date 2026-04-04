@@ -44,7 +44,7 @@ pub fn chat(client: &Client, name: &str) -> Result<(), String> {
 
     loop {
         if let Ok(input) = rx.try_recv() {
-            let msg = serde_json::json!({"type": "message", "content": input});
+            let msg = serde_json::json!({"type": "message", "text": input});
             if socket
                 .send(tungstenite::Message::Text(msg.to_string().into()))
                 .is_err()
@@ -56,7 +56,7 @@ pub fn chat(client: &Client, name: &str) -> Result<(), String> {
         match socket.read() {
             Ok(tungstenite::Message::Text(text)) => {
                 if let Ok(msg) = serde_json::from_str::<serde_json::Value>(text.as_ref()) {
-                    if let Some(content) = msg["content"].as_str() {
+                    if let Some(content) = msg["text"].as_str() {
                         print!("{}", content);
                         std::io::stdout().flush().ok();
                     }
