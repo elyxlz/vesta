@@ -199,19 +199,12 @@ fn authenticate_agent(client: &client::Client, name: &str) {
 fn get_client(host: Option<&str>, token: Option<&str>) -> client::Client {
     let config = platform::load_server_config(host, token);
 
+    // On Linux, also check for credentials from a running local vestad
     #[cfg(target_os = "linux")]
-    let config = config.or_else(try_migrate_linux);
+    let config = config.or_else(vesta_common::platform::linux::extract_credentials);
 
     let config = config.unwrap_or_else(|| platform::die("no server configured. run: vesta setup"));
     client::Client::new(&config)
-}
-
-/// On Linux, auto-migrate to client/server if no config exists.
-#[cfg(target_os = "linux")]
-fn try_migrate_linux() -> Option<platform::ServerConfig> {
-    eprintln!("setting up vestad...");
-    vesta_common::ensure_server().ok()?;
-    vesta_common::load_server_config()
 }
 
 fn fetch_latest_version(timeout: Option<u64>) -> Option<String> {

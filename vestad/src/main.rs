@@ -51,11 +51,22 @@ fn main() {
         Command::Serve { port } => {
             let config = config_dir();
 
+            // Install systemd user service on first run
+            #[cfg(target_os = "linux")]
+            ensure_systemd_service();
+
             // Ensure Docker is available
             docker::ensure_docker().unwrap_or_else(|e| die(&e));
 
-            // Migrate legacy containers
-            docker::maybe_migrate_legacy();
+            // Pre-flight port check for a better error message than the raw bind failure
+            if let Err(e) = std::net::TcpListener::bind(("0.0.0.0", port)) {
+                die(format!(
+                    "port {} is already in use ({}).\n\
+                     Another vestad or service may be running on this port.\n\
+                     Try: vestad serve --port {}",
+                    port, e, port + 1
+                ));
+            }
 
             // Acquire PID lock
             let _pid_lock = serve::acquire_pid_lock(&config).unwrap_or_else(|e| die(&e));
@@ -129,4 +140,62 @@ fn main() {
             eprintln!("updated. restart vestad to use new version.");
         }
     }
+}
+
+#[cfg(target_os = "linux")]
+fn ensure_systemd_service() {
+    let vestad_path = match std::env::current_exe().ok().and_then(|p| p.to_str().map(String::from)) {
+        Some(p) => p,
+        None => return,
+    };
+
+    let home = match std::env::var("HOME") {
+        Ok(h) => h,
+        Err(_) => return,
+    };
+    let unit_dir = format!("{}/.config/systemd/user", home);
+    let unit_path = format!("{}/vestad.service", unit_dir);
+
+    if std::path::Path::new(&unit_path).exists() {
+        return;
+    }
+
+    eprintln!("installing systemd user service...");
+    std::fs::create_dir_all(&unit_dir).ok();
+
+    let unit_content = format!(
+        r#"[Unit]
+Description=Vesta API Server
+After=docker.service
+
+[Service]
+ExecStart={vestad_path} serve
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+"#
+    );
+
+    if let Err(e) = std::fs::write(&unit_path, unit_content) {
+        eprintln!("warning: failed to write systemd service: {}", e);
+        return;
+    }
+
+    let _ = std::process::Command::new("systemctl")
+        .args(["--user", "daemon-reload"])
+        .status();
+    let _ = std::process::Command::new("systemctl")
+        .args(["--user", "enable", "vestad"])
+        .status();
+
+    // Enable lingering so the service survives logout
+    if let Ok(user) = std::env::var("USER") {
+        let _ = std::process::Command::new("loginctl")
+            .args(["enable-linger", &user])
+            .status();
+    }
+
+    eprintln!("systemd user service installed and enabled");
 }

@@ -26,6 +26,16 @@ microsoft auth complete --flow-cache <cache>  # Complete after signing in at the
 microsoft auth list                           # List authenticated accounts
 ```
 
+## Troubleshooting: Adding New Azure Permissions
+
+When adding new API permissions (e.g. MailboxSettings.ReadWrite) to an existing app registration:
+
+1. Add the permission in Azure portal → App Registration → API Permissions
+2. Click **"Grant admin consent"** (separate button — easy to miss)
+3. **Delete the MSAL cache**: `rm ~/.microsoft/auth_cache.bin` — cached tokens retain old scopes and won't pick up new permissions
+4. Re-authenticate all accounts: `microsoft auth login` → complete flow
+5. For **multi-tenant apps** (e.g. pascarelli.com + audiogen.co), repeat steps 1-2 in **each tenant's** Azure portal — admin consent is per-tenant
+
 ## First Use — Data Gathering
 
 On first activation with a new user, spend significant time analyzing their email and calendar data to learn their patterns. This is critical for being immediately useful:
