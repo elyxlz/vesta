@@ -4,6 +4,10 @@
     "description": "Use for \"browse\", \"open a website\", \"navigate to\", \"click\", \"fill form\","
   },
   {
+    "name": "chatgpt",
+    "description": "This skill should be used when the user asks to \"ask chatgpt\", \"ask openai\", \"ask gpt\", \"what does chatgpt think\", \"compare with chatgpt\", or wants to query OpenAI's models for a second opinion, comparison, or any delegated task. Requires OPENAI_API_KEY in environment."
+  },
+  {
     "name": "dream",
     "description": "Self-improvement and memory curation. Used by the nightly dreamer, but can also be used anytime."
   },
@@ -30,6 +34,10 @@
   {
     "name": "skills-registry",
     "description": "Discover and install new capabilities from the skill registry. Use this when asked to add a new feature, when you want to explore what you could do, or when a user asks if you can do something you don't have a skill for yet. The registry lives on GitHub \u2014 search it to find skills, then install them to give yourself new abilities."
+  },
+  {
+    "name": "susan-calvin",
+    "description": "Robopsychology skill for agent self-analysis. Packages memory, dreamer outputs, conversation history, core architecture, security surface, dependencies, error logs, and resource usage, then submits to GPT-5.4 for independent evaluation. Supports --deep flag for full source code review. Use when asked to \"analyze yourself\", \"self-review\", \"robopsych\", or \"susan calvin\". Requires OPENAI_API_KEY and the chatgpt skill."
   },
   {
     "name": "tasks",
