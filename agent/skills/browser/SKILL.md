@@ -44,6 +44,7 @@ DISPLAY=:99 browser launch --stealth  # Stealth + headed via Xvfb (maximum steal
 browser launch --headless           # Headless (no bot detection bypass)
 browser launch --port 9225          # Launch on specific port (auto-assigned if omitted)
 browser launch --user-data-dir ~/.config/BraveSoftware/Brave-Browser  # Use existing profile
+browser launch --port 9225          # Launch on specific port (auto-assigned if omitted)
 browser connect http://192.168.1.10:9222  # Connect to remote browser
 browser stop                        # Disconnect (remote) or stop (local)
 browser stop-all                    # Stop ALL browser sessions
@@ -150,6 +151,7 @@ The browser uses a persistent profile at `/root/.browser/profile` by default. Co
 - **Custom profile**: `browser launch --user-data-dir /path/to/profile`
 - SSO tokens typically expire after 8-12 hours — after that you'll need to re-authenticate
 - The `--stealth` flag is safe to use with persistent profiles
+
 
 ## Stealth Mode
 
