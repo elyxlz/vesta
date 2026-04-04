@@ -24,8 +24,14 @@ COPY agent/src ./src
 COPY agent/prompts ./prompts
 RUN uv sync --frozen
 
-# Everything else (non-core skills excluded via .dockerignore)
+# Everything else
 COPY agent/ .
+
+# Remove non-default skills (keep only those listed in default-skills.txt)
+RUN for d in skills/*/; do \
+      name="$(basename "$d")"; \
+      grep -qx "$name" skills/default-skills.txt || rm -rf "$d"; \
+    done && rm -f skills/default-skills.txt
 
 # SDK discovers skills from .claude/skills/ relative to cwd
 RUN mkdir -p .claude && ln -s ../skills .claude/skills
