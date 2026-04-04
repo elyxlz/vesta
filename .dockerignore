@@ -9,13 +9,6 @@ __pycache__/
 agent/tests/
 agent/skills/generate-index.py
 agent/skills/index.json
-agent/skills/google
-agent/skills/keeper
-agent/skills/microsoft
-agent/skills/onedrive
-agent/skills/whatsapp
-agent/skills/whisper
-agent/skills/zoom
 app/
 cli/
 vestad/
