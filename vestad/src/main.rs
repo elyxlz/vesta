@@ -17,9 +17,9 @@ struct Cli {
 enum Command {
     /// Start HTTP+WS server (default)
     Serve {
-        /// Port to listen on
-        #[arg(long, default_value = "7860")]
-        port: u16,
+        /// Port to listen on (auto-selected if not specified)
+        #[arg(long)]
+        port: Option<u16>,
         /// Disable Cloudflare tunnel
         #[arg(long)]
         no_tunnel: bool,
@@ -56,6 +56,13 @@ fn die(msg: impl std::fmt::Display) -> ! {
     std::process::exit(1);
 }
 
+fn find_available_port() -> Option<u16> {
+    std::net::TcpListener::bind(("0.0.0.0", 0))
+        .ok()
+        .and_then(|l| l.local_addr().ok())
+        .map(|addr| addr.port())
+}
+
 fn config_dir() -> std::path::PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| die("HOME not set"));
     std::path::PathBuf::from(home).join(".config/vesta")
@@ -68,7 +75,7 @@ fn main() {
 
     let cli = Cli::parse();
 
-    match cli.command.unwrap_or(Command::Serve { port: 7860, no_tunnel: false }) {
+    match cli.command.unwrap_or(Command::Serve { port: None, no_tunnel: false }) {
         Command::Serve { port, no_tunnel } => {
             let config = config_dir();
 
@@ -77,16 +84,10 @@ fn main() {
 
             docker::ensure_docker().unwrap_or_else(|e| die(&e));
 
-            if let Err(e) = std::net::TcpListener::bind(("0.0.0.0", port)) {
-                die(format!(
-                    "port {} is already in use ({}).\n\
-                     Another vestad or service may be running on this port.\n\
-                     Try: vestad serve --port {}",
-                    port, e, port + 1
-                ));
-            }
+            let port = port.unwrap_or_else(|| find_available_port().unwrap_or_else(|| die("no available port found")));
 
             let _pid_lock = serve::acquire_pid_lock(&config).unwrap_or_else(|e| die(&e));
+            serve::write_port_file(&config, port);
 
             let api_key = serve::ensure_api_key(&config);
             let (cert_pem, key_pem, _fingerprint) = serve::ensure_tls(&config);

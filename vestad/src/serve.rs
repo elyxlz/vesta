@@ -883,6 +883,11 @@ pub fn acquire_pid_lock(config_dir: &std::path::Path) -> Result<std::fs::File, S
     Ok(file)
 }
 
+pub fn write_port_file(config_dir: &std::path::Path, port: u16) {
+    let port_path = config_dir.join("port");
+    std::fs::write(&port_path, port.to_string()).ok();
+}
+
 // --- Router ---
 
 pub fn build_router(api_key: String, tunnel_url: Option<String>) -> Router {

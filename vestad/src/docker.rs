@@ -76,11 +76,14 @@ pub struct ListEntry {
 }
 
 pub fn container_name(name: &str) -> String {
-    format!("vesta-{}", name)
+    format!("vesta-{}-{}", current_user(), name)
 }
 
 pub fn name_from_cname(cname: &str) -> String {
-    cname.strip_prefix("vesta-").unwrap_or(cname).to_string()
+    let without_vesta = cname.strip_prefix("vesta-").unwrap_or(cname);
+    let user = current_user();
+    let user_prefix = format!("{}-", user);
+    without_vesta.strip_prefix(&user_prefix).unwrap_or(without_vesta).to_string()
 }
 
 pub fn normalize_name(raw: &str) -> String {

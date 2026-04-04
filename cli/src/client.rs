@@ -14,7 +14,7 @@ pub fn chat(client: &Client, name: &str) -> Result<(), String> {
     let parsed: url::Url =
         url.parse().map_err(|e| format!("invalid ws url: {}", e))?;
     let host = parsed.host_str().unwrap_or("localhost");
-    let port = parsed.port().unwrap_or(7860);
+    let port = parsed.port().unwrap_or(vesta_common::DEFAULT_API_PORT);
     let tcp = std::net::TcpStream::connect((host, port))
         .map_err(|e| format!("ws tcp connect failed: {}", e))?;
     let connector =

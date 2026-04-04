@@ -92,8 +92,15 @@ pub fn config_path() -> PathBuf {
     config_dir().join("config.json")
 }
 
+pub fn read_port_file() -> Option<u16> {
+    std::fs::read_to_string(config_dir().join("port"))
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+}
+
 pub fn default_server_url() -> String {
-    format!("https://localhost:{}", DEFAULT_API_PORT)
+    let port = read_port_file().unwrap_or(DEFAULT_API_PORT);
+    format!("https://localhost:{}", port)
 }
 
 pub fn load_config() -> VestaConfig {
@@ -143,7 +150,8 @@ pub fn wait_for_server_port(port: u16, timeout_secs: u64) -> bool {
 
 /// Wait for vestad on the default API port.
 pub fn wait_for_server(timeout_secs: u64) -> bool {
-    wait_for_server_port(DEFAULT_API_PORT, timeout_secs)
+    let port = read_port_file().unwrap_or(DEFAULT_API_PORT);
+    wait_for_server_port(port, timeout_secs)
 }
 
 /// Ensure vestad is installed, running, and configured.

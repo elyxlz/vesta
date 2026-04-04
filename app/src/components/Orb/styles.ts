@@ -36,11 +36,7 @@ export function getOrbVisualState(
 }
 
 export const orbColors: Record<OrbVisualState, [string, string, string]> = {
-  loading: [
-    "color-mix(in oklch, var(--primary), white 30%)",
-    "var(--primary)",
-    "color-mix(in oklch, var(--primary), black 25%)",
-  ],
+  loading: ["#e8cc8a", "#d4a84a", "#9e7e34"],
   alive: ["#b8ceb0", "#7a9e70", "#5a7e50"],
   thinking: ["#e8d0a0", "#c4a060", "#a08040"],
   booting: ["#c4deb8", "#8ab880", "#6a9e5a"],
