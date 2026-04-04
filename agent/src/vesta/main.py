@@ -150,6 +150,7 @@ def init_state(*, config: vm.VestaConfig) -> vm.State:
     if session_id:
         logger.init(f"Resuming session {session_id[:16]}...")
     from vesta.events import EventBus
+
     event_bus = EventBus(data_dir=config.data_dir)
     return vm.State(last_dreamer_run=last_dreamer_run, session_id=session_id, event_bus=event_bus)
 
