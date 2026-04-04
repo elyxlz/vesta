@@ -1,0 +1,501 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		000FD09881F04BB2F2A36B5C /* QuartzCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7702DBBDEBE7E4C2B582BAC3 /* QuartzCore.framework */; };
+		452CDFDCCC83000495671E36 /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B2F2AC9BC72564D6C1851514 /* WebKit.framework */; };
+		47A00AF3292872CA7F7FBEA3 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FCC5B92DB0A66193AFEBBE97 /* Metal.framework */; };
+		4D223F74E9EAC3A7CA2A6C83 /* libapp.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 5E617FDCA35607D21C10A292 /* libapp.a */; };
+		4D978F6CC6308D26D60AD16C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A295441F5E838C771AEA319A /* Assets.xcassets */; };
+		7E810C0D38F1E2C0E0B4C9FC /* main.mm in Sources */ = {isa = PBXBuildFile; fileRef = 3AB6F291E1D0E0D2A018399D /* main.mm */; };
+		846FFAFD84619C150373E63E /* CoreGraphics.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2FA2D33285AA411D0BE3FC17 /* CoreGraphics.framework */; };
+		92C9928A87090064445AFA58 /* MetalKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5D6798E251F75C062A61B52C /* MetalKit.framework */; };
+		9EE9EF5850A96BF34C685BDA /* assets in Resources */ = {isa = PBXBuildFile; fileRef = 3857918E395B10CAE03FF3AF /* assets */; };
+		DD77DC7BF76502C00F9037AE /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 8640C3F609F76DCA06D6F596 /* Security.framework */; };
+		F9B12571DBEAF034CEFD35B2 /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 8AF554773B2F653546851953 /* UIKit.framework */; };
+		FE7C083E1B77383CE0246A89 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = E2A87BF4700C681AF10A5283 /* LaunchScreen.storyboard */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		13E67664F9B7A7B08BBF6369 /* agents.rs */ = {isa = PBXFileReference; path = agents.rs; sourceTree = "<group>"; };
+		1D9C07F3CBDF802984742C1B /* logs.rs */ = {isa = PBXFileReference; path = logs.rs; sourceTree = "<group>"; };
+		24566EA2F91CF3919037807A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		2B8E97D97547316D66C018D7 /* bindings.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = bindings.h; sourceTree = "<group>"; };
+		2FA2D33285AA411D0BE3FC17 /* CoreGraphics.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreGraphics.framework; path = System/Library/Frameworks/CoreGraphics.framework; sourceTree = SDKROOT; };
+		34B9904A00D2359E811AA79C /* vesta-app_iOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = "vesta-app_iOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		3857918E395B10CAE03FF3AF /* assets */ = {isa = PBXFileReference; lastKnownFileType = folder; path = assets; sourceTree = SOURCE_ROOT; };
+		397DBC73E80484F265B94E30 /* lib.rs */ = {isa = PBXFileReference; path = lib.rs; sourceTree = "<group>"; };
+		3AB6F291E1D0E0D2A018399D /* main.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = main.mm; sourceTree = "<group>"; };
+		40FA7C3FF01CF02024E6FE1E /* ws.rs */ = {isa = PBXFileReference; path = ws.rs; sourceTree = "<group>"; };
+		5D6798E251F75C062A61B52C /* MetalKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MetalKit.framework; path = System/Library/Frameworks/MetalKit.framework; sourceTree = SDKROOT; };
+		5E617FDCA35607D21C10A292 /* libapp.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libapp.a; sourceTree = "<group>"; };
+		68B6C800828C315D2F7284D6 /* state.rs */ = {isa = PBXFileReference; path = state.rs; sourceTree = "<group>"; };
+		74FFB83956B929BACE11A36F /* auth.rs */ = {isa = PBXFileReference; path = auth.rs; sourceTree = "<group>"; };
+		7702DBBDEBE7E4C2B582BAC3 /* QuartzCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuartzCore.framework; path = System/Library/Frameworks/QuartzCore.framework; sourceTree = SDKROOT; };
+		7D1A10CE773E1E7E33A608D3 /* mod.rs */ = {isa = PBXFileReference; path = mod.rs; sourceTree = "<group>"; };
+		8640C3F609F76DCA06D6F596 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
+		8AF554773B2F653546851953 /* UIKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UIKit.framework; path = System/Library/Frameworks/UIKit.framework; sourceTree = SDKROOT; };
+		A295441F5E838C771AEA319A /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		AD1DF7DA101BF7ED9BE0D27E /* platform.rs */ = {isa = PBXFileReference; path = platform.rs; sourceTree = "<group>"; };
+		B2F2AC9BC72564D6C1851514 /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = System/Library/Frameworks/WebKit.framework; sourceTree = SDKROOT; };
+		BFF8E30A45242122828D71AF /* error.rs */ = {isa = PBXFileReference; path = error.rs; sourceTree = "<group>"; };
+		D45B550EAFD71962E5334432 /* vesta-app_iOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "vesta-app_iOS.entitlements"; sourceTree = "<group>"; };
+		D50A88008DAAD7894ED31D00 /* cli.rs */ = {isa = PBXFileReference; path = cli.rs; sourceTree = "<group>"; };
+		E2A87BF4700C681AF10A5283 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
+		E60EB57678C7EB0B31FEB1FD /* main.rs */ = {isa = PBXFileReference; path = main.rs; sourceTree = "<group>"; };
+		FCC5B92DB0A66193AFEBBE97 /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
+		FD1D837EDEA4D08973C9391D /* mod.rs */ = {isa = PBXFileReference; path = mod.rs; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		C1B8BA4D0A6D5C5C52ABFE30 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4D223F74E9EAC3A7CA2A6C83 /* libapp.a in Frameworks */,
+				846FFAFD84619C150373E63E /* CoreGraphics.framework in Frameworks */,
+				47A00AF3292872CA7F7FBEA3 /* Metal.framework in Frameworks */,
+				92C9928A87090064445AFA58 /* MetalKit.framework in Frameworks */,
+				000FD09881F04BB2F2A36B5C /* QuartzCore.framework in Frameworks */,
+				DD77DC7BF76502C00F9037AE /* Security.framework in Frameworks */,
+				F9B12571DBEAF034CEFD35B2 /* UIKit.framework in Frameworks */,
+				452CDFDCCC83000495671E36 /* WebKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		22BB7C154AAF632C45C97AA5 /* commands */ = {
+			isa = PBXGroup;
+			children = (
+				13E67664F9B7A7B08BBF6369 /* agents.rs */,
+				74FFB83956B929BACE11A36F /* auth.rs */,
+				1D9C07F3CBDF802984742C1B /* logs.rs */,
+				FD1D837EDEA4D08973C9391D /* mod.rs */,
+				AD1DF7DA101BF7ED9BE0D27E /* platform.rs */,
+				40FA7C3FF01CF02024E6FE1E /* ws.rs */,
+			);
+			path = commands;
+			sourceTree = "<group>";
+		};
+		254104E79F257DCA372FDEFC /* vesta-app_iOS */ = {
+			isa = PBXGroup;
+			children = (
+				24566EA2F91CF3919037807A /* Info.plist */,
+				D45B550EAFD71962E5334432 /* vesta-app_iOS.entitlements */,
+			);
+			path = "vesta-app_iOS";
+			sourceTree = "<group>";
+		};
+		3C31DA25E936171807781EF9 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				34B9904A00D2359E811AA79C /* vesta-app_iOS.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		621F75094E1340ECA647E844 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				BF42299C1B979B5F6777F03A /* vesta-app */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		8628FF7A0CFA055B44572661 /* bindings */ = {
+			isa = PBXGroup;
+			children = (
+				2B8E97D97547316D66C018D7 /* bindings.h */,
+			);
+			path = bindings;
+			sourceTree = "<group>";
+		};
+		A083799CFF66B17635E35759 /* runtime */ = {
+			isa = PBXGroup;
+			children = (
+				D50A88008DAAD7894ED31D00 /* cli.rs */,
+				7D1A10CE773E1E7E33A608D3 /* mod.rs */,
+			);
+			path = runtime;
+			sourceTree = "<group>";
+		};
+		BF42299C1B979B5F6777F03A /* vesta-app */ = {
+			isa = PBXGroup;
+			children = (
+				3AB6F291E1D0E0D2A018399D /* main.mm */,
+				8628FF7A0CFA055B44572661 /* bindings */,
+			);
+			path = "vesta-app";
+			sourceTree = "<group>";
+		};
+		CD98A0E537A76395AE462D77 = {
+			isa = PBXGroup;
+			children = (
+				3857918E395B10CAE03FF3AF /* assets */,
+				A295441F5E838C771AEA319A /* Assets.xcassets */,
+				E2A87BF4700C681AF10A5283 /* LaunchScreen.storyboard */,
+				DCB8620674D0953EA7FB5BA9 /* Externals */,
+				621F75094E1340ECA647E844 /* Sources */,
+				F222FCC3D416B4B9A8F53238 /* src */,
+				254104E79F257DCA372FDEFC /* vesta-app_iOS */,
+				D6110AD49F43DED7053DA053 /* Frameworks */,
+				3C31DA25E936171807781EF9 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		D6110AD49F43DED7053DA053 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				2FA2D33285AA411D0BE3FC17 /* CoreGraphics.framework */,
+				5E617FDCA35607D21C10A292 /* libapp.a */,
+				FCC5B92DB0A66193AFEBBE97 /* Metal.framework */,
+				5D6798E251F75C062A61B52C /* MetalKit.framework */,
+				7702DBBDEBE7E4C2B582BAC3 /* QuartzCore.framework */,
+				8640C3F609F76DCA06D6F596 /* Security.framework */,
+				8AF554773B2F653546851953 /* UIKit.framework */,
+				B2F2AC9BC72564D6C1851514 /* WebKit.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		DCB8620674D0953EA7FB5BA9 /* Externals */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = Externals;
+			sourceTree = "<group>";
+		};
+		F222FCC3D416B4B9A8F53238 /* src */ = {
+			isa = PBXGroup;
+			children = (
+				BFF8E30A45242122828D71AF /* error.rs */,
+				397DBC73E80484F265B94E30 /* lib.rs */,
+				E60EB57678C7EB0B31FEB1FD /* main.rs */,
+				68B6C800828C315D2F7284D6 /* state.rs */,
+				22BB7C154AAF632C45C97AA5 /* commands */,
+				A083799CFF66B17635E35759 /* runtime */,
+			);
+			name = src;
+			path = ../../src;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		69AC1DFBE365FD348ECCDAF6 /* vesta-app_iOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 58530F03532F3E91EDB73287 /* Build configuration list for PBXNativeTarget "vesta-app_iOS" */;
+			buildPhases = (
+				5BD1F86455CCB7B9AF99862E /* Build Rust Code */,
+				687E222555666E2F5553F126 /* Sources */,
+				981375E3D9A4987017CB93A7 /* Resources */,
+				C1B8BA4D0A6D5C5C52ABFE30 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "vesta-app_iOS";
+			packageProductDependencies = (
+			);
+			productName = "vesta-app_iOS";
+			productReference = 34B9904A00D2359E811AA79C /* vesta-app_iOS.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		E2561568834891E43E956DD9 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					69AC1DFBE365FD348ECCDAF6 = {
+						DevelopmentTeam = QB32XS5CT9;
+					};
+				};
+			};
+			buildConfigurationList = 8123AFDA4B8DFE710F3B0E33 /* Build configuration list for PBXProject "vesta-app" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = CD98A0E537A76395AE462D77;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 3C31DA25E936171807781EF9 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				69AC1DFBE365FD348ECCDAF6 /* vesta-app_iOS */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		981375E3D9A4987017CB93A7 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4D978F6CC6308D26D60AD16C /* Assets.xcassets in Resources */,
+				FE7C083E1B77383CE0246A89 /* LaunchScreen.storyboard in Resources */,
+				9EE9EF5850A96BF34C685BDA /* assets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		5BD1F86455CCB7B9AF99862E /* Build Rust Code */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build Rust Code";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(SRCROOT)/Externals/x86_64/${CONFIGURATION}/libapp.a",
+				"$(SRCROOT)/Externals/arm64/${CONFIGURATION}/libapp.a",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "npm run -- tauri ios xcode-script -v --platform ${PLATFORM_DISPLAY_NAME:?} --sdk-root ${SDKROOT:?} --framework-search-paths \"${FRAMEWORK_SEARCH_PATHS:?}\" --header-search-paths \"${HEADER_SEARCH_PATHS:?}\" --gcc-preprocessor-definitions \"${GCC_PREPROCESSOR_DEFINITIONS:-}\" --configuration ${CONFIGURATION:?} ${FORCE_COLOR} ${ARCHS:?}";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		687E222555666E2F5553F126 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7E810C0D38F1E2C0E0B4C9FC /* main.mm in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		04083275D7580BFAD5558277 /* release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				ARCHS = (
+					arm64,
+				);
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = "vesta-app_iOS/vesta-app_iOS.entitlements";
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = "QB32XS5CT9";
+				ENABLE_BITCODE = NO;
+				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\".\"",
+				);
+				INFOPLIST_FILE = "vesta-app_iOS/Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				"LIBRARY_SEARCH_PATHS[arch=arm64]" = "$(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(TOOLCHAIN_DIR)/usr/lib/swift/$(PLATFORM_NAME) $(TOOLCHAIN_DIR)/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				"LIBRARY_SEARCH_PATHS[arch=x86_64]" = "$(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(TOOLCHAIN_DIR)/usr/lib/swift/$(PLATFORM_NAME) $(TOOLCHAIN_DIR)/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.vestarun.app;
+				PRODUCT_NAME = "Vesta";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALID_ARCHS = arm64;
+			};
+			name = release;
+		};
+		8233AF0229BCEEAFEA235226 /* debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				ARCHS = (
+					arm64,
+				);
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = "vesta-app_iOS/vesta-app_iOS.entitlements";
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = "QB32XS5CT9";
+				ENABLE_BITCODE = NO;
+				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\".\"",
+				);
+				INFOPLIST_FILE = "vesta-app_iOS/Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				"LIBRARY_SEARCH_PATHS[arch=arm64]" = "$(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(TOOLCHAIN_DIR)/usr/lib/swift/$(PLATFORM_NAME) $(TOOLCHAIN_DIR)/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				"LIBRARY_SEARCH_PATHS[arch=x86_64]" = "$(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(TOOLCHAIN_DIR)/usr/lib/swift/$(PLATFORM_NAME) $(TOOLCHAIN_DIR)/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.vestarun.app;
+				PRODUCT_NAME = "Vesta";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALID_ARCHS = arm64;
+			};
+			name = debug;
+		};
+		87D0D6F78C1AFBD339893867 /* debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = debug;
+		};
+		D36E1873C99499EE5ADBD837 /* release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		58530F03532F3E91EDB73287 /* Build configuration list for PBXNativeTarget "vesta-app_iOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				8233AF0229BCEEAFEA235226 /* debug */,
+				04083275D7580BFAD5558277 /* release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = debug;
+		};
+		8123AFDA4B8DFE710F3B0E33 /* Build configuration list for PBXProject "vesta-app" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				87D0D6F78C1AFBD339893867 /* debug */,
+				D36E1873C99499EE5ADBD837 /* release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = E2561568834891E43E956DD9 /* Project object */;
+}

@@ -6,7 +6,7 @@ import { detectPlatform } from "@/lib/platform";
 export function Titlebar() {
   const platform = detectPlatform();
 
-  if (!isTauri) return null;
+  if (!isTauri || platform === "ios" || platform === "android") return null;
 
   const handleDrag = async (e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
@@ -28,8 +28,11 @@ export function Titlebar() {
   return (
     <div
       data-tauri-drag-region
-      className="fixed top-0 left-0 right-0 z-[100] flex items-center justify-end h-7 select-none"
-      style={{ paddingLeft: platform === "macos" ? 78 : undefined }}
+      className="fixed left-0 right-0 z-[100] flex items-center justify-end h-7 select-none"
+      style={{
+        top: "env(safe-area-inset-top)",
+        paddingLeft: platform === "macos" ? 78 : undefined,
+      }}
       onMouseDown={handleDrag}
     >
       {platform !== "macos" && (
