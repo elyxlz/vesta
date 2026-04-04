@@ -85,16 +85,6 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
     greeting_reason = "first_start" if first_start else restart_reason
     await queue_greeting(message_queue, config=config, reason=greeting_reason)
 
-    def _task_done(task: asyncio.Task[None]) -> None:
-        if task.cancelled():
-            return
-        exc = task.exception()
-        if exc:
-            logger.error(f"Task {task.get_name()} crashed: {type(exc).__name__}: {exc}")
-
-    for task in tasks:
-        task.add_done_callback(_task_done)
-
     try:
         await state.graceful_shutdown.wait()
     except (KeyboardInterrupt, asyncio.CancelledError):

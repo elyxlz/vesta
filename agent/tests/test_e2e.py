@@ -1,9 +1,8 @@
 """End-to-end tests for Vesta.
 
-These tests build a Docker image, spin up an ephemeral container, inject
-notifications via ``docker exec``, and verify outcomes by reading files
-back out of the container.  Every run is idempotent — the container is
-destroyed in teardown regardless of pass/fail.
+Build a Docker image, spin up an ephemeral container, inject notifications
+via ``docker exec``, and verify outcomes by reading files back out.
+Every run is idempotent — the container is destroyed in teardown.
 
 Requirements:
   - Docker daemon running
@@ -13,6 +12,7 @@ Requirements:
 import json
 import shutil
 import subprocess
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -23,7 +23,7 @@ import pytest
 # Constants
 # ---------------------------------------------------------------------------
 
-REPO_ROOT = Path(__file__).resolve().parents[2]  # …/vesta
+REPO_ROOT = Path(__file__).resolve().parents[2]
 IMAGE_TAG = "vesta:e2e-test"
 CONTAINER_PREFIX = "vesta-e2e"
 CREDENTIALS_PATH = Path.home() / ".claude" / ".credentials.json"
@@ -31,7 +31,7 @@ CONTAINER_CREDS = "/root/.claude/.credentials.json"
 NOTIFICATIONS_DIR = "/root/vesta/notifications"
 WORKSPACE_DIR = "/root/vesta/workspace"
 MEMORY_PATH = "/root/vesta/MEMORY.md"
-WS_PORT = 17865  # high port to avoid collisions
+WS_PORT = 17865
 
 TEST_MEMORY = """\
 # VESTA MEMORY SYSTEM (TEST MODE)
@@ -59,64 +59,51 @@ You are Vesta running in automated test mode.
 # ---------------------------------------------------------------------------
 
 
-def _run(cmd: list[str], *, check: bool = True, timeout: int = 300, capture: bool = True) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(cmd, capture_output=capture, text=True, check=check, timeout=timeout)
-
-
 def _docker(*args: str, check: bool = True, timeout: int = 300) -> subprocess.CompletedProcess[str]:
-    return _run(["docker", *args], check=check, timeout=timeout)
+    return subprocess.run(["docker", *args], capture_output=True, text=True, check=check, timeout=timeout)
 
 
 def _exec(container: str, cmd: str, *, timeout: int = 30) -> str:
-    result = _docker("exec", container, "bash", "-c", cmd, timeout=timeout)
-    return result.stdout.strip()
+    return _docker("exec", container, "bash", "-c", cmd, timeout=timeout).stdout.strip()
 
 
-def _exec_check(container: str, cmd: str) -> bool:
-    result = _docker("exec", container, "bash", "-c", cmd, check=False, timeout=15)
-    return result.returncode == 0
+def _exec_ok(container: str, cmd: str) -> bool:
+    return _docker("exec", container, "bash", "-c", cmd, check=False, timeout=15).returncode == 0
 
 
-def _write_notification(container: str, message: str, *, sender: str = "pytest", interrupt: bool = True) -> None:
-    payload = {
+def _write_notification(container: str, message: str, *, interrupt: bool = True) -> None:
+    payload = json.dumps({
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "source": "pytest",
         "type": "message",
         "message": message.strip(),
-        "sender": sender,
+        "sender": "pytest",
         "interrupt": interrupt,
         "metadata": {},
-    }
+    })
     filename = f"{int(time.time() * 1_000_000)}-{uuid.uuid4().hex}.json"
-    escaped = json.dumps(payload).replace("'", "'\\''")
-    _exec(container, f"echo '{escaped}' > {NOTIFICATIONS_DIR}/{filename}")
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        f.write(payload)
+        tmp = f.name
+    try:
+        _docker("cp", tmp, f"{container}:{NOTIFICATIONS_DIR}/{filename}")
+    finally:
+        Path(tmp).unlink(missing_ok=True)
 
 
 def _wait_for_file(container: str, path: str, *, timeout: float = 120.0) -> str:
     deadline = time.time() + timeout
     while time.time() < deadline:
-        if _exec_check(container, f"test -f {path}"):
+        if _exec_ok(container, f"test -f {path}"):
             return _exec(container, f"cat {path}")
         time.sleep(2.0)
     raise AssertionError(f"Timed out waiting for {path} in container {container}")
 
 
-def _assert_missing(container: str, path: str, *, duration: float = 30.0) -> None:
-    deadline = time.time() + duration
-    while time.time() < deadline:
-        if _exec_check(container, f"test -f {path}"):
-            raise AssertionError(f"Unexpected file created: {path}")
-        time.sleep(2.0)
-
-
 def _wait_for_agent_ready(container: str, *, timeout: float = 120.0) -> None:
-    """Wait until the agent's WebSocket server is accepting connections."""
     deadline = time.time() + timeout
     while time.time() < deadline:
-        if _exec_check(container, f"curl -sf http://localhost:{WS_PORT}/ws -o /dev/null || curl -sf --head http://localhost:{WS_PORT}/ -o /dev/null"):
-            return
-        # Also check if the log file has the WS startup message
-        if _exec_check(container, "grep -q 'WebSocket server started' /root/vesta/logs/vesta.log 2>/dev/null"):
+        if _exec_ok(container, "grep -q 'WebSocket server started' /root/vesta/logs/vesta.log 2>/dev/null"):
             return
         time.sleep(2.0)
     raise AssertionError(f"Agent did not become ready within {timeout}s")
@@ -144,8 +131,7 @@ def container(docker_image):
 
     name = f"{CONTAINER_PREFIX}-{uuid.uuid4().hex[:8]}"
 
-    # Create container with host networking and -i to keep stdin open
-    # (without -i, aioconsole.ainput gets EOFError and triggers shutdown)
+    # -i keeps stdin open so aioconsole.ainput doesn't EOF → shutdown
     _docker(
         "create", "-i",
         "--name", name,
@@ -159,20 +145,16 @@ def container(docker_image):
     )
 
     try:
-        # Inject credentials
         _docker("cp", str(CREDENTIALS_PATH), f"{name}:{CONTAINER_CREDS}")
 
-        # Inject test MEMORY.md
-        tmp = Path(f"/tmp/vesta-e2e-memory-{name}.md")
-        tmp.write_text(TEST_MEMORY)
-        _docker("cp", str(tmp), f"{name}:{MEMORY_PATH}")
-        tmp.unlink()
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
+            f.write(TEST_MEMORY)
+            tmp = f.name
+        _docker("cp", tmp, f"{name}:{MEMORY_PATH}")
+        Path(tmp).unlink()
 
-        # Ensure workspace exists
         _docker("start", name)
         _exec(container=name, cmd=f"mkdir -p {WORKSPACE_DIR}")
-
-        # Wait for agent to be ready
         _wait_for_agent_ready(name)
 
         yield name
@@ -186,18 +168,17 @@ def container(docker_image):
 
 
 def test_notification_creates_file(container):
-    """Agent should process a notification and create the requested file."""
+    """Agent processes a notification and creates the requested file."""
     uid = uuid.uuid4().hex[:8]
     target = f"{WORKSPACE_DIR}/single-{uid}.txt"
     expected = f"E2E content {uid}"
 
     _write_notification(container, f'Create the file "{target}" containing only:\n{expected}')
-    contents = _wait_for_file(container, target)
-    assert expected in contents
+    assert expected in _wait_for_file(container, target)
 
 
 def test_notification_batching(container):
-    """Multiple notifications arriving together should be batched and both handled."""
+    """Multiple notifications arriving together are batched and both handled."""
     uid = uuid.uuid4().hex[:8]
     file1 = f"{WORKSPACE_DIR}/batch-{uid}-1.txt"
     file2 = f"{WORKSPACE_DIR}/batch-{uid}-2.txt"
@@ -210,7 +191,7 @@ def test_notification_batching(container):
 
 
 def test_multiple_files_single_request(container):
-    """Agent should handle a request to create multiple files at once."""
+    """Agent handles a request to create multiple files at once."""
     uid = uuid.uuid4().hex[:8]
     fa = f"{WORKSPACE_DIR}/multi-{uid}-a.txt"
     fb = f"{WORKSPACE_DIR}/multi-{uid}-b.txt"
@@ -227,7 +208,7 @@ def test_multiple_files_single_request(container):
 
 
 def test_file_modification(container):
-    """Agent should be able to modify existing files."""
+    """Agent can modify an existing file."""
     uid = uuid.uuid4().hex[:8]
     target = f"{WORKSPACE_DIR}/modify-{uid}.txt"
 
@@ -236,8 +217,7 @@ def test_file_modification(container):
 
     deadline = time.time() + 60
     while time.time() < deadline:
-        content = _exec(container, f"cat {target}")
-        if "APPENDED" in content:
+        if "APPENDED" in _exec(container, f"cat {target}"):
             break
         time.sleep(2)
 
@@ -247,43 +227,38 @@ def test_file_modification(container):
 
 
 def test_interrupt_notification_interrupts_agent(container):
-    """A notification with interrupt=true (default) should interrupt active processing."""
+    """interrupt=true notification interrupts a busy agent."""
     uid = uuid.uuid4().hex[:8]
     slow_file = f"{WORKSPACE_DIR}/slow-{uid}.txt"
     urgent_file = f"{WORKSPACE_DIR}/urgent-{uid}.txt"
 
-    # Send a slow task
     _write_notification(
         container,
         f'Wait 30 seconds using bash sleep, then create "{slow_file}" with "slow done".',
     )
-    # Give the agent a moment to start processing
     time.sleep(5)
 
-    # Send an urgent interrupt notification
     _write_notification(
         container,
         f'Create the file "{urgent_file}" containing only:\nurgent done',
         interrupt=True,
     )
 
-    # The urgent file should appear well before the 30s sleep
-    contents = _wait_for_file(container, urgent_file, timeout=60.0)
-    assert "urgent done" in contents
+    # Urgent file should appear before the 30s sleep finishes
+    _wait_for_file(container, urgent_file, timeout=60.0)
+    assert not _exec_ok(container, f"test -f {slow_file}"), "slow task finished before urgent — test is inconclusive"
 
 
 def test_passive_notification_waits_for_idle(container):
-    """A notification with interrupt=false should wait until the agent is idle."""
+    """interrupt=false notification waits until the agent is idle."""
     uid = uuid.uuid4().hex[:8]
     busy_file = f"{WORKSPACE_DIR}/busy-{uid}.txt"
     passive_file = f"{WORKSPACE_DIR}/passive-{uid}.txt"
 
-    # Send a task that keeps the agent busy for a bit
     _write_notification(
         container,
         f'Create the file "{busy_file}" containing "busy done". Do this immediately, no waiting.',
     )
-    # Immediately send a passive (non-interrupting) notification
     time.sleep(1)
     _write_notification(
         container,
@@ -291,13 +266,12 @@ def test_passive_notification_waits_for_idle(container):
         interrupt=False,
     )
 
-    # Both should eventually complete — passive just waits for idle
     assert "busy done" in _wait_for_file(container, busy_file)
     assert "passive done" in _wait_for_file(container, passive_file)
 
 
 def test_graceful_shutdown(container):
-    """Container should have a log file and shut down cleanly."""
-    assert _exec_check(container, "test -f /root/vesta/logs/vesta.log")
+    """Container starts and has a valid log file."""
+    assert _exec_ok(container, "test -f /root/vesta/logs/vesta.log")
     log = _exec(container, "head -20 /root/vesta/logs/vesta.log")
-    assert "started" in log.lower() or "init" in log.lower() or "config" in log.lower()
+    assert "started" in log.lower() or "init" in log.lower()
