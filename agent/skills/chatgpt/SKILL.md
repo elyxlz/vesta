@@ -1,3 +1,8 @@
+---
+name: chatgpt
+description: This skill should be used when the user asks to "ask chatgpt", "ask openai", "ask gpt", "what does chatgpt think", "compare with chatgpt", or wants to query OpenAI's models for a second opinion, comparison, or any task. Default model gpt-5.4. No external dependencies.
+---
+
 # ChatGPT Skill
 
 This skill should be used when the user asks to "ask chatgpt", "ask openai", "ask gpt", "what does chatgpt think", "compare with chatgpt", or wants to query OpenAI's models for a second opinion, comparison, or any task.
