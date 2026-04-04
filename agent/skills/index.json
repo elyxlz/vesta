@@ -68,6 +68,10 @@
     "description": "Use when you need to contribute code, push a branch, open a pull request, submit a PR, sync with upstream, or do any git/GitHub operations on the vesta repo (elyxlz/vesta). IMPORTANT \u2014 always use this skill for GitHub access. Never use personal tokens or manual git push. Authentication is handled via the vesta-upstream GitHub App \u2014 no credentials needed from the user."
   },
   {
+    "name": "weather",
+    "description": "Use this skill when the user asks about \"weather\", \"forecast\", \"will it rain\", \"temperature\", \"wind\", \"humidity\", or needs current or upcoming weather conditions for any location."
+  },
+  {
     "name": "what-day",
     "description": "This skill should be used when working with ANY date to determine what day of the week it falls on. Use this skill when the user mentions dates, scheduling, planning events, or needs to know day-of-week information."
   },
