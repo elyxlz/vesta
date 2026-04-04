@@ -42,6 +42,8 @@ pub const OAUTH_REDIRECT_URI: &str = "https://console.anthropic.com/oauth/code/c
 pub const OAUTH_TOKEN_URL: &str = "https://api.anthropic.com/v1/oauth/token";
 pub const OAUTH_AUTHORIZE_URL: &str = "https://claude.ai/oauth/authorize";
 
+const ENTRYPOINT: &[&str] = &["uv", "run", "--project", "/root/vesta", "python", "-m", "vesta.main"];
+
 #[derive(PartialEq, Clone, Copy)]
 pub enum ContainerStatus {
     Running,
@@ -500,6 +502,7 @@ pub fn create_container(cname: &str, image: &str, port: u16, agent_name: &str) -
         "--label", &user_label,
         "-e", &ws_port_env,
         "-e", &agent_name_env,
+        "-e", "IS_SANDBOX=1",
     ];
 
     match gpu_available() {
@@ -516,6 +519,7 @@ pub fn create_container(cname: &str, image: &str, port: u16, agent_name: &str) -
     }
 
     args.push(image);
+    args.extend(ENTRYPOINT);
     if !docker_ok(&args) {
         return Err(DockerError::Failed("failed to create container".into()));
     }
