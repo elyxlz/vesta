@@ -36,7 +36,7 @@ export type VestaEvent =
   | (BaseEvent & { type: "tool_end"; tool: string })
   | (BaseEvent & { type: "error"; text: string })
   | (BaseEvent & { type: "notification"; source: string; summary: string })
-  | (BaseEvent & { type: "history"; events: VestaEvent[]; state: AgentActivityState });
+  | (BaseEvent & { type: "history"; events: VestaEvent[]; state: AgentActivityState; cursor: number | null });
 
 export type LogEvent =
   | { kind: "Line"; text: string }

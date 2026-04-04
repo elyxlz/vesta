@@ -10,7 +10,7 @@ from vesta import logger
 from vesta.events import APP_CHAT_TYPES, INTERNALS_TYPES, EventBus, HistoryEvent, VestaEvent
 
 
-async def _ws_handler(request: web.Request, filter_types: frozenset[str]) -> web.WebSocketResponse:
+async def _ws_handler(request: web.Request, channel: str, filter_types: frozenset[str]) -> web.WebSocketResponse:
     event_bus: EventBus = request.app["event_bus"]
     message_queue: asyncio.Queue[tuple[str, bool]] = request.app["message_queue"]
     state: vm.State = request.app["state"]
@@ -23,10 +23,11 @@ async def _ws_handler(request: web.Request, filter_types: frozenset[str]) -> web
     recv_task: asyncio.Task[None] | None = None
     send_task: asyncio.Task[None] | None = None
     try:
-        if event_bus.history:
-            filtered = [e for e in event_bus.history if e["type"] in filter_types]
-            if filtered:
-                await ws.send_json(HistoryEvent(type="history", events=filtered, state=event_bus.state))
+        history_log = event_bus.log(channel)
+        if history_log:
+            events, cursor = history_log.recent()
+            if events:
+                await ws.send_json(HistoryEvent(type="history", events=events, state=event_bus.state, cursor=cursor))
         recv_task = asyncio.create_task(_recv_loop(ws, message_queue, state, config))
         send_task = asyncio.create_task(_send_loop(ws, sub, filter_types))
         await asyncio.wait([recv_task, send_task], return_when=asyncio.FIRST_COMPLETED)
@@ -40,11 +41,31 @@ async def _ws_handler(request: web.Request, filter_types: frozenset[str]) -> web
 
 
 async def _internals_handler(request: web.Request) -> web.WebSocketResponse:
-    return await _ws_handler(request, INTERNALS_TYPES)
+    return await _ws_handler(request, "internals", INTERNALS_TYPES)
 
 
 async def _app_chat_handler(request: web.Request) -> web.WebSocketResponse:
-    return await _ws_handler(request, APP_CHAT_TYPES)
+    return await _ws_handler(request, "app-chat", APP_CHAT_TYPES)
+
+
+async def _history_handler(request: web.Request) -> web.Response:
+    event_bus: EventBus = request.app["event_bus"]
+    channel = request.query.get("channel", "app-chat")
+    cursor_raw = request.query.get("cursor", "")
+
+    if not cursor_raw:
+        return web.json_response({"error": "missing 'cursor' param"}, status=400)
+    try:
+        cursor = int(cursor_raw)
+    except ValueError:
+        return web.json_response({"error": "invalid cursor"}, status=400)
+
+    history_log = event_bus.log(channel)
+    if not history_log:
+        return web.json_response({"events": [], "cursor": None})
+
+    events, next_cursor = history_log.before(cursor)
+    return web.json_response({"events": events, "cursor": next_cursor})
 
 
 async def _recv_loop(
@@ -101,6 +122,7 @@ async def start_ws_server(
     app["config"] = config
     app.router.add_get("/ws", _internals_handler)
     app.router.add_get("/ws/app-chat", _app_chat_handler)
+    app.router.add_get("/history", _history_handler)
 
     runner = web.AppRunner(app)
     await runner.setup()

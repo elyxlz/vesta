@@ -1,7 +1,9 @@
+import { useCallback } from "react";
 import { Home, Plus } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAgents } from "@/providers/AgentsProvider";
 import { useAuth } from "@/providers/AuthProvider";
+import { useLayout } from "@/stores/use-layout";
 import { Settings } from "@/components/Settings";
 import { StatusPill } from "@/components/StatusPill";
 import { Button } from "@/components/ui/button";
@@ -22,9 +24,19 @@ export function Navbar({ center, trailing }: NavbarProps = {}) {
   const navigate = useNavigate();
   const location = useLocation();
   const isHome = location.pathname === "/";
+  const setNavbarHeight = useLayout((s) => s.setNavbarHeight);
+
+  const measureRef = useCallback((node: HTMLDivElement | null) => {
+    if (!node) return;
+    const observer = new ResizeObserver(([entry]) => {
+      setNavbarHeight(entry.contentRect.height);
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [setNavbarHeight]);
 
   return (
-    <div className="flex items-center justify-between min-h-11 shrink-0 select-none relative overflow-visible">
+    <div ref={measureRef} className="flex items-center justify-between min-h-11 shrink-0 select-none relative overflow-visible">
       <div className="flex-1 flex items-center">
         {connected && isHome && (
           <Tooltip>
