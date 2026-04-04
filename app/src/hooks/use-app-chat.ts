@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { VestaEvent, AgentActivityState } from "@/lib/types";
-import { wsAppChatUrl } from "@/lib/connection";
+import { wsAppChatUrl, fetchHistory } from "@/lib/connection";
 import { useAuth } from "@/providers/AuthProvider";
 
 const RECONNECT_BASE = 1000;
@@ -12,9 +12,11 @@ export function useAppChat(name: string | null, active: boolean) {
   const [messages, setMessages] = useState<VestaEvent[]>([]);
   const [agentState, setAgentState] = useState<AgentActivityState>("idle");
   const [connected, setConnected] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const pendingEchoesRef = useRef<string[]>([]);
+  const cursorRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!active || !name) return;
@@ -25,6 +27,7 @@ export function useAppChat(name: string | null, active: boolean) {
     let reconnectDelay = RECONNECT_BASE;
 
     setMessages([]);
+    cursorRef.current = null;
     pendingEchoesRef.current = [];
 
     const doConnect = () => {
@@ -48,6 +51,7 @@ export function useAppChat(name: string | null, active: boolean) {
         setConnected(true);
         setReachable(true);
         setMessages([]);
+        cursorRef.current = null;
         pendingEchoesRef.current = [];
       };
 
@@ -61,6 +65,7 @@ export function useAppChat(name: string | null, active: boolean) {
             setMessages(
               evts.length > MAX_MESSAGES ? evts.slice(-MAX_MESSAGES) : evts,
             );
+            cursorRef.current = event.cursor;
             if (event.state) setAgentState(event.state);
             return;
           }
@@ -95,7 +100,7 @@ export function useAppChat(name: string | null, active: boolean) {
         reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX);
       };
 
-      socket.onerror = () => {};
+      socket.onerror = () => { };
     };
 
     doConnect();
@@ -127,5 +132,21 @@ export function useAppChat(name: string | null, active: boolean) {
     return true;
   }, []);
 
-  return { messages, agentState, connected, send };
+  const hasMore = cursorRef.current !== null;
+
+  const loadMore = useCallback(async () => {
+    const cursor = cursorRef.current;
+    if (!name || loadingMore || cursor === null) return;
+
+    setLoadingMore(true);
+    try {
+      const result = await fetchHistory(name, "app-chat", cursor);
+      setMessages((prev) => [...result.events, ...prev]);
+      cursorRef.current = result.cursor;
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [name, loadingMore]);
+
+  return { messages, agentState, connected, hasMore, loadingMore, loadMore, send };
 }
