@@ -70,6 +70,7 @@ agent/memory/dreamer/
 node_modules/
 
 # Tauri build artifacts
+app/src-tauri/gen/
 app/src-tauri/target/
 app/src-tauri/binaries/vesta-*
 app/src-tauri/resources/*.tar.gz
