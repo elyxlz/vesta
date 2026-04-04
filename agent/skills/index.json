@@ -1,5 +1,9 @@
 [
   {
+    "name": "app-chat",
+    "description": "Use this skill when the user sends a message through the Vesta app or CLI. This is the primary channel for direct conversation with the user."
+  },
+  {
     "name": "browser",
     "description": "Use for \"browse\", \"open a website\", \"navigate to\", \"click\", \"fill form\","
   },

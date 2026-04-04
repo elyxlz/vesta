@@ -84,7 +84,9 @@ type StreamEvent = (
 )
 
 APP_CHAT_TYPES: frozenset[str] = frozenset({"user", "app_chat", "tool_start", "tool_end", "status", "error"})
-INTERNALS_TYPES: frozenset[str] = frozenset({"user", "assistant", "tool_start", "tool_end", "status", "error", "notification", "subagent_start", "subagent_stop"})
+INTERNALS_TYPES: frozenset[str] = frozenset(
+    {"user", "assistant", "tool_start", "tool_end", "status", "error", "notification", "subagent_start", "subagent_stop"}
+)
 
 
 class HistoryEvent(tp.TypedDict):
@@ -135,10 +137,13 @@ class _HistoryLog:
             return [], None
         events = [json.loads(r[1]) for r in reversed(rows)]
         oldest_id = rows[-1][0]
-        has_older = self._conn.execute(
-            "SELECT 1 FROM events WHERE channel = ? AND id < ? LIMIT 1",
-            (self._channel, oldest_id),
-        ).fetchone() is not None
+        has_older = (
+            self._conn.execute(
+                "SELECT 1 FROM events WHERE channel = ? AND id < ? LIMIT 1",
+                (self._channel, oldest_id),
+            ).fetchone()
+            is not None
+        )
         return events, oldest_id if has_older else None
 
     def before(self, cursor: int, limit: int = PAGE_SIZE) -> tuple[list[StreamEvent], int | None]:
@@ -150,10 +155,13 @@ class _HistoryLog:
             return [], None
         events = [json.loads(r[1]) for r in reversed(rows)]
         oldest_id = rows[-1][0]
-        has_older = self._conn.execute(
-            "SELECT 1 FROM events WHERE channel = ? AND id < ? LIMIT 1",
-            (self._channel, oldest_id),
-        ).fetchone() is not None
+        has_older = (
+            self._conn.execute(
+                "SELECT 1 FROM events WHERE channel = ? AND id < ? LIMIT 1",
+                (self._channel, oldest_id),
+            ).fetchone()
+            is not None
+        )
         return events, oldest_id if has_older else None
 
     def clear(self) -> None:
