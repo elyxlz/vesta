@@ -114,14 +114,20 @@ async def test_subagent_hook_emits_event(verb, event_type, agent_id, agent_type)
     assert received["agent_type"] == agent_type
 
 
+def _log(bus: EventBus, channel: str) -> tp.Any:
+    log = bus.log(channel)
+    assert log is not None
+    return log
+
+
 def test_eventbus_channel_filtering(tmp_path):
     """Events only persist to channels whose type set includes the event type."""
     bus = EventBus(data_dir=tmp_path)
     bus.emit(AppChatEvent(type="app_chat", text="hello"))
     bus.emit(SubagentStartEvent(type="subagent_start", agent_id="a", agent_type="browser"))
 
-    chat_events, _ = bus.log("app-chat").recent()
-    internals_events, _ = bus.log("internals").recent()
+    chat_events, _ = _log(bus, "app-chat").recent()
+    internals_events, _ = _log(bus, "internals").recent()
 
     chat_types = {e["type"] for e in chat_events}
     internals_types = {e["type"] for e in internals_events}
@@ -139,7 +145,8 @@ def test_eventbus_recent_pagination(tmp_path):
     for i in range(150):
         bus.emit(UserEvent(type="user", text=f"msg {i}"))
 
-    events, cursor = bus.log("app-chat").recent(limit=50)
+    events: list[tp.Any]
+    events, cursor = _log(bus, "app-chat").recent(limit=50)
     assert len(events) == 50
     assert events[-1]["text"] == "msg 149"
     assert events[0]["text"] == "msg 100"
@@ -153,17 +160,20 @@ def test_eventbus_cursor_pagination(tmp_path):
     for i in range(80):
         bus.emit(UserEvent(type="user", text=f"msg {i}"))
 
-    events, cursor = bus.log("app-chat").recent(limit=30)
+    events: list[tp.Any]
+    events, cursor = _log(bus, "app-chat").recent(limit=30)
     assert len(events) == 30
     assert cursor is not None
 
-    older, cursor2 = bus.log("app-chat").before(cursor, limit=30)
+    older: list[tp.Any]
+    older, cursor2 = _log(bus, "app-chat").before(cursor, limit=30)
     assert len(older) == 30
     assert older[-1]["text"] == "msg 49"
     assert older[0]["text"] == "msg 20"
     assert cursor2 is not None
 
-    oldest, cursor3 = bus.log("app-chat").before(cursor2, limit=30)
+    oldest: list[tp.Any]
+    oldest, cursor3 = _log(bus, "app-chat").before(cursor2, limit=30)
     assert len(oldest) == 20
     assert oldest[0]["text"] == "msg 0"
     assert cursor3 is None  # no more pages
@@ -177,8 +187,8 @@ def test_eventbus_clear_history(tmp_path):
     bus.emit(AppChatEvent(type="app_chat", text="reply"))
     bus.clear_history()
 
-    chat_events, _ = bus.log("app-chat").recent()
-    internals_events, _ = bus.log("internals").recent()
+    chat_events, _ = _log(bus, "app-chat").recent()
+    internals_events, _ = _log(bus, "internals").recent()
     assert len(chat_events) == 0
     assert len(internals_events) == 0
     bus.close()
@@ -192,7 +202,8 @@ def test_eventbus_persists_across_instances(tmp_path):
     bus.close()
 
     bus2 = EventBus(data_dir=tmp_path)
-    events, _ = bus2.log("app-chat").recent()
+    events: list[tp.Any]
+    events, _ = _log(bus2, "app-chat").recent()
     texts = [e["text"] for e in events if "text" in e]
     assert "before restart" in texts
     assert "reply" in texts
@@ -207,8 +218,8 @@ def test_eventbus_status_not_persisted(tmp_path):
     received = q.get_nowait()
     assert received["type"] == "status"
 
-    chat_events, _ = bus.log("app-chat").recent()
-    internals_events, _ = bus.log("internals").recent()
+    chat_events, _ = _log(bus, "app-chat").recent()
+    internals_events, _ = _log(bus, "internals").recent()
     assert len(chat_events) == 0
     assert len(internals_events) == 0
     bus.close()
@@ -220,7 +231,7 @@ def test_eventbus_no_data_dir():
     q = bus.subscribe()
     bus.emit(UserEvent(type="user", text="hello"))
     received = q.get_nowait()
-    assert received["text"] == "hello"
+    assert received["type"] == "user"
     assert bus.log("app-chat") is None
     bus.close()
 
