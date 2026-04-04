@@ -1,3 +1,8 @@
+---
+name: weather
+description: Use this skill when the user asks about "weather", "forecast", "will it rain", "temperature", "wind", "humidity", or needs current or upcoming weather conditions for any location.
+---
+
 # Weather Skill
 
 Use this skill when the user asks about weather, forecasts, "will it rain", "what's the temperature", etc.
