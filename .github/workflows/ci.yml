@@ -18,7 +18,6 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  VFKIT_VERSION: "0.6.0"
   NSIS_VERSION: "3.11"
 
 jobs:
@@ -38,7 +37,6 @@ jobs:
               - 'cli/**'
               - 'vestad/**'
               - 'vesta-common/**'
-              - 'vm/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
             app:
@@ -130,7 +128,7 @@ jobs:
 
       - name: Run tests
         working-directory: app
-        run: npm test
+        run: npm run test
 
   # ── Integration tests (real vestad + real client, Docker required) ─────
   test-integration:
@@ -179,11 +177,9 @@ jobs:
           - target: aarch64-apple-darwin
             os: macos-latest
             artifact: vesta-aarch64-apple-darwin
-            vfkit: true
           - target: x86_64-apple-darwin
             os: macos-latest
             artifact: vesta-x86_64-apple-darwin
-            vfkit: true
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
@@ -222,20 +218,10 @@ jobs:
         working-directory: .
         run: cargo build --release -p vesta --target ${{ matrix.target }}
 
-      - name: Download vfkit
-        if: matrix.vfkit
-        run: |
-          curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors -o /tmp/vfkit \
-            "https://github.com/crc-org/vfkit/releases/download/v${VFKIT_VERSION}/vfkit"
-          chmod +x /tmp/vfkit
-
       - name: Package
         run: |
           mkdir staging
           cp target/${{ matrix.target }}/release/vesta staging/
-          if [ -f /tmp/vfkit ]; then
-            cp /tmp/vfkit staging/
-          fi
           tar -czf ${{ matrix.artifact }}.tar.gz -C staging .
 
       - uses: actions/upload-artifact@v7
@@ -251,7 +237,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # musl targets for static binaries (vestad runs in Alpine VM/WSL with musl)
+          # musl targets for static binaries
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
             artifact: vestad-x86_64-unknown-linux-gnu
@@ -321,199 +307,6 @@ jobs:
           ./vestad --version
           ./vesta --version
 
-  # ── Test macOS CLI ────────────────────────────────────────────────────
-  test-macos:
-    needs: [build-vesta, build-vm-image]
-    if: ${{ !failure() && !cancelled() }}
-    runs-on: macos-latest
-    timeout-minutes: 10
-    steps:
-      - name: Download CLI
-        uses: actions/download-artifact@v8
-        with:
-          name: vesta-aarch64-apple-darwin
-          path: .
-
-      - name: Extract
-        run: |
-          mkdir -p cli-extract
-          tar -xzf vesta-aarch64-apple-darwin.tar.gz -C cli-extract
-          chmod +x cli-extract/vesta cli-extract/vfkit
-
-      - name: E2E test
-        run: |
-          set -euo pipefail
-          CLI="cli-extract/vesta"
-
-          echo "=== basic commands ==="
-          "$CLI" --version
-          "$CLI" --help
-
-          echo "=== verify vfkit ==="
-          ls -la cli-extract/vfkit
-          file cli-extract/vfkit
-
-      - name: Ad-hoc sign and verify
-        run: |
-          codesign --force --sign - cli-extract/vesta
-          codesign --force --sign - cli-extract/vfkit
-          codesign --verify --verbose cli-extract/vesta
-          codesign --verify --verbose cli-extract/vfkit
-
-      # Test VM image extraction + CLI integration (non-PR only)
-      - name: Download VM image
-        if: github.event_name != 'pull_request'
-        uses: actions/download-artifact@v8
-        with:
-          name: vm-image-arm64
-          path: .
-
-      - name: Test VM image and CLI integration
-        if: github.event_name != 'pull_request'
-        run: |
-          set -euo pipefail
-          CLI="cli-extract/vesta"
-          DATA_DIR="$HOME/Library/Application Support/vesta"
-          mkdir -p "$DATA_DIR"
-
-          # Extract VM image and place in data dir (simulates successful download+extraction)
-          tar --zstd -xf vesta-vm-arm64.tar.zst -C "$DATA_DIR"
-          for f in vm-kernel vm-initrd vm-disk.raw; do
-            test -s "$DATA_DIR/$f" || { echo "FAIL: $f missing"; exit 1; }
-          done
-          echo "VM image files OK"
-
-          # setup will skip download (files exist), generate SSH key, try to boot vfkit (will fail)
-          "$CLI" setup --name ci-test --yes 2>&1 || true
-
-          # Verify SSH key was generated
-          test -f "$DATA_DIR/ssh_key" || { echo "FAIL: SSH key not generated"; exit 1; }
-          test -f "$DATA_DIR/ssh_key.pub" || { echo "FAIL: SSH public key not generated"; exit 1; }
-          echo "SSH key generation OK"
-
-          # vfkit can't run in CI, so no server is configured — status should fail gracefully
-          if STATUS=$("$CLI" status ci-test --json 2>&1); then
-            echo "$STATUS"
-            echo "$STATUS" | jq -e '.status == "not_found"'
-          else
-            echo "$STATUS" | grep -qi "no server configured\|server not running\|connection" \
-              || { echo "FAIL: unexpected error: $STATUS"; exit 1; }
-            echo "status correctly reports server unreachable (expected in CI)"
-          fi
-          echo "all macOS integration tests passed"
-
-  # ── Build VM images ─────────────────────────────────────────────────
-  build-vm-image:
-    needs: [build-vestad, detect-changes]
-    if: needs.detect-changes.outputs.cli == 'true' || github.event_name != 'pull_request'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: amd64
-            vestad-artifact: vestad-x86_64-unknown-linux-gnu
-          - arch: arm64
-            vestad-artifact: vestad-aarch64-unknown-linux-gnu
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Set up QEMU
-        if: matrix.arch == 'arm64'
-        uses: docker/setup-qemu-action@v4
-
-      - name: Download vestad
-        uses: actions/download-artifact@v8
-        with:
-          name: ${{ matrix.vestad-artifact }}
-          path: .
-
-      - name: Extract vestad binary
-        run: |
-          mkdir -p /tmp/vestad-extract
-          tar -xzf ${{ matrix.vestad-artifact }}.tar.gz -C /tmp/vestad-extract
-          cp /tmp/vestad-extract/vestad vm/vestad
-
-      - name: Build VM Docker image
-        run: docker build --platform linux/${{ matrix.arch }} --build-arg INCLUDE_KERNEL=true -t vesta-vm -f vm/Dockerfile vm
-
-      - name: Export rootfs and create VM disk image
-        run: |
-          CONTAINER=$(docker create --platform linux/${{ matrix.arch }} vesta-vm)
-
-          docker export "$CONTAINER" > /tmp/rootfs.tar
-          docker rm "$CONTAINER" > /dev/null
-
-          truncate -s 2G /tmp/vm-disk.raw
-          mkfs.ext4 -q /tmp/vm-disk.raw
-          MOUNT_DIR=$(mktemp -d)
-          sudo mount /tmp/vm-disk.raw "$MOUNT_DIR"
-          trap "sudo umount '$MOUNT_DIR' 2>/dev/null; rmdir '$MOUNT_DIR' 2>/dev/null" EXIT
-          sudo tar -xf /tmp/rootfs.tar -C "$MOUNT_DIR"
-
-          VMLINUZ="$MOUNT_DIR/boot/vmlinuz-virt"
-          INITRD="$MOUNT_DIR/boot/initramfs-virt"
-
-          if [ "${{ matrix.arch }}" = "arm64" ]; then
-            # ARM64: vfkit needs an uncompressed kernel Image.
-            # Debian ARM64 vmlinuz may be uncompressed already or gzip-wrapped in an EFI stub.
-            sudo python3 -c "
-          import zlib, shutil
-          d = open('$VMLINUZ', 'rb').read()
-          off = 0
-          while True:
-              off = d.find(b'\x1f\x8b\x08', off)
-              if off < 0:
-                  break
-              try:
-                  raw = zlib.decompressobj(zlib.MAX_WBITS | 16).decompress(d[off:])
-                  if len(raw) > 1024 * 1024:
-                      open('/tmp/vm-kernel', 'wb').write(raw)
-                      raise SystemExit(0)
-              except zlib.error:
-                  pass
-              off += 1
-          shutil.copy('$VMLINUZ', '/tmp/vm-kernel')
-          "
-          else
-            sudo cp "$VMLINUZ" /tmp/vm-kernel
-          fi
-          sudo cp "$INITRD" /tmp/vm-initrd
-
-          sudo umount "$MOUNT_DIR"
-          rmdir "$MOUNT_DIR"
-          trap - EXIT
-          sudo chown "$(id -u):$(id -g)" /tmp/vm-kernel /tmp/vm-initrd /tmp/vm-disk.raw
-          for f in /tmp/vm-kernel /tmp/vm-initrd /tmp/vm-disk.raw; do
-            test -s "$f" || { echo "FATAL: $f is empty"; exit 1; }
-          done
-
-          cd /tmp
-          tar --zstd -cf vesta-vm-${{ matrix.arch }}.tar.zst vm-kernel vm-initrd vm-disk.raw
-          rm -f /tmp/rootfs.tar /tmp/vm-kernel /tmp/vm-initrd /tmp/vm-disk.raw
-
-      - name: Build and export WSL rootfs
-        if: matrix.arch == 'amd64'
-        run: |
-          docker build --build-arg INCLUDE_NVIDIA=true -t vesta-wsl -f vm/Dockerfile vm
-          CONTAINER=$(docker create vesta-wsl)
-          docker export "$CONTAINER" | gzip > /tmp/vesta-wsl-rootfs.tar.gz
-          docker rm "$CONTAINER" > /dev/null
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: vm-image-${{ matrix.arch }}
-          path: /tmp/vesta-vm-${{ matrix.arch }}.tar.zst
-
-      - uses: actions/upload-artifact@v7
-        if: matrix.arch == 'amd64'
-        with:
-          name: wsl-rootfs
-          path: /tmp/vesta-wsl-rootfs.tar.gz
-
-      - name: Clean up
-        run: rm -f vm/vestad
-
   # ── Windows Clippy (runs on PRs too) ─────────────────────────────────
   clippy-windows:
     needs: [version-check, detect-changes]
@@ -540,9 +333,9 @@ jobs:
         working-directory: .
         run: cargo clippy -p vesta --target x86_64-pc-windows-msvc -- -D warnings
 
-  # ── Build + Test Windows CLI (native MSVC) ───────────────────────────
-  build-test-windows:
-    needs: [build-vm-image, clippy-windows, detect-changes]
+  # ── Build Windows CLI (native MSVC) ──────────────────────────────────
+  build-windows:
+    needs: [clippy-windows, detect-changes]
     if: >-
       !failure() && !cancelled() && (
       needs.detect-changes.outputs.cli == 'true' ||
@@ -557,7 +350,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
-          components: clippy
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -568,69 +360,12 @@ jobs:
         working-directory: .
         run: cargo build --release -p vesta --target x86_64-pc-windows-msvc
 
-      - name: Download rootfs
-        uses: actions/download-artifact@v8
-        with:
-          name: wsl-rootfs
-          path: .
-
-      - name: E2E test
-        timeout-minutes: 10
+      - name: Smoke test
         shell: bash
         run: |
-          set -euo pipefail
           CLI="target/x86_64-pc-windows-msvc/release/vesta.exe"
-          VESTAD="/usr/local/bin/vestad"
-
-          cleanup() {
-            echo "=== Cleanup ==="
-            wsl.exe --unregister vesta-wsl 2>/dev/null || true
-          }
-          trap cleanup EXIT
-
-          echo "=== windows cli basics ==="
           "$CLI" --version
           "$CLI" --help
-
-          echo "=== verify rootfs ==="
-          ls -la vesta-wsl-rootfs.tar.gz
-          file vesta-wsl-rootfs.tar.gz
-
-          echo "=== WSL import ==="
-          INSTALL_DIR="$LOCALAPPDATA\\vesta-wsl-test"
-          mkdir -p "$INSTALL_DIR"
-          wsl.exe --import vesta-wsl "$INSTALL_DIR" vesta-wsl-rootfs.tar.gz --version 2
-          echo "import succeeded"
-
-          echo "=== distro health ==="
-          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec /bin/true
-          echo "distro is healthy"
-
-          echo "=== vestad inside WSL ==="
-          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec $VESTAD --version
-          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec $VESTAD --help
-
-          echo "=== start entrypoint for docker ==="
-          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec /entrypoint.sh &
-          ENTRY_PID=$!
-
-          echo "=== wait for docker ==="
-          for i in $(seq 1 30); do
-            if MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec test -S /var/run/docker.sock 2>/dev/null; then
-              echo "docker ready after ${i}s"
-              break
-            fi
-            [ "$i" -eq 30 ] && { echo "docker not ready"; exit 1; }
-            sleep 1
-          done
-
-          echo "=== vestad health check inside WSL ==="
-          MSYS_NO_PATHCONV=1 wsl.exe -d vesta-wsl --exec $VESTAD --version
-
-          echo "=== container image tests (skipped: WSL2 has no internet on CI runners) ==="
-          echo "These tests are covered by test-linux which runs the same checks"
-
-          echo "=== all tests passed ==="
 
       - name: Package Windows CLI zip
         shell: bash
@@ -671,11 +406,9 @@ jobs:
           - target: aarch64-apple-darwin
             os: macos-latest
             bundles: dmg
-            vfkit: true
           - target: x86_64-apple-darwin
             os: macos-latest
             bundles: dmg
-            vfkit: true
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
@@ -703,15 +436,6 @@ jobs:
             build-essential pkg-config \
             libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev
 
-      - name: Download vfkit (macOS)
-        if: matrix.vfkit
-        run: |
-          mkdir -p app/src-tauri/resources
-          curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors -o app/src-tauri/resources/vfkit \
-            "https://github.com/crc-org/vfkit/releases/download/v${VFKIT_VERSION}/vfkit"
-          chmod +x app/src-tauri/resources/vfkit
-          codesign --force --sign - app/src-tauri/resources/vfkit
-
       - name: Bundle vestad (Linux)
         if: runner.os == 'Linux'
         uses: actions/download-artifact@v8
@@ -729,7 +453,7 @@ jobs:
 
       - name: Install frontend deps
         working-directory: app
-        run: npm ci
+        run: npm install
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
@@ -741,25 +465,6 @@ jobs:
           projectPath: app
           tauriScript: npx tauri
           args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
-
-      - name: Verify macOS app bundle
-        if: runner.os == 'macOS'
-        run: |
-          DMG=$(find app/src-tauri/target/${{ matrix.target }}/release/bundle -name '*.dmg' | head -1)
-          echo "DMG: $DMG"
-          MOUNT=$(hdiutil attach "$DMG" -nobrowse | tail -1 | awk '{print $NF}')
-          echo "Mounted at: $MOUNT"
-          APP=$(find "$MOUNT" -name '*.app' -maxdepth 1 | head -1)
-          echo "App: $APP"
-          echo "=== MacOS dir ==="
-          ls -la "$APP/Contents/MacOS/"
-          echo "=== Resources dir ==="
-          ls -laR "$APP/Contents/Resources/"
-          VFKIT=$(find "$APP" -name vfkit -type f | head -1)
-          test -n "$VFKIT" || { echo "FAIL: vfkit not found anywhere in bundle"; exit 1; }
-          echo "vfkit found at: $VFKIT"
-          hdiutil detach "$MOUNT" -quiet
-          echo "app bundle OK"
 
       - name: Collect artifacts
         if: github.event_name != 'pull_request'
@@ -783,7 +488,7 @@ jobs:
 
   # ── Build Tauri app (Windows, non-PR) ────────────────────────────────
   build-tauri-windows:
-    needs: [build-test-windows]
+    needs: [build-windows]
     if: ${{ !failure() && !cancelled() && github.event_name != 'pull_request' }}
     runs-on: windows-latest
     steps:
@@ -823,7 +528,7 @@ jobs:
 
       - name: Install frontend deps
         working-directory: app
-        run: npm ci
+        run: npm install
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
@@ -850,7 +555,7 @@ jobs:
 
   # ── Push Docker image (release only) ─────────────────────────────────
   push-image:
-    needs: [test-linux, build-test-windows]
+    needs: [test-linux]
     if: ${{ !failure() && !cancelled() && github.event_name == 'release' }}
     runs-on: ubuntu-latest
     steps:
@@ -880,7 +585,7 @@ jobs:
 
   # ── Upload artifacts to release and publish ──────────────────────────
   release:
-    needs: [build-vesta, build-vestad, test-frontend, test-integration, test-linux, test-macos, build-vm-image, build-test-windows, build-tauri, build-tauri-windows, push-image]
+    needs: [build-vesta, build-vestad, test-frontend, test-integration, test-linux, build-windows, build-tauri, build-tauri-windows, push-image]
     if: ${{ !failure() && !cancelled() && github.event_name == 'release' }}
     runs-on: ubuntu-latest
     steps:
@@ -896,7 +601,7 @@ jobs:
         run: |
           mkdir release
           find artifacts -type f \( \
-            -name '*.tar.gz' -o -name '*.tar.zst' -o -name '*.zip' -o \
+            -name '*.tar.gz' -o -name '*.zip' -o \
             -name '*.deb' -o -name '*.rpm' -o -name '*.dmg' -o \
             -name '*-setup.exe' -o -name '*_x64-setup.exe' -o \
             -name '*.sig' \

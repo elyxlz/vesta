@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::docker;
+use crate::{docker, jwt};
 
 const API_KEY_BYTES: usize = 32;
 const AUTH_SESSION_TIMEOUT_SECS: u64 = 600;
@@ -47,7 +47,7 @@ pub fn ensure_tls(config_dir: &std::path::Path) -> (String, String, String) {
         .push(rcgen::SanType::IpAddress(std::net::IpAddr::V4(
             std::net::Ipv4Addr::new(127, 0, 0, 1),
         )));
-    // Add all local IP addresses as SANs for VM/WSL connections
+    // Add all local IP addresses as SANs for remote connections
     if let Ok(output) = std::process::Command::new("hostname").arg("-I").output() {
         let ips = String::from_utf8_lossy(&output.stdout);
         for ip_str in ips.split_whitespace() {
@@ -131,14 +131,16 @@ pub struct AppState {
     api_key: String,
     auth_sessions: Mutex<HashMap<String, AuthSession>>,
     agent_locks: Mutex<HashMap<String, Arc<tokio::sync::RwLock<()>>>>,
+    tunnel_url: Mutex<Option<String>>,
 }
 
 impl AppState {
-    fn new(api_key: String) -> Self {
+    fn new(api_key: String, tunnel_url: Option<String>) -> Self {
         Self {
             api_key,
             auth_sessions: Mutex::new(HashMap::new()),
             agent_locks: Mutex::new(HashMap::new()),
+            tunnel_url: Mutex::new(tunnel_url),
         }
     }
 
@@ -167,19 +169,12 @@ async fn auth_middleware(
     request: axum::extract::Request,
     next: Next,
 ) -> Response {
-    let path = request.uri().path();
-
-    // /health requires no auth
-    if path == "/health" {
-        return next.run(request).await;
-    }
-
     // Check Bearer header first, then query param ?token= (for WebSocket)
     let bearer_ok = headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
-        .map(|token| token == state.api_key)
+        .map(|token| verify_token(token, &state.api_key))
         .unwrap_or(false);
 
     let query_ok = if !bearer_ok {
@@ -190,7 +185,7 @@ async fn auth_middleware(
                 q.split('&')
                     .find_map(|p| p.strip_prefix("token="))
             })
-            .map(|t| t == state.api_key)
+            .map(|t| verify_token(t, &state.api_key))
             .unwrap_or(false)
     } else {
         false
@@ -205,6 +200,65 @@ async fn auth_middleware(
     }
 
     next.run(request).await
+}
+
+/// Accept raw API key or JWT access token.
+fn verify_token(token: &str, api_key: &str) -> bool {
+    if token == api_key {
+        return true;
+    }
+    if token.contains('.') {
+        return jwt::validate_token(api_key, token, "access").is_ok();
+    }
+    false
+}
+
+// --- Session endpoints ---
+
+#[derive(Deserialize)]
+struct SessionRequest {
+    api_key: String,
+}
+
+#[derive(Serialize)]
+struct SessionResponse {
+    access_token: String,
+    refresh_token: String,
+    expires_in: u64,
+}
+
+async fn create_session_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<SessionRequest>,
+) -> Result<Json<SessionResponse>, (StatusCode, Json<serde_json::Value>)> {
+    if body.api_key != state.api_key {
+        return Err(err_response(StatusCode::UNAUTHORIZED, "invalid API key"));
+    }
+
+    Ok(Json(SessionResponse {
+        access_token: jwt::create_token(&state.api_key, "access", jwt::ACCESS_TOKEN_TTL),
+        refresh_token: jwt::create_token(&state.api_key, "refresh", jwt::REFRESH_TOKEN_TTL),
+        expires_in: jwt::ACCESS_TOKEN_TTL,
+    }))
+}
+
+async fn refresh_session_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<RefreshRequest>,
+) -> Result<Json<SessionResponse>, (StatusCode, Json<serde_json::Value>)> {
+    jwt::validate_token(&state.api_key, &body.refresh_token, "refresh")
+        .map_err(|e| err_response(StatusCode::UNAUTHORIZED, &e.to_string()))?;
+
+    Ok(Json(SessionResponse {
+        access_token: jwt::create_token(&state.api_key, "access", jwt::ACCESS_TOKEN_TTL),
+        refresh_token: jwt::create_token(&state.api_key, "refresh", jwt::REFRESH_TOKEN_TTL),
+        expires_in: jwt::ACCESS_TOKEN_TTL,
+    }))
+}
+
+#[derive(Deserialize)]
+struct RefreshRequest {
+    refresh_token: String,
 }
 
 // --- Response helpers ---
@@ -241,6 +295,16 @@ async fn version() -> Json<serde_json::Value> {
         "version": env!("CARGO_PKG_VERSION"),
         "api_compat": "0.2",
     }))
+}
+
+async fn tunnel_handler(
+    State(state): State<SharedState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let url = state.tunnel_url.lock().await;
+    match url.as_ref() {
+        Some(tunnel_url) => Ok(Json(serde_json::json!({"tunnel_url": tunnel_url}))),
+        None => Err(err_response(StatusCode::NOT_FOUND, "no tunnel configured")),
+    }
 }
 
 async fn list_agents_handler() -> impl IntoResponse {
@@ -819,14 +883,24 @@ pub fn acquire_pid_lock(config_dir: &std::path::Path) -> Result<std::fs::File, S
     Ok(file)
 }
 
+pub fn write_port_file(config_dir: &std::path::Path, port: u16) {
+    let port_path = config_dir.join("port");
+    std::fs::write(&port_path, port.to_string()).ok();
+}
+
 // --- Router ---
 
-pub fn build_router(api_key: String) -> Router {
-    let state = Arc::new(AppState::new(api_key));
+pub fn build_router(api_key: String, tunnel_url: Option<String>) -> Router {
+    let state = Arc::new(AppState::new(api_key, tunnel_url));
 
-    Router::new()
+    let public = Router::new()
         .route("/health", get(health))
+        .route("/auth/session", post(create_session_handler))
+        .route("/auth/refresh", post(refresh_session_handler));
+
+    let protected = Router::new()
         .route("/version", get(version))
+        .route("/tunnel", get(tunnel_handler))
         .route("/agents", get(list_agents_handler))
         .route("/agents", post(create_agent_handler))
         .route("/agents/start", post(start_all_handler))
@@ -850,7 +924,11 @@ pub fn build_router(api_key: String) -> Router {
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
-        ))
+        ));
+
+    Router::new()
+        .merge(public)
+        .merge(protected)
         .layer(
             tower_http::cors::CorsLayer::new()
                 .allow_origin(tower_http::cors::Any)
@@ -862,8 +940,8 @@ pub fn build_router(api_key: String) -> Router {
 
 // --- Server start ---
 
-pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: String) {
-    let app = build_router(api_key);
+pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: String, tunnel_url: Option<String>) {
+    let app = build_router(api_key, tunnel_url);
 
     let rustls_config = axum_server::tls_rustls::RustlsConfig::from_pem(
         cert_pem.into_bytes(),
@@ -873,7 +951,6 @@ pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: S
     .expect("failed to configure TLS");
 
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
-    eprintln!("vestad listening on https://0.0.0.0:{}", port);
 
     axum_server::bind_rustls(addr, rustls_config)
         .serve(app.into_make_service())

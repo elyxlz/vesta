@@ -157,9 +157,9 @@ enum Command {
         /// Server URL, optionally with API key after #
         host: String,
     },
-    /// Start the server (platform-specific)
+    /// Start the server (Linux only)
     Boot,
-    /// Stop the server (platform-specific)
+    /// Stop the server (Linux only)
     Shutdown,
     /// Update vesta to the latest version
     Update,
@@ -199,19 +199,12 @@ fn authenticate_agent(client: &client::Client, name: &str) {
 fn get_client(host: Option<&str>, token: Option<&str>) -> client::Client {
     let config = platform::load_server_config(host, token);
 
+    // On Linux, also check for credentials from a running local vestad
     #[cfg(target_os = "linux")]
-    let config = config.or_else(try_migrate_linux);
+    let config = config.or_else(vesta_common::platform::linux::extract_credentials);
 
     let config = config.unwrap_or_else(|| platform::die("no server configured. run: vesta setup"));
     client::Client::new(&config)
-}
-
-/// On Linux, auto-migrate to client/server if no config exists.
-#[cfg(target_os = "linux")]
-fn try_migrate_linux() -> Option<platform::ServerConfig> {
-    eprintln!("setting up vestad...");
-    vesta_common::ensure_server().ok()?;
-    vesta_common::load_server_config()
 }
 
 fn fetch_latest_version(timeout: Option<u64>) -> Option<String> {
@@ -424,12 +417,6 @@ fn run(cli: Cli) {
             c.start_agent(&name).unwrap_or_else(|e| platform::die(&e));
             eprintln!("agent '{}' is running.", name);
 
-            #[cfg(target_os = "macos")]
-            platform::macos::install_autostart()
-                .unwrap_or_else(|e| platform::die(&e));
-            #[cfg(target_os = "windows")]
-            platform::windows::install_autostart()
-                .unwrap_or_else(|e| platform::die(&e));
         }
 
         Command::Create { build, name } => {
@@ -641,25 +628,23 @@ fn run(cli: Cli) {
 
         Command::Boot => {
             #[cfg(target_os = "linux")]
-            platform::linux::boot()
-                .unwrap_or_else(|e| platform::die(&e));
-            #[cfg(target_os = "macos")]
-            platform::macos::boot()
-                .unwrap_or_else(|e| platform::die(&e));
-            #[cfg(target_os = "windows")]
-            platform::windows::boot()
-                .unwrap_or_else(|e| platform::die(&e));
-            eprintln!("server started");
+            {
+                platform::linux::boot()
+                    .unwrap_or_else(|e| platform::die(&e));
+                eprintln!("server started");
+            }
+            #[cfg(not(target_os = "linux"))]
+            platform::die("boot is only supported on Linux. use 'vesta connect' to connect to a remote server.");
         }
 
         Command::Shutdown => {
             #[cfg(target_os = "linux")]
-            platform::linux::shutdown();
-            #[cfg(target_os = "macos")]
-            platform::macos::shutdown();
-            #[cfg(target_os = "windows")]
-            platform::windows::shutdown();
-            eprintln!("server stopped");
+            {
+                platform::linux::shutdown();
+                eprintln!("server stopped");
+            }
+            #[cfg(not(target_os = "linux"))]
+            platform::die("shutdown is only supported on Linux.");
         }
 
         Command::Update => {

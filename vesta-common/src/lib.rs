@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_WS_PORT: u16 = 7865;
 pub const DEFAULT_API_PORT: u16 = 7860;
+#[cfg(target_os = "linux")]
+const SERVER_START_TIMEOUT_SECS: u64 = 30;
 
 // ── Types ───────────────────────────────────────────────────────
 
@@ -90,13 +92,15 @@ pub fn config_path() -> PathBuf {
     config_dir().join("config.json")
 }
 
-/// Legacy server.json path — used for migration only.
-pub fn server_json_path() -> PathBuf {
-    config_dir().join("server.json")
+pub fn read_port_file() -> Option<u16> {
+    std::fs::read_to_string(config_dir().join("port"))
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
 }
 
 pub fn default_server_url() -> String {
-    format!("https://localhost:{}", DEFAULT_API_PORT)
+    let port = read_port_file().unwrap_or(DEFAULT_API_PORT);
+    format!("https://localhost:{}", port)
 }
 
 pub fn load_config() -> VestaConfig {
@@ -104,13 +108,6 @@ pub fn load_config() -> VestaConfig {
         if let Ok(config) = serde_json::from_str(&content) {
             return config;
         }
-    }
-    // Migrate from legacy server.json
-    if let Some(server) = load_legacy_server_config() {
-        let config = VestaConfig { server: Some(server) };
-        let _ = save_config(&config);
-        let _ = std::fs::remove_file(server_json_path());
-        return config;
     }
     VestaConfig::default()
 }
@@ -139,15 +136,6 @@ pub fn save_server_config(config: &ServerConfig) -> Result<(), String> {
     save_config(&full)
 }
 
-fn load_legacy_server_config() -> Option<ServerConfig> {
-    let content = std::fs::read_to_string(server_json_path()).ok()?;
-    let config: ServerConfig = serde_json::from_str(&content).ok()?;
-    if config.url.is_empty() || config.api_key.is_empty() {
-        return None;
-    }
-    Some(config)
-}
-
 /// Wait for vestad to become reachable on the given port.
 pub fn wait_for_server_port(port: u16, timeout_secs: u64) -> bool {
     let addr: std::net::SocketAddr = ([127, 0, 0, 1], port).into();
@@ -162,7 +150,8 @@ pub fn wait_for_server_port(port: u16, timeout_secs: u64) -> bool {
 
 /// Wait for vestad on the default API port.
 pub fn wait_for_server(timeout_secs: u64) -> bool {
-    wait_for_server_port(DEFAULT_API_PORT, timeout_secs)
+    let port = read_port_file().unwrap_or(DEFAULT_API_PORT);
+    wait_for_server_port(port, timeout_secs)
 }
 
 /// Ensure vestad is installed, running, and configured.
@@ -211,22 +200,14 @@ pub fn ensure_server_with(vestad_path: Option<&std::path::Path>) -> Result<bool,
         }
     }
 
-    #[cfg(target_os = "macos")]
-    {
-        platform::macos::setup(None, false, true)?;
-        if let Some(creds) = platform::macos::extract_credentials() {
-            save_server_config(&creds)?;
-        }
+    #[cfg(not(target_os = "linux"))]
+    if load_server_config().is_some() {
+        Ok(false)
+    } else {
+        Err("no server configured. use 'vesta connect' to connect to a remote server.".into())
     }
 
-    #[cfg(target_os = "windows")]
-    {
-        platform::windows::boot()?;
-        if let Some(creds) = platform::windows::extract_credentials() {
-            save_server_config(&creds)?;
-        }
-    }
-
+    #[cfg(target_os = "linux")]
     Ok(true)
 }
 
@@ -245,14 +226,19 @@ pub fn ensure_server() -> Result<bool, String> {
 
 #[cfg(target_os = "linux")]
 fn install_and_boot(shutdown_first: bool, vestad_hint: Option<&std::path::Path>) -> Result<(), String> {
-    let vestad_path = platform::linux::install_vestad_from(vestad_hint)?;
-    platform::linux::install_autostart(&vestad_path)?;
+    let _vestad_path = platform::linux::install_vestad_from(vestad_hint)?;
+    // systemd service is installed by vestad itself on first run
     if shutdown_first {
         platform::linux::shutdown();
     }
     platform::linux::boot()?;
-    if !wait_for_server(30) {
-        return Err("server did not start within 30s".into());
+    if !wait_for_server(SERVER_START_TIMEOUT_SECS) {
+        let detail = platform::linux::boot_log_summary();
+        return Err(if detail.is_empty() {
+            "server did not start within 30s".to_string()
+        } else {
+            format!("server failed to start:\n{}", detail)
+        });
     }
     Ok(())
 }

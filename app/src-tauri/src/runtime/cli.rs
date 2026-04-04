@@ -55,18 +55,6 @@ pub struct PlatformStatus {
     pub ready: bool,
     pub platform: String,
     #[serde(default)]
-    pub wsl_installed: bool,
-    #[serde(default)]
-    pub virtualization_enabled: Option<bool>,
-    #[serde(default)]
-    pub distro_registered: bool,
-    #[serde(default)]
-    pub distro_healthy: bool,
-    #[serde(default)]
-    pub services_ready: bool,
-    #[serde(default)]
-    pub needs_reboot: bool,
-    #[serde(default)]
     pub message: String,
 }
 
@@ -74,12 +62,6 @@ fn not_configured_status(message: &str) -> PlatformStatus {
     PlatformStatus {
         ready: false,
         platform: std::env::consts::OS.to_string(),
-        wsl_installed: false,
-        virtualization_enabled: None,
-        distro_registered: false,
-        distro_healthy: false,
-        services_ready: false,
-        needs_reboot: false,
         message: message.to_string(),
     }
 }
@@ -113,12 +95,6 @@ pub async fn platform_check() -> Result<PlatformStatus, VestaError> {
         Ok(()) => Ok(PlatformStatus {
             ready: true,
             platform: std::env::consts::OS.to_string(),
-            wsl_installed: true,
-            virtualization_enabled: Some(true),
-            distro_registered: true,
-            distro_healthy: true,
-            services_ready: true,
-            needs_reboot: false,
             message: String::new(),
         }),
         Err(e) => Ok(not_configured_status(&e)),

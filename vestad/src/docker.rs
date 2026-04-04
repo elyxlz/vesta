@@ -34,12 +34,15 @@ const DOCKER_DAEMON_WAIT_RETRIES: usize = 10;
 const AGENT_READY_TIMEOUT_MS: u64 = 200;
 const WAIT_READY_POLL_MS: u64 = 500;
 const DEFAULT_TOKEN_EXPIRES_SECS: u64 = 28800;
+const LABEL_USER: &str = "vesta.user";
 
 
 pub const OAUTH_CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 pub const OAUTH_REDIRECT_URI: &str = "https://console.anthropic.com/oauth/code/callback";
 pub const OAUTH_TOKEN_URL: &str = "https://api.anthropic.com/v1/oauth/token";
 pub const OAUTH_AUTHORIZE_URL: &str = "https://claude.ai/oauth/authorize";
+
+const ENTRYPOINT: &[&str] = &["uv", "run", "--project", "/root/vesta", "python", "-m", "vesta.main"];
 
 #[derive(PartialEq, Clone, Copy)]
 pub enum ContainerStatus {
@@ -75,11 +78,14 @@ pub struct ListEntry {
 }
 
 pub fn container_name(name: &str) -> String {
-    format!("vesta-{}", name)
+    format!("vesta-{}-{}", current_user(), name)
 }
 
 pub fn name_from_cname(cname: &str) -> String {
-    cname.strip_prefix("vesta-").unwrap_or(cname).to_string()
+    let without_vesta = cname.strip_prefix("vesta-").unwrap_or(cname);
+    let user = current_user();
+    let user_prefix = format!("{}-", user);
+    without_vesta.strip_prefix(&user_prefix).unwrap_or(without_vesta).to_string()
 }
 
 pub fn normalize_name(raw: &str) -> String {
@@ -134,6 +140,12 @@ pub fn validate_name(name: &str) -> Result<(), DockerError> {
     Ok(())
 }
 
+fn current_user() -> String {
+    std::env::var("USER")
+        .or_else(|_| std::env::var("LOGNAME"))
+        .unwrap_or_else(|_| "unknown".into())
+}
+
 // --- Docker helpers ---
 
 pub fn docker(args: &[&str]) -> Result<process::ExitStatus, DockerError> {
@@ -180,13 +192,42 @@ pub fn ensure_docker() -> Result<(), DockerError> {
     if !docker_quiet(&["--version"]) {
         return Err(DockerError::Failed("docker is not installed".into()));
     }
+
+    // Check permission on the first attempt — no point retrying 10 times if it's a group issue
+    if let Some(err) = check_docker_permission() {
+        return Err(err);
+    }
+
     for _ in 0..DOCKER_DAEMON_WAIT_RETRIES {
         if docker_quiet(&["info"]) {
             return Ok(());
         }
         std::thread::sleep(std::time::Duration::from_secs(1));
     }
-    Err(DockerError::Failed("docker daemon is not running".into()))
+
+    Err(DockerError::Failed("docker daemon is not running. start it with: sudo systemctl start docker".into()))
+}
+
+/// Run `docker info` once and check stderr for permission-denied errors.
+fn check_docker_permission() -> Option<DockerError> {
+    let output = process::Command::new("docker")
+        .args(["info"])
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::piped())
+        .output()
+        .ok()?;
+    if output.status.success() {
+        return None;
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).to_lowercase();
+    if stderr.contains("permission denied") {
+        return Some(DockerError::Failed(
+            "docker permission denied. add your user to the docker group:\n  \
+             sudo usermod -aG docker $USER\n  \
+             then log out and back in (or run: newgrp docker)".to_string()
+        ));
+    }
+    None
 }
 
 // --- Container query operations ---
@@ -391,19 +432,32 @@ pub fn get_container_port(cname: &str) -> u16 {
 }
 
 pub fn list_managed_containers() -> Vec<String> {
-    docker_output(&[
+    // Get all vesta-managed containers with their user label
+    let all = docker_output(&[
         "ps",
         "-a",
         "--filter",
         "label=vesta.managed=true",
         "--format",
-        "{{.Names}}",
+        &format!("{{{{.Names}}}}\t{{{{.Label \"{LABEL_USER}\"}}}}"),
     ])
-    .unwrap_or_default()
-    .lines()
-    .filter(|l| !l.trim().is_empty())
-    .map(|l| l.trim().to_string())
-    .collect()
+    .unwrap_or_default();
+
+    let user = current_user();
+    all.lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|line| {
+            let mut parts = line.splitn(2, '\t');
+            let name = parts.next()?.trim();
+            let owner = parts.next().unwrap_or("").trim();
+            // Show containers owned by this user, or legacy containers with no owner
+            if owner == user || owner.is_empty() {
+                Some(name.to_string())
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 // --- GPU detection ---
@@ -439,13 +493,16 @@ pub fn create_container(cname: &str, image: &str, port: u16, agent_name: &str) -
     let ws_port_env = format!("WS_PORT={}", port);
     let agent_name_env = format!("AGENT_NAME={}", agent_name);
     let port_label = format!("vesta.ws_port={}", port);
+    let user_label = format!("{}={}", LABEL_USER, current_user());
     let mut args = vec![
         "create", "--name", cname, "-it",
         "--restart", "unless-stopped", "--network", "host",
         "--label", "vesta.managed=true",
         "--label", &port_label,
+        "--label", &user_label,
         "-e", &ws_port_env,
         "-e", &agent_name_env,
+        "-e", "IS_SANDBOX=1",
     ];
 
     match gpu_available() {
@@ -462,6 +519,7 @@ pub fn create_container(cname: &str, image: &str, port: u16, agent_name: &str) -
     }
 
     args.push(image);
+    args.extend(ENTRYPOINT);
     if !docker_ok(&args) {
         return Err(DockerError::Failed("failed to create container".into()));
     }
@@ -952,50 +1010,6 @@ pub fn restore_agent(loaded_image: &str, name_override: Option<&str>, replace: b
     Ok(name)
 }
 
-/// Migrate legacy `vesta` container to new naming scheme.
-pub fn maybe_migrate_legacy() {
-    if docker_output(&["inspect", "--format", "{{.State.Status}}", "vesta"]).is_none() {
-        return;
-    }
-
-    let managed = list_managed_containers();
-    if !managed.is_empty() {
-        return;
-    }
-
-    let cs = container_status("vesta");
-    if cs == ContainerStatus::Dead {
-        docker_ok(&["rm", "-f", "vesta"]);
-        return;
-    }
-
-    let was_running = cs == ContainerStatus::Running;
-    let name = read_container_file("vesta", "/root/.vesta-name").unwrap_or_else(|| "default".to_string());
-    if validate_name(&name).is_err() {
-        return;
-    }
-    let cname = container_name(&name);
-
-    let migrate_tag = "vesta-migrate:temp";
-    if !docker_ok(&[
-        "commit",
-        "--change", "LABEL vesta.managed=true",
-        "--change", &format!("LABEL vesta.ws_port={}", BASE_WS_PORT),
-        "vesta",
-        migrate_tag,
-    ]) {
-        return;
-    }
-
-    docker_ok(&["rm", "-f", "vesta"]);
-    let _ = create_container(&cname, migrate_tag, BASE_WS_PORT, &name);
-
-    if was_running {
-        docker_ok(&["start", &cname]);
-    }
-
-    docker_ok(&["rmi", migrate_tag]);
-}
 
 #[cfg(test)]
 mod tests {

@@ -42,6 +42,7 @@ No CSS selectors needed — read the page as text, pick a numbered ref, act on i
 browser launch --stealth            # Stealth mode (Cloudflare bypass, 60+ anti-detection args)
 DISPLAY=:99 browser launch --stealth  # Stealth + headed via Xvfb (maximum stealth)
 browser launch --headless           # Headless (no bot detection bypass)
+browser launch --port 9225          # Launch on specific port (auto-assigned if omitted)
 browser launch --user-data-dir ~/.config/BraveSoftware/Brave-Browser  # Use existing profile
 browser launch --port 9225          # Launch on specific port (auto-assigned if omitted)
 browser connect http://192.168.1.10:9222  # Connect to remote browser
@@ -114,7 +115,7 @@ browser resize 1920 1080                # Resize viewport
 
 ## Multi-Agent / Concurrent Use
 
-Multiple subagents can each run their own Chrome instance concurrently. Port allocation is now automatic — each `browser launch` finds a free port starting from 9222, so no conflicts occur.
+Multiple subagents can each run their own Chrome instance concurrently. Port allocation is automatic — each `browser launch` finds a free port starting from 9222, so no conflicts occur.
 
 **Session isolation via `BROWSER_SESSION` env var:**
 Each subagent should set a unique `BROWSER_SESSION` environment variable so it gets its own session file and doesn't interfere with other agents:
@@ -141,6 +142,16 @@ browser stop-all                  # Stop all browser sessions
 - Port: auto-assigned from range 9222-9321. Override with `--port <N>` if needed
 - Session file: `~/.browser/session-<BROWSER_SESSION>.json` (or `session.json` if unset)
 - Each agent gets its own Chrome process, port, and session state
+
+## Session Persistence
+
+The browser uses a persistent profile at `/root/.browser/profile` by default. Cookies and SSO sessions survive browser restarts — no need to re-login each time.
+
+- **Default profile**: `/root/.browser/profile` (automatic, no flags needed)
+- **Custom profile**: `browser launch --user-data-dir /path/to/profile`
+- SSO tokens typically expire after 8-12 hours — after that you'll need to re-authenticate
+- The `--stealth` flag is safe to use with persistent profiles
+
 
 ## Stealth Mode
 
@@ -171,21 +182,54 @@ DISPLAY=:99 browser launch --stealth
 
 ## VNC Usage (Headed Mode)
 
-For visual debugging or CAPTCHA solving, run the browser in headed mode with VNC:
+For interactive browser sessions via VNC (headed mode), follow these steps:
 
-1. Start virtual display: `Xvfb :99 -screen 0 1920x1080x24 &`
-2. Start window manager: `DISPLAY=:99 openbox &`
-3. Launch browser headed: `DISPLAY=:99 browser launch --stealth --no-headless --disable-gpu`
-   - **CRITICAL**: `--disable-gpu` is required — without it, browser content only renders on the left portion of the screen
-4. Maximize window: `DISPLAY=:99 xdotool key super+d` or `DISPLAY=:99 xdotool search --onlyvisible --class chromium windowactivate windowsize 100% 100%`
-5. Start VNC server: `x11vnc -display :99 -nopw -forever &`
-6. Start websockify: `websockify --web /usr/share/novnc <PORT> localhost:5900 &`
+### Key Requirements
+- **GPU Flag**: Always launch Chromium with `--disable-gpu` — without it, browser content only renders on the left portion of the screen
+- **Window Manager**: Install and run `openbox` as the window manager
+- **Window Tools**: Install `xdotool` for window management
+
+### Setup (one-time)
+```bash
+apt-get install -y openbox xdotool
+```
+
+### Flow
+```bash
+# 1. Start Xvfb virtual display
+pkill -x Xvfb 2>/dev/null; sleep 1
+Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp &
+
+# 2. Start the window manager
+DISPLAY=:99 openbox &
+
+# 3. Launch Chromium with --disable-gpu flag (critical!)
+DISPLAY=:99 chromium --no-sandbox --disable-gpu \
+  --user-data-dir=/root/.browser-profile \
+  --window-size=1920,1080 'https://example.com' &
+
+# 4. Maximize the browser window (optional but recommended)
+DISPLAY=:99 xdotool search --name "chromium" windowmaximize
+
+# 5. Start x11vnc server
+x11vnc -display :99 -forever -nopw -rfbport 5900 -bg
+
+# 6. Start websockify for web access
+websockify --web=/usr/share/novnc <PORT> localhost:5900
+```
+
+### Cleanup
+```bash
+pkill -f "x11vnc"
+pkill -f "websockify"
+pkill -x openbox
+```
 
 ## Remote Assist (User Takeover)
 
 When the automated browser gets stuck — CAPTCHA, sign-in blocks, fingerprint detection — hand control to the user via noVNC. This lets them interact with the browser directly from their phone/laptop, then you take back over.
 
-### Prerequisites
+### Setup (one-time)
 ```bash
 apt-get install -y novnc x11vnc scrot
 ```
@@ -227,31 +271,6 @@ kill $(fuser <PORT>/tcp 2>/dev/null | tr -d ' ') 2>/dev/null
 - Always use the persistent profile dir so logins accumulate over time
 - After remote assist, switch back to the `browser` CLI tool — the profile cookies are shared
 - This is the escape hatch for any site that defeats stealth mode — let the user handle the auth, then take over
-
-## VNC Usage (Headed Mode)
-
-When using the browser in headed mode with VNC:
-
-**Critical**: Always pass `--disable-gpu` when launching Chrome for VNC — without it, browser content only renders on the left portion of the screen.
-
-**Setup flow**:
-1. Start Xvfb: `Xvfb :99 -screen 0 1920x1080x24 &`
-2. Start window manager: `DISPLAY=:99 openbox &`
-3. Launch Chrome with `--disable-gpu` flag
-4. Use `xdotool` to maximize: `DISPLAY=:99 xdotool key super+Up`
-5. Start VNC server: `x11vnc -display :99 -nopw -forever &`
-6. Start websockify: `websockify <PORT> localhost:5900 &`
-
-**Cleanup**: `pkill -f websockify; pkill -f x11vnc; pkill -f openbox`
-
-## Session Persistence
-
-The browser uses a persistent profile at `/root/.browser/profile` by default. Cookies and SSO sessions survive browser restarts — no need to re-login each time.
-
-- Default profile: `/root/.browser/profile` (automatic, no flags needed)
-- Custom profile: `browser launch --user-data-dir /path/to/profile`
-- SSO tokens typically expire after 8-12 hours — after that you'll need to re-authenticate
-- The `--stealth` flag is safe to use with persistent profiles
 
 ## Troubleshooting
 

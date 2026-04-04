@@ -12,14 +12,31 @@
     "macOSPrivateApi": true,
     "windows": [
       {
+        "label": "main",
         "title": "Vesta",
-        "width": 380,
-        "height": 380,
-        "decorations": false,
-        "resizable": false,
+        "decorations": true,
+        "hiddenTitle": true,
+        "titleBarStyle": "Overlay",
         "transparent": true,
-        "shadow": false,
-        "backgroundColor": [0, 0, 0, 0]
+        "height": 380,
+        "width": 380,
+        "minWidth": 380,
+        "minHeight": 380,
+        "center": false,
+        "resizable": true,
+        "dragDropEnabled": false,
+        "acceptFirstMouse": true,
+        "visible": true,
+        "windowEffects": {
+          "effects": [
+            "fullScreenUI",
+            "mica"
+          ],
+          "radius": 28,
+          "state": "active"
+        },
+        "shadow": true,
+        "backgroundThrottling": "disabled"
       }
     ],
     "security": {
