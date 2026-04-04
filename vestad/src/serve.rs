@@ -335,7 +335,6 @@ async fn list_agents_handler() -> impl IntoResponse {
 #[derive(Deserialize)]
 struct CreateBody {
     name: Option<String>,
-    build: Option<bool>,
 }
 
 async fn create_agent_handler(
@@ -349,12 +348,11 @@ async fn create_agent_handler(
     }
     let build = body.build.unwrap_or(false);
     tracing::info!(name = %name, build, "creating agent");
-
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
     let name =
-        tokio::task::spawn_blocking(move || docker::create_agent(&name, build))
+        tokio::task::spawn_blocking(move || docker::create_agent(&name))
             .await
             .unwrap()
             .map_err(map_docker_err)?;
@@ -640,6 +638,52 @@ async fn logs_handler(
     };
 
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
+}
+
+// --- History proxy ---
+
+async fn history_handler(
+    Path(name): Path<String>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+    docker::validate_name(&name).map_err(map_docker_err)?;
+    let cname = docker::container_name(&name);
+    docker::ensure_running(&cname).map_err(map_docker_err)?;
+    let port = docker::get_container_port(&cname);
+
+    let query_string: String = params
+        .iter()
+        .map(|(k, v)| format!("{}={}", k, v))
+        .collect::<Vec<_>>()
+        .join("&");
+    let path = if query_string.is_empty() {
+        "/history".to_string()
+    } else {
+        format!("/history?{}", query_string)
+    };
+
+    let mut stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port))
+        .await
+        .map_err(|e| err_response(StatusCode::BAD_GATEWAY, &format!("agent unreachable: {}", e)))?;
+
+    let request = format!("GET {} HTTP/1.1\r\nHost: localhost:{}\r\nConnection: close\r\n\r\n", path, port);
+    tokio::io::AsyncWriteExt::write_all(&mut stream, request.as_bytes())
+        .await
+        .map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e.to_string()))?;
+
+    let mut buf = Vec::new();
+    tokio::io::AsyncReadExt::read_to_end(&mut stream, &mut buf)
+        .await
+        .map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e.to_string()))?;
+
+    let response_str = String::from_utf8_lossy(&buf);
+    let body_start = response_str.find("\r\n\r\n").unwrap_or(0) + 4;
+    let body = &buf[body_start..];
+
+    Ok(Response::builder()
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(body.to_vec()))
+        .unwrap())
 }
 
 // --- WebSocket proxy ---
@@ -938,6 +982,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/logs", get(logs_handler))
         .route("/agents/{name}/ws", get(ws_handler))
         .route("/agents/{name}/ws/app-chat", get(ws_app_chat_handler))
+        .route("/agents/{name}/history", get(history_handler))
         .route("/agents/{name}/backups", post(create_backup_handler))
         .route("/agents/{name}/backups", get(list_backups_handler))
         .route("/agents/{name}/backups/{backup_id}/restore", post(restore_backup_handler))

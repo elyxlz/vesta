@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -16,6 +17,7 @@ import { ButtonGroup } from "@/components/ui/button-group";
 import { useAppChat } from "@/hooks/use-app-chat";
 import { useAutoScroll } from "@/hooks/use-auto-scroll";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
+import { useLayout } from "@/stores/use-layout";
 import { linkify } from "@/lib/linkify";
 import type { VestaEvent } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -59,7 +61,8 @@ const thinkingIndicatorVariants = {
 export function AppChat({ onCollapse, fullscreen }: AppChatProps = {}) {
   const { name, setAgentState } = useSelectedAgent();
   const navigate = useNavigate();
-  const { messages, agentState, connected, send } = useAppChat(name, true);
+  const navbarHeight = useLayout((s) => s.navbarHeight);
+  const { messages, agentState, connected, hasMore, loadingMore, loadMore, send } = useAppChat(name, true);
 
   useEffect(() => {
     setAgentState(agentState);
@@ -67,31 +70,21 @@ export function AppChat({ onCollapse, fullscreen }: AppChatProps = {}) {
 
   const [input, setInput] = useState("");
   const [wasConnected, setWasConnected] = useState(false);
-  const [showReconnect, setShowReconnect] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const { check, scroll } = useAutoScroll();
-
-  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prevMsgCountRef = useRef(0);
+  const scrollHeightBeforeLoad = useRef(0);
+  const { check, scroll, scrollToBottom, isNearBottom } = useAutoScroll();
+  const [hasNewMessage, setHasNewMessage] = useState(false);
 
   useEffect(() => {
-    if (connected) {
-      setWasConnected(true);
-      setShowReconnect(false);
-      if (reconnectTimerRef.current) {
-        clearTimeout(reconnectTimerRef.current);
-        reconnectTimerRef.current = null;
-      }
-    } else if (wasConnected) {
-      reconnectTimerRef.current = setTimeout(() => {
-        setShowReconnect(true);
-      }, 2000);
-    }
-    return () => {
-      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
-    };
-  }, [connected, wasConnected]);
+    if (connected) setWasConnected(true);
+  }, [connected]);
+
+  useEffect(() => {
+    if (isNearBottom) setHasNewMessage(false);
+  }, [isNearBottom]);
 
   const chatMessages = messages.filter(
     (m) => m.type === "user" || m.type === "app_chat" || m.type === "error",
@@ -100,12 +93,21 @@ export function AppChat({ onCollapse, fullscreen }: AppChatProps = {}) {
   const isThinking =
     agentState === "thinking" || agentState === "tool_use";
 
-  const showThinkingIndicator =
-    isThinking && chatMessages.length > 0;
-
   useLayoutEffect(() => {
-    scroll(scrollRef.current);
-  }, [chatMessages, scroll]);
+    const el = scrollRef.current;
+    if (!el) return;
+    const prevCount = prevMsgCountRef.current;
+    const newCount = chatMessages.length;
+    if (newCount > prevCount && prevCount > 0 && el.scrollTop < 50) {
+      el.scrollTop = el.scrollHeight - scrollHeightBeforeLoad.current;
+    } else if (newCount > prevCount && !isNearBottom) {
+      const latest = chatMessages[newCount - 1];
+      if (latest && latest.type !== "user") setHasNewMessage(true);
+    } else {
+      scroll(el);
+    }
+    prevMsgCountRef.current = newCount;
+  }, [chatMessages, scroll, isNearBottom]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -117,11 +119,25 @@ export function AppChat({ onCollapse, fullscreen }: AppChatProps = {}) {
       clearInterval(id);
       clearTimeout(timeout);
     };
-  }, [showThinkingIndicator, scroll]);
+  }, [isThinking, scroll]);
 
-  const handleScroll = () => {
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !hasMore || loadingMore) return;
+    if (el.scrollHeight <= el.clientHeight) {
+      scrollHeightBeforeLoad.current = el.scrollHeight;
+      loadMore();
+    }
+  }, [chatMessages, hasMore, loadingMore, loadMore]);
+
+  const handleScroll = useCallback(() => {
     check(scrollRef.current);
-  };
+    const el = scrollRef.current;
+    if (el && el.scrollTop < 100 && hasMore && !loadingMore) {
+      scrollHeightBeforeLoad.current = el.scrollHeight;
+      loadMore();
+    }
+  }, [check, hasMore, loadingMore, loadMore]);
 
   const handleSend = () => {
     const text = input.trim();
@@ -178,29 +194,68 @@ export function AppChat({ onCollapse, fullscreen }: AppChatProps = {}) {
         </div>
       )}
 
-      <CardContent className="flex-1 min-h-0 overflow-hidden p-0">
+      <CardContent className="flex-1 min-h-0 overflow-hidden p-0 relative">
+        <AnimatePresence>
+          {hasNewMessage && (
+            <motion.button
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 8 }}
+              transition={{ duration: 0.18 }}
+              onClick={() => scrollToBottom(scrollRef.current)}
+              className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 rounded-lg border border-primary/20 bg-primary/5 px-3 py-1.5 text-xs text-primary cursor-pointer hover:bg-primary/10 transition-colors"
+            >
+              new message
+            </motion.button>
+          )}
+        </AnimatePresence>
+        <AnimatePresence>
+          {loadingMore && (
+            <motion.div
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.18 }}
+              className="absolute left-1/2 -translate-x-1/2 z-10 pointer-events-none"
+              style={{ top: navbarHeight + 32 }}
+            >
+              <span className="rounded-lg border border-muted-foreground/20 bg-muted/80 backdrop-blur-sm px-3 py-1.5 text-xs text-muted-foreground">
+                loading...
+              </span>
+            </motion.div>
+          )}
+        </AnimatePresence>
         <div
           ref={scrollRef}
           onScroll={handleScroll}
-          className="h-full min-h-0 overflow-y-auto px-3 py-3"
+          className="h-full min-h-0 overflow-y-auto px-3 pt-6 pb-4"
           style={{ maskImage: "linear-gradient(to bottom, transparent, black 40px, black calc(100% - 24px), transparent)" }}
         >
-          <div className={cn("min-h-full flex flex-col justify-end", fullscreen && "pt-12")}>
+          <div className={cn("min-h-full flex flex-col", fullscreen && "pt-16 md:pt-20")}>
+            <div className="flex-1" />
             <div>
+              {!hasMore && chatMessages.length > 0 && (
+                <div className="flex justify-center py-3">
+                  <span className="text-[11px] text-muted-foreground/40">beginning of conversation</span>
+                </div>
+              )}
               {chatMessages.length === 0 ? (
                 <div className="flex flex-col items-center gap-2 py-2">
-                  <ThinkingDots />
                   <span className="text-xs text-muted-foreground">
                     {connected
-                      ? `${name} is listening`
+                      ? `${name} is setting things up`
                       : "connecting..."}
                   </span>
                 </div>
               ) : (
-                <div className="flex flex-col gap-1.5">
-                  {chatMessages.map((msg, i) => (
-                    <ChatBubble key={i} event={msg} />
-                  ))}
+                <div className="flex flex-col">
+                  {chatMessages.map((msg, i) => {
+                    const prev = chatMessages[i - 1];
+                    const sameGroup = prev && prev.type === msg.type;
+                    return (
+                      <ChatBubble key={i} event={msg} className={i === 0 ? "" : sameGroup ? "mt-1.5" : "mt-5"} />
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -208,23 +263,9 @@ export function AppChat({ onCollapse, fullscreen }: AppChatProps = {}) {
         </div>
       </CardContent>
 
-      <AnimatePresence>
-        {showReconnect && !connected && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="text-center py-2 bg-amber-500/10 text-amber-600 dark:text-amber-400 text-xs overflow-hidden shrink-0"
-          >
-            reconnecting...
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <div className="shrink-0 flex flex-col gap-0 px-2 pt-1 pb-3">
+      <div className="shrink-0 flex flex-col gap-0 px-2 pt-0 pb-3">
         <AnimatePresence>
-          {showThinkingIndicator && (
+          {isThinking && (
             <motion.div
               variants={thinkingIndicatorVariants}
               initial="hidden"
@@ -234,6 +275,21 @@ export function AppChat({ onCollapse, fullscreen }: AppChatProps = {}) {
             >
               <div className="px-3 pb-2">
                 <ThinkingDots className="py-0" />
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+        <AnimatePresence>
+          {wasConnected && !connected && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="overflow-hidden"
+            >
+              <div className="flex items-center justify-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-1.5 mb-3 mx-auto w-fit text-xs text-amber-600 dark:text-amber-400">
+                reconnecting...
               </div>
             </motion.div>
           )}
@@ -265,7 +321,7 @@ export function AppChat({ onCollapse, fullscreen }: AppChatProps = {}) {
   );
 }
 
-function ChatBubble({ event }: { event: VestaEvent }) {
+function ChatBubble({ event, className }: { event: VestaEvent; className?: string }) {
   if (event.type === "history" || event.type === "status") return null;
 
   const ts = event.ts
@@ -278,31 +334,33 @@ function ChatBubble({ event }: { event: VestaEvent }) {
 
   if (event.type === "error") {
     return (
-      <div className="flex justify-center px-4 py-1">
+      <div className={cn("flex justify-center px-4 py-1", className)}>
         <span className="text-xs text-destructive">{event.text}</span>
       </div>
     );
   }
 
+  if (event.type !== "user" && event.type !== "app_chat") return null;
+
   const isUser = event.type === "user";
   const text = event.text;
 
   return (
-    <div className={cn("flex", isUser ? "justify-end" : "justify-start")}>
+    <div className={cn("flex", isUser ? "justify-end" : "justify-start", className)}>
       <div
         className={cn(
-          "max-w-[85%] rounded-2xl px-3.5 py-2 text-sm leading-relaxed break-words",
+          "flex items-end max-w-[85%] rounded-2xl px-3 py-1.5 text-sm leading-relaxed",
           isUser
-            ? "bg-primary text-primary-foreground rounded-br-md"
-            : "bg-muted text-foreground rounded-bl-md",
+            ? "bg-primary text-primary-foreground rounded-br-sm"
+            : "bg-muted text-foreground rounded-bl-sm",
         )}
       >
-        <span dangerouslySetInnerHTML={{ __html: linkify(text) }} />
+        <span className="min-w-0 break-words" dangerouslySetInnerHTML={{ __html: linkify(text) }} />
         {ts && (
           <span
             className={cn(
-              "block text-[10px] mt-0.5 select-none",
-              isUser ? "text-primary-foreground/50 text-right" : "text-muted-foreground/50",
+              "shrink-0 ml-auto pl-2 text-[10px] leading-relaxed select-none whitespace-nowrap",
+              isUser ? "text-primary-foreground/50" : "text-muted-foreground/50",
             )}
           >
             {ts}

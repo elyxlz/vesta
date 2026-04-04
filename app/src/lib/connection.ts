@@ -1,4 +1,5 @@
 import { isTauri } from "./env";
+import type { VestaEvent } from "@/lib/types";
 
 const STORAGE_KEY = "vesta-connection";
 
@@ -146,4 +147,19 @@ export function wsAppChatUrl(name: string): string {
   if (!conn) throw new Error("not connected to vestad");
   const base = conn.url.replace(/^http/, "ws");
   return `${base}/agents/${name}/ws/app-chat?token=${encodeURIComponent(conn.accessToken)}`;
+}
+
+export async function fetchHistory(
+  name: string,
+  channel: "app-chat" | "internals",
+  cursor: number,
+): Promise<{ events: VestaEvent[]; cursor: number | null }> {
+  const conn = getConnection();
+  if (!conn) throw new Error("not connected to vestad");
+  const params = new URLSearchParams({ channel, cursor: String(cursor) });
+  const res = await fetch(`${conn.url}/agents/${name}/history?${params}`, {
+    headers: { Authorization: `Bearer ${conn.accessToken}` },
+  });
+  if (!res.ok) throw new Error(`history fetch failed: ${res.status}`);
+  return res.json();
 }

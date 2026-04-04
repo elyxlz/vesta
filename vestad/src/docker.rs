@@ -376,9 +376,8 @@ pub fn find_dockerfile() -> Result<std::path::PathBuf, DockerError> {
     Err(DockerError::BuildRequired("--build requires vestad to have access to the Vesta source code (run vestad from the repo root)".into()))
 }
 
-pub fn resolve_image(build: bool) -> Result<&'static str, DockerError> {
-    if build {
-        let context = find_dockerfile()?;
+pub fn resolve_image() -> Result<&'static str, DockerError> {
+    if let Ok(context) = find_dockerfile() {
         let status = process::Command::new("docker")
             .args(["build", "-t", LOCAL_IMAGE_TAG, "."])
             .current_dir(&context)
@@ -765,7 +764,7 @@ pub fn list_agents() -> Vec<ListEntry> {
         .collect()
 }
 
-pub fn create_agent(name: &str, build: bool) -> Result<String, DockerError> {
+pub fn create_agent(name: &str) -> Result<String, DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
 
@@ -773,7 +772,7 @@ pub fn create_agent(name: &str, build: bool) -> Result<String, DockerError> {
         return Err(DockerError::AlreadyExists(format!("agent '{}' already exists", name)));
     }
 
-    let image = resolve_image(build)?;
+    let image = resolve_image()?;
     let port = allocate_port();
     create_container(&cname, image, port, name)?;
     Ok(name.to_string())

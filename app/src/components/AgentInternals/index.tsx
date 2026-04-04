@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef } from "react";
+import { useLayoutEffect, useMemo, useRef } from "react";
 import { useAgentWs } from "@/hooks/use-agent-ws";
 import { useAutoScroll } from "@/hooks/use-auto-scroll";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
@@ -13,8 +13,9 @@ export function AgentInternals() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const { check, scroll } = useAutoScroll();
 
-  const filteredMessages = messages.filter(
-    (m) => m.type !== "status" && m.type !== "history",
+  const filteredMessages = useMemo(
+    () => messages.filter((m) => m.type !== "status" && m.type !== "history"),
+    [messages],
   );
 
   useLayoutEffect(() => {

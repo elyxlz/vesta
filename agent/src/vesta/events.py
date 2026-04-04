@@ -1,8 +1,10 @@
 """Event bus for agent ↔ app communication over WebSocket."""
 
 import asyncio
-import collections
 import datetime as dt
+import json
+import pathlib as pl
+import sqlite3
 import typing as tp
 
 type AgentState = tp.Literal["idle", "thinking", "tool_use"]
@@ -89,21 +91,94 @@ class HistoryEvent(tp.TypedDict):
     type: tp.Literal["history"]
     events: list[StreamEvent]
     state: AgentState
+    cursor: int | None
 
 
 type VestaEvent = StreamEvent | HistoryEvent
 
-MAX_HISTORY = 5000
+PAGE_SIZE = 100
+MAX_SUBSCRIBER_QUEUE = 5000
+
+_EVENTS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel TEXT NOT NULL,
+    ts TEXT NOT NULL,
+    data TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_events_channel_id ON events (channel, id);
+"""
+
+
+class _HistoryLog:
+    """SQLite-backed event log for a specific channel."""
+
+    def __init__(self, conn: sqlite3.Connection, channel: str, types: frozenset[str]) -> None:
+        self._conn = conn
+        self._channel = channel
+        self.types = types
+
+    def append(self, event: StreamEvent) -> None:
+        if event["type"] in self.types:
+            self._conn.execute(
+                "INSERT INTO events (channel, ts, data) VALUES (?, ?, ?)",
+                (self._channel, event.get("ts", ""), json.dumps(event)),
+            )
+            self._conn.commit()
+
+    def recent(self, limit: int = PAGE_SIZE) -> tuple[list[StreamEvent], int | None]:
+        rows = self._conn.execute(
+            "SELECT id, data FROM events WHERE channel = ? ORDER BY id DESC LIMIT ?",
+            (self._channel, limit),
+        ).fetchall()
+        if not rows:
+            return [], None
+        events = [json.loads(r[1]) for r in reversed(rows)]
+        oldest_id = rows[-1][0]
+        has_older = self._conn.execute(
+            "SELECT 1 FROM events WHERE channel = ? AND id < ? LIMIT 1",
+            (self._channel, oldest_id),
+        ).fetchone() is not None
+        return events, oldest_id if has_older else None
+
+    def before(self, cursor: int, limit: int = PAGE_SIZE) -> tuple[list[StreamEvent], int | None]:
+        rows = self._conn.execute(
+            "SELECT id, data FROM events WHERE channel = ? AND id < ? ORDER BY id DESC LIMIT ?",
+            (self._channel, cursor, limit),
+        ).fetchall()
+        if not rows:
+            return [], None
+        events = [json.loads(r[1]) for r in reversed(rows)]
+        oldest_id = rows[-1][0]
+        has_older = self._conn.execute(
+            "SELECT 1 FROM events WHERE channel = ? AND id < ? LIMIT 1",
+            (self._channel, oldest_id),
+        ).fetchone() is not None
+        return events, oldest_id if has_older else None
+
+    def clear(self) -> None:
+        self._conn.execute("DELETE FROM events WHERE channel = ?", (self._channel,))
+        self._conn.commit()
 
 
 class EventBus:
-    def __init__(self) -> None:
+    def __init__(self, data_dir: pl.Path | None = None) -> None:
         self._subscribers: set[asyncio.Queue[VestaEvent]] = set()
         self._state: AgentState = "idle"
-        self.history: collections.deque[StreamEvent] = collections.deque(maxlen=MAX_HISTORY)
+        self._conn: sqlite3.Connection | None = None
+        self._logs: dict[str, _HistoryLog] = {}
+        if data_dir:
+            data_dir.mkdir(parents=True, exist_ok=True)
+            self._conn = sqlite3.connect(str(data_dir / "events.db"))
+            self._conn.executescript(_EVENTS_SCHEMA)
+            self._logs["app-chat"] = _HistoryLog(self._conn, "app-chat", APP_CHAT_TYPES)
+            self._logs["internals"] = _HistoryLog(self._conn, "internals", INTERNALS_TYPES)
+
+    def log(self, channel: str) -> _HistoryLog | None:
+        return self._logs.get(channel)
 
     def subscribe(self) -> asyncio.Queue[VestaEvent]:
-        q: asyncio.Queue[VestaEvent] = asyncio.Queue(maxsize=MAX_HISTORY)
+        q: asyncio.Queue[VestaEvent] = asyncio.Queue(maxsize=MAX_SUBSCRIBER_QUEUE)
         self._subscribers.add(q)
         return q
 
@@ -113,7 +188,8 @@ class EventBus:
     def emit(self, event: StreamEvent) -> None:
         event["ts"] = dt.datetime.now(dt.UTC).isoformat()
         if event["type"] != "status":
-            self.history.append(event)
+            for history_log in self._logs.values():
+                history_log.append(event)
         for q in self._subscribers:
             try:
                 q.put_nowait(event)
@@ -131,4 +207,11 @@ class EventBus:
         self.emit(StatusEvent(type="status", state=state))
 
     def clear_history(self) -> None:
-        self.history.clear()
+        for history_log in self._logs.values():
+            history_log.clear()
+
+    def close(self) -> None:
+        self._logs.clear()
+        if self._conn:
+            self._conn.close()
+            self._conn = None
