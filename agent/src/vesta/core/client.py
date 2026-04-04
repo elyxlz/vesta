@@ -29,7 +29,7 @@ from claude_agent_sdk.types import (
 import vesta.models as vm
 from vesta import logger
 from vesta.core.init import get_memory_path
-from vesta.events import SubagentStartEvent, SubagentStopEvent, StreamEvent
+from vesta.events import AppChatEvent, SubagentStartEvent, SubagentStopEvent, StreamEvent
 
 
 def _format_search_results(results: list[dict[str, str]], *, max_chars: int = 50000) -> str:
@@ -384,7 +384,21 @@ def _build_vesta_tools_server(state: vm.State, config: vm.VestaConfig) -> tp.Any
             return {"content": [{"type": "text", "text": f"Search error: {e}"}]}
         return {"content": [{"type": "text", "text": _format_search_results(results)}]}
 
-    return create_sdk_mcp_server("vesta-tools", tools=[restart_vesta, search_conversation_history])
+    _APP_CHAT_REPLY_SCHEMA = {
+        "type": "object",
+        "properties": {
+            "message": {"type": "string", "description": "The message to send to the user"},
+        },
+        "required": ["message"],
+    }
+
+    @tool("app_chat_reply", "Send a message to the user in the Vesta app chat.", _APP_CHAT_REPLY_SCHEMA)
+    async def app_chat_reply(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
+        text = str(args["message"]).strip()
+        state.event_bus.emit(AppChatEvent(type="app_chat", text=text))
+        return {"content": [{"type": "text", "text": f"Message sent: {text}"}]}
+
+    return create_sdk_mcp_server("vesta-tools", tools=[restart_vesta, search_conversation_history, app_chat_reply])
 
 
 def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgentOptions:
