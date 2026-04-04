@@ -31,6 +31,7 @@ export type VestaEvent =
   | (BaseEvent & { type: "status"; state: AgentActivityState })
   | (BaseEvent & { type: "user"; text: string })
   | (BaseEvent & { type: "assistant"; text: string })
+  | (BaseEvent & { type: "app_chat"; text: string })
   | (BaseEvent & { type: "tool_start"; tool: string; input: string })
   | (BaseEvent & { type: "tool_end"; tool: string })
   | (BaseEvent & { type: "error"; text: string })

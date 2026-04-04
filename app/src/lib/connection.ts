@@ -140,3 +140,10 @@ export function wsUrl(name: string): string {
   const base = conn.url.replace(/^http/, "ws");
   return `${base}/agents/${name}/ws?token=${encodeURIComponent(conn.accessToken)}`;
 }
+
+export function wsAppChatUrl(name: string): string {
+  const conn = getConnection();
+  if (!conn) throw new Error("not connected to vestad");
+  const base = conn.url.replace(/^http/, "ws");
+  return `${base}/agents/${name}/ws/app-chat?token=${encodeURIComponent(conn.accessToken)}`;
+}

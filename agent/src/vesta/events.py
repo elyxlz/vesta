@@ -63,6 +63,11 @@ class SubagentStopEvent(_BaseEvent):
     agent_type: str
 
 
+class AppChatEvent(_BaseEvent):
+    type: tp.Literal["app_chat"]
+    text: str
+
+
 type StreamEvent = (
     StatusEvent
     | ToolStartEvent
@@ -73,7 +78,11 @@ type StreamEvent = (
     | NotificationEvent
     | SubagentStartEvent
     | SubagentStopEvent
+    | AppChatEvent
 )
+
+APP_CHAT_TYPES: frozenset[str] = frozenset({"user", "app_chat", "tool_start", "tool_end", "status", "error"})
+INTERNALS_TYPES: frozenset[str] = frozenset({"user", "assistant", "tool_start", "tool_end", "status", "error", "notification", "subagent_start", "subagent_stop"})
 
 
 class HistoryEvent(tp.TypedDict):

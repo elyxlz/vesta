@@ -649,11 +649,27 @@ async fn ws_handler(
     Path(name): Path<String>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
-    tracing::debug!(name = %name, "websocket connection");
-    docker::validate_name(&name).map_err(map_docker_err)?;
-    let cname = docker::container_name(&name);
+    ws_upgrade(state, &name, ws, "/ws").await
+}
 
-    let lock = state.agent_lock(&name).await;
+async fn ws_app_chat_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+    ws: WebSocketUpgrade,
+) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+    ws_upgrade(state, &name, ws, "/ws/app-chat").await
+}
+
+async fn ws_upgrade(
+    state: SharedState,
+    name: &str,
+    ws: WebSocketUpgrade,
+    path: &'static str,
+) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+    docker::validate_name(name).map_err(map_docker_err)?;
+    let cname = docker::container_name(name);
+
+    let lock = state.agent_lock(name).await;
     let guard = lock.read_owned().await;
 
     docker::ensure_running(&cname).map_err(map_docker_err)?;
@@ -661,16 +677,16 @@ async fn ws_handler(
 
     Ok(ws.on_upgrade(move |socket| async move {
         drop(guard);
-        ws_proxy(socket, port).await;
+        ws_proxy(socket, port, path).await;
     }))
 }
 
-async fn ws_proxy(client_ws: axum::extract::ws::WebSocket, agent_port: u16) {
+async fn ws_proxy(client_ws: axum::extract::ws::WebSocket, agent_port: u16, path: &str) {
     use axum::extract::ws::Message as AxumMsg;
     use futures_util::{SinkExt, StreamExt};
     use tokio_tungstenite::tungstenite::Message as TungMsg;
 
-    let url = format!("ws://localhost:{}/ws", agent_port);
+    let url = format!("ws://localhost:{}{}", agent_port, path);
     let agent_ws = match tokio_tungstenite::connect_async(&url).await {
         Ok((ws, _)) => ws,
         Err(e) => {
@@ -921,6 +937,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/auth/token", post(inject_token_handler))
         .route("/agents/{name}/logs", get(logs_handler))
         .route("/agents/{name}/ws", get(ws_handler))
+        .route("/agents/{name}/ws/app-chat", get(ws_app_chat_handler))
         .route("/agents/{name}/backups", post(create_backup_handler))
         .route("/agents/{name}/backups", get(list_backups_handler))
         .route("/agents/{name}/backups/{backup_id}/restore", post(restore_backup_handler))

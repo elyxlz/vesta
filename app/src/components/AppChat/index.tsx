@@ -4,7 +4,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { Maximize2, PanelRightClose, SendHorizontal, Wrench } from "lucide-react";
+import { Maximize2, PanelRightClose, SendHorizontal } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { Button } from "@/components/ui/button";
@@ -13,18 +13,16 @@ import {
   CardContent,
 } from "@/components/ui/card";
 import { ButtonGroup } from "@/components/ui/button-group";
-import { useAgentWs } from "@/hooks/use-agent-ws";
+import { useAppChat } from "@/hooks/use-app-chat";
 import { useAutoScroll } from "@/hooks/use-auto-scroll";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { linkify } from "@/lib/linkify";
 import type { VestaEvent } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-interface ChatProps {
+interface AppChatProps {
   onCollapse?: () => void;
   fullscreen?: boolean;
-  showToolCalls?: boolean;
-  onToggleToolCalls?: () => void;
 }
 
 const thinkingIndicatorVariants = {
@@ -58,19 +56,16 @@ const thinkingIndicatorVariants = {
   },
 };
 
-export function Chat({ onCollapse, fullscreen, showToolCalls: controlledShowToolCalls, onToggleToolCalls }: ChatProps = {}) {
+export function AppChat({ onCollapse, fullscreen }: AppChatProps = {}) {
   const { name, setAgentState } = useSelectedAgent();
   const navigate = useNavigate();
-  const { messages, agentState, connected, send } = useAgentWs(name, true);
+  const { messages, agentState, connected, send } = useAppChat(name, true);
 
   useEffect(() => {
     setAgentState(agentState);
   }, [agentState, setAgentState]);
 
   const [input, setInput] = useState("");
-  const [internalShowToolCalls, setInternalShowToolCalls] = useState(false);
-  const showToolCalls = controlledShowToolCalls ?? internalShowToolCalls;
-  const toggleToolCalls = onToggleToolCalls ?? (() => setInternalShowToolCalls((v) => !v));
   const [wasConnected, setWasConnected] = useState(false);
   const [showReconnect, setShowReconnect] = useState(false);
 
@@ -98,23 +93,19 @@ export function Chat({ onCollapse, fullscreen, showToolCalls: controlledShowTool
     };
   }, [connected, wasConnected]);
 
-  const filteredMessages = messages.filter(
-    (m) => {
-      if (m.type === "notification") return false;
-      if ((m.type === "tool_start" || m.type === "tool_end") && !showToolCalls) return false;
-      return true;
-    },
+  const chatMessages = messages.filter(
+    (m) => m.type === "user" || m.type === "app_chat" || m.type === "error",
   );
 
   const isThinking =
     agentState === "thinking" || agentState === "tool_use";
 
   const showThinkingIndicator =
-    isThinking && filteredMessages.length > 0;
+    isThinking && chatMessages.length > 0;
 
   useLayoutEffect(() => {
     scroll(scrollRef.current);
-  }, [filteredMessages, scroll]);
+  }, [chatMessages, scroll]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -184,17 +175,6 @@ export function Chat({ onCollapse, fullscreen, showToolCalls: controlledShowTool
               </Button>
             )}
           </ButtonGroup>
-          <Button
-            size="icon-sm"
-            variant="outline"
-            className={cn(
-              "dark:bg-card",
-              showToolCalls ? "text-primary" : "text-muted-foreground",
-            )}
-            onClick={toggleToolCalls}
-          >
-            <Wrench />
-          </Button>
         </div>
       )}
 
@@ -202,12 +182,12 @@ export function Chat({ onCollapse, fullscreen, showToolCalls: controlledShowTool
         <div
           ref={scrollRef}
           onScroll={handleScroll}
-          className="h-full min-h-0 overflow-y-auto px-4 py-3 font-mono text-sm leading-relaxed"
-          style={{ maskImage: "linear-gradient(to bottom, transparent, black 80px, black calc(100% - 24px), transparent)" }}
+          className="h-full min-h-0 overflow-y-auto px-3 py-3"
+          style={{ maskImage: "linear-gradient(to bottom, transparent, black 40px, black calc(100% - 24px), transparent)" }}
         >
           <div className={cn("min-h-full flex flex-col justify-end", fullscreen && "pt-12")}>
             <div>
-              {filteredMessages.length === 0 ? (
+              {chatMessages.length === 0 ? (
                 <div className="flex flex-col items-center gap-2 py-2">
                   <ThinkingDots />
                   <span className="text-xs text-muted-foreground">
@@ -217,9 +197,9 @@ export function Chat({ onCollapse, fullscreen, showToolCalls: controlledShowTool
                   </span>
                 </div>
               ) : (
-                <div className="flex flex-col gap-0 sm:gap-2">
-                  {filteredMessages.map((msg, i) => (
-                    <MessageLine key={i} event={msg} />
+                <div className="flex flex-col gap-1.5">
+                  {chatMessages.map((msg, i) => (
+                    <ChatBubble key={i} event={msg} />
                   ))}
                 </div>
               )}
@@ -252,7 +232,7 @@ export function Chat({ onCollapse, fullscreen, showToolCalls: controlledShowTool
               exit="exit"
               className="shrink-0 overflow-hidden"
             >
-              <div className="px-4 pb-2">
+              <div className="px-3 pb-2">
                 <ThinkingDots className="py-0" />
               </div>
             </motion.div>
@@ -268,7 +248,7 @@ export function Chat({ onCollapse, fullscreen, showToolCalls: controlledShowTool
             disabled={!connected}
             rows={1}
             enterKeyHint="send"
-            className="m-0 flex-1 min-h-5 max-h-[120px] bg-transparent py-2.5 text-base sm:text-sm font-mono leading-5 resize-none outline-none placeholder:text-muted-foreground/50 disabled:opacity-50"
+            className="m-0 flex-1 min-h-5 max-h-[120px] bg-transparent py-2.5 text-base sm:text-sm leading-5 resize-none outline-none placeholder:text-muted-foreground/50 disabled:opacity-50"
           />
           <Button
             size="icon-sm"
@@ -285,8 +265,8 @@ export function Chat({ onCollapse, fullscreen, showToolCalls: controlledShowTool
   );
 }
 
-function MessageLine({ event }: { event: VestaEvent }) {
-  if (event.type === "history") return null;
+function ChatBubble({ event }: { event: VestaEvent }) {
+  if (event.type === "history" || event.type === "status") return null;
 
   const ts = event.ts
     ? new Date(event.ts).toLocaleTimeString("en-US", {
@@ -296,55 +276,39 @@ function MessageLine({ event }: { event: VestaEvent }) {
     })
     : "";
 
-  let colorClass = "text-primary";
-  let contentClass = "";
-  let content = "";
-
-  switch (event.type) {
-    case "user":
-      colorClass = "text-foreground font-medium";
-      content = `> ${event.text}`;
-      break;
-    case "assistant":
-      colorClass = "text-primary/90";
-      content = event.text;
-      break;
-    case "tool_start":
-      colorClass = "text-muted-foreground";
-      contentClass = "text-xs leading-[1.9]";
-      content = `[${event.tool}] ${event.input}`;
-      break;
-    case "tool_end":
-      colorClass = "text-muted-foreground";
-      contentClass = "text-xs leading-[1.9]";
-      content = `[${event.tool}] done`;
-      break;
-    case "notification":
-      colorClass = "text-amber-600 dark:text-amber-400";
-      contentClass = "text-xs leading-[1.9]";
-      content = `[${event.source}] ${event.summary}`;
-      break;
-    case "error":
-      colorClass = "text-destructive";
-      content = `error: ${event.text}`;
-      break;
-    case "status":
-      return null;
-    default:
-      return null;
+  if (event.type === "error") {
+    return (
+      <div className="flex justify-center px-4 py-1">
+        <span className="text-xs text-destructive">{event.text}</span>
+      </div>
+    );
   }
 
+  const isUser = event.type === "user";
+  const text = event.text;
+
   return (
-    <div className={cn("flex gap-2 py-[1px] max-sm:flex-col max-sm:gap-0 max-sm:mt-2", colorClass)}>
-      {ts && (
-        <span className="text-xs text-muted-foreground/40 shrink-0 leading-[1.9] select-none">
-          {ts}
-        </span>
-      )}
-      <span
-        className={cn("break-words min-w-0", contentClass)}
-        dangerouslySetInnerHTML={{ __html: linkify(content) }}
-      />
+    <div className={cn("flex", isUser ? "justify-end" : "justify-start")}>
+      <div
+        className={cn(
+          "max-w-[85%] rounded-2xl px-3.5 py-2 text-sm leading-relaxed break-words",
+          isUser
+            ? "bg-primary text-primary-foreground rounded-br-md"
+            : "bg-muted text-foreground rounded-bl-md",
+        )}
+      >
+        <span dangerouslySetInnerHTML={{ __html: linkify(text) }} />
+        {ts && (
+          <span
+            className={cn(
+              "block text-[10px] mt-0.5 select-none",
+              isUser ? "text-primary-foreground/50 text-right" : "text-muted-foreground/50",
+            )}
+          >
+            {ts}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
