@@ -1,17 +1,20 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { VestaEvent, AgentActivityState } from "@/lib/types";
-import { wsUrl } from "@/lib/connection";
+import { wsAppChatUrl } from "@/lib/connection";
 import { useAuth } from "@/providers/AuthProvider";
 
 const RECONNECT_BASE = 1000;
 const RECONNECT_MAX = 30000;
 const MAX_MESSAGES = 5000;
 
-export function useAgentWs(name: string | null, active: boolean) {
+export function useAppChat(name: string | null, active: boolean) {
   const { setReachable } = useAuth();
   const [messages, setMessages] = useState<VestaEvent[]>([]);
   const [agentState, setAgentState] = useState<AgentActivityState>("idle");
   const [connected, setConnected] = useState(false);
+
+  const wsRef = useRef<WebSocket | null>(null);
+  const pendingEchoesRef = useRef<string[]>([]);
 
   useEffect(() => {
     if (!active || !name) return;
@@ -22,13 +25,14 @@ export function useAgentWs(name: string | null, active: boolean) {
     let reconnectDelay = RECONNECT_BASE;
 
     setMessages([]);
+    pendingEchoesRef.current = [];
 
     const doConnect = () => {
       if (cancelled) return;
 
       let url: string;
       try {
-        url = wsUrl(name);
+        url = wsAppChatUrl(name);
       } catch {
         reconnectTimer = setTimeout(doConnect, reconnectDelay);
         reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX);
@@ -36,6 +40,7 @@ export function useAgentWs(name: string | null, active: boolean) {
       }
 
       socket = new WebSocket(url);
+      wsRef.current = socket;
 
       socket.onopen = () => {
         if (cancelled) return;
@@ -43,6 +48,7 @@ export function useAgentWs(name: string | null, active: boolean) {
         setConnected(true);
         setReachable(true);
         setMessages([]);
+        pendingEchoesRef.current = [];
       };
 
       socket.onmessage = (e) => {
@@ -57,6 +63,13 @@ export function useAgentWs(name: string | null, active: boolean) {
             );
             if (event.state) setAgentState(event.state);
             return;
+          }
+          if (event.type === "user") {
+            const idx = pendingEchoesRef.current.indexOf(event.text);
+            if (idx !== -1) {
+              pendingEchoesRef.current.splice(idx, 1);
+              return;
+            }
           }
           setMessages((prev) => {
             const updated = [...prev, event];
@@ -75,6 +88,7 @@ export function useAgentWs(name: string | null, active: boolean) {
       socket.onclose = () => {
         if (cancelled) return;
         socket = null;
+        wsRef.current = null;
         setConnected(false);
         setReachable(false);
         reconnectTimer = setTimeout(doConnect, reconnectDelay);
@@ -94,9 +108,24 @@ export function useAgentWs(name: string | null, active: boolean) {
         socket.close();
         socket = null;
       }
+      wsRef.current = null;
       setConnected(false);
     };
   }, [active, name]);
 
-  return { messages, agentState, connected };
+  const send = useCallback((text: string): boolean => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+    ws.send(JSON.stringify({ type: "message", text }));
+    pendingEchoesRef.current.push(text);
+    setMessages((prev) => {
+      const updated: VestaEvent[] = [...prev, { type: "user", text, ts: new Date().toISOString() }];
+      return updated.length > MAX_MESSAGES
+        ? updated.slice(-MAX_MESSAGES)
+        : updated;
+    });
+    return true;
+  }, []);
+
+  return { messages, agentState, connected, send };
 }

@@ -7,10 +7,10 @@ from aiohttp import web
 
 import vesta.models as vm
 from vesta import logger
-from vesta.events import EventBus, HistoryEvent, VestaEvent
+from vesta.events import APP_CHAT_TYPES, INTERNALS_TYPES, EventBus, HistoryEvent, VestaEvent
 
 
-async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
+async def _ws_handler(request: web.Request, filter_types: frozenset[str]) -> web.WebSocketResponse:
     event_bus: EventBus = request.app["event_bus"]
     message_queue: asyncio.Queue[tuple[str, bool]] = request.app["message_queue"]
     state: vm.State = request.app["state"]
@@ -24,9 +24,11 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
     send_task: asyncio.Task[None] | None = None
     try:
         if event_bus.history:
-            await ws.send_json(HistoryEvent(type="history", events=list(event_bus.history), state=event_bus.state))
+            filtered = [e for e in event_bus.history if e["type"] in filter_types]
+            if filtered:
+                await ws.send_json(HistoryEvent(type="history", events=filtered, state=event_bus.state))
         recv_task = asyncio.create_task(_recv_loop(ws, message_queue, state, config))
-        send_task = asyncio.create_task(_send_loop(ws, sub))
+        send_task = asyncio.create_task(_send_loop(ws, sub, filter_types))
         await asyncio.wait([recv_task, send_task], return_when=asyncio.FIRST_COMPLETED)
     finally:
         recv_task and recv_task.cancel()
@@ -35,6 +37,14 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
         event_bus.unsubscribe(sub)
 
     return ws
+
+
+async def _internals_handler(request: web.Request) -> web.WebSocketResponse:
+    return await _ws_handler(request, INTERNALS_TYPES)
+
+
+async def _app_chat_handler(request: web.Request) -> web.WebSocketResponse:
+    return await _ws_handler(request, APP_CHAT_TYPES)
 
 
 async def _recv_loop(
@@ -66,11 +76,12 @@ async def _recv_loop(
             break
 
 
-async def _send_loop(ws: web.WebSocketResponse, sub: asyncio.Queue[VestaEvent]) -> None:
+async def _send_loop(ws: web.WebSocketResponse, sub: asyncio.Queue[VestaEvent], filter_types: frozenset[str]) -> None:
     try:
         while True:
             event = await sub.get()
-            await ws.send_json(event)
+            if event["type"] in filter_types:
+                await ws.send_json(event)
     except (ConnectionError, RuntimeError, TypeError, asyncio.CancelledError):
         pass
 
@@ -88,7 +99,8 @@ async def start_ws_server(
     app["message_queue"] = message_queue
     app["state"] = state
     app["config"] = config
-    app.router.add_get("/ws", _ws_handler)
+    app.router.add_get("/ws", _internals_handler)
+    app.router.add_get("/ws/app-chat", _app_chat_handler)
 
     runner = web.AppRunner(app)
     await runner.setup()

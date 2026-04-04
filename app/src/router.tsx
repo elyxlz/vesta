@@ -1,11 +1,10 @@
-import { useState } from "react";
 import { createBrowserRouter, Navigate, Outlet, useLocation, useNavigate, useParams } from "react-router-dom";
-import { Minimize2, Wrench } from "lucide-react";
+import { Minimize2 } from "lucide-react";
 import { Connect } from "@/components/Connect";
 import { Home } from "@/components/Home";
 import { CreateAgent } from "@/components/CreateAgent";
 import { AgentHome } from "@/components/AgentHome";
-import { Chat } from "@/components/Chat";
+import { AppChat } from "@/components/AppChat";
 import { DynamicIsland } from "@/components/DynamicIsland";
 import { Titlebar } from "@/components/Titlebar";
 import { Navbar } from "@/components/Navbar";
@@ -71,7 +70,6 @@ function AgentLayout() {
 function ChatFullscreenLayout() {
   const navigate = useNavigate();
   const { name } = useParams<{ name: string }>();
-  const [showToolCalls, setShowToolCalls] = useState(false);
 
   return (
     <div className="h-full relative">
@@ -103,7 +101,7 @@ function ChatFullscreenLayout() {
           </Button>
         </div>
       </div>
-      <Chat fullscreen showToolCalls={showToolCalls} onToggleToolCalls={() => setShowToolCalls((v) => !v)} />
+      <AppChat fullscreen />
     </div>
   );
 }

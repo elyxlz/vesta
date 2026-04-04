@@ -1,4 +1,5 @@
 import {
+  Activity,
   MoreVertical,
   Play,
   ScrollText,
@@ -53,6 +54,7 @@ type DynamicIslandExpandedProps = {
   onBackup: () => void | Promise<void>;
   onShowBackups: () => void;
   onShowConsole: () => void;
+  onShowInternals: () => void;
   onOpenDeleteDialog: () => void;
 };
 
@@ -79,6 +81,7 @@ export function DynamicIslandExpanded({
   onBackup,
   onShowBackups,
   onShowConsole,
+  onShowInternals,
   onOpenDeleteDialog,
 }: DynamicIslandExpandedProps) {
   return (
@@ -182,14 +185,24 @@ export function DynamicIslandExpanded({
                     </Button>
 
                     {info?.alive && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={onShowConsole}
-                      >
-                        <ScrollText data-icon="inline-start" />
-                        logs
-                      </Button>
+                      <>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={onShowConsole}
+                        >
+                          <ScrollText data-icon="inline-start" />
+                          logs
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={onShowInternals}
+                        >
+                          <Activity data-icon="inline-start" />
+                          internals
+                        </Button>
+                      </>
                     )}
 
                     <DropdownMenu open={menuOpen} onOpenChange={onMenuOpenChange}>

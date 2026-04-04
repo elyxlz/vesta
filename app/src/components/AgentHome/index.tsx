@@ -8,7 +8,7 @@ import {
   ResizablePanel,
   ResizableHandle,
 } from "@/components/ui/resizable";
-import { Chat } from "@/components/Chat";
+import { AppChat } from "@/components/AppChat";
 import { Dashboard } from "@/components/Dashboard";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useAgents } from "@/providers/AgentsProvider";
@@ -46,7 +46,7 @@ export function AgentHome() {
             <>
               <ResizableHandle withHandle className="mx-2" />
               <ResizablePanel defaultSize="30%" minSize="320px">
-                <Chat onCollapse={() => setChatCollapsed(true)} />
+                <AppChat onCollapse={() => setChatCollapsed(true)} />
               </ResizablePanel>
             </>
           )}

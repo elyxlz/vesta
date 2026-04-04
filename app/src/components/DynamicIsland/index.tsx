@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
+import { AgentInternals } from "@/components/AgentInternals";
 import { Console } from "@/components/Console";
 import { isTauri } from "@/lib/env";
 import {
@@ -50,6 +51,7 @@ export function DynamicIsland() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [showConsole, setShowConsole] = useState(false);
+  const [showInternals, setShowInternals] = useState(false);
   const [showAuth, setShowAuth] = useState(false);
   const [authStarting, setAuthStarting] = useState(false);
   const [authStart, setAuthStart] = useState<AuthStartResult | null>(null);
@@ -218,6 +220,7 @@ export function DynamicIsland() {
               onBackup={backup}
               onShowBackups={() => { /* TODO: backups panel */ }}
               onShowConsole={() => setShowConsole(true)}
+              onShowInternals={() => setShowInternals(true)}
               onOpenDeleteDialog={() => setDeleteDialogOpen(true)}
             />
           ) : (
@@ -275,6 +278,34 @@ export function DynamicIsland() {
                   name={name}
                   onClose={() => setShowConsole(false)}
                 />
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>,
+        document.body,
+      )}
+
+      {createPortal(
+        <AnimatePresence>
+          {showInternals && info?.alive && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.15 }}
+              className={cn("fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-0 sm:p-5", isTauri && "pt-7")}
+              onClick={(e) => {
+                if (e.target === e.currentTarget) setShowInternals(false);
+              }}
+            >
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.95, opacity: 0 }}
+                transition={{ duration: 0.15 }}
+                className="flex min-h-0 min-w-0 w-full h-full max-w-4xl max-h-[800px] flex-col rounded-none sm:rounded-xl overflow-hidden shadow-2xl border bg-card"
+              >
+                <AgentInternals />
               </motion.div>
             </motion.div>
           )}
