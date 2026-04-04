@@ -1,5 +1,5 @@
-export interface BoxInfo {
-  status: BoxStatus;
+export interface AgentInfo {
+  status: AgentStatus;
   id: string;
   authenticated: boolean;
   name: string;
@@ -9,11 +9,11 @@ export interface BoxInfo {
   friendly_status: string;
 }
 
-export type BoxStatus = "running" | "stopped" | "dead" | "not_found" | "unknown";
+export type AgentStatus = "running" | "stopped" | "dead" | "not_found" | "unknown";
 
 export interface ListEntry {
   name: string;
-  status: BoxStatus;
+  status: AgentStatus;
   authenticated: boolean;
   agent_ready: boolean;
   ws_port: number;
@@ -24,30 +24,24 @@ export interface ListEntry {
 export interface PlatformStatus {
   ready: boolean;
   platform: string;
-  wsl_installed: boolean;
-  virtualization_enabled: boolean | null;
-  distro_registered: boolean;
-  distro_healthy: boolean;
-  services_ready: boolean;
-  needs_reboot: boolean;
   message: string;
 }
 
-export type BoxActivityState = "idle" | "thinking" | "tool_use";
+export type AgentActivityState = "idle" | "thinking" | "tool_use";
 
-export type OnboardingStep = "platform" | "name" | "creating" | "auth" | "done";
+export type OnboardingStep = "name" | "connect" | "creating" | "auth" | "done";
 
 type BaseEvent = { ts?: string };
 
 export type VestaEvent =
-  | (BaseEvent & { type: "status"; state: BoxActivityState })
+  | (BaseEvent & { type: "status"; state: AgentActivityState })
   | (BaseEvent & { type: "user"; text: string })
   | (BaseEvent & { type: "assistant"; text: string })
   | (BaseEvent & { type: "tool_start"; tool: string; input: string })
   | (BaseEvent & { type: "tool_end"; tool: string })
   | (BaseEvent & { type: "error"; text: string })
   | (BaseEvent & { type: "notification"; source: string; summary: string })
-  | (BaseEvent & { type: "history"; events: VestaEvent[]; state: BoxActivityState });
+  | (BaseEvent & { type: "history"; events: VestaEvent[]; state: AgentActivityState });
 
 export type LogEvent =
   | { kind: "Line"; text: string }

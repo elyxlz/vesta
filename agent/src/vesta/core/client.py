@@ -297,6 +297,8 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
             msg = tp.cast(Message, result)
             texts, sub_agent_context, session_id, _ = _parse_sdk_message(msg, sub_agent_context=sub_agent_context)
             if session_id and session_id != state.session_id:
+                if state.session_id:
+                    logger.warning(f"Session ID changed: {state.session_id[:16]} -> {session_id[:16]} (resume may have failed)")
                 persist_session_id(session_id, state=state, config=config)
             text = "\n".join(texts) if texts else None
             if not text:
@@ -327,7 +329,7 @@ async def process_message(msg: str, *, state: vm.State, config: vm.VestaConfig, 
     return responses, state
 
 
-_SEARCH_HISTORY_DESCRIPTION = (
+_SEARCH_CONVERSATION_HISTORY_DESCRIPTION = (
     "Search past conversation memory using full-text search (SQLite FTS5). "
     "Searches ALL past conversations across sessions and days, not just the current session. "
     "Use this to recall specific past discussions, decisions, or information no longer in context.\n\n"
@@ -337,10 +339,10 @@ _SEARCH_HISTORY_DESCRIPTION = (
     '- OR: "cats OR dogs" finds messages with either word\n'
     '- Prefix: "sched*" matches schedule, scheduled, scheduling, etc.\n'
     '- NOT: "meeting NOT cancelled" excludes matches\n\n'
-    "Returns messages in chronological order with timestamps and roles (user/assistant/system)."
+    "Results are ranked by relevance with a recency boost — recent conversations surface higher."
 )
 
-_SEARCH_HISTORY_SCHEMA = {
+_SEARCH_CONVERSATION_HISTORY_SCHEMA = {
     "type": "object",
     "properties": {
         "query": {"type": "string", "description": "FTS5 search query"},
@@ -361,8 +363,8 @@ def _build_vesta_tools_server(state: vm.State, config: vm.VestaConfig) -> tp.Any
         os.kill(os.getpid(), signal.SIGTERM)
         return {"content": [{"type": "text", "text": "Container restart initiated."}]}
 
-    @tool("search_history", _SEARCH_HISTORY_DESCRIPTION, _SEARCH_HISTORY_SCHEMA)
-    async def search_history(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
+    @tool("search_conversation_history", _SEARCH_CONVERSATION_HISTORY_DESCRIPTION, _SEARCH_CONVERSATION_HISTORY_SCHEMA)
+    async def search_conversation_history(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
         if state.history is None:
             return {"content": [{"type": "text", "text": "History store not available."}]}
         query = str(args["query"])
@@ -373,7 +375,7 @@ def _build_vesta_tools_server(state: vm.State, config: vm.VestaConfig) -> tp.Any
             return {"content": [{"type": "text", "text": f"Search error: {e}"}]}
         return {"content": [{"type": "text", "text": format_results(results)}]}
 
-    return create_sdk_mcp_server("vesta-tools", tools=[restart_vesta, search_history])
+    return create_sdk_mcp_server("vesta-tools", tools=[restart_vesta, search_conversation_history])
 
 
 def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgentOptions:
@@ -389,6 +391,7 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
 
     return ClaudeAgentOptions(
         system_prompt=system_prompt,
+        model=config.agent_model,
         hooks={
             "PreToolUse": [HookMatcher(hooks=[pre_hook])],
             "PostToolUse": [HookMatcher(hooks=[post_hook])],

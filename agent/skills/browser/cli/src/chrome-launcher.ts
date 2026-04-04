@@ -410,7 +410,7 @@ const STEALTH_ARGS = [
   '--force-color-profile=srgb',
   '--font-render-hinting=none',
   '--aggressive-cache-discard',
-  '--disable-cookie-encryption',
+  // '--disable-cookie-encryption', // removed: breaks cookie persistence on exit
   '--disable-domain-reliability',
   '--disable-threaded-animation',
   '--disable-threaded-scrolling',
@@ -624,7 +624,7 @@ export async function launchChrome(opts: LaunchOptions = {}): Promise<RunningChr
   };
 }
 
-export async function stopChrome(running: RunningChrome, timeoutMs = 2500): Promise<void> {
+export async function stopChrome(running: RunningChrome, timeoutMs = 5000): Promise<void> {
   const proc = running.proc;
   if (proc.exitCode != null) return;
   try { proc.kill('SIGTERM'); } catch {}

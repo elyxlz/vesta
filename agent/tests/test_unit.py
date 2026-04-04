@@ -261,62 +261,39 @@ async def _run_processor_test(
 
 
 @pytest.mark.anyio
-async def test_message_processor_resets_on_error(tmp_path):
-    call_count = 0
-
+async def test_message_processor_restarts_on_error(tmp_path):
     async def side_effect(msg, *, state, config, is_user):
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            raise RuntimeError("Simulated SDK buffer overflow")
-        return (["OK"], state)
+        raise RuntimeError("Simulated SDK buffer overflow")
 
     state, session_count, messages = await _run_processor_test(
         tmp_path, message_side_effect=side_effect, initial_queue=[("first message - will fail", True)]
     )
-    assert session_count >= 2
-    assert any("Previous request failed" in msg for msg in messages)
+    assert state.graceful_shutdown.is_set()
+    assert state.restart_reason == "error — Simulated SDK buffer overflow"
 
 
 @pytest.mark.anyio
-async def test_message_processor_restart_preserves_session(tmp_path):
-    call_count = 0
-
+async def test_message_processor_restarts_on_timeout(tmp_path):
     async def side_effect(msg, *, state, config, is_user):
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            state.session_id = "test-session-123"
-            state.pending_context = "[System: Vesta restarted.]"
-        return (["OK"], state)
+        raise TimeoutError()
 
     state, session_count, messages = await _run_processor_test(
-        tmp_path, message_side_effect=side_effect, initial_queue=[("edit some config", True)]
+        tmp_path, message_side_effect=side_effect, initial_queue=[("slow request", True)]
     )
-    assert state.session_id == "test-session-123"
-    assert session_count >= 2
-    assert any("restarted" in msg.lower() for msg in messages)
+    assert state.graceful_shutdown.is_set()
+    assert state.restart_reason == "error — Response timed out"
 
 
-@pytest.mark.anyio
-async def test_response_timeout_triggers_session_reset(tmp_path):
-    call_count = 0
+def test_restart_reason_round_trip(tmp_path):
+    from vesta.main import _write_restart_reason, _read_restart_reason
 
-    async def side_effect(msg, *, state, config, is_user):
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            state.pending_context = "[System: Response timed out. Session was reset to recover.]"
-        return (["OK"], state)
+    config = vm.VestaConfig(root=tmp_path)
+    config.data_dir.mkdir(parents=True, exist_ok=True)
 
-    pre_state = vm.State()
-    pre_state.session_id = "timeout-session"
-    state, session_count, messages = await _run_processor_test(
-        tmp_path, message_side_effect=side_effect, pre_state=pre_state, initial_queue=[("slow request", True)]
-    )
-    assert session_count >= 2
-    assert state.session_id == "timeout-session"
-    assert any("timed out" in msg.lower() for msg in messages)
+    _write_restart_reason(config, "nightly — conversation history reset, dreamer ran")
+    assert _read_restart_reason(config) == "nightly — conversation history reset, dreamer ran"
+    # File is consumed after reading
+    assert _read_restart_reason(config) == "crash — restarted after unexpected exit"
 
 
 @pytest.mark.anyio
@@ -417,8 +394,7 @@ async def test_dreamer_triggers_automatic_restart(tmp_path):
     )
     assert state.session_id is None
     assert state.dreamer_active is False
-    assert session_count >= 2
-    assert any("new day" in msg for msg in messages)
+    assert state.graceful_shutdown.is_set()
 
 
 # --- Interrupt tests ---
@@ -917,32 +893,14 @@ def test_nightly_restart(tmp_path):
     from vesta.core.loops import _trigger_nightly_restart
 
     config = vm.VestaConfig(root=tmp_path)
-    fake_now = dt.datetime(2025, 6, 15, 4, 5, 0)
+    config.data_dir.mkdir(parents=True, exist_ok=True)
 
-    # With summary
     state = vm.State(session_id="old-session")
-    config.dreamer_dir.mkdir(parents=True, exist_ok=True)
-    (config.dreamer_dir / "2025-06-15.md").write_text("Updated MEMORY.md, pruned stale entries.")
-
-    with patch("vesta.core.loops._now", return_value=fake_now):
-        _trigger_nightly_restart(state=state, config=config)
+    _trigger_nightly_restart(state=state, config=config)
 
     assert state.session_id is None
-    assert state.pending_context is not None
-    assert "new day" in state.pending_context
-    assert "Updated MEMORY.md" in state.pending_context
-
-    # Without summary
-    state2 = vm.State(session_id="other-session")
-    (config.dreamer_dir / "2025-06-15.md").unlink()
-
-    with patch("vesta.core.loops._now", return_value=fake_now):
-        _trigger_nightly_restart(state=state2, config=config)
-
-    assert state2.session_id is None
-    assert state2.pending_context is not None
-    assert "new day" in state2.pending_context
-    assert "Dreamer Summary" not in state2.pending_context
+    assert state.restart_reason == "nightly — conversation history reset, dreamer ran"
+    assert state.graceful_shutdown.is_set()
 
 
 # --- History store ---
@@ -1008,6 +966,20 @@ def test_history_format_results():
     formatted = format_results(results)
     assert "hello" in formatted
     assert "user" in formatted
+
+
+def test_history_search_recency_ranking(tmp_path):
+    store = open_history(tmp_path / "test.db")
+    old = dt.datetime(2024, 1, 1, 10, 0, 0)
+    recent = dt.datetime(2026, 3, 30, 10, 0, 0)
+    history_save(store, "user", "deploy the backend service", timestamp=old)
+    history_save(store, "user", "deploy the backend service", timestamp=recent)
+
+    results = history_search(store, "deploy", limit=2)
+    assert len(results) == 2
+    # Recent message should rank first (lower combined score)
+    assert results[0]["timestamp"] == recent.isoformat()
+    assert results[1]["timestamp"] == old.isoformat()
 
 
 def test_history_store_session_id(tmp_path):

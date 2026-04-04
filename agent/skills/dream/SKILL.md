@@ -23,7 +23,7 @@ description: Self-improvement and memory curation. Used by the nightly dreamer, 
 
 ### 1. Retrospective
 
-Read the most recent file in `~/vesta/dreamer/`. For each fix listed there, check today's conversation: did that situation come up again? Did it go better? If a fix didn't help or made things worse, revisit it now. If it worked, note it in tonight's summary. Use `search_history` to check whether a fix has held up across multiple days.
+Read the last 5–7 files in `~/vesta/dreamer/` (sorted by date) to spot recurring patterns — fixes that keep resurfacing, problems marked "resolved" that came back, and improvements that actually stuck. For each fix in the recent summaries, check today's conversation: did that situation come up again? Did it go better? If a fix didn't help or made things worse, revisit it now. If it worked, note it in tonight's summary.
 
 ### 2. Review the conversation
 
@@ -49,13 +49,35 @@ You can change anything. If a fix requires code, write the code.
 
 Re-read the failing exchange and simulate: would the updated version have changed the outcome? If no or unclear, revise further or note it as unresolved. Don't mark something fixed if you can't convince yourself it would have helped.
 
-### 5. Upstream sync
+### 5. Upstream sync — MANDATORY
 
-Use the `upstream` skill to both pull and push. Don't skip this just because nothing broke today.
+**This step is NOT optional.** Every dream must include upstream sync. Skipping it causes debt that compounds — 30+ commits piled up when this was neglected. Do it every single time.
+
+#### Pull
+1. `git -C ~/vesta fetch origin`
+2. `git -C ~/vesta log HEAD..FETCH_HEAD --oneline` — check for new upstream commits
+3. For commits touching `agent/`: read the diff, understand the intent, manually apply relevant changes to local. Don't blindly paste — adapt to local divergences
+4. For Go CLI changes: rebuild the binary after applying
+5. For Python changes: run `uv lock` if dependencies changed, verify imports
+
+#### Push
+Audit **every** local divergence — not just the obvious ones. Check:
+- `~/vesta/skills/*/SKILL.md` vs `git show FETCH_HEAD:agent/skills/*/SKILL.md` — any doc improvements, gotchas, or workflow fixes
+- `~/vesta/skills/*/scripts/` — any new or improved scripts
+- `~/vesta/skills/*/cli/` — any code bug fixes or features
+- `~/vesta/prompts/` — any prompt improvements
+- `~/vesta/src/` (or `agent/src/`) — any Python agent code fixes
+- New skills that don't exist upstream — strip personal config, PR as skeleton skills
+
+For each divergence: if it would help any vesta instance (not just this one), PR it. Use the `upstream` skill workflow (worktree from FETCH_HEAD, apply changes, pr.py).
+
+**The dream summary must list what was synced.** If nothing was synced, explain why — "no new upstream commits and no local divergences" is fine. "Skipped" is not.
 
 ## User State (in MEMORY.md)
 
 Update the "User State" section — your working model of where they're at. Write what tomorrow's you needs to know to not start from zero.
+
+**CRITICAL: Never use relative dates or timing in the User State.** No "tonight", "tomorrow", "yesterday", "this weekend", "next week". Always use absolute dates (e.g., "Mar 19" not "yesterday", "Mar 22 5:15pm" not "tomorrow evening"). Relative references become wrong the moment a new day starts, causing cascading confusion.
 
 - What they're working on right now
 - What's going well and what isn't, reading between the lines

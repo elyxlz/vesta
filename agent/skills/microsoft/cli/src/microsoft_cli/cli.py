@@ -10,7 +10,7 @@ from pathlib import Path
 import httpx
 
 from .config import Config
-from . import auth_commands, email, calendar, monitor, notifications
+from . import auth_commands, email, calendar, monitor, notifications, block
 from .context import MicrosoftContext
 from .settings import MicrosoftSettings
 
@@ -95,6 +95,7 @@ def main():
     p_reply.add_argument("--body", required=True)
     p_reply.add_argument("--attachments", nargs="+", default=None)
     p_reply.add_argument("--reply-all", action="store_true")
+    p_reply.add_argument("--html", action="store_true")
 
     p_attachment = email_sub.add_parser("attachment")
     p_attachment.add_argument("--account", required=True)
@@ -113,6 +114,16 @@ def main():
     p_update.add_argument("--id", required=True, dest="email_id")
     p_update.add_argument("--is-read", type=lambda x: x.lower() == "true", default=None)
     p_update.add_argument("--categories", nargs="+", default=None)
+
+    p_block = email_sub.add_parser("block")
+    p_block.add_argument("--account", required=True)
+    p_block_group = p_block.add_mutually_exclusive_group(required=True)
+    p_block_group.add_argument("--sender", default=None, help="Email address of sender to block")
+    p_block_group.add_argument("--list", action="store_true", default=False, help="List all current block rules")
+
+    p_unblock = email_sub.add_parser("unblock")
+    p_unblock.add_argument("--account", required=True)
+    p_unblock.add_argument("--sender", required=True, help="Email address of sender to unblock")
 
     # calendar
     cal_parser = group.add_parser("calendar")
@@ -252,6 +263,7 @@ def _dispatch_email(args, config, client):
             body=args.body,
             attachments=args.attachments,
             reply_all=args.reply_all,
+            html=args.html,
         )
     elif args.command == "attachment":
         return email.get_attachment(
@@ -263,6 +275,12 @@ def _dispatch_email(args, config, client):
         return email.update_email(
             config, client, account_email=args.account, email_id=args.email_id, is_read=args.is_read, categories=args.categories
         )
+    elif args.command == "block":
+        if args.list:
+            return block.list_block_rules(config, client, account_email=args.account)
+        return block.block_sender(config, client, account_email=args.account, sender=args.sender)
+    elif args.command == "unblock":
+        return block.unblock_sender(config, client, account_email=args.account, sender=args.sender)
 
 
 def _dispatch_calendar(args, config, client):

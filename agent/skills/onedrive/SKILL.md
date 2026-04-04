@@ -9,6 +9,8 @@ Access OneDrive files via rclone. FUSE mounting works if the container was creat
 
 **Setup**: See [SETUP.md](SETUP.md)
 
+**Mount on restart**: `rclone mount onedrive: ~/onedrive --daemon --vfs-cache-mode full`
+
 ## Usage
 
 ```bash

@@ -1,4 +1,4 @@
-"""WebSocket API server for agent ↔ app communication."""
+"""WebSocket API server for agent <-> app communication."""
 
 import asyncio
 import json
@@ -29,10 +29,9 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
         send_task = asyncio.create_task(_send_loop(ws, sub))
         await asyncio.wait([recv_task, send_task], return_when=asyncio.FIRST_COMPLETED)
     finally:
-        if recv_task:
-            recv_task.cancel()
-        if send_task:
-            send_task.cancel()
+        recv_task and recv_task.cancel()
+        send_task and send_task.cancel()
+        await asyncio.gather(recv_task, send_task, return_exceptions=True)
         event_bus.unsubscribe(sub)
 
     return ws

@@ -1,0 +1,20 @@
+[project]
+name = "flights-vesta"
+version = "0.1.0"
+description = "Flight search CLI for Vesta using fli (punitarani/fli) — Google Flights via reverse-engineered API"
+readme = {text = "", content-type = "text/plain"}
+requires-python = ">=3.11"
+dependencies = [
+    "flights>=0.7.0",
+    "requests>=2.31.0",
+]
+
+[project.scripts]
+flights = "flights_cli.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/flights_cli"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

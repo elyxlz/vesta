@@ -1,25 +1,42 @@
 {
   "productName": "Vesta",
-  "version": "0.1.105",
+  "version": "0.1.107",
   "identifier": "com.vesta.app",
   "build": {
-    "beforeDevCommand": "cargo build --manifest-path ../cli/Cargo.toml && npm run dev",
+    "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "cargo build --release --manifest-path ../cli/Cargo.toml && npm run build",
+    "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
   },
   "app": {
     "macOSPrivateApi": true,
     "windows": [
       {
+        "label": "main",
         "title": "Vesta",
-        "width": 380,
-        "height": 380,
-        "decorations": false,
-        "resizable": false,
+        "decorations": true,
+        "hiddenTitle": true,
+        "titleBarStyle": "Overlay",
         "transparent": true,
-        "shadow": false,
-        "backgroundColor": [0, 0, 0, 0]
+        "height": 380,
+        "width": 380,
+        "minWidth": 380,
+        "minHeight": 380,
+        "center": false,
+        "resizable": true,
+        "dragDropEnabled": false,
+        "acceptFirstMouse": true,
+        "visible": true,
+        "windowEffects": {
+          "effects": [
+            "fullScreenUI",
+            "mica"
+          ],
+          "radius": 28,
+          "state": "active"
+        },
+        "shadow": true,
+        "backgroundThrottling": "disabled"
       }
     ],
     "security": {
@@ -43,9 +60,6 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ],
-    "externalBin": [
-      "binaries/vesta"
     ],
     "resources": [
       "resources/*"

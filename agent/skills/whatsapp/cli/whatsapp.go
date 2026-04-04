@@ -18,6 +18,7 @@ import (
 	"github.com/skip2/go-qrcode"
 	"go.mau.fi/whatsmeow"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
+	waStore "go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
@@ -88,6 +89,13 @@ func NewWhatsAppClient(dataDir, notificationsDir, instance string, readOnly bool
 			return nil, fmt.Errorf("failed to get device: %v", err)
 		}
 	}
+
+	// Enable full history sync (up to 2 years) for deeper backfill on new QR pairing
+	waStore.DeviceProps.RequireFullSync = proto.Bool(true)
+	waStore.DeviceProps.HistorySyncConfig.FullSyncDaysLimit = proto.Uint32(730)
+	waStore.DeviceProps.HistorySyncConfig.FullSyncSizeMbLimit = proto.Uint32(2048)
+	waStore.DeviceProps.HistorySyncConfig.RecentSyncDaysLimit = proto.Uint32(730)
+	waStore.DeviceProps.HistorySyncConfig.SupportGroupHistory = proto.Bool(true)
 
 	// Create WhatsApp client
 	client := whatsmeow.NewClient(deviceStore, logger)
@@ -758,6 +766,25 @@ func (wac *WhatsAppClient) prepareNotificationInfo(info types.MessageSource) (
 		contactPhone = contact.PhoneNumber
 		contactSaved = true
 	}
+
+	// Fallback: if chat was a LID that couldn't be resolved, try resolvedSender
+	if !contactSaved && resolvedSender.Server == types.DefaultUserServer {
+		if contact, err := wac.store.GetManualContact(resolvedSender.String()); err == nil && contact != nil {
+			contactName = contact.Name
+			contactPhone = contact.PhoneNumber
+			contactSaved = true
+		}
+	}
+
+	// Fallback: try SenderAlt directly (may be a phone-number JID even when Chat is a LID)
+	if !contactSaved && !info.SenderAlt.IsEmpty() && info.SenderAlt.Server == types.DefaultUserServer {
+		if contact, err := wac.store.GetManualContact(info.SenderAlt.String()); err == nil && contact != nil {
+			contactName = contact.Name
+			contactPhone = contact.PhoneNumber
+			contactSaved = true
+		}
+	}
+
 	if contactPhone == "" && resolvedChat.User != "" {
 		contactPhone = "+" + resolvedChat.User
 	}

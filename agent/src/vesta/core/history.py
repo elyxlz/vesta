@@ -56,6 +56,9 @@ def history_save(db: HistoryDB, role: str, content: str, *, session_id: str | No
     db.conn.commit()
 
 
+_RECENCY_DECAY_RATE = 0.01
+
+
 def history_search(db: HistoryDB, query: str, *, limit: int = 20) -> list[dict[str, str]]:
     rows = db.conn.execute(
         """
@@ -63,12 +66,12 @@ def history_search(db: HistoryDB, query: str, *, limit: int = 20) -> list[dict[s
         FROM messages_fts f
         JOIN messages m ON m.id = f.rowid
         WHERE messages_fts MATCH ?
-        ORDER BY m.id DESC
+        ORDER BY f.rank / (1.0 + ? * max(julianday('now') - julianday(m.timestamp), 0)) ASC
         LIMIT ?
         """,
-        (query, limit),
+        (query, _RECENCY_DECAY_RATE, limit),
     ).fetchall()
-    return [{"timestamp": r[0], "role": r[1], "content": r[2]} for r in reversed(rows)]
+    return [{"timestamp": r[0], "role": r[1], "content": r[2]} for r in rows]
 
 
 def history_get_range(

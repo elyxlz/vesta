@@ -61,13 +61,15 @@ def _make_signal_handler(state: vm.State, *, allow_force_exit: bool = False) -> 
     return handler
 
 
-async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: bool = False, crashed: bool = False) -> None:
+CLEAN_RESTART = "restart — clean restart"
+
+
+async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: bool = False, restart_reason: str = CLEAN_RESTART) -> None:
     signal.signal(signal.SIGHUP, signal.SIG_IGN)
     signal.signal(signal.SIGINT, _make_signal_handler(state, allow_force_exit=True))
     signal.signal(signal.SIGTERM, _make_signal_handler(state))
 
     logger.init(f"{config.agent_name.upper()} started")
-    (config.data_dir / "run_marker").touch()
 
     message_queue: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()
 
@@ -80,8 +82,8 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
         asyncio.create_task(monitor_loop(message_queue, state=state, config=config)),
     ]
 
-    reason = "first_start" if first_start else ("crash — restarted after unexpected exit" if crashed else "restart — clean restart")
-    await queue_greeting(message_queue, config=config, reason=reason)
+    greeting_reason = "first_start" if first_start else restart_reason
+    await queue_greeting(message_queue, config=config, reason=greeting_reason)
 
     try:
         await state.graceful_shutdown.wait()
@@ -101,15 +103,28 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
         logger.shutdown("Shutdown timed out (SDK cleanup hung), forcing exit")
         os._exit(1)
     await ws_runner.cleanup()
-    (config.data_dir / "run_marker").unlink(missing_ok=True)
+    _write_restart_reason(config, state.restart_reason or CLEAN_RESTART)
     logger.shutdown("sweet dreams!")
 
 
-def _detect_crash(config: vm.VestaConfig) -> bool:
-    run_marker = config.data_dir / "run_marker"
-    crashed = run_marker.exists()
-    run_marker.unlink(missing_ok=True)
-    return crashed
+def _write_restart_reason(config: vm.VestaConfig, reason: str) -> None:
+    try:
+        (config.data_dir / "restart_reason").write_text(reason)
+    except OSError:
+        logger.warning("Could not write restart_reason file")
+
+
+def _read_restart_reason(config: vm.VestaConfig) -> str:
+    path = config.data_dir / "restart_reason"
+    try:
+        reason = path.read_text().strip()
+        path.unlink(missing_ok=True)
+        return reason
+    except FileNotFoundError:
+        return "crash — restarted after unexpected exit"
+    except (OSError, UnicodeDecodeError):
+        logger.warning("Could not read restart_reason file")
+        return "crash — restarted after unexpected exit"
 
 
 def _read_last_dreamer_run(config: vm.VestaConfig) -> dt.datetime | None:
@@ -122,7 +137,7 @@ def _read_last_dreamer_run(config: vm.VestaConfig) -> dt.datetime | None:
     return None
 
 
-def init_state(*, config: vm.VestaConfig) -> tuple[vm.State, bool]:
+def init_state(*, config: vm.VestaConfig) -> vm.State:
     session_id = None
     try:
         if config.session_file.exists():
@@ -130,15 +145,11 @@ def init_state(*, config: vm.VestaConfig) -> tuple[vm.State, bool]:
     except (OSError, UnicodeDecodeError):
         logger.warning("Could not read session file, starting fresh")
 
-    crashed = _detect_crash(config)
-    if crashed:
-        logger.init("Crash detected")
-
     last_dreamer_run = _read_last_dreamer_run(config)
 
     if session_id:
         logger.init(f"Resuming session {session_id[:16]}...")
-    return vm.State(last_dreamer_run=last_dreamer_run, session_id=session_id), crashed
+    return vm.State(last_dreamer_run=last_dreamer_run, session_id=session_id)
 
 
 async def async_main() -> None:
@@ -154,10 +165,11 @@ async def async_main() -> None:
 
     memory_path = get_memory_path(config)
     first_start = not memory_path.exists() or "[Unknown - need to ask]" in memory_path.read_text()
-    initial_state, crashed = init_state(config=config)
+    restart_reason = _read_restart_reason(config)
+    initial_state = init_state(config=config)
     initial_state.history = open_history(config.history_db)
-    logger.init("Starting main loop...")
-    await run_vesta(config, state=initial_state, first_start=first_start, crashed=crashed)
+    logger.init(f"Starting main loop ({restart_reason})...")
+    await run_vesta(config, state=initial_state, first_start=first_start, restart_reason=restart_reason)
 
 
 def main() -> None:

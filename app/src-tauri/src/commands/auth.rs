@@ -7,7 +7,6 @@ use tauri::{AppHandle, Emitter, Manager};
 pub async fn authenticate(app: AppHandle, name: String) -> Result<(), VestaError> {
     let (tx, rx) = tokio::sync::oneshot::channel::<String>();
 
-    // Store sender so submit_auth_code can use it
     let state = app.state::<AppState>();
     *state.auth_code_tx.lock().await = Some(tx);
 

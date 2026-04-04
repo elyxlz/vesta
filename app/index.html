@@ -2,22 +2,16 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>vesta</title>
-    <style>
-      *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
-      body {
-        font-family: "Inter", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-        background: transparent;
-        overflow: hidden;
-        height: 100vh;
-        -webkit-font-smoothing: antialiased;
-      }
-      #app { height: 100vh; display: flex; flex-direction: column; }
-    </style>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Vesta</title>
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,100..900;1,100..900&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@100..900&display=swap" rel="stylesheet" />
   </head>
   <body>
-    <div id="app"></div>
-    <script type="module" src="/src/main.ts"></script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

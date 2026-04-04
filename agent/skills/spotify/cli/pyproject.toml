@@ -1,0 +1,14 @@
+[project]
+name = "spotify-cli"
+version = "0.1.0"
+description = "Spotify CLI for vesta — playlist management, search, and playback control"
+requires-python = ">=3.11"
+dependencies = [
+    "spotipy>=2.24.0",
+]
+
+[project.scripts]
+spotify = "spotify_cli.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/spotify_cli"]

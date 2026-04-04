@@ -18,10 +18,25 @@ microsoft email reply --account user@example.com --id <email_id> --body "Thanks!
 microsoft email search --account user@example.com --query "project update"
 ```
 
+## Email Block/Unblock
+
+Block or unblock senders to filter unwanted emails:
+
+```bash
+microsoft email block --account user@example.com --sender spam@example.com
+microsoft email unblock --account user@example.com --sender spam@example.com
+microsoft email block --account user@example.com --list  # show blocked senders
+```
+
+If block returns 403, re-authorize:
+```bash
+microsoft auth add --account user@example.com
+```
+
 ## Calendar
 
 ```bash
-microsoft calendar list --account user@example.com
+microsoft calendar list --account user@example.com --days-ahead 7
 microsoft calendar create --account user@example.com --subject "Standup" --start "2025-11-15T10:00:00" --end "2025-11-15T10:30:00" --timezone "Europe/London"
 microsoft calendar respond --account user@example.com --id <event_id> --response accept
 ```

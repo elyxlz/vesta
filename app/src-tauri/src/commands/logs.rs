@@ -18,9 +18,12 @@ pub async fn stream_logs(
         if let Some(old) = streams.remove(&name) {
             old.cancel.cancel();
         }
-        streams.insert(name.clone(), LogStream {
-            cancel: cancel.clone(),
-        });
+        streams.insert(
+            name.clone(),
+            LogStream {
+                cancel: cancel.clone(),
+            },
+        );
     }
 
     let log_streams = state.log_streams.clone();

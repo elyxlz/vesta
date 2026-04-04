@@ -1,0 +1,247 @@
+#!/usr/bin/env bash
+# qb — qBittorrent wrapper for media server
+# Usage: qb <command> [args]
+#
+# Required environment variables:
+#   MEDIA_SERVER_HOST      — hostname or IP of the media server
+#   MEDIA_SERVER_SSH_PORT  — SSH port (default: 22)
+#   MEDIA_SERVER_USER      — SSH username
+#   QB_PORT                — qBittorrent WebUI port (default: 8888)
+#   PLEX_MEDIA_PATH        — base path for Plex media (default: /media/Plex)
+#
+# Commands:
+#   status                          Show active/downloading torrents
+#   ls [filter]                     List all torrents (optionally filter by name/path)
+#   add <url> [--path PATH]         Add torrent by magnet/URL
+#   search <query> [--cat movies|tv|all]   Search via qBittorrent plugin
+#   pause <hash>                    Pause a torrent
+#   resume <hash>                   Resume a torrent
+#   delete <hash> [--files]         Delete torrent (--files also removes data)
+#   info <hash>                     Show torrent details
+#   disk                            Show disk space on PLEX_MEDIA_PATH
+#   ls-plex [USER] [movies|tv]      Browse Plex library
+#   find <keyword>                  Find files in PLEX_MEDIA_PATH by name
+
+SSH_PORT="${MEDIA_SERVER_SSH_PORT:-22}"
+SSH_HOST="${MEDIA_SERVER_USER:-media}@${MEDIA_SERVER_HOST:?MEDIA_SERVER_HOST is required}"
+SSH="ssh -p $SSH_PORT $SSH_HOST"
+QB_API_PORT="${QB_PORT:-8888}"
+QB="http://localhost:$QB_API_PORT/api/v2"
+MEDIA_PATH="${PLEX_MEDIA_PATH:-/media/Plex}"
+
+run() {
+    $SSH "$@"
+}
+
+qb_api() {
+    local endpoint="$1"
+    shift
+    run "curl -s '$QB/$endpoint' $*"
+}
+
+cmd="$1"
+shift
+
+case "$cmd" in
+    status)
+        run "curl -s '$QB/torrents/info' | python3 -c \"
+import json, sys
+data = json.load(sys.stdin)
+active = [t for t in data if t['state'] not in ['stoppedUP']]
+stopped_dl = [t for t in data if t['state'] == 'stoppedDL']
+print(f'Active: {len(active)} | Paused-incomplete: {len(stopped_dl)} | Total: {len(data)}')
+print()
+if not active and not stopped_dl:
+    print('Nothing downloading.')
+for t in active + stopped_dl:
+    pct = t['progress'] * 100
+    dl = t['dlspeed'] // 1024
+    eta = t['eta']
+    eta_str = f'{eta//3600}h{(eta%3600)//60}m' if 0 < eta < 8640000 else ''
+    size_gb = t['size'] / 1073741824
+    print(f'[{t[\\\"state\\\"]:<16}] {pct:5.1f}%  {dl:5d}KB/s  {size_gb:.1f}GB  {eta_str:8}  {t[\\\"name\\\"][:60]}')
+    print(f'  hash: {t[\\\"hash\\\"][:12]}...  path: {t[\\\"save_path\\\"]}')
+\""
+        ;;
+
+    ls)
+        filter="${1:-}"
+        run "curl -s '$QB/torrents/info' | python3 -c \"
+import json, sys
+data = json.load(sys.stdin)
+filter_str = '$filter'.lower()
+for t in sorted(data, key=lambda x: x['added_on'], reverse=True):
+    name = t['name']
+    path = t['save_path']
+    if filter_str and filter_str not in name.lower() and filter_str not in path.lower():
+        continue
+    import datetime
+    added = datetime.datetime.fromtimestamp(t['added_on']).strftime('%Y-%m-%d')
+    pct = t['progress'] * 100
+    size_gb = t['size'] / 1073741824
+    state = t['state']
+    print(f'{added}  {pct:5.1f}%  {size_gb:6.1f}GB  [{state:<16}]  {name[:65]}')
+\" | head -60"
+        ;;
+
+    add)
+        url="$1"
+        shift
+        savepath="$MEDIA_PATH"
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --path|-p) savepath="$2"; shift 2 ;;
+                --movies) savepath="$MEDIA_PATH/Movies"; shift ;;
+                --tv) savepath="$MEDIA_PATH/TVShows"; shift ;;
+                *) shift ;;
+            esac
+        done
+        echo "Adding torrent to $savepath ..."
+        result=$(run "curl -s -X POST '$QB/torrents/add' \
+            -F 'urls=$url' \
+            -F 'savepath=$savepath'")
+        echo "Result: $result"
+        ;;
+
+    search)
+        query="$1"
+        shift
+        cat_arg="all"
+        plugin_arg="${TRACKER_PLUGIN:-all}"
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --cat|-c) cat_arg="$2"; shift 2 ;;
+                --plugin) plugin_arg="$2"; shift 2 ;;
+                movies) cat_arg="movies"; shift ;;
+                tv) cat_arg="tv"; shift ;;
+                *) shift ;;
+            esac
+        done
+        echo "Searching for: '$query' (category: $cat_arg, plugin: $plugin_arg)"
+        # Start search
+        search_id=$(run "curl -s -X POST '$QB/search/start' \
+            -d 'pattern=$(echo "$query" | sed 's/ /+/g')&plugins=$plugin_arg&category=$cat_arg'" | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))")
+        if [[ -z "$search_id" ]]; then
+            echo "Failed to start search (check if qbittorrent is running)"
+            exit 1
+        fi
+        echo "Search ID: $search_id — waiting for results..."
+        sleep 3
+        # Get results
+        run "curl -s '$QB/search/results?id=$search_id&limit=20&offset=0' | python3 -c \"
+import json, sys
+data = json.load(sys.stdin)
+results = data.get('results', [])
+total = data.get('total', 0)
+print(f'Found {total} results (showing up to 20):')
+print()
+for i, t in enumerate(results):
+    size_gb = t.get('fileSize', 0) / 1073741824
+    seeds = t.get('nbSeeders', 0)
+    leech = t.get('nbLeechers', 0)
+    name = t.get('fileName', 'N/A')[:70]
+    link = t.get('fileUrl', 'N/A')
+    print(f'{i+1:2d}. [{seeds:4d}S/{leech:3d}L] {size_gb:6.2f}GB  {name}')
+    print(f'    {link}')
+    print()
+\""
+        # Clean up search
+        run "curl -s -X POST '$QB/search/delete' -d 'id=$search_id'" > /dev/null
+        ;;
+
+    pause)
+        hash="$1"
+        result=$(run "curl -s -X POST '$QB/torrents/stop' -d 'hashes=$hash'")
+        echo "Paused $hash: $result"
+        ;;
+
+    resume)
+        hash="$1"
+        result=$(run "curl -s -X POST '$QB/torrents/start' -d 'hashes=$hash'")
+        echo "Resumed $hash: $result"
+        ;;
+
+    delete)
+        hash="$1"
+        shift
+        delete_files="false"
+        [[ "$1" == "--files" ]] && delete_files="true"
+        result=$(run "curl -s -X POST '$QB/torrents/delete' -d 'hashes=$hash&deleteFiles=$delete_files'")
+        echo "Deleted $hash (files=$delete_files): $result"
+        ;;
+
+    info)
+        hash="$1"
+        run "curl -s '$QB/torrents/properties?hash=$hash' | python3 -c \"
+import json, sys
+t = json.load(sys.stdin)
+import datetime
+print('Name:', t.get('name', 'N/A'))
+print('State:', t.get('state', 'N/A'))
+print('Size:', round(t.get('total_size', 0)/1073741824, 2), 'GB')
+print('Progress:', round(t.get('completion_date', 0), 1), '%')
+print('Save path:', t.get('save_path', 'N/A'))
+print('Seeds:', t.get('seeds', 0), '/', t.get('seeds_total', 0))
+print('DL speed:', t.get('dl_speed', 0) // 1024, 'KB/s')
+print('Ratio:', round(t.get('share_ratio', 0), 3))
+added = t.get('addition_date', 0)
+if added: print('Added:', datetime.datetime.fromtimestamp(added).strftime('%Y-%m-%d %H:%M'))
+\""
+        ;;
+
+    disk)
+        run "df -h '$MEDIA_PATH/' && echo '' && du -sh '$MEDIA_PATH/'*/ 2>/dev/null"
+        ;;
+
+    ls-plex)
+        user="${1:-}"
+        what="${2:-}"
+        if [[ -n "$user" && "$what" == "tv" ]]; then
+            run "ls '$MEDIA_PATH/$user/TVShows/'"
+        elif [[ -n "$user" && "$what" == "movies" ]]; then
+            run "ls '$MEDIA_PATH/$user/Movies/'"
+        elif [[ -n "$user" ]]; then
+            run "ls '$MEDIA_PATH/$user/'"
+        else
+            run "ls '$MEDIA_PATH/'"
+        fi
+        ;;
+
+    find)
+        query="$*"
+        run "find '$MEDIA_PATH/' -iname '*$query*' 2>/dev/null"
+        ;;
+
+    *)
+        cat <<EOF
+qb — qBittorrent wrapper for media server
+
+Usage: qb <command> [args]
+
+Required env vars:
+  MEDIA_SERVER_HOST      hostname or IP of media server
+  MEDIA_SERVER_SSH_PORT  SSH port (default: 22)
+  MEDIA_SERVER_USER      SSH username
+  QB_PORT                qBittorrent WebUI port (default: 8888)
+  PLEX_MEDIA_PATH        Plex media base path (default: /media/Plex)
+
+Commands:
+  status                      Show active/in-progress torrents
+  ls [filter]                 List all torrents (filter by name or path keyword)
+  add <url> [--path PATH]     Add torrent by magnet/URL
+    --movies                  Save to PLEX_MEDIA_PATH/Movies
+    --tv                      Save to PLEX_MEDIA_PATH/TVShows
+  search <query> [movies|tv|all]  Search via qBittorrent plugin
+    --plugin <name>           Specify plugin name (default: all)
+  pause <hash>                Pause a torrent
+  resume <hash>               Resume a torrent
+  delete <hash> [--files]     Delete torrent (--files also deletes data)
+  info <hash>                 Show torrent properties
+  disk                        Show disk usage on PLEX_MEDIA_PATH
+  ls-plex [USER] [movies|tv]  Browse Plex library by user
+  find <keyword>              Find files in PLEX_MEDIA_PATH by name
+
+API: http://localhost:\$QB_PORT/api/v2 (configure no-auth for localhost in qBittorrent settings)
+EOF
+        ;;
+esac
