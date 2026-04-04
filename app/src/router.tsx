@@ -51,7 +51,7 @@ function AgentLayout() {
   return (
     <div className={cn("h-full bg-background flex flex-col", isTauri ? "pt-7" : "pt-3 sm:pt-4")}>
       <Titlebar />
-      <div className="flex flex-col flex-1 min-h-0 gap-4 px-3 pb-3 sm:px-5 sm:pb-5">
+      <div className="flex flex-col flex-1 min-h-0 gap-6 md:gap-8 px-3 pb-3 sm:px-5 sm:pb-5">
         <div className="shrink-0">
           <Navbar center={<DynamicIsland />} trailing={connected ? <>
             <StatusPill />
