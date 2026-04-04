@@ -14,11 +14,14 @@ import {
   stopAgent,
   restartAgent,
   rebuildAgent,
-  backupAgent,
-  restoreAgent,
+  createBackup,
+  listBackups,
+  restoreBackup,
+  deleteBackup,
   deleteAgent,
   waitForReady,
   waitForStopped,
+  type BackupInfo,
 } from "@/api";
 import { useAgentOps, type AgentOperation } from "@/stores/use-agent-ops";
 import type { AgentInfo, AgentActivityState } from "@/lib/types";
@@ -39,7 +42,10 @@ interface SelectedAgentContextValue {
   restart: () => void;
   rebuild: () => void;
   backup: () => void;
-  restore: () => void;
+  backups: BackupInfo[];
+  refreshBackups: () => Promise<void>;
+  restore: (backupId: string) => void;
+  removeBackup: (backupId: string) => void;
   remove: () => Promise<void>;
 }
 
@@ -116,26 +122,41 @@ export function SelectedAgentProvider({ children }: { children: ReactNode }) {
     }, "rebuild failed");
   }, [name, withOp, refreshAgent]);
 
-  const backup = useCallback(() => {
-    withOp(name, "backing-up", () => backupAgent(name), "backup failed");
-  }, [name, withOp]);
+  const [backups, setBackups] = useState<BackupInfo[]>([]);
 
-  const restore = useCallback(() => {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = ".tar.gz,.gz";
-    input.onchange = async () => {
-      const file = input.files?.[0];
-      if (!file) return;
-      await withOp(
-        name,
-        "restoring",
-        () => restoreAgent(file, name, true),
-        "restore failed",
-      );
-    };
-    input.click();
-  }, [name, withOp]);
+  const refreshBackups = useCallback(async () => {
+    if (!name) return;
+    try {
+      setBackups(await listBackups(name));
+    } catch { /* ignore */ }
+  }, [name]);
+
+  useEffect(() => {
+    refreshBackups();
+  }, [refreshBackups]);
+
+  const backup = useCallback(() => {
+    withOp(name, "backing-up", async () => {
+      await createBackup(name);
+      await refreshBackups();
+    }, "backup failed");
+  }, [name, withOp, refreshBackups]);
+
+  const restore = useCallback((backupId: string) => {
+    withOp(name, "restoring", async () => {
+      await restoreBackup(name, backupId);
+      await waitForReady(name);
+      await refreshAgent();
+      await refreshBackups();
+    }, "restore failed");
+  }, [name, withOp, refreshAgent, refreshBackups]);
+
+  const removeBackup = useCallback((backupId: string) => {
+    withOp(name, "deleting", async () => {
+      await deleteBackup(name, backupId);
+      await refreshBackups();
+    }, "delete backup failed");
+  }, [name, withOp, refreshBackups]);
 
   const remove = useCallback(async () => {
     await withOp(name, "deleting", () => deleteAgent(name), "delete failed");
@@ -156,7 +177,10 @@ export function SelectedAgentProvider({ children }: { children: ReactNode }) {
     restart,
     rebuild,
     backup,
+    backups,
+    refreshBackups,
     restore,
+    removeBackup,
     remove,
   };
 

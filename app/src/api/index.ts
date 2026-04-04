@@ -8,8 +8,11 @@ export {
   restartAgent,
   deleteAgent,
   rebuildAgent,
-  backupAgent,
-  restoreAgent,
+  createBackup,
+  listBackups,
+  restoreBackup,
+  deleteBackup,
+  type BackupInfo,
   waitForReady,
   waitForStopped,
 } from "./agents";

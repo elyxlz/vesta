@@ -30,4 +30,5 @@ futures-core = "0.3"
 futures-util = "0.3"
 async-stream = "0.3"
 bytes = "1"
+vesta-common = { path = "../vesta-common" }
 

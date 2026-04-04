@@ -47,36 +47,42 @@ export async function rebuildAgent(name: string): Promise<void> {
   });
 }
 
-export async function backupAgent(name: string): Promise<void> {
-  const resp = await apiFetch(
-    `/agents/${encodeURIComponent(name)}/backup`,
-    { method: "POST" },
-  );
-  const blob = await resp.blob();
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `${name}.tar.gz`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+export interface BackupInfo {
+  id: string;
+  agent_name: string;
+  backup_type: string;
+  created_at: string;
+  size: number;
 }
 
-export async function restoreAgent(
-  file: File,
-  name?: string,
-  replace?: boolean,
-): Promise<void> {
-  const params = new URLSearchParams();
-  if (name) params.set("name", name);
-  if (replace) params.set("replace", "true");
-  const qs = params.toString();
-  await apiFetch(`/agents/restore${qs ? `?${qs}` : ""}`, {
+export async function createBackup(name: string): Promise<BackupInfo> {
+  return apiJson(`/agents/${encodeURIComponent(name)}/backups`, {
     method: "POST",
-    headers: { "Content-Type": "application/gzip" },
-    body: file,
   });
+}
+
+export async function listBackups(name: string): Promise<BackupInfo[]> {
+  return apiJson(`/agents/${encodeURIComponent(name)}/backups`);
+}
+
+export async function restoreBackup(
+  name: string,
+  backupId: string,
+): Promise<void> {
+  await apiJson(
+    `/agents/${encodeURIComponent(name)}/backups/${encodeURIComponent(backupId)}/restore`,
+    { method: "POST" },
+  );
+}
+
+export async function deleteBackup(
+  name: string,
+  backupId: string,
+): Promise<void> {
+  await apiJson(
+    `/agents/${encodeURIComponent(name)}/backups/${encodeURIComponent(backupId)}`,
+    { method: "DELETE" },
+  );
 }
 
 export async function waitForReady(

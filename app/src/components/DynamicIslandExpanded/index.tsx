@@ -51,7 +51,7 @@ type DynamicIslandExpandedProps = {
   onRestart: () => void | Promise<void>;
   onRebuild: () => void | Promise<void>;
   onBackup: () => void | Promise<void>;
-  onRestore: () => void | Promise<void>;
+  onShowBackups: () => void;
   onShowConsole: () => void;
   onOpenDeleteDialog: () => void;
 };
@@ -77,7 +77,7 @@ export function DynamicIslandExpanded({
   onRestart,
   onRebuild,
   onBackup,
-  onRestore,
+  onShowBackups,
   onShowConsole,
   onOpenDeleteDialog,
 }: DynamicIslandExpandedProps) {
@@ -246,15 +246,14 @@ export function DynamicIslandExpanded({
                             </DropdownMenuItem>
                           </TooltipTrigger>
                           <TooltipContent side="left">
-                            export to file
+                            create a snapshot
                           </TooltipContent>
                         </Tooltip>
                         <DropdownMenuItem
                           className="text-sm"
-                          disabled={isBusy}
-                          onClick={onRestore}
+                          onClick={onShowBackups}
                         >
-                          load backup
+                          backups
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
                         <Tooltip>

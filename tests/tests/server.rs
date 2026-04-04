@@ -141,32 +141,116 @@ fn inject_token_marks_authenticated() {
 // ── Backup & Restore ───────────────────────────────────────────
 
 #[test]
-fn backup_restore_roundtrip() {
+fn backup_create() {
     let c = SERVER.client();
-    let agent = TestAgent::create(&c, "test-backup").unwrap();
+    let agent = TestAgent::create(&c, "test-backup-create").unwrap();
 
-    let tmp = tempfile::NamedTempFile::new().unwrap();
-    let path = tmp.path().to_path_buf();
-    c.backup(&agent.name, &path).unwrap();
-    assert!(std::fs::metadata(&path).unwrap().len() > 0);
+    let backup = c.create_backup(&agent.name).unwrap();
+    assert_eq!(backup.agent_name, agent.name);
+    assert_eq!(backup.backup_type, vesta_common::BackupType::Manual);
+    assert!(backup.size > 0);
+    assert!(!backup.id.is_empty());
 
-    c.stop_agent(&agent.name).ok();
-    c.destroy_agent(&agent.name).unwrap();
-    c.restore(&path, Some(&agent.name), false).unwrap();
-
-    let st = c.agent_status(&agent.name).unwrap();
-    assert_ne!(st.status, "not_found");
+    // Cleanup backup
+    c.delete_backup(&agent.name, &backup.id).ok();
 }
 
 #[test]
-fn restore_conflict_without_replace_fails() {
+fn backup_list() {
     let c = SERVER.client();
-    let agent = TestAgent::create(&c, "test-restore-conflict").unwrap();
+    let agent = TestAgent::create(&c, "test-backup-list").unwrap();
 
-    let tmp = tempfile::NamedTempFile::new().unwrap();
-    c.backup(&agent.name, tmp.path()).unwrap();
+    let b1 = c.create_backup(&agent.name).unwrap();
+    let b2 = c.create_backup(&agent.name).unwrap();
 
-    assert!(c.restore(tmp.path(), Some(&agent.name), false).is_err());
+    let backups = c.list_backups(&agent.name).unwrap();
+    assert!(backups.len() >= 2);
+    // Most recent first
+    assert!(backups[0].created_at >= backups[1].created_at);
+
+    // Cleanup
+    c.delete_backup(&agent.name, &b1.id).ok();
+    c.delete_backup(&agent.name, &b2.id).ok();
+}
+
+#[test]
+fn backup_list_empty() {
+    let c = SERVER.client();
+    let agent = TestAgent::create(&c, "test-backup-empty").unwrap();
+
+    let backups = c.list_backups(&agent.name).unwrap();
+    assert!(backups.is_empty());
+    drop(agent);
+}
+
+#[test]
+fn backup_restore() {
+    let c = SERVER.client();
+    let agent = TestAgent::create(&c, "test-backup-restore").unwrap();
+
+    let backup = c.create_backup(&agent.name).unwrap();
+    c.restore_backup(&agent.name, &backup.id).unwrap();
+
+    let st = c.agent_status(&agent.name).unwrap();
+    assert_eq!(st.status, "running");
+
+    // Cleanup backups (including pre-restore safety backup)
+    let backups = c.list_backups(&agent.name).unwrap();
+    for b in &backups {
+        c.delete_backup(&agent.name, &b.id).ok();
+    }
+}
+
+#[test]
+fn backup_restore_creates_safety_snapshot() {
+    let c = SERVER.client();
+    let agent = TestAgent::create(&c, "test-backup-safety").unwrap();
+
+    let backup = c.create_backup(&agent.name).unwrap();
+    c.restore_backup(&agent.name, &backup.id).unwrap();
+
+    let backups = c.list_backups(&agent.name).unwrap();
+    let pre_restore = backups
+        .iter()
+        .find(|b| b.backup_type == vesta_common::BackupType::PreRestore);
+    assert!(pre_restore.is_some(), "expected a pre-restore safety backup");
+
+    // Cleanup
+    for b in &backups {
+        c.delete_backup(&agent.name, &b.id).ok();
+    }
+}
+
+#[test]
+fn backup_delete() {
+    let c = SERVER.client();
+    let agent = TestAgent::create(&c, "test-backup-delete").unwrap();
+
+    let backup = c.create_backup(&agent.name).unwrap();
+    c.delete_backup(&agent.name, &backup.id).unwrap();
+
+    let backups = c.list_backups(&agent.name).unwrap();
+    assert!(!backups.iter().any(|b| b.id == backup.id));
+}
+
+#[test]
+fn backup_delete_nonexistent_fails() {
+    let c = SERVER.client();
+    let agent = TestAgent::create(&c, "test-backup-del-bad").unwrap();
+
+    let result = c.delete_backup(&agent.name, "vesta-backup:fake-manual-20260101-000000");
+    assert!(result.is_err());
+    drop(agent);
+}
+
+#[test]
+fn backup_restore_nonexistent_fails() {
+    let c = SERVER.client();
+    let agent = TestAgent::create(&c, "test-backup-res-bad").unwrap();
+
+    let result = c.restore_backup(&agent.name, "vesta-backup:fake-manual-20260101-000000");
+    assert!(result.is_err());
+    drop(agent);
 }
 
 // ── WebSocket ──────────────────────────────────────────────────
@@ -185,40 +269,6 @@ fn rebuild_preserves_auth() {
     let st = c.agent_status(&agent.name).unwrap();
     assert_eq!(st.status, "running");
     assert!(st.authenticated);
-}
-
-// ── Restore with replace ───────────────────────────────────────
-
-#[test]
-fn restore_with_replace() {
-    let c = SERVER.client();
-    let agent = TestAgent::create(&c, "test-restore-replace").unwrap();
-
-    let tmp = tempfile::NamedTempFile::new().unwrap();
-    c.backup(&agent.name, tmp.path()).unwrap();
-
-    // Restore over existing — should succeed with replace=true
-    c.restore(tmp.path(), Some(&agent.name), true).unwrap();
-    let st = c.agent_status(&agent.name).unwrap();
-    assert_ne!(st.status, "not_found");
-}
-
-#[test]
-fn restore_with_different_name() {
-    let c = SERVER.client();
-    let agent = TestAgent::create(&c, "test-restore-src").unwrap();
-
-    let tmp = tempfile::NamedTempFile::new().unwrap();
-    c.backup(&agent.name, tmp.path()).unwrap();
-
-    let restored_name = c.restore(tmp.path(), Some("test-restore-dst"), false).unwrap();
-    assert_eq!(restored_name, "test-restore-dst");
-
-    let st = c.agent_status("test-restore-dst").unwrap();
-    assert_ne!(st.status, "not_found");
-
-    // Cleanup
-    let _ = c.destroy_agent("test-restore-dst");
 }
 
 // ── Multi-agent ────────────────────────────────────────────────
