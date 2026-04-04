@@ -4,7 +4,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { Maximize2, PanelRightClose, SendHorizontal } from "lucide-react";
+import { Maximize2, PanelRightClose, SendHorizontal, Wrench } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { Button } from "@/components/ui/button";
@@ -23,6 +23,8 @@ import { cn } from "@/lib/utils";
 interface ChatProps {
   onCollapse?: () => void;
   fullscreen?: boolean;
+  showToolCalls?: boolean;
+  onToggleToolCalls?: () => void;
 }
 
 const thinkingIndicatorVariants = {
@@ -56,7 +58,7 @@ const thinkingIndicatorVariants = {
   },
 };
 
-export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
+export function Chat({ onCollapse, fullscreen, showToolCalls: controlledShowToolCalls, onToggleToolCalls }: ChatProps = {}) {
   const { name, setAgentState } = useSelectedAgent();
   const navigate = useNavigate();
   const { messages, agentState, connected, send } = useAgentWs(name, true);
@@ -66,6 +68,9 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   }, [agentState, setAgentState]);
 
   const [input, setInput] = useState("");
+  const [internalShowToolCalls, setInternalShowToolCalls] = useState(false);
+  const showToolCalls = controlledShowToolCalls ?? internalShowToolCalls;
+  const toggleToolCalls = onToggleToolCalls ?? (() => setInternalShowToolCalls((v) => !v));
   const [wasConnected, setWasConnected] = useState(false);
   const [showReconnect, setShowReconnect] = useState(false);
 
@@ -94,10 +99,11 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   }, [connected, wasConnected]);
 
   const filteredMessages = messages.filter(
-    (m) =>
-      m.type !== "tool_start" &&
-      m.type !== "tool_end" &&
-      m.type !== "notification",
+    (m) => {
+      if (m.type === "notification") return false;
+      if ((m.type === "tool_start" || m.type === "tool_end") && !showToolCalls) return false;
+      return true;
+    },
   );
 
   const isThinking =
@@ -157,27 +163,39 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     )}>
 
       {!fullscreen && (
-        <ButtonGroup className="absolute top-2 right-2 z-10">
-          <Button
-            size="icon-sm"
-            variant="outline"
-            className="text-muted-foreground dark:bg-card"
-            onClick={() => navigate(`/agent/${name}/chat`)}
-          >
-            <Maximize2 />
-          </Button>
-          {onCollapse && (
+        <div className="absolute top-2 right-2 z-10 flex flex-col items-end gap-1">
+          <ButtonGroup>
             <Button
               size="icon-sm"
               variant="outline"
               className="text-muted-foreground dark:bg-card"
-              onClick={onCollapse}
+              onClick={() => navigate(`/agent/${name}/chat`)}
             >
-              <PanelRightClose />
+              <Maximize2 />
             </Button>
-          )}
-
-        </ButtonGroup>
+            {onCollapse && (
+              <Button
+                size="icon-sm"
+                variant="outline"
+                className="text-muted-foreground dark:bg-card"
+                onClick={onCollapse}
+              >
+                <PanelRightClose />
+              </Button>
+            )}
+          </ButtonGroup>
+          <Button
+            size="icon-sm"
+            variant="outline"
+            className={cn(
+              "dark:bg-card",
+              showToolCalls ? "text-primary" : "text-muted-foreground",
+            )}
+            onClick={toggleToolCalls}
+          >
+            <Wrench />
+          </Button>
+        </div>
       )}
 
       <CardContent className="flex-1 min-h-0 overflow-hidden p-0">
@@ -279,6 +297,7 @@ function MessageLine({ event }: { event: VestaEvent }) {
     : "";
 
   let colorClass = "text-primary";
+  let contentClass = "";
   let content = "";
 
   switch (event.type) {
@@ -291,15 +310,18 @@ function MessageLine({ event }: { event: VestaEvent }) {
       content = event.text;
       break;
     case "tool_start":
-      colorClass = "text-muted-foreground text-xs";
+      colorClass = "text-muted-foreground";
+      contentClass = "text-xs leading-[1.9]";
       content = `[${event.tool}] ${event.input}`;
       break;
     case "tool_end":
-      colorClass = "text-muted-foreground text-xs";
+      colorClass = "text-muted-foreground";
+      contentClass = "text-xs leading-[1.9]";
       content = `[${event.tool}] done`;
       break;
     case "notification":
-      colorClass = "text-amber-600 dark:text-amber-400 text-xs";
+      colorClass = "text-amber-600 dark:text-amber-400";
+      contentClass = "text-xs leading-[1.9]";
       content = `[${event.source}] ${event.summary}`;
       break;
     case "error":
@@ -320,7 +342,7 @@ function MessageLine({ event }: { event: VestaEvent }) {
         </span>
       )}
       <span
-        className="break-words min-w-0"
+        className={cn("break-words min-w-0", contentClass)}
         dangerouslySetInnerHTML={{ __html: linkify(content) }}
       />
     </div>

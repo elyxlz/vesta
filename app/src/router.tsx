@@ -1,5 +1,6 @@
+import { useState } from "react";
 import { createBrowserRouter, Navigate, Outlet, useLocation, useNavigate, useParams } from "react-router-dom";
-import { Minimize2 } from "lucide-react";
+import { Minimize2, Wrench } from "lucide-react";
 import { Connect } from "@/components/Connect";
 import { Home } from "@/components/Home";
 import { CreateAgent } from "@/components/CreateAgent";
@@ -70,6 +71,7 @@ function AgentLayout() {
 function ChatFullscreenLayout() {
   const navigate = useNavigate();
   const { name } = useParams<{ name: string }>();
+  const [showToolCalls, setShowToolCalls] = useState(false);
 
   return (
     <div className="h-full relative">
@@ -79,19 +81,29 @@ function ChatFullscreenLayout() {
           <Navbar
             center={<DynamicIsland />}
             trailing={
-              <Button
-                size="icon"
-                variant="ghost"
-                className="size-7 text-foreground"
-                onClick={() => navigate(`/agent/${name}`)}
-              >
-                <Minimize2 size={14} />
-              </Button>
+              <div className="flex flex-col items-end gap-1">
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="size-7 text-foreground"
+                  onClick={() => navigate(`/agent/${name}`)}
+                >
+                  <Minimize2 size={14} />
+                </Button>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className={cn("size-7", showToolCalls ? "text-primary" : "text-muted-foreground")}
+                  onClick={() => setShowToolCalls((v) => !v)}
+                >
+                  <Wrench size={14} />
+                </Button>
+              </div>
             }
           />
         </div>
       </div>
-      <Chat fullscreen />
+      <Chat fullscreen showToolCalls={showToolCalls} onToggleToolCalls={() => setShowToolCalls((v) => !v)} />
     </div>
   );
 }
