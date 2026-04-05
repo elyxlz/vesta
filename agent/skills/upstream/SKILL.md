@@ -10,12 +10,17 @@ Local fork: `~/vesta` (this is a fork — it diverges from upstream as local cha
 
 ## Pulling upstream changes into local
 
-1. `git -C ~/vesta fetch origin`
-2. `git -C ~/vesta log HEAD..origin/master --oneline` — see what's new
-3. Only look at changes under `agent/`
-4. For each interesting commit: `git -C ~/vesta show <hash>` — understand what it does
-5. Manually apply the relevant changes to `~/vesta` source (don't paste diffs blindly — local may have diverged, adapt the intent)
-6. Track the last processed commit hash in MEMORY.md so you don't redo it next time
+Sync against **GitHub releases**, not individual master commits. Releases are the stable, intentional milestones — master commits are noisy work-in-progress.
+
+1. `git -C ~/vesta fetch origin --tags --prune --prune-tags`
+2. Find the latest release tag: `git -C ~/vesta tag --sort=-v:refname | head -5` (or `gh release list` via `--token-only` + API)
+3. Compare the last processed release (tracked in MEMORY.md) to the latest: `git -C ~/vesta log <last-tag>..<latest-tag> --oneline -- agent/`
+4. Only look at changes under `agent/`
+5. For each interesting commit in the range: `git -C ~/vesta show <hash>` — understand what it does
+6. Manually apply the relevant changes to `~/vesta` source (don't paste diffs blindly — local may have diverged, adapt the intent)
+7. Track the last processed **release tag** (e.g. `v0.4.2`) in MEMORY.md so you don't redo it next time
+
+If no new release exists since the last processed tag, there's nothing to sync — don't crawl master.
 
 ## Pushing local changes upstream (creating a PR)
 
@@ -46,11 +51,11 @@ uv run ~/vesta/skills/upstream/pr.py --token-only
 
 ## Skill registry sync
 
-When syncing upstream, also check for skill updates under `agent/skills/`:
+When syncing upstream, also check for skill updates under `agent/skills/` — scoped to the same release range:
 
-- For each installed skill (`ls ~/vesta/skills/`) check if there are new commits touching `agent/skills/<name>/`
+- For each installed skill (`ls ~/vesta/skills/`) check for commits in `<last-tag>..<latest-tag>` touching `agent/skills/<name>/`: `git -C ~/vesta log <last-tag>..<latest-tag> --oneline -- agent/skills/<name>/`
 - Read the diff and apply useful generic improvements to `~/vesta/skills/<name>/`
-- Track the last processed commit hash in MEMORY.md (same as core upstream sync)
+- The single release tag in MEMORY.md covers both core and skill syncs
 
 When contributing a skill improvement back upstream, use the same worktree flow. All skill changes — core or not — go in `agent/skills/<name>/`.
 
