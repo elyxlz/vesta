@@ -36,6 +36,10 @@
     "description": "This skill should be used when the user asks about \"tasks\", \"to-do\", \"todo\", \"task list\", or needs to create, manage, track, or organize tasks and to-do items. Everything actionable becomes a task immediately. All work, progress, drafts go in task metadata. Requires a background daemon."
   },
   {
+    "name": "transcript",
+    "description": "Extract and compress SDK session messages into a portable transcript for nap/dreamer handoff. Use before context resets, naps, or when you need to preserve session history to disk."
+  },
+  {
     "name": "upstream",
     "description": "Use when you need to contribute code, push a branch, open a pull request, submit a PR, sync with upstream, or do any git/GitHub operations on the vesta repo (elyxlz/vesta). IMPORTANT \u2014 always use this skill for GitHub access. Never use personal tokens or manual git push. Authentication is handled via the vesta-upstream GitHub App \u2014 no credentials needed from the user."
   },
