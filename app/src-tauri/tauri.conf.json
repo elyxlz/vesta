@@ -1,7 +1,7 @@
 {
   "productName": "Vesta",
   "version": "0.1.108",
-  "identifier": "com.vesta.app",
+  "identifier": "com.vestarun.app",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -63,6 +63,9 @@
     ],
     "resources": [
       "resources/*"
-    ]
+    ],
+    "iOS": {
+      "developmentTeam": "QB32XS5CT9"
+    }
   }
 }

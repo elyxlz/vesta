@@ -232,7 +232,7 @@ jobs:
   # ── Build vestad server (Linux only) ─────────────────────────────────
   build-vestad:
     needs: [version-check, detect-changes]
-    if: needs.detect-changes.outputs.cli == 'true' || github.event_name != 'pull_request'
+    if: needs.detect-changes.outputs.cli == 'true' || needs.detect-changes.outputs.app == 'true' || github.event_name != 'pull_request'
     strategy:
       fail-fast: false
       matrix:

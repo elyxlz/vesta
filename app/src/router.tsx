@@ -28,7 +28,7 @@ function RootLayout() {
   const showUpdateBar = connected && !isConnect;
 
   return (
-    <div className={cn("h-full bg-background flex flex-col", isTauri ? "pt-7" : "pt-3 sm:pt-4")}>
+    <div className={cn("h-full bg-background flex flex-col", isTauri ? "pt-2" : "pt-3 sm:pt-4")}>
       <Titlebar />
       <div className="flex flex-col flex-1 min-h-0 gap-3 px-3 sm:px-5">
         <div className="shrink-0">
@@ -50,7 +50,7 @@ function AgentLayout() {
   const { connected } = useAuth();
 
   return (
-    <div className={cn("h-full bg-background flex flex-col", isTauri ? "pt-7" : "pt-3 sm:pt-4")}>
+    <div className={cn("h-full bg-background flex flex-col", isTauri ? "pt-2" : "pt-3 sm:pt-4")}>
       <Titlebar />
       <div className="flex flex-col flex-1 min-h-0 gap-6 md:gap-8 px-3 pb-3 sm:px-5 sm:pb-5">
         <div className="shrink-0">
@@ -76,31 +76,31 @@ function ChatFullscreenLayout() {
   return (
     <div className="h-full relative">
       <Titlebar />
-      <div className={cn("absolute top-0 left-0 right-0 z-10 px-3 sm:px-5 pointer-events-none", isTauri ? "top-7" : "top-3 sm:top-4")}>
+      <div className={cn("absolute top-0 left-0 right-0 z-10 px-3 sm:px-5 pointer-events-none", isTauri ? "top-2" : "top-3 sm:top-4")}>
         <div className="pointer-events-auto">
           <Navbar
             center={<DynamicIsland />}
             trailing={
-              <div className="flex flex-col items-end gap-1">
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="size-7 text-foreground"
-                  onClick={() => navigate(`/agent/${name}`)}
-                >
-                  <Minimize2 size={14} />
-                </Button>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className={cn("size-7", showToolCalls ? "text-primary" : "text-muted-foreground")}
-                  onClick={() => setShowToolCalls((v) => !v)}
-                >
-                  <Wrench size={14} />
-                </Button>
-              </div>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="size-7 text-foreground"
+                onClick={() => navigate(`/agent/${name}`)}
+              >
+                <Minimize2 size={14} />
+              </Button>
             }
           />
+        </div>
+        <div className="flex justify-end pointer-events-auto mt-1">
+          <Button
+            size="icon"
+            variant="ghost"
+            className={cn("size-7", showToolCalls ? "text-primary" : "text-muted-foreground")}
+            onClick={() => setShowToolCalls((v) => !v)}
+          >
+            <Wrench size={14} />
+          </Button>
         </div>
       </div>
       <Chat fullscreen showToolCalls={showToolCalls} onToggleToolCalls={() => setShowToolCalls((v) => !v)} />

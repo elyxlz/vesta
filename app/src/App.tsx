@@ -1,3 +1,4 @@
+import { useCallback } from "react";
 import { RouterProvider } from "react-router-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -9,6 +10,7 @@ import { router } from "@/router";
 
 function AppContent() {
   const { loading, initialized, setLoading } = useAuth();
+  const onFinished = useCallback(() => setLoading(false), [setLoading]);
 
   return (
     <AnimatePresence mode="wait">
@@ -16,7 +18,7 @@ function AppContent() {
         <LoadingScreen
           key="loading"
           ready={initialized}
-          onFinished={() => setLoading(false)}
+          onFinished={onFinished}
         />
       ) : (
         <motion.div

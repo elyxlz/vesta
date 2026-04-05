@@ -5,6 +5,12 @@ mod state;
 
 use state::AppState;
 
+#[cfg(mobile)]
+#[tauri::mobile_entry_point]
+pub fn mobile_entry_point() {
+    run();
+}
+
 pub fn run() {
     rustls::crypto::ring::default_provider()
         .install_default()
@@ -39,6 +45,29 @@ pub fn run() {
                             let _ = window_vibrancy::apply_acrylic(&window, Some((0, 0, 0, 20)));
                         }
                     }
+                }
+            }
+            #[cfg(target_os = "ios")]
+            {
+                use tauri::Manager;
+                if let Some(window) = _app.get_webview_window("main") {
+                    window.with_webview(|webview| {
+                        unsafe {
+                            let wv: *mut std::ffi::c_void = webview.inner();
+                            let wv_ref = &*(wv as *const objc2::runtime::AnyObject);
+                            // Make scrollView not adjust content insets for safe area
+                            // UIScrollViewContentInsetAdjustmentNever = 2
+                            let scroll_view: *mut std::ffi::c_void =
+                                objc2::msg_send![wv_ref, scrollView];
+                            if !scroll_view.is_null() {
+                                let sv_ref = &*(scroll_view as *const objc2::runtime::AnyObject);
+                                let _: () = objc2::msg_send![
+                                    sv_ref,
+                                    setContentInsetAdjustmentBehavior: 2i64
+                                ];
+                            }
+                        }
+                    }).ok();
                 }
             }
             Ok(())

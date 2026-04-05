@@ -205,7 +205,7 @@ export function Chat({ onCollapse, fullscreen, showToolCalls: controlledShowTool
           className="h-full min-h-0 overflow-y-auto px-4 py-3 font-mono text-sm leading-relaxed"
           style={{ maskImage: "linear-gradient(to bottom, transparent, black 80px, black calc(100% - 24px), transparent)" }}
         >
-          <div className={cn("min-h-full flex flex-col justify-end", fullscreen && "pt-16 md:pt-20")}>
+          <div className={cn("min-h-full flex flex-col justify-end", fullscreen && "pt-12")}>
             <div>
               {filteredMessages.length === 0 ? (
                 <div className="flex flex-col items-center gap-2 py-2">

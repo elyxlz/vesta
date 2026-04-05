@@ -9,6 +9,7 @@ import { autoSetup, connectToServer } from "@/api";
 import { clearConnection, getConnection, authHeaders } from "@/lib/connection";
 import { ensureFreshToken } from "@/lib/token-refresh";
 import { isTauri } from "@/lib/env";
+import { detectPlatform } from "@/lib/platform";
 
 const POLL_INTERVAL_MS = 15_000;
 
@@ -72,7 +73,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await autoSetup();
       } catch { }
 
-      if (isTauri) {
+      const platform = detectPlatform();
+      if (isTauri && platform !== "ios" && platform !== "android") {
         try {
           const { getCurrentWindow } = await import("@tauri-apps/api/window");
           const win = getCurrentWindow();
