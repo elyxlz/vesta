@@ -122,29 +122,10 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Create a backup of an agent
+    /// Manage agent backups
     Backup {
-        /// Agent name
-        name: String,
-    },
-    /// List backups for an agent
-    Backups {
-        /// Agent name
-        name: String,
-    },
-    /// Restore an agent from a backup
-    Restore {
-        /// Agent name
-        name: String,
-        /// Backup ID (image tag from `vesta backups`)
-        backup_id: String,
-    },
-    /// Delete a backup
-    BackupDelete {
-        /// Agent name
-        name: String,
-        /// Backup ID (image tag from `vesta backups`)
-        backup_id: String,
+        #[command(subcommand)]
+        action: BackupAction,
     },
     /// Destroy an agent (irreversible)
     Destroy {
@@ -181,6 +162,34 @@ enum Command {
     Shutdown,
     /// Update vesta to the latest version
     Update,
+}
+
+#[derive(Subcommand)]
+enum BackupAction {
+    /// Create a new backup
+    Create {
+        /// Agent name
+        name: String,
+    },
+    /// List existing backups
+    List {
+        /// Agent name
+        name: String,
+    },
+    /// Restore an agent from a backup
+    Restore {
+        /// Agent name
+        name: String,
+        /// Backup ID (image tag from `vesta backup list`)
+        backup_id: String,
+    },
+    /// Delete a backup
+    Delete {
+        /// Agent name
+        name: String,
+        /// Backup ID (image tag from `vesta backup list`)
+        backup_id: String,
+    },
 }
 
 fn prompt(label: &str) -> String {
@@ -578,39 +587,37 @@ fn run(cli: Cli) {
             }
         }
 
-        Command::Backup { name } => {
+        Command::Backup { action } => {
             let c = get_client(host_ref, token_ref);
-            let backup = c.create_backup(&name).unwrap_or_else(|e| platform::die(&e));
-            eprintln!("backup created: {} ({})", backup.id, format_size(backup.size));
-        }
-
-        Command::Backups { name } => {
-            let c = get_client(host_ref, token_ref);
-            let backups = c.list_backups(&name).unwrap_or_else(|e| platform::die(&e));
-            if backups.is_empty() {
-                eprintln!("no backups for '{}'", name);
-            } else {
-                for b in &backups {
-                    println!(
-                        "  {} — {} — {} — {}",
-                        b.created_at, b.backup_type, format_size(b.size), b.id
-                    );
+            match action {
+                BackupAction::Create { name } => {
+                    let backup = c.create_backup(&name).unwrap_or_else(|e| platform::die(&e));
+                    eprintln!("backup created: {} ({})", backup.id, format_size(backup.size));
+                }
+                BackupAction::List { name } => {
+                    let backups = c.list_backups(&name).unwrap_or_else(|e| platform::die(&e));
+                    if backups.is_empty() {
+                        eprintln!("no backups for '{}'", name);
+                    } else {
+                        for b in &backups {
+                            println!(
+                                "  {} — {} — {} — {}",
+                                b.created_at, b.backup_type, format_size(b.size), b.id
+                            );
+                        }
+                    }
+                }
+                BackupAction::Restore { name, backup_id } => {
+                    c.restore_backup(&name, &backup_id)
+                        .unwrap_or_else(|e| platform::die(&e));
+                    eprintln!("{}: restored from {}", name, backup_id);
+                }
+                BackupAction::Delete { name, backup_id } => {
+                    c.delete_backup(&name, &backup_id)
+                        .unwrap_or_else(|e| platform::die(&e));
+                    eprintln!("backup deleted: {}", backup_id);
                 }
             }
-        }
-
-        Command::Restore { name, backup_id } => {
-            let c = get_client(host_ref, token_ref);
-            c.restore_backup(&name, &backup_id)
-                .unwrap_or_else(|e| platform::die(&e));
-            eprintln!("{}: restored from {}", name, backup_id);
-        }
-
-        Command::BackupDelete { name, backup_id } => {
-            let c = get_client(host_ref, token_ref);
-            c.delete_backup(&name, &backup_id)
-                .unwrap_or_else(|e| platform::die(&e));
-            eprintln!("backup deleted: {}", backup_id);
         }
 
         Command::Destroy { name } => {
