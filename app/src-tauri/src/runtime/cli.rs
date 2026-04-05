@@ -268,29 +268,42 @@ pub async fn obtain_and_inject_credentials(
 
 // ── Backup/Restore operations ───────────────────────────────────
 
-pub async fn backup_agent(name: &str, output: &str) -> Result<(), VestaError> {
+pub async fn create_backup(name: &str) -> Result<vesta_common::BackupInfo, VestaError> {
     let c = client()?;
     let name = name.to_string();
-    let output = std::path::PathBuf::from(output);
-    tokio::task::spawn_blocking(move || c.backup(&name, &output))
+    tokio::task::spawn_blocking(move || c.create_backup(&name))
         .await
         .map_err(|e| VestaError::new(ErrorCode::Internal, e.to_string()))?
         .map_err(map_err)
 }
 
-pub async fn restore_agent(
-    input: &str,
-    name: Option<&str>,
-    replace: bool,
-) -> Result<(), VestaError> {
+pub async fn list_backups(name: &str) -> Result<Vec<vesta_common::BackupInfo>, VestaError> {
     let c = client()?;
-    let input = std::path::PathBuf::from(input);
-    let name = name.map(|n| n.to_string());
-    tokio::task::spawn_blocking(move || c.restore(&input, name.as_deref(), replace))
+    let name = name.to_string();
+    tokio::task::spawn_blocking(move || c.list_backups(&name))
         .await
         .map_err(|e| VestaError::new(ErrorCode::Internal, e.to_string()))?
-        .map_err(map_err)?;
-    Ok(())
+        .map_err(map_err)
+}
+
+pub async fn restore_backup(name: &str, backup_id: &str) -> Result<(), VestaError> {
+    let c = client()?;
+    let name = name.to_string();
+    let backup_id = backup_id.to_string();
+    tokio::task::spawn_blocking(move || c.restore_backup(&name, &backup_id))
+        .await
+        .map_err(|e| VestaError::new(ErrorCode::Internal, e.to_string()))?
+        .map_err(map_err)
+}
+
+pub async fn delete_backup(name: &str, backup_id: &str) -> Result<(), VestaError> {
+    let c = client()?;
+    let name = name.to_string();
+    let backup_id = backup_id.to_string();
+    tokio::task::spawn_blocking(move || c.delete_backup(&name, &backup_id))
+        .await
+        .map_err(|e| VestaError::new(ErrorCode::Internal, e.to_string()))?
+        .map_err(map_err)
 }
 
 pub async fn wait_for_ready(name: &str, timeout_secs: u64) -> Result<(), VestaError> {

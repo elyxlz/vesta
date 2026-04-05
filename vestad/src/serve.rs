@@ -1,5 +1,4 @@
 use axum::{
-    body::Body,
     extract::{Path, Query, State, WebSocketUpgrade},
     http::{HeaderMap, StatusCode},
     middleware::{self, Next},
@@ -20,8 +19,7 @@ use crate::{docker, jwt};
 const API_KEY_BYTES: usize = 32;
 const AUTH_SESSION_TIMEOUT_SECS: u64 = 600;
 const LOG_TAIL_LINES: &str = "500";
-const BACKUP_BUFFER_SIZE: usize = 64 * 1024;
-const MAX_RESTORE_SIZE: usize = 4 * 1024 * 1024 * 1024; // 4 GB
+const AUTO_BACKUP_CHECK_INTERVAL_SECS: u64 = 3600;
 
 // --- TLS cert generation ---
 
@@ -695,162 +693,83 @@ async fn ws_proxy(client_ws: axum::extract::ws::WebSocket, agent_port: u16) {
 
 // --- Backup/Restore ---
 
-async fn backup_handler(
+async fn create_backup_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
-) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<vesta_common::BackupInfo>, (StatusCode, Json<serde_json::Value>)> {
     let lock = state.agent_lock(&name).await;
-    let guard = lock.write_owned().await;
+    let _guard = lock.write().await;
 
     let name_clone = name.clone();
-    let (backup_tag, was_running) =
-        tokio::task::spawn_blocking(move || docker::backup_prepare(&name_clone))
-            .await
-            .unwrap()
-            .map_err(map_docker_err)?;
-
-    // Stream docker save | gzip, then cleanup after stream completes
-    let tag = backup_tag.clone();
-    let name_for_cleanup = name.clone();
-    let tag_for_cleanup = backup_tag.clone();
-    let stream = async_stream::stream! {
-        // Hold write lock for entire stream duration to prevent container modification
-        let _guard = guard;
-
-        let mut docker_save = match tokio::process::Command::new("docker")
-            .args(["save", &tag])
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-        {
-            Ok(c) => c,
-            Err(e) => {
-                yield Err(std::io::Error::other(e));
-                tokio::task::spawn_blocking(move || {
-                    docker::backup_cleanup(&name_for_cleanup, &tag_for_cleanup, was_running);
-                }).await.ok();
-                return;
-            }
-        };
-
-        let child_stdout = docker_save.stdout.take().unwrap();
-        let mut gzip = match tokio::process::Command::new("gzip")
-            .stdin(child_stdout.into_owned_fd().unwrap())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-        {
-            Ok(c) => c,
-            Err(e) => {
-                yield Err(std::io::Error::other(e));
-                let name = name_for_cleanup; let tag = tag_for_cleanup;
-                tokio::task::spawn_blocking(move || {
-                    docker::backup_cleanup(&name, &tag, was_running);
-                }).await.ok();
-                return;
-            }
-        };
-
-        let stdout = gzip.stdout.take().unwrap();
-        let mut reader = tokio::io::BufReader::new(stdout);
-        let mut buf = vec![0u8; BACKUP_BUFFER_SIZE];
-
-        loop {
-            match tokio::io::AsyncReadExt::read(&mut reader, &mut buf).await {
-                Ok(0) => break,
-                Ok(bytes_read) => yield Ok(bytes::Bytes::copy_from_slice(&buf[..bytes_read])),
-                Err(e) => {
-                    yield Err(e);
-                    break;
-                }
-            }
-        }
-
-        docker_save.wait().await.ok();
-        gzip.wait().await.ok();
-
-        let name = name_for_cleanup; let tag = tag_for_cleanup;
-        tokio::task::spawn_blocking(move || {
-            docker::backup_cleanup(&name, &tag, was_running);
-        }).await.ok();
-    };
-
-    let body = Body::from_stream(stream);
-    Ok(Response::builder()
-        .header("content-type", "application/gzip")
-        .header(
-            "content-disposition",
-            format!("attachment; filename=\"{}.tar.gz\"", name),
-        )
-        .body(body)
-        .unwrap())
-}
-
-#[derive(Deserialize)]
-struct RestoreQuery {
-    name: Option<String>,
-    replace: Option<bool>,
-}
-
-async fn restore_handler(
-    Query(query): Query<RestoreQuery>,
-    body: axum::body::Bytes,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    // Write body to temp file, gunzip | docker load
-    let tmp_dir = std::env::temp_dir().join(format!("vesta_restore_{}", std::process::id()));
-    std::fs::create_dir_all(&tmp_dir)
-        .map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("temp dir: {}", e)))?;
-    let gz_path = tmp_dir.join("backup.tar.gz");
-    std::fs::write(&gz_path, &body)
-        .map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("write: {}", e)))?;
-
-    let name_override = query.name.clone();
-    let replace = query.replace.unwrap_or(false);
-
-    let result = tokio::task::spawn_blocking(move || -> Result<String, docker::DockerError> {
-        // gunzip | docker load
-        let file = std::fs::File::open(&gz_path)
-            .map_err(|e| docker::DockerError::Failed(format!("failed to open backup: {}", e)))?;
-        let mut gunzip = std::process::Command::new("gunzip")
-            .arg("-c")
-            .stdin(file)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::inherit())
-            .spawn()
-            .map_err(|_| docker::DockerError::Failed("failed to run gunzip".into()))?;
-
-        let load_output = std::process::Command::new("docker")
-            .args(["load"])
-            .stdin(gunzip.stdout.take().unwrap())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::inherit())
-            .output()
-            .map_err(|_| docker::DockerError::Failed("failed to run docker load".into()))?;
-
-        let gunzip_status = gunzip.wait()
-            .map_err(|_| docker::DockerError::Failed("gunzip failed".into()))?;
-        if !gunzip_status.success() || !load_output.status.success() {
-            return Err(docker::DockerError::Failed("failed to load backup".into()));
-        }
-
-        let load_stdout = String::from_utf8_lossy(&load_output.stdout);
-        let loaded_image = load_stdout
-            .lines()
-            .find_map(|l| l.strip_prefix("Loaded image: "))
-            .ok_or(docker::DockerError::Failed("could not determine loaded image".into()))?
-            .trim()
-            .to_string();
-
-        docker::restore_agent(&loaded_image, name_override.as_deref(), replace)
+    let backup = tokio::task::spawn_blocking(move || {
+        docker::create_backup(&name_clone, vesta_common::BackupType::Manual)
     })
     .await
     .unwrap()
     .map_err(map_docker_err)?;
 
-    // Cleanup temp
-    let _ = std::fs::remove_dir_all(&tmp_dir);
+    Ok(Json(backup))
+}
 
-    Ok(Json(serde_json::json!({"name": result})))
+async fn list_backups_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+) -> Result<Json<Vec<vesta_common::BackupInfo>>, (StatusCode, Json<serde_json::Value>)> {
+    let lock = state.agent_lock(&name).await;
+    let _guard = lock.read().await;
+
+    let name_clone = name.clone();
+    let backups = tokio::task::spawn_blocking(move || docker::list_backups(&name_clone))
+        .await
+        .unwrap()
+        .map_err(map_docker_err)?;
+
+    Ok(Json(backups))
+}
+
+#[derive(Deserialize)]
+struct RestoreBackupPath {
+    name: String,
+    backup_id: String,
+}
+
+async fn restore_backup_handler(
+    State(state): State<SharedState>,
+    Path(path): Path<RestoreBackupPath>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let lock = state.agent_lock(&path.name).await;
+    let _guard = lock.write().await;
+
+    let name = path.name.clone();
+    let backup_id = path.backup_id.clone();
+    tokio::task::spawn_blocking(move || docker::restore_backup(&name, &backup_id))
+        .await
+        .unwrap()
+        .map_err(map_docker_err)?;
+
+    Ok(Json(serde_json::json!({"ok": true})))
+}
+
+#[derive(Deserialize)]
+struct DeleteBackupPath {
+    name: String,
+    backup_id: String,
+}
+
+async fn delete_backup_handler(
+    State(state): State<SharedState>,
+    Path(path): Path<DeleteBackupPath>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let lock = state.agent_lock(&path.name).await;
+    let _guard = lock.write().await;
+
+    let backup_id = path.backup_id.clone();
+    tokio::task::spawn_blocking(move || docker::delete_backup(&backup_id))
+        .await
+        .unwrap()
+        .map_err(map_docker_err)?;
+
+    Ok(Json(serde_json::json!({"ok": true})))
 }
 
 // --- PID file ---
@@ -890,8 +809,7 @@ pub fn write_port_file(config_dir: &std::path::Path, port: u16) {
 
 // --- Router ---
 
-pub fn build_router(api_key: String, tunnel_url: Option<String>) -> Router {
-    let state = Arc::new(AppState::new(api_key, tunnel_url));
+pub fn build_router(state: SharedState) -> Router {
 
     let public = Router::new()
         .route("/health", get(health))
@@ -904,10 +822,6 @@ pub fn build_router(api_key: String, tunnel_url: Option<String>) -> Router {
         .route("/agents", get(list_agents_handler))
         .route("/agents", post(create_agent_handler))
         .route("/agents/start", post(start_all_handler))
-        .route(
-            "/agents/restore",
-            post(restore_handler).layer(axum::extract::DefaultBodyLimit::max(MAX_RESTORE_SIZE)),
-        )
         .route("/agents/{name}", get(agent_status_handler))
         .route("/agents/{name}/start", post(start_agent_handler))
         .route("/agents/{name}/stop", post(stop_agent_handler))
@@ -920,7 +834,10 @@ pub fn build_router(api_key: String, tunnel_url: Option<String>) -> Router {
         .route("/agents/{name}/auth/token", post(inject_token_handler))
         .route("/agents/{name}/logs", get(logs_handler))
         .route("/agents/{name}/ws", get(ws_handler))
-        .route("/agents/{name}/backup", post(backup_handler))
+        .route("/agents/{name}/backups", post(create_backup_handler))
+        .route("/agents/{name}/backups", get(list_backups_handler))
+        .route("/agents/{name}/backups/{backup_id}/restore", post(restore_backup_handler))
+        .route("/agents/{name}/backups/{backup_id}", axum::routing::delete(delete_backup_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
@@ -940,8 +857,86 @@ pub fn build_router(api_key: String, tunnel_url: Option<String>) -> Router {
 
 // --- Server start ---
 
+// --- Auto-backup background task ---
+
+fn spawn_auto_backup_task(state: SharedState) {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_secs(AUTO_BACKUP_CHECK_INTERVAL_SECS)).await;
+
+            let agents = tokio::task::spawn_blocking(docker::list_agent_names)
+                .await
+                .unwrap_or_default();
+
+            let now_epoch = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            let today_date = &docker::now_timestamp()[..8];
+            let seven_days_ago = docker::now_timestamp_from_epoch(now_epoch - 7 * 86400);
+            let thirty_days_ago = docker::now_timestamp_from_epoch(now_epoch - 30 * 86400);
+
+            for name in agents {
+                let lock = state.agent_lock(&name).await;
+                let _guard = lock.write().await;
+
+                let name_clone = name.clone();
+                let today = today_date.to_string();
+                let week_ago = seven_days_ago.clone();
+                let month_ago = thirty_days_ago.clone();
+
+                let result = tokio::task::spawn_blocking(move || -> Result<(), docker::DockerError> {
+                    let mut backups = docker::list_backups(&name_clone)?;
+
+                    let has_daily_today = backups.iter().any(|b| {
+                        b.backup_type == vesta_common::BackupType::Daily
+                            && b.created_at.starts_with(&today)
+                    });
+
+                    if !has_daily_today {
+                        eprintln!("auto-backup: creating daily backup for '{}'", name_clone);
+                        let new = docker::create_backup(&name_clone, vesta_common::BackupType::Daily)?;
+                        backups.insert(0, new);
+                    }
+
+                    let has_recent_weekly = backups.iter().any(|b| {
+                        b.backup_type == vesta_common::BackupType::Weekly && b.created_at >= week_ago
+                    });
+                    if !has_recent_weekly {
+                        eprintln!("auto-backup: creating weekly backup for '{}'", name_clone);
+                        let new = docker::create_backup(&name_clone, vesta_common::BackupType::Weekly)?;
+                        backups.insert(0, new);
+                    }
+
+                    let has_recent_monthly = backups.iter().any(|b| {
+                        b.backup_type == vesta_common::BackupType::Monthly && b.created_at >= month_ago
+                    });
+                    if !has_recent_monthly {
+                        eprintln!("auto-backup: creating monthly backup for '{}'", name_clone);
+                        let new = docker::create_backup(&name_clone, vesta_common::BackupType::Monthly)?;
+                        backups.insert(0, new);
+                    }
+
+                    docker::cleanup_backups(&backups);
+                    Ok(())
+                })
+                .await
+                .unwrap_or_else(|e| Err(docker::DockerError::Failed(e.to_string())));
+
+                if let Err(e) = result {
+                    eprintln!("auto-backup error for '{}': {}", name, e);
+                }
+            }
+        }
+    });
+}
+
+// --- Server start ---
+
 pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: String, tunnel_url: Option<String>) {
-    let app = build_router(api_key, tunnel_url);
+    let state = Arc::new(AppState::new(api_key, tunnel_url));
+    let app = build_router(state.clone());
+    spawn_auto_backup_task(state);
 
     let rustls_config = axum_server::tls_rustls::RustlsConfig::from_pem(
         cert_pem.into_bytes(),

@@ -139,6 +139,23 @@ pub fn extract_server_error(body: &str) -> Option<String> {
     v["error"].as_str().map(|s| s.to_string())
 }
 
+fn urlencod(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() * 3);
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            _ => {
+                out.push('%');
+                out.push(char::from(b"0123456789ABCDEF"[(b >> 4) as usize]));
+                out.push(char::from(b"0123456789ABCDEF"[(b & 0xf) as usize]));
+            }
+        }
+    }
+    out
+}
+
 pub struct Client {
     agent: ureq::Agent,
     base_url: String,
@@ -318,55 +335,43 @@ impl Client {
         Ok(())
     }
 
-    pub fn backup(&self, name: &str, output: &std::path::Path) -> Result<(), String> {
-        let resp = self.post(&format!("/agents/{}/backup", name))?;
-        let mut file = std::fs::File::create(output)
-            .map_err(|e| format!("failed to create {}: {}", output.display(), e))?;
-        let mut reader = resp.into_body().into_reader();
-        std::io::copy(&mut reader, &mut file)
-            .map_err(|e| format!("failed to write backup: {}", e))?;
+    pub fn create_backup(&self, name: &str) -> Result<crate::BackupInfo, String> {
+        let resp = self.post(&format!("/agents/{}/backups", name))?;
+        resp.into_body()
+            .read_json()
+            .map_err(|e| format!("parse error: {}", e))
+    }
+
+    pub fn list_backups(&self, name: &str) -> Result<Vec<crate::BackupInfo>, String> {
+        let resp = self.get(&format!("/agents/{}/backups", name))?;
+        resp.into_body()
+            .read_json()
+            .map_err(|e| format!("parse error: {}", e))
+    }
+
+    pub fn restore_backup(&self, name: &str, backup_id: &str) -> Result<(), String> {
+        self.post(&format!(
+            "/agents/{}/backups/{}/restore",
+            name,
+            urlencod(backup_id)
+        ))?;
         Ok(())
     }
 
-    pub fn restore(
-        &self,
-        input: &std::path::Path,
-        name: Option<&str>,
-        replace: bool,
-    ) -> Result<String, String> {
-        let data = std::fs::read(input)
-            .map_err(|e| format!("failed to read {}: {}", input.display(), e))?;
-
-        let mut query = String::new();
-        if let Some(n) = name {
-            query.push_str(&format!("name={}", n));
-        }
-        if replace {
-            if !query.is_empty() {
-                query.push('&');
-            }
-            query.push_str("replace=true");
-        }
-        let url = if query.is_empty() {
-            format!("{}/agents/restore", self.base_url)
-        } else {
-            format!("{}/agents/restore?{}", self.base_url, query)
-        };
-
+    pub fn delete_backup(&self, name: &str, backup_id: &str) -> Result<(), String> {
         let resp = self
             .agent
-            .post(&url)
+            .delete(&format!(
+                "{}/agents/{}/backups/{}",
+                self.base_url,
+                name,
+                urlencod(backup_id)
+            ))
             .header("Authorization", &format!("Bearer {}", self.api_key))
-            .header("Content-Type", "application/gzip")
-            .send(data.as_slice())
+            .call()
             .map_err(map_error)?;
-        let resp = check_response(resp)?;
-
-        let v: serde_json::Value = resp
-            .into_body()
-            .read_json()
-            .map_err(|e| format!("parse error: {}", e))?;
-        Ok(v["name"].as_str().unwrap_or("unknown").to_string())
+        check_response(resp)?;
+        Ok(())
     }
 
     /// Connect to SSE logs endpoint and print lines to stdout.

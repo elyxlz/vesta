@@ -12,6 +12,18 @@ const VERSION_CACHE_TTL_SECS: u64 = 3600;
 const UPDATE_CHECK_TIMEOUT_MS: u64 = 100;
 const UPDATE_CHECK_POLL_MS: u64 = 10;
 
+fn format_size(bytes: u64) -> String {
+    if bytes >= 1_000_000_000 {
+        format!("{:.1}GB", bytes as f64 / 1_000_000_000.0)
+    } else if bytes >= 1_000_000 {
+        format!("{:.1}MB", bytes as f64 / 1_000_000.0)
+    } else if bytes >= 1_000 {
+        format!("{:.0}kB", bytes as f64 / 1_000.0)
+    } else {
+        format!("{}B", bytes)
+    }
+}
+
 fn try_open_browser(url: &str) {
     #[cfg(target_os = "linux")]
     let _child = process::Command::new("xdg-open")
@@ -110,23 +122,10 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Export an agent to a backup file
+    /// Manage agent backups
     Backup {
-        /// Agent name
-        name: String,
-        /// Output file path (.tar.gz)
-        output: PathBuf,
-    },
-    /// Import an agent from a backup file
-    Restore {
-        /// Input backup file path (.tar.gz)
-        input: PathBuf,
-        /// Override agent name from backup
-        #[arg(long)]
-        name: Option<String>,
-        /// Replace existing agent with same name
-        #[arg(long)]
-        replace: bool,
+        #[command(subcommand)]
+        action: BackupAction,
     },
     /// Destroy an agent (irreversible)
     Destroy {
@@ -163,6 +162,34 @@ enum Command {
     Shutdown,
     /// Update vesta to the latest version
     Update,
+}
+
+#[derive(Subcommand)]
+enum BackupAction {
+    /// Create a new backup
+    Create {
+        /// Agent name
+        name: String,
+    },
+    /// List existing backups
+    List {
+        /// Agent name
+        name: String,
+    },
+    /// Restore an agent from a backup
+    Restore {
+        /// Agent name
+        name: String,
+        /// Backup ID (image tag from `vesta backup list`)
+        backup_id: String,
+    },
+    /// Delete a backup
+    Delete {
+        /// Agent name
+        name: String,
+        /// Backup ID (image tag from `vesta backup list`)
+        backup_id: String,
+    },
 }
 
 fn prompt(label: &str) -> String {
@@ -560,22 +587,37 @@ fn run(cli: Cli) {
             }
         }
 
-        Command::Backup { name, output } => {
+        Command::Backup { action } => {
             let c = get_client(host_ref, token_ref);
-            c.backup(&name, &output).unwrap_or_else(|e| platform::die(&e));
-            eprintln!("backup saved to {}", output.display());
-        }
-
-        Command::Restore {
-            input,
-            name,
-            replace,
-        } => {
-            let c = get_client(host_ref, token_ref);
-            let name = c
-                .restore(&input, name.as_deref(), replace)
-                .unwrap_or_else(|e| platform::die(&e));
-            eprintln!("agent '{}' restored. run 'vesta start {}' to start it.", name, name);
+            match action {
+                BackupAction::Create { name } => {
+                    let backup = c.create_backup(&name).unwrap_or_else(|e| platform::die(&e));
+                    eprintln!("backup created: {} ({})", backup.id, format_size(backup.size));
+                }
+                BackupAction::List { name } => {
+                    let backups = c.list_backups(&name).unwrap_or_else(|e| platform::die(&e));
+                    if backups.is_empty() {
+                        eprintln!("no backups for '{}'", name);
+                    } else {
+                        for b in &backups {
+                            println!(
+                                "  {} — {} — {} — {}",
+                                b.created_at, b.backup_type, format_size(b.size), b.id
+                            );
+                        }
+                    }
+                }
+                BackupAction::Restore { name, backup_id } => {
+                    c.restore_backup(&name, &backup_id)
+                        .unwrap_or_else(|e| platform::die(&e));
+                    eprintln!("{}: restored from {}", name, backup_id);
+                }
+                BackupAction::Delete { name, backup_id } => {
+                    c.delete_backup(&name, &backup_id)
+                        .unwrap_or_else(|e| platform::die(&e));
+                    eprintln!("backup deleted: {}", backup_id);
+                }
+            }
         }
 
         Command::Destroy { name } => {

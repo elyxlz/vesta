@@ -12,7 +12,6 @@ import {
   startAgent,
   restartAgent,
   waitForReady,
-  restoreAgent,
   checkPlatform,
   setupPlatform,
   authenticate,
@@ -117,27 +116,6 @@ export function CreateAgent() {
       if (friendly !== raw) setErrorDetails(raw);
       setStep("name");
     }
-  };
-
-  const handleRestore = () => {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = ".tar.gz,.gz";
-    input.onchange = async () => {
-      const file = input.files?.[0];
-      if (!file) return;
-      setStep("creating");
-      setCreatingMsg(0);
-      setError("");
-      try {
-        await restoreAgent(file);
-        navigate("/");
-      } catch (e: unknown) {
-        setError((e as { message?: string })?.message || "restore failed");
-        setStep("name");
-      }
-    };
-    input.click();
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -256,14 +234,6 @@ export function CreateAgent() {
           className="w-full"
         >
           create
-        </Button>
-
-        <Button
-          variant="link"
-          onClick={handleRestore}
-          className="h-auto px-0 py-0 text-xs font-normal text-muted-foreground underline underline-offset-4 hover:bg-transparent hover:text-foreground"
-        >
-          restore from backup
         </Button>
 
         {error && (

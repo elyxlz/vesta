@@ -42,13 +42,23 @@ pub async fn rebuild_agent(name: String) -> Result<(), VestaError> {
 }
 
 #[tauri::command]
-pub async fn backup_agent(name: String, output: String) -> Result<(), VestaError> {
-    cli::backup_agent(&name, &output).await
+pub async fn create_backup(name: String) -> Result<vesta_common::BackupInfo, VestaError> {
+    cli::create_backup(&name).await
 }
 
 #[tauri::command]
-pub async fn restore_agent(input: String, name: Option<String>, replace: bool) -> Result<(), VestaError> {
-    cli::restore_agent(&input, name.as_deref(), replace).await
+pub async fn list_backups(name: String) -> Result<Vec<vesta_common::BackupInfo>, VestaError> {
+    cli::list_backups(&name).await
+}
+
+#[tauri::command]
+pub async fn restore_backup(name: String, backup_id: String) -> Result<(), VestaError> {
+    cli::restore_backup(&name, &backup_id).await
+}
+
+#[tauri::command]
+pub async fn delete_backup(name: String, backup_id: String) -> Result<(), VestaError> {
+    cli::delete_backup(&name, &backup_id).await
 }
 
 #[tauri::command]

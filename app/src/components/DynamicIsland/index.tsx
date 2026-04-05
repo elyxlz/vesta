@@ -40,7 +40,6 @@ export function DynamicIsland() {
     restart,
     rebuild,
     backup,
-    restore,
     remove,
   } = useSelectedAgent();
 
@@ -217,7 +216,7 @@ export function DynamicIsland() {
               onRestart={restart}
               onRebuild={rebuild}
               onBackup={backup}
-              onRestore={restore}
+              onShowBackups={() => { /* TODO: backups panel */ }}
               onShowConsole={() => setShowConsole(true)}
               onOpenDeleteDialog={() => setDeleteDialogOpen(true)}
             />

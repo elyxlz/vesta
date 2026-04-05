@@ -1,5 +1,6 @@
 use serde::Serialize;
 use std::process;
+use vesta_common::{BackupInfo, BackupType};
 
 #[derive(Debug)]
 pub enum DockerError {
@@ -928,9 +929,131 @@ pub async fn wait_ready_async(name: &str, timeout_secs: u64) -> Result<(), Docke
     }
 }
 
-/// Backup: stops container, commits to image, returns (backup_tag, was_running).
-/// Pulls the base image first to ensure parent layers are present.
-pub fn backup_prepare(name: &str) -> Result<(String, bool), DockerError> {
+// ── Backup operations ──────────────────────────────────────────
+
+const BACKUP_IMAGE_PREFIX: &str = "vesta-backup";
+const RETENTION_DAILY: usize = 3;
+const RETENTION_WEEKLY: usize = 2;
+const RETENTION_MONTHLY: usize = 1;
+
+/// Build a backup image tag from components.
+pub fn backup_tag(agent_name: &str, backup_type: &BackupType, timestamp: &str) -> String {
+    format!("{}:{}-{}-{}", BACKUP_IMAGE_PREFIX, agent_name, backup_type, timestamp)
+}
+
+/// Parse a backup image tag into (agent_name, backup_type, timestamp).
+/// Returns None if the tag doesn't match the expected format.
+pub fn parse_backup_tag(tag: &str) -> Option<(String, BackupType, String)> {
+    let repo_tag = tag.strip_prefix(&format!("{}:", BACKUP_IMAGE_PREFIX))?;
+    // Format: {agent_name}-{type}-{YYYYMMDD-HHMMSS}
+    // The timestamp is always YYYYMMDD-HHMMSS (15 chars), type is before that.
+    // We need to find the type by scanning from the right since agent names can contain hyphens.
+    // Timestamp: YYYYMMDD-HHMMSS = 15 chars
+    if repo_tag.len() < 17 {
+        return None; // minimum: "a-x-YYYYMMDD-HHMMSS"
+    }
+    let timestamp = &repo_tag[repo_tag.len() - 15..];
+    // Validate timestamp format: YYYYMMDD-HHMMSS
+    if timestamp.len() != 15 || timestamp.as_bytes()[8] != b'-' {
+        return None;
+    }
+    // Everything before the timestamp (minus trailing hyphen) is "name-type"
+    let name_and_type = &repo_tag[..repo_tag.len() - 16]; // -16 for hyphen + timestamp
+
+    // Try each backup type suffix (longest first to avoid ambiguity)
+    for (suffix, bt) in [
+        ("-pre-restore", BackupType::PreRestore),
+        ("-manual", BackupType::Manual),
+        ("-daily", BackupType::Daily),
+        ("-weekly", BackupType::Weekly),
+        ("-monthly", BackupType::Monthly),
+    ] {
+        if let Some(name) = name_and_type.strip_suffix(suffix) {
+            if !name.is_empty() {
+                return Some((name.to_string(), bt, timestamp.to_string()));
+            }
+        }
+    }
+    None
+}
+
+pub fn now_timestamp() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    now_timestamp_from_epoch(now)
+}
+
+pub fn now_timestamp_from_epoch(now: u64) -> String {
+    // Convert to YYYYMMDD-HHMMSS using simple arithmetic (UTC)
+    let secs_per_day = 86400u64;
+    let days = now / secs_per_day;
+    let time_of_day = now % secs_per_day;
+    let hours = time_of_day / 3600;
+    let minutes = (time_of_day % 3600) / 60;
+    let seconds = time_of_day % 60;
+
+    // Days since epoch to Y/M/D
+    let mut y = 1970i64;
+    let mut remaining = days as i64;
+    loop {
+        let days_in_year = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) { 366 } else { 365 };
+        if remaining < days_in_year {
+            break;
+        }
+        remaining -= days_in_year;
+        y += 1;
+    }
+    let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+    let month_days = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mut m = 0usize;
+    for (i, &md) in month_days.iter().enumerate() {
+        if remaining < md as i64 {
+            m = i;
+            break;
+        }
+        remaining -= md as i64;
+    }
+    let d = remaining + 1;
+
+    format!("{:04}{:02}{:02}-{:02}{:02}{:02}", y, m + 1, d, hours, minutes, seconds)
+}
+
+/// Commit the container to a backup image without managing container lifecycle.
+/// Caller is responsible for stopping/starting the container.
+fn commit_backup(cname: &str, name: &str, backup_type: &BackupType) -> Result<BackupInfo, DockerError> {
+    let ts = now_timestamp();
+    let tag = backup_tag(name, backup_type, &ts);
+    let name_label = format!("LABEL vesta.agent_name={}", name);
+    let type_label = format!("LABEL vesta.backup_type={}", backup_type);
+    let date_label = format!("LABEL vesta.backup_date={}", ts);
+
+    if !docker_ok(&[
+        "commit",
+        "--change", &name_label,
+        "--change", &type_label,
+        "--change", &date_label,
+        cname, &tag,
+    ]) {
+        return Err(DockerError::Failed("backup commit failed".into()));
+    }
+
+    let size = docker_output(&["inspect", "--format", "{{.Size}}", &tag])
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(0);
+
+    Ok(BackupInfo {
+        id: tag,
+        agent_name: name.to_string(),
+        backup_type: backup_type.clone(),
+        created_at: ts,
+        size,
+    })
+}
+
+/// Create a backup of the given agent. Stops the container during commit, then restarts.
+pub fn create_backup(name: &str, backup_type: BackupType) -> Result<BackupInfo, DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
     let cs = container_status(&cname);
@@ -945,69 +1068,161 @@ pub fn backup_prepare(name: &str) -> Result<(String, bool), DockerError> {
         docker_ok(&["stop", &cname]);
     }
 
-    // Ensure base image layers are present so commit succeeds
-    docker_ok(&["pull", VESTA_IMAGE]);
+    let result = commit_backup(&cname, name, &backup_type);
 
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    let backup_tag = format!("vesta-backup:{}_{}", name, ts);
-    let commit_label = format!("LABEL vesta.agent_name={}", name);
-
-    if !docker_ok(&["commit", "--change", &commit_label, &cname, &backup_tag]) {
-        if was_running {
-            docker_ok(&["start", &cname]);
-        }
-        return Err(DockerError::Failed("backup commit failed".into()));
-    }
-
-    Ok((backup_tag, was_running))
-}
-
-/// Cleanup after backup streaming completes.
-pub fn backup_cleanup(name: &str, backup_tag: &str, was_running: bool) {
-    let cname = container_name(name);
-    docker_ok(&["rmi", backup_tag]);
     if was_running {
         docker_ok(&["start", &cname]);
     }
+
+    result
 }
 
-/// Restore from a loaded docker image tag.
-pub fn restore_agent(loaded_image: &str, name_override: Option<&str>, replace: bool) -> Result<String, DockerError> {
-    let name_from_backup = docker_output(&[
-        "inspect",
-        "--format",
-        "{{index .Config.Labels \"vesta.agent_name\"}}",
-        loaded_image,
-    ]);
-
-    let name = match name_override {
-        Some(n) => n.to_string(),
-        None => name_from_backup
-            .filter(|n| !n.is_empty() && n != "<no value>")
-            .ok_or(DockerError::Failed("backup has no agent name label. use ?name= to specify one.".into()))?,
-    };
-    validate_name(&name)?;
-    let cname = container_name(&name);
-
-    if container_status(&cname) != ContainerStatus::NotFound {
-        if !replace {
-            docker_ok(&["rmi", loaded_image]);
-            return Err(DockerError::AlreadyExists(format!(
-                "agent '{}' already exists. use ?replace=true to overwrite, or ?name= to pick a different name.",
-                name
-            )));
-        }
-        docker_ok(&["rm", "-f", &cname]);
+/// List all backups for the given agent, sorted by date descending.
+pub fn list_backups(name: &str) -> Result<Vec<BackupInfo>, DockerError> {
+    validate_name(name)?;
+    // Ensure agent exists
+    let cname = container_name(name);
+    if container_status(&cname) == ContainerStatus::NotFound {
+        return Err(DockerError::NotFound(format!("agent '{}' not found", name)));
     }
 
-    let port = allocate_port();
-    create_container(&cname, loaded_image, port, &name)?;
-    docker_ok(&["rmi", loaded_image]);
+    let output = docker_output(&[
+        "images",
+        "--format", "{{.Repository}}:{{.Tag}}\t{{.Size}}",
+        "--filter", &format!("reference={}:{}-*", BACKUP_IMAGE_PREFIX, name),
+    ])
+    .unwrap_or_default();
 
-    Ok(name)
+    let mut backups: Vec<BackupInfo> = output
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|line| {
+            let mut parts = line.splitn(2, '\t');
+            let tag = parts.next()?.trim();
+            let size_str = parts.next().unwrap_or("0").trim();
+            let (parsed_name, backup_type, timestamp) = parse_backup_tag(tag)?;
+            if parsed_name != name {
+                return None;
+            }
+            Some(BackupInfo {
+                id: tag.to_string(),
+                agent_name: parsed_name,
+                backup_type,
+                created_at: timestamp,
+                size: parse_docker_size(size_str),
+            })
+        })
+        .collect();
+
+    backups.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    Ok(backups)
+}
+
+/// Parse Docker's human-readable size strings like "1.5GB", "300MB", "15kB".
+fn parse_docker_size(s: &str) -> u64 {
+    let s = s.trim();
+    let (num_str, multiplier) = if let Some(n) = s.strip_suffix("GB") {
+        (n, 1_000_000_000u64)
+    } else if let Some(n) = s.strip_suffix("MB") {
+        (n, 1_000_000u64)
+    } else if let Some(n) = s.strip_suffix("kB") {
+        (n, 1_000u64)
+    } else if let Some(n) = s.strip_suffix('B') {
+        (n, 1u64)
+    } else {
+        (s, 1u64)
+    };
+    num_str
+        .trim()
+        .parse::<f64>()
+        .map(|n| (n * multiplier as f64) as u64)
+        .unwrap_or(0)
+}
+
+/// Restore an agent from a backup image.
+/// Creates a pre-restore safety backup first, then replaces the container.
+pub fn restore_backup(name: &str, backup_id: &str) -> Result<(), DockerError> {
+    validate_name(name)?;
+    let cname = container_name(name);
+
+    if docker_output(&["inspect", "--format", "{{.Id}}", backup_id]).is_none() {
+        return Err(DockerError::NotFound(format!("backup '{}' not found", backup_id)));
+    }
+
+    let info = inspect_container(&cname);
+    if info.status == ContainerStatus::NotFound {
+        return Err(DockerError::NotFound(format!("agent '{}' not found", name)));
+    }
+
+    // Stop once, commit safety backup, then remove — avoids a redundant stop/start cycle
+    if info.status == ContainerStatus::Running {
+        docker_ok(&["stop", &cname]);
+    }
+    commit_backup(&cname, name, &BackupType::PreRestore)?;
+    docker_ok(&["rm", "-f", &cname]);
+
+    // Create new container from backup image, reusing the port
+    create_container(&cname, backup_id, info.port, name)?;
+
+    if !docker_ok(&["start", &cname]) {
+        return Err(DockerError::Failed("failed to start restored agent".into()));
+    }
+
+    Ok(())
+}
+
+/// Delete a backup image.
+pub fn delete_backup(backup_id: &str) -> Result<(), DockerError> {
+    // Verify it's actually a backup image
+    if parse_backup_tag(backup_id).is_none() {
+        return Err(DockerError::Failed(format!("'{}' is not a valid backup tag", backup_id)));
+    }
+    if !docker_ok(&["rmi", backup_id]) {
+        return Err(DockerError::Failed(format!("failed to delete backup '{}'", backup_id)));
+    }
+    Ok(())
+}
+
+/// Determine which auto-backups should be deleted based on the retention policy.
+/// Returns the IDs of backups to delete.
+pub fn compute_backups_to_delete(backups: &[BackupInfo]) -> Vec<String> {
+    let mut to_delete = Vec::new();
+
+    for (backup_type, retention) in [
+        (BackupType::Daily, RETENTION_DAILY),
+        (BackupType::Weekly, RETENTION_WEEKLY),
+        (BackupType::Monthly, RETENTION_MONTHLY),
+    ] {
+        let mut typed: Vec<&BackupInfo> = backups
+            .iter()
+            .filter(|b| b.backup_type == backup_type)
+            .collect();
+        // Sort by date descending (newest first)
+        typed.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        // Mark excess for deletion
+        for excess in typed.into_iter().skip(retention) {
+            to_delete.push(excess.id.clone());
+        }
+    }
+
+    to_delete
+}
+
+/// Run retention cleanup for an agent's auto-backups.
+/// Pass existing backups list to avoid a redundant `docker images` call.
+pub fn cleanup_backups(backups: &[BackupInfo]) {
+    let to_delete = compute_backups_to_delete(backups);
+    for id in &to_delete {
+        docker_ok(&["rmi", id]);
+    }
+}
+
+/// List all agent names that have containers.
+pub fn list_agent_names() -> Vec<String> {
+    list_managed_containers()
+        .iter()
+        .map(|cname| name_from_cname(cname))
+        .collect()
 }
 
 
@@ -1115,6 +1330,181 @@ mod tests {
     fn container_name_roundtrip() {
         assert_eq!(name_from_cname(&container_name("test")), "test");
         assert_eq!(name_from_cname(&container_name("my-agent")), "my-agent");
+    }
+
+    // ── Backup tag tests ──────────────────────────────────────────
+
+    #[test]
+    fn backup_tag_generation() {
+        let tag = backup_tag("myagent", &BackupType::Manual, "20260404-120000");
+        assert_eq!(tag, "vesta-backup:myagent-manual-20260404-120000");
+    }
+
+    #[test]
+    fn backup_tag_generation_pre_restore() {
+        let tag = backup_tag("myagent", &BackupType::PreRestore, "20260404-120000");
+        assert_eq!(tag, "vesta-backup:myagent-pre-restore-20260404-120000");
+    }
+
+    #[test]
+    fn parse_backup_tag_manual() {
+        let (name, bt, ts) = parse_backup_tag("vesta-backup:myagent-manual-20260404-120000").unwrap();
+        assert_eq!(name, "myagent");
+        assert_eq!(bt, BackupType::Manual);
+        assert_eq!(ts, "20260404-120000");
+    }
+
+    #[test]
+    fn parse_backup_tag_pre_restore() {
+        let (name, bt, ts) = parse_backup_tag("vesta-backup:myagent-pre-restore-20260404-120000").unwrap();
+        assert_eq!(name, "myagent");
+        assert_eq!(bt, BackupType::PreRestore);
+        assert_eq!(ts, "20260404-120000");
+    }
+
+    #[test]
+    fn parse_backup_tag_with_hyphenated_name() {
+        let (name, bt, ts) = parse_backup_tag("vesta-backup:my-cool-agent-daily-20260404-120000").unwrap();
+        assert_eq!(name, "my-cool-agent");
+        assert_eq!(bt, BackupType::Daily);
+        assert_eq!(ts, "20260404-120000");
+    }
+
+    #[test]
+    fn parse_backup_tag_roundtrip() {
+        let original_tag = backup_tag("test-agent", &BackupType::Weekly, "20260101-235959");
+        let (name, bt, ts) = parse_backup_tag(&original_tag).unwrap();
+        assert_eq!(name, "test-agent");
+        assert_eq!(bt, BackupType::Weekly);
+        assert_eq!(ts, "20260101-235959");
+    }
+
+    #[test]
+    fn parse_backup_tag_invalid() {
+        assert!(parse_backup_tag("not-a-backup:tag").is_none());
+        assert!(parse_backup_tag("vesta-backup:").is_none());
+        assert!(parse_backup_tag("vesta-backup:short").is_none());
+    }
+
+    #[test]
+    fn parse_backup_tag_all_types() {
+        for type_str in ["manual", "daily", "weekly", "monthly", "pre-restore"] {
+            let bt: BackupType = type_str.parse().unwrap();
+            let tag = backup_tag("agent", &bt, "20260404-120000");
+            let (name, parsed_bt, _) = parse_backup_tag(&tag).unwrap();
+            assert_eq!(name, "agent");
+            assert_eq!(parsed_bt, bt);
+        }
+    }
+
+    // ── Retention policy tests ────────────────────────────────────
+
+    fn make_backup(agent: &str, bt: BackupType, ts: &str) -> BackupInfo {
+        BackupInfo {
+            id: backup_tag(agent, &bt, ts),
+            agent_name: agent.to_string(),
+            backup_type: bt,
+            created_at: ts.to_string(),
+            size: 1000,
+        }
+    }
+
+    #[test]
+    fn retention_empty_list() {
+        let to_delete = compute_backups_to_delete(&[]);
+        assert!(to_delete.is_empty());
+    }
+
+    #[test]
+    fn retention_under_limit() {
+        let backups = vec![
+            make_backup("a", BackupType::Daily, "20260401-120000"),
+            make_backup("a", BackupType::Daily, "20260402-120000"),
+        ];
+        let to_delete = compute_backups_to_delete(&backups);
+        assert!(to_delete.is_empty());
+    }
+
+    #[test]
+    fn retention_daily_over_limit() {
+        let backups = vec![
+            make_backup("a", BackupType::Daily, "20260401-120000"),
+            make_backup("a", BackupType::Daily, "20260402-120000"),
+            make_backup("a", BackupType::Daily, "20260403-120000"),
+            make_backup("a", BackupType::Daily, "20260404-120000"),
+            make_backup("a", BackupType::Daily, "20260405-120000"),
+        ];
+        let to_delete = compute_backups_to_delete(&backups);
+        assert_eq!(to_delete.len(), 2);
+        // Oldest two should be deleted
+        assert!(to_delete.contains(&backup_tag("a", &BackupType::Daily, "20260401-120000")));
+        assert!(to_delete.contains(&backup_tag("a", &BackupType::Daily, "20260402-120000")));
+    }
+
+    #[test]
+    fn retention_weekly_over_limit() {
+        let backups = vec![
+            make_backup("a", BackupType::Weekly, "20260301-120000"),
+            make_backup("a", BackupType::Weekly, "20260308-120000"),
+            make_backup("a", BackupType::Weekly, "20260315-120000"),
+            make_backup("a", BackupType::Weekly, "20260322-120000"),
+        ];
+        let to_delete = compute_backups_to_delete(&backups);
+        assert_eq!(to_delete.len(), 2);
+        assert!(to_delete.contains(&backup_tag("a", &BackupType::Weekly, "20260301-120000")));
+        assert!(to_delete.contains(&backup_tag("a", &BackupType::Weekly, "20260308-120000")));
+    }
+
+    #[test]
+    fn retention_monthly_over_limit() {
+        let backups = vec![
+            make_backup("a", BackupType::Monthly, "20260101-120000"),
+            make_backup("a", BackupType::Monthly, "20260201-120000"),
+            make_backup("a", BackupType::Monthly, "20260301-120000"),
+        ];
+        let to_delete = compute_backups_to_delete(&backups);
+        assert_eq!(to_delete.len(), 2);
+    }
+
+    #[test]
+    fn retention_mixed_types() {
+        let backups = vec![
+            make_backup("a", BackupType::Daily, "20260401-120000"),
+            make_backup("a", BackupType::Daily, "20260402-120000"),
+            make_backup("a", BackupType::Daily, "20260403-120000"),
+            make_backup("a", BackupType::Weekly, "20260322-120000"),
+            make_backup("a", BackupType::Weekly, "20260329-120000"),
+            make_backup("a", BackupType::Monthly, "20260301-120000"),
+            make_backup("a", BackupType::Manual, "20260404-120000"),
+        ];
+        let to_delete = compute_backups_to_delete(&backups);
+        // 3 daily (keep all), 2 weekly (keep all), 1 monthly (keep all), manual not touched
+        assert!(to_delete.is_empty());
+    }
+
+    #[test]
+    fn retention_ignores_manual_and_pre_restore() {
+        let backups = vec![
+            make_backup("a", BackupType::Manual, "20260401-120000"),
+            make_backup("a", BackupType::Manual, "20260402-120000"),
+            make_backup("a", BackupType::Manual, "20260403-120000"),
+            make_backup("a", BackupType::Manual, "20260404-120000"),
+            make_backup("a", BackupType::PreRestore, "20260401-120000"),
+            make_backup("a", BackupType::PreRestore, "20260402-120000"),
+        ];
+        let to_delete = compute_backups_to_delete(&backups);
+        assert!(to_delete.is_empty());
+    }
+
+    // ── Docker size parsing ───────────────────────────────────────
+
+    #[test]
+    fn parse_docker_size_values() {
+        assert_eq!(parse_docker_size("1.5GB"), 1_500_000_000);
+        assert_eq!(parse_docker_size("300MB"), 300_000_000);
+        assert_eq!(parse_docker_size("15kB"), 15_000);
+        assert_eq!(parse_docker_size("1024B"), 1024);
+        assert_eq!(parse_docker_size("0B"), 0);
     }
 
     #[test]
