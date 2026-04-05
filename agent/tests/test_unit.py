@@ -13,7 +13,7 @@ from claude_agent_sdk import HookContext
 from claude_agent_sdk.types import SubagentStartHookInput
 from vesta.core.client import _format_tool_call, _parse_agent_input, _tool_summary, _subagent_hook
 from vesta.core.history import format_results, history_get_range, history_save, history_search, open_history
-from vesta.events import AppChatEvent, EventBus, SubagentStartEvent, SubagentStopEvent, UserEvent
+from vesta.events import ChatEvent, EventBus, SubagentStartEvent, SubagentStopEvent, UserEvent
 from vesta.core.init import get_memory_path
 from vesta.core.loops import format_notification_batch
 
@@ -123,19 +123,19 @@ def _log(bus: EventBus, channel: str) -> tp.Any:
 def test_eventbus_channel_filtering(tmp_path):
     """Events only persist to channels whose type set includes the event type."""
     bus = EventBus(data_dir=tmp_path)
-    bus.emit(AppChatEvent(type="app_chat", text="hello"))
+    bus.emit(ChatEvent(type="chat", text="hello"))
     bus.emit(SubagentStartEvent(type="subagent_start", agent_id="a", agent_type="browser"))
 
-    chat_events, _ = _log(bus, "app-chat").recent()
+    chat_events, _ = _log(bus, "chat").recent()
     internals_events, _ = _log(bus, "internals").recent()
 
     chat_types = {e["type"] for e in chat_events}
     internals_types = {e["type"] for e in internals_events}
 
-    assert "app_chat" in chat_types
+    assert "chat" in chat_types
     assert "subagent_start" not in chat_types
     assert "subagent_start" in internals_types
-    assert "app_chat" not in internals_types
+    assert "chat" not in internals_types
     bus.close()
 
 
@@ -146,7 +146,7 @@ def test_eventbus_recent_pagination(tmp_path):
         bus.emit(UserEvent(type="user", text=f"msg {i}"))
 
     events: list[tp.Any]
-    events, cursor = _log(bus, "app-chat").recent(limit=50)
+    events, cursor = _log(bus, "chat").recent(limit=50)
     assert len(events) == 50
     assert events[-1]["text"] == "msg 149"
     assert events[0]["text"] == "msg 100"
@@ -161,19 +161,19 @@ def test_eventbus_cursor_pagination(tmp_path):
         bus.emit(UserEvent(type="user", text=f"msg {i}"))
 
     events: list[tp.Any]
-    events, cursor = _log(bus, "app-chat").recent(limit=30)
+    events, cursor = _log(bus, "chat").recent(limit=30)
     assert len(events) == 30
     assert cursor is not None
 
     older: list[tp.Any]
-    older, cursor2 = _log(bus, "app-chat").before(cursor, limit=30)
+    older, cursor2 = _log(bus, "chat").before(cursor, limit=30)
     assert len(older) == 30
     assert older[-1]["text"] == "msg 49"
     assert older[0]["text"] == "msg 20"
     assert cursor2 is not None
 
     oldest: list[tp.Any]
-    oldest, cursor3 = _log(bus, "app-chat").before(cursor2, limit=30)
+    oldest, cursor3 = _log(bus, "chat").before(cursor2, limit=30)
     assert len(oldest) == 20
     assert oldest[0]["text"] == "msg 0"
     assert cursor3 is None  # no more pages
@@ -184,10 +184,10 @@ def test_eventbus_clear_history(tmp_path):
     """clear_history() removes all events from all channels."""
     bus = EventBus(data_dir=tmp_path)
     bus.emit(UserEvent(type="user", text="hello"))
-    bus.emit(AppChatEvent(type="app_chat", text="reply"))
+    bus.emit(ChatEvent(type="chat", text="reply"))
     bus.clear_history()
 
-    chat_events, _ = _log(bus, "app-chat").recent()
+    chat_events, _ = _log(bus, "chat").recent()
     internals_events, _ = _log(bus, "internals").recent()
     assert len(chat_events) == 0
     assert len(internals_events) == 0
@@ -198,12 +198,12 @@ def test_eventbus_persists_across_instances(tmp_path):
     """Events survive EventBus recreation (simulating container restart)."""
     bus = EventBus(data_dir=tmp_path)
     bus.emit(UserEvent(type="user", text="before restart"))
-    bus.emit(AppChatEvent(type="app_chat", text="reply"))
+    bus.emit(ChatEvent(type="chat", text="reply"))
     bus.close()
 
     bus2 = EventBus(data_dir=tmp_path)
     events: list[tp.Any]
-    events, _ = _log(bus2, "app-chat").recent()
+    events, _ = _log(bus2, "chat").recent()
     texts = [e["text"] for e in events if "text" in e]
     assert "before restart" in texts
     assert "reply" in texts
@@ -218,7 +218,7 @@ def test_eventbus_status_not_persisted(tmp_path):
     received = q.get_nowait()
     assert received["type"] == "status"
 
-    chat_events, _ = _log(bus, "app-chat").recent()
+    chat_events, _ = _log(bus, "chat").recent()
     internals_events, _ = _log(bus, "internals").recent()
     assert len(chat_events) == 0
     assert len(internals_events) == 0
@@ -232,7 +232,7 @@ def test_eventbus_no_data_dir():
     bus.emit(UserEvent(type="user", text="hello"))
     received = q.get_nowait()
     assert received["type"] == "user"
-    assert bus.log("app-chat") is None
+    assert bus.log("chat") is None
     bus.close()
 
 
@@ -303,20 +303,21 @@ def test_skills_index_valid():
     import json
     import re
 
-    source_root = Path(__file__).parent.parent
-    index = json.loads((source_root / "skills" / "index.json").read_text())
+    skills_dir = Path(__file__).parent.parent / "skills"
+    index = json.loads((skills_dir / "index.json").read_text())
     assert isinstance(index, list) and index, "skills/index.json must be a non-empty list"
     skill_names = {s["name"] for s in index}
-    default_skills_path = source_root / "skills" / "default-skills.txt"
+    default_skills_path = skills_dir / "default-skills.txt"
     default_skills = set(default_skills_path.read_text().splitlines()) if default_skills_path.exists() else set()
-    for skill_md in (source_root / "skills").glob("*/SKILL.md"):
+    for skill_md in skills_dir.glob("*/SKILL.md"):
         text = skill_md.read_text()
         match = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
         fm = dict(re.findall(r"^(\w[\w-]*)\s*:\s*(.+)$", match.group(1), re.MULTILINE)) if match else {}
-        name = fm.get("name", skill_md.parent.name)
+        skill_dir_name = skill_md.parent.name
+        name = fm.get("name", skill_dir_name)
         if name in default_skills:
             continue
-        assert name in skill_names, f"{skill_md.parent.name} missing from skills/index.json"
+        assert name in skill_names, f"{skill_dir_name} missing from skills/index.json"
 
 
 def test_skills_registry_scripts_executable():

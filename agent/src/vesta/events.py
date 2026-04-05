@@ -65,8 +65,8 @@ class SubagentStopEvent(_BaseEvent):
     agent_type: str
 
 
-class AppChatEvent(_BaseEvent):
-    type: tp.Literal["app_chat"]
+class ChatEvent(_BaseEvent):
+    type: tp.Literal["chat"]
     text: str
 
 
@@ -80,10 +80,10 @@ type StreamEvent = (
     | NotificationEvent
     | SubagentStartEvent
     | SubagentStopEvent
-    | AppChatEvent
+    | ChatEvent
 )
 
-APP_CHAT_TYPES: frozenset[str] = frozenset({"user", "app_chat", "tool_start", "tool_end", "status", "error"})
+CHAT_TYPES: frozenset[str] = frozenset({"user", "chat", "tool_start", "tool_end", "status", "error"})
 INTERNALS_TYPES: frozenset[str] = frozenset(
     {"user", "assistant", "tool_start", "tool_end", "status", "error", "notification", "subagent_start", "subagent_stop"}
 )
@@ -179,7 +179,7 @@ class EventBus:
             data_dir.mkdir(parents=True, exist_ok=True)
             self._conn = sqlite3.connect(str(data_dir / "events.db"))
             self._conn.executescript(_EVENTS_SCHEMA)
-            self._logs["app-chat"] = _HistoryLog(self._conn, "app-chat", APP_CHAT_TYPES)
+            self._logs["chat"] = _HistoryLog(self._conn, "chat", CHAT_TYPES)
             self._logs["internals"] = _HistoryLog(self._conn, "internals", INTERNALS_TYPES)
 
     def log(self, channel: str) -> _HistoryLog | None:

@@ -142,21 +142,20 @@ export function wsUrl(name: string): string {
   return `${base}/agents/${name}/ws?token=${encodeURIComponent(conn.accessToken)}`;
 }
 
-export function wsAppChatUrl(name: string): string {
+export function wsChatUrl(name: string): string {
   const conn = getConnection();
   if (!conn) throw new Error("not connected to vestad");
   const base = conn.url.replace(/^http/, "ws");
-  return `${base}/agents/${name}/ws/app-chat?token=${encodeURIComponent(conn.accessToken)}`;
+  return `${base}/agents/${name}/ws/chat?token=${encodeURIComponent(conn.accessToken)}`;
 }
 
 export async function fetchHistory(
   name: string,
-  channel: "app-chat" | "internals",
   cursor: number,
 ): Promise<{ events: VestaEvent[]; cursor: number | null }> {
   const conn = getConnection();
   if (!conn) throw new Error("not connected to vestad");
-  const params = new URLSearchParams({ channel, cursor: String(cursor) });
+  const params = new URLSearchParams({ cursor: String(cursor) });
   const res = await fetch(`${conn.url}/agents/${name}/history?${params}`, {
     headers: { Authorization: `Bearer ${conn.accessToken}` },
   });

@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -14,7 +15,7 @@ import {
   CardContent,
 } from "@/components/ui/card";
 import { ButtonGroup } from "@/components/ui/button-group";
-import { useAppChat } from "@/hooks/use-app-chat";
+import { useChat } from "@/hooks/use-chat";
 import { useAutoScroll } from "@/hooks/use-auto-scroll";
 import { useVoiceInput } from "@/hooks/use-voice-input";
 import { useSettings } from "@/stores/use-settings";
@@ -24,7 +25,7 @@ import { linkify } from "@/lib/linkify";
 import type { VestaEvent } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-interface AppChatProps {
+interface ChatProps {
   onCollapse?: () => void;
   fullscreen?: boolean;
 }
@@ -60,12 +61,12 @@ const thinkingIndicatorVariants = {
   },
 };
 
-export function AppChat({ onCollapse, fullscreen }: AppChatProps = {}) {
+export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   const { name, setAgentState } = useSelectedAgent();
   const navigate = useNavigate();
   const navbarHeight = useLayout((s) => s.navbarHeight);
   const voiceAutoSend = useSettings((s) => s.voiceAutoSend);
-  const { messages, agentState, connected, hasMore, loadingMore, loadMore, send } = useAppChat(name, true);
+  const { messages, agentState, connected, hasMore, loadingMore, loadMore, send } = useChat(name, true);
 
   useEffect(() => {
     setAgentState(agentState);
@@ -74,7 +75,7 @@ export function AppChat({ onCollapse, fullscreen }: AppChatProps = {}) {
   const [input, setInput] = useState("");
   const voiceSend = useCallback((text: string) => { send(text); }, [send]);
   const voiceDraft = useCallback((text: string) => { setInput(text); }, []);
-  const { isRecording, liveTranscript, toggle: toggleVoice, error: voiceError } = useVoiceInput({ onSend: voiceSend, onDraft: voiceDraft });
+  const { isRecording, liveTranscript, toggle: toggleVoice, error: voiceError, sttAvailable } = useVoiceInput({ agentName: name || "", onSend: voiceSend, onDraft: voiceDraft });
   const [wasConnected, setWasConnected] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -93,7 +94,7 @@ export function AppChat({ onCollapse, fullscreen }: AppChatProps = {}) {
   }, [isNearBottom]);
 
   const chatMessages = messages.filter(
-    (m) => m.type === "user" || m.type === "app_chat" || m.type === "error",
+    (m) => m.type === "user" || m.type === "chat" || m.type === "error",
   );
 
   const isThinking =
@@ -342,8 +343,9 @@ export function AppChat({ onCollapse, fullscreen }: AppChatProps = {}) {
             size="icon-sm"
             variant="ghost"
             className="shrink-0"
-            disabled={!connected}
+            disabled={!connected || !sttAvailable}
             onClick={toggleVoice}
+            title={!sttAvailable ? "Voice input not configured — ask the agent to set it up" : undefined}
           >
             {isRecording ? (
               <Square className="text-red-500" size={14} />
@@ -387,7 +389,7 @@ function ChatBubble({ event, className }: { event: VestaEvent; className?: strin
     );
   }
 
-  if (event.type !== "user" && event.type !== "app_chat") return null;
+  if (event.type !== "user" && event.type !== "chat") return null;
 
   const isUser = event.type === "user";
   const text = event.text;

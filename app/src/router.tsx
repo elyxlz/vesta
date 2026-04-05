@@ -4,7 +4,7 @@ import { Connect } from "@/components/Connect";
 import { Home } from "@/components/Home";
 import { CreateAgent } from "@/components/CreateAgent";
 import { AgentHome } from "@/components/AgentHome";
-import { AppChat } from "@/components/AppChat";
+import { Chat } from "@/components/Chat";
 import { DynamicIsland } from "@/components/DynamicIsland";
 import { Titlebar } from "@/components/Titlebar";
 import { Navbar } from "@/components/Navbar";
@@ -101,7 +101,7 @@ function ChatFullscreenLayout() {
           </Button>
         </div>
       </div>
-      <AppChat fullscreen />
+      <Chat fullscreen />
     </div>
   );
 }

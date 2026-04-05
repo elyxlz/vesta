@@ -1,4 +1,3 @@
-app-chat
 banking
 browser
 dream
@@ -7,4 +6,5 @@ reminders
 skills-registry
 tasks
 upstream
+voice
 what-day

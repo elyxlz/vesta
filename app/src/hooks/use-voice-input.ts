@@ -1,20 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { DeepgramStream } from "@/lib/deepgram";
+import { Transcriber } from "@/lib/voice";
+import { useVoiceStatus } from "@/hooks/use-voice-status";
 import { useSettings } from "@/stores/use-settings";
 
 interface VoiceInputCallbacks {
+  agentName: string;
   onSend: (text: string) => void;
   onDraft: (text: string) => void;
 }
 
-export function useVoiceInput({ onSend, onDraft }: VoiceInputCallbacks) {
+export function useVoiceInput({ agentName, onSend, onDraft }: VoiceInputCallbacks) {
   const voiceAutoSend = useSettings((s) => s.voiceAutoSend);
-  const sttEotThreshold = useSettings((s) => s.sttEotThreshold);
-  const sttEotTimeoutMs = useSettings((s) => s.sttEotTimeoutMs);
+  const { status } = useVoiceStatus(agentName);
+  const sttAvailable = status?.stt.configured ?? false;
   const [isRecording, setIsRecording] = useState(false);
   const [liveTranscript, setLiveTranscript] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const streamRef = useRef<DeepgramStream | null>(null);
+  const streamRef = useRef<Transcriber | null>(null);
 
   const toggle = useCallback(() => {
     if (streamRef.current?.isActive()) {
@@ -25,22 +27,21 @@ export function useVoiceInput({ onSend, onDraft }: VoiceInputCallbacks) {
       return;
     }
 
+    if (!sttAvailable) {
+      setError("Voice input not configured — ask the agent to set it up");
+      return;
+    }
+
     setError(null);
-    const stream = new DeepgramStream({
-      eotThreshold: sttEotThreshold,
-      eotTimeoutMs: sttEotTimeoutMs,
+    const stream = new Transcriber({
+      agentName,
       onTranscript: (text) => {
         setLiveTranscript(text);
-        if (!voiceAutoSend) {
-          onDraft(text);
-        }
+        if (!voiceAutoSend) onDraft(text);
       },
       onTurnEnd: (text) => {
-        if (voiceAutoSend) {
-          onSend(text);
-        } else {
-          onDraft(text);
-        }
+        if (voiceAutoSend) onSend(text);
+        else onDraft(text);
         setLiveTranscript("");
       },
       onTurnStart: () => {},
@@ -60,7 +61,7 @@ export function useVoiceInput({ onSend, onDraft }: VoiceInputCallbacks) {
       setError(msg);
       streamRef.current = null;
     });
-  }, [onSend, onDraft, voiceAutoSend, sttEotThreshold, sttEotTimeoutMs]);
+  }, [agentName, onSend, onDraft, voiceAutoSend, sttAvailable]);
 
   useEffect(() => {
     if (!error) return;
@@ -68,5 +69,5 @@ export function useVoiceInput({ onSend, onDraft }: VoiceInputCallbacks) {
     return () => clearTimeout(timer);
   }, [error]);
 
-  return { isRecording, liveTranscript, toggle, error };
+  return { isRecording, liveTranscript, toggle, error, sttAvailable };
 }
