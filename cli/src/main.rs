@@ -2,12 +2,11 @@ use clap::{Parser, Subcommand};
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process;
-use vesta_common::version_less_than;
+use vesta_common::{fetch_latest_release_tag, version_less_than};
 
 mod client;
 mod platform;
 
-const GITHUB_RELEASES_URL: &str = "https://api.github.com/repos/elyxlz/vesta/releases/latest";
 const VERSION_CACHE_TTL_SECS: u64 = 3600;
 const UPDATE_CHECK_TIMEOUT_MS: u64 = 100;
 const UPDATE_CHECK_POLL_MS: u64 = 10;
@@ -234,47 +233,12 @@ fn get_client(host: Option<&str>, token: Option<&str>) -> client::Client {
     client::Client::new(&config)
 }
 
-fn fetch_latest_version(timeout: Option<u64>) -> Option<String> {
-    let mut args = vec!["-fsSL"];
-    let timeout_connect;
-    let timeout_max;
-    if let Some(t) = timeout {
-        timeout_connect = t.to_string();
-        timeout_max = t.to_string();
-        args.extend([
-            "--connect-timeout",
-            &timeout_connect,
-            "--max-time",
-            &timeout_max,
-        ]);
-    }
-    args.push(GITHUB_RELEASES_URL);
-
-    let output = process::Command::new("curl")
-        .args(&args)
-        .stdout(process::Stdio::piped())
-        .stderr(process::Stdio::null())
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-
-    let body = String::from_utf8_lossy(&output.stdout);
-    let data: serde_json::Value = serde_json::from_str(&body).ok()?;
-    let latest = data["tag_name"].as_str()?.trim_start_matches('v');
-    if latest.is_empty() {
-        return None;
-    }
-    Some(latest.to_string())
-}
-
 fn check_latest_version() -> Option<String> {
     let current = env!("CARGO_PKG_VERSION");
     eprintln!("current version: v{}", current);
 
-    let latest =
-        fetch_latest_version(None).unwrap_or_else(|| platform::die("failed to check for updates"));
+    let latest = fetch_latest_release_tag(None)
+        .unwrap_or_else(|| platform::die("failed to check for updates"));
 
     if latest == current {
         eprintln!("already up to date");
@@ -376,7 +340,7 @@ fn check_update_cached() -> Option<std::thread::JoinHandle<Option<String>>> {
     }
 
     Some(std::thread::spawn(move || {
-        let latest = fetch_latest_version(Some(5))?;
+        let latest = fetch_latest_release_tag(Some(5))?;
         let _ = std::fs::create_dir_all(&cache_dir);
         let _ = std::fs::write(&cache_file, &latest);
         if version_less_than(env!("CARGO_PKG_VERSION"), &latest) {
