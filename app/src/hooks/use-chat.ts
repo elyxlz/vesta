@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { VestaEvent, AgentActivityState } from "@/lib/types";
-import { wsAppChatUrl, fetchHistory } from "@/lib/connection";
+import { wsChatUrl, fetchHistory } from "@/lib/connection";
 import { useAuth } from "@/providers/AuthProvider";
 import { useSpeech } from "@/hooks/use-speech";
 
@@ -8,9 +8,17 @@ const RECONNECT_BASE = 1000;
 const RECONNECT_MAX = 30000;
 const MAX_MESSAGES = 5000;
 
-export function useAppChat(name: string | null, active: boolean) {
+// Module-level sender so non-descendant components (Settings, etc.) can push
+// typed events over the already-open chat WebSocket without opening their
+// own connection.
+let activeSender: ((event: object) => boolean) | null = null;
+export function sendChatEvent(event: object): boolean {
+  return activeSender ? activeSender(event) : false;
+}
+
+export function useChat(name: string | null, active: boolean) {
   const { setReachable } = useAuth();
-  const { speak, isSpeaking, stop: stopSpeech } = useSpeech();
+  const { speak, isSpeaking, stop: stopSpeech } = useSpeech(name);
   const [messages, setMessages] = useState<VestaEvent[]>([]);
   const [agentState, setAgentState] = useState<AgentActivityState>("idle");
   const [connected, setConnected] = useState(false);
@@ -37,7 +45,7 @@ export function useAppChat(name: string | null, active: boolean) {
 
       let url: string;
       try {
-        url = wsAppChatUrl(name);
+        url = wsChatUrl(name);
       } catch {
         reconnectTimer = setTimeout(doConnect, reconnectDelay);
         reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX);
@@ -84,7 +92,7 @@ export function useAppChat(name: string | null, active: boolean) {
               ? updated.slice(-MAX_MESSAGES)
               : updated;
           });
-          if (event.type === "app_chat" && event.text) {
+          if (event.type === "chat" && event.text) {
             speak(event.text);
           }
           if (event.type === "status") {
@@ -137,6 +145,18 @@ export function useAppChat(name: string | null, active: boolean) {
     return true;
   }, []);
 
+  const sendEvent = useCallback((event: object): boolean => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+    ws.send(JSON.stringify(event));
+    return true;
+  }, []);
+
+  useEffect(() => {
+    activeSender = sendEvent;
+    return () => { activeSender = null; };
+  }, [sendEvent]);
+
   const hasMore = cursorRef.current !== null;
 
   const loadMore = useCallback(async () => {
@@ -145,7 +165,7 @@ export function useAppChat(name: string | null, active: boolean) {
 
     setLoadingMore(true);
     try {
-      const result = await fetchHistory(name, "app-chat", cursor);
+      const result = await fetchHistory(name, cursor);
       const events = result.events ?? [];
       setMessages((prev) => [...events, ...prev]);
       cursorRef.current = result.cursor;
@@ -154,5 +174,5 @@ export function useAppChat(name: string | null, active: boolean) {
     }
   }, [name, loadingMore]);
 
-  return { messages, agentState, connected, hasMore, loadingMore, loadMore, send, isSpeaking, stopSpeech };
+  return { messages, agentState, connected, hasMore, loadingMore, loadMore, send, sendEvent, isSpeaking, stopSpeech };
 }

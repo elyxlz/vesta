@@ -37,12 +37,18 @@ testpaths = ["tests"]
 
 
 [tool.ty.src]
-include = ["src", "tests"]
+include = ["src", "tests", "skills/voice"]
+exclude = ["skills/voice/scripts"]
+
+[tool.ty.environment]
+extra-paths = ["skills"]
 
 [tool.ruff]
 line-length = 144
 indent-width = 4
 target-version = "py312"
+extend-include = ["skills/voice/**/*.py"]
+extend-exclude = ["skills/voice/scripts"]
 
 [tool.ruff.lint]
 ignore = ["E402", "E702", "E731", "UP008", "E712"]

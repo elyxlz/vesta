@@ -1,12 +1,13 @@
 use axum::{
-    extract::{Path, Query, State, WebSocketUpgrade},
+    body::Body,
+    extract::{Path, Query, Request, State, WebSocketUpgrade},
     http::{HeaderMap, StatusCode},
     middleware::{self, Next},
     response::{
         sse::{Event, KeepAlive},
         IntoResponse, Response, Sse,
     },
-    routing::{get, post},
+    routing::{any, get, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -625,90 +626,7 @@ async fn logs_handler(
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
-// --- History proxy ---
-
-async fn history_handler(
-    Path(name): Path<String>,
-    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
-) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
-    docker::validate_name(&name).map_err(map_docker_err)?;
-    let cname = docker::container_name(&name);
-    docker::ensure_running(&cname).map_err(map_docker_err)?;
-    let port = docker::get_container_port(&cname);
-
-    let query_string: String = params
-        .iter()
-        .map(|(k, v)| format!("{}={}", k, v))
-        .collect::<Vec<_>>()
-        .join("&");
-    let path = if query_string.is_empty() {
-        "/history".to_string()
-    } else {
-        format!("/history?{}", query_string)
-    };
-
-    let mut stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port))
-        .await
-        .map_err(|e| err_response(StatusCode::BAD_GATEWAY, &format!("agent unreachable: {}", e)))?;
-
-    let request = format!("GET {} HTTP/1.1\r\nHost: localhost:{}\r\nConnection: close\r\n\r\n", path, port);
-    tokio::io::AsyncWriteExt::write_all(&mut stream, request.as_bytes())
-        .await
-        .map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e.to_string()))?;
-
-    let mut buf = Vec::new();
-    tokio::io::AsyncReadExt::read_to_end(&mut stream, &mut buf)
-        .await
-        .map_err(|e| err_response(StatusCode::BAD_GATEWAY, &e.to_string()))?;
-
-    let response_str = String::from_utf8_lossy(&buf);
-    let body_start = response_str.find("\r\n\r\n").unwrap_or(0) + 4;
-    let body = &buf[body_start..];
-
-    Ok(Response::builder()
-        .header("content-type", "application/json")
-        .body(axum::body::Body::from(body.to_vec()))
-        .unwrap())
-}
-
-// --- WebSocket proxy ---
-
-async fn ws_handler(
-    State(state): State<SharedState>,
-    Path(name): Path<String>,
-    ws: WebSocketUpgrade,
-) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
-    ws_upgrade(state, &name, ws, "/ws").await
-}
-
-async fn ws_app_chat_handler(
-    State(state): State<SharedState>,
-    Path(name): Path<String>,
-    ws: WebSocketUpgrade,
-) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
-    ws_upgrade(state, &name, ws, "/ws/app-chat").await
-}
-
-async fn ws_upgrade(
-    state: SharedState,
-    name: &str,
-    ws: WebSocketUpgrade,
-    path: &'static str,
-) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
-    docker::validate_name(name).map_err(map_docker_err)?;
-    let cname = docker::container_name(name);
-
-    let lock = state.agent_lock(name).await;
-    let guard = lock.read_owned().await;
-
-    docker::ensure_running(&cname).map_err(map_docker_err)?;
-    let port = docker::get_container_port(&cname);
-
-    Ok(ws.on_upgrade(move |socket| async move {
-        drop(guard);
-        ws_proxy(socket, port, path).await;
-    }))
-}
+// --- WebSocket proxy (used by agent wildcard) ---
 
 async fn ws_proxy(client_ws: axum::extract::ws::WebSocket, agent_port: u16, path: &str) {
     use axum::extract::ws::Message as AxumMsg;
@@ -769,6 +687,113 @@ async fn ws_proxy(client_ws: axum::extract::ws::WebSocket, agent_port: u16, path
         _ = client_to_agent => {},
         _ = agent_to_client => {},
     }
+}
+
+// --- Agent wildcard proxy (HTTP + WS) for /agents/{name}/* ---
+
+async fn agent_proxy_handler(
+    State(state): State<SharedState>,
+    Path((name, path)): Path<(String, String)>,
+    request: Request,
+) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+    use axum::extract::FromRequestParts;
+
+    docker::validate_name(&name).map_err(map_docker_err)?;
+    let cname = docker::container_name(&name);
+
+    let lock = state.agent_lock(&name).await;
+    let guard = lock.read_owned().await;
+
+    docker::ensure_running(&cname).map_err(map_docker_err)?;
+    let port = docker::get_container_port(&cname);
+
+    // Build target path, preserving leading slash and query.
+    let mut target_path = format!("/{}", path);
+    if let Some(q) = request.uri().query() {
+        target_path.push('?');
+        target_path.push_str(q);
+    }
+
+    let is_ws_upgrade = request
+        .headers()
+        .get("upgrade")
+        .map(|v| v.as_bytes().eq_ignore_ascii_case(b"websocket"))
+        .unwrap_or(false);
+
+    if is_ws_upgrade {
+        let (mut parts, _body) = request.into_parts();
+        let ws = match WebSocketUpgrade::from_request_parts(&mut parts, &state).await {
+            Ok(ws) => ws,
+            Err(e) => {
+                return Err(err_response(
+                    StatusCode::BAD_REQUEST,
+                    &format!("invalid ws upgrade: {}", e),
+                ));
+            }
+        };
+        Ok(ws.on_upgrade(move |socket| async move {
+            drop(guard);
+            ws_proxy(socket, port, &target_path).await;
+        }))
+    } else {
+        drop(guard);
+        forward_http_to_container(port, &target_path, request).await
+    }
+}
+
+async fn forward_http_to_container(
+    port: u16,
+    target_path: &str,
+    request: Request,
+) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+    use reqwest::Client;
+
+    let (parts, body) = request.into_parts();
+    let url = format!("http://localhost:{}{}", port, target_path);
+
+    let method = reqwest::Method::from_bytes(parts.method.as_str().as_bytes())
+        .map_err(|e| err_response(StatusCode::BAD_REQUEST, &format!("bad method: {}", e)))?;
+
+    let body_bytes = axum::body::to_bytes(body, usize::MAX)
+        .await
+        .map_err(|e| err_response(StatusCode::BAD_REQUEST, &format!("read body: {}", e)))?;
+
+    let mut req_builder = Client::new().request(method, &url);
+    for (name, value) in parts.headers.iter() {
+        // Skip hop-by-hop headers — reqwest sets host/transfer-encoding itself.
+        let n = name.as_str().to_ascii_lowercase();
+        if matches!(n.as_str(), "host" | "connection" | "transfer-encoding" | "content-length") {
+            continue;
+        }
+        req_builder = req_builder.header(name.as_str(), value.as_bytes());
+    }
+    if !body_bytes.is_empty() {
+        req_builder = req_builder.body(body_bytes.to_vec());
+    }
+
+    let upstream = req_builder.send().await.map_err(|e| {
+        err_response(
+            StatusCode::BAD_GATEWAY,
+            &format!("container unreachable: {}", e),
+        )
+    })?;
+
+    let status = StatusCode::from_u16(upstream.status().as_u16())
+        .unwrap_or(StatusCode::BAD_GATEWAY);
+    let mut builder = Response::builder().status(status);
+    for (name, value) in upstream.headers().iter() {
+        let n = name.as_str().to_ascii_lowercase();
+        if matches!(n.as_str(), "transfer-encoding" | "connection" | "content-length") {
+            continue;
+        }
+        builder = builder.header(name.as_str(), value.as_bytes());
+    }
+
+    let stream = upstream.bytes_stream();
+    let body = Body::from_stream(stream);
+    builder
+        .body(body)
+        .map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("build response: {}", e)))
 }
 
 // --- Backup/Restore ---
@@ -919,13 +944,11 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/auth/code", post(complete_auth_handler))
         .route("/agents/{name}/auth/token", post(inject_token_handler))
         .route("/agents/{name}/logs", get(logs_handler))
-        .route("/agents/{name}/ws", get(ws_handler))
-        .route("/agents/{name}/ws/app-chat", get(ws_app_chat_handler))
-        .route("/agents/{name}/history", get(history_handler))
         .route("/agents/{name}/backups", post(create_backup_handler))
         .route("/agents/{name}/backups", get(list_backups_handler))
         .route("/agents/{name}/backups/{backup_id}/restore", post(restore_backup_handler))
         .route("/agents/{name}/backups/{backup_id}", axum::routing::delete(delete_backup_handler))
+        .route("/agents/{name}/{*path}", any(agent_proxy_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,

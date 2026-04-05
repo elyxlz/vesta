@@ -377,7 +377,7 @@ impl Client {
 
 // ── WebSocket chat (CLI-only) ──────────────────────────────────
 
-/// Connect to AppChat WebSocket and run interactive chat (CLI-only).
+/// Connect to Chat WebSocket and run interactive chat (CLI-only).
 pub fn chat(client: &Client, name: &str) -> Result<(), String> {
     let url = format!(
         "{}/agents/{}/ws/app-chat?token={}",
@@ -431,7 +431,7 @@ pub fn chat(client: &Client, name: &str) -> Result<(), String> {
         match socket.read() {
             Ok(tungstenite::Message::Text(text)) => {
                 if let Ok(msg) = serde_json::from_str::<serde_json::Value>(text.as_ref()) {
-                    if msg["type"].as_str() == Some("app_chat") {
+                    if msg["type"].as_str() == Some("chat") {
                         if let Some(content) = msg["text"].as_str() {
                             println!("{}", content);
                             std::io::stdout().flush().ok();

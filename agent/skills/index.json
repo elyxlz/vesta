@@ -1,9 +1,5 @@
 [
   {
-    "name": "app-chat",
-    "description": "Use this skill when the user sends a message through the Vesta app or CLI. This is the primary channel for direct conversation with the user."
-  },
-  {
     "name": "browser",
     "description": "Use for \"browse\", \"open a website\", \"navigate to\", \"click\", \"fill form\","
   },
@@ -70,6 +66,10 @@
   {
     "name": "upstream",
     "description": "Use when you need to contribute code, push a branch, open a pull request, submit a PR, sync with upstream, or do any git/GitHub operations on the vesta repo (elyxlz/vesta). IMPORTANT \u2014 always use this skill for GitHub access. Never use personal tokens or manual git push. Authentication is handled via the vesta-upstream GitHub App \u2014 no credentials needed from the user."
+  },
+  {
+    "name": "voice",
+    "description": "Use when the user asks to enable voice input/output, set up transcription or text-to-speech, rotate API keys, add custom voices, adjust the transcription sensitivity, or talks about the microphone/speaker in the Vesta app. This skill manages ~/vesta/data/voice_config.json \u2014 the single source of truth for STT/TTS keys, voice selection, keyterms, and thresholds."
   },
   {
     "name": "weather",
