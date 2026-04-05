@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { VestaEvent, AgentActivityState } from "@/lib/types";
 import { wsAppChatUrl, fetchHistory } from "@/lib/connection";
 import { useAuth } from "@/providers/AuthProvider";
+import { useSpeech } from "@/hooks/use-speech";
 
 const RECONNECT_BASE = 1000;
 const RECONNECT_MAX = 30000;
@@ -9,6 +10,7 @@ const MAX_MESSAGES = 5000;
 
 export function useAppChat(name: string | null, active: boolean) {
   const { setReachable } = useAuth();
+  const { speak, isSpeaking, stop: stopSpeech } = useSpeech();
   const [messages, setMessages] = useState<VestaEvent[]>([]);
   const [agentState, setAgentState] = useState<AgentActivityState>("idle");
   const [connected, setConnected] = useState(false);
@@ -82,6 +84,9 @@ export function useAppChat(name: string | null, active: boolean) {
               ? updated.slice(-MAX_MESSAGES)
               : updated;
           });
+          if (event.type === "app_chat" && event.text) {
+            speak(event.text);
+          }
           if (event.type === "status") {
             setAgentState(event.state);
           }
@@ -141,12 +146,13 @@ export function useAppChat(name: string | null, active: boolean) {
     setLoadingMore(true);
     try {
       const result = await fetchHistory(name, "app-chat", cursor);
-      setMessages((prev) => [...result.events, ...prev]);
+      const events = result.events ?? [];
+      setMessages((prev) => [...events, ...prev]);
       cursorRef.current = result.cursor;
     } finally {
       setLoadingMore(false);
     }
   }, [name, loadingMore]);
 
-  return { messages, agentState, connected, hasMore, loadingMore, loadMore, send };
+  return { messages, agentState, connected, hasMore, loadingMore, loadMore, send, isSpeaking, stopSpeech };
 }
