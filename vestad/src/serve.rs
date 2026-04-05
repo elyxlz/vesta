@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::{docker, jwt};
+use crate::{docker, jwt, update_check};
 
 const API_KEY_BYTES: usize = 32;
 const AUTH_SESSION_TIMEOUT_SECS: u64 = 600;
@@ -130,6 +130,7 @@ pub struct AppState {
     auth_sessions: Mutex<HashMap<String, AuthSession>>,
     agent_locks: Mutex<HashMap<String, Arc<tokio::sync::RwLock<()>>>>,
     tunnel_url: Mutex<Option<String>>,
+    update_info: Mutex<Option<update_check::UpdateInfo>>,
 }
 
 impl AppState {
@@ -139,6 +140,7 @@ impl AppState {
             auth_sessions: Mutex::new(HashMap::new()),
             agent_locks: Mutex::new(HashMap::new()),
             tunnel_url: Mutex::new(tunnel_url),
+            update_info: Mutex::new(None),
         }
     }
 
@@ -288,10 +290,20 @@ async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({"ok": true}))
 }
 
-async fn version() -> Json<serde_json::Value> {
+async fn version(State(state): State<SharedState>) -> Json<serde_json::Value> {
+    let update = state.update_info.lock().await;
+    let (latest, update_available) = match update.as_ref() {
+        Some(info) => (
+            Some(info.latest.clone()),
+            Some(info.update_available),
+        ),
+        None => (None, None),
+    };
     Json(serde_json::json!({
         "version": env!("CARGO_PKG_VERSION"),
         "api_compat": "0.2",
+        "latest_version": latest,
+        "update_available": update_available,
     }))
 }
 
@@ -931,12 +943,38 @@ fn spawn_auto_backup_task(state: SharedState) {
     });
 }
 
+// --- Update-check background task ---
+
+fn spawn_update_check_task(state: SharedState) {
+    tokio::spawn(async move {
+        loop {
+            let info_result = tokio::task::spawn_blocking(update_check::check_once).await;
+            match info_result {
+                Ok(Ok(info)) => {
+                    if info.update_available {
+                        eprintln!(
+                            "  \x1b[33mupdate available\x1b[0m: v{} → v{} (run `vestad update`)",
+                            info.current, info.latest
+                        );
+                    }
+                    let mut slot = state.update_info.lock().await;
+                    *slot = Some(info);
+                }
+                Ok(Err(e)) => eprintln!("update check failed: {}", e),
+                Err(e) => eprintln!("update check task failed: {}", e),
+            }
+            tokio::time::sleep(tokio::time::Duration::from_secs(update_check::CHECK_INTERVAL_SECS)).await;
+        }
+    });
+}
+
 // --- Server start ---
 
 pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: String, tunnel_url: Option<String>) {
     let state = Arc::new(AppState::new(api_key, tunnel_url));
     let app = build_router(state.clone());
-    spawn_auto_backup_task(state);
+    spawn_auto_backup_task(state.clone());
+    spawn_update_check_task(state);
 
     let rustls_config = axum_server::tls_rustls::RustlsConfig::from_pem(
         cert_pem.into_bytes(),

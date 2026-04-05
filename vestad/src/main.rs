@@ -4,6 +4,7 @@ mod docker;
 mod jwt;
 mod serve;
 mod tunnel;
+mod update_check;
 
 
 #[derive(Parser)]
