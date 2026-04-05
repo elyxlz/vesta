@@ -1,5 +1,6 @@
+import { useState } from "react";
 import { createBrowserRouter, Navigate, Outlet, useLocation, useNavigate, useParams } from "react-router-dom";
-import { Minimize2 } from "lucide-react";
+import { Minimize2, Wrench } from "lucide-react";
 import { Connect } from "@/components/Connect";
 import { Home } from "@/components/Home";
 import { CreateAgent } from "@/components/CreateAgent";
@@ -70,6 +71,7 @@ function AgentLayout() {
 function ChatFullscreenLayout() {
   const navigate = useNavigate();
   const { name } = useParams<{ name: string }>();
+  const [showToolCalls, setShowToolCalls] = useState(false);
 
   return (
     <div className="h-full relative">
