@@ -5,7 +5,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { Maximize2, PanelRightClose, SendHorizontal } from "lucide-react";
+import { Maximize2, Mic, PanelRightClose, SendHorizontal, Square } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { Button } from "@/components/ui/button";
@@ -16,6 +16,8 @@ import {
 import { ButtonGroup } from "@/components/ui/button-group";
 import { useAppChat } from "@/hooks/use-app-chat";
 import { useAutoScroll } from "@/hooks/use-auto-scroll";
+import { useVoiceInput } from "@/hooks/use-voice-input";
+import { useSettings } from "@/stores/use-settings";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useLayout } from "@/stores/use-layout";
 import { linkify } from "@/lib/linkify";
@@ -62,6 +64,7 @@ export function AppChat({ onCollapse, fullscreen }: AppChatProps = {}) {
   const { name, setAgentState } = useSelectedAgent();
   const navigate = useNavigate();
   const navbarHeight = useLayout((s) => s.navbarHeight);
+  const voiceAutoSend = useSettings((s) => s.voiceAutoSend);
   const { messages, agentState, connected, hasMore, loadingMore, loadMore, send } = useAppChat(name, true);
 
   useEffect(() => {
@@ -69,6 +72,9 @@ export function AppChat({ onCollapse, fullscreen }: AppChatProps = {}) {
   }, [agentState, setAgentState]);
 
   const [input, setInput] = useState("");
+  const voiceSend = useCallback((text: string) => { send(text); }, [send]);
+  const voiceDraft = useCallback((text: string) => { setInput(text); }, []);
+  const { isRecording, liveTranscript, toggle: toggleVoice, error: voiceError } = useVoiceInput({ onSend: voiceSend, onDraft: voiceDraft });
   const [wasConnected, setWasConnected] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -294,27 +300,68 @@ export function AppChat({ onCollapse, fullscreen }: AppChatProps = {}) {
             </motion.div>
           )}
         </AnimatePresence>
-        <div className="flex items-center gap-2.5 w-full rounded-xl border bg-card shadow-md px-4 min-h-12">
-          <textarea
-            ref={textareaRef}
-            value={input}
-            onChange={handleInput}
-            onKeyDown={handleKeyDown}
-            placeholder={connected ? "send a message..." : "connecting..."}
-            disabled={!connected}
-            rows={1}
-            enterKeyHint="send"
-            className="m-0 flex-1 min-h-5 max-h-[120px] bg-transparent py-2.5 text-base sm:text-sm leading-5 resize-none outline-none placeholder:text-muted-foreground/50 disabled:opacity-50"
-          />
+        <AnimatePresence>
+          {voiceError && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="overflow-hidden"
+            >
+              <div className="flex justify-center pb-2">
+                <span className="rounded-full border border-destructive/20 bg-destructive/5 px-3 py-1 text-xs text-destructive">
+                  {voiceError}
+                </span>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+        <div className={cn(
+          "flex items-center gap-2.5 w-full rounded-xl border bg-card shadow-md px-4 min-h-12",
+          isRecording && "border-red-500/50",
+        )}>
+          {isRecording && voiceAutoSend ? (
+            <div className="flex-1 py-2.5 text-base sm:text-sm leading-5 text-foreground min-h-5">
+              {liveTranscript || <span className="text-muted-foreground/50 animate-pulse">listening...</span>}
+            </div>
+          ) : (
+            <textarea
+              ref={textareaRef}
+              value={input}
+              onChange={handleInput}
+              onKeyDown={handleKeyDown}
+              placeholder={isRecording ? "listening..." : connected ? "send a message..." : "connecting..."}
+              disabled={!connected}
+              rows={1}
+              enterKeyHint="send"
+              className="m-0 flex-1 min-h-5 max-h-[120px] bg-transparent py-2.5 text-base sm:text-sm leading-5 resize-none outline-none placeholder:text-muted-foreground/50 disabled:opacity-50"
+            />
+          )}
           <Button
             size="icon-sm"
             variant="ghost"
             className="shrink-0"
-            disabled={!connected || !input.trim()}
-            onClick={handleSend}
+            disabled={!connected}
+            onClick={toggleVoice}
           >
-            <SendHorizontal className="text-muted-foreground" />
+            {isRecording ? (
+              <Square className="text-red-500" size={14} />
+            ) : (
+              <Mic className="text-muted-foreground" />
+            )}
           </Button>
+          {(!isRecording || !voiceAutoSend) && (
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              className="shrink-0"
+              disabled={!connected || !input.trim()}
+              onClick={handleSend}
+            >
+              <SendHorizontal className="text-muted-foreground" />
+            </Button>
+          )}
         </div>
       </div>
     </Card>
