@@ -301,3 +301,47 @@ pub fn version_less_than(a: &str, b: &str) -> bool {
     };
     parse(a) < parse(b)
 }
+
+// ── Update checks ───────────────────────────────────────────────
+
+pub const GITHUB_RELEASES_LATEST_URL: &str =
+    "https://api.github.com/repos/elyxlz/vesta/releases/latest";
+
+/// Fetch the latest vesta release tag from GitHub, returning it with any
+/// leading `v` stripped. `timeout_secs` applies to both connect and total
+/// request time; pass `None` for no timeout.
+pub fn fetch_latest_release_tag(timeout_secs: Option<u64>) -> Option<String> {
+    let mut args: Vec<String> = vec![
+        "-fsSL".into(),
+        "-H".into(),
+        "Accept: application/vnd.github+json".into(),
+        "-H".into(),
+        "User-Agent: vesta-release-check".into(),
+    ];
+    if let Some(t) = timeout_secs {
+        args.push("--connect-timeout".into());
+        args.push(t.to_string());
+        args.push("--max-time".into());
+        args.push(t.to_string());
+    }
+    args.push(GITHUB_RELEASES_LATEST_URL.into());
+
+    let output = std::process::Command::new("curl")
+        .args(&args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let body = String::from_utf8_lossy(&output.stdout);
+    let data: serde_json::Value = serde_json::from_str(&body).ok()?;
+    let tag = data.get("tag_name")?.as_str()?.trim().trim_start_matches('v');
+    if tag.is_empty() {
+        None
+    } else {
+        Some(tag.to_string())
+    }
+}

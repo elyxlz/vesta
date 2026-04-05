@@ -947,15 +947,17 @@ fn spawn_auto_backup_task(state: SharedState) {
 
 fn spawn_update_check_task(state: SharedState) {
     tokio::spawn(async move {
+        let mut last_notified: Option<String> = None;
         loop {
             let info_result = tokio::task::spawn_blocking(update_check::check_once).await;
             match info_result {
                 Ok(Ok(info)) => {
-                    if info.update_available {
+                    if info.update_available && last_notified.as_ref() != Some(&info.latest) {
                         eprintln!(
-                            "  \x1b[33mupdate available\x1b[0m: v{} → v{} (run `vestad update`)",
+                            "\nUpdate available: v{} → v{} (run 'vestad update')",
                             info.current, info.latest
                         );
+                        last_notified = Some(info.latest.clone());
                     }
                     let mut slot = state.update_info.lock().await;
                     *slot = Some(info);
