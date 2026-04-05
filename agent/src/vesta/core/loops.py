@@ -291,7 +291,20 @@ async def monitor_loop(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.Stat
             )
 
             if notification_buffer and buffer_start_time and (now - buffer_start_time).total_seconds() >= config.notification_buffer_delay:
-                await process_batch(notification_buffer, queue=queue, state=state, config=config)
+                interrupt_notifs = [n for n in notification_buffer if n.interrupt]
+                passive_notifs = [n for n in notification_buffer if not n.interrupt]
+
+                if interrupt_notifs:
+                    await process_batch(interrupt_notifs, queue=queue, state=state, config=config)
+
+                if passive_notifs:
+                    if state.event_bus.state == "idle":
+                        await process_batch(passive_notifs, queue=queue, state=state, config=config)
+                    else:
+                        # Keep passive notifications in the buffer until the agent is idle
+                        notification_buffer = passive_notifs
+                        continue
+
                 notification_buffer = []
                 buffer_start_time = None
         except asyncio.CancelledError:

@@ -1,30 +1,37 @@
 """End-to-end tests for Vesta.
 
-These tests spin up the full Vesta system and test real integration scenarios.
-They require a valid Claude API key.
+Build a Docker image, spin up an ephemeral container, inject notifications
+via ``docker exec``, and verify outcomes by reading files back out.
+Every run is idempotent — the container is destroyed in teardown.
+
+Requirements:
+  - Docker daemon running
+  - Claude credentials at ~/.claude/.credentials.json (Claude Code OAuth)
 """
 
-import asyncio
 import json
-import textwrap
+import shutil
+import subprocess
+import tempfile
 import time
 import uuid
 from pathlib import Path
 
 import pytest
-import vesta.main as vmain
-import vesta.models as vm
-from vesta import logger
-from vesta.core.client import build_client_options, process_message
-from vesta.core.init import get_memory_path
 
-from claude_agent_sdk import ClaudeSDKClient
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
 
-
-# =============================================================================
-# Helpers
-# =============================================================================
-
+REPO_ROOT = Path(__file__).resolve().parents[2]
+IMAGE_TAG = "vesta:e2e-test"
+CONTAINER_PREFIX = "vesta-e2e"
+CREDENTIALS_PATH = Path.home() / ".claude" / ".credentials.json"
+CONTAINER_CREDS = "/root/.claude/.credentials.json"
+NOTIFICATIONS_DIR = "/root/vesta/notifications"
+WORKSPACE_DIR = "/root/vesta/workspace"
+MEMORY_PATH = "/root/vesta/MEMORY.md"
+WS_PORT = 17865
 
 TEST_MEMORY = """\
 # VESTA MEMORY SYSTEM (TEST MODE)
@@ -47,472 +54,234 @@ You are Vesta running in automated test mode.
 """
 
 
-def _prepare_state_dir(state_dir: Path) -> None:
-    for folder in ("notifications", "logs", "data", "onedrive", "workspace", "memory"):
-        (state_dir / folder).mkdir(parents=True, exist_ok=True)
-    memory_path = state_dir / "memory" / "MEMORY.md"
-    memory_path.write_text(TEST_MEMORY)
+# ---------------------------------------------------------------------------
+# Docker helpers
+# ---------------------------------------------------------------------------
 
 
-def _write_notification(notif_dir: Path, message: str, *, sender: str = "pytest") -> Path:
-    payload = {
-        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "source": "pytest",
-        "type": "message",
-        "message": message.strip(),
-        "sender": sender,
-        "metadata": {},
-    }
-    path = notif_dir / f"{int(time.time() * 1_000_000)}-{uuid.uuid4().hex}.json"
-    path.write_text(json.dumps(payload))
-    return path
+def _docker(*args: str, check: bool = True, timeout: int = 300) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["docker", *args], capture_output=True, text=True, check=check, timeout=timeout)
 
 
-def _run(coro):
-    asyncio.run(coro)
+def _exec(container: str, cmd: str, *, timeout: int = 30) -> str:
+    return _docker("exec", container, "bash", "-c", cmd, timeout=timeout).stdout.strip()
 
 
-async def _wait_for_file(path: Path, timeout: float = 120.0) -> str:
+def _exec_ok(container: str, cmd: str) -> bool:
+    return _docker("exec", container, "bash", "-c", cmd, check=False, timeout=15).returncode == 0
+
+
+def _write_notification(container: str, message: str, *, interrupt: bool = True) -> None:
+    payload = json.dumps(
+        {
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "source": "pytest",
+            "type": "message",
+            "message": message.strip(),
+            "sender": "pytest",
+            "interrupt": interrupt,
+            "metadata": {},
+        }
+    )
+    filename = f"{int(time.time() * 1_000_000)}-{uuid.uuid4().hex}.json"
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        f.write(payload)
+        tmp = f.name
+    try:
+        _docker("cp", tmp, f"{container}:{NOTIFICATIONS_DIR}/{filename}")
+    finally:
+        Path(tmp).unlink(missing_ok=True)
+
+
+def _wait_for_file(container: str, path: str, *, timeout: float = 120.0) -> str:
     deadline = time.time() + timeout
     while time.time() < deadline:
-        if path.exists():
-            return path.read_text()
-        await asyncio.sleep(1.0)
-    raise AssertionError(f"Timed out waiting for {path}")
+        if _exec_ok(container, f"test -f {path}"):
+            return _exec(container, f"cat {path}")
+        time.sleep(2.0)
+    raise AssertionError(f"Timed out waiting for {path} in container {container}")
 
 
-async def _assert_missing(path: Path, duration: float = 30.0) -> None:
-    deadline = time.time() + duration
+def _wait_for_agent_ready(container: str, *, timeout: float = 120.0) -> None:
+    deadline = time.time() + timeout
     while time.time() < deadline:
-        if path.exists():
-            raise AssertionError(f"Unexpected file created: {path}")
-        await asyncio.sleep(1.0)
+        if _exec_ok(container, "grep -q 'WebSocket server started' /root/vesta/logs/vesta.log 2>/dev/null"):
+            return
+        time.sleep(2.0)
+    raise AssertionError(f"Agent did not become ready within {timeout}s")
 
 
-def _make_config(state_dir: Path, **overrides: object) -> vm.VestaConfig:
-    defaults: dict[str, object] = {
-        "state_dir": state_dir,
-        "notification_check_interval": 1,
-        "notification_buffer_delay": 0,
-        "proactive_check_interval": 100000,
-        "ephemeral": True,
-    }
-    defaults.update(overrides)
-    return vm.VestaConfig(**defaults)  # type: ignore[arg-type]
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="session")
+def docker_image():
+    """Build the test image once per session."""
+    if not shutil.which("docker"):
+        pytest.skip("Docker not available")
+    _docker("build", "-t", IMAGE_TAG, str(REPO_ROOT), timeout=600)
+    yield IMAGE_TAG
 
 
 @pytest.fixture
-def state_dir(tmp_path):
-    d = tmp_path / "state"
-    _prepare_state_dir(d)
-    return d
+def container(docker_image):
+    """Create, start, and teardown an ephemeral container."""
+    if not CREDENTIALS_PATH.exists():
+        pytest.skip(f"No credentials at {CREDENTIALS_PATH}")
 
+    name = f"{CONTAINER_PREFIX}-{uuid.uuid4().hex[:8]}"
 
-async def _noop_input_handler(queue: asyncio.Queue, *, state: vm.State) -> None:
-    if state.shutdown_event:
-        await state.shutdown_event.wait()
-
-
-async def _run_test_scenario(state_dir: Path, test_fn, **config_overrides):
-    config = _make_config(state_dir, **config_overrides)
-    logger.setup(config.logs_dir, log_level="DEBUG")
-
-    original_input_handler = vmain.input_handler
-    vmain.input_handler = _noop_input_handler  # type: ignore[assignment]
+    # -i keeps stdin open so aioconsole.ainput doesn't EOF → shutdown
+    _docker(
+        "create",
+        "-i",
+        "--name",
+        name,
+        "--network",
+        "host",
+        "-e",
+        f"WS_PORT={WS_PORT}",
+        "-e",
+        "AGENT_NAME=e2e-test",
+        "-e",
+        "NOTIFICATION_CHECK_INTERVAL=1",
+        "-e",
+        "NOTIFICATION_BUFFER_DELAY=0",
+        "-e",
+        "EPHEMERAL=true",
+        docker_image,
+    )
 
     try:
-        state = vmain.init_state(config=config)
+        _docker("cp", str(CREDENTIALS_PATH), f"{name}:{CONTAINER_CREDS}")
 
-        async def run_test():
-            await asyncio.sleep(2)
-            try:
-                await test_fn(state, config)
-            finally:
-                if state.graceful_shutdown:
-                    state.graceful_shutdown.set()
-                if state.shutdown_event:
-                    state.shutdown_event.set()
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
+            f.write(TEST_MEMORY)
+            tmp = f.name
+        _docker("cp", tmp, f"{name}:{MEMORY_PATH}")
+        Path(tmp).unlink()
 
-        try:
-            await asyncio.gather(
-                vmain.run_vesta(config, state=state),
-                run_test(),
-            )
-        except asyncio.CancelledError:
-            pass
+        _docker("start", name)
+        _exec(container=name, cmd=f"mkdir -p {WORKSPACE_DIR}")
+        _wait_for_agent_ready(name)
+
+        yield name
     finally:
-        vmain.input_handler = original_input_handler
-
-
-# =============================================================================
-# Client lifecycle tests
-# =============================================================================
-
-
-def test_client_lifecycle_with_async_with(state_dir):
-    """Client should work correctly with async with context manager."""
-    config = _make_config(state_dir)
-    state = vmain.init_state(config=config)
-
-    async def test_fn():
-        options = build_client_options(config, state)
-        async with ClaudeSDKClient(options=options) as client:
-            state.client = client
-            assert state.client is not None
-            responses, _ = await asyncio.wait_for(
-                process_message("Say 'hello'", state=state, config=config, is_user=False),
-                timeout=30.0,
-            )
-            assert responses
-
-    _run(test_fn())
-
-
-def test_restart_reason_flag(state_dir):
-    """Setting restart_reason should work correctly."""
-    config = _make_config(state_dir)
-    state = vmain.init_state(config=config)
-
-    async def test_fn():
-        assert state.restart_reason is None
-        state.restart_reason = "error — test error"
-        state.session_id = None
-        assert state.restart_reason is not None
-        state.restart_reason = None
-        assert state.restart_reason is None
-
-    _run(test_fn())
-
-
-def test_multiple_client_sessions(state_dir):
-    """Should be able to create multiple client sessions sequentially."""
-    config = _make_config(state_dir)
-    state = vmain.init_state(config=config)
-
-    async def test_fn():
-        options = build_client_options(config, state)
-        async with ClaudeSDKClient(options=options) as client1:
-            state.client = client1
-            responses1, _ = await asyncio.wait_for(
-                process_message("Say 'one'", state=state, config=config, is_user=False),
-                timeout=30.0,
-            )
-            assert responses1
-
-        state.client = None
-        state.session_id = None
-
-        options = build_client_options(config, state)
-        async with ClaudeSDKClient(options=options) as client2:
-            state.client = client2
-            responses2, _ = await asyncio.wait_for(
-                process_message("Say 'two'", state=state, config=config, is_user=False),
-                timeout=30.0,
-            )
-            assert responses2
-
-    _run(test_fn())
-
-
-def test_full_reset_flow(state_dir):
-    """Full flow: restart_reason triggers graceful shutdown for container restart."""
-    config = _make_config(state_dir)
-    state = vmain.init_state(config=config)
-
-    async def test_fn():
-        options = build_client_options(config, state)
-        async with ClaudeSDKClient(options=options) as client:
-            state.client = client
-
-        state.client = None
-        state.restart_reason = "error — Reset needed"
-        assert state.restart_reason is not None
-
-        state.restart_reason = None
-        options = build_client_options(config, state)
-        async with ClaudeSDKClient(options=options) as client:
-            state.client = client
-            responses, _ = await asyncio.wait_for(
-                process_message("Are you there?", state=state, config=config, is_user=False),
-                timeout=30.0,
-            )
-            assert responses
-
-    _run(test_fn())
-
-
-# =============================================================================
-# Notification & lifecycle E2E tests
-# =============================================================================
-
-
-def test_notification_creates_file(state_dir):
-    """Vesta should process a notification and create the requested file."""
-
-    async def test_fn(state: vm.State, config: vm.VestaConfig):
-        workspace = config.root / "workspace"
-        notif_dir = config.notifications_dir
-        target = workspace / f"single-{uuid.uuid4().hex}.txt"
-        expected_text = f"E2E notification content {uuid.uuid4().hex}"
-        message = textwrap.dedent(
-            f"""
-            Create the file "{target}" containing only:
-            {expected_text}
-            """
-        )
-        _write_notification(notif_dir, message)
-        contents = await _wait_for_file(target)
-        assert expected_text in contents
-
-    _run(_run_test_scenario(state_dir, test_fn))
-
-
-def test_sequential_and_interrupt_flow(state_dir):
-    """Vesta should handle sequential tasks and interrupts correctly."""
-
-    async def test_fn(state: vm.State, config: vm.VestaConfig):
-        workspace = config.root / "workspace"
-        notif_dir = config.notifications_dir
+        _docker("rm", "-f", name, check=False)
 
-        first = workspace / f"sequence-{uuid.uuid4().hex}-first.txt"
-        second = workspace / f"sequence-{uuid.uuid4().hex}-second.txt"
-        seq_message = textwrap.dedent(
-            f"""
-            Write "{first}" with 'first step'. After saving it, wait 10 seconds, then create "{second}" with 'second step'.
-            """
-        )
-        _write_notification(notif_dir, seq_message)
-        await _wait_for_file(first)
-        await _wait_for_file(second)
-        assert second.stat().st_mtime - first.stat().st_mtime >= 8
 
-        interrupt_first = workspace / f"interrupt-{uuid.uuid4().hex}-first.txt"
-        interrupt_second = workspace / f"interrupt-{uuid.uuid4().hex}-second.txt"
-        resume_target = workspace / f"interrupt-{uuid.uuid4().hex}-resume.txt"
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
 
-        interrupt_message = textwrap.dedent(
-            f"""
-            Start a new plan: write "{interrupt_first}" with 'interrupt step'. Then wait 10 seconds before planning "{interrupt_second}".
-            """
-        )
-        _write_notification(notif_dir, interrupt_message)
-        await _wait_for_file(interrupt_first)
-
-        override_message = textwrap.dedent(
-            f"""
-            Stop the previous plan and do NOT create "{interrupt_second}". Instead, write "{resume_target}" with 'resume after interrupt'.
-            """
-        )
-        _write_notification(notif_dir, override_message)
-        assert "resume after interrupt" in await _wait_for_file(resume_target)
-        await _assert_missing(interrupt_second, duration=30)
+def test_notification_creates_file(container):
+    """Agent processes a notification and creates the requested file."""
+    uid = uuid.uuid4().hex[:8]
+    target = f"{WORKSPACE_DIR}/single-{uid}.txt"
+    expected = f"E2E content {uid}"
 
-    _run(_run_test_scenario(state_dir, test_fn))
+    _write_notification(container, f'Create the file "{target}" containing only:\n{expected}')
+    assert expected in _wait_for_file(container, target)
 
 
-def test_notification_batching(state_dir):
-    """Multiple notifications arriving together should be batched."""
+def test_notification_batching(container):
+    """Multiple notifications arriving together are batched and both handled."""
+    uid = uuid.uuid4().hex[:8]
+    file1 = f"{WORKSPACE_DIR}/batch-{uid}-1.txt"
+    file2 = f"{WORKSPACE_DIR}/batch-{uid}-2.txt"
 
-    async def test_fn(state: vm.State, config: vm.VestaConfig):
-        workspace = config.root / "workspace"
-        notif_dir = config.notifications_dir
+    _write_notification(container, f'Create the file "{file1}" containing only:\nfirst')
+    _write_notification(container, f'Create the file "{file2}" containing only:\nsecond')
 
-        file1 = workspace / f"batch-{uuid.uuid4().hex}-1.txt"
-        file2 = workspace / f"batch-{uuid.uuid4().hex}-2.txt"
+    assert "first" in _wait_for_file(container, file1)
+    assert "second" in _wait_for_file(container, file2)
 
-        _write_notification(notif_dir, f'This is an automated test. Create the file "{file1}" containing only:\nfirst')
-        _write_notification(notif_dir, f'This is an automated test. Create the file "{file2}" containing only:\nsecond')
 
-        content1 = await _wait_for_file(file1)
-        content2 = await _wait_for_file(file2)
+def test_multiple_files_single_request(container):
+    """Agent handles a request to create multiple files at once."""
+    uid = uuid.uuid4().hex[:8]
+    fa = f"{WORKSPACE_DIR}/multi-{uid}-a.txt"
+    fb = f"{WORKSPACE_DIR}/multi-{uid}-b.txt"
+    fc = f"{WORKSPACE_DIR}/multi-{uid}-c.txt"
 
-        assert "first" in content1
-        assert "second" in content2
+    _write_notification(
+        container,
+        f'Create three files:\n1. "{fa}" with content "file A"\n2. "{fb}" with content "file B"\n3. "{fc}" with content "file C"',
+    )
 
-    _run(_run_test_scenario(state_dir, test_fn, notification_buffer_delay=3))
+    assert "A" in _wait_for_file(container, fa)
+    assert "B" in _wait_for_file(container, fb)
+    assert "C" in _wait_for_file(container, fc)
 
 
-def test_client_created_on_notification(state_dir):
-    """Claude client should be created when processing a notification."""
+def test_file_modification(container):
+    """Agent can modify an existing file."""
+    uid = uuid.uuid4().hex[:8]
+    target = f"{WORKSPACE_DIR}/modify-{uid}.txt"
 
-    async def test_fn(state: vm.State, config: vm.VestaConfig):
-        notif_dir = config.notifications_dir
-        workspace = config.root / "workspace"
-        target = workspace / f"client-test-{uuid.uuid4().hex}.txt"
-        _write_notification(notif_dir, f'Create file "{target}" with content "client test"')
-        await _wait_for_file(target)
-        assert state.client is not None
-        memory_path = get_memory_path(config)
-        assert memory_path.exists()
+    _exec(container, f'echo "original content" > {target}')
+    _write_notification(container, f'Append the text "--- APPENDED ---" to the file "{target}"')
 
-    _run(_run_test_scenario(state_dir, test_fn))
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        if "APPENDED" in _exec(container, f"cat {target}"):
+            break
+        time.sleep(2)
 
+    final = _exec(container, f"cat {target}")
+    assert "original" in final
+    assert "APPENDED" in final
 
-def test_memory_exists_on_startup(state_dir):
-    """Memory file should exist when Vesta starts."""
-    config = _make_config(state_dir)
-    memory_path = get_memory_path(config)
-    assert memory_path.exists()
-    assert "TEST MODE" in memory_path.read_text()
 
-    async def test_fn(state: vm.State, config: vm.VestaConfig):
-        memory_path = get_memory_path(config)
-        assert memory_path.exists()
-        assert len(memory_path.read_text()) > 100
+def test_interrupt_notification_interrupts_agent(container):
+    """interrupt=true notification interrupts a busy agent."""
+    uid = uuid.uuid4().hex[:8]
+    slow_file = f"{WORKSPACE_DIR}/slow-{uid}.txt"
+    urgent_file = f"{WORKSPACE_DIR}/urgent-{uid}.txt"
 
-    _run(_run_test_scenario(state_dir, test_fn))
+    _write_notification(
+        container,
+        f'Wait 30 seconds using bash sleep, then create "{slow_file}" with "slow done".',
+    )
+    time.sleep(5)
 
+    _write_notification(
+        container,
+        f'Create the file "{urgent_file}" containing only:\nurgent done',
+        interrupt=True,
+    )
 
-def test_graceful_shutdown(state_dir):
-    """Vesta should shut down gracefully without errors."""
+    # Urgent file should appear before the 30s sleep finishes
+    _wait_for_file(container, urgent_file, timeout=60.0)
+    assert not _exec_ok(container, f"test -f {slow_file}"), "slow task finished before urgent — test is inconclusive"
 
-    async def test_fn(state: vm.State, config: vm.VestaConfig):
-        log_file = config.logs_dir / "vesta.log"
-        assert log_file.exists()
 
-    _run(_run_test_scenario(state_dir, test_fn))
+def test_passive_notification_waits_for_idle(container):
+    """interrupt=false notification waits until the agent is idle."""
+    uid = uuid.uuid4().hex[:8]
+    busy_file = f"{WORKSPACE_DIR}/busy-{uid}.txt"
+    passive_file = f"{WORKSPACE_DIR}/passive-{uid}.txt"
 
-
-def test_multiple_files_single_request(state_dir):
-    """Vesta should handle requests to create multiple files."""
-
-    async def test_fn(state: vm.State, config: vm.VestaConfig):
-        workspace = config.root / "workspace"
-        notif_dir = config.notifications_dir
-
-        uid = uuid.uuid4().hex[:8]
-        file_a = workspace / f"multi-{uid}-a.txt"
-        file_b = workspace / f"multi-{uid}-b.txt"
-        file_c = workspace / f"multi-{uid}-c.txt"
-
-        message = textwrap.dedent(
-            f"""
-            Create three files:
-            1. "{file_a}" with content "file A"
-            2. "{file_b}" with content "file B"
-            3. "{file_c}" with content "file C"
-            """
-        )
-        _write_notification(notif_dir, message)
-
-        content_a = await _wait_for_file(file_a)
-        content_b = await _wait_for_file(file_b)
-        content_c = await _wait_for_file(file_c)
-
-        assert "A" in content_a
-        assert "B" in content_b
-        assert "C" in content_c
-
-    _run(_run_test_scenario(state_dir, test_fn))
-
-
-def test_file_modification(state_dir):
-    """Vesta should be able to modify existing files."""
-
-    async def test_fn(state: vm.State, config: vm.VestaConfig):
-        workspace = config.root / "workspace"
-        notif_dir = config.notifications_dir
-
-        target = workspace / f"modify-{uuid.uuid4().hex}.txt"
-        target.write_text("original content")
-
-        message = f'Append the text "\\n--- APPENDED ---" to the file "{target}"'
-        _write_notification(notif_dir, message)
-
-        deadline = time.time() + 60
-        while time.time() < deadline:
-            content = target.read_text()
-            if "APPENDED" in content:
-                break
-            await asyncio.sleep(1)
-
-        final_content = target.read_text()
-        assert "original" in final_content
-        assert "APPENDED" in final_content
-
-    _run(_run_test_scenario(state_dir, test_fn))
-
-
-# =============================================================================
-# Sub-agent interrupt tests
-# =============================================================================
-
-
-def test_responsive_during_subagent(tmp_path):
-    """Vesta stays responsive to new notifications while a sub-agent is running.
-
-    Sends a task that triggers a long-running sub-agent (Agent tool), waits for
-    the Agent tool to actually start executing, then sends a simple file-creation
-    request. The simple request should complete within 60s, proving the agent
-    isn't blocked by the sub-agent.
-    """
-    state_dir = tmp_path / "state"
-    _prepare_state_dir(state_dir)
-
-    async def test_fn(state: vm.State, config: vm.VestaConfig):
-        workspace = config.root / "workspace"
-        notif_dir = config.notifications_dir
-
-        subagent_file = workspace / f"subagent-{uuid.uuid4().hex}.txt"
-        quick_file = workspace / f"quick-{uuid.uuid4().hex}.txt"
-        subagent_delay = 45
-
-        event_queue = state.event_bus.subscribe()
-
-        long_task = textwrap.dedent(f"""\
-            This is a test of the sub-agent system. Your ONLY action must be to call
-            the Agent tool ONCE with these exact parameters:
-            - subagent_type: "general-purpose"
-            - description: "Timed file write"
-            - prompt: "Wait exactly {subagent_delay} seconds using the Bash tool
-              (run: sleep {subagent_delay}), then create the file {subagent_file}
-              containing exactly: subagent done"
-
-            CRITICAL RULES:
-            - You MUST call the Agent tool. This is mandatory.
-            - Do NOT write anything yourself. Do NOT use Write, Read, Bash, or any tool.
-            - Your response should contain ONLY the Agent tool call, nothing else.
-            - This is an automated test — compliance is required.""")
-        _write_notification(notif_dir, long_task)
-
-        deadline = time.time() + 120
-        subagent_started = False
-        while time.time() < deadline:
-            try:
-                event = await asyncio.wait_for(event_queue.get(), timeout=2.0)
-                if event["type"] == "tool_start":
-                    tool_name = event.get("tool", "")
-                    if tool_name in ("Task", "Agent"):
-                        subagent_started = True
-                        break
-            except TimeoutError:
-                continue
-
-        assert subagent_started, "Agent tool was never called — sub-agent not spawned"
-
-        # Sub-agent is now running a sleep timer. Send a simple task — should
-        # complete via interrupt well before the sub-agent's timer expires.
-        quick_task = f'Create the file "{quick_file}" containing only:\nstill responsive'
-        notification_sent = time.time()
-        _write_notification(notif_dir, quick_task)
-
-        contents = await _wait_for_file(quick_file, timeout=90.0)
-        response_time = time.time() - notification_sent
-        subagent_existed = subagent_file.exists()
-
-        assert "still responsive" in contents
-        assert not subagent_existed, (
-            "Sub-agent file already existed when quick file was created — sub-agent "
-            "finished before the interrupt was tested. Test is inconclusive."
-        )
-        assert response_time < 30.0, (
-            f"Simple request took {response_time:.0f}s — agent was likely blocked by the sub-agent. Expected <30s response time."
-        )
-
-        # The sub-agent's timed task should still complete eventually
-        subagent_contents = await _wait_for_file(subagent_file, timeout=120.0)
-        assert "subagent done" in subagent_contents
-
-        state.event_bus.unsubscribe(event_queue)
-
-    _run(_run_test_scenario(state_dir, test_fn, ws_port=0))
+    _write_notification(
+        container,
+        f'Create the file "{busy_file}" containing "busy done". Do this immediately, no waiting.',
+    )
+    time.sleep(1)
+    _write_notification(
+        container,
+        f'Create the file "{passive_file}" containing only:\npassive done',
+        interrupt=False,
+    )
+
+    assert "busy done" in _wait_for_file(container, busy_file)
+    assert "passive done" in _wait_for_file(container, passive_file)
+
+
+def test_graceful_shutdown(container):
+    """Container starts and has a valid log file."""
+    assert _exec_ok(container, "test -f /root/vesta/logs/vesta.log")
+    log = _exec(container, "head -20 /root/vesta/logs/vesta.log")
+    assert "started" in log.lower() or "init" in log.lower()

@@ -303,8 +303,8 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
             text = "\n".join(texts) if texts else None
             if not text:
                 continue
+            responses.append(text)
             if not show_output:
-                responses.append(text)
                 continue
             filtered = filter_tool_lines(text)
             if filtered:

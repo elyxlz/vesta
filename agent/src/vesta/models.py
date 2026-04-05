@@ -33,9 +33,10 @@ class Notification(pyd.BaseModel):
     timestamp: dt.datetime
     source: str
     type: str
+    interrupt: bool = pyd.Field(default=True, exclude=True)
     file_path: str | None = pyd.Field(default=None, exclude=True)
 
     def format_for_display(self) -> str:
-        data = self.model_dump(exclude={"file_path", "type", "source"})
+        data = self.model_dump(exclude={"file_path", "type", "source", "interrupt"})
         parts = [f"{k}={v}" for k, v in data.items() if v is not None]
         return f"[{self.type} from {self.source}] {', '.join(parts)}"
