@@ -14,10 +14,11 @@ description: Self-improvement and memory curation. Used by the nightly dreamer, 
 
 ## Order of operations
 
-1. **Self-improvement** — retrospective, review, fix, validate, upstream sync
-2. **User State** — update the snapshot in MEMORY.md
-3. **Memory curation** — prune, consolidate, move things out
-4. **Summary** — write tonight's dreamer summary
+1. **Read today's nap summaries** — load all files from `~/vesta/data/nap_summaries/` dated today. These contain structured session knowledge from mid-day context resets. Use them as primary source material alongside the live conversation.
+2. **Self-improvement** — retrospective, review, fix, validate, upstream sync
+3. **User State** — update the snapshot in MEMORY.md
+4. **Memory curation** — prune, consolidate, move things out
+5. **Summary** — write tonight's dreamer summary
 
 ## Self-Improvement
 

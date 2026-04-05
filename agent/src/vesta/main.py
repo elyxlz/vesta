@@ -3,6 +3,7 @@
 import asyncio
 import datetime as dt
 import errno
+import json
 import os
 import signal
 import types
@@ -61,6 +62,101 @@ def _make_signal_handler(state: vm.State, *, allow_force_exit: bool = False) -> 
     return handler
 
 
+async def context_monitor(
+    state: vm.State, config: vm.VestaConfig, queue: asyncio.Queue[tuple[str, bool]]
+) -> None:
+    """Periodically check SDK context usage and log it.
+
+    Nap escalation (requires nap + transcript skills):
+    - At 50%+: inject a system message asking the agent to request a nap every 5 minutes.
+    - At 80%+: inject a system message telling the agent to nap immediately.
+    """
+    INTERVAL = 600  # 10 minutes — normal reporting interval
+    NAP_ASK_INTERVAL = 300  # 5 minutes — re-ask interval once over threshold
+    NAP_ASK_THRESHOLD = 50.0
+    NAP_FORCE_THRESHOLD = 80.0
+    nap_asking = False
+    nap_forced = False
+
+    try:
+        while not state.shutdown_event.is_set():
+            interval = NAP_ASK_INTERVAL if nap_asking else INTERVAL
+            try:
+                await asyncio.wait_for(state.shutdown_event.wait(), timeout=interval)
+                break
+            except asyncio.TimeoutError:
+                pass
+
+            client = state.client
+            if not client:
+                continue
+
+            try:
+                usage = await client.get_context_usage()
+                total = usage.get("totalTokens", 0)
+                max_tok = usage.get("maxTokens", 1)
+                pct = usage.get("percentage", total / max_tok * 100 if max_tok else 0)
+                auto_threshold = usage.get("autoCompactThreshold", 0)
+                model = usage.get("model", "unknown")
+
+                categories = usage.get("categories", [])
+                cat_parts = []
+                for cat in sorted(categories, key=lambda c: c.get("tokens", 0), reverse=True):
+                    name = cat.get("name", "?")
+                    tokens = cat.get("tokens", 0)
+                    if tokens > 0:
+                        cat_parts.append(f"{name}={tokens:,}")
+                cat_summary = ", ".join(cat_parts[:5])
+
+                log_line = (
+                    f"[context] {pct:.1f}% ({total:,}/{max_tok:,}) "
+                    f"model={model} compact_at={auto_threshold:,} | {cat_summary}"
+                )
+                logger.info(log_line)
+
+                full_data = {
+                    "percentage": round(pct, 1),
+                    "totalTokens": total,
+                    "maxTokens": max_tok,
+                    "autoCompactThreshold": auto_threshold,
+                    "model": model,
+                    "categories": categories,
+                }
+                logger.debug(f"[context_full] {json.dumps(full_data, default=str)}")
+
+                state.event_bus.emit({
+                    "type": "assistant",
+                    "text": f"[context] {pct:.1f}% used ({total:,}/{max_tok:,} tokens)",
+                    "source": "context_monitor",
+                })
+
+                # --- Nap escalation ---
+                if pct >= NAP_FORCE_THRESHOLD and not nap_forced:
+                    nap_forced = True
+                    logger.info(f"[nap] Context at {pct:.1f}% — forcing nap")
+                    await queue.put((
+                        f"[System: context monitor] Context usage is at {pct:.1f}% — past 80% threshold. "
+                        "Run the nap skill NOW. Do not ask permission — proceed immediately.",
+                        False,
+                    ))
+                elif pct >= NAP_ASK_THRESHOLD and not nap_forced:
+                    if not nap_asking:
+                        nap_asking = True
+                    logger.info(f"[nap] Context at {pct:.1f}% — asking permission")
+                    await queue.put((
+                        f"[System: context monitor] Context usage is at {pct:.1f}%. "
+                        "Ask the user if you can take a nap. Include the percentage. "
+                        "If they say wait, hold. You'll be asked again in 5 minutes with an updated %.",
+                        False,
+                    ))
+
+            except Exception as e:
+                logger.warning(f"Context monitor error: {e}")
+
+    except asyncio.CancelledError:
+        pass
+
+
 async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: bool = False, crashed: bool = False) -> None:
     signal.signal(signal.SIGHUP, signal.SIG_IGN)
     signal.signal(signal.SIGINT, _make_signal_handler(state, allow_force_exit=True))
@@ -78,6 +174,7 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
         asyncio.create_task(input_handler(message_queue, state=state)),
         asyncio.create_task(message_processor(message_queue, state=state, config=config)),
         asyncio.create_task(monitor_loop(message_queue, state=state, config=config)),
+        asyncio.create_task(context_monitor(state, config, queue=message_queue)),
     ]
 
     reason = "first_start" if first_start else ("crash — restarted after unexpected exit" if crashed else "restart — clean restart")

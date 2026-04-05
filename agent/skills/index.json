@@ -20,6 +20,10 @@
     "description": "This skill should be used when the user asks about \"email\", \"emails\", \"inbox\", \"messages\", \"calendar\", \"schedule\", \"scheduling\", \"meetings\", \"appointments\", \"events\", \"outlook\", or needs to read/send emails, manage calendar events, or handle time-based tasks via Microsoft/Outlook. Requires a background daemon."
   },
   {
+    "name": "nap",
+    "description": "Mid-session context reset with memory preservation. Extracts, compresses, and summarizes the session transcript, then triggers a full dreamer cycle and restart."
+  },
+  {
     "name": "onedrive",
     "description": "This skill should be used when the user asks about \"OneDrive\", \"cloud files\", \"sync files\", \"mount drive\", or needs to access, mount, or manage OneDrive cloud storage."
   },
@@ -34,6 +38,10 @@
   {
     "name": "tasks",
     "description": "This skill should be used when the user asks about \"tasks\", \"to-do\", \"todo\", \"task list\", or needs to create, manage, track, or organize tasks and to-do items. Everything actionable becomes a task immediately. All work, progress, drafts go in task metadata. Requires a background daemon."
+  },
+  {
+    "name": "transcript",
+    "description": "Extract and compress SDK session messages into a portable transcript for nap/dreamer handoff."
   },
   {
     "name": "upstream",
