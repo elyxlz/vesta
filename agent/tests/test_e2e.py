@@ -72,15 +72,17 @@ def _exec_ok(container: str, cmd: str) -> bool:
 
 
 def _write_notification(container: str, message: str, *, interrupt: bool = True) -> None:
-    payload = json.dumps({
-        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "source": "pytest",
-        "type": "message",
-        "message": message.strip(),
-        "sender": "pytest",
-        "interrupt": interrupt,
-        "metadata": {},
-    })
+    payload = json.dumps(
+        {
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "source": "pytest",
+            "type": "message",
+            "message": message.strip(),
+            "sender": "pytest",
+            "interrupt": interrupt,
+            "metadata": {},
+        }
+    )
     filename = f"{int(time.time() * 1_000_000)}-{uuid.uuid4().hex}.json"
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
         f.write(payload)
@@ -133,14 +135,22 @@ def container(docker_image):
 
     # -i keeps stdin open so aioconsole.ainput doesn't EOF → shutdown
     _docker(
-        "create", "-i",
-        "--name", name,
-        "--network", "host",
-        "-e", f"WS_PORT={WS_PORT}",
-        "-e", "AGENT_NAME=e2e-test",
-        "-e", "NOTIFICATION_CHECK_INTERVAL=1",
-        "-e", "NOTIFICATION_BUFFER_DELAY=0",
-        "-e", "EPHEMERAL=true",
+        "create",
+        "-i",
+        "--name",
+        name,
+        "--network",
+        "host",
+        "-e",
+        f"WS_PORT={WS_PORT}",
+        "-e",
+        "AGENT_NAME=e2e-test",
+        "-e",
+        "NOTIFICATION_CHECK_INTERVAL=1",
+        "-e",
+        "NOTIFICATION_BUFFER_DELAY=0",
+        "-e",
+        "EPHEMERAL=true",
         docker_image,
     )
 
