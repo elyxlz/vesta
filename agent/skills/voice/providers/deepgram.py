@@ -6,7 +6,9 @@ import typing as tp
 import aiohttp
 from aiohttp import web
 
-from vesta import logger
+import logging
+
+logger = logging.getLogger("voice.deepgram")
 
 DEEPGRAM_API = "https://api.deepgram.com"
 DEEPGRAM_WS = "wss://api.deepgram.com"

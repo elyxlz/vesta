@@ -1,32 +1,25 @@
-"""Agent HTTP/WS server: core routes + skill endpoints.
+"""Agent HTTP/WS server: core routes + skill server proxy.
 
 The main aiohttp server exposes:
   - GET  /ws           internals event-bus monitor (CLI/admin, broad filter)
   - WS   /ws/chat      user ↔ LLM bidirectional chat channel
   - GET  /history      paginated chat event history
-  - skill endpoints listed in SKILL_ENDPOINTS (one row per exposed function)
+  - /{skill}/*         reverse-proxied to skill HTTP servers (see skill_server.py)
 
-When a skill exposes HTTP functions, append one tuple per endpoint to
-SKILL_ENDPOINTS below: (METHOD, PATH, "module.path:func_name"). The skill's
-package is imported from config.skills_dir at startup.
+When a skill runs its own HTTP server, append one tuple to SKILL_SERVERS in
+skill_server.py: (SKILL_NAME, PORT). The proxy strips the /{skill_name}
+prefix and forwards to localhost:{port}.
 """
 
 import asyncio
-import importlib
 import json
-import sys
 
 from aiohttp import web
 
 import vesta.models as vm
 from vesta import logger
 from vesta.events import CHAT_TYPES, INTERNALS_TYPES, EventBus, HistoryEvent, VestaEvent
-
-# Skill HTTP endpoints. Append one row per function a skill wants reachable
-# over HTTP. Format: (METHOD, PATH, "module:function"). Module is resolved
-# against config.skills_dir (added to sys.path at startup). WebSocket
-# handlers register as GET. Rows that fail to import are logged and skipped.
-SKILL_ENDPOINTS: list[tuple[str, str, str]] = []
+from vesta.skill_server import wire_skill_proxies
 
 
 async def ws_handler(request: web.Request, channel: str, filter_types: frozenset[str]) -> web.WebSocketResponse:
@@ -132,30 +125,6 @@ async def _history_handler(request: web.Request) -> web.Response:
     return web.json_response({"events": events, "cursor": next_cursor})
 
 
-def _wire_skill_endpoints(app: web.Application, config: vm.VestaConfig) -> None:
-    """Register every row in SKILL_ENDPOINTS. Adds config.skills_dir to
-    sys.path so each skill dir becomes a top-level importable package.
-    Rows that fail to import/resolve are logged and skipped — one broken
-    skill cannot prevent the server from starting."""
-    skills_dir = str(config.skills_dir)
-    if skills_dir not in sys.path:
-        sys.path.insert(0, skills_dir)
-    for method, path, target in SKILL_ENDPOINTS:
-        try:
-            module_name, func_name = target.split(":", 1)
-        except ValueError:
-            logger.error(f"skill endpoint {method} {path}: bad target '{target}' (expected 'module:func')")
-            continue
-        try:
-            module = importlib.import_module(module_name)
-            handler = getattr(module, func_name)
-        except Exception as e:
-            logger.error(f"skill endpoint {method} {path} -> {target} failed to load: {e}")
-            continue
-        app.router.add_route(method, path, handler)
-        logger.startup(f"wired skill endpoint {method} {path} -> {target}")
-
-
 async def start_ws_server(
     event_bus: EventBus,
     message_queue: asyncio.Queue[tuple[str, bool]],
@@ -173,7 +142,8 @@ async def start_ws_server(
     app.router.add_get("/ws/chat", _chat_handler)
     app.router.add_get("/history", _history_handler)
 
-    _wire_skill_endpoints(app, config)
+    # Skill server proxies (catch-all — must be registered after core routes)
+    wire_skill_proxies(app)
 
     runner = web.AppRunner(app)
     await runner.setup()
