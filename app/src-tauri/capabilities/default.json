@@ -19,6 +19,7 @@
     "dialog:allow-save",
     "dialog:allow-open",
     "updater:default",
-    "opener:default"
+    "opener:default",
+    "store:default"
   ]
 }
