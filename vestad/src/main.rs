@@ -35,6 +35,8 @@ enum Command {
         #[command(subcommand)]
         action: TunnelAction,
     },
+    /// Print host URL and API key for client connections
+    Info,
     /// Update vestad to the latest version
     Update,
 }
@@ -187,6 +189,30 @@ fn main() {
                         .unwrap_or_else(|e| die(e));
                 }
             }
+        }
+
+        Command::Info => {
+            let config = config_dir();
+
+            let api_key = match std::fs::read_to_string(config.join("api-key")) {
+                Ok(k) if !k.trim().is_empty() => k.trim().to_string(),
+                _ => die("no API key found — has vestad been started?"),
+            };
+
+            let host = if let Some(tc) = tunnel::get_tunnel_config(&config) {
+                format!("https://{}", tc.hostname)
+            } else {
+                let port = match std::fs::read_to_string(config.join("port")) {
+                    Ok(p) => p.trim().to_string(),
+                    _ => die("no port file found — is vestad running?"),
+                };
+                format!("https://localhost:{}", port)
+            };
+
+            eprintln!();
+            eprintln!("  \x1b[36mhost\x1b[0m  \x1b[1m{}\x1b[0m", host);
+            eprintln!("  \x1b[36mkey\x1b[0m   \x1b[33m{}\x1b[0m", api_key);
+            eprintln!();
         }
 
         Command::Update => {

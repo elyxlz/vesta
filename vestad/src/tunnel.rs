@@ -19,12 +19,18 @@ struct CloudflareEnv {
 }
 
 fn cf_env() -> Result<CloudflareEnv, String> {
-    let api_token = std::env::var("CLOUDFLARE_API_TOKEN")
-        .map_err(|_| "CLOUDFLARE_API_TOKEN env var not set")?;
-    let account_id = std::env::var("CLOUDFLARE_ACCOUNT_ID")
-        .map_err(|_| "CLOUDFLARE_ACCOUNT_ID env var not set")?;
-    let zone_id = std::env::var("CLOUDFLARE_ZONE_ID")
-        .map_err(|_| "CLOUDFLARE_ZONE_ID env var not set")?;
+    let api_token = option_env!("CLOUDFLARE_API_TOKEN")
+        .map(String::from)
+        .or_else(|| std::env::var("CLOUDFLARE_API_TOKEN").ok())
+        .ok_or("CLOUDFLARE_API_TOKEN not set (build-time or env)")?;
+    let account_id = option_env!("CLOUDFLARE_ACCOUNT_ID")
+        .map(String::from)
+        .or_else(|| std::env::var("CLOUDFLARE_ACCOUNT_ID").ok())
+        .ok_or("CLOUDFLARE_ACCOUNT_ID not set (build-time or env)")?;
+    let zone_id = option_env!("CLOUDFLARE_ZONE_ID")
+        .map(String::from)
+        .or_else(|| std::env::var("CLOUDFLARE_ZONE_ID").ok())
+        .ok_or("CLOUDFLARE_ZONE_ID not set (build-time or env)")?;
     Ok(CloudflareEnv { api_token, account_id, zone_id })
 }
 
