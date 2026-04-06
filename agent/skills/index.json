@@ -1,5 +1,9 @@
 [
   {
+    "name": "app-chat",
+    "description": "This skill handles messages from the Vesta app (desktop/web). When a user sends a message through the Vesta app, it arrives as a notification. Reply using the `app-chat` CLI. Requires a background daemon."
+  },
+  {
     "name": "browser",
     "description": "Use for \"browse\", \"open a website\", \"navigate to\", \"click\", \"fill form\","
   },

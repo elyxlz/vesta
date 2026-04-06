@@ -36,7 +36,7 @@ This skill turns on the microphone button and "read responses aloud" toggle in t
    ```bash
    uv run ~/vesta/skills/voice/scripts/voice_keys.py set-key --domain stt --provider deepgram --key <key>
    ```
-5. **Confirm via `chat_reply`** — e.g. "STT set up with Deepgram. Mic button should work now." The UI picks up changes on its next fetch.
+5. **Confirm to the user** — e.g. "STT set up with Deepgram. Mic button should work now." The UI picks up changes on its next fetch.
 
 ## Commands
 

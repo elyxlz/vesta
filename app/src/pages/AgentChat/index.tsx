@@ -17,7 +17,7 @@ export function AgentChat() {
 
   return (
     <div className="h-full relative">
-      <div className="absolute top-0 left-0 right-0 z-10 px-3 sm:px-5 pointer-events-none">
+      <div className="absolute top-0 left-0 right-0 z-10 bg-background px-3 sm:px-5 pointer-events-none">
         <div className="pointer-events-auto">
           <Navbar
             center={<AgentIsland {...island} />}

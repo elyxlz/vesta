@@ -60,10 +60,6 @@ class VestaConfig(pyd_settings.BaseSettings):
         return self.root / "prompts"
 
     @property
-    def history_db(self) -> pl.Path:
-        return self.data_dir / "history.db"
-
-    @property
     def dreamer_dir(self) -> pl.Path:
         return self.root / "dreamer"
 

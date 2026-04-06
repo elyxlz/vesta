@@ -28,9 +28,26 @@ from claude_agent_sdk.types import (
 
 import vesta.models as vm
 from vesta import logger
-from vesta.core.history import history_save, history_search, format_results
 from vesta.core.init import get_memory_path
-from vesta.events import ChatEvent, SubagentStartEvent, SubagentStopEvent, StreamEvent
+from vesta.events import SubagentStartEvent, SubagentStopEvent, StreamEvent
+
+
+def _format_search_results(results: list[dict[str, str]], *, max_chars: int = 50000) -> str:
+    if not results:
+        return "No results found."
+    lines = []
+    total = 0
+    for r in results:
+        content = r["content"]
+        if len(content) > 2000:
+            content = content[:2000] + "..."
+        line = f"[{r['timestamp']}] {r['role']}: {content}"
+        if total + len(line) > max_chars:
+            lines.append(f"... ({len(results) - len(lines)} more results truncated)")
+            break
+        lines.append(line)
+        total += len(line)
+    return "\n\n".join(lines)
 
 
 def _build_query(prompt: str, *, timestamp: dt.datetime) -> str:
@@ -315,18 +332,10 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
         if interrupt_task and not interrupt_task.done():
             await _cancel_task(interrupt_task)
 
-    if state.history is not None:
-        combined = "\n".join(r for r in (assistant_texts or responses) if r and r.strip())
-        if combined:
-            history_save(state.history, "assistant", combined, session_id=state.session_id)
-
     return responses
 
 
 async def process_message(msg: str, *, state: vm.State, config: vm.VestaConfig, is_user: bool) -> tuple[list[str], vm.State]:
-    if state.history is not None:
-        role = "user" if is_user else "system"
-        history_save(state.history, role, msg, session_id=state.session_id)
     responses = await converse(msg, state=state, config=config, show_output=True)
     return responses, state
 
@@ -367,31 +376,15 @@ def _build_vesta_tools_server(state: vm.State, config: vm.VestaConfig) -> tp.Any
 
     @tool("search_conversation_history", _SEARCH_CONVERSATION_HISTORY_DESCRIPTION, _SEARCH_CONVERSATION_HISTORY_SCHEMA)
     async def search_conversation_history(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
-        if state.history is None:
-            return {"content": [{"type": "text", "text": "History store not available."}]}
         query = str(args["query"])
         limit = int(args["limit"]) if "limit" in args else 20
         try:
-            results = history_search(state.history, query, limit=limit)
+            results = state.event_bus.search(query, limit=limit)
         except Exception as e:
             return {"content": [{"type": "text", "text": f"Search error: {e}"}]}
-        return {"content": [{"type": "text", "text": format_results(results)}]}
+        return {"content": [{"type": "text", "text": _format_search_results(results)}]}
 
-    _CHAT_REPLY_SCHEMA = {
-        "type": "object",
-        "properties": {
-            "message": {"type": "string", "description": "The message to send to the user"},
-        },
-        "required": ["message"],
-    }
-
-    @tool("chat_reply", "Send a message to the user in the Vesta app chat.", _CHAT_REPLY_SCHEMA)
-    async def chat_reply(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
-        text = str(args["message"]).strip()
-        state.event_bus.emit(ChatEvent(type="chat", text=text))
-        return {"content": [{"type": "text", "text": f"Message sent: {text}"}]}
-
-    return create_sdk_mcp_server("vesta-tools", tools=[restart_vesta, search_conversation_history, chat_reply])
+    return create_sdk_mcp_server("vesta-tools", tools=[restart_vesta, search_conversation_history])
 
 
 def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgentOptions:
