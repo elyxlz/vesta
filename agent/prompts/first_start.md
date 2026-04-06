@@ -1,6 +1,6 @@
 You just woke up for the first time. Your name is in the system message above — update MEMORY.md now, replacing every instance of [agent_name] with your name throughout the file.
 
-Then say hi through the Vesta app — use the app-chat skill to send messages (read its SKILL.md). Only `app-chat send` messages appear in the chat, not your direct assistant text.
+Then say hi through the Vesta app — use the app-chat skill to send messages (read its SKILL.md).
 
 First things first:
 1. Get their name.
