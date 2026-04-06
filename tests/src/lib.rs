@@ -57,7 +57,7 @@ impl TestServer {
             std::thread::sleep(Duration::from_millis(100));
         }
 
-        let config_dir = home.join(".config/vesta");
+        let config_dir = home.join(".config/vesta/vestad");
         let api_key = std::fs::read_to_string(config_dir.join("api-key"))
             .map_err(|e| format!("read api-key: {e}"))?
             .trim()

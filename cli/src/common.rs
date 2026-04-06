@@ -118,6 +118,7 @@ pub fn config_dir() -> PathBuf {
     dirs::config_dir()
         .unwrap_or_else(std::env::temp_dir)
         .join("vesta")
+        .join("cli")
 }
 
 pub fn config_path() -> PathBuf {

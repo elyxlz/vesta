@@ -67,7 +67,7 @@ fn find_available_port() -> Option<u16> {
 
 fn config_dir() -> std::path::PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| die("HOME not set"));
-    std::path::PathBuf::from(home).join(".config/vesta")
+    std::path::PathBuf::from(home).join(".config/vesta/vestad")
 }
 
 fn main() {
