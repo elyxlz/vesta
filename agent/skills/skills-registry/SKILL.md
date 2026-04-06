@@ -24,27 +24,28 @@ After installing, restart yourself with the `restart_vesta` tool to load the new
 
 ## If the skill exposes HTTP functions
 
-Some skills have functions the Vesta app (or other network clients) need to call over HTTP (e.g. the `voice` skill exposes `/voice/status`, `/voice/tts/speak`, etc.). Wire them up by appending rows to the `SKILL_ENDPOINTS` table in `~/vesta/src/vesta/api.py`:
+Some skills run their own HTTP server that the agent reverse-proxies (e.g. the `voice` skill serves on a local port and requests to `/voice/*` are forwarded to it). Wire them up by appending a row to `SKILL_SERVERS` in `~/vesta/src/vesta/skill_server.py`:
 
-1. Look at the skill's Python modules to find the handler functions. Each handler takes an aiohttp `web.Request` and returns a response:
+1. Check if the skill runs an HTTP server and what port it listens on:
    ```bash
    ls ~/vesta/skills/<name>/
    ```
-2. Edit `~/vesta/src/vesta/api.py` — find `SKILL_ENDPOINTS` near the top and append one tuple per endpoint:
+2. Edit `~/vesta/src/vesta/skill_server.py` — find `SKILL_SERVERS` near the top and append one tuple:
    ```python
-   SKILL_ENDPOINTS: list[tuple[str, str, str]] = [
+   SKILL_SERVERS: list[tuple[str, int]] = [
        ...,
-       ("GET",  "/<name>/foo",  "<name>.handlers:foo"),
-       ("POST", "/<name>/bar",  "<name>.handlers:bar"),
+       ("<name>", 7970),
    ]
    ```
-   Format: `(METHOD, PATH, "module:function")`. The module path is resolved against `~/vesta/skills/` (added to `sys.path` at startup), so `"voice.handlers:status"` means `skills/voice/handlers.py::status`. WebSocket handlers use method `"GET"`.
-3. Restart via `restart_vesta`.
+   Format: `(SKILL_NAME, PORT)`. The proxy strips the `/{skill_name}` prefix and forwards to `localhost:{port}`.
+3. Start the skill's HTTP server (as a background process or daemon).
+4. Restart via `restart_vesta`.
 
 **Constraints:**
-- The skill's directory name must be a valid Python identifier (no hyphens) if it exposes HTTP functions.
-- Handlers read shared state via `request.app["config"]` (a `VestaConfig`). Anything beyond config (paths, settings) should be stored in files under `config.data_dir`.
-- A broken import in one row is logged and skipped — it won't prevent the server from starting.
+- The skill server must listen on `localhost` only.
+- The proxy strips the `/{skill_name}` prefix — the skill server sees paths without it.
+- WebSocket connections are proxied bidirectionally.
+- If the skill server is unreachable, clients get a 502 error.
 
 Skills that are LLM-only don't need this step.
 
@@ -59,4 +60,4 @@ ls ~/vesta/skills/
 - Skills you install are downloaded from `agent/skills/<name>/` in the GitHub repo
 - Core skills ship pre-installed; optional skills are downloaded on demand
 - After installing a skill that requires setup, read its `SETUP.md`
-- If the skill has HTTP handlers, also edit `api.py` per above
+- If the skill runs an HTTP server, register it in `skill_server.py` per above
