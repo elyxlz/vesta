@@ -1,10 +1,3 @@
-mod commands;
-mod error;
-mod runtime;
-mod state;
-
-use state::AppState;
-
 #[cfg(mobile)]
 #[tauri::mobile_entry_point]
 pub fn mobile_entry_point() {
@@ -12,17 +5,10 @@ pub fn mobile_entry_point() {
 }
 
 pub fn run() {
-    rustls::crypto::ring::default_provider()
-        .install_default()
-        .expect("failed to install rustls crypto provider");
-
-    let app_state = AppState::new();
-
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .manage(app_state)
         .setup(|_app| {
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             {
@@ -55,8 +41,6 @@ pub fn run() {
                         unsafe {
                             let wv: *mut std::ffi::c_void = webview.inner();
                             let wv_ref = &*(wv as *const objc2::runtime::AnyObject);
-                            // Make scrollView not adjust content insets for safe area
-                            // UIScrollViewContentInsetAdjustmentNever = 2
                             let scroll_view: *mut std::ffi::c_void =
                                 objc2::msg_send![wv_ref, scrollView];
                             if !scroll_view.is_null() {
@@ -72,13 +56,6 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
-            commands::platform::auto_setup,
-            commands::platform::platform_check,
-            commands::platform::platform_setup,
-            commands::platform::connect_to_server,
-            commands::platform::run_install_script,
-        ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 

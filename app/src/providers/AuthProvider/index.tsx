@@ -5,7 +5,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { autoSetup, connectToServer } from "@/api";
+import { connectToServer } from "@/api";
 import { clearConnection, getConnection, authHeaders } from "@/lib/connection";
 import { ensureFreshToken } from "@/lib/token-refresh";
 import { isTauri } from "@/lib/env";
@@ -69,10 +69,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const init = async () => {
-      try {
-        await autoSetup();
-      } catch { }
-
       const platform = detectPlatform();
       if (isTauri && platform !== "ios" && platform !== "android") {
         try {

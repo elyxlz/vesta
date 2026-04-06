@@ -12,12 +12,9 @@ import {
   startAgent,
   restartAgent,
   waitForReady,
-  checkPlatform,
-  setupPlatform,
   authenticate,
   type AuthStartResult,
 } from "@/api";
-import type { PlatformStatus } from "@/lib/types";
 import { isTauri } from "@/lib/env";
 import { fadeSlide } from "@/lib/motion";
 import { detectPlatform } from "@/lib/platform";
@@ -26,7 +23,7 @@ import { useAgents } from "@/providers/AgentsProvider";
 import { useNavigate } from "react-router-dom";
 import { friendlyError } from "./errors";
 
-type Step = "platform" | "name" | "creating" | "auth" | "finalizing" | "done";
+type Step = "name" | "creating" | "auth" | "finalizing" | "done";
 
 const CREATING_MESSAGES = [
   "setting things up...",
@@ -124,15 +121,6 @@ export function CreateAgent() {
   };
 
   const content = (() => {
-    if (step === "platform") {
-      return (
-        <PlatformSetup
-          onReady={() => setStep("name")}
-          onCancel={hasAgents ? () => navigate("/") : undefined}
-        />
-      );
-    }
-
     if (step === "creating") {
       return (
         <div className="flex flex-col items-center gap-3 w-[260px] max-w-full px-4">
@@ -274,90 +262,3 @@ export function CreateAgent() {
   );
 }
 
-function PlatformSetup({
-  onReady,
-  onCancel,
-}: {
-  onReady: () => void;
-  onCancel?: () => void;
-}) {
-  const [checking, setChecking] = useState(true);
-  const [status, setStatus] = useState<PlatformStatus | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-
-  const doCheck = async () => {
-    setChecking(true);
-    try {
-      const s = await checkPlatform();
-      setStatus(s);
-      if (s.ready) {
-        onReady();
-        return;
-      }
-    } catch (e: unknown) {
-      setError((e as { message?: string })?.message || "check failed");
-    } finally {
-      setChecking(false);
-    }
-  };
-
-  useEffect(() => {
-    doCheck();
-  }, [doCheck]);
-
-  const handleInstall = async () => {
-    setBusy(true);
-    setError("");
-    try {
-      const result = await setupPlatform();
-      if (result.ready) {
-        onReady();
-      } else {
-        setStatus(result);
-      }
-    } catch (e: unknown) {
-      setError((e as { message?: string })?.message || "setup failed");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  if (checking) {
-    return (
-      <div className="flex flex-col items-center gap-3 w-[260px] max-w-full px-4">
-        <h2 className="text-base font-semibold">checking system</h2>
-        <p className="text-xs text-muted-foreground">
-          making sure everything is ready...
-        </p>
-        <ProgressBar />
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex flex-col items-center gap-3 w-[260px] max-w-full px-4">
-      <h2 className="text-base font-semibold">setting up</h2>
-      <p className="text-xs text-muted-foreground text-center">
-        {status?.message || "platform setup required."}
-      </p>
-      {busy ? (
-        <ProgressBar />
-      ) : (
-        <>
-          {error && (
-            <p className="text-xs text-destructive">{error}</p>
-          )}
-          <Button size="sm" onClick={handleInstall}>
-            retry
-          </Button>
-        </>
-      )}
-      {onCancel && (
-        <Button variant="link" size="sm" onClick={onCancel}>
-          cancel
-        </Button>
-      )}
-    </div>
-  );
-}

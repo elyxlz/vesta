@@ -155,10 +155,6 @@ enum Command {
         /// Server URL, optionally with API key after #
         host: String,
     },
-    /// Start the server (Linux only)
-    Boot,
-    /// Stop the server (Linux only)
-    Shutdown,
     /// Update vesta to the latest version
     Update,
 }
@@ -223,13 +219,8 @@ fn authenticate_agent(client: &client::Client, name: &str) {
 }
 
 fn get_client(host: Option<&str>, token: Option<&str>) -> client::Client {
-    let config = platform::load_server_config(host, token);
-
-    // On Linux, also check for credentials from a running local vestad
-    #[cfg(target_os = "linux")]
-    let config = config.or_else(vesta_common::platform::linux::extract_credentials);
-
-    let config = config.unwrap_or_else(|| platform::die("no server configured. run: vesta setup"));
+    let config = platform::load_server_config(host, token)
+        .unwrap_or_else(|| platform::die("no server configured. run: vesta connect <host>"));
     client::Client::new(&config)
 }
 
@@ -379,10 +370,6 @@ fn run(cli: Cli) {
 
     match command {
         Command::Setup { build, yes, name } => {
-            // Ensure vestad is installed, running, and configured
-            vesta_common::ensure_server()
-                .unwrap_or_else(|e| platform::die(&e));
-
             let c = get_client(host_ref, token_ref);
 
             let name = name
@@ -630,27 +617,6 @@ fn run(cli: Cli) {
             platform::save_server_config(&config)
                 .unwrap_or_else(|e| platform::die(&e));
             eprintln!("connected to {url}");
-        }
-
-        Command::Boot => {
-            #[cfg(target_os = "linux")]
-            {
-                platform::linux::boot()
-                    .unwrap_or_else(|e| platform::die(&e));
-                eprintln!("server started");
-            }
-            #[cfg(not(target_os = "linux"))]
-            platform::die("boot is only supported on Linux. use 'vesta connect' to connect to a remote server.");
-        }
-
-        Command::Shutdown => {
-            #[cfg(target_os = "linux")]
-            {
-                platform::linux::shutdown();
-                eprintln!("server stopped");
-            }
-            #[cfg(not(target_os = "linux"))]
-            platform::die("shutdown is only supported on Linux.");
         }
 
         Command::Update => {
