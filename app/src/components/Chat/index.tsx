@@ -18,7 +18,6 @@ import { ButtonGroup } from "@/components/ui/button-group";
 import { useChat } from "@/hooks/use-chat";
 import { useAutoScroll } from "@/hooks/use-auto-scroll";
 import { useVoiceInput } from "@/hooks/use-voice-input";
-import { useVoiceStatus } from "@/hooks/use-voice-status";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useLayout } from "@/stores/use-layout";
 import { linkify } from "@/lib/linkify";
@@ -62,13 +61,12 @@ const thinkingIndicatorVariants = {
 };
 
 export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
-  const { name, setAgentState } = useSelectedAgent();
+  const { name, setAgentState, sttStatus, ttsStatus } = useSelectedAgent();
   const navigate = useNavigate();
   const navbarHeight = useLayout((s) => s.navbarHeight);
-  const { status: voiceStatus } = useVoiceStatus(name);
-  const speechEnabled = voiceStatus?.speech_enabled ?? false;
-  const voiceAutoSend = voiceStatus?.voice_auto_send ?? true;
-  const sttAvailable = voiceStatus?.stt.configured ?? false;
+  const speechEnabled = (ttsStatus?.configured && ttsStatus?.enabled) ?? false;
+  const voiceAutoSend = sttStatus?.auto_send ?? true;
+  const sttAvailable = (sttStatus?.configured && sttStatus?.enabled) ?? false;
   const { messages, agentState, connected, hasMore, loadingMore, loadMore, send, stopSpeech } = useChat(name, true, speechEnabled);
 
   useEffect(() => {

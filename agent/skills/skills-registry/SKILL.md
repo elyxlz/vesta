@@ -59,4 +59,4 @@ ls ~/vesta/skills/
 - Skills you install are downloaded from `agent/skills/<name>/` in the GitHub repo
 - Core skills ship pre-installed; optional skills are downloaded on demand
 - After installing a skill that requires setup, read its `SETUP.md`
-- If the skill has HTTP routes (a `server.py`), also edit `api.py` per above
+- If the skill has HTTP handlers, also edit `api.py` per above

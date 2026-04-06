@@ -4,6 +4,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useAgents } from "@/providers/AgentsProvider";
 import { useAuth } from "@/providers/AuthProvider";
 import { useLayout } from "@/stores/use-layout";
+
 import { Settings } from "@/components/Settings";
 import { StatusPill } from "@/components/StatusPill";
 import { Button } from "@/components/ui/button";

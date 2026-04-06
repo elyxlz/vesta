@@ -1,37 +1,32 @@
 import { useCallback, useEffect, useState } from "react";
-import { fetchVoiceStatus, type VoiceStatus } from "@/lib/voice";
+import { fetchSttStatus, fetchTtsStatus, type SttStatus, type TtsStatus } from "@/lib/voice";
 
 const REFRESH_INTERVAL_MS = 10_000;
 
 export function useVoiceStatus(agentName: string | null) {
-  const [status, setStatus] = useState<VoiceStatus | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [stt, setStt] = useState<SttStatus | null>(null);
+  const [tts, setTts] = useState<TtsStatus | null>(null);
   const [version, setVersion] = useState(0);
 
   const refresh = useCallback(() => setVersion((v) => v + 1), []);
 
   useEffect(() => {
     if (!agentName) {
-      setStatus(null);
-      setError(null);
+      setStt(null);
+      setTts(null);
       return;
     }
     const ctrl = new AbortController();
-    setLoading(true);
-    setError(null);
-    fetchVoiceStatus(agentName, ctrl.signal)
-      .then((s) => {
+    Promise.all([
+      fetchSttStatus(agentName, ctrl.signal),
+      fetchTtsStatus(agentName, ctrl.signal),
+    ])
+      .then(([s, t]) => {
         if (ctrl.signal.aborted) return;
-        // Skip update if the shape matches what we already have — polling
-        // otherwise rerenders every 10s with an identical object.
-        setStatus((prev) => (prev && sameStatus(prev, s) ? prev : s));
+        setStt((prev) => (prev && same(prev, s) ? prev : s));
+        setTts((prev) => (prev && same(prev, t) ? prev : t));
       })
-      .catch((err) => {
-        if (ctrl.signal.aborted) return;
-        setError(err instanceof Error ? err.message : "Failed to load voice status");
-      })
-      .finally(() => { if (!ctrl.signal.aborted) setLoading(false); });
+      .catch(() => {});
     return () => ctrl.abort();
   }, [agentName, version]);
 
@@ -41,9 +36,9 @@ export function useVoiceStatus(agentName: string | null) {
     return () => clearInterval(interval);
   }, [agentName, refresh]);
 
-  return { status, loading, error, refresh };
+  return { stt, tts, refresh };
 }
 
-function sameStatus(a: VoiceStatus, b: VoiceStatus): boolean {
+function same(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }

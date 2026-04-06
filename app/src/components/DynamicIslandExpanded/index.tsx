@@ -3,6 +3,7 @@ import {
   MoreVertical,
   Play,
   ScrollText,
+  Settings,
   Square,
   KeyRound,
 } from "lucide-react";
@@ -55,6 +56,7 @@ type DynamicIslandExpandedProps = {
   onShowBackups: () => void;
   onShowConsole: () => void;
   onShowInternals: () => void;
+  onShowAgentSettings: () => void;
   onOpenDeleteDialog: () => void;
 };
 
@@ -82,6 +84,7 @@ export function DynamicIslandExpanded({
   onShowBackups,
   onShowConsole,
   onShowInternals,
+  onShowAgentSettings,
   onOpenDeleteDialog,
 }: DynamicIslandExpandedProps) {
   return (
@@ -201,6 +204,14 @@ export function DynamicIslandExpanded({
                         >
                           <Activity data-icon="inline-start" />
                           internals
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={onShowAgentSettings}
+                        >
+                          <Settings data-icon="inline-start" />
+                          settings
                         </Button>
                       </>
                     )}

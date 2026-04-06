@@ -3,26 +3,51 @@ import { getConnection } from "@/lib/connection";
 
 const SAMPLE_RATE = 16000;
 
-// --- Status + voice catalogue ---
+function voicePost(agentName: string, path: string, body: unknown): Promise<unknown> {
+  return apiJson(`/agents/${encodeURIComponent(agentName)}/voice/${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
 
-export interface VoiceStatus {
-  stt: {
-    configured: boolean;
-    provider: string | null;
-    eot_threshold?: number;
-    eot_timeout_ms?: number;
-    keyterms?: string[];
-    usage?: unknown;
-    balance?: unknown;
-  };
-  tts: {
-    configured: boolean;
-    provider: string | null;
-    selected_voice_id?: string;
-    usage?: unknown;
-  };
-  speech_enabled: boolean;
-  voice_auto_send: boolean;
+// --- STT ---
+
+export interface SttStatus {
+  configured: boolean;
+  provider: string | null;
+  enabled?: boolean;
+  auto_send?: boolean;
+  eot_threshold?: number;
+  eot_timeout_ms?: number;
+  keyterms?: string[];
+}
+
+export async function fetchSttStatus(agentName: string, signal?: AbortSignal): Promise<SttStatus> {
+  return apiJson<SttStatus>(`/agents/${encodeURIComponent(agentName)}/voice/stt/status`, { signal });
+}
+
+export interface SttUsage {
+  usage?: { results?: { hours?: number }[] };
+  balance?: { balances?: { amount?: number; units?: string }[] };
+}
+
+export async function fetchSttUsage(agentName: string): Promise<SttUsage> {
+  return apiJson<SttUsage>(`/agents/${encodeURIComponent(agentName)}/voice/stt/usage`);
+}
+
+export const setSttEnabled = (n: string, value: boolean) => voicePost(n, "stt/set-enabled", { value });
+export const setSttAutoSend = (n: string, value: boolean) => voicePost(n, "stt/set-auto-send", { value });
+export const setSttEot = (n: string, params: { threshold?: number; timeout_ms?: number }) => voicePost(n, "stt/set-eot", params);
+
+// --- TTS ---
+
+export interface TtsStatus {
+  configured: boolean;
+  provider: string | null;
+  enabled?: boolean;
+  selected_voice_id?: string;
+  voices?: VoiceInfo[];
 }
 
 export interface VoiceInfo {
@@ -32,45 +57,20 @@ export interface VoiceInfo {
   custom?: boolean;
 }
 
-export interface VoiceCatalogue {
-  provider: string;
-  selected_voice_id: string | null;
-  voices: VoiceInfo[];
+export async function fetchTtsStatus(agentName: string, signal?: AbortSignal): Promise<TtsStatus> {
+  return apiJson<TtsStatus>(`/agents/${encodeURIComponent(agentName)}/voice/tts/status`, { signal });
 }
 
-export async function fetchVoiceStatus(agentName: string, signal?: AbortSignal): Promise<VoiceStatus> {
-  return apiJson<VoiceStatus>(`/agents/${encodeURIComponent(agentName)}/voice/status`, { signal });
+export interface TtsUsage {
+  usage?: { character_count?: number; character_limit?: number };
 }
 
-export async function fetchVoices(agentName: string, signal?: AbortSignal): Promise<VoiceCatalogue> {
-  return apiJson<VoiceCatalogue>(`/agents/${encodeURIComponent(agentName)}/voice/tts/voices`, { signal });
+export async function fetchTtsUsage(agentName: string): Promise<TtsUsage> {
+  return apiJson<TtsUsage>(`/agents/${encodeURIComponent(agentName)}/voice/tts/usage`);
 }
 
-// --- Voice settings ---
-
-export async function setVoice(agentName: string, voiceId: string): Promise<void> {
-  await apiJson(`/agents/${encodeURIComponent(agentName)}/voice/tts/set-voice`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ voice_id: voiceId }),
-  });
-}
-
-export async function setEot(agentName: string, params: { threshold?: number; timeout_ms?: number }): Promise<void> {
-  await apiJson(`/agents/${encodeURIComponent(agentName)}/voice/stt/set-eot`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(params),
-  });
-}
-
-export async function setPreference(agentName: string, key: "speech_enabled" | "voice_auto_send", value: boolean): Promise<void> {
-  await apiJson(`/agents/${encodeURIComponent(agentName)}/voice/set-preference`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ key, value }),
-  });
-}
+export const setTtsEnabled = (n: string, value: boolean) => voicePost(n, "tts/set-enabled", { value });
+export const setTtsVoice = (n: string, voiceId: string) => voicePost(n, "tts/set-voice", { voice_id: voiceId });
 
 // --- TTS playback ---
 
