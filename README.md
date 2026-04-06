@@ -45,20 +45,14 @@ curl -fsSL https://raw.githubusercontent.com/elyxlz/vesta/master/install.sh | ba
 vestad serve
 ```
 
-On startup, vestad prints a connection string:
-
-```
-connect with: vesta connect https://<host>:7860#<api-key>
-```
-
-Make sure port **7860** is open.
+On startup, vestad prints the host URL and API key. By default it auto-selects an available port and sets up a Cloudflare tunnel. You can pin a specific port with `vestad serve --port 7860` or disable the tunnel with `--no-tunnel`.
 
 ### 2. Client
 
-Copy the connection string and run it locally:
+Copy the host URL and API key from the server output:
 
 ```bash
-vesta connect https://<server-ip>:7860#<api-key>
+vesta connect https://<host>#<api-key>
 vesta setup
 ```
 

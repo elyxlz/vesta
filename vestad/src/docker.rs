@@ -1,6 +1,6 @@
 use serde::Serialize;
 use std::process;
-use vesta_common::{BackupInfo, BackupType};
+use crate::types::{BackupInfo, BackupType};
 
 #[derive(Debug)]
 pub enum DockerError {

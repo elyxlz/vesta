@@ -21,12 +21,6 @@ export interface ListEntry {
   friendly_status: string;
 }
 
-export interface PlatformStatus {
-  ready: boolean;
-  platform: string;
-  message: string;
-}
-
 export type AgentActivityState = "idle" | "thinking" | "tool_use";
 
 export type OnboardingStep = "name" | "connect" | "creating" | "auth" | "done";

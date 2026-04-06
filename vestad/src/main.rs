@@ -4,6 +4,7 @@ mod docker;
 mod jwt;
 mod serve;
 mod tunnel;
+mod types;
 mod update_check;
 
 
@@ -68,7 +69,7 @@ fn find_available_port() -> Option<u16> {
 
 fn config_dir() -> std::path::PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| die("HOME not set"));
-    std::path::PathBuf::from(home).join(".config/vesta")
+    std::path::PathBuf::from(home).join(".config/vesta/vestad")
 }
 
 fn print_server_info(tunnel_url: Option<&str>, local_url: &str, api_key: &str) {
@@ -94,15 +95,11 @@ fn main() {
         Command::Serve { port, no_tunnel } => {
             let config = config_dir();
 
-            #[cfg(target_os = "linux")]
-            ensure_systemd_service();
-
             docker::ensure_docker().unwrap_or_else(|e| die(&e));
 
             let port = port.unwrap_or_else(|| find_available_port().unwrap_or_else(|| die("no available port found")));
 
             let _pid_lock = serve::acquire_pid_lock(&config).unwrap_or_else(|e| die(&e));
-            serve::write_port_file(&config, port);
 
             let api_key = serve::ensure_api_key(&config);
             let (cert_pem, key_pem, _fingerprint) = serve::ensure_tls(&config);
@@ -254,60 +251,3 @@ fn main() {
     }
 }
 
-#[cfg(target_os = "linux")]
-fn ensure_systemd_service() {
-    let vestad_path = match std::env::current_exe().ok().and_then(|p| p.to_str().map(String::from)) {
-        Some(p) => p,
-        None => return,
-    };
-
-    let home = match std::env::var("HOME") {
-        Ok(h) => h,
-        Err(_) => return,
-    };
-    let unit_dir = format!("{}/.config/systemd/user", home);
-    let unit_path = format!("{}/vestad.service", unit_dir);
-
-    if std::path::Path::new(&unit_path).exists() {
-        return;
-    }
-
-    eprintln!("installing systemd user service...");
-    std::fs::create_dir_all(&unit_dir).ok();
-
-    let unit_content = format!(
-        r#"[Unit]
-Description=Vesta API Server
-After=docker.service
-
-[Service]
-ExecStart={vestad_path} serve
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=default.target
-"#
-    );
-
-    if let Err(e) = std::fs::write(&unit_path, unit_content) {
-        eprintln!("warning: failed to write systemd service: {}", e);
-        return;
-    }
-
-    let _ = std::process::Command::new("systemctl")
-        .args(["--user", "daemon-reload"])
-        .status();
-    let _ = std::process::Command::new("systemctl")
-        .args(["--user", "enable", "vestad"])
-        .status();
-
-    // Enable lingering so the service survives logout
-    if let Ok(user) = std::env::var("USER") {
-        let _ = std::process::Command::new("loginctl")
-            .args(["enable-linger", &user])
-            .status();
-    }
-
-    eprintln!("systemd user service installed and enabled");
-}

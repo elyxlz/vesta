@@ -1,19 +1,4 @@
-#[cfg(target_os = "linux")]
-pub use vesta_common::platform::*;
-pub use vesta_common::{save_server_config, normalize_url, ServerConfig};
-
-/// Try to read the TLS cert PEM from the local vestad config directory.
-fn try_read_local_cert() -> Option<String> {
-    #[cfg(target_os = "linux")]
-    {
-        let home = std::env::var("HOME").ok()?;
-        std::fs::read_to_string(format!("{}/.config/vesta/tls/cert.pem", home)).ok()
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        None
-    }
-}
+pub use crate::common::{save_server_config, normalize_url, ServerConfig};
 
 pub fn load_server_config(host_flag: Option<&str>, token_flag: Option<&str>) -> Option<ServerConfig> {
     // 1. Flags
@@ -22,7 +7,7 @@ pub fn load_server_config(host_flag: Option<&str>, token_flag: Option<&str>) -> 
             url: normalize_url(host),
             api_key: token.to_string(),
             cert_fingerprint: None,
-            cert_pem: try_read_local_cert(),
+            cert_pem: None,
         });
     }
 
@@ -34,22 +19,12 @@ pub fn load_server_config(host_flag: Option<&str>, token_flag: Option<&str>) -> 
             url: normalize_url(host),
             api_key: token.to_string(),
             cert_fingerprint: None,
-            cert_pem: try_read_local_cert(),
+            cert_pem: None,
         });
     }
 
-    // 3. server.json (via vesta-common)
-    if let Some(config) = vesta_common::load_server_config() {
-        return Some(config);
-    }
-
-    // 4. Linux-only: read directly from server filesystem
-    #[cfg(target_os = "linux")]
-    if let Some(config) = vesta_common::platform::linux::extract_credentials() {
-        return Some(config);
-    }
-
-    None
+    // 3. config.json
+    crate::common::load_server_config()
 }
 
 pub fn die(msg: &str) -> ! {

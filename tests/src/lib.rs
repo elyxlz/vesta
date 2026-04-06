@@ -1,11 +1,14 @@
+pub mod client;
+pub mod types;
+
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::LazyLock;
 use std::time::Duration;
 
-use vesta_common::client::Client;
-use vesta_common::ServerConfig;
+use client::Client;
+use types::ServerConfig;
 
 pub static SERVER: LazyLock<TestServer> = LazyLock::new(|| {
     TestServer::start().unwrap_or_else(|e| panic!("failed to start test server: {e}"))
@@ -30,7 +33,6 @@ impl TestServer {
         let port = free_port()?;
         let vestad = find_vestad()?;
 
-        // Preserve real HOME's Docker config so vestad can pull images
         let real_home = std::env::var("HOME").unwrap_or_default();
         let docker_config = format!("{}/.docker", real_home);
 
@@ -55,7 +57,7 @@ impl TestServer {
             std::thread::sleep(Duration::from_millis(100));
         }
 
-        let config_dir = home.join(".config/vesta");
+        let config_dir = home.join(".config/vesta/vestad");
         let api_key = std::fs::read_to_string(config_dir.join("api-key"))
             .map_err(|e| format!("read api-key: {e}"))?
             .trim()
@@ -92,7 +94,6 @@ impl Drop for TestServer {
     }
 }
 
-/// RAII guard — destroys the agent on drop.
 pub struct TestAgent<'a> {
     pub name: String,
     client: &'a Client,
@@ -100,7 +101,6 @@ pub struct TestAgent<'a> {
 
 impl<'a> TestAgent<'a> {
     pub fn create(client: &'a Client, name: &str) -> Result<Self, String> {
-        // Ensure idempotent — clean up leftover from previous runs
         let _ = client.stop_agent(name);
         let _ = client.destroy_agent(name);
         let name = client.create_agent(name, false)?;

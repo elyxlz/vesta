@@ -708,13 +708,13 @@ async fn ws_proxy(client_ws: axum::extract::ws::WebSocket, agent_port: u16) {
 async fn create_backup_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
-) -> Result<Json<vesta_common::BackupInfo>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<crate::types::BackupInfo>, (StatusCode, Json<serde_json::Value>)> {
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
     let name_clone = name.clone();
     let backup = tokio::task::spawn_blocking(move || {
-        docker::create_backup(&name_clone, vesta_common::BackupType::Manual)
+        docker::create_backup(&name_clone, crate::types::BackupType::Manual)
     })
     .await
     .unwrap()
@@ -726,7 +726,7 @@ async fn create_backup_handler(
 async fn list_backups_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
-) -> Result<Json<Vec<vesta_common::BackupInfo>>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<Vec<crate::types::BackupInfo>>, (StatusCode, Json<serde_json::Value>)> {
     let lock = state.agent_lock(&name).await;
     let _guard = lock.read().await;
 
@@ -814,10 +814,6 @@ pub fn acquire_pid_lock(config_dir: &std::path::Path) -> Result<std::fs::File, S
     Ok(file)
 }
 
-pub fn write_port_file(config_dir: &std::path::Path, port: u16) {
-    let port_path = config_dir.join("port");
-    std::fs::write(&port_path, port.to_string()).ok();
-}
 
 // --- Router ---
 
@@ -901,31 +897,31 @@ fn spawn_auto_backup_task(state: SharedState) {
                     let mut backups = docker::list_backups(&name_clone)?;
 
                     let has_daily_today = backups.iter().any(|b| {
-                        b.backup_type == vesta_common::BackupType::Daily
+                        b.backup_type == crate::types::BackupType::Daily
                             && b.created_at.starts_with(&today)
                     });
 
                     if !has_daily_today {
                         eprintln!("auto-backup: creating daily backup for '{}'", name_clone);
-                        let new = docker::create_backup(&name_clone, vesta_common::BackupType::Daily)?;
+                        let new = docker::create_backup(&name_clone, crate::types::BackupType::Daily)?;
                         backups.insert(0, new);
                     }
 
                     let has_recent_weekly = backups.iter().any(|b| {
-                        b.backup_type == vesta_common::BackupType::Weekly && b.created_at >= week_ago
+                        b.backup_type == crate::types::BackupType::Weekly && b.created_at >= week_ago
                     });
                     if !has_recent_weekly {
                         eprintln!("auto-backup: creating weekly backup for '{}'", name_clone);
-                        let new = docker::create_backup(&name_clone, vesta_common::BackupType::Weekly)?;
+                        let new = docker::create_backup(&name_clone, crate::types::BackupType::Weekly)?;
                         backups.insert(0, new);
                     }
 
                     let has_recent_monthly = backups.iter().any(|b| {
-                        b.backup_type == vesta_common::BackupType::Monthly && b.created_at >= month_ago
+                        b.backup_type == crate::types::BackupType::Monthly && b.created_at >= month_ago
                     });
                     if !has_recent_monthly {
                         eprintln!("auto-backup: creating monthly backup for '{}'", name_clone);
-                        let new = docker::create_backup(&name_clone, vesta_common::BackupType::Monthly)?;
+                        let new = docker::create_backup(&name_clone, crate::types::BackupType::Monthly)?;
                         backups.insert(0, new);
                     }
 
