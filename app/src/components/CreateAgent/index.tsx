@@ -23,7 +23,7 @@ import { useAgents } from "@/providers/AgentsProvider";
 import { useNavigate } from "react-router-dom";
 import { friendlyError } from "./errors";
 
-type Step = "name" | "creating" | "auth" | "finalizing" | "done";
+type Step = "platform" | "name" | "creating" | "auth" | "finalizing" | "done";
 
 const CREATING_MESSAGES = [
   "setting things up...",
