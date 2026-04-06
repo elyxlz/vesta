@@ -236,7 +236,9 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
           ref={scrollRef}
           onScroll={handleScroll}
           className="h-full min-h-0 overflow-y-auto px-3 pt-6 pb-4"
-          style={{ maskImage: "linear-gradient(to bottom, transparent, black 40px, black calc(100% - 24px), transparent)" }}
+          style={{
+            maskImage: `linear-gradient(to bottom, transparent, black ${navbarHeight * 2}px, black calc(100% - ${navbarHeight}px), transparent)`,
+          }}
         >
           <div className={cn("min-h-full flex flex-col", fullscreen && "pt-16 md:pt-20")}>
             <div className="flex-1" />
