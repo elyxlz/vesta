@@ -221,7 +221,7 @@ main() {
   echo ""
   echo "Done! Get started:"
   if [ "$OS" = "linux" ]; then
-    echo "  vestad              # Start the server"
+    echo "  vestad              # Install systemd service and start"
     echo "  vesta connect       # Connect the CLI"
   else
     echo "  vesta connect <host>#<key>   # Connect to a remote vestad"

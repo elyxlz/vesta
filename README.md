@@ -34,18 +34,25 @@ curl -fsSL https://raw.githubusercontent.com/elyxlz/vesta/master/install.sh | ba
 irm https://raw.githubusercontent.com/elyxlz/vesta/master/install.ps1 | iex
 ```
 
-## Remote Setup
+## Setup
 
-Run vestad on a remote server and connect from your local machine.
-
-### 1. Server
+### 1. Server (Linux only)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/elyxlz/vesta/master/install.sh | bash
-vestad serve
+vestad
 ```
 
-On startup, vestad prints the host URL and API key. By default it auto-selects an available port and sets up a Cloudflare tunnel. You can pin a specific port with `vestad serve --port 7860` or disable the tunnel with `--no-tunnel`.
+On first run, vestad installs a systemd user service, starts itself, and prints the host URL and API key. It runs persistently via systemd (survives logout).
+
+```bash
+vestad status    # show service status
+vestad logs      # stream service logs
+vestad restart   # restart the service
+vestad stop      # stop the service
+```
+
+By default vestad auto-selects a port and sets up a Cloudflare tunnel. Use `vestad serve --standalone` to run in the foreground without systemd (for CI/development).
 
 ### 2. Client
 
