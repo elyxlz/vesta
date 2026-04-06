@@ -13,7 +13,7 @@ Control a Samsung Smart TV via the WebSocket API.
 - **MAC**: `<TV_MAC>`
 - **OS**: Tizen
 - **Port**: 8002 (WebSocket API, HTTPS)
-- **Token file**: `/root/vesta/data/samsung_tv_token.json`
+- **Token file**: `~/.tv/samsung_tv_token.json`
 
 ## Quick Start
 
@@ -45,7 +45,7 @@ tv = SamsungTVWS(
     port=8002,
     name='Vesta',
     timeout=15,
-    token_file='/root/vesta/data/samsung_tv_token.json'
+    token_file='~/.tv/samsung_tv_token.json'
 )
 ```
 
@@ -207,14 +207,14 @@ import time; time.sleep(5)
 
 The `pyytlounge` library wraps the Lounge API and provides playback control, event listening, and session management. This is the recommended approach.
 
-**Auth persistence:** The Lounge API auth state is saved to `/root/vesta/data/youtube_lounge_auth.json` after first successful pairing. On subsequent runs, the saved `screen_id` is used to refresh the lounge token without triggering the TV pairing popup. Only falls back to full `pair_with_screen_id()` if the saved state is invalid.
+**Auth persistence:** The Lounge API auth state is saved to `~/.tv/youtube_lounge_auth.json` after first successful pairing. On subsequent runs, the saved `screen_id` is used to refresh the lounge token without triggering the TV pairing popup. Only falls back to full `pair_with_screen_id()` if the saved state is invalid.
 
 ```python
 import asyncio, json, os, requests, xml.etree.ElementTree as ET
 from pyytlounge import YtLoungeApi
 
 TV_IP = find_tv_ip()  # use auto-discovery above
-AUTH_FILE = "/root/vesta/data/youtube_lounge_auth.json"
+AUTH_FILE = "~/.tv/youtube_lounge_auth.json"
 
 def get_screen_id():
     """Get YouTube screen ID from TV's DIAL service on port 8080."""
@@ -421,13 +421,13 @@ tv.move_cursor(x=500, y=300, duration=0)
 1. Install the Python library: `uv add samsungtvws`
 2. Set `<TV_MAC>` to your TV's MAC address (found in TV Settings > General > Network > Network Status)
 3. On first WebSocket connection, approve the pairing request on the TV screen
-4. The token is saved to `/root/vesta/data/samsung_tv_token.json` for subsequent connections
+4. The token is saved to `~/.tv/samsung_tv_token.json` for subsequent connections
 
 ## Notes
 
 - The TV must be on the same local network as Vesta
 - First WebSocket connection may require user approval on the TV screen
-- Token is saved to `/root/vesta/data/samsung_tv_token.json` after first successful connection
+- Token is saved to `~/.tv/samsung_tv_token.json` after first successful connection
 - REST API calls (rest_*) work without WebSocket -- useful for status checks
 - WebSocket calls (send_key, run_app, open_browser) require an active connection
 - If WebSocket times out, the TV may have gone to sleep -- send WoL first

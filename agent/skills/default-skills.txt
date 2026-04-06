@@ -2,7 +2,6 @@ banking
 browser
 dream
 flights
-reminders
 skills-registry
 tasks
 upstream

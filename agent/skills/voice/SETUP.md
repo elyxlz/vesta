@@ -1,4 +1,18 @@
-# Voice provider setup
+# Voice setup
+
+## 1. Start the voice server
+
+1. Pick a free port (e.g. 7965). Start the server in a background screen session:
+   ```bash
+   SKILL_PORT=7965 SKILL_NAME=voice PYTHONPATH=~/vesta/skills screen -dmS voice uv run python -m voice.server
+   ```
+2. Add `("voice", 7965)` to `PROXIED_SERVERS` in `~/vesta/src/vesta/proxy.py` and `restart_vesta`.
+3. Add to `~/vesta/prompts/restart.md`:
+   ```
+   SKILL_PORT=7965 SKILL_NAME=voice PYTHONPATH=~/vesta/skills screen -dmS voice uv run python -m voice.server
+   ```
+
+## 2. API keys
 
 Each user needs their own API keys — one Deepgram key for STT (voice input) and one ElevenLabs key for TTS (voice output). Keys stay on this container; they never transit vestad's configuration.
 

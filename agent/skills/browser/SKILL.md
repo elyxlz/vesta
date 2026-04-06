@@ -145,9 +145,9 @@ browser stop-all                  # Stop all browser sessions
 
 ## Session Persistence
 
-The browser uses a persistent profile at `/root/.browser/profile` by default. Cookies and SSO sessions survive browser restarts — no need to re-login each time.
+The browser uses a persistent profile at `~/.browser/profile` by default. Cookies and SSO sessions survive browser restarts — no need to re-login each time.
 
-- **Default profile**: `/root/.browser/profile` (automatic, no flags needed)
+- **Default profile**: `~/.browser/profile` (automatic, no flags needed)
 - **Custom profile**: `browser launch --user-data-dir /path/to/profile`
 - SSO tokens typically expire after 8-12 hours — after that you'll need to re-authenticate
 - The `--stealth` flag is safe to use with persistent profiles
@@ -205,7 +205,7 @@ DISPLAY=:99 openbox &
 
 # 3. Launch Chromium with --disable-gpu flag (critical!)
 DISPLAY=:99 chromium --no-sandbox --disable-gpu \
-  --user-data-dir=/root/.browser-profile \
+  --user-data-dir=~/.browser-profile \
   --window-size=1920,1080 'https://example.com' &
 
 # 4. Maximize the browser window (optional but recommended)
@@ -242,7 +242,7 @@ Xvfb :99 -screen 0 1280x720x24 &>/dev/null &
 
 # 2. Launch visible Chromium with a PERSISTENT profile (keeps cookies/sessions across restarts)
 DISPLAY=:99 chromium --no-sandbox --disable-gpu --disable-software-rasterizer \
-  --user-data-dir=/root/.browser-profile \
+  --user-data-dir=~/.browser-profile \
   --window-size=1280,720 'https://example.com' &>/dev/null &
 
 # 3. Start VNC + noVNC on an available port
@@ -261,9 +261,9 @@ kill $(fuser <PORT>/tcp 2>/dev/null | tr -d ' ') 2>/dev/null
 ```
 
 ### Persistent Browser Profile
-- Profile dir: `/root/.browser-profile`
+- Profile dir: `~/.browser-profile`
 - Once the user logs into any site here, session cookies persist across browser restarts
-- Use `browser launch --stealth --user-data-dir /root/.browser-profile` for automated sessions that reuse these cookies — avoids sign-in flows entirely
+- Use `browser launch --stealth --user-data-dir ~/.browser-profile` for automated sessions that reuse these cookies — avoids sign-in flows entirely
 - Works for any site — Google, banking, anything that blocks automated logins
 
 ### Key Notes

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""voice_keys.py — manage ~/vesta/data/voice_config.json.
+"""voice_keys.py — manage ~/.voice/voice_config.json.
 
 Commands:
   status
@@ -30,7 +30,7 @@ import providers  # noqa: E402
 
 
 def _data_dir() -> pl.Path:
-    return pl.Path.home() / "vesta" / "data"
+    return pl.Path.home() / ".voice"
 
 
 def _print(config: vc.VoiceConfig) -> None:

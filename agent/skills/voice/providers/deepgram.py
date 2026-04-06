@@ -1,12 +1,12 @@
 """Deepgram STT provider — Flux v2 realtime streaming."""
 
 import asyncio
+import logging
 import typing as tp
+from urllib.parse import urlencode
 
 import aiohttp
 from aiohttp import web
-
-import logging
 
 logger = logging.getLogger("voice.deepgram")
 
@@ -36,11 +36,13 @@ class DeepgramStt:
             await browser_ws.close(code=1008, message=b"missing api_key")
             return
 
-        keyterms: list[str] = stt_domain.get("keyterms") or []
-        eot_threshold = stt_domain.get("eot_threshold", 0.8)
-        eot_timeout_ms = stt_domain.get("eot_timeout_ms", 10000)
+        from .. import config as voice_config
 
-        params = [
+        keyterms: list[str] = stt_domain.get("keyterms") or []
+        eot_threshold = stt_domain.get("eot_threshold", voice_config.DEFAULT_EOT_THRESHOLD)
+        eot_timeout_ms = stt_domain.get("eot_timeout_ms", voice_config.DEFAULT_EOT_TIMEOUT_MS)
+
+        params: list[tuple[str, str]] = [
             ("model", MODEL),
             ("encoding", ENCODING),
             ("sample_rate", str(SAMPLE_RATE)),
@@ -50,8 +52,7 @@ class DeepgramStt:
         for term in keyterms:
             params.append(("keyterm", term))
 
-        qs = "&".join(f"{k}={aiohttp.helpers.quote(str(v), safe='')}" for k, v in params)
-        url = f"{DEEPGRAM_WS}/v2/listen?{qs}"
+        url = f"{DEEPGRAM_WS}/v2/listen?{urlencode(params)}"
         headers = {"Authorization": f"Token {api_key}"}
 
         session = aiohttp.ClientSession()
