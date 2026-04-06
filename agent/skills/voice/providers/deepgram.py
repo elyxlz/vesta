@@ -81,8 +81,14 @@ class DeepgramStt:
                     elif msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSING, aiohttp.WSMsgType.CLOSED):
                         break
 
+            tasks = [
+                asyncio.create_task(browser_to_deepgram()),
+                asyncio.create_task(deepgram_to_browser()),
+            ]
             try:
-                await asyncio.gather(browser_to_deepgram(), deepgram_to_browser())
+                await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                for t in tasks:
+                    t.cancel()
             finally:
                 if not dg_ws.closed:
                     await dg_ws.close()

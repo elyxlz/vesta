@@ -134,6 +134,7 @@ pub struct AppState {
     update_info: Mutex<Option<update_check::UpdateInfo>>,
     auto_backup_enabled: AtomicBool,
     backup_retention: Mutex<crate::types::RetentionPolicy>,
+    http_client: reqwest::Client,
 }
 
 impl AppState {
@@ -150,6 +151,7 @@ impl AppState {
                 weekly: docker::DEFAULT_RETENTION_WEEKLY,
                 monthly: docker::DEFAULT_RETENTION_MONTHLY,
             }),
+            http_client: reqwest::Client::new(),
         }
     }
 
@@ -752,17 +754,16 @@ async fn agent_proxy_handler(
         }))
     } else {
         drop(guard);
-        forward_http_to_container(port, &target_path, request).await
+        forward_http_to_container(&state.http_client, port, &target_path, request).await
     }
 }
 
 async fn forward_http_to_container(
+    client: &reqwest::Client,
     port: u16,
     target_path: &str,
     request: Request,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
-    use reqwest::Client;
-
     let (parts, body) = request.into_parts();
     let url = format!("http://localhost:{}{}", port, target_path);
 
@@ -773,7 +774,7 @@ async fn forward_http_to_container(
         .await
         .map_err(|e| err_response(StatusCode::BAD_REQUEST, &format!("read body: {}", e)))?;
 
-    let mut req_builder = Client::new().request(method, &url);
+    let mut req_builder = client.request(method, &url);
     for (name, value) in parts.headers.iter() {
         // Skip hop-by-hop headers — reqwest sets host/transfer-encoding itself.
         let n = name.as_str().to_ascii_lowercase();
