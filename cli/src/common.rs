@@ -4,9 +4,6 @@ use serde::{Deserialize, Serialize};
 
 // ── Constants ───────────────────────────────────────────────────
 
-pub const DEFAULT_WS_PORT: u16 = 7865;
-pub const DEFAULT_API_PORT: u16 = 7860;
-
 // ── Types ───────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

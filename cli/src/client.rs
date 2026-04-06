@@ -5,7 +5,6 @@ use ureq::Body;
 
 use crate::common::{
     AuthFlowResponse, BackupInfo, ListEntry, ServerConfig, StartAllResult, StatusJson,
-    DEFAULT_API_PORT,
 };
 
 // ── TLS fingerprint verification ────────────────────────────────
@@ -389,7 +388,7 @@ pub fn chat(client: &Client, name: &str) -> Result<(), String> {
     let parsed: url::Url =
         url.parse().map_err(|e| format!("invalid ws url: {}", e))?;
     let host = parsed.host_str().unwrap_or("localhost");
-    let port = parsed.port().unwrap_or(DEFAULT_API_PORT);
+    let port = parsed.port_or_known_default().unwrap_or(443);
     let tcp = std::net::TcpStream::connect((host, port))
         .map_err(|e| format!("ws tcp connect failed: {}", e))?;
     let connector =

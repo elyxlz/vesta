@@ -151,7 +151,7 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Connect to a remote server (e.g. vesta connect https://host:7860#apikey)
+    /// Connect to a remote server (e.g. vesta connect https://host#apikey)
     Connect {
         /// Server URL, optionally with API key after #
         host: String,
@@ -481,7 +481,7 @@ fn run(cli: Cli) {
                             "name": name,
                             "status": "not_found",
                             "authenticated": false,
-                            "ws_port": common::DEFAULT_WS_PORT,
+                            "ws_port": 0,
                             "alive": false,
                             "friendly_status": "not found"
                         })
