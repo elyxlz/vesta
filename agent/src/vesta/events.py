@@ -178,6 +178,7 @@ class EventBus:
         if data_dir:
             data_dir.mkdir(parents=True, exist_ok=True)
             self._conn = sqlite3.connect(str(data_dir / "events.db"))
+            self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.executescript(_EVENTS_SCHEMA)
             self._logs["chat"] = _HistoryLog(self._conn, "chat", CHAT_TYPES)
             self._logs["internals"] = _HistoryLog(self._conn, "internals", INTERNALS_TYPES)

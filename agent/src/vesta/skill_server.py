@@ -44,7 +44,6 @@ async def _http_proxy(request: web.Request, port: int, target_path: str) -> web.
     """Forward HTTP request to skill server, stream response back."""
     url = f"http://localhost:{port}{target_path}"
 
-    # Forward headers (skip hop-by-hop)
     headers = {k: v for k, v in request.headers.items() if k.lower() not in ("host", "connection", "transfer-encoding", "content-length")}
 
     body = await request.read()

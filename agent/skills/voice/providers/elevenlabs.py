@@ -162,33 +162,29 @@ class ElevenLabsTts:
 
     async def subscription(self, creds: dict[str, str]) -> dict:
         api_key = creds.get("api_key", "")
-        url = f"{ELEVENLABS_API}/v1/user/subscription"
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    url,
-                    headers={"xi-api-key": api_key},
-                    timeout=aiohttp.ClientTimeout(total=10),
-                ) as resp:
-                    body: tp.Any = await resp.json()
-                    if resp.status != 200:
-                        return {"error": f"status {resp.status}", "body": body}
-                    return body
-        except (TimeoutError, aiohttp.ClientError) as e:
-            return {"error": str(e)}
+        return await _fetch_subscription(api_key)
 
     async def validate(self, api_key: str) -> tuple[bool, str | None]:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    f"{ELEVENLABS_API}/v1/user/subscription",
-                    headers={"xi-api-key": api_key},
-                    timeout=aiohttp.ClientTimeout(total=10),
-                ) as resp:
-                    if resp.status == 401:
-                        return False, "invalid api key"
-                    if resp.status != 200:
-                        return False, f"elevenlabs returned {resp.status}"
-        except (TimeoutError, aiohttp.ClientError) as e:
-            return False, f"network error: {e}"
+        result = await _fetch_subscription(api_key)
+        if "error" in result:
+            msg = result["error"]
+            if "401" in str(msg):
+                return False, "invalid api key"
+            return False, str(msg)
         return True, None
+
+
+async def _fetch_subscription(api_key: str) -> dict:
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{ELEVENLABS_API}/v1/user/subscription",
+                headers={"xi-api-key": api_key},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                body: tp.Any = await resp.json()
+                if resp.status != 200:
+                    return {"error": f"status {resp.status}", "body": body}
+                return body
+    except (TimeoutError, aiohttp.ClientError) as e:
+        return {"error": str(e)}

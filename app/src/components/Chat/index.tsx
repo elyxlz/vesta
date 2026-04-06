@@ -74,9 +74,8 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   }, [agentState, setAgentState]);
 
   const [input, setInput] = useState("");
-  const voiceSend = useCallback((text: string) => { send(text); }, [send]);
   const voiceDraft = useCallback((text: string) => { setInput(text); }, []);
-  const { isRecording, liveTranscript, toggle: toggleVoice, error: voiceError } = useVoiceInput({ agentName: name || "", onSend: voiceSend, onDraft: voiceDraft, onRecordingStart: stopSpeech, sttAvailable, voiceAutoSend });
+  const { isRecording, liveTranscript, toggle: toggleVoice, error: voiceError } = useVoiceInput({ agentName: name || "", onSend: send, onDraft: voiceDraft, onRecordingStart: stopSpeech, sttAvailable, voiceAutoSend });
   const [wasConnected, setWasConnected] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -94,9 +93,9 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     if (isNearBottom) setHasNewMessage(false);
   }, [isNearBottom]);
 
-  const chatMessages = messages.filter(
+  const chatMessages = useMemo(() => messages.filter(
     (m) => m.type === "user" || m.type === "chat" || m.type === "error",
-  );
+  ), [messages]);
 
   const isThinking =
     agentState === "thinking" || agentState === "tool_use";

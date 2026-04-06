@@ -11,9 +11,7 @@ from . import providers
 
 logger = logging.getLogger("voice")
 
-
-def _data_dir(request: web.Request) -> pl.Path:
-    return pl.Path(os.environ["VESTA_DATA_DIR"])
+DATA_DIR = pl.Path(os.environ["VESTA_DATA_DIR"])
 
 
 async def _json_body(request: web.Request) -> dict | web.Response:
@@ -30,7 +28,7 @@ async def _json_body(request: web.Request) -> dict | web.Response:
 
 async def stt_status(request: web.Request) -> web.Response:
     """STT config (local read only — instant)."""
-    cfg = voice_config.load(_data_dir(request))
+    cfg = voice_config.load(DATA_DIR)
     stt_entry = cfg.get("stt")
 
     if not stt_entry or not stt_entry.get("provider"):
@@ -51,7 +49,7 @@ async def stt_status(request: web.Request) -> web.Response:
 
 async def stt_usage(request: web.Request) -> web.Response:
     """STT provider usage/balance (hits external API)."""
-    cfg = voice_config.load(_data_dir(request))
+    cfg = voice_config.load(DATA_DIR)
     stt_entry = cfg.get("stt")
     if not stt_entry or not stt_entry.get("provider"):
         return web.json_response({"error": "STT not configured"}, status=503)
@@ -76,7 +74,7 @@ async def _set_bool(request: web.Request, setter: tp.Callable[..., tp.Any]) -> w
     value = body.get("value")
     if not isinstance(value, bool):
         return web.json_response({"error": "value must be a boolean"}, status=400)
-    setter(_data_dir(request), value)
+    setter(DATA_DIR, value)
     return web.json_response({"ok": True})
 
 
@@ -94,9 +92,9 @@ async def stt_set_eot(request: web.Request) -> web.Response:
         return body
     try:
         if "threshold" in body:
-            voice_config.set_eot_threshold(_data_dir(request), float(body["threshold"]))
+            voice_config.set_eot_threshold(DATA_DIR, float(body["threshold"]))
         elif "timeout_ms" in body:
-            voice_config.set_eot_timeout_ms(_data_dir(request), int(body["timeout_ms"]))
+            voice_config.set_eot_timeout_ms(DATA_DIR, int(body["timeout_ms"]))
         else:
             return web.json_response({"error": "threshold or timeout_ms required"}, status=400)
     except ValueError as e:
@@ -105,7 +103,7 @@ async def stt_set_eot(request: web.Request) -> web.Response:
 
 
 async def stt_listen(request: web.Request) -> web.WebSocketResponse:
-    cfg = voice_config.load(_data_dir(request))
+    cfg = voice_config.load(DATA_DIR)
     stt_entry = cfg.get("stt")
     ws = web.WebSocketResponse()
     if not stt_entry or not stt_entry.get("provider"):
@@ -130,7 +128,7 @@ async def stt_listen(request: web.Request) -> web.WebSocketResponse:
 
 async def tts_status(request: web.Request) -> web.Response:
     """TTS config + voices (local read only — instant)."""
-    cfg = voice_config.load(_data_dir(request))
+    cfg = voice_config.load(DATA_DIR)
     tts_entry = cfg.get("tts")
 
     if not tts_entry or not tts_entry.get("provider"):
@@ -164,7 +162,7 @@ async def tts_status(request: web.Request) -> web.Response:
 
 async def tts_usage(request: web.Request) -> web.Response:
     """TTS provider usage (hits external API)."""
-    cfg = voice_config.load(_data_dir(request))
+    cfg = voice_config.load(DATA_DIR)
     tts_entry = cfg.get("tts")
     if not tts_entry or not tts_entry.get("provider"):
         return web.json_response({"error": "TTS not configured"}, status=503)
@@ -193,14 +191,14 @@ async def tts_set_voice(request: web.Request) -> web.Response:
     if not voice_id:
         return web.json_response({"error": "voice_id required"}, status=400)
     try:
-        voice_config.set_voice(_data_dir(request), voice_id)
+        voice_config.set_voice(DATA_DIR, voice_id)
     except ValueError as e:
         return web.json_response({"error": str(e)}, status=400)
     return web.json_response({"ok": True})
 
 
 async def tts_speak(request: web.Request) -> web.StreamResponse:
-    cfg = voice_config.load(_data_dir(request))
+    cfg = voice_config.load(DATA_DIR)
     tts_entry = cfg.get("tts")
     if not tts_entry or not tts_entry.get("provider"):
         return web.json_response({"error": "TTS not configured"}, status=503)
