@@ -132,8 +132,8 @@ def test_eventbus_recent_pagination(tmp_path):
 
     events, cursor = bus.recent(limit=50)
     assert len(events) == 50
-    assert events[-1]["text"] == "msg 149"
-    assert events[0]["text"] == "msg 100"
+    assert tp.cast(tp.Any, events[-1])["text"] == "msg 149"
+    assert tp.cast(tp.Any, events[0])["text"] == "msg 100"
     assert cursor is not None
     bus.close()
 
@@ -150,13 +150,13 @@ def test_eventbus_cursor_pagination(tmp_path):
 
     older, cursor2 = bus.before(cursor, limit=30)
     assert len(older) == 30
-    assert older[-1]["text"] == "msg 49"
-    assert older[0]["text"] == "msg 20"
+    assert tp.cast(tp.Any, older[-1])["text"] == "msg 49"
+    assert tp.cast(tp.Any, older[0])["text"] == "msg 20"
     assert cursor2 is not None
 
     oldest, cursor3 = bus.before(cursor2, limit=30)
     assert len(oldest) == 20
-    assert oldest[0]["text"] == "msg 0"
+    assert tp.cast(tp.Any, oldest[0])["text"] == "msg 0"
     assert cursor3 is None  # no more pages
     bus.close()
 
@@ -170,7 +170,7 @@ def test_eventbus_persists_across_instances(tmp_path):
 
     bus2 = EventBus(data_dir=tmp_path)
     events, _ = bus2.recent()
-    texts = [e["text"] for e in events if "text" in e]
+    texts = [tp.cast(tp.Any, e)["text"] for e in events if "text" in e]
     assert "before restart" in texts
     assert "reply" in texts
     bus2.close()
