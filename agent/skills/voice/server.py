@@ -30,6 +30,7 @@ app.router.add_post("/tts/speak", handlers.tts_speak)
 # Health
 app.router.add_get("/health", lambda _: web.Response(text="ok"))
 
+
 def main() -> None:
     port = int(os.environ["SKILL_PORT"])
     web.run_app(app, host="0.0.0.0", port=port, print=lambda *_: None)

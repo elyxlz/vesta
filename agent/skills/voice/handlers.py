@@ -16,7 +16,6 @@ def _data_dir(request: web.Request) -> pl.Path:
     return pl.Path(os.environ["VESTA_DATA_DIR"])
 
 
-
 async def _json_body(request: web.Request) -> dict | web.Response:
     """Parse JSON body. Returns dict on success, or a 400 Response on failure."""
     try:
@@ -37,15 +36,17 @@ async def stt_status(request: web.Request) -> web.Response:
     if not stt_entry or not stt_entry.get("provider"):
         return web.json_response({"configured": False, "provider": None})
 
-    return web.json_response({
-        "configured": True,
-        "provider": stt_entry["provider"],
-        "enabled": stt_entry.get("enabled", True),
-        "auto_send": stt_entry.get("auto_send", True),
-        "eot_threshold": stt_entry.get("eot_threshold", 0.8),
-        "eot_timeout_ms": stt_entry.get("eot_timeout_ms", 10000),
-        "keyterms": stt_entry.get("keyterms", []),
-    })
+    return web.json_response(
+        {
+            "configured": True,
+            "provider": stt_entry["provider"],
+            "enabled": stt_entry.get("enabled", True),
+            "auto_send": stt_entry.get("auto_send", True),
+            "eot_threshold": stt_entry.get("eot_threshold", 0.8),
+            "eot_timeout_ms": stt_entry.get("eot_timeout_ms", 10000),
+            "keyterms": stt_entry.get("keyterms", []),
+        }
+    )
 
 
 async def stt_usage(request: web.Request) -> web.Response:
@@ -150,13 +151,15 @@ async def tts_status(request: web.Request) -> web.Response:
         elif not selected and voice_list:
             selected = voice_list[0]["id"]
 
-    return web.json_response({
-        "configured": True,
-        "provider": provider_name,
-        "enabled": tts_entry.get("enabled", False),
-        "selected_voice_id": selected,
-        "voices": voice_list,
-    })
+    return web.json_response(
+        {
+            "configured": True,
+            "provider": provider_name,
+            "enabled": tts_entry.get("enabled", False),
+            "selected_voice_id": selected,
+            "voices": voice_list,
+        }
+    )
 
 
 async def tts_usage(request: web.Request) -> web.Response:
