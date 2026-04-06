@@ -22,6 +22,32 @@ Vesta's skills come from a registry on GitHub (`agent/skills/`). You can search 
 
 After installing, restart yourself with the `restart_vesta` tool to load the new skill into context.
 
+## If the skill exposes HTTP functions
+
+Some skills have functions the Vesta app (or other network clients) need to call over HTTP (e.g. the `voice` skill exposes `/voice/status`, `/voice/tts/speak`, etc.). Wire them up by appending rows to the `SKILL_ENDPOINTS` table in `~/vesta/src/vesta/api.py`:
+
+1. Look at the skill's Python modules to find the handler functions. Each handler takes an aiohttp `web.Request` and returns a response:
+   ```bash
+   ls ~/vesta/skills/<name>/
+   ```
+2. Edit `~/vesta/src/vesta/api.py` — find `SKILL_ENDPOINTS` near the top and append one tuple per endpoint:
+   ```python
+   SKILL_ENDPOINTS: list[tuple[str, str, str]] = [
+       ...,
+       ("GET",  "/<name>/foo",  "<name>.handlers:foo"),
+       ("POST", "/<name>/bar",  "<name>.handlers:bar"),
+   ]
+   ```
+   Format: `(METHOD, PATH, "module:function")`. The module path is resolved against `~/vesta/skills/` (added to `sys.path` at startup), so `"voice.handlers:status"` means `skills/voice/handlers.py::status`. WebSocket handlers use method `"GET"`.
+3. Restart via `restart_vesta`.
+
+**Constraints:**
+- The skill's directory name must be a valid Python identifier (no hyphens) if it exposes HTTP functions.
+- Handlers read shared state via `request.app["config"]` (a `VestaConfig`). Anything beyond config (paths, settings) should be stored in files under `config.data_dir`.
+- A broken import in one row is logged and skipped — it won't prevent the server from starting.
+
+Skills that are LLM-only don't need this step.
+
 ## Check what's installed
 
 ```bash
@@ -33,3 +59,4 @@ ls ~/vesta/skills/
 - Skills you install are downloaded from `agent/skills/<name>/` in the GitHub repo
 - Core skills ship pre-installed; optional skills are downloaded on demand
 - After installing a skill that requires setup, read its `SETUP.md`
+- If the skill has HTTP routes (a `server.py`), also edit `api.py` per above
