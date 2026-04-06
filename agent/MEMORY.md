@@ -82,10 +82,10 @@ Once [agent_name] knows who they're with (name isn't "[Unknown]"), that's it. No
 
 ### Service Registration
 - Any server inside the container that needs to be reachable from outside registers via `POST /services` with `{"name": "<name>", "port": <port>}`
+- Registrations persist to `~/.services.json` — register once, survives restarts
 - vestad discovers registered services and routes directly to them — no proxy layer inside the container
 - Use this for anything: skill servers (e.g. voice), custom APIs, dashboards, webhooks, etc.
-- To add a new server: pick a free port, start it in a screen session, register it, and add both commands to `restart.md`
-- Example: `curl -s -X POST http://localhost:$WS_PORT/services -H 'Content-Type: application/json' -d '{"name":"voice","port":7965}'`
+- To add a new server: pick a free port, start it in a screen session, register it once, and add the screen command to `restart.md`
 
 ### Self-Modification
 - Edit anything: source (`~/vesta/src/vesta/`), config (`config.py`, mechanical settings only), prompts (`~/vesta/prompts/`), skills (`~/vesta/skills/`), MEMORY.md
