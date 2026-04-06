@@ -341,8 +341,7 @@ async fn create_agent_handler(
     if name.is_empty() {
         return Err(err_response(StatusCode::BAD_REQUEST, "invalid agent name"));
     }
-    let build = body.build.unwrap_or(false);
-    tracing::info!(name = %name, build, "creating agent");
+    tracing::info!(name = %name, "creating agent");
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
