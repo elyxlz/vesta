@@ -552,6 +552,29 @@ jobs:
           name: tauri-x86_64-pc-windows-msvc
           path: tauri-out/*
 
+  # ── Merge gate (single required check for branch protection) ─────────
+  merge-gate-ci:
+    if: always()
+    needs:
+      - version-check
+      - skills-index-check
+      - test-frontend
+      - test-integration
+      - build-vesta
+      - build-vestad
+      - test-linux
+      - clippy-windows
+      - build-windows
+      - build-tauri
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for failures
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
+            echo "One or more required jobs failed"
+            exit 1
+          fi
+
   # ── Push Docker image (release only) ─────────────────────────────────
   push-image:
     needs: [test-linux]

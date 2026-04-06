@@ -50,6 +50,19 @@ jobs:
 
           echo "✓ uv.lock is up to date"
 
+  # ── Merge gate (single required check for branch protection) ─────────
+  merge-gate-pr:
+    if: always()
+    needs: [lockfile, agent-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for failures
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
+            echo "One or more required jobs failed"
+            exit 1
+          fi
+
   agent-tests:
     needs: detect-changes
     if: github.event_name != 'pull_request' || needs.detect-changes.outputs.agent == 'true'
