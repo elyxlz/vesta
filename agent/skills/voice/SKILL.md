@@ -16,12 +16,12 @@ This skill turns on the microphone button and "read responses aloud" toggle in t
 
 ## The setup flow
 
-0. **Start the voice server** — before anything works, the app needs to reach this skill's HTTP server. Check if `SKILL_SERVERS` in `~/vesta/src/vesta/skill_server.py` contains a voice entry. If not:
+0. **Start the voice server** — before anything works, the app needs to reach this skill's HTTP server. Check if `PROXIED_SERVERS` in `~/vesta/src/vesta/proxy.py` contains a voice entry. If not:
    a. Pick a free port (e.g. 7965). Start the server in a background screen session:
       ```bash
       SKILL_PORT=7965 SKILL_NAME=voice VESTA_DATA_DIR=~/vesta/data PYTHONPATH=~/vesta/skills screen -dmS voice uv run python -m voice.server
       ```
-   b. Append to `SKILL_SERVERS` in `~/vesta/src/vesta/skill_server.py` and `restart_vesta`:
+   b. Append to `PROXIED_SERVERS` in `~/vesta/src/vesta/proxy.py` and `restart_vesta`:
       ```python
       ("voice", 7965),
       ```

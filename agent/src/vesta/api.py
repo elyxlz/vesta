@@ -1,13 +1,9 @@
-"""Agent HTTP/WS server: core routes + skill server proxy.
+"""Agent HTTP/WS server.
 
-The main aiohttp server exposes:
-  - WS   /ws          bidirectional event bus (all event types, clients filter)
+Routes:
+  - WS   /ws          bidirectional event bus
   - GET  /history     paginated event history
-  - /{skill}/*        reverse-proxied to skill HTTP servers (see skill_server.py)
-
-When a skill runs its own HTTP server, append one tuple to SKILL_SERVERS in
-skill_server.py: (SKILL_NAME, PORT). The proxy strips the /{skill_name}
-prefix and forwards to localhost:{port}.
+  - /{name}/*         reverse-proxied to local servers (see proxy.py)
 """
 
 import asyncio
@@ -17,7 +13,7 @@ from aiohttp import web
 
 from vesta.events import EventBus, HistoryEvent, VestaEvent
 from vesta.config import VestaConfig
-from vesta.skill_server import wire_skill_proxies
+from vesta.proxy import wire_proxies
 
 
 async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
@@ -105,8 +101,8 @@ async def start_ws_server(
     app.router.add_get("/ws", _ws_handler)
     app.router.add_get("/history", _history_handler)
 
-    # Skill server proxies (catch-all — must be registered after core routes)
-    wire_skill_proxies(app)
+    # Reverse proxy catch-all — must be registered after core routes
+    wire_proxies(app)
 
     runner = web.AppRunner(app)
     await runner.setup()
