@@ -271,6 +271,10 @@ jobs:
 
       - name: Build vestad
         working-directory: .
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
         run: |
           if [ "${{ matrix.cross }}" = "true" ]; then
             cross build --release -p vestad --target ${{ matrix.target }}

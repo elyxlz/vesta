@@ -1,0 +1,6 @@
+[build.env]
+passthrough = [
+    "CLOUDFLARE_API_TOKEN",
+    "CLOUDFLARE_ACCOUNT_ID",
+    "CLOUDFLARE_ZONE_ID",
+]

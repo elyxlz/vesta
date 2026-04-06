@@ -35,6 +35,8 @@ enum Command {
         #[command(subcommand)]
         action: TunnelAction,
     },
+    /// Print host URL and API key for client connections
+    Info,
     /// Update vestad to the latest version
     Update,
 }
@@ -67,6 +69,18 @@ fn find_available_port() -> Option<u16> {
 fn config_dir() -> std::path::PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| die("HOME not set"));
     std::path::PathBuf::from(home).join(".config/vesta")
+}
+
+fn print_server_info(tunnel_url: Option<&str>, local_url: &str, api_key: &str) {
+    eprintln!();
+    if let Some(url) = tunnel_url {
+        eprintln!("  \x1b[36mhost\x1b[0m    \x1b[1m{}\x1b[0m", url);
+        eprintln!("  \x1b[36mlocal\x1b[0m   \x1b[2m{}\x1b[0m", local_url);
+    } else {
+        eprintln!("  \x1b[36mhost\x1b[0m    \x1b[1m{}\x1b[0m", local_url);
+    }
+    eprintln!("  \x1b[36mkey\x1b[0m     \x1b[33m{}\x1b[0m", api_key);
+    eprintln!();
 }
 
 fn main() {
@@ -109,15 +123,7 @@ fn main() {
 
             eprintln!();
             eprintln!("  \x1b[1;35mvestad\x1b[0m v{}", env!("CARGO_PKG_VERSION"));
-            eprintln!();
-            if let Some(ref url) = tunnel_url {
-                eprintln!("  \x1b[36mhost\x1b[0m    \x1b[1m{}\x1b[0m", url);
-                eprintln!("  \x1b[36mlocal\x1b[0m   \x1b[2m{}\x1b[0m", local_url);
-            } else {
-                eprintln!("  \x1b[36mhost\x1b[0m    \x1b[1m{}\x1b[0m", local_url);
-            }
-            eprintln!("  \x1b[36mkey\x1b[0m     \x1b[33m{}\x1b[0m", api_key);
-            eprintln!();
+            print_server_info(tunnel_url.as_deref(), &local_url, &api_key);
 
             tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
@@ -187,6 +193,25 @@ fn main() {
                         .unwrap_or_else(|e| die(e));
                 }
             }
+        }
+
+        Command::Info => {
+            let config = config_dir();
+
+            let api_key = match std::fs::read_to_string(config.join("api-key")) {
+                Ok(k) if !k.trim().is_empty() => k.trim().to_string(),
+                _ => die("no API key found — has vestad been started?"),
+            };
+
+            let local_url = match std::fs::read_to_string(config.join("port")) {
+                Ok(p) => format!("https://localhost:{}", p.trim()),
+                _ => die("no port file found — is vestad running?"),
+            };
+
+            let tunnel_url = tunnel::get_tunnel_config(&config)
+                .map(|tc| format!("https://{}", tc.hostname));
+
+            print_server_info(tunnel_url.as_deref(), &local_url, &api_key);
         }
 
         Command::Update => {
