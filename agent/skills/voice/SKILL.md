@@ -1,12 +1,12 @@
 ---
 name: voice
-description: Use when the user asks to enable voice input/output, set up transcription or text-to-speech, rotate API keys, add custom voices, adjust the transcription sensitivity, or talks about the microphone/speaker in the Vesta app. This skill manages ~/vesta/data/voice_config.json — the single source of truth for STT/TTS keys, voice selection, keyterms, and thresholds.
-serve: PYTHONPATH=~/vesta/skills uv run python -m voice.server
+description: Use when the user asks to enable voice input/output, set up transcription or text-to-speech, rotate API keys, add custom voices, adjust the transcription sensitivity, or talks about the microphone/speaker in the Vesta app. This skill manages ~/.voice/voice_config.json — the single source of truth for STT/TTS keys, voice selection, keyterms, and thresholds.
+serve: PYTHONPATH=~/vesta/skills SKILL_PORT=7965 uv run python -m voice.server
 ---
 
 # Voice setup (STT/TTS)
 
-This skill turns on the microphone button and "read responses aloud" toggle in the Vesta app. It owns `~/vesta/data/voice_config.json` and exposes the HTTP/WS endpoints the frontend calls for streaming transcription and speech synthesis.
+This skill turns on the microphone button and "read responses aloud" toggle in the Vesta app. It owns `~/.voice/voice_config.json` and exposes the HTTP/WS endpoints the frontend calls for streaming transcription and speech synthesis.
 
 ## When to offer setup
 
@@ -16,18 +16,9 @@ This skill turns on the microphone button and "read responses aloud" toggle in t
 
 ## The setup flow
 
-0. **Start the voice server** — before anything works, the app needs to reach this skill's HTTP server. Check if `PROXIED_SERVERS` in `~/vesta/src/vesta/proxy.py` contains a voice entry. If not:
-   a. Pick a free port (e.g. 7965). Start the server in a background screen session:
-      ```bash
-      SKILL_PORT=7965 SKILL_NAME=voice VESTA_DATA_DIR=~/vesta/data PYTHONPATH=~/vesta/skills screen -dmS voice uv run python -m voice.server
-      ```
-   b. Append to `PROXIED_SERVERS` in `~/vesta/src/vesta/proxy.py` and `restart_vesta`:
-      ```python
-      ("voice", 7965),
-      ```
-   Do this once — after that the proxy persists across restarts.
+0. **Start the voice server** — follow [SETUP.md](SETUP.md) section 1. Do this once — the proxy entry persists across restarts, and `restart.md` relaunches the screen session on boot.
 1. **Ask which provider(s) they want** — Deepgram for input (STT), ElevenLabs for output (TTS). Both are independent; the user may configure only one.
-2. **Walk them through signup** — see [VOICE_SETUP.md](VOICE_SETUP.md) for the per-provider link, required scopes, and where to find the key.
+2. **Walk them through signup** — see [SETUP.md](SETUP.md) section 2 for the per-provider link, required scopes, and where to find the key.
 3. **Validate the key** before saving:
    ```bash
    uv run ~/vesta/skills/voice/scripts/voice_keys.py validate --provider deepgram --key <key>

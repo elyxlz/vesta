@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import os
 import pathlib as pl
 import typing as tp
 
@@ -11,7 +10,27 @@ from . import providers
 
 logger = logging.getLogger("voice")
 
-DATA_DIR = pl.Path(os.environ["VESTA_DATA_DIR"])
+DATA_DIR = pl.Path.home() / ".voice"
+
+
+def _resolve_domain(
+    domain: tp.Literal["stt", "tts"],
+) -> tuple[dict, str, tp.Any, dict[str, str]] | web.Response:
+    """Load config and resolve provider + creds for a domain.
+
+    Returns (entry, provider_name, provider, creds) or a 503/500 Response.
+    """
+    cfg = voice_config.load(DATA_DIR)
+    entry = cfg.get(domain)
+    if not entry or not entry.get("provider"):
+        return web.json_response({"error": f"{domain.upper()} not configured"}, status=503)
+    provider_name = entry["provider"]
+    getter = providers.get_stt if domain == "stt" else providers.get_tts
+    provider = getter(provider_name)
+    if not provider:
+        return web.json_response({"error": f"unknown {domain} provider: {provider_name}"}, status=500)
+    creds = (entry.get("credentials") or {}).get(provider_name) or {}
+    return entry, provider_name, provider, creds
 
 
 async def _json_body(request: web.Request) -> dict | web.Response:
@@ -40,8 +59,8 @@ async def stt_status(request: web.Request) -> web.Response:
             "provider": stt_entry["provider"],
             "enabled": stt_entry.get("enabled", True),
             "auto_send": stt_entry.get("auto_send", True),
-            "eot_threshold": stt_entry.get("eot_threshold", 0.8),
-            "eot_timeout_ms": stt_entry.get("eot_timeout_ms", 10000),
+            "eot_threshold": stt_entry.get("eot_threshold", voice_config.DEFAULT_EOT_THRESHOLD),
+            "eot_timeout_ms": stt_entry.get("eot_timeout_ms", voice_config.DEFAULT_EOT_TIMEOUT_MS),
             "keyterms": stt_entry.get("keyterms", []),
         }
     )
@@ -49,15 +68,10 @@ async def stt_status(request: web.Request) -> web.Response:
 
 async def stt_usage(request: web.Request) -> web.Response:
     """STT provider usage/balance (hits external API)."""
-    cfg = voice_config.load(DATA_DIR)
-    stt_entry = cfg.get("stt")
-    if not stt_entry or not stt_entry.get("provider"):
-        return web.json_response({"error": "STT not configured"}, status=503)
-    provider_name = stt_entry["provider"]
-    provider = providers.get_stt(provider_name)
-    if not provider:
-        return web.json_response({"error": f"unknown stt provider: {provider_name}"}, status=500)
-    creds = (stt_entry.get("credentials") or {}).get(provider_name) or {}
+    resolved = _resolve_domain("stt")
+    if isinstance(resolved, web.Response):
+        return resolved
+    _entry, _name, provider, creds = resolved
     out: dict = {}
     usage, balance = await asyncio.gather(provider.usage(creds), provider.balance(creds), return_exceptions=True)
     if not isinstance(usage, BaseException):
@@ -103,23 +117,15 @@ async def stt_set_eot(request: web.Request) -> web.Response:
 
 
 async def stt_listen(request: web.Request) -> web.WebSocketResponse:
-    cfg = voice_config.load(DATA_DIR)
-    stt_entry = cfg.get("stt")
     ws = web.WebSocketResponse()
-    if not stt_entry or not stt_entry.get("provider"):
+    resolved = _resolve_domain("stt")
+    if isinstance(resolved, web.Response):
         await ws.prepare(request)
         await ws.close(code=1011, message=b"STT not configured")
         return ws
-    provider_name = stt_entry["provider"]
-    provider = providers.get_stt(provider_name)
-    if not provider:
-        await ws.prepare(request)
-        await ws.close(code=1011, message=f"unknown stt provider: {provider_name}".encode())
-        return ws
-
-    creds = (stt_entry.get("credentials") or {}).get(provider_name) or {}
+    entry, _name, provider, creds = resolved
     await ws.prepare(request)
-    await provider.relay(ws, creds, dict(stt_entry))
+    await provider.relay(ws, creds, dict(entry))
     return ws
 
 
@@ -162,15 +168,10 @@ async def tts_status(request: web.Request) -> web.Response:
 
 async def tts_usage(request: web.Request) -> web.Response:
     """TTS provider usage (hits external API)."""
-    cfg = voice_config.load(DATA_DIR)
-    tts_entry = cfg.get("tts")
-    if not tts_entry or not tts_entry.get("provider"):
-        return web.json_response({"error": "TTS not configured"}, status=503)
-    provider_name = tts_entry["provider"]
-    provider = providers.get_tts(provider_name)
-    if not provider:
-        return web.json_response({"error": f"unknown tts provider: {provider_name}"}, status=500)
-    creds = (tts_entry.get("credentials") or {}).get(provider_name) or {}
+    resolved = _resolve_domain("tts")
+    if isinstance(resolved, web.Response):
+        return resolved
+    _entry, _name, provider, creds = resolved
     try:
         sub = await provider.subscription(creds)
         return web.json_response({"usage": sub})
@@ -198,14 +199,10 @@ async def tts_set_voice(request: web.Request) -> web.Response:
 
 
 async def tts_speak(request: web.Request) -> web.StreamResponse:
-    cfg = voice_config.load(DATA_DIR)
-    tts_entry = cfg.get("tts")
-    if not tts_entry or not tts_entry.get("provider"):
-        return web.json_response({"error": "TTS not configured"}, status=503)
-    provider_name = tts_entry["provider"]
-    provider = providers.get_tts(provider_name)
-    if not provider:
-        return web.json_response({"error": f"unknown tts provider: {provider_name}"}, status=500)
+    resolved = _resolve_domain("tts")
+    if isinstance(resolved, web.Response):
+        return resolved
+    entry, _name, provider, creds = resolved
 
     body = await _json_body(request)
     if isinstance(body, web.Response):
@@ -214,12 +211,11 @@ async def tts_speak(request: web.Request) -> web.StreamResponse:
     if not text:
         return web.json_response({"error": "text required"}, status=400)
 
-    voice_id = tts_entry.get("selected_voice_id")
+    voice_id = entry.get("selected_voice_id")
     if not voice_id:
         voices = provider.premade_voices()
         voice_id = voices[0]["id"] if voices else None
     if not voice_id:
         return web.json_response({"error": "no voice selected"}, status=500)
 
-    creds = (tts_entry.get("credentials") or {}).get(provider_name) or {}
     return await provider.speak(text, voice_id, creds, request)

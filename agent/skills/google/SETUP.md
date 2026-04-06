@@ -5,7 +5,7 @@
 3. Go to "APIs & Services" > "Credentials" > "Create Credentials" > "OAuth client ID"
    - Application type: **Desktop app**
    - Download the JSON file
-4. Place the credentials file at `~/vesta/data/google/credentials.json`
+4. Place the credentials file at `~/.google/credentials.json`
 5. Install: `uv tool install ~/vesta/skills/google/cli`
 6. Start background daemon: `screen -dmS google google serve`
 7. Add to `~/vesta/prompts/restart.md`:

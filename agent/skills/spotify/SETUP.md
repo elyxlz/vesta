@@ -61,3 +61,10 @@ spotify organize config --init
 Edit `~/.spotify/organize.json` to customize:
 - `skip_playlists` — playlists to exclude from auto-sorting
 - `genre_rules` — keyword → playlist name mappings for genre-based sorting
+
+## Step 6: Add to restart.md
+
+If using the watch daemon, add to `~/vesta/prompts/restart.md`:
+```
+screen -dmS spotify-watch spotify organize watch
+```

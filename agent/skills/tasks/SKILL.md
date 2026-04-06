@@ -115,5 +115,10 @@ screen -dmS tasks tasks serve --notifications-dir ~/vesta/notifications
 
 One daemon handles everything — both task due-date monitoring and reminder scheduling. No separate reminder daemon needed.
 
+**Restart**: Add to `~/vesta/prompts/restart.md`:
+```
+screen -dmS tasks tasks serve --notifications-dir ~/vesta/notifications
+```
+
 ### Reminder Patterns
 [User's common reminder types and preferences]

@@ -44,14 +44,6 @@
     "description": "This skill should be used when the user asks about \"OneDrive\", \"cloud files\", \"sync files\", \"mount drive\", or needs to access, mount, or manage OneDrive cloud storage."
   },
   {
-    "name": "reminders",
-    "description": "Reminders are now part of the tasks CLI. Use `tasks remind` instead. This skill redirects to the tasks skill for all reminder functionality."
-  },
-  {
-    "name": "skill-maker",
-    "description": "Use this skill when asked to create a new skill, add a new capability, build an integration, or when you need to give yourself a new ability that doesn't exist yet. This teaches you the anatomy of a skill, how to give it network access, and how to expose it over HTTP."
-  },
-  {
     "name": "skills-registry",
     "description": "Discover and install new capabilities from the skill registry. Use this when asked to add a new feature, when you want to explore what you could do, or when a user asks if you can do something you don't have a skill for yet. The registry lives on GitHub \u2014 search it to find skills, then install them to give yourself new abilities."
   },

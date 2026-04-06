@@ -1,4 +1,4 @@
-"""Read/write ~/vesta/data/voice_config.json atomically."""
+"""Read/write ~/.voice/voice_config.json atomically."""
 
 import json
 import os
@@ -6,6 +6,10 @@ import pathlib as pl
 import typing as tp
 
 VOICE_CONFIG_FILENAME = "voice_config.json"
+
+# Default values — single source of truth for STT tuning defaults.
+DEFAULT_EOT_THRESHOLD = 0.8
+DEFAULT_EOT_TIMEOUT_MS = 10000
 
 
 class VoiceDomain(tp.TypedDict, total=False):
@@ -38,11 +42,9 @@ def config_path(data_dir: pl.Path) -> pl.Path:
 
 def load(data_dir: pl.Path) -> VoiceConfig:
     path = config_path(data_dir)
-    if not path.exists():
-        return {"stt": None, "tts": None}
     try:
         raw = json.loads(path.read_text())
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError, FileNotFoundError):
         return {"stt": None, "tts": None}
     cfg: VoiceConfig = {
         "stt": raw.get("stt") or None,
