@@ -199,19 +199,19 @@ fn main() {
                 _ => die("no API key found — has vestad been started?"),
             };
 
-            let host = if let Some(tc) = tunnel::get_tunnel_config(&config) {
-                format!("https://{}", tc.hostname)
-            } else {
-                let port = match std::fs::read_to_string(config.join("port")) {
-                    Ok(p) => p.trim().to_string(),
-                    _ => die("no port file found — is vestad running?"),
-                };
-                format!("https://localhost:{}", port)
+            let local_url = match std::fs::read_to_string(config.join("port")) {
+                Ok(p) => format!("https://localhost:{}", p.trim()),
+                _ => die("no port file found — is vestad running?"),
             };
 
             eprintln!();
-            eprintln!("  \x1b[36mhost\x1b[0m  \x1b[1m{}\x1b[0m", host);
-            eprintln!("  \x1b[36mkey\x1b[0m   \x1b[33m{}\x1b[0m", api_key);
+            if let Some(tc) = tunnel::get_tunnel_config(&config) {
+                eprintln!("  \x1b[36mhost\x1b[0m    \x1b[1mhttps://{}\x1b[0m", tc.hostname);
+                eprintln!("  \x1b[36mlocal\x1b[0m   \x1b[2m{}\x1b[0m", local_url);
+            } else {
+                eprintln!("  \x1b[36mhost\x1b[0m    \x1b[1m{}\x1b[0m", local_url);
+            }
+            eprintln!("  \x1b[36mkey\x1b[0m     \x1b[33m{}\x1b[0m", api_key);
             eprintln!();
         }
 
