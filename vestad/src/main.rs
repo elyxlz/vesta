@@ -1,8 +1,12 @@
+#[cfg(not(target_os = "linux"))]
+compile_error!("vestad only supports Linux");
+
 use clap::Parser;
 
 mod docker;
 mod jwt;
 mod serve;
+mod systemd;
 mod tunnel;
 mod types;
 mod update_check;
@@ -17,7 +21,7 @@ struct Cli {
 
 #[derive(clap::Subcommand)]
 enum Command {
-    /// Start HTTP+WS server (default)
+    /// Start the server (default). Runs via systemd.
     Serve {
         /// Port to listen on (auto-selected if not specified)
         #[arg(long)]
@@ -25,7 +29,25 @@ enum Command {
         /// Disable Cloudflare tunnel
         #[arg(long)]
         no_tunnel: bool,
+        /// Run in foreground without systemd (for CI/dev)
+        #[arg(long)]
+        standalone: bool,
     },
+    /// Show vestad service status
+    Status,
+    /// Stream vestad service logs
+    Logs {
+        /// Number of lines to show
+        #[arg(short, default_value = "50")]
+        n: usize,
+        /// Don't follow, just print and exit
+        #[arg(long)]
+        no_follow: bool,
+    },
+    /// Stop the vestad service
+    Stop,
+    /// Restart the vestad service
+    Restart,
     /// Open a shell inside an agent container
     Shell {
         /// Agent name
@@ -84,6 +106,119 @@ fn print_server_info(tunnel_url: Option<&str>, local_url: &str, api_key: &str) {
     eprintln!();
 }
 
+fn read_server_info(config: &std::path::Path) -> (Option<String>, Option<String>, Option<String>) {
+    let api_key = std::fs::read_to_string(config.join("api-key"))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    let local_url = std::fs::read_to_string(config.join("port"))
+        .ok()
+        .map(|s| format!("https://0.0.0.0:{}", s.trim()));
+
+    let tunnel_url = tunnel::get_tunnel_config(config)
+        .map(|tc| format!("https://{}", tc.hostname));
+
+    (tunnel_url, local_url, api_key)
+}
+
+fn run_server_foreground(port: Option<u16>, no_tunnel: bool) {
+    let config = config_dir();
+
+    docker::ensure_docker().unwrap_or_else(|e| die(&e));
+
+    let port = port.unwrap_or_else(|| find_available_port().unwrap_or_else(|| die("no available port found")));
+
+    let _pid_lock = serve::acquire_pid_lock(&config).unwrap_or_else(|e| die(&e));
+    serve::write_port_file(&config, port);
+
+    let api_key = serve::ensure_api_key(&config);
+    let (cert_pem, key_pem, _fingerprint) = serve::ensure_tls(&config);
+
+    let tunnel_url = if !no_tunnel {
+        match tunnel::ensure_tunnel(&config) {
+            Ok(tc) => Some(format!("https://{}", tc.hostname)),
+            Err(e) => {
+                tracing::warn!("tunnel setup failed: {e}, running without tunnel");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let local_url = format!("https://0.0.0.0:{}", port);
+
+    eprintln!();
+    eprintln!("  \x1b[1;35mvestad\x1b[0m v{}", env!("CARGO_PKG_VERSION"));
+    print_server_info(tunnel_url.as_deref(), &local_url, &api_key);
+
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let tunnel_child = if tunnel_url.is_some() {
+                match tunnel::start_tunnel(&config, port).await {
+                    Ok((child, _url)) => Some(child),
+                    Err(e) => {
+                        tracing::warn!("failed to start tunnel: {e}");
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+
+            serve::run_server(port, api_key, cert_pem, key_pem, tunnel_url).await;
+
+            if let Some(mut child) = tunnel_child {
+                child.kill().await.ok();
+            }
+        });
+}
+
+fn run_server_systemd(port: Option<u16>, no_tunnel: bool) {
+    if port.is_some() || no_tunnel {
+        eprintln!("note: --port and --no-tunnel only apply with --standalone");
+    }
+
+    systemd::ensure_service_installed().unwrap_or_else(|e| die(&e));
+
+    if systemd::is_active() {
+        if let Some(pid) = systemd::main_pid() {
+            eprintln!("vestad is already running (pid {}).", pid);
+        } else {
+            eprintln!("vestad is already running.");
+        }
+        eprintln!("run 'vestad logs' to see output, or 'vestad restart' to restart.");
+        return;
+    }
+
+    systemd::start().unwrap_or_else(|e| die(&e));
+    systemd::wait_for_start().unwrap_or_else(|e| die(&e));
+
+    let config = config_dir();
+    let (tunnel_url, local_url, api_key) = read_server_info(&config);
+
+    eprintln!();
+    eprintln!("  \x1b[1;35mvestad\x1b[0m v{} is now running as a systemd service.", env!("CARGO_PKG_VERSION"));
+
+    if let Some(api_key) = &api_key {
+        print_server_info(
+            tunnel_url.as_deref(),
+            local_url.as_deref().unwrap_or("https://0.0.0.0:?"),
+            api_key,
+        );
+    }
+
+    eprintln!("manage with:");
+    eprintln!("  vestad status     show service status");
+    eprintln!("  vestad logs       show service logs");
+    eprintln!("  vestad restart    restart the service");
+    eprintln!("  vestad stop       stop the service");
+}
+
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -99,63 +234,43 @@ fn main() {
 
     let cli = Cli::parse();
 
-    match cli.command.unwrap_or(Command::Serve { port: None, no_tunnel: false }) {
-        Command::Serve { port, no_tunnel } => {
-            let config = config_dir();
-
-            docker::ensure_docker().unwrap_or_else(|e| die(&e));
-
-            let port = port.unwrap_or_else(|| find_available_port().unwrap_or_else(|| die("no available port found")));
-
-            let _pid_lock = serve::acquire_pid_lock(&config).unwrap_or_else(|e| die(&e));
-
-            let api_key = serve::ensure_api_key(&config);
-            let (cert_pem, key_pem, _fingerprint) = serve::ensure_tls(&config);
-
-            let tunnel_url = if !no_tunnel {
-                match tunnel::ensure_tunnel(&config) {
-                    Ok(tc) => Some(format!("https://{}", tc.hostname)),
-                    Err(e) => {
-                        tracing::warn!("tunnel setup failed: {e}, running without tunnel");
-                        None
-                    }
-                }
+    match cli.command.unwrap_or(Command::Serve { port: None, no_tunnel: false, standalone: false }) {
+        Command::Serve { port, no_tunnel, standalone } => {
+            if standalone {
+                run_server_foreground(port, no_tunnel);
             } else {
-                None
-            };
+                run_server_systemd(port, no_tunnel);
+            }
+        }
 
-            let local_url = format!("https://0.0.0.0:{}", port);
-
-            eprintln!();
+        Command::Status => {
+            let config = config_dir();
             eprintln!("  \x1b[1;35mvestad\x1b[0m v{}", env!("CARGO_PKG_VERSION"));
-            print_server_info(tunnel_url.as_deref(), &local_url, &api_key);
 
-            tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()
-                .unwrap()
-                .block_on(async {
-                    let tunnel_child = if tunnel_url.is_some() {
-                        match tunnel::start_tunnel(&config, port).await {
-                            Ok((child, _url)) => {
+            let (tunnel_url, local_url, api_key) = read_server_info(&config);
+            if let Some(api_key) = &api_key {
+                print_server_info(
+                    tunnel_url.as_deref(),
+                    local_url.as_deref().unwrap_or("https://0.0.0.0:?"),
+                    api_key,
+                );
+            }
 
-                                Some(child)
-                            }
-                            Err(e) => {
-                                tracing::warn!("failed to start tunnel: {e}");
-                                None
-                            }
-                        }
-                    } else {
-                        None
-                    };
+            systemd::print_status();
+        }
 
-                    serve::run_server(port, api_key, cert_pem, key_pem, tunnel_url).await;
+        Command::Logs { n, no_follow } => {
+            systemd::exec_journal(n, !no_follow);
+        }
 
-                    if let Some(mut child) = tunnel_child {
-                        child.kill().await.ok();
-                    }
-                });
+        Command::Stop => {
+            systemd::stop().unwrap_or_else(|e| die(&e));
+            eprintln!("vestad stopped.");
+        }
+
+        Command::Restart => {
+            systemd::restart().unwrap_or_else(|e| die(&e));
+            eprintln!("vestad restarted.");
         }
 
         Command::Shell { name } => {
@@ -202,19 +317,10 @@ fn main() {
 
         Command::Info => {
             let config = config_dir();
+            let (tunnel_url, local_url, api_key) = read_server_info(&config);
 
-            let api_key = match std::fs::read_to_string(config.join("api-key")) {
-                Ok(k) if !k.trim().is_empty() => k.trim().to_string(),
-                _ => die("no API key found — has vestad been started?"),
-            };
-
-            let local_url = match std::fs::read_to_string(config.join("port")) {
-                Ok(p) => format!("https://localhost:{}", p.trim()),
-                _ => die("no port file found — is vestad running?"),
-            };
-
-            let tunnel_url = tunnel::get_tunnel_config(&config)
-                .map(|tc| format!("https://{}", tc.hostname));
+            let api_key = api_key.unwrap_or_else(|| die("no API key found — has vestad been started?"));
+            let local_url = local_url.unwrap_or_else(|| die("no port file found — is vestad running?"));
 
             print_server_info(tunnel_url.as_deref(), &local_url, &api_key);
         }
@@ -254,8 +360,17 @@ fn main() {
                 .unwrap_or_else(|e| die(format!("failed to replace binary: {}", e)));
 
             std::fs::remove_dir_all(&tmp).ok();
-            tracing::info!("updated — restart vestad to use new version");
+
+            if let Err(e) = systemd::reinstall_service() {
+                tracing::warn!("failed to update systemd service: {e}");
+            }
+            if systemd::is_active() {
+                tracing::info!("restarting vestad...");
+                systemd::restart().unwrap_or_else(|e| die(&e));
+                tracing::info!("updated and restarted.");
+            } else {
+                tracing::info!("updated. run 'vestad' to start.");
+            }
         }
     }
 }
-

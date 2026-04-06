@@ -206,12 +206,22 @@ jobs:
       - name: Clippy
         if: "!matrix.cross"
         working-directory: .
-        run: cargo clippy --workspace --exclude vesta-tests --target ${{ matrix.target }} -- -D warnings
+        run: cargo clippy --workspace --exclude vesta-tests --exclude vestad --target ${{ matrix.target }} -- -D warnings
+
+      - name: Clippy (vestad, Linux only)
+        if: "!matrix.cross && runner.os == 'Linux'"
+        working-directory: .
+        run: cargo clippy -p vestad --target ${{ matrix.target }} -- -D warnings
 
       - name: Test
         if: "!matrix.cross"
         working-directory: .
-        run: cargo test --workspace --exclude vesta-tests --target ${{ matrix.target }}
+        run: cargo test --workspace --exclude vesta-tests --exclude vestad --target ${{ matrix.target }}
+
+      - name: Test (vestad, Linux only)
+        if: "!matrix.cross && runner.os == 'Linux'"
+        working-directory: .
+        run: cargo test -p vestad --target ${{ matrix.target }}
 
       - name: Build vesta
         working-directory: .

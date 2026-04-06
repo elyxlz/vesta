@@ -37,7 +37,7 @@ impl TestServer {
         let docker_config = format!("{}/.docker", real_home);
 
         let process = Command::new(&vestad)
-            .args(["serve", "--port", &port.to_string()])
+            .args(["serve", "--standalone", "--port", &port.to_string()])
             .env("HOME", &home)
             .env("DOCKER_CONFIG", &docker_config)
             .stdout(Stdio::null())
