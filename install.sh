@@ -3,21 +3,17 @@ set -euo pipefail
 
 main() {
   REPO="elyxlz/vesta"
-  CLI_ONLY=false
-  SERVER_ONLY=false
   INSTALL_VERSION=""
 
   for arg in "$@"; do
     case "$arg" in
-      --cli) CLI_ONLY=true ;;
-      --server) SERVER_ONLY=true ;;
       --version=*) INSTALL_VERSION="${arg#--version=}" ;;
       --help|-h)
         echo "Usage: curl -fsSL https://raw.githubusercontent.com/elyxlz/vesta/master/install.sh | bash"
         echo ""
+        echo "Installs vesta CLI, desktop app (if GUI available), and vestad (Linux only)."
+        echo ""
         echo "Options:"
-        echo "  --cli              Install CLI + server (no desktop app)"
-        echo "  --server           Install server only (for remote hosting)"
         echo "  --version=X.Y.Z   Install a specific version"
         echo "  --help             Show this help"
         exit 0
@@ -45,7 +41,7 @@ main() {
   WORK_DIR=$(mktemp -d)
   trap 'rm -rf "$WORK_DIR"' EXIT
 
-  # Download checksums once for verification
+  # Download checksums for verification
   CHECKSUMS="$WORK_DIR/checksums.txt"
   curl -fsSL -o "$CHECKSUMS" "https://github.com/${REPO}/releases/download/v${VERSION}/checksums.txt" 2>/dev/null || true
 
@@ -57,7 +53,8 @@ main() {
       expected=$(grep "  ${artifact}$" "$CHECKSUMS" | cut -d' ' -f1 || true)
       if [ -n "$expected" ]; then
         local actual
-        actual=$(sha256sum "$file" | cut -d' ' -f1)
+        actual=$(sha256sum "$file" 2>/dev/null || shasum -a 256 "$file" | cut -d' ' -f1)
+        actual=$(echo "$actual" | cut -d' ' -f1)
         if [ "$actual" != "$expected" ]; then
           echo "Checksum verification failed for $artifact"
           echo "  expected: $expected"
@@ -84,8 +81,36 @@ main() {
       fi
     done
 
-    # Also add for current session
     export PATH="$bin_dir:$PATH"
+  }
+
+  install_cli() {
+    case "$OS" in
+      darwin)
+        case "$ARCH" in
+          x86_64) local rust_target="x86_64-apple-darwin" ;;
+          aarch64) local rust_target="aarch64-apple-darwin" ;;
+        esac
+        ;;
+      linux)
+        case "$ARCH" in
+          x86_64) local rust_target="x86_64-unknown-linux-gnu" ;;
+          aarch64) local rust_target="aarch64-unknown-linux-gnu" ;;
+        esac
+        ;;
+    esac
+
+    local artifact="vesta-${rust_target}.tar.gz"
+    echo "Downloading vesta CLI..."
+    curl -fsSL -o "$WORK_DIR/vesta.tar.gz" "https://github.com/${REPO}/releases/download/v${VERSION}/${artifact}"
+    verify_checksum "$WORK_DIR/vesta.tar.gz" "$artifact"
+    tar -xzf "$WORK_DIR/vesta.tar.gz" -C "$WORK_DIR"
+
+    local bin_dir="$HOME/.local/bin"
+    mkdir -p "$bin_dir"
+    install -m 755 "$WORK_DIR/vesta" "$bin_dir/vesta"
+    echo "  ✓ vesta CLI → $bin_dir/vesta"
+    ensure_path
   }
 
   install_vestad() {
@@ -93,100 +118,97 @@ main() {
       x86_64) local rust_target="x86_64-unknown-linux-gnu" ;;
       aarch64) local rust_target="aarch64-unknown-linux-gnu" ;;
     esac
+
     local artifact="vestad-${rust_target}.tar.gz"
     echo "Downloading vestad server..."
     curl -fsSL -o "$WORK_DIR/vestad.tar.gz" "https://github.com/${REPO}/releases/download/v${VERSION}/${artifact}"
     verify_checksum "$WORK_DIR/vestad.tar.gz" "$artifact"
     tar -xzf "$WORK_DIR/vestad.tar.gz" -C "$WORK_DIR"
+
     local bin_dir="$HOME/.local/bin"
     mkdir -p "$bin_dir"
     install -m 755 "$WORK_DIR/vestad" "$bin_dir/vestad"
-    echo "Installed vestad to $bin_dir/vestad"
+    echo "  ✓ vestad server → $bin_dir/vestad"
     ensure_path
   }
 
-  install_cli_to_path() {
-    local src="$1"
-    local bin_dir="$HOME/.local/bin"
-    mkdir -p "$bin_dir"
-    install -m 755 "$src" "$bin_dir/vesta"
-    echo "Installed vesta to $bin_dir/vesta"
-    ensure_path
+  install_app_linux() {
+    if command -v apt-get >/dev/null 2>&1; then
+      case "$ARCH" in
+        x86_64) local pkg_arch="amd64" ;;
+        aarch64) local pkg_arch="arm64" ;;
+      esac
+      local artifact="Vesta_${VERSION}_${pkg_arch}.deb"
+      echo "Downloading desktop app (DEB)..."
+      curl -fsSL -o "$WORK_DIR/vesta.deb" "https://github.com/${REPO}/releases/download/v${VERSION}/${artifact}"
+      verify_checksum "$WORK_DIR/vesta.deb" "$artifact"
+      sudo dpkg -i "$WORK_DIR/vesta.deb"
+    elif command -v rpm >/dev/null 2>&1; then
+      case "$ARCH" in
+        x86_64) local pkg_arch="x86_64" ;;
+        aarch64) local pkg_arch="aarch64" ;;
+      esac
+      local artifact="Vesta-${VERSION}-1.${pkg_arch}.rpm"
+      echo "Downloading desktop app (RPM)..."
+      curl -fsSL -o "$WORK_DIR/vesta.rpm" "https://github.com/${REPO}/releases/download/v${VERSION}/${artifact}"
+      verify_checksum "$WORK_DIR/vesta.rpm" "$artifact"
+      sudo rpm -U --force "$WORK_DIR/vesta.rpm"
+    else
+      echo "  ⚠ No supported package manager (apt-get/rpm), skipping desktop app"
+      return
+    fi
+    echo "  ✓ Vesta desktop app"
   }
+
+  install_app_macos() {
+    local artifact="Vesta_${VERSION}_${ARCH}.dmg"
+    local dmg_path="$WORK_DIR/Vesta.dmg"
+    echo "Downloading desktop app (DMG)..."
+
+    # Map arch for DMG filename
+    case "$ARCH" in
+      x86_64) artifact="Vesta_${VERSION}_x64.dmg" ;;
+      aarch64) artifact="Vesta_${VERSION}_aarch64.dmg" ;;
+    esac
+
+    curl -fsSL -o "$dmg_path" "https://github.com/${REPO}/releases/download/v${VERSION}/${artifact}"
+    verify_checksum "$dmg_path" "$artifact"
+
+    local mount_point
+    mount_point=$(hdiutil attach "$dmg_path" -nobrowse -noautoopen 2>/dev/null | grep '/Volumes/' | awk '{print $NF}')
+    if [ -d "$mount_point/Vesta.app" ]; then
+      rm -rf /Applications/Vesta.app
+      cp -R "$mount_point/Vesta.app" /Applications/
+      hdiutil detach "$mount_point" -quiet
+      echo "  ✓ Vesta desktop app → /Applications/Vesta.app"
+    else
+      hdiutil detach "$mount_point" -quiet 2>/dev/null || true
+      echo "  ⚠ Could not find Vesta.app in DMG, skipping"
+    fi
+  }
+
+  has_gui() {
+    case "$OS" in
+      darwin) return 0 ;;
+      linux) [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ] ;;
+      *) return 1 ;;
+    esac
+  }
+
+  echo ""
 
   case "$OS" in
-    darwin)
-      echo "This install script is for Linux only."
-      echo "On macOS, download the app from: https://github.com/${REPO}/releases/latest"
-      exit 1
-      ;;
     linux)
-      if [ "$SERVER_ONLY" = true ]; then
-        install_vestad
-        echo ""
-        echo "Done! Start the server with: vestad serve"
-        echo "Then connect from a client: vesta connect https://<this-host>:7860#<api-key>"
-        echo "(The API key is printed when vestad starts)"
-        return
+      install_cli
+      install_vestad
+      if has_gui; then
+        install_app_linux
       fi
-
-      if [ "$CLI_ONLY" = false ] && [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
-        echo "No display detected, installing CLI only. Use --cli to suppress this message."
-        CLI_ONLY=true
-      fi
-
-      if [ "$CLI_ONLY" = true ]; then
-        case "$ARCH" in
-          x86_64) RUST_TARGET="x86_64-unknown-linux-gnu" ;;
-          aarch64) RUST_TARGET="aarch64-unknown-linux-gnu" ;;
-        esac
-
-        VESTA_ARTIFACT="vesta-${RUST_TARGET}.tar.gz"
-        echo "Downloading vesta client..."
-        curl -fsSL -o "$WORK_DIR/vesta.tar.gz" "https://github.com/${REPO}/releases/download/v${VERSION}/${VESTA_ARTIFACT}"
-        verify_checksum "$WORK_DIR/vesta.tar.gz" "$VESTA_ARTIFACT"
-        tar -xzf "$WORK_DIR/vesta.tar.gz" -C "$WORK_DIR"
-        install_cli_to_path "$WORK_DIR/vesta"
-
-        install_vestad
-      else
-        if command -v apt-get >/dev/null 2>&1; then
-          PKG_TYPE="deb"
-        elif command -v rpm >/dev/null 2>&1; then
-          PKG_TYPE="rpm"
-        else
-          echo "No supported package manager found (apt-get or rpm required)"
-          exit 1
-        fi
-
-        if [ "$PKG_TYPE" = "rpm" ]; then
-          case "$ARCH" in
-            x86_64) PKG_ARCH="x86_64" ;;
-            aarch64) PKG_ARCH="aarch64" ;;
-          esac
-          ARTIFACT="Vesta-${VERSION}-1.${PKG_ARCH}.rpm"
-          echo "Downloading desktop app (RPM)..."
-          curl -fsSL -o "$WORK_DIR/vesta.rpm" "https://github.com/${REPO}/releases/download/v${VERSION}/${ARTIFACT}"
-          verify_checksum "$WORK_DIR/vesta.rpm" "$ARTIFACT"
-          sudo rpm -U --force "$WORK_DIR/vesta.rpm"
-        else
-          case "$ARCH" in
-            x86_64) PKG_ARCH="amd64" ;;
-            aarch64) PKG_ARCH="arm64" ;;
-          esac
-          ARTIFACT="Vesta_${VERSION}_${PKG_ARCH}.deb"
-          echo "Downloading desktop app (DEB)..."
-          curl -fsSL -o "$WORK_DIR/vesta.deb" "https://github.com/${REPO}/releases/download/v${VERSION}/${ARTIFACT}"
-          verify_checksum "$WORK_DIR/vesta.deb" "$ARTIFACT"
-          sudo dpkg -i "$WORK_DIR/vesta.deb"
-        fi
-
-        echo "Installed Vesta desktop app."
-
-        # Always install vestad standalone, even with desktop app
-        install_vestad
-
-        echo "Launch the app from your menu or by running: vesta-app"
+      ;;
+    darwin)
+      install_cli
+      if has_gui; then
+        install_app_macos
       fi
       ;;
     *)
@@ -196,7 +218,17 @@ main() {
       ;;
   esac
 
-  echo "Done! Run 'vesta --help' to get started."
+  echo ""
+  echo "Done! Get started:"
+  if [ "$OS" = "linux" ]; then
+    echo "  vestad              # Start the server"
+    echo "  vesta connect       # Connect the CLI"
+  else
+    echo "  vesta connect <host>#<key>   # Connect to a remote vestad"
+  fi
+  if has_gui; then
+    echo "  Open Vesta app and connect to your server"
+  fi
 }
 
 main "$@"
