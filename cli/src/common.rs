@@ -1,5 +1,3 @@
-pub mod client;
-
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -59,16 +57,6 @@ pub struct StartAllResult {
     pub name: String,
     pub ok: bool,
     pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentStatus {
-    Running,
-    Stopped,
-    Dead,
-    NotFound,
-    Unknown,
 }
 
 // ── Backup Types ──────────────────────────────────────────────
@@ -169,17 +157,14 @@ pub fn save_server_config(config: &ServerConfig) -> Result<(), String> {
     save_config(&full)
 }
 
+// ── Helpers ────────────────────────────────────────────────────
+
 pub fn normalize_url(host: &str) -> String {
     if host.starts_with("https://") || host.starts_with("http://") {
         host.to_string()
     } else {
         format!("https://{}", host)
     }
-}
-
-pub fn is_local_server(config: &ServerConfig) -> bool {
-    let url = &config.url;
-    url.contains("localhost") || url.contains("127.0.0.1") || url.contains("[::1]")
 }
 
 pub fn version_less_than(a: &str, b: &str) -> bool {
@@ -191,12 +176,9 @@ pub fn version_less_than(a: &str, b: &str) -> bool {
 
 // ── Update checks ───────────────────────────────────────────────
 
-pub const GITHUB_RELEASES_LATEST_URL: &str =
+const GITHUB_RELEASES_LATEST_URL: &str =
     "https://api.github.com/repos/elyxlz/vesta/releases/latest";
 
-/// Fetch the latest vesta release tag from GitHub, returning it with any
-/// leading `v` stripped. `timeout_secs` applies to both connect and total
-/// request time; pass `None` for no timeout.
 pub fn fetch_latest_release_tag(timeout_secs: Option<u64>) -> Option<String> {
     let mut args: Vec<String> = vec![
         "-fsSL".into(),

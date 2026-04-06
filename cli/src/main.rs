@@ -2,10 +2,11 @@ use clap::{Parser, Subcommand};
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process;
-use vesta_common::{fetch_latest_release_tag, version_less_than};
-
 mod client;
+mod common;
 mod platform;
+
+use common::{fetch_latest_release_tag, version_less_than};
 
 const VERSION_CACHE_TTL_SECS: u64 = 3600;
 const UPDATE_CHECK_TIMEOUT_MS: u64 = 100;
@@ -480,7 +481,7 @@ fn run(cli: Cli) {
                             "name": name,
                             "status": "not_found",
                             "authenticated": false,
-                            "ws_port": vesta_common::DEFAULT_WS_PORT,
+                            "ws_port": common::DEFAULT_WS_PORT,
                             "alive": false,
                             "friendly_status": "not found"
                         })
@@ -597,7 +598,7 @@ fn run(cli: Cli) {
                 (host, key)
             };
 
-            let url = vesta_common::normalize_url(&url);
+            let url = common::normalize_url(&url);
             if key.is_empty() {
                 platform::die("API key is required");
             }

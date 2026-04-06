@@ -1,9 +1,49 @@
 use vesta_tests::{TestAgent, SERVER};
+use vesta_tests::client::Client;
+use vesta_tests::types::{BackupType, ServerConfig};
 
 const FAKE_TOKEN: &str = r#"{"claudeAiOauth":{"accessToken":"test","refreshToken":"test","expiresAt":4102444800000}}"#;
 
-fn inject_fake_token(c: &vesta_common::client::Client, name: &str) {
+fn inject_fake_token(c: &Client, name: &str) {
     c.inject_token(name, FAKE_TOKEN).unwrap();
+}
+
+// ── Helper: WS URL ────────────────────────────────────────────
+
+fn ws_base_url(url: &str) -> String {
+    url.replace("https://", "wss://").replace("http://", "ws://")
+}
+
+fn make_ws_rustls_config(fingerprint: Option<String>) -> std::sync::Arc<rustls::ClientConfig> {
+    use std::sync::Arc;
+
+    #[derive(Debug)]
+    struct AcceptAll { expected: Option<String> }
+
+    impl rustls::client::danger::ServerCertVerifier for AcceptAll {
+        fn verify_server_cert(&self, end_entity: &rustls::pki_types::CertificateDer<'_>, _: &[rustls::pki_types::CertificateDer<'_>], _: &rustls::pki_types::ServerName<'_>, _: &[u8], _: rustls::pki_types::UnixTime) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+            if let Some(ref expected) = self.expected {
+                let digest = ring::digest::digest(&ring::digest::SHA256, end_entity.as_ref());
+                let actual = format!("sha256:{}", digest.as_ref().iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(":"));
+                if actual != *expected {
+                    return Err(rustls::Error::General("fingerprint mismatch".into()));
+                }
+            }
+            Ok(rustls::client::danger::ServerCertVerified::assertion())
+        }
+        fn verify_tls12_signature(&self, _: &[u8], _: &rustls::pki_types::CertificateDer<'_>, _: &rustls::DigitallySignedStruct) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+        }
+        fn verify_tls13_signature(&self, _: &[u8], _: &rustls::pki_types::CertificateDer<'_>, _: &rustls::DigitallySignedStruct) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+        }
+        fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+            rustls::crypto::ring::default_provider().signature_verification_algorithms.supported_schemes()
+        }
+    }
+
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    Arc::new(rustls::ClientConfig::builder().dangerous().with_custom_certificate_verifier(Arc::new(AcceptAll { expected: fingerprint })).with_no_client_auth())
 }
 
 // ── Health & Auth ──────────────────────────────────────────────
@@ -15,7 +55,7 @@ fn health() {
 
 #[test]
 fn wrong_token_rejected() {
-    let bad = vesta_common::client::Client::new(&vesta_common::ServerConfig {
+    let bad = Client::new(&ServerConfig {
         url: SERVER.config.url.clone(),
         api_key: "wrong".into(),
         cert_fingerprint: SERVER.config.cert_fingerprint.clone(),
@@ -147,11 +187,10 @@ fn backup_create() {
 
     let backup = c.create_backup(&agent.name).unwrap();
     assert_eq!(backup.agent_name, agent.name);
-    assert_eq!(backup.backup_type, vesta_common::BackupType::Manual);
+    assert_eq!(backup.backup_type, BackupType::Manual);
     assert!(backup.size > 0);
     assert!(!backup.id.is_empty());
 
-    // Cleanup backup
     c.delete_backup(&agent.name, &backup.id).ok();
 }
 
@@ -165,10 +204,8 @@ fn backup_list() {
 
     let backups = c.list_backups(&agent.name).unwrap();
     assert!(backups.len() >= 2);
-    // Most recent first
     assert!(backups[0].created_at >= backups[1].created_at);
 
-    // Cleanup
     c.delete_backup(&agent.name, &b1.id).ok();
     c.delete_backup(&agent.name, &b2.id).ok();
 }
@@ -194,7 +231,6 @@ fn backup_restore() {
     let st = c.agent_status(&agent.name).unwrap();
     assert_eq!(st.status, "running");
 
-    // Cleanup backups (including pre-restore safety backup)
     let backups = c.list_backups(&agent.name).unwrap();
     for b in &backups {
         c.delete_backup(&agent.name, &b.id).ok();
@@ -212,10 +248,9 @@ fn backup_restore_creates_safety_snapshot() {
     let backups = c.list_backups(&agent.name).unwrap();
     let pre_restore = backups
         .iter()
-        .find(|b| b.backup_type == vesta_common::BackupType::PreRestore);
+        .find(|b| b.backup_type == BackupType::PreRestore);
     assert!(pre_restore.is_some(), "expected a pre-restore safety backup");
 
-    // Cleanup
     for b in &backups {
         c.delete_backup(&agent.name, &b.id).ok();
     }
@@ -252,8 +287,6 @@ fn backup_restore_nonexistent_fails() {
     assert!(result.is_err());
     drop(agent);
 }
-
-// ── WebSocket ──────────────────────────────────────────────────
 
 // ── Rebuild ────────────────────────────────────────────────────
 
@@ -303,7 +336,6 @@ fn start_all_starts_authenticated_agents() {
 
     c.start_all().unwrap();
 
-    // Verify our agents specifically are running (other agents from other tests may also be affected)
     assert_eq!(c.agent_status(&a1.name).unwrap().status, "running");
     assert_eq!(c.agent_status(&a2.name).unwrap().status, "running");
 }
@@ -349,12 +381,12 @@ async fn ws_connect_to_running_agent() {
 
     let ws_url = format!(
         "{}/agents/{}/ws?token={}",
-        vesta_common::client::ws_base_url(&SERVER.config.url),
+        ws_base_url(&SERVER.config.url),
         agent.name,
         SERVER.config.api_key
     );
 
-    let tls = vesta_common::client::make_ws_rustls_config(SERVER.config.cert_fingerprint.clone());
+    let tls = make_ws_rustls_config(SERVER.config.cert_fingerprint.clone());
     let connector = tokio_tungstenite::Connector::Rustls(tls);
 
     let result = tokio_tungstenite::connect_async_tls_with_config(
@@ -377,10 +409,10 @@ async fn ws_connect_to_running_agent() {
 async fn ws_rejected_without_auth() {
     let ws_url = format!(
         "{}/agents/test-ws-noauth/ws",
-        vesta_common::client::ws_base_url(&SERVER.config.url),
+        ws_base_url(&SERVER.config.url),
     );
 
-    let tls = vesta_common::client::make_ws_rustls_config(SERVER.config.cert_fingerprint.clone());
+    let tls = make_ws_rustls_config(SERVER.config.cert_fingerprint.clone());
     let connector = tokio_tungstenite::Connector::Rustls(tls);
 
     let result = tokio_tungstenite::connect_async_tls_with_config(
@@ -389,12 +421,3 @@ async fn ws_rejected_without_auth() {
 
     assert!(result.is_err(), "WS without auth should be rejected");
 }
-
-// ── Server detection ───────────────────────────────────────────
-
-#[test]
-fn wait_for_server_port_detects_running() {
-    assert!(vesta_common::wait_for_server_port(SERVER.port, 1));
-}
-
-

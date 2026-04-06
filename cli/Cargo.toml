@@ -12,9 +12,12 @@ name = "vesta"
 path = "src/main.rs"
 
 [dependencies]
-vesta-common = { path = "../vesta-common" }
 clap = { version = "4", features = ["derive"] }
 tungstenite = { version = "0.26", features = ["rustls-tls-native-roots"] }
+ureq = { version = "3", features = ["json", "rustls"] }
+rustls = "0.23"
+ring = "0.17"
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 dirs = "6"
 self-replace = "1"

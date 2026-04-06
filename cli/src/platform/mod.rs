@@ -1,4 +1,4 @@
-pub use vesta_common::{save_server_config, normalize_url, ServerConfig};
+pub use crate::common::{save_server_config, normalize_url, ServerConfig};
 
 pub fn load_server_config(host_flag: Option<&str>, token_flag: Option<&str>) -> Option<ServerConfig> {
     // 1. Flags
@@ -24,7 +24,7 @@ pub fn load_server_config(host_flag: Option<&str>, token_flag: Option<&str>) -> 
     }
 
     // 3. config.json
-    vesta_common::load_server_config()
+    crate::common::load_server_config()
 }
 
 pub fn die(msg: &str) -> ! {

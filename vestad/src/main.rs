@@ -4,6 +4,7 @@ mod docker;
 mod jwt;
 mod serve;
 mod tunnel;
+mod types;
 mod update_check;
 
 

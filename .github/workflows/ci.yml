@@ -36,7 +36,6 @@ jobs:
             cli:
               - 'cli/**'
               - 'vestad/**'
-              - 'vesta-common/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
             app:
