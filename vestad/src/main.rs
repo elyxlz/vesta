@@ -71,6 +71,18 @@ fn config_dir() -> std::path::PathBuf {
     std::path::PathBuf::from(home).join(".config/vesta")
 }
 
+fn print_server_info(tunnel_url: Option<&str>, local_url: &str, api_key: &str) {
+    eprintln!();
+    if let Some(url) = tunnel_url {
+        eprintln!("  \x1b[36mhost\x1b[0m    \x1b[1m{}\x1b[0m", url);
+        eprintln!("  \x1b[36mlocal\x1b[0m   \x1b[2m{}\x1b[0m", local_url);
+    } else {
+        eprintln!("  \x1b[36mhost\x1b[0m    \x1b[1m{}\x1b[0m", local_url);
+    }
+    eprintln!("  \x1b[36mkey\x1b[0m     \x1b[33m{}\x1b[0m", api_key);
+    eprintln!();
+}
+
 fn main() {
     rustls::crypto::ring::default_provider()
         .install_default()
@@ -111,15 +123,7 @@ fn main() {
 
             eprintln!();
             eprintln!("  \x1b[1;35mvestad\x1b[0m v{}", env!("CARGO_PKG_VERSION"));
-            eprintln!();
-            if let Some(ref url) = tunnel_url {
-                eprintln!("  \x1b[36mhost\x1b[0m    \x1b[1m{}\x1b[0m", url);
-                eprintln!("  \x1b[36mlocal\x1b[0m   \x1b[2m{}\x1b[0m", local_url);
-            } else {
-                eprintln!("  \x1b[36mhost\x1b[0m    \x1b[1m{}\x1b[0m", local_url);
-            }
-            eprintln!("  \x1b[36mkey\x1b[0m     \x1b[33m{}\x1b[0m", api_key);
-            eprintln!();
+            print_server_info(tunnel_url.as_deref(), &local_url, &api_key);
 
             tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
@@ -204,15 +208,10 @@ fn main() {
                 _ => die("no port file found — is vestad running?"),
             };
 
-            eprintln!();
-            if let Some(tc) = tunnel::get_tunnel_config(&config) {
-                eprintln!("  \x1b[36mhost\x1b[0m    \x1b[1mhttps://{}\x1b[0m", tc.hostname);
-                eprintln!("  \x1b[36mlocal\x1b[0m   \x1b[2m{}\x1b[0m", local_url);
-            } else {
-                eprintln!("  \x1b[36mhost\x1b[0m    \x1b[1m{}\x1b[0m", local_url);
-            }
-            eprintln!("  \x1b[36mkey\x1b[0m     \x1b[33m{}\x1b[0m", api_key);
-            eprintln!();
+            let tunnel_url = tunnel::get_tunnel_config(&config)
+                .map(|tc| format!("https://{}", tc.hostname));
+
+            print_server_info(tunnel_url.as_deref(), &local_url, &api_key);
         }
 
         Command::Update => {
