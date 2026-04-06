@@ -1,18 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Transcriber } from "@/lib/voice";
-import { useVoiceStatus } from "@/hooks/use-voice-status";
-import { useSettings } from "@/stores/use-settings";
 
 interface VoiceInputCallbacks {
   agentName: string;
   onSend: (text: string) => void;
   onDraft: (text: string) => void;
+  onRecordingStart?: () => void;
+  sttAvailable: boolean;
+  voiceAutoSend: boolean;
 }
 
-export function useVoiceInput({ agentName, onSend, onDraft }: VoiceInputCallbacks) {
-  const voiceAutoSend = useSettings((s) => s.voiceAutoSend);
-  const { status } = useVoiceStatus(agentName);
-  const sttAvailable = status?.stt.configured ?? false;
+export function useVoiceInput({ agentName, onSend, onDraft, onRecordingStart, sttAvailable, voiceAutoSend }: VoiceInputCallbacks) {
   const [isRecording, setIsRecording] = useState(false);
   const [liveTranscript, setLiveTranscript] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -33,6 +31,7 @@ export function useVoiceInput({ agentName, onSend, onDraft }: VoiceInputCallback
     }
 
     setError(null);
+    onRecordingStart?.();
     const stream = new Transcriber({
       agentName,
       onTranscript: (text) => {
@@ -61,7 +60,7 @@ export function useVoiceInput({ agentName, onSend, onDraft }: VoiceInputCallback
       setError(msg);
       streamRef.current = null;
     });
-  }, [agentName, onSend, onDraft, voiceAutoSend, sttAvailable]);
+  }, [agentName, onSend, onDraft, onRecordingStart, voiceAutoSend, sttAvailable]);
 
   useEffect(() => {
     if (!error) return;
@@ -69,5 +68,5 @@ export function useVoiceInput({ agentName, onSend, onDraft }: VoiceInputCallback
     return () => clearTimeout(timer);
   }, [error]);
 
-  return { isRecording, liveTranscript, toggle, error, sttAvailable };
+  return { isRecording, liveTranscript, toggle, error };
 }

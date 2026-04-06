@@ -21,12 +21,10 @@ import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useTheme, type Theme } from "@/stores/use-theme";
-import { useSettings } from "@/stores/use-settings";
 import { useAuth } from "@/providers/AuthProvider";
 import { getConnection } from "@/lib/connection";
-import { fetchVoices, type VoiceCatalogue, type VoiceInfo } from "@/lib/voice";
+import { fetchVoices, setVoice as apiSetVoice, setEot as apiSetEot, setPreference as apiSetPreference, type VoiceCatalogue, type VoiceInfo } from "@/lib/voice";
 import { useVoiceStatus } from "@/hooks/use-voice-status";
-import { sendChatEvent } from "@/hooks/use-chat";
 import { StatusPill } from "@/components/StatusPill";
 
 const EOT_DEBOUNCE_MS = 400;
@@ -37,9 +35,6 @@ export function Settings() {
   const theme = useTheme((s) => s.theme);
   const setTheme = useTheme((s) => s.setTheme);
   const { reachable, disconnect } = useAuth();
-  const voiceAutoSend = useSettings((s) => s.voiceAutoSend);
-  const speechEnabled = useSettings((s) => s.speechEnabled);
-  const setSetting = useSettings((s) => s.set);
   const [playingVoice, setPlayingVoice] = useState<string | null>(null);
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -48,19 +43,14 @@ export function Settings() {
   const [catalogueError, setCatalogueError] = useState<string | null>(null);
   const [pendingVoiceId, setPendingVoiceId] = useState<string | null>(null);
 
-  const sttKeyMissing = status?.stt.configured === false;
-  const ttsKeyMissing = status?.tts.configured === false;
-
-  // Force speech off if TTS isn't available on this agent.
-  useEffect(() => {
-    if (ttsKeyMissing && speechEnabled) {
-      setSetting("speechEnabled", false);
-    }
-  }, [ttsKeyMissing, speechEnabled, setSetting]);
+  const sttConfigured = status?.stt.configured ?? false;
+  const ttsConfigured = status?.tts.configured ?? false;
+  const speechEnabled = status?.speech_enabled ?? false;
+  const voiceAutoSend = status?.voice_auto_send ?? true;
 
   // Fetch voice catalogue when dialog open + TTS configured.
   useEffect(() => {
-    if (!open || !agentName || ttsKeyMissing || !status?.tts.configured) {
+    if (!open || !agentName || !ttsConfigured) {
       setCatalogue(null);
       return;
     }
@@ -73,9 +63,9 @@ export function Settings() {
         setCatalogueError(err instanceof Error ? err.message : "Failed to load voices");
       });
     return () => ctrl.abort();
-  }, [open, agentName, ttsKeyMissing, status?.tts.configured]);
+  }, [open, agentName, ttsConfigured]);
 
-  // EOT slider local state (debounced writes via system_message).
+  // EOT slider local state (debounced writes).
   const [localEotThreshold, setLocalEotThreshold] = useState(0.8);
   const [localEotTimeoutMs, setLocalEotTimeoutMs] = useState(10000);
   useEffect(() => {
@@ -89,23 +79,22 @@ export function Settings() {
   const scheduleEotThresholdUpdate = (value: number) => {
     if (eotThresholdTimer.current) clearTimeout(eotThresholdTimer.current);
     eotThresholdTimer.current = setTimeout(() => {
-      sendChatEvent({
-        type: "system_message",
-        text: `User set EOT threshold to ${value.toFixed(2)}. Run voice_keys.py set-eot --threshold ${value.toFixed(2)}.`,
-      });
-      setTimeout(refreshStatus, 2000);
+      if (!agentName) return;
+      apiSetEot(agentName, { threshold: value }).then(() => refreshStatus()).catch(console.warn);
     }, EOT_DEBOUNCE_MS);
   };
 
   const scheduleEotTimeoutUpdate = (value: number) => {
     if (eotTimeoutMsTimer.current) clearTimeout(eotTimeoutMsTimer.current);
     eotTimeoutMsTimer.current = setTimeout(() => {
-      sendChatEvent({
-        type: "system_message",
-        text: `User set EOT timeout to ${value} ms. Run voice_keys.py set-eot --timeout-ms ${value}.`,
-      });
-      setTimeout(refreshStatus, 2000);
+      if (!agentName) return;
+      apiSetEot(agentName, { timeout_ms: value }).then(() => refreshStatus()).catch(console.warn);
     }, EOT_DEBOUNCE_MS);
+  };
+
+  const setPreference = (key: "speech_enabled" | "voice_auto_send", value: boolean) => {
+    if (!agentName) return;
+    apiSetPreference(agentName, key, value).then(() => refreshStatus()).catch(console.warn);
   };
 
   const playPreview = (voice: VoiceInfo) => {
@@ -126,12 +115,12 @@ export function Settings() {
   };
 
   const selectVoice = (voice: VoiceInfo) => {
+    if (!agentName) return;
     setPendingVoiceId(voice.id);
-    sendChatEvent({
-      type: "system_message",
-      text: `User selected voice '${voice.name}' (voice_id: ${voice.id}). Run voice_keys.py set-voice --id ${voice.id}.`,
-    });
-    setTimeout(() => { refreshStatus(); setPendingVoiceId(null); }, 2500);
+    apiSetVoice(agentName, voice.id)
+      .then(() => refreshStatus())
+      .catch(console.warn)
+      .finally(() => setPendingVoiceId(null));
   };
 
   const selectedVoiceId = pendingVoiceId ?? catalogue?.selected_voice_id ?? null;
@@ -210,7 +199,7 @@ export function Settings() {
           <Separator />
 
           <Field orientation="vertical" className="gap-3">
-            <FieldLabel>Voice</FieldLabel>
+            <FieldLabel>Agent</FieldLabel>
 
             <Field orientation="horizontal" className="items-center justify-between">
               <FieldContent>
@@ -218,115 +207,115 @@ export function Settings() {
                   <Mic className="size-4 text-muted-foreground" />
                   Auto-send on pause
                 </FieldLabel>
-                <FieldDescription className={sttKeyMissing ? "text-amber-600 dark:text-amber-500" : undefined}>
-                  {sttKeyMissing
+                <FieldDescription className={!sttConfigured ? "text-amber-600 dark:text-amber-500" : undefined}>
+                  {!sttConfigured
                     ? "Voice input not configured — ask the agent to set it up"
                     : "Send message automatically when you stop speaking"}
                 </FieldDescription>
               </FieldContent>
               <Switch
-                checked={voiceAutoSend && !sttKeyMissing}
-                disabled={sttKeyMissing}
-                onCheckedChange={(v) => setSetting("voiceAutoSend", v)}
+                checked={voiceAutoSend && sttConfigured}
+                disabled={!sttConfigured}
+                onCheckedChange={(v) => setPreference("voice_auto_send", v)}
               />
             </Field>
 
-            {!sttKeyMissing && status?.stt.configured && (
-              <Collapsible>
-                <CollapsibleTrigger asChild>
-                  <Button variant="ghost" size="sm" className="w-full justify-start gap-2 px-0 text-sm text-muted-foreground hover:text-foreground">
-                    <ChevronDown className="size-4 transition-transform [[data-state=closed]_&]:-rotate-90" />
-                    Advanced transcription
-                  </Button>
-                </CollapsibleTrigger>
-                <CollapsibleContent>
-                  <div className="flex flex-col gap-3 pt-2 px-6">
-                    <div className="flex items-center justify-between text-xs">
+                {sttConfigured && (
+                  <Collapsible>
+                    <CollapsibleTrigger asChild>
+                      <Button variant="ghost" size="sm" className="w-full justify-start gap-2 px-0 text-sm text-muted-foreground hover:text-foreground">
+                        <ChevronDown className="size-4 transition-transform [[data-state=closed]_&]:-rotate-90" />
+                        Advanced transcription
+                      </Button>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                      <div className="flex flex-col gap-3 pt-2 px-6">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-muted-foreground">Usage this month</span>
+                          <span className="text-foreground tabular-nums">
+                            {sttHours !== null && sttBalanceStr !== null
+                              ? `${sttHours.toFixed(2)} h used · ${sttBalanceStr} left`
+                              : "—"}
+                          </span>
+                        </div>
+
+                        <div className="flex flex-col gap-1.5">
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm text-foreground">End-of-turn sensitivity</span>
+                            <span className="text-[10px] text-muted-foreground/70 tabular-nums">{localEotThreshold.toFixed(2)}</span>
+                          </div>
+                          <Slider
+                            min={0.3}
+                            max={0.95}
+                            step={0.05}
+                            value={[localEotThreshold]}
+                            onValueChange={([v]) => { setLocalEotThreshold(v); scheduleEotThresholdUpdate(v); }}
+                          />
+                          <p className="text-xs text-muted-foreground">Lower finalizes turns faster; higher waits longer</p>
+                        </div>
+
+                        <div className="flex flex-col gap-1.5">
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm text-foreground">Max silence timeout</span>
+                            <span className="text-[10px] text-muted-foreground/70 tabular-nums">{(localEotTimeoutMs / 1000).toFixed(1)}s</span>
+                          </div>
+                          <Slider
+                            min={2000}
+                            max={15000}
+                            step={500}
+                            value={[localEotTimeoutMs]}
+                            onValueChange={([v]) => { setLocalEotTimeoutMs(v); scheduleEotTimeoutUpdate(v); }}
+                          />
+                          <p className="text-xs text-muted-foreground">Max silence before forcing end of turn</p>
+                        </div>
+                      </div>
+                    </CollapsibleContent>
+                  </Collapsible>
+                )}
+
+                <Field orientation="horizontal" className="items-center justify-between">
+                  <FieldContent>
+                    <FieldLabel className="flex items-center gap-2 text-sm">
+                      <Volume2 className="size-4 text-muted-foreground" />
+                      Read responses aloud
+                    </FieldLabel>
+                    <FieldDescription className={!ttsConfigured ? "text-amber-600 dark:text-amber-500" : undefined}>
+                      {!ttsConfigured
+                        ? "Voice output not configured — ask the agent to set it up"
+                        : "Speak agent replies using text-to-speech"}
+                    </FieldDescription>
+                  </FieldContent>
+                  <Switch
+                    checked={speechEnabled && ttsConfigured}
+                    disabled={!ttsConfigured}
+                    onCheckedChange={(v) => setPreference("speech_enabled", v)}
+                  />
+                </Field>
+
+                {speechEnabled && ttsConfigured && (
+                  <>
+                    <div className="flex items-center justify-between text-xs px-6">
                       <span className="text-muted-foreground">Usage this month</span>
                       <span className="text-foreground tabular-nums">
-                        {sttHours !== null && sttBalanceStr !== null
-                          ? `${sttHours.toFixed(2)} h used · ${sttBalanceStr} left`
+                        {ttsUsage && typeof ttsUsage.character_count === "number" && typeof ttsUsage.character_limit === "number"
+                          ? `${ttsUsage.character_count.toLocaleString()} / ${ttsUsage.character_limit.toLocaleString()} chars`
                           : "—"}
                       </span>
                     </div>
-
-                    <div className="flex flex-col gap-1.5">
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm text-foreground">End-of-turn sensitivity</span>
-                        <span className="text-[10px] text-muted-foreground/70 tabular-nums">{localEotThreshold.toFixed(2)}</span>
-                      </div>
-                      <Slider
-                        min={0.3}
-                        max={0.95}
-                        step={0.05}
-                        value={[localEotThreshold]}
-                        onValueChange={([v]) => { setLocalEotThreshold(v); scheduleEotThresholdUpdate(v); }}
+                    {catalogue && (
+                      <VoicePicker
+                        voices={catalogue.voices}
+                        selectedId={selectedVoiceId}
+                        playingId={playingVoice}
+                        onSelect={selectVoice}
+                        onPreview={playPreview}
                       />
-                      <p className="text-xs text-muted-foreground">Lower finalizes turns faster; higher waits longer</p>
-                    </div>
-
-                    <div className="flex flex-col gap-1.5">
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm text-foreground">Max silence timeout</span>
-                        <span className="text-[10px] text-muted-foreground/70 tabular-nums">{(localEotTimeoutMs / 1000).toFixed(1)}s</span>
-                      </div>
-                      <Slider
-                        min={2000}
-                        max={15000}
-                        step={500}
-                        value={[localEotTimeoutMs]}
-                        onValueChange={([v]) => { setLocalEotTimeoutMs(v); scheduleEotTimeoutUpdate(v); }}
-                      />
-                      <p className="text-xs text-muted-foreground">Max silence before forcing end of turn</p>
-                    </div>
-                  </div>
-                </CollapsibleContent>
-              </Collapsible>
-            )}
-
-            <Field orientation="horizontal" className="items-center justify-between">
-              <FieldContent>
-                <FieldLabel className="flex items-center gap-2 text-sm">
-                  <Volume2 className="size-4 text-muted-foreground" />
-                  Read responses aloud
-                </FieldLabel>
-                <FieldDescription className={ttsKeyMissing ? "text-amber-600 dark:text-amber-500" : undefined}>
-                  {ttsKeyMissing
-                    ? "Voice output not configured — ask the agent to set it up"
-                    : "Speak agent replies using text-to-speech"}
-                </FieldDescription>
-              </FieldContent>
-              <Switch
-                checked={speechEnabled && !ttsKeyMissing}
-                disabled={ttsKeyMissing}
-                onCheckedChange={(v) => setSetting("speechEnabled", v)}
-              />
-            </Field>
-
-            {speechEnabled && !ttsKeyMissing && (
-              <>
-                <div className="flex items-center justify-between text-xs px-6">
-                  <span className="text-muted-foreground">Usage this month</span>
-                  <span className="text-foreground tabular-nums">
-                    {ttsUsage && typeof ttsUsage.character_count === "number" && typeof ttsUsage.character_limit === "number"
-                      ? `${ttsUsage.character_count.toLocaleString()} / ${ttsUsage.character_limit.toLocaleString()} chars`
-                      : "—"}
-                  </span>
-                </div>
-                {catalogue && (
-                  <VoicePicker
-                    voices={catalogue.voices}
-                    selectedId={selectedVoiceId}
-                    playingId={playingVoice}
-                    onSelect={selectVoice}
-                    onPreview={playPreview}
-                  />
+                    )}
+                    {catalogueError && (
+                      <p className="text-xs text-destructive px-6">{catalogueError}</p>
+                    )}
+                  </>
                 )}
-                {catalogueError && (
-                  <p className="text-xs text-destructive px-6">{catalogueError}</p>
-                )}
-              </>
-            )}
           </Field>
 
           <Separator />

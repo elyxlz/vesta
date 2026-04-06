@@ -21,6 +21,8 @@ export interface VoiceStatus {
     selected_voice_id?: string;
     usage?: unknown;
   };
+  speech_enabled: boolean;
+  voice_auto_send: boolean;
 }
 
 export interface VoiceInfo {
@@ -42,6 +44,32 @@ export async function fetchVoiceStatus(agentName: string, signal?: AbortSignal):
 
 export async function fetchVoices(agentName: string, signal?: AbortSignal): Promise<VoiceCatalogue> {
   return apiJson<VoiceCatalogue>(`/agents/${encodeURIComponent(agentName)}/voice/tts/voices`, { signal });
+}
+
+// --- Voice settings ---
+
+export async function setVoice(agentName: string, voiceId: string): Promise<void> {
+  await apiJson(`/agents/${encodeURIComponent(agentName)}/voice/tts/set-voice`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ voice_id: voiceId }),
+  });
+}
+
+export async function setEot(agentName: string, params: { threshold?: number; timeout_ms?: number }): Promise<void> {
+  await apiJson(`/agents/${encodeURIComponent(agentName)}/voice/stt/set-eot`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+}
+
+export async function setPreference(agentName: string, key: "speech_enabled" | "voice_auto_send", value: boolean): Promise<void> {
+  await apiJson(`/agents/${encodeURIComponent(agentName)}/voice/set-preference`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key, value }),
+  });
 }
 
 // --- TTS playback ---

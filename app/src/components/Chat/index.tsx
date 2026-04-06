@@ -18,7 +18,7 @@ import { ButtonGroup } from "@/components/ui/button-group";
 import { useChat } from "@/hooks/use-chat";
 import { useAutoScroll } from "@/hooks/use-auto-scroll";
 import { useVoiceInput } from "@/hooks/use-voice-input";
-import { useSettings } from "@/stores/use-settings";
+import { useVoiceStatus } from "@/hooks/use-voice-status";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useLayout } from "@/stores/use-layout";
 import { linkify } from "@/lib/linkify";
@@ -65,8 +65,11 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   const { name, setAgentState } = useSelectedAgent();
   const navigate = useNavigate();
   const navbarHeight = useLayout((s) => s.navbarHeight);
-  const voiceAutoSend = useSettings((s) => s.voiceAutoSend);
-  const { messages, agentState, connected, hasMore, loadingMore, loadMore, send } = useChat(name, true);
+  const { status: voiceStatus } = useVoiceStatus(name);
+  const speechEnabled = voiceStatus?.speech_enabled ?? false;
+  const voiceAutoSend = voiceStatus?.voice_auto_send ?? true;
+  const sttAvailable = voiceStatus?.stt.configured ?? false;
+  const { messages, agentState, connected, hasMore, loadingMore, loadMore, send, stopSpeech } = useChat(name, true, speechEnabled);
 
   useEffect(() => {
     setAgentState(agentState);
@@ -75,7 +78,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   const [input, setInput] = useState("");
   const voiceSend = useCallback((text: string) => { send(text); }, [send]);
   const voiceDraft = useCallback((text: string) => { setInput(text); }, []);
-  const { isRecording, liveTranscript, toggle: toggleVoice, error: voiceError, sttAvailable } = useVoiceInput({ agentName: name || "", onSend: voiceSend, onDraft: voiceDraft });
+  const { isRecording, liveTranscript, toggle: toggleVoice, error: voiceError } = useVoiceInput({ agentName: name || "", onSend: voiceSend, onDraft: voiceDraft, onRecordingStart: stopSpeech, sttAvailable, voiceAutoSend });
   const [wasConnected, setWasConnected] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -339,20 +342,21 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
               className="m-0 flex-1 min-h-5 max-h-[120px] bg-transparent py-2.5 text-base sm:text-sm leading-5 resize-none outline-none placeholder:text-muted-foreground/50 disabled:opacity-50"
             />
           )}
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            className="shrink-0"
-            disabled={!connected || !sttAvailable}
-            onClick={toggleVoice}
-            title={!sttAvailable ? "Voice input not configured — ask the agent to set it up" : undefined}
-          >
-            {isRecording ? (
-              <Square className="text-red-500" size={14} />
-            ) : (
-              <Mic className="text-muted-foreground" />
-            )}
-          </Button>
+          {sttAvailable && (
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              className="shrink-0"
+              disabled={!connected}
+              onClick={toggleVoice}
+            >
+              {isRecording ? (
+                <Square className="text-red-500" size={14} />
+              ) : (
+                <Mic className="text-muted-foreground" />
+              )}
+            </Button>
+          )}
           {(!isRecording || !voiceAutoSend) && (
             <Button
               size="icon-sm"
