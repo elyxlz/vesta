@@ -94,6 +94,7 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
         state.shutdown_event.set()
 
     logger.shutdown("Shutting down...")
+    _write_restart_reason(config, state.restart_reason or CLEAN_RESTART)
 
     for task in tasks:
         task.cancel()
@@ -103,7 +104,6 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
         logger.shutdown("Shutdown timed out (SDK cleanup hung), forcing exit")
         os._exit(1)
     await ws_runner.cleanup()
-    _write_restart_reason(config, state.restart_reason or CLEAN_RESTART)
     logger.shutdown("sweet dreams!")
 
 
