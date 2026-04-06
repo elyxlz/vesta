@@ -145,18 +145,18 @@ if __name__ == "__main__":
     web.run_app(app, host="localhost", port=7970)
 ```
 
-### Step 2: Register the skill server
+### Step 2: Register with the reverse proxy
 
-Edit `~/vesta/src/vesta/skill_server.py` and append one tuple to `SKILL_SERVERS`:
+Edit `~/vesta/src/vesta/proxy.py` and append one tuple to `PROXIED_SERVERS`:
 
 ```python
-SKILL_SERVERS: list[tuple[str, int]] = [
+PROXIED_SERVERS: list[tuple[str, int]] = [
     ...,
     ("<name>", 7970),
 ]
 ```
 
-Format: `(SKILL_NAME, PORT)`. Pick an unused port.
+Format: `(name, port)`. Pick an unused port.
 
 ### Step 3: Start the server and restart
 
@@ -224,6 +224,6 @@ When creating a new skill:
 1. Create `~/vesta/skills/<name>/SKILL.md` with frontmatter and docs
 2. Add scripts to `~/vesta/skills/<name>/scripts/` (or Python modules at skill root)
 3. If it needs API keys or auth, create `~/vesta/skills/<name>/SETUP.md`
-4. If the app needs HTTP access, build an HTTP server + register in `SKILL_SERVERS`
+4. If the app needs HTTP access, build an HTTP server + register in `PROXIED_SERVERS`
 5. If it needs a daemon, build a CLI package under `cli/`
 6. Restart with `restart_vesta` to load the new skill
