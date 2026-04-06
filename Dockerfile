@@ -27,24 +27,14 @@ RUN uv sync --frozen
 # Everything else
 COPY agent/ .
 
-# Remove non-default skills (keep only those listed in default-skills.txt).
-# Skills live at skills/<dir>/; the canonical name is the frontmatter
-# `name:` field in SKILL.md (may differ from dir name).
+# Remove non-default skills (keep only those listed in default-skills.txt)
 RUN for d in skills/*/; do \
-      [ -f "$d/SKILL.md" ] || { rm -rf "$d"; continue; }; \
-      skill_name="$(awk -F': *' '/^name:/{print $2; exit}' "$d/SKILL.md")"; \
-      [ -z "$skill_name" ] && skill_name="$(basename "$d")"; \
-      grep -qx "$skill_name" skills/default-skills.txt || rm -rf "$d"; \
-    done && rm -f skills/default-skills.txt skills/generate-index.py
+      name="$(basename "$d")"; \
+      grep -qx "$name" skills/default-skills.txt || rm -rf "$d"; \
+    done && rm -f skills/default-skills.txt
 
-# SDK discovers skills from .claude/skills/<skill_name>/; create one
-# symlink per remaining skill using the frontmatter name.
-RUN mkdir -p .claude/skills && \
-    for d in skills/*/; do \
-      skill_name="$(awk -F': *' '/^name:/{print $2; exit}' "$d/SKILL.md")"; \
-      [ -z "$skill_name" ] && skill_name="$(basename "$d")"; \
-      ln -s "../../$d" ".claude/skills/$skill_name"; \
-    done
+# SDK discovers skills from .claude/skills/ relative to cwd
+RUN mkdir -p .claude && ln -s ../skills .claude/skills
 
 # Bare repo for upstream skill (fetch/worktree/show without exposing cli/app as working files)
 RUN git clone --bare --single-branch https://github.com/elyxlz/vesta.git .git && \
