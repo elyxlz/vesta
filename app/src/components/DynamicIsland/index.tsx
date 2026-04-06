@@ -22,6 +22,7 @@ import { useNavigate } from "react-router-dom";
 import { getOrbVisualState } from "@/components/Orb/styles";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useAgents } from "@/providers/AgentsProvider";
+import { AgentSettings } from "@/components/AgentSettings";
 import { DynamicIslandExpanded } from "@/components/DynamicIslandExpanded";
 import { DynamicIslandCollapsed } from "@/components/DynamicIslandCollapsed";
 
@@ -52,6 +53,7 @@ export function DynamicIsland() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [showConsole, setShowConsole] = useState(false);
   const [showInternals, setShowInternals] = useState(false);
+  const [showAgentSettings, setShowAgentSettings] = useState(false);
   const [showAuth, setShowAuth] = useState(false);
   const [authStarting, setAuthStarting] = useState(false);
   const [authStart, setAuthStart] = useState<AuthStartResult | null>(null);
@@ -221,6 +223,7 @@ export function DynamicIsland() {
               onShowBackups={() => { /* TODO: backups panel */ }}
               onShowConsole={() => setShowConsole(true)}
               onShowInternals={() => setShowInternals(true)}
+              onShowAgentSettings={() => setShowAgentSettings(true)}
               onOpenDeleteDialog={() => setDeleteDialogOpen(true)}
             />
           ) : (
@@ -312,6 +315,8 @@ export function DynamicIsland() {
         </AnimatePresence>,
         document.body,
       )}
+
+      <AgentSettings open={showAgentSettings} onOpenChange={setShowAgentSettings} />
     </div>
   );
 }

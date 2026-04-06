@@ -24,7 +24,9 @@ import {
   type BackupInfo,
 } from "@/api";
 import { useAgentOps, type AgentOperation } from "@/stores/use-agent-ops";
+import { useVoiceStatus } from "@/hooks/use-voice-status";
 import type { AgentInfo, AgentActivityState } from "@/lib/types";
+import type { SttStatus, TtsStatus } from "@/lib/voice";
 
 interface SelectedAgentContextValue {
   name: string;
@@ -36,6 +38,9 @@ interface SelectedAgentContextValue {
   error: string;
   isBusy: boolean;
 
+  sttStatus: SttStatus | null;
+  ttsStatus: TtsStatus | null;
+  refreshVoiceStatus: () => void;
   refreshAgent: () => Promise<void>;
   start: () => void;
   stop: () => void;
@@ -59,6 +64,7 @@ export function SelectedAgentProvider({ children }: { children: ReactNode }) {
 
   const [agent, setAgent] = useState<AgentInfo | null>(null);
   const [agentState, setAgentState] = useState<AgentActivityState>("idle");
+  const { stt: sttStatus, tts: ttsStatus, refresh: refreshVoiceStatus } = useVoiceStatus(name || null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const withOp = useAgentOps((s) => s.withOp);
@@ -171,6 +177,9 @@ export function SelectedAgentProvider({ children }: { children: ReactNode }) {
     operation: opState.operation,
     error: opState.error,
     isBusy,
+    sttStatus,
+    ttsStatus,
+    refreshVoiceStatus,
     refreshAgent,
     start,
     stop,

@@ -14,12 +14,15 @@ class VoiceDomain(tp.TypedDict, total=False):
 
 
 class SttDomain(VoiceDomain, total=False):
+    enabled: bool
     keyterms: list[str]
     eot_threshold: float
     eot_timeout_ms: int
+    auto_send: bool
 
 
 class TtsDomain(VoiceDomain, total=False):
+    enabled: bool
     selected_voice_id: str
     custom_voices: list[dict[str, str]]
 
@@ -27,8 +30,6 @@ class TtsDomain(VoiceDomain, total=False):
 class VoiceConfig(tp.TypedDict, total=False):
     stt: SttDomain | None
     tts: TtsDomain | None
-    speech_enabled: bool
-    voice_auto_send: bool
 
 
 def config_path(data_dir: pl.Path) -> pl.Path:
@@ -42,13 +43,17 @@ def load(data_dir: pl.Path) -> VoiceConfig:
     try:
         raw = json.loads(path.read_text())
     except (json.JSONDecodeError, OSError):
-        return {"stt": None, "tts": None, "speech_enabled": False, "voice_auto_send": True}
-    return {
+        return {"stt": None, "tts": None}
+    cfg: VoiceConfig = {
         "stt": raw.get("stt") or None,
         "tts": raw.get("tts") or None,
-        "speech_enabled": raw.get("speech_enabled", False),
-        "voice_auto_send": raw.get("voice_auto_send", True),
     }
+    # Migrate top-level preferences into their domains.
+    if "voice_auto_send" in raw and cfg["stt"]:
+        cfg["stt"].setdefault("auto_send", raw["voice_auto_send"])
+    if "speech_enabled" in raw and cfg["tts"]:
+        cfg["tts"].setdefault("speech_enabled", raw["speech_enabled"])
+    return cfg
 
 
 def save(data_dir: pl.Path, config: VoiceConfig) -> None:
@@ -80,7 +85,7 @@ def set_key(data_dir: pl.Path, domain: tp.Literal["stt", "tts"], provider: str, 
 
 def clear_domain(data_dir: pl.Path, domain: tp.Literal["stt", "tts"]) -> VoiceConfig:
     def _update(cfg: VoiceConfig) -> VoiceConfig:
-        cfg[domain] = None 
+        cfg[domain] = None
         return cfg
 
     return mutate(data_dir, _update)
@@ -184,9 +189,21 @@ def set_eot_timeout_ms(data_dir: pl.Path, timeout_ms: int) -> VoiceConfig:
     return mutate(data_dir, _update)
 
 
-def set_preference(data_dir: pl.Path, key: tp.Literal["speech_enabled", "voice_auto_send"], value: bool) -> VoiceConfig:
+def set_stt_auto_send(data_dir: pl.Path, value: bool) -> VoiceConfig:
     def _update(cfg: VoiceConfig) -> VoiceConfig:
-        cfg[key] = value
+        stt = dict(cfg.get("stt") or {})
+        stt["auto_send"] = value
+        cfg["stt"] = stt  # type: ignore[typeddict-item]
+        return cfg
+
+    return mutate(data_dir, _update)
+
+
+def set_enabled(data_dir: pl.Path, domain: tp.Literal["stt", "tts"], value: bool) -> VoiceConfig:
+    def _update(cfg: VoiceConfig) -> VoiceConfig:
+        d = dict(cfg.get(domain) or {})
+        d["enabled"] = value
+        cfg[domain] = d  # type: ignore[typeddict-item]
         return cfg
 
     return mutate(data_dir, _update)
