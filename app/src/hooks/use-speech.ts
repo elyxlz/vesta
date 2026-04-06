@@ -1,12 +1,13 @@
 import { useCallback, useRef, useState } from "react";
 import { streamSpeech } from "@/lib/voice";
-import { useSettings } from "@/stores/use-settings";
 
-export function useSpeech(agentName: string | null) {
+export function useSpeech(agentName: string | null, speechEnabled: boolean) {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const queueRef = useRef<string[]>([]);
   const playingRef = useRef(false);
+  const speechEnabledRef = useRef(speechEnabled);
+  speechEnabledRef.current = speechEnabled;
 
   const processQueue = useCallback(async () => {
     if (playingRef.current || queueRef.current.length === 0 || !agentName) return;
@@ -32,7 +33,7 @@ export function useSpeech(agentName: string | null) {
   }, [agentName]);
 
   const speak = useCallback((text: string) => {
-    if (!useSettings.getState().speechEnabled) {
+    if (!speechEnabledRef.current) {
       console.debug("[tts] skipped — speechEnabled=false");
       return;
     }

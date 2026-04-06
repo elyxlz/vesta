@@ -16,9 +16,9 @@ export function sendChatEvent(event: object): boolean {
   return activeSender ? activeSender(event) : false;
 }
 
-export function useChat(name: string | null, active: boolean) {
+export function useChat(name: string | null, active: boolean, speechEnabled: boolean) {
   const { setReachable } = useAuth();
-  const { speak, isSpeaking, stop: stopSpeech } = useSpeech(name);
+  const { speak, isSpeaking, stop: stopSpeech } = useSpeech(name, speechEnabled);
   const [messages, setMessages] = useState<VestaEvent[]>([]);
   const [agentState, setAgentState] = useState<AgentActivityState>("idle");
   const [connected, setConnected] = useState(false);

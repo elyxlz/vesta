@@ -1,10 +1,3 @@
-"""Voice skill entrypoint.
-
-Auto-loaded by the agent at startup. The skill is mounted at /voice/ on
-the container's aiohttp server, so /status here becomes /voice/status
-and /agents/{name}/api/voice/status through vestad.
-"""
-
 import asyncio
 import typing as tp
 
@@ -16,20 +9,11 @@ from . import config as voice_config
 from . import providers
 
 
-def routes() -> list[web.RouteDef]:
-    return [
-        web.get("/status", _status_handler),
-        web.get("/tts/voices", _voices_handler),
-        web.post("/tts/speak", _speak_handler),
-        web.get("/stt/listen", _listen_handler),
-    ]
-
-
 def _data_dir(request: web.Request) -> tp.Any:
     return request.app["config"].data_dir
 
 
-async def _status_handler(request: web.Request) -> web.Response:
+async def status(request: web.Request) -> web.Response:
     cfg = voice_config.load(_data_dir(request))
     stt_entry = cfg.get("stt")
     tts_entry = cfg.get("tts")
@@ -72,10 +56,15 @@ async def _status_handler(request: web.Request) -> web.Response:
             except Exception as e:
                 logger.error(f"tts subscription fetch failed: {e}")
 
-    return web.json_response({"stt": stt_out, "tts": tts_out})
+    return web.json_response({
+        "stt": stt_out,
+        "tts": tts_out,
+        "speech_enabled": cfg.get("speech_enabled", False),
+        "voice_auto_send": cfg.get("voice_auto_send", True),
+    })
 
 
-async def _voices_handler(request: web.Request) -> web.Response:
+async def voices(request: web.Request) -> web.Response:
     cfg = voice_config.load(_data_dir(request))
     tts_entry = cfg.get("tts")
     if not tts_entry or not tts_entry.get("provider"):
@@ -104,7 +93,7 @@ async def _voices_handler(request: web.Request) -> web.Response:
     })
 
 
-async def _speak_handler(request: web.Request) -> web.StreamResponse:
+async def speak(request: web.Request) -> web.StreamResponse:
     cfg = voice_config.load(_data_dir(request))
     tts_entry = cfg.get("tts")
     if not tts_entry or not tts_entry.get("provider"):
@@ -133,7 +122,59 @@ async def _speak_handler(request: web.Request) -> web.StreamResponse:
     return await provider.speak(text, voice_id, creds, request)
 
 
-async def _listen_handler(request: web.Request) -> web.WebSocketResponse:
+async def set_preference(request: web.Request) -> web.Response:
+    data_dir = _data_dir(request)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON body"}, status=400)
+    body = body or {}
+    key = body.get("key")
+    value = body.get("value")
+    if key not in ("speech_enabled", "voice_auto_send"):
+        return web.json_response({"error": "key must be speech_enabled or voice_auto_send"}, status=400)
+    if not isinstance(value, bool):
+        return web.json_response({"error": "value must be a boolean"}, status=400)
+    voice_config.set_preference(data_dir, key, value)
+    return web.json_response({"ok": True})
+
+
+async def set_voice(request: web.Request) -> web.Response:
+    data_dir = _data_dir(request)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON body"}, status=400)
+    voice_id = (body or {}).get("voice_id", "").strip()
+    if not voice_id:
+        return web.json_response({"error": "voice_id required"}, status=400)
+    try:
+        voice_config.set_voice(data_dir, voice_id)
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    return web.json_response({"ok": True})
+
+
+async def set_eot(request: web.Request) -> web.Response:
+    data_dir = _data_dir(request)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON body"}, status=400)
+    body = body or {}
+    try:
+        if "threshold" in body:
+            voice_config.set_eot_threshold(data_dir, float(body["threshold"]))
+        elif "timeout_ms" in body:
+            voice_config.set_eot_timeout_ms(data_dir, int(body["timeout_ms"]))
+        else:
+            return web.json_response({"error": "threshold or timeout_ms required"}, status=400)
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    return web.json_response({"ok": True})
+
+
+async def listen(request: web.Request) -> web.WebSocketResponse:
     cfg = voice_config.load(_data_dir(request))
     stt_entry = cfg.get("stt")
     ws = web.WebSocketResponse()

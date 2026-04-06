@@ -27,6 +27,8 @@ class TtsDomain(VoiceDomain, total=False):
 class VoiceConfig(tp.TypedDict, total=False):
     stt: SttDomain | None
     tts: TtsDomain | None
+    speech_enabled: bool
+    voice_auto_send: bool
 
 
 def config_path(data_dir: pl.Path) -> pl.Path:
@@ -40,10 +42,12 @@ def load(data_dir: pl.Path) -> VoiceConfig:
     try:
         raw = json.loads(path.read_text())
     except (json.JSONDecodeError, OSError):
-        return {"stt": None, "tts": None}
+        return {"stt": None, "tts": None, "speech_enabled": False, "voice_auto_send": True}
     return {
         "stt": raw.get("stt") or None,
         "tts": raw.get("tts") or None,
+        "speech_enabled": raw.get("speech_enabled", False),
+        "voice_auto_send": raw.get("voice_auto_send", True),
     }
 
 
@@ -175,6 +179,14 @@ def set_eot_timeout_ms(data_dir: pl.Path, timeout_ms: int) -> VoiceConfig:
             raise ValueError("STT not configured; set a provider key first")
         stt["eot_timeout_ms"] = timeout_ms
         cfg["stt"] = stt  # type: ignore[typeddict-item]
+        return cfg
+
+    return mutate(data_dir, _update)
+
+
+def set_preference(data_dir: pl.Path, key: tp.Literal["speech_enabled", "voice_auto_send"], value: bool) -> VoiceConfig:
+    def _update(cfg: VoiceConfig) -> VoiceConfig:
+        cfg[key] = value
         return cfg
 
     return mutate(data_dir, _update)

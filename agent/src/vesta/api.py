@@ -1,20 +1,19 @@
-"""Agent HTTP/WS server: core routes + skill auto-discovery.
+"""Agent HTTP/WS server: core routes + skill endpoints.
 
 The main aiohttp server exposes:
   - GET  /ws           internals event-bus monitor (CLI/admin, broad filter)
-  - WS   /ws/chat  user ↔ LLM bidirectional chat channel
+  - WS   /ws/chat      user ↔ LLM bidirectional chat channel
   - GET  /history      paginated chat event history
-  - /<skill>/*         auto-mounted per-skill sub-apps from agent/skills/
+  - skill endpoints listed in SKILL_ENDPOINTS (one row per exposed function)
 
-The chat WS and history live in core because they're the LLM's
-input/output pipe (coupled to message_queue + event_bus). Skills expose
-feature-specific endpoints via /api/<name>/*.
+When a skill exposes HTTP functions, append one tuple per endpoint to
+SKILL_ENDPOINTS below: (METHOD, PATH, "module.path:func_name"). The skill's
+package is imported from config.skills_dir at startup.
 """
 
 import asyncio
-import importlib.util
+import importlib
 import json
-import pathlib
 import sys
 
 from aiohttp import web
@@ -22,6 +21,12 @@ from aiohttp import web
 import vesta.models as vm
 from vesta import logger
 from vesta.events import CHAT_TYPES, INTERNALS_TYPES, EventBus, HistoryEvent, VestaEvent
+
+# Skill HTTP endpoints. Append one row per function a skill wants reachable
+# over HTTP. Format: (METHOD, PATH, "module:function"). Module is resolved
+# against config.skills_dir (added to sys.path at startup). WebSocket
+# handlers register as GET. Rows that fail to import are logged and skipped.
+SKILL_ENDPOINTS: list[tuple[str, str, str]] = []
 
 
 async def ws_handler(request: web.Request, channel: str, filter_types: frozenset[str]) -> web.WebSocketResponse:
@@ -127,66 +132,28 @@ async def _history_handler(request: web.Request) -> web.Response:
     return web.json_response({"events": events, "cursor": next_cursor})
 
 
-def _load_skill_server(skill_dir: pathlib.Path) -> object | None:
-    """Load agent/skills/<name>/server.py as a package so its relative
-    imports (e.g. `from .voice import routes`) work. Returns the loaded
-    module or None if the skill has no server.py."""
-    server_py = skill_dir / "server.py"
-    if not server_py.exists():
-        return None
-    pkg_name = f"_skill_{skill_dir.name.replace('-', '_')}"
-    if pkg_name in sys.modules:
-        return sys.modules[pkg_name]
-    spec = importlib.util.spec_from_file_location(
-        pkg_name,
-        server_py,
-        submodule_search_locations=[str(skill_dir)],
-    )
-    if spec is None or spec.loader is None:
-        return None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[pkg_name] = module
-    try:
-        spec.loader.exec_module(module)
-    except Exception as e:
-        logger.error(f"failed to load skill server at {skill_dir.name}: {e}")
-        sys.modules.pop(pkg_name, None)
-        return None
-    return module
-
-
-def _mount_skill_servers(app: web.Application, config: vm.VestaConfig) -> None:
-    """Discover and mount every skill that exposes a server.py with a
-    routes() function. Each skill's routes are mounted under a sub-app
-    at /<skill_dir_name>/, so `skills/<name>/server.py` exposing
-    `/ws` becomes reachable at `/<name>/ws`."""
-    skills_dir = config.skills_dir
-    if not skills_dir.exists():
-        return
-    for skill_dir in sorted(skills_dir.iterdir()):
-        if not skill_dir.is_dir():
-            continue
-        module = _load_skill_server(skill_dir)
-        if module is None:
-            continue
-        routes_fn = getattr(module, "routes", None)
-        if not callable(routes_fn):
+def _wire_skill_endpoints(app: web.Application, config: vm.VestaConfig) -> None:
+    """Register every row in SKILL_ENDPOINTS. Adds config.skills_dir to
+    sys.path so each skill dir becomes a top-level importable package.
+    Rows that fail to import/resolve are logged and skipped — one broken
+    skill cannot prevent the server from starting."""
+    skills_dir = str(config.skills_dir)
+    if skills_dir not in sys.path:
+        sys.path.insert(0, skills_dir)
+    for method, path, target in SKILL_ENDPOINTS:
+        try:
+            module_name, func_name = target.split(":", 1)
+        except ValueError:
+            logger.error(f"skill endpoint {method} {path}: bad target '{target}' (expected 'module:func')")
             continue
         try:
-            skill_routes = routes_fn()
+            module = importlib.import_module(module_name)
+            handler = getattr(module, func_name)
         except Exception as e:
-            logger.error(f"skill {skill_dir.name} routes() failed: {e}")
+            logger.error(f"skill endpoint {method} {path} -> {target} failed to load: {e}")
             continue
-        sub_app = web.Application()
-        # Share parent app state so skill handlers can reach event_bus,
-        # message_queue, state, config just like the core handlers.
-        sub_app["config"] = config
-        sub_app["event_bus"] = app["event_bus"]
-        sub_app["message_queue"] = app["message_queue"]
-        sub_app["state"] = app["state"]
-        sub_app.add_routes(skill_routes)
-        app.add_subapp(f"/{skill_dir.name}/", sub_app)
-        logger.startup(f"mounted skill '{skill_dir.name}' at /{skill_dir.name}/")
+        app.router.add_route(method, path, handler)
+        logger.startup(f"wired skill endpoint {method} {path} -> {target}")
 
 
 async def start_ws_server(
@@ -205,7 +172,8 @@ async def start_ws_server(
     app.router.add_get("/ws", _internals_handler)
     app.router.add_get("/ws/chat", _chat_handler)
     app.router.add_get("/history", _history_handler)
-    _mount_skill_servers(app, config)
+
+    _wire_skill_endpoints(app, config)
 
     runner = web.AppRunner(app)
     await runner.setup()
