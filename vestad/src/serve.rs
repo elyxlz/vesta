@@ -18,6 +18,13 @@ use tokio::sync::Mutex;
 use crate::{docker, jwt, update_check};
 
 const API_KEY_BYTES: usize = 32;
+const SERVICE_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(30);
+const SERVICE_FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+struct ServiceCache {
+    services: HashMap<String, u16>,
+    fetched_at: std::time::Instant,
+}
 const AUTH_SESSION_TIMEOUT_SECS: u64 = 600;
 const DEFAULT_LOG_TAIL_LINES: u64 = 500;
 const AUTO_BACKUP_CHECK_INTERVAL_SECS: u64 = 3600;
@@ -135,6 +142,7 @@ pub struct AppState {
     auto_backup_enabled: AtomicBool,
     backup_retention: Mutex<crate::types::RetentionPolicy>,
     http_client: reqwest::Client,
+    service_caches: Mutex<HashMap<String, ServiceCache>>,
 }
 
 impl AppState {
@@ -152,6 +160,7 @@ impl AppState {
                 monthly: docker::DEFAULT_RETENTION_MONTHLY,
             }),
             http_client: reqwest::Client::new(),
+            service_caches: Mutex::new(HashMap::new()),
         }
     }
 
@@ -412,10 +421,12 @@ async fn stop_agent_handler(
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
-    tokio::task::spawn_blocking(move || docker::stop_agent(&name))
+    let docker_name = name.clone();
+    tokio::task::spawn_blocking(move || docker::stop_agent(&docker_name))
         .await
         .unwrap()
         .map_err(map_docker_err)?;
+    state.service_caches.lock().await.remove(&name);
     Ok(ok_json())
 }
 
@@ -442,10 +453,12 @@ async fn destroy_agent_handler(
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
-    tokio::task::spawn_blocking(move || docker::destroy_agent(&name))
+    let docker_name = name.clone();
+    tokio::task::spawn_blocking(move || docker::destroy_agent(&docker_name))
         .await
         .unwrap()
         .map_err(map_docker_err)?;
+    state.service_caches.lock().await.remove(&name);
 
     Ok(ok_json())
 }
@@ -705,6 +718,67 @@ async fn ws_proxy(client_ws: axum::extract::ws::WebSocket, agent_port: u16, path
     }
 }
 
+// --- Service discovery ---
+
+async fn fetch_services(
+    client: &reqwest::Client,
+    agent_port: u16,
+) -> Result<HashMap<String, u16>, reqwest::Error> {
+    let resp: serde_json::Value = client
+        .get(format!("http://localhost:{}/services", agent_port))
+        .timeout(SERVICE_FETCH_TIMEOUT)
+        .send()
+        .await?
+        .json()
+        .await?;
+    let mut map = HashMap::new();
+    if let Some(obj) = resp.get("services").and_then(|v| v.as_object()) {
+        for (k, v) in obj {
+            if let Some(port) = v.as_u64() {
+                map.insert(k.clone(), port as u16);
+            }
+        }
+    }
+    Ok(map)
+}
+
+async fn resolve_service_port(
+    state: &AppState,
+    agent_name: &str,
+    agent_port: u16,
+    service_name: &str,
+) -> Option<u16> {
+    // Check cache
+    {
+        let caches = state.service_caches.lock().await;
+        if let Some(cache) = caches.get(agent_name) {
+            if cache.fetched_at.elapsed() < SERVICE_CACHE_TTL {
+                return cache.services.get(service_name).copied();
+            }
+        }
+    }
+
+    // Cache miss or stale — fetch from agent
+    match fetch_services(&state.http_client, agent_port).await {
+        Ok(services) => {
+            let port = services.get(service_name).copied();
+            let mut caches = state.service_caches.lock().await;
+            caches.insert(agent_name.to_string(), ServiceCache {
+                services,
+                fetched_at: std::time::Instant::now(),
+            });
+            port
+        }
+        Err(e) => {
+            tracing::warn!(agent = agent_name, error = %e, "failed to fetch /services");
+            // Fall back to stale cache
+            let caches = state.service_caches.lock().await;
+            caches.get(agent_name)
+                .and_then(|c| c.services.get(service_name).copied())
+        }
+    }
+}
+
 // --- Agent wildcard proxy (HTTP + WS) for /agents/{name}/* ---
 
 async fn agent_proxy_handler(
@@ -721,10 +795,25 @@ async fn agent_proxy_handler(
     let guard = lock.read_owned().await;
 
     docker::ensure_running(&cname).map_err(map_docker_err)?;
-    let port = docker::get_container_port(&cname);
+    let agent_port = docker::get_container_port(&cname);
 
-    // Build target path, preserving leading slash and query.
-    let mut target_path = format!("/{}", path);
+    // Check if the first path segment matches a registered service.
+    // If so, route directly to that service's port with the prefix stripped.
+    let first_segment = path.split('/').next().unwrap_or("");
+    let (target_port, stripped_path) = if !first_segment.is_empty() {
+        if let Some(service_port) = resolve_service_port(&state, &name, agent_port, first_segment).await {
+            let rest = &path[first_segment.len()..];
+            let rest = if rest.is_empty() { "/" } else { rest };
+            (service_port, rest.to_string())
+        } else {
+            (agent_port, format!("/{}", path))
+        }
+    } else {
+        (agent_port, format!("/{}", path))
+    };
+
+    // Append query string.
+    let mut target_path = stripped_path;
     if let Some(q) = request.uri().query() {
         target_path.push('?');
         target_path.push_str(q);
@@ -749,11 +838,11 @@ async fn agent_proxy_handler(
         };
         Ok(ws.on_upgrade(move |socket| async move {
             drop(guard);
-            ws_proxy(socket, port, &target_path).await;
+            ws_proxy(socket, target_port, &target_path).await;
         }))
     } else {
         drop(guard);
-        forward_http_to_container(&state.http_client, port, &target_path, request).await
+        forward_http_to_container(&state.http_client, target_port, &target_path, request).await
     }
 }
 

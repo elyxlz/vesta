@@ -80,12 +80,12 @@ Once [agent_name] knows who they're with (name isn't "[Unknown]"), that's it. No
 - `restart.md` must start every service the user has set up on every boot
 - New integrations follow the same pattern: daemon that writes JSON to `~/vesta/notifications/`
 
-### Reverse Proxy (`proxy.py`)
-- The container exposes only one port — `proxy.py` multiplexes any internal server behind path prefixes, like a minimal nginx
-- `PROXIED_SERVERS` in `~/vesta/src/vesta/proxy.py` is a list of `(name, port)` tuples
-- Requests to `/{name}/...` are forwarded to `localhost:{port}/...` (prefix stripped), for both HTTP and WebSocket
-- Use this for anything that needs to be reached from outside the container: skill servers (e.g. voice), custom APIs, dashboards, webhooks, etc.
-- To add a new server: pick a free port, start it in a screen session, add `("name", port)` to `PROXIED_SERVERS`, and `restart_vesta`
+### Service Registration
+- Any server inside the container that needs to be reachable from outside registers via `POST /services` with `{"name": "<name>", "port": <port>}`
+- vestad discovers registered services and routes directly to them — no proxy layer inside the container
+- Use this for anything: skill servers (e.g. voice), custom APIs, dashboards, webhooks, etc.
+- To add a new server: pick a free port, start it in a screen session, register it, and add both commands to `restart.md`
+- Example: `curl -s -X POST http://localhost:$WS_PORT/services -H 'Content-Type: application/json' -d '{"name":"voice","port":7965}'`
 
 ### Self-Modification
 - Edit anything: source (`~/vesta/src/vesta/`), config (`config.py`, mechanical settings only), prompts (`~/vesta/prompts/`), skills (`~/vesta/skills/`), MEMORY.md

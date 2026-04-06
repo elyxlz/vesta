@@ -1,9 +1,11 @@
 """Agent HTTP/WS server.
 
 Routes:
-  - WS   /ws          bidirectional event bus
-  - GET  /history     paginated event history
-  - /{name}/*         reverse-proxied to local servers (see proxy.py)
+  - WS   /ws              bidirectional event bus
+  - GET  /history         paginated event history
+  - GET  /services        list registered skill services
+  - POST /services        register a skill service
+  - DELETE /services/{n}  unregister a skill service
 """
 
 import asyncio
@@ -13,7 +15,7 @@ from aiohttp import web
 
 from vesta.events import EventBus, HistoryEvent, VestaEvent
 from vesta.config import VestaConfig
-from vesta.proxy import wire_proxies
+from vesta import services
 
 
 async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
@@ -90,6 +92,32 @@ async def _history_handler(request: web.Request) -> web.Response:
     return web.json_response({"events": events, "cursor": next_cursor})
 
 
+async def _services_list(request: web.Request) -> web.Response:
+    return web.json_response({"services": services.all_services()})
+
+
+async def _services_register(request: web.Request) -> web.Response:
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    name = data.get("name", "").strip()
+    port = data.get("port")
+    if not name or not isinstance(port, int):
+        return web.json_response({"error": "name (str) and port (int) required"}, status=400)
+    try:
+        services.register(name, port)
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    return web.json_response({"ok": True})
+
+
+async def _services_unregister(request: web.Request) -> web.Response:
+    name = request.match_info["name"]
+    services.unregister(name)
+    return web.json_response({"ok": True})
+
+
 async def start_ws_server(
     event_bus: EventBus,
     config: VestaConfig,
@@ -100,9 +128,9 @@ async def start_ws_server(
     app["event_bus"] = event_bus
     app.router.add_get("/ws", _ws_handler)
     app.router.add_get("/history", _history_handler)
-
-    # Reverse proxy catch-all — must be registered after core routes
-    wire_proxies(app)
+    app.router.add_get("/services", _services_list)
+    app.router.add_post("/services", _services_register)
+    app.router.add_delete("/services/{name}", _services_unregister)
 
     runner = web.AppRunner(app)
     await runner.setup()
