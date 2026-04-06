@@ -24,28 +24,28 @@ After installing, restart yourself with the `restart_vesta` tool to load the new
 
 ## If the skill exposes HTTP functions
 
-Some skills run their own HTTP server that the agent reverse-proxies (e.g. the `voice` skill serves on a local port and requests to `/voice/*` are forwarded to it). Wire them up by appending a row to `SKILL_SERVERS` in `~/vesta/src/vesta/skill_server.py`:
+Some skills run their own HTTP server that the agent reverse-proxies (e.g. the `voice` skill serves on a local port and requests to `/voice/*` are forwarded to it). Wire them up by appending a row to `PROXIED_SERVERS` in `~/vesta/src/vesta/proxy.py`:
 
 1. Check if the skill runs an HTTP server and what port it listens on:
    ```bash
    ls ~/vesta/skills/<name>/
    ```
-2. Edit `~/vesta/src/vesta/skill_server.py` — find `SKILL_SERVERS` near the top and append one tuple:
+2. Edit `~/vesta/src/vesta/proxy.py` — find `PROXIED_SERVERS` near the top and append one tuple:
    ```python
-   SKILL_SERVERS: list[tuple[str, int]] = [
+   PROXIED_SERVERS: list[tuple[str, int]] = [
        ...,
        ("<name>", 7970),
    ]
    ```
-   Format: `(SKILL_NAME, PORT)`. The proxy strips the `/{skill_name}` prefix and forwards to `localhost:{port}`.
+   Format: `(name, port)`. The proxy strips the `/{name}` prefix and forwards to `localhost:{port}`.
 3. Start the skill's HTTP server (as a background process or daemon).
 4. Restart via `restart_vesta`.
 
 **Constraints:**
-- The skill server must listen on `localhost` only.
-- The proxy strips the `/{skill_name}` prefix — the skill server sees paths without it.
+- The server must listen on `localhost` only.
+- The proxy strips the `/{name}` prefix — the server sees paths without it.
 - WebSocket connections are proxied bidirectionally.
-- If the skill server is unreachable, clients get a 502 error.
+- If the server is unreachable, clients get a 502 error.
 
 Skills that are LLM-only don't need this step.
 
@@ -60,4 +60,4 @@ ls ~/vesta/skills/
 - Skills you install are downloaded from `agent/skills/<name>/` in the GitHub repo
 - Core skills ship pre-installed; optional skills are downloaded on demand
 - After installing a skill that requires setup, read its `SETUP.md`
-- If the skill runs an HTTP server, register it in `skill_server.py` per above
+- If the skill runs an HTTP server, register it in `proxy.py` per above
