@@ -45,17 +45,17 @@ async def _http_proxy(request: web.Request, port: int, target_path: str) -> web.
     url = f"http://localhost:{port}{target_path}"
 
     # Forward headers (skip hop-by-hop)
-    headers = {
-        k: v for k, v in request.headers.items()
-        if k.lower() not in ("host", "connection", "transfer-encoding", "content-length")
-    }
+    headers = {k: v for k, v in request.headers.items() if k.lower() not in ("host", "connection", "transfer-encoding", "content-length")}
 
     body = await request.read()
 
     session: aiohttp.ClientSession = request.app["_skill_proxy_session"]
     try:
         async with session.request(
-            request.method, url, headers=headers, data=body if body else None,
+            request.method,
+            url,
+            headers=headers,
+            data=body if body else None,
         ) as upstream:
             response = web.StreamResponse(status=upstream.status)
             for k, v in upstream.headers.items():
