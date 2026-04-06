@@ -261,7 +261,9 @@ def test_skill_frontmatter():
         fm = dict(re.findall(r"^(\w[\w-]*)\s*:\s*(.+)$", match.group(1), re.MULTILINE))
         assert fm.get("name"), f"{skill_md}: missing 'name' in frontmatter"
         assert fm.get("description"), f"{skill_md}: missing 'description' in frontmatter"
-        assert fm["name"] == skill_md.parent.name, f"{skill_md}: frontmatter name '{fm['name']}' must match directory name '{skill_md.parent.name}'"
+        assert fm["name"] == skill_md.parent.name, (
+            f"{skill_md}: frontmatter name '{fm['name']}' must match directory name '{skill_md.parent.name}'"
+        )
 
 
 def test_skills_index_valid():
