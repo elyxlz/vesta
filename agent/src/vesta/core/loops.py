@@ -217,7 +217,6 @@ async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm
 
                 if state.dreamer_active:
                     state.dreamer_active = False
-                    state.event_bus.clear_history()
                     _trigger_nightly_restart(state=state, config=config)
         finally:
             state.client = None

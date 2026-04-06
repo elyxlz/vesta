@@ -14,7 +14,6 @@ from rich import print_json
 import vesta.models as vm
 from vesta import logger
 from vesta.api import start_ws_server
-from vesta.core.history import open_history
 from vesta.core.init import get_memory_path
 from vesta.core.loops import message_processor, monitor_loop, queue_greeting
 
@@ -73,7 +72,7 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
 
     message_queue: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()
 
-    ws_runner = await start_ws_server(state.event_bus, message_queue, state, config)
+    ws_runner = await start_ws_server(state.event_bus, config)
     logger.init(f"WebSocket server started on port {config.ws_port}")
 
     tasks = [
@@ -170,7 +169,6 @@ async def async_main() -> None:
     first_start = not memory_path.exists() or "[Unknown - need to ask]" in memory_path.read_text()
     restart_reason = _read_restart_reason(config)
     initial_state = init_state(config=config)
-    initial_state.history = open_history(config.history_db)
     logger.init(f"Starting main loop ({restart_reason})...")
     await run_vesta(config, state=initial_state, first_start=first_start, restart_reason=restart_reason)
 

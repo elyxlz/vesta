@@ -43,7 +43,7 @@ export function AgentDashboard() {
         />
         {connected && <UpdateBar />}
       </div>
-      <div className="flex-1 relative overflow-hidden min-h-0 outline outline-2 outline-red-500 outline-offset-0">
+      <div className="flex-1 relative overflow-hidden min-h-0">
         <AgentHome />
       </div>
     </div>

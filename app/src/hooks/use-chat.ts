@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { VestaEvent, AgentActivityState } from "@/lib/types";
-import { wsChatUrl, fetchHistory } from "@/lib/connection";
+import { wsUrl, fetchHistory } from "@/lib/connection";
 import { useAuth } from "@/providers/AuthProvider";
 import { useSpeech } from "@/hooks/use-speech";
 
@@ -45,7 +45,7 @@ export function useChat(name: string | null, active: boolean, speechEnabled: boo
 
       let url: string;
       try {
-        url = wsChatUrl(name);
+        url = wsUrl(name);
       } catch {
         reconnectTimer = setTimeout(doConnect, reconnectDelay);
         reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX);

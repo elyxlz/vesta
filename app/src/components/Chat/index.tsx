@@ -6,7 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { Maximize2, Mic, PanelRightClose, SendHorizontal, Square } from "lucide-react";
+import { ChevronRight, Maximize2, Mic, PanelRightClose, SendHorizontal, Square, Wrench } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { Button } from "@/components/ui/button";
@@ -94,7 +94,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   }, [isNearBottom]);
 
   const chatMessages = useMemo(() => messages.filter(
-    (m) => m.type === "user" || m.type === "chat" || m.type === "error",
+    (m) => m.type === "user" || m.type === "chat" || m.type === "error" || m.type === "tool_start",
   ), [messages]);
 
   const isThinking =
@@ -237,7 +237,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
           onScroll={handleScroll}
           className="h-full min-h-0 overflow-y-auto px-3 pt-6 pb-4"
           style={{
-            maskImage: `linear-gradient(to bottom, transparent, black ${navbarHeight * 2}px, black calc(100% - ${navbarHeight}px), transparent)`,
+            maskImage: `linear-gradient(to bottom, transparent, black ${navbarHeight * 2}px, black calc(100% - 20px), transparent)`,
           }}
         >
           <div className={cn("min-h-full flex flex-col", fullscreen && "pt-16 md:pt-20")}>
@@ -260,9 +260,11 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
                 <div className="flex flex-col">
                   {chatMessages.map((msg, i) => {
                     const prev = chatMessages[i - 1];
-                    const sameGroup = prev && prev.type === msg.type;
+                    const isTool = msg.type === "tool_start";
+                    const prevIsTool = prev?.type === "tool_start";
+                    const gap = i === 0 ? "" : isTool && prevIsTool ? "mt-1" : isTool || prevIsTool ? "mt-2" : prev && prev.type === msg.type ? "mt-1.5" : "mt-5";
                     return (
-                      <ChatBubble key={i} event={msg} className={i === 0 ? "" : sameGroup ? "mt-1.5" : "mt-5"} />
+                      <ChatBubble key={i} event={msg} className={gap} />
                     );
                   })}
                 </div>
@@ -392,6 +394,10 @@ function ChatBubble({ event, className }: { event: VestaEvent; className?: strin
     );
   }
 
+  if (event.type === "tool_start") {
+    return <ToolCallLabel tool={event.tool} input={event.input} className={className} />;
+  }
+
   if (event.type !== "user" && event.type !== "chat") return null;
 
   const isUser = event.type === "user";
@@ -419,6 +425,43 @@ function ChatBubble({ event, className }: { event: VestaEvent; className?: strin
           </span>
         )}
       </div>
+    </div>
+  );
+}
+
+function ToolCallLabel({ tool, input, className }: { tool: string; input: string; className?: string }) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div className={cn("flex flex-col items-start max-w-[85%]", className)}>
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex items-center gap-1.5 rounded-full border border-muted-foreground/15 bg-muted/50 px-2.5 py-1 cursor-pointer hover:bg-muted/80 transition-colors"
+      >
+        <Wrench className="size-3 text-muted-foreground/60" />
+        <span className="text-[11px] text-muted-foreground/70">{tool}</span>
+        <motion.span
+          animate={{ rotate: expanded ? 90 : 0 }}
+          transition={{ duration: 0.15 }}
+          className="flex items-center"
+        >
+          <ChevronRight className="size-3 text-muted-foreground/40" />
+        </motion.span>
+      </button>
+      <AnimatePresence>
+        {expanded && (
+          <motion.pre
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            className="mt-1 w-full overflow-hidden rounded-lg border border-muted-foreground/10 bg-muted/30 px-2.5 py-2 text-[11px] leading-relaxed text-muted-foreground/70 whitespace-pre-wrap break-words font-mono"
+          >
+            {input}
+          </motion.pre>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

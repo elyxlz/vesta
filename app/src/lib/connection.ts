@@ -142,13 +142,6 @@ export function wsUrl(name: string): string {
   return `${base}/agents/${name}/ws?token=${encodeURIComponent(conn.accessToken)}`;
 }
 
-export function wsChatUrl(name: string): string {
-  const conn = getConnection();
-  if (!conn) throw new Error("not connected to vestad");
-  const base = conn.url.replace(/^http/, "ws");
-  return `${base}/agents/${name}/ws/chat?token=${encodeURIComponent(conn.accessToken)}`;
-}
-
 export async function fetchHistory(
   name: string,
   cursor: number,
