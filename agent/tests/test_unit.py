@@ -227,7 +227,6 @@ def test_deployment_structure():
     assert skills_dir.is_dir(), "skills/ directory missing"
 
     expected_skills = [
-        "reminders",
         "tasks",
         "upstream",
         "dream",
@@ -245,7 +244,7 @@ def test_deployment_structure():
     for skill_name in expected_skills:
         assert (skills_dir / skill_name).is_dir(), f"Skill '{skill_name}' missing from skills/"
 
-    for skill_name in ("reminders", "tasks"):
+    for skill_name in ("tasks",):
         assert (skills_dir / skill_name / "cli" / "pyproject.toml").exists(), f"pyproject.toml missing for {skill_name}"
 
     assert (skills_dir / "whatsapp" / "cli" / "go.mod").exists(), "go.mod missing for whatsapp"
