@@ -112,50 +112,68 @@ If the skill needs OAuth or interactive auth, document the flow in `SETUP.md` an
 
 ## Exposing a skill over HTTP
 
-If the Vesta app (or other network clients) needs to call skill functions directly — not through the agent — expose them as HTTP endpoints.
+If the Vesta app (or other network clients) needs to call skill functions directly — not through the agent — the skill runs its own HTTP server and the agent reverse-proxies it.
 
-### Step 1: Write handler functions
+### How it works
 
-Create `~/vesta/skills/<name>/handlers.py` with plain async functions that take an aiohttp `web.Request`:
+The agent's main server proxies `/{skill_name}/*` to `localhost:{port}/*`, stripping the skill prefix. For example, if skill `voice` is registered on port 7965, a request to `/voice/stt/status` is forwarded to `localhost:7965/stt/status`. WebSocket upgrades are proxied too.
+
+### Step 1: Build an HTTP server in your skill
+
+Use any framework (aiohttp, FastAPI, plain http.server — whatever fits). The server listens on `localhost:{port}` and handles its own routes.
 
 ```python
+#!/usr/bin/env python3
+"""/// script
+dependencies = ["aiohttp"]
+///"""
 from aiohttp import web
 
-async def my_endpoint(request: web.Request) -> web.Response:
-    config = request.app["config"]  # VestaConfig — use config.data_dir for file paths
+async def status(request: web.Request) -> web.Response:
+    return web.json_response({"status": "ok"})
+
+async def do_thing(request: web.Request) -> web.Response:
+    data = await request.json()
     # ... do work ...
-    return web.json_response({"result": "ok"})
+    return web.json_response({"result": "done"})
+
+app = web.Application()
+app.router.add_get("/status", status)
+app.router.add_post("/do-thing", do_thing)
+
+if __name__ == "__main__":
+    web.run_app(app, host="localhost", port=7970)
 ```
 
-Available from `request.app["config"]`:
-- `config.data_dir` — persistent data directory (`~/vesta/data/`)
-- `config.skills_dir` — skills directory (`~/vesta/skills/`)
-- `config.root` — vesta root (`~/vesta/`)
+### Step 2: Register the skill server
 
-### Step 2: Register endpoints
-
-Edit `~/vesta/src/vesta/api.py` and append rows to `SKILL_ENDPOINTS`:
+Edit `~/vesta/src/vesta/skill_server.py` and append one tuple to `SKILL_SERVERS`:
 
 ```python
-SKILL_ENDPOINTS: list[tuple[str, str, str]] = [
+SKILL_SERVERS: list[tuple[str, int]] = [
     ...,
-    ("GET",  "/<name>/foo", "<name>.handlers:my_endpoint"),
+    ("<name>", 7970),
 ]
 ```
 
-Format: `(METHOD, PATH, "module:function")`. The module is resolved from `~/vesta/skills/`. WebSocket handlers use `"GET"`.
+Format: `(SKILL_NAME, PORT)`. Pick an unused port.
 
-### Step 3: Restart
+### Step 3: Start the server and restart
+
+The skill server must be running before requests can be proxied. Start it as a background process (or as part of a daemon — see the Daemons section). Then restart:
 
 ```bash
 restart_vesta
 ```
 
+After restart, requests to `/<name>/*` on the agent's main server are forwarded to your skill's server.
+
 ### Constraints
 
-- Skill directory name must be a valid Python identifier (no hyphens) if it exposes HTTP.
-- Handlers only get `config` — no access to agent internals (event bus, state, message queue).
-- Broken imports are logged and skipped; they won't crash the server.
+- The skill server must listen on `localhost` only.
+- The proxy strips the `/{skill_name}` prefix — your server sees paths without it.
+- WebSocket connections are proxied bidirectionally.
+- If the skill server is unreachable, clients get a 502 error.
 
 ## Daemons (advanced)
 
@@ -206,6 +224,6 @@ When creating a new skill:
 1. Create `~/vesta/skills/<name>/SKILL.md` with frontmatter and docs
 2. Add scripts to `~/vesta/skills/<name>/scripts/` (or Python modules at skill root)
 3. If it needs API keys or auth, create `~/vesta/skills/<name>/SETUP.md`
-4. If the app needs HTTP access, add `handlers.py` + register in `SKILL_ENDPOINTS`
+4. If the app needs HTTP access, build an HTTP server + register in `SKILL_SERVERS`
 5. If it needs a daemon, build a CLI package under `cli/`
 6. Restart with `restart_vesta` to load the new skill
