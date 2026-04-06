@@ -16,7 +16,7 @@ This skill turns on the microphone button and "read responses aloud" toggle in t
 
 ## The setup flow
 
-0. **Start the voice server** — follow [SETUP.md](SETUP.md) section 1. Do this once — the proxy entry persists across restarts, and `restart.md` relaunches the screen session on boot.
+0. **Start the voice server** — follow [SETUP.md](SETUP.md) section 1. The `restart.md` entries relaunch the screen session and re-register the service on boot.
 1. **Ask which provider(s) they want** — Deepgram for input (STT), ElevenLabs for output (TTS). Both are independent; the user may configure only one.
 2. **Walk them through signup** — see [SETUP.md](SETUP.md) section 2 for the per-provider link, required scopes, and where to find the key.
 3. **Validate the key** before saving:
