@@ -107,7 +107,7 @@ pub fn ensure_tunnel(config_dir: &Path) -> Result<TunnelConfig, String> {
         return Ok(tc);
     }
     let subdomain = generate_subdomain();
-    eprintln!("auto-creating tunnel with subdomain: {}", subdomain);
+    tracing::info!(subdomain = %subdomain, "auto-creating tunnel");
     setup_tunnel(config_dir, &subdomain)
 }
 
@@ -117,7 +117,7 @@ pub fn setup_tunnel(config_dir: &Path, subdomain: &str) -> Result<TunnelConfig, 
     let hostname = format!("{}.{}", subdomain, domain);
     let tunnel_name = format!("vesta-{}", subdomain);
 
-    eprintln!("creating tunnel {}...", tunnel_name);
+    tracing::info!(tunnel = %tunnel_name, "creating tunnel");
 
     let create_url = format!("{}/accounts/{}/cfd_tunnel", CF_API_BASE, env.account_id);
     let tunnel_secret: String = (0..32).map(|_| format!("{:02x}", rand::random::<u8>())).collect();
@@ -141,7 +141,7 @@ pub fn setup_tunnel(config_dir: &Path, subdomain: &str) -> Result<TunnelConfig, 
         .ok_or("missing tunnel token in response")?
         .to_string();
 
-    eprintln!("creating DNS record {} -> {}...", hostname, tunnel_id);
+    tracing::info!(hostname = %hostname, tunnel_id = %tunnel_id, "creating DNS record");
 
     let dns_url = format!("{}/zones/{}/dns_records", CF_API_BASE, env.zone_id);
     let dns_resp = cf_request("POST", &dns_url, &env.api_token, Some(serde_json::json!({
@@ -174,7 +174,7 @@ pub fn setup_tunnel(config_dir: &Path, subdomain: &str) -> Result<TunnelConfig, 
         std::fs::set_permissions(&config_path, std::fs::Permissions::from_mode(0o600)).ok();
     }
 
-    eprintln!("tunnel ready: https://{}", hostname);
+    tracing::info!(hostname = %hostname, "tunnel ready");
     Ok(config)
 }
 
@@ -185,12 +185,12 @@ pub fn destroy_tunnel(config_dir: &Path) -> Result<(), String> {
     let env = cf_env()?;
 
     if let Some(record_id) = &config.dns_record_id {
-        eprintln!("deleting DNS record...");
+        tracing::info!("deleting DNS record");
         let dns_url = format!("{}/zones/{}/dns_records/{}", CF_API_BASE, env.zone_id, record_id);
         cf_request("DELETE", &dns_url, &env.api_token, None).ok();
     }
 
-    eprintln!("deleting tunnel {}...", config.tunnel_id);
+    tracing::info!(tunnel_id = %config.tunnel_id, "deleting tunnel");
     let tunnel_url = format!(
         "{}/accounts/{}/cfd_tunnel/{}",
         CF_API_BASE, env.account_id, config.tunnel_id
@@ -199,7 +199,7 @@ pub fn destroy_tunnel(config_dir: &Path) -> Result<(), String> {
         .map_err(|e| format!("failed to delete tunnel: {}", e))?;
 
     std::fs::remove_file(tunnel_config_path(config_dir)).ok();
-    eprintln!("tunnel destroyed");
+    tracing::info!("tunnel destroyed");
     Ok(())
 }
 
@@ -220,7 +220,7 @@ pub fn ensure_cloudflared(config_dir: &Path) -> Result<PathBuf, String> {
     };
 
     let url = format!("{}/cloudflared-linux-{}", CLOUDFLARED_DOWNLOAD_BASE, arch);
-    eprintln!("downloading cloudflared from {}...", url);
+    tracing::info!(url = %url, "downloading cloudflared");
 
     std::fs::create_dir_all(config_dir)
         .map_err(|e| format!("failed to create config dir: {}", e))?;
@@ -241,7 +241,7 @@ pub fn ensure_cloudflared(config_dir: &Path) -> Result<PathBuf, String> {
             .map_err(|e| format!("chmod failed: {}", e))?;
     }
 
-    eprintln!("cloudflared downloaded to {}", local_bin.display());
+    tracing::info!(path = %local_bin.display(), "cloudflared downloaded");
     Ok(local_bin)
 }
 

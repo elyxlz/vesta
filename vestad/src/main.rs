@@ -85,6 +85,14 @@ fn print_server_info(tunnel_url: Option<&str>, local_url: &str, api_key: &str) {
 }
 
 fn main() {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .with_target(false)
+        .init();
+
     rustls::crypto::ring::default_provider()
         .install_default()
         .expect("failed to install crypto provider");
@@ -108,7 +116,7 @@ fn main() {
                 match tunnel::ensure_tunnel(&config) {
                     Ok(tc) => Some(format!("https://{}", tc.hostname)),
                     Err(e) => {
-                        eprintln!("warning: tunnel setup failed ({}), running without tunnel", e);
+                        tracing::warn!("tunnel setup failed: {e}, running without tunnel");
                         None
                     }
                 }
@@ -134,7 +142,7 @@ fn main() {
                                 Some(child)
                             }
                             Err(e) => {
-                                eprintln!("warning: failed to start tunnel: {}", e);
+                                tracing::warn!("failed to start tunnel: {e}");
                                 None
                             }
                         }
@@ -226,7 +234,7 @@ fn main() {
             let tmp = format!("/tmp/vestad-update-{}", std::process::id());
             std::fs::create_dir_all(&tmp).ok();
 
-            eprintln!("downloading update...");
+            tracing::info!("downloading update...");
             let status = std::process::Command::new("curl")
                 .args(["-fsSL", "-o", &format!("{}/{}", tmp, archive), &url])
                 .status();
@@ -246,7 +254,7 @@ fn main() {
                 .unwrap_or_else(|e| die(format!("failed to replace binary: {}", e)));
 
             std::fs::remove_dir_all(&tmp).ok();
-            eprintln!("updated. restart vestad to use new version.");
+            tracing::info!("updated — restart vestad to use new version");
         }
     }
 }
