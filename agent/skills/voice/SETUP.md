@@ -10,10 +10,10 @@
    ```bash
    curl -s -X POST http://localhost:$WS_PORT/services -H 'Content-Type: application/json' -d '{"name":"voice","port":7965}'
    ```
-3. Add both commands to `~/vesta/prompts/restart.md`:
+   This persists across restarts — only needs to be done once.
+3. Add to `~/vesta/prompts/restart.md`:
    ```
    SKILL_PORT=7965 SKILL_NAME=voice PYTHONPATH=~/vesta/skills screen -dmS voice uv run python -m voice.server
-   curl -s -X POST http://localhost:$WS_PORT/services -H 'Content-Type: application/json' -d '{"name":"voice","port":7965}'
    ```
 
 ## 2. API keys
