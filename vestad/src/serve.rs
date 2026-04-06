@@ -817,6 +817,15 @@ pub fn acquire_pid_lock(config_dir: &std::path::Path) -> Result<std::fs::File, S
 pub fn write_port_file(config_dir: &std::path::Path, port: u16) {
     let port_path = config_dir.join("port");
     std::fs::write(&port_path, port.to_string()).ok();
+
+    // Keep config.json server URL in sync with the actual port
+    let mut config = vesta_common::load_config();
+    if let Some(ref mut server) = config.server {
+        if vesta_common::is_local_server(server) {
+            server.url = format!("https://localhost:{}", port);
+            vesta_common::save_config(&config).ok();
+        }
+    }
 }
 
 // --- Router ---
