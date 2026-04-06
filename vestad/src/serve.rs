@@ -21,6 +21,8 @@ const API_KEY_BYTES: usize = 32;
 const SERVICE_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(30);
 const SERVICE_FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
+const PROXY_MAX_BODY_BYTES: usize = 10 * 1024 * 1024; // 10 MB
+
 struct ServiceCache {
     services: HashMap<String, u16>,
     fetched_at: std::time::Instant,
@@ -858,7 +860,7 @@ async fn forward_http_to_container(
     let method = reqwest::Method::from_bytes(parts.method.as_str().as_bytes())
         .map_err(|e| err_response(StatusCode::BAD_REQUEST, &format!("bad method: {}", e)))?;
 
-    let body_bytes = axum::body::to_bytes(body, usize::MAX)
+    let body_bytes = axum::body::to_bytes(body, PROXY_MAX_BODY_BYTES)
         .await
         .map_err(|e| err_response(StatusCode::BAD_REQUEST, &format!("read body: {}", e)))?;
 
