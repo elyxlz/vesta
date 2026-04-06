@@ -340,6 +340,7 @@ async fn create_agent_handler(
         return Err(err_response(StatusCode::BAD_REQUEST, "invalid agent name"));
     }
     let build = body.build.unwrap_or(false);
+    tracing::info!(name = %name, build, "creating agent");
 
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
@@ -367,6 +368,7 @@ async fn start_agent_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    tracing::info!(name = %name, "starting agent");
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
@@ -398,6 +400,7 @@ async fn stop_agent_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    tracing::info!(name = %name, "stopping agent");
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
@@ -412,6 +415,7 @@ async fn restart_agent_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    tracing::info!(name = %name, "restarting agent");
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
@@ -426,6 +430,7 @@ async fn destroy_agent_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    tracing::info!(name = %name, "destroying agent");
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
@@ -441,6 +446,7 @@ async fn rebuild_agent_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    tracing::info!(name = %name, "rebuilding agent");
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
@@ -628,6 +634,7 @@ async fn ws_handler(
     Path(name): Path<String>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+    tracing::debug!(name = %name, "websocket connection");
     docker::validate_name(&name).map_err(map_docker_err)?;
     let cname = docker::container_name(&name);
 
@@ -652,6 +659,7 @@ async fn ws_proxy(client_ws: axum::extract::ws::WebSocket, agent_port: u16) {
     let agent_ws = match tokio_tungstenite::connect_async(&url).await {
         Ok((ws, _)) => ws,
         Err(e) => {
+            tracing::warn!(url = %url, error = %e, "agent websocket not reachable");
             let mut client_ws = client_ws;
             let _ = client_ws
                 .send(AxumMsg::Close(Some(axum::extract::ws::CloseFrame {
@@ -709,6 +717,7 @@ async fn create_backup_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
 ) -> Result<Json<crate::types::BackupInfo>, (StatusCode, Json<serde_json::Value>)> {
+    tracing::info!(name = %name, "creating manual backup");
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
@@ -752,6 +761,7 @@ async fn restore_backup_handler(
     let lock = state.agent_lock(&path.name).await;
     let _guard = lock.write().await;
 
+    tracing::info!(name = %path.name, backup_id = %path.backup_id, "restoring backup");
     let name = path.name.clone();
     let backup_id = path.backup_id.clone();
     tokio::task::spawn_blocking(move || docker::restore_backup(&name, &backup_id))
@@ -775,6 +785,7 @@ async fn delete_backup_handler(
     let lock = state.agent_lock(&path.name).await;
     let _guard = lock.write().await;
 
+    tracing::info!(backup_id = %path.backup_id, "deleting backup");
     let backup_id = path.backup_id.clone();
     tokio::task::spawn_blocking(move || docker::delete_backup(&backup_id))
         .await
@@ -860,6 +871,7 @@ pub fn build_router(state: SharedState) -> Router {
                 .allow_methods(tower_http::cors::Any)
                 .allow_headers(tower_http::cors::Any),
         )
+        .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state)
 }
 
@@ -902,7 +914,7 @@ fn spawn_auto_backup_task(state: SharedState) {
                     });
 
                     if !has_daily_today {
-                        eprintln!("auto-backup: creating daily backup for '{}'", name_clone);
+                        tracing::info!("auto-backup: creating daily backup for '{}'", name_clone);
                         let new = docker::create_backup(&name_clone, crate::types::BackupType::Daily)?;
                         backups.insert(0, new);
                     }
@@ -911,7 +923,7 @@ fn spawn_auto_backup_task(state: SharedState) {
                         b.backup_type == crate::types::BackupType::Weekly && b.created_at >= week_ago
                     });
                     if !has_recent_weekly {
-                        eprintln!("auto-backup: creating weekly backup for '{}'", name_clone);
+                        tracing::info!("auto-backup: creating weekly backup for '{}'", name_clone);
                         let new = docker::create_backup(&name_clone, crate::types::BackupType::Weekly)?;
                         backups.insert(0, new);
                     }
@@ -920,7 +932,7 @@ fn spawn_auto_backup_task(state: SharedState) {
                         b.backup_type == crate::types::BackupType::Monthly && b.created_at >= month_ago
                     });
                     if !has_recent_monthly {
-                        eprintln!("auto-backup: creating monthly backup for '{}'", name_clone);
+                        tracing::info!("auto-backup: creating monthly backup for '{}'", name_clone);
                         let new = docker::create_backup(&name_clone, crate::types::BackupType::Monthly)?;
                         backups.insert(0, new);
                     }
@@ -932,7 +944,7 @@ fn spawn_auto_backup_task(state: SharedState) {
                 .unwrap_or_else(|e| Err(docker::DockerError::Failed(e.to_string())));
 
                 if let Err(e) = result {
-                    eprintln!("auto-backup error for '{}': {}", name, e);
+                    tracing::error!("auto-backup error for '{}': {}", name, e);
                 }
             }
         }
@@ -949,8 +961,8 @@ fn spawn_update_check_task(state: SharedState) {
             match info_result {
                 Ok(Ok(info)) => {
                     if info.update_available && last_notified.as_ref() != Some(&info.latest) {
-                        eprintln!(
-                            "\nUpdate available: v{} → v{} (run 'vestad update')",
+                        tracing::info!(
+                            "update available: v{} -> v{} (run 'vestad update')",
                             info.current, info.latest
                         );
                         last_notified = Some(info.latest.clone());
@@ -958,8 +970,8 @@ fn spawn_update_check_task(state: SharedState) {
                     let mut slot = state.update_info.lock().await;
                     *slot = Some(info);
                 }
-                Ok(Err(e)) => eprintln!("update check failed: {}", e),
-                Err(e) => eprintln!("update check task failed: {}", e),
+                Ok(Err(e)) => tracing::warn!("update check failed: {}", e),
+                Err(e) => tracing::error!("update check task failed: {}", e),
             }
             tokio::time::sleep(tokio::time::Duration::from_secs(update_check::CHECK_INTERVAL_SECS)).await;
         }
@@ -973,6 +985,8 @@ pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: S
     let app = build_router(state.clone());
     spawn_auto_backup_task(state.clone());
     spawn_update_check_task(state);
+
+    tracing::info!(port, "server listening");
 
     let rustls_config = axum_server::tls_rustls::RustlsConfig::from_pem(
         cert_pem.into_bytes(),

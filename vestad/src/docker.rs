@@ -509,12 +509,10 @@ pub fn create_container(cname: &str, image: &str, port: u16, agent_name: &str) -
     match gpu_available() {
         GpuStatus::Ready => {
             args.extend(["--gpus", "all"]);
-            eprintln!("GPU detected, enabling passthrough");
+            tracing::info!("GPU detected, enabling passthrough");
         }
         GpuStatus::NoRuntime => {
-            eprintln!("warning: NVIDIA GPU detected but nvidia-container-toolkit is not installed.");
-            eprintln!("         install it to enable GPU passthrough:");
-            eprintln!("         https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html");
+            tracing::warn!("NVIDIA GPU detected but nvidia-container-toolkit is not installed. Install it to enable GPU passthrough: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html");
         }
         GpuStatus::NoGpu => {}
     }
