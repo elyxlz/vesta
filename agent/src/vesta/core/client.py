@@ -34,6 +34,8 @@ from vesta.events import SubagentStartEvent, SubagentStopEvent, StreamEvent
 
 
 def _build_query(prompt: str, *, timestamp: dt.datetime) -> str:
+    if prompt.startswith("/"):
+        return prompt
     timestamp_str = timestamp.strftime("%A, %B %d, %Y at %I:%M:%S %p %Z")
     return f"[Current time: {timestamp_str}]\n{prompt}"
 

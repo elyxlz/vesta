@@ -376,7 +376,7 @@ async def test_dreamer_skips_when_already_run_today(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_dreamer_triggers_automatic_restart(tmp_path):
+async def test_dreamer_compacts_and_restarts(tmp_path):
     async def side_effect(msg, *, state, config, is_user):
         return (["OK"], state)
 
@@ -392,9 +392,25 @@ async def test_dreamer_triggers_automatic_restart(tmp_path):
         initial_queue=[("dreamer prompt content", False)],
         extra_patches={"vesta.core.loops._now": lambda: fake_now},
     )
-    assert state.session_id is None
+    assert state.session_id == "pre-dreamer-session"
     assert state.dreamer_active is False
     assert state.graceful_shutdown.is_set()
+    assert state.restart_reason == "nightly — dreamer ran, context compacted"
+    assert messages == ["dreamer prompt content", "/compact"]
+
+
+def test_build_query_passes_slash_commands_through():
+    from vesta.core.client import _build_query
+
+    result = _build_query("/compact", timestamp=dt.datetime(2025, 6, 15, 12, 0, 0))
+    assert result == "/compact"
+
+    result = _build_query("/clear some args", timestamp=dt.datetime(2025, 6, 15, 12, 0, 0))
+    assert result == "/clear some args"
+
+    result = _build_query("hello world", timestamp=dt.datetime(2025, 6, 15, 12, 0, 0))
+    assert "[Current time:" in result
+    assert "hello world" in result
 
 
 # --- Interrupt tests ---
@@ -884,23 +900,6 @@ async def test_drain_timeout_does_not_block_forever():
 
     # Must exit within drain timeout (5s) + some margin, not hang for 60s
     assert elapsed < 8.0, f"converse took {elapsed:.1f}s — drain blocked too long"
-
-
-# --- Nightly restart ---
-
-
-def test_nightly_restart(tmp_path):
-    from vesta.core.loops import _trigger_nightly_restart
-
-    config = vm.VestaConfig(root=tmp_path)
-    config.data_dir.mkdir(parents=True, exist_ok=True)
-
-    state = vm.State(session_id="old-session")
-    _trigger_nightly_restart(state=state, config=config)
-
-    assert state.session_id is None
-    assert state.restart_reason == "nightly — conversation history reset, dreamer ran"
-    assert state.graceful_shutdown.is_set()
 
 
 # --- History store ---

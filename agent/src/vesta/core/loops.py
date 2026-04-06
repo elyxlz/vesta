@@ -217,8 +217,11 @@ async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm
 
                 if state.dreamer_active:
                     state.dreamer_active = False
-                    state.event_bus.clear_history()
-                    _trigger_nightly_restart(state=state, config=config)
+                    logger.dreamer("Dreamer complete, running /compact...")
+                    await _process_interruptible("/compact", is_user=False, queue=queue, state=state, config=config)
+                    logger.dreamer("Compact complete, triggering nightly restart (session preserved)...")
+                    state.restart_reason = "nightly — dreamer ran, context compacted"
+                    state.graceful_shutdown.set()
         finally:
             state.client = None
             state.interrupt_event = None
@@ -234,14 +237,6 @@ async def check_proactive_task(queue: asyncio.Queue[tuple[str, bool]], *, config
         return
     logger.proactive(f"Running {config.proactive_check_interval}-minute check...")
     await queue.put((prompt, False))
-
-
-def _trigger_nightly_restart(*, state: vm.State, config: vm.VestaConfig) -> None:
-    logger.dreamer("Dreamer complete, triggering nightly restart...")
-    state.session_id = None
-    config.session_file.unlink(missing_ok=True)
-    state.restart_reason = "nightly — conversation history reset, dreamer ran"
-    state.graceful_shutdown.set()
 
 
 async def process_nightly_memory(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig) -> None:
