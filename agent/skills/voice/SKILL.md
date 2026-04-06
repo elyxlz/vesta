@@ -1,6 +1,7 @@
 ---
 name: voice
 description: Use when the user asks to enable voice input/output, set up transcription or text-to-speech, rotate API keys, add custom voices, adjust the transcription sensitivity, or talks about the microphone/speaker in the Vesta app. This skill manages ~/vesta/data/voice_config.json — the single source of truth for STT/TTS keys, voice selection, keyterms, and thresholds.
+serve: PYTHONPATH=~/vesta/skills uv run python -m voice.server
 ---
 
 # Voice setup (STT/TTS)
@@ -15,6 +16,16 @@ This skill turns on the microphone button and "read responses aloud" toggle in t
 
 ## The setup flow
 
+0. **Start the voice server** — before anything works, the app needs to reach this skill's HTTP server. Check if `SKILL_SERVERS` in `~/vesta/src/vesta/skill_server.py` contains a voice entry. If not:
+   a. Pick a free port (e.g. 7965). Start the server in a background screen session:
+      ```bash
+      SKILL_PORT=7965 SKILL_NAME=voice VESTA_DATA_DIR=~/vesta/data PYTHONPATH=~/vesta/skills screen -dmS voice uv run python -m voice.server
+      ```
+   b. Append to `SKILL_SERVERS` in `~/vesta/src/vesta/skill_server.py` and `restart_vesta`:
+      ```python
+      ("voice", 7965),
+      ```
+   Do this once — after that the proxy persists across restarts.
 1. **Ask which provider(s) they want** — Deepgram for input (STT), ElevenLabs for output (TTS). Both are independent; the user may configure only one.
 2. **Walk them through signup** — see [VOICE_SETUP.md](VOICE_SETUP.md) for the per-provider link, required scopes, and where to find the key.
 3. **Validate the key** before saving:
@@ -52,16 +63,10 @@ uv run ~/vesta/skills/voice/scripts/voice_keys.py set-eot --threshold 0.8
 uv run ~/vesta/skills/voice/scripts/voice_keys.py set-eot --timeout-ms 10000
 ```
 
-## System messages from the UI
-
-When the user clicks a voice in Settings or drags an EOT slider, the app sends a `{type: "system_message", text: "..."}` frame over the chat WebSocket. The text reads like "User selected voice 'Laura' (voice_id: FGY2WhTYpPnrIDTdsKH5). Run voice_keys.py set-voice --id FGY2WhTYpPnrIDTdsKH5." Treat these as normal user input instructing you to run the CLI — they arrive without a user chat bubble so the user expects silent execution.
-
-Respond with a short confirmation via `chat_reply` only if the action is noteworthy; for routine voice switches, silent success is fine.
-
 ## Common asks
 
 - **"Add the voice with id X named Y"** → `add-voice --id X --name Y`
 - **"I want you to sound like <name>"** → `set-voice --id <matching voice_id from status>`
-- **"Make sure you recognize 'Athena'"** → `add-keyterm Athena`
+- **"Make sure you recognize '{AGENT_NAME}'"** → `add-keyterm {AGENT_NAME}`
 - **"Finalize my turns faster"** → lower `--threshold` (e.g. 0.6)
 - **"Stop cutting me off"** → raise `--threshold` (e.g. 0.9) or raise `--timeout-ms`

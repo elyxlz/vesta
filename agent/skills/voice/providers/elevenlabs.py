@@ -5,7 +5,9 @@ import typing as tp
 import aiohttp
 from aiohttp import web
 
-from vesta import logger
+import logging
+
+logger = logging.getLogger("voice.elevenlabs")
 
 ELEVENLABS_API = "https://api.elevenlabs.io"
 MODEL_ID = "eleven_flash_v2_5"
