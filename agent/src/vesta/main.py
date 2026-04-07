@@ -30,7 +30,12 @@ async def input_handler(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.Sta
 
             logger.user(user_msg.strip())
             await queue.put((user_msg.strip(), True))
-        except (KeyboardInterrupt, EOFError):
+        except KeyboardInterrupt:
+            logger.shutdown("stdin: KeyboardInterrupt, shutting down")
+            state.shutdown_event.set()
+            break
+        except EOFError:
+            logger.shutdown("stdin: EOF (no TTY?), shutting down")
             state.shutdown_event.set()
             break
         except asyncio.CancelledError:
@@ -48,12 +53,16 @@ async def input_handler(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.Sta
 
 def _make_signal_handler(state: vm.State, *, allow_force_exit: bool = False) -> SignalHandler:
     def handler(signum: int, frame: types.FrameType | None) -> None:
+        sig_name = signal.Signals(signum).name
         state.shutdown_count += 1
         if state.shutdown_count == 1:
+            logger.shutdown(f"received {sig_name}, graceful shutdown")
             state.graceful_shutdown.set()
         elif allow_force_exit and state.shutdown_count > 2:
+            logger.shutdown(f"received {sig_name} x{state.shutdown_count}, force exit")
             os._exit(0)
         else:
+            logger.shutdown(f"received {sig_name} x{state.shutdown_count}, immediate shutdown")
             state.shutdown_event.set()
 
     return handler
@@ -91,7 +100,8 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
     if not state.shutdown_event.is_set():
         state.shutdown_event.set()
 
-    logger.shutdown("Shutting down...")
+    reason = state.restart_reason or CLEAN_RESTART
+    logger.shutdown(f"Shutting down ({reason})")
     _write_restart_reason(config, state.restart_reason or CLEAN_RESTART)
 
     for task in tasks:
