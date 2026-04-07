@@ -127,6 +127,7 @@ def main():
     # serve
     p_serve = sub.add_parser("serve", help="Run background daemon (scheduler + reminder engine)")
     p_serve.add_argument("--notifications-dir", required=True)
+    p_serve.add_argument("--port", type=int, default=8585, help="HTTP server port (default: 8585)")
 
     # add
     p_add = sub.add_parser("add", help="Add a new task")
@@ -181,7 +182,7 @@ def main():
 
     try:
         if args.command == "serve":
-            _run_serve(config, Path(args.notifications_dir))
+            _run_serve(config, Path(args.notifications_dir), port=args.port)
             return
 
         _require_daemon(config)
@@ -346,7 +347,7 @@ def _handle_task(args, config: Config):
     print(json.dumps(result, indent=2))
 
 
-def _run_serve(config: Config, notif_dir: Path):
+def _run_serve(config: Config, notif_dir: Path, *, port: int = 8585):
     notif_dir.mkdir(parents=True, exist_ok=True)
 
     logging.basicConfig(
@@ -357,6 +358,10 @@ def _run_serve(config: Config, notif_dir: Path):
             logging.StreamHandler(),
         ],
     )
+
+    from .server import start_server
+
+    http_server = start_server(config, port)
 
     scheduler = create_scheduler()
     scheduler.start()
@@ -377,13 +382,14 @@ def _run_serve(config: Config, notif_dir: Path):
 
     _write_pid(config)
 
-    print(json.dumps({"status": "serving", "sync_interval": sync_interval}))
+    print(json.dumps({"status": "serving", "sync_interval": sync_interval, "http_port": port}))
     sys.stdout.flush()
     try:
         while not stop:
             time.sleep(sync_interval)
             _sync_jobs(config, scheduler, notif_dir)
     finally:
+        http_server.shutdown()
         _write_death_notification(notif_dir, shutdown_reason)
         _remove_pid(config)
         scheduler.shutdown(wait=True)
