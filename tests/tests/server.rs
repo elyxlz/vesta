@@ -370,6 +370,43 @@ fn destroy_nonexistent_error_message() {
 
 // ── WebSocket ──────────────────────────────────────────────────
 
+// ── Creation flow ─────────────────────────────────────────────
+
+#[test]
+fn create_auto_starts() {
+    // POST /agents now auto-starts the agent.
+    let c = SERVER.client();
+    let agent = TestAgent::create(&c, "test-create-autostart").unwrap();
+
+    let st = c.agent_status(&agent.name).unwrap();
+    assert_eq!(st.status, "running");
+}
+
+#[test]
+fn creation_flow() {
+    // Mirrors the app's NewAgent creation flow:
+    //   create (auto-starts) → authenticate → complete_auth (auto-restarts + waits)
+    let c = SERVER.client();
+    let agent = TestAgent::create(&c, "test-creation-flow").unwrap();
+
+    // Agent is auto-started by create, no separate start needed
+    let st = c.agent_status(&agent.name).unwrap();
+    assert_eq!(st.status, "running");
+    assert!(!st.authenticated);
+
+    // Simulate OAuth: inject token then restart + wait (as complete_auth would)
+    inject_fake_token(&c, &agent.name);
+    assert!(c.agent_status(&agent.name).unwrap().authenticated);
+
+    c.restart_agent(&agent.name).unwrap();
+    c.wait_ready(&agent.name, 60).unwrap();
+
+    let st = c.agent_status(&agent.name).unwrap();
+    assert_eq!(st.status, "running");
+    assert!(st.authenticated);
+    assert!(st.agent_ready);
+}
+
 #[tokio::test]
 async fn ws_connect_to_running_agent() {
     let c = SERVER.client();
