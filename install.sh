@@ -4,16 +4,26 @@ set -euo pipefail
 main() {
   REPO="elyxlz/vesta"
   INSTALL_VERSION=""
+  INSTALL_CLI=""
+  INSTALL_SERVER=""
+  INSTALL_APP=""
 
   for arg in "$@"; do
     case "$arg" in
       --version=*) INSTALL_VERSION="${arg#--version=}" ;;
+      --cli) INSTALL_CLI=1 ;;
+      --server) INSTALL_SERVER=1 ;;
+      --app) INSTALL_APP=1 ;;
       --help|-h)
         echo "Usage: curl -fsSL https://raw.githubusercontent.com/elyxlz/vesta/master/install.sh | bash"
         echo ""
         echo "Installs vesta CLI, desktop app (if GUI available), and vestad (Linux only)."
+        echo "By default, all available components for your platform are installed."
         echo ""
         echo "Options:"
+        echo "  --cli              Install only the CLI"
+        echo "  --server           Install only vestad (Linux only)"
+        echo "  --app              Install only the desktop app"
         echo "  --version=X.Y.Z   Install a specific version"
         echo "  --help             Show this help"
         exit 0
@@ -22,6 +32,16 @@ main() {
   done
 
   OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+
+  EXPLICIT_FLAGS=""
+  [ -n "$INSTALL_CLI" ] || [ -n "$INSTALL_SERVER" ] || [ -n "$INSTALL_APP" ] && EXPLICIT_FLAGS=1
+
+  # If no component flags given, install everything available for this platform
+  if [ -z "$EXPLICIT_FLAGS" ]; then
+    INSTALL_CLI=1
+    [ "$OS" = "linux" ] && INSTALL_SERVER=1
+    INSTALL_APP=1
+  fi
   ARCH=$(uname -m)
 
   case "$ARCH" in
@@ -197,19 +217,25 @@ main() {
 
   echo ""
 
+  # Validate explicit flags for the current platform
+  if [ -n "$EXPLICIT_FLAGS" ]; then
+    if [ -n "$INSTALL_SERVER" ] && [ "$OS" != "linux" ]; then
+      echo "Error: --server is only available on Linux"; exit 1
+    fi
+    if [ -n "$INSTALL_APP" ] && ! has_gui; then
+      echo "Error: --app requires a GUI (DISPLAY or WAYLAND_DISPLAY)"; exit 1
+    fi
+  fi
+
   case "$OS" in
     linux)
-      install_cli
-      install_vestad
-      if has_gui; then
-        install_app_linux
-      fi
+      [ -n "$INSTALL_CLI" ] && install_cli
+      [ -n "$INSTALL_SERVER" ] && install_vestad
+      [ -n "$INSTALL_APP" ] && has_gui && install_app_linux
       ;;
     darwin)
-      install_cli
-      if has_gui; then
-        install_app_macos
-      fi
+      [ -n "$INSTALL_CLI" ] && install_cli
+      [ -n "$INSTALL_APP" ] && has_gui && install_app_macos
       ;;
     *)
       echo "Unsupported OS: $OS"
