@@ -85,11 +85,20 @@ async def process_batch(
     await delete_notification_files(notifications)
 
 
+CREDENTIALS_PATH = pl.Path("/root/.claude/.credentials.json")
+
+
 async def queue_greeting(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.VestaConfig, reason: str) -> None:
+    if not CREDENTIALS_PATH.exists():
+        logger.startup("No credentials yet — waiting for auth before starting")
+        return
+
     if reason == "first_start":
         prompt = load_prompt("first_start", config)
         if prompt:
             prompt = f"[System: your name is {config.agent_name}]\n\n{prompt}"
+        # Mark first start as done so restarts don't re-trigger it
+        (config.data_dir / "first_start_done").write_text("1")
     else:
         extras = []
         today = _now().strftime("%Y-%m-%d")

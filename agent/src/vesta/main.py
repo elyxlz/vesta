@@ -177,7 +177,8 @@ async def async_main() -> None:
 
     restart_reason = _read_restart_reason(config)
     initial_state = init_state(config=config)
-    first_start = initial_state.session_id is None
+    first_start_marker = config.data_dir / "first_start_done"
+    first_start = not first_start_marker.exists()
     logger.init(f"Starting main loop ({restart_reason})...")
     await run_vesta(config, state=initial_state, first_start=first_start, restart_reason=restart_reason)
 
