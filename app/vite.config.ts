@@ -7,6 +7,8 @@ import path from "path";
 const host = process.env.TAURI_DEV_HOST;
 const vestad = process.env.VITE_VESTAD_URL || "https://localhost:7860";
 
+const isTauri = !!process.env.TAURI_ENV_PLATFORM;
+
 export default defineConfig({
   plugins: [
     react({
@@ -15,7 +17,7 @@ export default defineConfig({
       },
     }),
     tailwindcss(),
-    basicSsl(),
+    ...(!isTauri ? [basicSsl()] : []),
   ],
   resolve: {
     alias: {
