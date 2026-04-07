@@ -70,6 +70,8 @@ enum Command {
     Update,
     /// Uninstall vestad: stop service, remove config, and delete binary
     Uninstall,
+    /// Print version information
+    Version,
 }
 
 #[derive(clap::Subcommand)]
@@ -450,6 +452,10 @@ fn main() {
 
         Command::Update => {
             self_update::perform_update().unwrap_or_else(|e| die(e.to_string()));
+        }
+
+        Command::Version => {
+            println!("v{}", env!("CARGO_PKG_VERSION"));
         }
 
         Command::Uninstall => {

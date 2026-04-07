@@ -163,6 +163,8 @@ enum Command {
     Update,
     /// Uninstall vesta CLI and remove config
     Uninstall,
+    /// Print version information
+    Version,
 }
 
 #[derive(Subcommand)]
@@ -718,6 +720,11 @@ fn run(cli: Cli) {
 
             eprintln!("\nvesta has been uninstalled.");
         }
+        Command::Version => {
+            println!("v{}", env!("CARGO_PKG_VERSION"));
+            return;
+        }
+
         Command::Update => {
             #[cfg(target_os = "linux")]
             {
