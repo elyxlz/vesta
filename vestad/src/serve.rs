@@ -136,6 +136,7 @@ pub struct AppState {
     agent_locks: Mutex<HashMap<String, Arc<tokio::sync::RwLock<()>>>>,
     tunnel_url: Mutex<Option<String>>,
     update_info: Mutex<Option<update_check::UpdateInfo>>,
+    updating: AtomicBool,
     auto_backup_enabled: AtomicBool,
     backup_retention: Mutex<crate::types::RetentionPolicy>,
     http_client: reqwest::Client,
@@ -152,6 +153,7 @@ impl AppState {
             agent_locks: Mutex::new(HashMap::new()),
             tunnel_url: Mutex::new(tunnel_url),
             update_info: Mutex::new(None),
+            updating: AtomicBool::new(false),
             auto_backup_enabled: AtomicBool::new(true),
             backup_retention: Mutex::new(crate::types::RetentionPolicy {
                 daily: docker::DEFAULT_RETENTION_DAILY,
@@ -334,11 +336,17 @@ async fn version(State(state): State<SharedState>) -> Json<serde_json::Value> {
     }))
 }
 
-async fn self_update_handler() -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+async fn self_update_handler(
+    State(state): State<SharedState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    if state.updating.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return Err(err_response(StatusCode::CONFLICT, "update already in progress"));
+    }
     tracing::info!("self-update requested via API");
     let result = tokio::task::spawn_blocking(self_update::perform_update)
         .await
         .unwrap();
+    state.updating.store(false, std::sync::atomic::Ordering::SeqCst);
     match result {
         Ok(restarting) => Ok(Json(serde_json::json!({
             "ok": true,
@@ -1358,16 +1366,19 @@ fn spawn_update_check_task(state: SharedState) {
             let info_result = tokio::task::spawn_blocking(update_check::check_once).await;
             match info_result {
                 Ok(Ok(info)) => {
-                    if info.update_available && last_attempted.as_ref() != Some(&info.latest) {
+                    let mut slot = state.update_info.lock().await;
+                    *slot = Some(info.clone());
+                    drop(slot);
+
+                    if info.update_available
+                        && last_attempted.as_ref() != Some(&info.latest)
+                        && !state.updating.swap(true, std::sync::atomic::Ordering::SeqCst)
+                    {
                         tracing::info!(
                             "update available: v{} -> v{}, auto-updating...",
                             info.current, info.latest
                         );
                         last_attempted = Some(info.latest.clone());
-
-                        let mut slot = state.update_info.lock().await;
-                        *slot = Some(info);
-                        drop(slot);
 
                         match tokio::task::spawn_blocking(self_update::perform_update).await {
                             Ok(Ok(true)) => {
@@ -1380,9 +1391,7 @@ fn spawn_update_check_task(state: SharedState) {
                             Ok(Err(e)) => tracing::error!("auto-update failed: {}", e),
                             Err(e) => tracing::error!("auto-update task panicked: {}", e),
                         }
-                    } else {
-                        let mut slot = state.update_info.lock().await;
-                        *slot = Some(info);
+                        state.updating.store(false, std::sync::atomic::Ordering::SeqCst);
                     }
                 }
                 Ok(Err(e)) => tracing::warn!("update check failed: {}", e),
