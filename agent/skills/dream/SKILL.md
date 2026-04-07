@@ -60,14 +60,9 @@ Re-read the failing exchange and simulate: would the updated version have change
 4. For Go CLI changes: rebuild the binary after applying
 5. For Python changes: run `uv lock` if dependencies changed, verify imports
 
-#### Dashboard sync
+#### Dashboard check
 
-If the dashboard skill is set up and upstream commits touched `app/src/styles/globals.css`, `app/src/components/ui/`, `app/src/lib/utils.ts`, or `app/src/hooks/use-mobile.ts`, re-run the sync script and rebuild:
-```bash
-bash ~/vesta/skills/dashboard/sync-app.sh
-cd ~/vesta/skills/dashboard/app && npx vite build
-```
-Then restart the server (see `~/vesta/skills/dashboard/SETUP.md` for the serve command).
+If the dashboard is set up, have a look and be proactive — read its SKILL.md and see if anything needs attention.
 
 #### Push
 Audit **every** local divergence — not just the obvious ones. Check:
