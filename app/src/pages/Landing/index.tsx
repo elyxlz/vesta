@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import { Button } from "@/components/ui/button";
 import { detectPlatform, type Platform } from "@/lib/platform";
 
 const REPO = "https://github.com/elyxlz/vesta";
@@ -8,6 +10,7 @@ type DownloadInfo = {
   label: string;
   filename: (version: string) => string;
   note?: string;
+  external?: boolean;
   altLinks?: { label: string; filename: (version: string) => string }[];
 };
 
@@ -39,7 +42,7 @@ const DOWNLOAD_MAP: Record<Platform, DownloadInfo> = {
   ios: {
     label: "Get on TestFlight",
     filename: () => "",
-    note: "Coming soon",
+    external: true,
   },
 };
 
@@ -52,6 +55,7 @@ const ALL_PLATFORMS: { label: string; platform: Platform }[] = [
 ];
 
 function buildUrl(version: string, filename: string): string {
+  if (!filename) return `${RELEASES}/latest`;
   return `${RELEASES}/download/v${version}/${filename}`;
 }
 
@@ -61,12 +65,16 @@ export function Landing() {
   const [version, setVersion] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch(`${RELEASES}/latest/download/latest.json`)
+    const controller = new AbortController();
+    fetch(`${RELEASES}/latest/download/latest.json`, {
+      signal: controller.signal,
+    })
       .then((r) => r.json())
       .then((data: { version?: string }) => {
         if (data.version) setVersion(data.version);
       })
       .catch(() => {});
+    return () => controller.abort();
   }, []);
 
   const mainUrl = version
@@ -82,16 +90,21 @@ export function Landing() {
         <p className="text-sm text-muted-foreground">Personal AI assistant</p>
       </div>
 
-      <div className="flex flex-col items-center gap-3">
-        <a
-          href={mainUrl}
-          className="inline-flex items-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-        >
-          {download.label}
-          {download.note && (
-            <span className="text-xs opacity-70">({download.note})</span>
-          )}
-        </a>
+      <div className="flex flex-col items-center gap-4">
+        <div className="flex flex-col items-center gap-2">
+          <Button asChild>
+            <a href={mainUrl}>
+              {download.label}
+              {download.note && (
+                <span className="text-xs opacity-70">({download.note})</span>
+              )}
+            </a>
+          </Button>
+
+          <Button variant="outline" size="sm" asChild>
+            <Link to="/connect">Continue in browser</Link>
+          </Button>
+        </div>
 
         {version && download.altLinks && (
           <div className="flex gap-3">
