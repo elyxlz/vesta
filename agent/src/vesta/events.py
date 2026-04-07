@@ -63,6 +63,12 @@ class SubagentStopEvent(_BaseEvent):
     agent_type: str
 
 
+class ContextStatusEvent(_BaseEvent):
+    type: tp.Literal["context_status"]
+    text: str
+    context_pct: float
+
+
 type StreamEvent = (
     StatusEvent
     | ToolStartEvent
@@ -73,6 +79,7 @@ type StreamEvent = (
     | NotificationEvent
     | SubagentStartEvent
     | SubagentStopEvent
+    | ContextStatusEvent
 )
 
 

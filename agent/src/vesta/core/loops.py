@@ -14,6 +14,7 @@ import vesta.models as vm
 from vesta import logger
 from vesta.core.client import process_message, build_client_options, attempt_interrupt, filter_tool_lines, persist_session_id, _cancel_task
 from vesta.core.init import load_prompt, build_restart_context
+from vesta.events import ContextStatusEvent
 
 _CONTEXT_STATUS_INTERVAL = 10 * 60  # seconds (10 minutes) — context status ping
 _status_log_path = pl.Path.home() / "vesta" / "logs" / "context-status.jsonl"
@@ -287,7 +288,7 @@ async def context_status_loop(*, state: vm.State) -> None:
                 continue
 
             try:
-                usage = await state.client.get_context_usage()
+                usage = await state.client.get_context_usage()  # type: ignore[unresolved-attribute]
 
                 pct = usage.get("percentage", 0.0)
                 total = usage.get("totalTokens", 0)
@@ -311,7 +312,7 @@ async def context_status_loop(*, state: vm.State) -> None:
                 with _status_log_path.open("a", encoding="utf-8") as f:
                     f.write(json.dumps(record) + "\n")
 
-                state.event_bus.emit({"type": "status", "text": f"context: {pct:.0f}%", "context_pct": pct})
+                state.event_bus.emit(ContextStatusEvent(type="context_status", text=f"context: {pct:.0f}%", context_pct=pct))
             except Exception:
                 pass  # skip iteration on any SDK/IO error
     except asyncio.CancelledError:
