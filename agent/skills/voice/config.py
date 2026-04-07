@@ -201,6 +201,20 @@ def set_stt_auto_send(data_dir: pl.Path, value: bool) -> VoiceConfig:
     return mutate(data_dir, _update)
 
 
+def set_setting(data_dir: pl.Path, domain: tp.Literal["stt", "tts"], key: str, value: tp.Any) -> VoiceConfig:
+    """Generic setter — stores value at cfg[domain][key]."""
+
+    def _update(cfg: VoiceConfig) -> VoiceConfig:
+        d = dict(cfg.get(domain) or {})
+        if not d:
+            raise ValueError(f"{domain.upper()} not configured; set a provider key first")
+        d[key] = value
+        cfg[domain] = d  # type: ignore[typeddict-item]
+        return cfg
+
+    return mutate(data_dir, _update)
+
+
 def set_enabled(data_dir: pl.Path, domain: tp.Literal["stt", "tts"], value: bool) -> VoiceConfig:
     def _update(cfg: VoiceConfig) -> VoiceConfig:
         d = dict(cfg.get(domain) or {})

@@ -44,7 +44,7 @@ export function Settings() {
         <TooltipContent>settings</TooltipContent>
       </Tooltip>
 
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog drawerOnMobile open={open} onOpenChange={setOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Settings</DialogTitle>

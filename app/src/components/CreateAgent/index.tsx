@@ -154,7 +154,7 @@ export function CreateAgent() {
                 setAuthStart(null);
                 try {
                   await deleteAgent(createdName);
-                } catch {}
+                } catch { }
                 await refreshAgents();
                 navigate("/");
               }}

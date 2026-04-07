@@ -11,16 +11,32 @@ function voicePost(agentName: string, path: string, body: unknown): Promise<unkn
   });
 }
 
+// --- Dynamic settings ---
+
+export interface SettingDef {
+  key: string;
+  type: "bool" | "number" | "select";
+  label: string;
+  description?: string;
+  value: unknown;
+  default?: unknown;
+  min?: number;
+  max?: number;
+  step?: number;
+  unit?: string;
+  options?: Array<{ value: string; label: string; preview?: string; custom?: boolean; [k: string]: unknown }>;
+}
+
+export const setVoiceSetting = (n: string, domain: "stt" | "tts", key: string, value: unknown) =>
+  voicePost(n, `${domain}/set`, { key, value });
+
 // --- STT ---
 
 export interface SttStatus {
   configured: boolean;
   provider: string | null;
   enabled?: boolean;
-  auto_send?: boolean;
-  eot_threshold?: number;
-  eot_timeout_ms?: number;
-  keyterms?: string[];
+  settings?: SettingDef[];
 }
 
 export async function fetchSttStatus(agentName: string, signal?: AbortSignal): Promise<SttStatus> {
@@ -46,15 +62,7 @@ export interface TtsStatus {
   configured: boolean;
   provider: string | null;
   enabled?: boolean;
-  selected_voice_id?: string;
-  voices?: VoiceInfo[];
-}
-
-export interface VoiceInfo {
-  id: string;
-  name: string;
-  preview?: string;
-  custom?: boolean;
+  settings?: SettingDef[];
 }
 
 export async function fetchTtsStatus(agentName: string, signal?: AbortSignal): Promise<TtsStatus> {

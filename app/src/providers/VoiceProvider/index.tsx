@@ -55,7 +55,7 @@ export function VoiceProvider({ agentName, children }: { agentName: string; chil
 
   const sttAvailable = (sttStatus?.configured && sttStatus?.enabled) ?? false;
   const speechEnabled = (ttsStatus?.configured && ttsStatus?.enabled) ?? false;
-  const voiceAutoSend = sttStatus?.auto_send ?? true;
+  const voiceAutoSend = (sttStatus?.settings?.find(s => s.key === "auto_send")?.value as boolean) ?? true;
 
   const { isSpeaking, speak, stop: stopSpeech } = useVoiceOutput(agentName || null, speechEnabled);
 

@@ -45,6 +45,18 @@ async def _json_body(request: web.Request) -> dict | web.Response:
 # --- STT ---
 
 
+def _build_settings(provider: tp.Any, entry: dict) -> list[dict]:
+    """Merge provider schema with current config values."""
+    if not hasattr(provider, "settings_schema"):
+        return []
+    settings: list[dict] = []
+    for s in provider.settings_schema():
+        setting = dict(s)
+        setting["value"] = entry.get(s["key"], s.get("default"))
+        settings.append(setting)
+    return settings
+
+
 async def stt_status(request: web.Request) -> web.Response:
     """STT config (local read only — instant)."""
     cfg = voice_config.load(DATA_DIR)
@@ -53,15 +65,16 @@ async def stt_status(request: web.Request) -> web.Response:
     if not stt_entry or not stt_entry.get("provider"):
         return web.json_response({"configured": False, "provider": None})
 
+    provider_name = stt_entry["provider"]
+    provider = providers.get_stt(provider_name)
+    settings = _build_settings(provider, stt_entry) if provider else []
+
     return web.json_response(
         {
             "configured": True,
-            "provider": stt_entry["provider"],
+            "provider": provider_name,
             "enabled": stt_entry.get("enabled", False),
-            "auto_send": stt_entry.get("auto_send", True),
-            "eot_threshold": stt_entry.get("eot_threshold", voice_config.DEFAULT_EOT_THRESHOLD),
-            "eot_timeout_ms": stt_entry.get("eot_timeout_ms", voice_config.DEFAULT_EOT_TIMEOUT_MS),
-            "keyterms": stt_entry.get("keyterms", []),
+            "settings": settings,
         }
     )
 
@@ -142,26 +155,28 @@ async def tts_status(request: web.Request) -> web.Response:
 
     provider_name = tts_entry["provider"]
     provider = providers.get_tts(provider_name)
-    voice_list: list[dict] = []
-    selected = tts_entry.get("selected_voice_id")
-    if provider:
-        voice_list = provider.premade_voices()
-        custom = tts_entry.get("custom_voices") or []
-        for v in custom:
-            if v.get("provider") == provider_name:
-                voice_list.append({"id": v["id"], "name": v["name"], "custom": True})
-        if selected and not any(v["id"] == selected for v in voice_list) and voice_list:
-            selected = voice_list[0]["id"]
-        elif not selected and voice_list:
-            selected = voice_list[0]["id"]
+    settings = _build_settings(provider, tts_entry) if provider else []
+
+    # Merge custom voices into the select options for voice selection settings
+    custom = tts_entry.get("custom_voices") or []
+    for setting in settings:
+        if setting.get("type") == "select" and setting["key"] == "selected_voice_id":
+            options = list(setting.get("options") or [])
+            for v in custom:
+                if v.get("provider") == provider_name:
+                    options.append({"value": v["id"], "label": v["name"], "custom": True})
+            setting["options"] = options
+            # Auto-select first voice if none selected
+            selected = setting.get("value")
+            if options and (not selected or not any(o["value"] == selected for o in options)):
+                setting["value"] = options[0]["value"]
 
     return web.json_response(
         {
             "configured": True,
             "provider": provider_name,
             "enabled": tts_entry.get("enabled", False),
-            "selected_voice_id": selected,
-            "voices": voice_list,
+            "settings": settings,
         }
     )
 
@@ -193,6 +208,25 @@ async def tts_set_voice(request: web.Request) -> web.Response:
         return web.json_response({"error": "voice_id required"}, status=400)
     try:
         voice_config.set_voice(DATA_DIR, voice_id)
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    return web.json_response({"ok": True})
+
+
+async def set_setting(request: web.Request) -> web.Response:
+    """Generic setter for any provider setting."""
+    domain = request.match_info["domain"]
+    if domain not in ("stt", "tts"):
+        return web.json_response({"error": "domain must be stt or tts"}, status=400)
+    body = await _json_body(request)
+    if isinstance(body, web.Response):
+        return body
+    key = body.get("key")
+    value = body.get("value")
+    if not key or not isinstance(key, str):
+        return web.json_response({"error": "key required"}, status=400)
+    try:
+        voice_config.set_setting(DATA_DIR, domain, key, value)  # type: ignore[arg-type]
     except ValueError as e:
         return web.json_response({"error": str(e)}, status=400)
     return web.json_response({"ok": True})

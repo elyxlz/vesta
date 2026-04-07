@@ -27,6 +27,9 @@ app.router.add_post("/tts/set-enabled", handlers.tts_set_enabled)
 app.router.add_post("/tts/set-voice", handlers.tts_set_voice)
 app.router.add_post("/tts/speak", handlers.tts_speak)
 
+# Generic setter (works for any provider setting)
+app.router.add_post("/{domain:stt|tts}/set", handlers.set_setting)
+
 # Health
 app.router.add_get("/health", lambda _: web.Response(text="ok"))
 

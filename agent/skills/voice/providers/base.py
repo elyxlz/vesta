@@ -5,11 +5,26 @@ import typing as tp
 from aiohttp import web
 
 
+class SettingDef(tp.TypedDict, total=False):
+    key: str
+    type: str  # "bool" | "number" | "select"
+    label: str
+    description: str
+    default: tp.Any
+    # number:
+    min: float
+    max: float
+    step: float
+    unit: str
+    # select:
+    options: list[dict[str, tp.Any]]
+
+
 class SttProvider(tp.Protocol):
     name: str
 
     async def relay(self, browser_ws: web.WebSocketResponse, creds: dict[str, str], stt_domain: dict) -> None:
-        """Open upstream STT connection, relay audio frames ↔ transcript events."""
+        """Open upstream STT connection, relay audio frames <-> transcript events."""
         ...
 
     async def usage(self, creds: dict[str, str]) -> dict:
@@ -22,6 +37,10 @@ class SttProvider(tp.Protocol):
 
     async def validate(self, api_key: str) -> tuple[bool, str | None]:
         """Return (valid, error_message) for the given API key."""
+        ...
+
+    def settings_schema(self) -> list[SettingDef]:
+        """Return provider-specific settings definitions."""
         ...
 
 
@@ -48,4 +67,8 @@ class TtsProvider(tp.Protocol):
 
     async def validate(self, api_key: str) -> tuple[bool, str | None]:
         """Return (valid, error_message) for the given API key."""
+        ...
+
+    def settings_schema(self) -> list[SettingDef]:
+        """Return provider-specific settings definitions."""
         ...

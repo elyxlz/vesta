@@ -1,12 +1,13 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Minimize2, Wrench } from "lucide-react";
+import { KeyRound, Minimize2, Wrench } from "lucide-react";
 import { Chat } from "@/components/Chat";
 import { AgentIsland } from "@/components/AgentIsland";
 import { AgentMenu } from "@/components/AgentMenu";
 import { Navbar } from "@/components/Navbar";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { useAgentIslandContext } from "@/lib/AgentLayout";
 import { useLayout } from "@/stores/use-layout";
 import { cn } from "@/lib/utils";
@@ -16,6 +17,8 @@ export function AgentChat() {
   const { name } = useParams<{ name: string }>();
   const [showToolCalls, setShowToolCalls] = useState(false);
   const island = useAgentIslandContext();
+  const isMobile = useIsMobile();
+  const showMobileReauth = isMobile && island.info?.status === "running" && !island.info?.authenticated;
   const headerStripRef = useRef<HTMLDivElement>(null);
   const setChatHeaderStripBottomPx = useLayout((s) => s.setChatHeaderStripBottomPx);
 
@@ -44,7 +47,19 @@ export function AgentChat() {
       >
         <div className="pointer-events-auto">
           <Navbar
-            center={<AgentIsland {...island} />}
+            center={
+              <>
+                <AgentIsland {...island} />
+                {showMobileReauth && (
+                  <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2">
+                    <Button size="sm" onClick={() => void island.handleOpenAuth()}>
+                      <KeyRound data-icon="inline-start" />
+                      reauthenticate
+                    </Button>
+                  </div>
+                )}
+              </>
+            }
             trailing={
               <div data-agent-menu className="flex items-center">
                 <AgentMenu

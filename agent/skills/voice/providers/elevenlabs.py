@@ -116,6 +116,21 @@ PREMADE_VOICES: list[dict[str, str]] = [
 class ElevenLabsTts:
     name = "elevenlabs"
 
+    def settings_schema(self) -> list[dict]:
+        return [
+            {
+                "key": "selected_voice_id",
+                "type": "select",
+                "label": "Voice",
+                "description": "Select a voice for speech synthesis",
+                "default": DEFAULT_VOICE_ID,
+                "options": [
+                    {"value": v["id"], "label": v["name"], "preview": v.get("preview", "")}
+                    for v in PREMADE_VOICES
+                ],
+            },
+        ]
+
     async def speak(
         self,
         text: str,

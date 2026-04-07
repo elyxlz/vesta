@@ -80,7 +80,7 @@ export function AgentMenu({
     </Button>
   );
 
-  const reauthenticateButton = showAuthenticate && authenticateBesideTrigger && (
+  const reauthenticateButton = showAuthenticate && authenticateBesideTrigger && !isMobile && (
     <Button size="sm" onClick={() => void onAuthOpen()}>
       <KeyRound data-icon="inline-start" />
       reauthenticate

@@ -150,6 +150,7 @@ fn current_user() -> String {
 // --- Docker helpers ---
 
 pub fn docker(args: &[&str]) -> Result<process::ExitStatus, DockerError> {
+    tracing::debug!(cmd = %format!("docker {}", args.join(" ")), "running docker command");
     process::Command::new("docker")
         .args(args)
         .stdout(process::Stdio::null())
@@ -192,6 +193,18 @@ pub fn docker_quiet(args: &[&str]) -> bool {
 pub fn ensure_docker() -> Result<(), DockerError> {
     if !docker_quiet(&["--version"]) {
         return Err(DockerError::Failed("docker is not installed".into()));
+    }
+
+    if !docker_quiet(&["buildx", "version"]) {
+        return Err(DockerError::Failed(
+            "docker buildx is required but not installed. install it with your package manager:\n  \
+             apt (docker.io):     sudo apt-get install docker-buildx\n  \
+             apt (docker-ce):     sudo apt-get install docker-buildx-plugin\n  \
+             dnf:                 sudo dnf install docker-buildx-plugin\n  \
+             pacman:              sudo pacman -S docker-buildx\n  \
+             brew:                brew install docker-buildx"
+                .into(),
+        ));
     }
 
     // Check permission on the first attempt — no point retrying 10 times if it's a group issue
@@ -496,7 +509,7 @@ pub fn create_container(cname: &str, image: &str, port: u16, agent_name: &str, v
     let port_label = format!("vesta.ws_port={}", port);
     let user_label = format!("{}={}", LABEL_USER, current_user());
     let mut args = vec![
-        "create", "--name", cname, "-t",
+        "create", "--name", cname,
         "--restart", "unless-stopped", "--network", "host",
         "--label", "vesta.managed=true",
         "--label", &port_label,

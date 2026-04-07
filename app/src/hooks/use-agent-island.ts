@@ -61,9 +61,9 @@ export function useAgentIsland({ menuAnchoredInNavbar }: UseAgentIslandOptions) 
   const statusLabel = getStatusLabel(info, operation, error);
 
   const handleDelete = async () => {
+    navigate("/");
     await remove();
     await refreshAgents();
-    navigate("/");
   };
 
   const clearAuthState = () => {

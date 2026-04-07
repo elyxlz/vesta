@@ -4,15 +4,21 @@ Routes:
   - WS   /ws              bidirectional event bus
   - GET  /history         paginated event history (cursor optional)
   - GET  /search          full-text search over events
+  - GET  /usage           plan usage limits and rate limit status
 """
 
 import asyncio
 import json
+import logging
+import pathlib as pl
 
+import aiohttp as _aiohttp
 from aiohttp import web
 
 from vesta.events import EventBus, HistoryEvent, VestaEvent
 from vesta.config import VestaConfig
+
+logger = logging.getLogger("vesta.api")
 
 
 async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
@@ -130,6 +136,47 @@ async def _search_handler(request: web.Request) -> web.Response:
     return web.json_response({"results": results})
 
 
+CREDENTIALS_PATH = pl.Path.home() / ".claude" / ".credentials.json"
+ANTHROPIC_API_URL = "https://api.anthropic.com"
+OAUTH_BETA_HEADER = "oauth-2025-04-20"
+
+
+def _read_oauth_token() -> str | None:
+    try:
+        data = json.loads(CREDENTIALS_PATH.read_text())
+        return data["claudeAiOauth"]["accessToken"]
+    except (OSError, KeyError, json.JSONDecodeError):
+        return None
+
+
+async def _usage_handler(request: web.Request) -> web.Response:
+    """Proxy plan usage limits from Anthropic API."""
+    token = _read_oauth_token()
+    if not token:
+        return web.json_response({"error": "no oauth credentials"}, status=503)
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "anthropic-beta": OAUTH_BETA_HEADER,
+        "Content-Type": "application/json",
+        "User-Agent": "claude-code/2.1.92",
+    }
+    try:
+        async with _aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{ANTHROPIC_API_URL}/api/oauth/usage",
+                headers=headers,
+                timeout=_aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                body = await resp.json()
+                if resp.status != 200:
+                    return web.json_response({"error": f"anthropic returned {resp.status}", "body": body}, status=resp.status)
+                return web.json_response(body)
+    except (TimeoutError, _aiohttp.ClientError) as e:
+        logger.error(f"usage fetch failed: {e}")
+        return web.json_response({"error": str(e)}, status=502)
+
+
 async def start_ws_server(
     event_bus: EventBus,
     config: VestaConfig,
@@ -141,6 +188,7 @@ async def start_ws_server(
     app.router.add_get("/ws", _ws_handler)
     app.router.add_get("/history", _history_handler)
     app.router.add_get("/search", _search_handler)
+    app.router.add_get("/usage", _usage_handler)
 
     runner = web.AppRunner(app)
     await runner.setup()

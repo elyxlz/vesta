@@ -67,6 +67,7 @@ export function AgentIslandModals({
   return (
     <>
       <Dialog
+        drawerOnMobile
         open={showAuth && info?.status === "running"}
         onOpenChange={(open) => {
           if (!open) clearAuthState();

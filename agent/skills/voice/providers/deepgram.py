@@ -20,6 +20,38 @@ SAMPLE_RATE = 16000
 class DeepgramStt:
     name = "deepgram"
 
+    def settings_schema(self) -> list[dict]:
+        return [
+            {
+                "key": "auto_send",
+                "type": "bool",
+                "label": "Auto-send on pause",
+                "description": "Send message automatically when you stop speaking",
+                "default": True,
+            },
+            {
+                "key": "eot_threshold",
+                "type": "number",
+                "label": "End-of-turn sensitivity",
+                "description": "Lower finalizes turns faster; higher waits longer",
+                "default": 0.8,
+                "min": 0.3,
+                "max": 0.95,
+                "step": 0.05,
+            },
+            {
+                "key": "eot_timeout_ms",
+                "type": "number",
+                "label": "Max silence timeout",
+                "description": "Max silence before forcing end of turn",
+                "default": 10000,
+                "min": 2000,
+                "max": 15000,
+                "step": 500,
+                "unit": "ms",
+            },
+        ]
+
     def __init__(self) -> None:
         # Cache project_id per api_key so status checks don't hit /v1/projects
         # twice per request (usage + balance both need it).
