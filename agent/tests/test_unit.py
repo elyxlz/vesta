@@ -34,7 +34,7 @@ def test_config_paths_under_root(tmp_path):
 
 def test_config_default_values():
     config = vm.VestaConfig()
-    assert config.notification_check_interval > 0
+    assert config.monitor_tick_interval > 0
     assert config.response_timeout > 0
 
 
