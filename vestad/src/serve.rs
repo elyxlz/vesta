@@ -214,6 +214,8 @@ async fn auth_middleware(
     };
 
     if !bearer_ok && !query_ok {
+        let path = request.uri().path().to_string();
+        tracing::warn!(path = %path, "client auth failed");
         return (
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({"error": "unauthorized"})),
@@ -254,9 +256,11 @@ async fn create_session_handler(
     Json(body): Json<SessionRequest>,
 ) -> Result<Json<SessionResponse>, (StatusCode, Json<serde_json::Value>)> {
     if body.api_key != state.api_key {
+        tracing::warn!("client session auth failed: invalid API key");
         return Err(err_response(StatusCode::UNAUTHORIZED, "invalid API key"));
     }
 
+    tracing::info!("client connected (new session)");
     Ok(Json(SessionResponse {
         access_token: jwt::create_token(&state.api_key, "access", jwt::ACCESS_TOKEN_TTL),
         refresh_token: jwt::create_token(&state.api_key, "refresh", jwt::REFRESH_TOKEN_TTL),
@@ -684,6 +688,8 @@ async fn ws_proxy(client_ws: axum::extract::ws::WebSocket, agent_port: u16, path
         }
     };
 
+    tracing::info!(port = agent_port, "client websocket connected");
+
     let (mut client_tx, mut client_rx) = client_ws.split();
     let (mut agent_tx, mut agent_rx) = agent_ws.split();
 
@@ -722,6 +728,8 @@ async fn ws_proxy(client_ws: axum::extract::ws::WebSocket, agent_port: u16, path
         _ = client_to_agent => {},
         _ = agent_to_client => {},
     }
+
+    tracing::info!(port = agent_port, "client websocket disconnected");
 }
 
 // --- Service discovery ---

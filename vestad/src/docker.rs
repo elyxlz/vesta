@@ -379,7 +379,7 @@ pub fn find_dockerfile() -> Result<std::path::PathBuf, DockerError> {
 pub fn resolve_image() -> Result<&'static str, DockerError> {
     if let Ok(context) = find_dockerfile() {
         let status = process::Command::new("docker")
-            .args(["build", "-t", LOCAL_IMAGE_TAG, "."])
+            .args(["buildx", "build", "-t", LOCAL_IMAGE_TAG, "."])
             .current_dir(&context)
             .stdout(process::Stdio::null())
             .stderr(process::Stdio::inherit())
