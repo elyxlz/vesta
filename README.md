@@ -34,6 +34,34 @@ curl -fsSL https://raw.githubusercontent.com/elyxlz/vesta/master/install.sh | ba
 irm https://raw.githubusercontent.com/elyxlz/vesta/master/install.ps1 | iex
 ```
 
+### Install specific components
+
+By default, all available components for your platform are installed. Use flags to install only what you need:
+
+```bash
+# CLI only
+curl -fsSL https://raw.githubusercontent.com/elyxlz/vesta/master/install.sh | bash -s -- --cli
+
+# Server only (Linux)
+curl -fsSL https://raw.githubusercontent.com/elyxlz/vesta/master/install.sh | bash -s -- --server
+
+# Desktop app only
+curl -fsSL https://raw.githubusercontent.com/elyxlz/vesta/master/install.sh | bash -s -- --app
+
+# Specific version
+curl -fsSL https://raw.githubusercontent.com/elyxlz/vesta/master/install.sh | bash -s -- --version=0.1.112
+```
+
+Windows (PowerShell):
+
+```powershell
+# CLI only
+irm https://raw.githubusercontent.com/elyxlz/vesta/master/install.ps1 | iex -- --cli
+
+# Desktop app only
+irm https://raw.githubusercontent.com/elyxlz/vesta/master/install.ps1 | iex -- --app
+```
+
 ## Setup
 
 ### 1. Server (Linux only)
