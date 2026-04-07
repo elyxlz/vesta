@@ -285,6 +285,10 @@ fn err_response(status: StatusCode, msg: &str) -> (StatusCode, Json<serde_json::
     (status, Json(serde_json::json!({"error": msg})))
 }
 
+fn map_join_err(e: tokio::task::JoinError) -> (StatusCode, Json<serde_json::Value>) {
+    err_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("task failed: {e}"))
+}
+
 fn map_docker_err(e: docker::DockerError) -> (StatusCode, Json<serde_json::Value>) {
     use docker::DockerError::*;
     let status = match &e {
@@ -722,7 +726,9 @@ async fn fetch_services(
     if let Some(obj) = resp.get("services").and_then(|v| v.as_object()) {
         for (k, v) in obj {
             if let Some(port) = v.as_u64() {
-                map.insert(k.clone(), port as u16);
+                if port >= 1 && port <= u16::MAX as u64 {
+                    map.insert(k.clone(), port as u16);
+                }
             }
         }
     }
@@ -781,8 +787,15 @@ async fn agent_proxy_handler(
     let lock = state.agent_lock(&name).await;
     let guard = lock.read_owned().await;
 
-    docker::ensure_running(&cname).map_err(map_docker_err)?;
-    let agent_port = docker::get_container_port(&cname);
+    let cname_clone = cname.clone();
+    tokio::task::spawn_blocking(move || docker::ensure_running(&cname_clone))
+        .await
+        .map_err(map_join_err)?
+        .map_err(map_docker_err)?;
+    let cname_clone = cname.clone();
+    let agent_port = tokio::task::spawn_blocking(move || docker::get_container_port(&cname_clone))
+        .await
+        .map_err(map_join_err)?;
 
     // Check if the first path segment matches a registered service.
     // If so, route directly to that service's port with the prefix stripped.

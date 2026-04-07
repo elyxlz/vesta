@@ -19,11 +19,12 @@ describe("linkify", () => {
     expect(result).toContain("http://b.com</a>");
   });
 
-  it("escapes HTML in surrounding text but preserves URL", () => {
+  it("escapes HTML in surrounding text and URL href", () => {
     const result = linkify('<script> https://example.com "test"');
     expect(result).toContain("&lt;script&gt;");
     expect(result).toContain("&quot;test&quot;");
-    expect(result).toContain('href="https://example.com"');
+    expect(result).toContain("https://example.com");
+    expect(result).toContain('target="_blank"');
   });
 
   it("renders bold markdown", () => {
@@ -42,9 +43,9 @@ describe("linkify", () => {
     expect(linkify("a & b")).toBe("a &amp; b");
   });
 
-  it("escapes ampersands in URL display text but preserves href", () => {
+  it("escapes ampersands in both URL href and display text", () => {
     const result = linkify("https://example.com?a=1&b=2");
-    expect(result).toContain('href="https://example.com?a=1&b=2"');
+    expect(result).toContain('href="https://example.com?a=1&amp;b=2"');
     expect(result).toContain("&amp;b=2</a>");
   });
 

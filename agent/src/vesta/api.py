@@ -57,15 +57,16 @@ async def _recv_loop(ws: web.WebSocketResponse, event_bus: EventBus) -> None:
                 data = json.loads(msg.data)
             except (json.JSONDecodeError, TypeError):
                 continue
-            msg_type = data.get("type")
-            if msg_type == "message":
-                text = data.get("text", "").strip()
+            if "type" not in data:
+                continue
+            msg_type = data["type"]
+            if msg_type in ("message", "chat"):
+                if "text" not in data:
+                    continue
+                text = data["text"].strip()
                 if text:
-                    event_bus.emit({"type": "user", "text": text})
-            elif msg_type == "chat":
-                text = data.get("text", "").strip()
-                if text:
-                    event_bus.emit({"type": "chat", "text": text})
+                    event_type = "user" if msg_type == "message" else "chat"
+                    event_bus.emit({"type": event_type, "text": text})
         elif msg.type in (web.WSMsgType.ERROR, web.WSMsgType.CLOSE):
             break
 
@@ -126,7 +127,10 @@ async def _search_handler(request: web.Request) -> web.Response:
         limit = int(limit_raw) if limit_raw else 20
     except ValueError:
         return web.json_response({"error": "invalid limit"}, status=400)
-    results = event_bus.search(query, limit=limit)
+    try:
+        results = event_bus.search(query, limit=limit)
+    except Exception:
+        return web.json_response({"error": "invalid search query"}, status=400)
     return web.json_response({"results": results})
 
 
@@ -139,10 +143,12 @@ async def _services_register(request: web.Request) -> web.Response:
         data = await request.json()
     except Exception:
         return web.json_response({"error": "invalid JSON"}, status=400)
-    name = data.get("name", "").strip()
-    port = data.get("port")
-    if not name or not isinstance(port, int):
-        return web.json_response({"error": "name (str) and port (int) required"}, status=400)
+    if "name" not in data or "port" not in data:
+        return web.json_response({"error": "name (str) and port (1-65535) required"}, status=400)
+    name = data["name"].strip()
+    port = data["port"]
+    if not name or not isinstance(port, int) or not (1 <= port <= 65535):
+        return web.json_response({"error": "name (str) and port (1-65535) required"}, status=400)
     try:
         services.register(name, port)
     except ValueError as e:

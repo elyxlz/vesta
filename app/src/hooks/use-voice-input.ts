@@ -63,6 +63,13 @@ export function useVoiceInput({ agentName, onSend, onDraft, onRecordingStart, st
   }, [agentName, onSend, onDraft, onRecordingStart, voiceAutoSend, sttAvailable]);
 
   useEffect(() => {
+    return () => {
+      streamRef.current?.stop();
+      streamRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
     if (!error) return;
     const timer = setTimeout(() => setError(null), 5000);
     return () => clearTimeout(timer);

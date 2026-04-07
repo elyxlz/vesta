@@ -67,7 +67,7 @@ export function AgentChat() {
           </Button>
         </div>
       </div>
-      <Chat fullscreen />
+      <Chat fullscreen showToolCalls={showToolCalls} />
     </div>
   );
 }

@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -169,7 +170,7 @@ export function SelectedAgentProvider({ children }: { children: ReactNode }) {
     removeAgentOp(name);
   }, [name, withOp, removeAgentOp]);
 
-  const value: SelectedAgentContextValue = {
+  const value = useMemo<SelectedAgentContextValue>(() => ({
     name,
     agent,
     agentState,
@@ -191,7 +192,11 @@ export function SelectedAgentProvider({ children }: { children: ReactNode }) {
     restore,
     removeBackup,
     remove,
-  };
+  }), [
+    name, agent, agentState, setAgentState, opState.operation, opState.error, isBusy,
+    sttStatus, ttsStatus, refreshVoiceStatus, refreshAgent,
+    start, stop, restart, rebuild, backup, backups, refreshBackups, restore, removeBackup, remove,
+  ]);
 
   return (
     <SelectedAgentContext.Provider value={value}>

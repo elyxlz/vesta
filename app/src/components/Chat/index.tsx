@@ -27,6 +27,7 @@ import { cn } from "@/lib/utils";
 interface ChatProps {
   onCollapse?: () => void;
   fullscreen?: boolean;
+  showToolCalls?: boolean;
 }
 
 const thinkingIndicatorVariants = {
@@ -60,7 +61,7 @@ const thinkingIndicatorVariants = {
   },
 };
 
-export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
+export function Chat({ onCollapse, fullscreen, showToolCalls = true }: ChatProps = {}) {
   const { name, setAgentState, sttStatus, ttsStatus } = useSelectedAgent();
   const navigate = useNavigate();
   const navbarHeight = useLayout((s) => s.navbarHeight);
@@ -94,8 +95,8 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   }, [isNearBottom]);
 
   const chatMessages = useMemo(() => messages.filter(
-    (m) => m.type === "user" || m.type === "chat" || m.type === "error" || m.type === "tool_start",
-  ), [messages]);
+    (m) => m.type === "user" || m.type === "chat" || m.type === "error" || (m.type === "tool_start" && showToolCalls),
+  ), [messages, showToolCalls]);
 
   const isThinking =
     agentState === "thinking" || agentState === "tool_use";
@@ -263,8 +264,9 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
                     const isTool = msg.type === "tool_start";
                     const prevIsTool = prev?.type === "tool_start";
                     const gap = i === 0 ? "" : isTool && prevIsTool ? "mt-1" : isTool || prevIsTool ? "mt-2" : prev && prev.type === msg.type ? "mt-1.5" : "mt-5";
+                    const key = msg.ts ? `${msg.ts}-${msg.type}-${i}` : `msg-${i}`;
                     return (
-                      <ChatBubble key={i} event={msg} className={gap} />
+                      <ChatBubble key={key} event={msg} className={gap} />
                     );
                   })}
                 </div>
