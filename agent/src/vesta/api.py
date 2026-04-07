@@ -1,20 +1,33 @@
-"""WebSocket API server for agent <-> app communication."""
+"""Agent HTTP/WS server.
+
+Routes:
+  - WS   /ws              bidirectional event bus
+  - GET  /history         paginated event history (cursor optional)
+  - GET  /search          full-text search over events
+  - GET  /usage           plan usage limits and rate limit status
+"""
 
 import asyncio
 import json
+import logging
+import pathlib as pl
 
+import aiohttp as _aiohttp
 from aiohttp import web
 
-import vesta.models as vm
-from vesta import logger
-from vesta.events import EventBus, HistoryEvent, VestaEvent
+from vesta.events import ChatEvent, EventBus, HistoryEvent, UserEvent, VestaEvent
+from vesta.config import VestaConfig
+
+logger = logging.getLogger("vesta.api")
 
 
 async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
+    """Bidirectional event bus WebSocket.
+
+    Send: all events from the event bus are pushed to connected clients.
+    Recv: clients can emit events (e.g. user messages, chat replies).
+    On connect: sends recent history."""
     event_bus: EventBus = request.app["event_bus"]
-    message_queue: asyncio.Queue[tuple[str, bool]] = request.app["message_queue"]
-    state: vm.State = request.app["state"]
-    config: vm.VestaConfig = request.app["config"]
 
     ws = web.WebSocketResponse()
     await ws.prepare(request)
@@ -23,9 +36,10 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
     recv_task: asyncio.Task[None] | None = None
     send_task: asyncio.Task[None] | None = None
     try:
-        if event_bus.history:
-            await ws.send_json(HistoryEvent(type="history", events=list(event_bus.history), state=event_bus.state))
-        recv_task = asyncio.create_task(_recv_loop(ws, message_queue, state, config))
+        events, cursor = event_bus.recent()
+        if events:
+            await ws.send_json(HistoryEvent(type="history", events=events, state=event_bus.state, cursor=cursor))
+        recv_task = asyncio.create_task(_recv_loop(ws, event_bus))
         send_task = asyncio.create_task(_send_loop(ws, sub))
         await asyncio.wait([recv_task, send_task], return_when=asyncio.FIRST_COMPLETED)
     finally:
@@ -37,36 +51,32 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
     return ws
 
 
-async def _recv_loop(
-    ws: web.WebSocketResponse,
-    message_queue: asyncio.Queue[tuple[str, bool]],
-    state: vm.State,
-    config: vm.VestaConfig,
-) -> None:
+async def _recv_loop(ws: web.WebSocketResponse, event_bus: EventBus) -> None:
+    """Receive events from clients and emit to event bus."""
     async for msg in ws:
         if msg.type == web.WSMsgType.TEXT:
             try:
                 data = json.loads(msg.data)
-            except (json.JSONDecodeError, TypeError) as e:
-                logger.warning(f"WS bad message: {e}")
+            except (json.JSONDecodeError, TypeError):
                 continue
-            try:
-                msg_type = data["type"]
-            except KeyError:
+            if "type" not in data:
                 continue
-            if msg_type == "message":
+            msg_type = data["type"]
+            if msg_type in ("message", "chat"):
+                if "text" not in data:
+                    continue
                 text = data["text"].strip()
                 if text:
-                    await message_queue.put((text, True))
-            elif msg_type == "interrupt":
-                from vesta.core.client import attempt_interrupt
-
-                await attempt_interrupt(state, config=config, reason="WS interrupt")
+                    if msg_type == "message":
+                        event_bus.emit(UserEvent(type="user", text=text))
+                    else:
+                        event_bus.emit(ChatEvent(type="chat", text=text))
         elif msg.type in (web.WSMsgType.ERROR, web.WSMsgType.CLOSE):
             break
 
 
 async def _send_loop(ws: web.WebSocketResponse, sub: asyncio.Queue[VestaEvent]) -> None:
+    """Forward all event-bus events to the WS client."""
     try:
         while True:
             event = await sub.get()
@@ -75,20 +85,112 @@ async def _send_loop(ws: web.WebSocketResponse, sub: asyncio.Queue[VestaEvent]) 
         pass
 
 
+async def _history_handler(request: web.Request) -> web.Response:
+    """Paginated event history.
+
+    Query params:
+      cursor (int, optional) — fetch events before this id. Omit for most recent.
+      limit  (int, optional) — max events to return (default: EventBus.PAGE_SIZE).
+    """
+    event_bus: EventBus = request.app["event_bus"]
+
+    limit_raw = request.query.get("limit", "")
+    try:
+        limit = int(limit_raw) if limit_raw else None
+    except ValueError:
+        return web.json_response({"error": "invalid limit"}, status=400)
+
+    kwargs = {"limit": limit} if limit is not None else {}
+
+    cursor_raw = request.query.get("cursor", "")
+    if cursor_raw:
+        try:
+            cursor = int(cursor_raw)
+        except ValueError:
+            return web.json_response({"error": "invalid cursor"}, status=400)
+        events, next_cursor = event_bus.before(cursor, **kwargs)
+    else:
+        events, next_cursor = event_bus.recent(**kwargs)
+
+    return web.json_response({"events": events, "cursor": next_cursor})
+
+
+async def _search_handler(request: web.Request) -> web.Response:
+    """Full-text search over events.
+
+    Query params:
+      q     (str, required)  — FTS5 search query.
+      limit (int, optional)  — max results (default: 20).
+    """
+    event_bus: EventBus = request.app["event_bus"]
+    query = request.query.get("q", "").strip()
+    if not query:
+        return web.json_response({"error": "missing 'q' param"}, status=400)
+    limit_raw = request.query.get("limit", "")
+    try:
+        limit = int(limit_raw) if limit_raw else 20
+    except ValueError:
+        return web.json_response({"error": "invalid limit"}, status=400)
+    try:
+        results = event_bus.search(query, limit=limit)
+    except Exception:
+        return web.json_response({"error": "invalid search query"}, status=400)
+    return web.json_response({"results": results})
+
+
+CREDENTIALS_PATH = pl.Path.home() / ".claude" / ".credentials.json"
+ANTHROPIC_API_URL = "https://api.anthropic.com"
+OAUTH_BETA_HEADER = "oauth-2025-04-20"
+
+
+def _read_oauth_token() -> str | None:
+    try:
+        data = json.loads(CREDENTIALS_PATH.read_text())
+        return data["claudeAiOauth"]["accessToken"]
+    except (OSError, KeyError, json.JSONDecodeError):
+        return None
+
+
+async def _usage_handler(request: web.Request) -> web.Response:
+    """Proxy plan usage limits from Anthropic API."""
+    token = _read_oauth_token()
+    if not token:
+        return web.json_response({"error": "no oauth credentials"}, status=503)
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "anthropic-beta": OAUTH_BETA_HEADER,
+        "Content-Type": "application/json",
+        "User-Agent": "claude-code/2.1.92",
+    }
+    try:
+        async with _aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{ANTHROPIC_API_URL}/api/oauth/usage",
+                headers=headers,
+                timeout=_aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                body = await resp.json()
+                if resp.status != 200:
+                    return web.json_response({"error": f"anthropic returned {resp.status}", "body": body}, status=resp.status)
+                return web.json_response(body)
+    except (TimeoutError, _aiohttp.ClientError) as e:
+        logger.error(f"usage fetch failed: {e}")
+        return web.json_response({"error": str(e)}, status=502)
+
+
 async def start_ws_server(
     event_bus: EventBus,
-    message_queue: asyncio.Queue[tuple[str, bool]],
-    state: vm.State,
-    config: vm.VestaConfig,
+    config: VestaConfig,
     *,
     host: str = "0.0.0.0",
 ) -> web.AppRunner:
     app = web.Application()
     app["event_bus"] = event_bus
-    app["message_queue"] = message_queue
-    app["state"] = state
-    app["config"] = config
     app.router.add_get("/ws", _ws_handler)
+    app.router.add_get("/history", _history_handler)
+    app.router.add_get("/search", _search_handler)
+    app.router.add_get("/usage", _usage_handler)
 
     runner = web.AppRunner(app)
     await runner.setup()

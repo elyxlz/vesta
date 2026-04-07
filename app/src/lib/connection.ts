@@ -1,4 +1,5 @@
 import { isTauri } from "./env";
+import type { VestaEvent } from "@/lib/types";
 
 const STORAGE_KEY = "vesta-connection";
 
@@ -139,4 +140,14 @@ export function wsUrl(name: string): string {
   if (!conn) throw new Error("not connected to vestad");
   const base = conn.url.replace(/^http/, "ws");
   return `${base}/agents/${name}/ws?token=${encodeURIComponent(conn.accessToken)}`;
+}
+
+export async function fetchHistory(
+  name: string,
+  channel: "app-chat" | "internals",
+  cursor: number,
+): Promise<{ events: VestaEvent[]; cursor: number | null }> {
+  const { apiJson } = await import("@/api/client");
+  const params = new URLSearchParams({ channel, cursor: String(cursor) });
+  return apiJson(`/agents/${encodeURIComponent(name)}/history?${params}`);
 }

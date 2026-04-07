@@ -31,11 +31,12 @@ export type VestaEvent =
   | (BaseEvent & { type: "status"; state: AgentActivityState })
   | (BaseEvent & { type: "user"; text: string })
   | (BaseEvent & { type: "assistant"; text: string })
+  | (BaseEvent & { type: "chat"; text: string })
   | (BaseEvent & { type: "tool_start"; tool: string; input: string })
   | (BaseEvent & { type: "tool_end"; tool: string })
   | (BaseEvent & { type: "error"; text: string })
   | (BaseEvent & { type: "notification"; source: string; summary: string })
-  | (BaseEvent & { type: "history"; events: VestaEvent[]; state: AgentActivityState });
+  | (BaseEvent & { type: "history"; events: VestaEvent[]; state: AgentActivityState; cursor: number | null });
 
 export type LogEvent =
   | { kind: "Line"; text: string }

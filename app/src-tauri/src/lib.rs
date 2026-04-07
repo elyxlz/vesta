@@ -11,50 +11,67 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|_app| {
+            use tauri::Manager;
+
             #[cfg(any(target_os = "macos", target_os = "windows"))]
-            {
-                use tauri::Manager;
-                if let Some(window) = _app.get_webview_window("main") {
-                    #[cfg(target_os = "macos")]
-                    {
-                        use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial};
-                        let _ = apply_vibrancy(
-                            &window,
-                            NSVisualEffectMaterial::HudWindow,
-                            None,
-                            None,
-                        );
-                    }
-                    #[cfg(target_os = "windows")]
-                    {
-                        use window_vibrancy::apply_mica;
-                        if apply_mica(&window, None).is_err() {
-                            let _ = window_vibrancy::apply_acrylic(&window, Some((0, 0, 0, 20)));
-                        }
+            if let Some(window) = _app.get_webview_window("main") {
+                #[cfg(target_os = "macos")]
+                {
+                    use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial};
+                    let _ = apply_vibrancy(
+                        &window,
+                        NSVisualEffectMaterial::HudWindow,
+                        None,
+                        None,
+                    );
+                }
+                #[cfg(target_os = "windows")]
+                {
+                    use window_vibrancy::apply_mica;
+                    if apply_mica(&window, None).is_err() {
+                        let _ = window_vibrancy::apply_acrylic(&window, Some((0, 0, 0, 20)));
                     }
                 }
             }
+
             #[cfg(target_os = "ios")]
-            {
-                use tauri::Manager;
-                if let Some(window) = _app.get_webview_window("main") {
-                    window.with_webview(|webview| {
-                        unsafe {
-                            let wv: *mut std::ffi::c_void = webview.inner();
-                            let wv_ref = &*(wv as *const objc2::runtime::AnyObject);
-                            let scroll_view: *mut std::ffi::c_void =
-                                objc2::msg_send![wv_ref, scrollView];
-                            if !scroll_view.is_null() {
-                                let sv_ref = &*(scroll_view as *const objc2::runtime::AnyObject);
-                                let _: () = objc2::msg_send![
-                                    sv_ref,
-                                    setContentInsetAdjustmentBehavior: 2i64
-                                ];
-                            }
+            if let Some(window) = _app.get_webview_window("main") {
+                window.with_webview(|webview| {
+                    unsafe {
+                        let wv: *mut std::ffi::c_void = webview.inner();
+                        let wv_ref = &*(wv as *const objc2::runtime::AnyObject);
+                        let scroll_view: *mut std::ffi::c_void =
+                            objc2::msg_send![wv_ref, scrollView];
+                        if !scroll_view.is_null() {
+                            let sv_ref = &*(scroll_view as *const objc2::runtime::AnyObject);
+                            let _: () = objc2::msg_send![
+                                sv_ref,
+                                setContentInsetAdjustmentBehavior: 2i64
+                            ];
                         }
-                    }).ok();
-                }
+                    }
+                }).ok();
             }
+
+            // Auto-grant microphone permission for the webview
+            #[cfg(any(
+                target_os = "linux",
+                target_os = "dragonfly",
+                target_os = "freebsd",
+                target_os = "netbsd",
+                target_os = "openbsd"
+            ))]
+            if let Some(window) = _app.get_webview_window("main") {
+                window.with_webview(|webview| {
+                    use webkit2gtk::{WebViewExt, PermissionRequestExt};
+                    let wv = webview.inner();
+                    wv.connect_permission_request(|_wv, request: &webkit2gtk::PermissionRequest| {
+                        request.allow();
+                        true
+                    });
+                }).ok();
+            }
+
             Ok(())
         })
         .build(tauri::generate_context!())

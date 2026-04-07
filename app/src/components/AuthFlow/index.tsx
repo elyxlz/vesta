@@ -68,7 +68,7 @@ export function AuthFlow({
   const content = (() => {
     if (authState === "submitting") {
       return (
-        <div className="flex flex-col items-center gap-3 w-full">
+        <div className="flex min-w-0 w-full max-w-full flex-col items-center gap-3">
           <p className="text-sm text-muted-foreground">verifying code...</p>
           <ProgressBar message="verifying..." />
         </div>
@@ -76,20 +76,21 @@ export function AuthFlow({
     }
 
     return (
-      <div className="flex flex-col items-center gap-3 w-full max-w-[260px]">
+      <div className="flex min-w-0 w-full max-w-full flex-col gap-3">
         {authUrl && (
-          <div className="flex items-center gap-1.5 max-w-full">
+          <div className="flex min-h-0 min-w-0 w-full max-w-full items-center gap-1.5 overflow-hidden">
             <a
               href={authUrl}
               target="_blank"
               rel="noopener"
-              className="text-xs text-muted-foreground hover:text-foreground truncate"
+              className="block min-w-0 flex-1 truncate text-xs text-muted-foreground hover:text-foreground"
             >
-              {authUrl.length > 50 ? `${authUrl.slice(0, 50)}...` : authUrl}
+              {authUrl}
             </a>
             <Button
               variant="ghost"
               size="icon-xs"
+              className="shrink-0"
               onClick={copyAuthUrl}
             >
               {copied ? <Check /> : <Copy />}
@@ -105,7 +106,7 @@ export function AuthFlow({
           onChange={(e) => setCode(e.target.value)}
           onKeyDown={handleKeyDown}
           autoFocus
-          className="text-center text-sm"
+          className="w-full text-center text-sm"
         />
         <Button
           onClick={handleSubmit}
@@ -122,7 +123,7 @@ export function AuthFlow({
           <Button
             variant="link"
             onClick={onCancel}
-            className="h-auto px-0 py-0 text-xs font-normal text-muted-foreground underline underline-offset-4 hover:bg-transparent hover:text-foreground"
+            className="self-center h-auto px-0 py-0 text-xs font-normal text-muted-foreground underline underline-offset-4 hover:bg-transparent hover:text-foreground"
           >
             cancel
           </Button>
@@ -133,7 +134,7 @@ export function AuthFlow({
 
   return (
     <AnimatePresence mode="wait">
-      <motion.div key={authState} {...fadeSlide}>
+      <motion.div key={authState} {...fadeSlide} className="min-w-0 w-full max-w-full">
         {content}
       </motion.div>
     </AnimatePresence>

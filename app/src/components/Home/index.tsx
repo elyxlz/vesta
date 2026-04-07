@@ -21,8 +21,6 @@ export function Home() {
     return () => clearInterval(interval);
   }, [refreshAgents]);
 
-  // No-agents redirect is handled by NavigationGuard in router.tsx
-
   useEffect(() => {
     return () => {
       for (const ws of wsRefs.current.values()) ws.close();

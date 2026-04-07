@@ -4753,6 +4753,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-store",
  "tauri-plugin-updater",
+ "webkit2gtk",
  "window-vibrancy 0.7.1",
 ]
 

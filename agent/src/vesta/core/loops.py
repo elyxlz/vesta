@@ -8,6 +8,7 @@ import pathlib as pl
 
 import pydantic
 from claude_agent_sdk import ClaudeSDKClient, ClaudeSDKError
+from watchfiles import awatch, Change
 
 import vesta.models as vm
 from vesta import logger
@@ -60,25 +61,12 @@ def format_notification_batch(notifications: list[vm.Notification], *, suffix: s
     return "[NOTIFICATIONS]\n" + "\n".join(prompts) + suffix_str
 
 
-async def load_and_display_new_notifications(
-    notification_buffer: list[vm.Notification], *, buffer_start_time: dt.datetime | None, state: vm.State, config: vm.VestaConfig
-) -> tuple[list[vm.Notification], dt.datetime | None]:
-    new_notifs = await load_notifications(config=config)
-
-    if new_notifs:
-        existing_paths = {n.file_path for n in notification_buffer if n.file_path}
-        truly_new = [n for n in new_notifs if n.file_path not in existing_paths]
-
-        if truly_new:
-            notification_buffer.extend(truly_new)
-            if buffer_start_time is None:
-                buffer_start_time = dt.datetime.now()
-
-            for notif in truly_new:
-                logger.notification(notif.model_dump_json(indent=2))
-                state.event_bus.emit({"type": "notification", "source": notif.source, "summary": notif.format_for_display()})
-
-    return notification_buffer, buffer_start_time
+async def load_new_notifications(*, state: vm.State, config: vm.VestaConfig) -> list[vm.Notification]:
+    notifications = await load_notifications(config=config)
+    for notif in notifications:
+        logger.notification(notif.model_dump_json(indent=2))
+        state.event_bus.emit({"type": "notification", "source": notif.source, "summary": notif.format_for_display()})
+    return notifications
 
 
 async def process_batch(
@@ -97,11 +85,20 @@ async def process_batch(
     await delete_notification_files(notifications)
 
 
+CREDENTIALS_PATH = pl.Path("/root/.claude/.credentials.json")
+
+
 async def queue_greeting(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.VestaConfig, reason: str) -> None:
+    if not CREDENTIALS_PATH.exists():
+        logger.startup("No credentials yet — waiting for auth before starting")
+        return
+
     if reason == "first_start":
         prompt = load_prompt("first_start", config)
         if prompt:
             prompt = f"[System: your name is {config.agent_name}]\n\n{prompt}"
+            # Mark first start as done so restarts don't re-trigger it
+            (config.data_dir / "first_start_done").write_text("1")
     else:
         extras = []
         today = _now().strftime("%Y-%m-%d")
@@ -261,46 +258,59 @@ async def process_nightly_memory(queue: asyncio.Queue[tuple[str, bool]], *, stat
 # --- Monitor loop ---
 
 
+def _is_new_json(change: Change, path: str) -> bool:
+    return change != Change.deleted and path.endswith(".json")
+
+
+async def _notification_watcher(notify: asyncio.Event, *, notifications_dir: pl.Path, stop: asyncio.Event) -> None:
+    """Watch the notifications directory for new .json files and signal the monitor loop."""
+    async for _ in awatch(notifications_dir, stop_event=stop, recursive=False, debounce=100, watch_filter=_is_new_json):
+        notify.set()
+
+
 async def monitor_loop(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig) -> None:
     last_proactive = _now()
-    notification_buffer: list[vm.Notification] = []
-    buffer_start_time: dt.datetime | None = None
+    pending_passive: list[vm.Notification] = []
+    notify = asyncio.Event()
 
-    while state.shutdown_event and not state.shutdown_event.is_set():
-        try:
-            await asyncio.sleep(config.notification_check_interval)
+    watcher_task = asyncio.create_task(_notification_watcher(notify, notifications_dir=config.notifications_dir, stop=state.shutdown_event))
 
-            if state.shutdown_event and state.shutdown_event.is_set():
-                break
+    try:
+        while state.shutdown_event and not state.shutdown_event.is_set():
+            try:
+                # Wait for either a file change or the periodic tick
+                try:
+                    await asyncio.wait_for(notify.wait(), timeout=config.monitor_tick_interval)
+                except TimeoutError:
+                    pass
+                notify.clear()
 
-            now = _now()
+                if state.shutdown_event and state.shutdown_event.is_set():
+                    break
 
-            if (now - last_proactive).total_seconds() >= config.proactive_check_interval * 60:
-                await check_proactive_task(queue, config=config)
-                last_proactive = now
+                now = _now()
 
-            await process_nightly_memory(queue, state=state, config=config)
+                if (now - last_proactive).total_seconds() >= config.proactive_check_interval * 60:
+                    await check_proactive_task(queue, config=config)
+                    last_proactive = now
 
-            notification_buffer, buffer_start_time = await load_and_display_new_notifications(
-                notification_buffer, buffer_start_time=buffer_start_time, state=state, config=config
-            )
+                await process_nightly_memory(queue, state=state, config=config)
 
-            if notification_buffer and buffer_start_time and (now - buffer_start_time).total_seconds() >= config.notification_buffer_delay:
-                interrupt_notifs = [n for n in notification_buffer if n.interrupt]
-                passive_notifs = [n for n in notification_buffer if not n.interrupt]
+                notifications = await load_new_notifications(state=state, config=config)
+                interrupt_notifs = [n for n in notifications if n.interrupt]
+                pending_passive.extend(n for n in notifications if not n.interrupt)
 
                 if interrupt_notifs:
                     await process_batch(interrupt_notifs, queue=queue, state=state, config=config)
 
-                if passive_notifs:
-                    if state.event_bus.state == "idle":
-                        await process_batch(passive_notifs, queue=queue, state=state, config=config)
-                    else:
-                        # Keep passive notifications in the buffer until the agent is idle
-                        notification_buffer = passive_notifs
-                        continue
-
-                notification_buffer = []
-                buffer_start_time = None
+                if pending_passive and state.event_bus.state == "idle":
+                    await process_batch(pending_passive, queue=queue, state=state, config=config)
+                    pending_passive = []
+            except asyncio.CancelledError:
+                break
+    finally:
+        watcher_task.cancel()
+        try:
+            await watcher_task
         except asyncio.CancelledError:
-            break
+            pass

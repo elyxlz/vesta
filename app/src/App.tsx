@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import { RouterProvider } from "react-router-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { LoadingScreen } from "@/components/LoadingScreen";
 import "@/stores/use-theme";
 import { AuthProvider, useAuth } from "@/providers/AuthProvider";
@@ -37,12 +38,14 @@ function AppContent() {
 
 export function App() {
   return (
-    <TooltipProvider delayDuration={300}>
-      <AuthProvider>
-        <AgentsProvider>
-          <AppContent />
-        </AgentsProvider>
-      </AuthProvider>
-    </TooltipProvider>
+    <ErrorBoundary>
+      <TooltipProvider delayDuration={300}>
+        <AuthProvider>
+          <AgentsProvider>
+            <AppContent />
+          </AgentsProvider>
+        </AuthProvider>
+      </TooltipProvider>
+    </ErrorBoundary>
   );
 }

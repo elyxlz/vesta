@@ -1,0 +1,31 @@
+---
+name: app-chat
+description: This skill handles messages from the Vesta app (desktop/web). When a user sends a message through the Vesta app, it arrives as a notification. Reply using the `app-chat` CLI. Requires a background daemon.
+---
+
+# App Chat — CLI: app-chat
+
+**Background**: `screen -dmS app-chat app-chat serve --notifications-dir ~/vesta/notifications`
+**Restart**: Add to `~/vesta/prompts/restart.md`:
+```
+screen -dmS app-chat app-chat serve --notifications-dir ~/vesta/notifications
+```
+
+## Quick Reference
+```bash
+app-chat send --message 'Hello!'
+app-chat history --search 'query'
+app-chat history --limit 20
+```
+
+## How it works
+- The daemon connects to the agent's `/ws` WebSocket
+- When the app user sends a message, the daemon writes a notification file
+- You receive the notification and reply with `app-chat send`
+- The daemon also relays liveness events (thinking, tool use) to the app
+
+## Notes
+- Always reply to app messages using `app-chat send`, not through any other channel
+- Send multiple short messages instead of one long one (like texting)
+- Lowercase, no bullet points, no newlines within a single message
+- The daemon auto-reconnects if the agent restarts

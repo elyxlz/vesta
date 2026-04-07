@@ -14,8 +14,6 @@ from rich import print_json
 import vesta.models as vm
 from vesta import logger
 from vesta.api import start_ws_server
-from vesta.core.history import open_history
-from vesta.core.init import get_memory_path
 from vesta.core.loops import message_processor, monitor_loop, queue_greeting
 
 SignalHandler = tp.Callable[[int, types.FrameType | None], None]
@@ -32,7 +30,12 @@ async def input_handler(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.Sta
 
             logger.user(user_msg.strip())
             await queue.put((user_msg.strip(), True))
-        except (KeyboardInterrupt, EOFError):
+        except KeyboardInterrupt:
+            logger.shutdown("stdin: KeyboardInterrupt, shutting down")
+            state.shutdown_event.set()
+            break
+        except EOFError:
+            logger.shutdown("stdin: EOF (no TTY?), shutting down")
             state.shutdown_event.set()
             break
         except asyncio.CancelledError:
@@ -50,12 +53,16 @@ async def input_handler(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.Sta
 
 def _make_signal_handler(state: vm.State, *, allow_force_exit: bool = False) -> SignalHandler:
     def handler(signum: int, frame: types.FrameType | None) -> None:
+        sig_name = signal.Signals(signum).name
         state.shutdown_count += 1
         if state.shutdown_count == 1:
+            logger.shutdown(f"received {sig_name}, graceful shutdown")
             state.graceful_shutdown.set()
         elif allow_force_exit and state.shutdown_count > 2:
+            logger.shutdown(f"received {sig_name} x{state.shutdown_count}, force exit")
             os._exit(0)
         else:
+            logger.shutdown(f"received {sig_name} x{state.shutdown_count}, immediate shutdown")
             state.shutdown_event.set()
 
     return handler
@@ -73,7 +80,7 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
 
     message_queue: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()
 
-    ws_runner = await start_ws_server(state.event_bus, message_queue, state, config)
+    ws_runner = await start_ws_server(state.event_bus, config)
     logger.init(f"WebSocket server started on port {config.ws_port}")
 
     tasks = [
@@ -93,7 +100,8 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
     if not state.shutdown_event.is_set():
         state.shutdown_event.set()
 
-    logger.shutdown("Shutting down...")
+    reason = state.restart_reason or CLEAN_RESTART
+    logger.shutdown(f"Shutting down ({reason})")
     _write_restart_reason(config, state.restart_reason or CLEAN_RESTART)
 
     for task in tasks:
@@ -104,6 +112,7 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
         logger.shutdown("Shutdown timed out (SDK cleanup hung), forcing exit")
         os._exit(1)
     await ws_runner.cleanup()
+    state.event_bus.close()
     logger.shutdown("sweet dreams!")
 
 
@@ -149,7 +158,10 @@ def init_state(*, config: vm.VestaConfig) -> vm.State:
 
     if session_id:
         logger.init(f"Resuming session {session_id[:16]}...")
-    return vm.State(last_dreamer_run=last_dreamer_run, session_id=session_id)
+    from vesta.events import EventBus
+
+    event_bus = EventBus(data_dir=config.data_dir)
+    return vm.State(last_dreamer_run=last_dreamer_run, session_id=session_id, event_bus=event_bus)
 
 
 async def async_main() -> None:
@@ -163,11 +175,10 @@ async def async_main() -> None:
     logger.setup(config.logs_dir, log_level=config.log_level)
     logger.init(f"{config.agent_name} starting")
 
-    memory_path = get_memory_path(config)
-    first_start = not memory_path.exists() or "[Unknown - need to ask]" in memory_path.read_text()
     restart_reason = _read_restart_reason(config)
     initial_state = init_state(config=config)
-    initial_state.history = open_history(config.history_db)
+    first_start_marker = config.data_dir / "first_start_done"
+    first_start = not first_start_marker.exists()
     logger.init(f"Starting main loop ({restart_reason})...")
     await run_vesta(config, state=initial_state, first_start=first_start, restart_reason=restart_reason)
 

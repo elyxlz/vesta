@@ -8,7 +8,7 @@ description: Self-improvement and memory curation. Used by the nightly dreamer, 
 ## Your files
 
 - **Memory**: ~/vesta/MEMORY.md
-- **Skills**: ~/vesta/skills/ (each has a SKILL.md)
+- **Skills**: ~/vesta/src/vesta/ (each has a SKILL.md)
 - **Prompts**: ~/vesta/prompts/
 - **Dreamer summaries**: ~/vesta/dreamer/
 

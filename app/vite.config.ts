@@ -1,10 +1,13 @@
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import basicSsl from "@vitejs/plugin-basic-ssl";
 import { defineConfig } from "vite";
 import path from "path";
 
 const host = process.env.TAURI_DEV_HOST;
 const vestad = process.env.VITE_VESTAD_URL || "https://localhost:7860";
+
+const isTauri = !!process.env.TAURI_ENV_PLATFORM;
 
 export default defineConfig({
   plugins: [
@@ -14,6 +17,7 @@ export default defineConfig({
       },
     }),
     tailwindcss(),
+    ...(!isTauri ? [basicSsl()] : []),
   ],
   resolve: {
     alias: {

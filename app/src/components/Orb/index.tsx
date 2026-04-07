@@ -5,6 +5,7 @@ interface OrbProps {
   state: OrbVisualState;
   size?: number;
   enableTracking?: boolean;
+  suppressMotion?: boolean;
 }
 
 const LIVE_STATES = new Set<OrbVisualState>([
@@ -217,25 +218,43 @@ function createProgram(gl: WebGLRenderingContext) {
 function getVisualTarget(
   state: OrbVisualState,
   container: HTMLElement,
+  suppressMotion: boolean,
 ): VisualTarget {
   const [lightColor, midColor, darkColor] = orbColors[state].map((color) =>
     resolveCssColor(color, container),
   ) as [VisualTarget["lightColor"], VisualTarget["midColor"], VisualTarget["darkColor"]];
   const isLive = LIVE_STATES.has(state);
 
+  if (suppressMotion) {
+    return {
+      lightColor,
+      midColor,
+      darkColor,
+      glowOpacityBase: state === "thinking" ? 0.55 : isLive ? 0.5 : 0.12,
+      glowOpacityAmplitude: 0,
+      glowScaleBase: state === "thinking" ? 1.08 : isLive ? 1.04 : 0.85,
+      glowScaleAmplitude: 0,
+      orbScaleBase: state === "thinking" ? 1.015 : 1,
+      orbScaleAmplitude: 0,
+      pulseDuration: 2.5,
+      floatAmplitudePx: 0,
+      floatDuration: state === "thinking" ? 3 : 4,
+    };
+  }
+
   return {
     lightColor,
     midColor,
     darkColor,
     glowOpacityBase: state === "thinking" ? 0.55 : isLive ? 0.5 : 0.12,
-    glowOpacityAmplitude: state === "thinking" ? 0.15 : 0,
+    glowOpacityAmplitude: state === "thinking" ? 0.08 : 0,
     glowScaleBase: state === "thinking" ? 1.08 : isLive ? 1.04 : 0.85,
-    glowScaleAmplitude: state === "thinking" ? 0.05 : 0,
+    glowScaleAmplitude: state === "thinking" ? 0.028 : 0,
     orbScaleBase: state === "thinking" ? 1.015 : 1,
-    orbScaleAmplitude: state === "thinking" ? 0.015 : 0,
+    orbScaleAmplitude: state === "thinking" ? 0.009 : 0,
     pulseDuration: 2.5,
-    floatAmplitudePx: isLive ? (state === "thinking" ? 8 : 6) : 0,
-    floatDuration: state === "thinking" ? 3 : 4,
+    floatAmplitudePx: isLive ? (state === "thinking" ? 4 : 3) : 0,
+    floatDuration: state === "thinking" ? 3.8 : 5,
   };
 }
 
@@ -253,7 +272,7 @@ function createInitialVisualState(target: VisualTarget): VisualState {
   };
 }
 
-export function Orb({ state, size = 140, enableTracking = false }: OrbProps) {
+export function Orb({ state, size = 140, enableTracking = false, suppressMotion = false }: OrbProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const isLive = LIVE_STATES.has(state);
@@ -273,13 +292,13 @@ export function Orb({ state, size = 140, enableTracking = false }: OrbProps) {
       return;
     }
 
-    const target = getVisualTarget(state, container);
+    const target = getVisualTarget(state, container, suppressMotion);
     targetVisualRef.current = target;
 
     if (!visualStateRef.current) {
       visualStateRef.current = createInitialVisualState(target);
     }
-  }, [state]);
+  }, [state, suppressMotion]);
 
   useEffect(() => {
     if (!shouldTrack) {
@@ -387,7 +406,7 @@ export function Orb({ state, size = 140, enableTracking = false }: OrbProps) {
     gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
 
     const initialTarget =
-      targetVisualRef.current ?? getVisualTarget(state, container);
+      targetVisualRef.current ?? getVisualTarget(state, container, suppressMotion);
     targetVisualRef.current = initialTarget;
     visualStateRef.current ??= createInitialVisualState(initialTarget);
 

@@ -14,6 +14,7 @@ dependencies = [
     "pydantic>=2.10.4",
     "pydantic-settings>=2.7.0",
     "rich>=14.2.0",
+    "watchfiles>=1.1.1",
 ]
 
 [project.urls]
@@ -39,6 +40,9 @@ testpaths = ["tests"]
 [tool.ty.src]
 include = ["src", "tests"]
 
+[tool.ty.environment]
+extra-paths = ["skills"]
+
 [tool.ruff]
 line-length = 144
 indent-width = 4
@@ -47,4 +51,3 @@ target-version = "py312"
 [tool.ruff.lint]
 ignore = ["E402", "E702", "E731", "UP008", "E712"]
 extend-select = ["UP"]
-

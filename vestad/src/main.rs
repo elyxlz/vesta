@@ -117,15 +117,25 @@ fn config_dir() -> std::path::PathBuf {
     std::path::PathBuf::from(home).join(".config/vesta/vestad")
 }
 
+fn read_vestad_port(config_dir: &std::path::Path) -> u16 {
+    std::fs::read_to_string(config_dir.join("port"))
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or_else(|| die("could not read vestad port from config — is vestad running?"))
+}
+
 fn print_server_info(tunnel_url: Option<&str>, local_url: &str, api_key: &str) {
     eprintln!();
+    eprintln!("  \x1b[36mhost\x1b[0m  \x1b[2m(enter in the app's host field)\x1b[0m");
     if let Some(url) = tunnel_url {
-        eprintln!("  \x1b[36mhost\x1b[0m    \x1b[1m{}\x1b[0m", url);
-        eprintln!("  \x1b[36mlocal\x1b[0m   \x1b[2m{}\x1b[0m", local_url);
-    } else {
-        eprintln!("  \x1b[36mhost\x1b[0m    \x1b[1m{}\x1b[0m", local_url);
+        eprintln!("    \x1b[36mremote\x1b[0m  \x1b[1m{}\x1b[0m", url);
     }
-    eprintln!("  \x1b[36mkey\x1b[0m     \x1b[33m{}\x1b[0m", api_key);
+    eprintln!("    \x1b[36mlocal\x1b[0m   \x1b[1m{}\x1b[0m  \x1b[2m(same machine only)\x1b[0m", local_url);
+    eprintln!("  \x1b[36mkey\x1b[0m   \x1b[33m{}\x1b[0m", api_key);
+    if tunnel_url.is_none() {
+        eprintln!();
+        eprintln!("  \x1b[33mtip:\x1b[0m run without --no-tunnel to get a remote URL");
+    }
     eprintln!();
 }
 
@@ -137,7 +147,8 @@ fn read_server_info(config: &std::path::Path) -> (Option<String>, Option<String>
 
     let local_url = std::fs::read_to_string(config.join("port"))
         .ok()
-        .map(|s| format!("https://0.0.0.0:{}", s.trim()));
+        .and_then(|s| s.trim().parse::<u16>().ok())
+        .map(|port| format!("http://localhost:{}", port + 1));
 
     let tunnel_url = tunnel::get_tunnel_config(config)
         .map(|tc| format!("https://{}", tc.hostname));
@@ -170,7 +181,7 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool) {
         None
     };
 
-    let local_url = format!("https://0.0.0.0:{}", port);
+    let local_url = format!("http://localhost:{}", port + 1);
 
     eprintln!();
     eprintln!("  \x1b[1;35mvestad\x1b[0m v{}", env!("CARGO_PKG_VERSION"));
@@ -230,7 +241,7 @@ fn run_server_systemd(port: Option<u16>, no_tunnel: bool) {
     if let Some(api_key) = &api_key {
         print_server_info(
             tunnel_url.as_deref(),
-            local_url.as_deref().unwrap_or("https://0.0.0.0:?"),
+            local_url.as_deref().unwrap_or("http://localhost:?"),
             api_key,
         );
     }
@@ -274,7 +285,7 @@ fn main() {
             if let Some(api_key) = &api_key {
                 print_server_info(
                     tunnel_url.as_deref(),
-                    local_url.as_deref().unwrap_or("https://0.0.0.0:?"),
+                    local_url.as_deref().unwrap_or("http://localhost:?"),
                     api_key,
                 );
             }
@@ -388,7 +399,8 @@ fn main() {
 
                 eprintln!("creating agent '{}'...", name);
                 let port = find_available_port().unwrap_or_else(|| die("no available port"));
-                docker::create_container(&cname, loaded_image, port, &name)
+                let vestad_port = read_vestad_port(&config_dir());
+                docker::create_container(&cname, loaded_image, port, &name, vestad_port)
                     .unwrap_or_else(|e| die(&e));
 
                 if !docker::docker_ok(&["start", &cname]) {

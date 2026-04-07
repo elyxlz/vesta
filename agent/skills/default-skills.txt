@@ -1,9 +1,10 @@
+app-chat
 banking
 browser
 dream
 flights
-reminders
 skills-registry
 tasks
 upstream
+voice
 what-day

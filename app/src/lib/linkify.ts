@@ -19,7 +19,7 @@ export function linkify(text: string): string {
   out = out.replace(/\x00URL(\d+)\x00/g, (_, i) => {
     const url = urls[Number(i)];
     const display = escapeHtml(url);
-    return `<a href="${url}" target="_blank" rel="noopener">${display}</a>`;
+    return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${display}</a>`;
   });
 
   out = out.replace(CODE_RE, (_, code) => `<code>${code}</code>`);

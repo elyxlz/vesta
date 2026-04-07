@@ -1,8 +1,10 @@
-"""Event bus for agent ↔ app communication over WebSocket."""
+"""Event bus for agent event broadcasting and persistence."""
 
 import asyncio
-import collections
 import datetime as dt
+import json
+import pathlib as pl
+import sqlite3
 import typing as tp
 
 type AgentState = tp.Literal["idle", "thinking", "tool_use"]
@@ -63,6 +65,11 @@ class SubagentStopEvent(_BaseEvent):
     agent_type: str
 
 
+class ChatEvent(_BaseEvent):
+    type: tp.Literal["chat"]
+    text: str
+
+
 type StreamEvent = (
     StatusEvent
     | ToolStartEvent
@@ -73,6 +80,7 @@ type StreamEvent = (
     | NotificationEvent
     | SubagentStartEvent
     | SubagentStopEvent
+    | ChatEvent
 )
 
 
@@ -80,21 +88,55 @@ class HistoryEvent(tp.TypedDict):
     type: tp.Literal["history"]
     events: list[StreamEvent]
     state: AgentState
+    cursor: int | None
 
 
 type VestaEvent = StreamEvent | HistoryEvent
 
-MAX_HISTORY = 5000
+PAGE_SIZE = 100
+
+_EVENTS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT NOT NULL,
+    data TEXT NOT NULL
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS events_fts USING fts5(
+    text_content,
+    content='events',
+    content_rowid='id'
+);
+
+CREATE TRIGGER IF NOT EXISTS events_fts_ai AFTER INSERT ON events BEGIN
+    INSERT INTO events_fts(rowid, text_content)
+    SELECT new.id, json_extract(new.data, '$.text')
+    WHERE json_extract(new.data, '$.type') IN ('user', 'assistant', 'chat');
+END;
+
+CREATE TRIGGER IF NOT EXISTS events_fts_ad AFTER DELETE ON events BEGIN
+    INSERT INTO events_fts(events_fts, rowid, text_content)
+    SELECT 'delete', old.id, json_extract(old.data, '$.text')
+    WHERE json_extract(old.data, '$.type') IN ('user', 'assistant', 'chat');
+END;
+"""
+
+_RECENCY_DECAY_RATE = 0.01
 
 
 class EventBus:
-    def __init__(self) -> None:
+    def __init__(self, data_dir: pl.Path | None = None) -> None:
         self._subscribers: set[asyncio.Queue[VestaEvent]] = set()
         self._state: AgentState = "idle"
-        self.history: collections.deque[StreamEvent] = collections.deque(maxlen=MAX_HISTORY)
+        self._conn: sqlite3.Connection | None = None
+        if data_dir:
+            data_dir.mkdir(parents=True, exist_ok=True)
+            self._conn = sqlite3.connect(str(data_dir / "events.db"))
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.executescript(_EVENTS_SCHEMA)
 
     def subscribe(self) -> asyncio.Queue[VestaEvent]:
-        q: asyncio.Queue[VestaEvent] = asyncio.Queue(maxsize=MAX_HISTORY)
+        q: asyncio.Queue[VestaEvent] = asyncio.Queue()
         self._subscribers.add(q)
         return q
 
@@ -103,13 +145,14 @@ class EventBus:
 
     def emit(self, event: StreamEvent) -> None:
         event["ts"] = dt.datetime.now(dt.UTC).isoformat()
-        if event["type"] != "status":
-            self.history.append(event)
+        if event["type"] != "status" and self._conn:
+            self._conn.execute(
+                "INSERT INTO events (ts, data) VALUES (?, ?)",
+                (event["ts"], json.dumps(event)),
+            )
+            self._conn.commit()
         for q in self._subscribers:
-            try:
-                q.put_nowait(event)
-            except asyncio.QueueFull:
-                pass
+            q.put_nowait(event)
 
     @property
     def state(self) -> AgentState:
@@ -121,5 +164,52 @@ class EventBus:
         self._state = state
         self.emit(StatusEvent(type="status", state=state))
 
-    def clear_history(self) -> None:
-        self.history.clear()
+    def recent(self, limit: int = PAGE_SIZE) -> tuple[list[StreamEvent], int | None]:
+        if not self._conn or limit <= 0:
+            return [], None
+        rows = self._conn.execute(
+            "SELECT id, data FROM events ORDER BY id DESC LIMIT ?",
+            (limit + 1,),
+        ).fetchall()
+        if not rows:
+            return [], None
+        has_older = len(rows) > limit
+        rows = rows[:limit]
+        events = [json.loads(r[1]) for r in reversed(rows)]
+        return events, rows[-1][0] if has_older else None
+
+    def before(self, cursor: int, limit: int = PAGE_SIZE) -> tuple[list[StreamEvent], int | None]:
+        if not self._conn or limit <= 0:
+            return [], None
+        rows = self._conn.execute(
+            "SELECT id, data FROM events WHERE id < ? ORDER BY id DESC LIMIT ?",
+            (cursor, limit + 1),
+        ).fetchall()
+        if not rows:
+            return [], None
+        has_older = len(rows) > limit
+        rows = rows[:limit]
+        events = [json.loads(r[1]) for r in reversed(rows)]
+        return events, rows[-1][0] if has_older else None
+
+    def search(self, query: str, *, limit: int = 20) -> list[dict[str, str]]:
+        if not self._conn:
+            return []
+        rows = self._conn.execute(
+            """
+            SELECT e.ts, json_extract(e.data, '$.type') AS role, json_extract(e.data, '$.text') AS content,
+                   f.rank / (1.0 + ? * max(julianday('now') - julianday(e.ts), 0)) AS score
+            FROM events_fts f
+            JOIN events e ON e.id = f.rowid
+            WHERE events_fts MATCH ?
+            ORDER BY score ASC
+            LIMIT ?
+            """,
+            (_RECENCY_DECAY_RATE, query, limit),
+        ).fetchall()
+        return [{"timestamp": r[0], "role": r[1], "content": r[2]} for r in rows]
+
+    def close(self) -> None:
+        if self._conn:
+            self._conn.close()
+            self._conn = None

@@ -167,6 +167,7 @@ fn current_user() -> String {
 // --- Docker helpers ---
 
 pub fn docker(args: &[&str]) -> Result<process::ExitStatus, DockerError> {
+    tracing::debug!(cmd = %format!("docker {}", args.join(" ")), "running docker command");
     process::Command::new("docker")
         .args(args)
         .stdout(process::Stdio::null())
@@ -209,6 +210,18 @@ pub fn docker_quiet(args: &[&str]) -> bool {
 pub fn ensure_docker() -> Result<(), DockerError> {
     if !docker_quiet(&["--version"]) {
         return Err(DockerError::Failed("docker is not installed".into()));
+    }
+
+    if !docker_quiet(&["buildx", "version"]) {
+        return Err(DockerError::Failed(
+            "docker buildx is required but not installed. install it with your package manager:\n  \
+             apt (docker.io):     sudo apt-get install docker-buildx\n  \
+             apt (docker-ce):     sudo apt-get install docker-buildx-plugin\n  \
+             dnf:                 sudo dnf install docker-buildx-plugin\n  \
+             pacman:              sudo pacman -S docker-buildx\n  \
+             brew:                brew install docker-buildx"
+                .into(),
+        ));
     }
 
     // Check permission on the first attempt — no point retrying 10 times if it's a group issue
@@ -403,9 +416,8 @@ pub fn find_dockerfile() -> Result<std::path::PathBuf, DockerError> {
     Err(DockerError::BuildRequired("--build requires vestad to have access to the Vesta source code (run vestad from the repo root)".into()))
 }
 
-pub fn resolve_image(build: bool) -> Result<&'static str, DockerError> {
-    if build {
-        let context = find_dockerfile()?;
+pub fn resolve_image() -> Result<&'static str, DockerError> {
+    if let Ok(context) = find_dockerfile() {
         let status = process::Command::new("docker")
             .args(["buildx", "build", "-t", LOCAL_IMAGE_TAG, "."])
             .current_dir(&context)
@@ -517,14 +529,15 @@ fn gpu_available() -> GpuStatus {
 
 // --- Container creation ---
 
-pub fn create_container(cname: &str, image: &str, port: u16, agent_name: &str) -> Result<(), DockerError> {
+pub fn create_container(cname: &str, image: &str, port: u16, agent_name: &str, vestad_port: u16) -> Result<(), DockerError> {
     let ws_port_env = format!("WS_PORT={}", port);
     let agent_name_env = format!("AGENT_NAME={}", agent_name);
+    let vestad_port_env = format!("VESTAD_PORT={}", vestad_port);
     let port_label = format!("vesta.ws_port={}", port);
     let user_label = format!("{}={}", LABEL_USER, current_user());
     let agent_name_label = format!("{}={}", LABEL_AGENT_NAME, agent_name);
     let mut args = vec![
-        "create", "--name", cname, "-it",
+        "create", "--name", cname, "-t",
         "--restart", "unless-stopped", "--network", "host",
         "--label", "vesta.managed=true",
         "--label", &port_label,
@@ -532,6 +545,7 @@ pub fn create_container(cname: &str, image: &str, port: u16, agent_name: &str) -
         "--label", &agent_name_label,
         "-e", &ws_port_env,
         "-e", &agent_name_env,
+        "-e", &vestad_port_env,
         "-e", "IS_SANDBOX=1",
     ];
 
@@ -795,7 +809,7 @@ pub fn list_agents() -> Vec<ListEntry> {
         .collect()
 }
 
-pub fn create_agent(name: &str, build: bool) -> Result<String, DockerError> {
+pub fn create_agent(name: &str, vestad_port: u16) -> Result<String, DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
 
@@ -803,9 +817,9 @@ pub fn create_agent(name: &str, build: bool) -> Result<String, DockerError> {
         return Err(DockerError::AlreadyExists(format!("agent '{}' already exists", name)));
     }
 
-    let image = resolve_image(build)?;
+    let image = resolve_image()?;
     let port = allocate_port();
-    create_container(&cname, image, port, name)?;
+    create_container(&cname, image, port, name, vestad_port)?;
     Ok(name.to_string())
 }
 
@@ -897,7 +911,7 @@ pub fn destroy_agent(name: &str) -> Result<(), DockerError> {
     Ok(())
 }
 
-pub fn rebuild_agent(name: &str) -> Result<(), DockerError> {
+pub fn rebuild_agent(name: &str, vestad_port: u16) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
     let info = inspect_container(&cname);
@@ -921,7 +935,7 @@ pub fn rebuild_agent(name: &str) -> Result<(), DockerError> {
 
     docker_ok(&["rm", "-f", &cname]);
 
-    create_container(&cname, &backup_tag, info.port, name)?;
+    create_container(&cname, &backup_tag, info.port, name, vestad_port)?;
 
     if !docker_ok(&["start", &cname]) {
         return Err(DockerError::Failed("failed to start".into()));
@@ -1197,7 +1211,7 @@ fn parse_docker_size(s: &str) -> u64 {
 
 /// Restore an agent from a backup image.
 /// Creates a pre-restore safety backup first, then replaces the container.
-pub fn restore_backup(name: &str, backup_id: &str) -> Result<(), DockerError> {
+pub fn restore_backup(name: &str, backup_id: &str, vestad_port: u16) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
 
@@ -1220,7 +1234,7 @@ pub fn restore_backup(name: &str, backup_id: &str) -> Result<(), DockerError> {
 
     // Create new container from backup image, reusing the port
     tracing::debug!(agent = %name, backup_id = %backup_id, "creating container from backup image");
-    create_container(&cname, backup_id, info.port, name)?;
+    create_container(&cname, backup_id, info.port, name, vestad_port)?;
 
     if !docker_ok(&["start", &cname]) {
         return Err(DockerError::Failed("failed to start restored agent".into()));

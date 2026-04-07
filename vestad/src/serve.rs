@@ -1,22 +1,26 @@
 use axum::{
-    extract::{Path, Query, State, WebSocketUpgrade},
+    body::Body,
+    extract::{Path, Query, Request, State, WebSocketUpgrade},
     http::{HeaderMap, StatusCode},
     middleware::{self, Next},
     response::{
         sse::{Event, KeepAlive},
         IntoResponse, Response, Sse,
     },
-    routing::{get, post},
+    routing::{any, get, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 
 use crate::{docker, jwt, update_check};
 
 const API_KEY_BYTES: usize = 32;
+const PROXY_MAX_BODY_BYTES: usize = 10 * 1024 * 1024; // 10 MB
+
+const RESERVED_SERVICE_NAMES: &[&str] = &["ws", "history", "services", "search"];
 const AUTH_SESSION_TIMEOUT_SECS: u64 = 600;
 const DEFAULT_LOG_TAIL_LINES: u64 = 500;
 const AUTO_BACKUP_CHECK_INTERVAL_SECS: u64 = 3600;
@@ -127,18 +131,23 @@ struct AuthSession {
 
 pub struct AppState {
     api_key: String,
+    vestad_port: u16,
     auth_sessions: Mutex<HashMap<String, AuthSession>>,
     agent_locks: Mutex<HashMap<String, Arc<tokio::sync::RwLock<()>>>>,
     tunnel_url: Mutex<Option<String>>,
     update_info: Mutex<Option<update_check::UpdateInfo>>,
     auto_backup_enabled: AtomicBool,
     backup_retention: Mutex<crate::types::RetentionPolicy>,
+    http_client: reqwest::Client,
+    service_registry: RwLock<HashMap<String, HashMap<String, u16>>>,
 }
 
 impl AppState {
-    fn new(api_key: String, tunnel_url: Option<String>) -> Self {
+    fn new(api_key: String, vestad_port: u16, tunnel_url: Option<String>) -> Self {
+        let service_registry = load_service_registry();
         Self {
             api_key,
+            vestad_port,
             auth_sessions: Mutex::new(HashMap::new()),
             agent_locks: Mutex::new(HashMap::new()),
             tunnel_url: Mutex::new(tunnel_url),
@@ -149,6 +158,8 @@ impl AppState {
                 weekly: docker::DEFAULT_RETENTION_WEEKLY,
                 monthly: docker::DEFAULT_RETENTION_MONTHLY,
             }),
+            http_client: reqwest::Client::new(),
+            service_registry: RwLock::new(service_registry),
         }
     }
 
@@ -283,6 +294,10 @@ fn err_response(status: StatusCode, msg: &str) -> (StatusCode, Json<serde_json::
     (status, Json(serde_json::json!({"error": msg})))
 }
 
+fn map_join_err(e: tokio::task::JoinError) -> (StatusCode, Json<serde_json::Value>) {
+    err_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("task failed: {e}"))
+}
+
 fn map_docker_err(e: docker::DockerError) -> (StatusCode, Json<serde_json::Value>) {
     use docker::DockerError::*;
     let status = match &e {
@@ -339,7 +354,6 @@ async fn list_agents_handler() -> impl IntoResponse {
 #[derive(Deserialize)]
 struct CreateBody {
     name: Option<String>,
-    build: Option<bool>,
 }
 
 async fn create_agent_handler(
@@ -351,14 +365,13 @@ async fn create_agent_handler(
     if name.is_empty() {
         return Err(err_response(StatusCode::BAD_REQUEST, "invalid agent name"));
     }
-    let build = body.build.unwrap_or(false);
-    tracing::info!(name = %name, build, "creating agent");
-
+    tracing::info!(name = %name, "creating agent");
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
+    let vestad_port = state.vestad_port;
     let name =
-        tokio::task::spawn_blocking(move || docker::create_agent(&name, build))
+        tokio::task::spawn_blocking(move || docker::create_agent(&name, vestad_port))
             .await
             .unwrap()
             .map_err(map_docker_err)?;
@@ -416,10 +429,16 @@ async fn stop_agent_handler(
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
-    tokio::task::spawn_blocking(move || docker::stop_agent(&name))
+    let docker_name = name.clone();
+    tokio::task::spawn_blocking(move || docker::stop_agent(&docker_name))
         .await
         .unwrap()
         .map_err(map_docker_err)?;
+    {
+        let mut reg = state.service_registry.write().await;
+        reg.remove(&name);
+        save_service_registry(&reg);
+    }
     Ok(ok_json())
 }
 
@@ -446,10 +465,16 @@ async fn destroy_agent_handler(
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
-    tokio::task::spawn_blocking(move || docker::destroy_agent(&name))
+    let docker_name = name.clone();
+    tokio::task::spawn_blocking(move || docker::destroy_agent(&docker_name))
         .await
         .unwrap()
         .map_err(map_docker_err)?;
+    {
+        let mut reg = state.service_registry.write().await;
+        reg.remove(&name);
+        save_service_registry(&reg);
+    }
 
     Ok(ok_json())
 }
@@ -462,7 +487,8 @@ async fn rebuild_agent_handler(
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
-    tokio::task::spawn_blocking(move || docker::rebuild_agent(&name))
+    let vestad_port = state.vestad_port;
+    tokio::task::spawn_blocking(move || docker::rebuild_agent(&name, vestad_port))
         .await
         .unwrap()
         .map_err(map_docker_err)?;
@@ -646,35 +672,14 @@ async fn logs_handler(
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
-// --- WebSocket proxy ---
+// --- WebSocket proxy (used by agent wildcard) ---
 
-async fn ws_handler(
-    State(state): State<SharedState>,
-    Path(name): Path<String>,
-    ws: WebSocketUpgrade,
-) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
-    tracing::info!(name = %name, "client websocket connecting");
-    docker::validate_name(&name).map_err(map_docker_err)?;
-    let cname = docker::container_name(&name);
-
-    let lock = state.agent_lock(&name).await;
-    let guard = lock.read_owned().await;
-
-    docker::ensure_running(&cname).map_err(map_docker_err)?;
-    let port = docker::get_container_port(&cname);
-
-    Ok(ws.on_upgrade(move |socket| async move {
-        drop(guard);
-        ws_proxy(socket, port).await;
-    }))
-}
-
-async fn ws_proxy(client_ws: axum::extract::ws::WebSocket, agent_port: u16) {
+async fn ws_proxy(client_ws: axum::extract::ws::WebSocket, agent_port: u16, path: &str) {
     use axum::extract::ws::Message as AxumMsg;
     use futures_util::{SinkExt, StreamExt};
     use tokio_tungstenite::tungstenite::Message as TungMsg;
 
-    let url = format!("ws://localhost:{}/ws", agent_port);
+    let url = format!("ws://localhost:{}{}", agent_port, path);
     let agent_ws = match tokio_tungstenite::connect_async(&url).await {
         Ok((ws, _)) => ws,
         Err(e) => {
@@ -734,6 +739,250 @@ async fn ws_proxy(client_ws: axum::extract::ws::WebSocket, agent_port: u16) {
     tracing::info!(port = agent_port, "client websocket disconnected");
 }
 
+// --- Service registry ---
+
+fn services_file() -> std::path::PathBuf {
+    let home = std::env::var("HOME").unwrap_or_default();
+    std::path::PathBuf::from(home).join(".config/vesta/vestad/services.json")
+}
+
+fn load_service_registry() -> HashMap<String, HashMap<String, u16>> {
+    let path = services_file();
+    match std::fs::read_to_string(&path) {
+        Ok(data) => match serde_json::from_str(&data) {
+            Ok(registry) => registry,
+            Err(err) => {
+                tracing::warn!(path = %path.display(), error = %err, "corrupt services.json, starting empty");
+                HashMap::new()
+            }
+        },
+        Err(_) => HashMap::new(),
+    }
+}
+
+fn save_service_registry(registry: &HashMap<String, HashMap<String, u16>>) {
+    let path = services_file();
+    if let Some(parent) = path.parent() {
+        if let Err(err) = std::fs::create_dir_all(parent) {
+            tracing::warn!(error = %err, "failed to create services dir");
+            return;
+        }
+    }
+    let data = match serde_json::to_string_pretty(registry) {
+        Ok(data) => data,
+        Err(err) => {
+            tracing::warn!(error = %err, "failed to serialize service registry");
+            return;
+        }
+    };
+    let tmp = path.with_extension("json.tmp");
+    if let Err(err) = std::fs::write(&tmp, &data) {
+        tracing::warn!(error = %err, "failed to write services.json.tmp");
+        return;
+    }
+    if let Err(err) = std::fs::rename(&tmp, &path) {
+        tracing::warn!(error = %err, "failed to rename services.json.tmp");
+    }
+}
+
+async fn resolve_service_port(
+    state: &AppState,
+    agent_name: &str,
+    service_name: &str,
+) -> Option<u16> {
+    let registry = state.service_registry.read().await;
+    registry.get(agent_name)?.get(service_name).copied()
+}
+
+#[derive(Deserialize)]
+struct RegisterServiceBody {
+    name: String,
+    port: u16,
+}
+
+async fn register_service_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+    Json(body): Json<RegisterServiceBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let service_name = body.name.trim().to_string();
+    let port = body.port;
+
+    if service_name.is_empty() || port == 0 {
+        return Err(err_response(StatusCode::BAD_REQUEST, "name (str) and port (1-65535) required"));
+    }
+    if RESERVED_SERVICE_NAMES.contains(&service_name.as_str()) {
+        return Err(err_response(StatusCode::BAD_REQUEST, &format!("reserved service name: {}", service_name)));
+    }
+
+    let docker_name = docker::container_name(&name);
+    let exists = tokio::task::spawn_blocking(move || docker::container_status(&docker_name) != docker::ContainerStatus::NotFound)
+        .await
+        .unwrap_or(false);
+    if !exists {
+        return Err(err_response(StatusCode::NOT_FOUND, &format!("agent '{}' not found", name)));
+    }
+
+    let mut registry = state.service_registry.write().await;
+    registry.entry(name.clone()).or_default().insert(service_name.clone(), port);
+    save_service_registry(&registry);
+    tracing::info!(agent = %name, service = %service_name, port, "service registered");
+    Ok(ok_json())
+}
+
+async fn unregister_service_handler(
+    State(state): State<SharedState>,
+    Path((name, service_name)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let mut registry = state.service_registry.write().await;
+    if let Some(agent_services) = registry.get_mut(&name) {
+        agent_services.remove(&service_name);
+        if agent_services.is_empty() {
+            registry.remove(&name);
+        }
+    }
+    save_service_registry(&registry);
+    tracing::info!(agent = %name, service = %service_name, "service unregistered");
+    Ok(ok_json())
+}
+
+async fn list_services_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+) -> Json<serde_json::Value> {
+    let registry = state.service_registry.read().await;
+    let services = registry.get(&name).cloned().unwrap_or_default();
+    Json(serde_json::json!({"services": services}))
+}
+
+// --- Agent wildcard proxy (HTTP + WS) for /agents/{name}/* ---
+
+async fn agent_proxy_handler(
+    State(state): State<SharedState>,
+    Path((name, path)): Path<(String, String)>,
+    request: Request,
+) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+    use axum::extract::FromRequestParts;
+
+    docker::validate_name(&name).map_err(map_docker_err)?;
+    let cname = docker::container_name(&name);
+
+    let lock = state.agent_lock(&name).await;
+    let guard = lock.read_owned().await;
+
+    let cname_clone = cname.clone();
+    tokio::task::spawn_blocking(move || docker::ensure_running(&cname_clone))
+        .await
+        .map_err(map_join_err)?
+        .map_err(map_docker_err)?;
+    let cname_clone = cname.clone();
+    let agent_port = tokio::task::spawn_blocking(move || docker::get_container_port(&cname_clone))
+        .await
+        .map_err(map_join_err)?;
+
+    // Check if the first path segment matches a registered service.
+    // If so, route directly to that service's port with the prefix stripped.
+    let first_segment = path.split('/').next().unwrap_or("");
+    let (target_port, stripped_path) = if !first_segment.is_empty() {
+        if let Some(service_port) = resolve_service_port(&state, &name, first_segment).await {
+            let rest = &path[first_segment.len()..];
+            let rest = if rest.is_empty() { "/" } else { rest };
+            (service_port, rest.to_string())
+        } else {
+            (agent_port, format!("/{}", path))
+        }
+    } else {
+        (agent_port, format!("/{}", path))
+    };
+
+    // Append query string.
+    let mut target_path = stripped_path;
+    if let Some(q) = request.uri().query() {
+        target_path.push('?');
+        target_path.push_str(q);
+    }
+
+    let is_ws_upgrade = request
+        .headers()
+        .get("upgrade")
+        .map(|v| v.as_bytes().eq_ignore_ascii_case(b"websocket"))
+        .unwrap_or(false);
+
+    if is_ws_upgrade {
+        let (mut parts, _body) = request.into_parts();
+        let ws = match WebSocketUpgrade::from_request_parts(&mut parts, &state).await {
+            Ok(ws) => ws,
+            Err(e) => {
+                return Err(err_response(
+                    StatusCode::BAD_REQUEST,
+                    &format!("invalid ws upgrade: {}", e),
+                ));
+            }
+        };
+        Ok(ws.on_upgrade(move |socket| async move {
+            drop(guard);
+            ws_proxy(socket, target_port, &target_path).await;
+        }))
+    } else {
+        drop(guard);
+        forward_http_to_container(&state.http_client, target_port, &target_path, request).await
+    }
+}
+
+async fn forward_http_to_container(
+    client: &reqwest::Client,
+    port: u16,
+    target_path: &str,
+    request: Request,
+) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+    let (parts, body) = request.into_parts();
+    let url = format!("http://localhost:{}{}", port, target_path);
+
+    let method = reqwest::Method::from_bytes(parts.method.as_str().as_bytes())
+        .map_err(|e| err_response(StatusCode::BAD_REQUEST, &format!("bad method: {}", e)))?;
+
+    let body_bytes = axum::body::to_bytes(body, PROXY_MAX_BODY_BYTES)
+        .await
+        .map_err(|e| err_response(StatusCode::BAD_REQUEST, &format!("read body: {}", e)))?;
+
+    let mut req_builder = client.request(method, &url);
+    for (name, value) in parts.headers.iter() {
+        // Skip hop-by-hop headers — reqwest sets host/transfer-encoding itself.
+        let n = name.as_str().to_ascii_lowercase();
+        if matches!(n.as_str(), "host" | "connection" | "transfer-encoding" | "content-length") {
+            continue;
+        }
+        req_builder = req_builder.header(name.as_str(), value.as_bytes());
+    }
+    if !body_bytes.is_empty() {
+        req_builder = req_builder.body(body_bytes.to_vec());
+    }
+
+    let upstream = req_builder.send().await.map_err(|e| {
+        err_response(
+            StatusCode::BAD_GATEWAY,
+            &format!("container unreachable: {}", e),
+        )
+    })?;
+
+    let status = StatusCode::from_u16(upstream.status().as_u16())
+        .unwrap_or(StatusCode::BAD_GATEWAY);
+    let mut builder = Response::builder().status(status);
+    for (name, value) in upstream.headers().iter() {
+        let n = name.as_str().to_ascii_lowercase();
+        if matches!(n.as_str(), "transfer-encoding" | "connection" | "content-length") {
+            continue;
+        }
+        builder = builder.header(name.as_str(), value.as_bytes());
+    }
+
+    let stream = upstream.bytes_stream();
+    let body = Body::from_stream(stream);
+    builder
+        .body(body)
+        .map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("build response: {}", e)))
+}
+
 // --- Backup/Restore ---
 
 async fn create_backup_handler(
@@ -788,7 +1037,8 @@ async fn restore_backup_handler(
     tracing::info!(agent = %path.name, backup_id = %path.backup_id, "restoring backup");
     let name = path.name.clone();
     let backup_id = path.backup_id.clone();
-    tokio::task::spawn_blocking(move || docker::restore_backup(&name, &backup_id))
+    let vestad_port = state.vestad_port;
+    tokio::task::spawn_blocking(move || docker::restore_backup(&name, &backup_id, vestad_port))
         .await
         .unwrap()
         .map_err(map_docker_err)?;
@@ -928,20 +1178,28 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/auth/code", post(complete_auth_handler))
         .route("/agents/{name}/auth/token", post(inject_token_handler))
         .route("/agents/{name}/logs", get(logs_handler))
-        .route("/agents/{name}/ws", get(ws_handler))
         .route("/agents/{name}/backups", post(create_backup_handler))
         .route("/agents/{name}/backups", get(list_backups_handler))
         .route("/agents/{name}/backups/{backup_id}/restore", post(restore_backup_handler))
         .route("/agents/{name}/backups/{backup_id}", axum::routing::delete(delete_backup_handler))
         .route("/settings/auto-backup", get(get_auto_backup_handler))
         .route("/settings/auto-backup", axum::routing::put(set_auto_backup_handler))
+        .route("/agents/{name}/{*path}", any(agent_proxy_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
         ));
 
+    // Internal routes: no auth required (used by skills inside containers via localhost)
+    let internal = Router::new()
+        .route("/agents/{name}/services", post(register_service_handler))
+        .route("/agents/{name}/services", get(list_services_handler))
+        .route("/agents/{name}/services/{service}", axum::routing::delete(unregister_service_handler))
+        .with_state(state.clone());
+
     Router::new()
         .merge(public)
+        .merge(internal)
         .merge(protected)
         .layer(
             tower_http::cors::CorsLayer::new()
@@ -1076,7 +1334,7 @@ fn spawn_update_check_task(state: SharedState) {
 // --- Server start ---
 
 pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: String, tunnel_url: Option<String>) {
-    let state = Arc::new(AppState::new(api_key, tunnel_url));
+    let state = Arc::new(AppState::new(api_key, port, tunnel_url));
     let app = build_router(state.clone());
     spawn_auto_backup_task(state.clone());
     spawn_update_check_task(state);
@@ -1090,10 +1348,34 @@ pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: S
     .await
     .expect("failed to configure TLS");
 
-    let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
+    // HTTPS on 0.0.0.0 for remote access
+    let https_addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
 
-    axum_server::bind_rustls(addr, rustls_config)
-        .serve(app.into_make_service())
-        .await
-        .expect("server failed");
+    // HTTP on 127.0.0.1 for local access (avoids self-signed cert issues)
+    let http_port = port + 1;
+    let http_addr = std::net::SocketAddr::from(([127, 0, 0, 1], http_port));
+
+    tracing::info!(http_port, "http server listening on localhost");
+
+    let http_app = app.clone();
+    let http_handle = tokio::spawn(async move {
+        let listener = tokio::net::TcpListener::bind(http_addr)
+            .await
+            .expect("failed to bind http listener");
+        axum::serve(listener, http_app.into_make_service())
+            .await
+            .expect("http server failed");
+    });
+
+    let https_handle = tokio::spawn(async move {
+        axum_server::bind_rustls(https_addr, rustls_config)
+            .serve(app.into_make_service())
+            .await
+            .expect("https server failed");
+    });
+
+    tokio::select! {
+        r = http_handle => r.expect("http task panicked"),
+        r = https_handle => r.expect("https task panicked"),
+    }
 }

@@ -1,10 +1,12 @@
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
-import { Maximize2, PanelRightClose, SendHorizontal, Wrench } from "lucide-react";
+import { ChevronRight, Maximize2, Mic, PanelRightClose, SendHorizontal, Square, Wrench } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { Button } from "@/components/ui/button";
@@ -13,9 +15,10 @@ import {
   CardContent,
 } from "@/components/ui/card";
 import { ButtonGroup } from "@/components/ui/button-group";
-import { useAgentWs } from "@/hooks/use-agent-ws";
 import { useAutoScroll } from "@/hooks/use-auto-scroll";
+import { useChatContext } from "@/providers/ChatProvider";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
+import { useVoice } from "@/providers/VoiceProvider";
 import { linkify } from "@/lib/linkify";
 import type { VestaEvent } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -24,7 +27,7 @@ interface ChatProps {
   onCollapse?: () => void;
   fullscreen?: boolean;
   showToolCalls?: boolean;
-  onToggleToolCalls?: () => void;
+  onShowToolCallsChange?: (show: boolean) => void;
 }
 
 const thinkingIndicatorVariants = {
@@ -58,63 +61,65 @@ const thinkingIndicatorVariants = {
   },
 };
 
-export function Chat({ onCollapse, fullscreen, showToolCalls: controlledShowToolCalls, onToggleToolCalls }: ChatProps = {}) {
-  const { name, setAgentState } = useSelectedAgent();
+export function Chat({ onCollapse, fullscreen, showToolCalls, onShowToolCallsChange }: ChatProps = {}) {
+  const { name } = useSelectedAgent();
+  const {
+    sttAvailable, voiceAutoSend,
+    isRecording, liveTranscript, toggleVoice, voiceError,
+    registerChatCallbacks,
+  } = useVoice();
   const navigate = useNavigate();
-  const { messages, agentState, connected, send } = useAgentWs(name, true);
 
-  useEffect(() => {
-    setAgentState(agentState);
-  }, [agentState, setAgentState]);
+  const { messages, agentState, connected, hasMore, loadingMore, loadMore, send } =
+    useChatContext();
 
   const [input, setInput] = useState("");
-  const [internalShowToolCalls, setInternalShowToolCalls] = useState(false);
-  const showToolCalls = controlledShowToolCalls ?? internalShowToolCalls;
-  const toggleToolCalls = onToggleToolCalls ?? (() => setInternalShowToolCalls((v) => !v));
+  const setInputCb = useCallback((text: string) => { setInput(text); }, []);
+
+  useEffect(() => {
+    registerChatCallbacks(send, setInputCb);
+  }, [registerChatCallbacks, send, setInputCb]);
+
   const [wasConnected, setWasConnected] = useState(false);
-  const [showReconnect, setShowReconnect] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const { check, scroll } = useAutoScroll();
-
-  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prevMsgCountRef = useRef(0);
+  const scrollHeightBeforeLoad = useRef(0);
+  const { check, scroll, scrollToBottom, isNearBottom } = useAutoScroll();
+  const [hasNewMessage, setHasNewMessage] = useState(false);
 
   useEffect(() => {
-    if (connected) {
-      setWasConnected(true);
-      setShowReconnect(false);
-      if (reconnectTimerRef.current) {
-        clearTimeout(reconnectTimerRef.current);
-        reconnectTimerRef.current = null;
-      }
-    } else if (wasConnected) {
-      reconnectTimerRef.current = setTimeout(() => {
-        setShowReconnect(true);
-      }, 2000);
-    }
-    return () => {
-      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
-    };
-  }, [connected, wasConnected]);
+    if (connected) setWasConnected(true);
+  }, [connected]);
 
-  const filteredMessages = messages.filter(
-    (m) => {
-      if (m.type === "notification") return false;
-      if ((m.type === "tool_start" || m.type === "tool_end") && !showToolCalls) return false;
-      return true;
-    },
-  );
+  useEffect(() => {
+    if (isNearBottom) setHasNewMessage(false);
+  }, [isNearBottom]);
+
+  const chatMessages = useMemo(() => messages.filter(
+    (m) => m.type === "user" || m.type === "chat" || m.type === "error" ||
+      (showToolCalls && m.type === "tool_start" && !(m.tool === "Bash" && m.input.includes("app-chat"))),
+  ), [messages, showToolCalls]);
 
   const isThinking =
     agentState === "thinking" || agentState === "tool_use";
 
-  const showThinkingIndicator =
-    isThinking && filteredMessages.length > 0;
-
   useLayoutEffect(() => {
-    scroll(scrollRef.current);
-  }, [filteredMessages, scroll]);
+    const el = scrollRef.current;
+    if (!el) return;
+    const prevCount = prevMsgCountRef.current;
+    const newCount = chatMessages.length;
+    if (newCount > prevCount && prevCount > 0 && el.scrollTop < 50) {
+      el.scrollTop = el.scrollHeight - scrollHeightBeforeLoad.current;
+    } else if (newCount > prevCount && !isNearBottom) {
+      const latest = chatMessages[newCount - 1];
+      if (latest && latest.type !== "user") setHasNewMessage(true);
+    } else {
+      scroll(el);
+    }
+    prevMsgCountRef.current = newCount;
+  }, [chatMessages, scroll, isNearBottom]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -126,11 +131,25 @@ export function Chat({ onCollapse, fullscreen, showToolCalls: controlledShowTool
       clearInterval(id);
       clearTimeout(timeout);
     };
-  }, [showThinkingIndicator, scroll]);
+  }, [isThinking, scroll]);
 
-  const handleScroll = () => {
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !hasMore || loadingMore) return;
+    if (el.scrollHeight <= el.clientHeight) {
+      scrollHeightBeforeLoad.current = el.scrollHeight;
+      loadMore();
+    }
+  }, [chatMessages, hasMore, loadingMore, loadMore]);
+
+  const handleScroll = useCallback(() => {
     check(scrollRef.current);
-  };
+    const el = scrollRef.current;
+    if (el && el.scrollTop < 100 && hasMore && !loadingMore) {
+      scrollHeightBeforeLoad.current = el.scrollHeight;
+      loadMore();
+    }
+  }, [check, hasMore, loadingMore, loadMore]);
 
   const handleSend = () => {
     const text = input.trim();
@@ -173,6 +192,20 @@ export function Chat({ onCollapse, fullscreen, showToolCalls: controlledShowTool
             >
               <Maximize2 />
             </Button>
+            {onShowToolCallsChange && (
+              <Button
+                size="icon-sm"
+                variant="outline"
+                className={cn(
+                  "text-muted-foreground dark:bg-card",
+                  showToolCalls && "text-primary",
+                )}
+                aria-pressed={showToolCalls}
+                onClick={() => onShowToolCallsChange(!showToolCalls)}
+              >
+                <Wrench />
+              </Button>
+            )}
             {onCollapse && (
               <Button
                 size="icon-sm"
@@ -184,43 +217,77 @@ export function Chat({ onCollapse, fullscreen, showToolCalls: controlledShowTool
               </Button>
             )}
           </ButtonGroup>
-          <Button
-            size="icon-sm"
-            variant="outline"
-            className={cn(
-              "dark:bg-card",
-              showToolCalls ? "text-primary" : "text-muted-foreground",
-            )}
-            onClick={toggleToolCalls}
-          >
-            <Wrench />
-          </Button>
         </div>
       )}
 
-      <CardContent className="flex-1 min-h-0 overflow-hidden p-0">
+      <CardContent className="flex-1 min-h-0 overflow-hidden p-0 relative">
+        <AnimatePresence>
+          {hasNewMessage && (
+            <motion.button
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 8 }}
+              transition={{ duration: 0.18 }}
+              onClick={() => scrollToBottom(scrollRef.current)}
+              className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 rounded-lg border border-primary/20 bg-primary/5 px-3 py-1.5 text-xs text-primary cursor-pointer hover:bg-primary/10 transition-colors"
+            >
+              new message
+            </motion.button>
+          )}
+        </AnimatePresence>
+        <AnimatePresence>
+          {loadingMore && (
+            <motion.div
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.18 }}
+              className="absolute left-1/2 -translate-x-1/2 z-10 pointer-events-none top-16"
+            >
+              <span className="rounded-lg border border-muted-foreground/20 bg-muted/80 backdrop-blur-sm px-3 py-1.5 text-xs text-muted-foreground">
+                loading...
+              </span>
+            </motion.div>
+          )}
+        </AnimatePresence>
         <div
           ref={scrollRef}
           onScroll={handleScroll}
-          className="h-full min-h-0 overflow-y-auto px-4 py-3 font-mono text-sm leading-relaxed"
-          style={{ maskImage: "linear-gradient(to bottom, transparent, black 80px, black calc(100% - 24px), transparent)" }}
+          className={cn(
+            "h-full min-h-0 overflow-y-auto px-3 pb-4",
+            fullscreen ? "pt-10" : "pt-6",
+          )}
+          style={{
+            maskImage: "linear-gradient(to bottom, transparent, black 48px, black calc(100% - 20px), transparent)",
+          }}
         >
-          <div className={cn("min-h-full flex flex-col justify-end", fullscreen && "pt-12")}>
+          <div className="min-h-full flex flex-col">
+            <div className="flex-1" />
             <div>
-              {filteredMessages.length === 0 ? (
+              {!hasMore && chatMessages.length > 0 && (
+                <div className="flex justify-center py-3">
+                  <span className="text-[11px] text-muted-foreground/40">beginning of conversation</span>
+                </div>
+              )}
+              {chatMessages.length === 0 ? (
                 <div className="flex flex-col items-center gap-2 py-2">
-                  <ThinkingDots />
                   <span className="text-xs text-muted-foreground">
                     {connected
-                      ? `${name} is listening`
+                      ? `${name} is setting things up`
                       : "connecting..."}
                   </span>
                 </div>
               ) : (
-                <div className="flex flex-col gap-0 sm:gap-2">
-                  {filteredMessages.map((msg, i) => (
-                    <MessageLine key={i} event={msg} />
-                  ))}
+                <div className="flex flex-col">
+                  {chatMessages.map((msg, i) => {
+                    const prev = chatMessages[i - 1];
+                    const isTool = msg.type === "tool_start";
+                    const prevIsTool = prev?.type === "tool_start";
+                    const gap = i === 0 ? "" : isTool && prevIsTool ? "mt-1" : isTool || prevIsTool ? "mt-2" : prev && prev.type === msg.type ? "mt-1.5" : "mt-5";
+                    return (
+                      <ChatBubble key={i} event={msg} className={gap} />
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -228,23 +295,9 @@ export function Chat({ onCollapse, fullscreen, showToolCalls: controlledShowTool
         </div>
       </CardContent>
 
-      <AnimatePresence>
-        {showReconnect && !connected && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="text-center py-2 bg-amber-500/10 text-amber-600 dark:text-amber-400 text-xs overflow-hidden shrink-0"
-          >
-            reconnecting...
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <div className="shrink-0 flex flex-col gap-0 px-2 pt-1 pb-3">
+      <div className="shrink-0 flex flex-col gap-0 px-2 pt-0 pb-3">
         <AnimatePresence>
-          {showThinkingIndicator && (
+          {isThinking && (
             <motion.div
               variants={thinkingIndicatorVariants}
               initial="hidden"
@@ -252,41 +305,99 @@ export function Chat({ onCollapse, fullscreen, showToolCalls: controlledShowTool
               exit="exit"
               className="shrink-0 overflow-hidden"
             >
-              <div className="px-4 pb-2">
+              <div className="px-3 pb-2">
                 <ThinkingDots className="py-0" />
               </div>
             </motion.div>
           )}
         </AnimatePresence>
-        <div className="flex items-center gap-2.5 w-full rounded-xl border bg-card shadow-md px-4 min-h-12">
-          <textarea
-            ref={textareaRef}
-            value={input}
-            onChange={handleInput}
-            onKeyDown={handleKeyDown}
-            placeholder={connected ? "send a message..." : "connecting..."}
-            disabled={!connected}
-            rows={1}
-            enterKeyHint="send"
-            className="m-0 flex-1 min-h-5 max-h-[120px] bg-transparent py-2.5 text-base sm:text-sm font-mono leading-5 resize-none outline-none placeholder:text-muted-foreground/50 disabled:opacity-50"
-          />
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            className="shrink-0"
-            disabled={!connected || !input.trim()}
-            onClick={handleSend}
-          >
-            <SendHorizontal className="text-muted-foreground" />
-          </Button>
+        <AnimatePresence>
+          {wasConnected && !connected && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="overflow-hidden"
+            >
+              <div className="flex items-center justify-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-1.5 mb-3 mx-auto w-fit text-xs text-amber-600 dark:text-amber-400">
+                reconnecting...
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+        <AnimatePresence>
+          {voiceError && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="overflow-hidden"
+            >
+              <div className="flex justify-center pb-2">
+                <span className="rounded-full border border-destructive/20 bg-destructive/5 px-3 py-1 text-xs text-destructive">
+                  {voiceError}
+                </span>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+        <div className={cn(
+          "flex items-center gap-2.5 w-full rounded-xl border bg-card shadow-md px-4 min-h-12",
+          isRecording && "border-red-500/50",
+        )}>
+          {isRecording && voiceAutoSend ? (
+            <div className="flex-1 py-2.5 text-base sm:text-sm leading-5 text-foreground min-h-5">
+              {liveTranscript || <span className="text-muted-foreground/50 animate-pulse">listening...</span>}
+            </div>
+          ) : (
+            <textarea
+              ref={textareaRef}
+              value={input}
+              onChange={handleInput}
+              onKeyDown={handleKeyDown}
+              placeholder={isRecording ? "listening..." : connected ? "send a message..." : "connecting..."}
+              disabled={!connected}
+              rows={1}
+              enterKeyHint="send"
+              className="m-0 flex-1 min-h-5 max-h-[120px] bg-transparent py-2.5 text-base sm:text-sm leading-5 resize-none outline-none placeholder:text-muted-foreground/50 disabled:opacity-50"
+            />
+          )}
+          {sttAvailable && (
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              className="shrink-0"
+              disabled={!connected}
+              onClick={toggleVoice}
+            >
+              {isRecording ? (
+                <Square className="text-red-500" size={14} />
+              ) : (
+                <Mic className="text-muted-foreground" />
+              )}
+            </Button>
+          )}
+          {(!isRecording || !voiceAutoSend) && (
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              className="shrink-0"
+              disabled={!connected || !input.trim()}
+              onClick={handleSend}
+            >
+              <SendHorizontal className="text-muted-foreground" />
+            </Button>
+          )}
         </div>
       </div>
     </Card>
   );
 }
 
-function MessageLine({ event }: { event: VestaEvent }) {
-  if (event.type === "history") return null;
+function ChatBubble({ event, className }: { event: VestaEvent; className?: string }) {
+  if (event.type === "history" || event.type === "status") return null;
 
   const ts = event.ts
     ? new Date(event.ts).toLocaleTimeString("en-US", {
@@ -296,55 +407,82 @@ function MessageLine({ event }: { event: VestaEvent }) {
     })
     : "";
 
-  let colorClass = "text-primary";
-  let contentClass = "";
-  let content = "";
-
-  switch (event.type) {
-    case "user":
-      colorClass = "text-foreground font-medium";
-      content = `> ${event.text}`;
-      break;
-    case "assistant":
-      colorClass = "text-primary/90";
-      content = event.text;
-      break;
-    case "tool_start":
-      colorClass = "text-muted-foreground";
-      contentClass = "text-xs leading-[1.9]";
-      content = `[${event.tool}] ${event.input}`;
-      break;
-    case "tool_end":
-      colorClass = "text-muted-foreground";
-      contentClass = "text-xs leading-[1.9]";
-      content = `[${event.tool}] done`;
-      break;
-    case "notification":
-      colorClass = "text-amber-600 dark:text-amber-400";
-      contentClass = "text-xs leading-[1.9]";
-      content = `[${event.source}] ${event.summary}`;
-      break;
-    case "error":
-      colorClass = "text-destructive";
-      content = `error: ${event.text}`;
-      break;
-    case "status":
-      return null;
-    default:
-      return null;
+  if (event.type === "error") {
+    return (
+      <div className={cn("flex justify-center px-4 py-1", className)}>
+        <span className="text-xs text-destructive">{event.text}</span>
+      </div>
+    );
   }
 
+  if (event.type === "tool_start") {
+    return <ToolCallLabel tool={event.tool} input={event.input} className={className} />;
+  }
+
+  if (event.type !== "user" && event.type !== "chat") return null;
+
+  const isUser = event.type === "user";
+  const text = event.text;
+
   return (
-    <div className={cn("flex gap-2 py-[1px] max-sm:flex-col max-sm:gap-0 max-sm:mt-2", colorClass)}>
-      {ts && (
-        <span className="text-xs text-muted-foreground/40 shrink-0 leading-[1.9] select-none">
-          {ts}
-        </span>
-      )}
-      <span
-        className={cn("break-words min-w-0", contentClass)}
-        dangerouslySetInnerHTML={{ __html: linkify(content) }}
-      />
+    <div className={cn("flex", isUser ? "justify-end" : "justify-start", className)}>
+      <div
+        className={cn(
+          "flex items-end max-w-[85%] rounded-2xl px-3 py-1.5 text-sm leading-relaxed",
+          isUser
+            ? "bg-primary text-primary-foreground rounded-br-sm"
+            : "bg-muted text-foreground rounded-bl-sm",
+        )}
+      >
+        <span className="min-w-0 break-words" dangerouslySetInnerHTML={{ __html: linkify(text) }} />
+        {ts && (
+          <span
+            className={cn(
+              "shrink-0 ml-auto pl-2 text-[10px] leading-relaxed select-none whitespace-nowrap",
+              isUser ? "text-primary-foreground/50" : "text-muted-foreground/50",
+            )}
+          >
+            {ts}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ToolCallLabel({ tool, input, className }: { tool: string; input: string; className?: string }) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div className={cn("flex flex-col items-start max-w-[85%]", className)}>
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex items-center gap-1.5 rounded-full border border-muted-foreground/15 bg-muted/50 px-2.5 py-1 cursor-pointer hover:bg-muted/80 transition-colors"
+      >
+        <Wrench className="size-3 text-muted-foreground/60" />
+        <span className="text-[11px] text-muted-foreground/70">{tool}</span>
+        <motion.span
+          animate={{ rotate: expanded ? 90 : 0 }}
+          transition={{ duration: 0.15 }}
+          className="flex items-center"
+        >
+          <ChevronRight className="size-3 text-muted-foreground/40" />
+        </motion.span>
+      </button>
+      <AnimatePresence>
+        {expanded && (
+          <motion.pre
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            className="mt-1 w-full overflow-hidden rounded-lg border border-muted-foreground/10 bg-muted/30 px-2.5 py-2 text-[11px] leading-relaxed text-muted-foreground/70 whitespace-pre-wrap break-words font-mono"
+          >
+            {input}
+          </motion.pre>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

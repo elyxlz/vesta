@@ -11,9 +11,8 @@ import pytest
 import vesta.models as vm
 from claude_agent_sdk import HookContext
 from claude_agent_sdk.types import SubagentStartHookInput
-from vesta.core.client import _format_tool_call, _parse_agent_input, _tool_summary, _subagent_hook
-from vesta.core.history import format_results, history_get_range, history_save, history_search, open_history
-from vesta.events import EventBus, SubagentStartEvent, SubagentStopEvent
+from vesta.core.client import _format_tool_call, _format_search_results, _parse_agent_input, _tool_summary, _subagent_hook
+from vesta.events import ChatEvent, EventBus, SubagentStartEvent, SubagentStopEvent, UserEvent
 from vesta.core.init import get_memory_path
 from vesta.core.loops import format_notification_batch
 
@@ -35,7 +34,7 @@ def test_config_paths_under_root(tmp_path):
 
 def test_config_default_values():
     config = vm.VestaConfig()
-    assert config.notification_check_interval > 0
+    assert config.monitor_tick_interval > 0
     assert config.response_timeout > 0
 
 
@@ -80,8 +79,8 @@ def test_tool_summary_task():
     assert _tool_summary("Task", {"subagent_type": "code", "description": "write code"}) == "Task [code]: write code"
 
 
-def test_eventbus_emit_subagent_start():
-    bus = EventBus()
+def test_eventbus_emit_subagent_start(tmp_path):
+    bus = EventBus(data_dir=tmp_path)
     q = bus.subscribe()
     event = SubagentStartEvent(type="subagent_start", agent_id="abc", agent_type="browser")
     bus.emit(event)
@@ -89,8 +88,11 @@ def test_eventbus_emit_subagent_start():
     assert received["type"] == "subagent_start"
     assert received["agent_id"] == "abc"
     assert received["agent_type"] == "browser"
-    assert len(bus.history) == 1
-    assert bus.history[0]["type"] == "subagent_start"
+    # Verify persisted
+    events, _ = bus.recent()
+    assert len(events) == 1
+    assert events[0]["type"] == "subagent_start"
+    bus.close()
 
 
 @pytest.mark.anyio
@@ -107,6 +109,96 @@ async def test_subagent_hook_emits_event(verb, event_type, agent_id, agent_type)
     assert received["type"] == event_type
     assert received["agent_id"] == agent_id
     assert received["agent_type"] == agent_type
+
+
+def test_eventbus_all_types_persisted(tmp_path):
+    """All non-status event types are persisted."""
+    bus = EventBus(data_dir=tmp_path)
+    bus.emit(ChatEvent(type="chat", text="hello"))
+    bus.emit(SubagentStartEvent(type="subagent_start", agent_id="a", agent_type="browser"))
+
+    events, _ = bus.recent()
+    types = {e["type"] for e in events}
+    assert "chat" in types
+    assert "subagent_start" in types
+    bus.close()
+
+
+def test_eventbus_recent_pagination(tmp_path):
+    """recent() returns last PAGE_SIZE events and a cursor when there are more."""
+    bus = EventBus(data_dir=tmp_path)
+    for i in range(150):
+        bus.emit(UserEvent(type="user", text=f"msg {i}"))
+
+    events, cursor = bus.recent(limit=50)
+    assert len(events) == 50
+    assert tp.cast(tp.Any, events[-1])["text"] == "msg 149"
+    assert tp.cast(tp.Any, events[0])["text"] == "msg 100"
+    assert cursor is not None
+    bus.close()
+
+
+def test_eventbus_cursor_pagination(tmp_path):
+    """before(cursor) returns the previous page of events."""
+    bus = EventBus(data_dir=tmp_path)
+    for i in range(80):
+        bus.emit(UserEvent(type="user", text=f"msg {i}"))
+
+    events, cursor = bus.recent(limit=30)
+    assert len(events) == 30
+    assert cursor is not None
+
+    older, cursor2 = bus.before(cursor, limit=30)
+    assert len(older) == 30
+    assert tp.cast(tp.Any, older[-1])["text"] == "msg 49"
+    assert tp.cast(tp.Any, older[0])["text"] == "msg 20"
+    assert cursor2 is not None
+
+    oldest, cursor3 = bus.before(cursor2, limit=30)
+    assert len(oldest) == 20
+    assert tp.cast(tp.Any, oldest[0])["text"] == "msg 0"
+    assert cursor3 is None  # no more pages
+    bus.close()
+
+
+def test_eventbus_persists_across_instances(tmp_path):
+    """Events survive EventBus recreation (simulating container restart)."""
+    bus = EventBus(data_dir=tmp_path)
+    bus.emit(UserEvent(type="user", text="before restart"))
+    bus.emit(ChatEvent(type="chat", text="reply"))
+    bus.close()
+
+    bus2 = EventBus(data_dir=tmp_path)
+    events, _ = bus2.recent()
+    texts = [tp.cast(tp.Any, e)["text"] for e in events if "text" in e]
+    assert "before restart" in texts
+    assert "reply" in texts
+    bus2.close()
+
+
+def test_eventbus_status_not_persisted(tmp_path):
+    """Status events are broadcast to subscribers but not stored."""
+    bus = EventBus(data_dir=tmp_path)
+    q = bus.subscribe()
+    bus.set_state("thinking")
+    received = q.get_nowait()
+    assert received["type"] == "status"
+
+    events, _ = bus.recent()
+    assert len(events) == 0
+    bus.close()
+
+
+def test_eventbus_no_data_dir():
+    """EventBus works without persistence (no data_dir)."""
+    bus = EventBus()
+    q = bus.subscribe()
+    bus.emit(UserEvent(type="user", text="hello"))
+    received = q.get_nowait()
+    assert received["type"] == "user"
+    events, _ = bus.recent()
+    assert events == []
+    bus.close()
 
 
 def test_format_notification_batch_single():
@@ -135,7 +227,6 @@ def test_deployment_structure():
     assert skills_dir.is_dir(), "skills/ directory missing"
 
     expected_skills = [
-        "reminders",
         "tasks",
         "upstream",
         "dream",
@@ -153,7 +244,7 @@ def test_deployment_structure():
     for skill_name in expected_skills:
         assert (skills_dir / skill_name).is_dir(), f"Skill '{skill_name}' missing from skills/"
 
-    for skill_name in ("reminders", "tasks"):
+    for skill_name in ("tasks",):
         assert (skills_dir / skill_name / "cli" / "pyproject.toml").exists(), f"pyproject.toml missing for {skill_name}"
 
     assert (skills_dir / "whatsapp" / "cli" / "go.mod").exists(), "go.mod missing for whatsapp"
@@ -170,21 +261,30 @@ def test_skill_frontmatter():
         fm = dict(re.findall(r"^(\w[\w-]*)\s*:\s*(.+)$", match.group(1), re.MULTILINE))
         assert fm.get("name"), f"{skill_md}: missing 'name' in frontmatter"
         assert fm.get("description"), f"{skill_md}: missing 'description' in frontmatter"
+        assert fm["name"] == skill_md.parent.name, (
+            f"{skill_md}: frontmatter name '{fm['name']}' must match directory name '{skill_md.parent.name}'"
+        )
 
 
 def test_skills_index_valid():
     import json
     import re
 
-    source_root = Path(__file__).parent.parent
-    index = json.loads((source_root / "skills" / "index.json").read_text())
+    skills_dir = Path(__file__).parent.parent / "skills"
+    index = json.loads((skills_dir / "index.json").read_text())
     assert isinstance(index, list) and index, "skills/index.json must be a non-empty list"
     skill_names = {s["name"] for s in index}
-    for skill_md in (source_root / "skills").glob("*/SKILL.md"):
+    default_skills_path = skills_dir / "default-skills.txt"
+    default_skills = set(default_skills_path.read_text().splitlines()) if default_skills_path.exists() else set()
+    for skill_md in skills_dir.glob("*/SKILL.md"):
         text = skill_md.read_text()
         match = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
         fm = dict(re.findall(r"^(\w[\w-]*)\s*:\s*(.+)$", match.group(1), re.MULTILINE)) if match else {}
-        assert fm.get("name", skill_md.parent.name) in skill_names, f"{skill_md.parent.name} missing from skills/index.json"
+        skill_dir_name = skill_md.parent.name
+        name = fm.get("name", skill_dir_name)
+        if name in default_skills:
+            continue
+        assert name in skill_names, f"{skill_dir_name} missing from skills/index.json"
 
 
 def test_skills_registry_scripts_executable():
@@ -905,86 +1005,48 @@ async def test_drain_timeout_does_not_block_forever():
 # --- History store ---
 
 
-def test_history_store_save_and_search(tmp_path):
-    store = open_history(tmp_path / "test.db")
-    history_save(store, "user", "what is the weather in paris")
-    history_save(store, "assistant", "it is sunny in paris today")
-    history_save(store, "user", "how about london")
-    history_save(store, "assistant", "london is rainy as usual")
+def test_eventbus_search(tmp_path):
+    """EventBus.search() finds text-bearing events via FTS5."""
+    bus = EventBus(data_dir=tmp_path)
+    bus.emit(UserEvent(type="user", text="what is the weather in paris"))
+    bus.emit(ChatEvent(type="chat", text="it is sunny in paris today"))
+    bus.emit(UserEvent(type="user", text="how about london"))
+    bus.emit(ChatEvent(type="chat", text="london is rainy as usual"))
 
-    results = history_search(store, "paris")
+    results = bus.search("paris")
     assert len(results) == 2
     assert any("paris" in r["content"] for r in results)
 
-    results = history_search(store, "london")
+    results = bus.search("london")
     assert len(results) == 2
 
-    results = history_search(store, "sunny")
+    results = bus.search("sunny")
     assert len(results) == 1
-    assert results[0]["role"] == "assistant"
+    assert results[0]["role"] == "chat"
+    bus.close()
 
 
-def test_history_store_search_no_results(tmp_path):
-    store = open_history(tmp_path / "test.db")
-    history_save(store, "user", "hello world")
-    results = history_search(store, "nonexistent")
+def test_eventbus_search_no_results(tmp_path):
+    bus = EventBus(data_dir=tmp_path)
+    bus.emit(UserEvent(type="user", text="hello world"))
+    results = bus.search("nonexistent")
     assert results == []
+    bus.close()
 
 
-def test_history_store_search_limit(tmp_path):
-    store = open_history(tmp_path / "test.db")
+def test_eventbus_search_limit(tmp_path):
+    bus = EventBus(data_dir=tmp_path)
     for i in range(10):
-        history_save(store, "user", f"message number {i} about python")
-
-    results = history_search(store, "python", limit=3)
+        bus.emit(UserEvent(type="user", text=f"message number {i} about python"))
+    results = bus.search("python", limit=3)
     assert len(results) == 3
+    bus.close()
 
 
-def test_history_store_get_range(tmp_path):
-    store = open_history(tmp_path / "test.db")
-    t1 = dt.datetime(2025, 1, 1, 10, 0, 0)
-    t2 = dt.datetime(2025, 1, 2, 10, 0, 0)
-    t3 = dt.datetime(2025, 1, 3, 10, 0, 0)
-    history_save(store, "user", "day one", timestamp=t1)
-    history_save(store, "user", "day two", timestamp=t2)
-    history_save(store, "user", "day three", timestamp=t3)
-
-    results = history_get_range(store, since=t2)
-    assert len(results) == 2
-    assert results[0]["content"] == "day two"
-
-    results = history_get_range(store, until=t2)
-    assert len(results) == 2
-    assert results[1]["content"] == "day two"
-
-
-def test_history_format_results():
-    assert format_results([]) == "No results found."
+def test_format_search_results():
+    assert _format_search_results([]) == "No results found."
 
     results = [{"timestamp": "2025-01-01T10:00:00", "role": "user", "content": "hello"}]
-    formatted = format_results(results)
+    formatted = _format_search_results(results)
     assert "hello" in formatted
     assert "user" in formatted
-
-
-def test_history_search_recency_ranking(tmp_path):
-    store = open_history(tmp_path / "test.db")
-    old = dt.datetime(2024, 1, 1, 10, 0, 0)
-    recent = dt.datetime(2026, 3, 30, 10, 0, 0)
-    history_save(store, "user", "deploy the backend service", timestamp=old)
-    history_save(store, "user", "deploy the backend service", timestamp=recent)
-
-    results = history_search(store, "deploy", limit=2)
-    assert len(results) == 2
-    # Recent message should rank first (lower combined score)
-    assert results[0]["timestamp"] == recent.isoformat()
-    assert results[1]["timestamp"] == old.isoformat()
-
-
-def test_history_store_session_id(tmp_path):
-    store = open_history(tmp_path / "test.db")
-    history_save(store, "user", "msg one", session_id="session-abc")
-    history_save(store, "user", "msg two", session_id="session-def")
-
-    results = history_search(store, "msg")
-    assert len(results) == 2

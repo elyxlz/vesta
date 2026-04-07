@@ -66,6 +66,9 @@
     ],
     "iOS": {
       "developmentTeam": "QB32XS5CT9"
+    },
+    "macOS": {
+      "entitlements": null
     }
   }
 }

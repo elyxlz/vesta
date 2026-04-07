@@ -13,7 +13,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
-import { Field, FieldContent, FieldDescription, FieldLabel } from "@/components/ui/field";
+import { Field, FieldLabel } from "@/components/ui/field";
 import { Separator } from "@/components/ui/separator";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useTheme, type Theme } from "@/stores/use-theme";
@@ -30,35 +30,25 @@ export function Settings() {
   const hostname = (() => {
     const conn = getConnection();
     if (!conn) return "";
-    try {
-      return new URL(conn.url).hostname;
-    } catch {
-      return conn.url;
-    }
+    try { return new URL(conn.url).hostname; } catch { return conn.url; }
   })();
 
   return (
     <>
       <Tooltip>
         <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => setOpen(true)}
-          >
+          <Button variant="ghost" size="icon-sm" onClick={() => setOpen(true)}>
             <SettingsIcon />
           </Button>
         </TooltipTrigger>
         <TooltipContent>settings</TooltipContent>
       </Tooltip>
 
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog drawerOnMobile open={open} onOpenChange={setOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Settings</DialogTitle>
-            <DialogDescription className="sr-only">
-              Application settings
-            </DialogDescription>
+            <DialogDescription className="sr-only">Application settings</DialogDescription>
           </DialogHeader>
 
           <Field orientation="vertical" className="sm:flex-row sm:items-center">
@@ -66,24 +56,13 @@ export function Settings() {
             <ToggleGroup
               type="single"
               value={theme}
-              onValueChange={(value) => {
-                if (value) setTheme(value as Theme);
-              }}
+              onValueChange={(value) => { if (value) setTheme(value as Theme); }}
               variant="outline"
               spacing={2}
             >
-              <ToggleGroupItem value="system">
-                <Monitor />
-                System
-              </ToggleGroupItem>
-              <ToggleGroupItem value="light">
-                <Sun />
-                Light
-              </ToggleGroupItem>
-              <ToggleGroupItem value="dark">
-                <Moon />
-                Dark
-              </ToggleGroupItem>
+              <ToggleGroupItem value="system"><Monitor /> System</ToggleGroupItem>
+              <ToggleGroupItem value="light"><Sun /> Light</ToggleGroupItem>
+              <ToggleGroupItem value="dark"><Moon /> Dark</ToggleGroupItem>
             </ToggleGroup>
           </Field>
 
@@ -96,10 +75,7 @@ export function Settings() {
             <Button
               variant="outline"
               className="w-full sm:w-auto shrink-0"
-              onClick={() => {
-                setOpen(false);
-                disconnect();
-              }}
+              onClick={() => { setOpen(false); disconnect(); }}
             >
               <LogOut data-icon="inline-start" />
               Disconnect
