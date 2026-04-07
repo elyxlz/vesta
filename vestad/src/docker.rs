@@ -380,7 +380,7 @@ pub fn resolve_image(build: bool) -> Result<&'static str, DockerError> {
     if build {
         let context = find_dockerfile()?;
         let status = process::Command::new("docker")
-            .args(["build", "-t", LOCAL_IMAGE_TAG, "."])
+            .args(["buildx", "build", "-t", LOCAL_IMAGE_TAG, "."])
             .current_dir(&context)
             .stdout(process::Stdio::null())
             .stderr(process::Stdio::inherit())
