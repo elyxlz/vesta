@@ -94,6 +94,13 @@ pub fn restart() -> Result<(), String> {
     run_systemctl(&["restart", SERVICE_NAME])
 }
 
+pub fn uninstall() -> Result<(), String> {
+    run_systemctl(&["disable", SERVICE_NAME]).ok();
+    let unit_path = unit_file_path()?;
+    std::fs::remove_file(&unit_path).ok();
+    run_systemctl(&["daemon-reload"])
+}
+
 pub fn wait_for_start() -> Result<(), String> {
     let deadline = std::time::Instant::now()
         + std::time::Duration::from_millis(SERVICE_STARTUP_WAIT_MS);
