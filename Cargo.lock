@@ -1974,7 +1974,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vesta"
-version = "0.1.110"
+version = "0.1.111"
 dependencies = [
  "clap",
  "dirs",
@@ -1990,7 +1990,7 @@ dependencies = [
 
 [[package]]
 name = "vesta-tests"
-version = "0.1.110"
+version = "0.1.111"
 dependencies = [
  "ring",
  "rustls",
@@ -2004,7 +2004,7 @@ dependencies = [
 
 [[package]]
 name = "vestad"
-version = "0.1.110"
+version = "0.1.111"
 dependencies = [
  "async-stream",
  "axum",

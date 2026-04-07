@@ -14,7 +14,6 @@ from rich import print_json
 import vesta.models as vm
 from vesta import logger
 from vesta.api import start_ws_server
-from vesta.core.init import get_memory_path
 from vesta.core.loops import message_processor, monitor_loop, queue_greeting
 
 SignalHandler = tp.Callable[[int, types.FrameType | None], None]
@@ -166,10 +165,9 @@ async def async_main() -> None:
     logger.setup(config.logs_dir, log_level=config.log_level)
     logger.init(f"{config.agent_name} starting")
 
-    memory_path = get_memory_path(config)
-    first_start = not memory_path.exists() or "[Unknown - need to ask]" in memory_path.read_text()
     restart_reason = _read_restart_reason(config)
     initial_state = init_state(config=config)
+    first_start = initial_state.session_id is None
     logger.init(f"Starting main loop ({restart_reason})...")
     await run_vesta(config, state=initial_state, first_start=first_start, restart_reason=restart_reason)
 

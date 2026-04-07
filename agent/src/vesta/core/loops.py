@@ -217,11 +217,7 @@ async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm
 
                 if state.dreamer_active:
                     state.dreamer_active = False
-                    logger.dreamer("Dreamer complete, running /compact...")
-                    await _process_interruptible("/compact", is_user=False, queue=queue, state=state, config=config)
-                    logger.dreamer("Compact complete, triggering nightly restart (session preserved)...")
-                    state.restart_reason = "nightly — dreamer ran, context compacted"
-                    state.graceful_shutdown.set()
+                    _trigger_nightly_restart(state=state, config=config)
         finally:
             state.client = None
             state.interrupt_event = None
