@@ -1,7 +1,7 @@
 #[cfg(not(target_os = "linux"))]
 compile_error!("vestad only supports Linux");
 
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 
 mod docker;
 mod jwt;
@@ -70,6 +70,10 @@ enum Command {
     Update,
     /// Uninstall vestad: stop service, remove config, and delete binary
     Uninstall,
+    /// Print version information
+    Version,
+    /// Print help information
+    Help,
 }
 
 #[derive(clap::Subcommand)]
@@ -450,6 +454,14 @@ fn main() {
 
         Command::Update => {
             self_update::perform_update().unwrap_or_else(|e| die(e.to_string()));
+        }
+
+        Command::Version => {
+            println!("v{}", env!("CARGO_PKG_VERSION"));
+        }
+
+        Command::Help => {
+            Cli::command().print_help().unwrap_or_else(|e| die(format!("failed to print help: {e}")));
         }
 
         Command::Uninstall => {
