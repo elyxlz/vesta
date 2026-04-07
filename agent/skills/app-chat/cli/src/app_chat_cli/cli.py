@@ -3,7 +3,7 @@
 Commands:
   serve   — daemon: connects to agent WS, writes notifications, accepts CLI commands via Unix socket
   send    — send a message to the app (via daemon Unix socket)
-  history — search/list chat history from events.db
+  history — search/list chat history via agent API
 """
 
 import argparse
@@ -29,7 +29,7 @@ def main() -> None:
     history_p = sub.add_parser("history", help="Search or list chat history")
     history_p.add_argument("--search", "-s", default=None, help="FTS5 search query")
     history_p.add_argument("--limit", "-n", type=int, default=20, help="Max results")
-    history_p.add_argument("--db", default=None, help="Path to events.db")
+    history_p.add_argument("--url", default=None, help="Agent HTTP base URL (default: http://localhost:7860)")
 
     args = parser.parse_args()
 
