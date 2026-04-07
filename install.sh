@@ -4,22 +4,39 @@ set -euo pipefail
 main() {
   REPO="elyxlz/vesta"
   INSTALL_VERSION=""
+  INSTALL_CLI=""
+  INSTALL_SERVER=""
+  INSTALL_APP=""
 
   for arg in "$@"; do
     case "$arg" in
       --version=*) INSTALL_VERSION="${arg#--version=}" ;;
+      --cli) INSTALL_CLI=1 ;;
+      --server) INSTALL_SERVER=1 ;;
+      --app) INSTALL_APP=1 ;;
       --help|-h)
         echo "Usage: curl -fsSL https://raw.githubusercontent.com/elyxlz/vesta/master/install.sh | bash"
         echo ""
         echo "Installs vesta CLI, desktop app (if GUI available), and vestad (Linux only)."
+        echo "By default, all available components for your platform are installed."
         echo ""
         echo "Options:"
+        echo "  --cli              Install only the CLI"
+        echo "  --server           Install only vestad (Linux only)"
+        echo "  --app              Install only the desktop app"
         echo "  --version=X.Y.Z   Install a specific version"
         echo "  --help             Show this help"
         exit 0
         ;;
     esac
   done
+
+  # If no component flags given, install everything
+  if [ -z "$INSTALL_CLI" ] && [ -z "$INSTALL_SERVER" ] && [ -z "$INSTALL_APP" ]; then
+    INSTALL_CLI=1
+    INSTALL_SERVER=1
+    INSTALL_APP=1
+  fi
 
   OS=$(uname -s | tr '[:upper:]' '[:lower:]')
   ARCH=$(uname -m)
@@ -199,15 +216,15 @@ main() {
 
   case "$OS" in
     linux)
-      install_cli
-      install_vestad
-      if has_gui; then
+      [ -n "$INSTALL_CLI" ] && install_cli
+      [ -n "$INSTALL_SERVER" ] && install_vestad
+      if [ -n "$INSTALL_APP" ] && has_gui; then
         install_app_linux
       fi
       ;;
     darwin)
-      install_cli
-      if has_gui; then
+      [ -n "$INSTALL_CLI" ] && install_cli
+      if [ -n "$INSTALL_APP" ] && has_gui; then
         install_app_macos
       fi
       ;;
