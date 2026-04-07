@@ -19,4 +19,4 @@ export {
 export { authenticate, submitAuthCode, type AuthStartResult } from "./auth";
 export { streamLogs, stopLogs } from "./logs";
 export { connectToServer } from "./server";
-export { isNewer, checkAndInstallUpdate } from "./updates";
+export { isNewer, checkAndInstallUpdate, type UpdateInfo } from "./updates";

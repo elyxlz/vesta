@@ -10,10 +10,15 @@ export function isNewer(latest: string, current: string): boolean {
   return false;
 }
 
-export async function checkAndInstallUpdate(): Promise<{
+export type UpdateInfo = {
   version: string;
-  installing: boolean;
-} | null> {
+  /** Update was downloaded and installed — app needs restart to apply. */
+  installed: boolean;
+  /** URL to download the update manually (Linux). */
+  releaseUrl: string | null;
+};
+
+export async function checkAndInstallUpdate(): Promise<UpdateInfo | null> {
   if (!isTauri) return null;
   try {
     const { getVersion } = await import("@tauri-apps/api/app");
@@ -25,15 +30,20 @@ export async function checkAndInstallUpdate(): Promise<{
       );
       if (!resp.ok) return null;
       const data = await resp.json();
-      const latest = (data.tag_name as string).replace(/^v/, "");
+      const tag = data.tag_name as string;
+      const latest = tag.replace(/^v/, "");
       if (!isNewer(latest, current)) return null;
-      return { version: latest, installing: false };
+      return {
+        version: latest,
+        installed: false,
+        releaseUrl: data.html_url as string,
+      };
     }
     const { check } = await import("@tauri-apps/plugin-updater");
     const update = await check();
     if (!update) return null;
     await update.downloadAndInstall();
-    return { version: update.version, installing: true };
+    return { version: update.version, installed: true, releaseUrl: null };
   } catch (e) {
     console.error("Update check failed:", e);
     return null;
