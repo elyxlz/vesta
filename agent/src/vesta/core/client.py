@@ -51,6 +51,8 @@ def _format_search_results(results: list[dict[str, str]], *, max_chars: int = 50
 
 
 def _build_query(prompt: str, *, timestamp: dt.datetime) -> str:
+    if prompt.startswith("/"):
+        return prompt
     timestamp_str = timestamp.strftime("%A, %B %d, %Y at %I:%M:%S %p %Z")
     return f"[Current time: {timestamp_str}]\n{prompt}"
 
