@@ -11,14 +11,14 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use tokio::sync::Mutex;
 
 use crate::{docker, jwt, update_check};
 
 const API_KEY_BYTES: usize = 32;
 const AUTH_SESSION_TIMEOUT_SECS: u64 = 600;
-const LOG_TAIL_LINES: &str = "500";
+const DEFAULT_LOG_TAIL_LINES: u64 = 500;
 const AUTO_BACKUP_CHECK_INTERVAL_SECS: u64 = 3600;
 
 // --- TLS cert generation ---
@@ -131,6 +131,8 @@ pub struct AppState {
     agent_locks: Mutex<HashMap<String, Arc<tokio::sync::RwLock<()>>>>,
     tunnel_url: Mutex<Option<String>>,
     update_info: Mutex<Option<update_check::UpdateInfo>>,
+    auto_backup_enabled: AtomicBool,
+    backup_retention: Mutex<crate::types::RetentionPolicy>,
 }
 
 impl AppState {
@@ -141,6 +143,12 @@ impl AppState {
             agent_locks: Mutex::new(HashMap::new()),
             tunnel_url: Mutex::new(tunnel_url),
             update_info: Mutex::new(None),
+            auto_backup_enabled: AtomicBool::new(true),
+            backup_retention: Mutex::new(crate::types::RetentionPolicy {
+                daily: docker::DEFAULT_RETENTION_DAILY,
+                weekly: docker::DEFAULT_RETENTION_WEEKLY,
+                monthly: docker::DEFAULT_RETENTION_MONTHLY,
+            }),
         }
     }
 
@@ -577,8 +585,14 @@ async fn inject_token_handler(
 
 // --- SSE Logs ---
 
+#[derive(Deserialize)]
+struct LogsQuery {
+    tail: Option<u64>,
+}
+
 async fn logs_handler(
     Path(name): Path<String>,
+    Query(query): Query<LogsQuery>,
 ) -> Result<Sse<impl futures_core::Stream<Item = Result<Event, std::io::Error>>>, (StatusCode, Json<serde_json::Value>)>
 {
     docker::validate_name(&name).map_err(map_docker_err)?;
@@ -586,9 +600,10 @@ async fn logs_handler(
     docker::ensure_running(&cname)
         .map_err(|e| err_response(StatusCode::BAD_REQUEST, &e.to_string()))?;
 
+    let tail_lines = query.tail.unwrap_or(DEFAULT_LOG_TAIL_LINES).to_string();
     let stream = async_stream::stream! {
         let mut child = match tokio::process::Command::new("docker")
-            .args(["exec", &cname, "tail", "-n", LOG_TAIL_LINES, "-f", docker::VESTA_LOG_PATH])
+            .args(["exec", &cname, "tail", "-n", &tail_lines, "-f", docker::VESTA_LOG_PATH])
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
             .spawn()
@@ -717,7 +732,7 @@ async fn create_backup_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
 ) -> Result<Json<crate::types::BackupInfo>, (StatusCode, Json<serde_json::Value>)> {
-    tracing::info!(name = %name, "creating manual backup");
+    tracing::info!(agent = %name, "creating manual backup");
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
@@ -729,6 +744,7 @@ async fn create_backup_handler(
     .unwrap()
     .map_err(map_docker_err)?;
 
+    tracing::info!(agent = %name, backup_id = %backup.id, size = backup.size, "backup created");
     Ok(Json(backup))
 }
 
@@ -761,7 +777,7 @@ async fn restore_backup_handler(
     let lock = state.agent_lock(&path.name).await;
     let _guard = lock.write().await;
 
-    tracing::info!(name = %path.name, backup_id = %path.backup_id, "restoring backup");
+    tracing::info!(agent = %path.name, backup_id = %path.backup_id, "restoring backup");
     let name = path.name.clone();
     let backup_id = path.backup_id.clone();
     tokio::task::spawn_blocking(move || docker::restore_backup(&name, &backup_id))
@@ -769,6 +785,7 @@ async fn restore_backup_handler(
         .unwrap()
         .map_err(map_docker_err)?;
 
+    tracing::info!(agent = %path.name, backup_id = %path.backup_id, "backup restored");
     Ok(Json(serde_json::json!({"ok": true})))
 }
 
@@ -785,14 +802,58 @@ async fn delete_backup_handler(
     let lock = state.agent_lock(&path.name).await;
     let _guard = lock.write().await;
 
-    tracing::info!(backup_id = %path.backup_id, "deleting backup");
+    tracing::info!(agent = %path.name, backup_id = %path.backup_id, "deleting backup");
     let backup_id = path.backup_id.clone();
     tokio::task::spawn_blocking(move || docker::delete_backup(&backup_id))
         .await
         .unwrap()
         .map_err(map_docker_err)?;
 
+    tracing::info!(agent = %path.name, backup_id = %path.backup_id, "backup deleted");
     Ok(Json(serde_json::json!({"ok": true})))
+}
+
+// --- Auto-backup settings ---
+
+async fn get_auto_backup_handler(
+    State(state): State<SharedState>,
+) -> Json<serde_json::Value> {
+    let enabled = state.auto_backup_enabled.load(Ordering::Relaxed);
+    let retention = *state.backup_retention.lock().await;
+    Json(serde_json::json!({
+        "enabled": enabled,
+        "retention": retention,
+    }))
+}
+
+async fn set_auto_backup_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    if let Some(enabled) = body["enabled"].as_bool() {
+        state.auto_backup_enabled.store(enabled, Ordering::Relaxed);
+        tracing::info!(enabled, "auto-backup toggled");
+    }
+
+    let mut retention = state.backup_retention.lock().await;
+    if let Some(ret) = body.get("retention") {
+        if let Some(d) = ret["daily"].as_u64() {
+            retention.daily = d as usize;
+        }
+        if let Some(w) = ret["weekly"].as_u64() {
+            retention.weekly = w as usize;
+        }
+        if let Some(m) = ret["monthly"].as_u64() {
+            retention.monthly = m as usize;
+        }
+        tracing::info!(daily = retention.daily, weekly = retention.weekly, monthly = retention.monthly, "backup retention updated");
+    }
+
+    let enabled = state.auto_backup_enabled.load(Ordering::Relaxed);
+    Ok(Json(serde_json::json!({
+        "enabled": enabled,
+        "retention": *retention,
+    })))
 }
 
 // --- Port file ---
@@ -864,6 +925,8 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/backups", get(list_backups_handler))
         .route("/agents/{name}/backups/{backup_id}/restore", post(restore_backup_handler))
         .route("/agents/{name}/backups/{backup_id}", axum::routing::delete(delete_backup_handler))
+        .route("/settings/auto-backup", get(get_auto_backup_handler))
+        .route("/settings/auto-backup", axum::routing::put(set_auto_backup_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
@@ -891,9 +954,21 @@ fn spawn_auto_backup_task(state: SharedState) {
         loop {
             tokio::time::sleep(tokio::time::Duration::from_secs(AUTO_BACKUP_CHECK_INTERVAL_SECS)).await;
 
+            if !state.auto_backup_enabled.load(Ordering::Relaxed) {
+                tracing::debug!("auto-backup: disabled, skipping cycle");
+                continue;
+            }
+
             let agents = tokio::task::spawn_blocking(docker::list_agent_names)
                 .await
                 .unwrap_or_default();
+
+            if agents.is_empty() {
+                tracing::debug!("auto-backup: no agents found, skipping cycle");
+                continue;
+            }
+
+            tracing::info!(agent_count = agents.len(), "auto-backup: starting cycle");
 
             let now_epoch = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -903,14 +978,17 @@ fn spawn_auto_backup_task(state: SharedState) {
             let seven_days_ago = docker::now_timestamp_from_epoch(now_epoch - 7 * 86400);
             let thirty_days_ago = docker::now_timestamp_from_epoch(now_epoch - 30 * 86400);
 
-            for name in agents {
-                let lock = state.agent_lock(&name).await;
+            let retention = *state.backup_retention.lock().await;
+
+            for name in &agents {
+                let lock = state.agent_lock(name).await;
                 let _guard = lock.write().await;
 
                 let name_clone = name.clone();
                 let today = today_date.to_string();
                 let week_ago = seven_days_ago.clone();
                 let month_ago = thirty_days_ago.clone();
+                let ret = retention;
 
                 let result = tokio::task::spawn_blocking(move || -> Result<(), docker::DockerError> {
                     let mut backups = docker::list_backups(&name_clone)?;
@@ -921,7 +999,7 @@ fn spawn_auto_backup_task(state: SharedState) {
                     });
 
                     if !has_daily_today {
-                        tracing::info!("auto-backup: creating daily backup for '{}'", name_clone);
+                        tracing::info!(agent = %name_clone, backup_type = "daily", "auto-backup: creating backup");
                         let new = docker::create_backup(&name_clone, crate::types::BackupType::Daily)?;
                         backups.insert(0, new);
                     }
@@ -930,7 +1008,7 @@ fn spawn_auto_backup_task(state: SharedState) {
                         b.backup_type == crate::types::BackupType::Weekly && b.created_at >= week_ago
                     });
                     if !has_recent_weekly {
-                        tracing::info!("auto-backup: creating weekly backup for '{}'", name_clone);
+                        tracing::info!(agent = %name_clone, backup_type = "weekly", "auto-backup: creating backup");
                         let new = docker::create_backup(&name_clone, crate::types::BackupType::Weekly)?;
                         backups.insert(0, new);
                     }
@@ -939,21 +1017,23 @@ fn spawn_auto_backup_task(state: SharedState) {
                         b.backup_type == crate::types::BackupType::Monthly && b.created_at >= month_ago
                     });
                     if !has_recent_monthly {
-                        tracing::info!("auto-backup: creating monthly backup for '{}'", name_clone);
+                        tracing::info!(agent = %name_clone, backup_type = "monthly", "auto-backup: creating backup");
                         let new = docker::create_backup(&name_clone, crate::types::BackupType::Monthly)?;
                         backups.insert(0, new);
                     }
 
-                    docker::cleanup_backups(&backups);
+                    docker::cleanup_backups(&backups, &ret);
                     Ok(())
                 })
                 .await
                 .unwrap_or_else(|e| Err(docker::DockerError::Failed(e.to_string())));
 
                 if let Err(e) = result {
-                    tracing::error!("auto-backup error for '{}': {}", name, e);
+                    tracing::error!(agent = %name, error = %e, "auto-backup: failed");
                 }
             }
+
+            tracing::info!(agent_count = agents.len(), "auto-backup: cycle complete");
         }
     });
 }

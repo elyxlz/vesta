@@ -223,6 +223,16 @@ impl Client {
         check_response(resp)
     }
 
+    fn put_json(&self, path: &str, body: &serde_json::Value) -> Result<Response<Body>, String> {
+        let resp = self
+            .agent
+            .put(&format!("{}{}", self.base_url, path))
+            .header("Authorization", &format!("Bearer {}", self.api_key))
+            .send_json(body)
+            .map_err(map_error)?;
+        check_response(resp)
+    }
+
     pub fn health(&self) -> Result<(), String> {
         let resp = self
             .agent
@@ -359,8 +369,22 @@ impl Client {
         Ok(())
     }
 
-    pub fn stream_logs(&self, name: &str) -> Result<(), String> {
-        let resp = self.get(&format!("/agents/{}/logs", name))?;
+    pub fn get_auto_backup_settings(&self) -> Result<serde_json::Value, String> {
+        let resp = self.get("/settings/auto-backup")?;
+        resp.into_body()
+            .read_json()
+            .map_err(|e| format!("parse error: {}", e))
+    }
+
+    pub fn set_auto_backup_settings(&self, body: &serde_json::Value) -> Result<serde_json::Value, String> {
+        let resp = self.put_json("/settings/auto-backup", body)?;
+        resp.into_body()
+            .read_json()
+            .map_err(|e| format!("parse error: {}", e))
+    }
+
+    pub fn stream_logs(&self, name: &str, tail: u64) -> Result<(), String> {
+        let resp = self.get(&format!("/agents/{}/logs?tail={}", name, tail))?;
         let reader = std::io::BufReader::new(resp.into_body().into_reader());
         for line in std::io::BufRead::lines(reader) {
             let line = line.map_err(|e| format!("read error: {}", e))?;

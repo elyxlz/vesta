@@ -44,3 +44,10 @@ pub struct BackupInfo {
     pub created_at: String,
     pub size: u64,
 }
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct RetentionPolicy {
+    pub daily: usize,
+    pub weekly: usize,
+    pub monthly: usize,
+}
