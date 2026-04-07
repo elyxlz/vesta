@@ -121,7 +121,7 @@ fn read_vestad_port(config_dir: &std::path::Path) -> u16 {
     std::fs::read_to_string(config_dir.join("port"))
         .ok()
         .and_then(|s| s.trim().parse().ok())
-        .unwrap_or(0)
+        .unwrap_or_else(|| die("could not read vestad port from config — is vestad running?"))
 }
 
 fn print_server_info(tunnel_url: Option<&str>, local_url: &str, api_key: &str) {

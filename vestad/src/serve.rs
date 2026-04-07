@@ -13,7 +13,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 
 use crate::{docker, jwt, update_check};
 
@@ -139,7 +139,7 @@ pub struct AppState {
     auto_backup_enabled: AtomicBool,
     backup_retention: Mutex<crate::types::RetentionPolicy>,
     http_client: reqwest::Client,
-    service_registry: Mutex<HashMap<String, HashMap<String, u16>>>,
+    service_registry: RwLock<HashMap<String, HashMap<String, u16>>>,
 }
 
 impl AppState {
@@ -159,7 +159,7 @@ impl AppState {
                 monthly: docker::DEFAULT_RETENTION_MONTHLY,
             }),
             http_client: reqwest::Client::new(),
-            service_registry: Mutex::new(service_registry),
+            service_registry: RwLock::new(service_registry),
         }
     }
 
@@ -434,8 +434,11 @@ async fn stop_agent_handler(
         .await
         .unwrap()
         .map_err(map_docker_err)?;
-    state.service_registry.lock().await.remove(&name);
-    save_service_registry(&*state.service_registry.lock().await);
+    {
+        let mut reg = state.service_registry.write().await;
+        reg.remove(&name);
+        save_service_registry(&reg);
+    }
     Ok(ok_json())
 }
 
@@ -467,8 +470,11 @@ async fn destroy_agent_handler(
         .await
         .unwrap()
         .map_err(map_docker_err)?;
-    state.service_registry.lock().await.remove(&name);
-    save_service_registry(&*state.service_registry.lock().await);
+    {
+        let mut reg = state.service_registry.write().await;
+        reg.remove(&name);
+        save_service_registry(&reg);
+    }
 
     Ok(ok_json())
 }
@@ -743,7 +749,13 @@ fn services_file() -> std::path::PathBuf {
 fn load_service_registry() -> HashMap<String, HashMap<String, u16>> {
     let path = services_file();
     match std::fs::read_to_string(&path) {
-        Ok(data) => serde_json::from_str(&data).unwrap_or_default(),
+        Ok(data) => match serde_json::from_str(&data) {
+            Ok(registry) => registry,
+            Err(err) => {
+                tracing::warn!(path = %path.display(), error = %err, "corrupt services.json, starting empty");
+                HashMap::new()
+            }
+        },
         Err(_) => HashMap::new(),
     }
 }
@@ -751,13 +763,25 @@ fn load_service_registry() -> HashMap<String, HashMap<String, u16>> {
 fn save_service_registry(registry: &HashMap<String, HashMap<String, u16>>) {
     let path = services_file();
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).ok();
-    }
-    let tmp = path.with_extension("json.tmp");
-    if let Ok(data) = serde_json::to_string_pretty(registry) {
-        if std::fs::write(&tmp, data).is_ok() {
-            std::fs::rename(&tmp, &path).ok();
+        if let Err(err) = std::fs::create_dir_all(parent) {
+            tracing::warn!(error = %err, "failed to create services dir");
+            return;
         }
+    }
+    let data = match serde_json::to_string_pretty(registry) {
+        Ok(data) => data,
+        Err(err) => {
+            tracing::warn!(error = %err, "failed to serialize service registry");
+            return;
+        }
+    };
+    let tmp = path.with_extension("json.tmp");
+    if let Err(err) = std::fs::write(&tmp, &data) {
+        tracing::warn!(error = %err, "failed to write services.json.tmp");
+        return;
+    }
+    if let Err(err) = std::fs::rename(&tmp, &path) {
+        tracing::warn!(error = %err, "failed to rename services.json.tmp");
     }
 }
 
@@ -766,32 +790,32 @@ async fn resolve_service_port(
     agent_name: &str,
     service_name: &str,
 ) -> Option<u16> {
-    let registry = state.service_registry.lock().await;
+    let registry = state.service_registry.read().await;
     registry.get(agent_name)?.get(service_name).copied()
+}
+
+#[derive(Deserialize)]
+struct RegisterServiceBody {
+    name: String,
+    port: u16,
 }
 
 async fn register_service_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
-    Json(body): Json<serde_json::Value>,
+    Json(body): Json<RegisterServiceBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let service_name = body.get("name")
-        .and_then(|v| v.as_str())
-        .map(|s| s.trim().to_string())
-        .unwrap_or_default();
-    let port = body.get("port")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
+    let service_name = body.name.trim().to_string();
+    let port = body.port;
 
-    if service_name.is_empty() || port < 1 || port > u16::MAX as u64 {
+    if service_name.is_empty() || port == 0 {
         return Err(err_response(StatusCode::BAD_REQUEST, "name (str) and port (1-65535) required"));
     }
     if RESERVED_SERVICE_NAMES.contains(&service_name.as_str()) {
         return Err(err_response(StatusCode::BAD_REQUEST, &format!("reserved service name: {}", service_name)));
     }
 
-    let cname = docker::container_name(&name);
-    let docker_name = cname.clone();
+    let docker_name = docker::container_name(&name);
     let exists = tokio::task::spawn_blocking(move || docker::container_status(&docker_name) != docker::ContainerStatus::NotFound)
         .await
         .unwrap_or(false);
@@ -799,8 +823,8 @@ async fn register_service_handler(
         return Err(err_response(StatusCode::NOT_FOUND, &format!("agent '{}' not found", name)));
     }
 
-    let mut registry = state.service_registry.lock().await;
-    registry.entry(name.clone()).or_default().insert(service_name.clone(), port as u16);
+    let mut registry = state.service_registry.write().await;
+    registry.entry(name.clone()).or_default().insert(service_name.clone(), port);
     save_service_registry(&registry);
     tracing::info!(agent = %name, service = %service_name, port, "service registered");
     Ok(ok_json())
@@ -810,7 +834,7 @@ async fn unregister_service_handler(
     State(state): State<SharedState>,
     Path((name, service_name)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let mut registry = state.service_registry.lock().await;
+    let mut registry = state.service_registry.write().await;
     if let Some(agent_services) = registry.get_mut(&name) {
         agent_services.remove(&service_name);
         if agent_services.is_empty() {
@@ -826,7 +850,7 @@ async fn list_services_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
 ) -> Json<serde_json::Value> {
-    let registry = state.service_registry.lock().await;
+    let registry = state.service_registry.read().await;
     let services = registry.get(&name).cloned().unwrap_or_default();
     Json(serde_json::json!({"services": services}))
 }
