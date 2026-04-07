@@ -1,6 +1,6 @@
 {
   "productName": "Vesta",
-  "version": "0.1.111",
+  "version": "0.1.112",
   "identifier": "com.vestarun.app",
   "build": {
     "beforeDevCommand": "npm run dev",
