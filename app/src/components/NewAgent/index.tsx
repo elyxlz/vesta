@@ -118,7 +118,7 @@ export function NewAgent() {
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter") handleCreate();
-    if (e.key === "Escape" && hasAgents) navigate("/");
+    if (e.key === "Escape" && hasAgents) navigate("/home");
   };
 
   const content = (() => {
@@ -157,7 +157,7 @@ export function NewAgent() {
                 setAuthStart(null);
 
                 if (hasOtherAgents) {
-                  navigate("/");
+                  navigate("/home");
                 } else {
                   setStep("name");
                 }

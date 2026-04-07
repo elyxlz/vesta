@@ -95,9 +95,9 @@ function ErrorFallback({
 
   const handleGoHome = useCallback(() => {
     if (navigate) {
-      navigate("/");
+      navigate("/home");
     } else {
-      window.location.href = "/";
+      window.location.href = "/home";
     }
   }, [navigate]);
 
