@@ -146,14 +146,9 @@ export async function fetchHistory(
   name: string,
   cursor: number,
 ): Promise<{ events: VestaEvent[]; cursor: number | null }> {
-  const conn = getConnection();
-  if (!conn) throw new Error("not connected to vestad");
+  const { apiJson } = await import("@/api/client");
   const params = new URLSearchParams({ cursor: String(cursor) });
-  const res = await fetch(`${conn.url}/agents/${name}/history?${params}`, {
-    headers: { Authorization: `Bearer ${conn.accessToken}` },
-  });
-  if (!res.ok) throw new Error(`history fetch failed: ${res.status}`);
-  return res.json();
+  return apiJson(`/agents/${encodeURIComponent(name)}/history?${params}`);
 }
 
 export async function fetchHistory(

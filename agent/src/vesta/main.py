@@ -103,6 +103,7 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
         logger.shutdown("Shutdown timed out (SDK cleanup hung), forcing exit")
         os._exit(1)
     await ws_runner.cleanup()
+    state.event_bus.close()
     logger.shutdown("sweet dreams!")
 
 

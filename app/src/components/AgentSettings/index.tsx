@@ -49,6 +49,12 @@ export function AgentSettings({ open, onOpenChange }: { open: boolean; onOpenCha
 
   const eotThresholdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const eotTimeoutMsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (eotThresholdTimer.current) clearTimeout(eotThresholdTimer.current);
+      if (eotTimeoutMsTimer.current) clearTimeout(eotTimeoutMsTimer.current);
+    };
+  }, []);
   const scheduleEotThresholdUpdate = (value: number) => {
     if (eotThresholdTimer.current) clearTimeout(eotThresholdTimer.current);
     eotThresholdTimer.current = setTimeout(() => {
@@ -84,6 +90,14 @@ export function AgentSettings({ open, onOpenChange }: { open: boolean; onOpenCha
   const [pendingVoiceId, setPendingVoiceId] = useState<string | null>(null);
   const [playingVoice, setPlayingVoice] = useState<string | null>(null);
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+  useEffect(() => {
+    return () => {
+      if (previewAudioRef.current) {
+        previewAudioRef.current.pause();
+        previewAudioRef.current = null;
+      }
+    };
+  }, []);
   const selectedVoiceId = pendingVoiceId ?? ttsStatus?.selected_voice_id ?? null;
 
   const selectVoice = (voice: VoiceInfo) => {

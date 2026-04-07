@@ -8,8 +8,11 @@ State is persisted to ~/.services.json so registrations survive restarts.
 """
 
 import json
+import logging
 import os
 import pathlib as pl
+
+log = logging.getLogger(__name__)
 
 _SERVICES_FILE = pl.Path.home() / ".services.json"
 
@@ -22,7 +25,10 @@ def _load() -> None:
     global _services
     try:
         _services = json.loads(_SERVICES_FILE.read_text())
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
+    except FileNotFoundError:
+        _services = {}
+    except (json.JSONDecodeError, OSError) as exc:
+        log.warning("Failed to load %s: %s", _SERVICES_FILE, exc)
         _services = {}
 
 

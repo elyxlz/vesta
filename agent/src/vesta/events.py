@@ -149,7 +149,7 @@ class EventBus:
         if event["type"] != "status" and self._conn:
             self._conn.execute(
                 "INSERT INTO events (ts, data) VALUES (?, ?)",
-                (event.get("ts", ""), json.dumps(event)),
+                (event["ts"], json.dumps(event)),
             )
             self._conn.commit()
         for q in self._subscribers:
@@ -169,7 +169,7 @@ class EventBus:
         self.emit(StatusEvent(type="status", state=state))
 
     def recent(self, limit: int = PAGE_SIZE) -> tuple[list[StreamEvent], int | None]:
-        if not self._conn:
+        if not self._conn or limit <= 0:
             return [], None
         rows = self._conn.execute(
             "SELECT id, data FROM events ORDER BY id DESC LIMIT ?",
@@ -183,7 +183,7 @@ class EventBus:
         return events, rows[-1][0] if has_older else None
 
     def before(self, cursor: int, limit: int = PAGE_SIZE) -> tuple[list[StreamEvent], int | None]:
-        if not self._conn:
+        if not self._conn or limit <= 0:
             return [], None
         rows = self._conn.execute(
             "SELECT id, data FROM events WHERE id < ? ORDER BY id DESC LIMIT ?",

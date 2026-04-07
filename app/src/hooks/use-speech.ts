@@ -5,13 +5,13 @@ export function useSpeech(agentName: string | null, speechEnabled: boolean) {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const queueRef = useRef<string[]>([]);
-  const playingRef = useRef(false);
+  const processingRef = useRef(false);
   const speechEnabledRef = useRef(speechEnabled);
   speechEnabledRef.current = speechEnabled;
 
   const processQueue = useCallback(async () => {
-    if (playingRef.current || queueRef.current.length === 0 || !agentName) return;
-    playingRef.current = true;
+    if (processingRef.current || !agentName) return;
+    processingRef.current = true;
     setIsSpeaking(true);
 
     while (queueRef.current.length > 0) {
@@ -28,7 +28,13 @@ export function useSpeech(agentName: string | null, speechEnabled: boolean) {
       abortRef.current = null;
     }
 
-    playingRef.current = false;
+    processingRef.current = false;
+
+    // Re-check: items may have been pushed between the while-exit and here
+    if (queueRef.current.length > 0) {
+      void processQueue();
+      return;
+    }
     setIsSpeaking(false);
   }, [agentName]);
 
@@ -40,7 +46,7 @@ export function useSpeech(agentName: string | null, speechEnabled: boolean) {
     if (!agentName) return;
     console.debug("[tts] queueing:", text.slice(0, 60));
     queueRef.current.push(text);
-    processQueue();
+    void processQueue();
   }, [processQueue, agentName]);
 
   const stop = useCallback(() => {
