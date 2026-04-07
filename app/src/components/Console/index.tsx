@@ -30,7 +30,7 @@ export function Console({ name, onClose }: ConsoleProps) {
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeRef = useRef(true);
 
-  const startStreamRef = useRef<() => void>();
+  const startStreamRef = useRef<() => void>(undefined);
   startStreamRef.current = () => {
     if (!name || !activeRef.current) return;
     stopLogs(name);
