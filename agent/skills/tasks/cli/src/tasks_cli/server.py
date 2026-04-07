@@ -59,6 +59,7 @@ def _handle_errors(method):
         except Exception as exc:
             logger.error(f"{self.command} {path} failed: {exc}")
             _send_error(self, 500, str(exc))
+
     return wrapper
 
 
