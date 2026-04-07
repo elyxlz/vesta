@@ -45,7 +45,7 @@ pub struct BackupInfo {
     pub size: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct RetentionPolicy {
     pub daily: usize,
     pub weekly: usize,

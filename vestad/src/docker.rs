@@ -1225,9 +1225,7 @@ pub fn compute_backups_to_delete(backups: &[BackupInfo], retention: &RetentionPo
             .iter()
             .filter(|b| b.backup_type == backup_type)
             .collect();
-        // Sort by date descending (newest first)
         typed.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-        // Mark excess for deletion
         for excess in typed.into_iter().skip(keep) {
             to_delete.push(excess.id.clone());
         }

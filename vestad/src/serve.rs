@@ -819,7 +819,7 @@ async fn get_auto_backup_handler(
     State(state): State<SharedState>,
 ) -> Json<serde_json::Value> {
     let enabled = state.auto_backup_enabled.load(Ordering::Relaxed);
-    let retention = state.backup_retention.lock().await.clone();
+    let retention = *state.backup_retention.lock().await;
     Json(serde_json::json!({
         "enabled": enabled,
         "retention": retention,
@@ -835,8 +835,8 @@ async fn set_auto_backup_handler(
         tracing::info!(enabled, "auto-backup toggled");
     }
 
+    let mut retention = state.backup_retention.lock().await;
     if let Some(ret) = body.get("retention") {
-        let mut retention = state.backup_retention.lock().await;
         if let Some(d) = ret["daily"].as_u64() {
             retention.daily = d as usize;
         }
@@ -850,10 +850,9 @@ async fn set_auto_backup_handler(
     }
 
     let enabled = state.auto_backup_enabled.load(Ordering::Relaxed);
-    let retention = state.backup_retention.lock().await.clone();
     Ok(Json(serde_json::json!({
         "enabled": enabled,
-        "retention": retention,
+        "retention": *retention,
     })))
 }
 
@@ -979,7 +978,7 @@ fn spawn_auto_backup_task(state: SharedState) {
             let seven_days_ago = docker::now_timestamp_from_epoch(now_epoch - 7 * 86400);
             let thirty_days_ago = docker::now_timestamp_from_epoch(now_epoch - 30 * 86400);
 
-            let retention = state.backup_retention.lock().await.clone();
+            let retention = *state.backup_retention.lock().await;
 
             for name in &agents {
                 let lock = state.agent_lock(name).await;
@@ -989,7 +988,7 @@ fn spawn_auto_backup_task(state: SharedState) {
                 let today = today_date.to_string();
                 let week_ago = seven_days_ago.clone();
                 let month_ago = thirty_days_ago.clone();
-                let ret = retention.clone();
+                let ret = retention;
 
                 let result = tokio::task::spawn_blocking(move || -> Result<(), docker::DockerError> {
                     let mut backups = docker::list_backups(&name_clone)?;

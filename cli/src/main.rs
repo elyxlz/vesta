@@ -192,7 +192,7 @@ enum BackupAction {
     /// Show or set auto-backup status
     AutoBackup {
         /// Set to "on" or "off" (omit to show current status)
-        toggle: Option<String>,
+        toggle: Option<Toggle>,
     },
     /// Show or set backup retention policy
     Retention {
@@ -206,6 +206,20 @@ enum BackupAction {
         #[arg(long)]
         monthly: Option<usize>,
     },
+}
+
+#[derive(Clone, clap::ValueEnum)]
+enum Toggle {
+    On,
+    Off,
+}
+
+fn print_retention(ret: &serde_json::Value) {
+    eprintln!("retention: daily={}, weekly={}, monthly={}",
+        ret["daily"].as_u64().unwrap_or(0),
+        ret["weekly"].as_u64().unwrap_or(0),
+        ret["monthly"].as_u64().unwrap_or(0),
+    );
 }
 
 fn prompt(label: &str) -> String {
@@ -590,18 +604,17 @@ fn run(cli: Cli) {
                         .unwrap_or_else(|e| platform::die(&e));
                     eprintln!("backup deleted: {}", backup_id);
                 }
-                BackupAction::AutoBackup { toggle } => match toggle.as_deref() {
-                    Some("on") => {
+                BackupAction::AutoBackup { toggle } => match toggle {
+                    Some(Toggle::On) => {
                         c.set_auto_backup_settings(&serde_json::json!({"enabled": true}))
                             .unwrap_or_else(|e| platform::die(&e));
                         eprintln!("auto-backup: enabled");
                     }
-                    Some("off") => {
+                    Some(Toggle::Off) => {
                         c.set_auto_backup_settings(&serde_json::json!({"enabled": false}))
                             .unwrap_or_else(|e| platform::die(&e));
                         eprintln!("auto-backup: disabled");
                     }
-                    Some(other) => platform::die(&format!("expected 'on' or 'off', got '{}'", other)),
                     None => {
                         let settings = c.get_auto_backup_settings().unwrap_or_else(|e| platform::die(&e));
                         let enabled = settings["enabled"].as_bool().unwrap_or(true);
@@ -611,12 +624,7 @@ fn run(cli: Cli) {
                 BackupAction::Retention { daily, weekly, monthly } => {
                     if daily.is_none() && weekly.is_none() && monthly.is_none() {
                         let settings = c.get_auto_backup_settings().unwrap_or_else(|e| platform::die(&e));
-                        let ret = &settings["retention"];
-                        eprintln!("retention: daily={}, weekly={}, monthly={}",
-                            ret["daily"].as_u64().unwrap_or(0),
-                            ret["weekly"].as_u64().unwrap_or(0),
-                            ret["monthly"].as_u64().unwrap_or(0),
-                        );
+                        print_retention(&settings["retention"]);
                     } else {
                         let mut ret = serde_json::Map::new();
                         if let Some(d) = daily { ret.insert("daily".into(), d.into()); }
@@ -624,12 +632,7 @@ fn run(cli: Cli) {
                         if let Some(m) = monthly { ret.insert("monthly".into(), m.into()); }
                         let settings = c.set_auto_backup_settings(&serde_json::json!({"retention": ret}))
                             .unwrap_or_else(|e| platform::die(&e));
-                        let r = &settings["retention"];
-                        eprintln!("retention: daily={}, weekly={}, monthly={}",
-                            r["daily"].as_u64().unwrap_or(0),
-                            r["weekly"].as_u64().unwrap_or(0),
-                            r["monthly"].as_u64().unwrap_or(0),
-                        );
+                        print_retention(&settings["retention"]);
                     }
                 },
             }
