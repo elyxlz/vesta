@@ -369,23 +369,22 @@ impl Client {
         Ok(())
     }
 
-    pub fn get_auto_backup(&self) -> Result<bool, String> {
+    pub fn get_auto_backup_settings(&self) -> Result<serde_json::Value, String> {
         let resp = self.get("/settings/auto-backup")?;
-        let body: serde_json::Value = resp
-            .into_body()
+        resp.into_body()
             .read_json()
-            .map_err(|e| format!("parse error: {}", e))?;
-        Ok(body["enabled"].as_bool().unwrap_or(true))
+            .map_err(|e| format!("parse error: {}", e))
     }
 
-    pub fn set_auto_backup(&self, enabled: bool) -> Result<(), String> {
-        let body = serde_json::json!({"enabled": enabled});
-        self.put_json("/settings/auto-backup", &body)?;
-        Ok(())
+    pub fn set_auto_backup_settings(&self, body: &serde_json::Value) -> Result<serde_json::Value, String> {
+        let resp = self.put_json("/settings/auto-backup", body)?;
+        resp.into_body()
+            .read_json()
+            .map_err(|e| format!("parse error: {}", e))
     }
 
-    pub fn stream_logs(&self, name: &str) -> Result<(), String> {
-        let resp = self.get(&format!("/agents/{}/logs", name))?;
+    pub fn stream_logs(&self, name: &str, tail: u64) -> Result<(), String> {
+        let resp = self.get(&format!("/agents/{}/logs?tail={}", name, tail))?;
         let reader = std::io::BufReader::new(resp.into_body().into_reader());
         for line in std::io::BufRead::lines(reader) {
             let line = line.map_err(|e| format!("read error: {}", e))?;

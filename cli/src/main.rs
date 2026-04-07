@@ -113,6 +113,9 @@ enum Command {
     Logs {
         /// Agent name
         name: String,
+        /// Number of lines to show initially
+        #[arg(long, default_value = "500")]
+        tail: u64,
     },
     /// Show agent status
     Status {
@@ -190,6 +193,18 @@ enum BackupAction {
     AutoBackup {
         /// Set to "on" or "off" (omit to show current status)
         toggle: Option<String>,
+    },
+    /// Show or set backup retention policy
+    Retention {
+        /// Daily backups to keep
+        #[arg(long)]
+        daily: Option<usize>,
+        /// Weekly backups to keep
+        #[arg(long)]
+        weekly: Option<usize>,
+        /// Monthly backups to keep
+        #[arg(long)]
+        monthly: Option<usize>,
     },
 }
 
@@ -471,9 +486,9 @@ fn run(cli: Cli) {
             client::chat(&c, &name).unwrap_or_else(|e| platform::die(&e));
         }
 
-        Command::Logs { name } => {
+        Command::Logs { name, tail } => {
             let c = get_client(host_ref, token_ref);
-            c.stream_logs(&name).unwrap_or_else(|e| platform::die(&e));
+            c.stream_logs(&name, tail).unwrap_or_else(|e| platform::die(&e));
         }
 
         Command::Status { name, json } => {
@@ -577,17 +592,44 @@ fn run(cli: Cli) {
                 }
                 BackupAction::AutoBackup { toggle } => match toggle.as_deref() {
                     Some("on") => {
-                        c.set_auto_backup(true).unwrap_or_else(|e| platform::die(&e));
+                        c.set_auto_backup_settings(&serde_json::json!({"enabled": true}))
+                            .unwrap_or_else(|e| platform::die(&e));
                         eprintln!("auto-backup: enabled");
                     }
                     Some("off") => {
-                        c.set_auto_backup(false).unwrap_or_else(|e| platform::die(&e));
+                        c.set_auto_backup_settings(&serde_json::json!({"enabled": false}))
+                            .unwrap_or_else(|e| platform::die(&e));
                         eprintln!("auto-backup: disabled");
                     }
                     Some(other) => platform::die(&format!("expected 'on' or 'off', got '{}'", other)),
                     None => {
-                        let enabled = c.get_auto_backup().unwrap_or_else(|e| platform::die(&e));
+                        let settings = c.get_auto_backup_settings().unwrap_or_else(|e| platform::die(&e));
+                        let enabled = settings["enabled"].as_bool().unwrap_or(true);
                         eprintln!("auto-backup: {}", if enabled { "enabled" } else { "disabled" });
+                    }
+                },
+                BackupAction::Retention { daily, weekly, monthly } => {
+                    if daily.is_none() && weekly.is_none() && monthly.is_none() {
+                        let settings = c.get_auto_backup_settings().unwrap_or_else(|e| platform::die(&e));
+                        let ret = &settings["retention"];
+                        eprintln!("retention: daily={}, weekly={}, monthly={}",
+                            ret["daily"].as_u64().unwrap_or(0),
+                            ret["weekly"].as_u64().unwrap_or(0),
+                            ret["monthly"].as_u64().unwrap_or(0),
+                        );
+                    } else {
+                        let mut ret = serde_json::Map::new();
+                        if let Some(d) = daily { ret.insert("daily".into(), d.into()); }
+                        if let Some(w) = weekly { ret.insert("weekly".into(), w.into()); }
+                        if let Some(m) = monthly { ret.insert("monthly".into(), m.into()); }
+                        let settings = c.set_auto_backup_settings(&serde_json::json!({"retention": ret}))
+                            .unwrap_or_else(|e| platform::die(&e));
+                        let r = &settings["retention"];
+                        eprintln!("retention: daily={}, weekly={}, monthly={}",
+                            r["daily"].as_u64().unwrap_or(0),
+                            r["weekly"].as_u64().unwrap_or(0),
+                            r["monthly"].as_u64().unwrap_or(0),
+                        );
                     }
                 },
             }

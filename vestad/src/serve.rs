@@ -18,7 +18,7 @@ use crate::{docker, jwt, update_check};
 
 const API_KEY_BYTES: usize = 32;
 const AUTH_SESSION_TIMEOUT_SECS: u64 = 600;
-const LOG_TAIL_LINES: &str = "500";
+const DEFAULT_LOG_TAIL_LINES: u64 = 500;
 const AUTO_BACKUP_CHECK_INTERVAL_SECS: u64 = 3600;
 
 // --- TLS cert generation ---
@@ -132,6 +132,7 @@ pub struct AppState {
     tunnel_url: Mutex<Option<String>>,
     update_info: Mutex<Option<update_check::UpdateInfo>>,
     auto_backup_enabled: AtomicBool,
+    backup_retention: Mutex<crate::types::RetentionPolicy>,
 }
 
 impl AppState {
@@ -143,6 +144,11 @@ impl AppState {
             tunnel_url: Mutex::new(tunnel_url),
             update_info: Mutex::new(None),
             auto_backup_enabled: AtomicBool::new(true),
+            backup_retention: Mutex::new(crate::types::RetentionPolicy {
+                daily: docker::DEFAULT_RETENTION_DAILY,
+                weekly: docker::DEFAULT_RETENTION_WEEKLY,
+                monthly: docker::DEFAULT_RETENTION_MONTHLY,
+            }),
         }
     }
 
@@ -579,8 +585,14 @@ async fn inject_token_handler(
 
 // --- SSE Logs ---
 
+#[derive(Deserialize)]
+struct LogsQuery {
+    tail: Option<u64>,
+}
+
 async fn logs_handler(
     Path(name): Path<String>,
+    Query(query): Query<LogsQuery>,
 ) -> Result<Sse<impl futures_core::Stream<Item = Result<Event, std::io::Error>>>, (StatusCode, Json<serde_json::Value>)>
 {
     docker::validate_name(&name).map_err(map_docker_err)?;
@@ -588,9 +600,10 @@ async fn logs_handler(
     docker::ensure_running(&cname)
         .map_err(|e| err_response(StatusCode::BAD_REQUEST, &e.to_string()))?;
 
+    let tail_lines = query.tail.unwrap_or(DEFAULT_LOG_TAIL_LINES).to_string();
     let stream = async_stream::stream! {
         let mut child = match tokio::process::Command::new("docker")
-            .args(["exec", &cname, "tail", "-n", LOG_TAIL_LINES, "-f", docker::VESTA_LOG_PATH])
+            .args(["exec", &cname, "tail", "-n", &tail_lines, "-f", docker::VESTA_LOG_PATH])
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
             .spawn()
@@ -806,22 +819,42 @@ async fn get_auto_backup_handler(
     State(state): State<SharedState>,
 ) -> Json<serde_json::Value> {
     let enabled = state.auto_backup_enabled.load(Ordering::Relaxed);
-    Json(serde_json::json!({"enabled": enabled}))
+    let retention = state.backup_retention.lock().await.clone();
+    Json(serde_json::json!({
+        "enabled": enabled,
+        "retention": retention,
+    }))
 }
 
 async fn set_auto_backup_handler(
     State(state): State<SharedState>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let enabled = body["enabled"].as_bool().ok_or_else(|| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"error": "missing boolean field 'enabled'"})),
-        )
-    })?;
-    state.auto_backup_enabled.store(enabled, Ordering::Relaxed);
-    tracing::info!(enabled, "auto-backup toggled");
-    Ok(Json(serde_json::json!({"enabled": enabled})))
+    if let Some(enabled) = body["enabled"].as_bool() {
+        state.auto_backup_enabled.store(enabled, Ordering::Relaxed);
+        tracing::info!(enabled, "auto-backup toggled");
+    }
+
+    if let Some(ret) = body.get("retention") {
+        let mut retention = state.backup_retention.lock().await;
+        if let Some(d) = ret["daily"].as_u64() {
+            retention.daily = d as usize;
+        }
+        if let Some(w) = ret["weekly"].as_u64() {
+            retention.weekly = w as usize;
+        }
+        if let Some(m) = ret["monthly"].as_u64() {
+            retention.monthly = m as usize;
+        }
+        tracing::info!(daily = retention.daily, weekly = retention.weekly, monthly = retention.monthly, "backup retention updated");
+    }
+
+    let enabled = state.auto_backup_enabled.load(Ordering::Relaxed);
+    let retention = state.backup_retention.lock().await.clone();
+    Ok(Json(serde_json::json!({
+        "enabled": enabled,
+        "retention": retention,
+    })))
 }
 
 // --- Port file ---
@@ -946,6 +979,8 @@ fn spawn_auto_backup_task(state: SharedState) {
             let seven_days_ago = docker::now_timestamp_from_epoch(now_epoch - 7 * 86400);
             let thirty_days_ago = docker::now_timestamp_from_epoch(now_epoch - 30 * 86400);
 
+            let retention = state.backup_retention.lock().await.clone();
+
             for name in &agents {
                 let lock = state.agent_lock(name).await;
                 let _guard = lock.write().await;
@@ -954,6 +989,7 @@ fn spawn_auto_backup_task(state: SharedState) {
                 let today = today_date.to_string();
                 let week_ago = seven_days_ago.clone();
                 let month_ago = thirty_days_ago.clone();
+                let ret = retention.clone();
 
                 let result = tokio::task::spawn_blocking(move || -> Result<(), docker::DockerError> {
                     let mut backups = docker::list_backups(&name_clone)?;
@@ -987,7 +1023,7 @@ fn spawn_auto_backup_task(state: SharedState) {
                         backups.insert(0, new);
                     }
 
-                    docker::cleanup_backups(&backups);
+                    docker::cleanup_backups(&backups, &ret);
                     Ok(())
                 })
                 .await
