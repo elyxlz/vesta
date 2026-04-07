@@ -16,9 +16,8 @@ A personal AI agent that lives in a Docker container, powered by Claude.
 ## Prerequisites
 
 - Claude subscription
-- **Linux**: Docker
-- **macOS**: macOS 13+
-- **Windows**: WSL2
+- **Server (vestad)**: Linux with Docker installed
+- **Client (CLI & app)**: Linux, macOS, or Windows — no additional dependencies
 
 ## Install
 
@@ -64,14 +63,13 @@ irm https://raw.githubusercontent.com/elyxlz/vesta/master/install.ps1 | iex -- -
 
 ## Setup
 
-### 1. Server (Linux only)
+### 1. Server (Linux)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/elyxlz/vesta/master/install.sh | bash
 vestad
 ```
 
-On first run, vestad installs a systemd user service, starts itself, and prints the host URL and API key. It runs persistently via systemd (survives logout).
+On first run, vestad installs a systemd user service, starts itself, and prints the host URL and API key. It runs persistently via systemd (survives logout). A Cloudflare tunnel is set up automatically for remote access.
 
 ```bash
 vestad status    # show service status
@@ -80,7 +78,7 @@ vestad restart   # restart the service
 vestad stop      # stop the service
 ```
 
-By default vestad auto-selects a port and sets up a Cloudflare tunnel. Use `vestad serve --standalone` to run in the foreground without systemd (for CI/development).
+Use `vestad serve --standalone` to run in the foreground without systemd (for CI/development). Use `--no-tunnel` to disable the Cloudflare tunnel.
 
 ### 2. Client
 
@@ -91,4 +89,4 @@ vesta connect https://<host>#<api-key>
 vesta setup
 ```
 
-Or in the desktop app, click **connect to server** on the onboarding screen.
+Or in the desktop app, enter the host URL and API key on the onboarding screen.
