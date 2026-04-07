@@ -5,6 +5,7 @@ import collections
 import datetime as dt
 import json
 import pathlib as pl
+import time
 
 import pydantic
 from claude_agent_sdk import ClaudeSDKClient, ClaudeSDKError
@@ -13,6 +14,9 @@ import vesta.models as vm
 from vesta import logger
 from vesta.core.client import process_message, build_client_options, attempt_interrupt, filter_tool_lines, persist_session_id, _cancel_task
 from vesta.core.init import load_prompt, build_restart_context
+
+_CONTEXT_STATUS_INTERVAL = 10 * 60  # seconds (10 minutes) — context status ping
+_status_log_path = pl.Path.home() / "vesta" / "logs" / "context-status.jsonl"
 
 
 def _now() -> dt.datetime:
@@ -264,6 +268,54 @@ async def process_nightly_memory(queue: asyncio.Queue[tuple[str, bool]], *, stat
             except OSError:
                 logger.warning("Could not persist last_dreamer_run")
             logger.dreamer("Dreamer prompt queued")
+
+
+# --- Context status loop ---
+
+
+async def context_status_loop(*, state: vm.State) -> None:
+    """Periodically poll SDK context usage and log/emit status."""
+    start_time = time.monotonic()
+    try:
+        while state.shutdown_event and not state.shutdown_event.is_set():
+            await asyncio.sleep(_CONTEXT_STATUS_INTERVAL)
+
+            if state.shutdown_event and state.shutdown_event.is_set():
+                break
+
+            if not state.client:
+                continue
+
+            try:
+                usage = await state.client.get_context_usage()
+
+                pct = usage.get("percentage", 0.0)
+                total = usage.get("totalTokens", 0)
+                max_tok = usage.get("maxTokens", 0)
+                threshold = usage.get("autoCompactThreshold", 0)
+
+                state.context_percentage = pct
+
+                logger.context(f"Status ping: {pct:.0f}% | {total:,}/{max_tok:,} tokens | compact at {threshold:,}")
+
+                uptime_secs = int(time.monotonic() - start_time)
+                record = {
+                    "ts": dt.datetime.now().isoformat(),
+                    "uptime_s": uptime_secs,
+                    "percentage": pct,
+                    "totalTokens": total,
+                    "maxTokens": max_tok,
+                    "autoCompactThreshold": threshold,
+                }
+                _status_log_path.parent.mkdir(parents=True, exist_ok=True)
+                with _status_log_path.open("a", encoding="utf-8") as f:
+                    f.write(json.dumps(record) + "\n")
+
+                state.event_bus.emit({"type": "status", "text": f"context: {pct:.0f}%", "context_pct": pct})
+            except Exception:
+                pass  # skip iteration on any SDK/IO error
+    except asyncio.CancelledError:
+        return
 
 
 # --- Monitor loop ---

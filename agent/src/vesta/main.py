@@ -16,7 +16,7 @@ from vesta import logger
 from vesta.api import start_ws_server
 from vesta.core.history import open_history
 from vesta.core.init import get_memory_path
-from vesta.core.loops import message_processor, monitor_loop, queue_greeting
+from vesta.core.loops import message_processor, monitor_loop, context_status_loop, queue_greeting
 
 SignalHandler = tp.Callable[[int, types.FrameType | None], None]
 
@@ -78,6 +78,7 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
         asyncio.create_task(input_handler(message_queue, state=state)),
         asyncio.create_task(message_processor(message_queue, state=state, config=config)),
         asyncio.create_task(monitor_loop(message_queue, state=state, config=config)),
+        asyncio.create_task(context_status_loop(state=state)),
     ]
 
     reason = "first_start" if first_start else ("crash — restarted after unexpected exit" if crashed else "restart — clean restart")

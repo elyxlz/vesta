@@ -25,6 +25,7 @@ class State:
     interrupt_event: asyncio.Event | None = None
     event_bus: EventBus = dc.field(default_factory=EventBus)
     history: HistoryDB | None = None
+    context_percentage: float = 0.0
 
 
 class Notification(pyd.BaseModel):

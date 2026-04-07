@@ -138,6 +138,10 @@ def usage(msg: tp.Any) -> None:
     _cat("$", "green", "USAGE", msg)
 
 
+def context(msg: tp.Any) -> None:
+    _cat("$", "blue", "CONTEXT", msg)
+
+
 def debug(msg: tp.Any) -> None:
     _log(f"[dim]{msg}[/dim]", level=logging.DEBUG)
 
