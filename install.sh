@@ -214,19 +214,23 @@ main() {
 
   echo ""
 
+  # Validate flags for the current platform
+  if [ -n "$INSTALL_SERVER" ] && [ "$OS" != "linux" ]; then
+    echo "Error: --server is only available on Linux"; exit 1
+  fi
+  if [ -n "$INSTALL_APP" ] && ! has_gui; then
+    echo "Error: --app requires a GUI (DISPLAY or WAYLAND_DISPLAY)"; exit 1
+  fi
+
   case "$OS" in
     linux)
       [ -n "$INSTALL_CLI" ] && install_cli
       [ -n "$INSTALL_SERVER" ] && install_vestad
-      if [ -n "$INSTALL_APP" ] && has_gui; then
-        install_app_linux
-      fi
+      [ -n "$INSTALL_APP" ] && has_gui && install_app_linux
       ;;
     darwin)
       [ -n "$INSTALL_CLI" ] && install_cli
-      if [ -n "$INSTALL_APP" ] && has_gui; then
-        install_app_macos
-      fi
+      [ -n "$INSTALL_APP" ] && has_gui && install_app_macos
       ;;
     *)
       echo "Unsupported OS: $OS"
