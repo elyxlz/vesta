@@ -19,7 +19,7 @@ app-chat history --limit 20
 ```
 
 ## How it works
-- The daemon connects to the agent's `/ws/app-chat` WebSocket
+- The daemon connects to the agent's `/ws` WebSocket
 - When the app user sends a message, the daemon writes a notification file
 - You receive the notification and reply with `app-chat send`
 - The daemon also relays liveness events (thinking, tool use) to the app

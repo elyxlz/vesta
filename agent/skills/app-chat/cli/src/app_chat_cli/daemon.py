@@ -28,6 +28,7 @@ class DaemonState:
     shutdown: asyncio.Event = field(default_factory=asyncio.Event)
     ws: aiohttp.ClientWebSocketResponse | None = None
     session: aiohttp.ClientSession | None = None
+    last_seen_ts: str | None = None
 
 
 def cmd_serve(args: object) -> None:
@@ -71,7 +72,8 @@ async def _run(state: DaemonState) -> None:
 async def _ws_loop(state: DaemonState) -> None:
     while not state.shutdown.is_set():
         try:
-            assert state.session is not None
+            if state.session is None:
+                break
             async with state.session.ws_connect(state.ws_url) as ws:
                 state.ws = ws
                 _log(f"connected to {state.ws_url}")
@@ -92,10 +94,44 @@ def _handle_event(state: DaemonState, raw: str) -> None:
     try:
         event = json.loads(raw)
     except json.JSONDecodeError:
+        _log(f"bad json from ws: {raw[:200]}")
         return
-    if event["type"] == "user":
+    if "type" not in event:
+        return
+
+    event_type = event["type"]
+
+    if event_type == "history" and "events" in event:
+        _replay_missed(state, event["events"])
+        return
+
+    if "ts" in event:
+        state.last_seen_ts = event["ts"]
+
+    if event_type == "user" and "text" in event:
         ts = event["ts"] if "ts" in event else None
         _write_notification(state, event["text"], timestamp=ts)
+
+
+def _replay_missed(state: DaemonState, events: list[dict[str, object]]) -> None:
+    """On reconnect, generate notifications for user messages missed during downtime."""
+    cutoff = state.last_seen_ts
+    count = 0
+    for past in events:
+        if "type" not in past or past["type"] != "user" or "text" not in past:
+            continue
+        ts = past["ts"] if "ts" in past else None
+        if cutoff and ts and str(ts) <= cutoff:
+            continue
+        _write_notification(state, str(past["text"]), timestamp=str(ts) if ts else None)
+        count += 1
+    # Update last_seen_ts to the latest event in the batch
+    for past in reversed(events):
+        if "ts" in past:
+            state.last_seen_ts = str(past["ts"])
+            break
+    if count:
+        _log(f"replayed {count} missed message(s)")
 
 
 def _write_notification(state: DaemonState, message: str, *, timestamp: str | None = None) -> None:
@@ -156,6 +192,7 @@ async def _handle_socket_conn(state: DaemonState, reader: asyncio.StreamReader, 
         _log(f"socket error: {exc}")
     finally:
         writer.close()
+        await writer.wait_closed()
 
 
 def _log(message: str) -> None:

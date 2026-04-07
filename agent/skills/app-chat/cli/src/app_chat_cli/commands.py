@@ -33,6 +33,7 @@ async def _send_via_socket(sock_path: pl.Path, message: str) -> dict[str, object
         writer.write_eof()
         data = await asyncio.wait_for(reader.read(65536), timeout=10.0)
         writer.close()
+        await writer.wait_closed()
         return json.loads(data.decode())
     except (OSError, TimeoutError, json.JSONDecodeError) as exc:
         return {"error": str(exc)}
@@ -66,12 +67,18 @@ def cmd_history(args: object) -> None:
         if "error" in data:
             print(json.dumps(data))
             sys.exit(1)
+        if "results" not in data:
+            print(json.dumps({"error": "unexpected response from /search"}))
+            sys.exit(1)
         print(json.dumps(data["results"], indent=2))
     else:
         params = {"limit": str(limit)}
         data = _api_get(base_url, "/history", params)
         if "error" in data:
             print(json.dumps(data))
+            sys.exit(1)
+        if "events" not in data:
+            print(json.dumps({"error": "unexpected response from /history"}))
             sys.exit(1)
         events = data["events"]
         results = [
