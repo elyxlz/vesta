@@ -138,6 +138,9 @@ pub fn validate_name(name: &str) -> Result<(), DockerError> {
     if !valid {
         return Err(DockerError::InvalidName("agent name must match [a-z0-9][a-z0-9-]*[a-z0-9]".into()));
     }
+    if name.contains("vesta") {
+        return Err(DockerError::InvalidName("agent name must not contain 'vesta'".into()));
+    }
     Ok(())
 }
 
@@ -1372,6 +1375,13 @@ mod tests {
     fn validate_rejects_special_chars() {
         assert!(validate_name("hello world").is_err());
         assert!(validate_name("hello_world").is_err());
+    }
+
+    #[test]
+    fn validate_rejects_vesta() {
+        assert!(validate_name("vesta").is_err());
+        assert!(validate_name("my-vesta").is_err());
+        assert!(validate_name("vesta-agent").is_err());
     }
 
     #[test]
