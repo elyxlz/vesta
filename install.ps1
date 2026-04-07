@@ -11,6 +11,10 @@ foreach ($arg in $args) {
     }
     elseif ($arg -eq "--cli") { $InstallCli = $true }
     elseif ($arg -eq "--app") { $InstallApp = $true }
+    elseif ($arg -eq "--server") {
+        Write-Host "Error: --server is only available on Linux (use WSL2)"
+        exit 1
+    }
     elseif ($arg -eq "--help" -or $arg -eq "-h") {
         Write-Host "Usage: irm https://raw.githubusercontent.com/elyxlz/vesta/master/install.ps1 | iex"
         Write-Host ""

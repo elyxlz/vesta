@@ -31,14 +31,17 @@ main() {
     esac
   done
 
-  # If no component flags given, install everything
-  if [ -z "$INSTALL_CLI" ] && [ -z "$INSTALL_SERVER" ] && [ -z "$INSTALL_APP" ]; then
+  OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+
+  EXPLICIT_FLAGS=""
+  [ -n "$INSTALL_CLI" ] || [ -n "$INSTALL_SERVER" ] || [ -n "$INSTALL_APP" ] && EXPLICIT_FLAGS=1
+
+  # If no component flags given, install everything available for this platform
+  if [ -z "$EXPLICIT_FLAGS" ]; then
     INSTALL_CLI=1
-    INSTALL_SERVER=1
+    [ "$OS" = "linux" ] && INSTALL_SERVER=1
     INSTALL_APP=1
   fi
-
-  OS=$(uname -s | tr '[:upper:]' '[:lower:]')
   ARCH=$(uname -m)
 
   case "$ARCH" in
@@ -214,12 +217,14 @@ main() {
 
   echo ""
 
-  # Validate flags for the current platform
-  if [ -n "$INSTALL_SERVER" ] && [ "$OS" != "linux" ]; then
-    echo "Error: --server is only available on Linux"; exit 1
-  fi
-  if [ -n "$INSTALL_APP" ] && ! has_gui; then
-    echo "Error: --app requires a GUI (DISPLAY or WAYLAND_DISPLAY)"; exit 1
+  # Validate explicit flags for the current platform
+  if [ -n "$EXPLICIT_FLAGS" ]; then
+    if [ -n "$INSTALL_SERVER" ] && [ "$OS" != "linux" ]; then
+      echo "Error: --server is only available on Linux"; exit 1
+    fi
+    if [ -n "$INSTALL_APP" ] && ! has_gui; then
+      echo "Error: --app requires a GUI (DISPLAY or WAYLAND_DISPLAY)"; exit 1
+    fi
   fi
 
   case "$OS" in
