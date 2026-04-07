@@ -5,7 +5,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { connectToServer } from "@/api";
+import { apiFetch, connectToServer, isNewer } from "@/api";
 import { clearConnection, getConnection, initConnection, authHeaders } from "@/lib/connection";
 import { ensureFreshToken } from "@/lib/token-refresh";
 import { isTauri } from "@/lib/env";
@@ -40,6 +40,15 @@ async function fetchVersion(): Promise<string> {
     return typeof data.version === "string" ? data.version : "";
   } catch {
     return "";
+  }
+}
+
+async function triggerVestadUpdateIfNeeded(vestadVersion: string) {
+  if (!vestadVersion || !isNewer(__APP_VERSION__, vestadVersion)) return;
+  try {
+    await apiFetch("/self-update", { method: "POST" });
+  } catch {
+    // vestad will restart — connection loss is expected
   }
 }
 
@@ -115,6 +124,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const loadVersion = async () => {
       const nextVersion = await fetchVersion();
       setVersion(nextVersion);
+      void triggerVestadUpdateIfNeeded(nextVersion);
     };
 
     void loadVersion();
@@ -143,8 +153,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const connect = async (url: string, apiKey: string) => {
     await connectToServer(url, apiKey);
     setConnected(true);
-    const nextVersion = await fetchVersion();
-    setVersion(nextVersion);
   };
 
   const disconnect = () => {
