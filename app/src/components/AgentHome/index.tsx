@@ -17,6 +17,7 @@ export function AgentHome() {
   const { name } = useSelectedAgent();
   const navigate = useNavigate();
   const [chatCollapsed, setChatCollapsed] = useState(false);
+  const [showToolCalls, setShowToolCalls] = useState(false);
 
   return (
     <div className="flex h-full relative overflow-hidden">
@@ -46,7 +47,11 @@ export function AgentHome() {
             <>
               <ResizableHandle withHandle className="mx-2" />
               <ResizablePanel defaultSize="30%" minSize="320px">
-                <Chat onCollapse={() => setChatCollapsed(true)} />
+                <Chat
+                  onCollapse={() => setChatCollapsed(true)}
+                  showToolCalls={showToolCalls}
+                  onShowToolCallsChange={setShowToolCalls}
+                />
               </ResizablePanel>
             </>
           )}

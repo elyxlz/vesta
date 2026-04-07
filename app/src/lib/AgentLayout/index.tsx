@@ -3,7 +3,8 @@ import { Navigate, Outlet, useParams } from "react-router-dom";
 import { AgentIslandModals } from "@/components/AgentIslandModals";
 import { useAgentIsland } from "@/hooks/use-agent-island";
 import { useAgents } from "@/providers/AgentsProvider";
-import { SelectedAgentProvider } from "@/providers/SelectedAgentProvider";
+import { SelectedAgentProvider, useSelectedAgent } from "@/providers/SelectedAgentProvider";
+import { VoiceProvider } from "@/providers/VoiceProvider";
 
 type AgentIslandValue = ReturnType<typeof useAgentIsland>;
 
@@ -17,14 +18,17 @@ export function useAgentIslandContext() {
   return value;
 }
 
-function AgentLayoutInner() {
+function AgentLayoutWithVoice() {
+  const { name } = useSelectedAgent();
   const island = useAgentIsland({ menuAnchoredInNavbar: true });
 
   return (
-    <AgentIslandContext.Provider value={island}>
-      <Outlet />
-      <AgentIslandModals {...island} />
-    </AgentIslandContext.Provider>
+    <VoiceProvider agentName={name}>
+      <AgentIslandContext.Provider value={island}>
+        <Outlet />
+        <AgentIslandModals {...island} />
+      </AgentIslandContext.Provider>
+    </VoiceProvider>
   );
 }
 
@@ -38,7 +42,7 @@ export function AgentLayout() {
 
   return (
     <SelectedAgentProvider>
-      <AgentLayoutInner />
+      <AgentLayoutWithVoice />
     </SelectedAgentProvider>
   );
 }

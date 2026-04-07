@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Minimize2, Wrench } from "lucide-react";
 import { Chat } from "@/components/Chat";
@@ -6,7 +6,9 @@ import { AgentIsland } from "@/components/AgentIsland";
 import { AgentMenu } from "@/components/AgentMenu";
 import { Navbar } from "@/components/Navbar";
 import { Button } from "@/components/ui/button";
+import { ButtonGroup } from "@/components/ui/button-group";
 import { useAgentIslandContext } from "@/lib/AgentLayout";
+import { useLayout } from "@/stores/use-layout";
 import { cn } from "@/lib/utils";
 
 export function AgentChat() {
@@ -14,57 +16,82 @@ export function AgentChat() {
   const { name } = useParams<{ name: string }>();
   const [showToolCalls, setShowToolCalls] = useState(false);
   const island = useAgentIslandContext();
+  const headerStripRef = useRef<HTMLDivElement>(null);
+  const setChatHeaderStripBottomPx = useLayout((s) => s.setChatHeaderStripBottomPx);
+
+  useLayoutEffect(() => {
+    const el = headerStripRef.current;
+    if (!el) return;
+    const update = () => {
+      setChatHeaderStripBottomPx(Math.ceil(el.getBoundingClientRect().bottom));
+    };
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    update();
+    window.addEventListener("resize", update);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", update);
+      setChatHeaderStripBottomPx(0);
+    };
+  }, [setChatHeaderStripBottomPx]);
 
   return (
     <div className="h-full relative">
-      <div className="absolute top-0 left-0 right-0 z-10 bg-background px-3 sm:px-5 pointer-events-none">
+      <div
+        ref={headerStripRef}
+        className="absolute top-0 left-0 right-0 z-10 px-3 sm:px-5 pointer-events-none"
+      >
         <div className="pointer-events-auto">
           <Navbar
             center={<AgentIsland {...island} />}
             trailing={
-              <div className="flex items-center gap-1.5">
-                <Button
-                  size="icon-sm"
-                  variant="outline"
-                  className="md:size-9"
-                  onClick={() => navigate(`/agent/${name}`)}
-                >
-                  <Minimize2 />
-                </Button>
-                <div data-agent-menu className="flex items-center">
-                  <AgentMenu
-                    open={island.menuOpen}
-                    onOpenChange={island.onMenuOpenChange}
-                    name={island.name}
-                    info={island.info}
-                    isBusy={island.isBusy}
-                    authenticateBesideTrigger
-                    onAuthOpen={island.handleOpenAuth}
-                    onStart={island.start}
-                    onStop={island.stop}
-                    onRestart={island.restart}
-                    onRebuild={island.rebuild}
-                    onBackup={island.backup}
-                    onShowBackups={island.onShowBackups}
-                    onShowConsole={island.onShowConsole}
-                    onShowInternals={island.onShowInternals}
-                    onShowAgentSettings={island.onShowAgentSettings}
-                    onOpenDeleteDialog={island.onOpenDeleteDialog}
-                  />
-                </div>
+              <div data-agent-menu className="flex items-center">
+                <AgentMenu
+                  open={island.menuOpen}
+                  onOpenChange={island.onMenuOpenChange}
+                  name={island.name}
+                  info={island.info}
+                  isBusy={island.isBusy}
+                  authenticateBesideTrigger
+                  onAuthOpen={island.handleOpenAuth}
+                  onStart={island.start}
+                  onStop={island.stop}
+                  onRestart={island.restart}
+                  onRebuild={island.rebuild}
+                  onBackup={island.backup}
+                  onShowBackups={island.onShowBackups}
+                  onShowConsole={island.onShowConsole}
+                  onShowAgentSettings={island.onShowAgentSettings}
+                  onOpenDeleteDialog={island.onOpenDeleteDialog}
+                />
               </div>
             }
           />
         </div>
         <div className="flex justify-end pointer-events-auto mt-1">
-          <Button
-            size="icon"
-            variant="ghost"
-            className={cn("size-7", showToolCalls ? "text-primary" : "text-muted-foreground")}
-            onClick={() => setShowToolCalls((v) => !v)}
-          >
-            <Wrench size={14} />
-          </Button>
+          <ButtonGroup>
+            <Button
+              size="icon-sm"
+              variant="outline"
+              className="md:size-9"
+              onClick={() => navigate(`/agent/${name}`)}
+            >
+              <Minimize2 />
+            </Button>
+            <Button
+              size="icon-sm"
+              variant="outline"
+              className={cn(
+                "md:size-9",
+                showToolCalls ? "text-primary" : "text-muted-foreground",
+              )}
+              aria-pressed={showToolCalls}
+              onClick={() => setShowToolCalls((v) => !v)}
+            >
+              <Wrench />
+            </Button>
+          </ButtonGroup>
         </div>
       </div>
       <Chat fullscreen showToolCalls={showToolCalls} />

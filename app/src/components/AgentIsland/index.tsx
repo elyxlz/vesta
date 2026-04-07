@@ -34,7 +34,7 @@ export function AgentIsland(props: AgentIslandProps) {
   } = props;
 
   return (
-    <div className="relative my-auto flex justify-center">
+    <div className="relative z-[99999] my-auto flex justify-center">
       <motion.div
         ref={rootRef}
         layout

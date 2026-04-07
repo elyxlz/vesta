@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { VestaEvent, AgentActivityState } from "@/lib/types";
 import { wsUrl, fetchHistory } from "@/lib/connection";
 import { useAuth } from "@/providers/AuthProvider";
-import { useSpeech } from "@/hooks/use-speech";
 
 const RECONNECT_BASE = 1000;
 const RECONNECT_MAX = 30000;
@@ -16,9 +15,14 @@ export function sendChatEvent(event: object): boolean {
   return activeSender ? activeSender(event) : false;
 }
 
-export function useChat(name: string | null, active: boolean, speechEnabled: boolean) {
+interface UseChatOptions {
+  name: string | null;
+  active: boolean;
+  onAssistantMessage?: (text: string) => void;
+}
+
+export function useChat({ name, active, onAssistantMessage }: UseChatOptions) {
   const { setReachable } = useAuth();
-  const { speak, isSpeaking, stop: stopSpeech } = useSpeech(name, speechEnabled);
   const [messages, setMessages] = useState<VestaEvent[]>([]);
   const [agentState, setAgentState] = useState<AgentActivityState>("idle");
   const [connected, setConnected] = useState(false);
@@ -27,6 +31,8 @@ export function useChat(name: string | null, active: boolean, speechEnabled: boo
   const wsRef = useRef<WebSocket | null>(null);
   const pendingEchoesRef = useRef<string[]>([]);
   const cursorRef = useRef<number | null>(null);
+  const onAssistantMessageRef = useRef(onAssistantMessage);
+  onAssistantMessageRef.current = onAssistantMessage;
 
   useEffect(() => {
     if (!active || !name) return;
@@ -93,7 +99,7 @@ export function useChat(name: string | null, active: boolean, speechEnabled: boo
               : updated;
           });
           if (event.type === "chat" && event.text) {
-            speak(event.text);
+            onAssistantMessageRef.current?.(event.text);
           }
           if (event.type === "status") {
             setAgentState(event.state);
@@ -165,7 +171,7 @@ export function useChat(name: string | null, active: boolean, speechEnabled: boo
 
     setLoadingMore(true);
     try {
-      const result = await fetchHistory(name, cursor);
+      const result = await fetchHistory(name, "app-chat", cursor);
       const events = result.events ?? [];
       setMessages((prev) => [...events, ...prev]);
       cursorRef.current = result.cursor;
@@ -174,5 +180,5 @@ export function useChat(name: string | null, active: boolean, speechEnabled: boo
     }
   }, [name, loadingMore]);
 
-  return { messages, agentState, connected, hasMore, loadingMore, loadMore, send, sendEvent, isSpeaking, stopSpeech };
+  return { messages, agentState, connected, hasMore, loadingMore, loadMore, send, sendEvent };
 }

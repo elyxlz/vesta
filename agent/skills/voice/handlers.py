@@ -57,7 +57,7 @@ async def stt_status(request: web.Request) -> web.Response:
         {
             "configured": True,
             "provider": stt_entry["provider"],
-            "enabled": stt_entry.get("enabled", True),
+            "enabled": stt_entry.get("enabled", False),
             "auto_send": stt_entry.get("auto_send", True),
             "eot_threshold": stt_entry.get("eot_threshold", voice_config.DEFAULT_EOT_THRESHOLD),
             "eot_timeout_ms": stt_entry.get("eot_timeout_ms", voice_config.DEFAULT_EOT_TIMEOUT_MS),

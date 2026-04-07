@@ -17,8 +17,8 @@ import {
 import { ButtonGroup } from "@/components/ui/button-group";
 import { useChat } from "@/hooks/use-chat";
 import { useAutoScroll } from "@/hooks/use-auto-scroll";
-import { useVoiceInput } from "@/hooks/use-voice-input";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
+import { useVoice } from "@/providers/VoiceProvider";
 import { useLayout } from "@/stores/use-layout";
 import { linkify } from "@/lib/linkify";
 import type { VestaEvent } from "@/lib/types";
@@ -28,6 +28,7 @@ interface ChatProps {
   onCollapse?: () => void;
   fullscreen?: boolean;
   showToolCalls?: boolean;
+  onShowToolCallsChange?: (show: boolean) => void;
 }
 
 const thinkingIndicatorVariants = {
@@ -61,22 +62,32 @@ const thinkingIndicatorVariants = {
   },
 };
 
-export function Chat({ onCollapse, fullscreen, showToolCalls = true }: ChatProps = {}) {
-  const { name, setAgentState, sttStatus, ttsStatus } = useSelectedAgent();
+export function Chat({ onCollapse, fullscreen, showToolCalls, onShowToolCallsChange }: ChatProps = {}) {
+  const { name, setAgentState } = useSelectedAgent();
+  const {
+    sttAvailable, voiceAutoSend,
+    isRecording, liveTranscript, toggleVoice, voiceError,
+    speak, registerChatCallbacks,
+  } = useVoice();
   const navigate = useNavigate();
   const navbarHeight = useLayout((s) => s.navbarHeight);
-  const speechEnabled = (ttsStatus?.configured && ttsStatus?.enabled) ?? false;
-  const voiceAutoSend = sttStatus?.auto_send ?? true;
-  const sttAvailable = (sttStatus?.configured && sttStatus?.enabled) ?? false;
-  const { messages, agentState, connected, hasMore, loadingMore, loadMore, send, stopSpeech } = useChat(name, true, speechEnabled);
+  const chatHeaderStripBottomPx = useLayout((s) => s.chatHeaderStripBottomPx);
+  const headerClearance = Math.max(navbarHeight, chatHeaderStripBottomPx);
+
+  const { messages, agentState, connected, hasMore, loadingMore, loadMore, send } =
+    useChat({ name, active: true, onAssistantMessage: speak });
 
   useEffect(() => {
     setAgentState(agentState);
   }, [agentState, setAgentState]);
 
   const [input, setInput] = useState("");
-  const voiceDraft = useCallback((text: string) => { setInput(text); }, []);
-  const { isRecording, liveTranscript, toggle: toggleVoice, error: voiceError } = useVoiceInput({ agentName: name || "", onSend: send, onDraft: voiceDraft, onRecordingStart: stopSpeech, sttAvailable, voiceAutoSend });
+  const setInputCb = useCallback((text: string) => { setInput(text); }, []);
+
+  useEffect(() => {
+    registerChatCallbacks(send, setInputCb);
+  }, [registerChatCallbacks, send, setInputCb]);
+
   const [wasConnected, setWasConnected] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -95,7 +106,8 @@ export function Chat({ onCollapse, fullscreen, showToolCalls = true }: ChatProps
   }, [isNearBottom]);
 
   const chatMessages = useMemo(() => messages.filter(
-    (m) => m.type === "user" || m.type === "chat" || m.type === "error" || (m.type === "tool_start" && showToolCalls),
+    (m) => m.type === "user" || m.type === "chat" || m.type === "error" ||
+      (showToolCalls && m.type === "tool_start" && !(m.tool === "Bash" && m.input.includes("app-chat"))),
   ), [messages, showToolCalls]);
 
   const isThinking =
@@ -188,6 +200,20 @@ export function Chat({ onCollapse, fullscreen, showToolCalls = true }: ChatProps
             >
               <Maximize2 />
             </Button>
+            {onShowToolCallsChange && (
+              <Button
+                size="icon-sm"
+                variant="outline"
+                className={cn(
+                  "text-muted-foreground dark:bg-card",
+                  showToolCalls && "text-primary",
+                )}
+                aria-pressed={showToolCalls}
+                onClick={() => onShowToolCallsChange(!showToolCalls)}
+              >
+                <Wrench />
+              </Button>
+            )}
             {onCollapse && (
               <Button
                 size="icon-sm"
@@ -225,7 +251,7 @@ export function Chat({ onCollapse, fullscreen, showToolCalls = true }: ChatProps
               exit={{ opacity: 0, y: -8 }}
               transition={{ duration: 0.18 }}
               className="absolute left-1/2 -translate-x-1/2 z-10 pointer-events-none"
-              style={{ top: navbarHeight + 32 }}
+              style={{ top: headerClearance + 32 }}
             >
               <span className="rounded-lg border border-muted-foreground/20 bg-muted/80 backdrop-blur-sm px-3 py-1.5 text-xs text-muted-foreground">
                 loading...
@@ -236,12 +262,18 @@ export function Chat({ onCollapse, fullscreen, showToolCalls = true }: ChatProps
         <div
           ref={scrollRef}
           onScroll={handleScroll}
-          className="h-full min-h-0 overflow-y-auto px-3 pt-6 pb-4"
+          className={cn(
+            "h-full min-h-0 overflow-y-auto px-3 pb-4",
+            fullscreen ? "pt-0" : "pt-6",
+          )}
           style={{
-            maskImage: `linear-gradient(to bottom, transparent, black ${navbarHeight * 2}px, black calc(100% - 20px), transparent)`,
+            maskImage: `linear-gradient(to bottom, transparent, black ${headerClearance * 2}px, black calc(100% - 20px), transparent)`,
           }}
         >
-          <div className={cn("min-h-full flex flex-col", fullscreen && "pt-16 md:pt-20")}>
+          <div
+            className="min-h-full flex flex-col"
+            style={fullscreen ? { paddingTop: headerClearance + 8 } : undefined}
+          >
             <div className="flex-1" />
             <div>
               {!hasMore && chatMessages.length > 0 && (
@@ -264,9 +296,8 @@ export function Chat({ onCollapse, fullscreen, showToolCalls = true }: ChatProps
                     const isTool = msg.type === "tool_start";
                     const prevIsTool = prev?.type === "tool_start";
                     const gap = i === 0 ? "" : isTool && prevIsTool ? "mt-1" : isTool || prevIsTool ? "mt-2" : prev && prev.type === msg.type ? "mt-1.5" : "mt-5";
-                    const key = msg.ts ? `${msg.ts}-${msg.type}-${i}` : `msg-${i}`;
                     return (
-                      <ChatBubble key={key} event={msg} className={gap} />
+                      <ChatBubble key={i} event={msg} className={gap} />
                     );
                   })}
                 </div>

@@ -21,11 +21,13 @@ import {
 } from "@/lib/voice";
 import { useOptimisticToggle } from "@/hooks/use-optimistic-toggle";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
+import { useVoice } from "@/providers/VoiceProvider";
 
 const EOT_DEBOUNCE_MS = 400;
 
 export function AgentSettings({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
-  const { name: agentName, sttStatus, ttsStatus, refreshVoiceStatus } = useSelectedAgent();
+  const { name: agentName } = useSelectedAgent();
+  const { sttStatus, ttsStatus, patchStt, patchTts, refreshVoiceStatus } = useVoice();
 
   // --- STT state ---
   const sttConfigured = sttStatus?.configured ?? false;
@@ -33,11 +35,11 @@ export function AgentSettings({ open, onOpenChange }: { open: boolean; onOpenCha
 
   const [sttEnabled, toggleSttEnabled] = useOptimisticToggle(
     sttStatus?.enabled, true,
-    (v) => { if (agentName) setSttEnabled(agentName, v).catch(console.warn); },
+    (v) => { patchStt({ enabled: v }); if (agentName) setSttEnabled(agentName, v).catch(() => refreshVoiceStatus()); },
   );
   const [autoSend, toggleAutoSend] = useOptimisticToggle(
     sttStatus?.auto_send, true,
-    (v) => { if (agentName) setSttAutoSend(agentName, v).catch(console.warn); },
+    (v) => { patchStt({ auto_send: v }); if (agentName) setSttAutoSend(agentName, v).catch(() => refreshVoiceStatus()); },
   );
 
   const [localEotThreshold, setLocalEotThreshold] = useState(0.8);
@@ -83,7 +85,7 @@ export function AgentSettings({ open, onOpenChange }: { open: boolean; onOpenCha
 
   const [ttsEnabled, toggleTtsEnabled] = useOptimisticToggle(
     ttsStatus?.enabled, false,
-    (v) => { if (agentName) setTtsEnabled(agentName, v).catch(console.warn); },
+    (v) => { patchTts({ enabled: v }); if (agentName) setTtsEnabled(agentName, v).catch(() => refreshVoiceStatus()); },
   );
 
   const voiceList = ttsStatus?.voices ?? [];

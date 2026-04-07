@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import { streamSpeech } from "@/lib/voice";
 
-export function useSpeech(agentName: string | null, speechEnabled: boolean) {
+export function useVoiceOutput(agentName: string | null, speechEnabled: boolean) {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const queueRef = useRef<string[]>([]);

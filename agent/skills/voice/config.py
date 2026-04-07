@@ -79,7 +79,7 @@ def set_key(data_dir: pl.Path, domain: tp.Literal["stt", "tts"], provider: str, 
         existing = cfg.get(domain) or {}
         creds = dict(existing.get("credentials") or {})
         creds[provider] = {"api_key": api_key}
-        cfg[domain] = {**existing, "provider": provider, "credentials": creds}
+        cfg[domain] = {**existing, "provider": provider, "credentials": creds, "enabled": True}
         return cfg
 
     return mutate(data_dir, _update)
