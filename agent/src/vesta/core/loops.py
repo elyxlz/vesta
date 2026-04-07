@@ -99,6 +99,8 @@ async def queue_greeting(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.V
             prompt = f"[System: your name is {config.agent_name}]\n\n{prompt}"
             # Mark first start as done so restarts don't re-trigger it
             (config.data_dir / "first_start_done").write_text("1")
+            # Remove ready marker so vestad keeps showing "waking up" until setup completes
+            (config.data_dir / "agent_ready").unlink(missing_ok=True)
     else:
         extras = []
         today = _now().strftime("%Y-%m-%d")
@@ -199,6 +201,7 @@ async def _process_interruptible(
 async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig) -> None:
     logger.client("Creating new client session...")
     options = build_client_options(config, state)
+    ready_marker = config.data_dir / "agent_ready"
     async with ClaudeSDKClient(options=options) as client:
         state.client = client
         logger.client("Client session started")
@@ -211,6 +214,11 @@ async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm
                     continue
 
                 await _process_interruptible(msg, is_user=is_user, queue=queue, state=state, config=config)
+
+                if not ready_marker.exists():
+                    ready_marker.parent.mkdir(parents=True, exist_ok=True)
+                    ready_marker.write_text("1")
+                    logger.startup("Agent ready")
 
                 if state.dreamer_active:
                     state.dreamer_active = False
