@@ -124,10 +124,7 @@ class ElevenLabsTts:
                 "label": "Voice",
                 "description": "Select a voice for speech synthesis",
                 "default": DEFAULT_VOICE_ID,
-                "options": [
-                    {"value": v["id"], "label": v["name"], "preview": v.get("preview", "")}
-                    for v in PREMADE_VOICES
-                ],
+                "options": [{"value": v["id"], "label": v["name"], "preview": v.get("preview", "")} for v in PREMADE_VOICES],
             },
         ]
 

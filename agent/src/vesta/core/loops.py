@@ -273,9 +273,7 @@ async def monitor_loop(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.Stat
     pending_passive: list[vm.Notification] = []
     notify = asyncio.Event()
 
-    watcher_task = asyncio.create_task(
-        _notification_watcher(notify, notifications_dir=config.notifications_dir, stop=state.shutdown_event)
-    )
+    watcher_task = asyncio.create_task(_notification_watcher(notify, notifications_dir=config.notifications_dir, stop=state.shutdown_event))
 
     try:
         while state.shutdown_event and not state.shutdown_event.is_set():
