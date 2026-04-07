@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use tokio::sync::{Mutex, RwLock};
 
-use crate::{docker, jwt, update_check};
+use crate::{docker, jwt, self_update, update_check};
 
 const API_KEY_BYTES: usize = 32;
 const PROXY_MAX_BODY_BYTES: usize = 10 * 1024 * 1024; // 10 MB
@@ -332,6 +332,20 @@ async fn version(State(state): State<SharedState>) -> Json<serde_json::Value> {
         "latest_version": latest,
         "update_available": update_available,
     }))
+}
+
+async fn self_update_handler() -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    tracing::info!("self-update requested via API");
+    let result = tokio::task::spawn_blocking(self_update::perform_update)
+        .await
+        .unwrap();
+    match result {
+        Ok(restarting) => Ok(Json(serde_json::json!({
+            "ok": true,
+            "restarting": restarting,
+        }))),
+        Err(e) => Err(err_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string())),
+    }
 }
 
 async fn tunnel_handler(
@@ -1163,6 +1177,7 @@ pub fn build_router(state: SharedState) -> Router {
 
     let protected = Router::new()
         .route("/version", get(version))
+        .route("/self-update", post(self_update_handler))
         .route("/tunnel", get(tunnel_handler))
         .route("/agents", get(list_agents_handler))
         .route("/agents", post(create_agent_handler))

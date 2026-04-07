@@ -5,6 +5,7 @@ use clap::Parser;
 
 mod docker;
 mod jwt;
+mod self_update;
 mod serve;
 mod systemd;
 mod tunnel;
@@ -448,51 +449,7 @@ fn main() {
         }
 
         Command::Update => {
-            let target = match std::env::consts::ARCH {
-                "x86_64" => "x86_64-unknown-linux-gnu",
-                "aarch64" => "aarch64-unknown-linux-gnu",
-                other => die(format!("unsupported architecture: {}", other)),
-            };
-
-            let archive = format!("vestad-{}.tar.gz", target);
-            let url = format!(
-                "https://github.com/elyxlz/vesta/releases/latest/download/{}",
-                archive
-            );
-            let tmp = format!("/tmp/vestad-update-{}", std::process::id());
-            std::fs::create_dir_all(&tmp).ok();
-
-            tracing::info!("downloading update...");
-            let status = std::process::Command::new("curl")
-                .args(["-fsSL", "-o", &format!("{}/{}", tmp, archive), &url])
-                .status();
-            if !status.map(|s| s.success()).unwrap_or(false) {
-                die("failed to download update");
-            }
-
-            let status = std::process::Command::new("tar")
-                .args(["-xzf", &format!("{}/{}", tmp, archive), "-C", &tmp])
-                .status();
-            if !status.map(|s| s.success()).unwrap_or(false) {
-                die("failed to extract update");
-            }
-
-            let new_binary = format!("{}/vestad", tmp);
-            self_replace::self_replace(&new_binary)
-                .unwrap_or_else(|e| die(format!("failed to replace binary: {}", e)));
-
-            std::fs::remove_dir_all(&tmp).ok();
-
-            if let Err(e) = systemd::reinstall_service() {
-                tracing::warn!("failed to update systemd service: {e}");
-            }
-            if systemd::is_active() {
-                tracing::info!("restarting vestad...");
-                systemd::restart().unwrap_or_else(|e| die(&e));
-                tracing::info!("updated and restarted.");
-            } else {
-                tracing::info!("updated. run 'vestad' to start.");
-            }
+            self_update::perform_update().unwrap_or_else(|e| die(e.to_string()));
         }
 
         Command::Uninstall => {
