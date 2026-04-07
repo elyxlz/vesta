@@ -223,6 +223,16 @@ impl Client {
         check_response(resp)
     }
 
+    fn put_json(&self, path: &str, body: &serde_json::Value) -> Result<Response<Body>, String> {
+        let resp = self
+            .agent
+            .put(&format!("{}{}", self.base_url, path))
+            .header("Authorization", &format!("Bearer {}", self.api_key))
+            .send_json(body)
+            .map_err(map_error)?;
+        check_response(resp)
+    }
+
     pub fn health(&self) -> Result<(), String> {
         let resp = self
             .agent
@@ -356,6 +366,21 @@ impl Client {
             .call()
             .map_err(map_error)?;
         check_response(resp)?;
+        Ok(())
+    }
+
+    pub fn get_auto_backup(&self) -> Result<bool, String> {
+        let resp = self.get("/settings/auto-backup")?;
+        let body: serde_json::Value = resp
+            .into_body()
+            .read_json()
+            .map_err(|e| format!("parse error: {}", e))?;
+        Ok(body["enabled"].as_bool().unwrap_or(true))
+    }
+
+    pub fn set_auto_backup(&self, enabled: bool) -> Result<(), String> {
+        let body = serde_json::json!({"enabled": enabled});
+        self.put_json("/settings/auto-backup", &body)?;
         Ok(())
     }
 

@@ -11,7 +11,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use tokio::sync::Mutex;
 
 use crate::{docker, jwt, update_check};
@@ -131,6 +131,7 @@ pub struct AppState {
     agent_locks: Mutex<HashMap<String, Arc<tokio::sync::RwLock<()>>>>,
     tunnel_url: Mutex<Option<String>>,
     update_info: Mutex<Option<update_check::UpdateInfo>>,
+    auto_backup_enabled: AtomicBool,
 }
 
 impl AppState {
@@ -141,6 +142,7 @@ impl AppState {
             agent_locks: Mutex::new(HashMap::new()),
             tunnel_url: Mutex::new(tunnel_url),
             update_info: Mutex::new(None),
+            auto_backup_enabled: AtomicBool::new(true),
         }
     }
 
@@ -717,7 +719,7 @@ async fn create_backup_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
 ) -> Result<Json<crate::types::BackupInfo>, (StatusCode, Json<serde_json::Value>)> {
-    tracing::info!(name = %name, "creating manual backup");
+    tracing::info!(agent = %name, "creating manual backup");
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
@@ -729,6 +731,7 @@ async fn create_backup_handler(
     .unwrap()
     .map_err(map_docker_err)?;
 
+    tracing::info!(agent = %name, backup_id = %backup.id, size = backup.size, "backup created");
     Ok(Json(backup))
 }
 
@@ -761,7 +764,7 @@ async fn restore_backup_handler(
     let lock = state.agent_lock(&path.name).await;
     let _guard = lock.write().await;
 
-    tracing::info!(name = %path.name, backup_id = %path.backup_id, "restoring backup");
+    tracing::info!(agent = %path.name, backup_id = %path.backup_id, "restoring backup");
     let name = path.name.clone();
     let backup_id = path.backup_id.clone();
     tokio::task::spawn_blocking(move || docker::restore_backup(&name, &backup_id))
@@ -769,6 +772,7 @@ async fn restore_backup_handler(
         .unwrap()
         .map_err(map_docker_err)?;
 
+    tracing::info!(agent = %path.name, backup_id = %path.backup_id, "backup restored");
     Ok(Json(serde_json::json!({"ok": true})))
 }
 
@@ -785,14 +789,39 @@ async fn delete_backup_handler(
     let lock = state.agent_lock(&path.name).await;
     let _guard = lock.write().await;
 
-    tracing::info!(backup_id = %path.backup_id, "deleting backup");
+    tracing::info!(agent = %path.name, backup_id = %path.backup_id, "deleting backup");
     let backup_id = path.backup_id.clone();
     tokio::task::spawn_blocking(move || docker::delete_backup(&backup_id))
         .await
         .unwrap()
         .map_err(map_docker_err)?;
 
+    tracing::info!(agent = %path.name, backup_id = %path.backup_id, "backup deleted");
     Ok(Json(serde_json::json!({"ok": true})))
+}
+
+// --- Auto-backup settings ---
+
+async fn get_auto_backup_handler(
+    State(state): State<SharedState>,
+) -> Json<serde_json::Value> {
+    let enabled = state.auto_backup_enabled.load(Ordering::Relaxed);
+    Json(serde_json::json!({"enabled": enabled}))
+}
+
+async fn set_auto_backup_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let enabled = body["enabled"].as_bool().ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "missing boolean field 'enabled'"})),
+        )
+    })?;
+    state.auto_backup_enabled.store(enabled, Ordering::Relaxed);
+    tracing::info!(enabled, "auto-backup toggled");
+    Ok(Json(serde_json::json!({"enabled": enabled})))
 }
 
 // --- Port file ---
@@ -864,6 +893,8 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/backups", get(list_backups_handler))
         .route("/agents/{name}/backups/{backup_id}/restore", post(restore_backup_handler))
         .route("/agents/{name}/backups/{backup_id}", axum::routing::delete(delete_backup_handler))
+        .route("/settings/auto-backup", get(get_auto_backup_handler))
+        .route("/settings/auto-backup", axum::routing::put(set_auto_backup_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
@@ -891,9 +922,21 @@ fn spawn_auto_backup_task(state: SharedState) {
         loop {
             tokio::time::sleep(tokio::time::Duration::from_secs(AUTO_BACKUP_CHECK_INTERVAL_SECS)).await;
 
+            if !state.auto_backup_enabled.load(Ordering::Relaxed) {
+                tracing::debug!("auto-backup: disabled, skipping cycle");
+                continue;
+            }
+
             let agents = tokio::task::spawn_blocking(docker::list_agent_names)
                 .await
                 .unwrap_or_default();
+
+            if agents.is_empty() {
+                tracing::debug!("auto-backup: no agents found, skipping cycle");
+                continue;
+            }
+
+            tracing::info!(agent_count = agents.len(), "auto-backup: starting cycle");
 
             let now_epoch = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -903,8 +946,8 @@ fn spawn_auto_backup_task(state: SharedState) {
             let seven_days_ago = docker::now_timestamp_from_epoch(now_epoch - 7 * 86400);
             let thirty_days_ago = docker::now_timestamp_from_epoch(now_epoch - 30 * 86400);
 
-            for name in agents {
-                let lock = state.agent_lock(&name).await;
+            for name in &agents {
+                let lock = state.agent_lock(name).await;
                 let _guard = lock.write().await;
 
                 let name_clone = name.clone();
@@ -921,7 +964,7 @@ fn spawn_auto_backup_task(state: SharedState) {
                     });
 
                     if !has_daily_today {
-                        tracing::info!("auto-backup: creating daily backup for '{}'", name_clone);
+                        tracing::info!(agent = %name_clone, backup_type = "daily", "auto-backup: creating backup");
                         let new = docker::create_backup(&name_clone, crate::types::BackupType::Daily)?;
                         backups.insert(0, new);
                     }
@@ -930,7 +973,7 @@ fn spawn_auto_backup_task(state: SharedState) {
                         b.backup_type == crate::types::BackupType::Weekly && b.created_at >= week_ago
                     });
                     if !has_recent_weekly {
-                        tracing::info!("auto-backup: creating weekly backup for '{}'", name_clone);
+                        tracing::info!(agent = %name_clone, backup_type = "weekly", "auto-backup: creating backup");
                         let new = docker::create_backup(&name_clone, crate::types::BackupType::Weekly)?;
                         backups.insert(0, new);
                     }
@@ -939,7 +982,7 @@ fn spawn_auto_backup_task(state: SharedState) {
                         b.backup_type == crate::types::BackupType::Monthly && b.created_at >= month_ago
                     });
                     if !has_recent_monthly {
-                        tracing::info!("auto-backup: creating monthly backup for '{}'", name_clone);
+                        tracing::info!(agent = %name_clone, backup_type = "monthly", "auto-backup: creating backup");
                         let new = docker::create_backup(&name_clone, crate::types::BackupType::Monthly)?;
                         backups.insert(0, new);
                     }
@@ -951,9 +994,11 @@ fn spawn_auto_backup_task(state: SharedState) {
                 .unwrap_or_else(|e| Err(docker::DockerError::Failed(e.to_string())));
 
                 if let Err(e) = result {
-                    tracing::error!("auto-backup error for '{}': {}", name, e);
+                    tracing::error!(agent = %name, error = %e, "auto-backup: failed");
                 }
             }
+
+            tracing::info!(agent_count = agents.len(), "auto-backup: cycle complete");
         }
     });
 }

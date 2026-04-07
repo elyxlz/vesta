@@ -933,6 +933,26 @@ const BACKUP_IMAGE_PREFIX: &str = "vesta-backup";
 const RETENTION_DAILY: usize = 3;
 const RETENTION_WEEKLY: usize = 2;
 const RETENTION_MONTHLY: usize = 1;
+const MIN_DISK_SPACE_BYTES: u64 = 1_000_000_000; // 1 GB
+
+/// Check that Docker's data root has enough free disk space for a backup.
+fn check_disk_space() -> Result<(), DockerError> {
+    let root = docker_output(&["info", "--format", "{{.DockerRootDir}}"])
+        .unwrap_or_else(|| "/var/lib/docker".to_string());
+
+    let stat = nix::sys::statvfs::statvfs(root.as_str())
+        .map_err(|e| DockerError::Failed(format!("failed to check disk space: {}", e)))?;
+
+    let available = stat.blocks_available() * stat.fragment_size();
+    if available < MIN_DISK_SPACE_BYTES {
+        let avail_mb = available / 1_000_000;
+        return Err(DockerError::Failed(format!(
+            "insufficient disk space for backup ({}MB available, need at least 1GB)",
+            avail_mb
+        )));
+    }
+    Ok(())
+}
 
 /// Build a backup image tag from components.
 pub fn backup_tag(agent_name: &str, backup_type: &BackupType, timestamp: &str) -> String {
@@ -1061,6 +1081,9 @@ pub fn create_backup(name: &str, backup_type: BackupType) -> Result<BackupInfo, 
         _ => {}
     }
 
+    check_disk_space()?;
+
+    tracing::debug!(agent = %name, backup_type = %backup_type, "starting backup");
     let was_running = cs == ContainerStatus::Running;
     if was_running {
         docker_ok(&["stop", &cname]);
@@ -1070,6 +1093,11 @@ pub fn create_backup(name: &str, backup_type: BackupType) -> Result<BackupInfo, 
 
     if was_running {
         docker_ok(&["start", &cname]);
+    }
+
+    match &result {
+        Ok(info) => tracing::debug!(agent = %name, backup_id = %info.id, size = info.size, "backup committed"),
+        Err(e) => tracing::error!(agent = %name, error = %e, "backup commit failed"),
     }
 
     result
@@ -1156,10 +1184,12 @@ pub fn restore_backup(name: &str, backup_id: &str) -> Result<(), DockerError> {
     if info.status == ContainerStatus::Running {
         docker_ok(&["stop", &cname]);
     }
+    tracing::info!(agent = %name, "creating pre-restore safety backup");
     commit_backup(&cname, name, &BackupType::PreRestore)?;
     docker_ok(&["rm", "-f", &cname]);
 
     // Create new container from backup image, reusing the port
+    tracing::debug!(agent = %name, backup_id = %backup_id, "creating container from backup image");
     create_container(&cname, backup_id, info.port, name)?;
 
     if !docker_ok(&["start", &cname]) {
@@ -1210,8 +1240,16 @@ pub fn compute_backups_to_delete(backups: &[BackupInfo]) -> Vec<String> {
 /// Pass existing backups list to avoid a redundant `docker images` call.
 pub fn cleanup_backups(backups: &[BackupInfo]) {
     let to_delete = compute_backups_to_delete(backups);
+    if to_delete.is_empty() {
+        return;
+    }
+    tracing::info!(count = to_delete.len(), "cleaning up old backups");
     for id in &to_delete {
-        docker_ok(&["rmi", id]);
+        if docker_ok(&["rmi", id]) {
+            tracing::debug!(backup_id = %id, "deleted expired backup");
+        } else {
+            tracing::warn!(backup_id = %id, "failed to delete expired backup");
+        }
     }
 }
 

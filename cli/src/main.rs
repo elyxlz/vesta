@@ -176,15 +176,20 @@ enum BackupAction {
     Restore {
         /// Agent name
         name: String,
-        /// Backup ID (image tag from `vesta backup list`)
+        /// Backup ID (from `vesta backup list`)
         backup_id: String,
     },
     /// Delete a backup
     Delete {
         /// Agent name
         name: String,
-        /// Backup ID (image tag from `vesta backup list`)
+        /// Backup ID (from `vesta backup list`)
         backup_id: String,
+    },
+    /// Show or set auto-backup status
+    AutoBackup {
+        /// Set to "on" or "off" (omit to show current status)
+        toggle: Option<String>,
     },
 }
 
@@ -551,9 +556,10 @@ fn run(cli: Cli) {
                     if backups.is_empty() {
                         eprintln!("no backups for '{}'", name);
                     } else {
+                        eprintln!("  {:<22} {:<13} {:>8}   ID", "DATE", "TYPE", "SIZE");
                         for b in &backups {
                             println!(
-                                "  {} — {} — {} — {}",
+                                "  {:<22} {:<13} {:>8}   {}",
                                 b.created_at, b.backup_type, format_size(b.size), b.id
                             );
                         }
@@ -569,6 +575,21 @@ fn run(cli: Cli) {
                         .unwrap_or_else(|e| platform::die(&e));
                     eprintln!("backup deleted: {}", backup_id);
                 }
+                BackupAction::AutoBackup { toggle } => match toggle.as_deref() {
+                    Some("on") => {
+                        c.set_auto_backup(true).unwrap_or_else(|e| platform::die(&e));
+                        eprintln!("auto-backup: enabled");
+                    }
+                    Some("off") => {
+                        c.set_auto_backup(false).unwrap_or_else(|e| platform::die(&e));
+                        eprintln!("auto-backup: disabled");
+                    }
+                    Some(other) => platform::die(&format!("expected 'on' or 'off', got '{}'", other)),
+                    None => {
+                        let enabled = c.get_auto_backup().unwrap_or_else(|e| platform::die(&e));
+                        eprintln!("auto-backup: {}", if enabled { "enabled" } else { "disabled" });
+                    }
+                },
             }
         }
 
