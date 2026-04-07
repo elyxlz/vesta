@@ -7,19 +7,33 @@ Commands:
 """
 
 import argparse
+import os
 import sys
 
 from app_chat_cli.commands import cmd_send, cmd_history
 from app_chat_cli.daemon import cmd_serve
 
 
+def _default_ws_url() -> str:
+    port = os.environ.get("WS_PORT", "7865")
+    return f"ws://localhost:{port}/ws"
+
+
+def _default_http_url() -> str:
+    port = os.environ.get("WS_PORT", "7865")
+    return f"http://localhost:{port}"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="app-chat", description="Vesta app chat skill")
     sub = parser.add_subparsers(dest="command")
 
+    ws_default = _default_ws_url()
+    http_default = _default_http_url()
+
     serve_p = sub.add_parser("serve", help="Run the app-chat daemon")
     serve_p.add_argument("--notifications-dir", required=True, help="Directory for notification JSON files")
-    serve_p.add_argument("--ws-url", default="ws://localhost:7865/ws", help="Agent WebSocket URL")
+    serve_p.add_argument("--ws-url", default=ws_default, help=f"Agent WebSocket URL (default: {ws_default})")
     serve_p.add_argument("--data-dir", default=None, help="Data directory (default: ~/.app-chat)")
 
     send_p = sub.add_parser("send", help="Send a message to the app")
@@ -29,7 +43,7 @@ def main() -> None:
     history_p = sub.add_parser("history", help="Search or list chat history")
     history_p.add_argument("--search", "-s", default=None, help="FTS5 search query")
     history_p.add_argument("--limit", "-n", type=int, default=20, help="Max results")
-    history_p.add_argument("--url", default=None, help="Agent HTTP base URL (default: http://localhost:7865)")
+    history_p.add_argument("--url", default=None, help=f"Agent HTTP base URL (default: {http_default})")
 
     args = parser.parse_args()
 

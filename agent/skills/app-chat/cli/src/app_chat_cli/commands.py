@@ -2,13 +2,17 @@
 
 import asyncio
 import json
+import os
 import pathlib as pl
 import sys
 import urllib.request
 import urllib.error
 import urllib.parse
 
-DEFAULT_AGENT_URL = "http://localhost:7865"
+
+def _default_agent_url() -> str:
+    port = os.environ.get("WS_PORT", "7865")
+    return f"http://localhost:{port}"
 
 
 def cmd_send(args: object) -> None:
@@ -59,7 +63,7 @@ def _api_get(base_url: str, path: str, params: dict[str, str]) -> dict[str, obje
 def cmd_history(args: object) -> None:
     query = args.search
     limit = args.limit
-    base_url = args.url or DEFAULT_AGENT_URL
+    base_url = args.url or _default_agent_url()
 
     if query:
         params: dict[str, str] = {"q": query, "limit": str(limit)}
