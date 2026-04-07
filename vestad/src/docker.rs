@@ -36,6 +36,7 @@ const AGENT_READY_TIMEOUT_MS: u64 = 200;
 const WAIT_READY_POLL_MS: u64 = 500;
 const DEFAULT_TOKEN_EXPIRES_SECS: u64 = 28800;
 const LABEL_USER: &str = "vesta.user";
+const LABEL_AGENT_NAME: &str = "vesta.agent_name";
 
 
 pub const OAUTH_CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
@@ -87,6 +88,19 @@ pub fn name_from_cname(cname: &str) -> String {
     let user = current_user();
     let user_prefix = format!("{}-", user);
     without_vesta.strip_prefix(&user_prefix).unwrap_or(without_vesta).to_string()
+}
+
+/// Read the agent name from the `vesta.agent_name` Docker label, falling back
+/// to parsing the container name for legacy containers that lack the label.
+pub fn get_agent_name(cname: &str) -> String {
+    docker_output(&[
+        "inspect",
+        "--format",
+        &format!("{{{{index .Config.Labels \"{}\"}}}}", LABEL_AGENT_NAME),
+        cname,
+    ])
+    .filter(|s| !s.trim().is_empty() && s.trim() != "<no value>")
+    .unwrap_or_else(|| name_from_cname(cname))
 }
 
 pub fn normalize_name(raw: &str) -> String {
@@ -240,6 +254,7 @@ pub struct ContainerInfo {
     pub status: ContainerStatus,
     pub port: u16,
     pub id: Option<String>,
+    pub agent_name: Option<String>,
 }
 
 pub struct AgentDerivedState {
@@ -258,14 +273,18 @@ pub fn compute_agent_state(cname: &str, info: &ContainerInfo) -> AgentDerivedSta
 }
 
 fn inspect_container(cname: &str) -> ContainerInfo {
+    let format_str = format!(
+        "{{{{.State.Status}}}}|{{{{index .Config.Labels \"vesta.ws_port\"}}}}|{{{{.Id}}}}|{{{{index .Config.Labels \"{}\"}}}}",
+        LABEL_AGENT_NAME
+    );
     match docker_output(&[
         "inspect",
         "--format",
-        "{{.State.Status}}|{{index .Config.Labels \"vesta.ws_port\"}}|{{.Id}}",
+        &format_str,
         cname,
     ]) {
         Some(s) => {
-            let parts: Vec<&str> = s.splitn(3, '|').collect();
+            let parts: Vec<&str> = s.splitn(4, '|').collect();
             let status = match parts.first().map(|p| p.trim()) {
                 Some("running" | "restarting" | "paused") => ContainerStatus::Running,
                 Some("exited" | "created") => ContainerStatus::Stopped,
@@ -279,12 +298,17 @@ fn inspect_container(cname: &str) -> ContainerInfo {
             let id = parts
                 .get(2)
                 .map(|p| p.trim().chars().take(12).collect::<String>());
-            ContainerInfo { status, port, id }
+            let agent_name = parts
+                .get(3)
+                .map(|p| p.trim().to_string())
+                .filter(|s| !s.is_empty() && s != "<no value>");
+            ContainerInfo { status, port, id, agent_name }
         }
         None => ContainerInfo {
             status: ContainerStatus::NotFound,
             port: BASE_WS_PORT,
             id: None,
+            agent_name: None,
         },
     }
 }
@@ -498,12 +522,14 @@ pub fn create_container(cname: &str, image: &str, port: u16, agent_name: &str) -
     let agent_name_env = format!("AGENT_NAME={}", agent_name);
     let port_label = format!("vesta.ws_port={}", port);
     let user_label = format!("{}={}", LABEL_USER, current_user());
+    let agent_name_label = format!("{}={}", LABEL_AGENT_NAME, agent_name);
     let mut args = vec![
         "create", "--name", cname, "-it",
         "--restart", "unless-stopped", "--network", "host",
         "--label", "vesta.managed=true",
         "--label", &port_label,
         "--label", &user_label,
+        "--label", &agent_name_label,
         "-e", &ws_port_env,
         "-e", &agent_name_env,
         "-e", "IS_SANDBOX=1",
@@ -755,8 +781,9 @@ pub fn list_agents() -> Vec<ListEntry> {
         .map(|cname| {
             let info = inspect_container(cname);
             let derived = compute_agent_state(cname, &info);
+            let name = info.agent_name.clone().unwrap_or_else(|| name_from_cname(cname));
             ListEntry {
-                name: name_from_cname(cname),
+                name,
                 status: status_label(&info.status),
                 authenticated: derived.authenticated,
                 agent_ready: derived.agent_ready,
@@ -810,7 +837,7 @@ pub fn start_all_agents() -> Vec<StartAllResult> {
     let containers = list_managed_containers();
     let mut results = Vec::new();
     for cname in &containers {
-        let name = name_from_cname(cname);
+        let name = get_agent_name(cname);
         if container_status(cname) != ContainerStatus::Running {
             if docker_ok(&["start", cname]) {
                 results.push(StartAllResult { name, ok: true, error: None });
@@ -1258,7 +1285,7 @@ pub fn cleanup_backups(backups: &[BackupInfo], retention: &RetentionPolicy) {
 pub fn list_agent_names() -> Vec<String> {
     list_managed_containers()
         .iter()
-        .map(|cname| name_from_cname(cname))
+        .map(|cname| get_agent_name(cname))
         .collect()
 }
 
