@@ -2,7 +2,8 @@
 
 Routes:
   - WS   /ws              bidirectional event bus
-  - GET  /history         paginated event history
+  - GET  /history         paginated event history (cursor optional)
+  - GET  /search          full-text search over events
   - GET  /services        list registered skill services
   - POST /services        register a skill service
   - DELETE /services/{n}  unregister a skill service
@@ -80,16 +81,47 @@ async def _send_loop(ws: web.WebSocketResponse, sub: asyncio.Queue[VestaEvent]) 
 
 
 async def _history_handler(request: web.Request) -> web.Response:
+    """Paginated event history.
+
+    Query params:
+      cursor (int, optional) — fetch events before this id. Omit for most recent.
+      limit  (int, optional) — max events to return (default: EventBus.PAGE_SIZE).
+    """
     event_bus: EventBus = request.app["event_bus"]
+
+    limit_raw = request.query.get("limit", "")
+    limit = int(limit_raw) if limit_raw else None
+
     cursor_raw = request.query.get("cursor", "")
-    if not cursor_raw:
-        return web.json_response({"error": "missing 'cursor' param"}, status=400)
-    try:
-        cursor = int(cursor_raw)
-    except ValueError:
-        return web.json_response({"error": "invalid cursor"}, status=400)
-    events, next_cursor = event_bus.before(cursor)
+    if cursor_raw:
+        try:
+            cursor = int(cursor_raw)
+        except ValueError:
+            return web.json_response({"error": "invalid cursor"}, status=400)
+        kwargs = {"limit": limit} if limit else {}
+        events, next_cursor = event_bus.before(cursor, **kwargs)
+    else:
+        kwargs = {"limit": limit} if limit else {}
+        events, next_cursor = event_bus.recent(**kwargs)
+
     return web.json_response({"events": events, "cursor": next_cursor})
+
+
+async def _search_handler(request: web.Request) -> web.Response:
+    """Full-text search over events.
+
+    Query params:
+      q     (str, required)  — FTS5 search query.
+      limit (int, optional)  — max results (default: 20).
+    """
+    event_bus: EventBus = request.app["event_bus"]
+    query = request.query.get("q", "").strip()
+    if not query:
+        return web.json_response({"error": "missing 'q' param"}, status=400)
+    limit_raw = request.query.get("limit", "")
+    limit = int(limit_raw) if limit_raw else 20
+    results = event_bus.search(query, limit=limit)
+    return web.json_response({"results": results})
 
 
 async def _services_list(request: web.Request) -> web.Response:
@@ -128,6 +160,7 @@ async def start_ws_server(
     app["event_bus"] = event_bus
     app.router.add_get("/ws", _ws_handler)
     app.router.add_get("/history", _history_handler)
+    app.router.add_get("/search", _search_handler)
     app.router.add_get("/services", _services_list)
     app.router.add_post("/services", _services_register)
     app.router.add_delete("/services/{name}", _services_unregister)

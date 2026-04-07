@@ -3,10 +3,12 @@
 import asyncio
 import json
 import pathlib as pl
-import sqlite3
 import sys
+import urllib.request
+import urllib.error
+import urllib.parse
 
-RECENCY_DECAY_RATE = 0.01
+DEFAULT_AGENT_URL = "http://localhost:7860"
 
 
 def cmd_send(args: object) -> None:
@@ -36,43 +38,45 @@ async def _send_via_socket(sock_path: pl.Path, message: str) -> dict[str, object
         return {"error": str(exc)}
 
 
+def _api_get(base_url: str, path: str, params: dict[str, str]) -> dict[str, object]:
+    qs = urllib.parse.urlencode({k: v for k, v in params.items() if v is not None})
+    url = f"{base_url}{path}?{qs}" if qs else f"{base_url}{path}"
+    try:
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode()
+        try:
+            return json.loads(body)
+        except json.JSONDecodeError:
+            return {"error": f"HTTP {exc.code}: {body}"}
+    except (urllib.error.URLError, OSError, TimeoutError) as exc:
+        return {"error": str(exc)}
+
+
 def cmd_history(args: object) -> None:
     query = args.search
     limit = args.limit
-    db_path = pl.Path(args.db or (pl.Path.home() / "vesta" / "data" / "events.db"))
+    base_url = args.url or DEFAULT_AGENT_URL
 
-    if not db_path.exists():
-        print(json.dumps({"error": f"events.db not found at {db_path}"}))
-        sys.exit(1)
-
-    conn = sqlite3.connect(str(db_path))
-    try:
-        if query:
-            rows = conn.execute(
-                """
-                SELECT e.ts, json_extract(e.data, '$.type') AS role, json_extract(e.data, '$.text') AS content
-                FROM events_fts f
-                JOIN events e ON e.id = f.rowid
-                WHERE events_fts MATCH ?
-                ORDER BY f.rank / (1.0 + ? * max(julianday('now') - julianday(e.ts), 0)) ASC
-                LIMIT ?
-                """,
-                (query, RECENCY_DECAY_RATE, limit),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                """
-                SELECT ts, json_extract(data, '$.type') AS role, json_extract(data, '$.text') AS content
-                FROM events
-                WHERE json_extract(data, '$.type') IN ('user', 'assistant', 'chat')
-                ORDER BY id DESC
-                LIMIT ?
-                """,
-                (limit,),
-            ).fetchall()
-            rows = list(reversed(rows))
-
-        results = [{"timestamp": r[0], "role": r[1], "content": r[2]} for r in rows]
+    if query:
+        params: dict[str, str] = {"q": query, "limit": str(limit)}
+        data = _api_get(base_url, "/search", params)
+        if "error" in data:
+            print(json.dumps(data))
+            sys.exit(1)
+        print(json.dumps(data["results"], indent=2))
+    else:
+        params = {"limit": str(limit)}
+        data = _api_get(base_url, "/history", params)
+        if "error" in data:
+            print(json.dumps(data))
+            sys.exit(1)
+        events = data["events"]
+        results = [
+            {"timestamp": e.get("ts", ""), "role": e.get("type", ""), "content": e.get("text", "")}
+            for e in events
+            if e.get("type") in ("user", "assistant", "chat")
+        ]
         print(json.dumps(results, indent=2))
-    finally:
-        conn.close()
