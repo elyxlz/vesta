@@ -23,10 +23,16 @@ def _bool_param(params: dict, key: str) -> bool:
     return key in params and params[key][0] == "true"
 
 
+MAX_BODY_SIZE = 1_048_576  # 1 MB
+
+
 def _read_json_body(handler: BaseHTTPRequestHandler) -> dict:
-    content_length = int(handler.headers["Content-Length"] or "0")
+    raw_value = handler.headers["Content-Length"]
+    content_length = int(raw_value) if raw_value else 0
     if content_length == 0:
         return {}
+    if content_length > MAX_BODY_SIZE:
+        raise ValueError(f"request body too large ({content_length} bytes, max {MAX_BODY_SIZE})")
     raw = handler.rfile.read(content_length)
     return json.loads(raw)
 
