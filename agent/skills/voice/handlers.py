@@ -45,7 +45,7 @@ async def _json_body(request: web.Request) -> dict | web.Response:
 # --- STT ---
 
 
-def _build_settings(provider: tp.Any, entry: dict) -> list[dict]:
+def _build_settings(provider: tp.Any, entry: tp.Any) -> list[dict]:
     """Merge provider schema with current config values."""
     if not hasattr(provider, "settings_schema"):
         return []

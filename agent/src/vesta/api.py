@@ -15,7 +15,7 @@ import pathlib as pl
 import aiohttp as _aiohttp
 from aiohttp import web
 
-from vesta.events import EventBus, HistoryEvent, VestaEvent
+from vesta.events import ChatEvent, EventBus, HistoryEvent, UserEvent, VestaEvent
 from vesta.config import VestaConfig
 
 logger = logging.getLogger("vesta.api")
@@ -67,8 +67,10 @@ async def _recv_loop(ws: web.WebSocketResponse, event_bus: EventBus) -> None:
                     continue
                 text = data["text"].strip()
                 if text:
-                    event_type = "user" if msg_type == "message" else "chat"
-                    event_bus.emit({"type": event_type, "text": text})
+                    if msg_type == "message":
+                        event_bus.emit(UserEvent(type="user", text=text))
+                    else:
+                        event_bus.emit(ChatEvent(type="chat", text=text))
         elif msg.type in (web.WSMsgType.ERROR, web.WSMsgType.CLOSE):
             break
 
