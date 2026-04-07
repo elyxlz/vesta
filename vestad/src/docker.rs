@@ -496,7 +496,7 @@ pub fn create_container(cname: &str, image: &str, port: u16, agent_name: &str, v
     let port_label = format!("vesta.ws_port={}", port);
     let user_label = format!("{}={}", LABEL_USER, current_user());
     let mut args = vec![
-        "create", "--name", cname,
+        "create", "--name", cname, "-t",
         "--restart", "unless-stopped", "--network", "host",
         "--label", "vesta.managed=true",
         "--label", &port_label,
