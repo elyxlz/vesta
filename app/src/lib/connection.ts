@@ -144,9 +144,10 @@ export function wsUrl(name: string): string {
 
 export async function fetchHistory(
   name: string,
+  channel: "app-chat" | "internals",
   cursor: number,
 ): Promise<{ events: VestaEvent[]; cursor: number | null }> {
   const { apiJson } = await import("@/api/client");
-  const params = new URLSearchParams({ cursor: String(cursor) });
+  const params = new URLSearchParams({ channel, cursor: String(cursor) });
   return apiJson(`/agents/${encodeURIComponent(name)}/history?${params}`);
 }

@@ -1,6 +1,6 @@
 [package]
 name = "vesta-app"
-version = "0.1.110"
+version = "0.1.111"
 description = "Vesta desktop app"
 license = "MIT"
 repository = "https://github.com/elyxlz/vesta"

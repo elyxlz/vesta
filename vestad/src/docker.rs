@@ -1,6 +1,6 @@
 use serde::Serialize;
 use std::process;
-use crate::types::{BackupInfo, BackupType};
+use crate::types::{BackupInfo, BackupType, RetentionPolicy};
 
 #[derive(Debug)]
 pub enum DockerError {
@@ -929,9 +929,29 @@ pub async fn wait_ready_async(name: &str, timeout_secs: u64) -> Result<(), Docke
 // ── Backup operations ──────────────────────────────────────────
 
 const BACKUP_IMAGE_PREFIX: &str = "vesta-backup";
-const RETENTION_DAILY: usize = 3;
-const RETENTION_WEEKLY: usize = 2;
-const RETENTION_MONTHLY: usize = 1;
+pub const DEFAULT_RETENTION_DAILY: usize = 3;
+pub const DEFAULT_RETENTION_WEEKLY: usize = 2;
+pub const DEFAULT_RETENTION_MONTHLY: usize = 1;
+const MIN_DISK_SPACE_BYTES: u64 = 1_000_000_000; // 1 GB
+
+/// Check that Docker's data root has enough free disk space for a backup.
+fn check_disk_space() -> Result<(), DockerError> {
+    let root = docker_output(&["info", "--format", "{{.DockerRootDir}}"])
+        .unwrap_or_else(|| "/var/lib/docker".to_string());
+
+    let stat = nix::sys::statvfs::statvfs(root.as_str())
+        .map_err(|e| DockerError::Failed(format!("failed to check disk space: {}", e)))?;
+
+    let available = stat.blocks_available() * stat.fragment_size();
+    if available < MIN_DISK_SPACE_BYTES {
+        let avail_mb = available / 1_000_000;
+        return Err(DockerError::Failed(format!(
+            "insufficient disk space for backup ({}MB available, need at least 1GB)",
+            avail_mb
+        )));
+    }
+    Ok(())
+}
 
 /// Build a backup image tag from components.
 pub fn backup_tag(agent_name: &str, backup_type: &BackupType, timestamp: &str) -> String {
@@ -1060,6 +1080,9 @@ pub fn create_backup(name: &str, backup_type: BackupType) -> Result<BackupInfo, 
         _ => {}
     }
 
+    check_disk_space()?;
+
+    tracing::debug!(agent = %name, backup_type = %backup_type, "starting backup");
     let was_running = cs == ContainerStatus::Running;
     if was_running {
         docker_ok(&["stop", &cname]);
@@ -1069,6 +1092,11 @@ pub fn create_backup(name: &str, backup_type: BackupType) -> Result<BackupInfo, 
 
     if was_running {
         docker_ok(&["start", &cname]);
+    }
+
+    match &result {
+        Ok(info) => tracing::debug!(agent = %name, backup_id = %info.id, size = info.size, "backup committed"),
+        Err(e) => tracing::error!(agent = %name, error = %e, "backup commit failed"),
     }
 
     result
@@ -1155,10 +1183,12 @@ pub fn restore_backup(name: &str, backup_id: &str) -> Result<(), DockerError> {
     if info.status == ContainerStatus::Running {
         docker_ok(&["stop", &cname]);
     }
+    tracing::info!(agent = %name, "creating pre-restore safety backup");
     commit_backup(&cname, name, &BackupType::PreRestore)?;
     docker_ok(&["rm", "-f", &cname]);
 
     // Create new container from backup image, reusing the port
+    tracing::debug!(agent = %name, backup_id = %backup_id, "creating container from backup image");
     create_container(&cname, backup_id, info.port, name)?;
 
     if !docker_ok(&["start", &cname]) {
@@ -1182,22 +1212,20 @@ pub fn delete_backup(backup_id: &str) -> Result<(), DockerError> {
 
 /// Determine which auto-backups should be deleted based on the retention policy.
 /// Returns the IDs of backups to delete.
-pub fn compute_backups_to_delete(backups: &[BackupInfo]) -> Vec<String> {
+pub fn compute_backups_to_delete(backups: &[BackupInfo], retention: &RetentionPolicy) -> Vec<String> {
     let mut to_delete = Vec::new();
 
-    for (backup_type, retention) in [
-        (BackupType::Daily, RETENTION_DAILY),
-        (BackupType::Weekly, RETENTION_WEEKLY),
-        (BackupType::Monthly, RETENTION_MONTHLY),
+    for (backup_type, keep) in [
+        (BackupType::Daily, retention.daily),
+        (BackupType::Weekly, retention.weekly),
+        (BackupType::Monthly, retention.monthly),
     ] {
         let mut typed: Vec<&BackupInfo> = backups
             .iter()
             .filter(|b| b.backup_type == backup_type)
             .collect();
-        // Sort by date descending (newest first)
         typed.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-        // Mark excess for deletion
-        for excess in typed.into_iter().skip(retention) {
+        for excess in typed.into_iter().skip(keep) {
             to_delete.push(excess.id.clone());
         }
     }
@@ -1207,10 +1235,18 @@ pub fn compute_backups_to_delete(backups: &[BackupInfo]) -> Vec<String> {
 
 /// Run retention cleanup for an agent's auto-backups.
 /// Pass existing backups list to avoid a redundant `docker images` call.
-pub fn cleanup_backups(backups: &[BackupInfo]) {
-    let to_delete = compute_backups_to_delete(backups);
+pub fn cleanup_backups(backups: &[BackupInfo], retention: &RetentionPolicy) {
+    let to_delete = compute_backups_to_delete(backups, retention);
+    if to_delete.is_empty() {
+        return;
+    }
+    tracing::info!(count = to_delete.len(), "cleaning up old backups");
     for id in &to_delete {
-        docker_ok(&["rmi", id]);
+        if docker_ok(&["rmi", id]) {
+            tracing::debug!(backup_id = %id, "deleted expired backup");
+        } else {
+            tracing::warn!(backup_id = %id, "failed to delete expired backup");
+        }
     }
 }
 
@@ -1396,6 +1432,12 @@ mod tests {
 
     // ── Retention policy tests ────────────────────────────────────
 
+    const DEFAULT_RETENTION: RetentionPolicy = RetentionPolicy {
+        daily: DEFAULT_RETENTION_DAILY,
+        weekly: DEFAULT_RETENTION_WEEKLY,
+        monthly: DEFAULT_RETENTION_MONTHLY,
+    };
+
     fn make_backup(agent: &str, bt: BackupType, ts: &str) -> BackupInfo {
         BackupInfo {
             id: backup_tag(agent, &bt, ts),
@@ -1408,7 +1450,7 @@ mod tests {
 
     #[test]
     fn retention_empty_list() {
-        let to_delete = compute_backups_to_delete(&[]);
+        let to_delete = compute_backups_to_delete(&[], &DEFAULT_RETENTION);
         assert!(to_delete.is_empty());
     }
 
@@ -1418,7 +1460,7 @@ mod tests {
             make_backup("a", BackupType::Daily, "20260401-120000"),
             make_backup("a", BackupType::Daily, "20260402-120000"),
         ];
-        let to_delete = compute_backups_to_delete(&backups);
+        let to_delete = compute_backups_to_delete(&backups, &DEFAULT_RETENTION);
         assert!(to_delete.is_empty());
     }
 
@@ -1431,7 +1473,7 @@ mod tests {
             make_backup("a", BackupType::Daily, "20260404-120000"),
             make_backup("a", BackupType::Daily, "20260405-120000"),
         ];
-        let to_delete = compute_backups_to_delete(&backups);
+        let to_delete = compute_backups_to_delete(&backups, &DEFAULT_RETENTION);
         assert_eq!(to_delete.len(), 2);
         // Oldest two should be deleted
         assert!(to_delete.contains(&backup_tag("a", &BackupType::Daily, "20260401-120000")));
@@ -1446,7 +1488,7 @@ mod tests {
             make_backup("a", BackupType::Weekly, "20260315-120000"),
             make_backup("a", BackupType::Weekly, "20260322-120000"),
         ];
-        let to_delete = compute_backups_to_delete(&backups);
+        let to_delete = compute_backups_to_delete(&backups, &DEFAULT_RETENTION);
         assert_eq!(to_delete.len(), 2);
         assert!(to_delete.contains(&backup_tag("a", &BackupType::Weekly, "20260301-120000")));
         assert!(to_delete.contains(&backup_tag("a", &BackupType::Weekly, "20260308-120000")));
@@ -1459,7 +1501,7 @@ mod tests {
             make_backup("a", BackupType::Monthly, "20260201-120000"),
             make_backup("a", BackupType::Monthly, "20260301-120000"),
         ];
-        let to_delete = compute_backups_to_delete(&backups);
+        let to_delete = compute_backups_to_delete(&backups, &DEFAULT_RETENTION);
         assert_eq!(to_delete.len(), 2);
     }
 
@@ -1474,7 +1516,7 @@ mod tests {
             make_backup("a", BackupType::Monthly, "20260301-120000"),
             make_backup("a", BackupType::Manual, "20260404-120000"),
         ];
-        let to_delete = compute_backups_to_delete(&backups);
+        let to_delete = compute_backups_to_delete(&backups, &DEFAULT_RETENTION);
         // 3 daily (keep all), 2 weekly (keep all), 1 monthly (keep all), manual not touched
         assert!(to_delete.is_empty());
     }
@@ -1489,7 +1531,7 @@ mod tests {
             make_backup("a", BackupType::PreRestore, "20260401-120000"),
             make_backup("a", BackupType::PreRestore, "20260402-120000"),
         ];
-        let to_delete = compute_backups_to_delete(&backups);
+        let to_delete = compute_backups_to_delete(&backups, &DEFAULT_RETENTION);
         assert!(to_delete.is_empty());
     }
 

@@ -58,10 +58,33 @@ enum Command {
         #[command(subcommand)]
         action: TunnelAction,
     },
+    /// Export or import agent backups as files
+    Backup {
+        #[command(subcommand)]
+        action: BackupAction,
+    },
     /// Print host URL and API key for client connections
     Info,
     /// Update vestad to the latest version
     Update,
+}
+
+#[derive(clap::Subcommand)]
+enum BackupAction {
+    /// Export an agent to a compressed file
+    Export {
+        /// Agent name
+        name: String,
+        /// Output file path (.tar.gz)
+        output: std::path::PathBuf,
+    },
+    /// Import an agent from a compressed file
+    Import {
+        /// Agent name to create
+        name: String,
+        /// Input file path (.tar.gz)
+        input: std::path::PathBuf,
+    },
 }
 
 #[derive(clap::Subcommand)]
@@ -289,6 +312,91 @@ fn main() {
                 std::process::exit(status.code().unwrap_or(1));
             }
         }
+
+        Command::Backup { action } => match action {
+            BackupAction::Export { name, output } => {
+                docker::validate_name(&name).unwrap_or_else(|e| die(&e));
+                let cname = docker::container_name(&name);
+
+                let cs = docker::container_status(&cname);
+                if cs == docker::ContainerStatus::NotFound {
+                    die(format!("agent '{}' not found", name));
+                }
+
+                let was_running = cs == docker::ContainerStatus::Running;
+                if was_running {
+                    eprintln!("stopping agent...");
+                    docker::docker_ok(&["stop", &cname]);
+                }
+
+                eprintln!("committing snapshot...");
+                let temp_tag = format!("vesta-export:{}-temp", name);
+                if !docker::docker_ok(&["commit", &cname, &temp_tag]) {
+                    if was_running { docker::docker_ok(&["start", &cname]); }
+                    die("docker commit failed");
+                }
+
+                if was_running {
+                    docker::docker_ok(&["start", &cname]);
+                }
+
+                eprintln!("exporting to {}...", output.display());
+                let output_str = output.to_string_lossy();
+                let save_cmd = format!("docker save '{}' | gzip > '{}'", temp_tag, output_str);
+                let status = std::process::Command::new("sh")
+                    .args(["-c", &save_cmd])
+                    .status()
+                    .unwrap_or_else(|e| die(format!("docker save failed: {}", e)));
+
+                docker::docker_ok(&["rmi", &temp_tag]);
+
+                if !status.success() {
+                    die("export failed");
+                }
+                eprintln!("exported: {}", output.display());
+            }
+            BackupAction::Import { name, input } => {
+                docker::validate_name(&name).unwrap_or_else(|e| die(&e));
+
+                if !input.exists() {
+                    die(format!("file not found: {}", input.display()));
+                }
+
+                let cname = docker::container_name(&name);
+                if docker::container_status(&cname) != docker::ContainerStatus::NotFound {
+                    die(format!("agent '{}' already exists — destroy it first or pick a different name", name));
+                }
+
+                eprintln!("loading image from {}...", input.display());
+                let input_str = input.to_string_lossy();
+                let load_cmd = format!("gunzip -c '{}' | docker load", input_str);
+                let output = std::process::Command::new("sh")
+                    .args(["-c", &load_cmd])
+                    .output()
+                    .unwrap_or_else(|e| die(format!("docker load failed: {}", e)));
+
+                if !output.status.success() {
+                    die("docker load failed");
+                }
+
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let loaded_image = stdout
+                    .lines()
+                    .filter_map(|l| l.strip_prefix("Loaded image: "))
+                    .next_back()
+                    .unwrap_or_else(|| die("could not determine loaded image from docker load output"));
+
+                eprintln!("creating agent '{}'...", name);
+                let port = find_available_port().unwrap_or_else(|| die("no available port"));
+                docker::create_container(&cname, loaded_image, port, &name)
+                    .unwrap_or_else(|e| die(&e));
+
+                if !docker::docker_ok(&["start", &cname]) {
+                    die("failed to start imported agent");
+                }
+                eprintln!("imported: {} (port {})", name, port);
+            }
+        },
 
         Command::Tunnel { action } => {
             let config = config_dir();
