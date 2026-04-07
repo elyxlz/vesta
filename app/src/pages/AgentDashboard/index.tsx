@@ -33,7 +33,6 @@ export function AgentDashboard() {
                   onBackup={island.backup}
                   onShowBackups={island.onShowBackups}
                   onShowConsole={island.onShowConsole}
-                  onShowInternals={island.onShowInternals}
                   onShowAgentSettings={island.onShowAgentSettings}
                   onOpenDeleteDialog={island.onOpenDeleteDialog}
                 />

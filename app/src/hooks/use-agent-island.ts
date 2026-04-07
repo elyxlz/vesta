@@ -37,7 +37,6 @@ export function useAgentIsland({ menuAnchoredInNavbar }: UseAgentIslandOptions) 
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [showConsole, setShowConsole] = useState(false);
-  const [showInternals, setShowInternals] = useState(false);
   const [showAgentSettings, setShowAgentSettings] = useState(false);
   const [showAuth, setShowAuth] = useState(false);
   const [authStarting, setAuthStarting] = useState(false);
@@ -179,8 +178,6 @@ export function useAgentIsland({ menuAnchoredInNavbar }: UseAgentIslandOptions) 
     menuOpen,
     showConsole,
     setShowConsole,
-    showInternals,
-    setShowInternals,
     showAgentSettings,
     setShowAgentSettings,
     showAuth,
@@ -204,7 +201,6 @@ export function useAgentIsland({ menuAnchoredInNavbar }: UseAgentIslandOptions) 
       /* TODO: backups panel */
     },
     onShowConsole: () => setShowConsole(true),
-    onShowInternals: () => setShowInternals(true),
     onShowAgentSettings: () => setShowAgentSettings(true),
     onOpenDeleteDialog: () => setDeleteDialogOpen(true),
   };

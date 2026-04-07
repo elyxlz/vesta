@@ -36,7 +36,15 @@ export function useVoiceStatus(agentName: string | null) {
     return () => clearInterval(interval);
   }, [agentName, refresh]);
 
-  return { stt, tts, refresh };
+  const patchStt = useCallback((patch: Partial<SttStatus>) => {
+    setStt((prev) => prev ? { ...prev, ...patch } : prev);
+  }, []);
+
+  const patchTts = useCallback((patch: Partial<TtsStatus>) => {
+    setTts((prev) => prev ? { ...prev, ...patch } : prev);
+  }, []);
+
+  return { stt, tts, refresh, patchStt, patchTts };
 }
 
 function same(a: unknown, b: unknown): boolean {

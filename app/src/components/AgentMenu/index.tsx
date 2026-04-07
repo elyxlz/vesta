@@ -1,5 +1,4 @@
 import {
-  Activity,
   MoreVertical,
   Play,
   ScrollText,
@@ -46,7 +45,6 @@ type AgentMenuProps = {
   onBackup: () => void | Promise<void>;
   onShowBackups: () => void;
   onShowConsole: () => void;
-  onShowInternals: () => void;
   onShowAgentSettings: () => void;
   onOpenDeleteDialog: () => void;
 };
@@ -66,7 +64,6 @@ export function AgentMenu({
   onBackup,
   onShowBackups,
   onShowConsole,
-  onShowInternals,
   onShowAgentSettings,
   onOpenDeleteDialog,
 }: AgentMenuProps) {
@@ -161,17 +158,6 @@ export function AgentMenu({
                     size="sm"
                     variant="outline"
                     className="w-full justify-start"
-                    onClick={onShowInternals}
-                  >
-                    <Activity data-icon="inline-start" />
-                    internals
-                  </Button>
-                </DrawerClose>
-                <DrawerClose asChild>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="w-full justify-start"
                     onClick={onShowAgentSettings}
                   >
                     <Settings data-icon="inline-start" />
@@ -255,7 +241,7 @@ export function AgentMenu({
       ) : (
         <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
       )}
-      <DropdownMenuContent align="center" side="bottom" className="min-w-[180px]">
+      <DropdownMenuContent align="end" side="bottom" className="min-w-[180px]">
         {showAuthenticateInMenu && (
           <DropdownMenuItem onClick={() => void onAuthOpen()}>
             <KeyRound data-icon="inline-start" />
@@ -280,10 +266,6 @@ export function AgentMenu({
             <DropdownMenuItem onClick={onShowConsole}>
               <ScrollText data-icon="inline-start" />
               logs
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={onShowInternals}>
-              <Activity data-icon="inline-start" />
-              internals
             </DropdownMenuItem>
             <DropdownMenuItem onClick={onShowAgentSettings}>
               <Settings data-icon="inline-start" />

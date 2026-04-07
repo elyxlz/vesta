@@ -40,9 +40,9 @@ export function Navbar({ center, trailing }: NavbarProps = {}) {
   return (
     <div
       ref={measureRef}
-      className="flex items-end justify-between min-h-11 shrink-0 select-none relative overflow-visible"
+      className="flex items-center justify-between min-h-11 shrink-0 select-none relative overflow-visible"
     >
-      <div className="flex flex-1 items-end">
+      <div className="flex flex-1 items-center">
         {connected && isHome && (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -78,12 +78,12 @@ export function Navbar({ center, trailing }: NavbarProps = {}) {
       </div>
 
       {center && (
-        <div className="absolute left-1/2 top-0 bottom-0 z-30 flex -translate-x-1/2 items-end overflow-visible">
+        <div className="absolute left-1/2 top-0 bottom-0 z-[99999] flex -translate-x-1/2 items-center overflow-visible">
           {center}
         </div>
       )}
 
-      <div className="flex items-end gap-1.5">
+      <div className="flex items-center gap-1.5">
         {trailing ?? (
           <>
             {connected && <StatusPill />}
