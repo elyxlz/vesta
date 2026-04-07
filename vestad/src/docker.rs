@@ -330,6 +330,48 @@ pub fn container_status(cname: &str) -> ContainerStatus {
     inspect_container(cname).status
 }
 
+pub const MIN_AGE_FOR_BACKUP_SECS: u64 = 6 * 3600;
+
+/// Returns the container's age in seconds, or None if unknown.
+pub fn container_age_secs(name: &str) -> Option<u64> {
+    let cname = container_name(name);
+    let created = docker_output(&["inspect", "--format", "{{.Created}}", &cname])?;
+    let created_epoch = parse_rfc3339_epoch(created.trim())?;
+    let now_epoch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    Some(now_epoch.saturating_sub(created_epoch))
+}
+
+/// Parse an RFC3339 timestamp (e.g. "2026-04-07T13:11:12.123Z") to unix epoch seconds.
+fn parse_rfc3339_epoch(ts: &str) -> Option<u64> {
+    let date_time = ts.split('T').collect::<Vec<_>>();
+    if date_time.len() != 2 { return None; }
+    let date_parts: Vec<&str> = date_time[0].split('-').collect();
+    let time_str = date_time[1].trim_end_matches('Z');
+    let time_parts: Vec<&str> = time_str.split(':').collect();
+    if date_parts.len() != 3 || time_parts.len() != 3 { return None; }
+
+    let year: u64 = date_parts[0].parse().ok()?;
+    let month: u64 = date_parts[1].parse().ok()?;
+    let day: u64 = date_parts[2].parse().ok()?;
+    let hour: u64 = time_parts[0].parse().ok()?;
+    let min: u64 = time_parts[1].parse().ok()?;
+    let sec: u64 = time_parts[2].split('.').next()?.parse().ok()?;
+
+    fn days_from_civil(year: u64, month: u64, day: u64) -> u64 {
+        let (y, m) = if month <= 2 { (year - 1, month + 9) } else { (year, month - 3) };
+        let era = y / 400;
+        let yoe = y - era * 400;
+        let doy = (153 * m + 2) / 5 + day - 1;
+        let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+        era * 146097 + doe - 719468
+    }
+
+    Some(days_from_civil(year, month, day) * 86400 + hour * 3600 + min * 60 + sec)
+}
+
 pub fn read_container_file(cname: &str, container_path: &str) -> Option<String> {
     let tmp = std::env::temp_dir().join(format!(
         "vesta_read_{}_{}",
@@ -1130,6 +1172,9 @@ pub fn create_backup(name: &str, backup_type: BackupType) -> Result<BackupInfo, 
     tracing::debug!(agent = %name, backup_type = %backup_type, "starting backup");
     let was_running = cs == ContainerStatus::Running;
     if was_running {
+        if let Err(err) = docker_cp_content(&cname, "backup — paused for backup", "/root/vesta/data/restart_reason") {
+            tracing::warn!(agent = %name, error = %err, "failed to write restart reason");
+        }
         docker_ok(&["stop", &cname]);
     }
 

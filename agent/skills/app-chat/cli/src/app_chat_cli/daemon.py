@@ -28,7 +28,26 @@ class DaemonState:
     shutdown: asyncio.Event = field(default_factory=asyncio.Event)
     ws: aiohttp.ClientWebSocketResponse | None = None
     session: aiohttp.ClientSession | None = None
+    data_dir: pl.Path = field(default_factory=lambda: pl.Path.home() / ".app-chat")
     last_seen_ts: str | None = None
+
+
+def _ts_path(state: DaemonState) -> pl.Path:
+    return state.data_dir / "last_seen_ts"
+
+
+def _load_last_seen_ts(state: DaemonState) -> None:
+    try:
+        state.last_seen_ts = _ts_path(state).read_text().strip() or None
+    except FileNotFoundError:
+        pass
+
+
+def _update_last_seen_ts(state: DaemonState, ts: str) -> None:
+    if ts == state.last_seen_ts:
+        return
+    state.last_seen_ts = ts
+    _ts_path(state).write_text(ts)
 
 
 def cmd_serve(args: object) -> None:
@@ -45,7 +64,9 @@ def cmd_serve(args: object) -> None:
         notifications_dir=notifications_dir,
         ws_url=ws_url,
         sock_path=sock_path,
+        data_dir=data_dir,
     )
+    _load_last_seen_ts(state)
     asyncio.run(_run(state))
 
 
@@ -106,7 +127,7 @@ def _handle_event(state: DaemonState, raw: str) -> None:
         return
 
     if "ts" in event:
-        state.last_seen_ts = event["ts"]
+        _update_last_seen_ts(state, event["ts"])
 
     if event_type == "user" and "text" in event:
         ts = event["ts"] if "ts" in event else None
@@ -128,7 +149,7 @@ def _replay_missed(state: DaemonState, events: list[dict[str, object]]) -> None:
     # Update last_seen_ts to the latest event in the batch
     for past in reversed(events):
         if "ts" in past:
-            state.last_seen_ts = str(past["ts"])
+            _update_last_seen_ts(state, str(past["ts"]))
             break
     if count:
         _log(f"replayed {count} missed message(s)")

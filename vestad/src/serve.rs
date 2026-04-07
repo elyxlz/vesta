@@ -1257,6 +1257,13 @@ fn spawn_auto_backup_task(state: SharedState) {
                 let ret = retention;
 
                 let result = tokio::task::spawn_blocking(move || -> Result<(), docker::DockerError> {
+                    if let Some(age) = docker::container_age_secs(&name_clone) {
+                        if age < docker::MIN_AGE_FOR_BACKUP_SECS {
+                            tracing::debug!(agent = %name_clone, age_hours = age / 3600, "auto-backup: skipping young agent");
+                            return Ok(());
+                        }
+                    }
+
                     let mut backups = docker::list_backups(&name_clone)?;
 
                     let has_daily_today = backups.iter().any(|b| {
