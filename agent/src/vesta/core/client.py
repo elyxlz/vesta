@@ -345,7 +345,9 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
                 try:
                     drain = client.receive_response().__aiter__()
                     while (leftover := await asyncio.wait_for(anext(drain, None), timeout=5.0)) is not None:
-                        texts, _, _, _ = _parse_sdk_message(tp.cast(Message, leftover), sub_agent_context=sub_agent_context, turn_start=turn_start, model=model, state=state)
+                        texts, _, _, _ = _parse_sdk_message(
+                            tp.cast(Message, leftover), sub_agent_context=sub_agent_context, turn_start=turn_start, model=model, state=state
+                        )
                         text = "\n".join(texts) if texts else None
                         if text and show_output:
                             filtered = filter_tool_lines(text)
@@ -360,7 +362,9 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
                 break
 
             msg = tp.cast(Message, result)
-            texts, sub_agent_context, session_id, _ = _parse_sdk_message(msg, sub_agent_context=sub_agent_context, turn_start=turn_start, model=model, state=state)
+            texts, sub_agent_context, session_id, _ = _parse_sdk_message(
+                msg, sub_agent_context=sub_agent_context, turn_start=turn_start, model=model, state=state
+            )
             if session_id and session_id != state.session_id:
                 persist_session_id(session_id, state=state, config=config)
             text = "\n".join(texts) if texts else None
