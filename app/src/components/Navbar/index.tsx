@@ -25,7 +25,7 @@ export function Navbar({ center, trailing }: NavbarProps = {}) {
   const { agents } = useAgents();
   const navigate = useNavigate();
   const location = useLocation();
-  const isHome = location.pathname === "/";
+  const isHome = location.pathname === "/home";
   const setNavbarHeight = useLayout((s) => s.setNavbarHeight);
 
   const measureRef = useCallback((node: HTMLDivElement | null) => {
@@ -66,7 +66,7 @@ export function Navbar({ center, trailing }: NavbarProps = {}) {
                   variant="outline"
                   size="icon-sm"
                   className="md:size-9"
-                  onClick={() => navigate("/")}
+                  onClick={() => navigate("/home")}
                 >
                   <Home />
                 </Button>

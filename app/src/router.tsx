@@ -3,12 +3,14 @@ import { RouteErrorBoundary } from "@/components/ErrorBoundary";
 import { AgentLayout } from "@/lib/AgentLayout";
 import { NavigationGuard } from "@/lib/NavigationGuard";
 import { RootLayout } from "@/lib/RootLayout";
+import { isTauri } from "@/lib/env";
 import {
   AgentChat,
   AgentDashboard,
   AgentSettingsPage,
   Connect,
   Home,
+  Landing,
   NewAgent,
 } from "@/pages";
 
@@ -17,12 +19,16 @@ export const router = createBrowserRouter([
     element: <RootLayout />,
     errorElement: <RouteErrorBoundary />,
     children: [
+      {
+        index: true,
+        element: isTauri ? <Navigate to="/connect" replace /> : <Landing />,
+      },
       { path: "/connect", element: <Connect /> },
       {
         element: <NavigationGuard />,
         errorElement: <RouteErrorBoundary />,
         children: [
-          { index: true, element: <Home /> },
+          { path: "home", element: <Home /> },
           { path: "new", element: <NewAgent /> },
           {
             path: "agent/:name",
@@ -34,7 +40,7 @@ export const router = createBrowserRouter([
               { path: "settings", element: <AgentSettingsPage /> },
             ],
           },
-          { path: "*", element: <Navigate to="/" replace /> },
+          { path: "*", element: <Navigate to="/home" replace /> },
         ],
       },
     ],

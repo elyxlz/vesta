@@ -18,7 +18,7 @@ export function AgentLayout() {
   const { agents } = useAgents();
 
   if (!agents.some((a) => a.name === routeName)) {
-    return <Navigate to="/" replace />;
+    return <Navigate to="/home" replace />;
   }
 
   return (
