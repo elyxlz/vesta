@@ -1348,10 +1348,34 @@ pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: S
     .await
     .expect("failed to configure TLS");
 
-    let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
+    // HTTPS on 0.0.0.0 for remote access
+    let https_addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
 
-    axum_server::bind_rustls(addr, rustls_config)
-        .serve(app.into_make_service())
-        .await
-        .expect("server failed");
+    // HTTP on 127.0.0.1 for local access (avoids self-signed cert issues)
+    let http_port = port + 1;
+    let http_addr = std::net::SocketAddr::from(([127, 0, 0, 1], http_port));
+
+    tracing::info!(http_port, "http server listening on localhost");
+
+    let http_app = app.clone();
+    let http_handle = tokio::spawn(async move {
+        let listener = tokio::net::TcpListener::bind(http_addr)
+            .await
+            .expect("failed to bind http listener");
+        axum::serve(listener, http_app.into_make_service())
+            .await
+            .expect("http server failed");
+    });
+
+    let https_handle = tokio::spawn(async move {
+        axum_server::bind_rustls(https_addr, rustls_config)
+            .serve(app.into_make_service())
+            .await
+            .expect("https server failed");
+    });
+
+    tokio::select! {
+        r = http_handle => r.expect("http task panicked"),
+        r = https_handle => r.expect("https task panicked"),
+    }
 }
