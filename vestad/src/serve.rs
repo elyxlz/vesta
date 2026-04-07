@@ -1353,20 +1353,37 @@ fn spawn_auto_backup_task(state: SharedState) {
 
 fn spawn_update_check_task(state: SharedState) {
     tokio::spawn(async move {
-        let mut last_notified: Option<String> = None;
+        let mut last_attempted: Option<String> = None;
         loop {
             let info_result = tokio::task::spawn_blocking(update_check::check_once).await;
             match info_result {
                 Ok(Ok(info)) => {
-                    if info.update_available && last_notified.as_ref() != Some(&info.latest) {
+                    if info.update_available && last_attempted.as_ref() != Some(&info.latest) {
                         tracing::info!(
-                            "update available: v{} -> v{} (run 'vestad update')",
+                            "update available: v{} -> v{}, auto-updating...",
                             info.current, info.latest
                         );
-                        last_notified = Some(info.latest.clone());
+                        last_attempted = Some(info.latest.clone());
+
+                        let mut slot = state.update_info.lock().await;
+                        *slot = Some(info);
+                        drop(slot);
+
+                        match tokio::task::spawn_blocking(self_update::perform_update).await {
+                            Ok(Ok(true)) => {
+                                tracing::info!("auto-update: restarting via systemd");
+                                return;
+                            }
+                            Ok(Ok(false)) => {
+                                tracing::info!("auto-update: binary replaced, awaiting restart");
+                            }
+                            Ok(Err(e)) => tracing::error!("auto-update failed: {}", e),
+                            Err(e) => tracing::error!("auto-update task panicked: {}", e),
+                        }
+                    } else {
+                        let mut slot = state.update_info.lock().await;
+                        *slot = Some(info);
                     }
-                    let mut slot = state.update_info.lock().await;
-                    *slot = Some(info);
                 }
                 Ok(Err(e)) => tracing::warn!("update check failed: {}", e),
                 Err(e) => tracing::error!("update check task failed: {}", e),
