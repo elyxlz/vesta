@@ -898,10 +898,23 @@ async fn resolve_service_port(
     registry.get(agent_name)?.get(service_name).copied()
 }
 
+const SERVICE_PORT_MIN: u16 = 49152;
+const SERVICE_PORT_MAX: u16 = 65535;
+
 #[derive(Deserialize)]
 struct RegisterServiceBody {
     name: String,
-    port: u16,
+}
+
+/// Collect all ports in use across all agents in the service registry.
+fn all_registered_ports(registry: &HashMap<String, HashMap<String, u16>>) -> Vec<u16> {
+    registry.values().flat_map(|services| services.values().copied()).collect()
+}
+
+/// Find a free port not used by any registered service.
+fn allocate_service_port(registry: &HashMap<String, HashMap<String, u16>>) -> Option<u16> {
+    let used = all_registered_ports(registry);
+    (SERVICE_PORT_MIN..=SERVICE_PORT_MAX).find(|p| !used.contains(p))
 }
 
 async fn register_service_handler(
@@ -910,10 +923,9 @@ async fn register_service_handler(
     Json(body): Json<RegisterServiceBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let service_name = body.name.trim().to_string();
-    let port = body.port;
 
-    if service_name.is_empty() || port == 0 {
-        return Err(err_response(StatusCode::BAD_REQUEST, "name (str) and port (1-65535) required"));
+    if service_name.is_empty() {
+        return Err(err_response(StatusCode::BAD_REQUEST, "name is required"));
     }
     if RESERVED_SERVICE_NAMES.contains(&service_name.as_str()) {
         return Err(err_response(StatusCode::BAD_REQUEST, &format!("reserved service name: {}", service_name)));
@@ -928,10 +940,19 @@ async fn register_service_handler(
     }
 
     let mut registry = state.service_registry.write().await;
+
+    // Reuse existing port if already registered, otherwise allocate a new one
+    let port = if let Some(existing) = registry.get(&name).and_then(|s| s.get(&service_name)).copied() {
+        existing
+    } else {
+        allocate_service_port(&registry)
+            .ok_or_else(|| err_response(StatusCode::SERVICE_UNAVAILABLE, "no free ports available"))?
+    };
+
     registry.entry(name.clone()).or_default().insert(service_name.clone(), port);
     save_service_registry(&registry);
     tracing::info!(agent = %name, service = %service_name, port, "service registered");
-    Ok(ok_json())
+    Ok(Json(serde_json::json!({"ok": true, "port": port})))
 }
 
 async fn unregister_service_handler(

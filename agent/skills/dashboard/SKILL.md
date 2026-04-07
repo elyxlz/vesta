@@ -1,12 +1,11 @@
 ---
 name: dashboard
 description: Use when the user asks to add, remove, or modify dashboard widgets, customize their dashboard layout, or build visual components like counters, charts, reminders, or status displays. Each widget is a self-contained React component. Do NOT register new services for widgets — widgets are files inside the existing dashboard app, not separate services.
-serve: SKILL_PORT=7966 screen -dmS dashboard sh -c 'cd ~/vesta/skills/dashboard/app && npx vite preview --port 7966 --host 0.0.0.0'
 ---
 
 # Dashboard
 
-A React app that renders widgets in the main Vesta app. The dashboard is ONE service called "dashboard" on port 7966 — do NOT register additional services. Widgets are `.tsx` files you add to the existing app.
+A React app that renders widgets in the main Vesta app. The dashboard is ONE service called "dashboard" — do NOT register additional services. Widgets are `.tsx` files you add to the existing app.
 
 ## Current widgets
 
@@ -18,9 +17,21 @@ _None yet._
 
 - Widgets are NOT services. They are `.tsx` files inside `~/vesta/skills/dashboard/app/src/widgets/`.
 - Never run `curl` to register services when creating widgets.
-- After creating or editing a widget, you MUST rebuild: `cd ~/vesta/skills/dashboard/app && npx vite build`
+- After creating or editing a widget, you MUST rebuild and restart the server.
 - If the dashboard server is not running yet, follow [SETUP.md](SETUP.md) first — but only once.
 - You only need to edit files in `src/widgets/` — do NOT read or modify `globals.css`, `main.tsx`, `theme-sync.ts`, `App.tsx`, or `index.html`.
+- **Never hardcode ports.** Register with vestad and it returns a port (see Port allocation below).
+
+## Port allocation
+
+Multiple agents share the host network, so ports must not conflict. Vestad allocates ports automatically — just register the service name without a port:
+
+```bash
+PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services \
+  -H 'Content-Type: application/json' -d '{"name":"dashboard"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])")
+```
+
+Vestad picks a free port, persists it, and returns it. On restart, re-registering the same service name reuses the same port.
 
 ## Before creating a widget
 
@@ -70,10 +81,14 @@ export const widgets: WidgetEntry[] = [
 ];
 ```
 
-**Step 3.** Rebuild:
+**Step 3.** Rebuild and restart the server:
 
 ```bash
 cd ~/vesta/skills/dashboard/app && npx vite build
+PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services \
+  -H 'Content-Type: application/json' -d '{"name":"dashboard"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])")
+screen -S dashboard -X quit 2>/dev/null
+screen -dmS dashboard sh -c "cd ~/vesta/skills/dashboard/app && npx vite preview --port $PORT --host 0.0.0.0"
 ```
 
 **Step 4.** Update the "Current widgets" section at the top of this SKILL.md — add a line like `- **My Widget** (`my-widget.tsx`) — brief description`.
@@ -117,7 +132,7 @@ If no existing skill provides the data a widget needs, create a new skill with a
 
 1. Remove the import and entry from `widgets/index.ts`
 2. Delete the widget `.tsx` file
-3. Rebuild: `cd ~/vesta/skills/dashboard/app && npx vite build`
+3. Rebuild and restart (same as Step 3 above)
 
 ## UI components
 
@@ -162,6 +177,5 @@ Height works the same (1 = compact, 2 = tall, 3 = extra tall).
 ## Troubleshooting
 
 - **Dashboard not showing?** `screen -ls | grep dashboard`
-- **Restart server:** `screen -S dashboard -X quit && SKILL_PORT=7966 screen -dmS dashboard sh -c 'cd ~/vesta/skills/dashboard/app && npx vite preview --port 7966 --host 0.0.0.0'`
-- **Rebuild:** `cd ~/vesta/skills/dashboard/app && npx vite build`
-- **Check registration:** `curl -sk https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services` — should show `dashboard` on port 7966
+- **Check registration:** `curl -sk https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services`
+- **Restart server:** Same as Step 3 in Creating a widget — rebuild, get port from vestad, restart screen

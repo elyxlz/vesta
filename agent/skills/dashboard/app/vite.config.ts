@@ -15,7 +15,6 @@ export default defineConfig({
     outDir: "dist",
   },
   preview: {
-    port: parseInt(process.env.SKILL_PORT || "7966"),
     host: "0.0.0.0",
     strictPort: true,
   },

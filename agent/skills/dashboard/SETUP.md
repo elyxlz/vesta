@@ -7,30 +7,33 @@ which node || (curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-
 cd ~/vesta/skills/dashboard/app && npm install
 ```
 
-## 2. Build the dashboard
+## 2. Sync shared files from the main app
+
+The dashboard shares UI components, styles, and utilities with the main Vesta app. Run the sync script to download them:
+```bash
+bash ~/vesta/skills/dashboard/sync-app.sh
+```
+
+This fetches `globals.css`, `components/ui/`, `lib/utils.ts`, and `hooks/use-mobile.ts` from the main app (GitHub, pinned to the current version). Run this again after upstream updates to keep the dashboard visually in sync.
+
+## 3. Build the dashboard
 
 ```bash
 cd ~/vesta/skills/dashboard/app && npx vite build
 ```
 
-## 3. Start the dashboard server
+## 4. Start the dashboard server
 
-Pick a free port (e.g. 7966). Start the server in a background screen session:
+Register with vestad to get a port, then start the server:
 ```bash
-SKILL_PORT=7966 screen -dmS dashboard sh -c 'cd ~/vesta/skills/dashboard/app && npx vite preview --port 7966 --host 0.0.0.0'
+PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services \
+  -H 'Content-Type: application/json' -d '{"name":"dashboard"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])")
+screen -dmS dashboard sh -c "cd ~/vesta/skills/dashboard/app && npx vite preview --port $PORT --host 0.0.0.0"
 ```
-
-## 4. Register with vestad
-
-Register the service with vestad so it's reachable from outside the container:
-```bash
-curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H 'Content-Type: application/json' -d '{"name":"dashboard","port":7966}'
-```
-This persists across restarts — only needs to be done once.
 
 ## 5. Add to restart.md
 
 Add to `~/vesta/prompts/restart.md`:
 ```
-SKILL_PORT=7966 screen -dmS dashboard sh -c 'cd ~/vesta/skills/dashboard/app && npx vite preview --port 7966 --host 0.0.0.0'
+PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H 'Content-Type: application/json' -d '{"name":"dashboard"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])") && screen -dmS dashboard sh -c "cd ~/vesta/skills/dashboard/app && npx vite preview --port $PORT --host 0.0.0.0"
 ```

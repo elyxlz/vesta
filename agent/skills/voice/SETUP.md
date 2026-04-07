@@ -2,18 +2,15 @@
 
 ## 1. Start the voice server
 
-1. Pick a free port (e.g. 7965). Start the server in a background screen session:
+1. Register with vestad to get a port, then start the server in a background screen session:
    ```bash
-   SKILL_PORT=7965 SKILL_NAME=voice PYTHONPATH=~/vesta/skills screen -dmS voice uv run python -m voice.server
+   PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services \
+     -H 'Content-Type: application/json' -d '{"name":"voice"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])")
+   SKILL_PORT=$PORT PYTHONPATH=~/vesta/skills screen -dmS voice uv run python -m voice.server
    ```
-2. Register the service with vestad so it's reachable from outside the container:
-   ```bash
-   curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H 'Content-Type: application/json' -d '{"name":"voice","port":7965}'
+2. Add to `~/vesta/prompts/restart.md`:
    ```
-   This persists across restarts — only needs to be done once.
-3. Add to `~/vesta/prompts/restart.md`:
-   ```
-   SKILL_PORT=7965 SKILL_NAME=voice PYTHONPATH=~/vesta/skills screen -dmS voice uv run python -m voice.server
+   PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H 'Content-Type: application/json' -d '{"name":"voice"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])") && SKILL_PORT=$PORT PYTHONPATH=~/vesta/skills screen -dmS voice uv run python -m voice.server
    ```
 
 ## 2. API keys

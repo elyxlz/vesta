@@ -109,15 +109,19 @@ uv tool install ~/vesta/skills/tasks/cli
 ```
 
 ## Background Daemon
+
+Register with vestad to get a port, then start:
 ```bash
-screen -dmS tasks tasks serve --notifications-dir ~/vesta/notifications
+PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services \
+  -H 'Content-Type: application/json' -d '{"name":"tasks"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])")
+screen -dmS tasks tasks serve --notifications-dir ~/vesta/notifications --port $PORT
 ```
 
 One daemon handles everything — both task due-date monitoring and reminder scheduling. No separate reminder daemon needed.
 
 **Restart**: Add to `~/vesta/prompts/restart.md`:
 ```
-screen -dmS tasks tasks serve --notifications-dir ~/vesta/notifications
+PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H 'Content-Type: application/json' -d '{"name":"tasks"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])") && screen -dmS tasks tasks serve --notifications-dir ~/vesta/notifications --port $PORT
 ```
 
 ### Reminder Patterns

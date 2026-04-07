@@ -1,0 +1,8 @@
+node_modules/
+dist/
+
+# Synced from main app via sync-app.sh — do not commit
+src/globals.css
+src/components/ui/
+src/lib/utils.ts
+src/hooks/
