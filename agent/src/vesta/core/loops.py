@@ -99,8 +99,6 @@ async def queue_greeting(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.V
             prompt = f"[System: your name is {config.agent_name}]\n\n{prompt}"
             # Mark first start as done so restarts don't re-trigger it
             (config.data_dir / "first_start_done").write_text("1")
-            # Remove ready marker so vestad keeps showing "waking up" until setup completes
-            (config.data_dir / "agent_ready").unlink(missing_ok=True)
     else:
         extras = []
         today = _now().strftime("%Y-%m-%d")
