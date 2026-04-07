@@ -1,3 +1,4 @@
+import json
 import pathlib as pl
 import typing as tp
 
@@ -22,6 +23,12 @@ class VestaConfig(pyd_settings.BaseSettings):
     interrupt_timeout: float = pyd.Field(default=5.0, gt=0)
     max_thinking_tokens: int | None = 10000
     ws_port: int = 7865
+
+    # Context nap settings (hot-reloadable via config.json)
+    context_nap_soft: int = pyd.Field(default=50, ge=10, le=90)    # % — notify user, nap on inactivity
+    context_nap_hard: int = pyd.Field(default=70, ge=20, le=95)    # % — force nap immediately
+    context_check_interval: int = pyd.Field(default=900, ge=60)    # seconds — status + nap check cycle
+    context_nap_inactivity: int = pyd.Field(default=600, ge=60)   # seconds — inactivity before auto-nap
 
     root: pl.Path = pyd.Field(default=_DEFAULT_ROOT)
 
@@ -65,3 +72,37 @@ class VestaConfig(pyd_settings.BaseSettings):
         return self.data_dir / "session_id"
 
     agent_name: str = "vesta"
+
+    @property
+    def config_file(self) -> pl.Path:
+        return self.root / "config.json"
+
+    def reload_from_file(self) -> bool:
+        """Re-read config.json and update mutable fields in-place.
+
+        Returns True if any field changed, False otherwise.
+        Only updates fields that are present in the JSON file.
+        """
+        path = self.config_file
+        if not path.exists():
+            return False
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return False
+
+        changed = False
+        # Only allow hot-reloading these specific fields
+        _HOT_RELOAD_FIELDS = {
+            "context_nap_soft", "context_nap_hard",
+            "context_check_interval", "context_nap_inactivity",
+            "nightly_memory_hour", "proactive_check_interval",
+            "notification_check_interval", "log_level",
+        }
+        for key, value in data.items():
+            if key in _HOT_RELOAD_FIELDS and hasattr(self, key):
+                current = getattr(self, key)
+                if current != value:
+                    object.__setattr__(self, key, value)
+                    changed = True
+        return changed

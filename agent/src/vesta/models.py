@@ -25,6 +25,10 @@ class State:
     interrupt_event: asyncio.Event | None = None
     event_bus: EventBus = dc.field(default_factory=EventBus)
     history: HistoryDB | None = None
+    context_percentage: float = 0.0
+    context_nap_warned: bool = False  # user notified about soft threshold
+    last_user_message_time: dt.datetime | None = None
+    is_daytime_nap: bool = False  # True when dream was triggered by context nap, not nightly
 
 
 class Notification(pyd.BaseModel):

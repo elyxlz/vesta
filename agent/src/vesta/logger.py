@@ -98,6 +98,10 @@ def interrupt(msg: tp.Any) -> None:
     _cat("*", "yellow", "INTERRUPT", msg, level=logging.DEBUG)
 
 
+def context(msg: tp.Any) -> None:
+    _cat("*", "dim", "CONTEXT", msg, level=logging.DEBUG)
+
+
 def proactive(msg: tp.Any) -> None:
     _cat("*", "yellow", "PROACTIVE", msg)
 

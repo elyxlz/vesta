@@ -222,6 +222,81 @@ async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm
                 logger.client("Client session closed")
 
 
+# --- Context nap (daytime dreamer) ---
+
+
+def _user_is_inactive(state: vm.State, config: vm.VestaConfig) -> bool:
+    """Return True if no user message in the last context_nap_inactivity seconds."""
+    if state.last_user_message_time is None:
+        return True  # no user messages this session
+    elapsed = (_now() - state.last_user_message_time).total_seconds()
+    return elapsed >= config.context_nap_inactivity
+
+
+async def _context_nap_check(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig) -> None:
+    """Check context usage and trigger daytime dream if needed.
+
+    Thresholds are read from config (hot-reloadable via config.json):
+    - < soft%: nothing
+    - soft%-hard%: if inactive -> nap silently. if active -> notify once, wait.
+    - >= hard%: force nap immediately.
+    """
+    if config.ephemeral or state.dreamer_active:
+        return
+
+    # Hot-reload config before each check
+    config.reload_from_file()
+
+    soft = config.context_nap_soft
+    hard = config.context_nap_hard
+    pct = state.context_percentage
+    if pct < soft:
+        return
+
+    if pct >= hard:
+        # Hard threshold — dream immediately, no questions
+        logger.dreamer(f"Context at {pct:.0f}% (hard limit {hard}%) — starting daytime dream")
+        state.context_nap_warned = False
+        _queue_daytime_dream(queue, state=state, config=config,
+                            reason=f"context at {pct:.0f}%, auto-dreaming")
+        return
+
+    # Soft threshold (soft%-hard%)
+    if _user_is_inactive(state, config):
+        # No recent activity — nap silently
+        logger.dreamer(f"Context at {pct:.0f}%, user inactive — napping silently")
+        state.context_nap_warned = False
+        _queue_daytime_dream(queue, state=state, config=config,
+                            reason=f"context at {pct:.0f}%, inactive — auto-nap")
+        return
+
+    # User is active — notify once, then wait for inactivity on subsequent checks
+    if not state.context_nap_warned:
+        logger.dreamer(f"Context at {pct:.0f}%, user active — notifying")
+        state.context_nap_warned = True
+        state.event_bus.emit({
+            "type": "status",
+            "text": f"context at {pct:.0f}% — will nap when things quiet down",
+        })
+    else:
+        logger.dreamer(f"Context at {pct:.0f}%, user still active — waiting for inactivity")
+
+
+def _queue_daytime_dream(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig, reason: str) -> None:
+    prompt = load_prompt("dream", config) or ""
+    if not prompt.strip():
+        logger.dreamer("Empty dream prompt — skipping daytime dream")
+        return
+    state.dreamer_active = True
+    state.is_daytime_nap = True
+
+    state.event_bus.emit({"type": "status", "text": f"going to sleep — {reason}"})
+
+    queue.put_nowait((prompt, False))
+    state.last_dreamer_run = _now()
+    logger.dreamer(f"Daytime dream queued: {reason}")
+
+
 # --- Proactive & dreamer ---
 
 
@@ -234,8 +309,11 @@ async def check_proactive_task(queue: asyncio.Queue[tuple[str, bool]], *, config
 
 
 def _trigger_nightly_restart(*, state: vm.State, config: vm.VestaConfig) -> None:
-    logger.dreamer("Dreamer complete, triggering nightly restart...")
+    is_nap = state.is_daytime_nap
+    label = "daytime nap" if is_nap else "nightly restart"
+    logger.dreamer(f"Dreamer complete, triggering {label}...")
     state.session_id = None
+    state.is_daytime_nap = False
     config.session_file.unlink(missing_ok=True)
 
     today = _now().strftime("%Y-%m-%d")
@@ -244,7 +322,12 @@ def _trigger_nightly_restart(*, state: vm.State, config: vm.VestaConfig) -> None
     if summary_path.exists():
         extras.append(f"[Dreamer Summary]\n{summary_path.read_text().strip()}")
 
-    state.pending_context = build_restart_context("new day — conversation history reset, nightly dreamer ran", config, extras=extras)
+    if is_nap:
+        reason = "daytime nap — conversation history reset, dreamer ran"
+    else:
+        reason = "new day — conversation history reset, nightly dreamer ran"
+
+    state.pending_context = build_restart_context(reason, config, extras=extras)
 
 
 async def process_nightly_memory(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig) -> None:
@@ -274,28 +357,89 @@ async def monitor_loop(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.Stat
     notification_buffer: list[vm.Notification] = []
     buffer_start_time: dt.datetime | None = None
 
-    while state.shutdown_event and not state.shutdown_event.is_set():
-        try:
-            await asyncio.sleep(config.notification_check_interval)
+    _status_log_path = pl.Path.home() / "vesta" / "logs" / "context-status.jsonl"
+    _context_loop_start = dt.datetime.now(dt.timezone.utc)
 
+    async def _context_loop() -> None:
+        """Fetch context usage from the SDK, log status, and check nap thresholds."""
+        _status_log_path.parent.mkdir(parents=True, exist_ok=True)
+        while state.shutdown_event and not state.shutdown_event.is_set():
+            try:
+                await asyncio.sleep(config.context_check_interval)
+            except asyncio.CancelledError:
+                return
             if state.shutdown_event and state.shutdown_event.is_set():
                 break
 
-            now = _now()
+            # Fetch fresh context usage from SDK
+            pct = state.context_percentage
+            try:
+                if state.client:
+                    result = state.client.get_context_usage()
+                    usage = await result if asyncio.iscoroutine(result) else result
+                    pct = usage.get("percentage", 0)
+                    state.context_percentage = pct
+            except Exception:
+                pass
 
-            if (now - last_proactive).total_seconds() >= config.proactive_check_interval * 60:
-                await check_proactive_task(queue, config=config)
-                last_proactive = now
+            now = dt.datetime.now(dt.timezone.utc)
+            uptime_min = int((now - _context_loop_start).total_seconds() / 60)
 
-            await process_nightly_memory(queue, state=state, config=config)
+            soft = config.context_nap_soft
+            hard = config.context_nap_hard
 
-            notification_buffer, buffer_start_time = await load_and_display_new_notifications(
-                notification_buffer, buffer_start_time=buffer_start_time, state=state, config=config
-            )
+            if state.dreamer_active:
+                nap_status = "dreaming"
+            elif pct >= hard:
+                nap_status = "critical"
+            elif pct >= soft:
+                nap_status = "warning"
+            else:
+                nap_status = "ok"
 
-            if notification_buffer and buffer_start_time and (now - buffer_start_time).total_seconds() >= config.notification_buffer_delay:
-                await process_batch(notification_buffer, queue=queue, state=state, config=config)
-                notification_buffer = []
-                buffer_start_time = None
-        except asyncio.CancelledError:
-            break
+            line = f"{now.strftime('%Y-%m-%d %H:%M:%S')} | up {uptime_min}m | {pct:.1f}% | {nap_status} | next:{f'hard@{hard}%' if pct >= soft else f'soft@{soft}%'}"
+            try:
+                with _status_log_path.open("a") as f:
+                    f.write(line + "\n")
+            except Exception:
+                pass
+
+            state.event_bus.emit({"type": "status", "text": f"context: {pct:.0f}%", "context_pct": pct})
+            logger.context(f"Status ping: {pct:.0f}%")
+
+            try:
+                await _context_nap_check(queue, state=state, config=config)
+            except Exception as e:
+                logger.warning(f"Context nap check failed: {e}")
+
+    context_task = asyncio.create_task(_context_loop())
+
+    try:
+        while state.shutdown_event and not state.shutdown_event.is_set():
+            try:
+                await asyncio.sleep(config.notification_check_interval)
+
+                if state.shutdown_event and state.shutdown_event.is_set():
+                    break
+
+                now = _now()
+
+                if (now - last_proactive).total_seconds() >= config.proactive_check_interval * 60:
+                    await check_proactive_task(queue, config=config)
+                    last_proactive = now
+
+                await process_nightly_memory(queue, state=state, config=config)
+
+                notification_buffer, buffer_start_time = await load_and_display_new_notifications(
+                    notification_buffer, buffer_start_time=buffer_start_time, state=state, config=config
+                )
+
+                if notification_buffer and buffer_start_time and (now - buffer_start_time).total_seconds() >= config.notification_buffer_delay:
+                    await process_batch(notification_buffer, queue=queue, state=state, config=config)
+                    notification_buffer = []
+                    buffer_start_time = None
+            except asyncio.CancelledError:
+                break
+    finally:
+        context_task.cancel()
+        await asyncio.gather(context_task, return_exceptions=True)
