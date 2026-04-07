@@ -27,7 +27,7 @@ export function Connect() {
     try {
       const url = host.includes("://") ? host.trim() : `https://${host.trim()}`;
       await connect(url, apiKey.trim());
-      navigate("/", { replace: true });
+      navigate("/home", { replace: true });
     } catch (e: unknown) {
       const msg = (e as { message?: string })?.message || "connection failed";
       if (msg === "could not reach server") {

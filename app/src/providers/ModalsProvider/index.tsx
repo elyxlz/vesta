@@ -79,7 +79,7 @@ export function ModalsProvider({ children }: { children: ReactNode }) {
   }, [name, authStarting]);
 
   const handleDelete = useCallback(async () => {
-    navigate("/");
+    navigate("/home");
     await remove();
     await refreshAgents();
   }, [navigate, remove, refreshAgents]);
