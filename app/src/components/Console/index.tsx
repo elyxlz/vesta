@@ -30,7 +30,8 @@ export function Console({ name, onClose }: ConsoleProps) {
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeRef = useRef(true);
 
-  const startStream = () => {
+  const startStreamRef = useRef<() => void>();
+  startStreamRef.current = () => {
     if (!name || !activeRef.current) return;
     setEnded(false);
 
@@ -45,17 +46,6 @@ export function Console({ name, onClose }: ConsoleProps) {
           break;
         }
         case "End":
-          setEnded(true);
-          if (activeRef.current) {
-            reconnectTimerRef.current = setTimeout(() => {
-              reconnectDelayRef.current = Math.min(
-                reconnectDelayRef.current * 2,
-                RECONNECT_MAX,
-              );
-              startStream();
-            }, reconnectDelayRef.current);
-          }
-          break;
         case "Error":
           setEnded(true);
           if (activeRef.current) {
@@ -64,7 +54,7 @@ export function Console({ name, onClose }: ConsoleProps) {
                 reconnectDelayRef.current * 2,
                 RECONNECT_MAX,
               );
-              startStream();
+              startStreamRef.current?.();
             }, reconnectDelayRef.current);
           }
           break;
@@ -76,13 +66,14 @@ export function Console({ name, onClose }: ConsoleProps) {
 
   useEffect(() => {
     activeRef.current = true;
-    startStream();
+    setLines([]);
+    startStreamRef.current?.();
     return () => {
       activeRef.current = false;
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
       if (name) stopLogs(name);
     };
-  }, [name, startStream]);
+  }, [name]);
 
   useLayoutEffect(() => {
     scroll(scrollRef.current);
