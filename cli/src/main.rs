@@ -429,10 +429,7 @@ fn run(cli: Cli) {
 
             eprintln!("authenticating claude...");
             authenticate_agent(&c, &name);
-
-            // Start
-            c.start_agent(&name).unwrap_or_else(|e| platform::die(&e));
-            eprintln!("agent '{}' is running.", name);
+            eprintln!("agent '{}' is ready.", name);
 
         }
 
@@ -442,10 +439,7 @@ fn run(cli: Cli) {
                 .map(|name| name.trim().to_string())
                 .unwrap_or_else(prompt_name);
             let name = c.create_agent(&name, build).unwrap_or_else(|e| platform::die(&e));
-            eprintln!(
-                "created (run 'vesta auth {}' to authenticate, then 'vesta start {}')",
-                name, name
-            );
+            eprintln!("created (run 'vesta auth {}' to authenticate)", name);
         }
 
         Command::Start { name } => {

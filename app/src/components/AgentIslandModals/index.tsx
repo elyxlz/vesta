@@ -27,7 +27,7 @@ import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useModals } from "@/providers/ModalsProvider";
 
 export function AgentIslandModals() {
-  const { name, agent, restart } = useSelectedAgent();
+  const { name, agent, refreshAgent } = useSelectedAgent();
   const {
     showAuth,
     authStarting,
@@ -64,7 +64,7 @@ export function AgentIslandModals() {
               onCancel={clearAuthState}
               onComplete={async () => {
                 clearAuthState();
-                await restart();
+                await refreshAgent();
               }}
             />
           ) : authStarting ? (

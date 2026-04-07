@@ -390,6 +390,12 @@ async fn create_agent_handler(
             .unwrap()
             .map_err(map_docker_err)?;
 
+    let start_name = name.clone();
+    tokio::task::spawn_blocking(move || docker::start_agent(&start_name))
+        .await
+        .unwrap()
+        .map_err(map_docker_err)?;
+
     Ok((StatusCode::CREATED, Json(serde_json::json!({"name": name}))))
 }
 
@@ -571,6 +577,8 @@ struct AuthCodeBody {
     code: String,
 }
 
+const AUTH_READY_TIMEOUT_SECS: u64 = 180;
+
 async fn complete_auth_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
@@ -600,6 +608,21 @@ async fn complete_auth_handler(
     tokio::task::spawn_blocking(move || docker::inject_credentials(&cname, &credentials))
         .await
         .unwrap()
+        .map_err(map_docker_err)?;
+
+    // Restart the agent so it picks up the new credentials, then wait for
+    // first-start setup (skills, memory, greeting) to complete.
+    let restart_name = name.clone();
+    let lock = state.agent_lock(&name).await;
+    let _guard = lock.write().await;
+
+    tokio::task::spawn_blocking(move || docker::restart_agent(&restart_name))
+        .await
+        .unwrap()
+        .map_err(map_docker_err)?;
+
+    docker::wait_ready_async(&name, AUTH_READY_TIMEOUT_SECS)
+        .await
         .map_err(map_docker_err)?;
 
     Ok(ok_json())

@@ -9,9 +9,6 @@ import { AuthFlow } from "@/components/AuthFlow";
 import {
   createAgent,
   deleteAgent,
-  startAgent,
-  restartAgent,
-  waitForReady,
   authenticate,
   type AuthStartResult,
 } from "@/api";
@@ -23,7 +20,7 @@ import { useAgents } from "@/providers/AgentsProvider";
 import { useNavigate } from "react-router-dom";
 import { friendlyError } from "./errors";
 
-type Step = "platform" | "name" | "creating" | "auth" | "finalizing" | "done";
+type Step = "platform" | "name" | "creating" | "auth" | "done";
 
 const CREATING_MESSAGES = [
   "setting things up...",
@@ -96,10 +93,6 @@ export function NewAgent() {
       await createAgent(normalized);
       created = true;
       await refreshAgents();
-      await startAgent(normalized);
-      await refreshAgents();
-      await waitForReady(normalized, 180);
-      await refreshAgents();
       const nextAuthStart = await authenticate(normalized);
       setAuthStart(nextAuthStart);
       setStep("auth");
@@ -134,15 +127,6 @@ export function NewAgent() {
       );
     }
 
-    if (step === "finalizing") {
-      return (
-        <div className="flex flex-col items-center gap-3 w-[260px] max-w-full px-4">
-          <h2 className="text-base font-semibold">preparing final things</h2>
-          <ProgressBar message="almost ready..." />
-        </div>
-      );
-    }
-
     if (step === "auth") {
       return (
         <div className="flex flex-col items-center gap-3 w-[260px] max-w-full px-4">
@@ -169,9 +153,6 @@ export function NewAgent() {
               }}
               onComplete={async () => {
                 setAuthStart(null);
-                setStep("finalizing");
-                await restartAgent(createdName);
-                await waitForReady(createdName, 30);
                 await refreshAgents();
                 setStep("done");
               }}
