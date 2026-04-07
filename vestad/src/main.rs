@@ -498,42 +498,42 @@ fn main() {
         Command::Uninstall => {
             eprint!("This will stop vestad, remove its systemd service, config, and binary. Continue? [y/N] ");
             use std::io::Write;
-            std::io::stdout().flush().ok();
+            std::io::stderr().flush().ok();
             let mut answer = String::new();
-            std::io::stdin().read_line(&mut answer).ok();
+            if std::io::stdin().read_line(&mut answer).is_err() {
+                eprintln!("failed to read input");
+                std::process::exit(1);
+            }
             if !answer.trim().eq_ignore_ascii_case("y") {
                 eprintln!("Aborted.");
                 std::process::exit(0);
             }
 
-            // Stop and disable systemd service
             if systemd::is_active() {
                 eprintln!("stopping vestad service...");
                 systemd::stop().unwrap_or_else(|e| eprintln!("warning: {}", e));
             }
-            systemd::uninstall().unwrap_or_else(|e| eprintln!("warning: {}", e));
-            eprintln!("  removed systemd service");
+            if let Err(err) = systemd::uninstall() {
+                eprintln!("warning: {}", err);
+            } else {
+                eprintln!("  removed systemd service");
+            }
 
-            // Remove config directory
             let config = config_dir();
-            if config.exists() {
-                if let Err(err) = std::fs::remove_dir_all(&config) {
-                    eprintln!("warning: failed to remove config dir {}: {}", config.display(), err);
-                } else {
-                    eprintln!("  removed {}", config.display());
+            match std::fs::remove_dir_all(&config) {
+                Ok(()) => eprintln!("  removed {}", config.display()),
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => eprintln!("warning: failed to remove config: {}", err),
+            }
+
+            if let Some(tunnel_dir) = config.parent().map(|p| p.join("cloudflared")) {
+                match std::fs::remove_dir_all(&tunnel_dir) {
+                    Ok(()) => eprintln!("  removed {}", tunnel_dir.display()),
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(err) => eprintln!("warning: failed to remove cloudflared: {}", err),
                 }
             }
 
-            // Remove tunnel config/binary if present
-            let tunnel_dir = config.parent().map(|p| p.join("cloudflared"));
-            if let Some(td) = tunnel_dir {
-                if td.exists() {
-                    std::fs::remove_dir_all(&td).ok();
-                    eprintln!("  removed {}", td.display());
-                }
-            }
-
-            // Remove the binary
             if let Ok(exe) = std::env::current_exe() {
                 if let Err(err) = std::fs::remove_file(&exe) {
                     eprintln!("warning: could not remove binary {}: {}", exe.display(), err);

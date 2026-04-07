@@ -690,25 +690,23 @@ fn run(cli: Cli) {
 
         Command::Uninstall => {
             eprint!("This will remove the vesta CLI binary and its config. Continue? [y/N] ");
-            io::stdout().flush().ok();
+            io::stderr().flush().ok();
             let mut answer = String::new();
-            io::stdin().read_line(&mut answer).ok();
+            if io::stdin().read_line(&mut answer).is_err() {
+                eprintln!("failed to read input");
+                process::exit(1);
+            }
             if !answer.trim().eq_ignore_ascii_case("y") {
                 eprintln!("Aborted.");
                 process::exit(0);
             }
 
-            // Remove config directory
-            let config = common::config_dir();
-            if config.exists() {
-                if let Err(err) = std::fs::remove_dir_all(&config) {
-                    eprintln!("warning: failed to remove config dir {}: {}", config.display(), err);
-                } else {
-                    eprintln!("  removed {}", config.display());
-                }
+            match std::fs::remove_dir_all(common::config_dir()) {
+                Ok(()) => eprintln!("  removed {}", common::config_dir().display()),
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => eprintln!("warning: failed to remove config: {}", err),
             }
 
-            // Remove the binary itself (best-effort self-delete)
             if let Ok(exe) = std::env::current_exe() {
                 if let Err(err) = std::fs::remove_file(&exe) {
                     eprintln!("warning: could not remove binary {}: {}", exe.display(), err);
