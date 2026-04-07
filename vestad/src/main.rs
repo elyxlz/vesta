@@ -67,6 +67,8 @@ enum Command {
     Info,
     /// Update vestad to the latest version
     Update,
+    /// Uninstall vestad: stop service, remove config, and delete binary
+    Uninstall,
 }
 
 #[derive(clap::Subcommand)]
@@ -491,6 +493,59 @@ fn main() {
             } else {
                 tracing::info!("updated. run 'vestad' to start.");
             }
+        }
+
+        Command::Uninstall => {
+            eprint!("This will stop vestad, remove its systemd service, config, and binary. Continue? [y/N] ");
+            use std::io::Write;
+            std::io::stderr().flush().ok();
+            let mut answer = String::new();
+            if std::io::stdin().read_line(&mut answer).is_err() {
+                eprintln!("failed to read input");
+                std::process::exit(1);
+            }
+            if !answer.trim().eq_ignore_ascii_case("y") {
+                eprintln!("Aborted.");
+                std::process::exit(0);
+            }
+
+            if systemd::is_active() {
+                eprintln!("stopping vestad service...");
+                systemd::stop().unwrap_or_else(|e| eprintln!("warning: {}", e));
+            }
+            if let Err(err) = systemd::uninstall() {
+                eprintln!("warning: {}", err);
+            } else {
+                eprintln!("  removed systemd service");
+            }
+
+            let config = config_dir();
+            match std::fs::remove_dir_all(&config) {
+                Ok(()) => eprintln!("  removed {}", config.display()),
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => eprintln!("warning: failed to remove config: {}", err),
+            }
+
+            if let Some(tunnel_dir) = config.parent().map(|p| p.join("cloudflared")) {
+                match std::fs::remove_dir_all(&tunnel_dir) {
+                    Ok(()) => eprintln!("  removed {}", tunnel_dir.display()),
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(err) => eprintln!("warning: failed to remove cloudflared: {}", err),
+                }
+            }
+
+            if let Ok(exe) = std::env::current_exe() {
+                if let Err(err) = std::fs::remove_file(&exe) {
+                    eprintln!("warning: could not remove binary {}: {}", exe.display(), err);
+                    eprintln!("  remove it manually: rm {}", exe.display());
+                } else {
+                    eprintln!("  removed {}", exe.display());
+                }
+            }
+
+            eprintln!("\nvestad has been uninstalled.");
+            eprintln!("Note: Docker containers and images for agents are still intact.");
+            eprintln!("To remove them too, run: docker rm -f $(docker ps -aq --filter name=vesta-)");
         }
     }
 }
