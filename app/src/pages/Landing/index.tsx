@@ -10,7 +10,6 @@ type DownloadInfo = {
   label: string;
   filename: (version: string) => string;
   note?: string;
-  external?: boolean;
   altLinks?: { label: string; filename: (version: string) => string }[];
 };
 
@@ -42,7 +41,7 @@ const DOWNLOAD_MAP: Record<Platform, DownloadInfo> = {
   ios: {
     label: "Get on TestFlight",
     filename: () => "",
-    external: true,
+    note: "Coming soon",
   },
 };
 
@@ -69,11 +68,17 @@ export function Landing() {
     fetch(`${RELEASES}/latest/download/latest.json`, {
       signal: controller.signal,
     })
-      .then((r) => r.json())
+      .then((r) => {
+        if (!r.ok) throw new Error(r.statusText);
+        return r.json();
+      })
       .then((data: { version?: string }) => {
         if (data.version) setVersion(data.version);
       })
-      .catch(() => {});
+      .catch((err: unknown) => {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        console.error("Failed to fetch latest version:", err);
+      });
     return () => controller.abort();
   }, []);
 
