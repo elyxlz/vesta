@@ -566,14 +566,10 @@ jobs:
           name: tauri-x86_64-pc-windows-msvc
           path: tauri-out/*
 
-  # ── Build Tauri app (Android APK) ────────────────────────────────────
+  # ── Build Tauri app (Android APK, non-PR only) ──────────────────────
   build-tauri-android:
-    needs: [test-frontend, detect-changes]
-    if: >-
-      !failure() && !cancelled() && (
-      github.event_name != 'pull_request' ||
-      needs.detect-changes.outputs.app == 'true'
-      )
+    needs: [test-frontend]
+    if: ${{ !failure() && !cancelled() && github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -620,11 +616,9 @@ jobs:
         run: npx tauri android build --apk
 
       - name: Collect artifacts
-        if: github.event_name != 'pull_request'
         run: |
           mkdir -p tauri-out
           find app/src-tauri/gen/android -name '*.apk' -exec cp {} tauri-out/ \;
-          # Rename to include version
           VERSION=$(python3 -c "import json; print(json.load(open('app/src-tauri/tauri.conf.json'))['version'])")
           for f in tauri-out/*.apk; do
             mv "$f" "tauri-out/Vesta_${VERSION}.apk"
@@ -632,19 +626,14 @@ jobs:
           ls -lh tauri-out/
 
       - uses: actions/upload-artifact@v7
-        if: github.event_name != 'pull_request'
         with:
           name: tauri-android
           path: tauri-out/*
 
-  # ── Build Tauri app (iOS) ──────────────────────────────────────────
+  # ── Build Tauri app (iOS, non-PR only) ──────────────────────────────
   build-tauri-ios:
-    needs: [test-frontend, detect-changes]
-    if: >-
-      !failure() && !cancelled() && (
-      github.event_name != 'pull_request' ||
-      needs.detect-changes.outputs.app == 'true'
-      )
+    needs: [test-frontend]
+    if: ${{ !failure() && !cancelled() && github.event_name != 'pull_request' }}
     runs-on: macos-latest
     steps:
       - name: Check for Apple signing secrets
@@ -718,7 +707,7 @@ jobs:
         run: npx tauri ios build --export-method app-store-connect
 
       - name: Collect artifacts
-        if: env.SKIP_IOS != 'true' && github.event_name != 'pull_request'
+        if: env.SKIP_IOS != 'true'
         run: |
           mkdir -p tauri-out
           find app/src-tauri/gen/apple -name '*.ipa' -exec cp {} tauri-out/ \;
@@ -744,7 +733,7 @@ jobs:
             --apiIssuer "$APPLE_API_ISSUER_ID"
 
       - uses: actions/upload-artifact@v7
-        if: env.SKIP_IOS != 'true' && github.event_name != 'pull_request'
+        if: env.SKIP_IOS != 'true'
         with:
           name: tauri-ios
           path: tauri-out/*
