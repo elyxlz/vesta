@@ -8,6 +8,10 @@
     "description": "Use for \"browse\", \"open a website\", \"navigate to\", \"click\", \"fill form\","
   },
   {
+    "name": "dashboard",
+    "description": "Use when the user asks to add, remove, or modify dashboard widgets, customize their dashboard layout, or build visual components like counters, charts, reminders, or status displays. Each widget is a self-contained React component. Do NOT register new services for widgets \u2014 widgets are files inside the existing dashboard app, not separate services."
+  },
+  {
     "name": "dream",
     "description": "Self-improvement and memory curation. Used by the nightly dreamer, but can also be used anytime."
   },
