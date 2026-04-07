@@ -19,7 +19,7 @@ def main() -> None:
 
     serve_p = sub.add_parser("serve", help="Run the app-chat daemon")
     serve_p.add_argument("--notifications-dir", required=True, help="Directory for notification JSON files")
-    serve_p.add_argument("--ws-url", default="ws://localhost:7860/ws", help="Agent WebSocket URL")
+    serve_p.add_argument("--ws-url", default="ws://localhost:7865/ws", help="Agent WebSocket URL")
     serve_p.add_argument("--data-dir", default=None, help="Data directory (default: ~/.app-chat)")
 
     send_p = sub.add_parser("send", help="Send a message to the app")
@@ -29,7 +29,7 @@ def main() -> None:
     history_p = sub.add_parser("history", help="Search or list chat history")
     history_p.add_argument("--search", "-s", default=None, help="FTS5 search query")
     history_p.add_argument("--limit", "-n", type=int, default=20, help="Max results")
-    history_p.add_argument("--url", default=None, help="Agent HTTP base URL (default: http://localhost:7860)")
+    history_p.add_argument("--url", default=None, help="Agent HTTP base URL (default: http://localhost:7865)")
 
     args = parser.parse_args()
 

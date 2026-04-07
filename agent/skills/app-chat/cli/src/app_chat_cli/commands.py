@@ -8,7 +8,7 @@ import urllib.request
 import urllib.error
 import urllib.parse
 
-DEFAULT_AGENT_URL = "http://localhost:7860"
+DEFAULT_AGENT_URL = "http://localhost:7865"
 
 
 def cmd_send(args: object) -> None:
