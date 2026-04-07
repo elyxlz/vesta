@@ -196,6 +196,11 @@ async fn auth_middleware(
     request: axum::extract::Request,
     next: Next,
 ) -> Response {
+    // Let CORS preflight through — the CorsLayer handles the response.
+    if request.method() == axum::http::Method::OPTIONS {
+        return next.run(request).await;
+    }
+
     // Dashboard asset sub-resources (JS/CSS bundles) are loaded by the browser
     // after the initial authenticated HTML request. They can't carry tokens,
     // so we skip auth for them — they're just static build artifacts.

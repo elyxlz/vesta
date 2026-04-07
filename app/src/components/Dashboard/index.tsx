@@ -22,6 +22,7 @@ export function Dashboard() {
   const theme = useTheme((s) => s.theme);
   const resolved = useTheme((s) => s.resolved);
   const [status, setStatus] = useState<Status>("loading");
+  const [loaded, setLoaded] = useState(false);
 
   // Poll services endpoint until dashboard is registered
   useEffect(() => {
@@ -116,9 +117,11 @@ export function Dashboard() {
     <iframe
       ref={iframeRef}
       src={dashboardUrl!}
-      className="w-full h-full border-0 bg-transparent"
-      allowTransparency
-      onLoad={sendTheme}
+      className={`w-full h-full border-0 bg-transparent transition-opacity duration-200 ${loaded ? "opacity-100" : "opacity-0"}`}
+      onLoad={() => {
+        sendTheme();
+        setLoaded(true);
+      }}
       onError={() => setStatus("error")}
       title="Dashboard"
     />
