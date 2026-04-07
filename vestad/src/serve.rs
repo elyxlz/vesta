@@ -1,6 +1,6 @@
 use axum::{
     body::Body,
-    extract::{Path, Query, Request, State, WebSocketUpgrade},
+    extract::{ConnectInfo, Path, Query, Request, State, WebSocketUpgrade},
     http::{HeaderMap, StatusCode},
     middleware::{self, Next},
     response::{
@@ -184,12 +184,25 @@ type SharedState = Arc<AppState>;
 
 // --- Auth middleware ---
 
+/// Check if a path matches `/agents/{name}/dashboard/...` for a static asset (not the root).
+fn is_dashboard_asset(path: &str) -> bool {
+    let segments: Vec<&str> = path.trim_start_matches('/').splitn(4, '/').collect();
+    segments.len() >= 4 && segments[0] == "agents" && segments[2] == "dashboard"
+}
+
 async fn auth_middleware(
     State(state): State<SharedState>,
     headers: HeaderMap,
     request: axum::extract::Request,
     next: Next,
 ) -> Response {
+    // Dashboard asset sub-resources (JS/CSS bundles) are loaded by the browser
+    // after the initial authenticated HTML request. They can't carry tokens,
+    // so we skip auth for them — they're just static build artifacts.
+    if is_dashboard_asset(request.uri().path()) {
+        return next.run(request).await;
+    }
+
     // Check Bearer header first, then query param ?token= (for WebSocket)
     let bearer_ok = headers
         .get("authorization")
@@ -215,6 +228,47 @@ async fn auth_middleware(
     if !bearer_ok && !query_ok {
         let path = request.uri().path().to_string();
         tracing::warn!(path = %path, "client auth failed");
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error": "unauthorized"})),
+        )
+            .into_response();
+    }
+
+    next.run(request).await
+}
+
+/// Allow requests from localhost without auth; require auth from external sources.
+async fn localhost_or_auth_middleware(
+    State(state): State<SharedState>,
+    connect_info: ConnectInfo<std::net::SocketAddr>,
+    headers: HeaderMap,
+    request: Request,
+    next: Next,
+) -> Response {
+    if connect_info.0.ip().is_loopback() {
+        return next.run(request).await;
+    }
+
+    let bearer_ok = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(|token| verify_token(token, &state.api_key))
+        .unwrap_or(false);
+
+    let query_ok = if !bearer_ok {
+        request
+            .uri()
+            .query()
+            .and_then(|q| q.split('&').find_map(|p| p.strip_prefix("token=")))
+            .map(|t| verify_token(t, &state.api_key))
+            .unwrap_or(false)
+    } else {
+        false
+    };
+
+    if !bearer_ok && !query_ok {
         return (
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({"error": "unauthorized"})),
@@ -1236,16 +1290,21 @@ pub fn build_router(state: SharedState) -> Router {
             auth_middleware,
         ));
 
-    // Internal routes: no auth required (used by skills inside containers via localhost)
-    let internal = Router::new()
+    // Service registry: localhost (agent containers) can access without auth,
+    // external requests (app frontend) require auth
+    let services = Router::new()
         .route("/agents/{name}/services", post(register_service_handler))
         .route("/agents/{name}/services", get(list_services_handler))
         .route("/agents/{name}/services/{service}", axum::routing::delete(unregister_service_handler))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            localhost_or_auth_middleware,
+        ))
         .with_state(state.clone());
 
     Router::new()
         .merge(public)
-        .merge(internal)
+        .merge(services)
         .merge(protected)
         .layer(
             tower_http::cors::CorsLayer::new()
@@ -1433,14 +1492,14 @@ pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: S
         let listener = tokio::net::TcpListener::bind(http_addr)
             .await
             .expect("failed to bind http listener");
-        axum::serve(listener, http_app.into_make_service())
+        axum::serve(listener, http_app.into_make_service_with_connect_info::<std::net::SocketAddr>())
             .await
             .expect("http server failed");
     });
 
     let https_handle = tokio::spawn(async move {
         axum_server::bind_rustls(https_addr, rustls_config)
-            .serve(app.into_make_service())
+            .serve(app.into_make_service_with_connect_info::<std::net::SocketAddr>())
             .await
             .expect("https server failed");
     });

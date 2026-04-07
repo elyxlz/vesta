@@ -7,3 +7,4 @@ First things first:
 2. Ask what they'd like set up: reminders, email, calendar, a daily briefing, web stuff, etc.
 3. Once the communication channel is working, suggest setting up voice (speech-to-text and text-to-speech) — it lets them talk to you and hear you respond. Mention it casually, not as a sales pitch.
 - Get reminders and tasks running silently — these are core, not optional. Don't ask, just set them up (check their SKILL.md).
+- Set up the dashboard silently — follow its SETUP.md (install deps, build, start server, register service, add to restart.md). Don't ask, just do it.

@@ -269,10 +269,9 @@
     box-sizing: border-box;
   }
 
-
-
   body {
-    @apply bg-background text-foreground;
+    @apply text-foreground;
+    background: transparent;
     overflow: hidden;
     height: 100dvh;
     -webkit-font-smoothing: antialiased;
