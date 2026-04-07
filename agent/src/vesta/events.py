@@ -94,7 +94,6 @@ class HistoryEvent(tp.TypedDict):
 type VestaEvent = StreamEvent | HistoryEvent
 
 PAGE_SIZE = 100
-MAX_SUBSCRIBER_QUEUE = 5000
 
 _EVENTS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
@@ -137,7 +136,7 @@ class EventBus:
             self._conn.executescript(_EVENTS_SCHEMA)
 
     def subscribe(self) -> asyncio.Queue[VestaEvent]:
-        q: asyncio.Queue[VestaEvent] = asyncio.Queue(maxsize=MAX_SUBSCRIBER_QUEUE)
+        q: asyncio.Queue[VestaEvent] = asyncio.Queue()
         self._subscribers.add(q)
         return q
 
@@ -152,17 +151,8 @@ class EventBus:
                 (event["ts"], json.dumps(event)),
             )
             self._conn.commit()
-        is_status = event["type"] == "status"
         for q in self._subscribers:
-            try:
-                q.put_nowait(event)
-            except asyncio.QueueFull:
-                if is_status:
-                    try:
-                        q.get_nowait()
-                        q.put_nowait(event)
-                    except (asyncio.QueueEmpty, asyncio.QueueFull):
-                        pass
+            q.put_nowait(event)
 
     @property
     def state(self) -> AgentState:
