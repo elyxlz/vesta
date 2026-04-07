@@ -1433,6 +1433,12 @@ mod tests {
 
     // ── Retention policy tests ────────────────────────────────────
 
+    const DEFAULT_RETENTION: RetentionPolicy = RetentionPolicy {
+        daily: DEFAULT_RETENTION_DAILY,
+        weekly: DEFAULT_RETENTION_WEEKLY,
+        monthly: DEFAULT_RETENTION_MONTHLY,
+    };
+
     fn make_backup(agent: &str, bt: BackupType, ts: &str) -> BackupInfo {
         BackupInfo {
             id: backup_tag(agent, &bt, ts),
@@ -1445,7 +1451,7 @@ mod tests {
 
     #[test]
     fn retention_empty_list() {
-        let to_delete = compute_backups_to_delete(&[]);
+        let to_delete = compute_backups_to_delete(&[], &DEFAULT_RETENTION);
         assert!(to_delete.is_empty());
     }
 
@@ -1455,7 +1461,7 @@ mod tests {
             make_backup("a", BackupType::Daily, "20260401-120000"),
             make_backup("a", BackupType::Daily, "20260402-120000"),
         ];
-        let to_delete = compute_backups_to_delete(&backups);
+        let to_delete = compute_backups_to_delete(&backups, &DEFAULT_RETENTION);
         assert!(to_delete.is_empty());
     }
 
@@ -1468,7 +1474,7 @@ mod tests {
             make_backup("a", BackupType::Daily, "20260404-120000"),
             make_backup("a", BackupType::Daily, "20260405-120000"),
         ];
-        let to_delete = compute_backups_to_delete(&backups);
+        let to_delete = compute_backups_to_delete(&backups, &DEFAULT_RETENTION);
         assert_eq!(to_delete.len(), 2);
         // Oldest two should be deleted
         assert!(to_delete.contains(&backup_tag("a", &BackupType::Daily, "20260401-120000")));
@@ -1483,7 +1489,7 @@ mod tests {
             make_backup("a", BackupType::Weekly, "20260315-120000"),
             make_backup("a", BackupType::Weekly, "20260322-120000"),
         ];
-        let to_delete = compute_backups_to_delete(&backups);
+        let to_delete = compute_backups_to_delete(&backups, &DEFAULT_RETENTION);
         assert_eq!(to_delete.len(), 2);
         assert!(to_delete.contains(&backup_tag("a", &BackupType::Weekly, "20260301-120000")));
         assert!(to_delete.contains(&backup_tag("a", &BackupType::Weekly, "20260308-120000")));
@@ -1496,7 +1502,7 @@ mod tests {
             make_backup("a", BackupType::Monthly, "20260201-120000"),
             make_backup("a", BackupType::Monthly, "20260301-120000"),
         ];
-        let to_delete = compute_backups_to_delete(&backups);
+        let to_delete = compute_backups_to_delete(&backups, &DEFAULT_RETENTION);
         assert_eq!(to_delete.len(), 2);
     }
 
@@ -1511,7 +1517,7 @@ mod tests {
             make_backup("a", BackupType::Monthly, "20260301-120000"),
             make_backup("a", BackupType::Manual, "20260404-120000"),
         ];
-        let to_delete = compute_backups_to_delete(&backups);
+        let to_delete = compute_backups_to_delete(&backups, &DEFAULT_RETENTION);
         // 3 daily (keep all), 2 weekly (keep all), 1 monthly (keep all), manual not touched
         assert!(to_delete.is_empty());
     }
@@ -1526,7 +1532,7 @@ mod tests {
             make_backup("a", BackupType::PreRestore, "20260401-120000"),
             make_backup("a", BackupType::PreRestore, "20260402-120000"),
         ];
-        let to_delete = compute_backups_to_delete(&backups);
+        let to_delete = compute_backups_to_delete(&backups, &DEFAULT_RETENTION);
         assert!(to_delete.is_empty());
     }
 
