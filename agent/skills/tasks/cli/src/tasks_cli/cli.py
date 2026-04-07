@@ -389,7 +389,7 @@ def _run_serve(config: Config, notif_dir: Path, *, port: int = 8585):
             time.sleep(sync_interval)
             _sync_jobs(config, scheduler, notif_dir)
     finally:
-        http_server.shutdown()
+        http_server.should_exit = True
         _write_death_notification(notif_dir, shutdown_reason)
         _remove_pid(config)
         scheduler.shutdown(wait=True)
