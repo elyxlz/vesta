@@ -117,6 +117,13 @@ fn config_dir() -> std::path::PathBuf {
     std::path::PathBuf::from(home).join(".config/vesta/vestad")
 }
 
+fn read_vestad_port(config_dir: &std::path::Path) -> u16 {
+    std::fs::read_to_string(config_dir.join("port"))
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(0)
+}
+
 fn print_server_info(tunnel_url: Option<&str>, local_url: &str, api_key: &str) {
     eprintln!();
     if let Some(url) = tunnel_url {
@@ -388,7 +395,8 @@ fn main() {
 
                 eprintln!("creating agent '{}'...", name);
                 let port = find_available_port().unwrap_or_else(|| die("no available port"));
-                docker::create_container(&cname, loaded_image, port, &name)
+                let vestad_port = read_vestad_port(&config_dir());
+                docker::create_container(&cname, loaded_image, port, &name, vestad_port)
                     .unwrap_or_else(|e| die(&e));
 
                 if !docker::docker_ok(&["start", &cname]) {

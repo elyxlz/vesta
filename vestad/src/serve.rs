@@ -18,15 +18,9 @@ use tokio::sync::Mutex;
 use crate::{docker, jwt, update_check};
 
 const API_KEY_BYTES: usize = 32;
-const SERVICE_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(30);
-const SERVICE_FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
-
 const PROXY_MAX_BODY_BYTES: usize = 10 * 1024 * 1024; // 10 MB
 
-struct ServiceCache {
-    services: HashMap<String, u16>,
-    fetched_at: std::time::Instant,
-}
+const RESERVED_SERVICE_NAMES: &[&str] = &["ws", "history", "services", "search"];
 const AUTH_SESSION_TIMEOUT_SECS: u64 = 600;
 const DEFAULT_LOG_TAIL_LINES: u64 = 500;
 const AUTO_BACKUP_CHECK_INTERVAL_SECS: u64 = 3600;
@@ -137,6 +131,7 @@ struct AuthSession {
 
 pub struct AppState {
     api_key: String,
+    vestad_port: u16,
     auth_sessions: Mutex<HashMap<String, AuthSession>>,
     agent_locks: Mutex<HashMap<String, Arc<tokio::sync::RwLock<()>>>>,
     tunnel_url: Mutex<Option<String>>,
@@ -144,13 +139,15 @@ pub struct AppState {
     auto_backup_enabled: AtomicBool,
     backup_retention: Mutex<crate::types::RetentionPolicy>,
     http_client: reqwest::Client,
-    service_caches: Mutex<HashMap<String, ServiceCache>>,
+    service_registry: Mutex<HashMap<String, HashMap<String, u16>>>,
 }
 
 impl AppState {
-    fn new(api_key: String, tunnel_url: Option<String>) -> Self {
+    fn new(api_key: String, vestad_port: u16, tunnel_url: Option<String>) -> Self {
+        let service_registry = load_service_registry();
         Self {
             api_key,
+            vestad_port,
             auth_sessions: Mutex::new(HashMap::new()),
             agent_locks: Mutex::new(HashMap::new()),
             tunnel_url: Mutex::new(tunnel_url),
@@ -162,7 +159,7 @@ impl AppState {
                 monthly: docker::DEFAULT_RETENTION_MONTHLY,
             }),
             http_client: reqwest::Client::new(),
-            service_caches: Mutex::new(HashMap::new()),
+            service_registry: Mutex::new(service_registry),
         }
     }
 
@@ -372,8 +369,9 @@ async fn create_agent_handler(
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
+    let vestad_port = state.vestad_port;
     let name =
-        tokio::task::spawn_blocking(move || docker::create_agent(&name))
+        tokio::task::spawn_blocking(move || docker::create_agent(&name, vestad_port))
             .await
             .unwrap()
             .map_err(map_docker_err)?;
@@ -436,7 +434,8 @@ async fn stop_agent_handler(
         .await
         .unwrap()
         .map_err(map_docker_err)?;
-    state.service_caches.lock().await.remove(&name);
+    state.service_registry.lock().await.remove(&name);
+    save_service_registry(&*state.service_registry.lock().await);
     Ok(ok_json())
 }
 
@@ -468,7 +467,8 @@ async fn destroy_agent_handler(
         .await
         .unwrap()
         .map_err(map_docker_err)?;
-    state.service_caches.lock().await.remove(&name);
+    state.service_registry.lock().await.remove(&name);
+    save_service_registry(&*state.service_registry.lock().await);
 
     Ok(ok_json())
 }
@@ -481,7 +481,8 @@ async fn rebuild_agent_handler(
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
-    tokio::task::spawn_blocking(move || docker::rebuild_agent(&name))
+    let vestad_port = state.vestad_port;
+    tokio::task::spawn_blocking(move || docker::rebuild_agent(&name, vestad_port))
         .await
         .unwrap()
         .map_err(map_docker_err)?;
@@ -732,67 +733,102 @@ async fn ws_proxy(client_ws: axum::extract::ws::WebSocket, agent_port: u16, path
     tracing::info!(port = agent_port, "client websocket disconnected");
 }
 
-// --- Service discovery ---
+// --- Service registry ---
 
-async fn fetch_services(
-    client: &reqwest::Client,
-    agent_port: u16,
-) -> Result<HashMap<String, u16>, reqwest::Error> {
-    let resp: serde_json::Value = client
-        .get(format!("http://localhost:{}/services", agent_port))
-        .timeout(SERVICE_FETCH_TIMEOUT)
-        .send()
-        .await?
-        .json()
-        .await?;
-    let mut map = HashMap::new();
-    if let Some(obj) = resp.get("services").and_then(|v| v.as_object()) {
-        for (k, v) in obj {
-            if let Some(port) = v.as_u64() {
-                if port >= 1 && port <= u16::MAX as u64 {
-                    map.insert(k.clone(), port as u16);
-                }
-            }
+fn services_file() -> std::path::PathBuf {
+    let home = std::env::var("HOME").unwrap_or_default();
+    std::path::PathBuf::from(home).join(".config/vesta/vestad/services.json")
+}
+
+fn load_service_registry() -> HashMap<String, HashMap<String, u16>> {
+    let path = services_file();
+    match std::fs::read_to_string(&path) {
+        Ok(data) => serde_json::from_str(&data).unwrap_or_default(),
+        Err(_) => HashMap::new(),
+    }
+}
+
+fn save_service_registry(registry: &HashMap<String, HashMap<String, u16>>) {
+    let path = services_file();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    let tmp = path.with_extension("json.tmp");
+    if let Ok(data) = serde_json::to_string_pretty(registry) {
+        if std::fs::write(&tmp, data).is_ok() {
+            std::fs::rename(&tmp, &path).ok();
         }
     }
-    Ok(map)
 }
 
 async fn resolve_service_port(
     state: &AppState,
     agent_name: &str,
-    agent_port: u16,
     service_name: &str,
 ) -> Option<u16> {
-    // Check cache
-    {
-        let caches = state.service_caches.lock().await;
-        if let Some(cache) = caches.get(agent_name) {
-            if cache.fetched_at.elapsed() < SERVICE_CACHE_TTL {
-                return cache.services.get(service_name).copied();
-            }
-        }
+    let registry = state.service_registry.lock().await;
+    registry.get(agent_name)?.get(service_name).copied()
+}
+
+async fn register_service_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let service_name = body.get("name")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    let port = body.get("port")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+
+    if service_name.is_empty() || port < 1 || port > u16::MAX as u64 {
+        return Err(err_response(StatusCode::BAD_REQUEST, "name (str) and port (1-65535) required"));
+    }
+    if RESERVED_SERVICE_NAMES.contains(&service_name.as_str()) {
+        return Err(err_response(StatusCode::BAD_REQUEST, &format!("reserved service name: {}", service_name)));
     }
 
-    // Cache miss or stale — fetch from agent
-    match fetch_services(&state.http_client, agent_port).await {
-        Ok(services) => {
-            let port = services.get(service_name).copied();
-            let mut caches = state.service_caches.lock().await;
-            caches.insert(agent_name.to_string(), ServiceCache {
-                services,
-                fetched_at: std::time::Instant::now(),
-            });
-            port
-        }
-        Err(e) => {
-            tracing::warn!(agent = agent_name, error = %e, "failed to fetch /services");
-            // Fall back to stale cache
-            let caches = state.service_caches.lock().await;
-            caches.get(agent_name)
-                .and_then(|c| c.services.get(service_name).copied())
+    let cname = docker::container_name(&name);
+    let docker_name = cname.clone();
+    let exists = tokio::task::spawn_blocking(move || docker::container_status(&docker_name) != docker::ContainerStatus::NotFound)
+        .await
+        .unwrap_or(false);
+    if !exists {
+        return Err(err_response(StatusCode::NOT_FOUND, &format!("agent '{}' not found", name)));
+    }
+
+    let mut registry = state.service_registry.lock().await;
+    registry.entry(name.clone()).or_default().insert(service_name.clone(), port as u16);
+    save_service_registry(&registry);
+    tracing::info!(agent = %name, service = %service_name, port, "service registered");
+    Ok(ok_json())
+}
+
+async fn unregister_service_handler(
+    State(state): State<SharedState>,
+    Path((name, service_name)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let mut registry = state.service_registry.lock().await;
+    if let Some(agent_services) = registry.get_mut(&name) {
+        agent_services.remove(&service_name);
+        if agent_services.is_empty() {
+            registry.remove(&name);
         }
     }
+    save_service_registry(&registry);
+    tracing::info!(agent = %name, service = %service_name, "service unregistered");
+    Ok(ok_json())
+}
+
+async fn list_services_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+) -> Json<serde_json::Value> {
+    let registry = state.service_registry.lock().await;
+    let services = registry.get(&name).cloned().unwrap_or_default();
+    Json(serde_json::json!({"services": services}))
 }
 
 // --- Agent wildcard proxy (HTTP + WS) for /agents/{name}/* ---
@@ -824,7 +860,7 @@ async fn agent_proxy_handler(
     // If so, route directly to that service's port with the prefix stripped.
     let first_segment = path.split('/').next().unwrap_or("");
     let (target_port, stripped_path) = if !first_segment.is_empty() {
-        if let Some(service_port) = resolve_service_port(&state, &name, agent_port, first_segment).await {
+        if let Some(service_port) = resolve_service_port(&state, &name, first_segment).await {
             let rest = &path[first_segment.len()..];
             let rest = if rest.is_empty() { "/" } else { rest };
             (service_port, rest.to_string())
@@ -977,7 +1013,8 @@ async fn restore_backup_handler(
     tracing::info!(agent = %path.name, backup_id = %path.backup_id, "restoring backup");
     let name = path.name.clone();
     let backup_id = path.backup_id.clone();
-    tokio::task::spawn_blocking(move || docker::restore_backup(&name, &backup_id))
+    let vestad_port = state.vestad_port;
+    tokio::task::spawn_blocking(move || docker::restore_backup(&name, &backup_id, vestad_port))
         .await
         .unwrap()
         .map_err(map_docker_err)?;
@@ -1129,8 +1166,16 @@ pub fn build_router(state: SharedState) -> Router {
             auth_middleware,
         ));
 
+    // Internal routes: no auth required (used by skills inside containers via localhost)
+    let internal = Router::new()
+        .route("/agents/{name}/services", post(register_service_handler))
+        .route("/agents/{name}/services", get(list_services_handler))
+        .route("/agents/{name}/services/{service}", axum::routing::delete(unregister_service_handler))
+        .with_state(state.clone());
+
     Router::new()
         .merge(public)
+        .merge(internal)
         .merge(protected)
         .layer(
             tower_http::cors::CorsLayer::new()
@@ -1265,7 +1310,7 @@ fn spawn_update_check_task(state: SharedState) {
 // --- Server start ---
 
 pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: String, tunnel_url: Option<String>) {
-    let state = Arc::new(AppState::new(api_key, tunnel_url));
+    let state = Arc::new(AppState::new(api_key, port, tunnel_url));
     let app = build_router(state.clone());
     spawn_auto_backup_task(state.clone());
     spawn_update_check_task(state);

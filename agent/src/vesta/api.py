@@ -4,9 +4,6 @@ Routes:
   - WS   /ws              bidirectional event bus
   - GET  /history         paginated event history (cursor optional)
   - GET  /search          full-text search over events
-  - GET  /services        list registered skill services
-  - POST /services        register a skill service
-  - DELETE /services/{n}  unregister a skill service
 """
 
 import asyncio
@@ -16,7 +13,6 @@ from aiohttp import web
 
 from vesta.events import EventBus, HistoryEvent, VestaEvent
 from vesta.config import VestaConfig
-from vesta import services
 
 
 async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
@@ -134,34 +130,6 @@ async def _search_handler(request: web.Request) -> web.Response:
     return web.json_response({"results": results})
 
 
-async def _services_list(request: web.Request) -> web.Response:
-    return web.json_response({"services": services.all_services()})
-
-
-async def _services_register(request: web.Request) -> web.Response:
-    try:
-        data = await request.json()
-    except Exception:
-        return web.json_response({"error": "invalid JSON"}, status=400)
-    if "name" not in data or "port" not in data:
-        return web.json_response({"error": "name (str) and port (1-65535) required"}, status=400)
-    name = data["name"].strip()
-    port = data["port"]
-    if not name or not isinstance(port, int) or not (1 <= port <= 65535):
-        return web.json_response({"error": "name (str) and port (1-65535) required"}, status=400)
-    try:
-        services.register(name, port)
-    except ValueError as e:
-        return web.json_response({"error": str(e)}, status=400)
-    return web.json_response({"ok": True})
-
-
-async def _services_unregister(request: web.Request) -> web.Response:
-    name = request.match_info["name"]
-    services.unregister(name)
-    return web.json_response({"ok": True})
-
-
 async def start_ws_server(
     event_bus: EventBus,
     config: VestaConfig,
@@ -173,9 +141,6 @@ async def start_ws_server(
     app.router.add_get("/ws", _ws_handler)
     app.router.add_get("/history", _history_handler)
     app.router.add_get("/search", _search_handler)
-    app.router.add_get("/services", _services_list)
-    app.router.add_post("/services", _services_register)
-    app.router.add_delete("/services/{name}", _services_unregister)
 
     runner = web.AppRunner(app)
     await runner.setup()

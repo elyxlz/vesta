@@ -489,9 +489,10 @@ fn gpu_available() -> GpuStatus {
 
 // --- Container creation ---
 
-pub fn create_container(cname: &str, image: &str, port: u16, agent_name: &str) -> Result<(), DockerError> {
+pub fn create_container(cname: &str, image: &str, port: u16, agent_name: &str, vestad_port: u16) -> Result<(), DockerError> {
     let ws_port_env = format!("WS_PORT={}", port);
     let agent_name_env = format!("AGENT_NAME={}", agent_name);
+    let vestad_port_env = format!("VESTAD_PORT={}", vestad_port);
     let port_label = format!("vesta.ws_port={}", port);
     let user_label = format!("{}={}", LABEL_USER, current_user());
     let mut args = vec![
@@ -502,6 +503,7 @@ pub fn create_container(cname: &str, image: &str, port: u16, agent_name: &str) -
         "--label", &user_label,
         "-e", &ws_port_env,
         "-e", &agent_name_env,
+        "-e", &vestad_port_env,
         "-e", "IS_SANDBOX=1",
     ];
 
@@ -764,7 +766,7 @@ pub fn list_agents() -> Vec<ListEntry> {
         .collect()
 }
 
-pub fn create_agent(name: &str) -> Result<String, DockerError> {
+pub fn create_agent(name: &str, vestad_port: u16) -> Result<String, DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
 
@@ -774,7 +776,7 @@ pub fn create_agent(name: &str) -> Result<String, DockerError> {
 
     let image = resolve_image()?;
     let port = allocate_port();
-    create_container(&cname, image, port, name)?;
+    create_container(&cname, image, port, name, vestad_port)?;
     Ok(name.to_string())
 }
 
@@ -866,7 +868,7 @@ pub fn destroy_agent(name: &str) -> Result<(), DockerError> {
     Ok(())
 }
 
-pub fn rebuild_agent(name: &str) -> Result<(), DockerError> {
+pub fn rebuild_agent(name: &str, vestad_port: u16) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
     let info = inspect_container(&cname);
@@ -890,7 +892,7 @@ pub fn rebuild_agent(name: &str) -> Result<(), DockerError> {
 
     docker_ok(&["rm", "-f", &cname]);
 
-    create_container(&cname, &backup_tag, info.port, name)?;
+    create_container(&cname, &backup_tag, info.port, name, vestad_port)?;
 
     if !docker_ok(&["start", &cname]) {
         return Err(DockerError::Failed("failed to start".into()));
@@ -1166,7 +1168,7 @@ fn parse_docker_size(s: &str) -> u64 {
 
 /// Restore an agent from a backup image.
 /// Creates a pre-restore safety backup first, then replaces the container.
-pub fn restore_backup(name: &str, backup_id: &str) -> Result<(), DockerError> {
+pub fn restore_backup(name: &str, backup_id: &str, vestad_port: u16) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
 
@@ -1189,7 +1191,7 @@ pub fn restore_backup(name: &str, backup_id: &str) -> Result<(), DockerError> {
 
     // Create new container from backup image, reusing the port
     tracing::debug!(agent = %name, backup_id = %backup_id, "creating container from backup image");
-    create_container(&cname, backup_id, info.port, name)?;
+    create_container(&cname, backup_id, info.port, name, vestad_port)?;
 
     if !docker_ok(&["start", &cname]) {
         return Err(DockerError::Failed("failed to start restored agent".into()));
