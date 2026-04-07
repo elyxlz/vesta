@@ -647,24 +647,38 @@ jobs:
       )
     runs-on: macos-latest
     steps:
+      - name: Check for Apple signing secrets
+        env:
+          HAS_SECRETS: ${{ secrets.APPLE_CERTIFICATE != '' }}
+        run: |
+          if [ "$HAS_SECRETS" != "true" ]; then
+            echo "::warning::Apple signing secrets not configured — skipping iOS build"
+            echo "SKIP_IOS=true" >> $GITHUB_ENV
+          fi
+
       - uses: actions/checkout@v6
+        if: env.SKIP_IOS != 'true'
 
       - name: Install Rust
+        if: env.SKIP_IOS != 'true'
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-ios
 
       - uses: Swatinem/rust-cache@v2
+        if: env.SKIP_IOS != 'true'
         with:
           workspaces: app/src-tauri
           key: ios
 
       - name: Setup Node
+        if: env.SKIP_IOS != 'true'
         uses: actions/setup-node@v6
         with:
           node-version: 22
 
       - name: Install Apple certificate and provisioning profile
+        if: env.SKIP_IOS != 'true'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -689,19 +703,22 @@ jobs:
           cp $PROFILE_PATH ~/Library/MobileDevice/Provisioning\ Profiles/
 
       - name: Install frontend deps
+        if: env.SKIP_IOS != 'true'
         working-directory: app
         run: npm install
 
       - name: Initialize iOS project
+        if: env.SKIP_IOS != 'true'
         working-directory: app
         run: npx tauri ios init
 
       - name: Build iOS
+        if: env.SKIP_IOS != 'true'
         working-directory: app
         run: npx tauri ios build --export-method app-store-connect
 
       - name: Collect artifacts
-        if: github.event_name != 'pull_request'
+        if: env.SKIP_IOS != 'true' && github.event_name != 'pull_request'
         run: |
           mkdir -p tauri-out
           find app/src-tauri/gen/apple -name '*.ipa' -exec cp {} tauri-out/ \;
@@ -712,7 +729,7 @@ jobs:
           ls -lh tauri-out/
 
       - name: Upload to TestFlight
-        if: github.event_name == 'release'
+        if: env.SKIP_IOS != 'true' && github.event_name == 'release'
         env:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
@@ -727,13 +744,13 @@ jobs:
             --apiIssuer "$APPLE_API_ISSUER_ID"
 
       - uses: actions/upload-artifact@v7
-        if: github.event_name != 'pull_request'
+        if: env.SKIP_IOS != 'true' && github.event_name != 'pull_request'
         with:
           name: tauri-ios
           path: tauri-out/*
 
       - name: Clean up keychain
-        if: always()
+        if: env.SKIP_IOS != 'true'
         run: security delete-keychain $RUNNER_TEMP/app-signing.keychain-db
 
   # ── Merge gate (single required check for branch protection) ─────────
