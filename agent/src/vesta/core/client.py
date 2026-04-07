@@ -3,6 +3,7 @@ import datetime as dt
 import json
 import os
 import signal
+import time
 import typing as tp
 
 from claude_agent_sdk import (
@@ -67,7 +68,14 @@ def filter_tool_lines(text: str) -> str:
     return "\n".join(s for line in text.split("\n") if (s := line.strip()) and not s.startswith("[TOOL]") and not s.startswith("[TASK]"))
 
 
-def _parse_sdk_message(msg: Message, *, sub_agent_context: str | None) -> tuple[list[str], str | None, str | None, bool]:
+def _parse_sdk_message(
+    msg: Message,
+    *,
+    sub_agent_context: str | None,
+    turn_start: float | None = None,
+    model: str | None = None,
+    state: vm.State | None = None,
+) -> tuple[list[str], str | None, str | None, bool]:
     if isinstance(msg, ResultMessage):
         session_id: str | None = None
         try:
@@ -80,18 +88,33 @@ def _parse_sdk_message(msg: Message, *, sub_agent_context: str | None) -> tuple[
             cost = msg.total_cost_usd
             duration_s = msg.duration_ms / 1000 if msg.duration_ms else None
             parts = []
+            if model:
+                parts.append(f"model={model}")
             if usage_data:
                 input_tok = usage_data.get("input_tokens", 0)
                 output_tok = usage_data.get("output_tokens", 0)
                 cache_read = usage_data.get("cache_read_input_tokens", 0)
                 cache_create = usage_data.get("cache_creation_input_tokens", 0)
+                # Subtract subagent tokens so main shows its own usage only
+                if state and state.subagent_usage:
+                    for sub in state.subagent_usage:
+                        input_tok -= sub.get("input", 0)
+                        output_tok -= sub.get("output", 0)
+                        cache_read -= sub.get("cache_read", 0)
+                        cache_create -= sub.get("cache_write", 0)
                 parts.append(f"in={input_tok} out={output_tok} cache_read={cache_read} cache_write={cache_create}")
+            cost_label = "cost (turn total)" if state and state.subagent_usage else "cost"
             if cost is not None:
-                parts.append(f"cost=${cost:.4f}")
+                parts.append(f"{cost_label}=${cost:.4f}")
             if duration_s is not None:
                 parts.append(f"duration={duration_s:.1f}s")
+            if turn_start is not None:
+                wall_s = time.time() - turn_start
+                parts.append(f"wall={wall_s:.1f}s")
             if parts:
-                logger.usage(" | ".join(parts))
+                logger.usage("[main] " + " | ".join(parts))
+            if state:
+                state.subagent_usage.clear()
         except (AttributeError, TypeError, KeyError):
             pass
         return ([], sub_agent_context, session_id, False)
@@ -137,6 +160,36 @@ def _tool_summary(name: str, tool_input: dict[str, tp.Any]) -> str:
     return f"{name}: {raw}"
 
 
+def _parse_subagent_transcript(path: str) -> tuple[str, dict[str, int]]:
+    """Parse a subagent transcript JSONL to extract model name and aggregate token usage."""
+    model_name = "unknown"
+    totals = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if entry.get("type") != "assistant":
+                    continue
+                message = entry.get("message") or {}
+                if "model" in message:
+                    model_name = message["model"]
+                usage = message.get("usage")
+                if usage:
+                    totals["input"] += usage.get("input_tokens", 0)
+                    totals["output"] += usage.get("output_tokens", 0)
+                    totals["cache_read"] += usage.get("cache_read_input_tokens", 0)
+                    totals["cache_write"] += usage.get("cache_creation_input_tokens", 0)
+    except (OSError, ValueError) as e:
+        logger.warning(f"Could not parse subagent transcript {path}: {e}")
+    return model_name, totals
+
+
 def _subagent_hook(state: vm.State, *, verb: str, event_type: str) -> HookCallback:
     async def hook(input_data: SubagentStartHookInput | SubagentStopHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
         agent_id = input_data["agent_id"]
@@ -147,6 +200,17 @@ def _subagent_hook(state: vm.State, *, verb: str, event_type: str) -> HookCallba
             event = SubagentStartEvent(type="subagent_start", agent_id=agent_id, agent_type=agent_type)
         else:
             event = SubagentStopEvent(type="subagent_stop", agent_id=agent_id, agent_type=agent_type)
+            # Parse subagent transcript for usage tracking
+            transcript_path = input_data.get("agent_transcript_path", "")  # type: ignore[union-attr]
+            if transcript_path:
+                sub_model, totals = _parse_subagent_transcript(transcript_path)
+                if any(totals.values()):
+                    logger.usage(
+                        f"[sub:{agent_type}] model={sub_model}"
+                        f" | in={totals['input']} out={totals['output']}"
+                        f" cache_read={totals['cache_read']} cache_write={totals['cache_write']}"
+                    )
+                    state.subagent_usage.append({"agent_type": agent_type, "model": sub_model, **totals})
         state.event_bus.emit(event)
         return tp.cast(HookJSONOutput, {})
 
@@ -230,9 +294,10 @@ async def _cancel_task(task: asyncio.Task[tp.Any]) -> None:
         pass
 
 
-async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show_output: bool) -> list[str]:
+async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show_output: bool, model: str | None = None) -> list[str]:
     assert state.client is not None
     client = state.client
+    turn_start = time.time()
 
     query = _build_query(prompt, timestamp=dt.datetime.now())
     try:
@@ -280,7 +345,7 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
                 try:
                     drain = client.receive_response().__aiter__()
                     while (leftover := await asyncio.wait_for(anext(drain, None), timeout=5.0)) is not None:
-                        texts, _, _, _ = _parse_sdk_message(tp.cast(Message, leftover), sub_agent_context=sub_agent_context)
+                        texts, _, _, _ = _parse_sdk_message(tp.cast(Message, leftover), sub_agent_context=sub_agent_context, turn_start=turn_start, model=model, state=state)
                         text = "\n".join(texts) if texts else None
                         if text and show_output:
                             filtered = filter_tool_lines(text)
@@ -295,7 +360,7 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
                 break
 
             msg = tp.cast(Message, result)
-            texts, sub_agent_context, session_id, _ = _parse_sdk_message(msg, sub_agent_context=sub_agent_context)
+            texts, sub_agent_context, session_id, _ = _parse_sdk_message(msg, sub_agent_context=sub_agent_context, turn_start=turn_start, model=model, state=state)
             if session_id and session_id != state.session_id:
                 persist_session_id(session_id, state=state, config=config)
             text = "\n".join(texts) if texts else None

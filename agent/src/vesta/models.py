@@ -1,6 +1,7 @@
 import asyncio
 import dataclasses as dc
 import datetime as dt
+import typing as tp
 
 import pydantic as pyd
 from claude_agent_sdk import ClaudeSDKClient
@@ -25,6 +26,7 @@ class State:
     interrupt_event: asyncio.Event | None = None
     event_bus: EventBus = dc.field(default_factory=EventBus)
     history: HistoryDB | None = None
+    subagent_usage: list[dict[str, tp.Any]] = dc.field(default_factory=list)
 
 
 class Notification(pyd.BaseModel):
