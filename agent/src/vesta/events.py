@@ -152,11 +152,17 @@ class EventBus:
                 (event["ts"], json.dumps(event)),
             )
             self._conn.commit()
+        is_status = event["type"] == "status"
         for q in self._subscribers:
             try:
                 q.put_nowait(event)
             except asyncio.QueueFull:
-                pass
+                if is_status:
+                    try:
+                        q.get_nowait()
+                        q.put_nowait(event)
+                    except (asyncio.QueueEmpty, asyncio.QueueFull):
+                        pass
 
     @property
     def state(self) -> AgentState:
