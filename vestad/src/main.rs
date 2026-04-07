@@ -67,6 +67,8 @@ enum Command {
     Info,
     /// Update vestad to the latest version
     Update,
+    /// Uninstall vestad: stop service, remove config, and delete binary
+    Uninstall,
 }
 
 #[derive(clap::Subcommand)]
@@ -491,6 +493,59 @@ fn main() {
             } else {
                 tracing::info!("updated. run 'vestad' to start.");
             }
+        }
+
+        Command::Uninstall => {
+            eprint!("This will stop vestad, remove its systemd service, config, and binary. Continue? [y/N] ");
+            use std::io::Write;
+            std::io::stdout().flush().ok();
+            let mut answer = String::new();
+            std::io::stdin().read_line(&mut answer).ok();
+            if !answer.trim().eq_ignore_ascii_case("y") {
+                eprintln!("Aborted.");
+                std::process::exit(0);
+            }
+
+            // Stop and disable systemd service
+            if systemd::is_active() {
+                eprintln!("stopping vestad service...");
+                systemd::stop().unwrap_or_else(|e| eprintln!("warning: {}", e));
+            }
+            systemd::uninstall().unwrap_or_else(|e| eprintln!("warning: {}", e));
+            eprintln!("  removed systemd service");
+
+            // Remove config directory
+            let config = config_dir();
+            if config.exists() {
+                if let Err(err) = std::fs::remove_dir_all(&config) {
+                    eprintln!("warning: failed to remove config dir {}: {}", config.display(), err);
+                } else {
+                    eprintln!("  removed {}", config.display());
+                }
+            }
+
+            // Remove tunnel config/binary if present
+            let tunnel_dir = config.parent().map(|p| p.join("cloudflared"));
+            if let Some(td) = tunnel_dir {
+                if td.exists() {
+                    std::fs::remove_dir_all(&td).ok();
+                    eprintln!("  removed {}", td.display());
+                }
+            }
+
+            // Remove the binary
+            if let Ok(exe) = std::env::current_exe() {
+                if let Err(err) = std::fs::remove_file(&exe) {
+                    eprintln!("warning: could not remove binary {}: {}", exe.display(), err);
+                    eprintln!("  remove it manually: rm {}", exe.display());
+                } else {
+                    eprintln!("  removed {}", exe.display());
+                }
+            }
+
+            eprintln!("\nvestad has been uninstalled.");
+            eprintln!("Note: Docker containers and images for agents are still intact.");
+            eprintln!("To remove them too, run: docker rm -f $(docker ps -aq --filter name=vesta-)");
         }
     }
 }

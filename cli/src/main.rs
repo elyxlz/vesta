@@ -161,6 +161,8 @@ enum Command {
     },
     /// Update vesta to the latest version
     Update,
+    /// Uninstall vesta CLI and remove config
+    Uninstall,
 }
 
 #[derive(Subcommand)]
@@ -686,6 +688,38 @@ fn run(cli: Cli) {
             eprintln!("connected to {url}");
         }
 
+        Command::Uninstall => {
+            eprint!("This will remove the vesta CLI binary and its config. Continue? [y/N] ");
+            io::stdout().flush().ok();
+            let mut answer = String::new();
+            io::stdin().read_line(&mut answer).ok();
+            if !answer.trim().eq_ignore_ascii_case("y") {
+                eprintln!("Aborted.");
+                process::exit(0);
+            }
+
+            // Remove config directory
+            let config = common::config_dir();
+            if config.exists() {
+                if let Err(err) = std::fs::remove_dir_all(&config) {
+                    eprintln!("warning: failed to remove config dir {}: {}", config.display(), err);
+                } else {
+                    eprintln!("  removed {}", config.display());
+                }
+            }
+
+            // Remove the binary itself (best-effort self-delete)
+            if let Ok(exe) = std::env::current_exe() {
+                if let Err(err) = std::fs::remove_file(&exe) {
+                    eprintln!("warning: could not remove binary {}: {}", exe.display(), err);
+                    eprintln!("  remove it manually: rm {}", exe.display());
+                } else {
+                    eprintln!("  removed {}", exe.display());
+                }
+            }
+
+            eprintln!("\nvesta has been uninstalled.");
+        }
         Command::Update => {
             #[cfg(target_os = "linux")]
             {
