@@ -23,6 +23,10 @@ class State:
     dreamer_active: bool = False
     interrupt_event: asyncio.Event | None = None
     event_bus: EventBus = dc.field(default_factory=EventBus)
+    context_percentage: float = 0.0
+    context_nap_warned: bool = False
+    last_user_message_time: dt.datetime | None = None
+    is_daytime_nap: bool = False
 
 
 class Notification(pyd.BaseModel):

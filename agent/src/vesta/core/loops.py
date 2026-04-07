@@ -219,16 +219,97 @@ async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm
                         logger.startup("Queued first_start greeting")
 
                 if state.dreamer_active:
+                    is_nap = state.is_daytime_nap
                     state.dreamer_active = False
-                    logger.dreamer("Dreamer complete, running /compact...")
+                    state.is_daytime_nap = False
+                    label = "daytime nap" if is_nap else "nightly"
+                    logger.dreamer(f"Dreamer complete ({label}), running /compact...")
                     await _process_interruptible("/compact", is_user=False, queue=queue, state=state, config=config)
-                    logger.dreamer("Compact complete, triggering nightly restart (session preserved)...")
-                    state.restart_reason = "nightly — dreamer ran, context compacted"
+                    if is_nap:
+                        state.restart_reason = "daytime nap — dreamer ran, context compacted"
+                    else:
+                        state.restart_reason = "nightly — dreamer ran, context compacted"
+                    logger.dreamer(f"Compact complete, triggering {label} restart...")
                     state.graceful_shutdown.set()
         finally:
             state.client = None
             state.interrupt_event = None
             logger.client("Client session closed")
+
+
+# --- Context nap (daytime dreamer) ---
+
+
+def _user_is_inactive(state: vm.State, config: vm.VestaConfig) -> bool:
+    """Return True if no user message in the last context_nap_inactivity seconds."""
+    if state.last_user_message_time is None:
+        return True  # no user messages this session
+    elapsed = (_now() - state.last_user_message_time).total_seconds()
+    return elapsed >= config.context_nap_inactivity
+
+
+async def _context_nap_check(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig) -> None:
+    """Check context usage and trigger daytime dream if needed.
+
+    Thresholds are read from config (hot-reloadable via config.json):
+    - < soft%: nothing
+    - soft%-hard%: if inactive -> nap silently. if active -> notify once, wait.
+    - >= hard%: force nap immediately.
+    """
+    if config.ephemeral or state.dreamer_active:
+        return
+
+    # Hot-reload config before each check
+    config.reload_from_file()
+
+    soft = config.context_nap_soft
+    hard = config.context_nap_hard
+    pct = state.context_percentage
+    if pct < soft:
+        return
+
+    if pct >= hard:
+        # Hard threshold — dream immediately, no questions
+        logger.dreamer(f"Context at {pct:.0f}% (hard limit {hard}%) — starting daytime dream")
+        state.context_nap_warned = False
+        _queue_daytime_dream(queue, state=state, config=config,
+                            reason=f"context at {pct:.0f}%, auto-dreaming")
+        return
+
+    # Soft threshold (soft%-hard%)
+    if _user_is_inactive(state, config):
+        # No recent activity — nap silently
+        logger.dreamer(f"Context at {pct:.0f}%, user inactive — napping silently")
+        state.context_nap_warned = False
+        _queue_daytime_dream(queue, state=state, config=config,
+                            reason=f"context at {pct:.0f}%, inactive — auto-nap")
+        return
+
+    # User is active — notify once, then wait for inactivity on subsequent checks
+    if not state.context_nap_warned:
+        logger.dreamer(f"Context at {pct:.0f}%, user active — notifying")
+        state.context_nap_warned = True
+        state.event_bus.emit({
+            "type": "status",
+            "text": f"context at {pct:.0f}% — will nap when things quiet down",
+        })
+    else:
+        logger.dreamer(f"Context at {pct:.0f}%, user still active — waiting for inactivity")
+
+
+def _queue_daytime_dream(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig, reason: str) -> None:
+    prompt = load_prompt("dream", config) or ""
+    if not prompt.strip():
+        logger.dreamer("Empty dream prompt — skipping daytime dream")
+        return
+    state.dreamer_active = True
+    state.is_daytime_nap = True
+
+    state.event_bus.emit({"type": "status", "text": f"going to sleep — {reason}"})
+
+    queue.put_nowait((prompt, False))
+    state.last_dreamer_run = _now()
+    logger.dreamer(f"Daytime dream queued: {reason}")
 
 
 # --- Proactive & dreamer ---
@@ -279,12 +360,69 @@ async def monitor_loop(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.Stat
     pending_passive: list[vm.Notification] = []
     notify = asyncio.Event()
 
+    _status_log_path = pl.Path.home() / "vesta" / "logs" / "context-status.jsonl"
+    _context_loop_start = dt.datetime.now(dt.timezone.utc)
+
+    async def _context_loop() -> None:
+        """Fetch context usage from the SDK, log status, and check nap thresholds."""
+        _status_log_path.parent.mkdir(parents=True, exist_ok=True)
+        while state.shutdown_event and not state.shutdown_event.is_set():
+            try:
+                await asyncio.sleep(config.context_check_interval)
+            except asyncio.CancelledError:
+                return
+            if state.shutdown_event and state.shutdown_event.is_set():
+                break
+
+            pct = state.context_percentage
+            try:
+                if state.client:
+                    result = state.client.get_context_usage()
+                    usage = await result if asyncio.iscoroutine(result) else result
+                    pct = usage["percentage"] if "percentage" in usage else 0
+                    state.context_percentage = pct
+            except (AttributeError, TypeError, KeyError, RuntimeError):
+                pass
+
+            now = dt.datetime.now(dt.timezone.utc)
+            uptime_min = int((now - _context_loop_start).total_seconds() / 60)
+
+            soft = config.context_nap_soft
+            hard = config.context_nap_hard
+
+            if state.dreamer_active:
+                nap_status = "dreaming"
+            elif pct >= hard:
+                nap_status = "critical"
+            elif pct >= soft:
+                nap_status = "warning"
+            else:
+                nap_status = "ok"
+
+            line = (
+                f"{now.strftime('%Y-%m-%d %H:%M:%S')} | up {uptime_min}m | {pct:.1f}% | {nap_status}"
+                f" | next:{f'hard@{hard}%' if pct >= soft else f'soft@{soft}%'}"
+            )
+            try:
+                with _status_log_path.open("a") as fh:
+                    fh.write(line + "\n")
+            except OSError:
+                pass
+
+            state.event_bus.emit({"type": "status", "text": f"context: {pct:.0f}%", "context_pct": pct})
+            logger.dreamer(f"Context status: {pct:.0f}%")
+
+            try:
+                await _context_nap_check(queue, state=state, config=config)
+            except (RuntimeError, ValueError, OSError) as exc:
+                logger.warning(f"Context nap check failed: {exc}")
+
     watcher_task = asyncio.create_task(_notification_watcher(notify, notifications_dir=config.notifications_dir, stop=state.shutdown_event))
+    context_task = asyncio.create_task(_context_loop())
 
     try:
         while state.shutdown_event and not state.shutdown_event.is_set():
             try:
-                # Wait for either a file change or the periodic tick
                 try:
                     await asyncio.wait_for(notify.wait(), timeout=config.monitor_tick_interval)
                 except TimeoutError:
@@ -316,7 +454,9 @@ async def monitor_loop(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.Stat
                 break
     finally:
         watcher_task.cancel()
+        context_task.cancel()
         try:
             await watcher_task
         except asyncio.CancelledError:
             pass
+        await asyncio.gather(context_task, return_exceptions=True)
