@@ -1,4 +1,4 @@
-use clap::{CommandFactory, Parser, Subcommand};
+use clap::{Parser, Subcommand};
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process;
@@ -165,8 +165,6 @@ enum Command {
     Uninstall,
     /// Print version information
     Version,
-    /// Print help information
-    Help,
 }
 
 #[derive(Subcommand)]
@@ -724,11 +722,6 @@ fn run(cli: Cli) {
         }
         Command::Version => {
             println!("v{}", env!("CARGO_PKG_VERSION"));
-            return;
-        }
-
-        Command::Help => {
-            Cli::command().print_help().unwrap_or_else(|e| platform::die(&format!("failed to print help: {e}")));
             return;
         }
 
