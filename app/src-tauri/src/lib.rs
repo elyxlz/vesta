@@ -1,3 +1,79 @@
+#[cfg(target_os = "linux")]
+#[tauri::command]
+async fn install_update(version: String) -> Result<(), String> {
+    use std::process::Command;
+
+    let arch = std::env::consts::ARCH;
+
+    // Try dpkg (Debian/Ubuntu) first, then rpm (Fedora/RHEL)
+    let (url, install_cmd) = if Command::new("dpkg").arg("--version").output().is_ok() {
+        let pkg_arch = match arch {
+            "x86_64" => "amd64",
+            "aarch64" => "arm64",
+            _ => return Err(format!("Unsupported architecture: {arch}")),
+        };
+        let filename = format!("Vesta_{version}_{pkg_arch}.deb");
+        let url =
+            format!("https://github.com/elyxlz/vesta/releases/download/v{version}/{filename}");
+        (url, vec!["dpkg", "-i"])
+    } else if Command::new("rpm").arg("--version").output().is_ok() {
+        let pkg_arch = match arch {
+            "x86_64" => "x86_64",
+            "aarch64" => "aarch64",
+            _ => return Err(format!("Unsupported architecture: {arch}")),
+        };
+        let filename = format!("Vesta-{version}-1.{pkg_arch}.rpm");
+        let url =
+            format!("https://github.com/elyxlz/vesta/releases/download/v{version}/{filename}");
+        (url, vec!["rpm", "-U", "--force"])
+    } else {
+        return Err("No supported package manager (dpkg/rpm) found".into());
+    };
+
+    let tmp_dir = std::env::temp_dir().join("vesta-update");
+    std::fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
+    let pkg_path = tmp_dir.join("vesta-update-pkg");
+
+    // Download the package
+    let output = Command::new("curl")
+        .args(["-fsSL", "-o"])
+        .arg(&pkg_path)
+        .arg(&url)
+        .output()
+        .map_err(|e| format!("Failed to download update: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "Download failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    // Install with pkexec for GUI privilege escalation
+    let mut args = vec![install_cmd[0]];
+    for flag in &install_cmd[1..] {
+        args.push(flag);
+    }
+    let pkg_path_str = pkg_path.to_string_lossy().to_string();
+    args.push(&pkg_path_str);
+
+    let output = Command::new("pkexec")
+        .args(&args)
+        .output()
+        .map_err(|e| format!("Failed to run pkexec: {e}"))?;
+
+    // Clean up
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+
+    if !output.status.success() {
+        return Err(format!(
+            "Install failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    Ok(())
+}
+
 #[cfg(mobile)]
 #[tauri::mobile_entry_point]
 pub fn mobile_entry_point() {
@@ -73,6 +149,16 @@ pub fn run() {
             }
 
             Ok(())
+        })
+        .invoke_handler({
+            #[cfg(target_os = "linux")]
+            {
+                tauri::generate_handler![install_update]
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                tauri::generate_handler![]
+            }
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
