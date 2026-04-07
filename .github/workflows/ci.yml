@@ -27,6 +27,7 @@ jobs:
     outputs:
       cli: ${{ steps.filter.outputs.cli }}
       app: ${{ steps.filter.outputs.app }}
+      agent: ${{ steps.filter.outputs.agent }}
     steps:
       - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v4
@@ -40,6 +41,8 @@ jobs:
               - 'Cargo.lock'
             app:
               - 'app/**'
+            agent:
+              - 'agent/**'
 
   # ── Version check ──────────────────────────────────────────────────────
   version-check:
@@ -92,6 +95,8 @@ jobs:
 
   # ── Skills index auto-update ──────────────────────────────────────────
   skills-index-check:
+    needs: detect-changes
+    if: github.event_name != 'pull_request' || needs.detect-changes.outputs.agent == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -159,9 +164,56 @@ jobs:
       - name: Run integration tests
         run: cargo test -p vesta-tests -- --test-threads=1
 
+  # ── Check vesta (clippy + tests, PRs only) ────────────────────────────
+  check-vesta:
+    needs: [version-check, detect-changes]
+    if: github.event_name != 'pull_request' || needs.detect-changes.outputs.cli == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            run-tests: true
+            run-vestad: true
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            run-tests: false
+            run-vestad: false
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .
+          key: ${{ matrix.target }}
+
+      - name: Clippy
+        run: cargo clippy --workspace --exclude vesta-tests --exclude vestad --target ${{ matrix.target }} -- -D warnings
+
+      - name: Clippy (vestad, Linux only)
+        if: matrix.run-vestad
+        run: cargo clippy -p vestad --target ${{ matrix.target }} -- -D warnings
+
+      - name: Test
+        if: matrix.run-tests
+        run: cargo test --workspace --exclude vesta-tests --exclude vestad --target ${{ matrix.target }}
+
+      - name: Test (vestad, Linux only)
+        if: matrix.run-vestad
+        run: cargo test -p vestad --target ${{ matrix.target }}
+
   # ── Build vesta client (all unix targets) ─────────────────────────────
   build-vesta:
     needs: [version-check]
+    if: github.event_name != 'pull_request'
     strategy:
       fail-fast: false
       matrix:
@@ -750,6 +802,7 @@ jobs:
       - skills-index-check
       - test-frontend
       - test-integration
+      - check-vesta
       - build-vesta
       - build-vestad
       - test-linux
