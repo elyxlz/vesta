@@ -14,8 +14,6 @@ export type UpdateInfo = {
   version: string;
   /** Update was downloaded and installed — app needs restart to apply. */
   installed: boolean;
-  /** URL to download the update manually (Linux). */
-  releaseUrl: string | null;
 };
 
 export async function checkAndInstallUpdate(): Promise<UpdateInfo | null> {
@@ -30,20 +28,15 @@ export async function checkAndInstallUpdate(): Promise<UpdateInfo | null> {
       );
       if (!resp.ok) return null;
       const data = await resp.json();
-      const tag = data.tag_name as string;
-      const latest = tag.replace(/^v/, "");
+      const latest = (data.tag_name as string).replace(/^v/, "");
       if (!isNewer(latest, current)) return null;
-      return {
-        version: latest,
-        installed: false,
-        releaseUrl: data.html_url as string,
-      };
+      return { version: latest, installed: false };
     }
     const { check } = await import("@tauri-apps/plugin-updater");
     const update = await check();
     if (!update) return null;
     await update.downloadAndInstall();
-    return { version: update.version, installed: true, releaseUrl: null };
+    return { version: update.version, installed: true };
   } catch (e) {
     console.error("Update check failed:", e);
     return null;
