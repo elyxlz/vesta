@@ -164,7 +164,10 @@ async def tts_status(request: web.Request) -> web.Response:
             options = list(setting.get("options") or [])
             for v in custom:
                 if v.get("provider") == provider_name:
-                    options.append({"value": v["id"], "label": v["name"], "custom": True})
+                    entry: dict = {"value": v["id"], "label": v["name"], "custom": True}
+                    if v.get("description"):
+                        entry["description"] = v["description"]
+                    options.append(entry)
             setting["options"] = options
             # Auto-select first voice if none selected
             selected = setting.get("value")

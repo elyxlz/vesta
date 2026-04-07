@@ -26,6 +26,7 @@ export function useChat({ name, active, onAssistantMessage }: UseChatOptions) {
   const [messages, setMessages] = useState<VestaEvent[]>([]);
   const [agentState, setAgentState] = useState<AgentActivityState>("idle");
   const [connected, setConnected] = useState(false);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const loadingMoreRef = useRef(false);
 
@@ -44,6 +45,7 @@ export function useChat({ name, active, onAssistantMessage }: UseChatOptions) {
     let reconnectDelay = RECONNECT_BASE;
 
     setMessages([]);
+    setHistoryLoaded(false);
     cursorRef.current = null;
     pendingEchoesRef.current = [];
 
@@ -66,6 +68,7 @@ export function useChat({ name, active, onAssistantMessage }: UseChatOptions) {
         if (cancelled) return;
         reconnectDelay = RECONNECT_BASE;
         setConnected(true);
+        setHistoryLoaded(false);
         setReachable(true);
         setMessages([]);
         cursorRef.current = null;
@@ -83,6 +86,7 @@ export function useChat({ name, active, onAssistantMessage }: UseChatOptions) {
               evts.length > MAX_MESSAGES ? evts.slice(-MAX_MESSAGES) : evts,
             );
             cursorRef.current = event.cursor;
+            setHistoryLoaded(true);
             if (event.state) setAgentState(event.state);
             return;
           }
@@ -183,5 +187,5 @@ export function useChat({ name, active, onAssistantMessage }: UseChatOptions) {
     }
   }, [name]);
 
-  return { messages, agentState, connected, hasMore, loadingMore, loadMore, send, sendEvent };
+  return { messages, agentState, connected, historyLoaded, hasMore, loadingMore, loadMore, send, sendEvent };
 }

@@ -6,9 +6,10 @@ import {
   useRef,
   type ReactNode,
 } from "react";
-import { useVoiceStatus } from "@/hooks/use-voice-status";
-import { useVoiceInput } from "@/hooks/use-voice-input";
-import { useVoiceOutput } from "@/hooks/use-voice-output";
+import { useVoiceStatus } from "./use-voice-status";
+import { useVoiceInput } from "./use-voice-input";
+import { useVoiceOutput } from "./use-voice-output";
+import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import type { SttStatus, TtsStatus } from "@/lib/voice";
 
 interface VoiceContextValue {
@@ -36,7 +37,8 @@ interface VoiceContextValue {
 
 const VoiceContext = createContext<VoiceContextValue | null>(null);
 
-export function VoiceProvider({ agentName, children }: { agentName: string; children: ReactNode }) {
+export function VoiceProvider({ children }: { children: ReactNode }) {
+  const { name: agentName } = useSelectedAgent();
   const sendRef = useRef<((text: string) => void) | null>(null);
   const draftRef = useRef<((text: string) => void) | null>(null);
 

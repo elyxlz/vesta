@@ -1,12 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Mic, Volume2, Play, Square, ChevronDown, Activity, RefreshCw } from "lucide-react";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from "@/components/ui/dialog";
+import { Mic, Volume2, Play, Square, ChevronDown, Activity, RefreshCw, ArrowLeft } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Field, FieldContent, FieldDescription, FieldLabel } from "@/components/ui/field";
@@ -21,14 +15,16 @@ import {
   type SettingDef, type SttStatus, type TtsStatus,
   type SttUsage, type TtsUsage,
 } from "@/lib/voice";
-import { fetchUsage, type Utilization, type RateLimit } from "@/api/agents";
+import type { RateLimit, Utilization } from "@/api/agents";
 import { useOptimisticToggle } from "@/hooks/use-optimistic-toggle";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useVoice } from "@/providers/VoiceProvider";
+import { useSettings } from "@/stores/use-settings";
 
 const DEBOUNCE_MS = 400;
 
-export function AgentSettings({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+export function AgentSettings() {
+  const navigate = useNavigate();
   const { name: agentName } = useSelectedAgent();
   const { sttStatus, ttsStatus, patchStt, patchTts, refreshVoiceStatus } = useVoice();
 
@@ -64,35 +60,28 @@ export function AgentSettings({ open, onOpenChange }: { open: boolean; onOpenCha
   const ttsChars = ttsUsageData?.usage;
 
   // --- Plan usage ---
-  const [utilization, setUtilization] = useState<Utilization | null>(null);
-  const [usageLoading, setUsageLoading] = useState(false);
-  const [usageError, setUsageError] = useState(false);
+  const utilizationMap = useSettings((s) => s.utilization);
+  const usageLoading = useSettings((s) => s.usageLoading);
+  const usageError = useSettings((s) => s.usageError);
+  const refreshUsageAction = useSettings((s) => s.refreshUsage);
+  const utilization = agentName ? utilizationMap[agentName] ?? null : null;
   const refreshUsage = useCallback(() => {
-    if (!agentName) return;
-    setUsageLoading(true);
-    setUsageError(false);
-    fetchUsage(agentName)
-      .then(setUtilization)
-      .catch(() => { setUtilization(null); setUsageError(true); })
-      .finally(() => setUsageLoading(false));
-  }, [agentName]);
+    if (agentName) refreshUsageAction(agentName);
+  }, [agentName, refreshUsageAction]);
   useEffect(() => {
-    if (open && agentName) {
-      refreshUsage();
-    } else {
-      setUtilization(null);
-      setUsageError(false);
-    }
-  }, [open, agentName, refreshUsage]);
+    if (agentName && !utilization && !usageError) refreshUsage();
+  }, [agentName, utilization, usageError, refreshUsage]);
 
   return (
-    <Dialog drawerOnMobile open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Agent Settings</DialogTitle>
-          <DialogDescription className="sr-only">Voice configuration for {agentName}</DialogDescription>
-        </DialogHeader>
+    <div className="flex flex-col flex-1 min-h-0 overflow-y-auto">
+      <div className="sticky top-0 z-10 bg-background/80 backdrop-blur-sm px-4 py-3 flex items-center gap-3">
+        <button onClick={() => navigate(-1)} className="text-muted-foreground hover:text-foreground transition-colors cursor-pointer">
+          <ArrowLeft className="size-5" />
+        </button>
+        <h1 className="text-lg font-semibold">settings</h1>
+      </div>
 
+      <div className="flex flex-col gap-6 p-4 sm:p-6 max-w-lg mx-auto w-full">
         {/* Plan Usage */}
         <PlanUsageSection
           utilization={utilization}
@@ -106,7 +95,7 @@ export function AgentSettings({ open, onOpenChange }: { open: boolean; onOpenCha
         {/* Speech to Text */}
         <DomainSection
           icon={<Mic className="size-4 text-muted-foreground" />}
-          title="Speech to Text"
+          title="speech to text"
           configured={sttConfigured}
           provider={sttStatus?.provider ?? null}
           enabled={sttEnabled}
@@ -121,12 +110,12 @@ export function AgentSettings({ open, onOpenChange }: { open: boolean; onOpenCha
               <CollapsibleTrigger asChild>
                 <Button variant="ghost" size="sm" className="w-full justify-start gap-2 px-0 text-sm text-muted-foreground hover:text-foreground">
                   <ChevronDown className="size-4 transition-transform [[data-state=closed]_&]:-rotate-90" />
-                  Usage
+                  usage
                 </Button>
               </CollapsibleTrigger>
               <CollapsibleContent>
                 <div className="flex items-center justify-between text-xs px-6 pt-2">
-                  <span className="text-muted-foreground">Hours this month</span>
+                  <span className="text-muted-foreground">hours this month</span>
                   <span className="text-foreground tabular-nums">
                     {sttHours !== null && sttBalanceStr !== null
                       ? `${sttHours.toFixed(2)} h used · ${sttBalanceStr} left`
@@ -143,7 +132,7 @@ export function AgentSettings({ open, onOpenChange }: { open: boolean; onOpenCha
         {/* Text to Speech */}
         <DomainSection
           icon={<Volume2 className="size-4 text-muted-foreground" />}
-          title="Text to Speech"
+          title="text to speech"
           configured={ttsConfigured}
           provider={ttsStatus?.provider ?? null}
           enabled={ttsEnabled}
@@ -158,12 +147,12 @@ export function AgentSettings({ open, onOpenChange }: { open: boolean; onOpenCha
               <CollapsibleTrigger asChild>
                 <Button variant="ghost" size="sm" className="w-full justify-start gap-2 px-0 text-sm text-muted-foreground hover:text-foreground">
                   <ChevronDown className="size-4 transition-transform [[data-state=closed]_&]:-rotate-90" />
-                  Usage
+                  usage
                 </Button>
               </CollapsibleTrigger>
               <CollapsibleContent>
                 <div className="flex items-center justify-between text-xs px-6 pt-2">
-                  <span className="text-muted-foreground">Characters this month</span>
+                  <span className="text-muted-foreground">characters this month</span>
                   <span className="text-foreground tabular-nums">
                     {ttsChars && typeof ttsChars.character_count === "number" && typeof ttsChars.character_limit === "number"
                       ? `${ttsChars.character_count.toLocaleString()} / ${ttsChars.character_limit.toLocaleString()}`
@@ -174,8 +163,8 @@ export function AgentSettings({ open, onOpenChange }: { open: boolean; onOpenCha
             </Collapsible>
           }
         />
-      </DialogContent>
-    </Dialog>
+      </div>
+    </div>
   );
 }
 
@@ -226,7 +215,7 @@ function DomainSection({
       </Field>
 
       {!configured ? (
-        <p className="text-xs text-amber-600 dark:text-amber-500">Not configured — ask the agent to set it up</p>
+        <p className="text-xs text-amber-600 dark:text-amber-500">not configured — ask the agent to set it up</p>
       ) : enabled ? (
         <>
           {settings && settings.length > 0 && (
@@ -287,7 +276,7 @@ function DynamicSettings({
           <CollapsibleTrigger asChild>
             <Button variant="ghost" size="sm" className="w-full justify-start gap-2 px-0 text-sm text-muted-foreground hover:text-foreground">
               <ChevronDown className="size-4 transition-transform [[data-state=closed]_&]:-rotate-90" />
-              Configuration
+              configuration
             </Button>
           </CollapsibleTrigger>
           <CollapsibleContent>
@@ -481,6 +470,11 @@ function VoicePicker({ setting, onChange, onRefresh }: { setting: SettingDef; on
                   }`}>
                   {opt.label}
                 </span>
+                {typeof opt.description === "string" && opt.description && (
+                  <span className="text-[9px] leading-tight text-center text-muted-foreground/60 truncate max-w-full">
+                    {opt.description}
+                  </span>
+                )}
               </button>
             );
           })}
@@ -525,10 +519,10 @@ function PlanUsageSection({ utilization, loading, error, onRefresh }: {
   onRefresh: () => void;
 }) {
   const bars: { label: string; limit: RateLimit }[] = [];
-  if (utilization?.five_hour) bars.push({ label: "Current session", limit: utilization.five_hour });
-  if (utilization?.seven_day) bars.push({ label: "Current week", limit: utilization.seven_day });
-  if (utilization?.seven_day_sonnet) bars.push({ label: "Current week (Sonnet)", limit: utilization.seven_day_sonnet });
-  if (utilization?.seven_day_opus) bars.push({ label: "Current week (Opus)", limit: utilization.seven_day_opus });
+  if (utilization?.five_hour) bars.push({ label: "current session", limit: utilization.five_hour });
+  if (utilization?.seven_day) bars.push({ label: "current week", limit: utilization.seven_day });
+  if (utilization?.seven_day_sonnet) bars.push({ label: "current week (sonnet)", limit: utilization.seven_day_sonnet });
+  if (utilization?.seven_day_opus) bars.push({ label: "current week (opus)", limit: utilization.seven_day_opus });
 
   return (
     <Field orientation="vertical" className="gap-3">
@@ -536,7 +530,7 @@ function PlanUsageSection({ utilization, loading, error, onRefresh }: {
         <FieldContent>
           <FieldLabel className="flex items-center gap-2">
             <Activity className="size-4 text-muted-foreground" />
-            Plan Usage
+            plan usage
           </FieldLabel>
         </FieldContent>
         <button onClick={onRefresh} className="text-muted-foreground hover:text-foreground transition-colors cursor-pointer">
@@ -553,15 +547,15 @@ function PlanUsageSection({ utilization, loading, error, onRefresh }: {
           <Skeleton className="h-1.5 w-full" />
         </div>
       ) : error ? (
-        <p className="text-xs text-muted-foreground">Failed to load usage data</p>
+        <p className="text-xs text-muted-foreground">failed to load usage data</p>
       ) : bars.length === 0 && !utilization?.extra_usage ? (
-        <p className="text-xs text-muted-foreground">No usage data available</p>
+        <p className="text-xs text-muted-foreground">no usage data available</p>
       ) : (
         <div className="flex flex-col gap-2.5">
           {bars.map(b => <UsageBar key={b.label} label={b.label} limit={b.limit} />)}
           {utilization?.extra_usage && utilization.extra_usage.is_enabled && (
             <div className="flex items-center justify-between text-xs">
-              <span className="text-muted-foreground">Extra credits</span>
+              <span className="text-muted-foreground">extra credits</span>
               <span className="text-foreground tabular-nums">
                 {utilization.extra_usage.used_credits != null && utilization.extra_usage.monthly_limit != null
                   ? `$${(utilization.extra_usage.used_credits / 100).toFixed(2)} / $${(utilization.extra_usage.monthly_limit / 100).toFixed(2)}`

@@ -43,7 +43,7 @@ function normalizeName(input: string): string {
     .replace(/^-|-$/g, "");
 }
 
-export function CreateAgent() {
+export function NewAgent() {
   const navigate = useNavigate();
   const { agents, refreshAgents } = useAgents();
 
@@ -57,6 +57,7 @@ export function CreateAgent() {
   const [creatingMsg, setCreatingMsg] = useState(0);
   const [createdName, setCreatedName] = useState("");
   const [authStart, setAuthStart] = useState<AuthStartResult | null>(null);
+
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -151,12 +152,20 @@ export function CreateAgent() {
               authUrl={authStart.auth_url}
               sessionId={authStart.session_id}
               onCancel={async () => {
+                const agentToRemove = createdName;
+                const hasOtherAgents = agents.length > 1;
                 setAuthStart(null);
+
+                if (hasOtherAgents) {
+                  navigate("/");
+                } else {
+                  setStep("name");
+                }
+
                 try {
-                  await deleteAgent(createdName);
+                  await deleteAgent(agentToRemove);
                 } catch { }
                 await refreshAgents();
-                navigate("/");
               }}
               onComplete={async () => {
                 setAuthStart(null);

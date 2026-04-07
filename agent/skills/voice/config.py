@@ -105,7 +105,7 @@ def set_voice(data_dir: pl.Path, voice_id: str) -> VoiceConfig:
     return mutate(data_dir, _update)
 
 
-def add_custom_voice(data_dir: pl.Path, voice_id: str, name: str) -> VoiceConfig:
+def add_custom_voice(data_dir: pl.Path, voice_id: str, name: str, description: str = "") -> VoiceConfig:
     def _update(cfg: VoiceConfig) -> VoiceConfig:
         tts = dict(cfg.get("tts") or {})
         if not tts:
@@ -114,7 +114,10 @@ def add_custom_voice(data_dir: pl.Path, voice_id: str, name: str) -> VoiceConfig
         voices = list(tts.get("custom_voices") or [])
         if any(v.get("id") == voice_id for v in voices):
             return cfg
-        voices.append({"provider": provider, "id": voice_id, "name": name})
+        entry: dict[str, str] = {"provider": provider, "id": voice_id, "name": name}
+        if description:
+            entry["description"] = description
+        voices.append(entry)
         tts["custom_voices"] = voices
         cfg["tts"] = tts  # type: ignore[typeddict-item]
         return cfg

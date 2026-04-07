@@ -4,7 +4,7 @@ import { Orb } from "@/components/Orb";
 import type { ListEntry, AgentActivityState } from "@/lib/types";
 import { useNavigate } from "react-router-dom";
 import { useAgentOps, getOpLabel } from "@/stores/use-agent-ops";
-import { getOrbVisualState } from "@/components/Orb/styles";
+import { useOrbState } from "@/hooks/use-orb-state";
 import { cn } from "@/lib/utils";
 
 interface AgentCardProps {
@@ -16,13 +16,7 @@ export function AgentCard({ agent, activityState }: AgentCardProps) {
   const navigate = useNavigate();
 
   const opState = useAgentOps((s) => s.getOp(agent.name));
-  const orbState = getOrbVisualState(
-    agent.status,
-    agent.authenticated,
-    agent.agent_ready,
-    activityState,
-    opState.operation,
-  );
+  const orbState = useOrbState(agent, activityState);
 
   return (
     <div

@@ -72,6 +72,8 @@ Triggers a GitHub Actions workflow that bumps version, commits to master, tags, 
 ### Frontend (app/src/)
 - **"Agent" terminology everywhere** — never "box". Types: `AgentInfo`, `AgentConnection`, `AgentActivityState`. Component: `AgentView.svelte`.
 - **Tauri invoke() names must match Rust backend** — the invoke command strings are the contract, don't rename them.
+- **Hook placement** — hooks used only by a single provider live in that provider's folder (e.g. `providers/VoiceProvider/use-voice-input.ts`). `hooks/` is reserved for shared hooks used across multiple components/providers.
+- **Components in folders** — each component gets a folder with `index.tsx` and optionally `styles.ts`.
 
 ## CI
 

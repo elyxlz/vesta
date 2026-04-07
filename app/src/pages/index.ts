@@ -1,5 +1,6 @@
 export { AgentDashboard } from "./AgentDashboard";
 export { AgentChat } from "./AgentChat";
+export { AgentSettingsPage } from "./AgentSettings";
 export { Connect } from "./Connect";
 export { Home } from "./Home";
-export { CreateAgent } from "./CreateAgent";
+export { NewAgent } from "./NewAgent";

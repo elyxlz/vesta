@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   MoreVertical,
   Play,
@@ -28,51 +30,33 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useIsMobile } from "@/hooks/use-mobile";
-import type { AgentInfo } from "@/lib/types";
+import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
+import { useModals } from "@/providers/ModalsProvider";
 
-type AgentMenuProps = {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  name: string;
-  info: Pick<AgentInfo, "status" | "authenticated" | "alive"> | null;
-  isBusy: boolean;
-  authenticateBesideTrigger?: boolean;
-  onAuthOpen: () => void | Promise<void>;
-  onStart: () => void | Promise<void>;
-  onStop: () => void | Promise<void>;
-  onRestart: () => void | Promise<void>;
-  onRebuild: () => void | Promise<void>;
-  onBackup: () => void | Promise<void>;
-  onShowBackups: () => void;
-  onShowConsole: () => void;
-  onShowAgentSettings: () => void;
-  onOpenDeleteDialog: () => void;
-};
+export function AgentMenu() {
+  const navigate = useNavigate();
+  const {
+    name,
+    agent,
+    isBusy,
+    start,
+    stop,
+    restart,
+    rebuild,
+    backup,
+  } = useSelectedAgent();
+  const {
+    handleOpenAuth,
+    setShowConsole,
+    setDeleteDialogOpen,
+  } = useModals();
 
-export function AgentMenu({
-  open,
-  onOpenChange,
-  name,
-  info,
-  isBusy,
-  authenticateBesideTrigger = false,
-  onAuthOpen,
-  onStart,
-  onStop,
-  onRestart,
-  onRebuild,
-  onBackup,
-  onShowBackups,
-  onShowConsole,
-  onShowAgentSettings,
-  onOpenDeleteDialog,
-}: AgentMenuProps) {
+  const [open, setOpen] = useState(false);
   const isMobile = useIsMobile();
 
-  const isRunning = info?.status === "running";
-  const showAuthenticate = isRunning && !info?.authenticated;
-  const showAuthenticateInMenu = showAuthenticate && !authenticateBesideTrigger;
-  const showAliveActions = info?.alive;
+  const isRunning = agent?.status === "running";
+  const showAuthenticate = isRunning && !agent?.authenticated;
+  const showAliveActions = agent?.alive;
 
   const trigger = (
     <Button size="icon-sm" variant="outline" className="md:size-9" aria-label="agent actions">
@@ -80,8 +64,8 @@ export function AgentMenu({
     </Button>
   );
 
-  const reauthenticateButton = showAuthenticate && authenticateBesideTrigger && !isMobile && (
-    <Button size="sm" onClick={() => void onAuthOpen()}>
+  const reauthenticateButton = showAuthenticate && !isMobile && (
+    <Button size="sm" onClick={() => void handleOpenAuth()}>
       <KeyRound data-icon="inline-start" />
       reauthenticate
     </Button>
@@ -89,7 +73,7 @@ export function AgentMenu({
 
   if (isMobile) {
     return (
-      <Drawer open={open} onOpenChange={onOpenChange}>
+      <Drawer open={open} onOpenChange={setOpen}>
         {reauthenticateButton ? (
           <div className="flex items-center gap-1.5">
             {reauthenticateButton}
@@ -103,14 +87,12 @@ export function AgentMenu({
             <DrawerTitle className="text-left">{name}</DrawerTitle>
           </DrawerHeader>
           <div className="flex flex-col gap-1 px-4 pb-8 max-h-[min(70vh,480px)] overflow-y-auto">
-            {showAuthenticateInMenu && (
+            {showAuthenticate && (
               <DrawerClose asChild>
                 <Button
                   size="sm"
                   className="w-full justify-start"
-                  onClick={() => {
-                    void onAuthOpen();
-                  }}
+                  onClick={() => void handleOpenAuth()}
                 >
                   <KeyRound data-icon="inline-start" />
                   authenticate
@@ -123,9 +105,7 @@ export function AgentMenu({
                 variant="outline"
                 className="w-full justify-start"
                 disabled={isBusy}
-                onClick={() => {
-                  void (isRunning ? onStop() : onStart());
-                }}
+                onClick={() => void (isRunning ? stop() : start())}
               >
                 {isRunning ? (
                   <>
@@ -147,7 +127,7 @@ export function AgentMenu({
                     size="sm"
                     variant="outline"
                     className="w-full justify-start"
-                    onClick={onShowConsole}
+                    onClick={() => setShowConsole(true)}
                   >
                     <ScrollText data-icon="inline-start" />
                     logs
@@ -158,7 +138,7 @@ export function AgentMenu({
                     size="sm"
                     variant="outline"
                     className="w-full justify-start"
-                    onClick={onShowAgentSettings}
+                    onClick={() => navigate(`/agent/${encodeURIComponent(name)}/settings`)}
                   >
                     <Settings data-icon="inline-start" />
                     settings
@@ -174,9 +154,7 @@ export function AgentMenu({
                     variant="outline"
                     className="w-full justify-start"
                     disabled={isBusy}
-                    onClick={() => {
-                      void onRestart();
-                    }}
+                    onClick={() => void restart()}
                   >
                     restart
                   </Button>
@@ -187,9 +165,7 @@ export function AgentMenu({
                     variant="outline"
                     className="w-full justify-start"
                     disabled={isBusy}
-                    onClick={() => {
-                      void onRebuild();
-                    }}
+                    onClick={() => void rebuild()}
                   >
                     rebuild
                   </Button>
@@ -202,16 +178,9 @@ export function AgentMenu({
                 variant="outline"
                 className="w-full justify-start"
                 disabled={isBusy}
-                onClick={() => {
-                  void onBackup();
-                }}
+                onClick={() => void backup()}
               >
                 backup
-              </Button>
-            </DrawerClose>
-            <DrawerClose asChild>
-              <Button size="sm" variant="outline" className="w-full justify-start" onClick={onShowBackups}>
-                backups
               </Button>
             </DrawerClose>
             <DrawerClose asChild>
@@ -220,7 +189,7 @@ export function AgentMenu({
                 variant="destructive"
                 className="w-full justify-start"
                 disabled={isBusy}
-                onClick={onOpenDeleteDialog}
+                onClick={() => setDeleteDialogOpen(true)}
               >
                 delete
               </Button>
@@ -232,7 +201,7 @@ export function AgentMenu({
   }
 
   return (
-    <DropdownMenu open={open} onOpenChange={onOpenChange}>
+    <DropdownMenu open={open} onOpenChange={setOpen}>
       {reauthenticateButton ? (
         <div className="flex items-center gap-1.5">
           {reauthenticateButton}
@@ -242,13 +211,13 @@ export function AgentMenu({
         <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
       )}
       <DropdownMenuContent align="end" side="bottom" className="min-w-[180px]">
-        {showAuthenticateInMenu && (
-          <DropdownMenuItem onClick={() => void onAuthOpen()}>
+        {showAuthenticate && (
+          <DropdownMenuItem onClick={() => void handleOpenAuth()}>
             <KeyRound data-icon="inline-start" />
             authenticate
           </DropdownMenuItem>
         )}
-        <DropdownMenuItem disabled={isBusy} onClick={() => void (isRunning ? onStop() : onStart())}>
+        <DropdownMenuItem disabled={isBusy} onClick={() => void (isRunning ? stop() : start())}>
           {isRunning ? (
             <>
               <Square data-icon="inline-start" />
@@ -263,11 +232,11 @@ export function AgentMenu({
         </DropdownMenuItem>
         {showAliveActions && (
           <>
-            <DropdownMenuItem onClick={onShowConsole}>
+            <DropdownMenuItem onClick={() => setShowConsole(true)}>
               <ScrollText data-icon="inline-start" />
               logs
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={onShowAgentSettings}>
+            <DropdownMenuItem onClick={() => navigate(`/agent/${encodeURIComponent(name)}/settings`)}>
               <Settings data-icon="inline-start" />
               settings
             </DropdownMenuItem>
@@ -278,7 +247,7 @@ export function AgentMenu({
             <DropdownMenuSeparator />
             <Tooltip>
               <TooltipTrigger asChild>
-                <DropdownMenuItem disabled={isBusy} onClick={() => void onRestart()}>
+                <DropdownMenuItem disabled={isBusy} onClick={() => void restart()}>
                   restart
                 </DropdownMenuItem>
               </TooltipTrigger>
@@ -286,7 +255,7 @@ export function AgentMenu({
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
-                <DropdownMenuItem disabled={isBusy} onClick={() => void onRebuild()}>
+                <DropdownMenuItem disabled={isBusy} onClick={() => void rebuild()}>
                   rebuild
                 </DropdownMenuItem>
               </TooltipTrigger>
@@ -297,19 +266,16 @@ export function AgentMenu({
         <DropdownMenuSeparator />
         <Tooltip>
           <TooltipTrigger asChild>
-            <DropdownMenuItem disabled={isBusy} onClick={() => void onBackup()}>
+            <DropdownMenuItem disabled={isBusy} onClick={() => void backup()}>
               backup
             </DropdownMenuItem>
           </TooltipTrigger>
           <TooltipContent side="left">create a snapshot</TooltipContent>
         </Tooltip>
-        <DropdownMenuItem onClick={onShowBackups}>
-          backups
-        </DropdownMenuItem>
         <DropdownMenuSeparator />
         <Tooltip>
           <TooltipTrigger asChild>
-            <DropdownMenuItem variant="destructive" disabled={isBusy} onClick={onOpenDeleteDialog}>
+            <DropdownMenuItem variant="destructive" disabled={isBusy} onClick={() => setDeleteDialogOpen(true)}>
               delete
             </DropdownMenuItem>
           </TooltipTrigger>

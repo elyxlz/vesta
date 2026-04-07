@@ -1,12 +1,12 @@
 ---
 name: voice
-description: Use when the user asks to enable voice input/output, set up transcription or text-to-speech, rotate API keys, add custom voices, adjust the transcription sensitivity, or talks about the microphone/speaker in the Vesta app. This skill manages ~/.voice/voice_config.json — the single source of truth for STT/TTS keys, voice selection, keyterms, and thresholds.
+description: Use when the user asks to enable/disable voice input/output, set up transcription or text-to-speech, rotate API keys, add custom voices, adjust the transcription sensitivity, or talks about the microphone/speaker in the Vesta app. This skill manages ~/.voice/voice_config.json — the single source of truth for STT/TTS keys, voice selection, keyterms, and thresholds. Use enable/disable to toggle without removing configuration; use clear only to wipe keys entirely.
 serve: PYTHONPATH=~/vesta/skills SKILL_PORT=7965 uv run python -m voice.server
 ---
 
 # Voice setup (STT/TTS)
 
-This skill turns on the microphone button and "read responses aloud" toggle in the Vesta app. It owns `~/.voice/voice_config.json` and exposes the HTTP/WS endpoints the frontend calls for streaming transcription and speech synthesis.
+Voice lets the user talk to you through the mic and hear your responses spoken aloud in the Vesta app.
 
 ## When to offer setup
 
@@ -16,18 +16,17 @@ This skill turns on the microphone button and "read responses aloud" toggle in t
 
 ## The setup flow
 
-0. **Start the voice server** — follow [SETUP.md](SETUP.md) section 1. The `restart.md` entries relaunch the screen session and re-register the service on boot.
-1. **Ask which provider(s) they want** — Deepgram for input (STT), ElevenLabs for output (TTS). Both are independent; the user may configure only one.
-2. **Walk them through signup** — see [SETUP.md](SETUP.md) section 2 for the per-provider link, required scopes, and where to find the key.
+1. **Ask which they want** — Deepgram for input (speech-to-text), ElevenLabs for output (text-to-speech). Both are independent; the user may configure only one.
+2. **Walk them through getting a key** — see [SETUP.md](SETUP.md) for the per-provider link and where to find the key.
 3. **Validate the key** before saving:
    ```bash
    uv run ~/vesta/skills/voice/scripts/voice_keys.py validate --provider deepgram --key <key>
    ```
-4. **Save the key** with `set-key`:
+4. **Save the key**:
    ```bash
    uv run ~/vesta/skills/voice/scripts/voice_keys.py set-key --domain stt --provider deepgram --key <key>
    ```
-5. **Confirm to the user** — e.g. "STT set up with Deepgram. Mic button should work now." The UI picks up changes on its next fetch.
+5. **Confirm** — e.g. "Voice is ready! You can use the mic button now." or "All set — I can speak to you now."
 
 ## Commands
 
@@ -38,7 +37,11 @@ uv run ~/vesta/skills/voice/scripts/voice_keys.py status
 # Keys
 uv run ~/vesta/skills/voice/scripts/voice_keys.py validate --provider {deepgram|elevenlabs} --key <k>
 uv run ~/vesta/skills/voice/scripts/voice_keys.py set-key --domain {stt|tts} --provider {deepgram|elevenlabs} --key <k>
-uv run ~/vesta/skills/voice/scripts/voice_keys.py clear --domain {stt|tts}
+uv run ~/vesta/skills/voice/scripts/voice_keys.py clear --domain {stt|tts}   # removes provider + keys entirely
+
+# Enable/disable (keeps configuration intact, just toggles on/off)
+uv run ~/vesta/skills/voice/scripts/voice_keys.py enable --domain {stt|tts}
+uv run ~/vesta/skills/voice/scripts/voice_keys.py disable --domain {stt|tts}
 
 # TTS voice selection
 uv run ~/vesta/skills/voice/scripts/voice_keys.py set-voice --id <voice_id>
@@ -56,7 +59,11 @@ uv run ~/vesta/skills/voice/scripts/voice_keys.py set-eot --timeout-ms 10000
 
 ## Common asks
 
-- **"Add the voice with id X named Y"** → `add-voice --id X --name Y`
+- **"Disable TTS / stop speaking"** → `disable --domain tts` (keeps keys, just turns it off)
+- **"Enable TTS / start speaking again"** → `enable --domain tts`
+- **"Disable STT / turn off the mic"** → `disable --domain stt`
+- **"Remove voice completely"** → `clear --domain tts` (wipes provider + keys)
+- **"Add the voice with id X named Y"** → `add-voice --id X --name Y` (description auto-fetched from ElevenLabs)
 - **"I want you to sound like <name>"** → `set-voice --id <matching voice_id from status>`
 - **"Make sure you recognize '{AGENT_NAME}'"** → `add-keyterm {AGENT_NAME}`
 - **"Finalize my turns faster"** → lower `--threshold` (e.g. 0.6)

@@ -23,52 +23,30 @@ import {
 import { ProgressBar } from "@/components/ProgressBar";
 import { AuthFlow } from "@/components/AuthFlow";
 import { cn } from "@/lib/utils";
-import { useAgentIsland } from "@/hooks/use-agent-island";
-import { AgentSettings } from "@/components/AgentSettings";
+import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
+import { useModals } from "@/providers/ModalsProvider";
 
-type AgentIslandModalsProps = Pick<
-  ReturnType<typeof useAgentIsland>,
-  | "name"
-  | "info"
-  | "deleteDialogOpen"
-  | "setDeleteDialogOpen"
-  | "showConsole"
-  | "setShowConsole"
-  | "showAgentSettings"
-  | "setShowAgentSettings"
-  | "handleDelete"
-  | "showAuth"
-  | "authStarting"
-  | "authStart"
-  | "authError"
-  | "clearAuthState"
-  | "handleOpenAuth"
-  | "restart"
->;
+export function AgentIslandModals() {
+  const { name, agent, restart } = useSelectedAgent();
+  const {
+    showAuth,
+    authStarting,
+    authStart,
+    authError,
+    handleOpenAuth,
+    clearAuthState,
+    deleteDialogOpen,
+    setDeleteDialogOpen,
+    handleDelete,
+    showConsole,
+    setShowConsole,
+  } = useModals();
 
-export function AgentIslandModals({
-  name,
-  info,
-  deleteDialogOpen,
-  setDeleteDialogOpen,
-  showConsole,
-  setShowConsole,
-  showAgentSettings,
-  setShowAgentSettings,
-  handleDelete,
-  showAuth,
-  authStarting,
-  authStart,
-  authError,
-  clearAuthState,
-  handleOpenAuth,
-  restart,
-}: AgentIslandModalsProps) {
   return (
     <>
       <Dialog
         drawerOnMobile
-        open={showAuth && info?.status === "running"}
+        open={showAuth && agent?.status === "running"}
         onOpenChange={(open) => {
           if (!open) clearAuthState();
         }}
@@ -133,7 +111,7 @@ export function AgentIslandModals({
 
       {createPortal(
         <AnimatePresence>
-          {showConsole && info?.alive && (
+          {showConsole && agent?.alive && (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -161,8 +139,6 @@ export function AgentIslandModals({
         </AnimatePresence>,
         document.body,
       )}
-
-      <AgentSettings open={showAgentSettings} onOpenChange={setShowAgentSettings} />
     </>
   );
 }
