@@ -75,8 +75,8 @@ def cmd_history(args: object) -> None:
             sys.exit(1)
         events = data["events"]
         results = [
-            {"timestamp": e.get("ts", ""), "role": e.get("type", ""), "content": e.get("text", "")}
+            {"timestamp": e["ts"], "role": e["type"], "content": e["text"]}
             for e in events
-            if e.get("type") in ("user", "assistant", "chat")
+            if e["type"] in ("user", "assistant", "chat")
         ]
         print(json.dumps(results, indent=2))

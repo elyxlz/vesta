@@ -90,7 +90,12 @@ async def _history_handler(request: web.Request) -> web.Response:
     event_bus: EventBus = request.app["event_bus"]
 
     limit_raw = request.query.get("limit", "")
-    limit = int(limit_raw) if limit_raw else None
+    try:
+        limit = int(limit_raw) if limit_raw else None
+    except ValueError:
+        return web.json_response({"error": "invalid limit"}, status=400)
+
+    kwargs = {"limit": limit} if limit is not None else {}
 
     cursor_raw = request.query.get("cursor", "")
     if cursor_raw:
@@ -98,10 +103,8 @@ async def _history_handler(request: web.Request) -> web.Response:
             cursor = int(cursor_raw)
         except ValueError:
             return web.json_response({"error": "invalid cursor"}, status=400)
-        kwargs = {"limit": limit} if limit else {}
         events, next_cursor = event_bus.before(cursor, **kwargs)
     else:
-        kwargs = {"limit": limit} if limit else {}
         events, next_cursor = event_bus.recent(**kwargs)
 
     return web.json_response({"events": events, "cursor": next_cursor})
@@ -119,7 +122,10 @@ async def _search_handler(request: web.Request) -> web.Response:
     if not query:
         return web.json_response({"error": "missing 'q' param"}, status=400)
     limit_raw = request.query.get("limit", "")
-    limit = int(limit_raw) if limit_raw else 20
+    try:
+        limit = int(limit_raw) if limit_raw else 20
+    except ValueError:
+        return web.json_response({"error": "invalid limit"}, status=400)
     results = event_bus.search(query, limit=limit)
     return web.json_response({"results": results})
 
