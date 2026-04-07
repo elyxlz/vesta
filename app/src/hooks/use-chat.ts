@@ -27,6 +27,7 @@ export function useChat({ name, active, onAssistantMessage }: UseChatOptions) {
   const [agentState, setAgentState] = useState<AgentActivityState>("idle");
   const [connected, setConnected] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const loadingMoreRef = useRef(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const pendingEchoesRef = useRef<string[]>([]);
@@ -167,8 +168,9 @@ export function useChat({ name, active, onAssistantMessage }: UseChatOptions) {
 
   const loadMore = useCallback(async () => {
     const cursor = cursorRef.current;
-    if (!name || loadingMore || cursor === null) return;
+    if (!name || loadingMoreRef.current || cursor === null) return;
 
+    loadingMoreRef.current = true;
     setLoadingMore(true);
     try {
       const result = await fetchHistory(name, "app-chat", cursor);
@@ -176,9 +178,10 @@ export function useChat({ name, active, onAssistantMessage }: UseChatOptions) {
       setMessages((prev) => [...events, ...prev]);
       cursorRef.current = result.cursor;
     } finally {
+      loadingMoreRef.current = false;
       setLoadingMore(false);
     }
-  }, [name, loadingMore]);
+  }, [name]);
 
   return { messages, agentState, connected, hasMore, loadingMore, loadMore, send, sendEvent };
 }

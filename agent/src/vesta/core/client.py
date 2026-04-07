@@ -50,25 +50,6 @@ def _format_search_results(results: list[dict[str, str]], *, max_chars: int = 50
     return "\n\n".join(lines)
 
 
-def _format_search_results(results: list[dict[str, str]], *, max_chars: int = 50000) -> str:
-    if not results:
-        return "No results found."
-    lines = []
-    total = 0
-    for r in results:
-        content = r["content"]
-        if len(content) > 2000:
-            content = content[:2000] + "..."
-        line = f"[{r['timestamp']}] {r['role']}: {content}"
-        if total + len(line) > max_chars:
-            lines.append(f"... ({len(results) - len(lines)} more results truncated)")
-            break
-        lines.append(line)
-        total += len(line)
-    return "\n\n".join(lines)
-
-
-
 def _build_query(prompt: str, *, timestamp: dt.datetime) -> str:
     if prompt.startswith("/"):
         return prompt

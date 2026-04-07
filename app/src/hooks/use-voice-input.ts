@@ -15,6 +15,12 @@ export function useVoiceInput({ agentName, onSend, onDraft, onRecordingStart, st
   const [liveTranscript, setLiveTranscript] = useState("");
   const [error, setError] = useState<string | null>(null);
   const streamRef = useRef<Transcriber | null>(null);
+  const onSendRef = useRef(onSend);
+  const onDraftRef = useRef(onDraft);
+  const autoSendRef = useRef(voiceAutoSend);
+  onSendRef.current = onSend;
+  onDraftRef.current = onDraft;
+  autoSendRef.current = voiceAutoSend;
 
   const toggle = useCallback(() => {
     if (streamRef.current?.isActive()) {
@@ -36,11 +42,11 @@ export function useVoiceInput({ agentName, onSend, onDraft, onRecordingStart, st
       agentName,
       onTranscript: (text) => {
         setLiveTranscript(text);
-        if (!voiceAutoSend) onDraft(text);
+        if (!autoSendRef.current) onDraftRef.current(text);
       },
       onTurnEnd: (text) => {
-        if (voiceAutoSend) onSend(text);
-        else onDraft(text);
+        if (autoSendRef.current) onSendRef.current(text);
+        else onDraftRef.current(text);
         setLiveTranscript("");
       },
       onTurnStart: () => {},
@@ -60,7 +66,7 @@ export function useVoiceInput({ agentName, onSend, onDraft, onRecordingStart, st
       setError(msg);
       streamRef.current = null;
     });
-  }, [agentName, onSend, onDraft, onRecordingStart, voiceAutoSend, sttAvailable]);
+  }, [agentName, onRecordingStart, sttAvailable]);
 
   useEffect(() => {
     return () => {

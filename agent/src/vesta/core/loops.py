@@ -97,8 +97,8 @@ async def queue_greeting(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.V
         prompt = load_prompt("first_start", config)
         if prompt:
             prompt = f"[System: your name is {config.agent_name}]\n\n{prompt}"
-        # Mark first start as done so restarts don't re-trigger it
-        (config.data_dir / "first_start_done").write_text("1")
+            # Mark first start as done so restarts don't re-trigger it
+            (config.data_dir / "first_start_done").write_text("1")
     else:
         extras = []
         today = _now().strftime("%Y-%m-%d")

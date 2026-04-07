@@ -33,6 +33,7 @@ export function Console({ name, onClose }: ConsoleProps) {
   const startStreamRef = useRef<() => void>();
   startStreamRef.current = () => {
     if (!name || !activeRef.current) return;
+    stopLogs(name);
     setEnded(false);
 
     streamLogs(name, (event) => {
