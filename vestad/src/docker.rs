@@ -28,6 +28,7 @@ pub const VESTA_LOG_PATH: &str = "/root/vesta/logs/vesta.log";
 pub const LOCAL_IMAGE_TAG: &str = "vesta:local";
 const MAX_DOCKERFILE_SEARCH_DEPTH: usize = 5;
 pub const CREDENTIALS_PATH: &str = "/root/.claude/.credentials.json";
+pub const AGENT_READY_MARKER_PATH: &str = "/root/vesta/data/agent_ready";
 const CLAUDE_JSON_PATH: &str = "/root/.claude.json";
 pub const BASE_WS_PORT: u16 = 7865;
 const NAME_MAX_LEN: usize = 32;
@@ -279,7 +280,7 @@ pub struct AgentDerivedState {
 
 pub fn compute_agent_state(cname: &str, info: &ContainerInfo) -> AgentDerivedState {
     let authenticated = info.status != ContainerStatus::NotFound && is_authenticated(cname);
-    let agent_ready = info.status == ContainerStatus::Running && is_agent_ready(info.port);
+    let agent_ready = info.status == ContainerStatus::Running && is_agent_ready(info.port, cname);
     let alive = info.status == ContainerStatus::Running && authenticated;
     let friendly_status = friendly_status(&info.status, authenticated, agent_ready);
     AgentDerivedState { authenticated, agent_ready, alive, friendly_status }
@@ -406,12 +407,13 @@ pub fn is_authenticated(cname: &str) -> bool {
     expires_at > now_ms
 }
 
-pub fn is_agent_ready(port: u16) -> bool {
-    std::net::TcpStream::connect_timeout(
+pub fn is_agent_ready(port: u16, cname: &str) -> bool {
+    let tcp_ok = std::net::TcpStream::connect_timeout(
         &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
         std::time::Duration::from_millis(AGENT_READY_TIMEOUT_MS),
     )
-    .is_ok()
+    .is_ok();
+    tcp_ok && read_container_file(cname, AGENT_READY_MARKER_PATH).is_some()
 }
 
 pub fn ensure_exists(cname: &str) -> Result<(), DockerError> {
@@ -998,10 +1000,13 @@ pub async fn wait_ready_async(name: &str, timeout_secs: u64) -> Result<(), Docke
         .await
         .unwrap()?
     };
-    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(timeout_secs);
     loop {
-        if tokio::net::TcpStream::connect(addr).await.is_ok() {
+        let cname_check = cname.clone();
+        let ready = tokio::task::spawn_blocking(move || is_agent_ready(port, &cname_check))
+            .await
+            .unwrap();
+        if ready {
             return Ok(());
         }
         if tokio::time::Instant::now() >= deadline {
