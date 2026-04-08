@@ -30,7 +30,7 @@ const MAX_DOCKERFILE_SEARCH_DEPTH: usize = 5;
 pub const CREDENTIALS_PATH: &str = "/root/.claude/.credentials.json";
 pub const AGENT_READY_MARKER_PATH: &str = "/root/vesta/data/agent_ready";
 const CLAUDE_JSON_PATH: &str = "/root/.claude.json";
-pub const BASE_WS_PORT: u16 = 7865;
+const FALLBACK_WS_PORT: u16 = 7865;
 const NAME_MAX_LEN: usize = 32;
 const DOCKER_DAEMON_WAIT_RETRIES: usize = 10;
 const AGENT_READY_TIMEOUT_MS: u64 = 200;
@@ -310,7 +310,7 @@ fn inspect_container(cname: &str) -> ContainerInfo {
             let port = parts
                 .get(1)
                 .and_then(|p| p.trim().parse().ok())
-                .unwrap_or(BASE_WS_PORT);
+                .unwrap_or(FALLBACK_WS_PORT);
             let id = parts
                 .get(2)
                 .map(|p| p.trim().chars().take(12).collect::<String>());
@@ -322,7 +322,7 @@ fn inspect_container(cname: &str) -> ContainerInfo {
         }
         None => ContainerInfo {
             status: ContainerStatus::NotFound,
-            port: BASE_WS_PORT,
+            port: FALLBACK_WS_PORT,
             id: None,
             agent_name: None,
         },
@@ -484,26 +484,13 @@ pub fn resolve_image() -> Result<&'static str, DockerError> {
 }
 
 pub fn allocate_port() -> u16 {
-    let containers = list_managed_containers();
-    let used: Vec<u16> = if containers.is_empty() {
-        vec![]
-    } else {
-        let args: Vec<&str> = ["inspect", "--format", "{{index .Config.Labels \"vesta.ws_port\"}}"]
-            .iter()
-            .copied()
-            .chain(containers.iter().map(|s| s.as_str()))
-            .collect();
-        docker_output(&args)
-            .unwrap_or_default()
-            .lines()
-            .filter_map(|s| s.trim().parse().ok())
-            .collect()
-    };
-    let mut port = BASE_WS_PORT;
-    while used.contains(&port) {
-        port += 1;
+    match std::net::TcpListener::bind("127.0.0.1:0") {
+        Ok(listener) => match listener.local_addr() {
+            Ok(addr) => addr.port(),
+            Err(_) => FALLBACK_WS_PORT,
+        },
+        Err(_) => FALLBACK_WS_PORT,
     }
-    port
 }
 
 pub fn get_container_port(cname: &str) -> u16 {
@@ -514,7 +501,7 @@ pub fn get_container_port(cname: &str) -> u16 {
         cname,
     ])
     .and_then(|s| s.parse().ok())
-    .unwrap_or(BASE_WS_PORT)
+    .unwrap_or(FALLBACK_WS_PORT)
 }
 
 pub fn list_managed_containers() -> Vec<String> {
