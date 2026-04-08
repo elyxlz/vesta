@@ -153,9 +153,6 @@ pub fn validate_name(name: &str) -> Result<(), DockerError> {
     if !valid {
         return Err(DockerError::InvalidName("agent name must match [a-z0-9][a-z0-9-]*[a-z0-9]".into()));
     }
-    if name.contains("vesta") {
-        return Err(DockerError::InvalidName("agent name must not contain 'vesta'".into()));
-    }
     Ok(())
 }
 
@@ -855,6 +852,9 @@ pub fn list_agents() -> Vec<ListEntry> {
 
 pub fn create_agent(name: &str, vestad_port: u16) -> Result<String, DockerError> {
     validate_name(name)?;
+    if name.contains("vesta") {
+        return Err(DockerError::InvalidName("agent name must not contain 'vesta'".into()));
+    }
     let cname = container_name(name);
 
     if container_status(&cname) != ContainerStatus::NotFound {
@@ -1455,10 +1455,10 @@ mod tests {
     }
 
     #[test]
-    fn validate_rejects_vesta() {
-        assert!(validate_name("vesta").is_err());
-        assert!(validate_name("my-vesta").is_err());
-        assert!(validate_name("vesta-agent").is_err());
+    fn validate_allows_vesta_in_name() {
+        assert!(validate_name("vesta").is_ok());
+        assert!(validate_name("my-vesta").is_ok());
+        assert!(validate_name("vesta-agent").is_ok());
     }
 
     #[test]
