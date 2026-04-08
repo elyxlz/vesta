@@ -2196,6 +2196,40 @@ func extractTextContent(msg *waProto.Message) string {
 	if doc := msg.GetDocumentMessage(); doc != nil && doc.GetCaption() != "" {
 		return doc.GetCaption()
 	}
+	if contact := msg.GetContactMessage(); contact != nil {
+		return formatContactCard(contact.GetDisplayName(), contact.GetVcard())
+	}
+	return ""
+}
+
+// formatContactCard formats a vCard contact message for display and storage.
+// Output: [Contact: Name — +phonenumber] or [Contact: Name] if no phone found.
+func formatContactCard(displayName, vcard string) string {
+	if displayName == "" && vcard == "" {
+		return ""
+	}
+	phone := extractVCardPhone(vcard)
+	if phone != "" {
+		return fmt.Sprintf("[Contact: %s — %s]", displayName, phone)
+	}
+	return fmt.Sprintf("[Contact: %s]", displayName)
+}
+
+// extractVCardPhone parses the first TEL value from a vCard string.
+func extractVCardPhone(vcard string) string {
+	for _, line := range strings.Split(vcard, "\n") {
+		line = strings.TrimSpace(line)
+		// Match TEL or TEL;type=...: value
+		upper := strings.ToUpper(line)
+		if strings.HasPrefix(upper, "TEL") {
+			if idx := strings.Index(line, ":"); idx >= 0 {
+				phone := strings.TrimSpace(line[idx+1:])
+				if phone != "" {
+					return phone
+				}
+			}
+		}
+	}
 	return ""
 }
 
