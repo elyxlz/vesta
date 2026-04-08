@@ -9,7 +9,7 @@
   },
   {
     "name": "dashboard",
-    "description": "Use when the user asks to add, remove, or modify dashboard widgets, customize their dashboard layout, or build visual components like counters, charts, reminders, or status displays. Each widget is a self-contained React component. Do NOT register new services for widgets \u2014 widgets are files inside the existing dashboard app, not separate services."
+    "description": "Use when you need to build, modify, or customize anything on the user's dashboard \u2014 widgets, layouts, pages, views, or any custom UI."
   },
   {
     "name": "dream",

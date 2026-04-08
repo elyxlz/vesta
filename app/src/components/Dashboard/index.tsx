@@ -46,7 +46,6 @@ export function Dashboard() {
     if (action === "removed") {
       setStatus("not-setup");
     } else {
-      retriesRef.current = 0;
       setStatus("ready");
       setLoaded(false);
       setIframeKey((k) => k + 1);
