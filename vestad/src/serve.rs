@@ -192,12 +192,18 @@ fn is_dashboard_asset(path: &str) -> bool {
 
 async fn auth_middleware(
     State(state): State<SharedState>,
+    connect_info: ConnectInfo<std::net::SocketAddr>,
     headers: HeaderMap,
-    request: axum::extract::Request,
+    request: Request,
     next: Next,
 ) -> Response {
     // Let CORS preflight through — the CorsLayer handles the response.
     if request.method() == axum::http::Method::OPTIONS {
+        return next.run(request).await;
+    }
+
+    // Localhost (agent containers) can access without auth.
+    if connect_info.0.ip().is_loopback() {
         return next.run(request).await;
     }
 
@@ -233,47 +239,6 @@ async fn auth_middleware(
     if !bearer_ok && !query_ok {
         let path = request.uri().path().to_string();
         tracing::warn!(path = %path, "client auth failed");
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({"error": "unauthorized"})),
-        )
-            .into_response();
-    }
-
-    next.run(request).await
-}
-
-/// Allow requests from localhost without auth; require auth from external sources.
-async fn localhost_or_auth_middleware(
-    State(state): State<SharedState>,
-    connect_info: ConnectInfo<std::net::SocketAddr>,
-    headers: HeaderMap,
-    request: Request,
-    next: Next,
-) -> Response {
-    if connect_info.0.ip().is_loopback() {
-        return next.run(request).await;
-    }
-
-    let bearer_ok = headers
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .map(|token| verify_token(token, &state.api_key))
-        .unwrap_or(false);
-
-    let query_ok = if !bearer_ok {
-        request
-            .uri()
-            .query()
-            .and_then(|q| q.split('&').find_map(|p| p.strip_prefix("token=")))
-            .map(|t| verify_token(t, &state.api_key))
-            .unwrap_or(false)
-    } else {
-        false
-    };
-
-    if !bearer_ok && !query_ok {
         return (
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({"error": "unauthorized"})),
@@ -1318,7 +1283,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/services/{service}", axum::routing::delete(unregister_service_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
-            localhost_or_auth_middleware,
+            auth_middleware,
         ))
         .with_state(state.clone());
 
