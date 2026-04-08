@@ -21,20 +21,9 @@ sync_from_local() {
 
 sync_from_git() {
     local repo_dir="$1"
-    # Use the release tag matching pyproject.toml version
-    local version
-    version=$(python3 -c "
-import re
-for line in open('$repo_dir/pyproject.toml'):
-    m = re.match(r'^version\s*=\s*\"(.+)\"', line)
-    if m: print('v' + m.group(1)); break
-" 2>/dev/null || echo "HEAD")
-
-    # Fetch the tag if not already available
-    git -C "$repo_dir" fetch origin "refs/tags/$version:refs/tags/$version" 2>/dev/null || true
-    local ref="$version"
-    # Fall back to HEAD if tag doesn't exist
-    git -C "$repo_dir" rev-parse --verify "$ref" >/dev/null 2>&1 || ref="HEAD"
+    local ref
+    # Use the current commit's tag if it has one (i.e. a release build), otherwise HEAD
+    ref=$(git -C "$repo_dir" describe --exact-match --tags HEAD 2>/dev/null || echo "HEAD")
 
     echo "Syncing from git repo: $repo_dir (ref: $ref)"
     mkdir -p "$DASHBOARD_SRC/lib" "$DASHBOARD_SRC/hooks" "$DASHBOARD_SRC/components/ui"

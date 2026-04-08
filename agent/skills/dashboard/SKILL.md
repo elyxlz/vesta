@@ -19,7 +19,7 @@ You MUST ask the user clarifying questions before writing any code. Go through t
 
 1. **Goal** — if the request is vague, clarify what they actually want to see or do
 2. **Interaction** — display-only, or do they want to tap/click/toggle/input things?
-3. **Data** — should it show static data baked into the code, or pull live data from a skill/API? If static, do they want any starting values added now?
+3. **Data** — should it show static data baked into the code, or pull live data from a skill/API?
 
 Only start building once the user has answered. Don't assume — ask.
 
@@ -80,11 +80,8 @@ PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/servic
   -H 'Content-Type: application/json' -d '{"name":"dashboard"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])")
 screen -S dashboard -X quit 2>/dev/null
 screen -dmS dashboard sh -c "cd ~/vesta/skills/dashboard/app && npx vite preview --port $PORT --host 0.0.0.0"
-```
-
-**Notify the app so the dashboard reloads:**
-
-```bash
+# Wait for the server to be ready before notifying the app
+for i in $(seq 1 20); do curl -s -o /dev/null http://localhost:$PORT && break; sleep 0.5; done
 curl -s -X POST http://localhost:$WS_PORT/events/service-update \
   -H 'Content-Type: application/json' -d '{"service":"dashboard","action":"updated"}'
 ```
@@ -93,7 +90,46 @@ curl -s -X POST http://localhost:$WS_PORT/events/service-update \
 
 ### Static data (habits, bookmarks, etc.)
 
-Data that the user dictates and that only changes when they ask you to update it. Hardcode it directly in the component source — when the user asks to add/remove items, edit the file and rebuild.
+Data that the user dictates and that only changes when they ask you to update it. Two approaches depending on whether the user wants persistence:
+
+Hardcode defaults in the source. When the user asks to permanently add/remove items, edit the file and rebuild.
+
+If the component has interactive state the user can change (checking items, toggling things, reordering), **always persist it to `localStorage`** so changes survive reloads. Pattern:
+
+```tsx
+const STORAGE_KEY = "vesta-dashboard-my-widget";
+
+const defaults = [
+  { id: "1", name: "Item one", done: false },
+  { id: "2", name: "Item two", done: false },
+];
+
+function load() {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    return saved ? JSON.parse(saved) : defaults;
+  } catch {
+    return defaults;
+  }
+}
+
+function save(items: typeof defaults) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+}
+
+// In the component:
+const [items, setItems] = useState(load);
+
+function toggle(id: string) {
+  setItems(prev => {
+    const next = prev.map(i => i.id === id ? { ...i, done: !i.done } : i);
+    save(next);
+    return next;
+  });
+}
+```
+
+Always prefix keys with `vesta-dashboard-` to avoid collisions.
 
 ### Dynamic data (skill APIs, third-party services, etc.)
 
@@ -142,7 +178,7 @@ Styling uses Tailwind CSS. Use semantic color classes like `text-foreground`, `t
 
 - **Use the UI components** from `@/components/ui/` — read them before building
 - **State**: `useState` / `useEffect` for local state
-- **No localStorage for data**: the dashboard is accessed from multiple devices. Static data goes in the source, dynamic data comes from skill APIs via `fetch()`
+- **localStorage only when the user opts in**: use it for persisting UI state (checked items, preferences), not as a primary data store. Always have hardcoded defaults as fallback
 - **No new dependencies**: only use packages in the dashboard's `package.json`
 
 ## Troubleshooting

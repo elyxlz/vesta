@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback, useState } from "react";
 import { LayoutDashboard, AlertCircle } from "lucide-react";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useTheme } from "@/stores/use-theme";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { getConnection } from "@/lib/connection";
 import { apiFetch } from "@/api/client";
 import { useServiceUpdate } from "@/hooks/use-service-update";
@@ -20,21 +21,21 @@ export function Dashboard() {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const theme = useTheme((s) => s.theme);
   const resolved = useTheme((s) => s.resolved);
+  const isMobile = useIsMobile();
   const [status, setStatus] = useState<Status>("loading");
   const [loaded, setLoaded] = useState(false);
   const [iframeKey, setIframeKey] = useState(0);
-  const eventReceived = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
     async function check() {
       try {
         const resp = await apiFetch(`/agents/${encodeURIComponent(name)}/services`);
-        if (cancelled || eventReceived.current) return;
+        if (cancelled) return;
         const body: { services: Record<string, number> } = await resp.json();
         setStatus("dashboard" in body.services ? "ready" : "not-setup");
       } catch {
-        if (!cancelled && !eventReceived.current) setStatus("not-setup");
+        if (!cancelled) setStatus("not-setup");
       }
     }
     check();
@@ -42,10 +43,10 @@ export function Dashboard() {
   }, [name]);
 
   useServiceUpdate("dashboard", useCallback((action) => {
-    eventReceived.current = true;
     if (action === "removed") {
       setStatus("not-setup");
     } else {
+      retriesRef.current = 0;
       setStatus("ready");
       setLoaded(false);
       setIframeKey((k) => k + 1);
@@ -55,7 +56,7 @@ export function Dashboard() {
   const conn = getConnection();
   const dashboardUrl =
     status === "ready" && conn
-      ? `${conn.url}/agents/${encodeURIComponent(name)}/dashboard/?token=${encodeURIComponent(conn.accessToken)}`
+      ? `${conn.url}/agents/${encodeURIComponent(name)}/dashboard/?token=${encodeURIComponent(conn.accessToken)}&fullscreen=${isMobile}`
       : null;
 
   const sendContext = useCallback(() => {

@@ -21,6 +21,8 @@ import { FadeScroll } from "./components/FadeScroll";
 // Set to false once custom code & widgets are added.
 const SHOW_EMPTY_STATE = true;
 
+const isFullscreen = new URLSearchParams(window.location.search).get("fullscreen") === "true";
+
 export default function App() {
   if (SHOW_EMPTY_STATE) {
     return (
@@ -40,7 +42,7 @@ export default function App() {
 
   return (
     <FadeScroll className="w-full h-full overflow-y-auto">
-      <div className="flex flex-col gap-4 px-page py-page">
+      <div className={`flex flex-col gap-4 ${isFullscreen ? "px-page pb-page" : "pr-4 pb-4"}`}>
         {/* your custom code and widgets and other components goes here */}
       </div>
     </FadeScroll>
