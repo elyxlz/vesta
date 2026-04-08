@@ -120,7 +120,7 @@ export function AgentIsland() {
   );
 }
 
-export function getStatusLabel(
+function getStatusLabel(
   agent: Pick<AgentInfo, "alive" | "status" | "authenticated" | "agent_ready" | "friendly_status"> | null,
   operation: string,
   error: string,

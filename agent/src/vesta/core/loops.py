@@ -12,7 +12,7 @@ from watchfiles import awatch, Change
 
 import vesta.models as vm
 from vesta import logger
-from vesta.core.client import process_message, build_client_options, attempt_interrupt, filter_tool_lines, persist_session_id, _cancel_task
+from vesta.core.client import process_message, build_client_options, attempt_interrupt, persist_session_id, _cancel_task
 from vesta.core.init import load_prompt, build_restart_context
 
 
