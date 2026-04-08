@@ -136,7 +136,6 @@ class EventBus:
         self._subscribers: set[asyncio.Queue[VestaEvent]] = set()
         self._state: AgentState = "idle"
         self._active_tools: int = 0
-        self._idle_timer: asyncio.TimerHandle | None = None
         self._conn: sqlite3.Connection | None = None
         if data_dir:
             data_dir.mkdir(parents=True, exist_ok=True)
@@ -177,23 +176,9 @@ class EventBus:
 
     def tool_started(self) -> None:
         self._active_tools += 1
-        if self._idle_timer:
-            self._idle_timer.cancel()
-            self._idle_timer = None
-        self.set_state("thinking")
 
     def tool_finished(self) -> None:
         self._active_tools = max(0, self._active_tools - 1)
-        if self._active_tools == 0:
-            loop = asyncio.get_event_loop()
-            if self._idle_timer:
-                self._idle_timer.cancel()
-            self._idle_timer = loop.call_later(5.0, self._deferred_idle)
-
-    def _deferred_idle(self) -> None:
-        self._idle_timer = None
-        if self._active_tools == 0:
-            self.set_state("idle")
 
     def recent(self, limit: int = PAGE_SIZE) -> tuple[list[StreamEvent], int | None]:
         if not self._conn or limit <= 0:

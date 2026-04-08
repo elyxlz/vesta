@@ -128,7 +128,6 @@ async def _process_message_safely(msg: str, *, is_user: bool, state: vm.State, c
         else:
             preview = msg[:200] + "..." if len(msg) > 200 else msg
             logger.system(preview.replace("\n", " "))
-        state.processing = True
         state.event_bus.set_state("thinking")
         await process_message(msg, state=state, config=config, is_user=is_user)
     except (ClaudeSDKError, OSError, RuntimeError, ValueError, TimeoutError) as e:
@@ -148,7 +147,6 @@ async def _process_message_safely(msg: str, *, is_user: bool, state: vm.State, c
         state.restart_reason = f"error — {error_msg}"
         state.graceful_shutdown.set()
     finally:
-        state.processing = False
         state.event_bus.set_state("idle")
 
 
