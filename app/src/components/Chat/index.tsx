@@ -5,72 +5,37 @@ import {
   useMemo,
   useRef,
   useState,
+  type ChangeEvent,
+  type KeyboardEvent,
 } from "react";
-import { ChevronRight, Maximize2, Mic, PanelRightClose, SendHorizontal, Square, Wrench } from "lucide-react";
-import { useNavigate } from "react-router-dom";
-import { AnimatePresence, motion } from "motion/react";
-import { Button } from "@/components/ui/button";
 import {
   Card,
-  CardContent,
 } from "@/components/ui/card";
-import { ButtonGroup } from "@/components/ui/button-group";
 import { useAutoScroll } from "@/hooks/use-auto-scroll";
+import { useLayout } from "@/stores/use-layout";
 import { useChatContext } from "@/providers/ChatProvider";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useVoice } from "@/providers/VoiceProvider";
-import { linkify } from "@/lib/linkify";
-import type { VestaEvent } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { ChatComposer } from "./ChatComposer";
+import { ChatHeaderActions } from "./ChatHeaderActions";
+import { ChatMessageArea } from "./ChatMessageArea";
 
 interface ChatProps {
   onCollapse?: () => void;
   fullscreen?: boolean;
-  showToolCalls?: boolean;
-  onShowToolCallsChange?: (show: boolean) => void;
 }
 
-const thinkingIndicatorVariants = {
-  hidden: { height: 0, opacity: 0 },
-  visible: {
-    height: "auto",
-    opacity: 1,
-    transition: {
-      height: {
-        type: "spring" as const,
-        stiffness: 420,
-        damping: 28,
-        mass: 0.65,
-      },
-      opacity: {
-        duration: 0.18,
-        ease: [0.2, 0.8, 0.2, 1] as const,
-      },
-    },
-  },
-  exit: {
-    height: 0,
-    opacity: 0,
-    transition: {
-      height: {
-        duration: 0.22,
-        ease: [0.32, 0.72, 0, 1] as const,
-      },
-      opacity: { duration: 0.14, ease: "easeIn" as const },
-    },
-  },
-};
-
-export function Chat({ onCollapse, fullscreen, showToolCalls, onShowToolCallsChange }: ChatProps = {}) {
+export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   const { name } = useSelectedAgent();
+  const navbarHeight = useLayout((s) => s.navbarHeight);
   const {
     sttAvailable, voiceAutoSend,
     isRecording, liveTranscript, toggleVoice, voiceError,
     registerChatCallbacks,
   } = useVoice();
-  const navigate = useNavigate();
 
-  const { messages, agentState, connected, hasMore, loadingMore, loadMore, send } =
+  const { messages, agentState, connected, hasMore, loadingMore, loadMore, send, showToolCalls } =
     useChatContext();
 
   const [input, setInput] = useState("");
@@ -161,14 +126,14 @@ export function Chat({ onCollapse, fullscreen, showToolCalls, onShowToolCallsCha
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSend();
     }
   };
 
-  const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+  const handleInput = (e: ChangeEvent<HTMLTextAreaElement>) => {
     setInput(e.target.value);
     const ta = e.target;
     ta.style.height = "auto";
@@ -181,331 +146,43 @@ export function Chat({ onCollapse, fullscreen, showToolCalls, onShowToolCallsCha
       fullscreen && "border-0 rounded-none shadow-none bg-background",
     )}>
 
-      {!fullscreen && (
-        <div className="absolute top-2 right-2 z-10 flex flex-col items-end gap-1">
-          <ButtonGroup>
-            <Button
-              size="icon-sm"
-              variant="outline"
-              className="text-muted-foreground dark:bg-card"
-              onClick={() => navigate(`/agent/${name}/chat`)}
-            >
-              <Maximize2 />
-            </Button>
-            {onShowToolCallsChange && (
-              <Button
-                size="icon-sm"
-                variant="outline"
-                className={cn(
-                  "text-muted-foreground dark:bg-card",
-                  showToolCalls && "text-primary",
-                )}
-                aria-pressed={showToolCalls}
-                onClick={() => onShowToolCallsChange(!showToolCalls)}
-              >
-                <Wrench />
-              </Button>
-            )}
-            {onCollapse && (
-              <Button
-                size="icon-sm"
-                variant="outline"
-                className="text-muted-foreground dark:bg-card"
-                onClick={onCollapse}
-              >
-                <PanelRightClose />
-              </Button>
-            )}
-          </ButtonGroup>
-        </div>
-      )}
+      <ChatHeaderActions
+        fullscreen={fullscreen}
+        onCollapse={onCollapse}
+        agentName={name}
+      />
 
-      <CardContent className="flex-1 min-h-0 overflow-hidden p-0 relative">
-        <AnimatePresence>
-          {hasNewMessage && (
-            <motion.button
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 8 }}
-              transition={{ duration: 0.18 }}
-              onClick={() => scrollToBottom(scrollRef.current)}
-              className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 rounded-lg border border-primary/20 bg-primary/5 px-3 py-1.5 text-xs text-primary cursor-pointer hover:bg-primary/10 transition-colors"
-            >
-              new message
-            </motion.button>
-          )}
-        </AnimatePresence>
-        <AnimatePresence>
-          {loadingMore && (
-            <motion.div
-              initial={{ opacity: 0, y: -8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              transition={{ duration: 0.18 }}
-              className="absolute left-1/2 -translate-x-1/2 z-10 pointer-events-none top-16"
-            >
-              <span className="rounded-lg border border-muted-foreground/20 bg-muted/80 backdrop-blur-sm px-3 py-1.5 text-xs text-muted-foreground">
-                loading...
-              </span>
-            </motion.div>
-          )}
-        </AnimatePresence>
-        <div
-          ref={scrollRef}
-          onScroll={handleScroll}
-          className={cn(
-            "h-full min-h-0 overflow-y-auto px-3 pb-4",
-            fullscreen ? "pt-10" : "pt-6",
-          )}
-          style={{
-            maskImage: "linear-gradient(to bottom, transparent, black 48px, black calc(100% - 20px), transparent)",
-          }}
-        >
-          <div className="min-h-full flex flex-col">
-            <div className="flex-1" />
-            <div>
-              {!hasMore && chatMessages.length > 0 && (
-                <div className="flex justify-center py-3">
-                  <span className="text-[11px] text-muted-foreground/40">beginning of conversation</span>
-                </div>
-              )}
-              {chatMessages.length === 0 ? (
-                <div className="flex flex-col items-center gap-2 py-2">
-                  <span className="text-xs text-muted-foreground">
-                    {connected
-                      ? `${name} is setting things up`
-                      : "connecting..."}
-                  </span>
-                </div>
-              ) : (
-                <div className="flex flex-col">
-                  {chatMessages.map((msg, i) => {
-                    const prev = chatMessages[i - 1];
-                    const isTool = msg.type === "tool_start";
-                    const prevIsTool = prev?.type === "tool_start";
-                    const gap = i === 0 ? "" : isTool && prevIsTool ? "mt-1" : isTool || prevIsTool ? "mt-2" : prev && prev.type === msg.type ? "mt-1.5" : "mt-5";
-                    return (
-                      <ChatBubble key={i} event={msg} className={gap} />
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </CardContent>
+      <ChatMessageArea
+        scrollRef={scrollRef}
+        onScroll={handleScroll}
+        fullscreen={fullscreen}
+        navbarHeight={navbarHeight}
+        hasNewMessage={hasNewMessage}
+        onScrollToBottom={() => scrollToBottom(scrollRef.current)}
+        loadingMore={loadingMore}
+        hasMore={hasMore}
+        chatMessages={chatMessages}
+        connected={connected}
+        agentName={name}
+      />
 
-      <div className="shrink-0 flex flex-col gap-0 px-2 pt-0 pb-3">
-        <AnimatePresence>
-          {isThinking && (
-            <motion.div
-              variants={thinkingIndicatorVariants}
-              initial="hidden"
-              animate="visible"
-              exit="exit"
-              className="shrink-0 overflow-hidden"
-            >
-              <div className="px-3 pb-2">
-                <ThinkingDots className="py-0" />
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-        <AnimatePresence>
-          {wasConnected && !connected && (
-            <motion.div
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: "auto", opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              className="overflow-hidden"
-            >
-              <div className="flex items-center justify-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-1.5 mb-3 mx-auto w-fit text-xs text-amber-600 dark:text-amber-400">
-                reconnecting...
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-        <AnimatePresence>
-          {voiceError && (
-            <motion.div
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: "auto", opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              className="overflow-hidden"
-            >
-              <div className="flex justify-center pb-2">
-                <span className="rounded-full border border-destructive/20 bg-destructive/5 px-3 py-1 text-xs text-destructive">
-                  {voiceError}
-                </span>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-        <div className={cn(
-          "flex items-center gap-2.5 w-full rounded-xl border bg-card shadow-md px-4 min-h-12",
-          isRecording && "border-red-500/50",
-        )}>
-          {isRecording && voiceAutoSend ? (
-            <div className="flex-1 py-2.5 text-base sm:text-sm leading-5 text-foreground min-h-5">
-              {liveTranscript || <span className="text-muted-foreground/50 animate-pulse">listening...</span>}
-            </div>
-          ) : (
-            <textarea
-              ref={textareaRef}
-              value={input}
-              onChange={handleInput}
-              onKeyDown={handleKeyDown}
-              placeholder={isRecording ? "listening..." : connected ? "send a message..." : "connecting..."}
-              disabled={!connected}
-              rows={1}
-              enterKeyHint="send"
-              className="m-0 flex-1 min-h-5 max-h-[120px] bg-transparent py-2.5 text-base sm:text-sm leading-5 resize-none outline-none placeholder:text-muted-foreground/50 disabled:opacity-50"
-            />
-          )}
-          {sttAvailable && (
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              className="shrink-0"
-              disabled={!connected}
-              onClick={toggleVoice}
-            >
-              {isRecording ? (
-                <Square className="text-red-500" size={14} />
-              ) : (
-                <Mic className="text-muted-foreground" />
-              )}
-            </Button>
-          )}
-          {(!isRecording || !voiceAutoSend) && (
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              className="shrink-0"
-              disabled={!connected || !input.trim()}
-              onClick={handleSend}
-            >
-              <SendHorizontal className="text-muted-foreground" />
-            </Button>
-          )}
-        </div>
-      </div>
+      <ChatComposer
+        fullscreen={fullscreen}
+        isThinking={isThinking}
+        wasConnected={wasConnected}
+        connected={connected}
+        voiceError={voiceError}
+        sttAvailable={sttAvailable}
+        isRecording={isRecording}
+        voiceAutoSend={voiceAutoSend}
+        liveTranscript={liveTranscript}
+        toggleVoice={toggleVoice}
+        input={input}
+        onInputChange={handleInput}
+        onKeyDown={handleKeyDown}
+        onSend={handleSend}
+        textareaRef={textareaRef}
+      />
     </Card>
-  );
-}
-
-function ChatBubble({ event, className }: { event: VestaEvent; className?: string }) {
-  if (event.type === "history" || event.type === "status") return null;
-
-  const ts = event.ts
-    ? new Date(event.ts).toLocaleTimeString("en-US", {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    })
-    : "";
-
-  if (event.type === "error") {
-    return (
-      <div className={cn("flex justify-center px-4 py-1", className)}>
-        <span className="text-xs text-destructive">{event.text}</span>
-      </div>
-    );
-  }
-
-  if (event.type === "tool_start") {
-    return <ToolCallLabel tool={event.tool} input={event.input} className={className} />;
-  }
-
-  if (event.type !== "user" && event.type !== "chat") return null;
-
-  const isUser = event.type === "user";
-  const text = event.text;
-
-  return (
-    <div className={cn("flex", isUser ? "justify-end" : "justify-start", className)}>
-      <div
-        className={cn(
-          "flex items-end max-w-[85%] rounded-2xl px-3 py-1.5 text-sm leading-relaxed",
-          isUser
-            ? "bg-primary text-primary-foreground rounded-br-sm"
-            : "bg-muted text-foreground rounded-bl-sm",
-        )}
-      >
-        <span className="min-w-0 break-words" dangerouslySetInnerHTML={{ __html: linkify(text) }} />
-        {ts && (
-          <span
-            className={cn(
-              "shrink-0 ml-auto pl-2 text-[10px] leading-relaxed select-none whitespace-nowrap",
-              isUser ? "text-primary-foreground/50" : "text-muted-foreground/50",
-            )}
-          >
-            {ts}
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function ToolCallLabel({ tool, input, className }: { tool: string; input: string; className?: string }) {
-  const [expanded, setExpanded] = useState(false);
-
-  return (
-    <div className={cn("flex flex-col items-start max-w-[85%]", className)}>
-      <button
-        type="button"
-        onClick={() => setExpanded((v) => !v)}
-        className="flex items-center gap-1.5 rounded-full border border-muted-foreground/15 bg-muted/50 px-2.5 py-1 cursor-pointer hover:bg-muted/80 transition-colors"
-      >
-        <Wrench className="size-3 text-muted-foreground/60" />
-        <span className="text-[11px] text-muted-foreground/70">{tool}</span>
-        <motion.span
-          animate={{ rotate: expanded ? 90 : 0 }}
-          transition={{ duration: 0.15 }}
-          className="flex items-center"
-        >
-          <ChevronRight className="size-3 text-muted-foreground/40" />
-        </motion.span>
-      </button>
-      <AnimatePresence>
-        {expanded && (
-          <motion.pre
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.15 }}
-            className="mt-1 w-full overflow-hidden rounded-lg border border-muted-foreground/10 bg-muted/30 px-2.5 py-2 text-[11px] leading-relaxed text-muted-foreground/70 whitespace-pre-wrap break-words font-mono"
-          >
-            {input}
-          </motion.pre>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-}
-
-function ThinkingDots({ className }: { className?: string }) {
-  return (
-    <div className={cn("flex items-center gap-2 py-1", className)}>
-      <span className="text-xs text-muted-foreground">Thinking</span>
-      <div className="flex items-center gap-1">
-        {[0, 1, 2].map((i) => (
-          <motion.div
-            key={i}
-            className="size-[5px] rounded-full bg-primary"
-            animate={{ opacity: [0.25, 1, 0.25] }}
-            transition={{
-              duration: 1.5,
-              repeat: Infinity,
-              ease: "easeInOut",
-              delay: i * 0.3,
-            }}
-          />
-        ))}
-      </div>
-    </div>
   );
 }

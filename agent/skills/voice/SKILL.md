@@ -28,7 +28,12 @@ Once configured, the user can manage voice settings directly from the **agent se
    ```bash
    uv run ~/vesta/skills/voice/scripts/voice_keys.py set-key --domain stt --provider deepgram --key <key>
    ```
-5. **Confirm** — e.g. "Voice is ready! You can use the mic button now. You can also change voices, listen to previews, and tweak settings from the settings page in the app."
+5. **Notify the app** so it picks up the new voice config:
+   ```bash
+   curl -s -X POST http://localhost:$WS_PORT/events/service-update \
+     -H 'Content-Type: application/json' -d '{"service":"voice","action":"updated"}'
+   ```
+6. **Confirm** — e.g. "Voice is ready! You can use the mic button now. You can also change voices, listen to previews, and tweak settings from the settings page in the app."
 
 ## Commands
 

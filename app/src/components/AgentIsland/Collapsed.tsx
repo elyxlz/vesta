@@ -12,7 +12,7 @@ type AgentIslandCollapsedProps = {
 export function AgentIslandCollapsed({ name, orbState, onExpand }: AgentIslandCollapsedProps) {
   return (
     <div
-      className="flex max-w-[min(100vw-2rem,320px)] cursor-pointer touch-manipulation items-center gap-1.5 py-2 px-5 will-change-transform"
+      className="flex h-11 max-w-[min(100vw-2rem,320px)] cursor-pointer touch-manipulation items-center gap-1.5 px-5 will-change-transform"
       onPointerDown={(event) => {
         if (event.pointerType === "touch") {
           onExpand();
@@ -25,7 +25,7 @@ export function AgentIslandCollapsed({ name, orbState, onExpand }: AgentIslandCo
         className="flex shrink-0 items-center justify-center will-change-transform"
         transition={agentIslandContentTransition}
       >
-        <Orb state={orbState} size={28} suppressMotion />
+        <Orb state={orbState} size={32} suppressMotion />
       </motion.div>
       <motion.span
         layoutId="agent-island-name"

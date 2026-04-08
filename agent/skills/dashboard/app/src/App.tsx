@@ -1,24 +1,37 @@
+// To add widgets and other shadcn or custom components: import them above, then include them inside the div below.
+// Example:
+// import { Tabs, TabsList, TabsTrigger, TabsContent } from "./components/ui/tabs";
+// import MyWidget from "./widgets/MyWidget";
+// ...
+// <Tabs defaultValue="social" className="w-[400px]">
+// <TabsList>
+//  <TabsTrigger value="social">social</TabsTrigger>
+//  <TabsTrigger value="work">Work</TabsTrigger>
+// </TabsList>
+// <TabsContent value="social">
+//  <MyWidget />
+// </TabsContent>
+// </Tabs>
+
 import { LayoutDashboard } from "lucide-react";
-import {
-  Empty,
-  EmptyHeader,
-  EmptyTitle,
-  EmptyDescription,
-  EmptyMedia,
-} from "@/components/ui/empty";
-import { widgets } from "./widgets";
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "./components/ui/empty";
+import { FadeScroll } from "./components/FadeScroll";
+
+// --- Empty state toggle ---
+// Set to false once custom code & widgets are added.
+const SHOW_EMPTY_STATE = true;
 
 export default function App() {
-  if (widgets.length === 0) {
+  if (SHOW_EMPTY_STATE) {
     return (
-      <Empty className="flex-1 border-0">
+      <Empty className="flex-1 h-full w-full border-0">
         <EmptyHeader>
           <EmptyMedia variant="icon">
             <LayoutDashboard />
           </EmptyMedia>
           <EmptyTitle>your dashboard</EmptyTitle>
           <EmptyDescription>
-            ask your agent to add some widgets
+            ask your agent to set up the dashboard and add some widgets
           </EmptyDescription>
         </EmptyHeader>
       </Empty>
@@ -26,19 +39,10 @@ export default function App() {
   }
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 auto-rows-min">
-      {widgets.map((w) => (
-        <div
-          key={w.id}
-          className="bg-card border border-border rounded-lg shadow-sm overflow-hidden"
-          style={{
-            gridColumn: `span ${w.width ?? 1}`,
-            gridRow: `span ${w.height ?? 1}`,
-          }}
-        >
-          <w.component />
-        </div>
-      ))}
-    </div>
+    <FadeScroll className="w-full h-full overflow-y-auto">
+      <div className="flex flex-col gap-4 px-page py-page">
+        {/* your custom code and widgets and other components goes here */}
+      </div>
+    </FadeScroll>
   );
 }

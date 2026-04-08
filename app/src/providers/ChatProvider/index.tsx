@@ -1,15 +1,28 @@
-import { createContext, useContext, useEffect, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type Dispatch,
+  type ReactNode,
+  type SetStateAction,
+} from "react";
 import { useChat } from "./use-chat";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useVoice } from "@/providers/VoiceProvider";
 
-type ChatContextValue = ReturnType<typeof useChat>;
+type ChatContextValue = ReturnType<typeof useChat> & {
+  showToolCalls: boolean;
+  setShowToolCalls: Dispatch<SetStateAction<boolean>>;
+};
 
 const ChatContext = createContext<ChatContextValue | null>(null);
 
 export function ChatProvider({ children }: { children: ReactNode }) {
   const { name, setAgentState } = useSelectedAgent();
   const { speak } = useVoice();
+  const [showToolCalls, setShowToolCalls] = useState(false);
 
   const chat = useChat({ name, active: true, onAssistantMessage: speak });
 
@@ -17,8 +30,13 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     setAgentState(chat.agentState);
   }, [chat.agentState, setAgentState]);
 
+  const value = useMemo(
+    () => ({ ...chat, showToolCalls, setShowToolCalls }),
+    [chat, showToolCalls],
+  );
+
   return (
-    <ChatContext.Provider value={chat}>
+    <ChatContext.Provider value={value}>
       {children}
     </ChatContext.Provider>
   );

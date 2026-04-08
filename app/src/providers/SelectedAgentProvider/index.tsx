@@ -65,7 +65,7 @@ export function SelectedAgentProvider({ children }: { children: ReactNode }) {
   const withOp = useAgentOps((s) => s.withOp);
   const removeAgentOp = useAgentOps((s) => s.removeAgent);
   const opState = useAgentOps((s) => s.getOp(name));
-  const isBusy = useAgentOps((s) => s.busyAgentName() !== null);
+  const isBusy = opState.operation !== "idle";
 
   const refreshAgent = useCallback(async () => {
     if (!name) return;

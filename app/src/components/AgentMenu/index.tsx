@@ -7,6 +7,7 @@ import {
   Settings,
   Square,
   KeyRound,
+  Wrench,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -30,8 +31,15 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useChatContext } from "@/providers/ChatProvider";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useModals } from "@/providers/ModalsProvider";
+
+function useNavigateToLogs() {
+  const navigate = useNavigate();
+  const { name } = useSelectedAgent();
+  return () => navigate(`/agent/${encodeURIComponent(name)}/logs`);
+}
 
 export function AgentMenu() {
   const navigate = useNavigate();
@@ -47,9 +55,10 @@ export function AgentMenu() {
   } = useSelectedAgent();
   const {
     handleOpenAuth,
-    setShowConsole,
     setDeleteDialogOpen,
   } = useModals();
+  const goToLogs = useNavigateToLogs();
+  const { showToolCalls, setShowToolCalls } = useChatContext();
 
   const [open, setOpen] = useState(false);
   const isMobile = useIsMobile();
@@ -120,6 +129,17 @@ export function AgentMenu() {
                 )}
               </Button>
             </DrawerClose>
+            {!showAliveActions && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="w-full justify-start"
+                onClick={() => setShowToolCalls((v) => !v)}
+              >
+                <Wrench data-icon="inline-start" />
+                {showToolCalls ? "hide tool calls" : "show tool calls"}
+              </Button>
+            )}
             {showAliveActions && (
               <>
                 <DrawerClose asChild>
@@ -127,12 +147,21 @@ export function AgentMenu() {
                     size="sm"
                     variant="outline"
                     className="w-full justify-start"
-                    onClick={() => setShowConsole(true)}
+                    onClick={goToLogs}
                   >
                     <ScrollText data-icon="inline-start" />
                     logs
                   </Button>
                 </DrawerClose>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="w-full justify-start"
+                  onClick={() => setShowToolCalls((v) => !v)}
+                >
+                  <Wrench data-icon="inline-start" />
+                  {showToolCalls ? "hide tool calls" : "show tool calls"}
+                </Button>
                 <DrawerClose asChild>
                   <Button
                     size="sm"
@@ -230,11 +259,21 @@ export function AgentMenu() {
             </>
           )}
         </DropdownMenuItem>
+        {!showAliveActions && (
+          <DropdownMenuItem onClick={() => setShowToolCalls((v) => !v)}>
+            <Wrench />
+            {showToolCalls ? "hide tool calls" : "show tool calls"}
+          </DropdownMenuItem>
+        )}
         {showAliveActions && (
           <>
-            <DropdownMenuItem onClick={() => setShowConsole(true)}>
+            <DropdownMenuItem onClick={goToLogs}>
               <ScrollText data-icon="inline-start" />
               logs
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setShowToolCalls((v) => !v)}>
+              <Wrench />
+              {showToolCalls ? "hide tool calls" : "show tool calls"}
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => navigate(`/agent/${encodeURIComponent(name)}/settings`)}>
               <Settings data-icon="inline-start" />

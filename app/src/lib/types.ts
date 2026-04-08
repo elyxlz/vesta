@@ -1,3 +1,10 @@
+import type { Dispatch, SetStateAction } from "react";
+
+export interface AgentHomeOutletContext {
+  chatCollapsed: boolean;
+  setChatCollapsed: Dispatch<SetStateAction<boolean>>;
+}
+
 export interface AgentInfo {
   status: AgentStatus;
   id: string;
@@ -36,6 +43,7 @@ export type VestaEvent =
   | (BaseEvent & { type: "tool_end"; tool: string })
   | (BaseEvent & { type: "error"; text: string })
   | (BaseEvent & { type: "notification"; source: string; summary: string })
+  | (BaseEvent & { type: "service_update"; service: string; action: "registered" | "updated" | "removed" })
   | (BaseEvent & { type: "history"; events: VestaEvent[]; state: AgentActivityState; cursor: number | null });
 
 export type LogEvent =

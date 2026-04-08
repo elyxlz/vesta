@@ -7,9 +7,11 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useAutoScroll } from "@/hooks/use-auto-scroll";
+import { useLayout } from "@/stores/use-layout";
 import { streamLogs, stopLogs } from "@/api";
 import { stripAnsi } from "@/lib/ansi";
 import { linkify } from "@/lib/linkify";
+import { cn } from "@/lib/utils";
 
 const MAX_LINES = 5000;
 const RECONNECT_BASE = 1000;
@@ -17,11 +19,12 @@ const RECONNECT_MAX = 30000;
 
 interface ConsoleProps {
   name: string;
-  onClose: () => void;
+  onClose?: () => void;
+  fullscreen?: boolean;
 }
 
-export function Console({ name, onClose }: ConsoleProps) {
-
+export function Console({ name, onClose, fullscreen }: ConsoleProps) {
+  const navbarHeight = useLayout((s) => s.navbarHeight);
   const [lines, setLines] = useState<string[]>([]);
   const [ended, setEnded] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -85,6 +88,7 @@ export function Console({ name, onClose }: ConsoleProps) {
   };
 
   useEffect(() => {
+    if (!onClose) return;
     const handleEsc = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
@@ -93,28 +97,40 @@ export function Console({ name, onClose }: ConsoleProps) {
   }, [onClose]);
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between px-4 py-3 min-h-11 shrink-0 border-b border-white/5">
-        <span className="text-sm font-medium">{name} logs</span>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className="size-9"
-              onClick={onClose}
-            >
-              <X className="size-5" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>close</TooltipContent>
-        </Tooltip>
-      </div>
+    <div className={cn(
+      "flex flex-col h-full",
+      fullscreen && "dark dark-overlay bg-[#1a1a1a] text-[#e8e8e8]",
+    )}>
+      {!fullscreen && (
+        <div className="flex items-center justify-between px-4 py-3 min-h-11 shrink-0 border-b border-white/5">
+          <span className="text-sm font-medium">{name} logs</span>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="size-9"
+                onClick={onClose}
+              >
+                <X className="size-5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>close</TooltipContent>
+          </Tooltip>
+        </div>
+      )}
 
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto px-3 py-2 font-mono text-xs leading-[1.6] text-white/70"
+        className={cn(
+          "flex-1 overflow-y-auto font-mono text-xs leading-[1.6] text-white/70",
+          fullscreen ? "px-page pb-page" : "px-3 py-2",
+        )}
+        style={fullscreen ? {
+          paddingTop: `calc(${navbarHeight}px + var(--page-padding-x))`,
+          maskImage: `linear-gradient(to bottom, transparent, black ${navbarHeight * 2}px, black calc(100% - 20px), transparent)`,
+        } : undefined}
       >
         <div className="min-h-full flex flex-col justify-end">
           <div>

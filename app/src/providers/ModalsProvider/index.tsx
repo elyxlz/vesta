@@ -24,9 +24,6 @@ interface ModalsContextValue {
   deleteDialogOpen: boolean;
   setDeleteDialogOpen: (open: boolean) => void;
   handleDelete: () => Promise<void>;
-
-  showConsole: boolean;
-  setShowConsole: (show: boolean) => void;
 }
 
 const ModalsContext = createContext<ModalsContextValue | null>(null);
@@ -43,7 +40,6 @@ export function ModalsProvider({ children }: { children: ReactNode }) {
   const authAttemptRef = useRef(0);
 
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [showConsole, setShowConsole] = useState(false);
 
   const clearAuthState = useCallback(() => {
     authAttemptRef.current += 1;
@@ -94,13 +90,10 @@ export function ModalsProvider({ children }: { children: ReactNode }) {
     deleteDialogOpen,
     setDeleteDialogOpen,
     handleDelete,
-    showConsole,
-    setShowConsole,
   }), [
     showAuth, authStarting, authStart, authError,
     handleOpenAuth, clearAuthState,
     deleteDialogOpen, handleDelete,
-    showConsole,
   ]);
 
   return (

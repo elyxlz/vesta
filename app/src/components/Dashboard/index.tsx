@@ -4,6 +4,7 @@ import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useTheme } from "@/stores/use-theme";
 import { getConnection } from "@/lib/connection";
 import { apiFetch } from "@/api/client";
+import { useServiceUpdate } from "@/hooks/use-service-update";
 import {
   Empty,
   EmptyHeader,
@@ -11,8 +12,6 @@ import {
   EmptyDescription,
   EmptyMedia,
 } from "@/components/ui/empty";
-
-const POLL_INTERVAL = 5_000;
 
 type Status = "loading" | "not-setup" | "ready" | "error";
 
@@ -23,36 +22,35 @@ export function Dashboard() {
   const resolved = useTheme((s) => s.resolved);
   const [status, setStatus] = useState<Status>("loading");
   const [loaded, setLoaded] = useState(false);
+  const [iframeKey, setIframeKey] = useState(0);
+  const eventReceived = useRef(false);
 
-  // Poll services endpoint until dashboard is registered
   useEffect(() => {
     let cancelled = false;
-    let timer: ReturnType<typeof setTimeout>;
-
     async function check() {
       try {
         const resp = await apiFetch(`/agents/${encodeURIComponent(name)}/services`);
-        if (cancelled) return;
+        if (cancelled || eventReceived.current) return;
         const body: { services: Record<string, number> } = await resp.json();
-        const registered = "dashboard" in body.services;
-        setStatus(registered ? "ready" : "not-setup");
-        if (!registered) {
-          timer = setTimeout(check, POLL_INTERVAL);
-        }
+        setStatus("dashboard" in body.services ? "ready" : "not-setup");
       } catch {
-        if (!cancelled) {
-          setStatus("not-setup");
-          timer = setTimeout(check, POLL_INTERVAL);
-        }
+        if (!cancelled && !eventReceived.current) setStatus("not-setup");
       }
     }
-
     check();
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
+    return () => { cancelled = true; };
   }, [name]);
+
+  useServiceUpdate("dashboard", useCallback((action) => {
+    eventReceived.current = true;
+    if (action === "removed") {
+      setStatus("not-setup");
+    } else {
+      setStatus("ready");
+      setLoaded(false);
+      setIframeKey((k) => k + 1);
+    }
+  }, []));
 
   const conn = getConnection();
   const dashboardUrl =
@@ -60,30 +58,36 @@ export function Dashboard() {
       ? `${conn.url}/agents/${encodeURIComponent(name)}/dashboard/?token=${encodeURIComponent(conn.accessToken)}`
       : null;
 
-  const sendTheme = useCallback(() => {
-    iframeRef.current?.contentWindow?.postMessage(
-      { type: "vesta-theme", dark: resolved() === "dark" },
-      "*",
-    );
-  }, [resolved]);
+  const sendContext = useCallback(() => {
+    const frame = iframeRef.current?.contentWindow;
+    if (!frame) return;
+    frame.postMessage({ type: "vesta-theme", dark: resolved() === "dark" }, "*");
+    if (conn) frame.postMessage({
+      type: "vesta-auth",
+      token: conn.accessToken,
+      baseUrl: `${conn.url}/agents/${encodeURIComponent(name)}`,
+    }, "*");
+  }, [resolved, conn]);
 
   useEffect(() => {
     const handler = (e: MessageEvent) => {
-      if (e.data?.type === "vesta-theme-request") sendTheme();
+      if (e.data?.type === "vesta-theme-request" || e.data?.type === "vesta-auth-request") {
+        sendContext();
+      }
     };
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
-  }, [sendTheme]);
+  }, [sendContext]);
 
   useEffect(() => {
-    sendTheme();
-  }, [sendTheme, theme]);
+    sendContext();
+  }, [sendContext, theme]);
 
   if (status === "loading") return null;
 
   if (status === "not-setup") {
     return (
-      <Empty className="flex-1 border-0">
+      <Empty className="flex-1 h-full w-full border-0">
         <EmptyHeader>
           <EmptyMedia variant="icon">
             <LayoutDashboard />
@@ -99,7 +103,7 @@ export function Dashboard() {
 
   if (status === "error") {
     return (
-      <Empty className="flex-1 border-0">
+      <Empty className="flex-1 h-full w-full border-0">
         <EmptyHeader>
           <EmptyMedia variant="icon">
             <AlertCircle />
@@ -115,15 +119,15 @@ export function Dashboard() {
 
   return (
     <iframe
+      key={iframeKey}
       ref={iframeRef}
       src={dashboardUrl!}
       className={`w-full h-full border-0 bg-transparent transition-opacity duration-200 ${loaded ? "opacity-100" : "opacity-0"}`}
       onLoad={() => {
-        sendTheme();
+        sendContext();
         setLoaded(true);
       }}
       onError={() => setStatus("error")}
-      title="Dashboard"
     />
   );
 }

@@ -78,7 +78,12 @@ export function AgentIsland() {
   }, [expanded]);
 
   return (
-    <div className="relative z-[99999] my-auto flex justify-center">
+    <div
+      className={cn(
+        "relative z-[99999] flex justify-center overflow-visible",
+        expanded ? "h-auto min-h-0" : "h-full",
+      )}
+    >
       <motion.div
         ref={rootRef}
         layout
@@ -87,8 +92,8 @@ export function AgentIsland() {
         onPointerEnter={handlePointerEnter}
         onPointerLeave={handlePointerLeave}
         className={cn(
-          "mx-auto w-fit overflow-hidden bg-card border will-change-[transform,opacity]",
-          expanded ? "shadow-xl" : "shadow-none",
+          "mx-auto w-fit border bg-card will-change-[transform,opacity]",
+          expanded ? "shadow-xl overflow-visible" : "h-11 overflow-hidden shadow-none",
         )}
       >
         <LayoutGroup id="agent-island">

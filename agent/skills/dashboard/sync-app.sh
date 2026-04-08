@@ -7,46 +7,67 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DASHBOARD_SRC="$SCRIPT_DIR/app/src"
 REPO_APP_SRC="$SCRIPT_DIR/../../../app/src"
 
-if [ -d "$REPO_APP_SRC" ]; then
-    APP_SRC="$(cd "$REPO_APP_SRC" && pwd)"
-    echo "Syncing from local app source: $APP_SRC"
+sync_from_local() {
+    local app_root
+    app_root="$(dirname "$1")"
+    echo "Syncing from local app source: $1"
+    cp "$app_root/components.json" "$SCRIPT_DIR/app/components.json"
+    cp "$1/styles/globals.css" "$DASHBOARD_SRC/globals.css"
+    mkdir -p "$DASHBOARD_SRC/lib" "$DASHBOARD_SRC/hooks" "$DASHBOARD_SRC/components/ui"
+    cp "$1/lib/utils.ts" "$DASHBOARD_SRC/lib/utils.ts"
+    cp "$1/hooks/use-mobile.ts" "$DASHBOARD_SRC/hooks/use-mobile.ts"
+    cp "$1/components/ui/"*.tsx "$DASHBOARD_SRC/components/ui/"
+}
 
-    cp "$APP_SRC/styles/globals.css" "$DASHBOARD_SRC/globals.css"
+sync_from_git() {
+    local repo_dir="$1"
+    # Use the release tag matching pyproject.toml version
+    local version
+    version=$(python3 -c "
+import re
+for line in open('$repo_dir/pyproject.toml'):
+    m = re.match(r'^version\s*=\s*\"(.+)\"', line)
+    if m: print('v' + m.group(1)); break
+" 2>/dev/null || echo "HEAD")
 
-    mkdir -p "$DASHBOARD_SRC/lib"
-    cp "$APP_SRC/lib/utils.ts" "$DASHBOARD_SRC/lib/utils.ts"
+    # Fetch the tag if not already available
+    git -C "$repo_dir" fetch origin "refs/tags/$version:refs/tags/$version" 2>/dev/null || true
+    local ref="$version"
+    # Fall back to HEAD if tag doesn't exist
+    git -C "$repo_dir" rev-parse --verify "$ref" >/dev/null 2>&1 || ref="HEAD"
 
-    mkdir -p "$DASHBOARD_SRC/hooks"
-    cp "$APP_SRC/hooks/use-mobile.ts" "$DASHBOARD_SRC/hooks/use-mobile.ts"
+    echo "Syncing from git repo: $repo_dir (ref: $ref)"
+    mkdir -p "$DASHBOARD_SRC/lib" "$DASHBOARD_SRC/hooks" "$DASHBOARD_SRC/components/ui"
 
-    mkdir -p "$DASHBOARD_SRC/components/ui"
-    cp "$APP_SRC/components/ui/"*.tsx "$DASHBOARD_SRC/components/ui/"
-else
-    # Inside agent container — fetch from GitHub
-    echo "Fetching shared files from GitHub..."
-    VERSION=$(python3 -c "import json; print(json.load(open('$SCRIPT_DIR/../../package.json'))['version'])" 2>/dev/null \
-        || python3 -c "import json; print(json.load(open('$SCRIPT_DIR/app/package.json'))['version'])" 2>/dev/null \
-        || echo "master")
-    REPO="https://raw.githubusercontent.com/elyxlz/vesta/v${VERSION}"
+    git -C "$repo_dir" show "$ref:app/components.json" > "$SCRIPT_DIR/app/components.json"
+    git -C "$repo_dir" show "$ref:app/src/styles/globals.css" > "$DASHBOARD_SRC/globals.css"
+    git -C "$repo_dir" show "$ref:app/src/lib/utils.ts" > "$DASHBOARD_SRC/lib/utils.ts"
+    git -C "$repo_dir" show "$ref:app/src/hooks/use-mobile.ts" > "$DASHBOARD_SRC/hooks/use-mobile.ts"
 
-    curl -fsSL "$REPO/app/src/styles/globals.css" -o "$DASHBOARD_SRC/globals.css"
-
-    mkdir -p "$DASHBOARD_SRC/lib"
-    curl -fsSL "$REPO/app/src/lib/utils.ts" -o "$DASHBOARD_SRC/lib/utils.ts"
-
-    mkdir -p "$DASHBOARD_SRC/hooks"
-    curl -fsSL "$REPO/app/src/hooks/use-mobile.ts" -o "$DASHBOARD_SRC/hooks/use-mobile.ts"
-
-    mkdir -p "$DASHBOARD_SRC/components/ui"
-    FILES=$(curl -fsSL "https://api.github.com/repos/elyxlz/vesta/contents/app/src/components/ui?ref=v${VERSION}" \
-        | python3 -c "import sys,json; [print(f['name']) for f in json.load(sys.stdin) if f['name'].endswith('.tsx')]")
-    for file in $FILES; do
-        curl -fsSL "$REPO/app/src/components/ui/$file" -o "$DASHBOARD_SRC/components/ui/$file"
+    git -C "$repo_dir" ls-tree --name-only "$ref:app/src/components/ui/" | while read -r file; do
+        case "$file" in *.tsx)
+            git -C "$repo_dir" show "$ref:app/src/components/ui/$file" > "$DASHBOARD_SRC/components/ui/$file"
+        ;; esac
     done
+}
+
+if [ -d "$REPO_APP_SRC" ]; then
+    sync_from_local "$(cd "$REPO_APP_SRC" && pwd)"
+elif [ -d "$HOME/vesta/.git" ]; then
+    sync_from_git "$HOME/vesta"
+else
+    echo "Error: no app source found (no local app/ dir and no git repo at ~/vesta/)" >&2
+    exit 1
 fi
 
 # Patch globals.css — transparent body for iframe
 sed -i 's/@apply bg-background text-foreground;/@apply text-foreground;\n    background: transparent;/' "$DASHBOARD_SRC/globals.css"
+
+# Tell Tailwind to scan gitignored synced files
+sed -i '1s|^|@source "./components/ui";\n@source "./lib";\n@source "./hooks";\n|' "$DASHBOARD_SRC/globals.css"
+
+# Patch components.json — point CSS path to dashboard location
+sed -i 's|src/styles/globals.css|src/globals.css|' "$SCRIPT_DIR/app/components.json"
 
 echo "Synced $(ls "$DASHBOARD_SRC/components/ui/" | wc -l) UI components"
 echo "Done."

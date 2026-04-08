@@ -1,64 +1,78 @@
 ---
 name: dashboard
-description: Use when the you need to add, remove, or modify dashboard widgets and or customize the dashboard layout.
+description: Use when you need to build, modify, or customize anything on the user's dashboard — widgets, layouts, pages, views, or any custom UI.
 serve: see SETUP.md
 ---
 
 # Dashboard
 
-A React app that renders the dashboard consisting of widgets embedded in the main Vesta app. 
-
-## Current widgets
-
-[current_widgets <!-- Keep this list up to date. After adding or removing a widget, update this section. -->]
+A React app embedded in the main Vesta app. You have full control over `App.tsx` and can build anything: widgets, custom layouts, multi-page views, interactive tools, data visualizations, or any other UI the user wants.
 
 ## Important
 
-- After creating or editing a widget, you MUST rebuild and restart the server.
-- If the dashboard server is not running yet, follow [SETUP.md](SETUP.md) first — but only once.
-- You only need to edit files in `src/widgets/` — do NOT read or modify `globals.css`, `main.tsx`, `theme-sync.ts`, `App.tsx`, or `index.html`.
+- **STOP — before building anything, ask the user questions first.** Do NOT start coding until you've confirmed details. See "Before building" below.
+- After any code change, you MUST rebuild and restart the server.
 
-## Before creating a widget
+## Before building (REQUIRED)
 
-When the user asks for a widget, ask enough to build it well. Don't ask open-ended questions — suggest concrete options for things like data source (static vs fetched), interactivity (display-only vs actionable), size, etc. Get it right the first time so there's less back-and-forth.
+You MUST ask the user clarifying questions before writing any code. Go through these:
 
-## Creating a widget
+1. **Goal** — if the request is vague, clarify what they actually want to see or do
+2. **Interaction** — display-only, or do they want to tap/click/toggle/input things?
+3. **Data** — should it show static data baked into the code, or pull live data from a skill/API? If static, do they want any starting values added now?
 
-Three steps: write the component, register it, rebuild.
+Only start building once the user has answered. Don't assume — ask.
 
-**Step 1.** Create `~/vesta/skills/dashboard/app/src/widgets/<widget-id>.tsx`:
+## Project structure
+
+```
+~/vesta/skills/dashboard/app/src/
+├── App.tsx              ← entry point, you edit this freely
+├── main.tsx             ← do NOT modify
+├── globals.css          ← do NOT modify (synced from main app)
+├── components/
+│   ├── ui/              ← shadcn components (synced, do NOT modify)
+│   └── FadeScroll.tsx   ← shared scroll wrapper
+├── widgets/             ← widget components (one file per widget)
+├── lib/
+│   ├── parent-bridge.ts ← auth + API helpers
+│   └── utils.ts         ← synced utility (do NOT modify)
+└── hooks/               ← synced hooks (do NOT modify)
+```
+
+**You can freely edit:** `App.tsx`, anything in `widgets/`, and any new files/folders you create (custom components, helpers, etc.)
+
+**Do NOT modify:** `main.tsx`, `globals.css`, `lib/utils.ts`, `hooks/`, `components/ui/`
+
+## Building components
+
+### Widgets
+
+For self-contained UI blocks, create files in `src/widgets/`:
 
 ```tsx
-import { useState } from "react";
-
-export const meta = {
-  id: "my-widget",
-  title: "My Widget",
-  width: 1,   // 1 = small, 2 = medium, 3 = full width
-  height: 1,  // 1 = short, 2 = tall
-};
-
 export default function MyWidget() {
   return (
-    <div className="p-4">
-      <h3 className="text-sm font-medium text-muted-foreground">{meta.title}</h3>
+    <div className="p-4 bg-card border border-border rounded-lg shadow-sm">
       {/* widget content */}
     </div>
   );
 }
 ```
 
-**Step 2.** Add the import and entry to `~/vesta/skills/dashboard/app/src/widgets/index.ts`:
+### Custom components
 
-```ts
-import MyWidget, { meta as myWidgetMeta } from "./my-widget";
+For shared components, layouts, or anything more complex, create files anywhere in `src/` (e.g. `src/components/MyComponent.tsx`, `src/views/`, etc.). Organize however makes sense for what you're building.
 
-export const widgets: WidgetEntry[] = [
-  { ...myWidgetMeta, component: MyWidget },
-];
-```
+### Editing App.tsx
 
-**Step 3.** Rebuild and restart the server:
+`App.tsx` is the root component. Import your widgets/components and arrange them however the user wants — grid layouts, tabs, sidebars, stacked views, anything. You have full control over the layout and structure.
+
+When adding the first component, set `SHOW_EMPTY_STATE = false` to disable the placeholder.
+
+## After every change (IMPORTANT)
+
+**Rebuild and restart the server:**
 
 ```bash
 cd ~/vesta/skills/dashboard/app && npx vite build
@@ -68,56 +82,52 @@ screen -S dashboard -X quit 2>/dev/null
 screen -dmS dashboard sh -c "cd ~/vesta/skills/dashboard/app && npx vite preview --port $PORT --host 0.0.0.0"
 ```
 
-**Step 4.** Update the "Current widgets" section at the top of this SKILL.md — add a line like `- **My Widget** (`my-widget.tsx`) — brief description`.
+**Notify the app so the dashboard reloads:**
 
-Do this for removals too — keep the list in sync.
+```bash
+curl -s -X POST http://localhost:$WS_PORT/events/service-update \
+  -H 'Content-Type: application/json' -d '{"service":"dashboard","action":"updated"}'
+```
 
-## Widget data patterns
+## Data patterns
 
 ### Static data (habits, bookmarks, etc.)
 
 Data that the user dictates and that only changes when they ask you to update it. Hardcode it directly in the component source — when the user asks to add/remove items, edit the file and rebuild.
 
-```tsx
-const bookmarks = [
-  { label: "Google News", url: "https://news.google.com" },
-  { label: "YouTube", url: "https://youtube.com" },
-];
-```
-
 ### Dynamic data (skill APIs, third-party services, etc.)
 
-Data that comes from somewhere else and changes dynamically — an existing skill's HTTP API, a third-party service, or a dedicated data skill you create. Use `fetch()` inside `useEffect`.
+Data that comes from somewhere else and changes dynamically — an existing skill's API, a new skill you create, or a third-party service.
+
+To call your skills use `apiFetch` from `@/lib/parent-bridge`. It handles auth and the base URL automatically:
 
 ```tsx
-useEffect(() => {
-  fetch("/agents/{name}/reminders/list")
-    .then(r => r.json())
-    .then(setReminders);
-}, []);
+import { apiFetch } from "@/lib/parent-bridge";
+
+// Call any skill endpoint — just use the skill name + path
+const resp = await apiFetch("tasks/list");
+const resp = await apiFetch("voice/tts/status");
+const resp = await apiFetch("water/add", { method: "POST" });
 ```
 
-If no existing skill provides the data a widget needs, create a new skill with an HTTP API that the widget can fetch from.
+## Removing components
 
-## Removing a widget
-
-1. Remove the import and entry from `widgets/index.ts`
-2. Delete the widget `.tsx` file
-3. Rebuild and restart (same as Step 3 above)
+1. Remove the import and usage from `App.tsx`
+2. Delete the source file(s)
+3. Rebuild and restart (same as above)
+4. If removing everything, set `SHOW_EMPTY_STATE = true` in `App.tsx`
 
 ## Syncing shared files
 
-The dashboard reuses UI components, styles, and utilities from the main Vesta app. Run `sync-app.sh` to pull the latest versions into the dashboard:
+The dashboard reuses UI components, styles, and utilities from the main Vesta app. Run `sync-app.sh` to pull the latest versions into the dashboard automatically:
 
 ```bash
 ~/vesta/skills/dashboard/sync-app.sh
 ```
 
-This copies `globals.css`, `lib/utils.ts`, `hooks/use-mobile.ts`, and all `components/ui/*.tsx` from the main app. Run it during initial setup and whenever the main app updates its shared files.
-
 ## UI components
 
-The dashboard uses the same shadcn/ui components as the main Vesta app, synced via `sync-app.sh`. Before creating a widget, check `~/vesta/skills/dashboard/app/src/components/ui/` for what's available and read `~/vesta/skills/dashboard/shadcn/README.md` for usage patterns.
+The dashboard uses the same shadcn/ui components as the main Vesta app, synced via `sync-app.sh`. Before building, check `~/vesta/skills/dashboard/app/src/components/ui/` for what's available and read `~/vesta/skills/dashboard/shadcn/README.md` for usage patterns.
 
 Import from `@/components/ui/<name>`:
 
@@ -126,31 +136,17 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 ```
 
-Styling uses Tailwind CSS with the same theme as the main app. Use semantic color classes like `text-foreground`, `text-muted-foreground`, `bg-primary`, `bg-secondary`, `bg-accent`, `bg-destructive`. The widget container already applies `bg-card border border-border rounded-lg shadow-sm` — don't duplicate those.
+Styling uses Tailwind CSS. Use semantic color classes like `text-foreground`, `text-muted-foreground`, `bg-primary`, `bg-secondary`, `bg-accent`, `bg-destructive`.
 
-Do not run the shadcn CLI — components are synced from the main app.
+## Rules
 
-## Widget rules
-
-- **One file per widget** in `~/vesta/skills/dashboard/app/src/widgets/`
-- **Self-contained**: no shared state between widgets
-- **Use the UI components** from `@/components/ui/` — read them before building widgets
+- **Use the UI components** from `@/components/ui/` — read them before building
 - **State**: `useState` / `useEffect` for local state
 - **No localStorage for data**: the dashboard is accessed from multiple devices. Static data goes in the source, dynamic data comes from skill APIs via `fetch()`
 - **No new dependencies**: only use packages in the dashboard's `package.json`
-
-## Widget sizes
-
-| width | Span | Good for |
-|-------|------|----------|
-| 1     | 1/3  | Counters, stats, toggles |
-| 2     | 2/3  | Charts, lists, calendars |
-| 3     | Full | Timelines, tables |
-
-Height works the same (1 = compact, 2 = tall, 3 = extra tall).
 
 ## Troubleshooting
 
 - **Dashboard not showing?** `screen -ls | grep dashboard`
 - **Check registration:** `curl -sk https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services`
-- **Restart server:** Same as Step 3 in Creating a widget — rebuild, get port from vestad, restart screen
+- **Restart server:** Rebuild, get port from vestad, restart screen (same as "After every change")

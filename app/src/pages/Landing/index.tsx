@@ -32,7 +32,7 @@ export function Landing() {
   };
 
   return (
-    <div className="flex flex-col items-center justify-center flex-1 min-h-0 px-4 gap-5 select-none">
+    <div className="flex flex-col items-center justify-center flex-1 min-h-0 px-page gap-5 select-none">
       <div className="flex flex-col items-center gap-8">
         <div className="flex flex-col items-center gap-1">
           <h1 className="text-4xl font-serif font-medium tracking-tight">

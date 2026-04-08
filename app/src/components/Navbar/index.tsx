@@ -31,7 +31,9 @@ export function Navbar({ center, trailing }: NavbarProps = {}) {
   const measureRef = useCallback((node: HTMLDivElement | null) => {
     if (!node) return;
     const observer = new ResizeObserver(([entry]) => {
-      setNavbarHeight(entry.contentRect.height);
+      const border = entry.borderBoxSize[0];
+      const height = border ? border.blockSize : entry.target.getBoundingClientRect().height;
+      setNavbarHeight(height);
     });
     observer.observe(node);
     return () => observer.disconnect();
@@ -40,56 +42,58 @@ export function Navbar({ center, trailing }: NavbarProps = {}) {
   return (
     <div
       ref={measureRef}
-      className="flex items-center justify-between min-h-11 shrink-0 select-none relative overflow-visible"
+      className="flex shrink-0 flex-col overflow-visible pt-5 select-none"
     >
-      <div className="flex flex-1 items-center">
-        {connected && isHome && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => navigate("/new")}
-              >
-                <Plus data-icon="inline-start" />
-                new agent
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>new agent</TooltipContent>
-          </Tooltip>
-        )}
-        {connected && agents.length > 0 && !isHome && (
-          <ButtonGroup>
+      <div className="relative flex h-11 w-full min-h-0 items-center justify-between">
+        <div className="flex flex-1 items-center">
+          {connected && isHome && (
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
-                  variant="outline"
-                  size="icon-sm"
-                  className="md:size-9"
-                  onClick={() => navigate("/home")}
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => navigate("/new")}
                 >
-                  <Home />
+                  <Plus data-icon="inline-start" />
+                  new agent
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>home</TooltipContent>
+              <TooltipContent>new agent</TooltipContent>
             </Tooltip>
-          </ButtonGroup>
-        )}
-      </div>
-
-      {center && (
-        <div className="absolute left-1/2 top-0 bottom-0 z-[99999] flex -translate-x-1/2 items-center overflow-visible">
-          {center}
+          )}
+          {connected && agents.length > 0 && !isHome && (
+            <ButtonGroup>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="icon-sm"
+                    className="md:size-9"
+                    onClick={() => navigate("/home")}
+                  >
+                    <Home />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>home</TooltipContent>
+              </Tooltip>
+            </ButtonGroup>
+          )}
         </div>
-      )}
 
-      <div className="flex items-center gap-1.5">
-        {trailing ?? (
-          <>
-            {connected && <StatusPill />}
-            {connected && <Settings />}
-          </>
+        {center && (
+          <div className="absolute left-1/2 top-0 bottom-0 z-[99999] flex -translate-x-1/2 items-start justify-center overflow-visible">
+            {center}
+          </div>
         )}
+
+        <div className="flex items-center gap-1.5">
+          {trailing ?? (
+            <>
+              {connected && <StatusPill />}
+              {connected && <Settings />}
+            </>
+          )}
+        </div>
       </div>
     </div>
   );

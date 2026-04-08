@@ -70,6 +70,12 @@ class ChatEvent(_BaseEvent):
     text: str
 
 
+class ServiceUpdateEvent(_BaseEvent):
+    type: tp.Literal["service_update"]
+    service: str
+    action: tp.Literal["registered", "updated", "removed"]
+
+
 type StreamEvent = (
     StatusEvent
     | ToolStartEvent
@@ -81,6 +87,7 @@ type StreamEvent = (
     | SubagentStartEvent
     | SubagentStopEvent
     | ChatEvent
+    | ServiceUpdateEvent
 )
 
 

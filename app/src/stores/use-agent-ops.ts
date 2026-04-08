@@ -22,7 +22,6 @@ interface AgentOpsStore {
   setError: (name: string, error: string) => void;
   clearOp: (name: string) => void;
   removeAgent: (name: string) => void;
-  busyAgentName: () => string | null;
   withOp: (
     name: string,
     op: AgentOperation,
@@ -61,13 +60,6 @@ export const useAgentOps = create<AgentOpsStore>((set, get) => ({
       const { [name]: _, ...rest } = s.states;
       return { states: rest };
     }),
-
-  busyAgentName: () => {
-    for (const [name, state] of Object.entries(get().states)) {
-      if (state.operation !== "idle") return name;
-    }
-    return null;
-  },
 
   withOp: async (name, op, fn, fallback) => {
     const store = get();
