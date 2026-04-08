@@ -96,6 +96,21 @@ screen -dmS whatsapp whatsapp serve --notifications-dir ~/vesta/notifications
 
 All transcription runs in-process — no external scripts or services needed.
 
+## Contact card support
+
+When someone sends a WhatsApp contact card (vCard), it is parsed and stored as:
+
+```
+[Contact: Name — +phonenumber]
+```
+
+The phone number is extracted from the `TEL` field of the vCard. Use `list-received-contacts` to list all received contact cards:
+
+```bash
+whatsapp list-received-contacts
+whatsapp list-received-contacts --to Alex --limit 10
+```
+
 ## Environment variables
 
 | Variable | Default | Description |

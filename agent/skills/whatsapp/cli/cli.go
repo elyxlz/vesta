@@ -616,6 +616,29 @@ func executeCommand(command string, args []string, wac *WhatsAppClient) (interfa
 		}
 		return map[string]interface{}{"pairing_code": code, "phone": phone, "instructions": "Enter this code in WhatsApp > Linked Devices > Link a Device > Link with phone number"}, nil
 
+	case "list-received-contacts":
+		var to string
+		var limit int
+		fs := flag.NewFlagSet("list-received-contacts", flag.ContinueOnError)
+		fs.StringVar(&to, "to", "", "Filter by chat (contact name, phone, or group)")
+		fs.IntVar(&limit, "limit", 50, "Max results")
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		var chatJID string
+		if to != "" {
+			jid, err := wac.ResolveRecipient(to)
+			if err != nil {
+				return nil, fmt.Errorf("failed to resolve chat: %v", err)
+			}
+			chatJID = jid.String()
+		}
+		messages, err := wac.store.ListMessages(nil, nil, "", chatJID, "[Contact:", limit, 0)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{"contacts": messages}, nil
+
 	default:
 		return nil, fmt.Errorf("unknown command: %s", command)
 	}
