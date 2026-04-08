@@ -53,23 +53,24 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
   const conn = getConnection();
   const dashboardUrl =
     status === "ready" && conn
-      ? `${conn.url}/agents/${encodeURIComponent(name)}/dashboard/?token=${encodeURIComponent(conn.accessToken)}&fullscreen=${!!fullscreen}`
+      ? `${conn.url}/agents/${encodeURIComponent(name)}/dashboard/?token=${encodeURIComponent(conn.accessToken)}`
       : null;
 
   const sendContext = useCallback(() => {
     const frame = iframeRef.current?.contentWindow;
     if (!frame) return;
     frame.postMessage({ type: "vesta-theme", dark: resolved() === "dark" }, "*");
+    frame.postMessage({ type: "vesta-layout", fullscreen: !!fullscreen }, "*");
     if (conn) frame.postMessage({
       type: "vesta-auth",
       token: conn.accessToken,
       baseUrl: `${conn.url}/agents/${encodeURIComponent(name)}`,
     }, "*");
-  }, [resolved, conn]);
+  }, [resolved, conn, fullscreen]);
 
   useEffect(() => {
     const handler = (e: MessageEvent) => {
-      if (e.data?.type === "vesta-theme-request" || e.data?.type === "vesta-auth-request") {
+      if (e.data?.type === "vesta-theme-request" || e.data?.type === "vesta-auth-request" || e.data?.type === "vesta-layout-request") {
         sendContext();
       }
     };

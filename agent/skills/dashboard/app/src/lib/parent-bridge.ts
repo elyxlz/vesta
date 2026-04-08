@@ -1,5 +1,16 @@
 let authToken: string | null = null;
 let baseUrl: string | null = null;
+let _fullscreen = false;
+const _layoutListeners: Set<(fullscreen: boolean) => void> = new Set();
+
+export function isFullscreen(): boolean {
+  return _fullscreen;
+}
+
+export function onLayoutChange(cb: (fullscreen: boolean) => void): () => void {
+  _layoutListeners.add(cb);
+  return () => _layoutListeners.delete(cb);
+}
 
 export function getAuthToken(): string | null {
   return authToken;
@@ -31,8 +42,13 @@ export function initParentBridge() {
       authToken = event.data.token;
       baseUrl = event.data.baseUrl;
     }
+    if (event.data?.type === "vesta-layout") {
+      _fullscreen = !!event.data.fullscreen;
+      _layoutListeners.forEach((cb) => cb(_fullscreen));
+    }
   });
 
   window.parent.postMessage({ type: "vesta-theme-request" }, "*");
   window.parent.postMessage({ type: "vesta-auth-request" }, "*");
+  window.parent.postMessage({ type: "vesta-layout-request" }, "*");
 }

@@ -13,17 +13,21 @@
 // </TabsContent>
 // </Tabs>
 
+import { useState, useEffect } from "react";
 import { LayoutDashboard } from "lucide-react";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "./components/ui/empty";
 import { FadeScroll } from "./components/FadeScroll";
+import { isFullscreen as getFullscreen, onLayoutChange } from "./lib/parent-bridge";
 
 // --- Empty state toggle ---
 // Set to false once custom code & widgets are added.
 const SHOW_EMPTY_STATE = true;
 
-const isFullscreen = new URLSearchParams(window.location.search).get("fullscreen") === "true";
-
 export default function App() {
+  const [fullscreen, setFullscreen] = useState(getFullscreen);
+
+  useEffect(() => onLayoutChange(setFullscreen), []);
+  
   if (SHOW_EMPTY_STATE) {
     return (
       <Empty className="flex-1 h-full w-full border-0">
@@ -42,7 +46,7 @@ export default function App() {
 
   return (
     <FadeScroll className="w-full h-full overflow-y-auto">
-      <div className={`flex flex-col gap-4 pb-page ${isFullscreen ? "px-page" : "pr-4"}`}>
+      <div className={`flex flex-col gap-4 pb-page ${fullscreen ? "px-page" : "pr-4"}`}>
         {/* your custom code and widgets and other components goes here */}
       </div>
     </FadeScroll>
