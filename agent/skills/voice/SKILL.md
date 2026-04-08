@@ -1,7 +1,7 @@
 ---
 name: voice
 description: Use when the user asks to enable/disable voice input/output, set up transcription or text-to-speech, rotate API keys, add custom voices, adjust the transcription sensitivity, or talks about the microphone/speaker in the Vesta app. This skill manages ~/.voice/voice_config.json — the single source of truth for STT/TTS keys, voice selection, keyterms, and thresholds. Use enable/disable to toggle without removing configuration; use clear only to wipe keys entirely.
-serve: see SETUP.md
+serve: PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H 'Content-Type: application/json' -d '{"name":"voice"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])") && SKILL_PORT=$PORT PYTHONPATH=~/vesta/skills screen -dmS voice uv run python -m voice.server
 ---
 
 # Voice setup (STT/TTS)

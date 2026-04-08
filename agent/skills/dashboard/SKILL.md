@@ -1,7 +1,7 @@
 ---
 name: dashboard
 description: Use when you need to build, modify, or customize anything on the user's dashboard — widgets, layouts, pages, views, or any custom UI.
-serve: see SETUP.md
+serve: PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H 'Content-Type: application/json' -d '{"name":"dashboard"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])") && screen -dmS dashboard sh -c "cd ~/vesta/skills/dashboard/app && npx vite preview --port $PORT --host 0.0.0.0"
 ---
 
 # Dashboard

@@ -18,7 +18,7 @@ use tokio::sync::{Mutex, RwLock};
 use crate::{docker, jwt, self_update, update_check};
 
 const API_KEY_BYTES: usize = 32;
-const PROXY_MAX_BODY_BYTES: usize = 10 * 1024 * 1024; // 10 MB
+pub(crate) const PROXY_MAX_BODY_BYTES: usize = 10 * 1024 * 1024; // 10 MB
 
 const RESERVED_SERVICE_NAMES: &[&str] = &["ws", "history", "services", "search"];
 const AUTH_SESSION_TIMEOUT_SECS: u64 = 600;
@@ -131,7 +131,7 @@ struct AuthSession {
 
 pub struct AppState {
     api_key: String,
-    vestad_port: u16,
+    env_file: std::path::PathBuf,
     auth_sessions: Mutex<HashMap<String, AuthSession>>,
     agent_locks: Mutex<HashMap<String, Arc<tokio::sync::RwLock<()>>>>,
     tunnel_url: Mutex<Option<String>>,
@@ -144,11 +144,11 @@ pub struct AppState {
 }
 
 impl AppState {
-    fn new(api_key: String, vestad_port: u16, tunnel_url: Option<String>) -> Self {
+    fn new(api_key: String, env_file: std::path::PathBuf, tunnel_url: Option<String>) -> Self {
         let service_registry = load_service_registry();
         Self {
             api_key,
-            vestad_port,
+            env_file,
             auth_sessions: Mutex::new(HashMap::new()),
             agent_locks: Mutex::new(HashMap::new()),
             tunnel_url: Mutex::new(tunnel_url),
@@ -183,12 +183,6 @@ impl AppState {
 type SharedState = Arc<AppState>;
 
 // --- Auth middleware ---
-
-/// Check if a path matches `/agents/{name}/dashboard/...` for a static asset (not the root).
-fn is_dashboard_asset(path: &str) -> bool {
-    let segments: Vec<&str> = path.trim_start_matches('/').splitn(4, '/').collect();
-    segments.len() >= 4 && segments[0] == "agents" && segments[2] == "dashboard"
-}
 
 async fn auth_middleware(
     State(state): State<SharedState>,
@@ -230,14 +224,7 @@ async fn check_auth(
         }
     }
 
-    // Dashboard asset sub-resources (JS/CSS bundles) are loaded by the browser
-    // after the initial authenticated HTML request. They can't carry tokens,
-    // so we skip auth for them — they're just static build artifacts.
-    if is_dashboard_asset(request.uri().path()) {
-        return next.run(request).await;
-    }
-
-    // Check Bearer header first, then query param ?token= (for WebSocket)
+    // Check Bearer header first, then query param ?token= (for WebSocket / dashboard assets)
     let bearer_ok = headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
@@ -438,9 +425,9 @@ async fn create_agent_handler(
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
-    let vestad_port = state.vestad_port;
+    let env_file = state.env_file.clone();
     let name =
-        tokio::task::spawn_blocking(move || docker::create_agent(&name, vestad_port))
+        tokio::task::spawn_blocking(move || docker::create_agent(&name, &env_file))
             .await
             .unwrap()
             .map_err(map_docker_err)?;
@@ -562,8 +549,8 @@ async fn rebuild_agent_handler(
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
-    let vestad_port = state.vestad_port;
-    tokio::task::spawn_blocking(move || docker::rebuild_agent(&name, vestad_port))
+    let env_file = state.env_file.clone();
+    tokio::task::spawn_blocking(move || docker::rebuild_agent(&name, &env_file))
         .await
         .unwrap()
         .map_err(map_docker_err)?;
@@ -990,16 +977,16 @@ async fn agent_proxy_handler(
     // Check if the first path segment matches a registered service.
     // If so, route directly to that service's port with the prefix stripped.
     let first_segment = path.split('/').next().unwrap_or("");
-    let (target_port, stripped_path) = if !first_segment.is_empty() {
+    let (target_port, stripped_path, is_service) = if !first_segment.is_empty() {
         if let Some(service_port) = resolve_service_port(&state, &name, first_segment).await {
             let rest = &path[first_segment.len()..];
             let rest = if rest.is_empty() { "/" } else { rest };
-            (service_port, rest.to_string())
+            (service_port, rest.to_string(), true)
         } else {
-            (agent_port, format!("/{}", path))
+            (agent_port, format!("/{}", path), false)
         }
     } else {
-        (agent_port, format!("/{}", path))
+        (agent_port, format!("/{}", path), false)
     };
 
     // Append query string.
@@ -1032,7 +1019,23 @@ async fn agent_proxy_handler(
         }))
     } else {
         drop(guard);
-        forward_http_to_container(&state.http_client, target_port, &target_path, request).await
+        // For service root HTML (e.g. /agents/{name}/dashboard/), rewrite
+        // relative asset URLs to carry the auth token so sub-resource loads
+        // pass through auth.
+        let is_service_root = is_service
+            && path.strip_suffix('/').unwrap_or(&path) == first_segment;
+        let token = if is_service_root {
+            crate::service_proxy::extract_token(request.uri())
+        } else {
+            None
+        };
+        let resp =
+            forward_http_to_container(&state.http_client, target_port, &target_path, request)
+                .await?;
+        match token {
+            Some(token) => crate::service_proxy::rewrite_asset_urls(resp, &token).await,
+            None => Ok(resp),
+        }
     }
 }
 
@@ -1144,8 +1147,8 @@ async fn restore_backup_handler(
     tracing::info!(agent = %path.name, backup_id = %path.backup_id, "restoring backup");
     let name = path.name.clone();
     let backup_id = path.backup_id.clone();
-    let vestad_port = state.vestad_port;
-    tokio::task::spawn_blocking(move || docker::restore_backup(&name, &backup_id, vestad_port))
+    let env_file = state.env_file.clone();
+    tokio::task::spawn_blocking(move || docker::restore_backup(&name, &backup_id, &env_file))
         .await
         .unwrap()
         .map_err(map_docker_err)?;
@@ -1226,6 +1229,14 @@ async fn set_auto_backup_handler(
 pub fn write_port_file(config_dir: &std::path::Path, port: u16) {
     let port_path = config_dir.join("port");
     std::fs::write(&port_path, port.to_string()).ok();
+}
+
+/// Write a sourceable env file that containers read via bind mount.
+/// Adding new vars here makes them available to all containers without rebuild.
+pub fn write_env_file(config_dir: &std::path::Path, port: u16) {
+    let env_path = config_dir.join("container.env");
+    let content = format!("VESTAD_PORT={port}\n");
+    std::fs::write(&env_path, content).ok();
 }
 
 // --- PID file ---
@@ -1471,8 +1482,9 @@ fn spawn_update_check_task(state: SharedState) {
 
 // --- Server start ---
 
-pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: String, tunnel_url: Option<String>) {
-    let state = Arc::new(AppState::new(api_key, port, tunnel_url));
+pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: String, tunnel_url: Option<String>, config_dir: std::path::PathBuf) {
+    let env_file = config_dir.join("container.env");
+    let state = Arc::new(AppState::new(api_key, env_file, tunnel_url));
     let app = build_router(state.clone());
     spawn_auto_backup_task(state.clone());
     spawn_update_check_task(state);

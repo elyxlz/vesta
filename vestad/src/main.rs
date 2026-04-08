@@ -7,6 +7,7 @@ mod docker;
 mod jwt;
 mod self_update;
 mod serve;
+mod service_proxy;
 mod systemd;
 mod tunnel;
 mod types;
@@ -122,12 +123,6 @@ fn config_dir() -> std::path::PathBuf {
     std::path::PathBuf::from(home).join(".config/vesta/vestad")
 }
 
-fn read_vestad_port(config_dir: &std::path::Path) -> u16 {
-    std::fs::read_to_string(config_dir.join("port"))
-        .ok()
-        .and_then(|s| s.trim().parse().ok())
-        .unwrap_or_else(|| die("could not read vestad port from config — is vestad running?"))
-}
 
 fn print_server_info(tunnel_url: Option<&str>, local_url: &str, api_key: &str) {
     eprintln!();
@@ -170,6 +165,7 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool) {
 
     let _pid_lock = serve::acquire_pid_lock(&config).unwrap_or_else(|e| die(&e));
     serve::write_port_file(&config, port);
+    serve::write_env_file(&config, port);
 
     let api_key = serve::ensure_api_key(&config);
     let (cert_pem, key_pem, _fingerprint) = serve::ensure_tls(&config);
@@ -209,7 +205,7 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool) {
                 None
             };
 
-            serve::run_server(port, api_key, cert_pem, key_pem, tunnel_url).await;
+            serve::run_server(port, api_key, cert_pem, key_pem, tunnel_url, config.clone()).await;
 
             if let Some(mut child) = tunnel_child {
                 child.kill().await.ok();
@@ -404,8 +400,8 @@ fn main() {
 
                 eprintln!("creating agent '{}'...", name);
                 let port = find_available_port().unwrap_or_else(|| die("no available port"));
-                let vestad_port = read_vestad_port(&config_dir());
-                docker::create_container(&cname, loaded_image, port, &name, vestad_port)
+                let env_file = config_dir().join("container.env");
+                docker::create_container(&cname, loaded_image, port, &name, &env_file)
                     .unwrap_or_else(|e| die(&e));
 
                 if !docker::docker_ok(&["start", &cname]) {
