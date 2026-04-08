@@ -76,6 +76,53 @@ fn get_zone_domain(env: &CloudflareEnv) -> Result<String, String> {
         .ok_or_else(|| "failed to get domain name from zone".to_string())
 }
 
+fn delete_tunnel_if_exists(env: &CloudflareEnv, tunnel_name: &str) {
+    let list_url = format!(
+        "{}/accounts/{}/cfd_tunnel?name={}",
+        CF_API_BASE, env.account_id, tunnel_name
+    );
+    let resp = match cf_request("GET", &list_url, &env.api_token, None) {
+        Ok(r) => r,
+        Err(_) => return,
+    };
+    if let Some(tunnels) = resp["result"].as_array() {
+        for tunnel in tunnels {
+            if tunnel["deleted_at"].is_null() {
+                if let Some(id) = tunnel["id"].as_str() {
+                    let del_url = format!("{}/accounts/{}/cfd_tunnel/{}", CF_API_BASE, env.account_id, id);
+                    tracing::info!(tunnel_id = %id, "deleting stale tunnel");
+                    cf_request("DELETE", &del_url, &env.api_token, None).ok();
+                }
+            }
+        }
+    }
+}
+
+fn delete_dns_record_if_exists(env: &CloudflareEnv, subdomain: &str) {
+    let domain = match get_zone_domain(env) {
+        Ok(d) => d,
+        Err(_) => return,
+    };
+    let fqdn = format!("{}.{}", subdomain, domain);
+    let list_url = format!(
+        "{}/zones/{}/dns_records?type=CNAME&name={}",
+        CF_API_BASE, env.zone_id, fqdn
+    );
+    let resp = match cf_request("GET", &list_url, &env.api_token, None) {
+        Ok(r) => r,
+        Err(_) => return,
+    };
+    if let Some(records) = resp["result"].as_array() {
+        for record in records {
+            if let Some(id) = record["id"].as_str() {
+                let del_url = format!("{}/zones/{}/dns_records/{}", CF_API_BASE, env.zone_id, id);
+                tracing::info!(record_id = %id, "deleting stale DNS record");
+                cf_request("DELETE", &del_url, &env.api_token, None).ok();
+            }
+        }
+    }
+}
+
 fn tunnel_config_path(config_dir: &Path) -> PathBuf {
     config_dir.join("tunnel.json")
 }
@@ -86,12 +133,49 @@ pub fn get_tunnel_config(config_dir: &Path) -> Option<TunnelConfig> {
     serde_json::from_str(&data).ok()
 }
 
-pub fn generate_subdomain() -> String {
-    let hostname = gethostname().to_lowercase().replace(|c: char| !c.is_alphanumeric(), "-");
-    let hostname = hostname.trim_matches('-');
-    let short = if hostname.len() > 20 { &hostname[..20] } else { hostname };
-    let suffix: String = (0..4).map(|_| format!("{:x}", rand::random::<u8>() & 0xf)).collect();
-    format!("{}-{}", short, suffix)
+const ANIMALS: &[&str] = &[
+    "alpaca", "badger", "beaver", "bison", "bobcat", "camel", "capybara", "cardinal",
+    "caribou", "chameleon", "cheetah", "chinchilla", "chipmunk", "cobra", "condor",
+    "cougar", "coyote", "crane", "cricket", "crow", "dingo", "dolphin", "donkey",
+    "eagle", "egret", "elk", "falcon", "ferret", "finch", "flamingo", "fox",
+    "gazelle", "gecko", "gopher", "grizzly", "grouse", "gull", "hamster", "hawk",
+    "hedgehog", "heron", "hornet", "hyena", "ibex", "iguana", "impala", "jackal",
+    "jaguar", "jay", "kestrel", "kingfisher", "kiwi", "koala", "komodo", "lark",
+    "lemur", "leopard", "lion", "llama", "lobster", "lynx", "macaw", "mamba",
+    "manatee", "mantis", "marmot", "marten", "merlin", "mink", "mongoose", "moose",
+    "narwhal", "newt", "ocelot", "okapi", "opossum", "osprey", "otter", "owl",
+    "panda", "panther", "parrot", "pelican", "penguin", "phoenix", "pika", "piranha",
+    "puma", "python", "quail", "raven", "robin", "salmon", "scorpion", "shark",
+    "shrike", "sparrow", "squid", "stork", "swift", "tapir", "tern", "tiger",
+    "toucan", "turtle", "viper", "vulture", "walrus", "weasel", "whale", "wolf",
+    "wolverine", "wombat", "wren", "yak", "zebra",
+];
+
+fn animal_for_user(username: &str, offset: usize) -> &'static str {
+    let mut hash: u64 = 5381;
+    for byte in username.bytes() {
+        hash = hash.wrapping_mul(33).wrapping_add(byte as u64);
+    }
+    ANIMALS[(hash as usize + offset) % ANIMALS.len()]
+}
+
+fn current_user() -> String {
+    std::env::var("USER")
+        .or_else(|_| std::env::var("LOGNAME"))
+        .unwrap_or_else(|_| "unknown".into())
+}
+
+/// Sanitize a string to only contain lowercase alphanumeric characters and hyphens.
+fn sanitize(s: &str) -> String {
+    let cleaned: String = s.to_lowercase().replace(|c: char| !c.is_alphanumeric(), "-");
+    cleaned.trim_matches('-').to_string()
+}
+
+fn generate_subdomain(offset: usize) -> String {
+    let animal = animal_for_user(&current_user(), offset);
+    let hostname = sanitize(&gethostname());
+    let short = if hostname.len() > 20 { &hostname[..20] } else { &hostname };
+    format!("{}-{}", animal, short.trim_end_matches('-'))
 }
 
 fn gethostname() -> String {
@@ -102,13 +186,58 @@ fn gethostname() -> String {
     if output.is_empty() { "vesta".to_string() } else { output }
 }
 
+const SUBDOMAIN_MAX_ATTEMPTS: usize = 10;
+
 pub fn ensure_tunnel(config_dir: &Path) -> Result<TunnelConfig, String> {
+    let preferred = generate_subdomain(0);
+
+    // Reuse existing tunnel if it uses any of our candidate animals
     if let Some(tc) = get_tunnel_config(config_dir) {
-        return Ok(tc);
+        let current = tc.hostname.split('.').next().unwrap_or("");
+        if is_our_subdomain(current) {
+            return Ok(tc);
+        }
+        tracing::info!(old = %current, new = %preferred, "tunnel subdomain changed, recreating");
+        if let Err(e) = destroy_tunnel(config_dir) {
+            tracing::warn!("failed to destroy old tunnel: {e}");
+            std::fs::remove_file(tunnel_config_path(config_dir)).ok();
+        }
     }
-    let subdomain = generate_subdomain();
-    tracing::info!(subdomain = %subdomain, "auto-creating tunnel");
-    setup_tunnel(config_dir, &subdomain)
+
+    let env = cf_env()?;
+
+    for attempt in 0..SUBDOMAIN_MAX_ATTEMPTS {
+        let subdomain = generate_subdomain(attempt);
+        let tunnel_name = format!("vesta-{}", subdomain);
+
+        if tunnel_exists(&env, &tunnel_name) {
+            tracing::info!(subdomain = %subdomain, "tunnel name already taken, trying next");
+            continue;
+        }
+
+        tracing::info!(subdomain = %subdomain, "creating tunnel");
+        return setup_tunnel(config_dir, &subdomain);
+    }
+
+    Err(format!("could not find available tunnel subdomain after {SUBDOMAIN_MAX_ATTEMPTS} attempts"))
+}
+
+/// Check if a subdomain matches any of our candidate animal-hostname combos.
+fn is_our_subdomain(subdomain: &str) -> bool {
+    (0..SUBDOMAIN_MAX_ATTEMPTS).any(|offset| generate_subdomain(offset) == subdomain)
+}
+
+/// Check if an active (non-deleted) tunnel with this name already exists.
+fn tunnel_exists(env: &CloudflareEnv, tunnel_name: &str) -> bool {
+    let url = format!(
+        "{}/accounts/{}/cfd_tunnel?name={}&is_deleted=false",
+        CF_API_BASE, env.account_id, tunnel_name
+    );
+    let resp = match cf_request("GET", &url, &env.api_token, None) {
+        Ok(r) => r,
+        Err(_) => return false,
+    };
+    resp["result"].as_array().is_some_and(|arr| !arr.is_empty())
 }
 
 pub fn setup_tunnel(config_dir: &Path, subdomain: &str) -> Result<TunnelConfig, String> {
@@ -118,6 +247,8 @@ pub fn setup_tunnel(config_dir: &Path, subdomain: &str) -> Result<TunnelConfig, 
     let tunnel_name = format!("vesta-{}", subdomain);
 
     tracing::info!(tunnel = %tunnel_name, "creating tunnel");
+
+    delete_tunnel_if_exists(&env, &tunnel_name);
 
     let create_url = format!("{}/accounts/{}/cfd_tunnel", CF_API_BASE, env.account_id);
     let tunnel_secret: String = (0..32).map(|_| format!("{:02x}", rand::random::<u8>())).collect();
@@ -142,6 +273,8 @@ pub fn setup_tunnel(config_dir: &Path, subdomain: &str) -> Result<TunnelConfig, 
         .to_string();
 
     tracing::info!(hostname = %hostname, tunnel_id = %tunnel_id, "creating DNS record");
+
+    delete_dns_record_if_exists(&env, subdomain);
 
     let dns_url = format!("{}/zones/{}/dns_records", CF_API_BASE, env.zone_id);
     let dns_resp = cf_request("POST", &dns_url, &env.api_token, Some(serde_json::json!({
@@ -296,6 +429,48 @@ fn which(name: &str) -> Result<PathBuf, ()> {
         }
     }
     Err(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn animal_for_user_is_deterministic() {
+        let a1 = animal_for_user("alice", 0);
+        let a2 = animal_for_user("alice", 0);
+        assert_eq!(a1, a2);
+    }
+
+    #[test]
+    fn animal_offset_changes_result() {
+        let a = animal_for_user("alice", 0);
+        let b = animal_for_user("alice", 1);
+        assert_ne!(a, b, "different offsets should give different animals");
+    }
+
+    #[test]
+    fn animal_is_from_list() {
+        for name in ["alice", "bob", "root", "deploy", "test-user", "x"] {
+            let animal = animal_for_user(name, 0);
+            assert!(ANIMALS.contains(&animal), "{name} mapped to '{animal}' which is not in ANIMALS");
+        }
+    }
+
+    #[test]
+    fn subdomain_format_is_animal_dash_hostname() {
+        let sub = generate_subdomain(0);
+        assert!(sub.contains('-'), "subdomain should contain a dash: {sub}");
+        let animal_part = sub.split('-').next().unwrap();
+        assert!(ANIMALS.contains(&animal_part), "first part should be an animal: {sub}");
+    }
+
+    #[test]
+    fn sanitize_strips_special_chars() {
+        assert_eq!(sanitize("Alice.Bob"), "alice-bob");
+        assert_eq!(sanitize("--test--"), "test");
+        assert_eq!(sanitize("a_b@c"), "a-b-c");
+    }
 }
 
 fn base64_encode(input: &str) -> String {

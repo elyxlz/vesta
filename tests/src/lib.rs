@@ -1,7 +1,6 @@
 pub mod client;
 pub mod types;
 
-use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::LazyLock;
@@ -11,14 +10,44 @@ use client::Client;
 use types::ServerConfig;
 
 pub static SERVER: LazyLock<TestServer> = LazyLock::new(|| {
+    kill_orphan_vestads();
     TestServer::start().unwrap_or_else(|e| panic!("failed to start test server: {e}"))
 });
+
+/// Kill vestad processes left behind by previous test runs (those whose HOME is a
+/// temp directory). Ignores the user's real vestad instance.
+fn kill_orphan_vestads() {
+    let Ok(output) = Command::new("sh")
+        .args(["-c", "ps -eo pid,args | grep '[v]estad serve'"])
+        .output()
+    else {
+        return;
+    };
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        let Some(pid_str) = parts.first() else { continue };
+        let Ok(pid) = pid_str.parse::<u32>() else { continue };
+
+        // Check if the process's HOME is a temp directory
+        let environ_path = format!("/proc/{pid}/environ");
+        let Ok(environ) = std::fs::read(&environ_path) else { continue };
+        let is_tmp_home = environ
+            .split(|&b| b == 0)
+            .filter_map(|entry| std::str::from_utf8(entry).ok())
+            .any(|entry| {
+                entry.starts_with("HOME=") && (entry.contains("/tmp/") || entry.contains("/tmp."))
+            });
+        if is_tmp_home {
+            let _ = Command::new("kill").arg("-9").arg(pid_str).output();
+        }
+    }
+}
 
 pub struct TestServer {
     process: Option<Child>,
     _tmpdir: tempfile::TempDir,
     pub config: ServerConfig,
-    #[allow(dead_code)]
     pub port: u16,
 }
 
@@ -30,14 +59,13 @@ impl TestServer {
 
         let tmpdir = tempfile::TempDir::new().map_err(|e| format!("tmpdir: {e}"))?;
         let home = tmpdir.path().to_path_buf();
-        let port = free_port()?;
         let vestad = find_vestad()?;
 
         let real_home = std::env::var("HOME").unwrap_or_default();
         let docker_config = format!("{}/.docker", real_home);
 
         let process = Command::new(&vestad)
-            .args(["serve", "--standalone", "--port", &port.to_string()])
+            .args(["serve", "--standalone", "--no-tunnel"])
             .env("HOME", &home)
             .env("DOCKER_CONFIG", &docker_config)
             .stdout(Stdio::null())
@@ -45,19 +73,25 @@ impl TestServer {
             .spawn()
             .map_err(|e| format!("spawn vestad: {e}"))?;
 
-        let addr: std::net::SocketAddr = ([127, 0, 0, 1], port).into();
+        let config_dir = home.join(".config/vesta/vestad");
+        let port_path = config_dir.join("port");
+
         let deadline = std::time::Instant::now() + Duration::from_secs(30);
-        loop {
-            if std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_ok() {
-                break;
+        let port = loop {
+            if let Ok(content) = std::fs::read_to_string(&port_path) {
+                if let Ok(p) = content.trim().parse::<u16>() {
+                    let addr: std::net::SocketAddr = ([127, 0, 0, 1], p).into();
+                    if std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_ok() {
+                        break p;
+                    }
+                }
             }
             if std::time::Instant::now() > deadline {
                 return Err("vestad did not start within 30s".into());
             }
             std::thread::sleep(Duration::from_millis(100));
-        }
+        };
 
-        let config_dir = home.join(".config/vesta/vestad");
         let api_key = std::fs::read_to_string(config_dir.join("api-key"))
             .map_err(|e| format!("read api-key: {e}"))?
             .trim()
@@ -82,6 +116,10 @@ impl TestServer {
 
     pub fn client(&self) -> Client {
         Client::new(&self.config)
+    }
+
+    pub fn _tmpdir_path(&self) -> &std::path::Path {
+        self._tmpdir.path()
     }
 }
 
@@ -113,11 +151,6 @@ impl Drop for TestAgent<'_> {
         let _ = self.client.stop_agent(&self.name);
         let _ = self.client.destroy_agent(&self.name);
     }
-}
-
-fn free_port() -> Result<u16, String> {
-    let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| format!("bind: {e}"))?;
-    Ok(listener.local_addr().map_err(|e| format!("addr: {e}"))?.port())
 }
 
 pub fn find_vestad() -> Result<PathBuf, String> {

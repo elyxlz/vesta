@@ -77,7 +77,7 @@ screen -S dashboard -X quit 2>/dev/null
 screen -dmS dashboard sh -c "cd ~/vesta/skills/dashboard/app && npx vite preview --port $PORT --host 0.0.0.0"
 # Wait for the server to be ready before notifying the app
 for i in $(seq 1 20); do curl -s -o /dev/null http://localhost:$PORT && break; sleep 0.5; done
-curl -s -X POST http://localhost:$WS_PORT/events/service-update \
+curl -s -X POST "http://localhost:$WS_PORT/events/service-update?agent_token=$AGENT_TOKEN" \
   -H 'Content-Type: application/json' -d '{"service":"dashboard","action":"updated"}'
 ```
 

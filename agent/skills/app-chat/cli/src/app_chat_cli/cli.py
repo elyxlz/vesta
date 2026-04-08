@@ -15,12 +15,18 @@ from app_chat_cli.daemon import cmd_serve
 
 
 def _default_ws_url() -> str:
-    port = os.environ.get("WS_PORT", "7865")
+    port = os.environ.get("WS_PORT")
+    if not port:
+        print("error: WS_PORT environment variable is not set", file=sys.stderr)
+        sys.exit(1)
     return f"ws://localhost:{port}/ws"
 
 
 def _default_http_url() -> str:
-    port = os.environ.get("WS_PORT", "7865")
+    port = os.environ.get("WS_PORT")
+    if not port:
+        print("error: WS_PORT environment variable is not set", file=sys.stderr)
+        sys.exit(1)
     return f"http://localhost:{port}"
 
 

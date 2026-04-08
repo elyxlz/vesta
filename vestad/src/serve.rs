@@ -131,7 +131,7 @@ struct AuthSession {
 
 pub struct AppState {
     api_key: String,
-    env_file: std::path::PathBuf,
+    env_config: docker::AgentEnvConfig,
     auth_sessions: Mutex<HashMap<String, AuthSession>>,
     agent_locks: Mutex<HashMap<String, Arc<tokio::sync::RwLock<()>>>>,
     tunnel_url: Mutex<Option<String>>,
@@ -144,11 +144,11 @@ pub struct AppState {
 }
 
 impl AppState {
-    fn new(api_key: String, env_file: std::path::PathBuf, tunnel_url: Option<String>) -> Self {
+    fn new(api_key: String, env_config: docker::AgentEnvConfig, tunnel_url: Option<String>) -> Self {
         let service_registry = load_service_registry();
         Self {
             api_key,
-            env_file,
+            env_config,
             auth_sessions: Mutex::new(HashMap::new()),
             agent_locks: Mutex::new(HashMap::new()),
             tunnel_url: Mutex::new(tunnel_url),
@@ -350,7 +350,10 @@ fn map_docker_err(e: docker::DockerError) -> (StatusCode, Json<serde_json::Value
 // --- Handlers ---
 
 async fn health() -> Json<serde_json::Value> {
-    Json(serde_json::json!({"ok": true}))
+    let user = std::env::var("USER")
+        .or_else(|_| std::env::var("LOGNAME"))
+        .unwrap_or_else(|_| "unknown".into());
+    Json(serde_json::json!({"ok": true, "user": user}))
 }
 
 async fn version(State(state): State<SharedState>) -> Json<serde_json::Value> {
@@ -400,8 +403,11 @@ async fn tunnel_handler(
     }
 }
 
-async fn list_agents_handler() -> impl IntoResponse {
-    let agents = tokio::task::spawn_blocking(docker::list_agents)
+async fn list_agents_handler(
+    State(state): State<SharedState>,
+) -> impl IntoResponse {
+    let agents_dir = state.env_config.agents_dir.clone();
+    let agents = tokio::task::spawn_blocking(move || docker::list_agents(&agents_dir))
         .await
         .unwrap();
     Json(agents)
@@ -425,9 +431,9 @@ async fn create_agent_handler(
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
-    let env_file = state.env_file.clone();
+    let env_config = state.env_config.clone();
     let name =
-        tokio::task::spawn_blocking(move || docker::create_agent(&name, &env_file))
+        tokio::task::spawn_blocking(move || docker::create_agent(&name, &env_config))
             .await
             .unwrap()
             .map_err(map_docker_err)?;
@@ -442,9 +448,11 @@ async fn create_agent_handler(
 }
 
 async fn agent_status_handler(
+    State(state): State<SharedState>,
     Path(name): Path<String>,
 ) -> Result<Json<docker::StatusJson>, (StatusCode, Json<serde_json::Value>)> {
-    let status = tokio::task::spawn_blocking(move || docker::get_status(&name))
+    let agents_dir = state.env_config.agents_dir.clone();
+    let status = tokio::task::spawn_blocking(move || docker::get_status(&name, &agents_dir))
         .await
         .unwrap()
         .map_err(map_docker_err)?;
@@ -528,7 +536,8 @@ async fn destroy_agent_handler(
     let _guard = lock.write().await;
 
     let docker_name = name.clone();
-    tokio::task::spawn_blocking(move || docker::destroy_agent(&docker_name))
+    let agents_dir = state.env_config.agents_dir.clone();
+    tokio::task::spawn_blocking(move || docker::destroy_agent(&docker_name, &agents_dir))
         .await
         .unwrap()
         .map_err(map_docker_err)?;
@@ -549,8 +558,8 @@ async fn rebuild_agent_handler(
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
-    let env_file = state.env_file.clone();
-    tokio::task::spawn_blocking(move || docker::rebuild_agent(&name, &env_file))
+    let env_config = state.env_config.clone();
+    tokio::task::spawn_blocking(move || docker::rebuild_agent(&name, &env_config))
         .await
         .unwrap()
         .map_err(map_docker_err)?;
@@ -563,11 +572,12 @@ struct WaitReadyQuery {
 }
 
 async fn wait_ready_handler(
+    State(state): State<SharedState>,
     Path(name): Path<String>,
     Query(query): Query<WaitReadyQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let timeout = query.timeout.unwrap_or(30);
-    docker::wait_ready_async(&name, timeout)
+    docker::wait_ready_async(&name, timeout, &state.env_config.agents_dir)
         .await
         .map_err(|e| err_response(StatusCode::SERVICE_UNAVAILABLE, &e.to_string()))?;
     Ok(ok_json())
@@ -747,12 +757,17 @@ async fn logs_handler(
 
 // --- WebSocket proxy (used by agent wildcard) ---
 
-async fn ws_proxy(client_ws: axum::extract::ws::WebSocket, agent_port: u16, path: &str) {
+async fn ws_proxy(client_ws: axum::extract::ws::WebSocket, agent_port: u16, path: &str, agent_token: Option<&str>) {
     use axum::extract::ws::Message as AxumMsg;
     use futures_util::{SinkExt, StreamExt};
     use tokio_tungstenite::tungstenite::Message as TungMsg;
 
-    let url = format!("ws://localhost:{}{}", agent_port, path);
+    let url = if let Some(token) = agent_token {
+        let sep = if path.contains('?') { "&" } else { "?" };
+        format!("ws://localhost:{}{}{}agent_token={}", agent_port, path, sep, token)
+    } else {
+        format!("ws://localhost:{}{}", agent_port, path)
+    };
     let agent_ws = match tokio_tungstenite::connect_async(&url).await {
         Ok((ws, _)) => ws,
         Err(e) => {
@@ -880,10 +895,23 @@ fn all_registered_ports(registry: &HashMap<String, HashMap<String, u16>>) -> Vec
     registry.values().flat_map(|services| services.values().copied()).collect()
 }
 
-/// Find a free port not used by any registered service.
+const SERVICE_PORT_ALLOC_RETRIES: usize = 5;
+
+/// Find a free port not used by any registered service or other process.
+/// Uses OS-assigned ports with retries to avoid races with other vestad instances.
 fn allocate_service_port(registry: &HashMap<String, HashMap<String, u16>>) -> Option<u16> {
     let used = all_registered_ports(registry);
-    (SERVICE_PORT_MIN..=SERVICE_PORT_MAX).find(|p| !used.contains(p))
+    for _ in 0..SERVICE_PORT_ALLOC_RETRIES {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).ok()?;
+        let port = listener.local_addr().ok()?.port();
+        if port >= SERVICE_PORT_MIN && !used.contains(&port) {
+            return Some(port);
+        }
+    }
+    // Fallback: linear scan (slower but guaranteed if ports exist)
+    (SERVICE_PORT_MIN..=SERVICE_PORT_MAX).find(|p| {
+        !used.contains(p) && std::net::TcpListener::bind(("127.0.0.1", *p)).is_ok()
+    })
 }
 
 async fn register_service_handler(
@@ -969,10 +997,13 @@ async fn agent_proxy_handler(
         .await
         .map_err(map_join_err)?
         .map_err(map_docker_err)?;
-    let cname_clone = cname.clone();
-    let agent_port = tokio::task::spawn_blocking(move || docker::get_container_port(&cname_clone))
+    let agents_dir = state.env_config.agents_dir.clone();
+    let agent_name = name.clone();
+    let (agent_port, agent_token) = tokio::task::spawn_blocking(move || docker::read_agent_port_and_token(&agent_name, &agents_dir))
         .await
         .map_err(map_join_err)?;
+    let agent_port = agent_port
+        .ok_or_else(|| err_response(StatusCode::INTERNAL_SERVER_ERROR, "agent has no port"))?;
 
     // Check if the first path segment matches a registered service.
     // If so, route directly to that service's port with the prefix stripped.
@@ -1013,15 +1044,13 @@ async fn agent_proxy_handler(
                 ));
             }
         };
+        let ws_token = agent_token.clone();
         Ok(ws.on_upgrade(move |socket| async move {
             drop(guard);
-            ws_proxy(socket, target_port, &target_path).await;
+            ws_proxy(socket, target_port, &target_path, ws_token.as_deref()).await;
         }))
     } else {
         drop(guard);
-        // For service root HTML (e.g. /agents/{name}/dashboard/), rewrite
-        // relative asset URLs to carry the auth token so sub-resource loads
-        // pass through auth.
         let is_service_root = is_service
             && path.strip_suffix('/').unwrap_or(&path) == first_segment;
         let token = if is_service_root {
@@ -1030,7 +1059,7 @@ async fn agent_proxy_handler(
             None
         };
         let resp =
-            forward_http_to_container(&state.http_client, target_port, &target_path, request)
+            forward_http_to_container(&state.http_client, target_port, &target_path, request, agent_token.as_deref())
                 .await?;
         match token {
             Some(token) => crate::service_proxy::rewrite_asset_urls(resp, &token).await,
@@ -1044,6 +1073,7 @@ async fn forward_http_to_container(
     port: u16,
     target_path: &str,
     request: Request,
+    agent_token: Option<&str>,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
     let (parts, body) = request.into_parts();
     let url = format!("http://localhost:{}{}", port, target_path);
@@ -1057,12 +1087,14 @@ async fn forward_http_to_container(
 
     let mut req_builder = client.request(method, &url);
     for (name, value) in parts.headers.iter() {
-        // Skip hop-by-hop headers — reqwest sets host/transfer-encoding itself.
         let n = name.as_str().to_ascii_lowercase();
         if matches!(n.as_str(), "host" | "connection" | "transfer-encoding" | "content-length") {
             continue;
         }
         req_builder = req_builder.header(name.as_str(), value.as_bytes());
+    }
+    if let Some(token) = agent_token {
+        req_builder = req_builder.header("X-Agent-Token", token);
     }
     if !body_bytes.is_empty() {
         req_builder = req_builder.body(body_bytes.to_vec());
@@ -1147,8 +1179,8 @@ async fn restore_backup_handler(
     tracing::info!(agent = %path.name, backup_id = %path.backup_id, "restoring backup");
     let name = path.name.clone();
     let backup_id = path.backup_id.clone();
-    let env_file = state.env_file.clone();
-    tokio::task::spawn_blocking(move || docker::restore_backup(&name, &backup_id, &env_file))
+    let env_config = state.env_config.clone();
+    tokio::task::spawn_blocking(move || docker::restore_backup(&name, &backup_id, &env_config))
         .await
         .unwrap()
         .map_err(map_docker_err)?;
@@ -1231,12 +1263,11 @@ pub fn write_port_file(config_dir: &std::path::Path, port: u16) {
     std::fs::write(&port_path, port.to_string()).ok();
 }
 
-/// Write a sourceable env file that containers read via bind mount.
-/// Adding new vars here makes them available to all containers without rebuild.
-pub fn write_env_file(config_dir: &std::path::Path, port: u16) {
-    let env_path = config_dir.join("container.env");
-    let content = format!("export VESTAD_PORT={port}\n");
-    std::fs::write(&env_path, content).ok();
+/// Update VESTAD_PORT and VESTAD_TUNNEL in all existing per-agent env files.
+/// Called at vestad startup so containers pick up the new values on restart.
+pub fn update_agent_env_files(config_dir: &std::path::Path, port: u16, tunnel_url: Option<&str>) {
+    let agents_dir = config_dir.join("agents");
+    docker::update_all_agent_env_files(&agents_dir, port, tunnel_url);
 }
 
 // --- PID file ---
@@ -1483,8 +1514,12 @@ fn spawn_update_check_task(state: SharedState) {
 // --- Server start ---
 
 pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: String, tunnel_url: Option<String>, config_dir: std::path::PathBuf) {
-    let env_file = config_dir.join("container.env");
-    let state = Arc::new(AppState::new(api_key, env_file, tunnel_url));
+    let env_config = docker::AgentEnvConfig {
+        agents_dir: config_dir.join("agents"),
+        vestad_port: port,
+        vestad_tunnel: tunnel_url.clone(),
+    };
+    let state = Arc::new(AppState::new(api_key, env_config, tunnel_url));
     let app = build_router(state.clone());
     spawn_auto_backup_task(state.clone());
     spawn_update_check_task(state);
