@@ -188,6 +188,7 @@ def _make_hooks(
         name = input_data["tool_name"]
         summary = _tool_summary(name, input_data["tool_input"])
         prefix, is_sub = _subagent_prefix(input_data)  # type: ignore[arg-type]
+        state.event_bus.set_state("thinking")
         logger.tool(f"{prefix}{summary}")
         state.event_bus.emit({"type": "tool_start", "tool": name, "input": summary, "subagent": is_sub})
         return tp.cast(HookJSONOutput, {})
@@ -197,6 +198,8 @@ def _make_hooks(
         prefix, is_sub = _subagent_prefix(input_data)  # type: ignore[arg-type]
         logger.tool(f"{prefix}done: {name}")
         state.event_bus.emit({"type": "tool_end", "tool": name, "subagent": is_sub})
+        if not state.processing:
+            state.event_bus.set_state("idle")
         return tp.cast(HookJSONOutput, {})
 
     return (

@@ -22,6 +22,7 @@ class State:
     last_dreamer_run: dt.datetime | None = None
     dreamer_active: bool = False
     interrupt_event: asyncio.Event | None = None
+    processing: bool = False
     event_bus: EventBus = dc.field(default_factory=EventBus)
 
 
