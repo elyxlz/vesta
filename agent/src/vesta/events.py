@@ -171,6 +171,7 @@ class EventBus:
             return
         self._state = state
         from vesta import logger
+
         logger.system(f"state → {state}")
         self.emit(StatusEvent(type="status", state=state))
 
