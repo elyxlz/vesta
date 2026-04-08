@@ -2401,3 +2401,40 @@ func min(a, b int) int {
 	}
 	return b
 }
+
+// DeleteChat clears all messages in a chat both locally and on the WhatsApp servers
+// (via the app-state sync mechanism used by official WhatsApp clients).
+// The chat row is preserved in the local DB so it still appears in list-chats.
+func (wac *WhatsAppClient) DeleteChat(chatIdentifier string) (bool, string) {
+	jid, err := wac.ResolveRecipient(chatIdentifier)
+	if err != nil {
+		return false, fmt.Sprintf("Failed to resolve chat: %v", err)
+	}
+
+	if err := wac.EnsureConnected(); err != nil {
+		return false, err.Error()
+	}
+
+	// Get the last message timestamp to anchor the deletion range.
+	lastTS, _, dbErr := wac.store.GetLastMessageInfo(jid.String())
+	if dbErr != nil {
+		// No local messages — use current time as fallback.
+		lastTS = time.Now()
+	}
+
+	// Push the delete-chat app-state patch so the deletion propagates to all
+	// linked devices (same mechanism the official WhatsApp app uses).
+	patch := appstate.BuildDeleteChat(jid, lastTS, nil, false)
+	if patchErr := wac.client.SendAppState(context.Background(), patch); patchErr != nil {
+		wac.logger.Warnf("Failed to push delete-chat app state: %v — clearing local DB only", patchErr)
+	}
+
+	// Clear local messages regardless of whether the server call succeeded.
+	n, err := wac.store.DeleteChatMessages(jid.String())
+	if err != nil {
+		return false, fmt.Sprintf("Failed to clear local messages: %v", err)
+	}
+
+	return true, fmt.Sprintf("Chat deleted: %d messages removed from local DB and deletion pushed to all devices", n)
+}
+

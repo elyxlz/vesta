@@ -235,6 +235,7 @@ func executeCommand(command string, args []string, wac *WhatsAppClient) (interfa
 			"leave-group": true, "create-group": true, "rename-group": true,
 			"update-group-participants": true, "set-group-photo": true, "set-group-description": true,
 			"revoke-message": true, "archive-chat": true, "archive-all-chats": true,
+			"delete-chat": true, "clear-all-chats": true,
 		}
 		if writeCommands[command] {
 			return nil, fmt.Errorf("command %q blocked: instance is read-only", command)
@@ -692,6 +693,48 @@ func executeCommand(command string, args []string, wac *WhatsAppClient) (interfa
 			result["errors"] = errs
 		}
 		return result, nil
+
+	case "delete-chat":
+		var to string
+		fs := flag.NewFlagSet("delete-chat", flag.ContinueOnError)
+		fs.StringVar(&to, "to", "", "Chat to delete (contact name, phone, group, or JID)")
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		if to == "" && len(fs.Args()) > 0 {
+			to = fs.Args()[0]
+		}
+		if to == "" {
+			return nil, fmt.Errorf("--to is required (contact name, phone number, group name, or JID)")
+		}
+		success, msg := wac.DeleteChat(to)
+		return map[string]interface{}{"success": success, "message": msg}, nil
+
+	case "clear-all-chats":
+		jids, err := wac.store.ListAllChatJIDs()
+		if err != nil {
+			return nil, fmt.Errorf("failed to list chats: %v", err)
+		}
+		var deleted, failed int
+		var errs2 []string
+		for _, jid := range jids {
+			ok, msg := wac.DeleteChat(jid)
+			if ok {
+				deleted++
+			} else {
+				failed++
+				errs2 = append(errs2, fmt.Sprintf("%s: %s", jid, msg))
+			}
+		}
+		result2 := map[string]interface{}{
+			"deleted": deleted,
+			"failed":  failed,
+			"total":   len(jids),
+		}
+		if len(errs2) > 0 {
+			result2["errors"] = errs2
+		}
+		return result2, nil
 
 	default:
 		return nil, fmt.Errorf("unknown command: %s", command)

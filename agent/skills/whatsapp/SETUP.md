@@ -81,6 +81,22 @@ sleep 10 && whatsapp authenticate
 ```
 **NEVER restart the daemon after the user has scanned** — restarting invalidates the session. If `authenticate` still says not authenticated, wait longer and check again (up to 30 seconds). Only restart the daemon if the user confirms they didn't scan in time or the QR visually expired.
 
+### Troubleshooting: "Can't link at this time"
+
+If the user scans the QR code but WhatsApp shows **"Can't link at this time"**, the daemon's WebSocket connection to WhatsApp's servers is stale. This is different from an expired QR — the scan succeeded on the phone but the server rejected the session establishment.
+
+**Fix:** Fully restart the daemon (not just generate a new QR):
+
+```bash
+screen -S whatsapp -X quit          # stop the old daemon
+sleep 2
+screen -dmS whatsapp whatsapp serve --notifications-dir ~/vesta/notifications
+sleep 3
+whatsapp authenticate               # get a fresh QR on a fresh connection
+```
+
+Then have the user scan the new QR immediately. The "Can't link at this time" error is caused by a dead WebSocket — the daemon auto-reconnects on incoming commands, but the QR pairing flow requires a freshly-established connection. Restarting the daemon guarantees a clean WebSocket.
+
 ## 6. Add to restart.md
 
 ```
