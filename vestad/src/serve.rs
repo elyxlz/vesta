@@ -192,7 +192,28 @@ fn is_dashboard_asset(path: &str) -> bool {
 
 async fn auth_middleware(
     State(state): State<SharedState>,
+    headers: HeaderMap,
+    request: Request,
+    next: Next,
+) -> Response {
+    check_auth(state, None, headers, request, next).await
+}
+
+/// Like `auth_middleware` but allows unauthenticated access from localhost
+/// (agent containers registering services).
+async fn auth_middleware_localhost(
+    State(state): State<SharedState>,
     connect_info: ConnectInfo<std::net::SocketAddr>,
+    headers: HeaderMap,
+    request: Request,
+    next: Next,
+) -> Response {
+    check_auth(state, Some(connect_info), headers, request, next).await
+}
+
+async fn check_auth(
+    state: SharedState,
+    connect_info: Option<ConnectInfo<std::net::SocketAddr>>,
     headers: HeaderMap,
     request: Request,
     next: Next,
@@ -202,9 +223,11 @@ async fn auth_middleware(
         return next.run(request).await;
     }
 
-    // Localhost (agent containers) can access without auth.
-    if connect_info.0.ip().is_loopback() {
-        return next.run(request).await;
+    // Localhost (agent containers) can access without auth when allowed.
+    if let Some(ci) = connect_info {
+        if ci.0.ip().is_loopback() {
+            return next.run(request).await;
+        }
     }
 
     // Dashboard asset sub-resources (JS/CSS bundles) are loaded by the browser
@@ -1283,7 +1306,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/services/{service}", axum::routing::delete(unregister_service_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
-            auth_middleware,
+            auth_middleware_localhost,
         ))
         .with_state(state.clone());
 
