@@ -99,11 +99,6 @@ async def queue_greeting(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.V
             await queue.put((setup_prompt.strip(), False))
             logger.startup("Queued first_start setup")
 
-        greeting_prompt = load_prompt("first_start_greeting", config)
-        if greeting_prompt:
-            await queue.put((greeting_prompt.strip(), False))
-            logger.startup("Queued first_start greeting")
-
         (config.data_dir / "first_start_done").write_text("1")
         return
 
@@ -217,6 +212,11 @@ async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm
                     ready_marker.parent.mkdir(parents=True, exist_ok=True)
                     ready_marker.write_text("1")
                     logger.startup("Agent ready")
+
+                    greeting_prompt = load_prompt("first_start_greeting", config)
+                    if greeting_prompt:
+                        await queue.put((greeting_prompt.strip(), False))
+                        logger.startup("Queued first_start greeting")
 
                 if state.dreamer_active:
                     state.dreamer_active = False
