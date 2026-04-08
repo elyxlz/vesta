@@ -204,10 +204,7 @@ async def _auth_middleware(request: web.Request, handler):
     expected = request.app.get("agent_token", "")
     if not expected:
         return await handler(request)
-    token = (
-        request.headers.get("X-Agent-Token")
-        or request.query.get("agent_token")
-    )
+    token = request.headers.get("X-Agent-Token") or request.query.get("agent_token")
     if token != expected:
         return web.json_response({"error": "unauthorized"}, status=401)
     return await handler(request)
