@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { isTauri } from "@/lib/env";
 import { checkAndInstallUpdate, type UpdateInfo } from "@/api";
+import { useTauri } from "@/providers/TauriProvider";
 import { X, LoaderCircle } from "lucide-react";
 
 export function UpdateBar() {
+  const { isTauri } = useTauri();
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   const [dismissed, setDismissed] = useState(false);
   const [installing, setInstalling] = useState(false);

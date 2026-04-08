@@ -13,9 +13,8 @@ import {
   waitForReady,
   type AuthStartResult,
 } from "@/api";
-import { isTauri } from "@/lib/env";
 import { fadeSlide } from "@/lib/motion";
-import { detectPlatform } from "@/lib/platform";
+import { useTauri } from "@/providers/TauriProvider";
 import { openExternalUrl } from "@/lib/open-external-url";
 import { useAgents } from "@/providers/AgentsProvider";
 import { useNavigate } from "react-router-dom";
@@ -42,6 +41,7 @@ function normalizeName(input: string): string {
 }
 
 export function NewAgent() {
+  const { isTauri, isWindows } = useTauri();
   const navigate = useNavigate();
   const { agents, refreshAgents } = useAgents();
 
@@ -60,7 +60,7 @@ export function NewAgent() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
-    if (isTauri && detectPlatform() === "windows") {
+    if (isTauri && isWindows) {
       setStep("platform");
     }
   }, []);

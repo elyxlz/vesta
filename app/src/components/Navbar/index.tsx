@@ -4,6 +4,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useAgents } from "@/providers/AgentsProvider";
 import { useAuth } from "@/providers/AuthProvider";
 import { useLayout } from "@/stores/use-layout";
+import { useTauri } from "@/providers/TauriProvider";
 
 import { Settings } from "@/components/Settings";
 import { StatusPill } from "@/components/StatusPill";
@@ -21,6 +22,7 @@ interface NavbarProps {
 }
 
 export function Navbar({ center, trailing }: NavbarProps = {}) {
+  const { isTauri, isMacOS } = useTauri();
   const { connected } = useAuth();
   const { agents } = useAgents();
   const navigate = useNavigate();
@@ -42,10 +44,11 @@ export function Navbar({ center, trailing }: NavbarProps = {}) {
   return (
     <div
       ref={measureRef}
-      className="flex shrink-0 flex-col overflow-visible pt-5 select-none"
+      data-tauri-drag-region
+      className={`flex shrink-0 flex-col overflow-visible ${isTauri && isMacOS ? "pt-8" : "pt-5"} select-none`}
     >
-      <div className="relative flex h-11 w-full min-h-0 items-center justify-between">
-        <div className="flex flex-1 items-center">
+      <div data-tauri-drag-region className="relative flex h-11 w-full min-h-0 items-center justify-between">
+        <div data-tauri-drag-region className="flex flex-1 items-center">
           {connected && isHome && (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -86,7 +89,7 @@ export function Navbar({ center, trailing }: NavbarProps = {}) {
           </div>
         )}
 
-        <div className="flex items-center gap-1.5">
+        <div data-tauri-drag-region className="flex items-center gap-1.5">
           {trailing ?? (
             <>
               {connected && <StatusPill />}

@@ -1,10 +1,8 @@
 import { Outlet } from "react-router-dom";
-import { Titlebar } from "@/components/Titlebar";
 
 export function RootLayout() {
   return (
     <div className="h-full bg-background flex flex-col">
-      <Titlebar />
       <div className="flex flex-col flex-1 min-h-0">
         <Outlet />
       </div>
