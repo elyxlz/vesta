@@ -180,7 +180,14 @@ def list_tasks(config: Config, *, show_completed: bool = False) -> list[dict]:
         query = "SELECT * FROM tasks"
         if not show_completed:
             query += " WHERE status != 'done'"
-        query += " ORDER BY priority DESC, due_date ASC NULLS LAST, created_at DESC"
+        # Overdue pending tasks (past due_date) always float to the top,
+        # ordered by most overdue first. Non-overdue tasks keep their existing sort order.
+        query += (
+            " ORDER BY"
+            " CASE WHEN status = 'pending' AND due_date IS NOT NULL AND due_date < datetime('now') THEN 0 ELSE 1 END ASC,"
+            " CASE WHEN status = 'pending' AND due_date IS NOT NULL AND due_date < datetime('now') THEN due_date END ASC,"
+            " priority DESC, due_date ASC NULLS LAST, created_at DESC"
+        )
         cursor = conn.execute(query)
         return [_task_with_metadata(config.data_dir, dict(row), include_content=False) for row in cursor]
 
@@ -262,7 +269,12 @@ def search_tasks(config: Config, *, query: str, show_completed: bool = False) ->
         sql = "SELECT * FROM tasks WHERE title LIKE ?"
         if not show_completed:
             sql += " AND status != 'done'"
-        sql += " ORDER BY priority DESC, due_date ASC NULLS LAST, created_at DESC"
+        sql += (
+            " ORDER BY"
+            " CASE WHEN status = 'pending' AND due_date IS NOT NULL AND due_date < datetime('now') THEN 0 ELSE 1 END ASC,"
+            " CASE WHEN status = 'pending' AND due_date IS NOT NULL AND due_date < datetime('now') THEN due_date END ASC,"
+            " priority DESC, due_date ASC NULLS LAST, created_at DESC"
+        )
         cursor = conn.execute(sql, (f"%{query}%",))
         return [_task_with_metadata(config.data_dir, dict(row), include_content=False) for row in cursor]
 
