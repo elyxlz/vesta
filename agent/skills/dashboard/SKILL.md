@@ -8,18 +8,13 @@ serve: PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME
 
 A React app embedded in the main Vesta app. You have full control over `App.tsx` and can build anything: widgets, custom layouts, multi-page views, interactive tools, data visualizations, or any other UI the user wants.
 
-## Important
-
-- **STOP — before building anything, ask the user questions first.** Do NOT start coding until you've confirmed details. See "Before building" below.
-- After any code change, you MUST rebuild and restart the server.
-
 ## Before building (REQUIRED)
 
 You MUST ask the user clarifying questions before writing any code. Go through these:
 
 1. **Goal** — if the request is vague, clarify what they actually want to see or do
 2. **Interaction** — display-only, or do they want to tap/click/toggle/input things?
-3. **Data** — should it show static data baked into the code, or pull live data from a skill/API?
+3. **Data** — should it show fixed sample data, or pull in live data from a skill or API? Does the info need to stay in sync and look the same across different Vesta apps (like mobile)?
 
 Only start building once the user has answered. Don't assume — ask.
 
@@ -96,55 +91,18 @@ Hardcode defaults in the source. When the user asks to permanently add/remove it
 
 If the component has interactive state the user can change (checking items, toggling things, reordering), **always persist it to `localStorage`** so changes survive reloads. Pattern:
 
-```tsx
-const STORAGE_KEY = "vesta-dashboard-my-widget";
-
-const defaults = [
-  { id: "1", name: "Item one", done: false },
-  { id: "2", name: "Item two", done: false },
-];
-
-function load() {
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    return saved ? JSON.parse(saved) : defaults;
-  } catch {
-    return defaults;
-  }
-}
-
-function save(items: typeof defaults) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
-}
-
-// In the component:
-const [items, setItems] = useState(load);
-
-function toggle(id: string) {
-  setItems(prev => {
-    const next = prev.map(i => i.id === id ? { ...i, done: !i.done } : i);
-    save(next);
-    return next;
-  });
-}
-```
-
 Always prefix keys with `vesta-dashboard-` to avoid collisions.
 
 ### Dynamic data (skill APIs, third-party services, etc.)
 
 Data that comes from somewhere else and changes dynamically — an existing skill's API, a new skill you create, or a third-party service.
 
-To call your skills use `apiFetch` from `@/lib/parent-bridge`. It handles auth and the base URL automatically:
+**Never fetch external APIs directly from widget code** — the browser will block cross-origin requests (CORS). Instead, create a skill that fetches the data server-side and exposes it as an endpoint, then call that endpoint from the widget.
 
-```tsx
-import { apiFetch } from "@/lib/parent-bridge";
+To call your skills use `apiFetch` from `@/lib/parent-bridge`. It handles auth and the base URL automatically. `apiFetch` waits for the auth token from the parent app before making requests, so it's safe to call on mount.
 
-// Call any skill endpoint — just use the skill name + path
-const resp = await apiFetch("tasks/list");
-const resp = await apiFetch("voice/tts/status");
-const resp = await apiFetch("water/add", { method: "POST" });
-```
+Widgets that fetch data **must show a loading state** while waiting — use skeletons or spinners to provide a nice ux while data loads.
+
 
 ## Removing components
 
@@ -174,8 +132,11 @@ import { Button } from "@/components/ui/button";
 
 Styling uses Tailwind CSS. Use semantic color classes like `text-foreground`, `text-muted-foreground`, `bg-primary`, `bg-secondary`, `bg-accent`, `bg-destructive`.
 
+Try to keep everything compact, dashboard space is at a premium.
+
 ## Rules
 
+- **No client-side fetches to external APIs** — the dashboard runs in a browser, so cross-origin requests to third-party APIs (Yahoo Finance, weather services, etc.) will be blocked by CORS. Instead, create a skill that fetches the data server-side and expose it as a skill API endpoint, then call it from the widget using `apiFetch`.
 - **Use the UI components** from `@/components/ui/` — read them before building
 - **State**: `useState` / `useEffect` for local state
 - **localStorage only when the user opts in**: use it for persisting UI state (checked items, preferences), not as a primary data store. Always have hardcoded defaults as fallback

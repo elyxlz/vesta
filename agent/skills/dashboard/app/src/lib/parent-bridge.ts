@@ -1,5 +1,7 @@
 let authToken: string | null = null;
 let baseUrl: string | null = null;
+let _resolveAuth: (() => void) | null = null;
+const _authReady = new Promise<void>((r) => { _resolveAuth = r; });
 let _fullscreen = false;
 const _layoutListeners: Set<(fullscreen: boolean) => void> = new Set();
 
@@ -24,8 +26,8 @@ export function authHeaders(): Record<string, string> {
  * Fetch a skill endpoint with auth.
  * Usage: apiFetch("tasks/list") or apiFetch("voice/tts/status")
  */
-export function apiFetch(path: string, init?: RequestInit): Promise<Response> {
-  if (!baseUrl) throw new Error("Dashboard not connected to parent app yet");
+export async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+  await _authReady;
   const url = `${baseUrl}/${path.replace(/^\//, "")}`;
   return fetch(url, {
     ...init,
@@ -41,6 +43,7 @@ export function initParentBridge() {
     if (event.data?.type === "vesta-auth") {
       authToken = event.data.token;
       baseUrl = event.data.baseUrl;
+      _resolveAuth?.();
     }
     if (event.data?.type === "vesta-layout") {
       _fullscreen = !!event.data.fullscreen;
