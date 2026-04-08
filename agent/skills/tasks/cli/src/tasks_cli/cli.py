@@ -127,7 +127,7 @@ def main():
     # serve
     p_serve = sub.add_parser("serve", help="Run background daemon (scheduler + reminder engine)")
     p_serve.add_argument("--notifications-dir", required=True)
-    p_serve.add_argument("--port", type=int, default=8585, help="HTTP server port (default: 8585)")
+    p_serve.add_argument("--port", type=int, required=True, help="HTTP server port (allocated by vestad)")
 
     # add
     p_add = sub.add_parser("add", help="Add a new task")
@@ -347,7 +347,7 @@ def _handle_task(args, config: Config):
     print(json.dumps(result, indent=2))
 
 
-def _run_serve(config: Config, notif_dir: Path, *, port: int = 8585):
+def _run_serve(config: Config, notif_dir: Path, *, port: int):
     notif_dir.mkdir(parents=True, exist_ok=True)
 
     logging.basicConfig(

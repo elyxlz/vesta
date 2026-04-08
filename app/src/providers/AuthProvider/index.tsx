@@ -8,8 +8,7 @@ import {
 import { apiFetch, connectToServer, isNewer } from "@/api";
 import { clearConnection, getConnection, initConnection, authHeaders } from "@/lib/connection";
 import { ensureFreshToken } from "@/lib/token-refresh";
-import { isTauri } from "@/lib/env";
-import { detectPlatform } from "@/lib/platform";
+import { useTauri } from "@/providers/TauriProvider";
 
 const POLL_INTERVAL_MS = 15_000;
 
@@ -70,6 +69,7 @@ async function checkStoredConnection(): Promise<boolean> {
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const { isTauri, isDesktop } = useTauri();
   const [loading, setLoading] = useState(true);
   const [initialized, setInitialized] = useState(false);
   const [connected, setConnected] = useState(false);
@@ -80,8 +80,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const init = async () => {
       await initConnection();
 
-      const platform = detectPlatform();
-      if (isTauri && platform !== "ios" && platform !== "android") {
+      if (isTauri && isDesktop) {
         try {
           const { getCurrentWindow } = await import("@tauri-apps/api/window");
           const win = getCurrentWindow();

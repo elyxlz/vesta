@@ -12,7 +12,7 @@ from watchfiles import awatch, Change
 
 import vesta.models as vm
 from vesta import logger
-from vesta.core.client import process_message, build_client_options, attempt_interrupt, filter_tool_lines, persist_session_id, _cancel_task
+from vesta.core.client import process_message, build_client_options, attempt_interrupt, persist_session_id, _cancel_task
 from vesta.core.init import load_prompt, build_restart_context
 
 
@@ -64,7 +64,6 @@ def format_notification_batch(notifications: list[vm.Notification], *, suffix: s
 async def load_new_notifications(*, state: vm.State, config: vm.VestaConfig) -> list[vm.Notification]:
     notifications = await load_notifications(config=config)
     for notif in notifications:
-        logger.notification(notif.model_dump_json(indent=2))
         state.event_bus.emit({"type": "notification", "source": notif.source, "summary": notif.format_for_display()})
     return notifications
 
@@ -94,20 +93,23 @@ async def queue_greeting(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.V
         return
 
     if reason == "first_start":
-        prompt = load_prompt("first_start", config)
-        if prompt:
-            prompt = f"[System: your name is {config.agent_name}]\n\n{prompt}"
-            # Mark first start as done so restarts don't re-trigger it
-            (config.data_dir / "first_start_done").write_text("1")
-    else:
-        extras = []
-        today = _now().strftime("%Y-%m-%d")
-        try:
-            summary = (config.dreamer_dir / f"{today}.md").read_text().strip()
-            extras.append(f"[Dreamer Summary]\n{summary}")
-        except FileNotFoundError:
-            pass
-        prompt = build_restart_context(reason, config, extras=extras)
+        setup_prompt = load_prompt("first_start_setup", config)
+        if setup_prompt:
+            setup_prompt = f"[System: your name is {config.agent_name}]\n\n{setup_prompt}"
+            await queue.put((setup_prompt.strip(), False))
+            logger.startup("Queued first_start setup")
+
+        (config.data_dir / "first_start_done").write_text("1")
+        return
+
+    extras = []
+    today = _now().strftime("%Y-%m-%d")
+    try:
+        summary = (config.dreamer_dir / f"{today}.md").read_text().strip()
+        extras.append(f"[Dreamer Summary]\n{summary}")
+    except FileNotFoundError:
+        pass
+    prompt = build_restart_context(reason, config, extras=extras)
     if not prompt or not prompt.strip():
         return
 
@@ -127,14 +129,7 @@ async def _process_message_safely(msg: str, *, is_user: bool, state: vm.State, c
             preview = msg[:200] + "..." if len(msg) > 200 else msg
             logger.system(preview.replace("\n", " "))
         state.event_bus.set_state("thinking")
-        responses, _ = await process_message(msg, state=state, config=config, is_user=is_user)
-        for response in responses:
-            if not response or not response.strip():
-                continue
-            filtered = filter_tool_lines(response)
-            if filtered:
-                logger.assistant(filtered)
-                state.event_bus.emit({"type": "assistant", "text": filtered})
+        await process_message(msg, state=state, config=config, is_user=is_user)
     except (ClaudeSDKError, OSError, RuntimeError, ValueError, TimeoutError) as e:
         if isinstance(e, TimeoutError):
             error_msg = "Response timed out"
@@ -217,6 +212,11 @@ async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm
                     ready_marker.parent.mkdir(parents=True, exist_ok=True)
                     ready_marker.write_text("1")
                     logger.startup("Agent ready")
+
+                    greeting_prompt = load_prompt("first_start_greeting", config)
+                    if greeting_prompt:
+                        await queue.put((greeting_prompt.strip(), False))
+                        logger.startup("Queued first_start greeting")
 
                 if state.dreamer_active:
                     state.dreamer_active = False

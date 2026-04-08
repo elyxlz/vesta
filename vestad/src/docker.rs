@@ -45,7 +45,12 @@ pub const OAUTH_REDIRECT_URI: &str = "https://console.anthropic.com/oauth/code/c
 pub const OAUTH_TOKEN_URL: &str = "https://api.anthropic.com/v1/oauth/token";
 pub const OAUTH_AUTHORIZE_URL: &str = "https://claude.ai/oauth/authorize";
 
-const ENTRYPOINT: &[&str] = &["uv", "run", "--project", "/root/vesta", "python", "-m", "vesta.main"];
+/// Container entrypoint: source the bind-mounted env file (so vestad can inject
+/// new vars without rebuilding images), then exec the agent.
+const ENTRYPOINT: &[&str] = &[
+    "sh", "-c",
+    ". /run/vestad-env; exec uv run --project /root/vesta python -m vesta.main",
+];
 
 #[derive(PartialEq, Clone, Copy)]
 pub enum ContainerStatus {
@@ -570,10 +575,10 @@ fn gpu_available() -> GpuStatus {
 
 // --- Container creation ---
 
-pub fn create_container(cname: &str, image: &str, port: u16, agent_name: &str, vestad_port: u16) -> Result<(), DockerError> {
+pub fn create_container(cname: &str, image: &str, port: u16, agent_name: &str, env_file: &std::path::Path) -> Result<(), DockerError> {
     let ws_port_env = format!("WS_PORT={}", port);
     let agent_name_env = format!("AGENT_NAME={}", agent_name);
-    let vestad_port_env = format!("VESTAD_PORT={}", vestad_port);
+    let env_mount = format!("{}:/run/vestad-env:ro", env_file.display());
     let port_label = format!("vesta.ws_port={}", port);
     let user_label = format!("{}={}", LABEL_USER, current_user());
     let agent_name_label = format!("{}={}", LABEL_AGENT_NAME, agent_name);
@@ -584,9 +589,9 @@ pub fn create_container(cname: &str, image: &str, port: u16, agent_name: &str, v
         "--label", &port_label,
         "--label", &user_label,
         "--label", &agent_name_label,
+        "-v", &env_mount,
         "-e", &ws_port_env,
         "-e", &agent_name_env,
-        "-e", &vestad_port_env,
         "-e", "IS_SANDBOX=1",
     ];
 
@@ -643,7 +648,7 @@ pub fn inject_credentials(container: &str, credentials: &str) -> Result<(), Dock
 
 // --- Auth flow (split for HTTP API) ---
 
-fn urlencod(s: &str) -> String {
+pub(crate) fn percent_encode(s: &str) -> String {
     let mut out = String::with_capacity(s.len() * 3);
     for b in s.bytes() {
         match b {
@@ -709,8 +714,8 @@ pub fn start_auth_flow() -> (String, String, String) {
         "{}?code=true&client_id={}&redirect_uri={}&response_type=code&scope={}&code_challenge={}&code_challenge_method=S256&state={}",
         OAUTH_AUTHORIZE_URL,
         OAUTH_CLIENT_ID,
-        urlencod(OAUTH_REDIRECT_URI),
-        urlencod("org:create_api_key user:profile user:inference"),
+        percent_encode(OAUTH_REDIRECT_URI),
+        percent_encode("org:create_api_key user:profile user:inference"),
         code_challenge,
         state,
     );
@@ -850,7 +855,7 @@ pub fn list_agents() -> Vec<ListEntry> {
         .collect()
 }
 
-pub fn create_agent(name: &str, vestad_port: u16) -> Result<String, DockerError> {
+pub fn create_agent(name: &str, env_file: &std::path::Path) -> Result<String, DockerError> {
     validate_name(name)?;
     if name.contains("vesta") {
         return Err(DockerError::InvalidName("agent name must not contain 'vesta'".into()));
@@ -863,7 +868,7 @@ pub fn create_agent(name: &str, vestad_port: u16) -> Result<String, DockerError>
 
     let image = resolve_image()?;
     let port = allocate_port();
-    create_container(&cname, image, port, name, vestad_port)?;
+    create_container(&cname, image, port, name, env_file)?;
     Ok(name.to_string())
 }
 
@@ -955,7 +960,7 @@ pub fn destroy_agent(name: &str) -> Result<(), DockerError> {
     Ok(())
 }
 
-pub fn rebuild_agent(name: &str, vestad_port: u16) -> Result<(), DockerError> {
+pub fn rebuild_agent(name: &str, env_file: &std::path::Path) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
     let info = inspect_container(&cname);
@@ -979,7 +984,7 @@ pub fn rebuild_agent(name: &str, vestad_port: u16) -> Result<(), DockerError> {
 
     docker_ok(&["rm", "-f", &cname]);
 
-    create_container(&cname, &backup_tag, info.port, name, vestad_port)?;
+    create_container(&cname, &backup_tag, info.port, name, env_file)?;
 
     if !docker_ok(&["start", &cname]) {
         return Err(DockerError::Failed("failed to start".into()));
@@ -1261,7 +1266,7 @@ fn parse_docker_size(s: &str) -> u64 {
 
 /// Restore an agent from a backup image.
 /// Creates a pre-restore safety backup first, then replaces the container.
-pub fn restore_backup(name: &str, backup_id: &str, vestad_port: u16) -> Result<(), DockerError> {
+pub fn restore_backup(name: &str, backup_id: &str, env_file: &std::path::Path) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
 
@@ -1284,7 +1289,7 @@ pub fn restore_backup(name: &str, backup_id: &str, vestad_port: u16) -> Result<(
 
     // Create new container from backup image, reusing the port
     tracing::debug!(agent = %name, backup_id = %backup_id, "creating container from backup image");
-    create_container(&cname, backup_id, info.port, name, vestad_port)?;
+    create_container(&cname, backup_id, info.port, name, env_file)?;
 
     if !docker_ok(&["start", &cname]) {
         return Err(DockerError::Failed("failed to start restored agent".into()));

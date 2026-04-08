@@ -7,7 +7,7 @@ import pathlib as pl
 import sqlite3
 import typing as tp
 
-type AgentState = tp.Literal["idle", "thinking", "tool_use"]
+type AgentState = tp.Literal["idle", "thinking"]
 
 
 class _BaseEvent(tp.TypedDict, total=False):
@@ -70,6 +70,12 @@ class ChatEvent(_BaseEvent):
     text: str
 
 
+class ServiceUpdateEvent(_BaseEvent):
+    type: tp.Literal["service_update"]
+    service: str
+    action: tp.Literal["registered", "updated", "removed"]
+
+
 type StreamEvent = (
     StatusEvent
     | ToolStartEvent
@@ -81,6 +87,7 @@ type StreamEvent = (
     | SubagentStartEvent
     | SubagentStopEvent
     | ChatEvent
+    | ServiceUpdateEvent
 )
 
 
@@ -128,6 +135,7 @@ class EventBus:
     def __init__(self, data_dir: pl.Path | None = None) -> None:
         self._subscribers: set[asyncio.Queue[VestaEvent]] = set()
         self._state: AgentState = "idle"
+        self._active_tools: int = 0
         self._conn: sqlite3.Connection | None = None
         if data_dir:
             data_dir.mkdir(parents=True, exist_ok=True)
@@ -162,7 +170,16 @@ class EventBus:
         if state == self._state:
             return
         self._state = state
+        from vesta import logger
+
+        logger.system(f"state → {state}")
         self.emit(StatusEvent(type="status", state=state))
+
+    def tool_started(self) -> None:
+        self._active_tools += 1
+
+    def tool_finished(self) -> None:
+        self._active_tools = max(0, self._active_tools - 1)
 
     def recent(self, limit: int = PAGE_SIZE) -> tuple[list[StreamEvent], int | None]:
         if not self._conn or limit <= 0:

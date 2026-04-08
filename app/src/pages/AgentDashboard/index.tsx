@@ -1,20 +1,18 @@
+import { useOutletContext } from "react-router-dom";
 import { AgentHome } from "@/components/AgentHome";
-import { UpdateBar } from "@/components/UpdateBar";
-import { useAuth } from "@/providers/AuthProvider";
+import { useLayout } from "@/stores/use-layout";
+import type { AgentHomeOutletContext } from "@/lib/types";
 
 export function AgentDashboard() {
-  const { connected } = useAuth();
+  const navbarHeight = useLayout((s) => s.navbarHeight);
+  const { chatCollapsed } = useOutletContext<AgentHomeOutletContext>();
 
   return (
-    <div className="flex flex-col flex-1 min-h-0 gap-3 md:gap-4 px-3 pb-3 sm:px-5 sm:pb-5">
-      {connected && (
-        <div className="shrink-0">
-          <UpdateBar />
-        </div>
-      )}
-      <div className="flex-1 relative overflow-hidden min-h-0">
-        <AgentHome />
-      </div>
+    <div
+      className={`flex flex-col flex-1 min-h-0 relative overflow-hidden ${chatCollapsed ? "" : "px-page"}`}
+      style={{ paddingTop: `calc(${navbarHeight}px + var(--page-padding-x) / 1.5)` }}
+    >
+      <AgentHome />
     </div>
   );
 }

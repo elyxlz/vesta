@@ -1,6 +1,7 @@
 app-chat
 banking
 browser
+dashboard
 dream
 flights
 skills-registry

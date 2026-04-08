@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { fetchSttStatus, fetchTtsStatus, type SttStatus, type TtsStatus } from "@/lib/voice";
-
-const REFRESH_INTERVAL_MS = 10_000;
+import { useServiceUpdate } from "@/hooks/use-service-update";
 
 export function useVoiceStatus(agentName: string | null) {
   const [stt, setStt] = useState<SttStatus | null>(null);
@@ -9,6 +8,8 @@ export function useVoiceStatus(agentName: string | null) {
   const [version, setVersion] = useState(0);
 
   const refresh = useCallback(() => setVersion((v) => v + 1), []);
+
+  useServiceUpdate("voice", refresh);
 
   useEffect(() => {
     if (!agentName) {
@@ -29,12 +30,6 @@ export function useVoiceStatus(agentName: string | null) {
       .catch(() => {});
     return () => ctrl.abort();
   }, [agentName, version]);
-
-  useEffect(() => {
-    if (!agentName) return;
-    const interval = setInterval(refresh, REFRESH_INTERVAL_MS);
-    return () => clearInterval(interval);
-  }, [agentName, refresh]);
 
   const patchStt = useCallback((patch: Partial<SttStatus>) => {
     setStt((prev) => prev ? { ...prev, ...patch } : prev);

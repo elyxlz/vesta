@@ -69,8 +69,8 @@ export function AuthFlow({
     if (authState === "submitting") {
       return (
         <div className="flex min-w-0 w-full max-w-full flex-col items-center gap-3">
-          <p className="text-sm text-muted-foreground">setting up agent...</p>
-          <ProgressBar message="this may take a couple of mins" />
+          <p className="text-sm text-muted-foreground">verifying code...</p>
+          <ProgressBar message="this should just take a moment" />
         </div>
       );
     }

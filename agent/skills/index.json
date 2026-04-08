@@ -8,6 +8,10 @@
     "description": "Use for \"browse\", \"open a website\", \"navigate to\", \"click\", \"fill form\","
   },
   {
+    "name": "dashboard",
+    "description": "Use when you need to build, modify, or customize anything on the user's dashboard \u2014 widgets, layouts, pages, views, or any custom UI."
+  },
+  {
     "name": "dream",
     "description": "Self-improvement and memory curation. Used by the nightly dreamer, but can also be used anytime."
   },

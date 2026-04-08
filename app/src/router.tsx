@@ -7,6 +7,7 @@ import { isTauri } from "@/lib/env";
 import {
   AgentChat,
   AgentDashboard,
+  AgentLogs,
   AgentSettingsPage,
   Connect,
   Home,
@@ -37,6 +38,7 @@ export const router = createBrowserRouter([
             children: [
               { index: true, element: <AgentDashboard /> },
               { path: "chat", element: <AgentChat /> },
+              { path: "logs", element: <AgentLogs /> },
               { path: "settings", element: <AgentSettingsPage /> },
             ],
           },

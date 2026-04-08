@@ -73,15 +73,12 @@ export function AgentSettings() {
   }, [agentName, utilization, usageError, refreshUsage]);
 
   return (
-    <div className="flex flex-col flex-1 min-h-0 overflow-y-auto">
-      <div className="sticky top-0 z-10 bg-background/80 backdrop-blur-sm px-4 py-3 flex items-center gap-3">
-        <button onClick={() => navigate(-1)} className="text-muted-foreground hover:text-foreground transition-colors cursor-pointer">
-          <ArrowLeft className="size-5" />
-        </button>
-        <h1 className="text-lg font-semibold">settings</h1>
+    <div className="flex flex-col flex-1 min-h-0 overflow-y-auto pt-2">
+      <div className="py-10 flex items-center justify-center min-h-11">
+        <h1 className="text-lg font-semibold">agent settings</h1>
       </div>
 
-      <div className="flex flex-col gap-6 p-4 sm:p-6 max-w-lg mx-auto w-full">
+      <div className="flex flex-col gap-6 max-w-lg mx-auto w-full">
         {/* Plan Usage */}
         <PlanUsageSection
           utilization={utilization}

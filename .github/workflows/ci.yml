@@ -862,6 +862,20 @@ jobs:
           path: artifacts
           pattern: "!*.dockerbuild"
 
+      - name: Verify install scripts exist at tagged version
+        run: |
+          VERSION="${{ github.event.release.tag_name }}"
+          REPO="elyxlz/vesta"
+          BASE="https://raw.githubusercontent.com/${REPO}/${VERSION}"
+          for script in install.sh install.ps1; do
+            STATUS=$(curl -sL -o /dev/null -w "%{http_code}" "${BASE}/${script}")
+            if [ "$STATUS" != "200" ]; then
+              echo "::error::${script} not found at ${BASE}/${script} (HTTP ${STATUS})"
+              exit 1
+            fi
+            echo "✓ ${script} exists at ${VERSION}"
+          done
+
       - name: Collect release assets
         run: |
           mkdir release

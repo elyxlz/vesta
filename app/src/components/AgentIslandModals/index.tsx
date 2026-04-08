@@ -1,7 +1,3 @@
-import { createPortal } from "react-dom";
-import { AnimatePresence, motion } from "motion/react";
-import { Console } from "@/components/Console";
-import { isTauri } from "@/lib/env";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -22,7 +18,6 @@ import {
 } from "@/components/ui/dialog";
 import { ProgressBar } from "@/components/ProgressBar";
 import { AuthFlow } from "@/components/AuthFlow";
-import { cn } from "@/lib/utils";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useModals } from "@/providers/ModalsProvider";
 
@@ -38,8 +33,6 @@ export function AgentIslandModals() {
     deleteDialogOpen,
     setDeleteDialogOpen,
     handleDelete,
-    showConsole,
-    setShowConsole,
   } = useModals();
 
   return (
@@ -109,36 +102,6 @@ export function AgentIslandModals() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {createPortal(
-        <AnimatePresence>
-          {showConsole && agent?.alive && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.15 }}
-              className={cn("fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-0 sm:p-5", isTauri && "pt-7")}
-              onClick={(e) => {
-                if (e.target === e.currentTarget) setShowConsole(false);
-              }}
-            >
-              <motion.div
-                initial={{ scale: 0.95, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                exit={{ scale: 0.95, opacity: 0 }}
-                transition={{ duration: 0.15 }}
-                className="flex min-h-0 min-w-0 w-full h-full max-w-4xl max-h-[800px] flex-col dark dark-overlay bg-[#1a1a1a] text-[#e8e8e8] rounded-none sm:rounded-xl overflow-hidden shadow-2xl"
-              >
-                <Console
-                  name={name}
-                  onClose={() => setShowConsole(false)}
-                />
-              </motion.div>
-            </motion.div>
-          )}
-        </AnimatePresence>,
-        document.body,
-      )}
     </>
   );
 }

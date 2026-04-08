@@ -113,6 +113,14 @@
   --scrollbar-thumb: oklch(0.35 0 0 / 0.35);
   --scrollbar-thumb-hover: oklch(0.25 0 0 / 0.45);
   --scrollbar-track: transparent;
+
+  --page-padding-x: 1.75rem;
+}
+
+@media (max-width: 767px) {
+  :root {
+    --page-padding-x: 1rem;
+  }
 }
 
 .dark {
@@ -243,6 +251,8 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+
+  --spacing-page: var(--page-padding-x);
 }
 
 @keyframes progress-indeterminate {
@@ -268,6 +278,8 @@
     padding: 0;
     box-sizing: border-box;
   }
+
+
 
   body {
     @apply bg-background text-foreground;

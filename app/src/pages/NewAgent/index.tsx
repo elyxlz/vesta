@@ -5,7 +5,7 @@ import { UpdateBar } from "@/components/UpdateBar";
 
 export function NewAgent() {
   return (
-    <div className="flex flex-col flex-1 min-h-0 gap-3 px-3 sm:px-5">
+    <div className="flex flex-col flex-1 min-h-0 gap-3 px-page">
       <div className="shrink-0">
         <Navbar />
         <UpdateBar />

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Navigate } from "react-router-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,15 +8,15 @@ import { fadeSlide } from "@/lib/motion";
 import { useAuth } from "@/providers/AuthProvider";
 
 export function Connect() {
-  const { connect } = useAuth();
-  const navigate = useNavigate();
-
+  const { connected, connect } = useAuth();
   const [host, setHost] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [error, setError] = useState("");
   const [details, setDetails] = useState("");
   const [showDetails, setShowDetails] = useState(false);
   const [busy, setBusy] = useState(false);
+
+  if (connected) return <Navigate to="/home" replace />;
 
   const handleConnect = async () => {
     if (!host.trim() || !apiKey.trim() || busy) return;
@@ -27,16 +27,10 @@ export function Connect() {
     try {
       const url = host.includes("://") ? host.trim() : `https://${host.trim()}`;
       await connect(url, apiKey.trim());
-      navigate("/home", { replace: true });
     } catch (e: unknown) {
       const msg = (e as { message?: string })?.message || "connection failed";
-      if (msg === "could not reach server") {
-        setError("could not reach server");
-      } else {
-        setError("could not reach server");
-        setDetails(msg);
-      }
-    } finally {
+      setError("could not reach server");
+      if (msg !== "could not reach server") setDetails(msg);
       setBusy(false);
     }
   };

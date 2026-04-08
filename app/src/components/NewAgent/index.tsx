@@ -10,17 +10,17 @@ import {
   createAgent,
   deleteAgent,
   authenticate,
+  waitForReady,
   type AuthStartResult,
 } from "@/api";
-import { isTauri } from "@/lib/env";
 import { fadeSlide } from "@/lib/motion";
-import { detectPlatform } from "@/lib/platform";
+import { useTauri } from "@/providers/TauriProvider";
 import { openExternalUrl } from "@/lib/open-external-url";
 import { useAgents } from "@/providers/AgentsProvider";
 import { useNavigate } from "react-router-dom";
 import { friendlyError } from "./errors";
 
-type Step = "platform" | "name" | "creating" | "auth" | "done";
+type Step = "platform" | "name" | "creating" | "auth" | "finalizing" | "done";
 
 const CREATING_MESSAGES = [
   "setting things up...",
@@ -41,6 +41,7 @@ function normalizeName(input: string): string {
 }
 
 export function NewAgent() {
+  const { isTauri, isWindows } = useTauri();
   const navigate = useNavigate();
   const { agents, refreshAgents } = useAgents();
 
@@ -59,7 +60,7 @@ export function NewAgent() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
-    if (isTauri && detectPlatform() === "windows") {
+    if (isTauri && isWindows) {
       setStep("platform");
     }
   }, []);
@@ -153,11 +154,30 @@ export function NewAgent() {
               }}
               onComplete={async () => {
                 setAuthStart(null);
+                setStep("finalizing");
+                // Poll wait-ready in short bursts to avoid tunnel timeouts
+                for (let i = 0; i < 18; i++) {
+                  try {
+                    await waitForReady(createdName, 10);
+                    break;
+                  } catch {
+                    if (i === 17) break;
+                  }
+                }
                 await refreshAgents();
                 setStep("done");
               }}
             />
           ) : null}
+        </div>
+      );
+    }
+
+    if (step === "finalizing") {
+      return (
+        <div className="flex flex-col items-center gap-3 w-[260px] max-w-full px-4">
+          <h2 className="text-base font-semibold">setting up</h2>
+          <ProgressBar message="this may take a couple of mins" />
         </div>
       );
     }

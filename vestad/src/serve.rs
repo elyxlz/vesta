@@ -1,6 +1,6 @@
 use axum::{
     body::Body,
-    extract::{Path, Query, Request, State, WebSocketUpgrade},
+    extract::{ConnectInfo, Path, Query, Request, State, WebSocketUpgrade},
     http::{HeaderMap, StatusCode},
     middleware::{self, Next},
     response::{
@@ -18,7 +18,7 @@ use tokio::sync::{Mutex, RwLock};
 use crate::{docker, jwt, self_update, update_check};
 
 const API_KEY_BYTES: usize = 32;
-const PROXY_MAX_BODY_BYTES: usize = 10 * 1024 * 1024; // 10 MB
+pub(crate) const PROXY_MAX_BODY_BYTES: usize = 10 * 1024 * 1024; // 10 MB
 
 const RESERVED_SERVICE_NAMES: &[&str] = &["ws", "history", "services", "search"];
 const AUTH_SESSION_TIMEOUT_SECS: u64 = 600;
@@ -131,7 +131,7 @@ struct AuthSession {
 
 pub struct AppState {
     api_key: String,
-    vestad_port: u16,
+    env_file: std::path::PathBuf,
     auth_sessions: Mutex<HashMap<String, AuthSession>>,
     agent_locks: Mutex<HashMap<String, Arc<tokio::sync::RwLock<()>>>>,
     tunnel_url: Mutex<Option<String>>,
@@ -144,11 +144,11 @@ pub struct AppState {
 }
 
 impl AppState {
-    fn new(api_key: String, vestad_port: u16, tunnel_url: Option<String>) -> Self {
+    fn new(api_key: String, env_file: std::path::PathBuf, tunnel_url: Option<String>) -> Self {
         let service_registry = load_service_registry();
         Self {
             api_key,
-            vestad_port,
+            env_file,
             auth_sessions: Mutex::new(HashMap::new()),
             agent_locks: Mutex::new(HashMap::new()),
             tunnel_url: Mutex::new(tunnel_url),
@@ -187,10 +187,44 @@ type SharedState = Arc<AppState>;
 async fn auth_middleware(
     State(state): State<SharedState>,
     headers: HeaderMap,
-    request: axum::extract::Request,
+    request: Request,
     next: Next,
 ) -> Response {
-    // Check Bearer header first, then query param ?token= (for WebSocket)
+    check_auth(state, None, headers, request, next).await
+}
+
+/// Like `auth_middleware` but allows unauthenticated access from localhost
+/// (agent containers registering services).
+async fn auth_middleware_localhost(
+    State(state): State<SharedState>,
+    connect_info: ConnectInfo<std::net::SocketAddr>,
+    headers: HeaderMap,
+    request: Request,
+    next: Next,
+) -> Response {
+    check_auth(state, Some(connect_info), headers, request, next).await
+}
+
+async fn check_auth(
+    state: SharedState,
+    connect_info: Option<ConnectInfo<std::net::SocketAddr>>,
+    headers: HeaderMap,
+    request: Request,
+    next: Next,
+) -> Response {
+    // Let CORS preflight through — the CorsLayer handles the response.
+    if request.method() == axum::http::Method::OPTIONS {
+        return next.run(request).await;
+    }
+
+    // Localhost (agent containers) can access without auth when allowed.
+    if let Some(ci) = connect_info {
+        if ci.0.ip().is_loopback() {
+            return next.run(request).await;
+        }
+    }
+
+    // Check Bearer header first, then query param ?token= (for WebSocket / dashboard assets)
     let bearer_ok = headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
@@ -391,9 +425,9 @@ async fn create_agent_handler(
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
-    let vestad_port = state.vestad_port;
+    let env_file = state.env_file.clone();
     let name =
-        tokio::task::spawn_blocking(move || docker::create_agent(&name, vestad_port))
+        tokio::task::spawn_blocking(move || docker::create_agent(&name, &env_file))
             .await
             .unwrap()
             .map_err(map_docker_err)?;
@@ -515,8 +549,8 @@ async fn rebuild_agent_handler(
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
-    let vestad_port = state.vestad_port;
-    tokio::task::spawn_blocking(move || docker::rebuild_agent(&name, vestad_port))
+    let env_file = state.env_file.clone();
+    tokio::task::spawn_blocking(move || docker::rebuild_agent(&name, &env_file))
         .await
         .unwrap()
         .map_err(map_docker_err)?;
@@ -585,8 +619,6 @@ struct AuthCodeBody {
     code: String,
 }
 
-const AUTH_READY_TIMEOUT_SECS: u64 = 180;
-
 async fn complete_auth_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
@@ -618,8 +650,8 @@ async fn complete_auth_handler(
         .unwrap()
         .map_err(map_docker_err)?;
 
-    // Restart the agent so it picks up the new credentials, then wait for
-    // first-start setup (skills, memory, greeting) to complete.
+    // Restart the agent so it picks up the new credentials.
+    // The client is responsible for polling wait-ready afterwards.
     let restart_name = name.clone();
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
@@ -627,10 +659,6 @@ async fn complete_auth_handler(
     tokio::task::spawn_blocking(move || docker::restart_agent(&restart_name))
         .await
         .unwrap()
-        .map_err(map_docker_err)?;
-
-    docker::wait_ready_async(&name, AUTH_READY_TIMEOUT_SECS)
-        .await
         .map_err(map_docker_err)?;
 
     Ok(ok_json())
@@ -839,10 +867,23 @@ async fn resolve_service_port(
     registry.get(agent_name)?.get(service_name).copied()
 }
 
+const SERVICE_PORT_MIN: u16 = 49152;
+const SERVICE_PORT_MAX: u16 = 65535;
+
 #[derive(Deserialize)]
 struct RegisterServiceBody {
     name: String,
-    port: u16,
+}
+
+/// Collect all ports in use across all agents in the service registry.
+fn all_registered_ports(registry: &HashMap<String, HashMap<String, u16>>) -> Vec<u16> {
+    registry.values().flat_map(|services| services.values().copied()).collect()
+}
+
+/// Find a free port not used by any registered service.
+fn allocate_service_port(registry: &HashMap<String, HashMap<String, u16>>) -> Option<u16> {
+    let used = all_registered_ports(registry);
+    (SERVICE_PORT_MIN..=SERVICE_PORT_MAX).find(|p| !used.contains(p))
 }
 
 async fn register_service_handler(
@@ -851,10 +892,9 @@ async fn register_service_handler(
     Json(body): Json<RegisterServiceBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let service_name = body.name.trim().to_string();
-    let port = body.port;
 
-    if service_name.is_empty() || port == 0 {
-        return Err(err_response(StatusCode::BAD_REQUEST, "name (str) and port (1-65535) required"));
+    if service_name.is_empty() {
+        return Err(err_response(StatusCode::BAD_REQUEST, "name is required"));
     }
     if RESERVED_SERVICE_NAMES.contains(&service_name.as_str()) {
         return Err(err_response(StatusCode::BAD_REQUEST, &format!("reserved service name: {}", service_name)));
@@ -869,10 +909,19 @@ async fn register_service_handler(
     }
 
     let mut registry = state.service_registry.write().await;
+
+    // Reuse existing port if already registered, otherwise allocate a new one
+    let port = if let Some(existing) = registry.get(&name).and_then(|s| s.get(&service_name)).copied() {
+        existing
+    } else {
+        allocate_service_port(&registry)
+            .ok_or_else(|| err_response(StatusCode::SERVICE_UNAVAILABLE, "no free ports available"))?
+    };
+
     registry.entry(name.clone()).or_default().insert(service_name.clone(), port);
     save_service_registry(&registry);
     tracing::info!(agent = %name, service = %service_name, port, "service registered");
-    Ok(ok_json())
+    Ok(Json(serde_json::json!({"ok": true, "port": port})))
 }
 
 async fn unregister_service_handler(
@@ -928,16 +977,16 @@ async fn agent_proxy_handler(
     // Check if the first path segment matches a registered service.
     // If so, route directly to that service's port with the prefix stripped.
     let first_segment = path.split('/').next().unwrap_or("");
-    let (target_port, stripped_path) = if !first_segment.is_empty() {
+    let (target_port, stripped_path, is_service) = if !first_segment.is_empty() {
         if let Some(service_port) = resolve_service_port(&state, &name, first_segment).await {
             let rest = &path[first_segment.len()..];
             let rest = if rest.is_empty() { "/" } else { rest };
-            (service_port, rest.to_string())
+            (service_port, rest.to_string(), true)
         } else {
-            (agent_port, format!("/{}", path))
+            (agent_port, format!("/{}", path), false)
         }
     } else {
-        (agent_port, format!("/{}", path))
+        (agent_port, format!("/{}", path), false)
     };
 
     // Append query string.
@@ -970,7 +1019,23 @@ async fn agent_proxy_handler(
         }))
     } else {
         drop(guard);
-        forward_http_to_container(&state.http_client, target_port, &target_path, request).await
+        // For service root HTML (e.g. /agents/{name}/dashboard/), rewrite
+        // relative asset URLs to carry the auth token so sub-resource loads
+        // pass through auth.
+        let is_service_root = is_service
+            && path.strip_suffix('/').unwrap_or(&path) == first_segment;
+        let token = if is_service_root {
+            crate::service_proxy::extract_token(request.uri())
+        } else {
+            None
+        };
+        let resp =
+            forward_http_to_container(&state.http_client, target_port, &target_path, request)
+                .await?;
+        match token {
+            Some(token) => crate::service_proxy::rewrite_asset_urls(resp, &token).await,
+            None => Ok(resp),
+        }
     }
 }
 
@@ -1082,8 +1147,8 @@ async fn restore_backup_handler(
     tracing::info!(agent = %path.name, backup_id = %path.backup_id, "restoring backup");
     let name = path.name.clone();
     let backup_id = path.backup_id.clone();
-    let vestad_port = state.vestad_port;
-    tokio::task::spawn_blocking(move || docker::restore_backup(&name, &backup_id, vestad_port))
+    let env_file = state.env_file.clone();
+    tokio::task::spawn_blocking(move || docker::restore_backup(&name, &backup_id, &env_file))
         .await
         .unwrap()
         .map_err(map_docker_err)?;
@@ -1166,6 +1231,14 @@ pub fn write_port_file(config_dir: &std::path::Path, port: u16) {
     std::fs::write(&port_path, port.to_string()).ok();
 }
 
+/// Write a sourceable env file that containers read via bind mount.
+/// Adding new vars here makes them available to all containers without rebuild.
+pub fn write_env_file(config_dir: &std::path::Path, port: u16) {
+    let env_path = config_dir.join("container.env");
+    let content = format!("export VESTAD_PORT={port}\n");
+    std::fs::write(&env_path, content).ok();
+}
+
 // --- PID file ---
 
 pub fn acquire_pid_lock(config_dir: &std::path::Path) -> Result<std::fs::File, String> {
@@ -1236,16 +1309,21 @@ pub fn build_router(state: SharedState) -> Router {
             auth_middleware,
         ));
 
-    // Internal routes: no auth required (used by skills inside containers via localhost)
-    let internal = Router::new()
+    // Service registry: localhost (agent containers) can access without auth,
+    // external requests (app frontend) require auth
+    let services = Router::new()
         .route("/agents/{name}/services", post(register_service_handler))
         .route("/agents/{name}/services", get(list_services_handler))
         .route("/agents/{name}/services/{service}", axum::routing::delete(unregister_service_handler))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth_middleware_localhost,
+        ))
         .with_state(state.clone());
 
     Router::new()
         .merge(public)
-        .merge(internal)
+        .merge(services)
         .merge(protected)
         .layer(
             tower_http::cors::CorsLayer::new()
@@ -1404,8 +1482,9 @@ fn spawn_update_check_task(state: SharedState) {
 
 // --- Server start ---
 
-pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: String, tunnel_url: Option<String>) {
-    let state = Arc::new(AppState::new(api_key, port, tunnel_url));
+pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: String, tunnel_url: Option<String>, config_dir: std::path::PathBuf) {
+    let env_file = config_dir.join("container.env");
+    let state = Arc::new(AppState::new(api_key, env_file, tunnel_url));
     let app = build_router(state.clone());
     spawn_auto_backup_task(state.clone());
     spawn_update_check_task(state);
@@ -1433,14 +1512,14 @@ pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: S
         let listener = tokio::net::TcpListener::bind(http_addr)
             .await
             .expect("failed to bind http listener");
-        axum::serve(listener, http_app.into_make_service())
+        axum::serve(listener, http_app.into_make_service_with_connect_info::<std::net::SocketAddr>())
             .await
             .expect("http server failed");
     });
 
     let https_handle = tokio::spawn(async move {
         axum_server::bind_rustls(https_addr, rustls_config)
-            .serve(app.into_make_service())
+            .serve(app.into_make_service_with_connect_info::<std::net::SocketAddr>())
             .await
             .expect("https server failed");
     });
