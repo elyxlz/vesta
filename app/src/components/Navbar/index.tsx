@@ -19,9 +19,10 @@ import {
 interface NavbarProps {
   center?: React.ReactNode;
   trailing?: React.ReactNode;
+  leadingExtra?: React.ReactNode;
 }
 
-export function Navbar({ center, trailing }: NavbarProps = {}) {
+export function Navbar({ center, trailing, leadingExtra }: NavbarProps = {}) {
   const { isTauri, isMacOS } = useTauri();
   const { connected } = useAuth();
   const { agents } = useAgents();
@@ -48,7 +49,7 @@ export function Navbar({ center, trailing }: NavbarProps = {}) {
       className={`flex shrink-0 flex-col overflow-visible ${isTauri && isMacOS ? "pt-8" : "pt-5"} select-none`}
     >
       <div data-tauri-drag-region className="relative flex h-11 w-full min-h-0 items-center justify-between">
-        <div data-tauri-drag-region className="flex flex-1 items-center">
+        <div data-tauri-drag-region className="flex flex-1 items-center gap-2">
           {connected && isHome && (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -81,6 +82,7 @@ export function Navbar({ center, trailing }: NavbarProps = {}) {
               </Tooltip>
             </ButtonGroup>
           )}
+          {leadingExtra}
         </div>
 
         {center && (

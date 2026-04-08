@@ -169,6 +169,8 @@ class EventBus:
         if state == self._state:
             return
         self._state = state
+        from vesta import logger
+        logger.system(f"state → {state}")
         self.emit(StatusEvent(type="status", state=state))
 
     def recent(self, limit: int = PAGE_SIZE) -> tuple[list[StreamEvent], int | None]:

@@ -73,17 +73,32 @@ function AgentNavbar({
   const agentDashboardMatch = useMatch({ path: "/agent/:name", end: true });
   const agentChatMatch = useMatch({ path: "/agent/:name/chat", end: true });
   const agentLogsMatch = useMatch({ path: "/agent/:name/logs", end: true });
+  const agentSettingsMatch = useMatch({ path: "/agent/:name/settings", end: true });
   const showChatButton =
     connected &&
     agentDashboardMatch &&
     name.length > 0 &&
     (isMobile || chatCollapsed);
   const showDashButton =
-    connected && (agentChatMatch || agentLogsMatch) && name.length > 0;
+    connected &&
+    (agentChatMatch || agentLogsMatch || agentSettingsMatch) &&
+    name.length > 0;
 
   return (
     <div className="shrink-0 px-page">
       <Navbar
+        leadingExtra={
+          showDashButton ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => navigate(`/agent/${encodeURIComponent(name)}`)}
+            >
+              <LayoutDashboard data-icon="inline-start" />
+              dashboard
+            </Button>
+          ) : undefined
+        }
         center={
           <>
             <AgentIsland />
@@ -101,17 +116,6 @@ function AgentNavbar({
         trailing={
           connected ? (
             <div className="flex items-center gap-2">
-              {showDashButton && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="text-muted-foreground"
-                  onClick={() => navigate(`/agent/${encodeURIComponent(name)}`)}
-                >
-                  <LayoutDashboard data-icon="inline-start" />
-                  dash
-                </Button>
-              )}
               {showChatButton && (
                 <Button
                   variant="outline"
