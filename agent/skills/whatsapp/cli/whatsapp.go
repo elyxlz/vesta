@@ -1747,6 +1747,26 @@ func (wac *WhatsAppClient) SetGroupPhoto(groupIdentifier, filePath string) (bool
 	return true, "Group photo updated successfully"
 }
 
+func (wac *WhatsAppClient) SetGroupDescription(groupIdentifier, description string) (bool, string) {
+	if groupIdentifier == "" || description == "" {
+		return false, "Group identifier and description are required"
+	}
+	jid, err := wac.ResolveRecipient(groupIdentifier)
+	if err != nil {
+		return false, fmt.Sprintf("Failed to resolve group: %v", err)
+	}
+	if jid.Server != types.GroupServer {
+		return false, "The specified identifier is not a WhatsApp group"
+	}
+	if err := wac.EnsureConnected(); err != nil {
+		return false, err.Error()
+	}
+	if err := wac.client.SetGroupDescription(context.Background(), jid, description); err != nil {
+		return false, fmt.Sprintf("Failed to set group description: %v", err)
+	}
+	return true, "Group description updated"
+}
+
 func (wac *WhatsAppClient) GetGroupInviteLink(groupIdentifier string) (bool, string, string) {
 	jid, err := wac.ResolveRecipient(groupIdentifier)
 	if err != nil {
