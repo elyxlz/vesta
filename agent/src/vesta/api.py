@@ -201,8 +201,8 @@ async def _service_update_handler(request: web.Request) -> web.Response:
 
 @web.middleware
 async def _auth_middleware(request: web.Request, handler):
-    expected = request.app.get("agent_token", "")
-    if not expected:
+    expected = request.app.get("agent_token")
+    if expected is None:
         return await handler(request)
     token = request.headers.get("X-Agent-Token") or request.query.get("agent_token")
     if token != expected:

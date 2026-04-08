@@ -200,7 +200,7 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool) {
         None
     };
 
-    serve::write_env_file(&config, port, tunnel_url.as_deref());
+    serve::update_agent_env_files(&config, port, tunnel_url.as_deref());
 
     let local_url = format!("http://localhost:{}", port + 1);
 
@@ -422,9 +422,20 @@ fn main() {
                     .unwrap_or_else(|| die("could not determine loaded image from docker load output"));
 
                 eprintln!("creating agent '{}'...", name);
-                let (port, _listener) = docker::allocate_port().unwrap_or_else(|e| die(&e));
-                let env_file = config_dir().join("container.env");
-                docker::create_container(&cname, loaded_image, port, &name, &env_file)
+                let config = config_dir();
+                let vestad_port = std::fs::read_to_string(config.join("port"))
+                    .ok()
+                    .and_then(|s| s.trim().parse::<u16>().ok())
+                    .unwrap_or(0);
+                let vestad_tunnel = tunnel::get_tunnel_config(&config)
+                    .map(|tc| format!("https://{}", tc.hostname));
+                let env_config = docker::AgentEnvConfig {
+                    agents_dir: config.join("agents"),
+                    vestad_port,
+                    vestad_tunnel,
+                };
+                let (port, _listener) = docker::allocate_port(&env_config.agents_dir).unwrap_or_else(|e| die(&e));
+                docker::create_container(&cname, loaded_image, port, &name, &env_config)
                     .unwrap_or_else(|e| die(&e));
 
                 if !docker::docker_ok(&["start", &cname]) {

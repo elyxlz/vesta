@@ -28,12 +28,17 @@ Once configured, the user can manage voice settings directly from the **agent se
    ```bash
    uv run ~/vesta/skills/voice/scripts/voice_keys.py set-key --domain stt --provider deepgram --key <key>
    ```
-5. **Notify the app** so it picks up the new voice config:
+5. **Ensure the voice server is running** — the app fetches config from it. Check with `screen -ls | grep voice`. If it's not running, start it:
+   ```bash
+   PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H 'Content-Type: application/json' -d '{"name":"voice"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])")
+   SKILL_PORT=$PORT PYTHONPATH=~/vesta/skills screen -dmS voice uv run python -m voice.server
+   ```
+6. **Notify the app** so it picks up the new voice config:
    ```bash
    curl -s -X POST "http://localhost:$WS_PORT/events/service-update?agent_token=$AGENT_TOKEN" \
      -H 'Content-Type: application/json' -d '{"service":"voice","action":"updated"}'
    ```
-6. **Confirm** — e.g. "Voice is ready! You can use the mic button now. You can also change voices, listen to previews, and tweak settings from the settings page in the app."
+7. **Confirm** — e.g. "Voice is ready! You can use the mic button now. You can also change voices, listen to previews, and tweak settings from the settings page in the app."
 
 ## Commands
 

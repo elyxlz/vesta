@@ -10,8 +10,39 @@ use client::Client;
 use types::ServerConfig;
 
 pub static SERVER: LazyLock<TestServer> = LazyLock::new(|| {
+    kill_orphan_vestads();
     TestServer::start().unwrap_or_else(|e| panic!("failed to start test server: {e}"))
 });
+
+/// Kill vestad processes left behind by previous test runs (those whose HOME is a
+/// temp directory). Ignores the user's real vestad instance.
+fn kill_orphan_vestads() {
+    let Ok(output) = Command::new("sh")
+        .args(["-c", "ps -eo pid,args | grep '[v]estad serve'"])
+        .output()
+    else {
+        return;
+    };
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        let Some(pid_str) = parts.first() else { continue };
+        let Ok(pid) = pid_str.parse::<u32>() else { continue };
+
+        // Check if the process's HOME is a temp directory
+        let environ_path = format!("/proc/{pid}/environ");
+        let Ok(environ) = std::fs::read(&environ_path) else { continue };
+        let is_tmp_home = environ
+            .split(|&b| b == 0)
+            .filter_map(|entry| std::str::from_utf8(entry).ok())
+            .any(|entry| {
+                entry.starts_with("HOME=") && (entry.contains("/tmp/") || entry.contains("/tmp."))
+            });
+        if is_tmp_home {
+            let _ = Command::new("kill").arg("-9").arg(pid_str).output();
+        }
+    }
+}
 
 pub struct TestServer {
     process: Option<Child>,

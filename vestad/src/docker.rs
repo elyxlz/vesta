@@ -291,9 +291,23 @@ pub fn compute_agent_state(cname: &str, info: &ContainerInfo) -> AgentDerivedSta
     AgentDerivedState { authenticated, agent_ready, alive, friendly_status }
 }
 
-fn inspect_container(cname: &str) -> ContainerInfo {
+/// Read a value from a per-agent env file by key (e.g. "WS_PORT").
+fn read_env_value(agents_dir: &std::path::Path, agent_name: &str, key: &str) -> Option<String> {
+    let env_path = agents_dir.join(format!("{}.env", agent_name));
+    let content = std::fs::read_to_string(&env_path).ok()?;
+    let prefix = format!("{key}=");
+    for line in content.lines() {
+        let line = line.strip_prefix("export ").unwrap_or(line);
+        if let Some(val) = line.strip_prefix(&prefix) {
+            return Some(val.to_string());
+        }
+    }
+    None
+}
+
+fn inspect_container(cname: &str, agents_dir: Option<&std::path::Path>) -> ContainerInfo {
     let format_str = format!(
-        "{{{{.State.Status}}}}|{{{{index .Config.Labels \"vesta.ws_port\"}}}}|{{{{.Id}}}}|{{{{index .Config.Labels \"{}\"}}}}",
+        "{{{{.State.Status}}}}|{{{{.Id}}}}|{{{{index .Config.Labels \"{}\"}}}}",
         LABEL_AGENT_NAME
     );
     match docker_output(&[
@@ -303,23 +317,23 @@ fn inspect_container(cname: &str) -> ContainerInfo {
         cname,
     ]) {
         Some(s) => {
-            let parts: Vec<&str> = s.splitn(4, '|').collect();
+            let parts: Vec<&str> = s.splitn(3, '|').collect();
             let status = match parts.first().map(|p| p.trim()) {
                 Some("running" | "restarting" | "paused") => ContainerStatus::Running,
                 Some("exited" | "created") => ContainerStatus::Stopped,
                 Some("dead" | "removing") => ContainerStatus::Dead,
                 _ => ContainerStatus::Stopped,
             };
-            let port = parts
-                .get(1)
-                .and_then(|p| p.trim().parse().ok());
             let id = parts
-                .get(2)
+                .get(1)
                 .map(|p| p.trim().chars().take(12).collect::<String>());
             let agent_name = parts
-                .get(3)
+                .get(2)
                 .map(|p| p.trim().to_string())
                 .filter(|s| !s.is_empty() && s != "<no value>");
+            let name = agent_name.clone().unwrap_or_else(|| name_from_cname(cname));
+            let port = agents_dir.and_then(|dir| read_env_value(dir, &name, "WS_PORT"))
+                .and_then(|v| v.parse().ok());
             ContainerInfo { status, port, id, agent_name }
         }
         None => ContainerInfo {
@@ -332,7 +346,7 @@ fn inspect_container(cname: &str) -> ContainerInfo {
 }
 
 pub fn container_status(cname: &str) -> ContainerStatus {
-    inspect_container(cname).status
+    inspect_container(cname, None).status
 }
 
 pub const MIN_AGE_FOR_BACKUP_SECS: u64 = 6 * 3600;
@@ -485,20 +499,30 @@ pub fn resolve_image() -> Result<&'static str, DockerError> {
     }
 }
 
-fn all_vesta_container_ports() -> HashSet<u16> {
-    docker_output(&[
-        "ps", "-a",
-        "--filter", "label=vesta.managed=true",
-        "--format", "{{.Label \"vesta.ws_port\"}}",
-    ])
-    .unwrap_or_default()
-    .lines()
-    .filter_map(|s| s.trim().parse().ok())
-    .collect()
+fn all_agent_ports(agents_dir: &std::path::Path) -> HashSet<u16> {
+    env_file_names(agents_dir)
+        .iter()
+        .filter_map(|name| read_env_value(agents_dir, name, "WS_PORT")?.parse().ok())
+        .collect()
 }
 
-pub fn allocate_port() -> Result<(u16, std::net::TcpListener), DockerError> {
-    let reserved = all_vesta_container_ports();
+/// List agent names that have env files in the agents directory.
+fn env_file_names(agents_dir: &std::path::Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(agents_dir) else { return Vec::new() };
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("env") {
+                return None;
+            }
+            path.file_stem().and_then(|s| s.to_str()).map(|s| s.to_string())
+        })
+        .collect()
+}
+
+pub fn allocate_port(agents_dir: &std::path::Path) -> Result<(u16, std::net::TcpListener), DockerError> {
+    let reserved = all_agent_ports(agents_dir);
     for _ in 0..PORT_ALLOC_RETRIES {
         let listener = std::net::TcpListener::bind("127.0.0.1:0")
             .map_err(|e| DockerError::Failed(format!("failed to bind port: {e}")))?;
@@ -512,25 +536,24 @@ pub fn allocate_port() -> Result<(u16, std::net::TcpListener), DockerError> {
     Err(DockerError::Failed("could not allocate a free port after retries".into()))
 }
 
-pub fn get_container_port(cname: &str) -> Option<u16> {
-    docker_output(&[
-        "inspect",
-        "--format",
-        "{{index .Config.Labels \"vesta.ws_port\"}}",
-        cname,
-    ])
-    .and_then(|s| s.trim().parse().ok())
-}
-
-pub fn get_container_agent_token(cname: &str) -> Option<String> {
-    docker_output(&[
-        "inspect",
-        "--format",
-        "{{index .Config.Labels \"vesta.agent_token\"}}",
-        cname,
-    ])
-    .map(|s| s.trim().to_string())
-    .filter(|s| !s.is_empty() && s != "<no value>")
+/// Read the agent's port and token from the per-agent env file in a single read.
+pub fn read_agent_port_and_token(agent_name: &str, agents_dir: &std::path::Path) -> (Option<u16>, Option<String>) {
+    let env_path = agents_dir.join(format!("{}.env", agent_name));
+    let content = match std::fs::read_to_string(&env_path) {
+        Ok(content) => content,
+        Err(_) => return (None, None),
+    };
+    let mut port = None;
+    let mut token = None;
+    for line in content.lines() {
+        let line = line.strip_prefix("export ").unwrap_or(line);
+        if let Some(val) = line.strip_prefix("WS_PORT=") {
+            port = val.parse().ok();
+        } else if let Some(val) = line.strip_prefix("AGENT_TOKEN=") {
+            token = Some(val.to_string());
+        }
+    }
+    (port, token)
 }
 
 pub fn generate_agent_token() -> String {
@@ -538,6 +561,75 @@ pub fn generate_agent_token() -> String {
         .map(|_| format!("{:02x}", rand::random::<u8>()))
         .collect()
 }
+
+// --- Per-agent env file ---
+
+#[derive(Clone)]
+pub struct AgentEnvConfig {
+    pub agents_dir: std::path::PathBuf,
+    pub vestad_port: u16,
+    pub vestad_tunnel: Option<String>,
+}
+
+/// Write a sourceable env file for a single agent. Returns the file path.
+fn write_agent_env_file(
+    env_config: &AgentEnvConfig,
+    agent_name: &str,
+    ws_port: u16,
+    agent_token: &str,
+) -> Result<std::path::PathBuf, DockerError> {
+    std::fs::create_dir_all(&env_config.agents_dir)
+        .map_err(|e| DockerError::Failed(format!("failed to create agents dir: {e}")))?;
+    let env_path = env_config.agents_dir.join(format!("{}.env", agent_name));
+    let mut content = format!(
+        "export WS_PORT={ws_port}\n\
+         export AGENT_NAME={agent_name}\n\
+         export AGENT_TOKEN={agent_token}\n\
+         export IS_SANDBOX=1\n\
+         export VESTAD_PORT={}\n",
+        env_config.vestad_port,
+    );
+    if let Some(url) = &env_config.vestad_tunnel {
+        content.push_str(&format!("export VESTAD_TUNNEL={url}\n"));
+    }
+    std::fs::write(&env_path, &content)
+        .map_err(|e| DockerError::Failed(format!("failed to write agent env file: {e}")))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&env_path, std::fs::Permissions::from_mode(0o600)).ok();
+    }
+    Ok(env_path)
+}
+
+fn delete_agent_env_file(agents_dir: &std::path::Path, agent_name: &str) {
+    let env_path = agents_dir.join(format!("{}.env", agent_name));
+    std::fs::remove_file(&env_path).ok();
+}
+
+/// Update VESTAD_PORT and VESTAD_TUNNEL in all existing per-agent env files.
+/// Called at vestad startup so running containers pick up the new values on restart.
+pub fn update_all_agent_env_files(agents_dir: &std::path::Path, vestad_port: u16, vestad_tunnel: Option<&str>) {
+    for name in env_file_names(agents_dir) {
+        let path = agents_dir.join(format!("{name}.env"));
+        let Ok(content) = std::fs::read_to_string(&path) else { continue };
+        let mut new_lines: Vec<String> = content
+            .lines()
+            .filter(|line| {
+                let stripped = line.strip_prefix("export ").unwrap_or(line);
+                !stripped.starts_with("VESTAD_PORT=") && !stripped.starts_with("VESTAD_TUNNEL=")
+            })
+            .map(|l| l.to_string())
+            .collect();
+        new_lines.push(format!("export VESTAD_PORT={vestad_port}"));
+        if let Some(url) = vestad_tunnel {
+            new_lines.push(format!("export VESTAD_TUNNEL={url}"));
+        }
+        new_lines.push(String::new());
+        std::fs::write(&path, new_lines.join("\n")).ok();
+    }
+}
+
 
 pub fn list_managed_containers() -> Vec<String> {
     // Get all vesta-managed containers with their user label
@@ -597,29 +689,19 @@ fn gpu_available() -> GpuStatus {
 
 // --- Container creation ---
 
-pub fn create_container(cname: &str, image: &str, port: u16, agent_name: &str, env_file: &std::path::Path) -> Result<(), DockerError> {
+pub fn create_container(cname: &str, image: &str, port: u16, agent_name: &str, env_config: &AgentEnvConfig) -> Result<(), DockerError> {
     let agent_token = generate_agent_token();
-    let ws_port_env = format!("WS_PORT={}", port);
-    let agent_name_env = format!("AGENT_NAME={}", agent_name);
-    let agent_token_env = format!("AGENT_TOKEN={}", agent_token);
-    let env_mount = format!("{}:/run/vestad-env:ro", env_file.display());
-    let port_label = format!("vesta.ws_port={}", port);
-    let token_label = format!("vesta.agent_token={}", agent_token);
+    let env_path = write_agent_env_file(env_config, agent_name, port, &agent_token)?;
+    let env_mount = format!("{}:/run/vestad-env:ro", env_path.display());
     let user_label = format!("{}={}", LABEL_USER, current_user());
     let agent_name_label = format!("{}={}", LABEL_AGENT_NAME, agent_name);
     let mut args = vec![
         "create", "--name", cname, "-t",
         "--restart", "unless-stopped", "--network", "host",
         "--label", "vesta.managed=true",
-        "--label", &port_label,
-        "--label", &token_label,
         "--label", &user_label,
         "--label", &agent_name_label,
         "-v", &env_mount,
-        "-e", &ws_port_env,
-        "-e", &agent_name_env,
-        "-e", &agent_token_env,
-        "-e", "IS_SANDBOX=1",
     ];
 
     match gpu_available() {
@@ -636,6 +718,7 @@ pub fn create_container(cname: &str, image: &str, port: u16, agent_name: &str, e
     args.push(image);
     args.extend(ENTRYPOINT);
     if !docker_ok(&args) {
+        delete_agent_env_file(&env_config.agents_dir, agent_name);
         return Err(DockerError::Failed("failed to create container".into()));
     }
     Ok(())
@@ -843,10 +926,10 @@ pub fn friendly_status(
 
 // --- High-level operations (used by serve.rs handlers) ---
 
-pub fn get_status(name: &str) -> Result<StatusJson, DockerError> {
+pub fn get_status(name: &str, agents_dir: &std::path::Path) -> Result<StatusJson, DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
-    let info = inspect_container(&cname);
+    let info = inspect_container(&cname, Some(agents_dir));
     let derived = compute_agent_state(&cname, &info);
 
     Ok(StatusJson {
@@ -861,12 +944,12 @@ pub fn get_status(name: &str) -> Result<StatusJson, DockerError> {
     })
 }
 
-pub fn list_agents() -> Vec<ListEntry> {
+pub fn list_agents(agents_dir: &std::path::Path) -> Vec<ListEntry> {
     let containers = list_managed_containers();
     containers
         .iter()
         .map(|cname| {
-            let info = inspect_container(cname);
+            let info = inspect_container(cname, Some(agents_dir));
             let derived = compute_agent_state(cname, &info);
             let name = info.agent_name.clone().unwrap_or_else(|| name_from_cname(cname));
             ListEntry {
@@ -882,7 +965,7 @@ pub fn list_agents() -> Vec<ListEntry> {
         .collect()
 }
 
-pub fn create_agent(name: &str, env_file: &std::path::Path) -> Result<String, DockerError> {
+pub fn create_agent(name: &str, env_config: &AgentEnvConfig) -> Result<String, DockerError> {
     validate_name(name)?;
     if name.contains("vesta") {
         return Err(DockerError::InvalidName("agent name must not contain 'vesta'".into()));
@@ -894,8 +977,8 @@ pub fn create_agent(name: &str, env_file: &std::path::Path) -> Result<String, Do
     }
 
     let image = resolve_image()?;
-    let (port, _listener) = allocate_port()?;
-    create_container(&cname, image, port, name, env_file)?;
+    let (port, _listener) = allocate_port(&env_config.agents_dir)?;
+    create_container(&cname, image, port, name, env_config)?;
     Ok(name.to_string())
 }
 
@@ -971,7 +1054,7 @@ pub fn restart_agent(name: &str) -> Result<(), DockerError> {
     Ok(())
 }
 
-pub fn destroy_agent(name: &str) -> Result<(), DockerError> {
+pub fn destroy_agent(name: &str, agents_dir: &std::path::Path) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
     let cs = container_status(&cname);
@@ -984,19 +1067,20 @@ pub fn destroy_agent(name: &str) -> Result<(), DockerError> {
     if !docker_ok(&["rm", "-f", &cname]) {
         return Err(DockerError::Failed("failed to destroy".into()));
     }
+    delete_agent_env_file(agents_dir, name);
     Ok(())
 }
 
-pub fn rebuild_agent(name: &str, env_file: &std::path::Path) -> Result<(), DockerError> {
+pub fn rebuild_agent(name: &str, env_config: &AgentEnvConfig) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
-    let info = inspect_container(&cname);
+    let info = inspect_container(&cname, Some(&env_config.agents_dir));
     match info.status {
         ContainerStatus::NotFound => return Err(DockerError::NotFound(format!("agent '{}' not found", name))),
         ContainerStatus::Dead => return Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name))),
         _ => {}
     }
-    let port = info.port.ok_or_else(|| DockerError::Failed("container has no port label".into()))?;
+    let port = info.port.ok_or_else(|| DockerError::Failed("agent has no port in env file".into()))?;
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -1011,7 +1095,7 @@ pub fn rebuild_agent(name: &str, env_file: &std::path::Path) -> Result<(), Docke
 
     docker_ok(&["rm", "-f", &cname]);
 
-    create_container(&cname, &backup_tag, port, name, env_file)?;
+    create_container(&cname, &backup_tag, port, name, env_config)?;
 
     if !docker_ok(&["start", &cname]) {
         return Err(DockerError::Failed("failed to start".into()));
@@ -1020,15 +1104,18 @@ pub fn rebuild_agent(name: &str, env_file: &std::path::Path) -> Result<(), Docke
     Ok(())
 }
 
-pub async fn wait_ready_async(name: &str, timeout_secs: u64) -> Result<(), DockerError> {
+pub async fn wait_ready_async(name: &str, timeout_secs: u64, agents_dir: &std::path::Path) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
     let port = {
         let cname = cname.clone();
+        let agents_dir = agents_dir.to_path_buf();
+        let agent_name = name.to_string();
         tokio::task::spawn_blocking(move || {
             ensure_running(&cname)?;
-            get_container_port(&cname)
-                .ok_or_else(|| DockerError::Failed("container has no port label".into()))
+            read_env_value(&agents_dir, &agent_name, "WS_PORT")
+                .and_then(|v| v.parse().ok())
+                .ok_or_else(|| DockerError::Failed("agent has no port".into()))
         })
         .await
         .unwrap()?
@@ -1294,7 +1381,7 @@ fn parse_docker_size(s: &str) -> u64 {
 
 /// Restore an agent from a backup image.
 /// Creates a pre-restore safety backup first, then replaces the container.
-pub fn restore_backup(name: &str, backup_id: &str, env_file: &std::path::Path) -> Result<(), DockerError> {
+pub fn restore_backup(name: &str, backup_id: &str, env_config: &AgentEnvConfig) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
 
@@ -1302,7 +1389,7 @@ pub fn restore_backup(name: &str, backup_id: &str, env_file: &std::path::Path) -
         return Err(DockerError::NotFound(format!("backup '{}' not found", backup_id)));
     }
 
-    let info = inspect_container(&cname);
+    let info = inspect_container(&cname, Some(&env_config.agents_dir));
     if info.status == ContainerStatus::NotFound {
         return Err(DockerError::NotFound(format!("agent '{}' not found", name)));
     }
@@ -1315,9 +1402,9 @@ pub fn restore_backup(name: &str, backup_id: &str, env_file: &std::path::Path) -
     commit_backup(&cname, name, &BackupType::PreRestore)?;
     docker_ok(&["rm", "-f", &cname]);
 
-    let port = info.port.ok_or_else(|| DockerError::Failed("container has no port label".into()))?;
+    let port = info.port.ok_or_else(|| DockerError::Failed("agent has no port in env file".into()))?;
     tracing::debug!(agent = %name, backup_id = %backup_id, "creating container from backup image");
-    create_container(&cname, backup_id, port, name, env_file)?;
+    create_container(&cname, backup_id, port, name, env_config)?;
 
     if !docker_ok(&["start", &cname]) {
         return Err(DockerError::Failed("failed to start restored agent".into()));

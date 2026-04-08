@@ -501,19 +501,35 @@ fn api_key_file_exists_and_nonempty() {
 }
 
 #[test]
-fn container_env_includes_vestad_port() {
-    let env_path = SERVER._tmpdir_path().join(".config/vesta/vestad/container.env");
+fn agent_env_file_includes_vestad_port() {
+    let c = SERVER.client();
+    let agent = TestAgent::create(&c, "test-env-port").unwrap();
+
+    let env_path = SERVER._tmpdir_path()
+        .join(format!(".config/vesta/vestad/agents/{}.env", agent.name));
     let content = std::fs::read_to_string(&env_path)
-        .expect("container.env should exist");
+        .expect("per-agent env file should exist");
     let expected = format!("export VESTAD_PORT={}", SERVER.port);
-    assert!(content.contains(&expected), "container.env should contain VESTAD_PORT: {content}");
+    assert!(content.contains(&expected), "agent env file should contain VESTAD_PORT: {content}");
 }
 
 #[test]
-fn agent_has_token_label() {
+fn agent_has_env_file_with_token() {
     let c = SERVER.client();
-    let agent = TestAgent::create(&c, "test-token-label").unwrap();
+    let agent = TestAgent::create(&c, "test-token-env").unwrap();
 
+    let agents_dir = SERVER._tmpdir_path().join(".config/vesta/vestad/agents");
+    let env_path = agents_dir.join(format!("{}.env", agent.name));
+    assert!(env_path.exists(), "per-agent env file should exist at {:?}", env_path);
+
+    let content = std::fs::read_to_string(&env_path).expect("should be able to read env file");
+    let token_line = content.lines()
+        .find(|l| l.contains("AGENT_TOKEN="))
+        .expect("env file should contain AGENT_TOKEN");
+    let token = token_line.strip_prefix("export AGENT_TOKEN=").expect("should have export prefix");
+    assert_eq!(token.len(), 64, "token should be 32 bytes hex-encoded (64 chars)");
+
+    // Token should NOT be in Docker labels
     let output = std::process::Command::new("docker")
         .args([
             "inspect", "--format",
@@ -522,10 +538,8 @@ fn agent_has_token_label() {
         ])
         .output()
         .expect("docker inspect should work");
-
-    let token = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    assert!(!token.is_empty() && token != "<no value>", "agent should have a non-empty token label");
-    assert_eq!(token.len(), 64, "token should be 32 bytes hex-encoded (64 chars)");
+    let label = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    assert!(label.is_empty() || label == "<no value>", "token should NOT be in Docker labels");
 }
 
 #[test]
