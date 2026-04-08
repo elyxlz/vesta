@@ -125,6 +125,7 @@ export function useChat({ name, active, onAssistantMessage }: UseChatOptions) {
         wsRef.current = null;
         setConnected(false);
         setReachable(false);
+        setAgentState("idle");
         reconnectTimer = setTimeout(doConnect, reconnectDelay);
         reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX);
       };

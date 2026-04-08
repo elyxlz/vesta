@@ -28,7 +28,7 @@ export interface ListEntry {
   friendly_status: string;
 }
 
-export type AgentActivityState = "idle" | "thinking" | "tool_use";
+export type AgentActivityState = "idle" | "thinking";
 
 export type OnboardingStep = "name" | "connect" | "creating" | "auth" | "done";
 

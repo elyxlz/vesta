@@ -67,8 +67,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
       (showToolCalls && m.type === "tool_start" && !(m.tool === "Bash" && m.input.includes("app-chat"))),
   ), [messages, showToolCalls]);
 
-  const isThinking =
-    agentState === "thinking" || agentState === "tool_use";
+  const isThinking = agentState === "thinking";
 
   useLayoutEffect(() => {
     const el = scrollRef.current;

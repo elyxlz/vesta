@@ -7,7 +7,7 @@ import pathlib as pl
 import sqlite3
 import typing as tp
 
-type AgentState = tp.Literal["idle", "thinking", "tool_use"]
+type AgentState = tp.Literal["idle", "thinking"]
 
 
 class _BaseEvent(tp.TypedDict, total=False):
