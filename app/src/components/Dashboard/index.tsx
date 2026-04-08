@@ -2,7 +2,6 @@ import { useEffect, useRef, useCallback, useState } from "react";
 import { LayoutDashboard, AlertCircle } from "lucide-react";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useTheme } from "@/stores/use-theme";
-import { useIsMobile } from "@/hooks/use-mobile";
 import { getConnection } from "@/lib/connection";
 import { apiFetch } from "@/api/client";
 import { useServiceUpdate } from "@/hooks/use-service-update";
@@ -16,12 +15,11 @@ import {
 
 type Status = "loading" | "not-setup" | "ready" | "error";
 
-export function Dashboard() {
+export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
   const { name } = useSelectedAgent();
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const theme = useTheme((s) => s.theme);
   const resolved = useTheme((s) => s.resolved);
-  const isMobile = useIsMobile();
   const [status, setStatus] = useState<Status>("loading");
   const [loaded, setLoaded] = useState(false);
   const [iframeKey, setIframeKey] = useState(0);
@@ -55,7 +53,7 @@ export function Dashboard() {
   const conn = getConnection();
   const dashboardUrl =
     status === "ready" && conn
-      ? `${conn.url}/agents/${encodeURIComponent(name)}/dashboard/?token=${encodeURIComponent(conn.accessToken)}&fullscreen=${isMobile}`
+      ? `${conn.url}/agents/${encodeURIComponent(name)}/dashboard/?token=${encodeURIComponent(conn.accessToken)}&fullscreen=${!!fullscreen}`
       : null;
 
   const sendContext = useCallback(() => {

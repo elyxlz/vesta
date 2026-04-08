@@ -42,7 +42,7 @@ export default function App() {
 
   return (
     <FadeScroll className="w-full h-full overflow-y-auto">
-      <div className={`flex flex-col gap-4 ${isFullscreen ? "px-page pb-page" : "pr-4 pb-4"}`}>
+      <div className={`flex flex-col gap-4 pb-page ${isFullscreen ? "px-page" : "pr-4"}`}>
         {/* your custom code and widgets and other components goes here */}
       </div>
     </FadeScroll>

@@ -1,4 +1,4 @@
-import { useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import { Navigate, Outlet, useMatch, useNavigate, useParams } from "react-router-dom";
 import { KeyRound, LayoutDashboard, MessageSquare } from "lucide-react";
 import { AgentIsland } from "@/components/AgentIsland";
@@ -31,7 +31,12 @@ export function AgentLayout() {
 }
 
 function AgentLayoutInner() {
-  const [chatCollapsed, setChatCollapsed] = useState(false);
+  const isMobile = useIsMobile();
+  const [chatCollapsed, setChatCollapsed] = useState(isMobile);
+
+  useEffect(() => {
+    setChatCollapsed(isMobile);
+  }, [isMobile]);
 
   return (
     <VoiceProvider>
