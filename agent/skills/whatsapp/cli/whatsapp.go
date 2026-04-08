@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"math/rand/v2"
@@ -59,6 +60,7 @@ type WhatsAppClient struct {
 	presenceMutex     sync.RWMutex
 	lastMessageSentAt time.Time
 	connectMutex      sync.Mutex
+	staleDetectorDone chan struct{}
 }
 
 func NewWhatsAppClient(dataDir, notificationsDir, instance string, readOnly bool, skipSenders map[string]bool, logger waLog.Logger) (*WhatsAppClient, error) {
@@ -134,6 +136,12 @@ func (wac *WhatsAppClient) Connect() error {
 	// Existing session - try to connect
 	wac.logger.Infof("Device already authenticated, connecting...")
 	err := wac.client.Connect()
+	if errors.Is(err, whatsmeow.ErrAlreadyConnected) {
+		wac.setAuthStatus(AuthStatusAuthenticated)
+		wac.logger.Infof("Already connected to WhatsApp")
+		wac.startStaleMessageDetector()
+		return nil
+	}
 	if err != nil {
 		wac.logger.Warnf("Failed to connect with existing session: %v - initiating re-auth", err)
 		return wac.initiateReauth()
@@ -145,6 +153,7 @@ func (wac *WhatsAppClient) Connect() error {
 		if wac.client.IsConnected() {
 			wac.setAuthStatus(AuthStatusAuthenticated)
 			wac.logger.Infof("Connected to WhatsApp after %d seconds", i+1)
+			wac.startStaleMessageDetector()
 			if err := wac.EnsureOnline(); err != nil {
 				wac.logger.Warnf("Failed to set online status: %v", err)
 			}
@@ -295,12 +304,48 @@ func (wac *WhatsAppClient) writeAuthStatusFile(data map[string]string) {
 }
 
 func (wac *WhatsAppClient) Disconnect() {
+	// Stop stale message detector
+	if wac.staleDetectorDone != nil {
+		close(wac.staleDetectorDone)
+		wac.staleDetectorDone = nil
+	}
+
 	wac.presenceMutex.Lock()
 	wac.presenceActive = false
 	wac.presenceMutex.Unlock()
 
 	wac.client.Disconnect()
 	wac.store.Close()
+}
+
+func (wac *WhatsAppClient) startStaleMessageDetector() {
+	if wac.staleDetectorDone != nil {
+		return
+	}
+	wac.staleDetectorDone = make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-wac.staleDetectorDone:
+				return
+			case <-ticker.C:
+				staleIDs, err := wac.store.GetStaleOutgoingMessages(90 * time.Second)
+				if err != nil {
+					wac.logger.Warnf("Failed to check for stale messages: %v", err)
+					continue
+				}
+				if len(staleIDs) > 0 {
+					wac.logger.Warnf("Detected %d stale outgoing messages (stuck in 'sent' >90s): %v — forcing reconnect", len(staleIDs), staleIDs)
+					wac.client.Disconnect()
+					if err := wac.client.Connect(); err != nil {
+						wac.logger.Errorf("Failed to reconnect after stale message detection: %v", err)
+					}
+				}
+			}
+		}
+	}()
 }
 
 func (wac *WhatsAppClient) eventHandler(evt interface{}) {
@@ -317,6 +362,20 @@ func (wac *WhatsAppClient) eventHandler(evt interface{}) {
 		wac.handleHistorySync(v)
 	case *events.Connected:
 		wac.logger.Infof("Connected to WhatsApp")
+		wac.presenceMutex.Lock()
+		wac.presenceActive = false
+		wac.presenceMutex.Unlock()
+	case *events.Disconnected:
+		wac.logger.Warnf("Disconnected from WhatsApp")
+		wac.presenceMutex.Lock()
+		wac.presenceActive = false
+		wac.presenceMutex.Unlock()
+	case *events.KeepAliveTimeout:
+		wac.logger.Warnf("WhatsApp keep-alive timeout: error_count=%d, last_success=%s", v.ErrorCount, v.LastSuccess.Format(time.RFC3339))
+	case *events.StreamReplaced:
+		wac.logger.Warnf("WhatsApp stream replaced — another connection took over this session")
+	case *events.StreamError:
+		wac.logger.Errorf("WhatsApp stream error: code=%s", v.Code)
 	case *events.LoggedOut:
 		wac.logger.Warnf("Device logged out from WhatsApp - initiating re-authentication")
 		wac.initiateReauth()
@@ -787,6 +846,14 @@ func (wac *WhatsAppClient) prepareNotificationInfo(info types.MessageSource) (
 
 	if contactPhone == "" && resolvedChat.User != "" {
 		contactPhone = "+" + resolvedChat.User
+	}
+
+	// Fallback: look up by phone number (handles LID JIDs that couldn't be resolved to stored JID)
+	if !contactSaved && contactPhone != "" {
+		if contact, err := wac.store.GetManualContactByPhone(contactPhone); err == nil && contact != nil {
+			contactName = contact.Name
+			contactSaved = true
+		}
 	}
 
 	if contactSaved && contactName != "" {
@@ -1785,14 +1852,14 @@ func (wac *WhatsAppClient) GetGroupInviteLink(groupIdentifier string) (bool, str
 }
 
 func (wac *WhatsAppClient) EnsureConnected() error {
-	if wac.client.IsConnected() {
+	if wac.client.IsConnected() && wac.client.IsLoggedIn() {
 		return nil
 	}
 
 	wac.connectMutex.Lock()
 	defer wac.connectMutex.Unlock()
 
-	if wac.client.IsConnected() {
+	if wac.client.IsConnected() && wac.client.IsLoggedIn() {
 		return nil
 	}
 
@@ -1802,7 +1869,7 @@ func (wac *WhatsAppClient) EnsureConnected() error {
 	}
 
 	wac.logger.Warnf("WhatsApp is not connected. Attempting to reconnect...")
-	if err := wac.client.Connect(); err != nil {
+	if err := wac.client.Connect(); err != nil && !errors.Is(err, whatsmeow.ErrAlreadyConnected) {
 		return fmt.Errorf("failed to reconnect to WhatsApp: %v", err)
 	}
 

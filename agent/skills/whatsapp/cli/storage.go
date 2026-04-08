@@ -784,6 +784,51 @@ func (ms *MessageStore) ListGroups(limit, offset int) ([]Chat, error) {
 	return groups, nil
 }
 
+func (ms *MessageStore) GetManualContactByPhone(phone string) (*Contact, error) {
+	var jid string
+	var name sql.NullString
+	err := ms.db.QueryRow(`
+		SELECT jid, name, phone_number
+		FROM contacts
+		WHERE phone_number = ?
+	`, phone).Scan(&jid, &name, &phone)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return &Contact{
+		JID:         jid,
+		Name:        name.String,
+		PhoneNumber: phone,
+		IsManual:    true,
+	}, nil
+}
+
+func (ms *MessageStore) GetStaleOutgoingMessages(olderThan time.Duration) ([]string, error) {
+	cutoff := time.Now().Add(-olderThan)
+	rows, err := ms.db.Query(`
+		SELECT id FROM messages
+		WHERE delivery_status = 'sent' AND is_from_me = 1 AND timestamp < ?
+	`, cutoff)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query stale messages: %v", err)
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("failed to scan stale message id: %v", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 func (ms *MessageStore) GetMessageMediaInfo(messageID, chatJID string) (*MediaInfo, error) {
 	var info MediaInfo
 	var mediaType, filename, url sql.NullString
