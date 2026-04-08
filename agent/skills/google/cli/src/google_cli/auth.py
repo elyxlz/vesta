@@ -1,4 +1,5 @@
 import json
+import tempfile
 from pathlib import Path
 
 from google.auth.transport.requests import Request
@@ -7,18 +8,26 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 
 LOOPBACK_PORT = 8097
 REDIRECT_URI = f"http://127.0.0.1:{LOOPBACK_PORT}"
+VERIFIER_FILE = Path(tempfile.gettempdir()) / "google_auth_verifier.txt"
 
 
 def start_auth_flow(credentials_file: Path, scopes: list[str]) -> dict:
     flow = InstalledAppFlow.from_client_secrets_file(str(credentials_file), scopes)
     flow.redirect_uri = REDIRECT_URI
-    auth_url, _ = flow.authorization_url(prompt="consent", access_type="offline")
+    auth_url, state = flow.authorization_url(prompt="consent", access_type="offline")
+    # Save code_verifier so complete_auth_flow can use it
+    if flow.code_verifier:
+        VERIFIER_FILE.write_text(flow.code_verifier)
     return {"auth_url": auth_url}
 
 
 def complete_auth_flow(credentials_file: Path, scopes: list[str], code: str, token_file: Path) -> Credentials:
     flow = InstalledAppFlow.from_client_secrets_file(str(credentials_file), scopes)
     flow.redirect_uri = REDIRECT_URI
+    # Restore code_verifier if available
+    if VERIFIER_FILE.exists():
+        flow.code_verifier = VERIFIER_FILE.read_text().strip()
+        VERIFIER_FILE.unlink(missing_ok=True)
     flow.fetch_token(code=code)
     creds = flow.credentials
     _save_token(token_file, creds)
