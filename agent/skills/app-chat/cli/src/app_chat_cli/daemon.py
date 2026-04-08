@@ -95,7 +95,12 @@ async def _ws_loop(state: DaemonState) -> None:
         try:
             if state.session is None:
                 break
-            async with state.session.ws_connect(state.ws_url) as ws:
+            url = state.ws_url
+            agent_token = os.environ.get("AGENT_TOKEN")
+            if agent_token:
+                sep = "&" if "?" in url else "?"
+                url = f"{url}{sep}agent_token={agent_token}"
+            async with state.session.ws_connect(url) as ws:
                 state.ws = ws
                 _log(f"connected to {state.ws_url}")
                 async for msg in ws:

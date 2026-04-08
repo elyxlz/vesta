@@ -20,7 +20,8 @@ class VestaConfig(pyd_settings.BaseSettings):
     nightly_memory_hour: int | None = pyd.Field(default=3, ge=0, le=23)
     interrupt_timeout: float = pyd.Field(default=5.0, gt=0)
     max_thinking_tokens: int | None = 10000
-    ws_port: int = 7865
+    ws_port: int
+    agent_token: str = ""
 
     root: pl.Path = pyd.Field(default=_DEFAULT_ROOT)
 

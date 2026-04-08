@@ -1,7 +1,6 @@
 pub mod client;
 pub mod types;
 
-use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::LazyLock;
@@ -18,7 +17,6 @@ pub struct TestServer {
     process: Option<Child>,
     _tmpdir: tempfile::TempDir,
     pub config: ServerConfig,
-    #[allow(dead_code)]
     pub port: u16,
 }
 
@@ -30,14 +28,13 @@ impl TestServer {
 
         let tmpdir = tempfile::TempDir::new().map_err(|e| format!("tmpdir: {e}"))?;
         let home = tmpdir.path().to_path_buf();
-        let port = free_port()?;
         let vestad = find_vestad()?;
 
         let real_home = std::env::var("HOME").unwrap_or_default();
         let docker_config = format!("{}/.docker", real_home);
 
         let process = Command::new(&vestad)
-            .args(["serve", "--standalone", "--port", &port.to_string()])
+            .args(["serve", "--standalone", "--no-tunnel"])
             .env("HOME", &home)
             .env("DOCKER_CONFIG", &docker_config)
             .stdout(Stdio::null())
@@ -45,19 +42,25 @@ impl TestServer {
             .spawn()
             .map_err(|e| format!("spawn vestad: {e}"))?;
 
-        let addr: std::net::SocketAddr = ([127, 0, 0, 1], port).into();
+        let config_dir = home.join(".config/vesta/vestad");
+        let port_path = config_dir.join("port");
+
         let deadline = std::time::Instant::now() + Duration::from_secs(30);
-        loop {
-            if std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_ok() {
-                break;
+        let port = loop {
+            if let Ok(content) = std::fs::read_to_string(&port_path) {
+                if let Ok(p) = content.trim().parse::<u16>() {
+                    let addr: std::net::SocketAddr = ([127, 0, 0, 1], p).into();
+                    if std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_ok() {
+                        break p;
+                    }
+                }
             }
             if std::time::Instant::now() > deadline {
                 return Err("vestad did not start within 30s".into());
             }
             std::thread::sleep(Duration::from_millis(100));
-        }
+        };
 
-        let config_dir = home.join(".config/vesta/vestad");
         let api_key = std::fs::read_to_string(config_dir.join("api-key"))
             .map_err(|e| format!("read api-key: {e}"))?
             .trim()
@@ -82,6 +85,10 @@ impl TestServer {
 
     pub fn client(&self) -> Client {
         Client::new(&self.config)
+    }
+
+    pub fn _tmpdir_path(&self) -> &std::path::Path {
+        self._tmpdir.path()
     }
 }
 
@@ -113,11 +120,6 @@ impl Drop for TestAgent<'_> {
         let _ = self.client.stop_agent(&self.name);
         let _ = self.client.destroy_agent(&self.name);
     }
-}
-
-fn free_port() -> Result<u16, String> {
-    let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| format!("bind: {e}"))?;
-    Ok(listener.local_addr().map_err(|e| format!("addr: {e}"))?.port())
 }
 
 pub fn find_vestad() -> Result<PathBuf, String> {

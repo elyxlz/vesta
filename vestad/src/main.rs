@@ -118,6 +118,26 @@ fn find_available_port() -> Option<u16> {
         .map(|addr| addr.port())
 }
 
+fn resolve_port(explicit: Option<u16>, config: &std::path::Path) -> u16 {
+    if let Some(port) = explicit {
+        return port;
+    }
+
+    if let Some(stored) = std::fs::read_to_string(config.join("port"))
+        .ok()
+        .and_then(|s| s.trim().parse::<u16>().ok())
+    {
+        if std::net::TcpListener::bind(("0.0.0.0", stored)).is_ok()
+            && std::net::TcpListener::bind(("127.0.0.1", stored + 1)).is_ok()
+        {
+            return stored;
+        }
+        tracing::warn!(stored_port = stored, "stored port unavailable, allocating new one");
+    }
+
+    find_available_port().unwrap_or_else(|| die("no available port found"))
+}
+
 fn config_dir() -> std::path::PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| die("HOME not set"));
     std::path::PathBuf::from(home).join(".config/vesta/vestad")
@@ -161,11 +181,9 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool) {
 
     docker::ensure_docker().unwrap_or_else(|e| die(&e));
 
-    let port = port.unwrap_or_else(|| find_available_port().unwrap_or_else(|| die("no available port found")));
-
     let _pid_lock = serve::acquire_pid_lock(&config).unwrap_or_else(|e| die(&e));
+    let port = resolve_port(port, &config);
     serve::write_port_file(&config, port);
-    serve::write_env_file(&config, port);
 
     let api_key = serve::ensure_api_key(&config);
     let (cert_pem, key_pem, _fingerprint) = serve::ensure_tls(&config);
@@ -182,10 +200,13 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool) {
         None
     };
 
+    serve::write_env_file(&config, port, tunnel_url.as_deref());
+
     let local_url = format!("http://localhost:{}", port + 1);
 
+    let user = std::env::var("USER").or_else(|_| std::env::var("LOGNAME")).unwrap_or_else(|_| "unknown".into());
     eprintln!();
-    eprintln!("  \x1b[1;35mvestad\x1b[0m v{}", env!("CARGO_PKG_VERSION"));
+    eprintln!("  \x1b[1;35mvestad\x1b[0m v{} \x1b[2m(user: {}, port: {})\x1b[0m", env!("CARGO_PKG_VERSION"), user, port);
     print_server_info(tunnel_url.as_deref(), &local_url, &api_key);
 
     tokio::runtime::Builder::new_multi_thread()
@@ -255,6 +276,8 @@ fn run_server_systemd(port: Option<u16>, no_tunnel: bool) {
 }
 
 fn main() {
+    dotenvy::dotenv().ok();
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -399,7 +422,7 @@ fn main() {
                     .unwrap_or_else(|| die("could not determine loaded image from docker load output"));
 
                 eprintln!("creating agent '{}'...", name);
-                let port = find_available_port().unwrap_or_else(|| die("no available port"));
+                let (port, _listener) = docker::allocate_port().unwrap_or_else(|e| die(&e));
                 let env_file = config_dir().join("container.env");
                 docker::create_container(&cname, loaded_image, port, &name, &env_file)
                     .unwrap_or_else(|e| die(&e));

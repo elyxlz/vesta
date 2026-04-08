@@ -199,14 +199,29 @@ async def _service_update_handler(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+@web.middleware
+async def _auth_middleware(request: web.Request, handler):
+    expected = request.app.get("agent_token", "")
+    if not expected:
+        return await handler(request)
+    token = (
+        request.headers.get("X-Agent-Token")
+        or request.query.get("agent_token")
+    )
+    if token != expected:
+        return web.json_response({"error": "unauthorized"}, status=401)
+    return await handler(request)
+
+
 async def start_ws_server(
     event_bus: EventBus,
     config: VestaConfig,
     *,
     host: str = "0.0.0.0",
 ) -> web.AppRunner:
-    app = web.Application()
+    app = web.Application(middlewares=[_auth_middleware])
     app["event_bus"] = event_bus
+    app["agent_token"] = config.agent_token
     app.router.add_get("/ws", _ws_handler)
     app.router.add_get("/history", _history_handler)
     app.router.add_get("/search", _search_handler)

@@ -98,6 +98,12 @@ impl Client {
         Ok(())
     }
 
+    pub fn health_json(&self) -> Result<serde_json::Value, String> {
+        let resp = self.agent.get(&format!("{}/health", self.base_url)).call().map_err(map_error)?;
+        let resp = check_response(resp)?;
+        resp.into_body().read_json().map_err(|e| format!("parse error: {}", e))
+    }
+
     pub fn list_agents(&self) -> Result<Vec<ListEntry>, String> {
         let resp = self.get("/agents")?;
         resp.into_body().read_json().map_err(|e| format!("parse error: {}", e))

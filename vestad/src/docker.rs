@@ -1,4 +1,5 @@
 use serde::Serialize;
+use std::collections::HashSet;
 use std::process;
 use crate::types::{BackupInfo, BackupType, RetentionPolicy};
 
@@ -30,7 +31,8 @@ const MAX_DOCKERFILE_SEARCH_DEPTH: usize = 5;
 pub const CREDENTIALS_PATH: &str = "/root/.claude/.credentials.json";
 pub const AGENT_READY_MARKER_PATH: &str = "/root/vesta/data/agent_ready";
 const CLAUDE_JSON_PATH: &str = "/root/.claude.json";
-const FALLBACK_WS_PORT: u16 = 7865;
+const AGENT_TOKEN_BYTES: usize = 32;
+const PORT_ALLOC_RETRIES: usize = 10;
 const NAME_MAX_LEN: usize = 32;
 const DOCKER_DAEMON_WAIT_RETRIES: usize = 10;
 const AGENT_READY_TIMEOUT_MS: u64 = 200;
@@ -268,7 +270,7 @@ fn check_docker_permission() -> Option<DockerError> {
 
 pub struct ContainerInfo {
     pub status: ContainerStatus,
-    pub port: u16,
+    pub port: Option<u16>,
     pub id: Option<String>,
     pub agent_name: Option<String>,
 }
@@ -282,7 +284,8 @@ pub struct AgentDerivedState {
 
 pub fn compute_agent_state(cname: &str, info: &ContainerInfo) -> AgentDerivedState {
     let authenticated = info.status != ContainerStatus::NotFound && is_authenticated(cname);
-    let agent_ready = info.status == ContainerStatus::Running && is_agent_ready(info.port, cname);
+    let agent_ready = info.status == ContainerStatus::Running
+        && info.port.is_some_and(|p| is_agent_ready(p, cname));
     let alive = info.status == ContainerStatus::Running && authenticated;
     let friendly_status = friendly_status(&info.status, authenticated, agent_ready);
     AgentDerivedState { authenticated, agent_ready, alive, friendly_status }
@@ -309,8 +312,7 @@ fn inspect_container(cname: &str) -> ContainerInfo {
             };
             let port = parts
                 .get(1)
-                .and_then(|p| p.trim().parse().ok())
-                .unwrap_or(FALLBACK_WS_PORT);
+                .and_then(|p| p.trim().parse().ok());
             let id = parts
                 .get(2)
                 .map(|p| p.trim().chars().take(12).collect::<String>());
@@ -322,7 +324,7 @@ fn inspect_container(cname: &str) -> ContainerInfo {
         }
         None => ContainerInfo {
             status: ContainerStatus::NotFound,
-            port: FALLBACK_WS_PORT,
+            port: None,
             id: None,
             agent_name: None,
         },
@@ -483,25 +485,58 @@ pub fn resolve_image() -> Result<&'static str, DockerError> {
     }
 }
 
-pub fn allocate_port() -> u16 {
-    match std::net::TcpListener::bind("127.0.0.1:0") {
-        Ok(listener) => match listener.local_addr() {
-            Ok(addr) => addr.port(),
-            Err(_) => FALLBACK_WS_PORT,
-        },
-        Err(_) => FALLBACK_WS_PORT,
-    }
+fn all_vesta_container_ports() -> HashSet<u16> {
+    docker_output(&[
+        "ps", "-a",
+        "--filter", "label=vesta.managed=true",
+        "--format", "{{.Label \"vesta.ws_port\"}}",
+    ])
+    .unwrap_or_default()
+    .lines()
+    .filter_map(|s| s.trim().parse().ok())
+    .collect()
 }
 
-pub fn get_container_port(cname: &str) -> u16 {
+pub fn allocate_port() -> Result<(u16, std::net::TcpListener), DockerError> {
+    let reserved = all_vesta_container_ports();
+    for _ in 0..PORT_ALLOC_RETRIES {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")
+            .map_err(|e| DockerError::Failed(format!("failed to bind port: {e}")))?;
+        let port = listener.local_addr()
+            .map_err(|e| DockerError::Failed(format!("failed to get port: {e}")))?
+            .port();
+        if !reserved.contains(&port) {
+            return Ok((port, listener));
+        }
+    }
+    Err(DockerError::Failed("could not allocate a free port after retries".into()))
+}
+
+pub fn get_container_port(cname: &str) -> Option<u16> {
     docker_output(&[
         "inspect",
         "--format",
         "{{index .Config.Labels \"vesta.ws_port\"}}",
         cname,
     ])
-    .and_then(|s| s.parse().ok())
-    .unwrap_or(FALLBACK_WS_PORT)
+    .and_then(|s| s.trim().parse().ok())
+}
+
+pub fn get_container_agent_token(cname: &str) -> Option<String> {
+    docker_output(&[
+        "inspect",
+        "--format",
+        "{{index .Config.Labels \"vesta.agent_token\"}}",
+        cname,
+    ])
+    .map(|s| s.trim().to_string())
+    .filter(|s| !s.is_empty() && s != "<no value>")
+}
+
+pub fn generate_agent_token() -> String {
+    (0..AGENT_TOKEN_BYTES)
+        .map(|_| format!("{:02x}", rand::random::<u8>()))
+        .collect()
 }
 
 pub fn list_managed_containers() -> Vec<String> {
@@ -563,10 +598,13 @@ fn gpu_available() -> GpuStatus {
 // --- Container creation ---
 
 pub fn create_container(cname: &str, image: &str, port: u16, agent_name: &str, env_file: &std::path::Path) -> Result<(), DockerError> {
+    let agent_token = generate_agent_token();
     let ws_port_env = format!("WS_PORT={}", port);
     let agent_name_env = format!("AGENT_NAME={}", agent_name);
+    let agent_token_env = format!("AGENT_TOKEN={}", agent_token);
     let env_mount = format!("{}:/run/vestad-env:ro", env_file.display());
     let port_label = format!("vesta.ws_port={}", port);
+    let token_label = format!("vesta.agent_token={}", agent_token);
     let user_label = format!("{}={}", LABEL_USER, current_user());
     let agent_name_label = format!("{}={}", LABEL_AGENT_NAME, agent_name);
     let mut args = vec![
@@ -574,11 +612,13 @@ pub fn create_container(cname: &str, image: &str, port: u16, agent_name: &str, e
         "--restart", "unless-stopped", "--network", "host",
         "--label", "vesta.managed=true",
         "--label", &port_label,
+        "--label", &token_label,
         "--label", &user_label,
         "--label", &agent_name_label,
         "-v", &env_mount,
         "-e", &ws_port_env,
         "-e", &agent_name_env,
+        "-e", &agent_token_env,
         "-e", "IS_SANDBOX=1",
     ];
 
@@ -815,7 +855,7 @@ pub fn get_status(name: &str) -> Result<StatusJson, DockerError> {
         id: info.id,
         authenticated: derived.authenticated,
         agent_ready: derived.agent_ready,
-        ws_port: info.port,
+        ws_port: info.port.unwrap_or(0),
         alive: derived.alive,
         friendly_status: derived.friendly_status,
     })
@@ -834,7 +874,7 @@ pub fn list_agents() -> Vec<ListEntry> {
                 status: status_label(&info.status),
                 authenticated: derived.authenticated,
                 agent_ready: derived.agent_ready,
-                ws_port: info.port,
+                ws_port: info.port.unwrap_or(0),
                 alive: derived.alive,
                 friendly_status: derived.friendly_status,
             }
@@ -854,7 +894,7 @@ pub fn create_agent(name: &str, env_file: &std::path::Path) -> Result<String, Do
     }
 
     let image = resolve_image()?;
-    let port = allocate_port();
+    let (port, _listener) = allocate_port()?;
     create_container(&cname, image, port, name, env_file)?;
     Ok(name.to_string())
 }
@@ -956,13 +996,13 @@ pub fn rebuild_agent(name: &str, env_file: &std::path::Path) -> Result<(), Docke
         ContainerStatus::Dead => return Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name))),
         _ => {}
     }
+    let port = info.port.ok_or_else(|| DockerError::Failed("container has no port label".into()))?;
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
     let backup_tag = format!("vesta-rebuild:{}_{}", name, ts);
 
-    // Ensure base image layers are present so commit succeeds
     docker_ok(&["pull", VESTA_IMAGE]);
 
     if !docker_ok(&["commit", &cname, &backup_tag]) {
@@ -971,7 +1011,7 @@ pub fn rebuild_agent(name: &str, env_file: &std::path::Path) -> Result<(), Docke
 
     docker_ok(&["rm", "-f", &cname]);
 
-    create_container(&cname, &backup_tag, info.port, name, env_file)?;
+    create_container(&cname, &backup_tag, port, name, env_file)?;
 
     if !docker_ok(&["start", &cname]) {
         return Err(DockerError::Failed("failed to start".into()));
@@ -987,7 +1027,8 @@ pub async fn wait_ready_async(name: &str, timeout_secs: u64) -> Result<(), Docke
         let cname = cname.clone();
         tokio::task::spawn_blocking(move || {
             ensure_running(&cname)?;
-            Ok::<_, DockerError>(get_container_port(&cname))
+            get_container_port(&cname)
+                .ok_or_else(|| DockerError::Failed("container has no port label".into()))
         })
         .await
         .unwrap()?
@@ -1274,9 +1315,9 @@ pub fn restore_backup(name: &str, backup_id: &str, env_file: &std::path::Path) -
     commit_backup(&cname, name, &BackupType::PreRestore)?;
     docker_ok(&["rm", "-f", &cname]);
 
-    // Create new container from backup image, reusing the port
+    let port = info.port.ok_or_else(|| DockerError::Failed("container has no port label".into()))?;
     tracing::debug!(agent = %name, backup_id = %backup_id, "creating container from backup image");
-    create_container(&cname, backup_id, info.port, name, env_file)?;
+    create_container(&cname, backup_id, port, name, env_file)?;
 
     if !docker_ok(&["start", &cname]) {
         return Err(DockerError::Failed("failed to start restored agent".into()));
@@ -1643,5 +1684,18 @@ mod tests {
     #[test]
     fn name_from_cname_no_prefix() {
         assert_eq!(name_from_cname("random"), "random");
+    }
+
+    #[test]
+    fn agent_token_length() {
+        let token = generate_agent_token();
+        assert_eq!(token.len(), AGENT_TOKEN_BYTES * 2);
+    }
+
+    #[test]
+    fn agent_tokens_are_unique() {
+        let t1 = generate_agent_token();
+        let t2 = generate_agent_token();
+        assert_ne!(t1, t2);
     }
 }

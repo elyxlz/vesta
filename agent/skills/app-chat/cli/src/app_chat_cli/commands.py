@@ -11,7 +11,10 @@ import urllib.parse
 
 
 def _default_agent_url() -> str:
-    port = os.environ.get("WS_PORT", "7865")
+    port = os.environ.get("WS_PORT")
+    if not port:
+        print("error: WS_PORT environment variable is not set", file=sys.stderr)
+        sys.exit(1)
     return f"http://localhost:{port}"
 
 
@@ -44,6 +47,9 @@ async def _send_via_socket(sock_path: pl.Path, message: str) -> dict[str, object
 
 
 def _api_get(base_url: str, path: str, params: dict[str, str]) -> dict[str, object]:
+    agent_token = os.environ.get("AGENT_TOKEN")
+    if agent_token:
+        params = {**params, "agent_token": agent_token}
     qs = urllib.parse.urlencode({k: v for k, v in params.items() if v is not None})
     url = f"{base_url}{path}?{qs}" if qs else f"{base_url}{path}"
     try:
