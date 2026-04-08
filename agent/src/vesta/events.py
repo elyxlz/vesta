@@ -135,6 +135,7 @@ class EventBus:
     def __init__(self, data_dir: pl.Path | None = None) -> None:
         self._subscribers: set[asyncio.Queue[VestaEvent]] = set()
         self._state: AgentState = "idle"
+        self._active_tools: int = 0
         self._conn: sqlite3.Connection | None = None
         if data_dir:
             data_dir.mkdir(parents=True, exist_ok=True)
@@ -172,6 +173,15 @@ class EventBus:
         from vesta import logger
         logger.system(f"state → {state}")
         self.emit(StatusEvent(type="status", state=state))
+
+    def tool_started(self) -> None:
+        self._active_tools += 1
+        self.set_state("thinking")
+
+    def tool_finished(self) -> None:
+        self._active_tools = max(0, self._active_tools - 1)
+        if self._active_tools == 0:
+            self.set_state("idle")
 
     def recent(self, limit: int = PAGE_SIZE) -> tuple[list[StreamEvent], int | None]:
         if not self._conn or limit <= 0:
