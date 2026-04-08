@@ -1235,7 +1235,7 @@ pub fn write_port_file(config_dir: &std::path::Path, port: u16) {
 /// Adding new vars here makes them available to all containers without rebuild.
 pub fn write_env_file(config_dir: &std::path::Path, port: u16) {
     let env_path = config_dir.join("container.env");
-    let content = format!("VESTAD_PORT={port}\n");
+    let content = format!("export VESTAD_PORT={port}\n");
     std::fs::write(&env_path, content).ok();
 }
 
