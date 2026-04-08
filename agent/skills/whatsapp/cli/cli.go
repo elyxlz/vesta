@@ -233,7 +233,7 @@ func executeCommand(command string, args []string, wac *WhatsAppClient) (interfa
 			"send-message": true, "send-file": true, "send-reaction": true,
 			"send-audio": true, "add-contact": true, "remove-contact": true,
 			"leave-group": true, "create-group": true, "rename-group": true,
-			"update-group-participants": true, "set-group-photo": true,
+			"update-group-participants": true, "set-group-photo": true, "set-group-description": true,
 			"revoke-message": true,
 		}
 		if writeCommands[command] {
@@ -546,6 +546,20 @@ func executeCommand(command string, args []string, wac *WhatsAppClient) (interfa
 			return nil, fmt.Errorf("--group and --file-path are required")
 		}
 		success, msg := wac.SetGroupPhoto(group, filePath)
+		return map[string]interface{}{"success": success, "message": msg}, nil
+
+	case "set-group-description":
+		var group, description string
+		fs := flag.NewFlagSet("set-group-description", flag.ContinueOnError)
+		fs.StringVar(&group, "group", "", "Group name or JID")
+		fs.StringVar(&description, "description", "", "New group description")
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		if group == "" || description == "" {
+			return nil, fmt.Errorf("--group and --description are required")
+		}
+		success, msg := wac.SetGroupDescription(group, description)
 		return map[string]interface{}{"success": success, "message": msg}, nil
 
 	case "check-delivery":
