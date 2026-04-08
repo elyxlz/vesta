@@ -13,6 +13,7 @@ from claude_agent_sdk import (
     Message,
     ResultMessage,
     TextBlock,
+    ThinkingBlock,
     ToolUseBlock,
     tool,
     create_sdk_mcp_server,
@@ -86,7 +87,7 @@ def filter_tool_lines(text: str) -> str:
     return "\n".join(s for line in text.split("\n") if (s := line.strip()) and not s.startswith("[TOOL]") and not s.startswith("[TASK]"))
 
 
-def _parse_sdk_message(msg: Message, *, sub_agent_context: str | None) -> tuple[list[str], str | None, str | None, bool]:
+def _parse_sdk_message(msg: Message, *, sub_agent_context: str | None) -> tuple[list[str], list[ThinkingBlock], str | None, str | None, bool]:
     if isinstance(msg, ResultMessage):
         session_id: str | None = None
         try:
@@ -113,25 +114,28 @@ def _parse_sdk_message(msg: Message, *, sub_agent_context: str | None) -> tuple[
                 logger.usage(" | ".join(parts))
         except (AttributeError, TypeError, KeyError):
             pass
-        return ([], sub_agent_context, session_id, False)
+        return ([], [], sub_agent_context, session_id, False)
 
     if not isinstance(msg, AssistantMessage):
-        return ([msg] if isinstance(msg, str) else [], sub_agent_context, None, False)
+        return ([msg] if isinstance(msg, str) else [], [], sub_agent_context, None, False)
 
     texts = []
+    thinking_blocks = []
     has_tool_use = False
     current_context = sub_agent_context
 
     for block in msg.content:
         if isinstance(block, TextBlock):
             texts.append(block.text)
+        elif isinstance(block, ThinkingBlock):
+            thinking_blocks.append(block)
         elif isinstance(block, ToolUseBlock):
             has_tool_use = True
             _, new_context = _format_tool_call(block.name, input_data=block.input, sub_agent_context=current_context)
             if new_context:
                 current_context = new_context
 
-    return texts, current_context, None, has_tool_use
+    return texts, thinking_blocks, current_context, None, has_tool_use
 
 
 _TOOL_KEYS: dict[str, str] = {
@@ -267,6 +271,10 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
         state.event_bus.emit({"type": "assistant", "text": t})
         assistant_texts.append(t)
 
+    def _emit_thinking(block: ThinkingBlock) -> None:
+        logger.thinking(block.thinking)
+        state.event_bus.emit({"type": "thinking", "text": block.thinking, "signature": block.signature})
+
     response_iter = client.receive_response().__aiter__()
 
     interrupt_task: asyncio.Task[tp.Any] | None = None
@@ -297,7 +305,10 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
                 try:
                     drain = client.receive_response().__aiter__()
                     while (leftover := await asyncio.wait_for(anext(drain, None), timeout=5.0)) is not None:
-                        texts, _, _, _ = _parse_sdk_message(tp.cast(Message, leftover), sub_agent_context=sub_agent_context)
+                        texts, thinking_blocks, _, _, _ = _parse_sdk_message(tp.cast(Message, leftover), sub_agent_context=sub_agent_context)
+                        if show_output:
+                            for block in thinking_blocks:
+                                _emit_thinking(block)
                         text = "\n".join(texts) if texts else None
                         if text and show_output:
                             filtered = filter_tool_lines(text)
@@ -312,11 +323,14 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
                 break
 
             msg = tp.cast(Message, result)
-            texts, sub_agent_context, session_id, _ = _parse_sdk_message(msg, sub_agent_context=sub_agent_context)
+            texts, thinking_blocks, sub_agent_context, session_id, _ = _parse_sdk_message(msg, sub_agent_context=sub_agent_context)
             if session_id and session_id != state.session_id:
                 if state.session_id:
                     logger.warning(f"Session ID changed: {state.session_id[:16]} -> {session_id[:16]} (resume may have failed)")
                 persist_session_id(session_id, state=state, config=config)
+            if show_output:
+                for block in thinking_blocks:
+                    _emit_thinking(block)
             text = "\n".join(texts) if texts else None
             if not text:
                 continue
@@ -410,7 +424,7 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
         cwd=config.root,
         setting_sources=["project"],
         add_dirs=[str(config.root)],
-        max_thinking_tokens=config.max_thinking_tokens,
+        thinking=config.thinking,
         max_buffer_size=10 * 1024 * 1024,
         stderr=lambda line: logger.sdk(line),
         mcp_servers={"vesta": _build_vesta_tools_server(state, config)},

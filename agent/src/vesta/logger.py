@@ -77,65 +77,88 @@ def _cat(symbol: str, color: str, prefix: str, msg: tp.Any, *, level: int = logg
     _log(f"{symbol} [{color}][{prefix}][/{color}] {msg}", level=level)
 
 
+def _system_phase(phase: str, msg: tp.Any, *, level: int = logging.INFO) -> None:
+    _log(f"* [cyan][SYSTEM][/cyan] - [dim][{phase}][/dim] {msg}", level=level)
+
+
+def _agent_phase(phase: str, msg: tp.Any, *, level: int = logging.INFO) -> None:
+    _log(f"< [magenta][AGENT][/magenta] - [blue][{phase}][/blue] {msg}", level=level)
+
+
+def _user_phase(phase: str, msg: tp.Any, *, level: int = logging.INFO) -> None:
+    _log(f"> [white][USER][/white] - [dim][{phase}][/dim] {msg}", level=level)
+
+
+def _event_phase(phase: str, msg: tp.Any, *, level: int = logging.INFO) -> None:
+    _log(f"! [yellow][EVENT][/yellow] - [dim][{phase}][/dim] {msg}", level=level)
+
+
 # Category loggers
 def init(msg: tp.Any) -> None:
-    _cat("*", "yellow", "INIT", msg)
+    _system_phase("INIT", msg)
 
 
 def shutdown(msg: tp.Any) -> None:
-    _cat("*", "red", "SHUTDOWN", msg)
+    _system_phase("SHUTDOWN", msg)
 
 
 def client(msg: tp.Any) -> None:
-    _cat("*", "dim", "CLIENT", msg)
+    _system_phase("CLIENT", msg)
 
 
 def dreamer(msg: tp.Any) -> None:
-    _cat("*", "magenta", "DREAMER", msg)
+    _system_phase("DREAMER", msg)
 
 
 def interrupt(msg: tp.Any) -> None:
-    _cat("*", "yellow", "INTERRUPT", msg, level=logging.DEBUG)
+    _system_phase("INTERRUPT", msg, level=logging.DEBUG)
 
 
 def proactive(msg: tp.Any) -> None:
-    _cat("*", "yellow", "PROACTIVE", msg)
+    _system_phase("PROACTIVE", msg)
 
 
 def startup(msg: tp.Any) -> None:
-    _cat("*", "dim", "STARTUP", msg)
+    _system_phase("STARTUP", msg)
 
 
 def user(msg: tp.Any) -> None:
-    _cat(">", "white", "USER", msg)
+    _user_phase("MESSAGE", msg)
 
 
 def assistant(msg: tp.Any) -> None:
-    _cat("<", "magenta", "ASSISTANT", msg)
+    _agent_phase("ASSISTANT", msg)
+
+
+def thinking(msg: tp.Any) -> None:
+    text = str(msg)
+    lines = text.splitlines() or [text]
+    for line in lines:
+        _agent_phase("THINKING", line)
 
 
 def tool(msg: tp.Any) -> None:
-    _cat("~", "dim", "TOOL", msg)
+    _agent_phase("TOOL CALL", msg)
 
 
 def notification(msg: tp.Any) -> None:
-    _cat("!", "yellow", "NOTIFICATION", msg)
+    _event_phase("NOTIFICATION", msg)
 
 
 def system(msg: tp.Any) -> None:
-    _cat(">", "cyan", "SYSTEM", msg)
+    _system_phase("MESSAGE", msg)
 
 
 def subagent(msg: tp.Any) -> None:
-    _cat("@", "blue", "SUBAGENT", msg)
+    _agent_phase("SUBAGENT", msg)
 
 
 def sdk(msg: tp.Any) -> None:
-    _cat("~", "dim", "SDK", msg, level=logging.DEBUG)
+    _system_phase("SDK", msg, level=logging.DEBUG)
 
 
 def usage(msg: tp.Any) -> None:
-    _cat("$", "green", "USAGE", msg)
+    _system_phase("USAGE", msg)
 
 
 def debug(msg: tp.Any) -> None:

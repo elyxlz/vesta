@@ -11,7 +11,7 @@ import pytest
 import vesta.models as vm
 from claude_agent_sdk import HookContext
 from claude_agent_sdk.types import SubagentStartHookInput
-from vesta.core.client import _format_tool_call, _format_search_results, _parse_agent_input, _tool_summary, _subagent_hook
+from vesta.core.client import _format_tool_call, _format_search_results, _parse_agent_input, _parse_sdk_message, _tool_summary, _subagent_hook
 from vesta.events import ChatEvent, EventBus, SubagentStartEvent, SubagentStopEvent, UserEvent
 from vesta.core.init import get_memory_path
 from vesta.core.loops import format_notification_batch
@@ -811,6 +811,23 @@ def test_filter_tool_lines():
     assert filter_tool_lines("") == ""
 
 
+def test_parse_sdk_message_extracts_thinking_blocks():
+    from claude_agent_sdk import TextBlock, ThinkingBlock
+
+    texts, thinking_blocks, context, session_id, has_tool_use = _parse_sdk_message(
+        _assistant_msg([ThinkingBlock("step one\nstep two", "sig-123"), TextBlock("done")]),
+        sub_agent_context=None,
+    )
+
+    assert texts == ["done"]
+    assert len(thinking_blocks) == 1
+    assert thinking_blocks[0].thinking == "step one\nstep two"
+    assert thinking_blocks[0].signature == "sig-123"
+    assert context is None
+    assert session_id is None
+    assert has_tool_use is False
+
+
 def test_process_message_always_streams():
     """process_message must always pass show_output=True — regression guard."""
     import ast
@@ -847,6 +864,34 @@ async def test_converse_emits_text_immediately_with_tool_use():
 
     texts = [t for t, _ in emitted]
     assert texts == ["restarting daemon", "checking status", "all done"], f"All text must be emitted immediately, got: {texts}"
+
+
+@pytest.mark.anyio
+async def test_converse_emits_thinking_events():
+    from claude_agent_sdk import TextBlock, ThinkingBlock
+    from vesta.core.client import converse
+
+    state, config, mock_client, emitted, _ = _make_converse_harness()
+    thinking_events: list[tuple[str, str]] = []
+    original_emit = state.event_bus.emit
+
+    def tracking_emit(event):
+        if isinstance(event, dict) and event.get("type") == "thinking":
+            thinking_events.append((event["text"], event["signature"]))
+        original_emit(event)
+
+    state.event_bus.emit = tracking_emit  # type: ignore[assignment]
+
+    async def response_with_thinking():
+        yield _assistant_msg([ThinkingBlock("step one\nstep two", "sig-123"), TextBlock("done")])
+        yield _result_msg()
+
+    mock_client.receive_response = MagicMock(return_value=response_with_thinking())
+
+    await converse("test", state=state, config=config, show_output=True)
+
+    assert thinking_events == [("step one\nstep two", "sig-123")]
+    assert [t for t, _ in emitted] == ["done"]
 
 
 @pytest.mark.anyio

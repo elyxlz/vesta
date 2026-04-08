@@ -19,7 +19,7 @@ class VestaConfig(pyd_settings.BaseSettings):
     response_timeout: int = pyd.Field(default=600, ge=1)
     nightly_memory_hour: int | None = pyd.Field(default=3, ge=0, le=23)
     interrupt_timeout: float = pyd.Field(default=5.0, gt=0)
-    max_thinking_tokens: int | None = 10000
+    thinking: dict[str, tp.Any] = {"type": "adaptive"}
     ws_port: int = 0
     agent_token: str | None = None
 

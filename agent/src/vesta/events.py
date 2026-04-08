@@ -37,6 +37,12 @@ class AssistantEvent(_BaseEvent):
     text: str
 
 
+class ThinkingEvent(_BaseEvent):
+    type: tp.Literal["thinking"]
+    text: str
+    signature: str
+
+
 class UserEvent(_BaseEvent):
     type: tp.Literal["user"]
     text: str
@@ -81,6 +87,7 @@ type StreamEvent = (
     | ToolStartEvent
     | ToolEndEvent
     | AssistantEvent
+    | ThinkingEvent
     | UserEvent
     | ErrorEvent
     | NotificationEvent
