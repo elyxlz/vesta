@@ -277,46 +277,16 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
 
     response_iter = client.receive_response().__aiter__()
 
-    interrupt_task: asyncio.Task[tp.Any] | None = None
-    if state.interrupt_event and not state.interrupt_event.is_set():
-        interrupt_task = asyncio.create_task(state.interrupt_event.wait())
-
     try:
         while True:
             anext_task = asyncio.create_task(anext(response_iter, _STOP))
-            waitables: set[asyncio.Task[tp.Any]] = {anext_task}
-            if interrupt_task and not interrupt_task.done():
-                waitables.add(interrupt_task)
 
-            done, pending = await asyncio.wait(waitables, return_when=asyncio.FIRST_COMPLETED, timeout=config.response_timeout)
+            done, _ = await asyncio.wait({anext_task}, return_when=asyncio.FIRST_COMPLETED, timeout=config.response_timeout)
 
             if not done:
                 await _cancel_task(anext_task)
                 await attempt_interrupt(state, config=config, reason="Response timeout")
                 raise TimeoutError
-
-            if interrupt_task and interrupt_task in done:
-                logger.interrupt("Conversation interrupted by new message")
-                await attempt_interrupt(state, config=config, reason="New message interrupt")
-                await _cancel_task(anext_task)
-                # Cancelling anext_task finalizes response_iter, so drain leftover
-                # messages with a fresh iterator to keep the stream clean.
-                # Emit any text so it's not lost.
-                try:
-                    drain = client.receive_response().__aiter__()
-                    while (leftover := await asyncio.wait_for(anext(drain, None), timeout=5.0)) is not None:
-                        texts, thinking_blocks, _, _, _ = _parse_sdk_message(tp.cast(Message, leftover), sub_agent_context=sub_agent_context)
-                        if show_output:
-                            for block in thinking_blocks:
-                                _emit_thinking(block)
-                        text = "\n".join(texts) if texts else None
-                        if text and show_output:
-                            filtered = filter_tool_lines(text)
-                            if filtered:
-                                _emit(filtered)
-                except (TimeoutError, StopAsyncIteration):
-                    pass
-                break
 
             result = anext_task.result()
             if result is _STOP:
@@ -341,8 +311,7 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
             if filtered:
                 _emit(filtered)
     finally:
-        if interrupt_task and not interrupt_task.done():
-            await _cancel_task(interrupt_task)
+        pass
 
     return responses
 

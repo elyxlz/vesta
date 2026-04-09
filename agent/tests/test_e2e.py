@@ -151,7 +151,10 @@ def container(docker_image):
         "NOTIFICATION_BUFFER_DELAY=0",
         "-e",
         "EPHEMERAL=true",
+        "-e",
+        "IS_SANDBOX=1",
         docker_image,
+        "bash", "-c", "exec uv run --project /root/vesta python -m vesta.main",
     )
 
     try:
@@ -236,27 +239,30 @@ def test_file_modification(container):
     assert "APPENDED" in final
 
 
-def test_interrupt_notification_interrupts_agent(container):
-    """interrupt=true notification interrupts a busy agent."""
+def test_new_notification_queued_without_rejecting_tool_call(container):
+    """A new notification during processing must not cause false tool rejections.
+
+    Both tasks complete — the first finishes its turn, then the second runs.
+    No 'tool use was rejected' errors should appear (issue #184).
+    """
     uid = uuid.uuid4().hex[:8]
-    slow_file = f"{WORKSPACE_DIR}/slow-{uid}.txt"
-    urgent_file = f"{WORKSPACE_DIR}/urgent-{uid}.txt"
+    first_file = f"{WORKSPACE_DIR}/first-{uid}.txt"
+    second_file = f"{WORKSPACE_DIR}/second-{uid}.txt"
 
     _write_notification(
         container,
-        f'Wait 30 seconds using bash sleep, then create "{slow_file}" with "slow done".',
+        f'Create the file "{first_file}" containing only:\nfirst done',
     )
-    time.sleep(5)
+    time.sleep(3)
 
     _write_notification(
         container,
-        f'Create the file "{urgent_file}" containing only:\nurgent done',
+        f'Create the file "{second_file}" containing only:\nsecond done',
         interrupt=True,
     )
 
-    # Urgent file should appear before the 30s sleep finishes
-    _wait_for_file(container, urgent_file, timeout=60.0)
-    assert not _exec_ok(container, f"test -f {slow_file}"), "slow task finished before urgent — test is inconclusive"
+    assert "first done" in _wait_for_file(container, first_file)
+    assert "second done" in _wait_for_file(container, second_file)
 
 
 def test_passive_notification_waits_for_idle(container):
