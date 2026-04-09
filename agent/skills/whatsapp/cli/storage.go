@@ -900,3 +900,33 @@ func (ms *MessageStore) GetMessageMediaInfo(messageID, chatJID string) (*MediaIn
 
 	return &info, nil
 }
+
+// GetLastMessageInfo returns the timestamp and ID of the most recent message in a chat.
+// Used to build the message range for chat deletion app state patches.
+func (ms *MessageStore) GetLastMessageInfo(chatJID string) (time.Time, string, error) {
+	var msgID string
+	var ts time.Time
+	err := ms.db.QueryRow(`
+		SELECT id, timestamp FROM messages
+		WHERE chat_jid = ?
+		ORDER BY timestamp DESC LIMIT 1
+	`, chatJID).Scan(&msgID, &ts)
+	if err != nil {
+		return time.Time{}, "", err
+	}
+	return ts, msgID, nil
+}
+
+// DeleteChatMessages removes all messages for the given chat JID from the local DB.
+// The chat row itself is kept so the chat still appears in list-chats.
+func (ms *MessageStore) DeleteChatMessages(chatJID string) (int64, error) {
+	res, err := ms.db.Exec(`DELETE FROM messages WHERE chat_jid = ?`, chatJID)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	// Rebuild FTS after bulk delete
+	ms.db.Exec(`DELETE FROM messages_fts`)
+	ms.rebuildFTS()
+	return n, nil
+}
