@@ -10,7 +10,7 @@ import subprocess
 import sys
 import urllib.request
 
-WINDY_API_KEY = os.environ.get("WINDY_API_KEY", "")
+WINDY_API_KEY = os.environ["WINDY_API_KEY"] if "WINDY_API_KEY" in os.environ else ""
 WINDY_URL = "https://api.windy.com/api/point-forecast/v2"
 
 # Named locations for convenience
@@ -54,9 +54,9 @@ def get_ha_location() -> tuple[float, float, str] | None:
         if result.returncode != 0:
             return None
         data = json.loads(result.stdout)
-        lat = data.get("latitude")
-        lon = data.get("longitude")
-        if lat and lon:
+        if "latitude" in data and "longitude" in data:
+            lat = data["latitude"]
+            lon = data["longitude"]
             # Guess timezone from coordinates (simple heuristic)
             tz = guess_timezone(lat, lon)
             return (lat, lon, tz)
@@ -105,17 +105,17 @@ def format_forecast(data: dict, hours: int, tz_name: str, location_label: str) -
         import zoneinfo
         tz = zoneinfo.ZoneInfo(tz_name)
     except (ImportError, KeyError):
-        tz = dt.timezone.utc
+        tz = dt.UTC
 
-    timestamps = data.get("ts", [])
-    temps = data.get("temp-surface", [])
-    precips = data.get("past3hprecip-surface", [])
-    wind_us = data.get("wind_u-surface", [])
-    wind_vs = data.get("wind_v-surface", [])
-    rhs = data.get("rh-surface", [])
+    timestamps = data["ts"] if "ts" in data else []
+    temps = data["temp-surface"] if "temp-surface" in data else []
+    precips = data["past3hprecip-surface"] if "past3hprecip-surface" in data else []
+    wind_us = data["wind_u-surface"] if "wind_u-surface" in data else []
+    wind_vs = data["wind_v-surface"] if "wind_v-surface" in data else []
+    rhs = data["rh-surface"] if "rh-surface" in data else []
     # clouds not available on free tier
 
-    now = dt.datetime.now(dt.timezone.utc)
+    now = dt.datetime.now(dt.UTC)
     lines = [f"Weather forecast for {location_label}:"]
     lines.append("")
 
@@ -127,7 +127,7 @@ def format_forecast(data: dict, hours: int, tz_name: str, location_label: str) -
     hourly_lines = []
 
     for i, ts_ms in enumerate(timestamps):
-        ts = dt.datetime.fromtimestamp(ts_ms / 1000, tz=dt.timezone.utc)
+        ts = dt.datetime.fromtimestamp(ts_ms / 1000, tz=dt.UTC)
         if ts < now - dt.timedelta(hours=1):
             continue
         if count >= hours // 3 + 1:

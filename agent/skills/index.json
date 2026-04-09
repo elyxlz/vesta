@@ -92,6 +92,10 @@
     "description": "Use for \"transcribe\", \"transcription\", \"speech to text\", \"audio to text\", \"convert audio\", or when the user wants text extracted from any audio or video file."
   },
   {
+    "name": "windy-weather",
+    "description": "Use this skill when the user asks about \"weather\", \"forecast\", \"will it rain\", \"temperature\", \"wind\", \"humidity\", or needs current or upcoming weather conditions for any location. Powered by the Windy Point Forecast API."
+  },
+  {
     "name": "zoom",
     "description": "This skill should be used when the user asks about \"zoom\", \"zoom meeting\", \"zoom call\", or needs to create, list, or delete Zoom meetings."
   }
