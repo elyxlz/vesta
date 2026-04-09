@@ -136,5 +136,8 @@ The first time a new type of notification comes up (a mailing list, a recurring 
 
 [Things the user wants/doesn't want to be notified about]
 
+### Rules
+- **Search before saying "I don't have/can't"**: vesta/data → task metadata → WhatsApp history (500+ deep) → conversation DB → /tmp → OneDrive. Read SKILL.md before saying a CLI feature doesn't exist. NEVER say "I can't do X" without first exhaustively checking source code, help commands, and docs — confirm the limitation is real before reporting it
+
 ### Mistakes & Corrections
 [Important lessons learned]
