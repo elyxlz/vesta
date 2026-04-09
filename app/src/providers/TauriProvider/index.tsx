@@ -19,7 +19,8 @@ const platform = detectPlatform();
 const info: TauriInfo = {
   isTauri,
   platform,
-  isDesktop: platform === "macos" || platform === "windows" || platform === "linux",
+  isDesktop:
+    platform === "macos" || platform === "windows" || platform === "linux",
   isMobile: platform === "ios" || platform === "android",
   isMacOS: platform === "macos",
   isWindows: platform === "windows",

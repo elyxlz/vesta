@@ -8,15 +8,12 @@ import {
   type ChangeEvent,
   type KeyboardEvent,
 } from "react";
-import {
-  Card,
-} from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { useAutoScroll } from "@/hooks/use-auto-scroll";
 import { useLayout } from "@/stores/use-layout";
 import { useChatContext } from "@/providers/ChatProvider";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useVoice } from "@/providers/VoiceProvider";
-import { cn } from "@/lib/utils";
 import { ChatComposer } from "./ChatComposer";
 import { ChatHeaderActions } from "./ChatHeaderActions";
 import { ChatMessageArea } from "./ChatMessageArea";
@@ -30,16 +27,30 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   const { name } = useSelectedAgent();
   const navbarHeight = useLayout((s) => s.navbarHeight);
   const {
-    sttAvailable, voiceAutoSend,
-    isRecording, liveTranscript, toggleVoice, voiceError,
+    sttAvailable,
+    voiceAutoSend,
+    isRecording,
+    liveTranscript,
+    toggleVoice,
+    voiceError,
     registerChatCallbacks,
   } = useVoice();
 
-  const { messages, agentState, connected, hasMore, loadingMore, loadMore, send, showToolCalls } =
-    useChatContext();
+  const {
+    messages,
+    agentState,
+    connected,
+    hasMore,
+    loadingMore,
+    loadMore,
+    send,
+    showToolCalls,
+  } = useChatContext();
 
   const [input, setInput] = useState("");
-  const setInputCb = useCallback((text: string) => { setInput(text); }, []);
+  const setInputCb = useCallback((text: string) => {
+    setInput(text);
+  }, []);
 
   useEffect(() => {
     registerChatCallbacks(send, setInputCb);
@@ -62,10 +73,19 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     if (isNearBottom) setHasNewMessage(false);
   }, [isNearBottom]);
 
-  const chatMessages = useMemo(() => messages.filter(
-    (m) => m.type === "user" || m.type === "chat" || m.type === "error" ||
-      (showToolCalls && m.type === "tool_start" && !(m.tool === "Bash" && m.input.includes("app-chat"))),
-  ), [messages, showToolCalls]);
+  const chatMessages = useMemo(
+    () =>
+      messages.filter(
+        (m) =>
+          m.type === "user" ||
+          m.type === "chat" ||
+          m.type === "error" ||
+          (showToolCalls &&
+            m.type === "tool_start" &&
+            !(m.tool === "Bash" && m.input.includes("app-chat"))),
+      ),
+    [messages, showToolCalls],
+  );
 
   const isThinking = agentState === "thinking";
 
@@ -140,11 +160,11 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   };
 
   return (
-    <Card className={cn(
-      "flex flex-col h-full gap-0 py-0 overflow-hidden relative",
-      fullscreen && "border-0 rounded-none shadow-none bg-background",
-    )}>
-
+    <Card
+      className={
+        "flex flex-col h-full gap-0 py-0 px-0 overflow-hidden relative text-base"
+      }
+    >
       <ChatHeaderActions
         fullscreen={fullscreen}
         onCollapse={onCollapse}

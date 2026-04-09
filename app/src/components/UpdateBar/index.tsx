@@ -46,7 +46,7 @@ export function UpdateBar() {
           transition={{ duration: 0.2 }}
           className="overflow-hidden flex justify-center py-2"
         >
-          <div className="flex items-center gap-2 rounded-full border border-border bg-muted/50 py-1 pl-3 pr-1 text-xs">
+          <div className="flex items-center gap-2 rounded-full border border-border bg-muted/50 py-1.5 pl-3.5 pr-1.5 text-sm">
             <span className="text-muted-foreground">
               {done
                 ? `v${update!.version} installed — restart to apply`
@@ -54,17 +54,15 @@ export function UpdateBar() {
                   ? `v${update!.version} installed — restart to apply`
                   : `v${update!.version} available`}
             </span>
-            {error && (
-              <span className="text-destructive text-xs">{error}</span>
-            )}
+            {error && <span className="text-destructive text-sm">{error}</span>}
             {!update!.installed && !done && (
               <button
                 onClick={handleUpdate}
                 disabled={installing}
-                className="rounded-full bg-primary px-3 py-0.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+                className="rounded-full bg-primary px-3.5 py-1 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
               >
                 {installing ? (
-                  <LoaderCircle size={12} className="animate-spin" />
+                  <LoaderCircle size={14} className="animate-spin" />
                 ) : (
                   "Update"
                 )}
@@ -72,9 +70,9 @@ export function UpdateBar() {
             )}
             <button
               onClick={() => setDismissed(true)}
-              className="rounded-full p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              className="rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             >
-              <X size={12} />
+              <X size={14} />
             </button>
           </div>
         </motion.div>

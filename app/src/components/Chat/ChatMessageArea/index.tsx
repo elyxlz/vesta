@@ -1,8 +1,6 @@
 import type { RefObject } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import {
-  CardContent,
-} from "@/components/ui/card";
+import { CardContent } from "@/components/ui/card";
 import type { VestaEvent } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { ChatBubble } from "../ChatBubble";
@@ -57,9 +55,12 @@ export function ChatMessageArea({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -8 }}
             transition={{ duration: 0.18 }}
-            className="absolute left-1/2 -translate-x-1/2 z-10 pointer-events-none top-16"
+            className={cn(
+              "absolute left-1/2 -translate-x-1/2 z-10 pointer-events-none",
+              fullscreen ? "top-[5rem]" : "top-10",
+            )}
           >
-            <span className="rounded-lg border border-muted-foreground/20 bg-muted/80 backdrop-blur-sm px-3 py-1.5 text-xs text-muted-foreground">
+            <span className="rounded-full border border-muted-foreground/20 bg-muted/80 backdrop-blur-sm px-3 py-1.5 text-xs text-muted-foreground">
               loading...
             </span>
           </motion.div>
@@ -68,9 +69,14 @@ export function ChatMessageArea({
       <div
         ref={scrollRef}
         onScroll={onScroll}
-        className={cn("h-full min-h-0 overflow-y-auto pb-4", fullscreen ? "px-page" : "px-4")}
+        className={cn(
+          "h-full min-h-0 overflow-y-auto pb-4",
+          fullscreen ? "px-page" : "px-4",
+        )}
         style={{
-          paddingTop: fullscreen ? `calc(${navbarHeight}px + var(--page-padding-x))` : 32,
+          paddingTop: fullscreen
+            ? `calc(${navbarHeight}px + 1rem)`
+            : 32,
           maskImage: `linear-gradient(to bottom, transparent, black ${fullscreen ? navbarHeight * 2 : 48}px, black calc(100% - 20px), transparent)`,
         }}
       >
@@ -79,7 +85,9 @@ export function ChatMessageArea({
           <div>
             {!hasMore && chatMessages.length > 0 && (
               <div className="flex justify-center py-3">
-                <span className="text-[11px] text-muted-foreground/40">beginning of conversation</span>
+                <span className="text-[11px] text-muted-foreground/40">
+                  beginning of conversation
+                </span>
               </div>
             )}
             {chatMessages.length === 0 ? (
@@ -96,10 +104,17 @@ export function ChatMessageArea({
                   const prev = chatMessages[i - 1];
                   const isTool = msg.type === "tool_start";
                   const prevIsTool = prev?.type === "tool_start";
-                  const gap = i === 0 ? "" : isTool && prevIsTool ? "mt-1" : isTool || prevIsTool ? "mt-2" : prev && prev.type === msg.type ? "mt-1.5" : "mt-5";
-                  return (
-                    <ChatBubble key={i} event={msg} className={gap} />
-                  );
+                  const gap =
+                    i === 0
+                      ? ""
+                      : isTool && prevIsTool
+                        ? "mt-1"
+                        : isTool || prevIsTool
+                          ? "mt-2"
+                          : prev && prev.type === msg.type
+                            ? "mt-1.5"
+                            : "mt-5";
+                  return <ChatBubble key={i} event={msg} className={gap} />;
                 })}
               </div>
             )}

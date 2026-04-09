@@ -4,10 +4,10 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useAgents } from "@/providers/AgentsProvider";
 import { useAuth } from "@/providers/AuthProvider";
 import { useLayout } from "@/stores/use-layout";
-import { useTauri } from "@/providers/TauriProvider";
 
 import { Settings } from "@/components/Settings";
 import { StatusPill } from "@/components/StatusPill";
+import { UpdateBar } from "@/components/UpdateBar";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
 import {
@@ -23,7 +23,6 @@ interface NavbarProps {
 }
 
 export function Navbar({ center, trailing, leadingExtra }: NavbarProps = {}) {
-  const { isTauri, isMacOS } = useTauri();
   const { connected } = useAuth();
   const { agents } = useAgents();
   const navigate = useNavigate();
@@ -31,39 +30,42 @@ export function Navbar({ center, trailing, leadingExtra }: NavbarProps = {}) {
   const isHome = location.pathname === "/home";
   const setNavbarHeight = useLayout((s) => s.setNavbarHeight);
 
-  const measureRef = useCallback((node: HTMLDivElement | null) => {
-    if (!node) return;
-    const observer = new ResizeObserver(([entry]) => {
-      const border = entry.borderBoxSize[0];
-      const height = border ? border.blockSize : entry.target.getBoundingClientRect().height;
-      setNavbarHeight(height);
-    });
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, [setNavbarHeight]);
+  const measureRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (!node) return;
+      const observer = new ResizeObserver(([entry]) => {
+        const border = entry.borderBoxSize[0];
+        const height = border
+          ? border.blockSize
+          : entry.target.getBoundingClientRect().height;
+        setNavbarHeight(height);
+      });
+      observer.observe(node);
+      return () => observer.disconnect();
+    },
+    [setNavbarHeight],
+  );
 
   return (
     <div
       ref={measureRef}
       data-tauri-drag-region
-      className={`flex shrink-0 flex-col overflow-visible ${isTauri && isMacOS ? "pt-8" : "pt-5"} select-none`}
+      className="absolute top-0 left-0 right-0 z-[99999] flex flex-col shrink-0 min-h-0 select-none overflow-visible p-3"
     >
-      <div data-tauri-drag-region className="relative flex h-11 w-full min-h-0 items-center justify-between">
+      <div
+        data-tauri-drag-region
+        className="relative flex flex-row items-center justify-between"
+      >
         <div data-tauri-drag-region className="flex flex-1 items-center gap-2">
           {connected && isHome && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => navigate("/new")}
-                >
-                  <Plus data-icon="inline-start" />
-                  new agent
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>new agent</TooltipContent>
-            </Tooltip>
+            <Button
+              variant="default"
+              size="lg"
+              onClick={() => navigate("/new")}
+            >
+              <Plus data-icon="inline-start" />
+              new agent
+            </Button>
           )}
           {connected && agents.length > 0 && !isHome && (
             <ButtonGroup>
@@ -71,8 +73,7 @@ export function Navbar({ center, trailing, leadingExtra }: NavbarProps = {}) {
                 <TooltipTrigger asChild>
                   <Button
                     variant="outline"
-                    size="icon-sm"
-                    className="md:size-9"
+                    size="icon-lg"
                     onClick={() => navigate("/home")}
                   >
                     <Home />
@@ -91,7 +92,7 @@ export function Navbar({ center, trailing, leadingExtra }: NavbarProps = {}) {
           </div>
         )}
 
-        <div data-tauri-drag-region className="flex items-center gap-1.5">
+        <div data-tauri-drag-region className="flex items-center gap-2">
           {trailing ?? (
             <>
               {connected && <StatusPill />}
@@ -100,6 +101,7 @@ export function Navbar({ center, trailing, leadingExtra }: NavbarProps = {}) {
           )}
         </div>
       </div>
+      <UpdateBar />
     </div>
   );
 }

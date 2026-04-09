@@ -5,13 +5,13 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { useTheme, type Theme } from "@/stores/use-theme";
+import { useTheme } from "@/providers/ThemeProvider";
 
+type Theme = "dark" | "light" | "system";
 const CYCLE: Theme[] = ["system", "light", "dark"];
 
 export function ThemeToggle() {
-  const theme = useTheme((s) => s.theme);
-  const setTheme = useTheme((s) => s.setTheme);
+  const { theme, setTheme } = useTheme();
 
   const next = () => {
     const idx = CYCLE.indexOf(theme);

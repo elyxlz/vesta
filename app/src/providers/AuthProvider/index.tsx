@@ -6,7 +6,12 @@ import {
   type ReactNode,
 } from "react";
 import { apiFetch, connectToServer, isNewer } from "@/api";
-import { clearConnection, getConnection, initConnection, authHeaders } from "@/lib/connection";
+import {
+  clearConnection,
+  getConnection,
+  initConnection,
+  authHeaders,
+} from "@/lib/connection";
 import { ensureFreshToken } from "@/lib/token-refresh";
 import { useTauri } from "@/providers/TauriProvider";
 
@@ -84,8 +89,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         try {
           const { getCurrentWindow } = await import("@tauri-apps/api/window");
           const win = getCurrentWindow();
-          const monitor = await import("@tauri-apps/api/window").then((module) =>
-            module.currentMonitor(),
+          const monitor = await import("@tauri-apps/api/window").then(
+            (module) => module.currentMonitor(),
           );
           if (monitor) {
             const shortest = Math.min(
@@ -100,7 +105,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             );
             await win.center();
           }
-        } catch { }
+        } catch {}
       }
 
       const ok = await checkStoredConnection();

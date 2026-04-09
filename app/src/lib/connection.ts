@@ -12,11 +12,14 @@ export interface ConnectionConfig {
 
 // ── Storage backend ────────────────────────────────────────────
 
-let storePromise: Promise<import("@tauri-apps/plugin-store").Store> | null = null;
+let storePromise: Promise<import("@tauri-apps/plugin-store").Store> | null =
+  null;
 
 function getStore() {
   if (!storePromise) {
-    storePromise = import("@tauri-apps/plugin-store").then((m) => m.load("connection.json"));
+    storePromise = import("@tauri-apps/plugin-store").then((m) =>
+      m.load("connection.json"),
+    );
   }
   return storePromise;
 }
@@ -85,7 +88,12 @@ export function setConnection(
 ): void {
   const normalized = url.replace(/\/+$/, "");
   const expiresAt = Date.now() + expiresIn * 1000;
-  const config: ConnectionConfig = { url: normalized, accessToken, refreshToken, expiresAt };
+  const config: ConnectionConfig = {
+    url: normalized,
+    accessToken,
+    refreshToken,
+    expiresAt,
+  };
   cached = config;
 
   if (isTauri) {

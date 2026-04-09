@@ -1,18 +1,48 @@
-import { useOutletContext } from "react-router-dom";
-import { AgentHome } from "@/components/AgentHome";
 import { useLayout } from "@/stores/use-layout";
+
+import { useOutletContext } from "react-router-dom";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
+import { Chat } from "@/components/Chat";
+import { Dashboard } from "@/components/Dashboard";
 import type { AgentHomeOutletContext } from "@/lib/types";
 
 export function AgentDashboard() {
+  const { chatCollapsed, setChatCollapsed } =
+    useOutletContext<AgentHomeOutletContext>();
   const navbarHeight = useLayout((s) => s.navbarHeight);
-  const { chatCollapsed } = useOutletContext<AgentHomeOutletContext>();
 
   return (
     <div
-      className={`flex flex-col flex-1 min-h-0 relative overflow-hidden ${chatCollapsed ? "" : "px-page"}`}
-      style={{ paddingTop: `calc(${navbarHeight}px + var(--page-padding-x) / 1.5)` }}
+      className="flex h-full w-full min-h-0 min-w-0 p-3"
+      style={{
+        paddingTop: `calc(${navbarHeight}px)`,
+      }}
     >
-      <AgentHome />
+      <ResizablePanelGroup
+        orientation="horizontal"
+        className="flex h-full w-full gap-1"
+      >
+        <ResizablePanel defaultSize="70%" minSize="300px">
+          <div className={`h-full ${chatCollapsed ? " " : " -mr-1 p-2"}`}>
+            <Dashboard fullscreen={chatCollapsed} />
+          </div>
+        </ResizablePanel>
+
+        {!chatCollapsed && (
+          <>
+            <ResizableHandle withHandle />
+            <ResizablePanel defaultSize="30%" minSize="320px">
+              <div className="h-full p-2">
+                <Chat onCollapse={() => setChatCollapsed(true)} />
+              </div>
+            </ResizablePanel>
+          </>
+        )}
+      </ResizablePanelGroup>
     </div>
   );
 }

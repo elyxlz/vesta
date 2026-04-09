@@ -116,9 +116,7 @@ export function AuthFlow({
         >
           submit
         </Button>
-        {error && (
-          <p className="text-xs text-destructive">{error}</p>
-        )}
+        {error && <p className="text-xs text-destructive">{error}</p>}
         {onCancel && (
           <Button
             variant="link"
@@ -134,7 +132,11 @@ export function AuthFlow({
 
   return (
     <AnimatePresence mode="wait">
-      <motion.div key={authState} {...fadeSlide} className="min-w-0 w-full max-w-full">
+      <motion.div
+        key={authState}
+        {...fadeSlide}
+        className="min-w-0 w-full max-w-full"
+      >
         {content}
       </motion.div>
     </AnimatePresence>

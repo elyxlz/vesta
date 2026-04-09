@@ -32,29 +32,33 @@ export function Landing() {
   };
 
   return (
-    <div className="flex flex-col items-center justify-center flex-1 min-h-0 px-page gap-5 select-none">
+    <div className="flex flex-col items-center justify-center flex-1 min-h-0 p-page gap-5 select-none">
       <div className="flex flex-col items-center gap-8">
         <div className="flex flex-col items-center gap-1">
           <h1 className="text-4xl font-serif font-medium tracking-tight">
             Vesta
           </h1>
-          <p className="text-sm text-muted-foreground">Your personal assistant</p>
+          <p className="text-sm text-muted-foreground">
+            Your personal assistant
+          </p>
         </div>
 
         <div className="relative">
-          <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 z-10 rounded-md border border-border bg-muted/50 px-2 py-0.5 text-[11px] text-muted-foreground">Download now for {osName}</span>
-          <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/50 px-4 py-2.5 pt-3.5">
+          <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 z-10 rounded-full border border-border bg-muted dark:bg-background px-2 py-0.5 text-[11px] text-muted-foreground">
+            Download now for {osName}
+          </span>
+          <div className="flex items-center gap-2 rounded-4xl border border-border bg-muted dark:bg-background px-4 py-2.5 pt-3.5">
             <code className="text-sm font-mono text-foreground select-all">
               {installCmd}
             </code>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-7 shrink-0"
-            onClick={copy}
-          >
-            {copied ? <Check /> : <Copy />}
-          </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-7 shrink-0"
+              onClick={copy}
+            >
+              {copied ? <Check /> : <Copy />}
+            </Button>
           </div>
         </div>
       </div>

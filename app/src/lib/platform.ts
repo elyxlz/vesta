@@ -5,7 +5,8 @@ export function detectPlatform(): Platform {
   if (ua.includes("Android")) return "android";
   if (ua.includes("iPhone") || ua.includes("iPad")) return "ios";
   if (ua.includes("Mac")) {
-    if ("maxTouchPoints" in navigator && navigator.maxTouchPoints > 0) return "ios";
+    if ("maxTouchPoints" in navigator && navigator.maxTouchPoints > 0)
+      return "ios";
     return "macos";
   }
   if (ua.includes("Windows")) return "windows";

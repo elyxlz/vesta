@@ -176,10 +176,12 @@ export function Console({ name, onClose, fullscreen }: ConsoleProps) {
   }, [onClose]);
 
   return (
-    <div className={cn(
-      "flex flex-col h-full",
-      fullscreen && "dark dark-overlay bg-[#1a1a1a] text-[#e8e8e8]",
-    )}>
+    <div
+      className={cn(
+        "flex flex-col h-full",
+        fullscreen && "dark dark-overlay bg-[#1a1a1a] text-[#e8e8e8]",
+      )}
+    >
       {!fullscreen && (
         <div className="flex items-center justify-between px-4 py-3 min-h-11 shrink-0 border-b border-white/5">
           <span className="text-sm font-medium">{name} logs</span>
@@ -206,10 +208,14 @@ export function Console({ name, onClose, fullscreen }: ConsoleProps) {
           "flex-1 overflow-y-auto font-mono text-xs leading-[1.6] text-white/70",
           fullscreen ? "px-page pb-page" : "px-3 py-2",
         )}
-        style={fullscreen ? {
-          paddingTop: `calc(${navbarHeight}px + var(--page-padding-x))`,
-          maskImage: `linear-gradient(to bottom, transparent, black ${navbarHeight * 2}px, black calc(100% - 20px), transparent)`,
-        } : undefined}
+        style={
+          fullscreen
+            ? {
+              paddingTop: `calc(${navbarHeight}px + var(--page-padding-x))`,
+              maskImage: `linear-gradient(to bottom, transparent, black ${navbarHeight * 2}px, black calc(100% - 15px), transparent)`,
+            }
+            : undefined
+        }
       >
         <div className="min-h-full flex flex-col justify-end">
           <div>

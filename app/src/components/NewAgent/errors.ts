@@ -33,10 +33,7 @@ const ERROR_MAP: [RegExp, string][] = [
     /failed to run cli/i,
     "something went wrong starting vesta. try reinstalling.",
   ],
-  [
-    /setup[_-]?token/i,
-    "authentication setup failed. try again or reinstall.",
-  ],
+  [/setup[_-]?token/i, "authentication setup failed. try again or reinstall."],
 ];
 
 export function friendlyError(raw: string): string {

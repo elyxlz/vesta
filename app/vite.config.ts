@@ -11,7 +11,9 @@ const vestad = process.env.VITE_VESTAD_URL || "https://localhost:7860";
 const isTauri = !!process.env.TAURI_ENV_PLATFORM;
 const useHttps = !isTauri && process.env.HTTPS !== "false";
 
-const pkg = JSON.parse(readFileSync(path.resolve(__dirname, "package.json"), "utf-8"));
+const pkg = JSON.parse(
+  readFileSync(path.resolve(__dirname, "package.json"), "utf-8"),
+);
 const version = pkg.version;
 
 function installScriptsPlugin(): Plugin {

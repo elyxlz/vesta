@@ -66,7 +66,9 @@ export function ModalsProvider({ children }: { children: ReactNode }) {
       void openExternalUrl(result.auth_url);
     } catch (e: unknown) {
       if (authAttemptRef.current !== attemptId) return;
-      setAuthError((e as { message?: string })?.message || "authentication failed");
+      setAuthError(
+        (e as { message?: string })?.message || "authentication failed",
+      );
     } finally {
       if (authAttemptRef.current === attemptId) {
         setAuthStarting(false);
@@ -80,26 +82,32 @@ export function ModalsProvider({ children }: { children: ReactNode }) {
     await refreshAgents();
   }, [navigate, remove, refreshAgents]);
 
-  const value = useMemo<ModalsContextValue>(() => ({
-    showAuth,
-    authStarting,
-    authStart,
-    authError,
-    handleOpenAuth,
-    clearAuthState,
-    deleteDialogOpen,
-    setDeleteDialogOpen,
-    handleDelete,
-  }), [
-    showAuth, authStarting, authStart, authError,
-    handleOpenAuth, clearAuthState,
-    deleteDialogOpen, handleDelete,
-  ]);
+  const value = useMemo<ModalsContextValue>(
+    () => ({
+      showAuth,
+      authStarting,
+      authStart,
+      authError,
+      handleOpenAuth,
+      clearAuthState,
+      deleteDialogOpen,
+      setDeleteDialogOpen,
+      handleDelete,
+    }),
+    [
+      showAuth,
+      authStarting,
+      authStart,
+      authError,
+      handleOpenAuth,
+      clearAuthState,
+      deleteDialogOpen,
+      handleDelete,
+    ],
+  );
 
   return (
-    <ModalsContext.Provider value={value}>
-      {children}
-    </ModalsContext.Provider>
+    <ModalsContext.Provider value={value}>{children}</ModalsContext.Provider>
   );
 }
 

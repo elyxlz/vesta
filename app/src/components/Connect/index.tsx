@@ -1,9 +1,14 @@
 import { useState } from "react";
-import { Navigate } from "react-router-dom";
+import { Link, Navigate } from "react-router-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { FieldGroup, Field, FieldLabel, FieldDescription } from "@/components/ui/field";
+import {
+  FieldGroup,
+  Field,
+  FieldLabel,
+  FieldDescription,
+} from "@/components/ui/field";
 import { fadeSlide } from "@/lib/motion";
 import { useAuth } from "@/providers/AuthProvider";
 
@@ -41,22 +46,23 @@ export function Connect() {
   };
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex-1 flex items-center justify-center">
+    <div className="flex h-full flex-col p-page">
+
+
+      <div className="flex flex-1 items-center justify-center">
         <form
           onSubmit={handleSubmit}
           className="flex flex-col items-center gap-3 w-[240px] max-w-full px-4"
         >
           <div className="flex flex-col items-center gap-1 text-center">
-            <h2 className="text-base font-semibold">connect</h2>
-            <FieldDescription>
-              connect to a remote vesta server.
-            </FieldDescription>
+            <h1 className="text-base font-semibold">connect</h1>
           </div>
 
           <FieldGroup className="gap-3">
             <Field>
-              <FieldLabel htmlFor="url" className="sr-only">Host</FieldLabel>
+              <FieldLabel htmlFor="url" className="sr-only">
+                Host
+              </FieldLabel>
               <Input
                 id="url"
                 name="url"
@@ -69,7 +75,9 @@ export function Connect() {
             </Field>
 
             <Field>
-              <FieldLabel htmlFor="key" className="sr-only">Key</FieldLabel>
+              <FieldLabel htmlFor="key" className="sr-only">
+                Key
+              </FieldLabel>
               <Input
                 id="key"
                 name="password"
@@ -93,13 +101,22 @@ export function Connect() {
 
           <AnimatePresence>
             {error && (
-              <motion.div {...fadeSlide} className="flex flex-col items-center gap-1 text-center">
+              <motion.div
+                {...fadeSlide}
+                className="flex flex-col items-center gap-1 text-center"
+              >
                 <p
                   className={`text-xs ${details ? "cursor-pointer" : ""}`}
-                  onClick={details ? () => setShowDetails(!showDetails) : undefined}
+                  onClick={
+                    details ? () => setShowDetails(!showDetails) : undefined
+                  }
                 >
-                  <span className="text-destructive">{error}</span>{details && (
-                    <span className="text-foreground"> · {showDetails ? "hide details" : "show details"}</span>
+                  <span className="text-destructive">{error}</span>
+                  {details && (
+                    <span className="text-foreground">
+                      {" "}
+                      · {showDetails ? "hide details" : "show details"}
+                    </span>
                   )}
                 </p>
                 {showDetails && details && (

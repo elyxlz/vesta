@@ -25,6 +25,7 @@ import {
   type BackupInfo,
 } from "@/api";
 import { useAgentOps, type AgentOperation } from "@/stores/use-agent-ops";
+import { useAgents } from "@/providers/AgentsProvider";
 import type { AgentInfo, AgentActivityState } from "@/lib/types";
 
 interface SelectedAgentContextValue {
@@ -35,6 +36,7 @@ interface SelectedAgentContextValue {
 
   operation: AgentOperation;
   error: string;
+  statusLabel: string;
   isBusy: boolean;
 
   refreshAgent: () => Promise<void>;
@@ -50,13 +52,56 @@ interface SelectedAgentContextValue {
   remove: () => Promise<void>;
 }
 
-const SelectedAgentContext = createContext<SelectedAgentContextValue | null>(null);
+const SelectedAgentContext = createContext<SelectedAgentContextValue | null>(
+  null,
+);
 
 const POLL_INTERVAL = 5000;
+
+function getStatusLabel(
+  agent: Pick<
+    AgentInfo,
+    "alive" | "status" | "authenticated" | "agent_ready" | "friendly_status"
+  > | null,
+  operation: string,
+  error: string,
+): string {
+  if (error) return error;
+
+  switch (operation) {
+    case "stopping":
+      return "stopping...";
+    case "starting":
+      return "starting...";
+    case "authenticating":
+      return "signing in...";
+    case "deleting":
+      return "deleting...";
+    case "rebuilding":
+      return "rebuilding...";
+    case "backing-up":
+      return "backing up...";
+    case "restoring":
+      return "restoring...";
+  }
+
+  if (!agent) return "";
+
+  if (agent.alive) return "alive";
+  if (agent.status === "running" && agent.authenticated && !agent.agent_ready)
+    return "waking up...";
+  if (agent.status === "running" && !agent.authenticated)
+    return "not signed in";
+  if (agent.status === "stopped") return "stopped";
+  if (agent.status === "dead") return "broken — delete and recreate";
+  return agent.friendly_status || agent.status;
+}
 
 export function SelectedAgentProvider({ children }: { children: ReactNode }) {
   const { name: routeName } = useParams<{ name: string }>();
   const name = routeName ?? "";
+
+  const { agents } = useAgents();
 
   const [agent, setAgent] = useState<AgentInfo | null>(null);
   const [agentState, setAgentState] = useState<AgentActivityState>("idle");
@@ -67,11 +112,21 @@ export function SelectedAgentProvider({ children }: { children: ReactNode }) {
   const opState = useAgentOps((s) => s.getOp(name));
   const isBusy = opState.operation !== "idle";
 
+  const listEntry = agents.find((a) => a.name === name);
+  const info = agent ?? listEntry ?? null;
+
+  const statusLabel = useMemo(
+    () => getStatusLabel(info, opState.operation, opState.error),
+    [info, opState.operation, opState.error],
+  );
+
   const refreshAgent = useCallback(async () => {
     if (!name) return;
     try {
       setAgent(await agentStatus(name));
-    } catch { /* poll will catch up */ }
+    } catch {
+      /* poll will catch up */
+    }
   }, [name]);
 
   useEffect(() => {
@@ -92,34 +147,55 @@ export function SelectedAgentProvider({ children }: { children: ReactNode }) {
   }, [name, opState.operation]);
 
   const start = useCallback(() => {
-    withOp(name, "starting", async () => {
-      await startAgent(name);
-      await waitForReady(name);
-      await refreshAgent();
-    }, "start failed");
+    withOp(
+      name,
+      "starting",
+      async () => {
+        await startAgent(name);
+        await waitForReady(name);
+        await refreshAgent();
+      },
+      "start failed",
+    );
   }, [name, withOp, refreshAgent]);
 
   const stop = useCallback(() => {
-    withOp(name, "stopping", async () => {
-      await stopAgent(name);
-      await waitForStopped(name);
-      await refreshAgent();
-    }, "stop failed");
+    withOp(
+      name,
+      "stopping",
+      async () => {
+        await stopAgent(name);
+        await waitForStopped(name);
+        await refreshAgent();
+      },
+      "stop failed",
+    );
   }, [name, withOp, refreshAgent]);
 
   const restart = useCallback(() => {
-    withOp(name, "starting", async () => {
-      await restartAgent(name);
-      await refreshAgent();
-    }, "restart failed");
+    withOp(
+      name,
+      "starting",
+      async () => {
+        await restartAgent(name);
+        await waitForReady(name);
+        await refreshAgent();
+      },
+      "restart failed",
+    );
   }, [name, withOp, refreshAgent]);
 
   const rebuild = useCallback(() => {
-    withOp(name, "rebuilding", async () => {
-      await rebuildAgent(name);
-      await waitForReady(name);
-      await refreshAgent();
-    }, "rebuild failed");
+    withOp(
+      name,
+      "rebuilding",
+      async () => {
+        await rebuildAgent(name);
+        await waitForReady(name);
+        await refreshAgent();
+      },
+      "rebuild failed",
+    );
   }, [name, withOp, refreshAgent]);
 
   const [backups, setBackups] = useState<BackupInfo[]>([]);
@@ -128,7 +204,9 @@ export function SelectedAgentProvider({ children }: { children: ReactNode }) {
     if (!name) return;
     try {
       setBackups(await listBackups(name));
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }, [name]);
 
   useEffect(() => {
@@ -136,56 +214,98 @@ export function SelectedAgentProvider({ children }: { children: ReactNode }) {
   }, [refreshBackups]);
 
   const backup = useCallback(() => {
-    withOp(name, "backing-up", async () => {
-      await createBackup(name);
-      await refreshBackups();
-    }, "backup failed");
+    withOp(
+      name,
+      "backing-up",
+      async () => {
+        await createBackup(name);
+        await refreshBackups();
+      },
+      "backup failed",
+    );
   }, [name, withOp, refreshBackups]);
 
-  const restore = useCallback((backupId: string) => {
-    withOp(name, "restoring", async () => {
-      await restoreBackup(name, backupId);
-      await waitForReady(name);
-      await refreshAgent();
-      await refreshBackups();
-    }, "restore failed");
-  }, [name, withOp, refreshAgent, refreshBackups]);
+  const restore = useCallback(
+    (backupId: string) => {
+      withOp(
+        name,
+        "restoring",
+        async () => {
+          await restoreBackup(name, backupId);
+          await waitForReady(name);
+          await refreshAgent();
+          await refreshBackups();
+        },
+        "restore failed",
+      );
+    },
+    [name, withOp, refreshAgent, refreshBackups],
+  );
 
-  const removeBackup = useCallback((backupId: string) => {
-    withOp(name, "deleting", async () => {
-      await deleteBackup(name, backupId);
-      await refreshBackups();
-    }, "delete backup failed");
-  }, [name, withOp, refreshBackups]);
+  const removeBackup = useCallback(
+    (backupId: string) => {
+      withOp(
+        name,
+        "deleting",
+        async () => {
+          await deleteBackup(name, backupId);
+          await refreshBackups();
+        },
+        "delete backup failed",
+      );
+    },
+    [name, withOp, refreshBackups],
+  );
 
   const remove = useCallback(async () => {
     await withOp(name, "deleting", () => deleteAgent(name), "delete failed");
     removeAgentOp(name);
   }, [name, withOp, removeAgentOp]);
 
-  const value = useMemo<SelectedAgentContextValue>(() => ({
-    name,
-    agent,
-    agentState,
-    setAgentState,
-    operation: opState.operation,
-    error: opState.error,
-    isBusy,
-    refreshAgent,
-    start,
-    stop,
-    restart,
-    rebuild,
-    backup,
-    backups,
-    refreshBackups,
-    restore,
-    removeBackup,
-    remove,
-  }), [
-    name, agent, agentState, setAgentState, opState.operation, opState.error, isBusy,
-    refreshAgent, start, stop, restart, rebuild, backup, backups, refreshBackups, restore, removeBackup, remove,
-  ]);
+  const value = useMemo<SelectedAgentContextValue>(
+    () => ({
+      name,
+      agent,
+      agentState,
+      setAgentState,
+      operation: opState.operation,
+      error: opState.error,
+      statusLabel,
+      isBusy,
+      refreshAgent,
+      start,
+      stop,
+      restart,
+      rebuild,
+      backup,
+      backups,
+      refreshBackups,
+      restore,
+      removeBackup,
+      remove,
+    }),
+    [
+      name,
+      agent,
+      agentState,
+      setAgentState,
+      opState.operation,
+      opState.error,
+      statusLabel,
+      isBusy,
+      refreshAgent,
+      start,
+      stop,
+      restart,
+      rebuild,
+      backup,
+      backups,
+      refreshBackups,
+      restore,
+      removeBackup,
+      remove,
+    ],
+  );
 
   return (
     <SelectedAgentContext.Provider value={value}>
@@ -197,7 +317,9 @@ export function SelectedAgentProvider({ children }: { children: ReactNode }) {
 export function useSelectedAgent() {
   const context = useContext(SelectedAgentContext);
   if (!context) {
-    throw new Error("useSelectedAgent must be used within SelectedAgentProvider");
+    throw new Error(
+      "useSelectedAgent must be used within SelectedAgentProvider",
+    );
   }
   return context;
 }

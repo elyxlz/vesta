@@ -99,7 +99,9 @@ export function useChat({ name, active, onAssistantMessage }: UseChatOptions) {
             }
           }
           if (event.type === "service_update") {
-            window.dispatchEvent(new CustomEvent(SERVICE_UPDATE_EVENT, { detail: event }));
+            window.dispatchEvent(
+              new CustomEvent(SERVICE_UPDATE_EVENT, { detail: event }),
+            );
           } else {
             setMessages((prev) => {
               const updated = [...prev, event];
@@ -130,7 +132,7 @@ export function useChat({ name, active, onAssistantMessage }: UseChatOptions) {
         reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX);
       };
 
-      socket.onerror = () => { };
+      socket.onerror = () => {};
     };
 
     doConnect();
@@ -154,7 +156,10 @@ export function useChat({ name, active, onAssistantMessage }: UseChatOptions) {
     ws.send(JSON.stringify({ type: "message", text }));
     pendingEchoesRef.current.push(text);
     setMessages((prev) => {
-      const updated: VestaEvent[] = [...prev, { type: "user", text, ts: new Date().toISOString() }];
+      const updated: VestaEvent[] = [
+        ...prev,
+        { type: "user", text, ts: new Date().toISOString() },
+      ];
       return updated.length > MAX_MESSAGES
         ? updated.slice(-MAX_MESSAGES)
         : updated;
@@ -171,7 +176,9 @@ export function useChat({ name, active, onAssistantMessage }: UseChatOptions) {
 
   useEffect(() => {
     activeSender = sendEvent;
-    return () => { activeSender = null; };
+    return () => {
+      activeSender = null;
+    };
   }, [sendEvent]);
 
   const hasMore = cursorRef.current !== null;
@@ -193,5 +200,15 @@ export function useChat({ name, active, onAssistantMessage }: UseChatOptions) {
     }
   }, [name]);
 
-  return { messages, agentState, connected, historyLoaded, hasMore, loadingMore, loadMore, send, sendEvent };
+  return {
+    messages,
+    agentState,
+    connected,
+    historyLoaded,
+    hasMore,
+    loadingMore,
+    loadMore,
+    send,
+    sendEvent,
+  };
 }

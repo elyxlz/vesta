@@ -27,8 +27,7 @@ export function getOrbVisualState(
   if (status === "running") {
     if (!authenticated) return "authenticating";
     if (!agentReady) return "booting";
-    if (activityState === "thinking")
-      return "thinking";
+    if (activityState === "thinking") return "thinking";
     return "alive";
   }
 
