@@ -110,7 +110,6 @@ export function SelectedAgentProvider({ children }: { children: ReactNode }) {
   const restart = useCallback(() => {
     withOp(name, "starting", async () => {
       await restartAgent(name);
-      await waitForReady(name);
       await refreshAgent();
     }, "restart failed");
   }, [name, withOp, refreshAgent]);
