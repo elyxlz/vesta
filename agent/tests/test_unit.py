@@ -880,7 +880,7 @@ async def test_converse_emits_thinking_events():
             thinking_events.append((event["text"], event["signature"]))
         original_emit(event)
 
-    state.event_bus.emit = tracking_emit  # type: ignore[assignment]
+    state.event_bus.emit = tracking_emit
 
     async def response_with_thinking():
         yield _assistant_msg([ThinkingBlock("step one\nstep two", "sig-123"), TextBlock("done")])

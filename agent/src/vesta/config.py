@@ -3,6 +3,7 @@ import typing as tp
 
 import pydantic as pyd
 import pydantic_settings as pyd_settings
+from claude_agent_sdk.types import ThinkingConfigAdaptive, ThinkingConfigDisabled, ThinkingConfigEnabled
 
 
 _DEFAULT_ROOT = pl.Path.home() / "vesta"
@@ -19,7 +20,7 @@ class VestaConfig(pyd_settings.BaseSettings):
     response_timeout: int = pyd.Field(default=600, ge=1)
     nightly_memory_hour: int | None = pyd.Field(default=3, ge=0, le=23)
     interrupt_timeout: float = pyd.Field(default=5.0, gt=0)
-    thinking: dict[str, tp.Any] = {"type": "adaptive"}
+    thinking: ThinkingConfigAdaptive | ThinkingConfigEnabled | ThinkingConfigDisabled = ThinkingConfigAdaptive(type="adaptive")
     ws_port: int = 0
     agent_token: str | None = None
 
