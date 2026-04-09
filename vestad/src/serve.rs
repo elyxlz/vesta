@@ -1763,6 +1763,7 @@ fn spawn_update_check_task(state: SharedState) {
 
 pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: String, tunnel_url: Option<String>, config_dir: std::path::PathBuf) {
     let env_config = docker::AgentEnvConfig {
+        config_dir: config_dir.clone(),
         agents_dir: config_dir.join("agents"),
         vestad_port: port,
         vestad_tunnel: tunnel_url.clone(),

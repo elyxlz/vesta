@@ -291,7 +291,7 @@ pub fn compute_agent_state(cname: &str, info: &ContainerInfo) -> AgentDerivedSta
 }
 
 /// Read a value from a per-agent env file by key (e.g. "WS_PORT").
-fn read_env_value(agents_dir: &std::path::Path, agent_name: &str, key: &str) -> Option<String> {
+pub fn read_env_value(agents_dir: &std::path::Path, agent_name: &str, key: &str) -> Option<String> {
     let env_path = agents_dir.join(format!("{}.env", agent_name));
     let content = std::fs::read_to_string(&env_path).ok()?;
     let prefix = format!("{key}=");
@@ -523,6 +523,7 @@ pub fn generate_agent_token() -> String {
 
 #[derive(Clone)]
 pub struct AgentEnvConfig {
+    pub config_dir: std::path::PathBuf,
     pub agents_dir: std::path::PathBuf,
     pub vestad_port: u16,
     pub vestad_tunnel: Option<String>,
@@ -650,6 +651,13 @@ pub fn create_container(cname: &str, image: &str, port: u16, agent_name: &str, e
     let agent_token = generate_agent_token();
     let env_path = write_agent_env_file(env_config, agent_name, port, &agent_token)?;
     let env_mount = format!("{}:/run/vestad-env:ro", env_path.display());
+
+    // Read-only mounts for agent source code, pyproject.toml, and uv.lock
+    let code_dir = crate::agent_code::agent_code_dir(&env_config.config_dir);
+    let src_mount = format!("{}:/root/vesta/src/vesta:ro", code_dir.join("src/vesta").display());
+    let pyproject_mount = format!("{}:/root/vesta/pyproject.toml:ro", code_dir.join("pyproject.toml").display());
+    let lock_mount = format!("{}:/root/vesta/uv.lock:ro", code_dir.join("uv.lock").display());
+
     let user_label = format!("{}={}", LABEL_USER, current_user());
     let agent_name_label = format!("{}={}", LABEL_AGENT_NAME, agent_name);
     let mut args = vec![
@@ -659,6 +667,9 @@ pub fn create_container(cname: &str, image: &str, port: u16, agent_name: &str, e
         "--label", &user_label,
         "--label", &agent_name_label,
         "-v", &env_mount,
+        "-v", &src_mount,
+        "-v", &pyproject_mount,
+        "-v", &lock_mount,
     ];
 
     match gpu_available() {
@@ -672,6 +683,7 @@ pub fn create_container(cname: &str, image: &str, port: u16, agent_name: &str, e
         GpuStatus::NoGpu => {}
     }
 
+    tracing::info!(agent = %agent_name, "creating container with read-only mounts for src/vesta, pyproject.toml, uv.lock");
     args.push(image);
     args.extend(ENTRYPOINT);
     if !docker_ok(&args) {
@@ -934,6 +946,11 @@ pub fn create_agent(name: &str, env_config: &AgentEnvConfig) -> Result<String, D
     }
 
     let image = resolve_image()?;
+
+    tracing::info!(agent = %name, image = %image, "ensuring agent code on host");
+    crate::agent_code::ensure_agent_code(&env_config.config_dir, image)
+        .map_err(|e| DockerError::Failed(format!("failed to populate agent code: {e}")))?;
+
     let (port, _listener) = allocate_port(&env_config.agents_dir)?;
     create_container(&cname, image, port, name, env_config)?;
     Ok(name.to_string())
@@ -1026,6 +1043,13 @@ pub fn destroy_agent(name: &str, agents_dir: &std::path::Path) -> Result<(), Doc
     }
     delete_agent_env_file(agents_dir, name);
     Ok(())
+}
+
+/// Check if a container has the read-only agent code bind mounts.
+pub fn has_agent_code_mounts(cname: &str) -> bool {
+    docker_output(&["inspect", "--format", "{{json .Mounts}}", cname])
+        .map(|s| s.contains("/root/vesta/src/vesta"))
+        .unwrap_or(false)
 }
 
 pub fn rebuild_agent(name: &str, env_config: &AgentEnvConfig) -> Result<(), DockerError> {

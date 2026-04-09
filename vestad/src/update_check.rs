@@ -31,6 +31,10 @@ fn version_less_than(a: &str, b: &str) -> bool {
     parse(a) < parse(b)
 }
 
+pub fn fetch_latest_tag() -> Option<String> {
+    fetch_latest_release_tag(Some(FETCH_TIMEOUT_SECS))
+}
+
 fn fetch_latest_release_tag(timeout_secs: Option<u64>) -> Option<String> {
     let mut args: Vec<String> = vec![
         "-fsSL".into(),
