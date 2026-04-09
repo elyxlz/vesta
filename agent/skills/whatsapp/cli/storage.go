@@ -829,6 +829,24 @@ func (ms *MessageStore) GetStaleOutgoingMessages(olderThan time.Duration) ([]str
 	return ids, rows.Err()
 }
 
+func (ms *MessageStore) ListAllChatJIDs() ([]string, error) {
+	rows, err := ms.db.Query(`SELECT jid FROM chats ORDER BY last_message_time DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var jids []string
+	for rows.Next() {
+		var jid string
+		if err := rows.Scan(&jid); err != nil {
+			continue
+		}
+		jids = append(jids, jid)
+	}
+	return jids, nil
+}
+
 func (ms *MessageStore) GetMessageMediaInfo(messageID, chatJID string) (*MediaInfo, error) {
 	var info MediaInfo
 	var mediaType, filename, url sql.NullString

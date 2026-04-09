@@ -234,7 +234,7 @@ func executeCommand(command string, args []string, wac *WhatsAppClient) (interfa
 			"send-audio": true, "add-contact": true, "remove-contact": true,
 			"leave-group": true, "create-group": true, "rename-group": true,
 			"update-group-participants": true, "set-group-photo": true, "set-group-description": true,
-			"revoke-message": true,
+			"revoke-message": true, "archive-chat": true, "archive-all-chats": true,
 		}
 		if writeCommands[command] {
 			return nil, fmt.Errorf("command %q blocked: instance is read-only", command)
@@ -665,6 +665,33 @@ func executeCommand(command string, args []string, wac *WhatsAppClient) (interfa
 			return nil, err
 		}
 		return map[string]interface{}{"contacts": messages}, nil
+
+	case "archive-chat":
+		var jid string
+		fs := flag.NewFlagSet("archive-chat", flag.ContinueOnError)
+		fs.StringVar(&jid, "jid", "", "Chat JID to archive (e.g. 1234567890@s.whatsapp.net)")
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		if jid == "" && len(fs.Args()) > 0 {
+			jid = fs.Args()[0]
+		}
+		if jid == "" {
+			return nil, fmt.Errorf("chat JID is required (pass as --jid or positional argument)")
+		}
+		success, msg := wac.ArchiveChat(jid)
+		return map[string]interface{}{"success": success, "message": msg}, nil
+
+	case "archive-all-chats":
+		archived, errs, err := wac.ArchiveAllChats()
+		if err != nil {
+			return nil, err
+		}
+		result := map[string]interface{}{"archived": archived}
+		if len(errs) > 0 {
+			result["errors"] = errs
+		}
+		return result, nil
 
 	default:
 		return nil, fmt.Errorf("unknown command: %s", command)

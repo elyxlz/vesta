@@ -19,6 +19,7 @@ import (
 	"github.com/skip2/go-qrcode"
 	"go.mau.fi/whatsmeow"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
+	"go.mau.fi/whatsmeow/appstate"
 	waStore "go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
@@ -143,6 +144,11 @@ func (wac *WhatsAppClient) Connect() error {
 		return nil
 	}
 	if err != nil {
+		if errors.Is(err, whatsmeow.ErrAlreadyConnected) {
+			wac.setAuthStatus(AuthStatusAuthenticated)
+			wac.logger.Infof("Already connected to WhatsApp")
+			return nil
+		}
 		wac.logger.Warnf("Failed to connect with existing session: %v - initiating re-auth", err)
 		return wac.initiateReauth()
 	}
@@ -1711,6 +1717,54 @@ func (wac *WhatsAppClient) RevokeMessage(messageID, chatIdentifier string) (bool
 	}
 
 	return true, fmt.Sprintf("Message revoked successfully (revocation ID: %s)", resp.ID)
+}
+
+func (wac *WhatsAppClient) ArchiveChat(chatIdentifier string) (bool, string) {
+	jid, err := wac.ResolveRecipient(chatIdentifier)
+	if err != nil {
+		return false, fmt.Sprintf("Failed to resolve chat: %v", err)
+	}
+
+	if err := wac.EnsureConnected(); err != nil {
+		return false, err.Error()
+	}
+
+	// lastMessageTimestamp and lastMessageKey are optional; pass zero values.
+	patch := appstate.BuildArchive(jid, true, time.Time{}, nil)
+	if err := wac.client.SendAppState(context.Background(), patch); err != nil {
+		return false, fmt.Sprintf("Failed to archive chat: %v", err)
+	}
+
+	return true, "Chat archived successfully"
+}
+
+func (wac *WhatsAppClient) ArchiveAllChats() (int, []string, error) {
+	if err := wac.EnsureConnected(); err != nil {
+		return 0, nil, err
+	}
+
+	jids, err := wac.store.ListAllChatJIDs()
+	if err != nil {
+		return 0, nil, fmt.Errorf("failed to list chats: %v", err)
+	}
+
+	var errs []string
+	archived := 0
+	for _, jidStr := range jids {
+		jid, parseErr := types.ParseJID(jidStr)
+		if parseErr != nil {
+			errs = append(errs, fmt.Sprintf("%s: invalid JID: %v", jidStr, parseErr))
+			continue
+		}
+		patch := appstate.BuildArchive(jid, true, time.Time{}, nil)
+		if sendErr := wac.client.SendAppState(context.Background(), patch); sendErr != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", jidStr, sendErr))
+			continue
+		}
+		archived++
+	}
+
+	return archived, errs, nil
 }
 
 func (wac *WhatsAppClient) CreateGroup(name string, participants []string) (bool, string) {
