@@ -61,7 +61,7 @@ function ConnectedAgentsProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const aliveNames = new Set(
-      agents.filter((a) => a.alive).map((a) => a.name),
+      agents.filter((a) => a.alive && a.agent_ready).map((a) => a.name),
     );
     const current = wsRefs.current;
 
