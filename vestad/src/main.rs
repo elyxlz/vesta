@@ -3,6 +3,7 @@ compile_error!("vestad only supports Linux");
 
 use clap::Parser;
 
+mod agent_code;
 mod docker;
 mod jwt;
 mod self_update;
@@ -430,10 +431,13 @@ fn main() {
                 let vestad_tunnel = tunnel::get_tunnel_config(&config)
                     .map(|tc| format!("https://{}", tc.hostname));
                 let env_config = docker::AgentEnvConfig {
+                    config_dir: config.clone(),
                     agents_dir: config.join("agents"),
                     vestad_port,
                     vestad_tunnel,
                 };
+                agent_code::ensure_agent_code(&config, loaded_image)
+                    .unwrap_or_else(|e| die(format!("failed to populate agent code: {e}")));
                 let (port, _listener) = docker::allocate_port(&env_config.agents_dir).unwrap_or_else(|e| die(&e));
                 docker::create_container(&cname, loaded_image, port, &name, &env_config)
                     .unwrap_or_else(|e| die(&e));

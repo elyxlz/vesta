@@ -16,6 +16,7 @@ Sync against **GitHub releases**, not individual master commits. Releases are th
 2. Find the latest release tag: `git -C ~/vesta tag --sort=-v:refname | head -5` (or `gh release list` via `--token-only` + API)
 3. Compare the last processed release (tracked in MEMORY.md) to the latest: `git -C ~/vesta log <last-tag>..<latest-tag> --oneline -- agent/`
 4. Only look at changes under `agent/`
+5. **NEVER modify `src/vesta/`, `pyproject.toml`, or `uv.lock`** — these are mounted read-only and updated automatically by `vestad update`. Only sync `skills/`, `prompts/`, and other agent-managed files.
 5. For each interesting commit in the range: `git -C ~/vesta show <hash>` — understand what it does
 6. Manually apply the relevant changes to `~/vesta` source (don't paste diffs blindly — local may have diverged, adapt the intent)
 7. Track the last processed **release tag** (e.g. `v0.4.2`) in MEMORY.md so you don't redo it next time
