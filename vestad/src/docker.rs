@@ -519,6 +519,28 @@ pub fn generate_agent_token() -> String {
         .collect()
 }
 
+/// Determine the git ref for the running vestad.
+/// Returns the version tag (e.g. "v0.1.116") if one exists for HEAD, otherwise the current branch name.
+fn vesta_git_ref() -> String {
+    let version = env!("CARGO_PKG_VERSION");
+    let tag = format!("v{version}");
+    // Check if this exact tag exists in the repo
+    let tag_exists = std::process::Command::new("git")
+        .args(["rev-parse", "--verify", &format!("refs/tags/{tag}")])
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if tag_exists {
+        return tag;
+    }
+    // Fall back to current branch
+    std::process::Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .output()
+        .ok()
+        .and_then(|o| o.status.success().then(|| String::from_utf8_lossy(&o.stdout).trim().to_string()))
+        .unwrap_or_else(|| "master".to_string())
+}
+
 // --- Per-agent env file ---
 
 #[derive(Clone)]
@@ -550,6 +572,8 @@ fn write_agent_env_file(
     if let Some(url) = &env_config.vestad_tunnel {
         content.push_str(&format!("export VESTAD_TUNNEL={url}\n"));
     }
+    let vesta_ref = vesta_git_ref();
+    content.push_str(&format!("export VESTA_VERSION={vesta_ref}\n"));
     std::fs::write(&env_path, &content)
         .map_err(|e| DockerError::Failed(format!("failed to write agent env file: {e}")))?;
     #[cfg(unix)]

@@ -10,6 +10,8 @@ A React app embedded in the main Vesta app. You have full control over `App.tsx`
 
 ## Before building (REQUIRED)
 
+**Check if shared files need syncing:** Compare `$VESTA_VERSION` against `cat ~/vesta/skills/dashboard/app/.last-sync`. If they differ (or `.last-sync` doesn't exist), run `~/vesta/skills/dashboard/sync-app.sh` and rebuild. This ensures the dashboard uses the same UI components and styles as the main app.
+
 You MUST ask the user clarifying questions before writing any code. Go through these:
 
 1. **Goal** — if the request is vague, clarify what they actually want to see or do
@@ -113,7 +115,7 @@ Widgets that fetch data **must show a loading state** while waiting — use skel
 
 ## Syncing shared files
 
-The dashboard reuses UI components, styles, and utilities from the main Vesta app. Run `sync-app.sh` to pull the latest versions into the dashboard automatically:
+The dashboard reuses UI components, styles, and utilities from the main Vesta app. Run `sync-app.sh` to sync them — it uses `$VESTA_VERSION` (set by vestad) to fetch from the correct branch or release tag. It's idempotent and skips if already up to date:
 
 ```bash
 ~/vesta/skills/dashboard/sync-app.sh
