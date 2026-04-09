@@ -16,6 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       agent: ${{ steps.filter.outputs.agent }}
+      go: ${{ steps.filter.outputs.go }}
     steps:
       - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v4
@@ -24,6 +25,8 @@ jobs:
           filters: |
             agent:
               - 'agent/**'
+            go:
+              - 'agent/skills/whatsapp/cli/**'
 
   lockfile:
     if: >-
@@ -50,10 +53,38 @@ jobs:
 
           echo "✓ uv.lock is up to date"
 
+  go-checks:
+    needs: detect-changes
+    if: github.event_name != 'pull_request' || needs.detect-changes.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Format check
+        working-directory: agent/skills/whatsapp/cli
+        run: |
+          UNFORMATTED=$(gofmt -l .)
+          if [ -n "$UNFORMATTED" ]; then
+            echo "❌ These files are not formatted:"
+            echo "$UNFORMATTED"
+            echo "Run 'gofmt -w .' and commit the result"
+            exit 1
+          fi
+          echo "✓ All Go files are formatted"
+
+      # go vet is skipped — requires whisper.cpp CGO headers that are only
+      # available in the Docker build environment. Compilation is verified
+      # by the container image build in CI.
+
   # ── Merge gate (single required check for branch protection) ─────────
   merge-gate-pr:
     if: always()
-    needs: [lockfile, agent-tests]
+    needs: [lockfile, agent-tests, go-checks]
     runs-on: ubuntu-latest
     steps:
       - name: Check for failures

@@ -1,8 +1,6 @@
 package main
 
-import (
-	"time"
-)
+import "time"
 
 type Message struct {
 	ID          string    `json:"id"`
@@ -34,10 +32,32 @@ type Contact struct {
 	IsManual    bool   `json:"is_manual,omitempty"`
 }
 
-type MessageContext struct {
-	Message Message   `json:"message"`
-	Before  []Message `json:"before"`
-	After   []Message `json:"after"`
+type StoreMessageParams struct {
+	ID            string
+	ChatJID       string
+	Sender        string
+	Content       string
+	Timestamp     time.Time
+	IsFromMe      bool
+	IsForwarded   bool
+	MediaType     string
+	Filename      string
+	URL           string
+	MediaKey      []byte
+	FileSHA256    []byte
+	FileEncSHA256 []byte
+	FileLength    uint64
+}
+
+type NotifContext struct {
+	NotifDir     string
+	ChatName     string
+	ContactName  string
+	ContactPhone string
+	Instance     string
+	ContactSaved bool
+	IsDirectChat bool
+	Sender       string
 }
 
 type MediaInfo struct {
@@ -51,4 +71,3 @@ type MediaInfo struct {
 	FileEncSHA256 []byte
 	FileLength    uint64
 }
-

@@ -13,8 +13,6 @@ import (
 	wav "github.com/go-audio/wav"
 )
 
-const defaultModelPath = "/usr/local/share/ggml-small.bin"
-
 var (
 	whisperModel     whisper.Model
 	whisperModelOnce sync.Once
@@ -26,8 +24,8 @@ func getModelPath() string {
 		return p
 	}
 	// Prefer multilingual models, fall back to english-only
-	if _, err := os.Stat(defaultModelPath); err == nil {
-		return defaultModelPath
+	if _, err := os.Stat(DefaultWhisperModelPath); err == nil {
+		return DefaultWhisperModelPath
 	}
 	fallbacks := []string{
 		"/usr/local/share/ggml-small.en.bin",
@@ -39,7 +37,7 @@ func getModelPath() string {
 			return fb
 		}
 	}
-	return defaultModelPath
+	return DefaultWhisperModelPath
 }
 
 func loadWhisperModel() (whisper.Model, error) {

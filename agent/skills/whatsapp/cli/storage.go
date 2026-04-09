@@ -135,6 +135,16 @@ func (ms *MessageStore) Close() error {
 	return ms.db.Close()
 }
 
+// Begin starts a transaction for batched writes.
+func (ms *MessageStore) Begin() (*sql.Tx, error) {
+	return ms.db.Begin()
+}
+
+// execer is satisfied by both *sql.DB and *sql.Tx.
+type execer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
 func (ms *MessageStore) rebuildFTS() error {
 	var count int
 	if err := ms.db.QueryRow("SELECT COUNT(*) FROM messages_fts").Scan(&count); err != nil {
@@ -180,7 +190,15 @@ func (ms *MessageStore) GetOldestMessage(chatJID string) (string, string, bool, 
 }
 
 func (ms *MessageStore) StoreChat(jid, name string, lastMessageTime time.Time) error {
-	_, err := ms.db.Exec(`
+	return storeChat(ms.db, jid, name, lastMessageTime)
+}
+
+func (ms *MessageStore) StoreChatTx(tx *sql.Tx, jid, name string, lastMessageTime time.Time) error {
+	return storeChat(tx, jid, name, lastMessageTime)
+}
+
+func storeChat(ex execer, jid, name string, lastMessageTime time.Time) error {
+	_, err := ex.Exec(`
 		INSERT INTO chats (jid, name, last_message_time)
 		VALUES (?, ?, ?)
 		ON CONFLICT(jid) DO UPDATE SET
@@ -194,34 +212,35 @@ func (ms *MessageStore) StoreChat(jid, name string, lastMessageTime time.Time) e
 	return err
 }
 
-func (ms *MessageStore) StoreMessage(
-	id, chatJID, sender, content string,
-	timestamp time.Time,
-	isFromMe, isForwarded bool,
-	mediaType, filename, url string,
-	mediaKey, fileSHA256, fileEncSHA256 []byte,
-	fileLength uint64,
-) error {
+func (ms *MessageStore) StoreMessage(p StoreMessageParams) error {
+	return storeMessage(ms.db, p)
+}
+
+func (ms *MessageStore) StoreMessageTx(tx *sql.Tx, p StoreMessageParams) error {
+	return storeMessage(tx, p)
+}
+
+func storeMessage(ex execer, p StoreMessageParams) error {
 	deliveryStatus := ""
-	if isFromMe {
-		deliveryStatus = "sent"
+	if p.IsFromMe {
+		deliveryStatus = DeliveryStatusSent
 	}
-	_, err := ms.db.Exec(`
+	_, err := ex.Exec(`
 		INSERT OR REPLACE INTO messages (
 			id, chat_jid, sender, content, timestamp,
 			is_from_me, is_forwarded, media_type, filename, url,
 			media_key, file_sha256, file_enc_sha256, file_length,
 			delivery_status, delivery_timestamp
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, id, chatJID, sender, content, timestamp, isFromMe, isForwarded,
-		mediaType, filename, url, mediaKey, fileSHA256, fileEncSHA256, fileLength,
-		deliveryStatus, timestamp)
+	`, p.ID, p.ChatJID, p.Sender, p.Content, p.Timestamp, p.IsFromMe, p.IsForwarded,
+		p.MediaType, p.Filename, p.URL, p.MediaKey, p.FileSHA256, p.FileEncSHA256, p.FileLength,
+		deliveryStatus, p.Timestamp)
 	return err
 }
 
 func (ms *MessageStore) UpdateDeliveryStatus(messageID, chatJID, status string, timestamp time.Time) error {
 	// Only upgrade status: sent -> delivered -> read -> played
-	statusRank := map[string]int{"": 0, "sent": 1, "delivered": 2, "read": 3, "played": 4}
+	statusRank := map[string]int{"": 0, DeliveryStatusSent: 1, DeliveryStatusDelivered: 2, DeliveryStatusRead: 3, DeliveryStatusPlayed: 4}
 	newRank := statusRank[status]
 	if newRank == 0 {
 		return nil
@@ -258,7 +277,7 @@ func (ms *MessageStore) GetDeliveryStatus(messageID, chatJID string) (string, *t
 	return status.String, tsPtr, nil
 }
 
-func (ms *MessageStore) GetRecentOutgoingStatus(chatJID string, limit int) ([]map[string]interface{}, error) {
+func (ms *MessageStore) GetRecentOutgoingStatus(chatJID string, limit int) ([]map[string]any, error) {
 	if limit <= 0 {
 		limit = 10
 	}
@@ -273,7 +292,7 @@ func (ms *MessageStore) GetRecentOutgoingStatus(chatJID string, limit int) ([]ma
 	}
 	defer rows.Close()
 
-	var results []map[string]interface{}
+	var results []map[string]any
 	for rows.Next() {
 		var id, content string
 		var ts time.Time
@@ -282,7 +301,7 @@ func (ms *MessageStore) GetRecentOutgoingStatus(chatJID string, limit int) ([]ma
 		if err := rows.Scan(&id, &content, &ts, &status, &deliveryTs); err != nil {
 			continue
 		}
-		entry := map[string]interface{}{
+		entry := map[string]any{
 			"id":              id,
 			"content":         content,
 			"timestamp":       ts.Format(time.RFC3339),
@@ -327,7 +346,7 @@ func (ms *MessageStore) SearchContacts(query string, limit int) ([]Contact, erro
 		"phone_number LIKE ?",
 		"LOWER(jid) LIKE ?",
 	}
-	manualArgs := []interface{}{likeName, jidLike, jidLike}
+	manualArgs := []any{likeName, jidLike, jidLike}
 	if rawDigits != "" {
 		manualConditions = append(manualConditions, "REPLACE(phone_number, '+', '') LIKE ?")
 		manualArgs = append(manualArgs, digitsLike)
@@ -371,7 +390,7 @@ func (ms *MessageStore) SearchContacts(query string, limit int) ([]Contact, erro
 		"LOWER(COALESCE(name, '')) LIKE ?",
 		"LOWER(jid) LIKE ?",
 	}
-	chatArgs := []interface{}{likeName, jidLike}
+	chatArgs := []any{likeName, jidLike}
 	if rawDigits != "" {
 		chatConditions = append(chatConditions, "SUBSTR(jid, 1, INSTR(jid, '@') - 1) LIKE ?")
 		chatArgs = append(chatArgs, digitsLike)
@@ -570,7 +589,7 @@ func (ms *MessageStore) listMessagesFTS(
 		JOIN messages_fts ON messages_fts.rowid = m.rowid
 		WHERE messages_fts MATCH ?
 	`)
-	args := []interface{}{query}
+	args := []any{query}
 
 	if after != nil {
 		qb.WriteString(" AND m.timestamp >= ?")
@@ -609,7 +628,7 @@ func (ms *MessageStore) listMessagesLike(
 		JOIN chats c ON m.chat_jid = c.jid
 		WHERE 1=1
 	`)
-	args := []interface{}{}
+	args := []any{}
 
 	if after != nil {
 		qb.WriteString(" AND m.timestamp >= ?")
@@ -668,42 +687,65 @@ func (ms *MessageStore) ListChats(
 	includeLastMessage bool,
 	sortBy string,
 ) ([]Chat, error) {
-	queryBuilder := strings.Builder{}
+	return ms.listChatsFiltered(query, "", limit, offset, includeLastMessage, sortBy)
+}
+
+func (ms *MessageStore) ListGroups(limit, offset int) ([]Chat, error) {
+	return ms.listChatsFiltered("", "%@g.us", limit, offset, true, "last_active")
+}
+
+// SearchGroups searches groups by name, returning only groups whose name matches the query.
+func (ms *MessageStore) SearchGroups(query string, limit int) ([]Chat, error) {
+	return ms.listChatsFiltered(query, "%@g.us", limit, 0, false, "last_active")
+}
+
+func (ms *MessageStore) listChatsFiltered(
+	query, jidFilter string,
+	limit, offset int,
+	includeLastMessage bool,
+	sortBy string,
+) ([]Chat, error) {
+	qb := strings.Builder{}
 
 	if includeLastMessage {
-		queryBuilder.WriteString(`
-			SELECT
-				c.jid, c.name, c.last_message_time,
+		qb.WriteString(`
+			SELECT c.jid, c.name, c.last_message_time,
 				m.content, m.sender, m.is_from_me
 			FROM chats c
 			LEFT JOIN messages m ON c.jid = m.chat_jid
-				AND c.last_message_time = m.timestamp
-		`)
+				AND c.last_message_time = m.timestamp`)
 	} else {
-		queryBuilder.WriteString(`
-			SELECT
-				c.jid, c.name, c.last_message_time,
+		qb.WriteString(`
+			SELECT c.jid, c.name, c.last_message_time,
 				NULL, NULL, NULL
-			FROM chats c
-		`)
+			FROM chats c`)
 	}
 
-	args := []interface{}{}
+	args := []any{}
+	clauses := []string{}
+
+	if jidFilter != "" {
+		clauses = append(clauses, "c.jid LIKE ?")
+		args = append(args, jidFilter)
+	}
 	if query != "" {
-		queryBuilder.WriteString(" WHERE c.name LIKE ?")
+		clauses = append(clauses, "c.name LIKE ?")
 		args = append(args, "%"+query+"%")
+	}
+	if len(clauses) > 0 {
+		qb.WriteString(" WHERE " + strings.Join(clauses, " AND "))
 	}
 
 	if sortBy == "name" {
-		queryBuilder.WriteString(" ORDER BY c.name")
+		qb.WriteString(" ORDER BY c.name")
 	} else {
-		queryBuilder.WriteString(" ORDER BY c.last_message_time DESC")
+		qb.WriteString(" ORDER BY c.last_message_time DESC")
 	}
 
-	queryBuilder.WriteString(" LIMIT ? OFFSET ?")
+	qb.WriteString(" LIMIT ? OFFSET ?")
 	args = append(args, limit, offset)
 
-	rows, err := ms.db.Query(queryBuilder.String(), args...)
+	rows, err := ms.db.Query(qb.String(), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -738,52 +780,6 @@ func (ms *MessageStore) ListChats(
 	return chats, nil
 }
 
-func (ms *MessageStore) ListGroups(limit, offset int) ([]Chat, error) {
-	rows, err := ms.db.Query(`
-		SELECT
-			c.jid, c.name, c.last_message_time,
-			m.content, m.sender, m.is_from_me
-		FROM chats c
-		LEFT JOIN messages m ON c.jid = m.chat_jid
-			AND c.last_message_time = m.timestamp
-		WHERE c.jid LIKE '%@g.us'
-		ORDER BY c.last_message_time DESC
-		LIMIT ? OFFSET ?
-	`, limit, offset)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var groups []Chat
-	for rows.Next() {
-		var c Chat
-		var name, lastMsg, lastSender sql.NullString
-		var lastTime sql.NullTime
-		var lastIsFromMe sql.NullBool
-
-		if err := rows.Scan(
-			&c.JID, &name, &lastTime,
-			&lastMsg, &lastSender, &lastIsFromMe,
-		); err != nil {
-			continue
-		}
-
-		c.Name = name.String
-		if lastTime.Valid {
-			c.LastMessageTime = lastTime.Time
-		}
-		c.LastMessage = lastMsg.String
-		c.LastSender = lastSender.String
-		c.LastIsFromMe = lastIsFromMe.Bool
-		c.IsGroup = true
-
-		groups = append(groups, c)
-	}
-
-	return groups, nil
-}
-
 func (ms *MessageStore) GetManualContactByPhone(phone string) (*Contact, error) {
 	var jid string
 	var name sql.NullString
@@ -811,8 +807,8 @@ func (ms *MessageStore) GetStaleOutgoingMessages(olderThan time.Duration) ([]str
 	cutoff := time.Now().Add(-olderThan)
 	rows, err := ms.db.Query(`
 		SELECT id FROM messages
-		WHERE delivery_status = 'sent' AND is_from_me = 1 AND timestamp < ?
-	`, cutoff)
+		WHERE delivery_status = ? AND is_from_me = 1 AND timestamp < ?
+	`, DeliveryStatusSent, cutoff)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query stale messages: %v", err)
 	}
@@ -920,13 +916,15 @@ func (ms *MessageStore) GetLastMessageInfo(chatJID string) (time.Time, string, e
 // DeleteChatMessages removes all messages for the given chat JID from the local DB.
 // The chat row itself is kept so the chat still appears in list-chats.
 func (ms *MessageStore) DeleteChatMessages(chatJID string) (int64, error) {
+	// Remove FTS entries for this chat before deleting messages.
+	// This is faster than letting the per-row AFTER DELETE trigger fire for each message,
+	// and avoids the old approach of wiping+rebuilding the entire FTS index.
+	ms.db.Exec(`DELETE FROM messages_fts WHERE rowid IN (SELECT rowid FROM messages WHERE chat_jid = ?)`, chatJID)
+
 	res, err := ms.db.Exec(`DELETE FROM messages WHERE chat_jid = ?`, chatJID)
 	if err != nil {
 		return 0, err
 	}
 	n, _ := res.RowsAffected()
-	// Rebuild FTS after bulk delete
-	ms.db.Exec(`DELETE FROM messages_fts`)
-	ms.rebuildFTS()
 	return n, nil
 }

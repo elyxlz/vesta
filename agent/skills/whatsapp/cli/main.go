@@ -44,13 +44,13 @@ func main() {
 
 	// Resolve short command aliases
 	aliases := map[string]string{
-		"send":     "send-message",
-		"messages": "list-messages",
-		"chats":    "list-chats",
-		"contacts": "list-contacts",
-		"groups":   "list-groups",
-		"file":     "send-file",
-		"react":    "send-reaction",
+		"send":            "send-message",
+		"messages":        "list-messages",
+		"chats":           "list-chats",
+		"contacts":        "list-contacts",
+		"groups":          "list-groups",
+		"file":            "send-file",
+		"react":           "send-reaction",
 		"rename":          "rename-group",
 		"delivery":        "check-delivery",
 		"search-contacts": "list-contacts",
@@ -59,26 +59,26 @@ func main() {
 		command = canon
 	}
 
-	// The bash execution environment escapes ! to \! — undo that in all args
+	// The bash execution environment escapes special chars — undo in all args
 	for i := range os.Args {
-		os.Args[i] = strings.ReplaceAll(os.Args[i], `\!`, `!`)
+		os.Args[i] = shellEscapeReplacer.Replace(os.Args[i])
 	}
 
 	// Rewrite leading positional args into flags
 	positionalSpecs := map[string][]string{
-		"send-message":   {"to", "message"},
-		"list-messages":  {"to"},
-		"send-file":      {"to", "file-path"},
-		"send-reaction":  {"to", "message-id", "emoji"},
-		"add-contact":    {"name", "phone"},
-		"remove-contact": {"identifier"},
-		"leave-group":    {"group"},
-		"backfill":       {"to"},
-		"rename-group":            {"group", "name"},
-		"set-group-description":   {"group", "description"},
-		"check-delivery": {"message-id"},
-		"delete-chat":    {"to"},
-		"archive-chat":   {"to"},
+		"send-message":          {"to", "message"},
+		"list-messages":         {"to"},
+		"send-file":             {"to", "file-path"},
+		"send-reaction":         {"to", "message-id", "emoji"},
+		"add-contact":           {"name", "phone"},
+		"remove-contact":        {"identifier"},
+		"leave-group":           {"group"},
+		"backfill":              {"to"},
+		"rename-group":          {"group", "name"},
+		"set-group-description": {"group", "description"},
+		"check-delivery":        {"message-id"},
+		"delete-chat":           {"to"},
+		"archive-chat":          {"to"},
 	}
 	if spec, ok := positionalSpecs[command]; ok {
 		remaining := os.Args[1:]

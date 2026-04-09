@@ -14,6 +14,10 @@ import (
 	waLog "go.mau.fi/whatsmeow/util/log"
 )
 
+// These parse os.Args directly rather than using flag.FlagSet because they are
+// global flags that must be read before command dispatch (the per-command FlagSet
+// only sees the remaining args after the subcommand).
+
 func extractFlag(name string) string {
 	flag := "--" + name
 	prefix := flag + "="
@@ -28,7 +32,7 @@ func extractFlag(name string) string {
 	return ""
 }
 
-func extractInstance() string        { return extractFlag("instance") }
+func extractInstance() string         { return extractFlag("instance") }
 func extractNotificationsDir() string { return extractFlag("notifications-dir") }
 
 func isReadOnly() bool {
@@ -74,7 +78,11 @@ func getSocketPath() string {
 	return filepath.Join(os.Getenv("HOME"), ".whatsapp", "whatsapp.sock")
 }
 
-func printJSON(v interface{}) {
+func successResult(success bool, msg string) map[string]any {
+	return map[string]any{"success": success, "message": msg}
+}
+
+func printJSON(v any) {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "JSON encoding error: %v\n", err)
@@ -219,524 +227,595 @@ func runOneShot(command string) {
 	sockPath := getSocketPath()
 	output, exitCode, connected := trySocketCommand(sockPath, command, stripGlobalFlags(os.Args[1:]))
 	if !connected {
-		printJSON(map[string]interface{}{"error": "daemon not running — start with: screen -dmS whatsapp whatsapp serve"})
+		printJSON(map[string]any{"error": "daemon not running — start with: screen -dmS whatsapp whatsapp serve"})
 		os.Exit(1)
 	}
 	fmt.Println(string(output))
 	os.Exit(exitCode)
 }
 
-func executeCommand(command string, args []string, wac *WhatsAppClient) (interface{}, error) {
-	// Block write commands on read-only instances
-	if wac.readOnly {
-		writeCommands := map[string]bool{
-			"send-message": true, "send-file": true, "send-reaction": true,
-			"send-audio": true, "add-contact": true, "remove-contact": true,
-			"leave-group": true, "create-group": true, "rename-group": true,
-			"update-group-participants": true, "set-group-photo": true, "set-group-description": true,
-			"revoke-message": true, "archive-chat": true, "archive-all-chats": true,
-			"delete-chat": true, "clear-all-chats": true,
-		}
-		if writeCommands[command] {
-			return nil, fmt.Errorf("command %q blocked: instance is read-only", command)
-		}
+// writeCommands lists commands that are blocked in read-only mode.
+var writeCommands = map[string]bool{
+	"send-message": true, "send-file": true, "send-reaction": true,
+	"send-audio": true, "add-contact": true, "remove-contact": true,
+	"leave-group": true, "create-group": true, "rename-group": true,
+	"update-group-participants": true, "set-group-photo": true, "set-group-description": true,
+	"revoke-message": true, "archive-chat": true, "archive-all-chats": true,
+	"delete-chat": true, "clear-all-chats": true,
+}
+
+func executeCommand(command string, args []string, wac *WhatsAppClient) (any, error) {
+	if wac.readOnly && writeCommands[command] {
+		return nil, fmt.Errorf("command %q blocked: instance is read-only", command)
 	}
 
 	switch command {
 	case "list-contacts":
-		var query string
-		var limit int
-		fs := flag.NewFlagSet("list-contacts", flag.ContinueOnError)
-		fs.StringVar(&query, "query", "", "Optional search query")
-		fs.IntVar(&limit, "limit", 50, "Max results")
-		if err := fs.Parse(args); err != nil {
-			return nil, err
-		}
-		contacts, err := wac.store.SearchContacts(query, limit)
-		if err != nil {
-			return nil, err
-		}
-		return map[string]interface{}{"contacts": contacts}, nil
-
+		return cmdListContacts(args, wac)
 	case "add-contact":
-		var name, phone string
-		fs := flag.NewFlagSet("add-contact", flag.ContinueOnError)
-		fs.StringVar(&name, "name", "", "Contact name")
-		fs.StringVar(&phone, "phone", "", "Phone number (E.164)")
-		if err := fs.Parse(args); err != nil {
-			return nil, err
-		}
-		if name == "" || phone == "" {
-			return nil, fmt.Errorf("--name and --phone are required")
-		}
-		contact, err := wac.AddContact(name, phone)
-		if err != nil {
-			return nil, err
-		}
-		return map[string]interface{}{"contact": contact}, nil
-
+		return cmdAddContact(args, wac)
 	case "remove-contact":
-		var identifier string
-		fs := flag.NewFlagSet("remove-contact", flag.ContinueOnError)
-		fs.StringVar(&identifier, "identifier", "", "Contact name or phone")
-		if err := fs.Parse(args); err != nil {
-			return nil, err
-		}
-		if identifier == "" {
-			return nil, fmt.Errorf("--identifier is required")
-		}
-		if err := wac.store.DeleteManualContact(identifier); err != nil {
-			return nil, err
-		}
-		return map[string]interface{}{"success": true, "message": "Contact removed"}, nil
-
+		return cmdRemoveContact(args, wac)
 	case "list-messages":
-		var to, after, before, senderPhone, query string
-		var limit, page int
-		fs := flag.NewFlagSet("list-messages", flag.ContinueOnError)
-		fs.StringVar(&to, "to", "", "Chat filter (contact name, phone, or group)")
-		fs.StringVar(&after, "after", "", "ISO-8601 datetime")
-		fs.StringVar(&before, "before", "", "ISO-8601 datetime")
-		fs.StringVar(&senderPhone, "sender-phone", "", "Filter by sender")
-		fs.StringVar(&query, "query", "", "Search query")
-		fs.IntVar(&limit, "limit", 50, "Max results")
-		fs.IntVar(&page, "page", 0, "Page number")
-		if err := fs.Parse(args); err != nil {
-			return nil, err
-		}
-
-		var afterTime, beforeTime *time.Time
-		if after != "" {
-			t, err := time.Parse(time.RFC3339, after)
-			if err != nil {
-				return nil, fmt.Errorf("invalid --after timestamp (expected RFC3339): %v", err)
-			}
-			afterTime = &t
-		}
-		if before != "" {
-			t, err := time.Parse(time.RFC3339, before)
-			if err != nil {
-				return nil, fmt.Errorf("invalid --before timestamp (expected RFC3339): %v", err)
-			}
-			beforeTime = &t
-		}
-
-		var chatJID string
-		if to != "" {
-			jid, err := wac.ResolveRecipient(to)
-			if err != nil {
-				return nil, fmt.Errorf("failed to resolve chat: %v", err)
-			}
-			chatJID = jid.String()
-		}
-
-		messages, err := wac.store.ListMessages(
-			afterTime, beforeTime,
-			senderPhone, chatJID, query,
-			limit, page*limit,
-		)
-		if err != nil {
-			return nil, err
-		}
-		return map[string]interface{}{"messages": messages}, nil
-
+		return cmdListMessages(args, wac)
 	case "list-chats":
-		var query, sortBy string
-		var limit, page int
-		var includeLastMessage bool
-		fs := flag.NewFlagSet("list-chats", flag.ContinueOnError)
-		fs.StringVar(&query, "query", "", "Search query")
-		fs.IntVar(&limit, "limit", 50, "Max results")
-		fs.IntVar(&page, "page", 0, "Page number")
-		fs.BoolVar(&includeLastMessage, "include-last-message", false, "Include last message")
-		fs.StringVar(&sortBy, "sort-by", "last_active", "Sort by (last_active or name)")
-		if err := fs.Parse(args); err != nil {
-			return nil, err
-		}
-		chats, err := wac.store.ListChats(query, limit, page*limit, includeLastMessage, sortBy)
-		if err != nil {
-			return nil, err
-		}
-		return map[string]interface{}{"chats": chats}, nil
-
+		return cmdListChats(args, wac)
 	case "send-message":
-		var to, message string
-		fs := flag.NewFlagSet("send-message", flag.ContinueOnError)
-		fs.StringVar(&to, "to", "", "Recipient (name, phone, or group)")
-		fs.StringVar(&message, "message", "", "Message text")
-		if err := fs.Parse(args); err != nil {
-			return nil, err
-		}
-		if to == "" || message == "" {
-			return nil, fmt.Errorf("--to and --message are required")
-		}
-		success, msg := wac.SendMessageWithPresence(to, message)
-		return map[string]interface{}{"success": success, "message": msg}, nil
-
+		return cmdSendMessage(args, wac)
 	case "send-file":
-		var to, filePath, caption, displayName string
-		fs := flag.NewFlagSet("send-file", flag.ContinueOnError)
-		fs.StringVar(&to, "to", "", "Recipient")
-		fs.StringVar(&filePath, "file-path", "", "Path to file")
-		fs.StringVar(&caption, "caption", "", "Optional caption")
-		fs.StringVar(&displayName, "display-name", "", "Override filename shown to recipient")
-		if err := fs.Parse(args); err != nil {
-			return nil, err
-		}
-		if to == "" || filePath == "" {
-			return nil, fmt.Errorf("--to and --file-path are required")
-		}
-		success, msg := wac.SendFile(to, filePath, caption, displayName)
-		return map[string]interface{}{"success": success, "message": msg}, nil
-
+		return cmdSendFile(args, wac)
 	case "send-audio":
-		var to, filePath string
-		fs := flag.NewFlagSet("send-audio", flag.ContinueOnError)
-		fs.StringVar(&to, "to", "", "Recipient")
-		fs.StringVar(&filePath, "file-path", "", "Path to audio file")
-		if err := fs.Parse(args); err != nil {
-			return nil, err
-		}
-		if to == "" || filePath == "" {
-			return nil, fmt.Errorf("--to and --file-path are required")
-		}
-		success, msg := wac.SendAudioMessage(to, filePath)
-		return map[string]interface{}{"success": success, "message": msg}, nil
-
+		return cmdSendAudio(args, wac)
 	case "download-media":
-		var messageID, to, downloadPath string
-		fs := flag.NewFlagSet("download-media", flag.ContinueOnError)
-		fs.StringVar(&messageID, "message-id", "", "Message ID")
-		fs.StringVar(&to, "to", "", "Chat")
-		fs.StringVar(&downloadPath, "download-path", "", "Save path")
-		if err := fs.Parse(args); err != nil {
-			return nil, err
-		}
-		if messageID == "" {
-			return nil, fmt.Errorf("--message-id is required")
-		}
-		path, err := wac.DownloadMedia(messageID, to, downloadPath)
-		if err != nil {
-			return map[string]interface{}{"success": false, "message": err.Error()}, nil
-		}
-		return map[string]interface{}{"success": true, "file_path": path, "message": "Media downloaded"}, nil
-
+		return cmdDownloadMedia(args, wac)
 	case "send-reaction":
-		var messageID, emoji, to string
-		fs := flag.NewFlagSet("send-reaction", flag.ContinueOnError)
-		fs.StringVar(&messageID, "message-id", "", "Message ID")
-		fs.StringVar(&emoji, "emoji", "", "Emoji")
-		fs.StringVar(&to, "to", "", "Chat")
-		if err := fs.Parse(args); err != nil {
-			return nil, err
-		}
-		if messageID == "" || emoji == "" || to == "" {
-			return nil, fmt.Errorf("--message-id, --emoji, and --to are required")
-		}
-		success, msg := wac.SendReaction(messageID, emoji, to)
-		return map[string]interface{}{"success": success, "message": msg}, nil
-
+		return cmdSendReaction(args, wac)
 	case "revoke-message":
-		var messageID, to string
-		fs := flag.NewFlagSet("revoke-message", flag.ContinueOnError)
-		fs.StringVar(&messageID, "message-id", "", "Message ID to revoke/delete for everyone")
-		fs.StringVar(&to, "to", "", "Chat (contact name, phone, or group)")
-		if err := fs.Parse(args); err != nil {
-			return nil, err
-		}
-		if messageID == "" || to == "" {
-			return nil, fmt.Errorf("--message-id and --to are required")
-		}
-		success, msg := wac.RevokeMessage(messageID, to)
-		return map[string]interface{}{"success": success, "message": msg}, nil
-
+		return cmdRevokeMessage(args, wac)
 	case "create-group":
-		var groupName string
-		fs := flag.NewFlagSet("create-group", flag.ContinueOnError)
-		fs.StringVar(&groupName, "name", "", "Group name")
-		if err := fs.Parse(args); err != nil {
-			return nil, err
-		}
-		participants := fs.Args()
-		if groupName == "" || len(participants) == 0 {
-			return nil, fmt.Errorf("--name and participant phone numbers are required")
-		}
-		success, msg := wac.CreateGroup(groupName, participants)
-		return map[string]interface{}{"success": success, "group_name": groupName, "message": msg}, nil
-
+		return cmdCreateGroup(args, wac)
 	case "leave-group":
-		var group string
-		fs := flag.NewFlagSet("leave-group", flag.ContinueOnError)
-		fs.StringVar(&group, "group", "", "Group name")
-		if err := fs.Parse(args); err != nil {
-			return nil, err
-		}
-		if group == "" {
-			return nil, fmt.Errorf("--group is required")
-		}
-		success, msg := wac.LeaveGroup(group)
-		return map[string]interface{}{"success": success, "message": msg}, nil
-
+		return cmdLeaveGroup(args, wac)
 	case "list-groups":
-		var limit, page int
-		fs := flag.NewFlagSet("list-groups", flag.ContinueOnError)
-		fs.IntVar(&limit, "limit", 50, "Max results")
-		fs.IntVar(&page, "page", 0, "Page number")
-		if err := fs.Parse(args); err != nil {
-			return nil, err
-		}
-		groups, err := wac.store.ListGroups(limit, page*limit)
-		if err != nil {
-			return nil, err
-		}
-		return map[string]interface{}{"groups": groups}, nil
-
+		return cmdListGroups(args, wac)
 	case "update-group-participants":
-		var group, action string
-		fs := flag.NewFlagSet("update-group-participants", flag.ContinueOnError)
-		fs.StringVar(&group, "group", "", "Group name")
-		fs.StringVar(&action, "action", "", "add or remove")
-		if err := fs.Parse(args); err != nil {
-			return nil, err
-		}
-		participants := fs.Args()
-		if group == "" || action == "" || len(participants) == 0 {
-			return nil, fmt.Errorf("--group, --action, and participant phone numbers are required")
-		}
-		success, msg := wac.UpdateGroupParticipants(group, action, participants)
-		return map[string]interface{}{"success": success, "message": msg}, nil
-
+		return cmdUpdateGroupParticipants(args, wac)
 	case "backfill":
-		var to string
-		var count int
-		fs := flag.NewFlagSet("backfill", flag.ContinueOnError)
-		fs.StringVar(&to, "to", "", "Chat to backfill")
-		fs.IntVar(&count, "count", 50, "Number of messages to request")
-		if err := fs.Parse(args); err != nil {
-			return nil, err
-		}
-		if to == "" {
-			return nil, fmt.Errorf("--to is required")
-		}
-		success, msg := wac.RequestBackfill(to, count)
-		return map[string]interface{}{"success": success, "message": msg}, nil
-
+		return cmdBackfill(args, wac)
 	case "rename-group":
-		var group, name string
-		fs := flag.NewFlagSet("rename-group", flag.ContinueOnError)
-		fs.StringVar(&group, "group", "", "Group name or JID")
-		fs.StringVar(&name, "name", "", "New group name")
-		if err := fs.Parse(args); err != nil {
-			return nil, err
-		}
-		if group == "" || name == "" {
-			return nil, fmt.Errorf("--group and --name are required")
-		}
-		success, msg := wac.RenameGroup(group, name)
-		return map[string]interface{}{"success": success, "message": msg}, nil
-
+		return cmdRenameGroup(args, wac)
 	case "set-group-photo":
-		var group, filePath string
-		fs := flag.NewFlagSet("set-group-photo", flag.ContinueOnError)
-		fs.StringVar(&group, "group", "", "Group name or JID")
-		fs.StringVar(&filePath, "file-path", "", "Path to image file")
-		if err := fs.Parse(args); err != nil {
-			return nil, err
-		}
-		if group == "" || filePath == "" {
-			return nil, fmt.Errorf("--group and --file-path are required")
-		}
-		success, msg := wac.SetGroupPhoto(group, filePath)
-		return map[string]interface{}{"success": success, "message": msg}, nil
-
+		return cmdSetGroupPhoto(args, wac)
 	case "set-group-description":
-		var group, description string
-		fs := flag.NewFlagSet("set-group-description", flag.ContinueOnError)
-		fs.StringVar(&group, "group", "", "Group name or JID")
-		fs.StringVar(&description, "description", "", "New group description")
-		if err := fs.Parse(args); err != nil {
-			return nil, err
-		}
-		if group == "" || description == "" {
-			return nil, fmt.Errorf("--group and --description are required")
-		}
-		success, msg := wac.SetGroupDescription(group, description)
-		return map[string]interface{}{"success": success, "message": msg}, nil
-
+		return cmdSetGroupDescription(args, wac)
 	case "get-group-invite-link":
-		var group string
-		fs := flag.NewFlagSet("get-group-invite-link", flag.ContinueOnError)
-		fs.StringVar(&group, "group", "", "Group name or JID")
-		if err := fs.Parse(args); err != nil {
-			return nil, err
-		}
-		if group == "" {
-			return nil, fmt.Errorf("--group is required")
-		}
-		success, link, msg := wac.GetGroupInviteLink(group)
-		return map[string]interface{}{"success": success, "link": link, "message": msg}, nil
-
+		return cmdGetGroupInviteLink(args, wac)
 	case "check-delivery":
-		var messageID, to string
-		var limit int
-		var recent bool
-		fs := flag.NewFlagSet("check-delivery", flag.ContinueOnError)
-		fs.StringVar(&messageID, "message-id", "", "Message ID to check")
-		fs.StringVar(&to, "to", "", "Chat filter (contact name, phone, or group)")
-		fs.IntVar(&limit, "limit", 10, "Number of recent messages to show")
-		fs.BoolVar(&recent, "recent", false, "Show recent outgoing message statuses")
-		if err := fs.Parse(args); err != nil {
-			return nil, err
-		}
-
-		if recent || messageID == "" {
-			// Show recent outgoing messages with delivery status
-			var chatJID string
-			if to != "" {
-				jid, err := wac.ResolveRecipient(to)
-				if err != nil {
-					return nil, fmt.Errorf("failed to resolve chat: %v", err)
-				}
-				chatJID = jid.String()
-			}
-			results, err := wac.store.GetRecentOutgoingStatus(chatJID, limit)
-			if err != nil {
-				return nil, err
-			}
-			return map[string]interface{}{"messages": results}, nil
-		}
-
-		// Check specific message
-		var chatJID string
-		if to != "" {
-			jid, err := wac.ResolveRecipient(to)
-			if err != nil {
-				return nil, fmt.Errorf("failed to resolve chat: %v", err)
-			}
-			chatJID = jid.String()
-		}
-		status, ts, err := wac.store.GetDeliveryStatus(messageID, chatJID)
-		if err != nil {
-			return nil, fmt.Errorf("message not found: %v", err)
-		}
-		result := map[string]interface{}{
-			"message_id":      messageID,
-			"delivery_status": status,
-		}
-		if ts != nil {
-			result["delivery_timestamp"] = ts.Format(time.RFC3339)
-		}
-		return result, nil
-
+		return cmdCheckDelivery(args, wac)
 	case "pair-phone":
-		var phone string
-		fs := flag.NewFlagSet("pair-phone", flag.ContinueOnError)
-		fs.StringVar(&phone, "phone", "", "Phone number to pair with (E.164 format, e.g. +393481234567)")
-		if err := fs.Parse(args); err != nil {
-			return nil, err
-		}
-		if phone == "" {
-			return nil, fmt.Errorf("--phone is required (E.164 format, e.g. +393481234567)")
-		}
-		code, err := wac.PairPhone(phone)
-		if err != nil {
-			return nil, fmt.Errorf("failed to generate pairing code: %v", err)
-		}
-		return map[string]interface{}{"pairing_code": code, "phone": phone, "instructions": "Enter this code in WhatsApp > Linked Devices > Link a Device > Link with phone number"}, nil
-
+		return cmdPairPhone(args, wac)
 	case "list-received-contacts":
-		var to string
-		var limit int
-		fs := flag.NewFlagSet("list-received-contacts", flag.ContinueOnError)
-		fs.StringVar(&to, "to", "", "Filter by chat (contact name, phone, or group)")
-		fs.IntVar(&limit, "limit", 50, "Max results")
-		if err := fs.Parse(args); err != nil {
-			return nil, err
-		}
-		var chatJID string
-		if to != "" {
-			jid, err := wac.ResolveRecipient(to)
-			if err != nil {
-				return nil, fmt.Errorf("failed to resolve chat: %v", err)
-			}
-			chatJID = jid.String()
-		}
-		messages, err := wac.store.ListMessages(nil, nil, "", chatJID, "[Contact:", limit, 0)
-		if err != nil {
-			return nil, err
-		}
-		return map[string]interface{}{"contacts": messages}, nil
-
+		return cmdListReceivedContacts(args, wac)
 	case "archive-chat":
-		var jid string
-		fs := flag.NewFlagSet("archive-chat", flag.ContinueOnError)
-		fs.StringVar(&jid, "jid", "", "Chat JID to archive (e.g. 1234567890@s.whatsapp.net)")
-		if err := fs.Parse(args); err != nil {
-			return nil, err
-		}
-		if jid == "" && len(fs.Args()) > 0 {
-			jid = fs.Args()[0]
-		}
-		if jid == "" {
-			return nil, fmt.Errorf("chat JID is required (pass as --jid or positional argument)")
-		}
-		success, msg := wac.ArchiveChat(jid)
-		return map[string]interface{}{"success": success, "message": msg}, nil
-
+		return cmdArchiveChat(args, wac)
 	case "archive-all-chats":
-		archived, errs, err := wac.ArchiveAllChats()
-		if err != nil {
-			return nil, err
-		}
-		result := map[string]interface{}{"archived": archived}
-		if len(errs) > 0 {
-			result["errors"] = errs
-		}
-		return result, nil
-
+		return cmdArchiveAllChats(wac)
 	case "delete-chat":
-		var to string
-		fs := flag.NewFlagSet("delete-chat", flag.ContinueOnError)
-		fs.StringVar(&to, "to", "", "Chat to delete (contact name, phone, group, or JID)")
-		if err := fs.Parse(args); err != nil {
-			return nil, err
-		}
-		if to == "" && len(fs.Args()) > 0 {
-			to = fs.Args()[0]
-		}
-		if to == "" {
-			return nil, fmt.Errorf("--to is required (contact name, phone number, group name, or JID)")
-		}
-		success, msg := wac.DeleteChat(to)
-		return map[string]interface{}{"success": success, "message": msg}, nil
-
+		return cmdDeleteChat(args, wac)
 	case "clear-all-chats":
-		jids, err := wac.store.ListAllChatJIDs()
-		if err != nil {
-			return nil, fmt.Errorf("failed to list chats: %v", err)
-		}
-		var deleted, failed int
-		var errs2 []string
-		for _, jid := range jids {
-			ok, msg := wac.DeleteChat(jid)
-			if ok {
-				deleted++
-			} else {
-				failed++
-				errs2 = append(errs2, fmt.Sprintf("%s: %s", jid, msg))
-			}
-		}
-		result2 := map[string]interface{}{
-			"deleted": deleted,
-			"failed":  failed,
-			"total":   len(jids),
-		}
-		if len(errs2) > 0 {
-			result2["errors"] = errs2
-		}
-		return result2, nil
-
+		return cmdClearAllChats(wac)
 	default:
 		return nil, fmt.Errorf("unknown command: %s", command)
 	}
+}
+
+func cmdListContacts(args []string, wac *WhatsAppClient) (any, error) {
+	var query string
+	var limit int
+	fs := flag.NewFlagSet("list-contacts", flag.ContinueOnError)
+	fs.StringVar(&query, "query", "", "Optional search query")
+	fs.IntVar(&limit, "limit", 50, "Max results")
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	contacts, err := wac.store.SearchContacts(query, limit)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"contacts": contacts}, nil
+}
+
+func cmdAddContact(args []string, wac *WhatsAppClient) (any, error) {
+	var name, phone string
+	fs := flag.NewFlagSet("add-contact", flag.ContinueOnError)
+	fs.StringVar(&name, "name", "", "Contact name")
+	fs.StringVar(&phone, "phone", "", "Phone number (E.164)")
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	if name == "" || phone == "" {
+		return nil, fmt.Errorf("--name and --phone are required")
+	}
+	contact, err := wac.AddContact(name, phone)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"contact": contact}, nil
+}
+
+func cmdRemoveContact(args []string, wac *WhatsAppClient) (any, error) {
+	var identifier string
+	fs := flag.NewFlagSet("remove-contact", flag.ContinueOnError)
+	fs.StringVar(&identifier, "identifier", "", "Contact name or phone")
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	if identifier == "" {
+		return nil, fmt.Errorf("--identifier is required")
+	}
+	if err := wac.store.DeleteManualContact(identifier); err != nil {
+		return nil, err
+	}
+	return map[string]any{"success": true, "message": "Contact removed"}, nil
+}
+
+func cmdListMessages(args []string, wac *WhatsAppClient) (any, error) {
+	var to, after, before, senderPhone, query string
+	var limit, page int
+	fs := flag.NewFlagSet("list-messages", flag.ContinueOnError)
+	fs.StringVar(&to, "to", "", "Chat filter (contact name, phone, or group)")
+	fs.StringVar(&after, "after", "", "ISO-8601 datetime")
+	fs.StringVar(&before, "before", "", "ISO-8601 datetime")
+	fs.StringVar(&senderPhone, "sender-phone", "", "Filter by sender")
+	fs.StringVar(&query, "query", "", "Search query")
+	fs.IntVar(&limit, "limit", 50, "Max results")
+	fs.IntVar(&page, "page", 0, "Page number")
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+
+	var afterTime, beforeTime *time.Time
+	if after != "" {
+		t, err := time.Parse(time.RFC3339, after)
+		if err != nil {
+			return nil, fmt.Errorf("invalid --after timestamp (expected RFC3339): %v", err)
+		}
+		afterTime = &t
+	}
+	if before != "" {
+		t, err := time.Parse(time.RFC3339, before)
+		if err != nil {
+			return nil, fmt.Errorf("invalid --before timestamp (expected RFC3339): %v", err)
+		}
+		beforeTime = &t
+	}
+
+	var chatJID string
+	if to != "" {
+		jid, err := wac.ResolveRecipient(to)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve chat: %v", err)
+		}
+		chatJID = jid.String()
+	}
+
+	messages, err := wac.store.ListMessages(afterTime, beforeTime, senderPhone, chatJID, query, limit, page*limit)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"messages": messages}, nil
+}
+
+func cmdListChats(args []string, wac *WhatsAppClient) (any, error) {
+	var query, sortBy string
+	var limit, page int
+	var includeLastMessage bool
+	fs := flag.NewFlagSet("list-chats", flag.ContinueOnError)
+	fs.StringVar(&query, "query", "", "Search query")
+	fs.IntVar(&limit, "limit", 50, "Max results")
+	fs.IntVar(&page, "page", 0, "Page number")
+	fs.BoolVar(&includeLastMessage, "include-last-message", false, "Include last message")
+	fs.StringVar(&sortBy, "sort-by", "last_active", "Sort by (last_active or name)")
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	chats, err := wac.store.ListChats(query, limit, page*limit, includeLastMessage, sortBy)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"chats": chats}, nil
+}
+
+func cmdSendMessage(args []string, wac *WhatsAppClient) (any, error) {
+	var to, message string
+	fs := flag.NewFlagSet("send-message", flag.ContinueOnError)
+	fs.StringVar(&to, "to", "", "Recipient")
+	fs.StringVar(&message, "message", "", "Message text")
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	if to == "" || message == "" {
+		return nil, fmt.Errorf("--to and --message are required")
+	}
+	success, msg := wac.SendMessageWithPresence(to, message)
+	return successResult(success, msg), nil
+}
+
+func cmdSendFile(args []string, wac *WhatsAppClient) (any, error) {
+	var to, filePath, caption, displayName string
+	fs := flag.NewFlagSet("send-file", flag.ContinueOnError)
+	fs.StringVar(&to, "to", "", "Recipient")
+	fs.StringVar(&filePath, "file-path", "", "Path to file")
+	fs.StringVar(&caption, "caption", "", "Optional caption")
+	fs.StringVar(&displayName, "display-name", "", "Override filename shown to recipient")
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	if to == "" || filePath == "" {
+		return nil, fmt.Errorf("--to and --file-path are required")
+	}
+	success, msg := wac.SendFile(to, filePath, caption, displayName)
+	return successResult(success, msg), nil
+}
+
+func cmdSendAudio(args []string, wac *WhatsAppClient) (any, error) {
+	var to, filePath string
+	fs := flag.NewFlagSet("send-audio", flag.ContinueOnError)
+	fs.StringVar(&to, "to", "", "Recipient")
+	fs.StringVar(&filePath, "file-path", "", "Path to audio file")
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	if to == "" || filePath == "" {
+		return nil, fmt.Errorf("--to and --file-path are required")
+	}
+	success, msg := wac.SendAudioMessage(to, filePath)
+	return successResult(success, msg), nil
+}
+
+func cmdDownloadMedia(args []string, wac *WhatsAppClient) (any, error) {
+	var messageID, to, downloadPath string
+	fs := flag.NewFlagSet("download-media", flag.ContinueOnError)
+	fs.StringVar(&messageID, "message-id", "", "Message ID")
+	fs.StringVar(&to, "to", "", "Chat")
+	fs.StringVar(&downloadPath, "download-path", "", "Save path")
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	if messageID == "" {
+		return nil, fmt.Errorf("--message-id is required")
+	}
+	path, err := wac.DownloadMedia(messageID, to, downloadPath)
+	if err != nil {
+		return map[string]any{"success": false, "message": err.Error()}, nil
+	}
+	return map[string]any{"success": true, "file_path": path, "message": "Media downloaded"}, nil
+}
+
+func cmdSendReaction(args []string, wac *WhatsAppClient) (any, error) {
+	var messageID, emoji, to string
+	fs := flag.NewFlagSet("send-reaction", flag.ContinueOnError)
+	fs.StringVar(&messageID, "message-id", "", "Message ID")
+	fs.StringVar(&emoji, "emoji", "", "Emoji")
+	fs.StringVar(&to, "to", "", "Chat")
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	if messageID == "" || emoji == "" || to == "" {
+		return nil, fmt.Errorf("--message-id, --emoji, and --to are required")
+	}
+	success, msg := wac.SendReaction(messageID, emoji, to)
+	return successResult(success, msg), nil
+}
+
+func cmdRevokeMessage(args []string, wac *WhatsAppClient) (any, error) {
+	var messageID, to string
+	fs := flag.NewFlagSet("revoke-message", flag.ContinueOnError)
+	fs.StringVar(&messageID, "message-id", "", "Message ID to revoke")
+	fs.StringVar(&to, "to", "", "Chat")
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	if messageID == "" || to == "" {
+		return nil, fmt.Errorf("--message-id and --to are required")
+	}
+	success, msg := wac.RevokeMessage(messageID, to)
+	return successResult(success, msg), nil
+}
+
+func cmdCreateGroup(args []string, wac *WhatsAppClient) (any, error) {
+	var groupName string
+	fs := flag.NewFlagSet("create-group", flag.ContinueOnError)
+	fs.StringVar(&groupName, "name", "", "Group name")
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	participants := fs.Args()
+	if groupName == "" || len(participants) == 0 {
+		return nil, fmt.Errorf("--name and participant phone numbers are required")
+	}
+	success, msg := wac.CreateGroup(groupName, participants)
+	return map[string]any{"success": success, "group_name": groupName, "message": msg}, nil
+}
+
+func cmdLeaveGroup(args []string, wac *WhatsAppClient) (any, error) {
+	var group string
+	fs := flag.NewFlagSet("leave-group", flag.ContinueOnError)
+	fs.StringVar(&group, "group", "", "Group name")
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	if group == "" {
+		return nil, fmt.Errorf("--group is required")
+	}
+	success, msg := wac.LeaveGroup(group)
+	return successResult(success, msg), nil
+}
+
+func cmdListGroups(args []string, wac *WhatsAppClient) (any, error) {
+	var limit, page int
+	fs := flag.NewFlagSet("list-groups", flag.ContinueOnError)
+	fs.IntVar(&limit, "limit", 50, "Max results")
+	fs.IntVar(&page, "page", 0, "Page number")
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	groups, err := wac.store.ListGroups(limit, page*limit)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"groups": groups}, nil
+}
+
+func cmdUpdateGroupParticipants(args []string, wac *WhatsAppClient) (any, error) {
+	var group, action string
+	fs := flag.NewFlagSet("update-group-participants", flag.ContinueOnError)
+	fs.StringVar(&group, "group", "", "Group name")
+	fs.StringVar(&action, "action", "", "add or remove")
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	participants := fs.Args()
+	if group == "" || action == "" || len(participants) == 0 {
+		return nil, fmt.Errorf("--group, --action, and participant phone numbers are required")
+	}
+	success, msg := wac.UpdateGroupParticipants(group, action, participants)
+	return successResult(success, msg), nil
+}
+
+func cmdBackfill(args []string, wac *WhatsAppClient) (any, error) {
+	var to string
+	var count int
+	fs := flag.NewFlagSet("backfill", flag.ContinueOnError)
+	fs.StringVar(&to, "to", "", "Chat to backfill")
+	fs.IntVar(&count, "count", 50, "Number of messages")
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	if to == "" {
+		return nil, fmt.Errorf("--to is required")
+	}
+	success, msg := wac.RequestBackfill(to, count)
+	return successResult(success, msg), nil
+}
+
+func cmdRenameGroup(args []string, wac *WhatsAppClient) (any, error) {
+	var group, name string
+	fs := flag.NewFlagSet("rename-group", flag.ContinueOnError)
+	fs.StringVar(&group, "group", "", "Group name or JID")
+	fs.StringVar(&name, "name", "", "New group name")
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	if group == "" || name == "" {
+		return nil, fmt.Errorf("--group and --name are required")
+	}
+	success, msg := wac.RenameGroup(group, name)
+	return successResult(success, msg), nil
+}
+
+func cmdSetGroupPhoto(args []string, wac *WhatsAppClient) (any, error) {
+	var group, filePath string
+	fs := flag.NewFlagSet("set-group-photo", flag.ContinueOnError)
+	fs.StringVar(&group, "group", "", "Group name or JID")
+	fs.StringVar(&filePath, "file-path", "", "Path to image file")
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	if group == "" || filePath == "" {
+		return nil, fmt.Errorf("--group and --file-path are required")
+	}
+	success, msg := wac.SetGroupPhoto(group, filePath)
+	return successResult(success, msg), nil
+}
+
+func cmdSetGroupDescription(args []string, wac *WhatsAppClient) (any, error) {
+	var group, description string
+	fs := flag.NewFlagSet("set-group-description", flag.ContinueOnError)
+	fs.StringVar(&group, "group", "", "Group name or JID")
+	fs.StringVar(&description, "description", "", "New group description")
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	if group == "" || description == "" {
+		return nil, fmt.Errorf("--group and --description are required")
+	}
+	success, msg := wac.SetGroupDescription(group, description)
+	return successResult(success, msg), nil
+}
+
+func cmdGetGroupInviteLink(args []string, wac *WhatsAppClient) (any, error) {
+	var group string
+	fs := flag.NewFlagSet("get-group-invite-link", flag.ContinueOnError)
+	fs.StringVar(&group, "group", "", "Group name or JID")
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	if group == "" {
+		return nil, fmt.Errorf("--group is required")
+	}
+	success, link, msg := wac.GetGroupInviteLink(group)
+	return map[string]any{"success": success, "link": link, "message": msg}, nil
+}
+
+func cmdCheckDelivery(args []string, wac *WhatsAppClient) (any, error) {
+	var messageID, to string
+	var limit int
+	var recent bool
+	fs := flag.NewFlagSet("check-delivery", flag.ContinueOnError)
+	fs.StringVar(&messageID, "message-id", "", "Message ID to check")
+	fs.StringVar(&to, "to", "", "Chat filter")
+	fs.IntVar(&limit, "limit", 10, "Recent messages to show")
+	fs.BoolVar(&recent, "recent", false, "Show recent outgoing statuses")
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+
+	var chatJID string
+	if to != "" {
+		jid, err := wac.ResolveRecipient(to)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve chat: %v", err)
+		}
+		chatJID = jid.String()
+	}
+
+	if recent || messageID == "" {
+		results, err := wac.store.GetRecentOutgoingStatus(chatJID, limit)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"messages": results}, nil
+	}
+
+	status, ts, err := wac.store.GetDeliveryStatus(messageID, chatJID)
+	if err != nil {
+		return nil, fmt.Errorf("message not found: %v", err)
+	}
+	result := map[string]any{
+		"message_id":      messageID,
+		"delivery_status": status,
+	}
+	if ts != nil {
+		result["delivery_timestamp"] = ts.Format(time.RFC3339)
+	}
+	return result, nil
+}
+
+func cmdPairPhone(args []string, wac *WhatsAppClient) (any, error) {
+	var phone string
+	fs := flag.NewFlagSet("pair-phone", flag.ContinueOnError)
+	fs.StringVar(&phone, "phone", "", "Phone number (E.164 format)")
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	if phone == "" {
+		return nil, fmt.Errorf("--phone is required (E.164 format, e.g. +393481234567)")
+	}
+	code, err := wac.PairPhone(phone)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate pairing code: %v", err)
+	}
+	return map[string]any{
+		"pairing_code": code,
+		"phone":        phone,
+		"instructions": "Enter this code in WhatsApp > Linked Devices > Link a Device > Link with phone number",
+	}, nil
+}
+
+func cmdListReceivedContacts(args []string, wac *WhatsAppClient) (any, error) {
+	var to string
+	var limit int
+	fs := flag.NewFlagSet("list-received-contacts", flag.ContinueOnError)
+	fs.StringVar(&to, "to", "", "Filter by chat")
+	fs.IntVar(&limit, "limit", 50, "Max results")
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	var chatJID string
+	if to != "" {
+		jid, err := wac.ResolveRecipient(to)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve chat: %v", err)
+		}
+		chatJID = jid.String()
+	}
+	messages, err := wac.store.ListMessages(nil, nil, "", chatJID, "[Contact:", limit, 0)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"contacts": messages}, nil
+}
+
+func cmdArchiveChat(args []string, wac *WhatsAppClient) (any, error) {
+	var to string
+	fs := flag.NewFlagSet("archive-chat", flag.ContinueOnError)
+	fs.StringVar(&to, "to", "", "Chat to archive (contact name, phone, group, or JID)")
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	if to == "" && len(fs.Args()) > 0 {
+		to = fs.Args()[0]
+	}
+	if to == "" {
+		return nil, fmt.Errorf("--to is required (contact name, phone number, group name, or JID)")
+	}
+	success, msg := wac.ArchiveChat(to)
+	return successResult(success, msg), nil
+}
+
+func cmdArchiveAllChats(wac *WhatsAppClient) (any, error) {
+	archived, errs, err := wac.ArchiveAllChats()
+	if err != nil {
+		return nil, err
+	}
+	result := map[string]any{"archived": archived}
+	if len(errs) > 0 {
+		result["errors"] = errs
+	}
+	return result, nil
+}
+
+func cmdDeleteChat(args []string, wac *WhatsAppClient) (any, error) {
+	var to string
+	fs := flag.NewFlagSet("delete-chat", flag.ContinueOnError)
+	fs.StringVar(&to, "to", "", "Chat to delete")
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	if to == "" && len(fs.Args()) > 0 {
+		to = fs.Args()[0]
+	}
+	if to == "" {
+		return nil, fmt.Errorf("--to is required (contact name, phone number, group name, or JID)")
+	}
+	success, msg := wac.DeleteChat(to)
+	return successResult(success, msg), nil
+}
+
+func cmdClearAllChats(wac *WhatsAppClient) (any, error) {
+	jids, err := wac.store.ListAllChatJIDs()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list chats: %v", err)
+	}
+	var deleted, failed int
+	var errs []string
+	for _, jid := range jids {
+		ok, msg := wac.DeleteChat(jid)
+		if ok {
+			deleted++
+		} else {
+			failed++
+			errs = append(errs, fmt.Sprintf("%s: %s", jid, msg))
+		}
+	}
+	result := map[string]any{
+		"deleted": deleted,
+		"failed":  failed,
+		"total":   len(jids),
+	}
+	if len(errs) > 0 {
+		result["errors"] = errs
+	}
+	return result, nil
 }

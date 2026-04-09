@@ -45,90 +45,78 @@ type reactionNotif struct {
 	Note            string `json:"note,omitempty"`
 }
 
-func WriteNotification(
-	notifDir, messageID, chatName, contactName, contactPhone, instance string,
-	contactSaved, isDirectChat bool,
-	sender, content, mediaType string, isForwarded bool,
-	quotedMessageID, quotedText string,
-) error {
+func writeNotificationFile(notifDir string, data any, notifType string) error {
 	if notifDir == "" {
 		return nil
 	}
-
 	if err := os.MkdirAll(notifDir, 0755); err != nil {
 		return fmt.Errorf("failed to create notifications dir: %v", err)
 	}
+	b, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal %s notification: %v", notifType, err)
+	}
+	filename := fmt.Sprintf("%s-whatsapp-%s.json", uuid.New().String(), notifType)
+	return os.WriteFile(filepath.Join(notifDir, filename), b, 0644)
+}
 
+const unknownContactNote = "Unknown contact. Ask the user who this is and add them as a contact once you know."
+
+func (ctx NotifContext) note() string {
+	if !ctx.ContactSaved && ctx.IsDirectChat && ctx.Instance == "" {
+		return unknownContactNote
+	}
+	return ""
+}
+
+func WriteNotification(
+	ctx NotifContext,
+	messageID, content, mediaType string, isForwarded bool,
+	quotedMessageID, quotedText string,
+) error {
 	n := messageNotif{
 		Source:          "whatsapp",
 		Type:            "message",
-		Instance:        instance,
-		ContactName:     contactName,
+		Instance:        ctx.Instance,
+		ContactName:     ctx.ContactName,
 		Message:         content,
-		ContactPhone:    contactPhone,
+		ContactPhone:    ctx.ContactPhone,
 		MediaType:       mediaType,
 		IsForwarded:     isForwarded,
 		QuotedMessageID: quotedMessageID,
 		QuotedText:      quotedText,
 		Timestamp:       time.Now().Format(time.RFC3339),
 		MessageID:       messageID,
-		ContactSaved:    contactSaved,
+		ContactSaved:    ctx.ContactSaved,
+		Note:            ctx.note(),
 	}
-	if !isDirectChat {
-		n.Sender = sender
-		n.ChatName = chatName
+	if !ctx.IsDirectChat {
+		n.Sender = ctx.Sender
+		n.ChatName = ctx.ChatName
 	}
-	if !contactSaved && isDirectChat && instance == "" {
-		n.Note = "Unknown contact. Ask the user who this is and add them as a contact once you know."
-	}
-
-	data, err := json.MarshalIndent(n, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal notification: %v", err)
-	}
-
-	filename := fmt.Sprintf("%s-whatsapp-message.json", uuid.New().String())
-	return os.WriteFile(filepath.Join(notifDir, filename), data, 0644)
+	return writeNotificationFile(ctx.NotifDir, n, "message")
 }
 
 func WriteReactionNotification(
-	notifDir, targetMessageID, chatName, contactName, contactPhone, instance string,
-	contactSaved, isDirectChat bool,
-	sender, emoji string, isRemoved bool,
+	ctx NotifContext,
+	targetMessageID, emoji string, isRemoved bool,
 ) error {
-	if notifDir == "" {
-		return nil
-	}
-
-	if err := os.MkdirAll(notifDir, 0755); err != nil {
-		return fmt.Errorf("failed to create notifications dir: %v", err)
-	}
-
 	n := reactionNotif{
 		Source:          "whatsapp",
 		Type:            "reaction",
-		Instance:        instance,
-		ContactName:     contactName,
+		Instance:        ctx.Instance,
+		ContactName:     ctx.ContactName,
 		Emoji:           emoji,
-		ContactPhone:    contactPhone,
+		ContactPhone:    ctx.ContactPhone,
 		IsRemoved:       isRemoved,
 		Timestamp:       time.Now().Format(time.RFC3339),
 		TargetMessageID: targetMessageID,
-		ContactSaved:    contactSaved,
+		ContactSaved:    ctx.ContactSaved,
+		Note:            ctx.note(),
 	}
-	if !isDirectChat {
-		n.Sender = sender
-		n.ChatName = chatName
+	if !ctx.IsDirectChat {
+		n.Sender = ctx.Sender
+		n.ChatName = ctx.ChatName
 	}
-	if !contactSaved && isDirectChat && instance == "" {
-		n.Note = "Unknown contact. Ask the user who this is and add them as a contact once you know."
-	}
-
-	data, err := json.MarshalIndent(n, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal reaction notification: %v", err)
-	}
-
-	filename := fmt.Sprintf("%s-whatsapp-reaction.json", uuid.New().String())
-	return os.WriteFile(filepath.Join(notifDir, filename), data, 0644)
+	return writeNotificationFile(ctx.NotifDir, n, "reaction")
 }
