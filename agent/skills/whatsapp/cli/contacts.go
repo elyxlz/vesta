@@ -72,8 +72,8 @@ func (wac *WhatsAppClient) ResolveRecipient(identifier string) (types.JID, error
 		}
 	}
 
-	// Search groups by name
-	groups, err := wac.store.ListGroups(50, 0)
+	// Search groups by name (filtered query avoids loading all groups)
+	groups, err := wac.store.SearchGroups(identifier, 50)
 	if err == nil {
 		if jid, err := resolveFromGroups(groups, identifier); err != nil || jid.User != "" {
 			return jid, err

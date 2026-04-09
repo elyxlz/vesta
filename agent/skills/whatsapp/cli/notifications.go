@@ -45,8 +45,6 @@ type reactionNotif struct {
 	Note            string `json:"note,omitempty"`
 }
 
-// writeNotificationFile marshals data to JSON and writes it as a timestamped
-// notification file. notifType is used in the filename (e.g. "message", "reaction").
 func writeNotificationFile(notifDir string, data interface{}, notifType string) error {
 	if notifDir == "" {
 		return nil
@@ -62,63 +60,64 @@ func writeNotificationFile(notifDir string, data interface{}, notifType string) 
 	return os.WriteFile(filepath.Join(notifDir, filename), b, 0644)
 }
 
-// unknownContactNote is appended to DM notifications from unsaved contacts.
 const unknownContactNote = "Unknown contact. Ask the user who this is and add them as a contact once you know."
 
+func (ctx NotifContext) applyGroupFields(sender, chatName *string) {
+	if !ctx.IsDirectChat {
+		*sender = ctx.Sender
+		*chatName = ctx.ChatName
+	}
+}
+
+func (ctx NotifContext) unknownNote() string {
+	if !ctx.ContactSaved && ctx.IsDirectChat && ctx.Instance == "" {
+		return unknownContactNote
+	}
+	return ""
+}
+
 func WriteNotification(
-	notifDir, messageID, chatName, contactName, contactPhone, instance string,
-	contactSaved, isDirectChat bool,
-	sender, content, mediaType string, isForwarded bool,
+	ctx NotifContext,
+	messageID, content, mediaType string, isForwarded bool,
 	quotedMessageID, quotedText string,
 ) error {
 	n := messageNotif{
 		Source:          "whatsapp",
 		Type:            "message",
-		Instance:        instance,
-		ContactName:     contactName,
+		Instance:        ctx.Instance,
+		ContactName:     ctx.ContactName,
 		Message:         content,
-		ContactPhone:    contactPhone,
+		ContactPhone:    ctx.ContactPhone,
 		MediaType:       mediaType,
 		IsForwarded:     isForwarded,
 		QuotedMessageID: quotedMessageID,
 		QuotedText:      quotedText,
 		Timestamp:       time.Now().Format(time.RFC3339),
 		MessageID:       messageID,
-		ContactSaved:    contactSaved,
+		ContactSaved:    ctx.ContactSaved,
+		Note:            ctx.unknownNote(),
 	}
-	if !isDirectChat {
-		n.Sender = sender
-		n.ChatName = chatName
-	}
-	if !contactSaved && isDirectChat && instance == "" {
-		n.Note = unknownContactNote
-	}
-	return writeNotificationFile(notifDir, n, "message")
+	ctx.applyGroupFields(&n.Sender, &n.ChatName)
+	return writeNotificationFile(ctx.NotifDir, n, "message")
 }
 
 func WriteReactionNotification(
-	notifDir, targetMessageID, chatName, contactName, contactPhone, instance string,
-	contactSaved, isDirectChat bool,
-	sender, emoji string, isRemoved bool,
+	ctx NotifContext,
+	targetMessageID, emoji string, isRemoved bool,
 ) error {
 	n := reactionNotif{
 		Source:          "whatsapp",
 		Type:            "reaction",
-		Instance:        instance,
-		ContactName:     contactName,
+		Instance:        ctx.Instance,
+		ContactName:     ctx.ContactName,
 		Emoji:           emoji,
-		ContactPhone:    contactPhone,
+		ContactPhone:    ctx.ContactPhone,
 		IsRemoved:       isRemoved,
 		Timestamp:       time.Now().Format(time.RFC3339),
 		TargetMessageID: targetMessageID,
-		ContactSaved:    contactSaved,
+		ContactSaved:    ctx.ContactSaved,
+		Note:            ctx.unknownNote(),
 	}
-	if !isDirectChat {
-		n.Sender = sender
-		n.ChatName = chatName
-	}
-	if !contactSaved && isDirectChat && instance == "" {
-		n.Note = unknownContactNote
-	}
-	return writeNotificationFile(notifDir, n, "reaction")
+	ctx.applyGroupFields(&n.Sender, &n.ChatName)
+	return writeNotificationFile(ctx.NotifDir, n, "reaction")
 }

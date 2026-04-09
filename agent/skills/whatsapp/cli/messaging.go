@@ -73,7 +73,7 @@ func (wac *WhatsAppClient) SendMessageWithPresence(recipient, message string) (b
 		return false, fmt.Sprintf("Failed to send message: %v", err)
 	}
 
-	wac.recordOutgoingMessage(jid, resp.ID, message, "", "", "", nil, nil, nil, 0)
+	wac.recordOutgoingMessage(jid, StoreMessageParams{ID: resp.ID, Content: message})
 
 	wac.presenceMutex.Lock()
 	wac.lastMessageSentAt = time.Now()
@@ -181,11 +181,11 @@ func (wac *WhatsAppClient) SendFile(recipient, filePath, caption, displayName st
 		filename = msg.DocumentMessage.GetFileName()
 	}
 
-	wac.recordOutgoingMessage(
-		jid, resp.ID, caption, mediaTypeToString(mediaType), filename,
-		uploaded.URL, uploaded.MediaKey, uploaded.FileSHA256,
-		uploaded.FileEncSHA256, uploaded.FileLength,
-	)
+	wac.recordOutgoingMessage(jid, StoreMessageParams{
+		ID: resp.ID, Content: caption, MediaType: mediaTypeToString(mediaType), Filename: filename,
+		URL: uploaded.URL, MediaKey: uploaded.MediaKey, FileSHA256: uploaded.FileSHA256,
+		FileEncSHA256: uploaded.FileEncSHA256, FileLength: uploaded.FileLength,
+	})
 
 	return true, fmt.Sprintf("File sent successfully (ID: %s)", resp.ID)
 }
@@ -260,11 +260,11 @@ func (wac *WhatsAppClient) SendAudioMessage(recipient, filePath string) (bool, s
 		return false, fmt.Sprintf("Failed to send audio message: %v", err)
 	}
 
-	wac.recordOutgoingMessage(
-		jid, resp.ID, "", "audio", "",
-		uploaded.URL, uploaded.MediaKey, uploaded.FileSHA256,
-		uploaded.FileEncSHA256, uploaded.FileLength,
-	)
+	wac.recordOutgoingMessage(jid, StoreMessageParams{
+		ID: resp.ID, MediaType: MediaTypeAudio,
+		URL: uploaded.URL, MediaKey: uploaded.MediaKey, FileSHA256: uploaded.FileSHA256,
+		FileEncSHA256: uploaded.FileEncSHA256, FileLength: uploaded.FileLength,
+	})
 
 	return true, fmt.Sprintf("Audio message sent successfully (ID: %s)", resp.ID)
 }
@@ -323,36 +323,28 @@ func buildMessage(text string, mentionedJIDs []string) *waProto.Message {
 	}
 }
 
-func (wac *WhatsAppClient) recordOutgoingMessage(
-	jid types.JID,
-	messageID, content, mediaType, filename, url string,
-	mediaKey, fileSHA256, fileEncSHA256 []byte,
-	fileLength uint64,
-) {
+func (wac *WhatsAppClient) recordOutgoingMessage(jid types.JID, p StoreMessageParams) {
 	if wac.store == nil || (jid.User == "" && jid.Server == "") {
 		return
 	}
 
-	if messageID == "" {
-		messageID = fmt.Sprintf("local-%d", time.Now().UnixNano())
+	if p.ID == "" {
+		p.ID = fmt.Sprintf("local-%d", time.Now().UnixNano())
 	}
 
-	timestamp := time.Now()
+	p.ChatJID = jid.String()
+	p.Timestamp = time.Now()
+	p.IsFromMe = true
 
-	if err := wac.store.StoreChat(jid.String(), wac.getChatName(jid), timestamp); err != nil {
+	if err := wac.store.StoreChat(jid.String(), wac.getChatName(jid), p.Timestamp); err != nil {
 		wac.logger.Warnf("Failed to store outgoing chat metadata: %v", err)
 	}
 
-	sender := ""
 	if wac.client != nil && wac.client.Store != nil && wac.client.Store.ID != nil {
-		sender = wac.client.Store.ID.String()
+		p.Sender = wac.client.Store.ID.String()
 	}
 
-	if err := wac.store.StoreMessage(
-		messageID, jid.String(), sender, content, timestamp,
-		true, false, mediaType, filename, url,
-		mediaKey, fileSHA256, fileEncSHA256, fileLength,
-	); err != nil {
+	if err := wac.store.StoreMessage(p); err != nil {
 		wac.logger.Warnf("Failed to record outgoing message: %v", err)
 	}
 }

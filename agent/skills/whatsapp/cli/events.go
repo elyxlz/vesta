@@ -91,42 +91,55 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 	wac.sendersMutex.Lock()
 	wac.messageSenders[info.ID] = resolvedSender.String()
 	wac.senderOrder = append(wac.senderOrder, info.ID)
-	if len(wac.senderOrder) > MaxSenderCacheSize {
-		evict := wac.senderOrder[:len(wac.senderOrder)-MaxSenderCacheSize]
+	if len(wac.senderOrder) > MaxSenderCacheSize+SenderCacheEvictBatch {
+		// Evict in bulk so we don't slice-copy on every message at capacity
+		evict := wac.senderOrder[:SenderCacheEvictBatch]
 		for _, id := range evict {
 			delete(wac.messageSenders, id)
 		}
-		wac.senderOrder = wac.senderOrder[len(wac.senderOrder)-MaxSenderCacheSize:]
+		wac.senderOrder = wac.senderOrder[SenderCacheEvictBatch:]
 	}
 	wac.sendersMutex.Unlock()
 
 	if err := wac.store.StoreChat(info.Chat.String(), chatName, info.Timestamp); err != nil {
 		wac.logger.Warnf("Failed to store chat: %v", err)
 	}
-	if err := wac.store.StoreMessage(
-		info.ID, info.Chat.String(), senderDisplay, content,
-		info.Timestamp, info.IsFromMe, isForwarded,
-		mediaType, filename, url, mediaKey, fileSHA256, fileEncSHA256, fileLength,
-	); err != nil {
+	if err := wac.store.StoreMessage(StoreMessageParams{
+		ID: info.ID, ChatJID: info.Chat.String(), Sender: senderDisplay, Content: content,
+		Timestamp: info.Timestamp, IsFromMe: info.IsFromMe, IsForwarded: isForwarded,
+		MediaType: mediaType, Filename: filename, URL: url,
+		MediaKey: mediaKey, FileSHA256: fileSHA256, FileEncSHA256: fileEncSHA256, FileLength: fileLength,
+	}); err != nil {
 		wac.logger.Warnf("Failed to store message: %v", err)
 	}
 
-	// Auto-transcribe audio messages
-	if mediaType == MediaTypeAudio && !info.IsFromMe {
-		if transcription := wac.transcribeAudioMessage(info.ID, info.Chat.String()); transcription != "" {
-			content = transcription
+	// Build notification context (shared by sync and async paths)
+	shouldNotify := wac.notificationsDir != "" && !info.IsFromMe && !wac.skipSenders[contactPhone]
+	var notifCtx NotifContext
+	if shouldNotify {
+		notifCtx = NotifContext{
+			NotifDir: wac.notificationsDir, ChatName: chatName,
+			ContactName: contactName, ContactPhone: contactPhone,
+			Instance: wac.instance, ContactSaved: contactSaved,
+			IsDirectChat: isDirectChat, Sender: senderDisplay,
 		}
 	}
 
-	// Write notification for incoming messages
-	if wac.notificationsDir != "" && !info.IsFromMe && !wac.skipSenders[contactPhone] {
-		WriteNotification(
-			wac.notificationsDir, info.ID, chatName,
-			contactName, contactPhone, wac.instance,
-			contactSaved, isDirectChat, senderDisplay,
-			content, mediaType, isForwarded,
-			quotedMessageID, quotedText,
-		)
+	// Audio messages: transcribe asynchronously, then send notification
+	if mediaType == MediaTypeAudio && !info.IsFromMe {
+		msgID := info.ID
+		chatJIDStr := info.Chat.String()
+		go func() {
+			notifContent := content
+			if transcription := wac.transcribeAudioMessage(msgID, chatJIDStr); transcription != "" {
+				notifContent = transcription
+			}
+			if shouldNotify {
+				WriteNotification(notifCtx, msgID, notifContent, mediaType, isForwarded, quotedMessageID, quotedText)
+			}
+		}()
+	} else if shouldNotify {
+		WriteNotification(notifCtx, info.ID, content, mediaType, isForwarded, quotedMessageID, quotedText)
 	}
 
 	// Delayed read receipt
@@ -173,17 +186,25 @@ func (wac *WhatsAppClient) handleReaction(evt *events.Message) {
 
 	if wac.notificationsDir != "" {
 		_, senderDisplay, contactName, contactPhone, contactSaved, isDirectChat := wac.prepareNotificationInfo(evt.Info.MessageSource)
-		WriteReactionNotification(
-			wac.notificationsDir, targetID, chatName,
-			contactName, contactPhone, wac.instance,
-			contactSaved, isDirectChat, senderDisplay,
-			emoji, isRemoved,
-		)
+		ctx := NotifContext{
+			NotifDir: wac.notificationsDir, ChatName: chatName,
+			ContactName: contactName, ContactPhone: contactPhone,
+			Instance: wac.instance, ContactSaved: contactSaved,
+			IsDirectChat: isDirectChat, Sender: senderDisplay,
+		}
+		WriteReactionNotification(ctx, targetID, emoji, isRemoved)
 	}
 }
 
 func (wac *WhatsAppClient) handleHistorySync(evt *events.HistorySync) {
 	wac.logger.Infof("Processing history sync with %d conversations", len(evt.Data.Conversations))
+
+	tx, err := wac.store.Begin()
+	if err != nil {
+		wac.logger.Errorf("Failed to begin history sync transaction: %v", err)
+		return
+	}
+	defer tx.Rollback()
 
 	for _, conversation := range evt.Data.Conversations {
 		if conversation.ID == nil {
@@ -233,12 +254,12 @@ func (wac *WhatsAppClient) handleHistorySync(evt *events.HistorySync) {
 				msgID = *msg.Message.Key.ID
 			}
 
-			if err := wac.store.StoreMessage(
-				msgID, chatJID, sender, content,
-				timestamp, isFromMe, isForwarded,
-				mediaType, filename, url,
-				mediaKey, fileSHA256, fileEncSHA256, fileLength,
-			); err != nil {
+			if err := wac.store.StoreMessageTx(tx, StoreMessageParams{
+				ID: msgID, ChatJID: chatJID, Sender: sender, Content: content,
+				Timestamp: timestamp, IsFromMe: isFromMe, IsForwarded: isForwarded,
+				MediaType: mediaType, Filename: filename, URL: url,
+				MediaKey: mediaKey, FileSHA256: fileSHA256, FileEncSHA256: fileEncSHA256, FileLength: fileLength,
+			}); err != nil {
 				wac.logger.Warnf("Failed to store history message: %v", err)
 			}
 		}
@@ -247,10 +268,14 @@ func (wac *WhatsAppClient) handleHistorySync(evt *events.HistorySync) {
 			latestMsg := conversation.Messages[0]
 			if latestMsg != nil && latestMsg.Message != nil {
 				timestamp := time.Unix(int64(latestMsg.Message.GetMessageTimestamp()), 0)
-				if err := wac.store.StoreChat(chatJID, name, timestamp); err != nil {
+				if err := wac.store.StoreChatTx(tx, chatJID, name, timestamp); err != nil {
 					wac.logger.Warnf("Failed to store history chat: %v", err)
 				}
 			}
 		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		wac.logger.Errorf("Failed to commit history sync transaction: %v", err)
 	}
 }

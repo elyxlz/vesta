@@ -25,7 +25,10 @@ const (
 )
 
 // Sender cache (maps message IDs to sender JIDs for reaction routing).
-const MaxSenderCacheSize = 10_000
+const (
+	MaxSenderCacheSize    = 10_000
+	SenderCacheEvictBatch = 2_000 // evict 20% at a time to avoid per-message slice copies
+)
 
 // QR code generation.
 const QRCodeSize = 256

@@ -135,6 +135,46 @@ func (ms *MessageStore) Close() error {
 	return ms.db.Close()
 }
 
+// Begin starts a transaction for batched writes.
+func (ms *MessageStore) Begin() (*sql.Tx, error) {
+	return ms.db.Begin()
+}
+
+// StoreMessageTx is like StoreMessage but uses an existing transaction.
+func (ms *MessageStore) StoreMessageTx(tx *sql.Tx, p StoreMessageParams) error {
+	deliveryStatus := ""
+	if p.IsFromMe {
+		deliveryStatus = DeliveryStatusSent
+	}
+	_, err := tx.Exec(`
+		INSERT OR REPLACE INTO messages (
+			id, chat_jid, sender, content, timestamp,
+			is_from_me, is_forwarded, media_type, filename, url,
+			media_key, file_sha256, file_enc_sha256, file_length,
+			delivery_status, delivery_timestamp
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, p.ID, p.ChatJID, p.Sender, p.Content, p.Timestamp, p.IsFromMe, p.IsForwarded,
+		p.MediaType, p.Filename, p.URL, p.MediaKey, p.FileSHA256, p.FileEncSHA256, p.FileLength,
+		deliveryStatus, p.Timestamp)
+	return err
+}
+
+// StoreChatTx is like StoreChat but uses an existing transaction.
+func (ms *MessageStore) StoreChatTx(tx *sql.Tx, jid, name string, lastMessageTime time.Time) error {
+	_, err := tx.Exec(`
+		INSERT INTO chats (jid, name, last_message_time)
+		VALUES (?, ?, ?)
+		ON CONFLICT(jid) DO UPDATE SET
+			name = COALESCE(excluded.name, chats.name),
+			last_message_time = CASE
+				WHEN excluded.last_message_time > chats.last_message_time
+				THEN excluded.last_message_time
+				ELSE chats.last_message_time
+			END
+	`, jid, name, lastMessageTime)
+	return err
+}
+
 func (ms *MessageStore) rebuildFTS() error {
 	var count int
 	if err := ms.db.QueryRow("SELECT COUNT(*) FROM messages_fts").Scan(&count); err != nil {
@@ -194,16 +234,9 @@ func (ms *MessageStore) StoreChat(jid, name string, lastMessageTime time.Time) e
 	return err
 }
 
-func (ms *MessageStore) StoreMessage(
-	id, chatJID, sender, content string,
-	timestamp time.Time,
-	isFromMe, isForwarded bool,
-	mediaType, filename, url string,
-	mediaKey, fileSHA256, fileEncSHA256 []byte,
-	fileLength uint64,
-) error {
+func (ms *MessageStore) StoreMessage(p StoreMessageParams) error {
 	deliveryStatus := ""
-	if isFromMe {
+	if p.IsFromMe {
 		deliveryStatus = DeliveryStatusSent
 	}
 	_, err := ms.db.Exec(`
@@ -213,9 +246,9 @@ func (ms *MessageStore) StoreMessage(
 			media_key, file_sha256, file_enc_sha256, file_length,
 			delivery_status, delivery_timestamp
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, id, chatJID, sender, content, timestamp, isFromMe, isForwarded,
-		mediaType, filename, url, mediaKey, fileSHA256, fileEncSHA256, fileLength,
-		deliveryStatus, timestamp)
+	`, p.ID, p.ChatJID, p.Sender, p.Content, p.Timestamp, p.IsFromMe, p.IsForwarded,
+		p.MediaType, p.Filename, p.URL, p.MediaKey, p.FileSHA256, p.FileEncSHA256, p.FileLength,
+		deliveryStatus, p.Timestamp)
 	return err
 }
 
@@ -675,6 +708,11 @@ func (ms *MessageStore) ListGroups(limit, offset int) ([]Chat, error) {
 	return ms.listChatsFiltered("", "%@g.us", limit, offset, true, "last_active")
 }
 
+// SearchGroups searches groups by name, returning only groups whose name matches the query.
+func (ms *MessageStore) SearchGroups(query string, limit int) ([]Chat, error) {
+	return ms.listChatsFiltered(query, "%@g.us", limit, 0, false, "last_active")
+}
+
 func (ms *MessageStore) listChatsFiltered(
 	query, jidFilter string,
 	limit, offset int,
@@ -892,13 +930,15 @@ func (ms *MessageStore) GetLastMessageInfo(chatJID string) (time.Time, string, e
 // DeleteChatMessages removes all messages for the given chat JID from the local DB.
 // The chat row itself is kept so the chat still appears in list-chats.
 func (ms *MessageStore) DeleteChatMessages(chatJID string) (int64, error) {
+	// Remove FTS entries for this chat before deleting messages.
+	// This is faster than letting the per-row AFTER DELETE trigger fire for each message,
+	// and avoids the old approach of wiping+rebuilding the entire FTS index.
+	ms.db.Exec(`DELETE FROM messages_fts WHERE rowid IN (SELECT rowid FROM messages WHERE chat_jid = ?)`, chatJID)
+
 	res, err := ms.db.Exec(`DELETE FROM messages WHERE chat_jid = ?`, chatJID)
 	if err != nil {
 		return 0, err
 	}
 	n, _ := res.RowsAffected()
-	// Rebuild FTS after bulk delete
-	ms.db.Exec(`DELETE FROM messages_fts`)
-	ms.rebuildFTS()
 	return n, nil
 }
