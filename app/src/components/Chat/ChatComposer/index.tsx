@@ -91,7 +91,7 @@ export function ChatComposer({
         )}
       </AnimatePresence>
       <div className={cn(
-        "flex items-center gap-2.5 w-full rounded-xl border bg-card shadow-md px-4 min-h-12",
+        "flex items-center gap-2.5 w-full rounded-4xl border bg-card shadow-md px-4 min-h-12",
         isRecording && "border-red-500/50",
       )}>
         {isRecording && voiceAutoSend ? (

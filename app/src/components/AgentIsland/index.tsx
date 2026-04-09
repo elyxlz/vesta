@@ -88,7 +88,7 @@ export function AgentIsland() {
         ref={rootRef}
         layout
         transition={springTransition}
-        style={{ borderRadius: 16 }}
+        style={{ borderRadius: 32 }}
         onPointerEnter={handlePointerEnter}
         onPointerLeave={handlePointerLeave}
         className={cn(
