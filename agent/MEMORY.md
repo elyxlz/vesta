@@ -71,7 +71,7 @@ Once [agent_name] knows who they're with (name isn't "[Unknown]"), that's it. No
 - `~/.bashrc` is sourced at container start before the agent runs, and also in interactive shells
 - Use it for persistent environment variables, PATH changes, aliases, etc.
 - `TZ` (IANA timezone like `Europe/London`) is set here during onboarding
-- To update: edit `~/.bashrc`, run the export in current shell, update User Profile below
+- Changes to `~/.bashrc` only take effect after `restart_vesta` — the running process doesn't pick them up mid-session
 
 ### Technical
 - **Clean up**: Temp files, stale processes. Don't leave a mess
