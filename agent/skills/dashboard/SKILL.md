@@ -24,7 +24,7 @@ Only start building once the user has answered. Don't assume — ask.
 ~/vesta/skills/dashboard/app/src/
 ├── App.tsx              ← entry point, you edit this freely
 ├── main.tsx             ← do NOT modify
-├── globals.css          ← do NOT modify (synced from main app)
+├── index.css          ← do NOT modify (synced from main app)
 ├── components/
 │   ├── ui/              ← shadcn components (synced, do NOT modify)
 │   └── FadeScroll.tsx   ← shared scroll wrapper
@@ -37,7 +37,7 @@ Only start building once the user has answered. Don't assume — ask.
 
 **You can freely edit:** `App.tsx`, anything in `widgets/`, and any new files/folders you create (custom components, helpers, etc.)
 
-**Do NOT modify:** `main.tsx`, `globals.css`, `lib/utils.ts`, `hooks/`, `components/ui/`
+**Do NOT modify:** `main.tsx`, `index.css`, `lib/utils.ts`, `hooks/`, `components/ui/`
 
 ## Building components
 
@@ -67,7 +67,7 @@ When adding the first component, set `SHOW_EMPTY_STATE = false` to disable the p
 
 ## After every change (IMPORTANT)
 
-**Rebuild and restart the server:**
+**Rebuild, Register with VESTAD, Restart the server and Notify the Vesta App**
 
 ```bash
 cd ~/vesta/skills/dashboard/app && npx vite build
@@ -121,16 +121,7 @@ The dashboard reuses UI components, styles, and utilities from the main Vesta ap
 
 ## UI components
 
-The dashboard uses the same shadcn/ui components as the main Vesta app, synced via `sync-app.sh`. Before building, check `~/vesta/skills/dashboard/app/src/components/ui/` for what's available and read `~/vesta/skills/dashboard/shadcn/README.md` for usage patterns.
-
-Import from `@/components/ui/<name>`:
-
-```tsx
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-```
-
-Styling uses Tailwind CSS. Use semantic color classes like `text-foreground`, `text-muted-foreground`, `bg-primary`, `bg-secondary`, `bg-accent`, `bg-destructive`.
+**Before every UI change**, read the full shadcn skill at [shadcn/SKILL.md](./shadcn/SKILL.md) — including the linked rule files (`styling.md`, `forms.md`, `composition.md`, `icons.md`) relevant to your change. This is not optional. The skill contains critical rules, correct patterns, and component APIs that you must follow. Re-read it every time, not just the first time.
 
 Try to keep everything compact, dashboard space is at a premium.
 
@@ -139,7 +130,7 @@ Try to keep everything compact, dashboard space is at a premium.
 - **No client-side fetches to external APIs** — the dashboard runs in a browser, so cross-origin requests to third-party APIs (Yahoo Finance, weather services, etc.) will be blocked by CORS. Instead, create a skill that fetches the data server-side and expose it as a skill API endpoint, then call it from the widget using `apiFetch`.
 - **Use the UI components** from `@/components/ui/` — read them before building
 - **State**: `useState` / `useEffect` for local state
-- **localStorage only when the user opts in**: use it for persisting UI state (checked items, preferences), not as a primary data store. Always have hardcoded defaults as fallback
+- **localStorage**: use it for persisting UI state (checked items, preferences), not as a primary data store. Always have hardcoded defaults as fallback
 - **No new dependencies**: only use packages in the dashboard's `package.json`
 
 ## Troubleshooting
