@@ -29,19 +29,14 @@ export function AppSidebar({
   }))
 
   return (
-    <Sidebar collapsible="offcanvas" {...props}>
+    <Sidebar collapsible="offcanvas" className="[&_[data-slot=sidebar-inner]]:bg-transparent!" {...props}>
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton
-              asChild
-              className="data-[slot=sidebar-menu-button]:p-1.5!"
-            >
-              <a href="#">
-                {config.titleIcon}
-                <span className="text-base font-semibold">{config.title}</span>
-              </a>
-            </SidebarMenuButton>
+            <div className="flex items-center gap-2 p-1.5">
+              {config.titleIcon}
+              <span className="text-base font-semibold">{config.title}</span>
+            </div>
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarHeader>

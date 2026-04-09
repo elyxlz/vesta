@@ -48,9 +48,10 @@ export default function App() {
   return (
     <TooltipProvider>
       <SidebarProvider
+        className="bg-transparent!"
         style={
           {
-            "--sidebar-width": "calc(var(--spacing) * 72)",
+            "--sidebar-width": "calc(var(--spacing) * 52)",
             "--header-height": "calc(var(--spacing) * 12)",
           } as React.CSSProperties
         }
@@ -63,10 +64,8 @@ export default function App() {
         />
         <SidebarInset>
           <SiteHeader title={activePage?.title ?? ""} />
-          <div className={`flex flex-1 flex-col ${fullscreen ? "px-page" : ""}`}>
-            <div className="@container/main flex flex-1 flex-col gap-2">
-              {activePage && <activePage.component />}
-            </div>
+          <div className={fullscreen ? "px-page" : ""}>
+            {activePage && <activePage.component />}
           </div>
         </SidebarInset>
       </SidebarProvider>

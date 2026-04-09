@@ -11,7 +11,7 @@
 
 import type { ComponentType, ReactNode } from "react"
 import {
-  CommandIcon,
+  LayoutDashboardIcon,
 } from "lucide-react"
 
 // --- Types ---
@@ -33,8 +33,8 @@ export interface DashboardConfig {
 // --- Configuration ---
 
 export const config: DashboardConfig = {
-  title: "Vesta",
-  titleIcon: <CommandIcon className="size-5!" />,
+  title: "Dashboard",
+  titleIcon: <LayoutDashboardIcon className="size-5!" />,
 
   pages: [
     // Add pages here:

@@ -27,7 +27,7 @@ export function AgentDashboard() {
         className="flex h-full w-full gap-1"
       >
         <ResizablePanel defaultSize="70%" minSize="300px">
-          <div className={`h-full ${chatCollapsed ? " " : " -mr-1 p-2"}`}>
+          <div className={`h-full`}>
             <Dashboard fullscreen={chatCollapsed} />
           </div>
         </ResizablePanel>
