@@ -69,6 +69,8 @@ def _make_signal_handler(state: vm.State, *, allow_force_exit: bool = False) -> 
 
 
 CLEAN_RESTART = "restart — clean restart"
+NIGHTLY_RESTART = "nightly — dreamer ran, context compacted"
+CRASH_RESTART = "crash — restarted after unexpected exit"
 
 
 async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: bool = False, restart_reason: str = CLEAN_RESTART) -> None:
@@ -100,7 +102,7 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
     if not state.shutdown_event.is_set():
         state.shutdown_event.set()
 
-    reason = state.restart_reason or _read_external_restart_reason(config) or CLEAN_RESTART
+    reason = state.restart_reason or _peek_restart_reason(config) or CLEAN_RESTART
     logger.shutdown(f"Shutting down ({reason})")
     _write_restart_reason(config, reason)
 
@@ -123,8 +125,7 @@ def _write_restart_reason(config: vm.VestaConfig, reason: str) -> None:
         logger.warning("Could not write restart_reason file")
 
 
-def _read_external_restart_reason(config: vm.VestaConfig) -> str | None:
-    """Read restart reason written by an external process (e.g. vestad backup) without consuming it."""
+def _peek_restart_reason(config: vm.VestaConfig) -> str | None:
     path = config.data_dir / "restart_reason"
     try:
         reason = path.read_text().strip()
@@ -140,10 +141,10 @@ def _read_restart_reason(config: vm.VestaConfig) -> str:
         path.unlink(missing_ok=True)
         return reason
     except FileNotFoundError:
-        return "crash — restarted after unexpected exit"
+        return CRASH_RESTART
     except (OSError, UnicodeDecodeError):
         logger.warning("Could not read restart_reason file")
-        return "crash — restarted after unexpected exit"
+        return CRASH_RESTART
 
 
 def _read_last_dreamer_run(config: vm.VestaConfig) -> dt.datetime | None:

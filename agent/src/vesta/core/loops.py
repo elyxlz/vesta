@@ -103,7 +103,7 @@ async def queue_greeting(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.V
         return
 
     extras = []
-    if "nightly" in reason:
+    if reason.startswith("nightly"):
         today = _now().strftime("%Y-%m-%d")
         try:
             summary = (config.dreamer_dir / f"{today}.md").read_text().strip()

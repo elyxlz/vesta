@@ -24,7 +24,7 @@ const RESERVED_SERVICE_NAMES: &[&str] = &["ws", "history", "services", "search"]
 const AUTH_SESSION_TIMEOUT_SECS: u64 = 600;
 const DEFAULT_LOG_TAIL_LINES: u64 = 500;
 const AUTO_BACKUP_CHECK_INTERVAL_SECS: u64 = 3600;
-const DEFAULT_AUTO_BACKUP_HOUR: u8 = 4; // 4am local time (after dreamer at 3am)
+const DEFAULT_AUTO_BACKUP_HOUR: u8 = 4;
 
 // --- TLS cert generation ---
 
