@@ -103,12 +103,13 @@ async def queue_greeting(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.V
         return
 
     extras = []
-    today = _now().strftime("%Y-%m-%d")
-    try:
-        summary = (config.dreamer_dir / f"{today}.md").read_text().strip()
-        extras.append(f"[Dreamer Summary]\n{summary}")
-    except FileNotFoundError:
-        pass
+    if "nightly" in reason:
+        today = _now().strftime("%Y-%m-%d")
+        try:
+            summary = (config.dreamer_dir / f"{today}.md").read_text().strip()
+            extras.append(f"[Dreamer Summary]\n{summary}")
+        except FileNotFoundError:
+            pass
     prompt = build_restart_context(reason, config, extras=extras)
     if not prompt or not prompt.strip():
         return

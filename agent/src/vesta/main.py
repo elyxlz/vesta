@@ -100,9 +100,9 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
     if not state.shutdown_event.is_set():
         state.shutdown_event.set()
 
-    reason = state.restart_reason or CLEAN_RESTART
+    reason = state.restart_reason or _read_external_restart_reason(config) or CLEAN_RESTART
     logger.shutdown(f"Shutting down ({reason})")
-    _write_restart_reason(config, state.restart_reason or CLEAN_RESTART)
+    _write_restart_reason(config, reason)
 
     for task in tasks:
         task.cancel()
@@ -121,6 +121,16 @@ def _write_restart_reason(config: vm.VestaConfig, reason: str) -> None:
         (config.data_dir / "restart_reason").write_text(reason)
     except OSError:
         logger.warning("Could not write restart_reason file")
+
+
+def _read_external_restart_reason(config: vm.VestaConfig) -> str | None:
+    """Read restart reason written by an external process (e.g. vestad backup) without consuming it."""
+    path = config.data_dir / "restart_reason"
+    try:
+        reason = path.read_text().strip()
+        return reason if reason and reason != CLEAN_RESTART else None
+    except (FileNotFoundError, OSError, UnicodeDecodeError):
+        return None
 
 
 def _read_restart_reason(config: vm.VestaConfig) -> str:
