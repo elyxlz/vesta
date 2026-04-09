@@ -49,7 +49,6 @@ export default function App() {
     <div className={`h-full w-full ${fullscreen ? "p-page" : "pl-2 pr-4 py-4"}`}>
       <TooltipProvider>
         <SidebarProvider
-          className="rounded-4xl bg-card shadow-md ring-1 ring-foreground/5 dark:ring-foreground/10 overflow-hidden h-full"
           style={
             {
               "--sidebar-width": "calc(var(--spacing) * 52)",
