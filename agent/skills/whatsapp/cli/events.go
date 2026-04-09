@@ -92,12 +92,14 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 	wac.messageSenders[info.ID] = resolvedSender.String()
 	wac.senderOrder = append(wac.senderOrder, info.ID)
 	if len(wac.senderOrder) > MaxSenderCacheSize+SenderCacheEvictBatch {
-		// Evict in bulk so we don't slice-copy on every message at capacity
 		evict := wac.senderOrder[:SenderCacheEvictBatch]
 		for _, id := range evict {
 			delete(wac.messageSenders, id)
 		}
-		wac.senderOrder = wac.senderOrder[SenderCacheEvictBatch:]
+		// Copy into a new slice so the old backing array can be GC'd
+		remaining := wac.senderOrder[SenderCacheEvictBatch:]
+		wac.senderOrder = make([]string, len(remaining))
+		copy(wac.senderOrder, remaining)
 	}
 	wac.sendersMutex.Unlock()
 
@@ -130,6 +132,9 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 		msgID := info.ID
 		chatJIDStr := info.Chat.String()
 		go func() {
+			wac.transcribeSem <- struct{}{} // acquire
+			defer func() { <-wac.transcribeSem }()
+
 			notifContent := content
 			if transcription := wac.transcribeAudioMessage(msgID, chatJIDStr); transcription != "" {
 				notifContent = transcription

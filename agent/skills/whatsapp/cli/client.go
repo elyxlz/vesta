@@ -51,6 +51,7 @@ type WhatsAppClient struct {
 	lastMessageSentAt time.Time
 	connectMutex      sync.Mutex
 	staleDetectorDone chan struct{}
+	transcribeSem     chan struct{} // limits concurrent audio transcriptions
 }
 
 func NewWhatsAppClient(dataDir, notificationsDir, instance string, readOnly bool, skipSenders map[string]bool, logger waLog.Logger) (*WhatsAppClient, error) {
@@ -103,6 +104,7 @@ func NewWhatsAppClient(dataDir, notificationsDir, instance string, readOnly bool
 		skipSenders:      skipSenders,
 		messageSenders:   make(map[string]string),
 		authStatus:       AuthStatusNotAuthenticated,
+		transcribeSem:    make(chan struct{}, MaxConcurrentTranscriptions),
 	}
 
 	client.AddEventHandler(wac.eventHandler)

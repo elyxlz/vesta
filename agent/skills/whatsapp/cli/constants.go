@@ -33,6 +33,9 @@ const (
 // QR code generation.
 const QRCodeSize = 256
 
+// Maximum concurrent audio transcription goroutines.
+const MaxConcurrentTranscriptions = 3
+
 // Human-like presence simulation — typing indicator.
 const (
 	TypingDelayPerChar = 25 * time.Millisecond

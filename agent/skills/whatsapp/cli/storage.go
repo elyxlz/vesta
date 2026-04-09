@@ -140,39 +140,9 @@ func (ms *MessageStore) Begin() (*sql.Tx, error) {
 	return ms.db.Begin()
 }
 
-// StoreMessageTx is like StoreMessage but uses an existing transaction.
-func (ms *MessageStore) StoreMessageTx(tx *sql.Tx, p StoreMessageParams) error {
-	deliveryStatus := ""
-	if p.IsFromMe {
-		deliveryStatus = DeliveryStatusSent
-	}
-	_, err := tx.Exec(`
-		INSERT OR REPLACE INTO messages (
-			id, chat_jid, sender, content, timestamp,
-			is_from_me, is_forwarded, media_type, filename, url,
-			media_key, file_sha256, file_enc_sha256, file_length,
-			delivery_status, delivery_timestamp
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, p.ID, p.ChatJID, p.Sender, p.Content, p.Timestamp, p.IsFromMe, p.IsForwarded,
-		p.MediaType, p.Filename, p.URL, p.MediaKey, p.FileSHA256, p.FileEncSHA256, p.FileLength,
-		deliveryStatus, p.Timestamp)
-	return err
-}
-
-// StoreChatTx is like StoreChat but uses an existing transaction.
-func (ms *MessageStore) StoreChatTx(tx *sql.Tx, jid, name string, lastMessageTime time.Time) error {
-	_, err := tx.Exec(`
-		INSERT INTO chats (jid, name, last_message_time)
-		VALUES (?, ?, ?)
-		ON CONFLICT(jid) DO UPDATE SET
-			name = COALESCE(excluded.name, chats.name),
-			last_message_time = CASE
-				WHEN excluded.last_message_time > chats.last_message_time
-				THEN excluded.last_message_time
-				ELSE chats.last_message_time
-			END
-	`, jid, name, lastMessageTime)
-	return err
+// execer is satisfied by both *sql.DB and *sql.Tx.
+type execer interface {
+	Exec(query string, args ...any) (sql.Result, error)
 }
 
 func (ms *MessageStore) rebuildFTS() error {
@@ -220,7 +190,15 @@ func (ms *MessageStore) GetOldestMessage(chatJID string) (string, string, bool, 
 }
 
 func (ms *MessageStore) StoreChat(jid, name string, lastMessageTime time.Time) error {
-	_, err := ms.db.Exec(`
+	return storeChat(ms.db, jid, name, lastMessageTime)
+}
+
+func (ms *MessageStore) StoreChatTx(tx *sql.Tx, jid, name string, lastMessageTime time.Time) error {
+	return storeChat(tx, jid, name, lastMessageTime)
+}
+
+func storeChat(ex execer, jid, name string, lastMessageTime time.Time) error {
+	_, err := ex.Exec(`
 		INSERT INTO chats (jid, name, last_message_time)
 		VALUES (?, ?, ?)
 		ON CONFLICT(jid) DO UPDATE SET
@@ -235,11 +213,19 @@ func (ms *MessageStore) StoreChat(jid, name string, lastMessageTime time.Time) e
 }
 
 func (ms *MessageStore) StoreMessage(p StoreMessageParams) error {
+	return storeMessage(ms.db, p)
+}
+
+func (ms *MessageStore) StoreMessageTx(tx *sql.Tx, p StoreMessageParams) error {
+	return storeMessage(tx, p)
+}
+
+func storeMessage(ex execer, p StoreMessageParams) error {
 	deliveryStatus := ""
 	if p.IsFromMe {
 		deliveryStatus = DeliveryStatusSent
 	}
-	_, err := ms.db.Exec(`
+	_, err := ex.Exec(`
 		INSERT OR REPLACE INTO messages (
 			id, chat_jid, sender, content, timestamp,
 			is_from_me, is_forwarded, media_type, filename, url,
