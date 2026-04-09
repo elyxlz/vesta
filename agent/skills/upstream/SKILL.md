@@ -8,6 +8,21 @@ description: Use when you need to contribute code, push a branch, open a pull re
 Source repo: https://github.com/elyxlz/vesta
 Local fork: `~/vesta` (this is a fork — it diverges from upstream as local changes accumulate. Never try to merge or rebase; always apply changes manually and deliberately)
 
+## Path mapping
+
+The upstream repo nests all agent code under an `agent/` prefix. Locally, those same files live at the repo root. Always translate paths when syncing:
+
+| Upstream (GitHub)               | Local (`~/vesta`)          |
+|---------------------------------|----------------------------|
+| `agent/skills/whatsapp/cli/`    | `skills/whatsapp/cli/`     |
+| `agent/skills/<name>/SKILL.md`  | `skills/<name>/SKILL.md`   |
+| `agent/prompts/MEMORY.md`       | `prompts/MEMORY.md`        |
+| `agent/<anything>`              | `<anything>`               |
+
+**Rule**: strip `agent/` when pulling upstream → local. Add `agent/` when pushing local → upstream.
+
+When running `git diff` or `git log` against upstream, always scope to `agent/` and mentally map the paths. When copying files into a PR worktree (`/tmp/vesta-pr`), place them under `agent/`.
+
 ## Pulling upstream changes into local
 
 Sync against **GitHub releases**, not individual master commits. Releases are the stable, intentional milestones — master commits are noisy work-in-progress.
