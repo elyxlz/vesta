@@ -3,7 +3,7 @@ dist/
 
 # Synced from main app via sync-app.sh — do not commit
 components.json
-src/globals.css
+src/index.css
 src/components/ui/
 src/lib/utils.ts
-src/hooks/
+src/hooks/use-mobile.ts

@@ -12,7 +12,7 @@ sync_from_local() {
     app_root="$(dirname "$1")"
     echo "Syncing from local app source: $1"
     cp "$app_root/components.json" "$SCRIPT_DIR/app/components.json"
-    cp "$1/styles/globals.css" "$DASHBOARD_SRC/globals.css"
+    cp "$1/index.css" "$DASHBOARD_SRC/index.css"
     mkdir -p "$DASHBOARD_SRC/lib" "$DASHBOARD_SRC/hooks" "$DASHBOARD_SRC/components/ui"
     cp "$1/lib/utils.ts" "$DASHBOARD_SRC/lib/utils.ts"
     cp "$1/hooks/use-mobile.ts" "$DASHBOARD_SRC/hooks/use-mobile.ts"
@@ -29,7 +29,7 @@ sync_from_git() {
     mkdir -p "$DASHBOARD_SRC/lib" "$DASHBOARD_SRC/hooks" "$DASHBOARD_SRC/components/ui"
 
     git -C "$repo_dir" show "$ref:app/components.json" > "$SCRIPT_DIR/app/components.json"
-    git -C "$repo_dir" show "$ref:app/src/styles/globals.css" > "$DASHBOARD_SRC/globals.css"
+    git -C "$repo_dir" show "$ref:app/src/index.css" > "$DASHBOARD_SRC/index.css"
     git -C "$repo_dir" show "$ref:app/src/lib/utils.ts" > "$DASHBOARD_SRC/lib/utils.ts"
     git -C "$repo_dir" show "$ref:app/src/hooks/use-mobile.ts" > "$DASHBOARD_SRC/hooks/use-mobile.ts"
 
@@ -49,14 +49,14 @@ else
     exit 1
 fi
 
-# Patch globals.css — transparent body for iframe
-sed -i 's/@apply bg-background text-foreground;/@apply text-foreground;\n    background: transparent;/' "$DASHBOARD_SRC/globals.css"
+# Patch index.css — transparent background for iframe embedding
+# Remove bg-background from html/body (dashboard is embedded in iframe)
+sed -i 's/bg-background //g; s/ bg-background//g; s/bg-background//g' "$DASHBOARD_SRC/index.css"
+# Add transparent background to body
+sed -i '/body {/{n;s|$|\n    background: transparent;|}' "$DASHBOARD_SRC/index.css"
 
 # Tell Tailwind to scan gitignored synced files
-sed -i '1s|^|@source "./components/ui";\n@source "./lib";\n@source "./hooks";\n|' "$DASHBOARD_SRC/globals.css"
-
-# Patch components.json — point CSS path to dashboard location
-sed -i 's|src/styles/globals.css|src/globals.css|' "$SCRIPT_DIR/app/components.json"
+sed -i '1s|^|@source "./components/ui";\n@source "./lib";\n@source "./hooks";\n|' "$DASHBOARD_SRC/index.css"
 
 echo "Synced $(ls "$DASHBOARD_SRC/components/ui/" | wc -l) UI components"
 echo "Done."

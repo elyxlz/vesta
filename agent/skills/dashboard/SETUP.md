@@ -14,7 +14,7 @@ The dashboard shares UI components, styles, and utilities with the main Vesta ap
 bash ~/vesta/skills/dashboard/sync-app.sh
 ```
 
-This fetches `globals.css`, `components/ui/`, `lib/utils.ts`, and `hooks/use-mobile.ts` from the main app (GitHub, pinned to the current version). Run this again after upstream updates to keep the dashboard visually in sync.
+This fetches `index.css`, `components/ui/`, `lib/utils.ts`, and `hooks/use-mobile.ts` from the main app (GitHub, pinned to the current version). Run this again after upstream updates to keep the dashboard visually in sync.
 
 ## 3. Build the dashboard
 
