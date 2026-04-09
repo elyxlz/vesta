@@ -166,7 +166,7 @@ The browser uses a persistent profile at `~/.browser/profile` by default. Cookie
 
 For maximum stealth, combine with Xvfb (headed on virtual display):
 ```bash
-screen -dmS xvfb Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp
+Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp &
 DISPLAY=:99 browser launch --stealth
 ```
 
@@ -196,12 +196,12 @@ apt-get install -y openbox xdotool
 
 ### Flow
 ```bash
-# 1. Start Xvfb virtual display (via screen session)
-screen -X -S xvfb quit 2>/dev/null; sleep 1
-screen -dmS xvfb Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp
+# 1. Start Xvfb virtual display
+pkill -x Xvfb 2>/dev/null; sleep 1
+Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp &
 
 # 2. Start the window manager
-screen -dmS openbox bash -c 'DISPLAY=:99 openbox'
+DISPLAY=:99 openbox &
 
 # 3. Launch Chromium with --disable-gpu flag (critical!)
 DISPLAY=:99 chromium --no-sandbox --disable-gpu \
@@ -212,17 +212,17 @@ DISPLAY=:99 chromium --no-sandbox --disable-gpu \
 DISPLAY=:99 xdotool search --name "chromium" windowmaximize
 
 # 5. Start x11vnc server
-screen -dmS x11vnc x11vnc -display :99 -forever -nopw -rfbport 5900
+x11vnc -display :99 -forever -nopw -rfbport 5900 -bg
 
 # 6. Start websockify for web access
-screen -dmS websockify websockify --web=/usr/share/novnc <PORT> localhost:5900
+websockify --web=/usr/share/novnc <PORT> localhost:5900
 ```
 
 ### Cleanup
 ```bash
-screen -X -S x11vnc quit 2>/dev/null
-screen -X -S websockify quit 2>/dev/null
-screen -X -S openbox quit 2>/dev/null
+pkill -f "x11vnc"
+pkill -f "websockify"
+pkill -x openbox
 ```
 
 ## Remote Assist (User Takeover)
@@ -236,9 +236,9 @@ apt-get install -y novnc x11vnc scrot
 
 ### Flow
 ```bash
-# 1. Make sure Xvfb is running (via screen session)
-screen -X -S xvfb quit 2>/dev/null; sleep 1
-screen -dmS xvfb Xvfb :99 -screen 0 1280x720x24
+# 1. Make sure Xvfb is running
+pkill -x Xvfb 2>/dev/null; sleep 1
+Xvfb :99 -screen 0 1280x720x24 &>/dev/null &
 
 # 2. Launch visible Chromium with a PERSISTENT profile (keeps cookies/sessions across restarts)
 DISPLAY=:99 chromium --no-sandbox --disable-gpu --disable-software-rasterizer \
@@ -246,8 +246,8 @@ DISPLAY=:99 chromium --no-sandbox --disable-gpu --disable-software-rasterizer \
   --window-size=1280,720 'https://example.com' &>/dev/null &
 
 # 3. Start VNC + noVNC on an available port
-screen -dmS x11vnc x11vnc -display :99 -nopw -forever -shared -rfbport 5900
-screen -dmS websockify websockify --web=/usr/share/novnc <PORT> localhost:5900
+x11vnc -display :99 -nopw -forever -shared -rfbport 5900 &>/dev/null &
+websockify --web=/usr/share/novnc <PORT> localhost:5900 &>/dev/null &
 
 # 4. Send the user the link
 # http://<LAN_IP>:<PORT>/vnc.html
@@ -255,9 +255,9 @@ screen -dmS websockify websockify --web=/usr/share/novnc <PORT> localhost:5900
 
 ### After user finishes
 ```bash
-# Stop VNC/noVNC (keep the browser profile for future use)
-screen -X -S x11vnc quit 2>/dev/null
-screen -X -S websockify quit 2>/dev/null
+# Kill VNC/noVNC (keep the browser profile for future use)
+kill $(fuser 5900/tcp 2>/dev/null | tr -d ' ') 2>/dev/null
+kill $(fuser <PORT>/tcp 2>/dev/null | tr -d ' ') 2>/dev/null
 ```
 
 ### Persistent Browser Profile
@@ -279,7 +279,7 @@ screen -X -S websockify quit 2>/dev/null
 - **Browser crashed / zombie processes?** Stop and relaunch:
   ```bash
   browser stop
-  screen -dmS xvfb Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp
+  Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp &
   DISPLAY=:99 browser launch
   ```
 - **Sign-in blocked (e.g. Google)?** Sites like Google detect automated browsers even with stealth. Use Remote Assist — have the user log in once via noVNC, then reuse the persistent profile for future automated sessions

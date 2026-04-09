@@ -5,7 +5,7 @@ on:
     branches: [master]
   pull_request:
   release:
-    types: [created, published]
+    types: [created]
   workflow_dispatch:
 
 permissions:
@@ -137,7 +137,7 @@ jobs:
   # ── Integration tests (real vestad + real client, Docker required) ─────
   test-integration:
     needs: [version-check, detect-changes]
-    if: github.event_name != 'pull_request' || needs.detect-changes.outputs.cli == 'true' || needs.detect-changes.outputs.agent == 'true'
+    if: github.event_name != 'pull_request' || needs.detect-changes.outputs.cli == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -209,12 +209,6 @@ jobs:
       - name: Test (vestad, Linux only)
         if: matrix.run-vestad
         run: cargo test -p vestad --target ${{ matrix.target }}
-
-      - name: Docker integration tests (vestad, Linux only)
-        if: matrix.run-vestad
-        run: |
-          docker pull ghcr.io/elyxlz/vesta:latest
-          cargo test -p vestad --target ${{ matrix.target }} -- --ignored
 
   # ── Build vesta client (all unix targets) ─────────────────────────────
   build-vesta:
@@ -947,6 +941,3 @@ jobs:
             gh release upload "${{ github.event.release.tag_name }}" "$f" --clobber
           done
           gh release edit "${{ github.event.release.tag_name }}" --draft=false --prerelease=false
-
-      - name: Push to production
-        run: git push --force origin HEAD:production

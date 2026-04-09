@@ -181,17 +181,9 @@ fn read_server_info(config: &std::path::Path) -> (Option<String>, Option<String>
 fn run_server_foreground(port: Option<u16>, no_tunnel: bool) {
     let config = config_dir();
 
-    let docker = docker::connect().unwrap_or_else(|e| die(&e));
-    docker::ensure_docker_sync(&docker).unwrap_or_else(|e| die(&e));
+    docker::ensure_docker().unwrap_or_else(|e| die(&e));
 
     let _pid_lock = serve::acquire_pid_lock(&config).unwrap_or_else(|e| die(&e));
-    // Kill orphaned cloudflared from a previous crash so it doesn't hold the port
-    let cf_config = config.join("cloudflared.yml");
-    if cf_config.exists() {
-        std::process::Command::new("pkill")
-            .args(["-f", &format!("cloudflared.*{}", cf_config.display())])
-            .output().ok();
-    }
     let port = resolve_port(port, &config);
     serve::write_port_file(&config, port);
 
@@ -236,8 +228,7 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool) {
                 None
             };
 
-            let dev_mode = cfg!(debug_assertions) || std::env::var("VESTAD_DEV").is_ok();
-            serve::run_server(port, api_key, cert_pem, key_pem, tunnel_url, config.clone(), docker.clone(), dev_mode).await;
+            serve::run_server(port, api_key, cert_pem, key_pem, tunnel_url, config.clone()).await;
 
             if let Some(mut child) = tunnel_child {
                 child.kill().await.ok();
@@ -250,8 +241,6 @@ fn run_server_systemd(port: Option<u16>, no_tunnel: bool) {
         eprintln!("note: --port and --no-tunnel only apply with --standalone");
     }
 
-    let docker = docker::connect().unwrap_or_else(|e| die(&e));
-    docker::ensure_docker_sync(&docker).unwrap_or_else(|e| die(&e));
     systemd::ensure_service_installed().unwrap_or_else(|e| die(&e));
 
     if systemd::is_active() {
@@ -346,12 +335,9 @@ fn main() {
 
         Command::Shell { name } => {
             docker::validate_name(&name).unwrap_or_else(|e| die(&e));
-            let docker = docker::connect().unwrap_or_else(|e| die(&e));
             let cname = docker::container_name(&name);
-            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-            rt.block_on(docker::ensure_running(&docker, &cname)).unwrap_or_else(|e| die(&e));
+            docker::ensure_running(&cname).unwrap_or_else(|e| die(&e));
 
-            // Keep the docker exec -it subprocess as-is for TTY support
             let status = std::process::Command::new("docker")
                 .args(["exec", "-it", "--detach-keys=ctrl-q", &cname, "bash"])
                 .stdin(std::process::Stdio::inherit())
@@ -364,98 +350,149 @@ fn main() {
             }
         }
 
-        Command::Backup { action } => {
-            let docker = docker::connect().unwrap_or_else(|e| die(&e));
-            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        Command::Backup { action } => match action {
+            BackupAction::Export { name, output } => {
+                docker::validate_name(&name).unwrap_or_else(|e| die(&e));
+                let _lock = backup::agent_file_lock(&name).unwrap_or_else(|e| die(&e));
+                let cname = docker::container_name(&name);
 
-            match action {
-                BackupAction::Export { name, output } => {
-                    docker::validate_name(&name).unwrap_or_else(|e| die(&e));
-                    let _lock = backup::agent_file_lock(&name).unwrap_or_else(|e| die(&e));
-                    let cname = docker::container_name(&name);
-
-                    rt.block_on(async {
-                        let cs = docker::container_status(&docker, &cname).await;
-                        if cs == docker::ContainerStatus::NotFound {
-                            die(format!("agent '{}' not found", name));
-                        }
-
-                        let was_running = cs == docker::ContainerStatus::Running;
-                        if was_running {
-                            eprintln!("stopping agent...");
-                            docker::stop_container_with_timeout(&docker, &cname, backup::BACKUP_STOP_TIMEOUT_SECS).await
-                                .unwrap_or_else(|e| die(format!("failed to stop container: {}", e)));
-                        }
-
-                        eprintln!("snapshotting container...");
-                        let temp_tag = format!("vesta-export:{}-temp", name);
-                        if let Err(e) = docker::snapshot_container(&docker, &cname, &temp_tag, &[]).await {
-                            if was_running {
-                                docker::start_container(&docker, &cname).await;
-                            }
-                            die(format!("snapshot failed: {}", e));
-                        }
-
-                        if was_running {
-                            docker::start_container(&docker, &cname).await;
-                        }
-
-                        eprintln!("exporting to {}...", output.display());
-                        docker::export_image_gzip(&docker, &temp_tag, &output).await
-                            .unwrap_or_else(|e| die(format!("export failed: {}", e)));
-
-                        docker::remove_image(&docker, &temp_tag).await
-                            .unwrap_or_else(|e| die(format!("failed to remove temp image: {}", e)));
-
-                        eprintln!("exported: {}", output.display());
-                    });
+                let cs = docker::container_status(&cname);
+                if cs == docker::ContainerStatus::NotFound {
+                    die(format!("agent '{}' not found", name));
                 }
-                BackupAction::Import { name, input } => {
-                    docker::validate_name(&name).unwrap_or_else(|e| die(&e));
-                    let _lock = backup::agent_file_lock(&name).unwrap_or_else(|e| die(&e));
 
-                    if !input.exists() {
-                        die(format!("file not found: {}", input.display()));
+                let was_running = cs == docker::ContainerStatus::Running;
+                if was_running {
+                    eprintln!("stopping agent...");
+                    docker::docker_ok(&["stop", "--time", backup::BACKUP_STOP_TIMEOUT_SECS, &cname]);
+                }
+
+                eprintln!("committing snapshot...");
+                let temp_tag = format!("vesta-export:{}-temp", name);
+                if !docker::docker_ok(&["commit", &cname, &temp_tag]) {
+                    eprintln!("docker commit failed, trying export/import fallback...");
+                    let mut export_child = std::process::Command::new("docker")
+                        .args(["export", &cname])
+                        .stdout(std::process::Stdio::piped())
+                        .spawn()
+                        .unwrap_or_else(|e| {
+                            if was_running { docker::docker_ok(&["start", &cname]); }
+                            die(format!("docker export failed: {}", e));
+                        });
+                    let export_stdout = export_child.stdout.take().expect("stdout was set to piped");
+                    let import_out = std::process::Command::new("docker")
+                        .args(["import", "-", &temp_tag])
+                        .stdin(export_stdout)
+                        .output()
+                        .unwrap_or_else(|e| {
+                            if was_running { docker::docker_ok(&["start", &cname]); }
+                            die(format!("docker import failed: {}", e));
+                        });
+                    let _ = export_child.wait();
+                    if !import_out.status.success() {
+                        if was_running { docker::docker_ok(&["start", &cname]); }
+                        die("export fallback failed");
                     }
-
-                    let cname = docker::container_name(&name);
-
-                    rt.block_on(async {
-                        if docker::container_status(&docker, &cname).await != docker::ContainerStatus::NotFound {
-                            die(format!("agent '{}' already exists — destroy it first or pick a different name", name));
-                        }
-
-                        eprintln!("loading image from {}...", input.display());
-                        let loaded_image = docker::import_image_gzip(&docker, &input).await
-                            .unwrap_or_else(|e| die(format!("import failed: {}", e)));
-                        let loaded_image = loaded_image.as_str();
-
-                        eprintln!("creating agent '{}'...", name);
-                        let config = config_dir();
-                        let vestad_port = std::fs::read_to_string(config.join("port"))
-                            .ok()
-                            .and_then(|s| s.trim().parse::<u16>().ok())
-                            .unwrap_or(0);
-                        let vestad_tunnel = tunnel::get_tunnel_config(&config)
-                            .map(|tc| format!("https://{}", tc.hostname));
-                        let env_config = docker::AgentEnvConfig {
-                            config_dir: config.clone(),
-                            agents_dir: config.join("agents"),
-                            vestad_port,
-                            vestad_tunnel,
-                        };
-                        agent_code::ensure_agent_code(&config)
-                            .unwrap_or_else(|e| die(format!("failed to populate agent code: {e}")));
-                        let (port, _listener) = docker::allocate_port(&env_config.agents_dir).unwrap_or_else(|e| die(&e));
-                        docker::create_container(&docker, &cname, loaded_image, port, &name, &env_config, true).await
-                            .unwrap_or_else(|e| die(&e));
-
-                        if !docker::start_container(&docker, &cname).await {
-                            die("failed to start imported agent");
-                        }
-                        eprintln!("imported: {} (port {})", name, port);
-                    });
                 }
+
+                if was_running {
+                    docker::docker_ok(&["start", &cname]);
+                }
+
+                eprintln!("exporting to {}...", output.display());
+                let mut docker_save = std::process::Command::new("docker")
+                    .args(["save", &temp_tag])
+                    .stdout(std::process::Stdio::piped())
+                    .spawn()
+                    .unwrap_or_else(|e| die(format!("docker save failed: {}", e)));
+
+                let save_stdout = docker_save.stdout.take().expect("stdout was set to piped");
+                let output_file = std::fs::File::create(&output)
+                    .unwrap_or_else(|e| die(format!("failed to create output file: {}", e)));
+
+                let gzip_status = std::process::Command::new("gzip")
+                    .stdin(save_stdout)
+                    .stdout(output_file)
+                    .status()
+                    .unwrap_or_else(|e| die(format!("gzip failed: {}", e)));
+
+                let _ = docker_save.wait();
+
+                docker::docker_ok(&["rmi", &temp_tag]);
+
+                if !gzip_status.success() {
+                    die("export failed");
+                }
+                eprintln!("exported: {}", output.display());
+            }
+            BackupAction::Import { name, input } => {
+                docker::validate_name(&name).unwrap_or_else(|e| die(&e));
+                let _lock = backup::agent_file_lock(&name).unwrap_or_else(|e| die(&e));
+
+                if !input.exists() {
+                    die(format!("file not found: {}", input.display()));
+                }
+
+                let cname = docker::container_name(&name);
+                if docker::container_status(&cname) != docker::ContainerStatus::NotFound {
+                    die(format!("agent '{}' already exists — destroy it first or pick a different name", name));
+                }
+
+                eprintln!("loading image from {}...", input.display());
+                let input_file = std::fs::File::open(&input)
+                    .unwrap_or_else(|e| die(format!("failed to open input file: {}", e)));
+
+                let mut gunzip = std::process::Command::new("gunzip")
+                    .arg("-c")
+                    .stdin(input_file)
+                    .stdout(std::process::Stdio::piped())
+                    .spawn()
+                    .unwrap_or_else(|e| die(format!("gunzip failed: {}", e)));
+
+                let gunzip_stdout = gunzip.stdout.take().expect("stdout was set to piped");
+                let output = std::process::Command::new("docker")
+                    .args(["load"])
+                    .stdin(gunzip_stdout)
+                    .output()
+                    .unwrap_or_else(|e| die(format!("docker load failed: {}", e)));
+
+                let _ = gunzip.wait();
+
+                if !output.status.success() {
+                    die("docker load failed");
+                }
+
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let loaded_image = stdout
+                    .lines()
+                    .filter_map(|l| l.strip_prefix("Loaded image: "))
+                    .next_back()
+                    .unwrap_or_else(|| die("could not determine loaded image from docker load output"));
+
+                eprintln!("creating agent '{}'...", name);
+                let config = config_dir();
+                let vestad_port = std::fs::read_to_string(config.join("port"))
+                    .ok()
+                    .and_then(|s| s.trim().parse::<u16>().ok())
+                    .unwrap_or(0);
+                let vestad_tunnel = tunnel::get_tunnel_config(&config)
+                    .map(|tc| format!("https://{}", tc.hostname));
+                let env_config = docker::AgentEnvConfig {
+                    config_dir: config.clone(),
+                    agents_dir: config.join("agents"),
+                    vestad_port,
+                    vestad_tunnel,
+                };
+                agent_code::ensure_agent_code(&config, loaded_image)
+                    .unwrap_or_else(|e| die(format!("failed to populate agent code: {e}")));
+                let (port, _listener) = docker::allocate_port(&env_config.agents_dir).unwrap_or_else(|e| die(&e));
+                docker::create_container(&cname, loaded_image, port, &name, &env_config)
+                    .unwrap_or_else(|e| die(&e));
+
+                if !docker::docker_ok(&["start", &cname]) {
+                    die("failed to start imported agent");
+                }
+                eprintln!("imported: {} (port {})", name, port);
             }
         },
 

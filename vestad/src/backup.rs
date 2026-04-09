@@ -1,12 +1,8 @@
 use std::fs::File;
 
-use bollard::Docker;
-
 use crate::docker::{
-    container_created, container_name, container_size_rw, container_status, create_container,
-    docker_cp_content, docker_root_dir, get_agent_name, image_exists, inspect_container,
-    list_images_by_reference, list_managed_containers, remove_container_force, remove_image,
-    snapshot_container, start_container, stop_container_with_timeout, tag_image, validate_name,
+    container_name, container_status, create_container, docker_cp_content, docker_ok,
+    docker_output, get_agent_name, inspect_container, list_managed_containers, validate_name,
     AgentEnvConfig, ContainerStatus, DockerError,
 };
 use crate::types::{BackupInfo, BackupType, RetentionPolicy};
@@ -17,7 +13,7 @@ pub const DEFAULT_RETENTION_WEEKLY: usize = 2;
 pub const DEFAULT_RETENTION_MONTHLY: usize = 1;
 const MIN_DISK_SPACE_BYTES: u64 = 1_000_000_000; // 1 GB
 const DISK_SPACE_MARGIN_BYTES: u64 = 500_000_000; // 500 MB margin above container size
-pub const BACKUP_STOP_TIMEOUT_SECS: i64 = 30;
+pub const BACKUP_STOP_TIMEOUT_SECS: &str = "30";
 pub const MIN_AGE_FOR_BACKUP_SECS: u64 = 6 * 3600;
 
 /// Acquire an exclusive file lock for the given agent. The lock is held for the
@@ -37,15 +33,18 @@ pub fn agent_file_lock(name: &str) -> Result<nix::fcntl::Flock<File>, DockerErro
 
 /// Check that Docker's data root has enough free disk space for a backup.
 /// Requires at least the container's writable layer size + margin, with a 1GB floor.
-async fn check_disk_space(docker: &Docker, cname: &str) -> Result<(), DockerError> {
-    let root = docker_root_dir(docker).await;
+fn check_disk_space(cname: &str) -> Result<(), DockerError> {
+    let root = docker_output(&["info", "--format", "{{.DockerRootDir}}"])
+        .unwrap_or_else(|| "/var/lib/docker".to_string());
 
     let stat = nix::sys::statvfs::statvfs(root.as_str())
         .map_err(|e| DockerError::Failed(format!("failed to check disk space: {}", e)))?;
 
     let available = stat.blocks_available() * stat.fragment_size();
 
-    let container_size = container_size_rw(docker, cname).await.unwrap_or(0);
+    let container_size = docker_output(&["inspect", "--format", "{{.SizeRw}}", cname])
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(0);
     let required = std::cmp::max(container_size + DISK_SPACE_MARGIN_BYTES, MIN_DISK_SPACE_BYTES);
 
     if available < required {
@@ -128,9 +127,9 @@ pub fn now_timestamp_from_epoch(epoch_secs: u64) -> String {
 }
 
 /// Returns the container's age in seconds, or None if unknown.
-pub async fn container_age_secs(docker: &Docker, name: &str) -> Option<u64> {
+pub fn container_age_secs(name: &str) -> Option<u64> {
     let cname = container_name(name);
-    let created = container_created(docker, &cname).await?;
+    let created = docker_output(&["inspect", "--format", "{{.Created}}", &cname])?;
     let created_epoch = parse_rfc3339_epoch(created.trim())?;
     let now_epoch = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -149,10 +148,9 @@ fn parse_rfc3339_epoch(ts: &str) -> Option<u64> {
     Some(dt.unix_timestamp() as u64)
 }
 
-/// Snapshot the container to a backup image without managing container lifecycle.
+/// Commit the container to a backup image without managing container lifecycle.
 /// Caller is responsible for stopping/starting the container.
-async fn commit_backup(
-    docker: &Docker,
+fn commit_backup(
     cname: &str,
     name: &str,
     backup_type: &BackupType,
@@ -163,10 +161,29 @@ async fn commit_backup(
     let type_label = format!("LABEL vesta.backup_type={}", backup_type);
     let date_label = format!("LABEL vesta.backup_date={}", ts);
 
-    snapshot_container(docker, cname, &tag, &[&name_label, &type_label, &date_label]).await?;
+    if !docker_ok(&[
+        "commit",
+        "--change",
+        &name_label,
+        "--change",
+        &type_label,
+        "--change",
+        &date_label,
+        cname,
+        &tag,
+    ]) {
+        return Err(DockerError::Failed("backup commit failed".into()));
+    }
 
-    let images = list_images_by_reference(docker, &tag).await;
-    let size = images.first().map(|(_, sz)| *sz).unwrap_or(0);
+    let size = docker_output(&[
+        "images",
+        "--format",
+        "{{.Size}}",
+        "--filter",
+        &format!("reference={}", tag),
+    ])
+    .map(|s| parse_docker_size(&s))
+    .unwrap_or(0);
 
     Ok(BackupInfo {
         id: tag,
@@ -178,14 +195,10 @@ async fn commit_backup(
 }
 
 /// Create a backup of the given agent. Stops the container during commit, then restarts.
-pub async fn create_backup(
-    docker: &Docker,
-    name: &str,
-    backup_type: BackupType,
-) -> Result<BackupInfo, DockerError> {
+pub fn create_backup(name: &str, backup_type: BackupType) -> Result<BackupInfo, DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
-    let cs = container_status(docker, &cname).await;
+    let cs = container_status(&cname);
     match cs {
         ContainerStatus::NotFound => {
             return Err(DockerError::NotFound(format!(
@@ -202,30 +215,27 @@ pub async fn create_backup(
         _ => {}
     }
 
-    check_disk_space(docker, &cname).await?;
+    check_disk_space(&cname)?;
 
     let was_running = cs == ContainerStatus::Running;
     if was_running {
         tracing::info!(agent = %name, backup_type = %backup_type, "stopping agent for backup");
         if let Err(err) = docker_cp_content(
-            docker,
             &cname,
             "backup — paused for backup",
             "/root/vesta/data/restart_reason",
-        )
-        .await
-        {
+        ) {
             tracing::warn!(agent = %name, error = %err, "failed to write restart reason");
         }
-        stop_container_with_timeout(docker, &cname, BACKUP_STOP_TIMEOUT_SECS).await.ok();
+        docker_ok(&["stop", "--time", BACKUP_STOP_TIMEOUT_SECS, &cname]);
     }
 
     tracing::info!(agent = %name, "committing backup image");
-    let result = commit_backup(docker, &cname, name, &backup_type).await;
+    let result = commit_backup(&cname, name, &backup_type);
 
     if was_running {
         tracing::info!(agent = %name, "restarting agent");
-        start_container(docker, &cname).await;
+        docker_ok(&["start", &cname]);
     }
 
     match &result {
@@ -243,8 +253,7 @@ pub async fn create_backup(
 /// Returns a result per type — failures don't block other types.
 /// NOTE: Tagged images share the first type's Docker labels (vesta.backup_type). This is fine
 /// because the system identifies backup type from the image tag string, not from labels.
-pub async fn create_backups_batch(
-    docker: &Docker,
+pub fn create_backups_batch(
     name: &str,
     types: Vec<BackupType>,
 ) -> Vec<(BackupType, Result<BackupInfo, DockerError>)> {
@@ -264,7 +273,7 @@ pub async fn create_backups_batch(
         Err(e) => return fail_all(types, e),
     };
 
-    let cs = container_status(docker, &cname).await;
+    let cs = container_status(&cname);
     match cs {
         ContainerStatus::NotFound => {
             return fail_all(
@@ -281,28 +290,25 @@ pub async fn create_backups_batch(
         _ => {}
     }
 
-    if let Err(e) = check_disk_space(docker, &cname).await {
+    if let Err(e) = check_disk_space(&cname) {
         return fail_all(types, e);
     }
 
     let was_running = cs == ContainerStatus::Running;
     if was_running {
         if let Err(err) = docker_cp_content(
-            docker,
             &cname,
             "backup — paused for backup",
             "/root/vesta/data/restart_reason",
-        )
-        .await
-        {
+        ) {
             tracing::warn!(agent = %name, error = %err, "failed to write restart reason");
         }
-        stop_container_with_timeout(docker, &cname, BACKUP_STOP_TIMEOUT_SECS).await.ok();
+        docker_ok(&["stop", "--time", BACKUP_STOP_TIMEOUT_SECS, &cname]);
     }
 
     let mut results = Vec::new();
     let first_type = &types[0];
-    let first_result = commit_backup(docker, &cname, name, first_type).await;
+    let first_result = commit_backup(&cname, name, first_type);
 
     match first_result {
         Ok(first_info) => {
@@ -313,29 +319,25 @@ pub async fn create_backups_batch(
 
             for bt in &types[1..] {
                 let new_tag = backup_tag(name, bt, &ts);
-                let (repo, img_tag) = new_tag.rsplit_once(':').unwrap_or((&new_tag, "latest"));
-                match tag_image(docker, &source_tag, repo, img_tag).await {
-                    Ok(()) => {
-                        results.push((
-                            bt.clone(),
-                            Ok(BackupInfo {
-                                id: new_tag,
-                                agent_name: name.to_string(),
-                                backup_type: bt.clone(),
-                                created_at: ts.clone(),
-                                size,
-                            }),
-                        ));
-                    }
-                    Err(_) => {
-                        results.push((
-                            bt.clone(),
-                            Err(DockerError::Failed(format!(
-                                "failed to tag backup as {}",
-                                bt
-                            ))),
-                        ));
-                    }
+                if docker_ok(&["tag", &source_tag, &new_tag]) {
+                    results.push((
+                        bt.clone(),
+                        Ok(BackupInfo {
+                            id: new_tag,
+                            agent_name: name.to_string(),
+                            backup_type: bt.clone(),
+                            created_at: ts.clone(),
+                            size,
+                        }),
+                    ));
+                } else {
+                    results.push((
+                        bt.clone(),
+                        Err(DockerError::Failed(format!(
+                            "failed to tag backup as {}",
+                            bt
+                        ))),
+                    ));
                 }
             }
         }
@@ -351,35 +353,42 @@ pub async fn create_backups_batch(
     }
 
     if was_running {
-        start_container(docker, &cname).await;
+        docker_ok(&["start", &cname]);
     }
 
     results
 }
 
-/// Query Docker for backup images matching a reference and optional agent name, sorted by date descending.
-async fn query_backup_images(
-    docker: &Docker,
-    reference: &str,
-    agent_name: Option<&str>,
-) -> Vec<BackupInfo> {
-    let images = list_images_by_reference(docker, reference).await;
+/// Query Docker for backup images matching a filter and optional agent name, sorted by date descending.
+fn query_backup_images(filter: &str, agent_name: Option<&str>) -> Vec<BackupInfo> {
+    let output = docker_output(&[
+        "images",
+        "--format",
+        "{{.Repository}}:{{.Tag}}\t{{.Size}}",
+        "--filter",
+        filter,
+    ])
+    .unwrap_or_default();
 
-    let mut backups: Vec<BackupInfo> = images
-        .into_iter()
-        .filter_map(|(tag, size)| {
-            let (parsed_name, backup_type, timestamp) = parse_backup_tag(&tag)?;
+    let mut backups: Vec<BackupInfo> = output
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|line| {
+            let mut parts = line.splitn(2, '\t');
+            let tag = parts.next()?.trim();
+            let size_str = parts.next().unwrap_or("0").trim();
+            let (parsed_name, backup_type, timestamp) = parse_backup_tag(tag)?;
             if let Some(name) = agent_name {
                 if parsed_name != name {
                     return None;
                 }
             }
             Some(BackupInfo {
-                id: tag,
+                id: tag.to_string(),
                 agent_name: parsed_name,
                 backup_type,
                 created_at: timestamp,
-                size,
+                size: parse_docker_size(size_str),
             })
         })
         .collect();
@@ -389,45 +398,64 @@ async fn query_backup_images(
 }
 
 /// List all backups for the given agent, sorted by date descending.
-pub async fn list_backups(docker: &Docker, name: &str) -> Result<Vec<BackupInfo>, DockerError> {
+pub fn list_backups(name: &str) -> Result<Vec<BackupInfo>, DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
-    if container_status(docker, &cname).await == ContainerStatus::NotFound {
+    if container_status(&cname) == ContainerStatus::NotFound {
         return Err(DockerError::NotFound(format!(
             "agent '{}' not found",
             name
         )));
     }
-    let reference = format!("{}:{}*", BACKUP_IMAGE_PREFIX, name);
-    Ok(query_backup_images(docker, &reference, Some(name)).await)
+    let filter = format!("reference={}:{}*", BACKUP_IMAGE_PREFIX, name);
+    Ok(query_backup_images(&filter, Some(name)))
+}
+
+/// Parse Docker's human-readable size strings like "1.5GB", "300MB", "15kB".
+fn parse_docker_size(s: &str) -> u64 {
+    let s = s.trim();
+    let (num_str, multiplier) = if let Some(n) = s.strip_suffix("GB") {
+        (n, 1_000_000_000u64)
+    } else if let Some(n) = s.strip_suffix("MB") {
+        (n, 1_000_000u64)
+    } else if let Some(n) = s.strip_suffix("kB") {
+        (n, 1_000u64)
+    } else if let Some(n) = s.strip_suffix('B') {
+        (n, 1u64)
+    } else {
+        (s, 1u64)
+    };
+    num_str
+        .trim()
+        .parse::<f64>()
+        .map(|n| (n * multiplier as f64) as u64)
+        .unwrap_or(0)
 }
 
 /// List all backup images regardless of whether the agent container exists.
-pub async fn list_all_backups(docker: &Docker) -> Vec<BackupInfo> {
-    let reference = format!("{}:*", BACKUP_IMAGE_PREFIX);
-    query_backup_images(docker, &reference, None).await
+pub fn list_all_backups() -> Vec<BackupInfo> {
+    let filter = format!("reference={}:*", BACKUP_IMAGE_PREFIX);
+    query_backup_images(&filter, None)
 }
 
 /// Restore an agent from a backup image.
 /// Creates a pre-restore safety backup first, then replaces the container.
-pub async fn restore_backup(
-    docker: &Docker,
+pub fn restore_backup(
     name: &str,
     backup_id: &str,
     env_config: &AgentEnvConfig,
-    manage_code: bool,
 ) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
 
-    if !image_exists(docker, backup_id).await {
+    if docker_output(&["inspect", "--format", "{{.Id}}", backup_id]).is_none() {
         return Err(DockerError::NotFound(format!(
             "backup '{}' not found",
             backup_id
         )));
     }
 
-    let info = inspect_container(docker, &cname, Some(&env_config.agents_dir)).await;
+    let info = inspect_container(&cname, Some(&env_config.agents_dir));
     if info.status == ContainerStatus::NotFound {
         return Err(DockerError::NotFound(format!(
             "agent '{}' not found",
@@ -437,27 +465,25 @@ pub async fn restore_backup(
 
     // Stop once, commit safety backup, then remove — avoids a redundant stop/start cycle
     if info.status == ContainerStatus::Running {
-        stop_container_with_timeout(docker, &cname, BACKUP_STOP_TIMEOUT_SECS).await.ok();
+        docker_ok(&["stop", "--time", BACKUP_STOP_TIMEOUT_SECS, &cname]);
     }
     tracing::info!(agent = %name, "creating pre-restore safety backup");
-    if let Err(e) = commit_backup(docker, &cname, name, &BackupType::PreRestore).await {
+    commit_backup(&cname, name, &BackupType::PreRestore).map_err(|e| {
         // Restart the container before returning the error
         if info.status == ContainerStatus::Running {
-            start_container(docker, &cname).await;
+            docker_ok(&["start", &cname]);
         }
-        return Err(DockerError::Failed(format!(
-            "pre-restore safety backup failed: {e}"
-        )));
-    }
-    remove_container_force(docker, &cname).await.ok();
+        DockerError::Failed(format!("pre-restore safety backup failed: {e}"))
+    })?;
+    docker_ok(&["rm", "-f", &cname]);
 
     let port = info
         .port
         .ok_or_else(|| DockerError::Failed("agent has no port in env file".into()))?;
     tracing::debug!(agent = %name, backup_id = %backup_id, "creating container from backup image");
-    create_container(docker, &cname, backup_id, port, name, env_config, manage_code).await?;
+    create_container(&cname, backup_id, port, name, env_config)?;
 
-    if !start_container(docker, &cname).await {
+    if !docker_ok(&["start", &cname]) {
         return Err(DockerError::Failed(
             "failed to start restored agent".into(),
         ));
@@ -467,11 +493,7 @@ pub async fn restore_backup(
 }
 
 /// Delete a backup image. Verifies the backup belongs to the named agent.
-pub async fn delete_backup(
-    docker: &Docker,
-    name: &str,
-    backup_id: &str,
-) -> Result<(), DockerError> {
+pub fn delete_backup(name: &str, backup_id: &str) -> Result<(), DockerError> {
     let (parsed_name, _, _) = parse_backup_tag(backup_id)
         .ok_or_else(|| DockerError::Failed(format!("'{}' is not a valid backup tag", backup_id)))?;
     if parsed_name != name {
@@ -480,7 +502,7 @@ pub async fn delete_backup(
             backup_id, parsed_name, name
         )));
     }
-    if remove_image(docker, backup_id).await.is_err() {
+    if !docker_ok(&["rmi", backup_id]) {
         return Err(DockerError::Failed(format!(
             "failed to delete backup '{}'",
             backup_id
@@ -517,18 +539,14 @@ pub fn compute_backups_to_delete(
 
 /// Run retention cleanup for an agent's auto-backups.
 /// Pass existing backups list to avoid a redundant `docker images` call.
-pub async fn cleanup_backups(
-    docker: &Docker,
-    backups: &[BackupInfo],
-    retention: &RetentionPolicy,
-) {
+pub fn cleanup_backups(backups: &[BackupInfo], retention: &RetentionPolicy) {
     let to_delete = compute_backups_to_delete(backups, retention);
     if to_delete.is_empty() {
         return;
     }
     tracing::info!(count = to_delete.len(), "cleaning up old backups");
     for id in &to_delete {
-        if remove_image(docker, id).await.is_ok() {
+        if docker_ok(&["rmi", id]) {
             tracing::debug!(backup_id = %id, "deleted expired backup");
         } else {
             tracing::warn!(backup_id = %id, "failed to delete expired backup");
@@ -537,13 +555,11 @@ pub async fn cleanup_backups(
 }
 
 /// List all agent names that have containers.
-pub async fn list_agent_names(docker: &Docker) -> Vec<String> {
-    let containers = list_managed_containers(docker).await;
-    let mut names = Vec::with_capacity(containers.len());
-    for cname in &containers {
-        names.push(get_agent_name(docker, cname).await);
-    }
-    names
+pub fn list_agent_names() -> Vec<String> {
+    list_managed_containers()
+        .iter()
+        .map(|cname| get_agent_name(cname))
+        .collect()
 }
 
 #[cfg(test)]
@@ -739,5 +755,16 @@ mod tests {
         ];
         let to_delete = compute_backups_to_delete(&backups, &DEFAULT_RETENTION);
         assert!(to_delete.is_empty());
+    }
+
+    // ── Docker size parsing ───────────────────────────────────────
+
+    #[test]
+    fn parse_docker_size_values() {
+        assert_eq!(parse_docker_size("1.5GB"), 1_500_000_000);
+        assert_eq!(parse_docker_size("300MB"), 300_000_000);
+        assert_eq!(parse_docker_size("15kB"), 15_000);
+        assert_eq!(parse_docker_size("1024B"), 1024);
+        assert_eq!(parse_docker_size("0B"), 0);
     }
 }

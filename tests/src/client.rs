@@ -1,4 +1,3 @@
-use std::io::BufRead;
 use std::sync::Arc;
 use ureq::http::Response;
 use ureq::Body;
@@ -42,44 +41,6 @@ fn urlencod(s: &str) -> String {
         }
     }
     out
-}
-
-/// Read an SSE stream, returning the data from the "done" event or an error.
-fn read_sse_result(resp: Response<Body>) -> Result<String, String> {
-    let reader = std::io::BufReader::new(resp.into_body().into_reader());
-    let mut event_type = String::new();
-    let mut data = String::new();
-
-    for line in BufRead::lines(reader) {
-        let line = line.map_err(|e| format!("read error: {}", e))?;
-
-        if let Some(ev) = line.strip_prefix("event:") {
-            event_type = ev.trim().to_string();
-        } else if let Some(d) = line.strip_prefix("data:") {
-            data = d.trim().to_string();
-        } else if line.is_empty() && !event_type.is_empty() {
-            match event_type.as_str() {
-                "done" => return Ok(data),
-                "error" => {
-                    let msg = serde_json::from_str::<serde_json::Value>(&data)
-                        .ok()
-                        .and_then(|v| {
-                            v["error"]["message"]
-                                .as_str()
-                                .or(v["error"].as_str())
-                                .map(|s| s.to_string())
-                        })
-                        .unwrap_or(data);
-                    return Err(msg);
-                }
-                _ => {}
-            }
-            event_type.clear();
-            data.clear();
-        }
-    }
-
-    Err("server closed connection before completing".into())
 }
 
 pub struct Client {
@@ -218,8 +179,7 @@ impl Client {
 
     pub fn create_backup(&self, name: &str) -> Result<BackupInfo, String> {
         let resp = self.post(&format!("/agents/{}/backups", name))?;
-        let data = read_sse_result(resp)?;
-        serde_json::from_str(&data).map_err(|e| format!("parse error: {}", e))
+        resp.into_body().read_json().map_err(|e| format!("parse error: {}", e))
     }
 
     pub fn list_backups(&self, name: &str) -> Result<Vec<BackupInfo>, String> {
@@ -228,8 +188,7 @@ impl Client {
     }
 
     pub fn restore_backup(&self, name: &str, backup_id: &str) -> Result<(), String> {
-        let resp = self.post(&format!("/agents/{}/backups/{}/restore", name, urlencod(backup_id)))?;
-        read_sse_result(resp)?;
+        self.post(&format!("/agents/{}/backups/{}/restore", name, urlencod(backup_id)))?;
         Ok(())
     }
 

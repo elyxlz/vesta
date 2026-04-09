@@ -71,9 +71,6 @@ enum Command {
         /// Agent name (prompted interactively if omitted)
         #[arg(long)]
         name: Option<String>,
-        /// Use the Docker image's baked-in code instead of vestad-managed code
-        #[arg(long)]
-        no_manage_code: bool,
     },
     /// Create an agent container (without starting or authenticating)
     Create {
@@ -83,9 +80,6 @@ enum Command {
         /// Agent name (prompted interactively if omitted)
         #[arg(long)]
         name: Option<String>,
-        /// Use the Docker image's baked-in code instead of vestad-managed code
-        #[arg(long)]
-        no_manage_code: bool,
     },
     /// Start an agent (or all agents if no name given)
     Start {
@@ -135,17 +129,6 @@ enum Command {
     Backup {
         #[command(subcommand)]
         action: BackupAction,
-    },
-    /// View or update agent settings
-    Settings {
-        /// Agent name
-        name: String,
-        /// Enable vestad-managed code (mount from host)
-        #[arg(long)]
-        manage_code: bool,
-        /// Disable vestad-managed code (use image's baked-in code)
-        #[arg(long, conflicts_with = "manage_code")]
-        no_manage_code: bool,
     },
     /// Destroy an agent (irreversible)
     Destroy {
@@ -459,7 +442,7 @@ fn run(cli: Cli) {
     let token_ref = cli.token.as_deref();
 
     match command {
-        Command::Setup { build, yes, name, no_manage_code } => {
+        Command::Setup { build, yes, name } => {
             let c = get_client(host_ref, token_ref);
 
             let name = name
@@ -467,7 +450,7 @@ fn run(cli: Cli) {
                 .unwrap_or_else(prompt_name);
 
             // Create agent
-            match c.create_agent(&name, build, !no_manage_code) {
+            match c.create_agent(&name, build) {
                 Ok(name) => eprintln!("created agent '{}'", name),
                 Err(e) if e.contains("already exists") && yes => {
                     eprintln!("agent '{}' already exists, continuing...", name);
@@ -484,27 +467,13 @@ fn run(cli: Cli) {
 
         }
 
-        Command::Create { build, name, no_manage_code } => {
+        Command::Create { build, name } => {
             let c = get_client(host_ref, token_ref);
             let name = name
                 .map(|name| name.trim().to_string())
                 .unwrap_or_else(prompt_name);
-            let name = c.create_agent(&name, build, !no_manage_code).unwrap_or_else(|e| platform::die(&e));
+            let name = c.create_agent(&name, build).unwrap_or_else(|e| platform::die(&e));
             eprintln!("created (run 'vesta auth {}' to authenticate)", name);
-        }
-
-        Command::Settings { name, manage_code, no_manage_code } => {
-            let c = get_client(host_ref, token_ref);
-            if manage_code || no_manage_code {
-                let body = serde_json::json!({"manage_agent_code": !no_manage_code});
-                let result = c.patch_agent_settings(&name, &body).unwrap_or_else(|e| platform::die(&e));
-                let val = result["manage_agent_code"].as_bool().unwrap_or(true);
-                eprintln!("{}: manage_agent_code = {}", name, val);
-            } else {
-                let result = c.get_agent_settings(&name).unwrap_or_else(|e| platform::die(&e));
-                let val = result["manage_agent_code"].as_bool().unwrap_or(true);
-                eprintln!("manage_agent_code = {}", val);
-            }
         }
 
         Command::Start { name } => {

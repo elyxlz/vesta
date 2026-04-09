@@ -1,0 +1,49 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump type"
+        required: true
+        default: "patch"
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Bump version
+        run: ./bump.sh ${{ inputs.bump }}
+
+      - name: Commit and push
+        run: |
+          VERSION=$(grep '^version = ' agent/pyproject.toml | cut -d'"' -f2)
+          git add -A
+          git commit -m "Bump version to ${VERSION}"
+          git push origin master
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          VERSION=$(grep '^version = ' agent/pyproject.toml | cut -d'"' -f2)
+          TAG="v${VERSION}"
+          gh release create "$TAG" --title "$TAG" --generate-notes --target master --prerelease
+
+      - name: Update production branch
+        run: git push origin master:production

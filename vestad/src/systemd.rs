@@ -9,12 +9,16 @@ fn unit_file_path() -> Result<String, String> {
     Ok(format!("{}/.config/systemd/user/vestad.service", home))
 }
 
+pub fn reinstall_service() -> Result<(), String> {
+    std::fs::remove_file(&unit_file_path()?).ok();
+    ensure_service_installed()
+}
+
 pub fn ensure_service_installed() -> Result<(), String> {
     let vestad_path = std::env::current_exe()
         .map_err(|e| format!("cannot determine binary path: {}", e))?
         .to_str()
         .ok_or("binary path is not valid UTF-8")?
-        .trim_end_matches(" (deleted)")
         .to_string();
 
     let unit_path = unit_file_path()?;
@@ -36,8 +40,7 @@ pub fn ensure_service_installed() -> Result<(), String> {
     let unit_content = format!(
         r#"[Unit]
 Description=Vesta API Server
-After=docker.service network-online.target
-Wants=network-online.target
+After=docker.service
 
 [Service]
 ExecStart={vestad_path} serve --standalone

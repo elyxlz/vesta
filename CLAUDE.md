@@ -45,7 +45,7 @@ cargo test                                 # Test
 ./release.sh major   # Major release (0.1.0 -> 1.0.0)
 ```
 
-Run locally on master. Bumps versions, updates lockfiles, commits, pushes, and creates the GitHub release. CI then builds artifacts and publishes.
+Triggers a GitHub Actions workflow that bumps version, commits to master, tags, and creates the release.
 
 **Do NOT bump versions in PRs** — `release.sh` handles version bumps automatically at release time.
 

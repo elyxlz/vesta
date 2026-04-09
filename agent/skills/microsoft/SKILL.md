@@ -51,14 +51,8 @@ microsoft calendar respond --account user@example.com --id <event_id> --response
 - `--user-timezone` on calendar list converts times to the given IANA timezone
 - `--folder` on email list/search filters by folder (default "inbox")
 - `--no-attachments` on email get skips attachment metadata
-- `--save-to` on email get saves the email body text to a file (NOT JSON — plain text only)
+- `--save-to` on email get saves the full email JSON to a file
 - `--categories` on email update accepts multiple space-separated category names
-
-## Email Attachments
-
-```bash
-microsoft email attachment --account user@example.com --email-id '<email_id>' --attachment-id '<attachment_id>' --save-path /tmp/file.pdf
-```
 
 ### Contact Communication Styles
 [How to communicate with different contacts — fill in after data gathering: who are the key contacts, what tone/formality for each, language preferences]
