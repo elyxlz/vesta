@@ -9,9 +9,20 @@ import os
 import subprocess
 import sys
 import urllib.request
+import zoneinfo
 
-WINDY_API_KEY = os.environ["WINDY_API_KEY"] if "WINDY_API_KEY" in os.environ else ""
+WINDY_API_KEY = os.environ.get("WINDY_API_KEY", "")
 WINDY_URL = "https://api.windy.com/api/point-forecast/v2"
+
+# Named locations for convenience
+KNOWN_LOCATIONS = {
+    "gavoi": (40.1167, 9.1833, "Europe/Rome"),
+    "rome": (41.9028, 12.4964, "Europe/Rome"),
+    "london": (51.5074, -0.1278, "Europe/London"),
+    "olbia": (40.9226, 9.4963, "Europe/Rome"),
+    "cagliari": (39.2238, 9.1217, "Europe/Rome"),
+    "malaga": (36.7213, -4.4214, "Europe/Madrid"),
+}
 
 COMPASS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"]
 
@@ -25,7 +36,7 @@ def wind_dir(u: float, v: float) -> str:
 
 def wind_speed(u: float, v: float) -> float:
     """Convert u/v wind components to speed in km/h."""
-    return math.sqrt(u**2 + v**2) * 3.6
+    return math.sqrt(u**2 + v**2) * 3.6  # m/s to km/h
 
 
 def kelvin_to_c(k: float) -> float:
@@ -44,19 +55,23 @@ def get_ha_location() -> tuple[float, float, str] | None:
             lon = data["longitude"]
             tz = guess_timezone(lat, lon)
             return (lat, lon, tz)
-    except (subprocess.TimeoutExpired, json.JSONDecodeError, KeyError, OSError):
-        pass
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, KeyError, OSError) as exc:
+        print(f"HA location error: {exc}", file=sys.stderr)
     return None
 
 
 def guess_timezone(lat: float, lon: float) -> str:
     """Simple timezone guess based on coordinates."""
+    # UK
     if 49 < lat < 61 and -8 < lon < 2:
         return "Europe/London"
+    # Italy / Central Europe
     if 36 < lat < 47 and 6 < lon < 19:
         return "Europe/Rome"
+    # Spain
     if 36 < lat < 44 and -10 < lon < 4:
         return "Europe/Madrid"
+    # US (coarse — defaults to Eastern)
     if 25 < lat < 50 and -125 < lon < -66:
         return "America/New_York"
     return "UTC"
@@ -87,10 +102,8 @@ def fetch_forecast(lat: float, lon: float) -> dict:
 def format_forecast(data: dict, hours: int, tz_name: str, location_label: str) -> str:
     """Format forecast data into a readable summary."""
     try:
-        import zoneinfo
-
         tz = zoneinfo.ZoneInfo(tz_name)
-    except (ImportError, KeyError):
+    except KeyError:
         tz = dt.UTC
 
     timestamps = data["ts"] if "ts" in data else []
@@ -126,7 +139,7 @@ def format_forecast(data: dict, hours: int, tz_name: str, location_label: str) -
 
         ws = wind_speed(wu, wv)
         wd = wind_dir(wu, wv)
-        rain_total += precip or 0
+        rain_total += precip
 
         if temp_c is not None:
             temp_min = min(temp_min, temp_c)
@@ -168,6 +181,7 @@ def main():
     parser = argparse.ArgumentParser(description="Weather forecast")
     parser.add_argument("--lat", type=float, help="Latitude")
     parser.add_argument("--lon", type=float, help="Longitude")
+    parser.add_argument("--location", type=str, help="Named location (e.g. 'gavoi', 'london')")
     parser.add_argument("--hours", type=int, default=12, help="Forecast hours (default: 12)")
     args = parser.parse_args()
 
@@ -177,17 +191,26 @@ def main():
 
     lat, lon, tz_name, label = None, None, "UTC", "current location"
 
-    if args.lat is not None and args.lon is not None:
+    if args.location:
+        loc_key = args.location.lower().strip()
+        if loc_key in KNOWN_LOCATIONS:
+            lat, lon, tz_name = KNOWN_LOCATIONS[loc_key]
+            label = args.location.capitalize()
+        else:
+            print(f"Unknown location '{args.location}'. Known: {', '.join(KNOWN_LOCATIONS.keys())}", file=sys.stderr)
+            sys.exit(1)
+    elif args.lat is not None and args.lon is not None:
         lat, lon = args.lat, args.lon
         tz_name = guess_timezone(lat, lon)
         label = f"{lat:.2f}, {lon:.2f}"
     else:
+        # Auto-detect from HA
         loc = get_ha_location()
         if loc:
             lat, lon, tz_name = loc
             label = f"your location ({lat:.2f}, {lon:.2f})"
         else:
-            print("Could not detect location from Home Assistant. Use --lat/--lon.", file=sys.stderr)
+            print("Could not detect location from Home Assistant. Use --lat/--lon or --location.", file=sys.stderr)
             sys.exit(1)
 
     try:

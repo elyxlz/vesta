@@ -1,9 +1,9 @@
 ---
-name: weather
-description: Use this skill when the user asks about "weather", "forecast", "will it rain", "temperature", "wind", "humidity", or needs current or upcoming weather conditions for any location.
+name: windy-weather
+description: Use this skill when the user asks about "weather", "forecast", "will it rain", "temperature", "wind", "humidity", or needs current or upcoming weather conditions for any location. Powered by the Windy Point Forecast API.
 ---
 
-# Weather Skill
+# Windy Weather Skill
 
 Use this skill when the user asks about weather, forecasts, "will it rain", "what's the temperature", etc.
 
@@ -11,6 +11,7 @@ Use this skill when the user asks about weather, forecasts, "will it rain", "wha
 
 ```bash
 weather                        # Auto-detect location from HA, show forecast
+weather --location london      # Named location
 weather --lat 51.5 --lon -0.1  # Specific coordinates
 weather --hours 24             # Show next 24 hours (default: 12)
 ```
@@ -29,6 +30,8 @@ weather --hours 24             # Show next 24 hours (default: 12)
 
 ## Notes
 
+- Requires a [Windy API key](https://api.windy.com) — free tier available
+- Auto-location requires Home Assistant with a GPS-reporting device; use `--lat`/`--lon` as fallback
 - Always present temperatures in Celsius and wind in km/h
 - Always state the location used (auto-detected or specified)
 - Convert UTC timestamps to the user's local timezone
