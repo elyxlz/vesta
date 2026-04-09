@@ -1557,7 +1557,20 @@ pub fn build_router(state: SharedState) -> Router {
                 .allow_methods(tower_http::cors::Any)
                 .allow_headers(tower_http::cors::Any),
         )
-        .layer(tower_http::trace::TraceLayer::new_for_http())
+        .layer(
+            tower_http::trace::TraceLayer::new_for_http()
+                .make_span_with(|req: &axum::http::Request<_>| {
+                    tracing::info_span!("request", method = %req.method(), uri = %req.uri())
+                })
+                .on_response(
+                    |res: &axum::http::Response<_>, latency: std::time::Duration, _span: &tracing::Span| {
+                        let status = res.status().as_u16();
+                        if status >= 400 {
+                            tracing::error!(status, latency_ms = latency.as_millis(), "response failed");
+                        }
+                    },
+                ),
+        )
         .with_state(state)
 }
 

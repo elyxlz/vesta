@@ -8,10 +8,15 @@ export function ProgressBar({ message }: ProgressBarProps) {
   return (
     <div className="flex flex-col items-center gap-2 w-full">
       <div className="w-full max-w-[200px] h-[3px] bg-foreground/5 rounded-full overflow-hidden">
-        <div
+        <motion.div
           className="h-full w-1/3 bg-foreground/30 rounded-full"
-          style={{
-            animation: "progress-indeterminate 1.5s ease-in-out infinite",
+          initial={{ x: "-100%" }}
+          animate={{ x: "400%" }}
+          transition={{
+            duration: 1.5,
+            ease: "easeInOut",
+            repeat: Infinity,
+            repeatType: "loop",
           }}
         />
       </div>
