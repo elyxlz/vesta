@@ -5,7 +5,13 @@ import { Footer } from "@/components/Footer";
 export function HomeLayout() {
   return (
     <>
-      <Navbar />
+      <Navbar
+        center={
+          <span className="text-4xl font-serif font-medium tracking-tight">
+            Vesta
+          </span>
+        }
+      />
       <Outlet />
       <Footer />
     </>

@@ -63,7 +63,7 @@ export function ChatComposer({
             exit="exit"
             className="shrink-0 overflow-hidden"
           >
-            <div className="px-4 pt-2 pb-1">
+            <div className="px-4 py-2">
               <ThinkingDots className="py-0" />
             </div>
           </motion.div>

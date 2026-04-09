@@ -6,7 +6,7 @@ serve: PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME
 
 # Dashboard
 
-A React app embedded in the main Vesta app. You have full control over `App.tsx` and can build anything: widgets, custom layouts, multi-page views, interactive tools, data visualizations, or any other UI the user wants.
+A React app embedded in the main Vesta app. Uses a sidebar layout with page-based navigation. The agent configures pages, sidebar items, and content by editing `config.tsx` and creating page components.
 
 ## Before building (REQUIRED)
 
@@ -24,48 +24,90 @@ Only start building once the user has answered. Don't assume — ask.
 
 ```
 ~/vesta/skills/dashboard/app/src/
-├── App.tsx              ← entry point, you edit this freely
+├── App.tsx              ← layout shell (sidebar + content area)
+├── config.tsx           ← EDIT THIS: define pages, sidebar nav, branding
 ├── main.tsx             ← do NOT modify
-├── index.css          ← do NOT modify (synced from main app)
+├── index.css            ← do NOT modify (synced from main app)
+├── pages/               ← page components (one per sidebar nav item)
+├── examples/            ← reference components from shadcn dashboard-01 (read for inspiration)
+│   ├── section-cards.tsx       ← metric cards with trend badges
+│   ├── chart-area-interactive.tsx ← interactive area chart
+│   ├── data-table.tsx          ← sortable data table with drag-and-drop
+│   └── data.json               ← sample table data
 ├── components/
 │   ├── ui/              ← shadcn components (synced, do NOT modify)
-│   └── FadeScroll.tsx   ← shared scroll wrapper
-├── widgets/             ← widget components (one file per widget)
+│   ├── app-sidebar.tsx  ← sidebar component (reads from config)
+│   ├── site-header.tsx  ← header with page title
+│   ├── nav-main.tsx     ← main nav items
+│   ├── nav-secondary.tsx
+├── widgets/             ← reusable widget components
 ├── lib/
 │   ├── parent-bridge.ts ← auth + API helpers
 │   └── utils.ts         ← synced utility (do NOT modify)
 └── hooks/               ← synced hooks (do NOT modify)
 ```
 
-**You can freely edit:** `App.tsx`, anything in `widgets/`, and any new files/folders you create (custom components, helpers, etc.)
+**You can freely edit:** `config.tsx`, `App.tsx`, anything in `pages/`, `components/`, `widgets/`, and any new files you create
 
 **Do NOT modify:** `main.tsx`, `index.css`, `lib/utils.ts`, `hooks/`, `components/ui/`
 
-## Building components
+## How it works
 
-### Widgets
-
-For self-contained UI blocks, create files in `src/widgets/`:
+The dashboard uses a **sidebar + page** layout. The agent controls what appears by editing `config.tsx`:
 
 ```tsx
-export default function MyWidget() {
-  return (
-    <div className="p-4 bg-card border border-border rounded-lg shadow-sm">
-      {/* widget content */}
-    </div>
-  );
+// config.tsx
+import { OverviewPage } from "./pages/overview"
+import { AnalyticsPage } from "./pages/analytics"
+import { LayoutDashboardIcon, ChartBarIcon } from "lucide-react"
+
+export const config: DashboardConfig = {
+  title: "Vesta",                                    // sidebar header
+  titleIcon: <CommandIcon className="size-5!" />,    // sidebar header icon
+  pages: [
+    { id: "overview", title: "Overview", icon: <LayoutDashboardIcon />, component: OverviewPage },
+    { id: "analytics", title: "Analytics", icon: <ChartBarIcon />, component: AnalyticsPage },
+  ],
+  secondaryNav: [],   // optional: sidebar bottom nav items
 }
 ```
 
-### Custom components
+Each `pages` entry creates a sidebar nav item. Clicking it renders that page's `component` in the content area.
 
-For shared components, layouts, or anything more complex, create files anywhere in `src/` (e.g. `src/components/MyComponent.tsx`, `src/views/`, etc.). Organize however makes sense for what you're building.
+### Adding a page
 
-### Editing App.tsx
+1. Create `src/pages/my-page.tsx`:
+```tsx
+export function MyPage() {
+  return (
+    <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6">
+      <div className="px-4 lg:px-6">
+        <h2 className="text-lg font-semibold">My Page</h2>
+        {/* page content */}
+      </div>
+    </div>
+  )
+}
+```
 
-`App.tsx` is the root component. Import your widgets/components and arrange them however the user wants — grid layouts, tabs, sidebars, stacked views, anything. You have full control over the layout and structure.
+2. Add it to `config.tsx`:
+```tsx
+import { MyPage } from "./pages/my-page"
+import { StarIcon } from "lucide-react"
 
-When adding the first component, set `SHOW_EMPTY_STATE = false` to disable the placeholder.
+// In the pages array:
+{ id: "my-page", title: "My Page", icon: <StarIcon />, component: MyPage },
+```
+
+3. Rebuild (see below)
+
+### Example components
+
+Read `src/examples/` for inspiration when building pages. These are reference implementations from shadcn's dashboard-01 block showing common patterns: metric cards with trends, interactive area charts, and sortable data tables with drag-and-drop. Copy and adapt what you need into your pages.
+
+### Empty state
+
+When no pages are configured, set `SHOW_EMPTY_STATE = true` in `App.tsx` to show the placeholder. Set it to `false` once pages are added.
 
 ## After every change (IMPORTANT)
 
@@ -108,8 +150,8 @@ Widgets that fetch data **must show a loading state** while waiting — use skel
 
 ## Removing components
 
-1. Remove the import and usage from `App.tsx`
-2. Delete the source file(s)
+1. Remove the page from `config.tsx`
+2. Delete the source file(s) from `pages/`
 3. Rebuild and restart (same as above)
 4. If removing everything, set `SHOW_EMPTY_STATE = true` in `App.tsx`
 

@@ -1,33 +1,34 @@
-// To add widgets and other shadcn or custom components: import them above, then include them inside the div below.
-// Example:
-// import { Tabs, TabsList, TabsTrigger, TabsContent } from "./components/ui/tabs";
-// import MyWidget from "./widgets/MyWidget";
-// ...
-// <Tabs defaultValue="social" className="w-[400px]">
-// <TabsList>
-//  <TabsTrigger value="social">social</TabsTrigger>
-//  <TabsTrigger value="work">Work</TabsTrigger>
-// </TabsList>
-// <TabsContent value="social">
-//  <MyWidget />
-// </TabsContent>
-// </Tabs>
-
-import { useState, useEffect } from "react";
-import { LayoutDashboard } from "lucide-react";
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "./components/ui/empty";
-import { FadeScroll } from "./components/FadeScroll";
-import { isFullscreen as getFullscreen, onLayoutChange } from "./lib/parent-bridge";
+import { useState, useEffect } from "react"
+import { LayoutDashboard } from "lucide-react"
+import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar"
+import { TooltipProvider } from "@/components/ui/tooltip"
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty"
+import { AppSidebar } from "@/components/app-sidebar"
+import { SiteHeader } from "@/components/site-header"
+import { config } from "./config"
+import {
+  isFullscreen as getFullscreen,
+  onLayoutChange,
+} from "./lib/parent-bridge"
 
 // --- Empty state toggle ---
-// Set to false once custom code & widgets are added.
-const SHOW_EMPTY_STATE = true;
+// Set to false once there are configured pages in config.tsx.
+const SHOW_EMPTY_STATE = true
 
 export default function App() {
-  const [fullscreen, setFullscreen] = useState(getFullscreen);
+  const [fullscreen, setFullscreen] = useState(getFullscreen)
+  const [activePageId, setActivePageId] = useState(config.pages[0]?.id ?? "")
+  const activePage =
+    config.pages.find((p) => p.id === activePageId) ?? config.pages[0]
 
-  useEffect(() => onLayoutChange(setFullscreen), []);
-  
+  useEffect(() => onLayoutChange(setFullscreen), [])
+
   if (SHOW_EMPTY_STATE) {
     return (
       <Empty className="flex-1 h-full w-full border-0">
@@ -41,14 +42,34 @@ export default function App() {
           </EmptyDescription>
         </EmptyHeader>
       </Empty>
-    );
+    )
   }
 
   return (
-    <FadeScroll className="w-full h-full overflow-y-auto">
-      <div className={`flex flex-col gap-4 pb-page ${fullscreen ? "px-page" : "pr-4"}`}>
-        {/* your custom code and widgets and other components goes here */}
-      </div>
-    </FadeScroll>
-  );
+    <TooltipProvider>
+      <SidebarProvider
+        style={
+          {
+            "--sidebar-width": "calc(var(--spacing) * 72)",
+            "--header-height": "calc(var(--spacing) * 12)",
+          } as React.CSSProperties
+        }
+      >
+        <AppSidebar
+          config={config}
+          activePageId={activePageId}
+          onNavigate={setActivePageId}
+          variant="inset"
+        />
+        <SidebarInset>
+          <SiteHeader title={activePage?.title ?? ""} />
+          <div className={`flex flex-1 flex-col ${fullscreen ? "px-page" : ""}`}>
+            <div className="@container/main flex flex-1 flex-col gap-2">
+              {activePage && <activePage.component />}
+            </div>
+          </div>
+        </SidebarInset>
+      </SidebarProvider>
+    </TooltipProvider>
+  )
 }
