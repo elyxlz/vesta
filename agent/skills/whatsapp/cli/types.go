@@ -34,12 +34,6 @@ type Contact struct {
 	IsManual    bool   `json:"is_manual,omitempty"`
 }
 
-type MessageContext struct {
-	Message Message   `json:"message"`
-	Before  []Message `json:"before"`
-	After   []Message `json:"after"`
-}
-
 type MediaInfo struct {
 	MessageID     string
 	ChatJID       string
@@ -51,4 +45,3 @@ type MediaInfo struct {
 	FileEncSHA256 []byte
 	FileLength    uint64
 }
-

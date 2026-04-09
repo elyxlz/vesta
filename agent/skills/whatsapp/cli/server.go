@@ -52,7 +52,7 @@ func handleSocketConn(conn net.Conn, wac *WhatsAppClient) {
 		}
 	}()
 
-	conn.SetDeadline(time.Now().Add(5 * time.Minute))
+	conn.SetDeadline(time.Now().Add(SocketTimeout))
 
 	var req SocketRequest
 	if err := json.NewDecoder(conn).Decode(&req); err != nil {
@@ -75,13 +75,13 @@ func handleSocketConn(conn net.Conn, wac *WhatsAppClient) {
 // trySocketCommand attempts to run a command via the serve process's Unix socket.
 // Returns (output bytes, exitCode, connected). connected=false means serve isn't running.
 func trySocketCommand(sockPath string, command string, args []string) ([]byte, int, bool) {
-	conn, err := net.DialTimeout("unix", sockPath, 2*time.Second)
+	conn, err := net.DialTimeout("unix", sockPath, SocketDialTimeout)
 	if err != nil {
 		return nil, 0, false
 	}
 	defer conn.Close()
 
-	conn.SetDeadline(time.Now().Add(5 * time.Minute))
+	conn.SetDeadline(time.Now().Add(SocketTimeout))
 
 	if err := json.NewEncoder(conn).Encode(SocketRequest{Command: command, Args: args}); err != nil {
 		return nil, 0, false

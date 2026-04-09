@@ -45,20 +45,32 @@ type reactionNotif struct {
 	Note            string `json:"note,omitempty"`
 }
 
+// writeNotificationFile marshals data to JSON and writes it as a timestamped
+// notification file. notifType is used in the filename (e.g. "message", "reaction").
+func writeNotificationFile(notifDir string, data interface{}, notifType string) error {
+	if notifDir == "" {
+		return nil
+	}
+	if err := os.MkdirAll(notifDir, 0755); err != nil {
+		return fmt.Errorf("failed to create notifications dir: %v", err)
+	}
+	b, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal %s notification: %v", notifType, err)
+	}
+	filename := fmt.Sprintf("%s-whatsapp-%s.json", uuid.New().String(), notifType)
+	return os.WriteFile(filepath.Join(notifDir, filename), b, 0644)
+}
+
+// unknownContactNote is appended to DM notifications from unsaved contacts.
+const unknownContactNote = "Unknown contact. Ask the user who this is and add them as a contact once you know."
+
 func WriteNotification(
 	notifDir, messageID, chatName, contactName, contactPhone, instance string,
 	contactSaved, isDirectChat bool,
 	sender, content, mediaType string, isForwarded bool,
 	quotedMessageID, quotedText string,
 ) error {
-	if notifDir == "" {
-		return nil
-	}
-
-	if err := os.MkdirAll(notifDir, 0755); err != nil {
-		return fmt.Errorf("failed to create notifications dir: %v", err)
-	}
-
 	n := messageNotif{
 		Source:          "whatsapp",
 		Type:            "message",
@@ -79,16 +91,9 @@ func WriteNotification(
 		n.ChatName = chatName
 	}
 	if !contactSaved && isDirectChat && instance == "" {
-		n.Note = "Unknown contact. Ask the user who this is and add them as a contact once you know."
+		n.Note = unknownContactNote
 	}
-
-	data, err := json.MarshalIndent(n, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal notification: %v", err)
-	}
-
-	filename := fmt.Sprintf("%s-whatsapp-message.json", uuid.New().String())
-	return os.WriteFile(filepath.Join(notifDir, filename), data, 0644)
+	return writeNotificationFile(notifDir, n, "message")
 }
 
 func WriteReactionNotification(
@@ -96,14 +101,6 @@ func WriteReactionNotification(
 	contactSaved, isDirectChat bool,
 	sender, emoji string, isRemoved bool,
 ) error {
-	if notifDir == "" {
-		return nil
-	}
-
-	if err := os.MkdirAll(notifDir, 0755); err != nil {
-		return fmt.Errorf("failed to create notifications dir: %v", err)
-	}
-
 	n := reactionNotif{
 		Source:          "whatsapp",
 		Type:            "reaction",
@@ -121,14 +118,7 @@ func WriteReactionNotification(
 		n.ChatName = chatName
 	}
 	if !contactSaved && isDirectChat && instance == "" {
-		n.Note = "Unknown contact. Ask the user who this is and add them as a contact once you know."
+		n.Note = unknownContactNote
 	}
-
-	data, err := json.MarshalIndent(n, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal reaction notification: %v", err)
-	}
-
-	filename := fmt.Sprintf("%s-whatsapp-reaction.json", uuid.New().String())
-	return os.WriteFile(filepath.Join(notifDir, filename), data, 0644)
+	return writeNotificationFile(notifDir, n, "reaction")
 }

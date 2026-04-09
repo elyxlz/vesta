@@ -668,42 +668,60 @@ func (ms *MessageStore) ListChats(
 	includeLastMessage bool,
 	sortBy string,
 ) ([]Chat, error) {
-	queryBuilder := strings.Builder{}
+	return ms.listChatsFiltered(query, "", limit, offset, includeLastMessage, sortBy)
+}
+
+func (ms *MessageStore) ListGroups(limit, offset int) ([]Chat, error) {
+	return ms.listChatsFiltered("", "%@g.us", limit, offset, true, "last_active")
+}
+
+func (ms *MessageStore) listChatsFiltered(
+	query, jidFilter string,
+	limit, offset int,
+	includeLastMessage bool,
+	sortBy string,
+) ([]Chat, error) {
+	qb := strings.Builder{}
 
 	if includeLastMessage {
-		queryBuilder.WriteString(`
-			SELECT
-				c.jid, c.name, c.last_message_time,
+		qb.WriteString(`
+			SELECT c.jid, c.name, c.last_message_time,
 				m.content, m.sender, m.is_from_me
 			FROM chats c
 			LEFT JOIN messages m ON c.jid = m.chat_jid
-				AND c.last_message_time = m.timestamp
-		`)
+				AND c.last_message_time = m.timestamp`)
 	} else {
-		queryBuilder.WriteString(`
-			SELECT
-				c.jid, c.name, c.last_message_time,
+		qb.WriteString(`
+			SELECT c.jid, c.name, c.last_message_time,
 				NULL, NULL, NULL
-			FROM chats c
-		`)
+			FROM chats c`)
 	}
 
 	args := []interface{}{}
+	clauses := []string{}
+
+	if jidFilter != "" {
+		clauses = append(clauses, "c.jid LIKE ?")
+		args = append(args, jidFilter)
+	}
 	if query != "" {
-		queryBuilder.WriteString(" WHERE c.name LIKE ?")
+		clauses = append(clauses, "c.name LIKE ?")
 		args = append(args, "%"+query+"%")
+	}
+	if len(clauses) > 0 {
+		qb.WriteString(" WHERE " + strings.Join(clauses, " AND "))
 	}
 
 	if sortBy == "name" {
-		queryBuilder.WriteString(" ORDER BY c.name")
+		qb.WriteString(" ORDER BY c.name")
 	} else {
-		queryBuilder.WriteString(" ORDER BY c.last_message_time DESC")
+		qb.WriteString(" ORDER BY c.last_message_time DESC")
 	}
 
-	queryBuilder.WriteString(" LIMIT ? OFFSET ?")
+	qb.WriteString(" LIMIT ? OFFSET ?")
 	args = append(args, limit, offset)
 
-	rows, err := ms.db.Query(queryBuilder.String(), args...)
+	rows, err := ms.db.Query(qb.String(), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -736,52 +754,6 @@ func (ms *MessageStore) ListChats(
 	}
 
 	return chats, nil
-}
-
-func (ms *MessageStore) ListGroups(limit, offset int) ([]Chat, error) {
-	rows, err := ms.db.Query(`
-		SELECT
-			c.jid, c.name, c.last_message_time,
-			m.content, m.sender, m.is_from_me
-		FROM chats c
-		LEFT JOIN messages m ON c.jid = m.chat_jid
-			AND c.last_message_time = m.timestamp
-		WHERE c.jid LIKE '%@g.us'
-		ORDER BY c.last_message_time DESC
-		LIMIT ? OFFSET ?
-	`, limit, offset)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var groups []Chat
-	for rows.Next() {
-		var c Chat
-		var name, lastMsg, lastSender sql.NullString
-		var lastTime sql.NullTime
-		var lastIsFromMe sql.NullBool
-
-		if err := rows.Scan(
-			&c.JID, &name, &lastTime,
-			&lastMsg, &lastSender, &lastIsFromMe,
-		); err != nil {
-			continue
-		}
-
-		c.Name = name.String
-		if lastTime.Valid {
-			c.LastMessageTime = lastTime.Time
-		}
-		c.LastMessage = lastMsg.String
-		c.LastSender = lastSender.String
-		c.LastIsFromMe = lastIsFromMe.Bool
-		c.IsGroup = true
-
-		groups = append(groups, c)
-	}
-
-	return groups, nil
 }
 
 func (ms *MessageStore) GetManualContactByPhone(phone string) (*Contact, error) {
