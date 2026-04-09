@@ -4,6 +4,7 @@ compile_error!("vestad only supports Linux");
 use clap::Parser;
 
 mod agent_code;
+mod backup;
 mod docker;
 mod jwt;
 mod self_update;
@@ -352,6 +353,7 @@ fn main() {
         Command::Backup { action } => match action {
             BackupAction::Export { name, output } => {
                 docker::validate_name(&name).unwrap_or_else(|e| die(&e));
+                let _lock = backup::agent_file_lock(&name).unwrap_or_else(|e| die(&e));
                 let cname = docker::container_name(&name);
 
                 let cs = docker::container_status(&cname);
@@ -362,14 +364,35 @@ fn main() {
                 let was_running = cs == docker::ContainerStatus::Running;
                 if was_running {
                     eprintln!("stopping agent...");
-                    docker::docker_ok(&["stop", &cname]);
+                    docker::docker_ok(&["stop", "--time", backup::BACKUP_STOP_TIMEOUT_SECS, &cname]);
                 }
 
                 eprintln!("committing snapshot...");
                 let temp_tag = format!("vesta-export:{}-temp", name);
                 if !docker::docker_ok(&["commit", &cname, &temp_tag]) {
-                    if was_running { docker::docker_ok(&["start", &cname]); }
-                    die("docker commit failed");
+                    eprintln!("docker commit failed, trying export/import fallback...");
+                    let mut export_child = std::process::Command::new("docker")
+                        .args(["export", &cname])
+                        .stdout(std::process::Stdio::piped())
+                        .spawn()
+                        .unwrap_or_else(|e| {
+                            if was_running { docker::docker_ok(&["start", &cname]); }
+                            die(format!("docker export failed: {}", e));
+                        });
+                    let export_stdout = export_child.stdout.take().expect("stdout was set to piped");
+                    let import_out = std::process::Command::new("docker")
+                        .args(["import", "-", &temp_tag])
+                        .stdin(export_stdout)
+                        .output()
+                        .unwrap_or_else(|e| {
+                            if was_running { docker::docker_ok(&["start", &cname]); }
+                            die(format!("docker import failed: {}", e));
+                        });
+                    let _ = export_child.wait();
+                    if !import_out.status.success() {
+                        if was_running { docker::docker_ok(&["start", &cname]); }
+                        die("export fallback failed");
+                    }
                 }
 
                 if was_running {
@@ -377,22 +400,34 @@ fn main() {
                 }
 
                 eprintln!("exporting to {}...", output.display());
-                let output_str = output.to_string_lossy();
-                let save_cmd = format!("docker save '{}' | gzip > '{}'", temp_tag, output_str);
-                let status = std::process::Command::new("sh")
-                    .args(["-c", &save_cmd])
-                    .status()
+                let mut docker_save = std::process::Command::new("docker")
+                    .args(["save", &temp_tag])
+                    .stdout(std::process::Stdio::piped())
+                    .spawn()
                     .unwrap_or_else(|e| die(format!("docker save failed: {}", e)));
+
+                let save_stdout = docker_save.stdout.take().expect("stdout was set to piped");
+                let output_file = std::fs::File::create(&output)
+                    .unwrap_or_else(|e| die(format!("failed to create output file: {}", e)));
+
+                let gzip_status = std::process::Command::new("gzip")
+                    .stdin(save_stdout)
+                    .stdout(output_file)
+                    .status()
+                    .unwrap_or_else(|e| die(format!("gzip failed: {}", e)));
+
+                let _ = docker_save.wait();
 
                 docker::docker_ok(&["rmi", &temp_tag]);
 
-                if !status.success() {
+                if !gzip_status.success() {
                     die("export failed");
                 }
                 eprintln!("exported: {}", output.display());
             }
             BackupAction::Import { name, input } => {
                 docker::validate_name(&name).unwrap_or_else(|e| die(&e));
+                let _lock = backup::agent_file_lock(&name).unwrap_or_else(|e| die(&e));
 
                 if !input.exists() {
                     die(format!("file not found: {}", input.display()));
@@ -404,12 +439,24 @@ fn main() {
                 }
 
                 eprintln!("loading image from {}...", input.display());
-                let input_str = input.to_string_lossy();
-                let load_cmd = format!("gunzip -c '{}' | docker load", input_str);
-                let output = std::process::Command::new("sh")
-                    .args(["-c", &load_cmd])
+                let input_file = std::fs::File::open(&input)
+                    .unwrap_or_else(|e| die(format!("failed to open input file: {}", e)));
+
+                let mut gunzip = std::process::Command::new("gunzip")
+                    .arg("-c")
+                    .stdin(input_file)
+                    .stdout(std::process::Stdio::piped())
+                    .spawn()
+                    .unwrap_or_else(|e| die(format!("gunzip failed: {}", e)));
+
+                let gunzip_stdout = gunzip.stdout.take().expect("stdout was set to piped");
+                let output = std::process::Command::new("docker")
+                    .args(["load"])
+                    .stdin(gunzip_stdout)
                     .output()
                     .unwrap_or_else(|e| die(format!("docker load failed: {}", e)));
+
+                let _ = gunzip.wait();
 
                 if !output.status.success() {
                     die("docker load failed");

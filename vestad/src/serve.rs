@@ -12,10 +12,10 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::{Arc, atomic::{AtomicBool, AtomicU8, Ordering}};
+use std::sync::{Arc, atomic::AtomicBool};
 use tokio::sync::{Mutex, RwLock};
 
-use crate::{docker, jwt, self_update, update_check};
+use crate::{backup, docker, jwt, self_update, update_check};
 
 const API_KEY_BYTES: usize = 32;
 pub(crate) const PROXY_MAX_BODY_BYTES: usize = 10 * 1024 * 1024; // 10 MB
@@ -24,7 +24,6 @@ const RESERVED_SERVICE_NAMES: &[&str] = &["ws", "history", "services", "search"]
 const AUTH_SESSION_TIMEOUT_SECS: u64 = 600;
 const DEFAULT_LOG_TAIL_LINES: u64 = 500;
 const AUTO_BACKUP_CHECK_INTERVAL_SECS: u64 = 3600;
-const DEFAULT_AUTO_BACKUP_HOUR: u8 = 4;
 
 // --- TLS cert generation ---
 
@@ -138,16 +137,13 @@ pub struct AppState {
     tunnel_url: Mutex<Option<String>>,
     update_info: Mutex<Option<update_check::UpdateInfo>>,
     updating: AtomicBool,
-    auto_backup_enabled: AtomicBool,
-    auto_backup_hour: AtomicU8,
-    backup_retention: Mutex<crate::types::RetentionPolicy>,
     http_client: reqwest::Client,
-    service_registry: RwLock<HashMap<String, HashMap<String, u16>>>,
+    settings: RwLock<Settings>,
 }
 
 impl AppState {
     fn new(api_key: String, env_config: docker::AgentEnvConfig, tunnel_url: Option<String>) -> Self {
-        let service_registry = load_service_registry();
+        let settings = load_settings();
         Self {
             api_key,
             env_config,
@@ -156,15 +152,8 @@ impl AppState {
             tunnel_url: Mutex::new(tunnel_url),
             update_info: Mutex::new(None),
             updating: AtomicBool::new(false),
-            auto_backup_enabled: AtomicBool::new(true),
-            auto_backup_hour: AtomicU8::new(DEFAULT_AUTO_BACKUP_HOUR),
-            backup_retention: Mutex::new(crate::types::RetentionPolicy {
-                daily: docker::DEFAULT_RETENTION_DAILY,
-                weekly: docker::DEFAULT_RETENTION_WEEKLY,
-                monthly: docker::DEFAULT_RETENTION_MONTHLY,
-            }),
             http_client: reqwest::Client::new(),
-            service_registry: RwLock::new(service_registry),
+            settings: RwLock::new(settings),
         }
     }
 
@@ -508,9 +497,9 @@ async fn stop_agent_handler(
         .unwrap()
         .map_err(map_docker_err)?;
     {
-        let mut reg = state.service_registry.write().await;
-        reg.remove(&name);
-        save_service_registry(&reg);
+        let mut settings = state.settings.write().await;
+        settings.services.remove(&name);
+        save_settings(&settings);
     }
     Ok(ok_json())
 }
@@ -545,9 +534,9 @@ async fn destroy_agent_handler(
         .unwrap()
         .map_err(map_docker_err)?;
     {
-        let mut reg = state.service_registry.write().await;
-        reg.remove(&name);
-        save_service_registry(&reg);
+        let mut settings = state.settings.write().await;
+        settings.services.remove(&name);
+        save_settings(&settings);
     }
 
     Ok(ok_json())
@@ -830,49 +819,119 @@ async fn ws_proxy(client_ws: axum::extract::ws::WebSocket, agent_port: u16, path
     tracing::info!(port = agent_port, "client websocket disconnected");
 }
 
-// --- Service registry ---
+// --- Unified settings ---
 
-fn services_file() -> std::path::PathBuf {
-    let home = std::env::var("HOME").unwrap_or_default();
-    std::path::PathBuf::from(home).join(".config/vesta/vestad/services.json")
+const DEFAULT_AUTO_BACKUP_HOUR: u8 = 4;
+
+#[derive(Serialize, Deserialize, Default)]
+struct Settings {
+    #[serde(default)]
+    services: HashMap<String, HashMap<String, u16>>,
+    #[serde(default)]
+    backup: BackupGlobalSettings,
 }
 
-fn load_service_registry() -> HashMap<String, HashMap<String, u16>> {
-    let path = services_file();
-    match std::fs::read_to_string(&path) {
-        Ok(data) => match serde_json::from_str(&data) {
-            Ok(registry) => registry,
-            Err(err) => {
-                tracing::warn!(path = %path.display(), error = %err, "corrupt services.json, starting empty");
-                HashMap::new()
-            }
-        },
-        Err(_) => HashMap::new(),
+#[derive(Serialize, Deserialize, Clone)]
+struct BackupGlobalSettings {
+    #[serde(default = "default_true")]
+    enabled: bool,
+    #[serde(default = "default_backup_hour")]
+    hour: u8,
+    #[serde(default = "default_retention")]
+    retention: crate::types::RetentionPolicy,
+    #[serde(default)]
+    agents: HashMap<String, AgentBackupOverride>,
+}
+
+impl Default for BackupGlobalSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            hour: DEFAULT_AUTO_BACKUP_HOUR,
+            retention: default_retention(),
+            agents: HashMap::new(),
+        }
     }
 }
 
-fn save_service_registry(registry: &HashMap<String, HashMap<String, u16>>) {
-    let path = services_file();
+fn default_true() -> bool { true }
+
+fn default_backup_hour() -> u8 { DEFAULT_AUTO_BACKUP_HOUR }
+
+fn default_retention() -> crate::types::RetentionPolicy {
+    crate::types::RetentionPolicy {
+        daily: backup::DEFAULT_RETENTION_DAILY,
+        weekly: backup::DEFAULT_RETENTION_WEEKLY,
+        monthly: backup::DEFAULT_RETENTION_MONTHLY,
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct AgentBackupOverride {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    retention: Option<crate::types::RetentionPolicy>,
+}
+
+fn settings_file() -> std::path::PathBuf {
+    let home = std::env::var("HOME").unwrap_or_default();
+    std::path::PathBuf::from(home).join(".config/vesta/vestad/settings.json")
+}
+
+fn load_settings() -> Settings {
+    let path = settings_file();
+
+    // Try loading unified settings.json
+    if let Ok(data) = std::fs::read_to_string(&path) {
+        match serde_json::from_str(&data) {
+            Ok(settings) => return settings,
+            Err(err) => {
+                tracing::warn!(path = %path.display(), error = %err, "corrupt settings.json, using defaults");
+            }
+        }
+    }
+
+    // Migrate from old services.json if it exists
+    let old_services = path.with_file_name("services.json");
+    let mut settings = Settings::default();
+    if let Ok(data) = std::fs::read_to_string(&old_services) {
+        if let Ok(services) = serde_json::from_str(&data) {
+            settings.services = services;
+            save_settings(&settings);
+            if let Err(err) = std::fs::remove_file(&old_services) {
+                tracing::warn!(error = %err, "failed to remove old services.json after migration");
+            } else {
+                tracing::info!("migrated services.json into settings.json");
+            }
+        }
+    }
+
+    settings
+}
+
+fn save_settings(settings: &Settings) {
+    let path = settings_file();
     if let Some(parent) = path.parent() {
         if let Err(err) = std::fs::create_dir_all(parent) {
-            tracing::warn!(error = %err, "failed to create services dir");
+            tracing::warn!(error = %err, "failed to create settings dir");
             return;
         }
     }
-    let data = match serde_json::to_string_pretty(registry) {
+    let data = match serde_json::to_string_pretty(settings) {
         Ok(data) => data,
         Err(err) => {
-            tracing::warn!(error = %err, "failed to serialize service registry");
+            tracing::warn!(error = %err, "failed to serialize settings");
             return;
         }
     };
     let tmp = path.with_extension("json.tmp");
     if let Err(err) = std::fs::write(&tmp, &data) {
-        tracing::warn!(error = %err, "failed to write services.json.tmp");
+        tracing::warn!(error = %err, "failed to write settings.json.tmp");
         return;
     }
     if let Err(err) = std::fs::rename(&tmp, &path) {
-        tracing::warn!(error = %err, "failed to rename services.json.tmp");
+        tracing::warn!(error = %err, "failed to rename settings.json.tmp");
     }
 }
 
@@ -881,8 +940,8 @@ async fn resolve_service_port(
     agent_name: &str,
     service_name: &str,
 ) -> Option<u16> {
-    let registry = state.service_registry.read().await;
-    registry.get(agent_name)?.get(service_name).copied()
+    let settings = state.settings.read().await;
+    settings.services.get(agent_name)?.get(service_name).copied()
 }
 
 const SERVICE_PORT_MIN: u16 = 49152;
@@ -939,18 +998,18 @@ async fn register_service_handler(
         return Err(err_response(StatusCode::NOT_FOUND, &format!("agent '{}' not found", name)));
     }
 
-    let mut registry = state.service_registry.write().await;
+    let mut settings = state.settings.write().await;
 
     // Reuse existing port if already registered, otherwise allocate a new one
-    let port = if let Some(existing) = registry.get(&name).and_then(|s| s.get(&service_name)).copied() {
+    let port = if let Some(existing) = settings.services.get(&name).and_then(|s| s.get(&service_name)).copied() {
         existing
     } else {
-        allocate_service_port(&registry)
+        allocate_service_port(&settings.services)
             .ok_or_else(|| err_response(StatusCode::SERVICE_UNAVAILABLE, "no free ports available"))?
     };
 
-    registry.entry(name.clone()).or_default().insert(service_name.clone(), port);
-    save_service_registry(&registry);
+    settings.services.entry(name.clone()).or_default().insert(service_name.clone(), port);
+    save_settings(&settings);
     tracing::info!(agent = %name, service = %service_name, port, "service registered");
     Ok(Json(serde_json::json!({"ok": true, "port": port})))
 }
@@ -959,14 +1018,14 @@ async fn unregister_service_handler(
     State(state): State<SharedState>,
     Path((name, service_name)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let mut registry = state.service_registry.write().await;
-    if let Some(agent_services) = registry.get_mut(&name) {
+    let mut settings = state.settings.write().await;
+    if let Some(agent_services) = settings.services.get_mut(&name) {
         agent_services.remove(&service_name);
         if agent_services.is_empty() {
-            registry.remove(&name);
+            settings.services.remove(&name);
         }
     }
-    save_service_registry(&registry);
+    save_settings(&settings);
     tracing::info!(agent = %name, service = %service_name, "service unregistered");
     Ok(ok_json())
 }
@@ -975,8 +1034,8 @@ async fn list_services_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
 ) -> Json<serde_json::Value> {
-    let registry = state.service_registry.read().await;
-    let services = registry.get(&name).cloned().unwrap_or_default();
+    let settings = state.settings.read().await;
+    let services = settings.services.get(&name).cloned().unwrap_or_default();
     Json(serde_json::json!({"services": services}))
 }
 
@@ -1140,7 +1199,8 @@ async fn create_backup_handler(
 
     let name_clone = name.clone();
     let backup = tokio::task::spawn_blocking(move || {
-        docker::create_backup(&name_clone, crate::types::BackupType::Manual)
+        let _file_lock = backup::agent_file_lock(&name_clone)?;
+        backup::create_backup(&name_clone, crate::types::BackupType::Manual)
     })
     .await
     .unwrap()
@@ -1158,12 +1218,19 @@ async fn list_backups_handler(
     let _guard = lock.read().await;
 
     let name_clone = name.clone();
-    let backups = tokio::task::spawn_blocking(move || docker::list_backups(&name_clone))
+    let backups = tokio::task::spawn_blocking(move || backup::list_backups(&name_clone))
         .await
         .unwrap()
         .map_err(map_docker_err)?;
 
     Ok(Json(backups))
+}
+
+async fn list_all_backups_handler() -> Json<Vec<crate::types::BackupInfo>> {
+    let backups = tokio::task::spawn_blocking(backup::list_all_backups)
+        .await
+        .unwrap_or_default();
+    Json(backups)
 }
 
 #[derive(Deserialize)]
@@ -1183,7 +1250,10 @@ async fn restore_backup_handler(
     let name = path.name.clone();
     let backup_id = path.backup_id.clone();
     let env_config = state.env_config.clone();
-    tokio::task::spawn_blocking(move || docker::restore_backup(&name, &backup_id, &env_config))
+    tokio::task::spawn_blocking(move || {
+        let _file_lock = backup::agent_file_lock(&name)?;
+        backup::restore_backup(&name, &backup_id, &env_config)
+    })
         .await
         .unwrap()
         .map_err(map_docker_err)?;
@@ -1206,8 +1276,9 @@ async fn delete_backup_handler(
     let _guard = lock.write().await;
 
     tracing::info!(agent = %path.name, backup_id = %path.backup_id, "deleting backup");
+    let name = path.name.clone();
     let backup_id = path.backup_id.clone();
-    tokio::task::spawn_blocking(move || docker::delete_backup(&backup_id))
+    tokio::task::spawn_blocking(move || backup::delete_backup(&name, &backup_id))
         .await
         .unwrap()
         .map_err(map_docker_err)?;
@@ -1221,53 +1292,159 @@ async fn delete_backup_handler(
 async fn get_auto_backup_handler(
     State(state): State<SharedState>,
 ) -> Json<serde_json::Value> {
-    let enabled = state.auto_backup_enabled.load(Ordering::Relaxed);
-    let hour = state.auto_backup_hour.load(Ordering::Relaxed);
-    let retention = *state.backup_retention.lock().await;
+    let settings = state.settings.read().await;
     Json(serde_json::json!({
-        "enabled": enabled,
-        "hour": hour,
-        "retention": retention,
+        "enabled": settings.backup.enabled,
+        "hour": settings.backup.hour,
+        "retention": settings.backup.retention,
     }))
+}
+
+#[derive(Deserialize)]
+struct SetBackupSettingsBody {
+    enabled: Option<bool>,
+    hour: Option<u8>,
+    retention: Option<RetentionUpdate>,
+}
+
+#[derive(Deserialize)]
+struct RetentionUpdate {
+    daily: Option<usize>,
+    weekly: Option<usize>,
+    monthly: Option<usize>,
+}
+
+const MIN_RETENTION: usize = 1;
+
+fn validate_retention(update: &RetentionUpdate) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    for (name, val) in [("daily", update.daily), ("weekly", update.weekly), ("monthly", update.monthly)] {
+        if let Some(v) = val {
+            if v < MIN_RETENTION {
+                return Err(err_response(StatusCode::BAD_REQUEST, &format!("retention.{} must be at least {}", name, MIN_RETENTION)));
+            }
+        }
+    }
+    Ok(())
 }
 
 async fn set_auto_backup_handler(
     State(state): State<SharedState>,
-    Json(body): Json<serde_json::Value>,
+    Json(body): Json<SetBackupSettingsBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    if let Some(enabled) = body["enabled"].as_bool() {
-        state.auto_backup_enabled.store(enabled, Ordering::Relaxed);
+    if let Some(ref ret) = body.retention {
+        validate_retention(ret)?;
+    }
+
+    if let Some(hour) = body.hour {
+        if hour > 23 {
+            return Err(err_response(StatusCode::BAD_REQUEST, "hour must be 0-23"));
+        }
+    }
+
+    let mut settings = state.settings.write().await;
+
+    if let Some(enabled) = body.enabled {
+        settings.backup.enabled = enabled;
         tracing::info!(enabled, "auto-backup toggled");
     }
 
-    if let Some(hour) = body["hour"].as_u64() {
-        if hour <= 23 {
-            state.auto_backup_hour.store(hour as u8, Ordering::Relaxed);
-            tracing::info!(hour, "auto-backup hour updated");
-        }
+    if let Some(hour) = body.hour {
+        settings.backup.hour = hour;
+        tracing::info!(hour, "auto-backup hour updated");
     }
 
-    let mut retention = state.backup_retention.lock().await;
-    if let Some(ret) = body.get("retention") {
-        if let Some(d) = ret["daily"].as_u64() {
-            retention.daily = d as usize;
-        }
-        if let Some(w) = ret["weekly"].as_u64() {
-            retention.weekly = w as usize;
-        }
-        if let Some(m) = ret["monthly"].as_u64() {
-            retention.monthly = m as usize;
-        }
-        tracing::info!(daily = retention.daily, weekly = retention.weekly, monthly = retention.monthly, "backup retention updated");
+    if let Some(ret) = body.retention {
+        if let Some(d) = ret.daily { settings.backup.retention.daily = d; }
+        if let Some(w) = ret.weekly { settings.backup.retention.weekly = w; }
+        if let Some(m) = ret.monthly { settings.backup.retention.monthly = m; }
+        tracing::info!(
+            daily = settings.backup.retention.daily,
+            weekly = settings.backup.retention.weekly,
+            monthly = settings.backup.retention.monthly,
+            "backup retention updated"
+        );
     }
 
-    let enabled = state.auto_backup_enabled.load(Ordering::Relaxed);
-    let hour = state.auto_backup_hour.load(Ordering::Relaxed);
+    save_settings(&settings);
+
     Ok(Json(serde_json::json!({
-        "enabled": enabled,
-        "hour": hour,
-        "retention": *retention,
+        "enabled": settings.backup.enabled,
+        "hour": settings.backup.hour,
+        "retention": settings.backup.retention,
     })))
+}
+
+async fn get_agent_backup_settings_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+) -> Json<serde_json::Value> {
+    let settings = state.settings.read().await;
+    let agent_override = settings.backup.agents.get(&name);
+    let enabled = agent_override.and_then(|o| o.enabled).unwrap_or(settings.backup.enabled);
+    let retention = agent_override.and_then(|o| o.retention).unwrap_or(settings.backup.retention);
+    let has_override = agent_override.is_some();
+    Json(serde_json::json!({
+        "enabled": enabled,
+        "retention": retention,
+        "has_override": has_override,
+    }))
+}
+
+async fn set_agent_backup_settings_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+    Json(body): Json<SetBackupSettingsBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    if let Some(ref ret) = body.retention {
+        validate_retention(ret)?;
+    }
+
+    let mut settings = state.settings.write().await;
+    let global_retention = settings.backup.retention;
+    let global_enabled = settings.backup.enabled;
+
+    let entry = settings.backup.agents.entry(name.clone()).or_insert(AgentBackupOverride {
+        enabled: None,
+        retention: None,
+    });
+
+    if let Some(enabled) = body.enabled {
+        entry.enabled = Some(enabled);
+    }
+    if let Some(ret) = body.retention {
+        let mut r = entry.retention.unwrap_or(global_retention);
+        if let Some(d) = ret.daily { r.daily = d; }
+        if let Some(w) = ret.weekly { r.weekly = w; }
+        if let Some(m) = ret.monthly { r.monthly = m; }
+        entry.retention = Some(r);
+    }
+
+    let effective_enabled = entry.enabled.unwrap_or(global_enabled);
+    let effective_retention = entry.retention.unwrap_or(global_retention);
+
+    save_settings(&settings);
+    tracing::info!(agent = %name, "agent backup settings updated");
+
+    Ok(Json(serde_json::json!({
+        "enabled": effective_enabled,
+        "retention": effective_retention,
+        "has_override": true,
+    })))
+}
+
+async fn delete_agent_backup_settings_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+) -> Json<serde_json::Value> {
+    let mut settings = state.settings.write().await;
+    settings.backup.agents.remove(&name);
+    save_settings(&settings);
+    tracing::info!(agent = %name, "agent backup override removed, using global settings");
+    Json(serde_json::json!({
+        "enabled": settings.backup.enabled,
+        "retention": settings.backup.retention,
+        "has_override": false,
+    }))
 }
 
 // --- Port file ---
@@ -1342,10 +1519,14 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/auth/code", post(complete_auth_handler))
         .route("/agents/{name}/auth/token", post(inject_token_handler))
         .route("/agents/{name}/logs", get(logs_handler))
+        .route("/backups", get(list_all_backups_handler))
         .route("/agents/{name}/backups", post(create_backup_handler))
         .route("/agents/{name}/backups", get(list_backups_handler))
         .route("/agents/{name}/backups/{backup_id}/restore", post(restore_backup_handler))
         .route("/agents/{name}/backups/{backup_id}", axum::routing::delete(delete_backup_handler))
+        .route("/agents/{name}/settings/backup", get(get_agent_backup_settings_handler))
+        .route("/agents/{name}/settings/backup", axum::routing::put(set_agent_backup_settings_handler))
+        .route("/agents/{name}/settings/backup", axum::routing::delete(delete_agent_backup_settings_handler))
         .route("/settings/auto-backup", get(get_auto_backup_handler))
         .route("/settings/auto-backup", axum::routing::put(set_auto_backup_handler))
         .route("/agents/{name}/{*path}", any(agent_proxy_handler))
@@ -1399,19 +1580,24 @@ fn spawn_auto_backup_task(state: SharedState) {
         loop {
             tokio::time::sleep(tokio::time::Duration::from_secs(AUTO_BACKUP_CHECK_INTERVAL_SECS)).await;
 
-            if !state.auto_backup_enabled.load(Ordering::Relaxed) {
+            let backup_settings = {
+                let settings = state.settings.read().await;
+                settings.backup.clone()
+            };
+
+            if !backup_settings.enabled {
                 tracing::debug!("auto-backup: disabled, skipping cycle");
                 continue;
             }
 
-            let target_hour = state.auto_backup_hour.load(Ordering::Relaxed);
+            let target_hour = backup_settings.hour;
             let current_hour = local_hour();
             if current_hour != target_hour {
                 tracing::debug!(current_hour, target_hour, "auto-backup: not in backup window, skipping");
                 continue;
             }
 
-            let agents = tokio::task::spawn_blocking(docker::list_agent_names)
+            let agents = tokio::task::spawn_blocking(backup::list_agent_names)
                 .await
                 .unwrap_or_default();
 
@@ -1426,13 +1612,24 @@ fn spawn_auto_backup_task(state: SharedState) {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs();
-            let today_date = &docker::now_timestamp()[..8];
-            let seven_days_ago = docker::now_timestamp_from_epoch(now_epoch - 7 * 86400);
-            let thirty_days_ago = docker::now_timestamp_from_epoch(now_epoch - 30 * 86400);
-
-            let retention = *state.backup_retention.lock().await;
+            let today_date = &backup::now_timestamp()[..8];
+            let seven_days_ago = backup::now_timestamp_from_epoch(now_epoch - 7 * 86400);
+            let thirty_days_ago = backup::now_timestamp_from_epoch(now_epoch - 30 * 86400);
 
             for name in &agents {
+                // Resolve per-agent settings (override or global fallback)
+                let agent_override = backup_settings.agents.get(name);
+                let agent_enabled = agent_override
+                    .and_then(|o| o.enabled)
+                    .unwrap_or(backup_settings.enabled);
+                if !agent_enabled {
+                    tracing::debug!(agent = %name, "auto-backup: disabled for agent, skipping");
+                    continue;
+                }
+                let ret = agent_override
+                    .and_then(|o| o.retention)
+                    .unwrap_or(backup_settings.retention);
+
                 let lock = state.agent_lock(name).await;
                 let _guard = lock.write().await;
 
@@ -1440,55 +1637,75 @@ fn spawn_auto_backup_task(state: SharedState) {
                 let today = today_date.to_string();
                 let week_ago = seven_days_ago.clone();
                 let month_ago = thirty_days_ago.clone();
-                let ret = retention;
 
-                let result = tokio::task::spawn_blocking(move || -> Result<(), docker::DockerError> {
-                    if let Some(age) = docker::container_age_secs(&name_clone) {
-                        if age < docker::MIN_AGE_FOR_BACKUP_SECS {
+                let result = tokio::task::spawn_blocking(move || {
+                    if let Some(age) = backup::container_age_secs(&name_clone) {
+                        if age < backup::MIN_AGE_FOR_BACKUP_SECS {
                             tracing::debug!(agent = %name_clone, age_hours = age / 3600, "auto-backup: skipping young agent");
-                            return Ok(());
+                            return;
                         }
                     }
 
-                    let mut backups = docker::list_backups(&name_clone)?;
+                    let mut backups = match backup::list_backups(&name_clone) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            tracing::error!(agent = %name_clone, error = %e, "auto-backup: failed to list backups");
+                            return;
+                        }
+                    };
+
+                    let mut needed = Vec::new();
 
                     let has_daily_today = backups.iter().any(|b| {
                         b.backup_type == crate::types::BackupType::Daily
                             && b.created_at.starts_with(&today)
                     });
-
                     if !has_daily_today {
-                        tracing::info!(agent = %name_clone, backup_type = "daily", "auto-backup: creating backup");
-                        let new = docker::create_backup(&name_clone, crate::types::BackupType::Daily)?;
-                        backups.insert(0, new);
+                        needed.push(crate::types::BackupType::Daily);
                     }
 
                     let has_recent_weekly = backups.iter().any(|b| {
                         b.backup_type == crate::types::BackupType::Weekly && b.created_at >= week_ago
                     });
                     if !has_recent_weekly {
-                        tracing::info!(agent = %name_clone, backup_type = "weekly", "auto-backup: creating backup");
-                        let new = docker::create_backup(&name_clone, crate::types::BackupType::Weekly)?;
-                        backups.insert(0, new);
+                        needed.push(crate::types::BackupType::Weekly);
                     }
 
                     let has_recent_monthly = backups.iter().any(|b| {
                         b.backup_type == crate::types::BackupType::Monthly && b.created_at >= month_ago
                     });
                     if !has_recent_monthly {
-                        tracing::info!(agent = %name_clone, backup_type = "monthly", "auto-backup: creating backup");
-                        let new = docker::create_backup(&name_clone, crate::types::BackupType::Monthly)?;
-                        backups.insert(0, new);
+                        needed.push(crate::types::BackupType::Monthly);
                     }
 
-                    docker::cleanup_backups(&backups, &ret);
-                    Ok(())
+                    if !needed.is_empty() {
+                        let _file_lock = match backup::agent_file_lock(&name_clone) {
+                            Ok(lock) => lock,
+                            Err(e) => {
+                                tracing::error!(agent = %name_clone, error = %e, "auto-backup: failed to acquire lock");
+                                return;
+                            }
+                        };
+                        tracing::info!(agent = %name_clone, types = ?needed, "auto-backup: creating backups");
+                        for (bt, result) in backup::create_backups_batch(&name_clone, needed) {
+                            match result {
+                                Ok(info) => {
+                                    tracing::info!(agent = %name_clone, backup_type = %bt, backup_id = %info.id, "auto-backup: created");
+                                    backups.insert(0, info);
+                                }
+                                Err(e) => {
+                                    tracing::error!(agent = %name_clone, backup_type = %bt, error = %e, "auto-backup: failed");
+                                }
+                            }
+                        }
+                    }
+
+                    backup::cleanup_backups(&backups, &ret);
                 })
-                .await
-                .unwrap_or_else(|e| Err(docker::DockerError::Failed(e.to_string())));
+                .await;
 
                 if let Err(e) = result {
-                    tracing::error!(agent = %name, error = %e, "auto-backup: failed");
+                    tracing::error!(agent = %name, error = %e, "auto-backup: task panicked");
                 }
             }
 

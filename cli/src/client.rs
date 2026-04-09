@@ -223,6 +223,16 @@ impl Client {
         check_response(resp)
     }
 
+    fn delete_req(&self, path: &str) -> Result<Response<Body>, String> {
+        let resp = self
+            .agent
+            .delete(&format!("{}{}", self.base_url, path))
+            .header("Authorization", &format!("Bearer {}", self.api_key))
+            .call()
+            .map_err(map_error)?;
+        check_response(resp)
+    }
+
     fn put_json(&self, path: &str, body: &serde_json::Value) -> Result<Response<Body>, String> {
         let resp = self
             .agent
@@ -354,18 +364,7 @@ impl Client {
     }
 
     pub fn delete_backup(&self, name: &str, backup_id: &str) -> Result<(), String> {
-        let resp = self
-            .agent
-            .delete(&format!(
-                "{}/agents/{}/backups/{}",
-                self.base_url,
-                name,
-                urlencod(backup_id)
-            ))
-            .header("Authorization", &format!("Bearer {}", self.api_key))
-            .call()
-            .map_err(map_error)?;
-        check_response(resp)?;
+        self.delete_req(&format!("/agents/{}/backups/{}", name, urlencod(backup_id)))?;
         Ok(())
     }
 
@@ -378,6 +377,34 @@ impl Client {
 
     pub fn set_auto_backup_settings(&self, body: &serde_json::Value) -> Result<serde_json::Value, String> {
         let resp = self.put_json("/settings/auto-backup", body)?;
+        resp.into_body()
+            .read_json()
+            .map_err(|e| format!("parse error: {}", e))
+    }
+
+    pub fn list_all_backups(&self) -> Result<Vec<BackupInfo>, String> {
+        let resp = self.get("/backups")?;
+        resp.into_body()
+            .read_json()
+            .map_err(|e| format!("parse error: {}", e))
+    }
+
+    pub fn get_agent_backup_settings(&self, name: &str) -> Result<serde_json::Value, String> {
+        let resp = self.get(&format!("/agents/{}/settings/backup", name))?;
+        resp.into_body()
+            .read_json()
+            .map_err(|e| format!("parse error: {}", e))
+    }
+
+    pub fn set_agent_backup_settings(&self, name: &str, body: &serde_json::Value) -> Result<serde_json::Value, String> {
+        let resp = self.put_json(&format!("/agents/{}/settings/backup", name), body)?;
+        resp.into_body()
+            .read_json()
+            .map_err(|e| format!("parse error: {}", e))
+    }
+
+    pub fn delete_agent_backup_settings(&self, name: &str) -> Result<serde_json::Value, String> {
+        let resp = self.delete_req(&format!("/agents/{}/settings/backup", name))?;
         resp.into_body()
             .read_json()
             .map_err(|e| format!("parse error: {}", e))
