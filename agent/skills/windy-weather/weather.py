@@ -23,8 +23,7 @@ KNOWN_LOCATIONS = {
     "malaga": (36.7213, -4.4214, "Europe/Madrid"),
 }
 
-COMPASS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
-           "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"]
+COMPASS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"]
 
 
 def wind_dir(u: float, v: float) -> str:
@@ -46,11 +45,7 @@ def kelvin_to_c(k: float) -> float:
 def get_ha_location() -> tuple[float, float, str] | None:
     """Get current location from Home Assistant."""
     try:
-        result = subprocess.run(
-            ["ha", "location"],
-            capture_output=True, text=True, timeout=10,
-            env={**os.environ}
-        )
+        result = subprocess.run(["ha", "location"], capture_output=True, text=True, timeout=10, env={**os.environ})
         if result.returncode != 0:
             return None
         data = json.loads(result.stdout)
@@ -81,14 +76,16 @@ def guess_timezone(lat: float, lon: float) -> str:
 
 def fetch_forecast(lat: float, lon: float, hours: int = 12) -> dict:
     """Fetch forecast from Windy API."""
-    payload = json.dumps({
-        "lat": lat,
-        "lon": lon,
-        "model": "gfs",
-        "parameters": ["temp", "precip", "wind", "rh"],
-        "levels": ["surface"],
-        "key": WINDY_API_KEY,
-    }).encode()
+    payload = json.dumps(
+        {
+            "lat": lat,
+            "lon": lon,
+            "model": "gfs",
+            "parameters": ["temp", "precip", "wind", "rh"],
+            "levels": ["surface"],
+            "key": WINDY_API_KEY,
+        }
+    ).encode()
 
     req = urllib.request.Request(
         WINDY_URL,
@@ -103,6 +100,7 @@ def format_forecast(data: dict, hours: int, tz_name: str, location_label: str) -
     """Format forecast data into a readable summary."""
     try:
         import zoneinfo
+
         tz = zoneinfo.ZoneInfo(tz_name)
     except (ImportError, KeyError):
         tz = dt.UTC
