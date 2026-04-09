@@ -1249,7 +1249,8 @@ pub fn now_timestamp_from_epoch(now: u64) -> String {
     format!("{:04}{:02}{:02}-{:02}{:02}{:02}", y, m + 1, d, hours, minutes, seconds)
 }
 
-/// Commit the container to a backup image without managing container lifecycle.
+/// Try `docker commit`; on failure fall back to `docker export | docker import`
+/// which rebuilds layers from scratch and recovers from content-store corruption.
 /// Caller is responsible for stopping/starting the container.
 fn commit_backup(cname: &str, name: &str, backup_type: &BackupType) -> Result<BackupInfo, DockerError> {
     let ts = now_timestamp();
@@ -1258,14 +1259,17 @@ fn commit_backup(cname: &str, name: &str, backup_type: &BackupType) -> Result<Ba
     let type_label = format!("LABEL vesta.backup_type={}", backup_type);
     let date_label = format!("LABEL vesta.backup_date={}", ts);
 
-    if !docker_ok(&[
+    let committed = docker_ok(&[
         "commit",
         "--change", &name_label,
         "--change", &type_label,
         "--change", &date_label,
         cname, &tag,
-    ]) {
-        return Err(DockerError::Failed("backup commit failed".into()));
+    ]);
+
+    if !committed {
+        tracing::warn!(agent = %name, "docker commit failed, falling back to export/import");
+        export_import_backup(cname, name, &tag)?;
     }
 
     let size = docker_output(&["inspect", "--format", "{{.Size}}", &tag])
@@ -1279,6 +1283,31 @@ fn commit_backup(cname: &str, name: &str, backup_type: &BackupType) -> Result<Ba
         created_at: ts,
         size,
     })
+}
+
+/// Fallback backup via `docker export | docker import` which flattens all layers
+/// into a single layer, bypassing any content-store corruption.
+fn export_import_backup(cname: &str, name: &str, tag: &str) -> Result<(), DockerError> {
+    let export = process::Command::new("docker")
+        .args(["export", cname])
+        .stdout(process::Stdio::piped())
+        .stderr(process::Stdio::piped())
+        .spawn()
+        .map_err(|e| DockerError::Failed(format!("failed to start docker export: {e}")))?;
+
+    let import_output = process::Command::new("docker")
+        .args(["import", "-", tag])
+        .stdin(export.stdout.unwrap())
+        .output()
+        .map_err(|e| DockerError::Failed(format!("failed to run docker import: {e}")))?;
+
+    if !import_output.status.success() {
+        let stderr = String::from_utf8_lossy(&import_output.stderr);
+        return Err(DockerError::Failed(format!("backup export/import failed: {stderr}")));
+    }
+
+    tracing::info!(agent = %name, "backup recovered via export/import fallback");
+    Ok(())
 }
 
 /// Create a backup of the given agent. Stops the container during commit, then restarts.
