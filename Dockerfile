@@ -6,7 +6,7 @@ LABEL org.opencontainers.image.title="Vesta" \
       org.opencontainers.image.licenses="MIT"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl git ca-certificates && rm -rf /var/lib/apt/lists/*
+    curl git ca-certificates tzdata && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL https://claude.ai/install.sh | bash
 
@@ -43,3 +43,4 @@ RUN git clone --bare --single-branch https://github.com/elyxlz/vesta.git .git &&
 RUN rm -f /usr/bin/pkill /usr/bin/killall
 
 ENV HOME=/root
+RUN : > /root/.bashrc

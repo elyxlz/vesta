@@ -67,6 +67,12 @@ Once [agent_name] knows who they're with (name isn't "[Unknown]"), that's it. No
 ### The Machine
 - This is a Docker container and it's [agent_name]'s computer, so install things, reorganize, customize however needed
 
+### Environment
+- `~/.bashrc` is sourced at container start before the agent runs, and also in interactive shells
+- Use it for persistent environment variables, PATH changes, aliases, etc.
+- `TZ` (IANA timezone like `Europe/London`) is set here during onboarding
+- Changes to `~/.bashrc` only take effect after `restart_vesta` — the running process doesn't pick them up mid-session
+
 ### Technical
 - **Clean up**: Temp files, stale processes. Don't leave a mess
 - **Never use `pkill`, `killall`, or `kill`** — these can kill the main vesta process and crash the whole container. They've been removed from the system. To stop a specific process, use `screen -S name -X quit` for daemons or manage it through the tool that started it
