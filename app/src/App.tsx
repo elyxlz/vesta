@@ -47,7 +47,7 @@ export default function App() {
     >
       <div
         className={cn(
-          "relative flex min-h-0 flex-1 flex-col border border-border bg-muted",
+          "relative flex min-h-0 flex-1 flex-col border border-border bg-muted overflow-hidden",
           !isTauri && "rounded-3xl",
         )}
       >
