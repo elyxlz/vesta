@@ -11,6 +11,7 @@ Use this skill when the user asks about weather, forecasts, "will it rain", "wha
 
 ```bash
 weather                        # Auto-detect location from HA, show forecast
+weather --location london      # Named location
 weather --lat 51.5 --lon -0.1  # Specific coordinates
 weather --hours 24             # Show next 24 hours (default: 12)
 ```

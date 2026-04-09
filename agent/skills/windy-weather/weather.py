@@ -9,8 +9,9 @@ import os
 import subprocess
 import sys
 import urllib.request
+import zoneinfo
 
-WINDY_API_KEY = os.environ["WINDY_API_KEY"] if "WINDY_API_KEY" in os.environ else ""
+WINDY_API_KEY = os.environ.get("WINDY_API_KEY", "")
 WINDY_URL = "https://api.windy.com/api/point-forecast/v2"
 
 # Named locations for convenience
@@ -52,11 +53,10 @@ def get_ha_location() -> tuple[float, float, str] | None:
         if "latitude" in data and "longitude" in data:
             lat = data["latitude"]
             lon = data["longitude"]
-            # Guess timezone from coordinates (simple heuristic)
             tz = guess_timezone(lat, lon)
             return (lat, lon, tz)
-    except (subprocess.TimeoutExpired, json.JSONDecodeError, KeyError, OSError):
-        pass
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, KeyError, OSError) as exc:
+        print(f"HA location error: {exc}", file=sys.stderr)
     return None
 
 
@@ -102,10 +102,8 @@ def fetch_forecast(lat: float, lon: float) -> dict:
 def format_forecast(data: dict, hours: int, tz_name: str, location_label: str) -> str:
     """Format forecast data into a readable summary."""
     try:
-        import zoneinfo
-
         tz = zoneinfo.ZoneInfo(tz_name)
-    except (ImportError, KeyError):
+    except KeyError:
         tz = dt.UTC
 
     timestamps = data["ts"] if "ts" in data else []
@@ -114,13 +112,11 @@ def format_forecast(data: dict, hours: int, tz_name: str, location_label: str) -
     wind_us = data["wind_u-surface"] if "wind_u-surface" in data else []
     wind_vs = data["wind_v-surface"] if "wind_v-surface" in data else []
     rhs = data["rh-surface"] if "rh-surface" in data else []
-    # clouds not available on free tier
 
     now = dt.datetime.now(dt.UTC)
     lines = [f"Weather forecast for {location_label}:"]
     lines.append("")
 
-    # Filter to requested hours
     count = 0
     rain_total = 0.0
     temp_min = float("inf")
@@ -143,7 +139,7 @@ def format_forecast(data: dict, hours: int, tz_name: str, location_label: str) -
 
         ws = wind_speed(wu, wv)
         wd = wind_dir(wu, wv)
-        rain_total += precip or 0
+        rain_total += precip
 
         if temp_c is not None:
             temp_min = min(temp_min, temp_c)
@@ -162,7 +158,6 @@ def format_forecast(data: dict, hours: int, tz_name: str, location_label: str) -
         hourly_lines.append("  ".join(parts))
         count += 1
 
-    # Summary line
     summary_parts = []
     if temp_min != float("inf"):
         if abs(temp_max - temp_min) < 1.5:
