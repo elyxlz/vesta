@@ -78,6 +78,10 @@ func getSocketPath() string {
 	return filepath.Join(os.Getenv("HOME"), ".whatsapp", "whatsapp.sock")
 }
 
+func successResult(success bool, msg string) map[string]any {
+	return map[string]any{"success": success, "message": msg}
+}
+
 func printJSON(v any) {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
@@ -434,7 +438,7 @@ func cmdSendMessage(args []string, wac *WhatsAppClient) (any, error) {
 		return nil, fmt.Errorf("--to and --message are required")
 	}
 	success, msg := wac.SendMessageWithPresence(to, message)
-	return map[string]any{"success": success, "message": msg}, nil
+	return successResult(success, msg), nil
 }
 
 func cmdSendFile(args []string, wac *WhatsAppClient) (any, error) {
@@ -451,7 +455,7 @@ func cmdSendFile(args []string, wac *WhatsAppClient) (any, error) {
 		return nil, fmt.Errorf("--to and --file-path are required")
 	}
 	success, msg := wac.SendFile(to, filePath, caption, displayName)
-	return map[string]any{"success": success, "message": msg}, nil
+	return successResult(success, msg), nil
 }
 
 func cmdSendAudio(args []string, wac *WhatsAppClient) (any, error) {
@@ -466,7 +470,7 @@ func cmdSendAudio(args []string, wac *WhatsAppClient) (any, error) {
 		return nil, fmt.Errorf("--to and --file-path are required")
 	}
 	success, msg := wac.SendAudioMessage(to, filePath)
-	return map[string]any{"success": success, "message": msg}, nil
+	return successResult(success, msg), nil
 }
 
 func cmdDownloadMedia(args []string, wac *WhatsAppClient) (any, error) {
@@ -501,7 +505,7 @@ func cmdSendReaction(args []string, wac *WhatsAppClient) (any, error) {
 		return nil, fmt.Errorf("--message-id, --emoji, and --to are required")
 	}
 	success, msg := wac.SendReaction(messageID, emoji, to)
-	return map[string]any{"success": success, "message": msg}, nil
+	return successResult(success, msg), nil
 }
 
 func cmdRevokeMessage(args []string, wac *WhatsAppClient) (any, error) {
@@ -516,7 +520,7 @@ func cmdRevokeMessage(args []string, wac *WhatsAppClient) (any, error) {
 		return nil, fmt.Errorf("--message-id and --to are required")
 	}
 	success, msg := wac.RevokeMessage(messageID, to)
-	return map[string]any{"success": success, "message": msg}, nil
+	return successResult(success, msg), nil
 }
 
 func cmdCreateGroup(args []string, wac *WhatsAppClient) (any, error) {
@@ -545,7 +549,7 @@ func cmdLeaveGroup(args []string, wac *WhatsAppClient) (any, error) {
 		return nil, fmt.Errorf("--group is required")
 	}
 	success, msg := wac.LeaveGroup(group)
-	return map[string]any{"success": success, "message": msg}, nil
+	return successResult(success, msg), nil
 }
 
 func cmdListGroups(args []string, wac *WhatsAppClient) (any, error) {
@@ -576,7 +580,7 @@ func cmdUpdateGroupParticipants(args []string, wac *WhatsAppClient) (any, error)
 		return nil, fmt.Errorf("--group, --action, and participant phone numbers are required")
 	}
 	success, msg := wac.UpdateGroupParticipants(group, action, participants)
-	return map[string]any{"success": success, "message": msg}, nil
+	return successResult(success, msg), nil
 }
 
 func cmdBackfill(args []string, wac *WhatsAppClient) (any, error) {
@@ -592,7 +596,7 @@ func cmdBackfill(args []string, wac *WhatsAppClient) (any, error) {
 		return nil, fmt.Errorf("--to is required")
 	}
 	success, msg := wac.RequestBackfill(to, count)
-	return map[string]any{"success": success, "message": msg}, nil
+	return successResult(success, msg), nil
 }
 
 func cmdRenameGroup(args []string, wac *WhatsAppClient) (any, error) {
@@ -607,7 +611,7 @@ func cmdRenameGroup(args []string, wac *WhatsAppClient) (any, error) {
 		return nil, fmt.Errorf("--group and --name are required")
 	}
 	success, msg := wac.RenameGroup(group, name)
-	return map[string]any{"success": success, "message": msg}, nil
+	return successResult(success, msg), nil
 }
 
 func cmdSetGroupPhoto(args []string, wac *WhatsAppClient) (any, error) {
@@ -622,7 +626,7 @@ func cmdSetGroupPhoto(args []string, wac *WhatsAppClient) (any, error) {
 		return nil, fmt.Errorf("--group and --file-path are required")
 	}
 	success, msg := wac.SetGroupPhoto(group, filePath)
-	return map[string]any{"success": success, "message": msg}, nil
+	return successResult(success, msg), nil
 }
 
 func cmdSetGroupDescription(args []string, wac *WhatsAppClient) (any, error) {
@@ -637,7 +641,7 @@ func cmdSetGroupDescription(args []string, wac *WhatsAppClient) (any, error) {
 		return nil, fmt.Errorf("--group and --description are required")
 	}
 	success, msg := wac.SetGroupDescription(group, description)
-	return map[string]any{"success": success, "message": msg}, nil
+	return successResult(success, msg), nil
 }
 
 func cmdGetGroupInviteLink(args []string, wac *WhatsAppClient) (any, error) {
@@ -757,7 +761,7 @@ func cmdArchiveChat(args []string, wac *WhatsAppClient) (any, error) {
 		return nil, fmt.Errorf("--to is required (contact name, phone number, group name, or JID)")
 	}
 	success, msg := wac.ArchiveChat(to)
-	return map[string]any{"success": success, "message": msg}, nil
+	return successResult(success, msg), nil
 }
 
 func cmdArchiveAllChats(wac *WhatsAppClient) (any, error) {
@@ -786,7 +790,7 @@ func cmdDeleteChat(args []string, wac *WhatsAppClient) (any, error) {
 		return nil, fmt.Errorf("--to is required (contact name, phone number, group name, or JID)")
 	}
 	success, msg := wac.DeleteChat(to)
-	return map[string]any{"success": success, "message": msg}, nil
+	return successResult(success, msg), nil
 }
 
 func cmdClearAllChats(wac *WhatsAppClient) (any, error) {

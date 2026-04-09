@@ -1,8 +1,6 @@
 package main
 
-import (
-	"time"
-)
+import "time"
 
 type Message struct {
 	ID          string    `json:"id"`
@@ -34,7 +32,6 @@ type Contact struct {
 	IsManual    bool   `json:"is_manual,omitempty"`
 }
 
-// StoreMessageParams holds all fields for storing a message in the database.
 type StoreMessageParams struct {
 	ID            string
 	ChatJID       string
@@ -52,7 +49,6 @@ type StoreMessageParams struct {
 	FileLength    uint64
 }
 
-// NotifContext holds common fields shared by message and reaction notifications.
 type NotifContext struct {
 	NotifDir     string
 	ChatName     string
