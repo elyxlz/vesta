@@ -134,11 +134,22 @@ PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/servic
   -H 'Content-Type: application/json' -d '{"name":"dashboard"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])")
 screen -S dashboard -X quit 2>/dev/null
 screen -dmS dashboard sh -c "cd ~/vesta/skills/dashboard/app && npx vite preview --port $PORT --host 0.0.0.0"
-# Wait for the server to be ready before notifying the app
+# Wait for the server to be ready
 for i in $(seq 1 20); do curl -s -o /dev/null http://localhost:$PORT && break; sleep 0.5; done
-curl -s -X POST "http://localhost:$WS_PORT/events/service-update?agent_token=$AGENT_TOKEN" \
-  -H 'Content-Type: application/json' -d '{"service":"dashboard","action":"updated"}'
+# Smoke test: fetch the page and check for runtime errors before notifying
+SMOKE=$(curl -s http://localhost:$PORT/ | head -50)
+if echo "$SMOKE" | grep -q '<div id="root"'; then
+  curl -s -X POST "http://localhost:$WS_PORT/events/service-update?agent_token=$AGENT_TOKEN" \
+    -H 'Content-Type: application/json' -d '{"service":"dashboard","action":"updated"}'
+else
+  echo "ERROR: Dashboard failed to load, not notifying app. Check the build output."
+fi
 ```
+
+**Before notifying the app**, always verify your page renders without errors. After the server starts, open the page in a headless check or review your code for these common crash sources:
+- Arrays/objects that may be `undefined` on first render (empty localStorage, no API response yet) — always default to `[]` or `{}`
+- Chart components that receive `undefined` config or data
+- `.reduce()`, `.map()`, `.filter()` on values that might not be arrays yet
 
 ## Data patterns
 

@@ -46,29 +46,30 @@ export default function App() {
   }
 
   return (
-    <TooltipProvider>
-      <SidebarProvider
-        className="bg-transparent!"
-        style={
-          {
-            "--sidebar-width": "calc(var(--spacing) * 52)",
-            "--header-height": "calc(var(--spacing) * 12)",
-          } as React.CSSProperties
-        }
-      >
-        <AppSidebar
-          config={config}
-          activePageId={activePageId}
-          onNavigate={setActivePageId}
-          variant="inset"
-        />
-        <SidebarInset>
-          <SiteHeader title={activePage?.title ?? ""} />
-          <div className={fullscreen ? "px-page" : ""}>
-            {activePage && <activePage.component />}
-          </div>
-        </SidebarInset>
-      </SidebarProvider>
-    </TooltipProvider>
+    <div className={`h-full w-full ${fullscreen ? "p-page" : "pl-2 pr-4 py-4"}`}>
+      <TooltipProvider>
+        <SidebarProvider
+          className="rounded-4xl bg-card shadow-md ring-1 ring-foreground/5 dark:ring-foreground/10 overflow-hidden h-full"
+          style={
+            {
+              "--sidebar-width": "calc(var(--spacing) * 52)",
+              "--header-height": "calc(var(--spacing) * 12)",
+            } as React.CSSProperties
+          }
+        >
+          <AppSidebar
+            config={config}
+            activePageId={activePageId}
+            onNavigate={setActivePageId}
+          />
+          <SidebarInset>
+            <SiteHeader title={activePage?.title ?? ""} />
+            <div className="overflow-y-auto flex-1">
+              {activePage && <activePage.component />}
+            </div>
+          </SidebarInset>
+        </SidebarProvider>
+      </TooltipProvider>
+    </div>
   )
 }

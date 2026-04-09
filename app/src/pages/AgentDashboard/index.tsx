@@ -24,7 +24,7 @@ export function AgentDashboard() {
     >
       <ResizablePanelGroup
         orientation="horizontal"
-        className="flex h-full w-full gap-1"
+        className="flex h-full w-full gap-2"
       >
         <ResizablePanel defaultSize="70%" minSize="300px">
           <div className={`h-full`}>
