@@ -149,8 +149,6 @@ func (wac *WhatsAppClient) RevokeMessage(messageID, chatIdentifier string) (bool
 	return true, fmt.Sprintf("Message revoked successfully (revocation ID: %s)", resp.ID)
 }
 
-// --- Media type helpers ---
-
 func mediaTypeToString(mt whatsmeow.MediaType) string {
 	switch mt {
 	case whatsmeow.MediaImage:
@@ -227,8 +225,6 @@ func validateFilePath(path string) error {
 	}
 	return nil
 }
-
-// --- Message content extraction ---
 
 func extractTextContent(msg *waProto.Message) string {
 	if msg == nil {

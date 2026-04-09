@@ -14,8 +14,8 @@ type SocketRequest struct {
 }
 
 type SocketResponse struct {
-	Result interface{} `json:"result,omitempty"`
-	Error  string      `json:"error,omitempty"`
+	Result any    `json:"result,omitempty"`
+	Error  string `json:"error,omitempty"`
 }
 
 func startSocketServer(sockPath string, wac *WhatsAppClient) (net.Listener, error) {
@@ -93,7 +93,7 @@ func trySocketCommand(sockPath string, command string, args []string) ([]byte, i
 	}
 
 	if resp.Error != "" {
-		data, _ := json.MarshalIndent(map[string]interface{}{"error": resp.Error}, "", "  ")
+		data, _ := json.MarshalIndent(map[string]any{"error": resp.Error}, "", "  ")
 		return data, 1, true
 	}
 

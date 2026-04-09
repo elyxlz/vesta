@@ -269,8 +269,6 @@ func (wac *WhatsAppClient) SendAudioMessage(recipient, filePath string) (bool, s
 	return true, fmt.Sprintf("Audio message sent successfully (ID: %s)", resp.ID)
 }
 
-// --- Helpers ---
-
 // parseMentions finds @mention patterns in text, resolves them to JIDs,
 // and returns the modified text (with @phone format) and list of mentioned JIDs.
 func (wac *WhatsAppClient) parseMentions(text string) (string, []string) {

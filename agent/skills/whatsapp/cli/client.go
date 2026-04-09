@@ -211,8 +211,6 @@ func (wac *WhatsAppClient) EnsureOnline() error {
 	return nil
 }
 
-// --- Authentication ---
-
 func (wac *WhatsAppClient) initiateReauth() error {
 	wac.logger.Infof("Initiating re-authentication...")
 	wac.client.Disconnect()
@@ -336,8 +334,6 @@ func (wac *WhatsAppClient) writeAuthStatusFile(data map[string]string) {
 		wac.logger.Warnf("Failed to write auth status file: %v", err)
 	}
 }
-
-// --- Stale Message Detector ---
 
 func (wac *WhatsAppClient) startStaleMessageDetector() {
 	if wac.staleDetectorDone != nil {

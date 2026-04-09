@@ -277,7 +277,7 @@ func (ms *MessageStore) GetDeliveryStatus(messageID, chatJID string) (string, *t
 	return status.String, tsPtr, nil
 }
 
-func (ms *MessageStore) GetRecentOutgoingStatus(chatJID string, limit int) ([]map[string]interface{}, error) {
+func (ms *MessageStore) GetRecentOutgoingStatus(chatJID string, limit int) ([]map[string]any, error) {
 	if limit <= 0 {
 		limit = 10
 	}
@@ -292,7 +292,7 @@ func (ms *MessageStore) GetRecentOutgoingStatus(chatJID string, limit int) ([]ma
 	}
 	defer rows.Close()
 
-	var results []map[string]interface{}
+	var results []map[string]any
 	for rows.Next() {
 		var id, content string
 		var ts time.Time
@@ -301,7 +301,7 @@ func (ms *MessageStore) GetRecentOutgoingStatus(chatJID string, limit int) ([]ma
 		if err := rows.Scan(&id, &content, &ts, &status, &deliveryTs); err != nil {
 			continue
 		}
-		entry := map[string]interface{}{
+		entry := map[string]any{
 			"id":              id,
 			"content":         content,
 			"timestamp":       ts.Format(time.RFC3339),
@@ -346,7 +346,7 @@ func (ms *MessageStore) SearchContacts(query string, limit int) ([]Contact, erro
 		"phone_number LIKE ?",
 		"LOWER(jid) LIKE ?",
 	}
-	manualArgs := []interface{}{likeName, jidLike, jidLike}
+	manualArgs := []any{likeName, jidLike, jidLike}
 	if rawDigits != "" {
 		manualConditions = append(manualConditions, "REPLACE(phone_number, '+', '') LIKE ?")
 		manualArgs = append(manualArgs, digitsLike)
@@ -390,7 +390,7 @@ func (ms *MessageStore) SearchContacts(query string, limit int) ([]Contact, erro
 		"LOWER(COALESCE(name, '')) LIKE ?",
 		"LOWER(jid) LIKE ?",
 	}
-	chatArgs := []interface{}{likeName, jidLike}
+	chatArgs := []any{likeName, jidLike}
 	if rawDigits != "" {
 		chatConditions = append(chatConditions, "SUBSTR(jid, 1, INSTR(jid, '@') - 1) LIKE ?")
 		chatArgs = append(chatArgs, digitsLike)
@@ -589,7 +589,7 @@ func (ms *MessageStore) listMessagesFTS(
 		JOIN messages_fts ON messages_fts.rowid = m.rowid
 		WHERE messages_fts MATCH ?
 	`)
-	args := []interface{}{query}
+	args := []any{query}
 
 	if after != nil {
 		qb.WriteString(" AND m.timestamp >= ?")
@@ -628,7 +628,7 @@ func (ms *MessageStore) listMessagesLike(
 		JOIN chats c ON m.chat_jid = c.jid
 		WHERE 1=1
 	`)
-	args := []interface{}{}
+	args := []any{}
 
 	if after != nil {
 		qb.WriteString(" AND m.timestamp >= ?")
@@ -721,7 +721,7 @@ func (ms *MessageStore) listChatsFiltered(
 			FROM chats c`)
 	}
 
-	args := []interface{}{}
+	args := []any{}
 	clauses := []string{}
 
 	if jidFilter != "" {

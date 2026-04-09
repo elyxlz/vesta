@@ -8,7 +8,7 @@ import (
 	"go.mau.fi/whatsmeow/types/events"
 )
 
-func (wac *WhatsAppClient) eventHandler(evt interface{}) {
+func (wac *WhatsAppClient) eventHandler(evt any) {
 	switch v := evt.(type) {
 	case *events.Message:
 		if v.Message.GetReactionMessage() != nil {

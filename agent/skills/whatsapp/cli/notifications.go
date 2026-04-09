@@ -45,7 +45,7 @@ type reactionNotif struct {
 	Note            string `json:"note,omitempty"`
 }
 
-func writeNotificationFile(notifDir string, data interface{}, notifType string) error {
+func writeNotificationFile(notifDir string, data any, notifType string) error {
 	if notifDir == "" {
 		return nil
 	}
@@ -62,14 +62,7 @@ func writeNotificationFile(notifDir string, data interface{}, notifType string) 
 
 const unknownContactNote = "Unknown contact. Ask the user who this is and add them as a contact once you know."
 
-func (ctx NotifContext) applyGroupFields(sender, chatName *string) {
-	if !ctx.IsDirectChat {
-		*sender = ctx.Sender
-		*chatName = ctx.ChatName
-	}
-}
-
-func (ctx NotifContext) unknownNote() string {
+func (ctx NotifContext) note() string {
 	if !ctx.ContactSaved && ctx.IsDirectChat && ctx.Instance == "" {
 		return unknownContactNote
 	}
@@ -95,9 +88,12 @@ func WriteNotification(
 		Timestamp:       time.Now().Format(time.RFC3339),
 		MessageID:       messageID,
 		ContactSaved:    ctx.ContactSaved,
-		Note:            ctx.unknownNote(),
+		Note:            ctx.note(),
 	}
-	ctx.applyGroupFields(&n.Sender, &n.ChatName)
+	if !ctx.IsDirectChat {
+		n.Sender = ctx.Sender
+		n.ChatName = ctx.ChatName
+	}
 	return writeNotificationFile(ctx.NotifDir, n, "message")
 }
 
@@ -116,8 +112,11 @@ func WriteReactionNotification(
 		Timestamp:       time.Now().Format(time.RFC3339),
 		TargetMessageID: targetMessageID,
 		ContactSaved:    ctx.ContactSaved,
-		Note:            ctx.unknownNote(),
+		Note:            ctx.note(),
 	}
-	ctx.applyGroupFields(&n.Sender, &n.ChatName)
+	if !ctx.IsDirectChat {
+		n.Sender = ctx.Sender
+		n.ChatName = ctx.ChatName
+	}
 	return writeNotificationFile(ctx.NotifDir, n, "reaction")
 }

@@ -89,8 +89,6 @@ const (
 // Whisper model default path.
 const DefaultWhisperModelPath = "/usr/local/share/ggml-small.bin"
 
-// shellEscapeReplacer undoes bash escape sequences that the shell execution
-// environment may introduce (e.g. \! → !).
 var shellEscapeReplacer = strings.NewReplacer(
 	`\!`, `!`,
 	`\?`, `?`,
