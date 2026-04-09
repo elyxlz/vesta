@@ -59,7 +59,7 @@ export function Navbar({ center, trailing, leadingExtra }: NavbarProps = {}) {
         <div data-tauri-drag-region className="flex flex-1 items-center gap-2">
           {connected && isHome && (
             <Button
-              variant="default"
+              variant="secondary"
               size="lg"
               onClick={() => navigate("/new")}
             >
