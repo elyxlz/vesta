@@ -5,6 +5,7 @@
 """Upstream PR tool — authenticates via GitHub App, pushes branch, creates PR."""
 
 import argparse
+import os
 import subprocess
 import sys
 import time
@@ -81,6 +82,11 @@ def main():
     if not args.title:
         parser.error("--title is required when creating a PR")
 
+    # Resolve agent identity for commit authorship
+    agent_name = os.environ.get("AGENT_NAME", "vesta")
+    author_name = f"{agent_name} (vesta)"
+    author_email = f"{agent_name}@vesta.noreply"
+
     # Get current branch
     result = run(["git", "rev-parse", "--abbrev-ref", "HEAD"])
     if result.returncode != 0:
@@ -88,6 +94,13 @@ def main():
         sys.exit(1)
     current_branch = result.stdout.strip()
     branch = args.branch or current_branch
+
+    # Set commit author so pushes are attributed to this vesta instance
+    run(["git", "config", "user.name", author_name])
+    run(["git", "config", "user.email", author_email])
+
+    # Amend the latest commit to update its author to this vesta instance
+    run(["git", "commit", "--amend", "--no-edit", f"--author={author_name} <{author_email}>"])
 
     # Configure upstream remote
     remote_url = f"https://x-access-token:{token}@github.com/{UPSTREAM_REPO}.git"
@@ -111,10 +124,15 @@ def main():
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     }
+    # Append agent attribution to PR body
+    body = args.body
+    attribution = f"\n\n---\nSubmitted by **{agent_name}**"
+    body = f"{body}{attribution}" if body else attribution.lstrip()
+
     resp = requests.post(
         f"{GITHUB_API}/repos/{UPSTREAM_REPO}/pulls",
         headers=headers,
-        json={"title": args.title, "body": args.body, "head": branch, "base": args.base},
+        json={"title": args.title, "body": body, "head": branch, "base": args.base},
         timeout=30,
     )
 
