@@ -20,11 +20,12 @@ type ChatContextValue = ReturnType<typeof useChat> & {
 const ChatContext = createContext<ChatContextValue | null>(null);
 
 export function ChatProvider({ children }: { children: ReactNode }) {
-  const { name, setAgentState } = useSelectedAgent();
+  const { name, agent, setAgentState } = useSelectedAgent();
   const { speak } = useVoice();
   const [showToolCalls, setShowToolCalls] = useState(false);
 
-  const chat = useChat({ name, active: true, onAssistantMessage: speak });
+  const ready = agent?.agent_ready ?? false;
+  const chat = useChat({ name, active: ready, onAssistantMessage: speak });
 
   useEffect(() => {
     setAgentState(chat.agentState);

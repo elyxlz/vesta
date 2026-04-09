@@ -37,7 +37,7 @@ RUN for d in skills/*/; do \
 RUN mkdir -p .claude && ln -s ../skills .claude/skills
 
 # Bare repo for upstream skill (fetch/worktree/show without exposing cli/app as working files)
-RUN git clone --bare --single-branch https://github.com/elyxlz/vesta.git .git && \
+RUN git clone --bare https://github.com/elyxlz/vesta.git .git && \
     git config core.bare false
 
 RUN rm -f /usr/bin/pkill /usr/bin/killall

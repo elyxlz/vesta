@@ -208,7 +208,7 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool) {
 
     let user = std::env::var("USER").or_else(|_| std::env::var("LOGNAME")).unwrap_or_else(|_| "unknown".into());
     eprintln!();
-    eprintln!("  \x1b[1;35mvestad\x1b[0m v{} \x1b[2m(user: {}, port: {})\x1b[0m", env!("CARGO_PKG_VERSION"), user, port);
+    eprintln!("  \x1b[1;35mvestad\x1b[0m {} \x1b[2m(user: {}, port: {})\x1b[0m", docker::vesta_version(), user, port);
     print_server_info(tunnel_url.as_deref(), &local_url, &api_key);
 
     tokio::runtime::Builder::new_multi_thread()
@@ -262,7 +262,7 @@ fn run_server_systemd(port: Option<u16>, no_tunnel: bool) {
     let (tunnel_url, local_url, api_key) = read_server_info(&config);
 
     eprintln!();
-    eprintln!("  \x1b[1;35mvestad\x1b[0m v{} is now running as a systemd service.", env!("CARGO_PKG_VERSION"));
+    eprintln!("  \x1b[1;35mvestad\x1b[0m {} is now running as a systemd service.", docker::vesta_version());
 
     if let Some(api_key) = &api_key {
         print_server_info(
@@ -307,7 +307,7 @@ fn main() {
 
         Command::Status => {
             let config = config_dir();
-            eprintln!("  \x1b[1;35mvestad\x1b[0m v{}", env!("CARGO_PKG_VERSION"));
+            eprintln!("  \x1b[1;35mvestad\x1b[0m {}", docker::vesta_version());
 
             let (tunnel_url, local_url, api_key) = read_server_info(&config);
             if let Some(api_key) = &api_key {
@@ -517,7 +517,7 @@ fn main() {
         }
 
         Command::Version => {
-            println!("v{}", env!("CARGO_PKG_VERSION"));
+            println!("{}", docker::vesta_version());
         }
 
         Command::Uninstall => {

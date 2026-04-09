@@ -597,26 +597,34 @@ pub fn generate_agent_token() -> String {
         .collect()
 }
 
-/// Determine the git ref for the running vestad.
-/// Returns the version tag (e.g. "v0.1.116") if one exists for HEAD, otherwise the current branch name.
-fn vesta_git_ref() -> String {
+/// Returns the current git branch name, or None for release builds (where the tag matches the version).
+fn git_branch() -> Option<String> {
     let version = env!("CARGO_PKG_VERSION");
     let tag = format!("v{version}");
-    // Check if this exact tag exists in the repo
-    let tag_exists = std::process::Command::new("git")
-        .args(["rev-parse", "--verify", &format!("refs/tags/{tag}")])
+    // Check if HEAD is the exact tagged commit (i.e. this is a release build)
+    let is_release = std::process::Command::new("git")
+        .args(["describe", "--exact-match", "--tags", "HEAD"])
         .output()
-        .is_ok_and(|o| o.status.success());
-    if tag_exists {
-        return tag;
+        .ok()
+        .and_then(|o| o.status.success().then(|| String::from_utf8_lossy(&o.stdout).trim().to_string()))
+        .is_some_and(|t| t == tag);
+    if is_release {
+        return None;
     }
-    // Fall back to current branch
     std::process::Command::new("git")
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .output()
         .ok()
         .and_then(|o| o.status.success().then(|| String::from_utf8_lossy(&o.stdout).trim().to_string()))
-        .unwrap_or_else(|| "master".to_string())
+}
+
+/// Full version string: "v0.1.116" for releases, "v0.1.116 (branch-name)" for dev builds.
+pub fn vesta_version() -> String {
+    let version = format!("v{}", env!("CARGO_PKG_VERSION"));
+    match git_branch() {
+        Some(branch) => format!("{version} ({branch})"),
+        None => version,
+    }
 }
 
 // --- Per-agent env file ---
@@ -660,8 +668,8 @@ pub fn write_agent_env_file(
     if let Some(url) = &env_config.vestad_tunnel {
         content.push_str(&format!("export VESTAD_TUNNEL={url}\n"));
     }
-    let vesta_ref = vesta_git_ref();
-    content.push_str(&format!("export VESTA_VERSION={vesta_ref}\n"));
+    let version = vesta_version();
+    content.push_str(&format!("export VESTA_VERSION='{version}'\n"));
     std::fs::write(&env_path, &content)
         .map_err(|e| DockerError::Failed(format!("failed to write agent env file: {e}")))?;
     #[cfg(unix)]
