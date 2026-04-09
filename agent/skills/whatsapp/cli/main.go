@@ -59,9 +59,9 @@ func main() {
 		command = canon
 	}
 
-	// The bash execution environment escapes ! to \! — undo that in all args
+	// The bash execution environment escapes special chars — undo in all args
 	for i := range os.Args {
-		os.Args[i] = strings.ReplaceAll(os.Args[i], `\!`, `!`)
+		os.Args[i] = shellEscapeReplacer.Replace(os.Args[i])
 	}
 
 	// Rewrite leading positional args into flags

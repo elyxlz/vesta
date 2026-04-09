@@ -64,6 +64,22 @@ const (
 	SocketDialTimeout = 2 * time.Second
 )
 
+// Delivery status progression: sent → delivered → read → played.
+const (
+	DeliveryStatusSent      = "sent"
+	DeliveryStatusDelivered = "delivered"
+	DeliveryStatusRead      = "read"
+	DeliveryStatusPlayed    = "played"
+)
+
+// Media type identifiers.
+const (
+	MediaTypeImage    = "image"
+	MediaTypeVideo    = "video"
+	MediaTypeAudio    = "audio"
+	MediaTypeDocument = "document"
+)
+
 // Whisper model default path.
 const DefaultWhisperModelPath = "/usr/local/share/ggml-small.bin"
 

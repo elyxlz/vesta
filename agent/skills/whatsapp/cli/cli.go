@@ -676,22 +676,6 @@ func cmdCheckDelivery(args []string, wac *WhatsAppClient) (interface{}, error) {
 		return nil, err
 	}
 
-	if recent || messageID == "" {
-		var chatJID string
-		if to != "" {
-			jid, err := wac.ResolveRecipient(to)
-			if err != nil {
-				return nil, fmt.Errorf("failed to resolve chat: %v", err)
-			}
-			chatJID = jid.String()
-		}
-		results, err := wac.store.GetRecentOutgoingStatus(chatJID, limit)
-		if err != nil {
-			return nil, err
-		}
-		return map[string]interface{}{"messages": results}, nil
-	}
-
 	var chatJID string
 	if to != "" {
 		jid, err := wac.ResolveRecipient(to)
@@ -700,6 +684,15 @@ func cmdCheckDelivery(args []string, wac *WhatsAppClient) (interface{}, error) {
 		}
 		chatJID = jid.String()
 	}
+
+	if recent || messageID == "" {
+		results, err := wac.store.GetRecentOutgoingStatus(chatJID, limit)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{"messages": results}, nil
+	}
+
 	status, ts, err := wac.store.GetDeliveryStatus(messageID, chatJID)
 	if err != nil {
 		return nil, fmt.Errorf("message not found: %v", err)

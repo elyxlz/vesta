@@ -33,25 +33,25 @@ func (wac *WhatsAppClient) DownloadMedia(messageID, chatIdentifier, downloadPath
 
 	var downloadable whatsmeow.DownloadableMessage
 	switch mediaInfo.MediaType {
-	case "image":
+	case MediaTypeImage:
 		downloadable = &waProto.ImageMessage{
 			URL: proto.String(mediaInfo.URL), MediaKey: mediaInfo.MediaKey,
 			FileSHA256: mediaInfo.FileSHA256, FileEncSHA256: mediaInfo.FileEncSHA256,
 			FileLength: proto.Uint64(mediaInfo.FileLength),
 		}
-	case "video":
+	case MediaTypeVideo:
 		downloadable = &waProto.VideoMessage{
 			URL: proto.String(mediaInfo.URL), MediaKey: mediaInfo.MediaKey,
 			FileSHA256: mediaInfo.FileSHA256, FileEncSHA256: mediaInfo.FileEncSHA256,
 			FileLength: proto.Uint64(mediaInfo.FileLength),
 		}
-	case "audio":
+	case MediaTypeAudio:
 		downloadable = &waProto.AudioMessage{
 			URL: proto.String(mediaInfo.URL), MediaKey: mediaInfo.MediaKey,
 			FileSHA256: mediaInfo.FileSHA256, FileEncSHA256: mediaInfo.FileEncSHA256,
 			FileLength: proto.Uint64(mediaInfo.FileLength),
 		}
-	case "document":
+	case MediaTypeDocument:
 		downloadable = &waProto.DocumentMessage{
 			URL: proto.String(mediaInfo.URL), MediaKey: mediaInfo.MediaKey,
 			FileSHA256: mediaInfo.FileSHA256, FileEncSHA256: mediaInfo.FileEncSHA256,
@@ -154,13 +154,13 @@ func (wac *WhatsAppClient) RevokeMessage(messageID, chatIdentifier string) (bool
 func mediaTypeToString(mt whatsmeow.MediaType) string {
 	switch mt {
 	case whatsmeow.MediaImage:
-		return "image"
+		return MediaTypeImage
 	case whatsmeow.MediaVideo:
-		return "video"
+		return MediaTypeVideo
 	case whatsmeow.MediaAudio:
-		return "audio"
+		return MediaTypeAudio
 	case whatsmeow.MediaDocument:
-		return "document"
+		return MediaTypeDocument
 	default:
 		return ""
 	}
@@ -168,11 +168,11 @@ func mediaTypeToString(mt whatsmeow.MediaType) string {
 
 func getExtensionForMediaType(mediaType string) string {
 	switch mediaType {
-	case "image":
+	case MediaTypeImage:
 		return ".jpg"
-	case "video":
+	case MediaTypeVideo:
 		return ".mp4"
-	case "audio":
+	case MediaTypeAudio:
 		return ".ogg"
 	default:
 		return ".bin"
@@ -338,19 +338,19 @@ func extractMediaInfo(msg *waProto.Message) (
 		return
 	}
 	if img := msg.GetImageMessage(); img != nil {
-		return "image", "", img.GetURL(),
+		return MediaTypeImage, "", img.GetURL(),
 			img.GetMediaKey(), img.GetFileSHA256(), img.GetFileEncSHA256(), img.GetFileLength()
 	}
 	if vid := msg.GetVideoMessage(); vid != nil {
-		return "video", "", vid.GetURL(),
+		return MediaTypeVideo, "", vid.GetURL(),
 			vid.GetMediaKey(), vid.GetFileSHA256(), vid.GetFileEncSHA256(), vid.GetFileLength()
 	}
 	if aud := msg.GetAudioMessage(); aud != nil {
-		return "audio", "", aud.GetURL(),
+		return MediaTypeAudio, "", aud.GetURL(),
 			aud.GetMediaKey(), aud.GetFileSHA256(), aud.GetFileEncSHA256(), aud.GetFileLength()
 	}
 	if doc := msg.GetDocumentMessage(); doc != nil {
-		return "document", doc.GetFileName(), doc.GetURL(),
+		return MediaTypeDocument, doc.GetFileName(), doc.GetURL(),
 			doc.GetMediaKey(), doc.GetFileSHA256(), doc.GetFileEncSHA256(), doc.GetFileLength()
 	}
 	return

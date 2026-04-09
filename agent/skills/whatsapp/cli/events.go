@@ -50,14 +50,14 @@ func (wac *WhatsAppClient) handleReceipt(evt *events.Receipt) {
 	var status string
 	switch evt.Type {
 	case types.ReceiptTypeDelivered:
-		status = "delivered"
+		status = DeliveryStatusDelivered
 	case types.ReceiptTypeRead:
-		status = "read"
+		status = DeliveryStatusRead
 	case types.ReceiptTypePlayed:
-		status = "played"
+		status = DeliveryStatusPlayed
 	default:
 		if evt.Type == types.ReceiptTypeSender || evt.Type == "" {
-			status = "delivered"
+			status = DeliveryStatusDelivered
 		} else {
 			return
 		}
@@ -84,7 +84,7 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 		return
 	}
 
-	resolvedSender, senderDisplay, _, _, _, _ := wac.prepareNotificationInfo(info.MessageSource)
+	resolvedSender, senderDisplay, contactName, contactPhone, contactSaved, isDirectChat := wac.prepareNotificationInfo(info.MessageSource)
 	chatName := wac.getChatName(info.Chat)
 
 	// Track message sender for reaction routing
@@ -112,24 +112,21 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 	}
 
 	// Auto-transcribe audio messages
-	if mediaType == "audio" && !info.IsFromMe {
+	if mediaType == MediaTypeAudio && !info.IsFromMe {
 		if transcription := wac.transcribeAudioMessage(info.ID, info.Chat.String()); transcription != "" {
 			content = transcription
 		}
 	}
 
 	// Write notification for incoming messages
-	if wac.notificationsDir != "" && !info.IsFromMe {
-		_, senderDisplay, contactName, contactPhone, contactSaved, isDirectChat := wac.prepareNotificationInfo(info.MessageSource)
-		if !wac.skipSenders[contactPhone] {
-			WriteNotification(
-				wac.notificationsDir, info.ID, chatName,
-				contactName, contactPhone, wac.instance,
-				contactSaved, isDirectChat, senderDisplay,
-				content, mediaType, isForwarded,
-				quotedMessageID, quotedText,
-			)
-		}
+	if wac.notificationsDir != "" && !info.IsFromMe && !wac.skipSenders[contactPhone] {
+		WriteNotification(
+			wac.notificationsDir, info.ID, chatName,
+			contactName, contactPhone, wac.instance,
+			contactSaved, isDirectChat, senderDisplay,
+			content, mediaType, isForwarded,
+			quotedMessageID, quotedText,
+		)
 	}
 
 	// Delayed read receipt

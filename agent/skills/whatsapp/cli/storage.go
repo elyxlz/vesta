@@ -204,7 +204,7 @@ func (ms *MessageStore) StoreMessage(
 ) error {
 	deliveryStatus := ""
 	if isFromMe {
-		deliveryStatus = "sent"
+		deliveryStatus = DeliveryStatusSent
 	}
 	_, err := ms.db.Exec(`
 		INSERT OR REPLACE INTO messages (
@@ -221,7 +221,7 @@ func (ms *MessageStore) StoreMessage(
 
 func (ms *MessageStore) UpdateDeliveryStatus(messageID, chatJID, status string, timestamp time.Time) error {
 	// Only upgrade status: sent -> delivered -> read -> played
-	statusRank := map[string]int{"": 0, "sent": 1, "delivered": 2, "read": 3, "played": 4}
+	statusRank := map[string]int{"": 0, DeliveryStatusSent: 1, DeliveryStatusDelivered: 2, DeliveryStatusRead: 3, DeliveryStatusPlayed: 4}
 	newRank := statusRank[status]
 	if newRank == 0 {
 		return nil
@@ -783,8 +783,8 @@ func (ms *MessageStore) GetStaleOutgoingMessages(olderThan time.Duration) ([]str
 	cutoff := time.Now().Add(-olderThan)
 	rows, err := ms.db.Query(`
 		SELECT id FROM messages
-		WHERE delivery_status = 'sent' AND is_from_me = 1 AND timestamp < ?
-	`, cutoff)
+		WHERE delivery_status = ? AND is_from_me = 1 AND timestamp < ?
+	`, DeliveryStatusSent, cutoff)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query stale messages: %v", err)
 	}

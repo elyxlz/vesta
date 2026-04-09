@@ -11,6 +11,19 @@ import (
 	"go.mau.fi/whatsmeow/types"
 )
 
+// resolveGroup resolves an identifier to a group JID, returning an error if
+// the identifier doesn't point to a group.
+func (wac *WhatsAppClient) resolveGroup(identifier string) (types.JID, error) {
+	jid, err := wac.ResolveRecipient(identifier)
+	if err != nil {
+		return types.JID{}, fmt.Errorf("Failed to resolve group: %v", err)
+	}
+	if jid.Server != types.GroupServer {
+		return types.JID{}, fmt.Errorf("The specified identifier is not a WhatsApp group")
+	}
+	return jid, nil
+}
+
 func (wac *WhatsAppClient) CreateGroup(name string, participants []string) (bool, string) {
 	if name == "" || len(participants) == 0 {
 		return false, "Group name and participants are required"
@@ -39,12 +52,9 @@ func (wac *WhatsAppClient) LeaveGroup(groupIdentifier string) (bool, string) {
 		return false, "Group name is required"
 	}
 
-	jid, err := wac.ResolveRecipient(groupIdentifier)
+	jid, err := wac.resolveGroup(groupIdentifier)
 	if err != nil {
-		return false, fmt.Sprintf("Failed to resolve group: %v", err)
-	}
-	if jid.Server != types.GroupServer {
-		return false, "The specified identifier is not a WhatsApp group"
+		return false, err.Error()
 	}
 
 	err = wac.client.LeaveGroup(context.Background(), jid)
@@ -59,12 +69,9 @@ func (wac *WhatsAppClient) RenameGroup(groupIdentifier, newName string) (bool, s
 		return false, "Group identifier and new name are required"
 	}
 
-	jid, err := wac.ResolveRecipient(groupIdentifier)
+	jid, err := wac.resolveGroup(groupIdentifier)
 	if err != nil {
-		return false, fmt.Sprintf("Failed to resolve group: %v", err)
-	}
-	if jid.Server != types.GroupServer {
-		return false, "The specified identifier is not a WhatsApp group"
+		return false, err.Error()
 	}
 	if err := wac.EnsureConnected(); err != nil {
 		return false, err.Error()
@@ -84,12 +91,9 @@ func (wac *WhatsAppClient) SetGroupPhoto(groupIdentifier, filePath string) (bool
 		return false, "Group identifier and file path are required"
 	}
 
-	jid, err := wac.ResolveRecipient(groupIdentifier)
+	jid, err := wac.resolveGroup(groupIdentifier)
 	if err != nil {
-		return false, fmt.Sprintf("Failed to resolve group: %v", err)
-	}
-	if jid.Server != types.GroupServer {
-		return false, "The specified identifier is not a WhatsApp group"
+		return false, err.Error()
 	}
 
 	imageBytes, err := os.ReadFile(filePath)
@@ -111,12 +115,9 @@ func (wac *WhatsAppClient) SetGroupDescription(groupIdentifier, description stri
 	if groupIdentifier == "" || description == "" {
 		return false, "Group identifier and description are required"
 	}
-	jid, err := wac.ResolveRecipient(groupIdentifier)
+	jid, err := wac.resolveGroup(groupIdentifier)
 	if err != nil {
-		return false, fmt.Sprintf("Failed to resolve group: %v", err)
-	}
-	if jid.Server != types.GroupServer {
-		return false, "The specified identifier is not a WhatsApp group"
+		return false, err.Error()
 	}
 	if err := wac.EnsureConnected(); err != nil {
 		return false, err.Error()
@@ -128,12 +129,9 @@ func (wac *WhatsAppClient) SetGroupDescription(groupIdentifier, description stri
 }
 
 func (wac *WhatsAppClient) GetGroupInviteLink(groupIdentifier string) (bool, string, string) {
-	jid, err := wac.ResolveRecipient(groupIdentifier)
+	jid, err := wac.resolveGroup(groupIdentifier)
 	if err != nil {
-		return false, "", fmt.Sprintf("Failed to resolve group: %v", err)
-	}
-	if jid.Server != types.GroupServer {
-		return false, "", "The specified identifier is not a WhatsApp group"
+		return false, "", err.Error()
 	}
 
 	link, err := wac.client.GetGroupInviteLink(context.Background(), jid, false)
@@ -148,12 +146,9 @@ func (wac *WhatsAppClient) UpdateGroupParticipants(groupIdentifier, action strin
 		return false, "group is required"
 	}
 
-	jid, err := wac.ResolveRecipient(groupIdentifier)
+	jid, err := wac.resolveGroup(groupIdentifier)
 	if err != nil {
-		return false, fmt.Sprintf("Failed to resolve group: %v", err)
-	}
-	if jid.Server != types.GroupServer {
-		return false, "The specified identifier is not a WhatsApp group"
+		return false, err.Error()
 	}
 
 	participantJIDs, err := parseParticipantJIDs(participants)
