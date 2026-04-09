@@ -1,7 +1,7 @@
 import { useEffect, useRef, useCallback, useState } from "react";
 import { LayoutDashboard, AlertCircle } from "lucide-react";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
-import { useTheme } from "@/stores/use-theme";
+import { useTheme } from "@/providers/ThemeProvider";
 import { getConnection } from "@/lib/connection";
 import { apiFetch } from "@/api/client";
 import { useServiceUpdate } from "@/hooks/use-service-update";
@@ -18,8 +18,7 @@ type Status = "loading" | "not-setup" | "ready" | "error";
 export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
   const { name } = useSelectedAgent();
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const theme = useTheme((s) => s.theme);
-  const resolved = useTheme((s) => s.resolved);
+  const { resolvedTheme } = useTheme();
   const [status, setStatus] = useState<Status>("loading");
   const [loaded, setLoaded] = useState(false);
   const [iframeKey, setIframeKey] = useState(0);
@@ -28,7 +27,9 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
     let cancelled = false;
     async function check() {
       try {
-        const resp = await apiFetch(`/agents/${encodeURIComponent(name)}/services`);
+        const resp = await apiFetch(
+          `/agents/${encodeURIComponent(name)}/services`,
+        );
         if (cancelled) return;
         const body: { services: Record<string, number> } = await resp.json();
         setStatus("dashboard" in body.services ? "ready" : "not-setup");
@@ -37,18 +38,23 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
       }
     }
     check();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [name]);
 
-  useServiceUpdate("dashboard", useCallback((action) => {
-    if (action === "removed") {
-      setStatus("not-setup");
-    } else {
-      setStatus("ready");
-      setLoaded(false);
-      setIframeKey((k) => k + 1);
-    }
-  }, []));
+  useServiceUpdate(
+    "dashboard",
+    useCallback((action) => {
+      if (action === "removed") {
+        setStatus("not-setup");
+      } else {
+        setStatus("ready");
+        setLoaded(false);
+        setIframeKey((k) => k + 1);
+      }
+    }, []),
+  );
 
   const conn = getConnection();
   const dashboardUrl =
@@ -59,18 +65,29 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
   const sendContext = useCallback(() => {
     const frame = iframeRef.current?.contentWindow;
     if (!frame) return;
-    frame.postMessage({ type: "vesta-theme", dark: resolved() === "dark" }, "*");
+    frame.postMessage(
+      { type: "vesta-theme", dark: resolvedTheme === "dark" },
+      "*",
+    );
     frame.postMessage({ type: "vesta-layout", fullscreen: !!fullscreen }, "*");
-    if (conn) frame.postMessage({
-      type: "vesta-auth",
-      token: conn.accessToken,
-      baseUrl: `${conn.url}/agents/${encodeURIComponent(name)}`,
-    }, "*");
-  }, [resolved, conn, fullscreen]);
+    if (conn)
+      frame.postMessage(
+        {
+          type: "vesta-auth",
+          token: conn.accessToken,
+          baseUrl: `${conn.url}/agents/${encodeURIComponent(name)}`,
+        },
+        "*",
+      );
+  }, [resolvedTheme, conn, fullscreen]);
 
   useEffect(() => {
     const handler = (e: MessageEvent) => {
-      if (e.data?.type === "vesta-theme-request" || e.data?.type === "vesta-auth-request" || e.data?.type === "vesta-layout-request") {
+      if (
+        e.data?.type === "vesta-theme-request" ||
+        e.data?.type === "vesta-auth-request" ||
+        e.data?.type === "vesta-layout-request"
+      ) {
         sendContext();
       }
     };
@@ -80,7 +97,7 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
 
   useEffect(() => {
     sendContext();
-  }, [sendContext, theme]);
+  }, [sendContext, resolvedTheme]);
 
   if (status === "loading") return null;
 
@@ -109,7 +126,8 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
           </EmptyMedia>
           <EmptyTitle>dashboard unavailable</EmptyTitle>
           <EmptyDescription>
-            the dashboard server isn't responding — ask your agent to check on it
+            the dashboard server isn't responding — ask your agent to check on
+            it
           </EmptyDescription>
         </EmptyHeader>
       </Empty>

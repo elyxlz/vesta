@@ -16,7 +16,12 @@ export interface AgentInfo {
   friendly_status: string;
 }
 
-export type AgentStatus = "running" | "stopped" | "dead" | "not_found" | "unknown";
+export type AgentStatus =
+  | "running"
+  | "stopped"
+  | "dead"
+  | "not_found"
+  | "unknown";
 
 export interface ListEntry {
   name: string;
@@ -44,8 +49,17 @@ export type VestaEvent =
   | (BaseEvent & { type: "tool_end"; tool: string })
   | (BaseEvent & { type: "error"; text: string })
   | (BaseEvent & { type: "notification"; source: string; summary: string })
-  | (BaseEvent & { type: "service_update"; service: string; action: "registered" | "updated" | "removed" })
-  | (BaseEvent & { type: "history"; events: VestaEvent[]; state: AgentActivityState; cursor: number | null });
+  | (BaseEvent & {
+      type: "service_update";
+      service: string;
+      action: "registered" | "updated" | "removed";
+    })
+  | (BaseEvent & {
+      type: "history";
+      events: VestaEvent[];
+      state: AgentActivityState;
+      cursor: number | null;
+    });
 
 export type LogEvent =
   | { kind: "Line"; text: string }

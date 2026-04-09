@@ -90,9 +90,7 @@ export async function waitForReady(
   timeout?: number,
 ): Promise<void> {
   const t = timeout ?? 30;
-  await apiJson(
-    `/agents/${encodeURIComponent(name)}/wait-ready?timeout=${t}`,
-  );
+  await apiJson(`/agents/${encodeURIComponent(name)}/wait-ready?timeout=${t}`);
 }
 
 export interface RateLimit {

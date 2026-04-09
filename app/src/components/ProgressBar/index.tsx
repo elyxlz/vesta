@@ -10,7 +10,9 @@ export function ProgressBar({ message }: ProgressBarProps) {
       <div className="w-full max-w-[200px] h-[3px] bg-foreground/5 rounded-full overflow-hidden">
         <div
           className="h-full w-1/3 bg-foreground/30 rounded-full"
-          style={{ animation: "progress-indeterminate 1.5s ease-in-out infinite" }}
+          style={{
+            animation: "progress-indeterminate 1.5s ease-in-out infinite",
+          }}
         />
       </div>
       <AnimatePresence mode="wait">

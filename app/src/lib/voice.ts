@@ -3,7 +3,11 @@ import { getConnection } from "@/lib/connection";
 
 const SAMPLE_RATE = 16000;
 
-function voicePost(agentName: string, path: string, body: unknown): Promise<unknown> {
+function voicePost(
+  agentName: string,
+  path: string,
+  body: unknown,
+): Promise<unknown> {
   return apiJson(`/agents/${encodeURIComponent(agentName)}/voice/${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -24,11 +28,21 @@ export interface SettingDef {
   max?: number;
   step?: number;
   unit?: string;
-  options?: Array<{ value: string; label: string; preview?: string; custom?: boolean; [k: string]: unknown }>;
+  options?: Array<{
+    value: string;
+    label: string;
+    preview?: string;
+    custom?: boolean;
+    [k: string]: unknown;
+  }>;
 }
 
-export const setVoiceSetting = (n: string, domain: "stt" | "tts", key: string, value: unknown) =>
-  voicePost(n, `${domain}/set`, { key, value });
+export const setVoiceSetting = (
+  n: string,
+  domain: "stt" | "tts",
+  key: string,
+  value: unknown,
+) => voicePost(n, `${domain}/set`, { key, value });
 
 // --- STT ---
 
@@ -39,8 +53,14 @@ export interface SttStatus {
   settings?: SettingDef[];
 }
 
-export async function fetchSttStatus(agentName: string, signal?: AbortSignal): Promise<SttStatus> {
-  return apiJson<SttStatus>(`/agents/${encodeURIComponent(agentName)}/voice/stt/status`, { signal });
+export async function fetchSttStatus(
+  agentName: string,
+  signal?: AbortSignal,
+): Promise<SttStatus> {
+  return apiJson<SttStatus>(
+    `/agents/${encodeURIComponent(agentName)}/voice/stt/status`,
+    { signal },
+  );
 }
 
 export interface SttUsage {
@@ -49,12 +69,19 @@ export interface SttUsage {
 }
 
 export async function fetchSttUsage(agentName: string): Promise<SttUsage> {
-  return apiJson<SttUsage>(`/agents/${encodeURIComponent(agentName)}/voice/stt/usage`);
+  return apiJson<SttUsage>(
+    `/agents/${encodeURIComponent(agentName)}/voice/stt/usage`,
+  );
 }
 
-export const setSttEnabled = (n: string, value: boolean) => voicePost(n, "stt/set-enabled", { value });
-export const setSttAutoSend = (n: string, value: boolean) => voicePost(n, "stt/set-auto-send", { value });
-export const setSttEot = (n: string, params: { threshold?: number; timeout_ms?: number }) => voicePost(n, "stt/set-eot", params);
+export const setSttEnabled = (n: string, value: boolean) =>
+  voicePost(n, "stt/set-enabled", { value });
+export const setSttAutoSend = (n: string, value: boolean) =>
+  voicePost(n, "stt/set-auto-send", { value });
+export const setSttEot = (
+  n: string,
+  params: { threshold?: number; timeout_ms?: number },
+) => voicePost(n, "stt/set-eot", params);
 
 // --- TTS ---
 
@@ -65,8 +92,14 @@ export interface TtsStatus {
   settings?: SettingDef[];
 }
 
-export async function fetchTtsStatus(agentName: string, signal?: AbortSignal): Promise<TtsStatus> {
-  return apiJson<TtsStatus>(`/agents/${encodeURIComponent(agentName)}/voice/tts/status`, { signal });
+export async function fetchTtsStatus(
+  agentName: string,
+  signal?: AbortSignal,
+): Promise<TtsStatus> {
+  return apiJson<TtsStatus>(
+    `/agents/${encodeURIComponent(agentName)}/voice/tts/status`,
+    { signal },
+  );
 }
 
 export interface TtsUsage {
@@ -74,21 +107,32 @@ export interface TtsUsage {
 }
 
 export async function fetchTtsUsage(agentName: string): Promise<TtsUsage> {
-  return apiJson<TtsUsage>(`/agents/${encodeURIComponent(agentName)}/voice/tts/usage`);
+  return apiJson<TtsUsage>(
+    `/agents/${encodeURIComponent(agentName)}/voice/tts/usage`,
+  );
 }
 
-export const setTtsEnabled = (n: string, value: boolean) => voicePost(n, "tts/set-enabled", { value });
-export const setTtsVoice = (n: string, voiceId: string) => voicePost(n, "tts/set-voice", { voice_id: voiceId });
+export const setTtsEnabled = (n: string, value: boolean) =>
+  voicePost(n, "tts/set-enabled", { value });
+export const setTtsVoice = (n: string, voiceId: string) =>
+  voicePost(n, "tts/set-voice", { voice_id: voiceId });
 
 // --- TTS playback ---
 
-export async function streamSpeech(text: string, agentName: string, signal?: AbortSignal): Promise<void> {
-  const res = await apiFetch(`/agents/${encodeURIComponent(agentName)}/voice/tts/speak`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text }),
-    signal,
-  });
+export async function streamSpeech(
+  text: string,
+  agentName: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await apiFetch(
+    `/agents/${encodeURIComponent(agentName)}/voice/tts/speak`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+      signal,
+    },
+  );
 
   const contentType = res.headers.get("content-type") || "";
   if (contentType.includes("audio/mpeg") || contentType.includes("audio/mp3")) {
@@ -99,16 +143,28 @@ export async function streamSpeech(text: string, agentName: string, signal?: Abo
   const url = URL.createObjectURL(blob);
   const audio = new Audio(url);
   if (signal) {
-    signal.addEventListener("abort", () => { audio.pause(); URL.revokeObjectURL(url); });
+    signal.addEventListener("abort", () => {
+      audio.pause();
+      URL.revokeObjectURL(url);
+    });
   }
   await new Promise<void>((resolve, reject) => {
-    audio.onended = () => { URL.revokeObjectURL(url); resolve(); };
-    audio.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Audio playback failed")); };
+    audio.onended = () => {
+      URL.revokeObjectURL(url);
+      resolve();
+    };
+    audio.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Audio playback failed"));
+    };
     audio.play().catch(reject);
   });
 }
 
-async function playStreamedAudio(body: ReadableStream<Uint8Array>, signal?: AbortSignal): Promise<void> {
+async function playStreamedAudio(
+  body: ReadableStream<Uint8Array>,
+  signal?: AbortSignal,
+): Promise<void> {
   const mediaSource = new MediaSource();
   const audio = new Audio();
   audio.src = URL.createObjectURL(mediaSource);
@@ -121,60 +177,77 @@ async function playStreamedAudio(body: ReadableStream<Uint8Array>, signal?: Abor
   }
 
   await new Promise<void>((resolve, reject) => {
-    mediaSource.addEventListener("sourceopen", async () => {
-      let sourceBuffer: SourceBuffer;
-      try {
-        sourceBuffer = mediaSource.addSourceBuffer("audio/mpeg");
-      } catch {
-        URL.revokeObjectURL(audio.src);
+    mediaSource.addEventListener(
+      "sourceopen",
+      async () => {
+        let sourceBuffer: SourceBuffer;
+        try {
+          sourceBuffer = mediaSource.addSourceBuffer("audio/mpeg");
+        } catch {
+          URL.revokeObjectURL(audio.src);
+          const reader = body.getReader();
+          const chunks: Uint8Array[] = [];
+          // eslint-disable-next-line no-constant-condition
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            chunks.push(value);
+          }
+          const blob = new Blob(chunks as BlobPart[], { type: "audio/mpeg" });
+          audio.src = URL.createObjectURL(blob);
+          audio.onended = () => {
+            URL.revokeObjectURL(audio.src);
+            resolve();
+          };
+          audio.onerror = () => {
+            URL.revokeObjectURL(audio.src);
+            reject(new Error("Playback failed"));
+          };
+          audio.play().catch(reject);
+          return;
+        }
+
         const reader = body.getReader();
-        const chunks: Uint8Array[] = [];
+        const queue: Uint8Array[] = [];
+        let ended = false;
+
+        const appendNext = () => {
+          if (sourceBuffer.updating) return;
+          if (queue.length === 0) {
+            if (ended && mediaSource.readyState === "open")
+              mediaSource.endOfStream();
+            return;
+          }
+          sourceBuffer.appendBuffer(queue.shift()!.buffer as ArrayBuffer);
+        };
+
+        sourceBuffer.addEventListener("updateend", appendNext);
+
+        audio.onended = () => {
+          URL.revokeObjectURL(audio.src);
+          resolve();
+        };
+        audio.onerror = () => {
+          URL.revokeObjectURL(audio.src);
+          reject(new Error("Playback failed"));
+        };
+        audio.play().catch(reject);
+
         // eslint-disable-next-line no-constant-condition
         while (true) {
           const { done, value } = await reader.read();
-          if (done) break;
-          chunks.push(value);
-        }
-        const blob = new Blob(chunks as BlobPart[], { type: "audio/mpeg" });
-        audio.src = URL.createObjectURL(blob);
-        audio.onended = () => { URL.revokeObjectURL(audio.src); resolve(); };
-        audio.onerror = () => { URL.revokeObjectURL(audio.src); reject(new Error("Playback failed")); };
-        audio.play().catch(reject);
-        return;
-      }
-
-      const reader = body.getReader();
-      const queue: Uint8Array[] = [];
-      let ended = false;
-
-      const appendNext = () => {
-        if (sourceBuffer.updating) return;
-        if (queue.length === 0) {
-          if (ended && mediaSource.readyState === "open") mediaSource.endOfStream();
-          return;
-        }
-        sourceBuffer.appendBuffer(queue.shift()!.buffer as ArrayBuffer);
-      };
-
-      sourceBuffer.addEventListener("updateend", appendNext);
-
-      audio.onended = () => { URL.revokeObjectURL(audio.src); resolve(); };
-      audio.onerror = () => { URL.revokeObjectURL(audio.src); reject(new Error("Playback failed")); };
-      audio.play().catch(reject);
-
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        const { done, value } = await reader.read();
-        if (signal?.aborted) break;
-        if (done) {
-          ended = true;
+          if (signal?.aborted) break;
+          if (done) {
+            ended = true;
+            appendNext();
+            break;
+          }
+          queue.push(value);
           appendNext();
-          break;
         }
-        queue.push(value);
-        appendNext();
-      }
-    }, { once: true });
+      },
+      { once: true },
+    );
   });
 }
 
@@ -213,7 +286,9 @@ export class Transcriber {
 
     if (!navigator.mediaDevices) {
       this.active = false;
-      throw new Error("Microphone requires HTTPS — connect via the tunnel or localhost");
+      throw new Error(
+        "Microphone requires HTTPS — connect via the tunnel or localhost",
+      );
     }
 
     try {
@@ -227,9 +302,12 @@ export class Transcriber {
     } catch (err) {
       this.active = false;
       if (err instanceof DOMException) {
-        if (err.name === "NotAllowedError") throw new Error("Microphone permission denied");
-        if (err.name === "NotFoundError") throw new Error("No microphone found");
-        if (err.name === "NotReadableError") throw new Error("Microphone is in use by another app");
+        if (err.name === "NotAllowedError")
+          throw new Error("Microphone permission denied");
+        if (err.name === "NotFoundError")
+          throw new Error("No microphone found");
+        if (err.name === "NotReadableError")
+          throw new Error("Microphone is in use by another app");
       }
       throw new Error("Could not access microphone");
     }
@@ -242,7 +320,8 @@ export class Transcriber {
       await new Promise<void>((resolve, reject) => {
         socket.onopen = () => resolve();
         socket.onerror = () => reject(new Error("websocket error"));
-        socket.onclose = (ev) => reject(new Error(ev.reason || "closed before open"));
+        socket.onclose = (ev) =>
+          reject(new Error(ev.reason || "closed before open"));
       });
     } catch {
       this.cleanup();
@@ -302,11 +381,15 @@ export class Transcriber {
       this.audioCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
     } catch {
       this.cleanup();
-      throw new Error("Could not initialize audio — browser may not support AudioContext");
+      throw new Error(
+        "Could not initialize audio — browser may not support AudioContext",
+      );
     }
 
     try {
-      await this.audioCtx.audioWorklet.addModule(new URL("./pcm-worklet.js", import.meta.url).href);
+      await this.audioCtx.audioWorklet.addModule(
+        new URL("./pcm-worklet.js", import.meta.url).href,
+      );
     } catch {
       this.cleanup();
       throw new Error("Could not load audio worklet");
@@ -320,7 +403,12 @@ export class Transcriber {
     });
 
     workletNode.port.onmessage = (e: MessageEvent<Float32Array>) => {
-      if (!this.active || !this.socket || this.socket.readyState !== WebSocket.OPEN) return;
+      if (
+        !this.active ||
+        !this.socket ||
+        this.socket.readyState !== WebSocket.OPEN
+      )
+        return;
       try {
         const pcm = floatTo16BitPCM(e.data);
         this.socket.send(pcm);
@@ -361,11 +449,19 @@ export class Transcriber {
 
   private cleanup(): void {
     if (this.socket) {
-      try { this.socket.close(); } catch { /* ignore */ }
+      try {
+        this.socket.close();
+      } catch {
+        /* ignore */
+      }
       this.socket = null;
     }
     if (this.audioCtx) {
-      try { this.audioCtx.close(); } catch { /* ignore */ }
+      try {
+        this.audioCtx.close();
+      } catch {
+        /* ignore */
+      }
       this.audioCtx = null;
     }
     if (this.stream) {

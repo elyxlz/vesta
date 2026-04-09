@@ -1,4 +1,7 @@
-import { getOrbVisualState, type OrbVisualState } from "@/components/Orb/styles";
+import {
+  getOrbVisualState,
+  type OrbVisualState,
+} from "@/components/Orb/styles";
 import type { AgentActivityState } from "@/lib/types";
 import { useAgentOps } from "@/stores/use-agent-ops";
 

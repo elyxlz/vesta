@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { fetchSttStatus, fetchTtsStatus, type SttStatus, type TtsStatus } from "@/lib/voice";
+import {
+  fetchSttStatus,
+  fetchTtsStatus,
+  type SttStatus,
+  type TtsStatus,
+} from "@/lib/voice";
 import { useServiceUpdate } from "@/hooks/use-service-update";
 
 export function useVoiceStatus(agentName: string | null) {
@@ -32,11 +37,11 @@ export function useVoiceStatus(agentName: string | null) {
   }, [agentName, version]);
 
   const patchStt = useCallback((patch: Partial<SttStatus>) => {
-    setStt((prev) => prev ? { ...prev, ...patch } : prev);
+    setStt((prev) => (prev ? { ...prev, ...patch } : prev));
   }, []);
 
   const patchTts = useCallback((patch: Partial<TtsStatus>) => {
-    setTts((prev) => prev ? { ...prev, ...patch } : prev);
+    setTts((prev) => (prev ? { ...prev, ...patch } : prev));
   }, []);
 
   return { stt, tts, refresh, patchStt, patchTts };

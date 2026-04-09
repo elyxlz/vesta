@@ -3,7 +3,12 @@ import { Check } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Field, FieldGroup, FieldLabel, FieldDescription } from "@/components/ui/field";
+import {
+  Field,
+  FieldGroup,
+  FieldLabel,
+  FieldDescription,
+} from "@/components/ui/field";
 import { ProgressBar } from "@/components/ProgressBar";
 import { AuthFlow } from "@/components/AuthFlow";
 import {
@@ -55,7 +60,6 @@ export function NewAgent() {
   const [creatingMsg, setCreatingMsg] = useState(0);
   const [createdName, setCreatedName] = useState("");
   const [authStart, setAuthStart] = useState<AuthStartResult | null>(null);
-
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -149,7 +153,7 @@ export function NewAgent() {
 
                 try {
                   await deleteAgent(agentToRemove);
-                } catch { }
+                } catch {}
                 await refreshAgents();
               }}
               onComplete={async () => {
@@ -188,13 +192,13 @@ export function NewAgent() {
           <div className="size-10 rounded-full bg-primary/20 flex items-center justify-center">
             <Check size={20} className="text-primary" />
           </div>
-          <h2 className="text-base font-semibold">
-            {createdName} is ready
-          </h2>
+          <h2 className="text-base font-semibold">{createdName} is ready</h2>
           <p className="text-xs text-muted-foreground">say hi.</p>
           <Button
             className="w-full"
-            onClick={() => navigate(`/agent/${createdName}`, { state: { panel: "chat" } })}
+            onClick={() =>
+              navigate(`/agent/${createdName}`, { state: { panel: "chat" } })
+            }
           >
             continue
           </Button>
@@ -206,14 +210,14 @@ export function NewAgent() {
       <div className="flex flex-col items-center gap-3 w-[260px] max-w-full px-4">
         <div className="flex flex-col items-center gap-1 text-center">
           <h2 className="text-base font-semibold">new agent</h2>
-          <FieldDescription>
-            give it a name to get started.
-          </FieldDescription>
+          <FieldDescription>give it a name to get started.</FieldDescription>
         </div>
 
         <FieldGroup className="gap-3">
           <Field>
-            <FieldLabel htmlFor="agent-name" className="sr-only">Name</FieldLabel>
+            <FieldLabel htmlFor="agent-name" className="sr-only">
+              Name
+            </FieldLabel>
             <Input
               id="agent-name"
               placeholder="name your agent"
@@ -271,4 +275,3 @@ export function NewAgent() {
     </div>
   );
 }
-

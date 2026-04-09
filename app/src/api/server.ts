@@ -18,9 +18,16 @@ export async function connectToServer(
   });
 
   if (!resp.ok) {
-    throw new Error(resp.status === 401 ? "invalid API key" : "session creation failed");
+    throw new Error(
+      resp.status === 401 ? "invalid API key" : "session creation failed",
+    );
   }
 
   const data = await resp.json();
-  setConnection(normalized, data.access_token, data.refresh_token, data.expires_in);
+  setConnection(
+    normalized,
+    data.access_token,
+    data.refresh_token,
+    data.expires_in,
+  );
 }

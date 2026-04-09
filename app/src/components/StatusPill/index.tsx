@@ -20,9 +20,13 @@ export function StatusPill({ showHostname = true }: StatusPillProps) {
 
   return (
     <div className="flex items-center gap-1.5">
-      <div className={`size-2 rounded-full shrink-0 ${reachable ? "bg-green-500" : "bg-red-500"}`} />
+      <div
+        className={`size-2 rounded-full shrink-0 ${reachable ? "bg-green-500" : "bg-red-500"}`}
+      />
       {showHostname && hostname && (
-        <span className="text-sm text-foreground truncate hidden sm:block">{hostname}</span>
+        <span className="text-sm text-foreground truncate hidden sm:block">
+          {hostname}
+        </span>
       )}
     </div>
   );

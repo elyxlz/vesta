@@ -14,7 +14,9 @@ export function useServiceUpdate(
       if (!(e instanceof CustomEvent)) return;
       const detail = e.detail as { service?: string; action?: string };
       if (detail.service !== service) return;
-      callbackRef.current(detail.action as "registered" | "updated" | "removed");
+      callbackRef.current(
+        detail.action as "registered" | "updated" | "removed",
+      );
     };
     window.addEventListener(SERVICE_UPDATE_EVENT, handler);
     return () => window.removeEventListener(SERVICE_UPDATE_EVENT, handler);

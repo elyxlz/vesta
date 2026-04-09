@@ -10,7 +10,14 @@ interface VoiceInputCallbacks {
   voiceAutoSend: boolean;
 }
 
-export function useVoiceInput({ agentName, onSend, onDraft, onRecordingStart, sttAvailable, voiceAutoSend }: VoiceInputCallbacks) {
+export function useVoiceInput({
+  agentName,
+  onSend,
+  onDraft,
+  onRecordingStart,
+  sttAvailable,
+  voiceAutoSend,
+}: VoiceInputCallbacks) {
   const [isRecording, setIsRecording] = useState(false);
   const [liveTranscript, setLiveTranscript] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -59,13 +66,17 @@ export function useVoiceInput({ agentName, onSend, onDraft, onRecordingStart, st
     });
 
     streamRef.current = stream;
-    stream.start().then(() => {
-      setIsRecording(true);
-    }).catch((err) => {
-      const msg = err instanceof Error ? err.message : "Microphone access denied";
-      setError(msg);
-      streamRef.current = null;
-    });
+    stream
+      .start()
+      .then(() => {
+        setIsRecording(true);
+      })
+      .catch((err) => {
+        const msg =
+          err instanceof Error ? err.message : "Microphone access denied";
+        setError(msg);
+        streamRef.current = null;
+      });
   }, [agentName, onRecordingStart, sttAvailable]);
 
   useEffect(() => {

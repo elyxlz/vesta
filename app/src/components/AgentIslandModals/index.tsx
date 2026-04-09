@@ -47,7 +47,9 @@ export function AgentIslandModals() {
         <DialogContent className="sm:max-w-lg" showCloseButton>
           <DialogHeader>
             <DialogTitle>authenticate {name}</DialogTitle>
-            <DialogDescription className="sr-only">complete sign-in for this agent</DialogDescription>
+            <DialogDescription className="sr-only">
+              complete sign-in for this agent
+            </DialogDescription>
           </DialogHeader>
           {authStart ? (
             <AuthFlow
@@ -62,7 +64,9 @@ export function AgentIslandModals() {
             />
           ) : authStarting ? (
             <div className="flex flex-col items-center gap-3 py-2">
-              <p className="text-sm text-muted-foreground">starting authentication...</p>
+              <p className="text-sm text-muted-foreground">
+                starting authentication...
+              </p>
               <ProgressBar message="waiting..." />
               <Button variant="link" size="sm" onClick={clearAuthState}>
                 cancel
@@ -70,7 +74,9 @@ export function AgentIslandModals() {
             </div>
           ) : (
             <div className="flex flex-col items-center gap-3 py-2">
-              <p className="text-xs text-destructive text-center">{authError || "authentication failed"}</p>
+              <p className="text-xs text-destructive text-center">
+                {authError || "authentication failed"}
+              </p>
               <Button size="sm" onClick={() => void handleOpenAuth()}>
                 retry
               </Button>
@@ -87,21 +93,18 @@ export function AgentIslandModals() {
           <AlertDialogHeader>
             <AlertDialogTitle>delete {name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              this will permanently destroy the agent and all its data. this action cannot be undone.
+              this will permanently destroy the agent and all its data. this
+              action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>cancel</AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              onClick={handleDelete}
-            >
+            <AlertDialogAction variant="destructive" onClick={handleDelete}>
               delete
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-
     </>
   );
 }
