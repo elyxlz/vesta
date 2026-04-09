@@ -179,6 +179,8 @@ enum BackupAction {
         /// Agent name
         name: String,
     },
+    /// List all backups across all agents (including orphaned)
+    ListAll,
     /// Restore an agent from a backup
     Restore {
         /// Agent name
@@ -210,6 +212,26 @@ enum BackupAction {
         #[arg(long)]
         monthly: Option<usize>,
     },
+    /// Show or set per-agent backup settings
+    Settings {
+        /// Agent name
+        name: String,
+        /// Enable or disable backups for this agent
+        #[arg(long)]
+        enabled: Option<Toggle>,
+        /// Daily backups to keep (per-agent override)
+        #[arg(long)]
+        daily: Option<usize>,
+        /// Weekly backups to keep (per-agent override)
+        #[arg(long)]
+        weekly: Option<usize>,
+        /// Monthly backups to keep (per-agent override)
+        #[arg(long)]
+        monthly: Option<usize>,
+        /// Remove per-agent override, revert to global settings
+        #[arg(long)]
+        reset: bool,
+    },
 }
 
 #[derive(Clone, clap::ValueEnum)]
@@ -223,6 +245,18 @@ fn print_retention(ret: &serde_json::Value) {
         ret["daily"].as_u64().unwrap_or(0),
         ret["weekly"].as_u64().unwrap_or(0),
         ret["monthly"].as_u64().unwrap_or(0),
+    );
+}
+
+fn print_agent_backup_settings(result: &serde_json::Value) {
+    let enabled = result["enabled"].as_bool().unwrap_or(true);
+    let has_override = result["has_override"].as_bool().unwrap_or(false);
+    eprintln!("  enabled: {} {}", if enabled { "yes" } else { "no" },
+        if has_override { "(override)" } else { "(global)" });
+    eprintln!("  retention: daily={}, weekly={}, monthly={}",
+        result["retention"]["daily"].as_u64().unwrap_or(0),
+        result["retention"]["weekly"].as_u64().unwrap_or(0),
+        result["retention"]["monthly"].as_u64().unwrap_or(0),
     );
 }
 
@@ -575,6 +609,7 @@ fn run(cli: Cli) {
             let c = get_client(host_ref, token_ref);
             match action {
                 BackupAction::Create { name } => {
+                    eprintln!("creating backup for '{}'...", name);
                     let backup = c.create_backup(&name).unwrap_or_else(|e| platform::die(&e));
                     eprintln!("backup created: {} ({})", backup.id, format_size(backup.size));
                 }
@@ -592,7 +627,22 @@ fn run(cli: Cli) {
                         }
                     }
                 }
+                BackupAction::ListAll => {
+                    let backups = c.list_all_backups().unwrap_or_else(|e| platform::die(&e));
+                    if backups.is_empty() {
+                        eprintln!("no backups found");
+                    } else {
+                        eprintln!("  {:<16} {:<22} {:<13} {:>8}   ID", "AGENT", "DATE", "TYPE", "SIZE");
+                        for b in &backups {
+                            println!(
+                                "  {:<16} {:<22} {:<13} {:>8}   {}",
+                                b.agent_name, b.created_at, b.backup_type, format_size(b.size), b.id
+                            );
+                        }
+                    }
+                }
                 BackupAction::Restore { name, backup_id } => {
+                    eprintln!("restoring '{}' from backup...", name);
                     c.restore_backup(&name, &backup_id)
                         .unwrap_or_else(|e| platform::die(&e));
                     eprintln!("{}: restored from {}", name, backup_id);
@@ -631,6 +681,34 @@ fn run(cli: Cli) {
                         let settings = c.set_auto_backup_settings(&serde_json::json!({"retention": ret}))
                             .unwrap_or_else(|e| platform::die(&e));
                         print_retention(&settings["retention"]);
+                    }
+                },
+                BackupAction::Settings { name, enabled, daily, weekly, monthly, reset } => {
+                    if reset {
+                        let result = c.delete_agent_backup_settings(&name)
+                            .unwrap_or_else(|e| platform::die(&e));
+                        eprintln!("{}: backup settings reset to global defaults", name);
+                        print_agent_backup_settings(&result);
+                    } else if enabled.is_none() && daily.is_none() && weekly.is_none() && monthly.is_none() {
+                        let result = c.get_agent_backup_settings(&name)
+                            .unwrap_or_else(|e| platform::die(&e));
+                        print_agent_backup_settings(&result);
+                    } else {
+                        let mut body = serde_json::Map::new();
+                        if let Some(toggle) = enabled {
+                            body.insert("enabled".into(), matches!(toggle, Toggle::On).into());
+                        }
+                        if daily.is_some() || weekly.is_some() || monthly.is_some() {
+                            let mut ret = serde_json::Map::new();
+                            if let Some(d) = daily { ret.insert("daily".into(), d.into()); }
+                            if let Some(w) = weekly { ret.insert("weekly".into(), w.into()); }
+                            if let Some(m) = monthly { ret.insert("monthly".into(), m.into()); }
+                            body.insert("retention".into(), serde_json::Value::Object(ret));
+                        }
+                        let result = c.set_agent_backup_settings(&name, &serde_json::Value::Object(body))
+                            .unwrap_or_else(|e| platform::die(&e));
+                        eprintln!("{}: backup settings updated", name);
+                        print_agent_backup_settings(&result);
                     }
                 },
             }
