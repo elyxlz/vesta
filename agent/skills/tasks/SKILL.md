@@ -40,10 +40,10 @@ tasks remind "Meeting" --at "2025-12-01T10:00:00" --tz "Europe/London"
 tasks remind "Check progress" --task <id> --in-hours 1
 
 # Recurring
-tasks remind "Standup" --recurring daily --at "2025-12-01T10:30:00" --tz "UTC"
-tasks remind "Review" --recurring weekly --at "2025-12-06T17:00:00" --tz "UTC"
-tasks remind "Bills" --recurring monthly --at "2025-12-15T09:00:00" --tz "UTC"
-tasks remind "Birthday" --recurring yearly --at "2025-03-14T12:00:00" --tz "UTC"
+tasks remind "Standup" --recurring daily --at "2025-12-01T10:30:00" --tz "America/New_York"
+tasks remind "Review" --recurring weekly --at "2025-12-06T17:00:00" --tz "America/New_York"
+tasks remind "Bills" --recurring monthly --at "2025-12-15T09:00:00" --tz "America/New_York"
+tasks remind "Birthday" --recurring yearly --at "2025-03-14T12:00:00" --tz "America/New_York"
 tasks remind "Check inbox" --recurring hourly
 
 # List, delete, update
@@ -58,6 +58,7 @@ tasks remind update <id> --message "New message"
 - `--at` + `--tz`: absolute datetime (both required together)
 - `--recurring`: hourly | daily | weekly | monthly | yearly
   - hourly needs no datetime; others require `--at` + `--tz`
+- Always use the user's timezone from MEMORY.md section 5, not UTC
 - `--task <id>`: link reminder to a task (optional)
 - `--message`: alternative to positional message argument
 

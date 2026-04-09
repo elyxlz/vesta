@@ -49,7 +49,7 @@ pub const OAUTH_AUTHORIZE_URL: &str = "https://claude.ai/oauth/authorize";
 /// new vars without rebuilding images), then exec the agent.
 const ENTRYPOINT: &[&str] = &[
     "sh", "-c",
-    ". /run/vestad-env; exec uv run --project /root/vesta python -m vesta.main",
+    ". /run/vestad-env; . ~/.bashrc || true; exec uv run --project /root/vesta python -m vesta.main",
 ];
 
 #[derive(PartialEq, Clone, Copy)]
