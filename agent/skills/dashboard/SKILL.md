@@ -6,7 +6,7 @@ serve: PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME
 
 # Dashboard
 
-A React app embedded in the main Vesta app. Uses a sidebar layout with page-based navigation. The agent configures pages, sidebar items, and content by editing `config.tsx` and creating page components.
+A React app embedded in the main Vesta app that serves as the user's **life HQ** — a personal command center for health, finances, productivity, habits, goals, and anything else they want to track and manage. Uses a sidebar layout with page-based navigation. The agent configures pages, sidebar items, and content by editing `config.tsx` and creating page components.
 
 ## Before building (REQUIRED)
 
@@ -74,17 +74,32 @@ export const config: DashboardConfig = {
 
 Each `pages` entry creates a sidebar nav item. Clicking it renders that page's `component` in the content area.
 
+### Organizing widgets into pages
+
+When the user asks to add a widget without specifying which page, **choose a fitting page name yourself**. Group related widgets under a meaningful category with an appropriate lucide icon. For example, a water intake tracker would go under a "Health" page with `<HeartIcon />`, a stock ticker under "Finance" with `<DollarSignIcon />`, a to-do list under "Productivity" with `<CheckSquareIcon />`. If a suitable page already exists, add the widget there instead of creating a new one. The sidebar should feel like a natural, well-organized set of tabs — not one page per widget.
+
+### Widget sizing and layout
+
+**Widgets must be compact and small.** Don't let cards or widgets stretch to full width — give them explicit max widths or use a grid so multiple widgets sit side by side. Content should be top-left aligned, not centered.
+
+Page layout pattern — use a grid with auto-fit columns:
+```tsx
+<div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 p-4 lg:p-6">
+  <MyWidget />        {/* each widget fills one grid cell */}
+  <AnotherWidget />
+</div>
+```
+
+Individual widgets should be self-contained cards that fit their grid cell. Don't make widgets full-width unless they genuinely need it (e.g. a wide chart). Prefer small, dense cards over large sprawling ones.
+
 ### Adding a page
 
 1. Create `src/pages/my-page.tsx`:
 ```tsx
 export function MyPage() {
   return (
-    <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6">
-      <div className="px-4 lg:px-6">
-        <h2 className="text-lg font-semibold">My Page</h2>
-        {/* page content */}
-      </div>
+    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 p-4 lg:p-6">
+      {/* compact widgets here */}
     </div>
   )
 }
@@ -171,6 +186,7 @@ Try to keep everything compact, dashboard space is at a premium.
 
 ## Rules
 
+- **Keep widgets small and compact** — never full-width by default. Use grid layouts so widgets sit side by side. Content top-left aligned, never centered. Dashboard space is at a premium.
 - **No client-side fetches to external APIs** — the dashboard runs in a browser, so cross-origin requests to third-party APIs (Yahoo Finance, weather services, etc.) will be blocked by CORS. Instead, create a skill that fetches the data server-side and expose it as a skill API endpoint, then call it from the widget using `apiFetch`.
 - **Use the UI components** from `@/components/ui/` — read them before building
 - **State**: `useState` / `useEffect` for local state
