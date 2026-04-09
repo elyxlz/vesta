@@ -139,7 +139,7 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
       key={iframeKey}
       ref={iframeRef}
       src={dashboardUrl!}
-      className={`w-full h-full border-0 bg-transparent transition-opacity duration-200 ${loaded ? "opacity-100" : "opacity-0"}`}
+      className={`w-full h-full bg-transparent transition-opacity duration-200 ${loaded ? "opacity-100" : "opacity-0"}`}
       onLoad={() => {
         sendContext();
         setLoaded(true);
