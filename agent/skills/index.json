@@ -76,10 +76,6 @@
     "description": "Use when the user asks to enable/disable voice input/output, set up transcription or text-to-speech, rotate API keys, add custom voices, adjust the transcription sensitivity, or talks about the microphone/speaker in the Vesta app. This skill manages ~/.voice/voice_config.json \u2014 the single source of truth for STT/TTS keys, voice selection, keyterms, and thresholds. Use enable/disable to toggle without removing configuration; use clear only to wipe keys entirely."
   },
   {
-    "name": "weather",
-    "description": "Use this skill when the user asks about \"weather\", \"forecast\", \"will it rain\", \"temperature\", \"wind\", \"humidity\", or needs current or upcoming weather conditions for any location."
-  },
-  {
     "name": "what-day",
     "description": "This skill should be used when working with ANY date to determine what day of the week it falls on. Use this skill when the user mentions dates, scheduling, planning events, or needs to know day-of-week information."
   },

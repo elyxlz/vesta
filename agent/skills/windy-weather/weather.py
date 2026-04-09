@@ -71,10 +71,13 @@ def guess_timezone(lat: float, lon: float) -> str:
     # Spain
     if 36 < lat < 44 and -10 < lon < 4:
         return "Europe/Madrid"
+    # US (coarse — defaults to Eastern)
+    if 25 < lat < 50 and -125 < lon < -66:
+        return "America/New_York"
     return "UTC"
 
 
-def fetch_forecast(lat: float, lon: float, hours: int = 12) -> dict:
+def fetch_forecast(lat: float, lon: float) -> dict:
     """Fetch forecast from Windy API."""
     payload = json.dumps(
         {
@@ -216,7 +219,7 @@ def main():
             sys.exit(1)
 
     try:
-        data = fetch_forecast(lat, lon, args.hours)
+        data = fetch_forecast(lat, lon)
     except Exception as e:
         print(f"API error: {e}", file=sys.stderr)
         sys.exit(1)
