@@ -517,16 +517,19 @@ def test_build_query_passes_slash_commands_through():
 
 
 @pytest.mark.anyio
-async def test_message_processor_queues_new_message_without_interrupting(tmp_path):
-    """New messages arriving during processing are queued and processed after the current turn."""
+async def test_message_processor_interrupts_on_new_message(tmp_path):
+    """New messages arriving during processing set the interrupt event and are processed after."""
     processing_started = asyncio.Event()
-    processing_done = asyncio.Event()
+    interrupt_seen = asyncio.Event()
 
     async def slow_side_effect(msg, *, state, config, is_user):
         if "slow" in msg:
             processing_started.set()
-            await asyncio.sleep(0.5)
-            processing_done.set()
+            for _ in range(100):
+                if state.interrupt_event and state.interrupt_event.is_set():
+                    interrupt_seen.set()
+                    break
+                await asyncio.sleep(0.05)
         return (["OK"], state)
 
     config = _make_config(tmp_path)
@@ -550,9 +553,8 @@ async def test_message_processor_queues_new_message_without_interrupting(tmp_pat
     async def inject_message_and_shutdown():
         await processing_started.wait()
         await queue.put(("urgent message", True))
-        # Wait for slow processing to finish naturally (no interrupt)
-        await processing_done.wait()
-        await asyncio.sleep(0.5)
+        await interrupt_seen.wait()
+        await asyncio.sleep(0.1)
         assert state.shutdown_event is not None
         state.shutdown_event.set()
 
@@ -568,6 +570,7 @@ async def test_message_processor_queues_new_message_without_interrupting(tmp_pat
             inject_message_and_shutdown(),
         )
 
+    assert interrupt_seen.is_set(), "interrupt_event should have been set when new message arrived"
     assert "slow processing message" in processed
     assert "urgent message" in processed
 
@@ -847,36 +850,71 @@ async def test_converse_emits_thinking_events():
 
 
 @pytest.mark.anyio
-async def test_converse_completes_turn_without_interrupting():
-    """converse() must always complete the full SDK turn — no mid-turn interrupts.
-
-    This is the fix for issue #184: incoming messages must NOT cause
-    client.interrupt() which sends false 'tool use was rejected' errors."""
-    import time
-
+async def test_interrupt_grace_period_no_false_rejection():
+    """Issue #184: when a fast tool finishes within the grace period,
+    client.interrupt() must NOT be called — no false rejection."""
     from claude_agent_sdk import TextBlock, ToolUseBlock
     from vesta.core.client import converse
 
-    state, config, mock_client, emitted, message_queue = _make_converse_harness(use_shared_queue=True)
-    assert message_queue is not None
+    state, config, mock_client, emitted, _ = _make_converse_harness()
+    state.interrupt_event = asyncio.Event()
 
-    async def response_with_tool_use():
+    async def fast_tool_response():
         yield _assistant_msg([ToolUseBlock("1", "Bash", {})])
-        await asyncio.sleep(0.3)
-        yield _assistant_msg([TextBlock("done with tool call")])
-        yield _result_msg()
+        await asyncio.sleep(0.2)  # Fast tool — finishes well within grace period
+        yield _assistant_msg([TextBlock("file created")])
 
-    mock_client.receive_response = MagicMock(side_effect=lambda: response_with_tool_use())
+    mock_client.receive_response = MagicMock(return_value=fast_tool_response())
+
+    async def trigger_interrupt():
+        await asyncio.sleep(0.05)
+        assert state.interrupt_event is not None
+        state.interrupt_event.set()
+
+    asyncio.create_task(trigger_interrupt())
+    await converse("create a file", state=state, config=config, show_output=True)
+
+    assert not mock_client.interrupt.called, "client.interrupt() must NOT be called when the tool finishes within the grace period"
+    texts = [t for t, _ in emitted]
+    assert "file created" in texts, f"Tool result should be emitted: {texts}"
+
+
+@pytest.mark.anyio
+async def test_interrupt_force_interrupts_slow_tool():
+    """When a tool exceeds the grace period, client.interrupt() IS called."""
+    from claude_agent_sdk import ToolUseBlock
+    from vesta.core.client import converse
+
+    config = vm.VestaConfig(interrupt_timeout=0.2)  # Short grace period for test
+    state = vm.State()
+    state.interrupt_event = asyncio.Event()
+    state.event_bus = EventBus()
+
+    mock_client = MagicMock()
+    mock_client.query = AsyncMock()
+    mock_client.interrupt = AsyncMock()
     state.client = mock_client
 
+    async def slow_tool_response():
+        yield _assistant_msg([ToolUseBlock("1", "Bash", {})])
+        await asyncio.sleep(60)  # Very slow tool — will exceed grace period
+
+    mock_client.receive_response = MagicMock(return_value=slow_tool_response())
+
+    async def trigger_interrupt():
+        await asyncio.sleep(0.05)
+        assert state.interrupt_event is not None
+        state.interrupt_event.set()
+
+    import time
+
+    asyncio.create_task(trigger_interrupt())
     t0 = time.monotonic()
-    await converse("do something", state=state, config=config, show_output=True)
+    await converse("sleep 60", state=state, config=config, show_output=False)
     elapsed = time.monotonic() - t0
 
-    texts = [t for t, _ in emitted]
-    assert "done with tool call" in texts, f"Full turn must complete: {texts}"
-    assert not mock_client.interrupt.called, "client.interrupt() must not be called during normal turns"
-    assert elapsed < 5.0, f"Turn took too long: {elapsed:.1f}s"
+    assert mock_client.interrupt.called, "client.interrupt() should be called for slow tools"
+    assert elapsed < 2.0, f"Should exit after grace period, took {elapsed:.1f}s"
 
 
 # --- History store ---

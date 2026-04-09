@@ -153,11 +153,12 @@ async def _process_message_safely(msg: str, *, is_user: bool, state: vm.State, c
 async def _process_interruptible(
     msg: str, *, is_user: bool, queue: asyncio.Queue[tuple[str, bool]], state: vm.State, config: vm.VestaConfig
 ) -> None:
-    """Process a message while monitoring the queue for new messages.
+    """Process a message while monitoring the queue for new messages that should interrupt.
 
-    New messages that arrive during processing are queued and processed after the
-    current turn completes — they do NOT interrupt in-flight tool calls.  This
-    avoids the false "tool use was rejected" errors described in issue #184.
+    When a new message arrives during processing, ``interrupt_event`` is set so
+    that ``converse()`` can break between SDK messages.  ``converse()`` gives the
+    current tool call a grace period to finish naturally before force-interrupting,
+    avoiding the false "tool use was rejected" errors described in issue #184.
     """
     pending: collections.deque[tuple[str, bool]] = collections.deque([(msg, is_user)])
     process_task: asyncio.Task[None] | None = None
@@ -170,6 +171,7 @@ async def _process_interruptible(
                 break
 
             current_msg, current_is_user = pending.popleft()
+            state.interrupt_event = asyncio.Event()
             process_task = asyncio.create_task(_process_message_safely(current_msg, is_user=current_is_user, state=state, config=config))
 
             while not process_task.done():
@@ -178,7 +180,8 @@ async def _process_interruptible(
 
                 if queue_task in done:
                     pending.append(queue_task.result())
-                    logger.interrupt(f"New message queued, will process after current turn ({len(pending)} pending)")
+                    state.interrupt_event.set()
+                    logger.interrupt(f"New message queued, interrupting current processing ({len(pending)} pending)")
                     await process_task
                     break
                 else:
@@ -186,6 +189,7 @@ async def _process_interruptible(
 
             await process_task
             process_task = None
+            state.interrupt_event = None
     except asyncio.CancelledError:
         if process_task and not process_task.done():
             process_task.cancel()
@@ -230,6 +234,7 @@ async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm
                     state.graceful_shutdown.set()
         finally:
             state.client = None
+            state.interrupt_event = None
             logger.client("Client session closed")
 
 

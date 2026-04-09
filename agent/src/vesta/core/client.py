@@ -277,16 +277,73 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
 
     response_iter = client.receive_response().__aiter__()
 
+    interrupt_task: asyncio.Task[tp.Any] | None = None
+    if state.interrupt_event and not state.interrupt_event.is_set():
+        interrupt_task = asyncio.create_task(state.interrupt_event.wait())
+
     try:
         while True:
             anext_task = asyncio.create_task(anext(response_iter, _STOP))
+            waitables: set[asyncio.Task[tp.Any]] = {anext_task}
+            if interrupt_task and not interrupt_task.done():
+                waitables.add(interrupt_task)
 
-            done, _ = await asyncio.wait({anext_task}, return_when=asyncio.FIRST_COMPLETED, timeout=config.response_timeout)
+            done, _ = await asyncio.wait(waitables, return_when=asyncio.FIRST_COMPLETED, timeout=config.response_timeout)
 
             if not done:
                 await _cancel_task(anext_task)
                 await attempt_interrupt(state, config=config, reason="Response timeout")
                 raise TimeoutError
+
+            if interrupt_task and interrupt_task in done:
+                # New message arrived.  Give the current SDK operation a grace
+                # period to finish so we can break cleanly between tool calls
+                # instead of sending a false "tool use was rejected" (issue #184).
+                try:
+                    result = await asyncio.wait_for(anext_task, timeout=config.interrupt_timeout)
+                except TimeoutError:
+                    # Tool still running after grace period — force interrupt
+                    logger.interrupt("Grace period expired, force-interrupting")
+                    await attempt_interrupt(state, config=config, reason="New message interrupt")
+                    await _cancel_task(anext_task)
+                    try:
+                        drain = client.receive_response().__aiter__()
+                        while (leftover := await asyncio.wait_for(anext(drain, None), timeout=5.0)) is not None:
+                            texts, thinking_blocks, _, _, _ = _parse_sdk_message(
+                                tp.cast(Message, leftover), sub_agent_context=sub_agent_context
+                            )
+                            if show_output:
+                                for block in thinking_blocks:
+                                    _emit_thinking(block)
+                            text = "\n".join(texts) if texts else None
+                            if text and show_output:
+                                filtered = filter_tool_lines(text)
+                                if filtered:
+                                    _emit(filtered)
+                    except (TimeoutError, StopAsyncIteration):
+                        pass
+                    break
+
+                # Tool finished within grace period — process it, then break
+                logger.interrupt("Interrupted cleanly between tool calls")
+                if result is not _STOP:
+                    msg = tp.cast(Message, result)
+                    texts, thinking_blocks, sub_agent_context, session_id, _ = _parse_sdk_message(msg, sub_agent_context=sub_agent_context)
+                    if session_id and session_id != state.session_id:
+                        if state.session_id:
+                            logger.warning(f"Session ID changed: {state.session_id[:16]} -> {session_id[:16]} (resume may have failed)")
+                        persist_session_id(session_id, state=state, config=config)
+                    if show_output:
+                        for block in thinking_blocks:
+                            _emit_thinking(block)
+                    text = "\n".join(texts) if texts else None
+                    if text:
+                        responses.append(text)
+                        if show_output:
+                            filtered = filter_tool_lines(text)
+                            if filtered:
+                                _emit(filtered)
+                break
 
             result = anext_task.result()
             if result is _STOP:
@@ -311,7 +368,8 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
             if filtered:
                 _emit(filtered)
     finally:
-        pass
+        if interrupt_task and not interrupt_task.done():
+            await _cancel_task(interrupt_task)
 
     return responses
 
