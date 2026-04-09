@@ -562,6 +562,19 @@ func executeCommand(command string, args []string, wac *WhatsAppClient) (interfa
 		success, msg := wac.SetGroupDescription(group, description)
 		return map[string]interface{}{"success": success, "message": msg}, nil
 
+	case "get-group-invite-link":
+		var group string
+		fs := flag.NewFlagSet("get-group-invite-link", flag.ContinueOnError)
+		fs.StringVar(&group, "group", "", "Group name or JID")
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		if group == "" {
+			return nil, fmt.Errorf("--group is required")
+		}
+		success, link, msg := wac.GetGroupInviteLink(group)
+		return map[string]interface{}{"success": success, "link": link, "message": msg}, nil
+
 	case "check-delivery":
 		var messageID, to string
 		var limit int
