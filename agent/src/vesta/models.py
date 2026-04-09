@@ -10,6 +10,10 @@ from .events import EventBus
 
 __all__ = ["State", "Notification", "VestaConfig"]
 
+CLEAN_RESTART = "restart — clean restart"
+NIGHTLY_RESTART = "nightly — dreamer ran, context compacted"
+CRASH_RESTART = "crash — restarted after unexpected exit"
+
 
 @dc.dataclass
 class State:

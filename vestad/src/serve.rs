@@ -12,7 +12,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+use std::sync::{Arc, atomic::{AtomicBool, AtomicU8, Ordering}};
 use tokio::sync::{Mutex, RwLock};
 
 use crate::{docker, jwt, self_update, update_check};
@@ -24,6 +24,7 @@ const RESERVED_SERVICE_NAMES: &[&str] = &["ws", "history", "services", "search"]
 const AUTH_SESSION_TIMEOUT_SECS: u64 = 600;
 const DEFAULT_LOG_TAIL_LINES: u64 = 500;
 const AUTO_BACKUP_CHECK_INTERVAL_SECS: u64 = 3600;
+const DEFAULT_AUTO_BACKUP_HOUR: u8 = 4;
 
 // --- TLS cert generation ---
 
@@ -138,6 +139,7 @@ pub struct AppState {
     update_info: Mutex<Option<update_check::UpdateInfo>>,
     updating: AtomicBool,
     auto_backup_enabled: AtomicBool,
+    auto_backup_hour: AtomicU8,
     backup_retention: Mutex<crate::types::RetentionPolicy>,
     http_client: reqwest::Client,
     service_registry: RwLock<HashMap<String, HashMap<String, u16>>>,
@@ -155,6 +157,7 @@ impl AppState {
             update_info: Mutex::new(None),
             updating: AtomicBool::new(false),
             auto_backup_enabled: AtomicBool::new(true),
+            auto_backup_hour: AtomicU8::new(DEFAULT_AUTO_BACKUP_HOUR),
             backup_retention: Mutex::new(crate::types::RetentionPolicy {
                 daily: docker::DEFAULT_RETENTION_DAILY,
                 weekly: docker::DEFAULT_RETENTION_WEEKLY,
@@ -1219,9 +1222,11 @@ async fn get_auto_backup_handler(
     State(state): State<SharedState>,
 ) -> Json<serde_json::Value> {
     let enabled = state.auto_backup_enabled.load(Ordering::Relaxed);
+    let hour = state.auto_backup_hour.load(Ordering::Relaxed);
     let retention = *state.backup_retention.lock().await;
     Json(serde_json::json!({
         "enabled": enabled,
+        "hour": hour,
         "retention": retention,
     }))
 }
@@ -1233,6 +1238,13 @@ async fn set_auto_backup_handler(
     if let Some(enabled) = body["enabled"].as_bool() {
         state.auto_backup_enabled.store(enabled, Ordering::Relaxed);
         tracing::info!(enabled, "auto-backup toggled");
+    }
+
+    if let Some(hour) = body["hour"].as_u64() {
+        if hour <= 23 {
+            state.auto_backup_hour.store(hour as u8, Ordering::Relaxed);
+            tracing::info!(hour, "auto-backup hour updated");
+        }
     }
 
     let mut retention = state.backup_retention.lock().await;
@@ -1250,8 +1262,10 @@ async fn set_auto_backup_handler(
     }
 
     let enabled = state.auto_backup_enabled.load(Ordering::Relaxed);
+    let hour = state.auto_backup_hour.load(Ordering::Relaxed);
     Ok(Json(serde_json::json!({
         "enabled": enabled,
+        "hour": hour,
         "retention": *retention,
     })))
 }
@@ -1370,6 +1384,16 @@ pub fn build_router(state: SharedState) -> Router {
 
 // --- Auto-backup background task ---
 
+fn local_hour() -> u8 {
+    let epoch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as libc::time_t;
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    unsafe { libc::localtime_r(&epoch, &mut tm) };
+    tm.tm_hour as u8
+}
+
 fn spawn_auto_backup_task(state: SharedState) {
     tokio::spawn(async move {
         loop {
@@ -1377,6 +1401,13 @@ fn spawn_auto_backup_task(state: SharedState) {
 
             if !state.auto_backup_enabled.load(Ordering::Relaxed) {
                 tracing::debug!("auto-backup: disabled, skipping cycle");
+                continue;
+            }
+
+            let target_hour = state.auto_backup_hour.load(Ordering::Relaxed);
+            let current_hour = local_hour();
+            if current_hour != target_hour {
+                tracing::debug!(current_hour, target_hour, "auto-backup: not in backup window, skipping");
                 continue;
             }
 
