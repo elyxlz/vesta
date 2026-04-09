@@ -103,7 +103,9 @@ async def queue_greeting(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.V
         return
 
     extras = []
-    if reason.startswith("nightly"):
+    flag = config.data_dir / "show_dreamer_summary"
+    if flag.exists():
+        flag.unlink()
         today = _now().strftime("%Y-%m-%d")
         try:
             summary = (config.dreamer_dir / f"{today}.md").read_text().strip()
@@ -224,7 +226,8 @@ async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm
                     logger.dreamer("Dreamer complete, running /compact...")
                     await _process_interruptible("/compact", is_user=False, queue=queue, state=state, config=config)
                     logger.dreamer("Compact complete, triggering nightly restart (session preserved)...")
-                    state.restart_reason = "nightly — dreamer ran, context compacted"
+                    (config.data_dir / "show_dreamer_summary").write_text("1")
+                    state.restart_reason = vm.NIGHTLY_RESTART
                     state.graceful_shutdown.set()
         finally:
             state.client = None
