@@ -17,6 +17,85 @@ const MAX_LINES = 5000;
 const RECONNECT_BASE = 1000;
 const RECONNECT_MAX = 30000;
 
+const LOG_LEVEL_TAGS = new Set(["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]);
+const FAMILY_TAGS = new Set(["AGENT", "SYSTEM", "USER", "EVENT"]);
+
+const FAMILY_COLOR_CLASS: Record<string, string> = {
+  AGENT: "text-fuchsia-300/90",
+  SYSTEM: "text-green-300/90",
+  USER: "text-white/90",
+  EVENT: "text-yellow-300/90",
+};
+
+const SUBFAMILY_COLOR_CLASS: Record<string, Record<string, string>> = {
+  AGENT: {
+    ASSISTANT: "text-fuchsia-200/90",
+    THINKING: "text-fuchsia-300/90",
+    "TOOL CALL": "text-fuchsia-400/90",
+    SUBAGENT: "text-fuchsia-500/90",
+  },
+  SYSTEM: {
+    INIT: "text-green-200/90",
+    STARTUP: "text-green-300/90",
+    SHUTDOWN: "text-green-500/90",
+    CLIENT: "text-green-400/90",
+    DREAMER: "text-green-200/90",
+    INTERRUPT: "text-green-500/90",
+    PROACTIVE: "text-green-200/90",
+    MESSAGE: "text-green-300/90",
+    SDK: "text-green-500/90",
+    USAGE: "text-green-400/90",
+  },
+  USER: {
+    MESSAGE: "text-white/90",
+  },
+  EVENT: {
+    NOTIFICATION: "text-yellow-200/90",
+  },
+};
+
+const LEGACY_TAG_TO_FAMILY: Record<string, string> = {
+  ASSISTANT: "AGENT",
+  THINKING: "AGENT",
+  "TOOL CALL": "AGENT",
+  TOOL: "AGENT",
+  SUBAGENT: "AGENT",
+  INIT: "SYSTEM",
+  STARTUP: "SYSTEM",
+  SHUTDOWN: "SYSTEM",
+  CLIENT: "SYSTEM",
+  DREAMER: "SYSTEM",
+  INTERRUPT: "SYSTEM",
+  PROACTIVE: "SYSTEM",
+  SDK: "SYSTEM",
+  USAGE: "SYSTEM",
+  USER: "USER",
+  NOTIFICATION: "EVENT",
+};
+
+function extractTags(line: string): string[] {
+  return [...line.matchAll(/\[([A-Z ]+)\]/g)]
+    .map((match) => match[1])
+    .filter((tag) => !LOG_LEVEL_TAGS.has(tag));
+}
+
+function lineColorClass(line: string): string | null {
+  const tags = extractTags(line);
+  const familyIndex = tags.findIndex((tag) => FAMILY_TAGS.has(tag));
+
+  if (familyIndex !== -1) {
+    const family = tags[familyIndex];
+    const subfamily = tags[familyIndex + 1];
+    return (subfamily && SUBFAMILY_COLOR_CLASS[family]?.[subfamily]) || FAMILY_COLOR_CLASS[family] || null;
+  }
+
+  const legacyTag = tags.find((tag) => tag in LEGACY_TAG_TO_FAMILY);
+  if (!legacyTag) return null;
+
+  const family = LEGACY_TAG_TO_FAMILY[legacyTag];
+  return SUBFAMILY_COLOR_CLASS[family]?.[legacyTag] || FAMILY_COLOR_CLASS[family] || null;
+}
+
 interface ConsoleProps {
   name: string;
   onClose?: () => void;
@@ -148,7 +227,10 @@ export function Console({ name, onClose, fullscreen }: ConsoleProps) {
             {lines.map((line, i) => (
               <div
                 key={i}
-                className="break-all"
+                className={cn(
+                  "break-words whitespace-pre-wrap",
+                  lineColorClass(line),
+                )}
                 dangerouslySetInnerHTML={{ __html: linkify(line) }}
               />
             ))}
