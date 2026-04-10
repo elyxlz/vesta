@@ -292,7 +292,7 @@ pub fn compute_agent_state(cname: &str, info: &ContainerInfo) -> AgentDerivedSta
 
 /// Read a value from a per-agent env file by key (e.g. "WS_PORT").
 pub fn read_env_value(agents_dir: &std::path::Path, agent_name: &str, key: &str) -> Option<String> {
-    let env_path = agents_dir.join(format!("{}.vestad.env", agent_name));
+    let env_path = agents_dir.join(format!("{}.env", agent_name));
     let content = std::fs::read_to_string(&env_path).ok()?;
     let prefix = format!("{key}=");
     for line in content.lines() {
@@ -470,7 +470,7 @@ fn env_file_names(agents_dir: &std::path::Path) -> Vec<String> {
         .flatten()
         .filter_map(|entry| {
             let name = entry.file_name().to_str()?.to_string();
-            name.strip_suffix(".vestad.env").map(|s| s.to_string())
+            name.strip_suffix(".env").map(|s| s.to_string())
         })
         .collect()
 }
@@ -492,7 +492,7 @@ pub fn allocate_port(agents_dir: &std::path::Path) -> Result<(u16, std::net::Tcp
 
 /// Read the agent's port and token from the per-agent env file in a single read.
 pub fn read_agent_port_and_token(agent_name: &str, agents_dir: &std::path::Path) -> (Option<u16>, Option<String>) {
-    let env_path = agents_dir.join(format!("{}.vestad.env", agent_name));
+    let env_path = agents_dir.join(format!("{}.env", agent_name));
     let content = match std::fs::read_to_string(&env_path) {
         Ok(content) => content,
         Err(_) => return (None, None),
@@ -545,7 +545,7 @@ pub fn write_agent_env_file(
 ) -> Result<std::path::PathBuf, DockerError> {
     std::fs::create_dir_all(&env_config.agents_dir)
         .map_err(|e| DockerError::Failed(format!("failed to create agents dir: {e}")))?;
-    let env_path = env_config.agents_dir.join(format!("{}.vestad.env", agent_name));
+    let env_path = env_config.agents_dir.join(format!("{}.env", agent_name));
     let mut content = format!(
         "export WS_PORT={ws_port}\n\
          export AGENT_NAME={agent_name}\n\
@@ -568,7 +568,7 @@ pub fn write_agent_env_file(
 }
 
 fn delete_agent_env_file(agents_dir: &std::path::Path, agent_name: &str) {
-    let env_path = agents_dir.join(format!("{}.vestad.env", agent_name));
+    let env_path = agents_dir.join(format!("{}.env", agent_name));
     std::fs::remove_file(&env_path).ok();
 }
 
@@ -576,7 +576,7 @@ fn delete_agent_env_file(agents_dir: &std::path::Path, agent_name: &str) {
 /// Called at vestad startup so running containers pick up the new values on restart.
 pub fn update_all_agent_env_files(agents_dir: &std::path::Path, vestad_port: u16, vestad_tunnel: Option<&str>) {
     for name in env_file_names(agents_dir) {
-        let path = agents_dir.join(format!("{name}.vestad.env"));
+        let path = agents_dir.join(format!("{name}.env"));
         let Ok(content) = std::fs::read_to_string(&path) else { continue };
         let mut new_lines: Vec<String> = content
             .lines()
