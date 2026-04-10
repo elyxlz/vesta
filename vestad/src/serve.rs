@@ -1569,21 +1569,15 @@ pub fn build_router(state: SharedState) -> Router {
         .layer(
             tower_http::trace::TraceLayer::new_for_http()
                 .make_span_with(tower_http::trace::DefaultMakeSpan::new().level(tracing::Level::INFO))
-                .on_response(
-                    |response: &axum::http::Response<_>, latency: std::time::Duration, span: &tracing::Span| {
-                        let status = response.status().as_u16();
-                        if status >= 400 {
-                            tracing::error!(parent: span, status, latency_ms = latency.as_millis() as u64, "response error");
-                        }
-                    },
-                )
                 .on_request(
                     |request: &axum::http::Request<_>, _span: &tracing::Span| {
                         if request.method() != axum::http::Method::OPTIONS {
                             tracing::info!(method = %request.method(), path = %request.uri(), "request");
                         }
                     },
-                ),
+                )
+                .on_response(tower_http::trace::DefaultOnResponse::new().level(tracing::Level::DEBUG))
+                .on_failure(tower_http::trace::DefaultOnFailure::new().level(tracing::Level::DEBUG)),
         )
         .with_state(state)
 }
