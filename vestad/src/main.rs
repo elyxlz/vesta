@@ -7,7 +7,6 @@ mod agent_code;
 mod backup;
 mod docker;
 mod jwt;
-mod migrations;
 mod self_update;
 mod serve;
 mod service_proxy;

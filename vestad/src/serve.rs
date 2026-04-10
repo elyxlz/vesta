@@ -560,7 +560,10 @@ async fn rebuild_agent_handler(
     let _guard = lock.write().await;
 
     let env_config = state.env_config.clone();
-    tokio::task::spawn_blocking(move || docker::rebuild_agent(&name, &env_config))
+    tokio::task::spawn_blocking(move || {
+        docker::rebuild_agent(&name, &env_config)?;
+        docker::start_agent(&name)
+    })
         .await
         .unwrap()
         .map_err(map_docker_err)?;
@@ -1792,7 +1795,11 @@ pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: S
         vestad_port: port,
         vestad_tunnel: tunnel_url.clone(),
     };
-    crate::migrations::run(&env_config);
+    if let Err(e) = crate::agent_code::ensure_agent_code(&env_config.config_dir) {
+        tracing::error!(error = %e, "failed to ensure agent code");
+    }
+    let env_config_clone = env_config.clone();
+    tokio::task::spawn_blocking(move || docker::reconcile_containers(&env_config_clone));
     let state = Arc::new(AppState::new(api_key, env_config, tunnel_url, dev_mode));
     let app = build_router(state.clone());
     spawn_auto_backup_task(state.clone());
