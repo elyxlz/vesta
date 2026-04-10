@@ -997,8 +997,7 @@ pub fn create_agent(name: &str, env_config: &AgentEnvConfig) -> Result<String, D
 
     let image = resolve_image()?;
 
-    tracing::info!(agent = %name, image = %image, "ensuring agent code on host");
-    crate::agent_code::ensure_agent_code(&env_config.config_dir, image)
+    crate::agent_code::ensure_agent_code(&env_config.config_dir)
         .map_err(|e| DockerError::Failed(format!("failed to populate agent code: {e}")))?;
 
     let (port, _listener) = allocate_port(&env_config.agents_dir)?;

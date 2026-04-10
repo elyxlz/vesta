@@ -26,82 +26,84 @@ pub fn agent_code_dir(config: &Path) -> PathBuf {
 }
 
 fn is_populated(config: &Path) -> bool {
-    agent_code_dir(config).join("src/vesta/main.py").exists()
+    let dir = agent_code_dir(config);
+    dir.join("src/vesta/main.py").exists()
+        && dir.join("pyproject.toml").is_file()
+        && dir.join("uv.lock").is_file()
 }
 
-/// Ensure agent code exists on the host. Extracts from the Docker image on first call.
-/// Subsequent calls are a no-op.
-pub fn ensure_agent_code(config: &Path, image: &str) -> Result<PathBuf, AgentCodeError> {
+/// Ensure agent code exists on the host.
+/// - Dev (debug builds): copies from the local repo
+/// - Prod (release builds): downloads from GitHub for the current version
+pub fn ensure_agent_code(config: &Path) -> Result<PathBuf, AgentCodeError> {
     let dir = agent_code_dir(config);
     if is_populated(config) {
-        tracing::info!("agent code already exists at {}", dir.display());
         return Ok(dir);
     }
 
-    tracing::info!(image = %image, "extracting agent code from docker image");
-    extract_from_image(config, image)?;
+    if cfg!(debug_assertions) {
+        tracing::info!("dev mode: copying agent code from local repo");
+        copy_from_local_repo(config)?;
+    } else {
+        let version = env!("CARGO_PKG_VERSION");
+        tracing::info!(version, "downloading agent code from github");
+        fetch_agent_code_from_github(config, version)?;
+    }
 
     if !is_populated(config) {
         return Err(AgentCodeError::Extract(
-            "extraction succeeded but src/vesta/main.py not found".into(),
+            "agent code population succeeded but validation failed".into(),
         ));
     }
 
-    tracing::info!("agent code extracted to {}", dir.display());
+    tracing::info!("agent code ready at {}", dir.display());
     Ok(dir)
 }
 
-/// Extract src/vesta/, pyproject.toml, uv.lock from a Docker image into agent-code/.
-fn extract_from_image(config: &Path, image: &str) -> Result<(), AgentCodeError> {
-    let dir = agent_code_dir(config);
-    fs::create_dir_all(&dir).map_err(|e| AgentCodeError::Io(e.to_string()))?;
-
-    let temp_name = format!("{TEMP_PREFIX}-{}", std::process::id());
-
-    // Create a temporary container (not started) to copy files from
-    if !crate::docker::docker_ok(&["create", "--name", &temp_name, image, "true"]) {
-        return Err(AgentCodeError::Extract("failed to create temp container".into()));
-    }
-
-    let cleanup = || {
-        crate::docker::docker_ok(&["rm", "-f", &temp_name]);
-    };
-
-    // Copy src/vesta/ directory
-    let src_dest = dir.join("src");
-    fs::create_dir_all(&src_dest).map_err(|e| {
-        cleanup();
-        AgentCodeError::Io(e.to_string())
-    })?;
-
-    let copy_results = [
-        ("src/vesta", "/root/vesta/src/vesta", src_dest.join("vesta")),
-    ];
-
-    for (label, container_path, host_dest) in &copy_results {
-        tracing::debug!(path = %label, "copying from container");
-        let src = format!("{temp_name}:{container_path}");
-        if !crate::docker::docker_ok(&["cp", &src, &host_dest.display().to_string()]) {
-            cleanup();
-            return Err(AgentCodeError::Extract(format!("failed to copy {label} from container")));
+/// Find the repo root by walking up from cwd looking for agent/src/vesta/main.py.
+fn find_repo_agent_dir() -> Option<PathBuf> {
+    let mut dir = std::env::current_dir().ok()?;
+    for _ in 0..10 {
+        let candidate = dir.join("agent");
+        if candidate.join("src/vesta/main.py").exists() {
+            return Some(candidate);
         }
+        dir = dir.parent()?.to_path_buf();
+    }
+    None
+}
+
+/// Copy agent code from the local repo into agent-code/.
+fn copy_from_local_repo(config: &Path) -> Result<(), AgentCodeError> {
+    let agent_dir = find_repo_agent_dir()
+        .ok_or_else(|| AgentCodeError::Extract("cannot find agent/ directory in repo".into()))?;
+
+    let dest = agent_code_dir(config);
+    // Clean and recreate
+    let _ = fs::remove_dir_all(&dest);
+    fs::create_dir_all(&dest).map_err(|e| AgentCodeError::Io(e.to_string()))?;
+
+    // Copy src/vesta/ using cp -r
+    let src_dest = dest.join("src");
+    fs::create_dir_all(&src_dest).map_err(|e| AgentCodeError::Io(e.to_string()))?;
+
+    let status = process::Command::new("cp")
+        .args(["-r",
+            &agent_dir.join("src/vesta").display().to_string(),
+            &src_dest.join("vesta").display().to_string(),
+        ])
+        .status()
+        .map_err(|e| AgentCodeError::Io(e.to_string()))?;
+    if !status.success() {
+        return Err(AgentCodeError::Extract("failed to copy src/vesta".into()));
     }
 
-    // Copy individual files (destination must include filename, not just directory)
-    for (label, container_path) in [
-        ("pyproject.toml", "/root/vesta/pyproject.toml"),
-        ("uv.lock", "/root/vesta/uv.lock"),
-    ] {
-        tracing::debug!(path = %label, "copying from container");
-        let src = format!("{temp_name}:{container_path}");
-        let dest = dir.join(label);
-        if !crate::docker::docker_ok(&["cp", &src, &dest.display().to_string()]) {
-            cleanup();
-            return Err(AgentCodeError::Extract(format!("failed to copy {label} from container")));
-        }
+    // Copy individual files
+    for file in ["pyproject.toml", "uv.lock"] {
+        fs::copy(agent_dir.join(file), dest.join(file))
+            .map_err(|e| AgentCodeError::Io(format!("failed to copy {file}: {e}")))?;
     }
 
-    cleanup();
     Ok(())
 }
 

@@ -64,7 +64,7 @@ fn migrate_add_mounts_and_env(env_config: &docker::AgentEnvConfig, containers: &
     // Check if any container needs mounts — if so, ensure agent code is on host first
     let needs_mounts = containers.iter().any(|c| !docker::has_agent_code_mounts(c));
     if needs_mounts {
-        if let Err(e) = crate::agent_code::ensure_agent_code(&env_config.config_dir, docker::VESTA_IMAGE) {
+        if let Err(e) = crate::agent_code::ensure_agent_code(&env_config.config_dir) {
             tracing::error!(
                 migration = "add_mounts_and_env",
                 error = %e,
