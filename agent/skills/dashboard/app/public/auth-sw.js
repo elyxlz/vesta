@@ -4,6 +4,9 @@
 
 let token = null;
 
+self.addEventListener("install", () => self.skipWaiting());
+self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));
+
 self.addEventListener("message", (e) => {
   if (e.data?.type === "set-token") {
     token = e.data.token;
@@ -12,9 +15,7 @@ self.addEventListener("message", (e) => {
 
 self.addEventListener("fetch", (e) => {
   if (!token) return;
-  // Only intercept same-origin requests
   if (new URL(e.request.url).origin !== self.location.origin) return;
-  // Already has auth — don't override
   if (e.request.headers.get("authorization")) return;
 
   const authed = new Request(e.request, {

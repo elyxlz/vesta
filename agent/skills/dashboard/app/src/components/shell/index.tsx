@@ -5,8 +5,6 @@ import {
   onLayoutChange,
 } from "@/lib/parent-bridge"
 
-//  Do not touch this file. 
-
 export function Shell({ className, ...props }: React.ComponentProps<"div">) {
   const [fullscreen, setFullscreen] = useState(getFullscreen)
 
@@ -15,8 +13,10 @@ export function Shell({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       className={cn(
-        "h-full w-full text-card-foreground overflow-hidden contain-paint",
-        fullscreen ? "" : "bg-card rounded-4xl shadow-md ring-1 ring-foreground/5 dark:ring-foreground/10",
+        "text-card-foreground overflow-hidden contain-paint",
+        fullscreen
+          ? "h-full w-full"
+          : "m-2 h-[calc(100%-1rem)] w-[calc(100%-1rem)] bg-card rounded-4xl shadow-md ring-1 ring-foreground/5 dark:ring-foreground/10",
         className,
       )}
       {...props}

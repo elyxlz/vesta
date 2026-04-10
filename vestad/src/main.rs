@@ -9,6 +9,7 @@ mod docker;
 mod jwt;
 mod self_update;
 mod serve;
+mod service_proxy;
 mod systemd;
 mod tunnel;
 mod types;
