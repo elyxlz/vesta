@@ -194,11 +194,16 @@ async def _process_interruptible(
         raise
 
 
+SDK_CLEANUP_TIMEOUT = 5
+
+
 async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig) -> None:
     logger.client("Creating new client session...")
     options = build_client_options(config, state)
     ready_marker = config.data_dir / "agent_ready"
-    async with ClaudeSDKClient(options=options) as client:
+    client = ClaudeSDKClient(options=options)
+    await client.__aenter__()
+    try:
         state.client = client
         logger.client("Client session started")
 
@@ -233,6 +238,12 @@ async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm
             state.client = None
             state.interrupt_event = None
             logger.client("Client session closed")
+    finally:
+        try:
+            async with asyncio.timeout(SDK_CLEANUP_TIMEOUT):
+                await client.__aexit__(None, None, None)
+        except (TimeoutError, Exception):
+            logger.client("SDK cleanup timed out, abandoning")
 
 
 # --- Proactive & dreamer ---
