@@ -1155,9 +1155,7 @@ async fn agent_proxy_handler(
         }))
     } else {
         drop(guard);
-        let is_service_root = is_service
-            && path.strip_suffix('/').unwrap_or(&path) == first_segment;
-        let token = if is_service_root {
+        let token = if is_service {
             crate::service_proxy::extract_token(request.uri())
         } else {
             None

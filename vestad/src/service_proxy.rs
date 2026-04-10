@@ -1,9 +1,6 @@
 use axum::{body::Body, http::StatusCode, Json, response::Response};
 
-/// Rewrite relative asset references in proxied HTML to carry the auth token,
-/// so the browser's initial sub-resource loads (JS/CSS from <script>/<link>)
-/// pass through auth. A client-side service worker covers subsequent loads
-/// (fonts from CSS, images, etc.) once it activates.
+/// Rewrite relative `src` and `href` attributes in HTML to include the auth token.
 fn inject_token_into_html(html: &str, token: &str) -> String {
     let encoded = crate::docker::percent_encode(token);
     let token_suffix = format!("?token={encoded}");
@@ -38,6 +35,51 @@ fn inject_token_into_html(html: &str, token: &str) -> String {
     out
 }
 
+/// Rewrite relative `url()` references in CSS to include the auth token.
+fn inject_token_into_css(css: &str, token: &str) -> String {
+    let encoded = crate::docker::percent_encode(token);
+    let token_suffix = format!("?token={encoded}");
+    let mut out = String::with_capacity(css.len() + token_suffix.len() * 8);
+    let mut remaining = css;
+    while let Some(pos) = remaining.find("url(") {
+        out.push_str(&remaining[..pos + 4]);
+        let after = &remaining[pos + 4..];
+        let (quote, value_start) = if let Some(rest) = after.strip_prefix('"') {
+            (Some('"'), rest)
+        } else if let Some(rest) = after.strip_prefix('\'') {
+            (Some('\''), rest)
+        } else {
+            (None, after)
+        };
+        if value_start.starts_with("./") {
+            let close = match quote {
+                Some(q) => value_start.find(q),
+                None => value_start.find(')'),
+            };
+            if let Some(end) = close {
+                if let Some(q) = quote {
+                    out.push(q);
+                }
+                out.push_str(&value_start[..end]);
+                out.push_str(&token_suffix);
+                remaining = &value_start[end..];
+            } else {
+                if let Some(q) = quote {
+                    out.push(q);
+                }
+                remaining = value_start;
+            }
+        } else {
+            if let Some(q) = quote {
+                out.push(q);
+            }
+            remaining = value_start;
+        }
+    }
+    out.push_str(remaining);
+    out
+}
+
 /// Extract the auth token from the query string.
 pub fn extract_token(uri: &axum::http::Uri) -> Option<String> {
     uri.query()
@@ -45,19 +87,21 @@ pub fn extract_token(uri: &axum::http::Uri) -> Option<String> {
         .map(|t| t.to_string())
 }
 
-/// If the response is HTML, rewrite relative asset URLs to include the auth token.
-/// No-op for non-HTML responses.
+/// Rewrite relative asset URLs in HTML and CSS responses to include the auth
+/// token. No-op for other content types.
 pub async fn rewrite_asset_urls(
     resp: Response,
     token: &str,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
-    let is_html = resp
+    let ct = resp
         .headers()
         .get("content-type")
-        .map(|ct| ct.as_bytes().starts_with(b"text/html"))
-        .unwrap_or(false);
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let is_html = ct.starts_with("text/html");
+    let is_css = ct.starts_with("text/css");
 
-    if !is_html {
+    if !is_html && !is_css {
         return Ok(resp);
     }
 
@@ -67,11 +111,15 @@ pub async fn rewrite_asset_urls(
         .map_err(|e| {
             (
                 StatusCode::BAD_GATEWAY,
-                Json(serde_json::json!({"error": format!("read html: {e}")})),
+                Json(serde_json::json!({"error": format!("read body: {e}")})),
             )
         })?;
-    let html = String::from_utf8_lossy(&body_bytes);
-    let rewritten = inject_token_into_html(&html, token);
+    let text = String::from_utf8_lossy(&body_bytes);
+    let rewritten = if is_html {
+        inject_token_into_html(&text, token)
+    } else {
+        inject_token_into_css(&text, token)
+    };
     Ok(Response::from_parts(parts, Body::from(rewritten)))
 }
 
@@ -80,17 +128,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rewrites_relative_assets() {
-        let html = r#"<link rel="stylesheet" href="./assets/index-08Wd65qu.css"><script type="module" src="./assets/index-BTqrWaCT.js"></script>"#;
+    fn rewrites_relative_html_assets() {
+        let html = r#"<link rel="stylesheet" href="./assets/index.css"><script type="module" src="./assets/index.js"></script>"#;
         let result = inject_token_into_html(html, "tok123");
         assert_eq!(
             result,
-            r#"<link rel="stylesheet" href="./assets/index-08Wd65qu.css?token=tok123"><script type="module" src="./assets/index-BTqrWaCT.js?token=tok123"></script>"#
+            r#"<link rel="stylesheet" href="./assets/index.css?token=tok123"><script type="module" src="./assets/index.js?token=tok123"></script>"#
         );
     }
 
     #[test]
-    fn ignores_absolute_urls() {
+    fn html_ignores_absolute_urls() {
         let html = r#"<script src="https://cdn.example.com/lib.js"></script>"#;
         let result = inject_token_into_html(html, "tok123");
         assert_eq!(result, html);
@@ -101,5 +149,32 @@ mod tests {
         let html = r#"<script src="./app.js"></script>"#;
         let result = inject_token_into_html(html, "a b+c");
         assert!(result.contains("?token=a%20b%2Bc"));
+    }
+
+    #[test]
+    fn rewrites_css_url_unquoted() {
+        let css = r#"@font-face{src:url(./assets/font.woff2) format("woff2")}"#;
+        let result = inject_token_into_css(css, "tok123");
+        assert_eq!(
+            result,
+            r#"@font-face{src:url(./assets/font.woff2?token=tok123) format("woff2")}"#
+        );
+    }
+
+    #[test]
+    fn rewrites_css_url_double_quoted() {
+        let css = r#"@font-face{src:url("./assets/font.woff2") format("woff2")}"#;
+        let result = inject_token_into_css(css, "tok123");
+        assert_eq!(
+            result,
+            r#"@font-face{src:url("./assets/font.woff2?token=tok123") format("woff2")}"#
+        );
+    }
+
+    #[test]
+    fn css_ignores_absolute_urls() {
+        let css = r#"@import url(https://fonts.googleapis.com/css);"#;
+        let result = inject_token_into_css(css, "tok123");
+        assert_eq!(result, css);
     }
 }
