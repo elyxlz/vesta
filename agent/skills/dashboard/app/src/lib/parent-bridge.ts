@@ -44,7 +44,7 @@ export function initParentBridge() {
       authToken = event.data.token;
       baseUrl = event.data.baseUrl;
       _resolveAuth?.();
-      registerSW();
+      sendTokenToSW();
     }
     if (event.data?.type === "vesta-layout") {
       _fullscreen = !!event.data.fullscreen;
@@ -56,6 +56,12 @@ export function initParentBridge() {
   window.parent.postMessage({ type: "vesta-auth-request" }, "*");
   window.parent.postMessage({ type: "vesta-layout-request" }, "*");
 
+  // Register SW immediately using the token from the page URL so it's
+  // active before CSS triggers font loads. The postMessage token arrives
+  // later and is also forwarded.
+  const urlToken = new URLSearchParams(window.location.search).get("token");
+  if (urlToken) registerSW(urlToken);
+
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.addEventListener("controllerchange", () => sendTokenToSW());
   }
@@ -63,12 +69,12 @@ export function initParentBridge() {
 
 let _swRegistered = false;
 
-function registerSW() {
-  if (_swRegistered || !authToken || !("serviceWorker" in navigator)) return;
+function registerSW(token: string) {
+  if (_swRegistered || !("serviceWorker" in navigator)) return;
   _swRegistered = true;
-  // Pass token so the SW script itself passes auth.
+  authToken ??= token;
   navigator.serviceWorker
-    .register(`./auth-sw.js?token=${encodeURIComponent(authToken)}`)
+    .register(`./auth-sw.js?token=${encodeURIComponent(token)}`)
     .then(() => sendTokenToSW());
 }
 
