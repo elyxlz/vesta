@@ -1089,15 +1089,13 @@ pub fn reconcile_containers(env_config: &AgentEnvConfig) {
         return;
     }
 
-    // Phase 1: ensure env files exist, rebuild containers with wrong config
+    // Phase 1: ensure env files exist, track which are running
     let mut was_running = std::collections::HashSet::new();
-    let mut any_needs_rebuild = false;
-
     for cname in &containers {
         let name = get_agent_name(cname);
-        let running = container_status(cname) == ContainerStatus::Running;
-
-        // Ensure env file exists
+        if container_status(cname) == ContainerStatus::Running {
+            was_running.insert(name.clone());
+        }
         let env_path = env_config.agents_dir.join(format!("{name}.env"));
         if !env_path.exists() {
             if let Some(port) = read_container_env(cname, "WS_PORT").and_then(|v| v.parse::<u16>().ok()) {
@@ -1107,27 +1105,31 @@ pub fn reconcile_containers(env_config: &AgentEnvConfig) {
                 }
             }
         }
+    }
 
-        if needs_rebuild(cname) {
-            if !any_needs_rebuild {
-                any_needs_rebuild = true;
-                if let Err(e) = crate::agent_code::ensure_agent_code(&env_config.config_dir) {
+    // Phase 2: rebuild containers with wrong config
+    let mut agent_code_ok = false;
+    for cname in &containers {
+        if !needs_rebuild(cname) {
+            continue;
+        }
+        let name = get_agent_name(cname);
+        if !agent_code_ok {
+            match crate::agent_code::ensure_agent_code(&env_config.config_dir) {
+                Ok(_) => agent_code_ok = true,
+                Err(e) => {
                     tracing::error!(error = %e, "failed to ensure agent code — skipping rebuilds");
                     break;
                 }
             }
-            match rebuild_agent(&name, env_config) {
-                Ok(()) => tracing::info!(agent = %name, "rebuild complete"),
-                Err(e) => { tracing::error!(agent = %name, error = %e, "rebuild failed"); continue; }
-            }
         }
-
-        if running {
-            was_running.insert(name);
+        match rebuild_agent(&name, env_config) {
+            Ok(()) => tracing::info!(agent = %name, "rebuild complete"),
+            Err(e) => tracing::error!(agent = %name, error = %e, "rebuild failed"),
         }
     }
 
-    // Phase 2: restart running agents (picks up new env), start rebuilt ones
+    // Phase 3: restart running agents (picks up new env), start rebuilt ones
     for cname in &containers {
         let name = name_from_cname(cname);
         match container_status(cname) {

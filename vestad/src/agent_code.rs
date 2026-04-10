@@ -166,7 +166,7 @@ fn fetch_agent_code_from_github(config: &Path, tag: &str) -> Result<(), AgentCod
     let _ = fs::remove_dir_all(&old_dir);
     fs::create_dir_all(&tmp_dir).map_err(|e| AgentCodeError::Io(e.to_string()))?;
 
-    let archive_url = format!("{GITHUB_ARCHIVE_URL}/{tag}.tar.gz");
+    let archive_url = format!("{GITHUB_ARCHIVE_URL}/v{tag}.tar.gz");
     let archive_path = format!("/tmp/{TEMP_PREFIX}-{}.tar.gz", std::process::id());
 
     // Download
@@ -182,9 +182,9 @@ fn fetch_agent_code_from_github(config: &Path, tag: &str) -> Result<(), AgentCod
     }
 
     // Extract the entire agent/ subtree into a temp staging dir, then move what we need.
-    // GitHub archives have prefix vesta-{tag}/, so --strip-components=2 turns
-    // vesta-{tag}/agent/src/vesta/... into src/vesta/..., agent/pyproject.toml into pyproject.toml, etc.
-    let prefix = format!("vesta-{tag}/agent");
+    // GitHub archives have prefix vesta-v{tag}/, so --strip-components=2 turns
+    // vesta-v{tag}/agent/src/vesta/... into src/vesta/...
+    let prefix = format!("vesta-v{tag}/agent");
     let ok = process::Command::new("tar")
         .args([
             "-xzf", &archive_path,
