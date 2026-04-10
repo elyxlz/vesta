@@ -6,7 +6,6 @@ pub enum UpdateError {
     Download(String),
     Extract(String),
     Replace(String),
-    AgentCode(String),
 }
 
 impl fmt::Display for UpdateError {
@@ -16,13 +15,13 @@ impl fmt::Display for UpdateError {
             Self::Download(msg) => write!(f, "failed to download update: {}", msg),
             Self::Extract(msg) => write!(f, "failed to extract update: {}", msg),
             Self::Replace(msg) => write!(f, "failed to replace binary: {}", msg),
-            Self::AgentCode(msg) => write!(f, "failed to update agent code: {}", msg),
         }
     }
 }
 
 /// Downloads the latest vestad binary from GitHub, replaces the current binary,
-/// updates agent code, restarts running agents, and reinstalls the systemd service.
+/// and reinstalls the systemd service. Agent code and container restarts are
+/// handled on the next vestad startup.
 /// Returns Ok(true) if a restart was triggered.
 pub fn perform_update() -> Result<bool, UpdateError> {
     let tag = crate::update_check::fetch_latest_tag()
@@ -31,13 +30,6 @@ pub fn perform_update() -> Result<bool, UpdateError> {
     tracing::info!(tag = %tag, "starting update");
 
     update_binary(&tag)?;
-
-    let config = crate::config_dir();
-    tracing::info!(tag = %tag, "updating agent code from github");
-    crate::agent_code::fetch_agent_code_from_github(&config, &tag)
-        .map_err(|e| UpdateError::AgentCode(e.to_string()))?;
-
-    restart_agents();
 
     if let Err(e) = crate::systemd::reinstall_service() {
         tracing::warn!("failed to update systemd service: {e}");
@@ -94,27 +86,4 @@ fn update_binary(tag: &str) -> Result<(), UpdateError> {
     std::fs::remove_dir_all(&tmp).ok();
     tracing::info!("vestad binary replaced successfully");
     Ok(())
-}
-
-/// Restart running agents so they pick up new agent code.
-/// Migration of pre-migration containers is handled at startup by docker::migrate_containers.
-fn restart_agents() {
-    let containers = crate::docker::list_managed_containers();
-    if containers.is_empty() {
-        tracing::info!("no agents to restart");
-        return;
-    }
-
-    for cname in &containers {
-        let name = crate::docker::get_agent_name(cname);
-        let status = crate::docker::container_status(cname);
-        if status == crate::docker::ContainerStatus::Running {
-            tracing::info!(agent = %name, "restarting agent for code update");
-            if !crate::docker::docker_ok(&["restart", cname]) {
-                tracing::error!(agent = %name, "failed to restart agent");
-            }
-        } else {
-            tracing::info!(agent = %name, "agent is stopped, will use new code on next start");
-        }
-    }
 }

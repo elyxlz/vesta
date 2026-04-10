@@ -46,6 +46,12 @@ pub const OAUTH_REDIRECT_URI: &str = "https://console.anthropic.com/oauth/code/c
 pub const OAUTH_TOKEN_URL: &str = "https://api.anthropic.com/v1/oauth/token";
 pub const OAUTH_AUTHORIZE_URL: &str = "https://claude.ai/oauth/authorize";
 
+// --- Expected container config (single source of truth) ---
+
+const NETWORK_MODE: &str = "host";
+const RESTART_POLICY: &str = "unless-stopped";
+const MOUNT_DESTS: &[&str] = &["/run/vestad-env", "/root/vesta/src/vesta", "/root/vesta/pyproject.toml", "/root/vesta/uv.lock"];
+
 /// Container entrypoint: source the bind-mounted env file (so vestad can inject
 /// new vars without rebuilding images), then exec the agent.
 const ENTRYPOINT: &[&str] = &[
@@ -699,20 +705,18 @@ fn gpu_available() -> GpuStatus {
 pub fn create_container(cname: &str, image: &str, port: u16, agent_name: &str, env_config: &AgentEnvConfig) -> Result<(), DockerError> {
     let agent_token = generate_agent_token();
     let env_path = write_agent_env_file(env_config, agent_name, port, &agent_token)?;
-    let env_mount = format!("{}:/run/vestad-env:ro,z", env_path.display());
+    let env_mount = format!("{}:{}:ro,z", env_path.display(), MOUNT_DESTS[0]);
 
-    // Read-only mounts for agent source code, pyproject.toml, and uv.lock
-    // The :z flag sets SELinux shared labels so containers can read the files.
     let code_dir = crate::agent_code::agent_code_dir(&env_config.config_dir);
-    let src_mount = format!("{}:/root/vesta/src/vesta:ro,z", code_dir.join("src/vesta").display());
-    let pyproject_mount = format!("{}:/root/vesta/pyproject.toml:ro,z", code_dir.join("pyproject.toml").display());
-    let lock_mount = format!("{}:/root/vesta/uv.lock:ro,z", code_dir.join("uv.lock").display());
+    let src_mount = format!("{}:{}:ro,z", code_dir.join("src/vesta").display(), MOUNT_DESTS[1]);
+    let pyproject_mount = format!("{}:{}:ro,z", code_dir.join("pyproject.toml").display(), MOUNT_DESTS[2]);
+    let lock_mount = format!("{}:{}:ro,z", code_dir.join("uv.lock").display(), MOUNT_DESTS[3]);
 
     let user_label = format!("{}={}", LABEL_USER, current_user());
     let agent_name_label = format!("{}={}", LABEL_AGENT_NAME, agent_name);
     let mut args = vec![
         "create", "--name", cname, "-t",
-        "--restart", "unless-stopped", "--network", "host",
+        "--restart", RESTART_POLICY, "--network", NETWORK_MODE,
         "--label", "vesta.managed=true",
         "--label", &user_label,
         "--label", &agent_name_label,
@@ -998,7 +1002,7 @@ pub fn create_agent(name: &str, env_config: &AgentEnvConfig) -> Result<String, D
     let image = resolve_image()?;
 
     crate::agent_code::ensure_agent_code(&env_config.config_dir)
-        .map_err(|e| DockerError::Failed(format!("failed to populate agent code: {e}")))?;
+        .map_err(|e| DockerError::Failed(format!("agent code: {e}")))?;
 
     let (port, _listener) = allocate_port(&env_config.agents_dir)?;
     create_container(&cname, image, port, name, env_config)?;
@@ -1077,6 +1081,69 @@ pub fn restart_agent(name: &str) -> Result<(), DockerError> {
     Ok(())
 }
 
+/// Ensure all containers match expected config and running agents are restarted.
+/// Called once at startup after agent code and env files are ready.
+pub fn reconcile_containers(env_config: &AgentEnvConfig) {
+    let containers = list_managed_containers();
+    if containers.is_empty() {
+        return;
+    }
+
+    // Phase 1: ensure env files exist, rebuild containers with wrong config
+    let mut was_running = std::collections::HashSet::new();
+    let mut any_needs_rebuild = false;
+
+    for cname in &containers {
+        let name = get_agent_name(cname);
+        let running = container_status(cname) == ContainerStatus::Running;
+
+        // Ensure env file exists
+        let env_path = env_config.agents_dir.join(format!("{name}.env"));
+        if !env_path.exists() {
+            if let Some(port) = read_container_env(cname, "WS_PORT").and_then(|v| v.parse::<u16>().ok()) {
+                let token = generate_agent_token();
+                if let Err(e) = write_agent_env_file(env_config, &name, port, &token) {
+                    tracing::error!(agent = %name, error = %e, "failed to create missing env file");
+                }
+            }
+        }
+
+        if needs_rebuild(cname) {
+            if !any_needs_rebuild {
+                any_needs_rebuild = true;
+                if let Err(e) = crate::agent_code::ensure_agent_code(&env_config.config_dir) {
+                    tracing::error!(error = %e, "failed to ensure agent code — skipping rebuilds");
+                    break;
+                }
+            }
+            match rebuild_agent(&name, env_config) {
+                Ok(()) => tracing::info!(agent = %name, "rebuild complete"),
+                Err(e) => { tracing::error!(agent = %name, error = %e, "rebuild failed"); continue; }
+            }
+        }
+
+        if running {
+            was_running.insert(name);
+        }
+    }
+
+    // Phase 2: restart running agents (picks up new env), start rebuilt ones
+    for cname in &containers {
+        let name = name_from_cname(cname);
+        match container_status(cname) {
+            ContainerStatus::Running => {
+                tracing::info!(agent = %name, "restarting");
+                docker_ok(&["restart", cname]);
+            }
+            ContainerStatus::Stopped if was_running.contains(&name) => {
+                tracing::info!(agent = %name, "starting after rebuild");
+                docker_ok(&["start", cname]);
+            }
+            _ => {}
+        }
+    }
+}
+
 pub fn destroy_agent(name: &str, agents_dir: &std::path::Path) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
@@ -1094,11 +1161,46 @@ pub fn destroy_agent(name: &str, agents_dir: &std::path::Path) -> Result<(), Doc
     Ok(())
 }
 
-/// Check if a container has the read-only agent code bind mounts.
-pub fn has_agent_code_mounts(cname: &str) -> bool {
-    docker_output(&["inspect", "--format", "{{json .Mounts}}", cname])
-        .map(|s| s.contains("/root/vesta/src/vesta"))
-        .unwrap_or(false)
+/// Check if a container's config diverges from what create_container would produce.
+fn needs_rebuild(cname: &str) -> bool {
+    let fmt = "{{json .Mounts}}\\n{{json .Config.Entrypoint}}\\n{{.HostConfig.NetworkMode}}\\n{{.HostConfig.RestartPolicy.Name}}";
+    let output = match docker_output(&["inspect", "--format", fmt, cname]) {
+        Some(s) => s,
+        None => return true,
+    };
+
+    let lines: Vec<&str> = output.lines().collect();
+    let mounts = lines.first().unwrap_or(&"");
+    let entrypoint = lines.get(1).unwrap_or(&"");
+    let network = lines.get(2).map(|s| s.trim()).unwrap_or("");
+    let restart = lines.get(3).map(|s| s.trim()).unwrap_or("");
+
+    // Check mounts
+    if MOUNT_DESTS.iter().any(|d| !mounts.contains(d)) {
+        tracing::info!(container = %cname, "rebuild needed: missing mounts");
+        return true;
+    }
+
+    // Check entrypoint (exact match against ENTRYPOINT array)
+    let ep_ok = serde_json::from_str::<Vec<String>>(entrypoint)
+        .map(|actual| actual.iter().zip(ENTRYPOINT).all(|(a, e)| a == e) && actual.len() == ENTRYPOINT.len())
+        .unwrap_or(false);
+    if !ep_ok {
+        tracing::info!(container = %cname, "rebuild needed: entrypoint mismatch");
+        return true;
+    }
+
+    if network != NETWORK_MODE {
+        tracing::info!(container = %cname, network, "rebuild needed: wrong network mode");
+        return true;
+    }
+
+    if restart != RESTART_POLICY {
+        tracing::info!(container = %cname, restart, "rebuild needed: wrong restart policy");
+        return true;
+    }
+
+    false
 }
 
 /// Recreate a container with the latest container config (entrypoint, mounts, env file)
@@ -1125,22 +1227,15 @@ pub fn rebuild_agent(name: &str, env_config: &AgentEnvConfig) -> Result<(), Dock
         .as_secs();
     let backup_tag = format!("vesta-rebuild:{}_{}", name, ts);
 
-    tracing::info!(agent = %name, "[1/5] snapshotting container filesystem...");
+    tracing::info!(agent = %name, "[1/3] snapshotting container filesystem...");
     snapshot_container(&cname, &backup_tag, &[])?;
 
-    tracing::info!(agent = %name, "[2/5] removing old container...");
+    tracing::info!(agent = %name, "[2/3] removing old container...");
     docker_ok(&["rm", "-f", &cname]);
 
-    tracing::info!(agent = %name, "[3/5] creating container with new config...");
+    tracing::info!(agent = %name, "[3/3] creating container with new config...");
     create_container(&cname, &backup_tag, port, name, env_config)?;
 
-    tracing::info!(agent = %name, "[4/5] starting container...");
-    if !docker_ok(&["start", &cname]) {
-        return Err(DockerError::Failed("failed to start".into()));
-    }
-
-    tracing::info!(agent = %name, "[5/5] cleaning up temporary image...");
-    docker_ok(&["rmi", &backup_tag]);
     Ok(())
 }
 
