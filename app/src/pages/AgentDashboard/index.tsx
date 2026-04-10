@@ -6,6 +6,7 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
+import { Card } from "@/components/ui/card";
 import { Chat } from "@/components/Chat";
 import { Dashboard } from "@/components/Dashboard";
 import type { AgentHomeOutletContext } from "@/lib/types";
@@ -27,8 +28,8 @@ export function AgentDashboard() {
         className="flex h-full w-full gap-2"
       >
         <ResizablePanel defaultSize="70%" minSize="300px">
-          <div className={`h-full`}>
-            <Dashboard fullscreen={chatCollapsed} />
+          <div className="h-full">
+            <Dashboard fullscreen />
           </div>
         </ResizablePanel>
 
