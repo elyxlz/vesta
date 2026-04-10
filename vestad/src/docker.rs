@@ -1165,7 +1165,8 @@ pub fn destroy_agent(name: &str, agents_dir: &std::path::Path) -> Result<(), Doc
 
 /// Check if a container's config diverges from what create_container would produce.
 fn needs_rebuild(cname: &str) -> bool {
-    let fmt = "{{json .Mounts}}\\n{{json .Config.Entrypoint}}\\n{{.HostConfig.NetworkMode}}\\n{{.HostConfig.RestartPolicy.Name}}";
+    // docker create puts args after the image into Cmd, not Entrypoint
+    let fmt = "{{json .Mounts}}\\n{{json .Config.Cmd}}\\n{{.HostConfig.NetworkMode}}\\n{{.HostConfig.RestartPolicy.Name}}";
     let output = match docker_output(&["inspect", "--format", fmt, cname]) {
         Some(s) => s,
         None => return true,
@@ -1173,32 +1174,31 @@ fn needs_rebuild(cname: &str) -> bool {
 
     let lines: Vec<&str> = output.lines().collect();
     let mounts = lines.first().unwrap_or(&"");
-    let entrypoint = lines.get(1).unwrap_or(&"");
+    let cmd_json = lines.get(1).unwrap_or(&"");
     let network = lines.get(2).map(|s| s.trim()).unwrap_or("");
     let restart = lines.get(3).map(|s| s.trim()).unwrap_or("");
 
-    // Check mounts
-    if MOUNT_DESTS.iter().any(|d| !mounts.contains(d)) {
-        tracing::info!(container = %cname, "rebuild needed: missing mounts");
+    let missing: Vec<_> = MOUNT_DESTS.iter().filter(|d| !mounts.contains(**d)).collect();
+    if !missing.is_empty() {
+        tracing::info!(container = %cname, missing = ?missing, "rebuild needed: missing mounts");
         return true;
     }
 
-    // Check entrypoint (exact match against ENTRYPOINT array)
-    let ep_ok = serde_json::from_str::<Vec<String>>(entrypoint)
+    let cmd_ok = serde_json::from_str::<Vec<String>>(cmd_json)
         .map(|actual| actual.iter().zip(ENTRYPOINT).all(|(a, e)| a == e) && actual.len() == ENTRYPOINT.len())
         .unwrap_or(false);
-    if !ep_ok {
-        tracing::info!(container = %cname, "rebuild needed: entrypoint mismatch");
+    if !cmd_ok {
+        tracing::info!(container = %cname, actual = %cmd_json, "rebuild needed: command mismatch");
         return true;
     }
 
     if network != NETWORK_MODE {
-        tracing::info!(container = %cname, network, "rebuild needed: wrong network mode");
+        tracing::info!(container = %cname, actual = network, expected = NETWORK_MODE, "rebuild needed: wrong network mode");
         return true;
     }
 
     if restart != RESTART_POLICY {
-        tracing::info!(container = %cname, restart, "rebuild needed: wrong restart policy");
+        tracing::info!(container = %cname, actual = restart, expected = RESTART_POLICY, "rebuild needed: wrong restart policy");
         return true;
     }
 
