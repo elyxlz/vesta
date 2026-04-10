@@ -1125,19 +1125,22 @@ pub fn rebuild_agent(name: &str, env_config: &AgentEnvConfig) -> Result<(), Dock
         .as_secs();
     let backup_tag = format!("vesta-rebuild:{}_{}", name, ts);
 
-    tracing::info!(agent = %name, "[1/4] snapshotting container filesystem...");
+    tracing::info!(agent = %name, "[1/5] snapshotting container filesystem...");
     snapshot_container(&cname, &backup_tag, &[])?;
 
-    tracing::info!(agent = %name, "[2/4] removing old container...");
+    tracing::info!(agent = %name, "[2/5] removing old container...");
     docker_ok(&["rm", "-f", &cname]);
 
-    tracing::info!(agent = %name, "[3/4] creating container with new config...");
+    tracing::info!(agent = %name, "[3/5] creating container with new config...");
     create_container(&cname, &backup_tag, port, name, env_config)?;
 
-    tracing::info!(agent = %name, "[4/4] starting container...");
+    tracing::info!(agent = %name, "[4/5] starting container...");
     if !docker_ok(&["start", &cname]) {
         return Err(DockerError::Failed("failed to start".into()));
     }
+
+    tracing::info!(agent = %name, "[5/5] cleaning up temporary image...");
+    docker_ok(&["rmi", &backup_tag]);
     Ok(())
 }
 
