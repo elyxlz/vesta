@@ -37,3 +37,6 @@ reqwest = { version = "0.12", default-features = false, features = ["stream", "j
 dotenvy = "0.15"
 time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
 
+[dev-dependencies]
+tempfile = "3"
+
