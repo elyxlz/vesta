@@ -105,7 +105,7 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
     return (
       <Empty className="flex-1 h-full w-full border-0">
         <EmptyHeader>
-          <EmptyMedia variant="icon">
+          <EmptyMedia variant="icon" className="size-12 rounded-full bg-sidebar-primary text-sidebar-primary-foreground [&_svg:not([class*='size-'])]:size-6">
             <LayoutDashboard />
           </EmptyMedia>
           <EmptyTitle>your dashboard</EmptyTitle>

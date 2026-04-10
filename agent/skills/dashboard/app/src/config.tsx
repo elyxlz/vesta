@@ -10,9 +10,7 @@
 // ============================================================================
 
 import type { ComponentType, ReactNode } from "react"
-import {
-  LayoutDashboardIcon,
-} from "lucide-react"
+import { LayoutDashboardIcon } from "lucide-react"
 
 // --- Types ---
 
@@ -38,6 +36,6 @@ export const config: DashboardConfig = {
 
   pages: [
     // Add pages here:
-    // { id: "overview", title: "Overview", icon: <LayoutDashboardIcon />, component: OverviewPage },
+    { id: "overview", title: "Overview", icon: <LayoutDashboardIcon />, component: () => <div>Overview</div> },
   ],
 }

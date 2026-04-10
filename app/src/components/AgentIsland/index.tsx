@@ -67,7 +67,7 @@ export function AgentIsland() {
           "border border-border bg-card text-base text-card-foreground shadow-sm",
           expanded
             ? "aspect-square w-[min(100vw-2rem,178px)] shrink-0 overflow-visible"
-            : "h-full w-fit max-w-[min(100vw-2rem,158px)] overflow-hidden flex items-center",
+            : "h-full w-fit max-w-[min(100vw-2rem,280px)] overflow-hidden flex items-center",
         )}
       >
         <div

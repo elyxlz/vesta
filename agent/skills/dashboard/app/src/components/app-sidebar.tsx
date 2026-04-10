@@ -1,6 +1,6 @@
 import * as React from "react"
 
-import type { DashboardConfig } from "@/config"
+import type { DashboardConfig, PageConfig } from "@/config"
 import { NavMain } from "@/components/nav-main"
 import {
   Sidebar,
@@ -13,15 +13,19 @@ import {
 
 export function AppSidebar({
   config,
+  pages,
+  onReorder,
   activePageId,
   onNavigate,
   ...props
 }: {
   config: DashboardConfig
+  pages: PageConfig[]
+  onReorder: (pages: PageConfig[]) => void
   activePageId: string
   onNavigate: (id: string) => void
 } & React.ComponentProps<typeof Sidebar>) {
-  const navItems = config.pages.map((p) => ({
+  const navItems = pages.map((p) => ({
     id: p.id,
     title: p.title,
     icon: p.icon,
@@ -32,11 +36,11 @@ export function AppSidebar({
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
-            <div className="flex items-center gap-2 p-1.5">
-              {config.titleIcon}
-              <span className="text-base font-heading font-medium group-data-[collapsible=icon]:hidden">
-                {config.title}
-              </span>
+            <div className="flex items-center gap-2 overflow-hidden px-3 py-2 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:px-0">
+              <div className="flex aspect-square size-8 shrink-0 items-center justify-center rounded-full bg-sidebar-primary text-sidebar-primary-foreground">
+                {config.titleIcon}
+              </div>
+              <span className="truncate font-heading font-medium">{config.title}</span>
             </div>
           </SidebarMenuItem>
         </SidebarMenu>
@@ -46,6 +50,10 @@ export function AppSidebar({
           items={navItems}
           activeId={activePageId}
           onNavigate={onNavigate}
+          onReorder={(reordered) => {
+            const idOrder = reordered.map((item) => item.id)
+            onReorder(idOrder.map((id) => pages.find((p) => p.id === id)!))
+          }}
         />
       </SidebarContent>
       <SidebarRail />

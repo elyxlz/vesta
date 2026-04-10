@@ -1,5 +1,4 @@
-import { useState, useEffect } from "react"
-import { LayoutDashboard } from "lucide-react"
+import { useState } from "react"
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import {
@@ -10,43 +9,38 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty"
 import { AppSidebar } from "@/components/app-sidebar"
+import { Shell } from "@/components/shell"
 import { SiteHeader } from "@/components/site-header"
 import { config } from "./config"
-import {
-  isFullscreen as getFullscreen,
-  onLayoutChange,
-} from "./lib/parent-bridge"
 
-// --- Empty state toggle ---
-// Set to false once there are configured pages in config.tsx.
-const SHOW_EMPTY_STATE = true
+const SHOW_EMPTY_STATE = config.pages.length === 0
 
 export default function App() {
-  const [fullscreen, setFullscreen] = useState(getFullscreen)
   const [activePageId, setActivePageId] = useState(config.pages[0]?.id ?? "")
+  const [pages, setPages] = useState(config.pages)
   const activePage =
-    config.pages.find((p) => p.id === activePageId) ?? config.pages[0]
-
-  useEffect(() => onLayoutChange(setFullscreen), [])
+    pages.find((p) => p.id === activePageId) ?? pages[0]
 
   if (SHOW_EMPTY_STATE) {
     return (
-      <Empty className="flex-1 h-full w-full border-0">
-        <EmptyHeader>
-          <EmptyMedia variant="icon">
-            <LayoutDashboard />
-          </EmptyMedia>
-          <EmptyTitle>your dashboard</EmptyTitle>
-          <EmptyDescription>
-            ask your agent to set up the dashboard and add some widgets
-          </EmptyDescription>
-        </EmptyHeader>
-      </Empty>
+      <Shell>
+        <Empty className="flex-1 h-full w-full border-0">
+          <EmptyHeader>
+            <EmptyMedia variant="icon" className="size-12 rounded-full bg-sidebar-primary text-sidebar-primary-foreground [&_svg:not([class*='size-'])]:size-6">
+              {config.titleIcon}
+            </EmptyMedia>
+            <EmptyTitle>your dashboard</EmptyTitle>
+            <EmptyDescription>
+              ask your agent to set up the dashboard and add some widgets
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      </Shell>
     )
   }
 
   return (
-    <div className={`h-full w-full ${fullscreen ? "p-page" : "pl-2 pr-4 py-4"}`}>
+    <Shell>
       <TooltipProvider>
         <SidebarProvider
           style={
@@ -58,17 +52,19 @@ export default function App() {
         >
           <AppSidebar
             config={config}
+            pages={pages}
+            onReorder={setPages}
             activePageId={activePageId}
             onNavigate={setActivePageId}
           />
           <SidebarInset>
             <SiteHeader title={activePage?.title ?? ""} />
-            <div className="overflow-y-auto flex-1">
+            <div className="overflow-y-auto flex-1 p-4">
               {activePage && <activePage.component />}
             </div>
           </SidebarInset>
         </SidebarProvider>
       </TooltipProvider>
-    </div>
+    </Shell>
   )
 }
