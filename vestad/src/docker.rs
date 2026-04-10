@@ -184,6 +184,48 @@ pub fn docker_ok(args: &[&str]) -> bool {
     docker(args).map(|s| s.success()).unwrap_or(false)
 }
 
+/// Snapshot a container's filesystem as a new image using docker export | docker import.
+/// Unlike docker commit, this doesn't depend on parent image layers.
+/// Optional `changes` apply Dockerfile instructions (e.g. LABEL) to the imported image.
+pub fn snapshot_container(cname: &str, tag: &str, changes: &[&str]) -> Result<(), DockerError> {
+    let mut export_child = process::Command::new("docker")
+        .args(["export", cname])
+        .stdout(process::Stdio::piped())
+        .stderr(process::Stdio::piped())
+        .spawn()
+        .map_err(|e| DockerError::Failed(format!("failed to start docker export: {e}")))?;
+
+    let export_stdout = export_child.stdout.take()
+        .ok_or_else(|| DockerError::Failed("docker export stdout not available".into()))?;
+
+    let mut import_args = Vec::new();
+    for change in changes {
+        import_args.push("--change");
+        import_args.push(change);
+    }
+    import_args.push("-");
+    import_args.push(tag);
+
+    let import_output = process::Command::new("docker")
+        .args(["import"])
+        .args(&import_args)
+        .stdin(export_stdout)
+        .output()
+        .map_err(|e| DockerError::Failed(format!("failed to run docker import: {e}")))?;
+
+    let export_status = export_child.wait()
+        .map_err(|e| DockerError::Failed(format!("docker export wait failed: {e}")))?;
+
+    if !export_status.success() {
+        return Err(DockerError::Failed("docker export failed".into()));
+    }
+    if !import_output.status.success() {
+        let stderr = String::from_utf8_lossy(&import_output.stderr);
+        return Err(DockerError::Failed(format!("docker import failed: {stderr}")));
+    }
+    Ok(())
+}
+
 pub fn docker_output(args: &[&str]) -> Option<String> {
     let output = process::Command::new("docker")
         .args(args)
@@ -469,11 +511,8 @@ fn env_file_names(agents_dir: &std::path::Path) -> Vec<String> {
     entries
         .flatten()
         .filter_map(|entry| {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("env") {
-                return None;
-            }
-            path.file_stem().and_then(|s| s.to_str()).map(|s| s.to_string())
+            let name = entry.file_name().to_str()?.to_string();
+            name.strip_suffix(".env").map(|s| s.to_string())
         })
         .collect()
 }
@@ -529,8 +568,18 @@ pub struct AgentEnvConfig {
     pub vestad_tunnel: Option<String>,
 }
 
+/// Read an environment variable from a container's config (baked-in env vars).
+pub fn read_container_env(cname: &str, key: &str) -> Option<String> {
+    let envs = docker_output(&["inspect", "--format", "{{json .Config.Env}}", cname])?;
+    let arr: Vec<String> = serde_json::from_str(&envs).ok()?;
+    let prefix = format!("{}=", key);
+    arr.iter()
+        .find(|e| e.starts_with(&prefix))
+        .map(|e| e[prefix.len()..].to_string())
+}
+
 /// Write a sourceable env file for a single agent. Returns the file path.
-fn write_agent_env_file(
+pub fn write_agent_env_file(
     env_config: &AgentEnvConfig,
     agent_name: &str,
     ws_port: u16,
@@ -948,8 +997,7 @@ pub fn create_agent(name: &str, env_config: &AgentEnvConfig) -> Result<String, D
 
     let image = resolve_image()?;
 
-    tracing::info!(agent = %name, image = %image, "ensuring agent code on host");
-    crate::agent_code::ensure_agent_code(&env_config.config_dir, image)
+    crate::agent_code::ensure_agent_code(&env_config.config_dir)
         .map_err(|e| DockerError::Failed(format!("failed to populate agent code: {e}")))?;
 
     let (port, _listener) = allocate_port(&env_config.agents_dir)?;
@@ -1053,6 +1101,9 @@ pub fn has_agent_code_mounts(cname: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Recreate a container with the latest container config (entrypoint, mounts, env file)
+/// while preserving the filesystem. Commits the old container, removes it, and creates
+/// a new one from the committed image.
 pub fn rebuild_agent(name: &str, env_config: &AgentEnvConfig) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
@@ -1062,26 +1113,33 @@ pub fn rebuild_agent(name: &str, env_config: &AgentEnvConfig) -> Result<(), Dock
         ContainerStatus::Dead => return Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name))),
         _ => {}
     }
-    let port = info.port.ok_or_else(|| DockerError::Failed("agent has no port in env file".into()))?;
+
+    // Get port: try env file first, then container's baked-in env vars
+    let port = info.port
+        .or_else(|| read_container_env(&cname, "WS_PORT").and_then(|v| v.parse().ok()))
+        .ok_or_else(|| DockerError::Failed("agent has no port".into()))?;
+
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
     let backup_tag = format!("vesta-rebuild:{}_{}", name, ts);
 
-    docker_ok(&["pull", VESTA_IMAGE]);
+    tracing::info!(agent = %name, "[1/5] snapshotting container filesystem...");
+    snapshot_container(&cname, &backup_tag, &[])?;
 
-    if !docker_ok(&["commit", &cname, &backup_tag]) {
-        return Err(DockerError::Failed("backup failed".into()));
-    }
-
+    tracing::info!(agent = %name, "[2/5] removing old container...");
     docker_ok(&["rm", "-f", &cname]);
 
+    tracing::info!(agent = %name, "[3/5] creating container with new config...");
     create_container(&cname, &backup_tag, port, name, env_config)?;
 
+    tracing::info!(agent = %name, "[4/5] starting container...");
     if !docker_ok(&["start", &cname]) {
         return Err(DockerError::Failed("failed to start".into()));
     }
+
+    tracing::info!(agent = %name, "[5/5] cleaning up temporary image...");
     docker_ok(&["rmi", &backup_tag]);
     Ok(())
 }

@@ -7,6 +7,7 @@ mod agent_code;
 mod backup;
 mod docker;
 mod jwt;
+mod migrations;
 mod self_update;
 mod serve;
 mod service_proxy;
@@ -228,7 +229,8 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool) {
                 None
             };
 
-            serve::run_server(port, api_key, cert_pem, key_pem, tunnel_url, config.clone()).await;
+            let dev_mode = cfg!(debug_assertions) || std::env::var("VESTAD_DEV").is_ok();
+            serve::run_server(port, api_key, cert_pem, key_pem, tunnel_url, config.clone(), dev_mode).await;
 
             if let Some(mut child) = tunnel_child {
                 child.kill().await.ok();
@@ -367,32 +369,11 @@ fn main() {
                     docker::docker_ok(&["stop", "--time", backup::BACKUP_STOP_TIMEOUT_SECS, &cname]);
                 }
 
-                eprintln!("committing snapshot...");
+                eprintln!("snapshotting container...");
                 let temp_tag = format!("vesta-export:{}-temp", name);
-                if !docker::docker_ok(&["commit", &cname, &temp_tag]) {
-                    eprintln!("docker commit failed, trying export/import fallback...");
-                    let mut export_child = std::process::Command::new("docker")
-                        .args(["export", &cname])
-                        .stdout(std::process::Stdio::piped())
-                        .spawn()
-                        .unwrap_or_else(|e| {
-                            if was_running { docker::docker_ok(&["start", &cname]); }
-                            die(format!("docker export failed: {}", e));
-                        });
-                    let export_stdout = export_child.stdout.take().expect("stdout was set to piped");
-                    let import_out = std::process::Command::new("docker")
-                        .args(["import", "-", &temp_tag])
-                        .stdin(export_stdout)
-                        .output()
-                        .unwrap_or_else(|e| {
-                            if was_running { docker::docker_ok(&["start", &cname]); }
-                            die(format!("docker import failed: {}", e));
-                        });
-                    let _ = export_child.wait();
-                    if !import_out.status.success() {
-                        if was_running { docker::docker_ok(&["start", &cname]); }
-                        die("export fallback failed");
-                    }
+                if let Err(e) = docker::snapshot_container(&cname, &temp_tag, &[]) {
+                    if was_running { docker::docker_ok(&["start", &cname]); }
+                    die(format!("snapshot failed: {}", e));
                 }
 
                 if was_running {
@@ -483,7 +464,7 @@ fn main() {
                     vestad_port,
                     vestad_tunnel,
                 };
-                agent_code::ensure_agent_code(&config, loaded_image)
+                agent_code::ensure_agent_code(&config)
                     .unwrap_or_else(|e| die(format!("failed to populate agent code: {e}")));
                 let (port, _listener) = docker::allocate_port(&env_config.agents_dir).unwrap_or_else(|e| die(&e));
                 docker::create_container(&cname, loaded_image, port, &name, &env_config)
