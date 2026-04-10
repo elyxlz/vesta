@@ -20,7 +20,7 @@ impl fmt::Display for UpdateError {
 }
 
 /// Downloads the latest vestad binary from GitHub, replaces the current binary,
-/// and reinstalls the systemd service. Agent code and container restarts are
+/// and restarts the systemd service. Agent code and container restarts are
 /// handled on the next vestad startup.
 /// Returns Ok(true) if a restart was triggered.
 pub fn perform_update() -> Result<bool, UpdateError> {
@@ -31,9 +31,11 @@ pub fn perform_update() -> Result<bool, UpdateError> {
 
     update_binary(&tag)?;
 
-    if let Err(e) = crate::systemd::reinstall_service() {
-        tracing::warn!("failed to update systemd service: {e}");
-    }
+    // Don't reinstall the systemd service here — self-replace puts the new
+    // binary at the same path, so the ExecStart line doesn't change. And
+    // reading /proc/self/exe after self-replace returns the path with
+    // " (deleted)" appended, which would break the service file.
+    // The new binary calls ensure_service_installed() on startup if needed.
 
     if crate::systemd::is_active() {
         tracing::info!("restarting vestad...");

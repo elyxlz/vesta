@@ -9,11 +9,6 @@ fn unit_file_path() -> Result<String, String> {
     Ok(format!("{}/.config/systemd/user/vestad.service", home))
 }
 
-pub fn reinstall_service() -> Result<(), String> {
-    std::fs::remove_file(&unit_file_path()?).ok();
-    ensure_service_installed()
-}
-
 pub fn ensure_service_installed() -> Result<(), String> {
     let vestad_path = std::env::current_exe()
         .map_err(|e| format!("cannot determine binary path: {}", e))?
