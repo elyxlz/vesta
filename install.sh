@@ -85,6 +85,8 @@ main() {
     fi
   }
 
+  PATH_UPDATED=""
+
   ensure_path() {
     local bin_dir="$HOME/.local/bin"
     case ":$PATH:" in
@@ -98,6 +100,7 @@ main() {
         echo "# Added by Vesta installer" >> "$rc"
         echo "$line" >> "$rc"
         echo "Added $bin_dir to PATH in $(basename "$rc")"
+        PATH_UPDATED=1
       fi
     done
 
@@ -254,6 +257,10 @@ main() {
   fi
   if has_gui; then
     echo "  Open Vesta app and connect to your server"
+  fi
+  if [ -n "$PATH_UPDATED" ]; then
+    echo ""
+    echo "NOTE: Run 'source ~/.bashrc' or open a new terminal first."
   fi
 }
 
