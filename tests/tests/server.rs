@@ -399,7 +399,7 @@ fn creation_flow() {
     assert!(c.agent_status(&agent.name).unwrap().authenticated);
 
     c.restart_agent(&agent.name).unwrap();
-    c.wait_ready(&agent.name, 120).unwrap();
+    c.wait_ready(&agent.name, 60).unwrap();
 
     let st = c.agent_status(&agent.name).unwrap();
     assert_eq!(st.status, "running");
