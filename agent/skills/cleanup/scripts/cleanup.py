@@ -6,10 +6,17 @@ Scans for cleanable items (caches, build artifacts, temp files, etc.) and
 reports their sizes. By default runs in dry-run mode — nothing is deleted
 until you pass --clean.
 
+Two-tier system:
+  Tier 1 — Auto-clean  : safe items that regenerate automatically (pyc, logs,
+                          tmp, build-artifacts). Cleaned by --clean.
+  Tier 2 — Report-only : caches that re-download on next use (pip, uv, go,
+                          npm, huggingface, playwright). Require --clean-all.
+
 Usage:
     python3 ~/vesta/skills/cleanup/scripts/cleanup.py               # dry-run report
-    python3 ~/vesta/skills/cleanup/scripts/cleanup.py --clean       # actually delete
-    python3 ~/vesta/skills/cleanup/scripts/cleanup.py --clean --target pip-cache pyc
+    python3 ~/vesta/skills/cleanup/scripts/cleanup.py --clean       # clean tier-1 only
+    python3 ~/vesta/skills/cleanup/scripts/cleanup.py --clean-all   # clean everything
+    python3 ~/vesta/skills/cleanup/scripts/cleanup.py --clean --target pyc logs
     python3 ~/vesta/skills/cleanup/scripts/cleanup.py --list-targets
 """
 
@@ -32,6 +39,21 @@ def fmt_size(n_bytes: int) -> str:
             return f"{n_bytes:.1f} {unit}"
         n_bytes /= 1024.0
     return f"{n_bytes:.1f} PB"
+
+
+def fmt_atime(path: Path) -> str:
+    """Return a human-readable 'last accessed' string for a path, or '' if unavailable."""
+    try:
+        atime = path.stat().st_atime
+    except OSError:
+        return ""
+    age_secs = time.time() - atime
+    if age_secs < 3600:
+        return f"last accessed {int(age_secs // 60)}m ago"
+    if age_secs < 86400:
+        return f"last accessed {int(age_secs // 3600)}h ago"
+    days = int(age_secs // 86400)
+    return f"last accessed {days}d ago"
 
 
 def dir_size(path: Path) -> int:
@@ -75,12 +97,12 @@ def remove_path(path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 # Each target is a dict with:
-#   key         : str   — CLI name
-#   label       : str   — display label
-#   description : str   — one-line description
-#   warning     : str | None — shown in red if set
-#   scan        : callable(home, vesta_root) -> list[Path]  — returns paths to delete
-#   size        : callable(paths) -> int  — how to compute total size of those paths
+#   key         : str        — CLI name
+#   label       : str        — display label
+#   description : str        — one-line description
+#   tier        : str        — "auto" (cleaned by --clean) or "report" (--clean-all only)
+#   warning     : str | None — shown in yellow if set
+#   scan        : callable() -> list[Path]  — returns paths to delete
 
 HOME = Path.home()
 VESTA_ROOT = HOME / "vesta"
@@ -206,52 +228,12 @@ def _scan_build_artifacts() -> list[Path]:
 # Defined after the scan functions so lambdas/references resolve correctly.
 
 TARGETS: list[dict] = [
-    {
-        "key": "pip-cache",
-        "label": "pip cache",
-        "description": "pip wheel and HTTP cache (~/.cache/pip/)",
-        "warning": None,
-        "scan": lambda: _scan_single_dir(HOME / ".cache" / "pip"),
-    },
-    {
-        "key": "uv-cache",
-        "label": "uv cache",
-        "description": "uv package cache (~/.cache/uv/)",
-        "warning": None,
-        "scan": lambda: _scan_single_dir(HOME / ".cache" / "uv"),
-    },
-    {
-        "key": "go-build",
-        "label": "Go build cache",
-        "description": "Go compiler build cache (~/.cache/go-build/)",
-        "warning": None,
-        "scan": lambda: _scan_single_dir(HOME / ".cache" / "go-build"),
-    },
-    {
-        "key": "huggingface",
-        "label": "HuggingFace cache",
-        "description": "HuggingFace model/dataset cache (~/.cache/huggingface/)",
-        "warning": "Models must be re-downloaded from HuggingFace Hub after cleaning.",
-        "scan": lambda: _scan_single_dir(HOME / ".cache" / "huggingface"),
-    },
-    {
-        "key": "npm-cache",
-        "label": "npm cache",
-        "description": "npm package cache (~/.npm/)",
-        "warning": None,
-        "scan": lambda: _scan_single_dir(HOME / ".npm"),
-    },
-    {
-        "key": "playwright",
-        "label": "Playwright browsers",
-        "description": "Playwright browser binaries (~/.cache/ms-playwright/)",
-        "warning": "Browser automation will break until 'playwright install' is re-run.",
-        "scan": lambda: _scan_single_dir(HOME / ".cache" / "ms-playwright"),
-    },
+    # ---- Tier 1: Auto-clean (safe, items regenerate without network) -------
     {
         "key": "pyc",
         "label": "Python bytecode",
         "description": "Compiled .pyc files and __pycache__ dirs under ~/vesta/",
+        "tier": "auto",
         "warning": None,
         "scan": _scan_pyc,
     },
@@ -259,6 +241,7 @@ TARGETS: list[dict] = [
         "key": "logs",
         "label": "Old log files",
         "description": "Rotated/old log files in ~/vesta/logs/ (current logs kept)",
+        "tier": "auto",
         "warning": None,
         "scan": _scan_logs,
     },
@@ -266,6 +249,7 @@ TARGETS: list[dict] = [
         "key": "tmp",
         "label": "Stale /tmp files",
         "description": "Files in /tmp/ not modified in the last 24 hours",
+        "tier": "auto",
         "warning": None,
         "scan": _scan_tmp,
     },
@@ -273,8 +257,58 @@ TARGETS: list[dict] = [
         "key": "build-artifacts",
         "label": "Build artifacts",
         "description": "build/, dist/, *.egg-info/ under ~/vesta/skills/",
+        "tier": "auto",
         "warning": None,
         "scan": _scan_build_artifacts,
+    },
+    # ---- Tier 2: Report-only (caches that re-download on next use) ---------
+    {
+        "key": "pip-cache",
+        "label": "pip cache",
+        "description": "pip wheel and HTTP cache (~/.cache/pip/)",
+        "tier": "report",
+        "warning": None,
+        "scan": lambda: _scan_single_dir(HOME / ".cache" / "pip"),
+    },
+    {
+        "key": "uv-cache",
+        "label": "uv cache",
+        "description": "uv package cache (~/.cache/uv/)",
+        "tier": "report",
+        "warning": None,
+        "scan": lambda: _scan_single_dir(HOME / ".cache" / "uv"),
+    },
+    {
+        "key": "go-build",
+        "label": "Go build cache",
+        "description": "Go compiler build cache (~/.cache/go-build/)",
+        "tier": "report",
+        "warning": None,
+        "scan": lambda: _scan_single_dir(HOME / ".cache" / "go-build"),
+    },
+    {
+        "key": "npm-cache",
+        "label": "npm cache",
+        "description": "npm package cache (~/.npm/)",
+        "tier": "report",
+        "warning": None,
+        "scan": lambda: _scan_single_dir(HOME / ".npm"),
+    },
+    {
+        "key": "huggingface",
+        "label": "HuggingFace cache",
+        "description": "HuggingFace model/dataset cache (~/.cache/huggingface/)",
+        "tier": "report",
+        "warning": "Models must be re-downloaded from HuggingFace Hub after cleaning.",
+        "scan": lambda: _scan_single_dir(HOME / ".cache" / "huggingface"),
+    },
+    {
+        "key": "playwright",
+        "label": "Playwright browsers",
+        "description": "Playwright browser binaries (~/.cache/ms-playwright/)",
+        "tier": "report",
+        "warning": "Browser automation will break until 'playwright install' is re-run.",
+        "scan": lambda: _scan_single_dir(HOME / ".cache" / "ms-playwright"),
     },
 ]
 
@@ -322,59 +356,155 @@ def color(text: str, code: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def run(targets: list[dict], dry_run: bool) -> None:
-    mode_label = color("DRY RUN", YELLOW) if dry_run else color("CLEAN", RED + BOLD)
-    print(f"\n{color('Vesta Disk Cleanup', BOLD)}  [{mode_label}]\n")
+def _print_section(
+    section_label: str,
+    targets: list[dict],
+    col_label: int,
+    col_size: int,
+    show_atime: bool,
+) -> tuple[list[tuple], int]:
+    """
+    Print one section of the dry-run table.
 
-    results: list[tuple[str, int, list[Path], str | None]] = []  # (label, size, paths, warning)
-    grand_total = 0
+    Returns (results, section_total) where results is a list of
+    (label, size, paths, warning, key) tuples.
+    """
+    print(color(f"  {section_label}", BOLD))
+    print(color("  " + "-" * (col_label + col_size + 44), DIM))
 
-    col_label = 22
-    col_size = 12
-
-    header = f"  {'Target':<{col_label}}  {'Size':>{col_size}}  Description"
-    print(color(header, DIM))
-    print(color("  " + "-" * (col_label + col_size + 40), DIM))
+    results: list[tuple] = []
+    section_total = 0
 
     for target in targets:
         paths = target["scan"]()
         size = compute_size(paths)
-        grand_total += size
+        section_total += size
         results.append((target["label"], size, paths, target.get("warning"), target["key"]))
 
         size_str = fmt_size(size) if size > 0 else color("—", DIM)
         warn_icon = color(" !", YELLOW) if target.get("warning") else "  "
-        print(f"  {target['label']:<{col_label}}  {size_str:>{col_size}}{warn_icon}  {target['description']}")
 
-    print(color("  " + "-" * (col_label + col_size + 40), DIM))
-    total_str = color(fmt_size(grand_total), GREEN if grand_total > 0 else DIM)
-    print(f"  {'TOTAL':<{col_label}}  {total_str:>{col_size}}\n")
+        extra = ""
+        if show_atime and paths:
+            extra = color(f"  [{fmt_atime(paths[0])}]", DIM)
 
-    # Print warnings
-    warned = [(label, warning) for (label, _, paths, warning, _) in results if warning and compute_size(paths) > 0]
-    if warned:
-        print(color("  Warnings:", YELLOW + BOLD))
-        for label, warning in warned:
-            print(f"  {color('!', YELLOW)} {color(label, BOLD)}: {warning}")
-        print()
+        print(f"  {target['label']:<{col_label}}  {size_str:>{col_size}}{warn_icon}  {target['description']}{extra}")
+
+    print(color("  " + "-" * (col_label + col_size + 44), DIM))
+    total_str = color(fmt_size(section_total), GREEN if section_total > 0 else DIM)
+    print(f"  {'Subtotal':<{col_label}}  {total_str:>{col_size}}\n")
+
+    return results, section_total
+
+
+def run(targets: list[dict], dry_run: bool, clean_all: bool) -> None:
+    if dry_run:
+        mode_label = color("DRY RUN", YELLOW)
+    elif clean_all:
+        mode_label = color("CLEAN ALL", RED + BOLD)
+    else:
+        mode_label = color("CLEAN", RED + BOLD)
+
+    print(f"\n{color('Vesta Disk Cleanup', BOLD)}  [{mode_label}]\n")
+
+    col_label = 22
+    col_size = 12
+
+    # Split selected targets by tier
+    auto_targets = [t for t in targets if t.get("tier") == "auto"]
+    report_targets = [t for t in targets if t.get("tier") == "report"]
+
+    all_results: list[tuple] = []
+    grand_total = 0
 
     if dry_run:
-        print(color("  Run with --clean to delete the above items.", DIM))
+        # Show both sections clearly labelled
+        if auto_targets:
+            results, subtotal = _print_section(
+                "Auto-clean  (safe — items regenerate automatically)",
+                auto_targets,
+                col_label,
+                col_size,
+                show_atime=False,
+            )
+            all_results.extend(results)
+            grand_total += subtotal
+
+        if report_targets:
+            results, subtotal = _print_section(
+                "Report only (caches — will re-download on next use)",
+                report_targets,
+                col_label,
+                col_size,
+                show_atime=True,
+            )
+            all_results.extend(results)
+            grand_total += subtotal
+
+        total_str = color(fmt_size(grand_total), GREEN if grand_total > 0 else DIM)
+        print(f"  {'GRAND TOTAL':<{col_label}}  {total_str:>{col_size}}\n")
+
+        # Print warnings
+        warned = [(lbl, warn) for (lbl, _, paths, warn, _) in all_results if warn and compute_size(paths) > 0]
+        if warned:
+            print(color("  Warnings:", YELLOW + BOLD))
+            for lbl, warn in warned:
+                print(f"  {color('!', YELLOW)} {color(lbl, BOLD)}: {warn}")
+            print()
+
+        print(color("  Run with --clean to delete auto-clean items.", DIM))
+        print(color("  Run with --clean-all to also delete report-only caches.", DIM))
         print()
         return
 
     # --- Actual deletion ---
-    if grand_total == 0:
+    # Determine which targets to actually clean
+    if clean_all:
+        clean_targets = targets
+    else:
+        clean_targets = [t for t in targets if t.get("tier") == "auto"]
+
+    # Collect results for clean_targets only
+    results_to_clean: list[tuple] = []
+    total_to_clean = 0
+    for target in clean_targets:
+        paths = target["scan"]()
+        size = compute_size(paths)
+        total_to_clean += size
+        results_to_clean.append((target["label"], size, paths, target.get("warning"), target["key"]))
+
+    # In clean (non-dry-run) mode, still print a summary table first
+    header = f"  {'Target':<{col_label}}  {'Size':>{col_size}}  Description"
+    print(color(header, DIM))
+    print(color("  " + "-" * (col_label + col_size + 40), DIM))
+    for lbl, size, paths, warning, key in results_to_clean:
+        size_str = fmt_size(size) if size > 0 else color("—", DIM)
+        warn_icon = color(" !", YELLOW) if warning else "  "
+        tgt = TARGET_MAP[key]
+        print(f"  {lbl:<{col_label}}  {size_str:>{col_size}}{warn_icon}  {tgt['description']}")
+    print(color("  " + "-" * (col_label + col_size + 40), DIM))
+    total_str = color(fmt_size(total_to_clean), GREEN if total_to_clean > 0 else DIM)
+    print(f"  {'TOTAL':<{col_label}}  {total_str:>{col_size}}\n")
+
+    if total_to_clean == 0:
         print(color("  Nothing to clean.", DIM))
         print()
         return
 
+    # Warnings
+    warned = [(lbl, warn) for (lbl, _, paths, warn, _) in results_to_clean if warn and compute_size(paths) > 0]
+    if warned:
+        print(color("  Warnings:", YELLOW + BOLD))
+        for lbl, warn in warned:
+            print(f"  {color('!', YELLOW)} {color(lbl, BOLD)}: {warn}")
+        print()
+
     cleaned = 0
     errors = 0
-    for label, size, paths, warning, key in results:
+    for lbl, size, paths, warning, key in results_to_clean:
         if not paths or size == 0:
             continue
-        print(f"  Cleaning {color(label, BOLD)} ...", end=" ", flush=True)
+        print(f"  Cleaning {color(lbl, BOLD)} ...", end=" ", flush=True)
         for p in paths:
             try:
                 remove_path(p)
@@ -413,7 +543,13 @@ def main() -> None:
         "--clean",
         action="store_true",
         default=False,
-        help="Actually delete the cleanable items",
+        help="Delete tier-1 (auto-clean) items only",
+    )
+    mode_group.add_argument(
+        "--clean-all",
+        action="store_true",
+        default=False,
+        help="Delete everything including tier-2 caches (pip, uv, npm, etc.)",
     )
     parser.add_argument(
         "--target",
@@ -431,9 +567,17 @@ def main() -> None:
 
     if args.list_targets:
         print("\nAvailable targets:\n")
-        for t in TARGETS:
+        auto = [t for t in TARGETS if t.get("tier") == "auto"]
+        report = [t for t in TARGETS if t.get("tier") == "report"]
+        print(color("  Tier 1 — Auto-clean:", BOLD))
+        for t in auto:
             warn = f"  {color('!', YELLOW)} {t['warning']}" if t.get("warning") else ""
-            print(f"  {color(t['key'], BOLD):<30} {t['description']}{warn}")
+            print(f"    {color(t['key'], BOLD):<30} {t['description']}{warn}")
+        print()
+        print(color("  Tier 2 — Report-only (caches):", BOLD))
+        for t in report:
+            warn = f"  {color('!', YELLOW)} {t['warning']}" if t.get("warning") else ""
+            print(f"    {color(t['key'], BOLD):<30} {t['description']}{warn}")
         print()
         return
 
@@ -448,8 +592,8 @@ def main() -> None:
     else:
         selected = TARGETS
 
-    dry_run = not args.clean
-    run(selected, dry_run=dry_run)
+    dry_run = not (args.clean or args.clean_all)
+    run(selected, dry_run=dry_run, clean_all=args.clean_all)
 
 
 if __name__ == "__main__":
