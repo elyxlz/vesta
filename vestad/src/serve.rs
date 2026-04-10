@@ -417,6 +417,7 @@ async fn list_agents_handler(
 #[derive(Deserialize)]
 struct CreateBody {
     name: Option<String>,
+    manage_agent_code: Option<bool>,
 }
 
 async fn create_agent_handler(
@@ -428,13 +429,20 @@ async fn create_agent_handler(
     if name.is_empty() {
         return Err(err_response(StatusCode::BAD_REQUEST, "invalid agent name"));
     }
-    tracing::info!(name = %name, "creating agent");
+    let manage_code = body.manage_agent_code.unwrap_or(true);
+    tracing::info!(name = %name, manage_code, "creating agent");
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
+    if !manage_code {
+        let mut settings = state.settings.write().await;
+        settings.agents.entry(name.clone()).or_default().manage_agent_code = false;
+        save_settings(&settings);
+    }
+
     let env_config = state.env_config.clone();
     let name =
-        tokio::task::spawn_blocking(move || docker::create_agent(&name, &env_config))
+        tokio::task::spawn_blocking(move || docker::create_agent(&name, &env_config, manage_code))
             .await
             .unwrap()
             .map_err(map_docker_err)?;
@@ -545,6 +553,7 @@ async fn destroy_agent_handler(
     {
         let mut settings = state.settings.write().await;
         settings.services.remove(&name);
+        settings.agents.remove(&name);
         save_settings(&settings);
     }
 
@@ -559,9 +568,10 @@ async fn rebuild_agent_handler(
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
+    let manage_code = state.settings.read().await.manages_code(&name);
     let env_config = state.env_config.clone();
     tokio::task::spawn_blocking(move || {
-        docker::rebuild_agent(&name, &env_config)?;
+        docker::rebuild_agent(&name, &env_config, manage_code)?;
         docker::start_agent(&name)
     })
         .await
@@ -841,6 +851,26 @@ struct Settings {
     services: HashMap<String, HashMap<String, u16>>,
     #[serde(default)]
     backup: BackupGlobalSettings,
+    #[serde(default)]
+    agents: HashMap<String, AgentSettings>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct AgentSettings {
+    #[serde(default = "default_true")]
+    manage_agent_code: bool,
+}
+
+impl Default for AgentSettings {
+    fn default() -> Self {
+        Self { manage_agent_code: true }
+    }
+}
+
+impl Settings {
+    fn manages_code(&self, name: &str) -> bool {
+        self.agents.get(name).is_none_or(|s| s.manage_agent_code)
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -1204,22 +1234,35 @@ async fn forward_http_to_container(
 async fn create_backup_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
-) -> Result<Json<crate::types::BackupInfo>, (StatusCode, Json<serde_json::Value>)> {
+) -> Sse<impl futures_core::Stream<Item = Result<Event, std::convert::Infallible>>> {
     tracing::info!(agent = %name, "creating manual backup");
-    let lock = state.agent_lock(&name).await;
-    let _guard = lock.write().await;
 
-    let name_clone = name.clone();
-    let backup = tokio::task::spawn_blocking(move || {
-        let _file_lock = backup::agent_file_lock(&name_clone)?;
-        backup::create_backup(&name_clone, crate::types::BackupType::Manual)
-    })
-    .await
-    .unwrap()
-    .map_err(map_docker_err)?;
+    let stream = async_stream::stream! {
+        let lock = state.agent_lock(&name).await;
+        let _guard = lock.write().await;
 
-    tracing::info!(agent = %name, backup_id = %backup.id, size = backup.size, "backup created");
-    Ok(Json(backup))
+        let name_clone = name.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            let _file_lock = backup::agent_file_lock(&name_clone)?;
+            backup::create_backup(&name_clone, crate::types::BackupType::Manual)
+        })
+        .await
+        .unwrap();
+
+        match result {
+            Ok(info) => {
+                tracing::info!(agent = %name, backup_id = %info.id, size = info.size, "backup created");
+                yield Ok(Event::default().event("done").data(serde_json::to_string(&info).unwrap()));
+            }
+            Err(e) => {
+                let (status, body) = map_docker_err(e);
+                let err = serde_json::json!({"status": status.as_u16(), "error": body.0});
+                yield Ok(Event::default().event("error").data(err.to_string()));
+            }
+        }
+    };
+
+    Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
 async fn list_backups_handler(
@@ -1254,24 +1297,38 @@ struct RestoreBackupPath {
 async fn restore_backup_handler(
     State(state): State<SharedState>,
     Path(path): Path<RestoreBackupPath>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let lock = state.agent_lock(&path.name).await;
-    let _guard = lock.write().await;
-
+) -> Sse<impl futures_core::Stream<Item = Result<Event, std::convert::Infallible>>> {
     tracing::info!(agent = %path.name, backup_id = %path.backup_id, "restoring backup");
-    let name = path.name.clone();
-    let backup_id = path.backup_id.clone();
-    let env_config = state.env_config.clone();
-    tokio::task::spawn_blocking(move || {
-        let _file_lock = backup::agent_file_lock(&name)?;
-        backup::restore_backup(&name, &backup_id, &env_config)
-    })
-        .await
-        .unwrap()
-        .map_err(map_docker_err)?;
 
-    tracing::info!(agent = %path.name, backup_id = %path.backup_id, "backup restored");
-    Ok(Json(serde_json::json!({"ok": true})))
+    let stream = async_stream::stream! {
+        let lock = state.agent_lock(&path.name).await;
+        let _guard = lock.write().await;
+
+        let name = path.name.clone();
+        let backup_id = path.backup_id.clone();
+        let env_config = state.env_config.clone();
+        let manage_code = state.settings.read().await.manages_code(&name);
+        let result = tokio::task::spawn_blocking(move || {
+            let _file_lock = backup::agent_file_lock(&name)?;
+            backup::restore_backup(&name, &backup_id, &env_config, manage_code)
+        })
+        .await
+        .unwrap();
+
+        match result {
+            Ok(()) => {
+                tracing::info!(agent = %path.name, backup_id = %path.backup_id, "backup restored");
+                yield Ok(Event::default().event("done").data(r#"{"ok":true}"#));
+            }
+            Err(e) => {
+                let (status, body) = map_docker_err(e);
+                let err = serde_json::json!({"status": status.as_u16(), "error": body.0});
+                yield Ok(Event::default().event("error").data(err.to_string()));
+            }
+        }
+    };
+
+    Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
 #[derive(Deserialize)]
@@ -1383,6 +1440,67 @@ async fn set_auto_backup_handler(
         "enabled": settings.backup.enabled,
         "hour": settings.backup.hour,
         "retention": settings.backup.retention,
+    })))
+}
+
+// --- Per-agent settings ---
+
+async fn get_agent_settings_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let settings = state.settings.read().await;
+    let agent = settings.agents.get(&name).cloned().unwrap_or_default();
+    Ok(Json(serde_json::json!({
+        "manage_agent_code": agent.manage_agent_code,
+    })))
+}
+
+#[derive(Deserialize)]
+struct PatchAgentSettingsBody {
+    manage_agent_code: Option<bool>,
+}
+
+async fn patch_agent_settings_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+    Json(body): Json<PatchAgentSettingsBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let lock = state.agent_lock(&name).await;
+    let _guard = lock.write().await;
+
+    let (old_manage_code, new_manage_code) = {
+        let mut settings = state.settings.write().await;
+        let old = settings.manages_code(&name);
+        if let Some(val) = body.manage_agent_code {
+            settings.agents.entry(name.clone()).or_default().manage_agent_code = val;
+        }
+        let new = settings.manages_code(&name);
+        save_settings(&settings);
+        (old, new)
+    };
+
+    // Rebuild if the mount config changed
+    if old_manage_code != new_manage_code {
+        let env_config = state.env_config.clone();
+        let rebuild_name = name.clone();
+        tokio::task::spawn_blocking(move || {
+            let was_running = docker::container_status(&docker::container_name(&rebuild_name))
+                == docker::ContainerStatus::Running;
+            if let Err(e) = docker::rebuild_agent(&rebuild_name, &env_config, new_manage_code) {
+                tracing::error!(agent = %rebuild_name, error = %e, "rebuild after settings change failed");
+                return;
+            }
+            if was_running {
+                docker::start_agent(&rebuild_name).ok();
+            }
+        })
+        .await
+        .unwrap();
+    }
+
+    Ok(Json(serde_json::json!({
+        "manage_agent_code": new_manage_code,
     })))
 }
 
@@ -1536,6 +1654,8 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/backups", get(list_backups_handler))
         .route("/agents/{name}/backups/{backup_id}/restore", post(restore_backup_handler))
         .route("/agents/{name}/backups/{backup_id}", axum::routing::delete(delete_backup_handler))
+        .route("/agents/{name}/settings", get(get_agent_settings_handler))
+        .route("/agents/{name}/settings", axum::routing::patch(patch_agent_settings_handler))
         .route("/agents/{name}/settings/backup", get(get_agent_backup_settings_handler))
         .route("/agents/{name}/settings/backup", axum::routing::put(set_agent_backup_settings_handler))
         .route("/agents/{name}/settings/backup", axum::routing::delete(delete_agent_backup_settings_handler))
@@ -1799,7 +1919,12 @@ pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: S
         tracing::error!(error = %e, "failed to ensure agent code");
     }
     let env_config_clone = env_config.clone();
-    tokio::task::spawn_blocking(move || docker::reconcile_containers(&env_config_clone));
+    let agent_settings = load_settings().agents.clone();
+    tokio::task::spawn_blocking(move || {
+        docker::reconcile_containers(&env_config_clone, &|name| {
+            agent_settings.get(name).is_none_or(|s| s.manage_agent_code)
+        });
+    });
     let state = Arc::new(AppState::new(api_key, env_config, tunnel_url, dev_mode));
     let app = build_router(state.clone());
     spawn_auto_backup_task(state.clone());
