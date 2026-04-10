@@ -50,7 +50,7 @@ pub const OAUTH_AUTHORIZE_URL: &str = "https://claude.ai/oauth/authorize";
 /// new vars without rebuilding images), then exec the agent.
 const ENTRYPOINT: &[&str] = &[
     "sh", "-c",
-    ". /run/vestad-env; . ~/.bashrc || true; exec uv run --project /root/vesta python -m vesta.main",
+    ". /run/vestad-env; . ~/.bashrc || true; exec uv run --frozen --project /root/vesta python -m vesta.main",
 ];
 
 #[derive(PartialEq, Clone, Copy)]
@@ -657,13 +657,14 @@ fn gpu_available() -> GpuStatus {
 pub fn create_container(cname: &str, image: &str, port: u16, agent_name: &str, env_config: &AgentEnvConfig) -> Result<(), DockerError> {
     let agent_token = generate_agent_token();
     let env_path = write_agent_env_file(env_config, agent_name, port, &agent_token)?;
-    let env_mount = format!("{}:/run/vestad-env:ro", env_path.display());
+    let env_mount = format!("{}:/run/vestad-env:ro,z", env_path.display());
 
     // Read-only mounts for agent source code, pyproject.toml, and uv.lock
+    // The :z flag sets SELinux shared labels so containers can read the files.
     let code_dir = crate::agent_code::agent_code_dir(&env_config.config_dir);
-    let src_mount = format!("{}:/root/vesta/src/vesta:ro", code_dir.join("src/vesta").display());
-    let pyproject_mount = format!("{}:/root/vesta/pyproject.toml:ro", code_dir.join("pyproject.toml").display());
-    let lock_mount = format!("{}:/root/vesta/uv.lock:ro", code_dir.join("uv.lock").display());
+    let src_mount = format!("{}:/root/vesta/src/vesta:ro,z", code_dir.join("src/vesta").display());
+    let pyproject_mount = format!("{}:/root/vesta/pyproject.toml:ro,z", code_dir.join("pyproject.toml").display());
+    let lock_mount = format!("{}:/root/vesta/uv.lock:ro,z", code_dir.join("uv.lock").display());
 
     let user_label = format!("{}={}", LABEL_USER, current_user());
     let agent_name_label = format!("{}={}", LABEL_AGENT_NAME, agent_name);
