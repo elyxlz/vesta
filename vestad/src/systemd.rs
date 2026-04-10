@@ -19,6 +19,7 @@ pub fn ensure_service_installed() -> Result<(), String> {
         .map_err(|e| format!("cannot determine binary path: {}", e))?
         .to_str()
         .ok_or("binary path is not valid UTF-8")?
+        .trim_end_matches(" (deleted)")
         .to_string();
 
     let unit_path = unit_file_path()?;
