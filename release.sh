@@ -50,10 +50,7 @@ TAG="v${NEW}"
 git add -A
 git commit -m "Bump version to ${NEW}"
 git push origin master
-gh release create "$TAG" --title "$TAG" --generate-notes --target master --prerelease
+gh release create "$TAG" --title "$TAG" --generate-notes --target master --draft
 
-# Update production branch
-git push origin master:production
-
-echo "✅ Released ${TAG}"
-echo "CI will build artifacts and publish the release."
+echo "✅ Created draft release ${TAG}"
+echo "CI will build artifacts, publish the release, and push to production."
