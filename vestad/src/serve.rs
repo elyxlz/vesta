@@ -321,6 +321,9 @@ fn ok_json() -> Json<serde_json::Value> {
 }
 
 fn err_response(status: StatusCode, msg: &str) -> (StatusCode, Json<serde_json::Value>) {
+    if status.is_server_error() {
+        tracing::error!(status = status.as_u16(), error = msg, "server error");
+    }
     (status, Json(serde_json::json!({"error": msg})))
 }
 
@@ -1576,7 +1579,9 @@ pub fn build_router(state: SharedState) -> Router {
                 )
                 .on_request(
                     |request: &axum::http::Request<_>, _span: &tracing::Span| {
-                        tracing::info!(method = %request.method(), path = %request.uri(), "request");
+                        if request.method() != axum::http::Method::OPTIONS {
+                            tracing::info!(method = %request.method(), path = %request.uri(), "request");
+                        }
                     },
                 ),
         )
