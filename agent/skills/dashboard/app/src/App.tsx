@@ -23,7 +23,7 @@ export default function App() {
 
   if (SHOW_EMPTY_STATE) {
     return (
-      <Shell className="m-2 h-[calc(100%-1rem)] w-[calc(100%-1rem)]">
+      <Shell>
         <Empty className="flex-1 h-full w-full border-0">
           <EmptyHeader>
             <EmptyMedia variant="icon" className="size-12 rounded-full bg-sidebar-primary text-sidebar-primary-foreground [&_svg:not([class*='size-'])]:size-6">

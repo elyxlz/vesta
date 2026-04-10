@@ -4,7 +4,6 @@ let _resolveAuth: (() => void) | null = null;
 const _authReady = new Promise<void>((r) => { _resolveAuth = r; });
 let _fullscreen = false;
 const _layoutListeners: Set<(fullscreen: boolean) => void> = new Set();
-let _swReg: ServiceWorkerRegistration | null = null;
 
 export function isFullscreen(): boolean {
   return _fullscreen;
@@ -45,7 +44,7 @@ export function initParentBridge() {
       authToken = event.data.token;
       baseUrl = event.data.baseUrl;
       _resolveAuth?.();
-      sendTokenToSW(authToken);
+      sendTokenToSW();
     }
     if (event.data?.type === "vesta-layout") {
       _fullscreen = !!event.data.fullscreen;
@@ -58,16 +57,15 @@ export function initParentBridge() {
   window.parent.postMessage({ type: "vesta-layout-request" }, "*");
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("./auth-sw.js").then((reg) => {
-      _swReg = reg;
-      if (authToken) sendTokenToSW(authToken);
-    });
+    // The SW uses skipWaiting + clients.claim to activate immediately.
+    navigator.serviceWorker.register("./auth-sw.js").then(() => sendTokenToSW());
+    navigator.serviceWorker.addEventListener("controllerchange", () => sendTokenToSW());
   }
 }
 
-function sendTokenToSW(token: string | null) {
-  const sw = _swReg?.active ?? navigator.serviceWorker?.controller;
-  if (sw && token) {
-    sw.postMessage({ type: "set-token", token });
+function sendTokenToSW() {
+  const sw = navigator.serviceWorker?.controller;
+  if (sw && authToken) {
+    sw.postMessage({ type: "set-token", token: authToken });
   }
 }

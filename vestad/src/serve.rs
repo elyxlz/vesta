@@ -1112,16 +1112,16 @@ async fn agent_proxy_handler(
     // Check if the first path segment matches a registered service.
     // If so, route directly to that service's port with the prefix stripped.
     let first_segment = path.split('/').next().unwrap_or("");
-    let (target_port, stripped_path) = if !first_segment.is_empty() {
+    let (target_port, stripped_path, is_service) = if !first_segment.is_empty() {
         if let Some(service_port) = resolve_service_port(&state, &name, first_segment).await {
             let rest = &path[first_segment.len()..];
             let rest = if rest.is_empty() { "/" } else { rest };
-            (service_port, rest.to_string())
+            (service_port, rest.to_string(), true)
         } else {
-            (agent_port, format!("/{}", path))
+            (agent_port, format!("/{}", path), false)
         }
     } else {
-        (agent_port, format!("/{}", path))
+        (agent_port, format!("/{}", path), false)
     };
 
     // Append query string.
@@ -1155,8 +1155,20 @@ async fn agent_proxy_handler(
         }))
     } else {
         drop(guard);
-        forward_http_to_container(&state.http_client, target_port, &target_path, request, agent_token.as_deref())
-            .await
+        let is_service_root = is_service
+            && path.strip_suffix('/').unwrap_or(&path) == first_segment;
+        let token = if is_service_root {
+            crate::service_proxy::extract_token(request.uri())
+        } else {
+            None
+        };
+        let resp =
+            forward_http_to_container(&state.http_client, target_port, &target_path, request, agent_token.as_deref())
+                .await?;
+        match token {
+            Some(token) => crate::service_proxy::rewrite_asset_urls(resp, &token).await,
+            None => Ok(resp),
+        }
     }
 }
 

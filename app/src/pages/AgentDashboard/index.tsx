@@ -6,7 +6,6 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
-import { Card } from "@/components/ui/card";
 import { Chat } from "@/components/Chat";
 import { Dashboard } from "@/components/Dashboard";
 import type { AgentHomeOutletContext } from "@/lib/types";
