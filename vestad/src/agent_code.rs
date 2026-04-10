@@ -227,3 +227,20 @@ fn fetch_agent_code_from_github(config: &Path, tag: &str) -> Result<(), AgentCod
     tracing::info!(tag = %tag, "agent code updated successfully");
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fetch_agent_code_known_tag() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let config = tmp.path();
+        // Use a known released tag
+        fetch_agent_code_from_github(config, "0.1.118").unwrap();
+        let dir = agent_code_dir(config);
+        assert!(dir.join("src/vesta/main.py").exists(), "main.py missing");
+        assert!(dir.join("pyproject.toml").exists(), "pyproject.toml missing");
+        assert!(dir.join("uv.lock").exists(), "uv.lock missing");
+    }
+}
