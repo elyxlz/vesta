@@ -1053,87 +1053,6 @@ pub fn destroy_agent(name: &str, agents_dir: &std::path::Path) -> Result<(), Doc
     Ok(())
 }
 
-/// Migrate pre-migration containers at startup.
-/// For containers missing env files: read WS_PORT from the container's baked-in
-/// env vars, create the env file, then recreate with mounts.
-/// For containers with env files but no mounts: recreate with mounts.
-pub fn migrate_containers(env_config: &AgentEnvConfig) {
-    let containers = list_managed_containers();
-    if containers.is_empty() {
-        return;
-    }
-
-    for cname in &containers {
-        let name = get_agent_name(cname);
-
-        if has_agent_code_mounts(cname) {
-            // Already migrated — check env file exists
-            let env_path = env_config.agents_dir.join(format!("{}.env", name));
-            if !env_path.exists() {
-                // Has mounts but no env file — read port from container env
-                let port = read_container_env(cname, "WS_PORT")
-                    .and_then(|v| v.parse::<u16>().ok());
-                let Some(port) = port else {
-                    tracing::warn!(agent = %name, "container has mounts but no env file and no WS_PORT — skipping");
-                    continue;
-                };
-                let token = generate_agent_token();
-                if let Err(e) = write_agent_env_file(env_config, &name, port, &token) {
-                    tracing::error!(agent = %name, error = %e, "failed to create env file");
-                }
-                tracing::info!(agent = %name, port, "created missing env file");
-            }
-            continue;
-        }
-
-        // No mounts — need full migration (recreate container)
-        let status = container_status(cname);
-        let was_running = status == ContainerStatus::Running;
-
-        // Get port: try env file first, then container env vars
-        let port = read_env_value(&env_config.agents_dir, &name, "WS_PORT")
-            .or_else(|| read_container_env(cname, "WS_PORT"))
-            .and_then(|v| v.parse::<u16>().ok());
-
-        let Some(port) = port else {
-            tracing::error!(agent = %name, "cannot migrate: no WS_PORT found");
-            continue;
-        };
-
-        tracing::info!(agent = %name, "migrating container to use read-only mounts");
-
-        // Commit current state as backup
-        let ts = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        let backup_tag = format!("vesta-migrate:{}_{}", name, ts);
-
-        if !docker_ok(&["commit", cname, &backup_tag]) {
-            tracing::error!(agent = %name, "failed to commit container for migration");
-            continue;
-        }
-
-        docker_ok(&["rm", "-f", cname]);
-
-        if let Err(e) = create_container(cname, &backup_tag, port, &name, env_config) {
-            tracing::error!(agent = %name, error = %e, "failed to recreate container with mounts");
-            continue;
-        }
-
-        if was_running {
-            tracing::info!(agent = %name, "starting migrated agent");
-            if !docker_ok(&["start", cname]) {
-                tracing::error!(agent = %name, "failed to start migrated agent");
-            }
-        } else {
-            tracing::info!(agent = %name, "migrated agent (kept stopped)");
-        }
-
-        docker_ok(&["rmi", &backup_tag]);
-    }
-}
-
 /// Check if a container has the read-only agent code bind mounts.
 pub fn has_agent_code_mounts(cname: &str) -> bool {
     docker_output(&["inspect", "--format", "{{json .Mounts}}", cname])
@@ -1141,6 +1060,9 @@ pub fn has_agent_code_mounts(cname: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Recreate a container with the latest container config (entrypoint, mounts, env file)
+/// while preserving the filesystem. Commits the old container, removes it, and creates
+/// a new one from the committed image.
 pub fn rebuild_agent(name: &str, env_config: &AgentEnvConfig) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
@@ -1150,14 +1072,17 @@ pub fn rebuild_agent(name: &str, env_config: &AgentEnvConfig) -> Result<(), Dock
         ContainerStatus::Dead => return Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name))),
         _ => {}
     }
-    let port = info.port.ok_or_else(|| DockerError::Failed("agent has no port in env file".into()))?;
+
+    // Get port: try env file first, then container's baked-in env vars
+    let port = info.port
+        .or_else(|| read_container_env(&cname, "WS_PORT").and_then(|v| v.parse().ok()))
+        .ok_or_else(|| DockerError::Failed("agent has no port".into()))?;
+
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
     let backup_tag = format!("vesta-rebuild:{}_{}", name, ts);
-
-    docker_ok(&["pull", VESTA_IMAGE]);
 
     if !docker_ok(&["commit", &cname, &backup_tag]) {
         return Err(DockerError::Failed("backup failed".into()));

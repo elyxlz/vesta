@@ -1789,7 +1789,7 @@ pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: S
         vestad_port: port,
         vestad_tunnel: tunnel_url.clone(),
     };
-    docker::migrate_containers(&env_config);
+    crate::migrations::run(&env_config);
     let state = Arc::new(AppState::new(api_key, env_config, tunnel_url, dev_mode));
     let app = build_router(state.clone());
     spawn_auto_backup_task(state.clone());
