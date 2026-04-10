@@ -432,6 +432,7 @@ pub fn restore_backup(
     name: &str,
     backup_id: &str,
     env_config: &AgentEnvConfig,
+    manage_code: bool,
 ) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
@@ -469,7 +470,7 @@ pub fn restore_backup(
         .port
         .ok_or_else(|| DockerError::Failed("agent has no port in env file".into()))?;
     tracing::debug!(agent = %name, backup_id = %backup_id, "creating container from backup image");
-    create_container(&cname, backup_id, port, name, env_config)?;
+    create_container(&cname, backup_id, port, name, env_config, manage_code)?;
 
     if !docker_ok(&["start", &cname]) {
         return Err(DockerError::Failed(
