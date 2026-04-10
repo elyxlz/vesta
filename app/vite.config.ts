@@ -53,6 +53,10 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      "motion-plus-dom": path.resolve(
+        __dirname,
+        "./src/lib/motion-plus-dom/dist/es/index.mjs",
+      ),
     },
   },
   clearScreen: false,

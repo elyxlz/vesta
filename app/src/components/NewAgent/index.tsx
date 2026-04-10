@@ -21,7 +21,7 @@ import {
 import { fadeSlide } from "@/lib/motion";
 import { useTauri } from "@/providers/TauriProvider";
 import { openExternalUrl } from "@/lib/open-external-url";
-import { useAgents } from "@/providers/AgentsProvider";
+import { useGateway } from "@/providers/GatewayProvider";
 import { useNavigate } from "react-router-dom";
 import { friendlyError } from "./errors";
 
@@ -48,7 +48,7 @@ function normalizeName(input: string): string {
 export function NewAgent() {
   const { isTauri, isWindows } = useTauri();
   const navigate = useNavigate();
-  const { agents, refreshAgents } = useAgents();
+  const { agents } = useGateway();
 
   const hasAgents = agents.length > 0;
 
@@ -97,15 +97,11 @@ export function NewAgent() {
     try {
       await createAgent(normalized);
       created = true;
-      await refreshAgents();
       const nextAuthStart = await authenticate(normalized);
       setAuthStart(nextAuthStart);
       setStep("auth");
       void openExternalUrl(nextAuthStart.auth_url);
     } catch (e: unknown) {
-      if (created) {
-        await refreshAgents();
-      }
       const raw = (e as { message?: string })?.message || "creation failed";
       const friendly = friendlyError(raw);
       setError(friendly);
@@ -154,7 +150,6 @@ export function NewAgent() {
                 try {
                   await deleteAgent(agentToRemove);
                 } catch {}
-                await refreshAgents();
               }}
               onComplete={async () => {
                 setAuthStart(null);
@@ -168,7 +163,6 @@ export function NewAgent() {
                     if (i === 17) break;
                   }
                 }
-                await refreshAgents();
                 setStep("done");
               }}
             />

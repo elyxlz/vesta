@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Archive,
   Mic,
@@ -28,6 +28,7 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import { Card, CardContent } from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
@@ -88,10 +89,10 @@ export function AgentSettings() {
   );
 
   const [sttUsageData, setSttUsageData] = useState<SttUsage | null>(null);
-  const loadSttUsage = useCallback(() => {
+  const loadSttUsage = () => {
     if (agentName)
       fetchSttUsage(agentName).then(setSttUsageData).catch(console.warn);
-  }, [agentName]);
+  };
   const sttUsage = sttUsageData?.usage;
   const sttBalance = sttUsageData?.balance;
   const sttHours = sttUsage?.results
@@ -115,10 +116,10 @@ export function AgentSettings() {
   );
 
   const [ttsUsageData, setTtsUsageData] = useState<TtsUsage | null>(null);
-  const loadTtsUsage = useCallback(() => {
+  const loadTtsUsage = () => {
     if (agentName)
       fetchTtsUsage(agentName).then(setTtsUsageData).catch(console.warn);
-  }, [agentName]);
+  };
   const ttsChars = ttsUsageData?.usage;
 
   // --- Plan usage ---
@@ -127,12 +128,12 @@ export function AgentSettings() {
   const usageError = useSettings((s) => s.usageError);
   const refreshUsageAction = useSettings((s) => s.refreshUsage);
   const utilization = agentName ? (utilizationMap[agentName] ?? null) : null;
-  const refreshUsage = useCallback(() => {
+  const refreshUsage = () => {
     if (agentName) refreshUsageAction(agentName);
-  }, [agentName, refreshUsageAction]);
+  };
   useEffect(() => {
     if (agentName && !utilization && !usageError) refreshUsage();
-  }, [agentName, utilization, usageError, refreshUsage]);
+  }, [agentName, utilization, usageError]);
 
   return (
     <div className="flex flex-col flex-1 min-h-0 overflow-y-auto pt-2">
@@ -147,15 +148,57 @@ export function AgentSettings() {
               <FieldLabel>agent actions</FieldLabel>
 
               {showAuthenticate && (
+                <>
+                  <Button
+                    size="sm"
+                    className="w-full justify-start"
+                    onClick={() => void handleOpenAuth()}
+                  >
+                    <KeyRound data-icon="inline-start" />
+                    authenticate
+                  </Button>
+                  <Separator className="my-0.5" />
+                </>
+              )}
+
+              {showAliveActions && (
+                <>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="w-full justify-start"
+                    onClick={() =>
+                      navigate(`/agent/${encodeURIComponent(agentName)}/logs`)
+                    }
+                  >
+                    <ScrollText data-icon="inline-start" />
+                    logs
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="w-full justify-start"
+                    onClick={() => setShowToolCalls((value) => !value)}
+                  >
+                    <Wrench data-icon="inline-start" />
+                    {showToolCalls ? "hide tool calls" : "show tool calls"}
+                  </Button>
+                </>
+              )}
+
+              {!showAliveActions && (
                 <Button
                   size="sm"
+                  variant="outline"
                   className="w-full justify-start"
-                  onClick={() => void handleOpenAuth()}
+                  onClick={() => setShowToolCalls((value) => !value)}
                 >
-                  <KeyRound data-icon="inline-start" />
-                  authenticate
+                  <Wrench data-icon="inline-start" />
+                  {showToolCalls ? "hide tool calls" : "show tool calls"}
                 </Button>
               )}
+
+              <Separator className="my-0.5" />
 
               <Button
                 size="sm"
@@ -176,44 +219,6 @@ export function AgentSettings() {
                   </>
                 )}
               </Button>
-
-              {!showAliveActions && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="w-full justify-start"
-                  onClick={() => setShowToolCalls((value) => !value)}
-                >
-                  <Wrench data-icon="inline-start" />
-                  {showToolCalls ? "hide tool calls" : "show tool calls"}
-                </Button>
-              )}
-
-              {showAliveActions && (
-                <>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="w-full justify-start"
-                    onClick={() =>
-                      navigate(`/agent/${encodeURIComponent(agentName)}/logs`)
-                    }
-                  >
-                    <ScrollText data-icon="inline-start" />
-                    logs
-                  </Button>
-
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="w-full justify-start"
-                    onClick={() => setShowToolCalls((value) => !value)}
-                  >
-                    <Wrench data-icon="inline-start" />
-                    {showToolCalls ? "hide tool calls" : "show tool calls"}
-                  </Button>
-                </>
-              )}
 
               {isRunning && (
                 <>
@@ -472,19 +477,15 @@ function DynamicSettings({
   onSettingChange: (settings: SettingDef[]) => void;
   onRefresh: () => void;
 }) {
-  const updateSetting = useCallback(
-    (key: string, value: unknown) => {
-      onSettingChange(
-        settings.map((s) => (s.key === key ? { ...s, value } : s)),
-      );
-      if (agentName) {
-        setVoiceSetting(agentName, domain, key, value).catch(() => onRefresh());
-      }
-    },
-    [settings, domain, agentName, onSettingChange, onRefresh],
-  );
+  const updateSetting = (key: string, value: unknown) => {
+    onSettingChange(
+      settings.map((s) => (s.key === key ? { ...s, value } : s)),
+    );
+    if (agentName) {
+      setVoiceSetting(agentName, domain, key, value).catch(() => onRefresh());
+    }
+  };
 
-  // Split settings: select settings get their own collapsibles, others go in a Configuration section
   const boolSettings = settings.filter((s) => s.type === "bool");
   const numberSettings = settings.filter((s) => s.type === "number");
   const selectSettings = settings.filter((s) => s.type === "select");

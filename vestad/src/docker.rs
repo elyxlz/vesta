@@ -62,6 +62,7 @@ const ENTRYPOINT: &[&str] = &[
 #[derive(PartialEq, Clone, Copy)]
 pub enum ContainerStatus {
     Running,
+    Restarting,
     Stopped,
     NotFound,
     Dead,
@@ -81,7 +82,7 @@ pub struct StatusJson {
     pub friendly_status: &'static str,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, PartialEq)]
 pub struct ListEntry {
     pub name: String,
     pub status: &'static str,
@@ -366,7 +367,7 @@ pub fn compute_agent_state(cname: &str, info: &ContainerInfo) -> AgentDerivedSta
     let authenticated = info.status != ContainerStatus::NotFound && is_authenticated(cname);
     let agent_ready = info.status == ContainerStatus::Running
         && info.port.is_some_and(|p| is_agent_ready(p, cname));
-    let alive = info.status == ContainerStatus::Running && authenticated;
+    let alive = info.status == ContainerStatus::Running && authenticated && agent_ready;
     let friendly_status = friendly_status(&info.status, authenticated, agent_ready);
     AgentDerivedState { authenticated, agent_ready, alive, friendly_status }
 }
@@ -399,7 +400,8 @@ pub(crate) fn inspect_container(cname: &str, agents_dir: Option<&std::path::Path
         Some(s) => {
             let parts: Vec<&str> = s.splitn(3, '|').collect();
             let status = match parts.first().map(|p| p.trim()) {
-                Some("running" | "restarting" | "paused") => ContainerStatus::Running,
+                Some("running" | "paused") => ContainerStatus::Running,
+                Some("restarting") => ContainerStatus::Restarting,
                 Some("exited" | "created") => ContainerStatus::Stopped,
                 Some("dead" | "removing") => ContainerStatus::Dead,
                 _ => ContainerStatus::Stopped,
@@ -486,6 +488,7 @@ pub fn ensure_running(cname: &str) -> Result<(), DockerError> {
         ContainerStatus::NotFound => Err(DockerError::NotFound(format!("agent '{}' not found", name_from_cname(cname)))),
         ContainerStatus::Dead => Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name_from_cname(cname)))),
         ContainerStatus::Running => Ok(()),
+        ContainerStatus::Restarting => Err(DockerError::NotRunning(format!("agent '{}' is restarting", name_from_cname(cname)))),
         ContainerStatus::Stopped => Err(DockerError::NotRunning(format!("agent '{}' is not running", name_from_cname(cname)))),
     }
 }
@@ -992,6 +995,7 @@ pub fn complete_auth_flow(input: &str, code_verifier: &str, expected_state: &str
 pub fn status_label(cs: &ContainerStatus) -> &'static str {
     match cs {
         ContainerStatus::Running => "running",
+        ContainerStatus::Restarting => "restarting",
         ContainerStatus::Dead => "dead",
         ContainerStatus::NotFound => "not_found",
         ContainerStatus::Stopped => "stopped",
@@ -1007,6 +1011,7 @@ pub fn friendly_status(
         ContainerStatus::Running if !authenticated => "not signed in",
         ContainerStatus::Running if agent_ready => "alive",
         ContainerStatus::Running => "starting...",
+        ContainerStatus::Restarting => "restarting...",
         ContainerStatus::Dead => "broken",
         ContainerStatus::Stopped => "stopped",
         ContainerStatus::NotFound => "not found",
@@ -1084,7 +1089,7 @@ pub fn start_agent(name: &str) -> Result<(), DockerError> {
     match cs {
         ContainerStatus::NotFound => return Err(DockerError::NotFound(format!("agent '{}' not found", name))),
         ContainerStatus::Dead => return Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name))),
-        ContainerStatus::Running => return Ok(()),
+        ContainerStatus::Running | ContainerStatus::Restarting => return Ok(()),
         ContainerStatus::Stopped => {}
     }
     if !docker_ok(&["start", &cname]) {
@@ -1131,7 +1136,7 @@ pub fn stop_agent(name: &str) -> Result<(), DockerError> {
         ContainerStatus::NotFound => return Err(DockerError::NotFound(format!("agent '{}' not found", name))),
         ContainerStatus::Dead => return Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name))),
         ContainerStatus::Stopped => return Ok(()),
-        ContainerStatus::Running => {}
+        ContainerStatus::Running | ContainerStatus::Restarting => {}
     }
     if !docker_ok(&["stop", &cname]) {
         return Err(DockerError::Failed("failed to stop".into()));
@@ -1223,7 +1228,7 @@ pub fn destroy_agent(name: &str, agents_dir: &std::path::Path) -> Result<(), Doc
     match cs {
         ContainerStatus::NotFound => return Err(DockerError::NotFound(format!("agent '{}' not found", name))),
         ContainerStatus::Dead => return Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name))),
-        ContainerStatus::Running => { docker_ok(&["stop", &cname]); }
+        ContainerStatus::Running | ContainerStatus::Restarting => { docker_ok(&["stop", &cname]); }
         ContainerStatus::Stopped => {}
     }
     if !docker_ok(&["rm", "-f", &cname]) {

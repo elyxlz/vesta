@@ -1,7 +1,5 @@
 export { apiFetch, apiJson } from "./client";
 export {
-  listAgents,
-  agentStatus,
   createAgent,
   startAgent,
   stopAgent,
@@ -14,7 +12,6 @@ export {
   deleteBackup,
   type BackupInfo,
   waitForReady,
-  waitForStopped,
 } from "./agents";
 export { authenticate, submitAuthCode, type AuthStartResult } from "./auth";
 export { streamLogs, stopLogs } from "./logs";

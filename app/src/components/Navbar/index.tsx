@@ -1,7 +1,6 @@
-import { useCallback } from "react";
 import { Home, Plus } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { useAgents } from "@/providers/AgentsProvider";
+import { useGateway } from "@/providers/GatewayProvider";
 import { useAuth } from "@/providers/AuthProvider";
 import { useLayout } from "@/stores/use-layout";
 
@@ -24,27 +23,24 @@ interface NavbarProps {
 
 export function Navbar({ center, trailing, leadingExtra }: NavbarProps = {}) {
   const { connected } = useAuth();
-  const { agents } = useAgents();
+  const { agents } = useGateway();
   const navigate = useNavigate();
   const location = useLocation();
   const isHome = location.pathname === "/home";
   const setNavbarHeight = useLayout((s) => s.setNavbarHeight);
 
-  const measureRef = useCallback(
-    (node: HTMLDivElement | null) => {
-      if (!node) return;
-      const observer = new ResizeObserver(([entry]) => {
-        const border = entry.borderBoxSize[0];
-        const height = border
-          ? border.blockSize
-          : entry.target.getBoundingClientRect().height;
-        setNavbarHeight(height);
-      });
-      observer.observe(node);
-      return () => observer.disconnect();
-    },
-    [setNavbarHeight],
-  );
+  const measureRef = (node: HTMLDivElement | null) => {
+    if (!node) return;
+    const observer = new ResizeObserver(([entry]) => {
+      const border = entry.borderBoxSize[0];
+      const height = border
+        ? border.blockSize
+        : entry.target.getBoundingClientRect().height;
+      setNavbarHeight(height);
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  };
 
   return (
     <div
@@ -87,7 +83,7 @@ export function Navbar({ center, trailing, leadingExtra }: NavbarProps = {}) {
         </div>
 
         {center && (
-          <div className="absolute left-1/2 top-0 bottom-0 z-[99999] flex -translate-x-1/2 items-start justify-center overflow-visible">
+          <div className="absolute left-1/2 top-0 bottom-0 z-[100001] flex -translate-x-1/2 items-start justify-center overflow-visible">
             {center}
           </div>
         )}

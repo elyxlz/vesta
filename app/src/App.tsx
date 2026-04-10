@@ -1,18 +1,23 @@
-import { useCallback } from "react";
 import { RouterProvider } from "react-router-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { LoadingScreen } from "@/components/LoadingScreen";
 import { AuthProvider, useAuth } from "@/providers/AuthProvider";
-import { AgentsProvider } from "@/providers/AgentsProvider";
+import { GatewayProvider, useGateway } from "@/providers/GatewayProvider";
+import { VersionMismatchDialog } from "@/components/VersionMismatchDialog";
 import { isTauri } from "@/lib/env";
 import { cn } from "@/lib/utils";
 import { router } from "@/router";
 
+function VersionMismatchGuard() {
+  const { gatewayVersion } = useGateway();
+  if (!gatewayVersion || gatewayVersion === __APP_VERSION__) return null;
+  return <VersionMismatchDialog gatewayVersion={gatewayVersion} />;
+}
+
 function AppContent() {
   const { loading, initialized, setLoading } = useAuth();
-  const onFinished = useCallback(() => setLoading(false), [setLoading]);
 
   return (
     <AnimatePresence mode="wait">
@@ -20,7 +25,7 @@ function AppContent() {
         <LoadingScreen
           key="loading"
           ready={initialized}
-          onFinished={onFinished}
+          onFinished={() => setLoading(false)}
         />
       ) : (
         <motion.div
@@ -54,9 +59,10 @@ export default function App() {
         <ErrorBoundary>
           <TooltipProvider delayDuration={300}>
             <AuthProvider>
-              <AgentsProvider>
+              <GatewayProvider>
+                <VersionMismatchGuard />
                 <AppContent />
-              </AgentsProvider>
+              </GatewayProvider>
             </AuthProvider>
           </TooltipProvider>
         </ErrorBoundary>

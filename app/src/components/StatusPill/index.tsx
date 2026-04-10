@@ -1,12 +1,12 @@
 import { getConnection } from "@/lib/connection";
-import { useAuth } from "@/providers/AuthProvider";
+import { useGateway } from "@/providers/GatewayProvider";
 
 interface StatusPillProps {
   showHostname?: boolean;
 }
 
 export function StatusPill({ showHostname = true }: StatusPillProps) {
-  const { reachable } = useAuth();
+  const { reachable } = useGateway();
 
   const hostname = (() => {
     const conn = getConnection();

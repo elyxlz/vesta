@@ -8,11 +8,11 @@ import {
 } from "@/components/ui/resizable";
 import { Chat } from "@/components/Chat";
 import { Dashboard } from "@/components/Dashboard";
-import type { AgentHomeOutletContext } from "@/lib/types";
+import type { Dispatch, SetStateAction } from "react";
 
 export function AgentDashboard() {
   const { chatCollapsed, setChatCollapsed } =
-    useOutletContext<AgentHomeOutletContext>();
+    useOutletContext<{ chatCollapsed: boolean; setChatCollapsed: Dispatch<SetStateAction<boolean>> }>();
   const navbarHeight = useLayout((s) => s.navbarHeight);
 
   return (

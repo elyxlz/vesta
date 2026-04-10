@@ -98,33 +98,27 @@ export function ThemeProvider({
     theme === "system" ? getSystemTheme() : theme,
   );
 
-  const setTheme = React.useCallback(
-    (nextTheme: Theme) => {
-      localStorage.setItem(storageKey, nextTheme);
-      setThemeState(nextTheme);
-    },
-    [storageKey],
-  );
+  const setTheme = (nextTheme: Theme) => {
+    localStorage.setItem(storageKey, nextTheme);
+    setThemeState(nextTheme);
+  };
 
-  const applyTheme = React.useCallback(
-    (nextTheme: Theme) => {
-      const root = document.documentElement;
-      const resolvedTheme =
-        nextTheme === "system" ? getSystemTheme() : nextTheme;
-      const restoreTransitions = disableTransitionOnChange
-        ? disableTransitionsTemporarily()
-        : null;
+  const applyTheme = (nextTheme: Theme) => {
+    const root = document.documentElement;
+    const resolved =
+      nextTheme === "system" ? getSystemTheme() : nextTheme;
+    const restoreTransitions = disableTransitionOnChange
+      ? disableTransitionsTemporarily()
+      : null;
 
-      root.classList.remove("light", "dark");
-      root.classList.add(resolvedTheme);
-      setResolvedTheme(resolvedTheme);
+    root.classList.remove("light", "dark");
+    root.classList.add(resolved);
+    setResolvedTheme(resolved);
 
-      if (restoreTransitions) {
-        restoreTransitions();
-      }
-    },
-    [disableTransitionOnChange],
-  );
+    if (restoreTransitions) {
+      restoreTransitions();
+    }
+  };
 
   React.useEffect(() => {
     applyTheme(theme);
@@ -143,7 +137,7 @@ export function ThemeProvider({
     return () => {
       mediaQuery.removeEventListener("change", handleChange);
     };
-  }, [theme, applyTheme]);
+  }, [theme, disableTransitionOnChange]);
 
   React.useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -210,14 +204,11 @@ export function ThemeProvider({
     };
   }, [defaultTheme, storageKey]);
 
-  const value = React.useMemo(
-    () => ({
-      theme,
-      resolvedTheme,
-      setTheme,
-    }),
-    [theme, resolvedTheme, setTheme],
-  );
+  const value: ThemeProviderState = {
+    theme,
+    resolvedTheme,
+    setTheme,
+  };
 
   return (
     <ThemeProviderContext.Provider {...props} value={value}>

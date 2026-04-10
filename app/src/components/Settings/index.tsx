@@ -21,6 +21,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useTheme } from "@/providers/ThemeProvider";
 type Theme = "dark" | "light" | "system";
 import { useAuth } from "@/providers/AuthProvider";
+import { useGateway } from "@/providers/GatewayProvider";
 import { getConnection } from "@/lib/connection";
 import { StatusPill } from "@/components/StatusPill";
 
@@ -33,7 +34,8 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const navigate = useNavigate();
   const { name: activeAgentName } = useParams<{ name?: string }>();
   const { theme, setTheme } = useTheme();
-  const { reachable, disconnect } = useAuth();
+  const { disconnect } = useAuth();
+  const { reachable, gatewayVersion } = useGateway();
 
   const hostname = (() => {
     const conn = getConnection();
@@ -106,6 +108,11 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
               <span className="min-w-0 truncate font-medium text-foreground">
                 {hostname}
               </span>
+              {gatewayVersion && (
+                <span className="text-xs text-muted-foreground">
+                  gateway v{gatewayVersion}
+                </span>
+              )}
             </div>
           </div>
           <Button

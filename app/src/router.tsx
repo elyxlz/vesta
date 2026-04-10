@@ -10,6 +10,7 @@ import {
   AgentLogs,
   AgentSettingsPage,
   Connect,
+  Debug,
   Home,
   Landing,
   NewAgent,
@@ -24,6 +25,7 @@ export const router = createBrowserRouter([
         element: isTauri ? <Navigate to="/connect" replace /> : <Landing />,
       },
       { path: "/connect", element: <Connect /> },
+      { path: "/debug", element: <Debug /> },
       {
         element: <NavigationGuard />,
         errorElement: <RouteErrorBoundary />,

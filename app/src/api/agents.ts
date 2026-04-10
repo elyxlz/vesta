@@ -1,13 +1,4 @@
-import type { AgentInfo, ListEntry } from "@/lib/types";
-import { apiFetch, apiJson } from "./client";
-
-export async function listAgents(): Promise<ListEntry[]> {
-  return apiJson("/agents");
-}
-
-export async function agentStatus(name: string): Promise<AgentInfo> {
-  return apiJson(`/agents/${encodeURIComponent(name)}`);
-}
+import { apiJson } from "./client";
 
 export async function createAgent(name: string): Promise<void> {
   await apiJson("/agents", {
@@ -116,16 +107,4 @@ export interface Utilization {
 
 export async function fetchUsage(name: string): Promise<Utilization> {
   return apiJson(`/agents/${encodeURIComponent(name)}/usage`);
-}
-
-export async function waitForStopped(
-  name: string,
-  timeout = 30,
-): Promise<void> {
-  const deadline = Date.now() + timeout * 1000;
-  while (Date.now() < deadline) {
-    const info: AgentInfo = await agentStatus(name);
-    if (info.status === "stopped") return;
-    await new Promise((r) => setTimeout(r, 1000));
-  }
 }

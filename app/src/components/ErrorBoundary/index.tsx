@@ -2,7 +2,6 @@ import {
   Component,
   type ErrorInfo,
   type ReactNode,
-  useCallback,
   useState,
 } from "react";
 import {
@@ -109,29 +108,29 @@ function ErrorFallback({
     // Outside router context
   }
 
-  const handleRetry = useCallback(() => {
+  const handleRetry = () => {
     if (onReset) {
       onReset();
     } else {
       window.location.reload();
     }
-  }, [onReset]);
+  };
 
-  const handleGoHome = useCallback(() => {
+  const handleGoHome = () => {
     if (navigate) {
       navigate("/home");
     } else {
       window.location.href = "/home";
     }
-  }, [navigate]);
+  };
 
-  const handleCopy = useCallback(() => {
+  const handleCopy = () => {
     const text = [error.message, error.stack].filter(Boolean).join("\n\n");
     navigator.clipboard.writeText(text).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
-  }, [error]);
+  };
 
   return (
     <div className="flex h-full w-full items-center justify-center p-6">

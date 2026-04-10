@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { LayoutDashboard, AlertCircle } from "lucide-react";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useTheme } from "@/providers/ThemeProvider";
@@ -45,7 +45,7 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
 
   useServiceUpdate(
     "dashboard",
-    useCallback((action) => {
+    (action) => {
       if (action === "removed") {
         setStatus("not-setup");
       } else {
@@ -53,7 +53,7 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
         setLoaded(false);
         setIframeKey((k) => k + 1);
       }
-    }, []),
+    },
   );
 
   const conn = getConnection();
@@ -62,7 +62,7 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
       ? `${conn.url}/agents/${encodeURIComponent(name)}/dashboard/?token=${encodeURIComponent(conn.accessToken)}`
       : null;
 
-  const sendContext = useCallback(() => {
+  const sendContext = () => {
     const frame = iframeRef.current?.contentWindow;
     if (!frame) return;
     frame.postMessage(
@@ -79,7 +79,7 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
         },
         "*",
       );
-  }, [resolvedTheme, conn, fullscreen]);
+  };
 
   useEffect(() => {
     const handler = (e: MessageEvent) => {

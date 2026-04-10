@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { VestaEvent, AgentActivityState } from "@/lib/types";
 import { wsUrl, fetchHistory } from "@/lib/connection";
-import { useAuth } from "@/providers/AuthProvider";
 import { SERVICE_UPDATE_EVENT } from "@/hooks/use-service-update";
 
 const RECONNECT_BASE = 1000;
@@ -23,7 +22,6 @@ interface UseChatOptions {
 }
 
 export function useChat({ name, active, onAssistantMessage }: UseChatOptions) {
-  const { setReachable } = useAuth();
   const [messages, setMessages] = useState<VestaEvent[]>([]);
   const [agentState, setAgentState] = useState<AgentActivityState>("idle");
   const [connected, setConnected] = useState(false);
@@ -70,7 +68,6 @@ export function useChat({ name, active, onAssistantMessage }: UseChatOptions) {
         reconnectDelay = RECONNECT_BASE;
         setConnected(true);
         setHistoryLoaded(false);
-        setReachable(true);
         setMessages([]);
         cursorRef.current = null;
         pendingEchoesRef.current = [];
@@ -126,7 +123,6 @@ export function useChat({ name, active, onAssistantMessage }: UseChatOptions) {
         socket = null;
         wsRef.current = null;
         setConnected(false);
-        setReachable(false);
         setAgentState("idle");
         reconnectTimer = setTimeout(doConnect, reconnectDelay);
         reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX);

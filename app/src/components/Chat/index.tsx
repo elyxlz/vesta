@@ -1,8 +1,6 @@
 import {
-  useCallback,
   useEffect,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
   type ChangeEvent,
@@ -48,9 +46,9 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   } = useChatContext();
 
   const [input, setInput] = useState("");
-  const setInputCb = useCallback((text: string) => {
+  const setInputCb = (text: string) => {
     setInput(text);
-  }, []);
+  };
 
   useEffect(() => {
     registerChatCallbacks(send, setInputCb);
@@ -73,18 +71,14 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     if (isNearBottom) setHasNewMessage(false);
   }, [isNearBottom]);
 
-  const chatMessages = useMemo(
-    () =>
-      messages.filter(
-        (m) =>
-          m.type === "user" ||
-          m.type === "chat" ||
-          m.type === "error" ||
-          (showToolCalls &&
-            m.type === "tool_start" &&
-            !(m.tool === "Bash" && m.input.includes("app-chat"))),
-      ),
-    [messages, showToolCalls],
+  const chatMessages = messages.filter(
+    (m) =>
+      m.type === "user" ||
+      m.type === "chat" ||
+      m.type === "error" ||
+      (showToolCalls &&
+        m.type === "tool_start" &&
+        !(m.tool === "Bash" && m.input.includes("app-chat"))),
   );
 
   const isThinking = agentState === "thinking";
@@ -126,14 +120,14 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     }
   }, [chatMessages, hasMore, loadingMore, loadMore]);
 
-  const handleScroll = useCallback(() => {
+  const handleScroll = () => {
     check(scrollRef.current);
     const el = scrollRef.current;
     if (el && el.scrollTop < 100 && hasMore && !loadingMore) {
       scrollHeightBeforeLoad.current = el.scrollHeight;
       loadMore();
     }
-  }, [check, hasMore, loadingMore, loadMore]);
+  };
 
   const handleSend = () => {
     const text = input.trim();

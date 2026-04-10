@@ -2,7 +2,6 @@ import {
   createContext,
   useContext,
   useEffect,
-  useMemo,
   useState,
   type Dispatch,
   type ReactNode,
@@ -31,10 +30,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     setAgentState(chat.agentState);
   }, [chat.agentState, setAgentState]);
 
-  const value = useMemo(
-    () => ({ ...chat, showToolCalls, setShowToolCalls }),
-    [chat, showToolCalls],
-  );
+  const value: ChatContextValue = { ...chat, showToolCalls, setShowToolCalls };
 
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;
 }
