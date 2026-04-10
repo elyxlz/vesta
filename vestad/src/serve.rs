@@ -139,10 +139,11 @@ pub struct AppState {
     updating: AtomicBool,
     http_client: reqwest::Client,
     settings: RwLock<Settings>,
+    dev_mode: bool,
 }
 
 impl AppState {
-    fn new(api_key: String, env_config: docker::AgentEnvConfig, tunnel_url: Option<String>) -> Self {
+    fn new(api_key: String, env_config: docker::AgentEnvConfig, tunnel_url: Option<String>, dev_mode: bool) -> Self {
         let settings = load_settings();
         Self {
             api_key,
@@ -154,6 +155,7 @@ impl AppState {
             updating: AtomicBool::new(false),
             http_client: reqwest::Client::new(),
             settings: RwLock::new(settings),
+            dev_mode,
         }
     }
 
@@ -319,6 +321,9 @@ fn ok_json() -> Json<serde_json::Value> {
 }
 
 fn err_response(status: StatusCode, msg: &str) -> (StatusCode, Json<serde_json::Value>) {
+    if status.is_server_error() {
+        tracing::error!(status = status.as_u16(), error = msg, "server error");
+    }
     (status, Json(serde_json::json!({"error": msg})))
 }
 
@@ -362,12 +367,16 @@ async fn version(State(state): State<SharedState>) -> Json<serde_json::Value> {
         "api_compat": "0.2",
         "latest_version": latest,
         "update_available": update_available,
+        "dev_mode": state.dev_mode,
     }))
 }
 
 async fn self_update_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    if state.dev_mode {
+        return Err(err_response(StatusCode::BAD_REQUEST, "self-update disabled in dev mode"));
+    }
     if state.updating.swap(true, std::sync::atomic::Ordering::SeqCst) {
         return Err(err_response(StatusCode::CONFLICT, "update already in progress"));
     }
@@ -1557,7 +1566,22 @@ pub fn build_router(state: SharedState) -> Router {
                 .allow_methods(tower_http::cors::Any)
                 .allow_headers(tower_http::cors::Any),
         )
-        .layer(tower_http::trace::TraceLayer::new_for_http())
+        .layer(
+            tower_http::trace::TraceLayer::new_for_http()
+                .make_span_with(tower_http::trace::DefaultMakeSpan::new().level(tracing::Level::INFO))
+                .on_request(
+                    |request: &axum::http::Request<_>, _span: &tracing::Span| {
+                        let path = request.uri().path();
+                        let is_noisy = request.method() == axum::http::Method::OPTIONS
+                            || path.ends_with("/logs");
+                        if !is_noisy {
+                            tracing::info!(method = %request.method(), path = %request.uri(), "request");
+                        }
+                    },
+                )
+                .on_response(tower_http::trace::DefaultOnResponse::new().level(tracing::Level::DEBUG))
+                .on_failure(tower_http::trace::DefaultOnFailure::new().level(tracing::Level::DEBUG)),
+        )
         .with_state(state)
 }
 
@@ -1761,17 +1785,22 @@ fn spawn_update_check_task(state: SharedState) {
 
 // --- Server start ---
 
-pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: String, tunnel_url: Option<String>, config_dir: std::path::PathBuf) {
+pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: String, tunnel_url: Option<String>, config_dir: std::path::PathBuf, dev_mode: bool) {
     let env_config = docker::AgentEnvConfig {
         config_dir: config_dir.clone(),
         agents_dir: config_dir.join("agents"),
         vestad_port: port,
         vestad_tunnel: tunnel_url.clone(),
     };
-    let state = Arc::new(AppState::new(api_key, env_config, tunnel_url));
+    crate::migrations::run(&env_config);
+    let state = Arc::new(AppState::new(api_key, env_config, tunnel_url, dev_mode));
     let app = build_router(state.clone());
     spawn_auto_backup_task(state.clone());
-    spawn_update_check_task(state);
+    if dev_mode {
+        tracing::info!("dev mode: auto-update disabled");
+    } else {
+        spawn_update_check_task(state);
+    }
 
     tracing::info!(port, "server listening");
 
