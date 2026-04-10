@@ -32,22 +32,40 @@ fn is_populated(config: &Path) -> bool {
         && dir.join("uv.lock").is_file()
 }
 
-/// Ensure agent code exists on the host.
-/// - Dev (debug builds): copies from the local repo
-/// - Prod (release builds): downloads from GitHub for the current version
+/// Read the version from the on-disk agent pyproject.toml.
+fn on_disk_version(config: &Path) -> Option<String> {
+    let pyproject = fs::read_to_string(agent_code_dir(config).join("pyproject.toml")).ok()?;
+    for line in pyproject.lines() {
+        // Match exactly "version = ..." at the top level, not dependency version fields
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("version") {
+            let rest = rest.trim_start();
+            if let Some(rest) = rest.strip_prefix('=') {
+                return Some(rest.trim().trim_matches('"').to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Ensure agent code exists on the host and matches the vestad version.
+/// - Dev (debug builds): copies from the local repo if source is newer
+/// - Prod (release builds): downloads from GitHub if missing or version mismatch
 pub fn ensure_agent_code(config: &Path) -> Result<PathBuf, AgentCodeError> {
     let dir = agent_code_dir(config);
-    if is_populated(config) {
-        return Ok(dir);
-    }
+    let vestad_version = env!("CARGO_PKG_VERSION");
 
     if cfg!(debug_assertions) {
-        tracing::info!("dev mode: copying agent code from local repo");
         copy_from_local_repo(config)?;
+    } else if is_populated(config) && on_disk_version(config).as_deref() == Some(vestad_version) {
+        return Ok(dir);
     } else {
-        let version = env!("CARGO_PKG_VERSION");
-        tracing::info!(version, "downloading agent code from github");
-        fetch_agent_code_from_github(config, version)?;
+        tracing::info!(
+            vestad = vestad_version,
+            agent = on_disk_version(config).as_deref().unwrap_or("missing"),
+            "updating agent code from github"
+        );
+        fetch_agent_code_from_github(config, vestad_version)?;
     }
 
     if !is_populated(config) {
@@ -73,24 +91,56 @@ fn find_repo_agent_dir() -> Option<PathBuf> {
     None
 }
 
-/// Copy agent code from the local repo into agent-code/.
+/// Most recent mtime of any file under `dir` (recursive).
+fn newest_mtime(dir: &Path) -> Option<std::time::SystemTime> {
+    fn walk(dir: &Path, newest: &mut Option<std::time::SystemTime>) {
+        let entries = fs::read_dir(dir).ok();
+        for entry in entries.into_iter().flatten().filter_map(|e| e.ok()) {
+            if let Ok(meta) = entry.metadata() {
+                if let Ok(mtime) = meta.modified() {
+                    if newest.is_none_or(|n| mtime > n) {
+                        *newest = Some(mtime);
+                    }
+                }
+                if meta.is_dir() {
+                    walk(&entry.path(), newest);
+                }
+            }
+        }
+    }
+    let mut newest = None;
+    walk(dir, &mut newest);
+    newest
+}
+
+/// Copy agent code from the local repo into agent-code/, skipping if unchanged.
 fn copy_from_local_repo(config: &Path) -> Result<(), AgentCodeError> {
     let agent_dir = find_repo_agent_dir()
         .ok_or_else(|| AgentCodeError::Extract("cannot find agent/ directory in repo".into()))?;
 
     let dest = agent_code_dir(config);
-    // Clean and recreate
-    let _ = fs::remove_dir_all(&dest);
-    fs::create_dir_all(&dest).map_err(|e| AgentCodeError::Io(e.to_string()))?;
 
-    // Copy src/vesta/ using cp -r
-    let src_dest = dest.join("src");
-    fs::create_dir_all(&src_dest).map_err(|e| AgentCodeError::Io(e.to_string()))?;
+    // Skip if dest is already up-to-date
+    if dest.exists() {
+        let src_mtime = newest_mtime(&agent_dir.join("src/vesta"));
+        let dest_mtime = newest_mtime(&dest.join("src/vesta"));
+        if let (Some(src), Some(dst)) = (src_mtime, dest_mtime) {
+            if dst >= src {
+                return Ok(());
+            }
+        }
+    }
+
+    tracing::info!("dev mode: copying agent code from local repo");
+
+    let _ = fs::remove_dir_all(&dest);
+    fs::create_dir_all(dest.join("src")).map_err(|e| AgentCodeError::Io(e.to_string()))?;
 
     let status = process::Command::new("cp")
-        .args(["-r",
+        .args([
+            "-r",
             &agent_dir.join("src/vesta").display().to_string(),
-            &src_dest.join("vesta").display().to_string(),
+            &dest.join("src/vesta").display().to_string(),
         ])
         .status()
         .map_err(|e| AgentCodeError::Io(e.to_string()))?;
@@ -98,7 +148,6 @@ fn copy_from_local_repo(config: &Path) -> Result<(), AgentCodeError> {
         return Err(AgentCodeError::Extract("failed to copy src/vesta".into()));
     }
 
-    // Copy individual files
     for file in ["pyproject.toml", "uv.lock"] {
         fs::copy(agent_dir.join(file), dest.join(file))
             .map_err(|e| AgentCodeError::Io(format!("failed to copy {file}: {e}")))?;
@@ -108,121 +157,59 @@ fn copy_from_local_repo(config: &Path) -> Result<(), AgentCodeError> {
 }
 
 /// Download agent code for a specific release tag from GitHub and atomically swap it in.
-pub fn fetch_agent_code_from_github(config: &Path, tag: &str) -> Result<(), AgentCodeError> {
+fn fetch_agent_code_from_github(config: &Path, tag: &str) -> Result<(), AgentCodeError> {
     let dir = agent_code_dir(config);
     let tmp_dir = config.join("agent-code.new");
     let old_dir = config.join("agent-code.old");
 
-    // Clean up any leftover temp dirs from previous failed attempts
     let _ = fs::remove_dir_all(&tmp_dir);
     let _ = fs::remove_dir_all(&old_dir);
-
     fs::create_dir_all(&tmp_dir).map_err(|e| AgentCodeError::Io(e.to_string()))?;
 
     let archive_url = format!("{GITHUB_ARCHIVE_URL}/{tag}.tar.gz");
-    tracing::info!(tag = %tag, url = %archive_url, "downloading agent code from github");
-
-    // Download tarball
     let archive_path = format!("/tmp/{TEMP_PREFIX}-{}.tar.gz", std::process::id());
-    let status = process::Command::new("curl")
+
+    // Download
+    let ok = process::Command::new("curl")
         .args(["-fsSL", "-o", &archive_path, &archive_url])
-        .status();
-    if !status.map(|s| s.success()).unwrap_or(false) {
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !ok {
         let _ = fs::remove_dir_all(&tmp_dir);
         let _ = fs::remove_file(&archive_path);
         return Err(AgentCodeError::Download(format!("failed to download {archive_url}")));
     }
 
-    tracing::info!("extracting tarball");
-
-    // Extract only the files we need from the tarball
-    // GitHub archives have a prefix directory like vesta-{tag}/
-    let prefix = format!("vesta-{tag}");
-
-    // Extract agent/src/vesta/
-    let src_dest = tmp_dir.join("src");
-    fs::create_dir_all(&src_dest).map_err(|e| AgentCodeError::Io(e.to_string()))?;
-
-    let extract_ok = process::Command::new("tar")
-        .args([
-            "-xzf", &archive_path,
-            "-C", &src_dest.display().to_string(),
-            "--strip-components=3",
-            &format!("{prefix}/agent/src/vesta"),
-        ])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-    if !extract_ok {
-        let _ = fs::remove_dir_all(&tmp_dir);
-        let _ = fs::remove_file(&archive_path);
-        return Err(AgentCodeError::Extract("failed to extract src/vesta from tarball".into()));
-    }
-
-    // The above extracts contents of vesta/ into src/, but we need src/vesta/
-    // tar --strip-components=3 on vesta-tag/agent/src/vesta/* puts files directly in src/
-    // We need to move them into src/vesta/
-    let extracted_src = tmp_dir.join("src");
-    let final_src = tmp_dir.join("src_final/vesta");
-    fs::create_dir_all(&final_src).map_err(|e| AgentCodeError::Io(e.to_string()))?;
-
-    // Move all files from extracted_src into final_src
-    for entry in fs::read_dir(&extracted_src).map_err(|e| AgentCodeError::Io(e.to_string()))? {
-        let entry = entry.map_err(|e| AgentCodeError::Io(e.to_string()))?;
-        let dest = final_src.join(entry.file_name());
-        fs::rename(entry.path(), &dest).map_err(|e| AgentCodeError::Io(e.to_string()))?;
-    }
-    fs::remove_dir_all(&extracted_src).ok();
-    fs::rename(tmp_dir.join("src_final"), tmp_dir.join("src"))
-        .map_err(|e| AgentCodeError::Io(e.to_string()))?;
-
-    // Extract pyproject.toml
-    let extract_ok = process::Command::new("tar")
+    // Extract the entire agent/ subtree into a temp staging dir, then move what we need.
+    // GitHub archives have prefix vesta-{tag}/, so --strip-components=2 turns
+    // vesta-{tag}/agent/src/vesta/... into src/vesta/..., agent/pyproject.toml into pyproject.toml, etc.
+    let prefix = format!("vesta-{tag}/agent");
+    let ok = process::Command::new("tar")
         .args([
             "-xzf", &archive_path,
             "-C", &tmp_dir.display().to_string(),
             "--strip-components=2",
-            &format!("{prefix}/agent/pyproject.toml"),
+            &prefix,
         ])
         .status()
         .map(|s| s.success())
         .unwrap_or(false);
-    if !extract_ok {
-        let _ = fs::remove_dir_all(&tmp_dir);
-        let _ = fs::remove_file(&archive_path);
-        return Err(AgentCodeError::Extract("failed to extract pyproject.toml from tarball".into()));
-    }
-
-    // Extract uv.lock
-    let extract_ok = process::Command::new("tar")
-        .args([
-            "-xzf", &archive_path,
-            "-C", &tmp_dir.display().to_string(),
-            "--strip-components=2",
-            &format!("{prefix}/agent/uv.lock"),
-        ])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-    if !extract_ok {
-        let _ = fs::remove_dir_all(&tmp_dir);
-        let _ = fs::remove_file(&archive_path);
-        return Err(AgentCodeError::Extract("failed to extract uv.lock from tarball".into()));
-    }
 
     let _ = fs::remove_file(&archive_path);
 
-    // Validate before swap
-    if !tmp_dir.join("src/vesta/main.py").exists() {
+    if !ok {
         let _ = fs::remove_dir_all(&tmp_dir);
-        return Err(AgentCodeError::Extract("src/vesta/main.py not found in extracted archive".into()));
-    }
-    if !tmp_dir.join("pyproject.toml").exists() {
-        let _ = fs::remove_dir_all(&tmp_dir);
-        return Err(AgentCodeError::Extract("pyproject.toml not found in extracted archive".into()));
+        return Err(AgentCodeError::Extract("failed to extract agent/ from tarball".into()));
     }
 
-    // Atomic swap: agent-code -> agent-code.old, agent-code.new -> agent-code
+    // Validate
+    if !tmp_dir.join("src/vesta/main.py").exists() || !tmp_dir.join("pyproject.toml").exists() {
+        let _ = fs::remove_dir_all(&tmp_dir);
+        return Err(AgentCodeError::Extract("extracted archive missing required files".into()));
+    }
+
+    // Atomic swap
     if dir.exists() {
         fs::rename(&dir, &old_dir).map_err(|e| {
             let _ = fs::remove_dir_all(&tmp_dir);
@@ -231,7 +218,6 @@ pub fn fetch_agent_code_from_github(config: &Path, tag: &str) -> Result<(), Agen
     }
 
     fs::rename(&tmp_dir, &dir).map_err(|e| {
-        // Try to restore old dir
         if old_dir.exists() {
             let _ = fs::rename(&old_dir, &dir);
         }
@@ -239,7 +225,6 @@ pub fn fetch_agent_code_from_github(config: &Path, tag: &str) -> Result<(), Agen
     })?;
 
     let _ = fs::remove_dir_all(&old_dir);
-
     tracing::info!(tag = %tag, "agent code updated successfully");
     Ok(())
 }
