@@ -1,6 +1,6 @@
 [project]
 name = "vesta"
-version = "0.1.120"
+version = "0.1.121"
 description = "Personal assistant agent that works autonomously on your behalf"
 license = "MIT"
 authors = [
