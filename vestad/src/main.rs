@@ -228,7 +228,7 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool) {
                 None
             };
 
-            let dev_mode = std::env::var("VESTAD_DEV").is_ok();
+            let dev_mode = cfg!(debug_assertions) || std::env::var("VESTAD_DEV").is_ok();
             serve::run_server(port, api_key, cert_pem, key_pem, tunnel_url, config.clone(), dev_mode).await;
 
             if let Some(mut child) = tunnel_child {
