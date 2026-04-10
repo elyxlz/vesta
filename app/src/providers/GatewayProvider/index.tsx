@@ -42,7 +42,7 @@ function controlWsUrl(): string {
 function ConnectedGateway({ children }: { children: ReactNode }) {
   const [reachable, setReachable] = useState(false);
   const [gatewayVersion, setGatewayVersion] = useState("");
-  const [agents, setAgents] = useState<AgentInfo[] | null>(null);
+  const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [agentsFetched, setAgentsFetched] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -134,7 +134,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
       value={{
         reachable,
         gatewayVersion,
-        agents: agents ?? [],
+        agents,
         agentsFetched,
         send,
       }}

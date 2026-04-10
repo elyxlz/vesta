@@ -453,42 +453,26 @@ async fn control_ws_session(state: SharedState, socket: axum::extract::ws::WebSo
     // 3. Event loop
     loop {
         tokio::select! {
-            // Agent list changed
-            result = agents_rx.changed() => {
-                if result.is_err() {
-                    break;
-                }
-                let agents = agents_rx.borrow_and_update().clone();
-                let activity = activity_rx.borrow_and_update().clone();
-                let msg = build_agents_message(&agents, &activity);
-                if tx.send(Message::Text(msg.to_string().into())).await.is_err() {
-                    break;
-                }
-            }
-
-            // Activity state changed
-            result = activity_rx.changed() => {
-                if result.is_err() {
-                    break;
-                }
-                let agents = agents_rx.borrow_and_update().clone();
-                let activity = activity_rx.borrow_and_update().clone();
-                let msg = build_agents_message(&agents, &activity);
-                if tx.send(Message::Text(msg.to_string().into())).await.is_err() {
-                    break;
-                }
-            }
-
-            // Client message
+            result = agents_rx.changed() => { if result.is_err() { break; } }
+            result = activity_rx.changed() => { if result.is_err() { break; } }
             msg = rx.next() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
                         handle_control_command(&state, &text).await;
+                        continue;
                     }
                     Some(Ok(Message::Close(_))) | None => break,
-                    _ => {}
+                    _ => { continue; }
                 }
             }
+        }
+
+        // Drain both watches and send a single coalesced snapshot
+        let agents = agents_rx.borrow_and_update().clone();
+        let activity = activity_rx.borrow_and_update().clone();
+        let msg = build_agents_message(&agents, &activity);
+        if tx.send(Message::Text(msg.to_string().into())).await.is_err() {
+            break;
         }
     }
 }

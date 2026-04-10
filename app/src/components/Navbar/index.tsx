@@ -1,3 +1,4 @@
+import { useCallback } from "react";
 import { Home, Plus } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useGateway } from "@/providers/GatewayProvider";
@@ -29,7 +30,7 @@ export function Navbar({ center, trailing, leadingExtra }: NavbarProps = {}) {
   const isHome = location.pathname === "/home";
   const setNavbarHeight = useLayout((s) => s.setNavbarHeight);
 
-  const measureRef = (node: HTMLDivElement | null) => {
+  const measureRef = useCallback((node: HTMLDivElement | null) => {
     if (!node) return;
     const observer = new ResizeObserver(([entry]) => {
       const border = entry.borderBoxSize[0];
@@ -39,8 +40,7 @@ export function Navbar({ center, trailing, leadingExtra }: NavbarProps = {}) {
       setNavbarHeight(height);
     });
     observer.observe(node);
-    return () => observer.disconnect();
-  };
+  }, [setNavbarHeight]);
 
   return (
     <div

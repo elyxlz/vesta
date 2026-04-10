@@ -54,10 +54,6 @@ pub fn spawn_agent_status_task(cache: Arc<AgentStatusCache>, agents_dir: PathBuf
                 .await
                 .unwrap_or_default();
 
-            for a in &agents {
-                tracing::debug!(agent = %a.name, status = %a.status, alive = a.alive, ready = a.agent_ready, "poll");
-            }
-
             // Update the agents watch channel (only notifies if changed)
             cache.agents_tx.send_if_modified(|current| {
                 if *current == agents {
@@ -70,7 +66,7 @@ pub fn spawn_agent_status_task(cache: Arc<AgentStatusCache>, agents_dir: PathBuf
             // Reconcile internal WS connections for activity state
             let alive_agents: HashMap<String, u16> = agents
                 .iter()
-                .filter(|a| a.alive && a.agent_ready)
+                .filter(|a| a.alive)
                 .map(|a| (a.name.clone(), a.ws_port))
                 .collect();
 
