@@ -27,6 +27,10 @@ import {
 import { useAgentOps, type AgentOperation } from "@/stores/use-agent-ops";
 import { useAgents } from "@/providers/AgentsProvider";
 import type { AgentInfo, AgentActivityState } from "@/lib/types";
+import {
+  getAgentVisualStatus,
+  type OrbVisualState,
+} from "@/components/Orb/styles";
 
 interface SelectedAgentContextValue {
   name: string;
@@ -37,6 +41,7 @@ interface SelectedAgentContextValue {
   operation: AgentOperation;
   error: string;
   statusLabel: string;
+  orbState: OrbVisualState;
   isBusy: boolean;
 
   refreshAgent: () => Promise<void>;
@@ -58,45 +63,6 @@ const SelectedAgentContext = createContext<SelectedAgentContextValue | null>(
 
 const POLL_INTERVAL = 5000;
 
-function getStatusLabel(
-  agent: Pick<
-    AgentInfo,
-    "alive" | "status" | "authenticated" | "agent_ready" | "friendly_status"
-  > | null,
-  operation: string,
-  error: string,
-): string {
-  if (error) return error;
-
-  switch (operation) {
-    case "stopping":
-      return "stopping...";
-    case "starting":
-      return "starting...";
-    case "authenticating":
-      return "signing in...";
-    case "deleting":
-      return "deleting...";
-    case "rebuilding":
-      return "rebuilding...";
-    case "backing-up":
-      return "backing up...";
-    case "restoring":
-      return "restoring...";
-  }
-
-  if (!agent) return "";
-
-  if (agent.alive) return "alive";
-  if (agent.status === "running" && agent.authenticated && !agent.agent_ready)
-    return "waking up...";
-  if (agent.status === "running" && !agent.authenticated)
-    return "not signed in";
-  if (agent.status === "stopped") return "stopped";
-  if (agent.status === "dead") return "broken — delete and recreate";
-  return agent.friendly_status || agent.status;
-}
-
 export function SelectedAgentProvider({ children }: { children: ReactNode }) {
   const { name: routeName } = useParams<{ name: string }>();
   const name = routeName ?? "";
@@ -115,9 +81,9 @@ export function SelectedAgentProvider({ children }: { children: ReactNode }) {
   const listEntry = agents.find((a) => a.name === name);
   const info = agent ?? listEntry ?? null;
 
-  const statusLabel = useMemo(
-    () => getStatusLabel(info, opState.operation, opState.error),
-    [info, opState.operation, opState.error],
+  const { label: statusLabel, orbState } = useMemo(
+    () => getAgentVisualStatus(info, opState.operation, opState.error, agentState),
+    [info, opState.operation, opState.error, agentState],
   );
 
   const refreshAgent = useCallback(async () => {
@@ -271,6 +237,7 @@ export function SelectedAgentProvider({ children }: { children: ReactNode }) {
       operation: opState.operation,
       error: opState.error,
       statusLabel,
+      orbState,
       isBusy,
       refreshAgent,
       start,
@@ -292,6 +259,7 @@ export function SelectedAgentProvider({ children }: { children: ReactNode }) {
       opState.operation,
       opState.error,
       statusLabel,
+      orbState,
       isBusy,
       refreshAgent,
       start,
