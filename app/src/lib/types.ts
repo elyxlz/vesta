@@ -1,20 +1,3 @@
-import type { Dispatch, SetStateAction } from "react";
-
-export interface AgentHomeOutletContext {
-  chatCollapsed: boolean;
-  setChatCollapsed: Dispatch<SetStateAction<boolean>>;
-}
-
-export interface AgentInfo {
-  status: AgentStatus;
-  id: string;
-  authenticated: boolean;
-  name: string;
-  agent_ready: boolean;
-  ws_port: number;
-  alive: boolean;
-  friendly_status: string;
-}
 
 export type AgentStatus =
   | "running"
@@ -23,7 +6,7 @@ export type AgentStatus =
   | "not_found"
   | "unknown";
 
-export interface ListEntry {
+export interface AgentInfo {
   name: string;
   status: AgentStatus;
   authenticated: boolean;
@@ -31,6 +14,7 @@ export interface ListEntry {
   ws_port: number;
   alive: boolean;
   friendly_status: string;
+  activityState: AgentActivityState;
 }
 
 export type AgentActivityState = "idle" | "thinking";

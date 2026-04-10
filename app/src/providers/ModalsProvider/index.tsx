@@ -1,8 +1,6 @@
 import {
   createContext,
-  useCallback,
   useContext,
-  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -11,7 +9,7 @@ import { useNavigate } from "react-router-dom";
 import { authenticate, type AuthStartResult } from "@/api";
 import { openExternalUrl } from "@/lib/open-external-url";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
-import { useAgents } from "@/providers/AgentsProvider";
+
 
 interface ModalsContextValue {
   showAuth: boolean;
@@ -31,7 +29,6 @@ const ModalsContext = createContext<ModalsContextValue | null>(null);
 export function ModalsProvider({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const { name, remove } = useSelectedAgent();
-  const { refreshAgents } = useAgents();
 
   const [showAuth, setShowAuth] = useState(false);
   const [authStarting, setAuthStarting] = useState(false);
@@ -41,15 +38,15 @@ export function ModalsProvider({ children }: { children: ReactNode }) {
 
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
-  const clearAuthState = useCallback(() => {
+  const clearAuthState = () => {
     authAttemptRef.current += 1;
     setShowAuth(false);
     setAuthStarting(false);
     setAuthStart(null);
     setAuthError("");
-  }, []);
+  };
 
-  const handleOpenAuth = useCallback(async () => {
+  const handleOpenAuth = async () => {
     if (!name || authStarting) return;
 
     const attemptId = authAttemptRef.current + 1;
@@ -74,37 +71,24 @@ export function ModalsProvider({ children }: { children: ReactNode }) {
         setAuthStarting(false);
       }
     }
-  }, [name, authStarting]);
+  };
 
-  const handleDelete = useCallback(async () => {
+  const handleDelete = async () => {
     navigate("/home");
     await remove();
-    await refreshAgents();
-  }, [navigate, remove, refreshAgents]);
+  };
 
-  const value = useMemo<ModalsContextValue>(
-    () => ({
-      showAuth,
-      authStarting,
-      authStart,
-      authError,
-      handleOpenAuth,
-      clearAuthState,
-      deleteDialogOpen,
-      setDeleteDialogOpen,
-      handleDelete,
-    }),
-    [
-      showAuth,
-      authStarting,
-      authStart,
-      authError,
-      handleOpenAuth,
-      clearAuthState,
-      deleteDialogOpen,
-      handleDelete,
-    ],
-  );
+  const value: ModalsContextValue = {
+    showAuth,
+    authStarting,
+    authStart,
+    authError,
+    handleOpenAuth,
+    clearAuthState,
+    deleteDialogOpen,
+    setDeleteDialogOpen,
+    handleDelete,
+  };
 
   return (
     <ModalsContext.Provider value={value}>{children}</ModalsContext.Provider>

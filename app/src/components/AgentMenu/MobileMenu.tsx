@@ -9,6 +9,7 @@ import {
   Hammer,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
 import {
   Drawer,
   DrawerClose,
@@ -26,38 +27,6 @@ export function MobileMenu({ state, open, onOpenChange, trigger }: MenuProps) {
         <DrawerHeader>
         </DrawerHeader>
         <div className="flex flex-col gap-1 px-4 pb-8 max-h-[min(70vh,480px)] overflow-y-auto">
-          <DrawerClose asChild>
-            <Button
-              size="sm"
-              variant="outline"
-              className="w-full justify-start"
-              disabled={state.isBusy}
-              onClick={state.onToggle}
-            >
-              {state.isRunning ? (
-                <>
-                  <Square data-icon="inline-start" />
-                  stop
-                </>
-              ) : (
-                <>
-                  <Play data-icon="inline-start" />
-                  start
-                </>
-              )}
-            </Button>
-          </DrawerClose>
-          {!state.showAliveActions && (
-            <Button
-              size="sm"
-              variant="outline"
-              className="w-full justify-start"
-              onClick={state.onToolCalls}
-            >
-              <Wrench data-icon="inline-start" />
-              {state.showToolCalls ? "hide tool calls" : "show tool calls"}
-            </Button>
-          )}
           {state.showAliveActions && (
             <>
               <DrawerClose asChild>
@@ -82,6 +51,39 @@ export function MobileMenu({ state, open, onOpenChange, trigger }: MenuProps) {
               </Button>
             </>
           )}
+          {!state.showAliveActions && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="w-full justify-start"
+              onClick={state.onToolCalls}
+            >
+              <Wrench data-icon="inline-start" />
+              {state.showToolCalls ? "hide tool calls" : "show tool calls"}
+            </Button>
+          )}
+          <Separator className="my-1" />
+          <DrawerClose asChild>
+            <Button
+              size="sm"
+              variant="outline"
+              className="w-full justify-start"
+              disabled={state.isBusy}
+              onClick={state.onToggle}
+            >
+              {state.isRunning ? (
+                <>
+                  <Square data-icon="inline-start" />
+                  stop
+                </>
+              ) : (
+                <>
+                  <Play data-icon="inline-start" />
+                  start
+                </>
+              )}
+            </Button>
+          </DrawerClose>
           {state.isRunning && (
             <>
               <DrawerClose asChild>

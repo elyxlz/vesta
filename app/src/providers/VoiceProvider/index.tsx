@@ -1,8 +1,6 @@
 import {
   createContext,
-  useCallback,
   useContext,
-  useMemo,
   useRef,
   type ReactNode,
 } from "react";
@@ -45,19 +43,19 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
   const sendRef = useRef<((text: string) => void) | null>(null);
   const draftRef = useRef<((text: string) => void) | null>(null);
 
-  const onSend = useCallback((text: string) => {
+  const onSend = (text: string) => {
     sendRef.current?.(text);
-  }, []);
-  const onDraft = useCallback((text: string) => {
+  };
+  const onDraft = (text: string) => {
     draftRef.current?.(text);
-  }, []);
-  const registerChatCallbacks = useCallback(
-    (send: (text: string) => void, draft: (text: string) => void) => {
-      sendRef.current = send;
-      draftRef.current = draft;
-    },
-    [],
-  );
+  };
+  const registerChatCallbacks = (
+    send: (text: string) => void,
+    draft: (text: string) => void,
+  ) => {
+    sendRef.current = send;
+    draftRef.current = draft;
+  };
 
   const {
     stt: sttStatus,
@@ -79,9 +77,9 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     stop: stopSpeech,
   } = useVoiceOutput(agentName || null, speechEnabled);
 
-  const onRecordingStart = useCallback(() => {
+  const onRecordingStart = () => {
     stopSpeech();
-  }, [stopSpeech]);
+  };
 
   const {
     isRecording,
@@ -97,44 +95,24 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     voiceAutoSend,
   });
 
-  const value = useMemo<VoiceContextValue>(
-    () => ({
-      sttStatus,
-      ttsStatus,
-      sttAvailable,
-      speechEnabled,
-      voiceAutoSend,
-      patchStt,
-      patchTts,
-      refreshVoiceStatus,
-      isRecording,
-      liveTranscript,
-      toggleVoice,
-      voiceError,
-      isSpeaking,
-      speak,
-      stopSpeech,
-      registerChatCallbacks,
-    }),
-    [
-      sttStatus,
-      ttsStatus,
-      sttAvailable,
-      speechEnabled,
-      voiceAutoSend,
-      patchStt,
-      patchTts,
-      refreshVoiceStatus,
-      isRecording,
-      liveTranscript,
-      toggleVoice,
-      voiceError,
-      isSpeaking,
-      speak,
-      stopSpeech,
-      registerChatCallbacks,
-    ],
-  );
+  const value: VoiceContextValue = {
+    sttStatus,
+    ttsStatus,
+    sttAvailable,
+    speechEnabled,
+    voiceAutoSend,
+    patchStt,
+    patchTts,
+    refreshVoiceStatus,
+    isRecording,
+    liveTranscript,
+    toggleVoice,
+    voiceError,
+    isSpeaking,
+    speak,
+    stopSpeech,
+    registerChatCallbacks,
+  };
 
   return (
     <VoiceContext.Provider value={value}>{children}</VoiceContext.Provider>

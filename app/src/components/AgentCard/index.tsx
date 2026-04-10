@@ -7,26 +7,25 @@ import {
 } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
 import { Orb } from "@/components/Orb";
-import type { ListEntry, AgentActivityState } from "@/lib/types";
+import type { AgentInfo } from "@/lib/types";
 import { useNavigate } from "react-router-dom";
 import { useAgentOps, getOpLabel } from "@/stores/use-agent-ops";
 import { useOrbState } from "@/hooks/use-orb-state";
 import { cn } from "@/lib/utils";
 
 interface AgentCardProps {
-  agent: ListEntry;
-  activityState: AgentActivityState;
+  agent: AgentInfo;
 }
 
-export function AgentCard({ agent, activityState }: AgentCardProps) {
+export function AgentCard({ agent }: AgentCardProps) {
   const navigate = useNavigate();
 
   const opState = useAgentOps((s) => s.getOp(agent.name));
-  const orbState = useOrbState(agent, activityState);
+  const orbState = useOrbState(agent, agent.activityState);
 
   return (
     <Card
-      className="cursor-pointer items-center gap-3"
+      className="cursor-pointer flex items-center justify-center gap-3 h-full w-full"
       onClick={() => navigate(`/agent/${agent.name}`)}
     >
       <CardContent className="flex flex-col items-center gap-3 px-5 pt-0 pb-0">

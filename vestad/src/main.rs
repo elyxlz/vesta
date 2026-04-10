@@ -4,6 +4,7 @@ compile_error!("vestad only supports Linux");
 use clap::Parser;
 
 mod agent_code;
+mod agent_status;
 mod backup;
 mod docker;
 mod jwt;

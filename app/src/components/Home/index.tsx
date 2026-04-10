@@ -1,38 +1,11 @@
-import { motion } from "motion/react";
-import { AgentCard } from "@/components/AgentCard";
-import { staggerContainer, staggerItem } from "@/lib/motion";
-import { useAgents } from "@/providers/AgentsProvider";
-import { cn } from "@/lib/utils";
+import { useGateway } from "@/providers/GatewayProvider";
+import { AgentsCarousel } from "./AgentsCarousel";
+import { EmptyState } from "./EmptyState";
 
 export function Home() {
-  const { agents, agentsLoaded, activityStates } = useAgents();
+  const { agents } = useGateway();
 
-  if (!agentsLoaded || agents.length === 0) return null;
+  if (agents.length === 0) return <EmptyState />;
 
-  const gridCols =
-    agents.length === 1
-      ? "grid-cols-1 max-w-[300px]"
-      : agents.length === 2
-        ? "grid-cols-2 max-w-[520px]"
-        : "grid-cols-3";
-
-  return (
-    <div className="flex min-h-0 w-full flex-1 items-center justify-center overflow-y-auto px-4">
-      <motion.div
-        className={cn("grid gap-8 mx-auto", gridCols)}
-        variants={staggerContainer}
-        initial="hidden"
-        animate="show"
-      >
-        {agents.map((agent) => (
-          <motion.div key={agent.name} variants={staggerItem}>
-            <AgentCard
-              agent={agent}
-              activityState={activityStates[agent.name] ?? "idle"}
-            />
-          </motion.div>
-        ))}
-      </motion.div>
-    </div>
-  );
+  return <AgentsCarousel agents={agents} />;
 }

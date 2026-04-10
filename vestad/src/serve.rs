@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, atomic::AtomicBool};
 use tokio::sync::{Mutex, RwLock};
 
-use crate::{backup, docker, jwt, self_update, update_check};
+use crate::{agent_status, backup, docker, jwt, self_update, update_check};
 
 const API_KEY_BYTES: usize = 32;
 pub(crate) const PROXY_MAX_BODY_BYTES: usize = 10 * 1024 * 1024; // 10 MB
@@ -139,6 +139,7 @@ pub struct AppState {
     updating: AtomicBool,
     http_client: reqwest::Client,
     settings: RwLock<Settings>,
+    agent_status_cache: Arc<agent_status::AgentStatusCache>,
 }
 
 impl AppState {
@@ -154,6 +155,7 @@ impl AppState {
             updating: AtomicBool::new(false),
             http_client: reqwest::Client::new(),
             settings: RwLock::new(settings),
+            agent_status_cache: Arc::new(agent_status::AgentStatusCache::new()),
         }
     }
 
@@ -382,6 +384,127 @@ async fn self_update_handler(
             "restarting": restarting,
         }))),
         Err(e) => Err(err_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string())),
+    }
+}
+
+// --- Control plane WebSocket ---
+
+async fn control_ws_handler(
+    State(state): State<SharedState>,
+    ws: WebSocketUpgrade,
+) -> Response {
+    ws.on_upgrade(move |socket| control_ws_session(state, socket))
+}
+
+fn build_agents_message(
+    agents: &[docker::ListEntry],
+    activity: &HashMap<String, String>,
+) -> serde_json::Value {
+    let enriched: Vec<serde_json::Value> = agents
+        .iter()
+        .map(|a| {
+            let mut obj = serde_json::to_value(a).unwrap_or_default();
+            if let Some(map) = obj.as_object_mut() {
+                let state = activity.get(&a.name).map(|s| s.as_str()).unwrap_or("idle");
+                map.insert("activityState".into(), serde_json::Value::String(state.into()));
+            }
+            obj
+        })
+        .collect();
+    serde_json::json!({ "type": "agents", "agents": enriched })
+}
+
+async fn control_ws_session(state: SharedState, socket: axum::extract::ws::WebSocket) {
+    use axum::extract::ws::Message;
+    use futures_util::{SinkExt, StreamExt};
+
+    let (mut tx, mut rx) = socket.split();
+
+    // 1. Send hello handshake
+    let hello = serde_json::json!({
+        "type": "hello",
+        "version": env!("CARGO_PKG_VERSION"),
+        "api_compat": "0.2",
+    });
+    if tx.send(Message::Text(hello.to_string().into())).await.is_err() {
+        return;
+    }
+
+    // 2. Send initial agents snapshot
+    let mut agents_rx = state.agent_status_cache.subscribe_agents();
+    let mut activity_rx = state.agent_status_cache.subscribe_activity();
+
+    let agents = agents_rx.borrow_and_update().clone();
+    let activity = activity_rx.borrow_and_update().clone();
+    let msg = build_agents_message(&agents, &activity);
+    if tx.send(Message::Text(msg.to_string().into())).await.is_err() {
+        return;
+    }
+
+    // 3. Event loop
+    loop {
+        tokio::select! {
+            // Agent list changed
+            result = agents_rx.changed() => {
+                if result.is_err() {
+                    break;
+                }
+                let agents = agents_rx.borrow_and_update().clone();
+                let activity = activity_rx.borrow_and_update().clone();
+                let msg = build_agents_message(&agents, &activity);
+                if tx.send(Message::Text(msg.to_string().into())).await.is_err() {
+                    break;
+                }
+            }
+
+            // Activity state changed
+            result = activity_rx.changed() => {
+                if result.is_err() {
+                    break;
+                }
+                let agents = agents_rx.borrow_and_update().clone();
+                let activity = activity_rx.borrow_and_update().clone();
+                let msg = build_agents_message(&agents, &activity);
+                if tx.send(Message::Text(msg.to_string().into())).await.is_err() {
+                    break;
+                }
+            }
+
+            // Client message
+            msg = rx.next() => {
+                match msg {
+                    Some(Ok(Message::Text(text))) => {
+                        handle_control_command(&state, &text).await;
+                    }
+                    Some(Ok(Message::Close(_))) | None => break,
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
+async fn handle_control_command(state: &SharedState, text: &str) {
+    let parsed: serde_json::Value = match serde_json::from_str(text) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+    let cmd_type = parsed.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    match cmd_type {
+        "self_update" => {
+            if state.updating.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                return;
+            }
+            tracing::info!("self-update requested via control websocket");
+            let result = tokio::task::spawn_blocking(self_update::perform_update).await;
+            state.updating.store(false, std::sync::atomic::Ordering::SeqCst);
+            if let Ok(Err(err)) = result {
+                tracing::error!(error = %err, "self-update failed");
+            }
+        }
+        _ => {
+            tracing::debug!(cmd_type, "unknown control command");
+        }
     }
 }
 
@@ -1500,6 +1623,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/auth/refresh", post(refresh_session_handler));
 
     let protected = Router::new()
+        .route("/ws", get(control_ws_handler))
         .route("/version", get(version))
         .route("/self-update", post(self_update_handler))
         .route("/tunnel", get(tunnel_handler))
@@ -1780,6 +1904,10 @@ pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: S
         vestad_tunnel: tunnel_url.clone(),
     };
     let state = Arc::new(AppState::new(api_key, env_config, tunnel_url));
+    agent_status::spawn_agent_status_task(
+        state.agent_status_cache.clone(),
+        state.env_config.agents_dir.clone(),
+    );
     let app = build_router(state.clone());
     spawn_auto_backup_task(state.clone());
     spawn_update_check_task(state);
