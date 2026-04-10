@@ -2,8 +2,8 @@ use std::fs::File;
 
 use crate::docker::{
     container_name, container_status, create_container, docker_cp_content, docker_ok,
-    docker_output, get_agent_name, inspect_container, list_managed_containers, validate_name,
-    AgentEnvConfig, ContainerStatus, DockerError,
+    docker_output, get_agent_name, inspect_container, list_managed_containers, snapshot_container,
+    validate_name, AgentEnvConfig, ContainerStatus, DockerError,
 };
 use crate::types::{BackupInfo, BackupType, RetentionPolicy};
 
@@ -148,7 +148,7 @@ fn parse_rfc3339_epoch(ts: &str) -> Option<u64> {
     Some(dt.unix_timestamp() as u64)
 }
 
-/// Commit the container to a backup image without managing container lifecycle.
+/// Snapshot the container to a backup image without managing container lifecycle.
 /// Caller is responsible for stopping/starting the container.
 fn commit_backup(
     cname: &str,
@@ -161,19 +161,7 @@ fn commit_backup(
     let type_label = format!("LABEL vesta.backup_type={}", backup_type);
     let date_label = format!("LABEL vesta.backup_date={}", ts);
 
-    if !docker_ok(&[
-        "commit",
-        "--change",
-        &name_label,
-        "--change",
-        &type_label,
-        "--change",
-        &date_label,
-        cname,
-        &tag,
-    ]) {
-        return Err(DockerError::Failed("backup commit failed".into()));
-    }
+    snapshot_container(cname, &tag, &[&name_label, &type_label, &date_label])?;
 
     let size = docker_output(&[
         "images",

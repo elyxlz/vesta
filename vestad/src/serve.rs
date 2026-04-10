@@ -1571,7 +1571,10 @@ pub fn build_router(state: SharedState) -> Router {
                 .make_span_with(tower_http::trace::DefaultMakeSpan::new().level(tracing::Level::INFO))
                 .on_request(
                     |request: &axum::http::Request<_>, _span: &tracing::Span| {
-                        if request.method() != axum::http::Method::OPTIONS {
+                        let path = request.uri().path();
+                        let is_noisy = request.method() == axum::http::Method::OPTIONS
+                            || path.ends_with("/logs");
+                        if !is_noisy {
                             tracing::info!(method = %request.method(), path = %request.uri(), "request");
                         }
                     },

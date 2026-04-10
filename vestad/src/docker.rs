@@ -184,6 +184,48 @@ pub fn docker_ok(args: &[&str]) -> bool {
     docker(args).map(|s| s.success()).unwrap_or(false)
 }
 
+/// Snapshot a container's filesystem as a new image using docker export | docker import.
+/// Unlike docker commit, this doesn't depend on parent image layers.
+/// Optional `changes` apply Dockerfile instructions (e.g. LABEL) to the imported image.
+pub fn snapshot_container(cname: &str, tag: &str, changes: &[&str]) -> Result<(), DockerError> {
+    let mut export_child = process::Command::new("docker")
+        .args(["export", cname])
+        .stdout(process::Stdio::piped())
+        .stderr(process::Stdio::piped())
+        .spawn()
+        .map_err(|e| DockerError::Failed(format!("failed to start docker export: {e}")))?;
+
+    let export_stdout = export_child.stdout.take()
+        .ok_or_else(|| DockerError::Failed("docker export stdout not available".into()))?;
+
+    let mut import_args = Vec::new();
+    for change in changes {
+        import_args.push("--change");
+        import_args.push(change);
+    }
+    import_args.push("-");
+    import_args.push(tag);
+
+    let import_output = process::Command::new("docker")
+        .args(["import"])
+        .args(&import_args)
+        .stdin(export_stdout)
+        .output()
+        .map_err(|e| DockerError::Failed(format!("failed to run docker import: {e}")))?;
+
+    let export_status = export_child.wait()
+        .map_err(|e| DockerError::Failed(format!("docker export wait failed: {e}")))?;
+
+    if !export_status.success() {
+        return Err(DockerError::Failed("docker export failed".into()));
+    }
+    if !import_output.status.success() {
+        let stderr = String::from_utf8_lossy(&import_output.stderr);
+        return Err(DockerError::Failed(format!("docker import failed: {stderr}")));
+    }
+    Ok(())
+}
+
 pub fn docker_output(args: &[&str]) -> Option<String> {
     let output = process::Command::new("docker")
         .args(args)
@@ -1084,10 +1126,8 @@ pub fn rebuild_agent(name: &str, env_config: &AgentEnvConfig) -> Result<(), Dock
         .as_secs();
     let backup_tag = format!("vesta-rebuild:{}_{}", name, ts);
 
-    tracing::info!(agent = %name, "[1/5] committing container filesystem...");
-    if !docker_ok(&["commit", &cname, &backup_tag]) {
-        return Err(DockerError::Failed("backup failed".into()));
-    }
+    tracing::info!(agent = %name, "[1/5] snapshotting container filesystem...");
+    snapshot_container(&cname, &backup_tag, &[])?;
 
     tracing::info!(agent = %name, "[2/5] removing old container...");
     docker_ok(&["rm", "-f", &cname]);

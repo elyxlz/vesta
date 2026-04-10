@@ -87,14 +87,15 @@ fn extract_from_image(config: &Path, image: &str) -> Result<(), AgentCodeError> 
         }
     }
 
-    // Copy individual files
+    // Copy individual files (destination must include filename, not just directory)
     for (label, container_path) in [
         ("pyproject.toml", "/root/vesta/pyproject.toml"),
         ("uv.lock", "/root/vesta/uv.lock"),
     ] {
         tracing::debug!(path = %label, "copying from container");
         let src = format!("{temp_name}:{container_path}");
-        if !crate::docker::docker_ok(&["cp", &src, &dir.display().to_string()]) {
+        let dest = dir.join(label);
+        if !crate::docker::docker_ok(&["cp", &src, &dest.display().to_string()]) {
             cleanup();
             return Err(AgentCodeError::Extract(format!("failed to copy {label} from container")));
         }

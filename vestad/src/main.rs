@@ -369,32 +369,11 @@ fn main() {
                     docker::docker_ok(&["stop", "--time", backup::BACKUP_STOP_TIMEOUT_SECS, &cname]);
                 }
 
-                eprintln!("committing snapshot...");
+                eprintln!("snapshotting container...");
                 let temp_tag = format!("vesta-export:{}-temp", name);
-                if !docker::docker_ok(&["commit", &cname, &temp_tag]) {
-                    eprintln!("docker commit failed, trying export/import fallback...");
-                    let mut export_child = std::process::Command::new("docker")
-                        .args(["export", &cname])
-                        .stdout(std::process::Stdio::piped())
-                        .spawn()
-                        .unwrap_or_else(|e| {
-                            if was_running { docker::docker_ok(&["start", &cname]); }
-                            die(format!("docker export failed: {}", e));
-                        });
-                    let export_stdout = export_child.stdout.take().expect("stdout was set to piped");
-                    let import_out = std::process::Command::new("docker")
-                        .args(["import", "-", &temp_tag])
-                        .stdin(export_stdout)
-                        .output()
-                        .unwrap_or_else(|e| {
-                            if was_running { docker::docker_ok(&["start", &cname]); }
-                            die(format!("docker import failed: {}", e));
-                        });
-                    let _ = export_child.wait();
-                    if !import_out.status.success() {
-                        if was_running { docker::docker_ok(&["start", &cname]); }
-                        die("export fallback failed");
-                    }
+                if let Err(e) = docker::snapshot_container(&cname, &temp_tag, &[]) {
+                    if was_running { docker::docker_ok(&["start", &cname]); }
+                    die(format!("snapshot failed: {}", e));
                 }
 
                 if was_running {
