@@ -13,11 +13,11 @@ Two-tier system:
                           npm, huggingface, playwright). Require --clean-all.
 
 Usage:
-    python3 ~/vesta/skills/cleanup/scripts/cleanup.py               # dry-run report
-    python3 ~/vesta/skills/cleanup/scripts/cleanup.py --clean       # clean tier-1 only
-    python3 ~/vesta/skills/cleanup/scripts/cleanup.py --clean-all   # clean everything
-    python3 ~/vesta/skills/cleanup/scripts/cleanup.py --clean --target pyc logs
-    python3 ~/vesta/skills/cleanup/scripts/cleanup.py --list-targets
+    python3 ~/vesta/skills/declutter/scripts/cleanup.py               # dry-run report
+    python3 ~/vesta/skills/declutter/scripts/cleanup.py --clean       # clean tier-1 only
+    python3 ~/vesta/skills/declutter/scripts/cleanup.py --clean-all   # clean everything
+    python3 ~/vesta/skills/declutter/scripts/cleanup.py --clean --target pyc logs
+    python3 ~/vesta/skills/declutter/scripts/cleanup.py --list-targets
 """
 
 import argparse

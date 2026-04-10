@@ -1,5 +1,5 @@
 ---
-name: cleanup
+name: declutter
 description: This skill should be used when the user asks about "cleanup", "disk space", "clean up", "free space", "cache", "declutter", or wants to reclaim storage in their vesta agent container.
 ---
 
@@ -18,19 +18,19 @@ Targets are split into two tiers:
 
 ```bash
 # Show what can be cleaned (dry-run, safe — no deletions)
-python3 ~/vesta/skills/cleanup/scripts/cleanup.py
+python3 ~/vesta/skills/declutter/scripts/cleanup.py
 
 # Clean tier-1 only (safe — items regenerate automatically)
-python3 ~/vesta/skills/cleanup/scripts/cleanup.py --clean
+python3 ~/vesta/skills/declutter/scripts/cleanup.py --clean
 
 # Clean everything including tier-2 caches
-python3 ~/vesta/skills/cleanup/scripts/cleanup.py --clean-all
+python3 ~/vesta/skills/declutter/scripts/cleanup.py --clean-all
 
 # Clean specific categories only
-python3 ~/vesta/skills/cleanup/scripts/cleanup.py --clean --target pyc logs
+python3 ~/vesta/skills/declutter/scripts/cleanup.py --clean --target pyc logs
 
 # List available targets
-python3 ~/vesta/skills/cleanup/scripts/cleanup.py --list-targets
+python3 ~/vesta/skills/declutter/scripts/cleanup.py --list-targets
 ```
 
 ## Cleanup Targets
