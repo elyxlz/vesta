@@ -181,10 +181,9 @@ fn fetch_agent_code_from_github(config: &Path, tag: &str) -> Result<(), AgentCod
         return Err(AgentCodeError::Download(format!("failed to download {archive_url}")));
     }
 
-    // Extract the entire agent/ subtree into a temp staging dir, then move what we need.
-    // GitHub archives have prefix vesta-v{tag}/, so --strip-components=2 turns
-    // vesta-v{tag}/agent/src/vesta/... into src/vesta/...
-    let prefix = format!("vesta-v{tag}/agent");
+    // GitHub archives have prefix vesta-{tag}/ (v is stripped from directory name).
+    // --strip-components=2 turns vesta-{tag}/agent/src/vesta/... into src/vesta/...
+    let prefix = format!("vesta-{tag}/agent");
     let ok = process::Command::new("tar")
         .args([
             "-xzf", &archive_path,
