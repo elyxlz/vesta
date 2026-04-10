@@ -16,7 +16,7 @@ export function Shell({ className, ...props }: React.ComponentProps<"div">) {
     <div
       className={cn(
         "h-full w-full text-card-foreground overflow-hidden contain-paint",
-        fullscreen ? "" : "bg-card rounded-4xl border border-border shadow-sm",
+        fullscreen ? "" : "bg-card rounded-4xl shadow-md ring-1 ring-foreground/5 dark:ring-foreground/10",
         className,
       )}
       {...props}
