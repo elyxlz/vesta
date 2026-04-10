@@ -44,7 +44,7 @@ export function initParentBridge() {
       authToken = event.data.token;
       baseUrl = event.data.baseUrl;
       _resolveAuth?.();
-      sendTokenToSW();
+      registerSW();
     }
     if (event.data?.type === "vesta-layout") {
       _fullscreen = !!event.data.fullscreen;
@@ -57,10 +57,19 @@ export function initParentBridge() {
   window.parent.postMessage({ type: "vesta-layout-request" }, "*");
 
   if ("serviceWorker" in navigator) {
-    // The SW uses skipWaiting + clients.claim to activate immediately.
-    navigator.serviceWorker.register("./auth-sw.js").then(() => sendTokenToSW());
     navigator.serviceWorker.addEventListener("controllerchange", () => sendTokenToSW());
   }
+}
+
+let _swRegistered = false;
+
+function registerSW() {
+  if (_swRegistered || !authToken || !("serviceWorker" in navigator)) return;
+  _swRegistered = true;
+  // Pass token so the SW script itself passes auth.
+  navigator.serviceWorker
+    .register(`./auth-sw.js?token=${encodeURIComponent(authToken)}`)
+    .then(() => sendTokenToSW());
 }
 
 function sendTokenToSW() {
