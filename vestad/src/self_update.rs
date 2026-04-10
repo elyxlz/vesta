@@ -20,7 +20,7 @@ impl fmt::Display for UpdateError {
 }
 
 /// Downloads the latest vestad binary from GitHub, replaces the current binary,
-/// and reinstalls the systemd service. Agent code and container restarts are
+/// and restarts the systemd service. Agent code and container restarts are
 /// handled on the next vestad startup.
 /// Returns Ok(true) if a restart was triggered.
 pub fn perform_update() -> Result<bool, UpdateError> {
