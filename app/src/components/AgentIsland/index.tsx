@@ -1,9 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { LayoutGroup, motion } from "motion/react";
 import { cn } from "@/lib/utils";
-import { useOrbState } from "@/hooks/use-orb-state";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
-import { useAgents } from "@/providers/AgentsProvider";
 import { AgentIslandExpanded } from "./Expanded";
 import { AgentIslandCollapsed } from "./Collapsed";
 import { agentIslandContentTransition } from "./transitions";
@@ -18,12 +16,7 @@ const COLLAPSED_RADIUS = 22;
 const EXPANDED_RADIUS = 22;
 
 export function AgentIsland() {
-  const { name, agent, agentState, error, statusLabel } = useSelectedAgent();
-  const { agents } = useAgents();
-  const listEntry = agents.find((a) => a.name === name);
-  const info = agent ?? listEntry ?? null;
-
-  const orbState = useOrbState(info, agentState);
+  const { name, error, statusLabel, orbState } = useSelectedAgent();
 
   const [expanded, setExpanded] = useState(false);
   const islandRef = useRef<HTMLDivElement>(null);
