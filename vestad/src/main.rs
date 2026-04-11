@@ -242,6 +242,7 @@ fn run_server_systemd(port: Option<u16>, no_tunnel: bool) {
         eprintln!("note: --port and --no-tunnel only apply with --standalone");
     }
 
+    docker::ensure_docker().unwrap_or_else(|e| die(&e));
     systemd::ensure_service_installed().unwrap_or_else(|e| die(&e));
 
     if systemd::is_active() {
