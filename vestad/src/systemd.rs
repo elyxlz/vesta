@@ -36,7 +36,8 @@ pub fn ensure_service_installed() -> Result<(), String> {
     let unit_content = format!(
         r#"[Unit]
 Description=Vesta API Server
-After=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
 
 [Service]
 ExecStart={vestad_path} serve --standalone
