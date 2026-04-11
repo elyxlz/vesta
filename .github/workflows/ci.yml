@@ -210,6 +210,12 @@ jobs:
         if: matrix.run-vestad
         run: cargo test -p vestad --target ${{ matrix.target }}
 
+      - name: Docker integration tests (vestad, Linux only)
+        if: matrix.run-vestad
+        run: |
+          docker pull ghcr.io/elyxlz/vesta:latest
+          cargo test -p vestad --target ${{ matrix.target }} -- --ignored
+
   # ── Build vesta client (all unix targets) ─────────────────────────────
   build-vesta:
     needs: [version-check]
