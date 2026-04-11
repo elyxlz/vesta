@@ -537,23 +537,92 @@ fn load_dockerignore(context: &std::path::Path) -> Vec<String> {
         .collect()
 }
 
-/// Check if a relative path matches any `.dockerignore` pattern.
-/// Supports simple prefix matching and `*` wildcards at start/end.
+/// Check if a relative path matches `.dockerignore` patterns.
+/// Supports `!` negation, `*` (non-separator wildcard), `**` (multi-directory),
+/// and `?` (single character). Last matching pattern wins.
 fn is_dockerignored(rel_path: &str, patterns: &[String]) -> bool {
-    for pattern in patterns {
-        let pat = pattern.trim_end_matches('/');
-        if rel_path == pat || (rel_path.starts_with(pat) && rel_path.as_bytes().get(pat.len()) == Some(&b'/')) {
+    let mut ignored = false;
+    for raw in patterns {
+        let (negated, pat) = match raw.strip_prefix('!') {
+            Some(p) => (true, p.trim()),
+            None => (false, raw.as_str()),
+        };
+        let pat = pat.trim_end_matches('/');
+        if docker_pattern_matches(rel_path, pat) {
+            ignored = !negated;
+        }
+    }
+    ignored
+}
+
+/// Match a path against a single dockerignore glob pattern.
+fn docker_pattern_matches(path: &str, pattern: &str) -> bool {
+    // "**/" prefix: match against any subpath
+    if let Some(rest) = pattern.strip_prefix("**/") {
+        if docker_pattern_matches(path, rest) {
             return true;
         }
-        // Wildcard prefix: "*.pyc" matches "foo.pyc" and "dir/foo.pyc"
-        if let Some(suffix) = pat.strip_prefix('*') {
-            let filename = rel_path.rsplit('/').next().unwrap_or(rel_path);
-            if filename.ends_with(suffix) {
+        let mut remaining = path;
+        while let Some(pos) = remaining.find('/') {
+            remaining = &remaining[pos + 1..];
+            if docker_pattern_matches(remaining, rest) {
                 return true;
             }
         }
+        return false;
     }
-    false
+
+    // No slash in pattern: match against filename, or as directory prefix
+    if !pattern.contains('/') {
+        let filename = path.rsplit('/').next().unwrap_or(path);
+        if glob_match(filename.as_bytes(), pattern.as_bytes()) {
+            return true;
+        }
+        return path == pattern
+            || (path.starts_with(pattern) && path.as_bytes().get(pattern.len()) == Some(&b'/'));
+    }
+
+    // Pattern has slashes: match from context root, or as directory prefix
+    glob_match(path.as_bytes(), pattern.as_bytes())
+        || (path.starts_with(pattern) && path.as_bytes().get(pattern.len()) == Some(&b'/'))
+}
+
+/// Simple glob: `*` matches non-`/` chars, `?` matches single non-`/` char,
+/// `**` between slashes matches any number of path segments.
+fn glob_match(text: &[u8], pattern: &[u8]) -> bool {
+    if pattern.is_empty() {
+        return text.is_empty();
+    }
+    match pattern[0] {
+        b'*' => {
+            // "**/" inside pattern: match zero or more path segments
+            if pattern.starts_with(b"**/") {
+                let rest = &pattern[3..];
+                if glob_match(text, rest) {
+                    return true;
+                }
+                for (i, &byte) in text.iter().enumerate() {
+                    if byte == b'/' && glob_match(&text[i + 1..], rest) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            // Single `*`: match any sequence of non-`/` characters
+            let rest = &pattern[1..];
+            for i in 0..=text.len() {
+                if i > 0 && text[i - 1] == b'/' {
+                    break;
+                }
+                if glob_match(&text[i..], rest) {
+                    return true;
+                }
+            }
+            false
+        }
+        b'?' => !text.is_empty() && text[0] != b'/' && glob_match(&text[1..], &pattern[1..]),
+        c => !text.is_empty() && text[0] == c && glob_match(&text[1..], &pattern[1..]),
+    }
 }
 
 pub async fn resolve_image(docker: &Docker) -> Result<&'static str, DockerError> {
@@ -812,22 +881,54 @@ pub async fn remove_image(docker: &Docker, image: &str) -> Result<(), DockerErro
     Ok(())
 }
 
-/// Export a Docker image to a gzip-compressed tar file (replaces `docker save | gzip`).
+/// Export a Docker image to a gzip-compressed tar file.
+/// Streams from Docker through gzip to disk without buffering the full image in memory.
+/// Cleans up the partial file on failure.
 pub async fn export_image_gzip(docker: &Docker, image: &str, output: &std::path::Path) -> Result<(), DockerError> {
-    let file = std::fs::File::create(output)
-        .map_err(|e| DockerError::Failed(format!("failed to create output file: {e}")))?;
-    let mut encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+    let output = output.to_path_buf();
+    let (tx, rx) = std::sync::mpsc::sync_channel::<bytes::Bytes>(8);
+
+    let write_output = output.clone();
+    let write_handle = tokio::task::spawn_blocking(move || -> Result<(), DockerError> {
+        let file = std::fs::File::create(&write_output)
+            .map_err(|e| DockerError::Failed(format!("failed to create output file: {e}")))?;
+        let mut encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+        while let Ok(chunk) = rx.recv() {
+            std::io::Write::write_all(&mut encoder, &chunk)
+                .map_err(|e| DockerError::Failed(format!("failed to write export data: {e}")))?;
+        }
+        encoder.finish()
+            .map_err(|e| DockerError::Failed(format!("failed to finalize gzip: {e}")))?;
+        Ok(())
+    });
 
     let mut stream = docker.export_image(image);
+    let mut stream_err = None;
     while let Some(chunk) = stream.next().await {
-        let data = chunk.map_err(|e| DockerError::Failed(format!("export stream error: {e}")))?;
-        std::io::Write::write_all(&mut encoder, &data)
-            .map_err(|e| DockerError::Failed(format!("failed to write export data: {e}")))?;
+        match chunk {
+            Ok(data) => {
+                if tx.send(data).is_err() {
+                    break;
+                }
+            }
+            Err(e) => {
+                stream_err = Some(DockerError::Failed(format!("export stream error: {e}")));
+                break;
+            }
+        }
+    }
+    drop(tx);
+
+    if let Some(err) = stream_err {
+        tokio::fs::remove_file(&output).await.ok();
+        return Err(err);
     }
 
-    encoder.finish()
-        .map_err(|e| DockerError::Failed(format!("failed to finalize gzip: {e}")))?;
-    Ok(())
+    write_handle.await
+        .map_err(|e| DockerError::Failed(format!("export task failed: {e}")))?
+        .inspect_err(|_| {
+            std::fs::remove_file(&output).ok();
+        })
 }
 
 /// Import a Docker image from a gzip-compressed tar file (replaces `gunzip | docker load`).
@@ -1683,6 +1784,73 @@ mod tests {
         let t1 = generate_agent_token();
         let t2 = generate_agent_token();
         assert_ne!(t1, t2);
+    }
+
+    // --- Dockerignore pattern matching ---
+
+    fn patterns(pats: &[&str]) -> Vec<String> {
+        pats.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn dockerignore_exact_match() {
+        let pats = patterns(&["target"]);
+        assert!(is_dockerignored("target", &pats));
+        assert!(is_dockerignored("target/debug/foo", &pats));
+        assert!(!is_dockerignored("targets", &pats));
+    }
+
+    #[test]
+    fn dockerignore_trailing_slash() {
+        let pats = patterns(&["app/"]);
+        assert!(is_dockerignored("app", &pats));
+        assert!(is_dockerignored("app/src/main.rs", &pats));
+    }
+
+    #[test]
+    fn dockerignore_wildcard_extension() {
+        let pats = patterns(&["*.pyc"]);
+        assert!(is_dockerignored("foo.pyc", &pats));
+        assert!(is_dockerignored("dir/bar.pyc", &pats));
+        assert!(!is_dockerignored("foo.py", &pats));
+    }
+
+    #[test]
+    fn dockerignore_question_mark() {
+        let pats = patterns(&["?.txt"]);
+        assert!(is_dockerignored("a.txt", &pats));
+        assert!(!is_dockerignored("ab.txt", &pats));
+    }
+
+    #[test]
+    fn dockerignore_doublestar() {
+        let pats = patterns(&["**/logs"]);
+        assert!(is_dockerignored("logs", &pats));
+        assert!(is_dockerignored("a/logs", &pats));
+        assert!(is_dockerignored("a/b/logs", &pats));
+        assert!(is_dockerignored("a/b/logs/debug.log", &pats));
+    }
+
+    #[test]
+    fn dockerignore_negation() {
+        let pats = patterns(&["*.md", "!README.md"]);
+        assert!(!is_dockerignored("README.md", &pats));
+        assert!(is_dockerignored("CHANGELOG.md", &pats));
+    }
+
+    #[test]
+    fn dockerignore_path_with_slash() {
+        let pats = patterns(&["agent/tests"]);
+        assert!(is_dockerignored("agent/tests", &pats));
+        assert!(is_dockerignored("agent/tests/test_unit.py", &pats));
+        assert!(!is_dockerignored("other/agent/tests", &pats));
+    }
+
+    #[test]
+    fn dockerignore_no_false_prefix() {
+        let pats = patterns(&["app"]);
+        assert!(!is_dockerignored("application", &pats));
+        assert!(is_dockerignored("app/foo", &pats));
     }
 
     // --- Docker integration tests (require Docker daemon) ---
