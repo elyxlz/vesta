@@ -186,6 +186,15 @@ To call your skills use `apiFetch` from `@/lib/parent-bridge`. It handles auth a
 
 Widgets that fetch data **must show a loading state** while waiting — use skeletons or spinners to provide a nice ux while data loads.
 
+### Keeping data fresh
+
+The dashboard should always show current information. Choose the right strategy based on how often the data changes:
+
+1. **Fetch on mount** (default) — fetch data in a `useEffect` when the widget mounts. Good for data that doesn't change frequently (daily stats, settings, lists).
+2. **Fetch on mount + refresh button** — same as above but add a visible refresh button so the user can manually update. Good for data that changes throughout the day (notifications, task lists, feeds).
+3. **Polling** — fetch on an interval (`setInterval` in a `useEffect`). Only use for data that changes frequently and the user expects to see live (stock prices, active timers, live metrics). Keep intervals reasonable (30s+).
+
+Always prefer simpler strategies. Most widgets should fetch on mount with a refresh button. Polling is rarely needed.
 
 ## Removing components
 

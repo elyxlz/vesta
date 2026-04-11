@@ -8,7 +8,6 @@ import { useLayout } from "@/stores/use-layout";
 import { Settings } from "@/components/Settings";
 import { StatusPill } from "@/components/StatusPill";
 import { Button } from "@/components/ui/button";
-import { ButtonGroup } from "@/components/ui/button-group";
 import {
   Tooltip,
   TooltipContent,
@@ -88,20 +87,18 @@ export function NavbarLeading({ extra }: { extra?: React.ReactNode }) {
         </Button>
       )}
       {connected && agentsFetched && agents.length > 0 && !isHome && (
-        <ButtonGroup>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="outline"
-                size="icon-lg"
-                onClick={() => navigate("/home")}
-              >
-                <Home />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>home</TooltipContent>
-          </Tooltip>
-        </ButtonGroup>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="outline"
+              size="icon-lg"
+              onClick={() => navigate("/home")}
+            >
+              <Home />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>home</TooltipContent>
+        </Tooltip>
       )}
       {extra}
     </>
