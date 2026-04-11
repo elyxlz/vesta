@@ -3,7 +3,7 @@ use bollard::container::{
     RemoveContainerOptions, StartContainerOptions, StopContainerOptions, UploadToContainerOptions,
 };
 use bollard::image::{
-    BuildImageOptions, CommitContainerOptions, CreateImageOptions, ListImagesOptions,
+    CommitContainerOptions, CreateImageOptions, ListImagesOptions,
     RemoveImageOptions, TagImageOptions,
 };
 use bollard::Docker;
@@ -479,31 +479,18 @@ pub fn find_dockerfile() -> Result<std::path::PathBuf, DockerError> {
 
 pub async fn resolve_image(docker: &Docker) -> Result<&'static str, DockerError> {
     if let Ok(context) = find_dockerfile() {
-        // Build a tar of the build context
-        let tar_data = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, DockerError> {
-            let mut builder = tar::Builder::new(Vec::new());
-            builder.follow_symlinks(true);
-            builder.append_dir_all(".", &context)
-                .map_err(|e| DockerError::Failed(format!("failed to create build context tar: {e}")))?;
-            builder.into_inner()
-                .map_err(|e| DockerError::Failed(format!("failed to finish build context tar: {e}")))
-        }).await.unwrap()?;
-
-        let opts = BuildImageOptions {
-            t: LOCAL_IMAGE_TAG.to_string(),
-            ..Default::default()
-        };
-
-        let mut stream = docker.build_image(opts, None, Some(tar_data.into()));
-        while let Some(msg) = stream.next().await {
-            match msg {
-                Ok(output) => {
-                    if let Some(error) = output.error {
-                        return Err(DockerError::Failed(format!("image build error: {error}")));
-                    }
-                }
-                Err(e) => return Err(DockerError::Failed(format!("image build failed: {e}"))),
-            }
+        // Use docker build subprocess — bollard's build_image API has tar header
+        // compatibility issues with Docker daemon (GNU sparse headers not supported)
+        let status = tokio::process::Command::new("docker")
+            .args(["build", "-t", LOCAL_IMAGE_TAG, "."])
+            .current_dir(&context)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::inherit())
+            .status()
+            .await
+            .map_err(|e| DockerError::Failed(format!("docker build failed: {e}")))?;
+        if !status.success() {
+            return Err(DockerError::Failed("image build failed".into()));
         }
         Ok(LOCAL_IMAGE_TAG)
     } else {
@@ -1578,6 +1565,16 @@ mod tests {
         connect().expect("failed to connect to docker")
     }
 
+    /// Best-effort cleanup via docker CLI (safe to call from Drop inside tokio).
+    fn docker_cleanup(args: &[&str]) {
+        std::process::Command::new("docker")
+            .args(args)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .ok();
+    }
+
     /// Create a unique container name for tests and ensure cleanup on drop.
     struct TestContainer {
         name: String,
@@ -1587,18 +1584,14 @@ mod tests {
         fn new(suffix: &str) -> Self {
             let name = format!("{}-{}-{}", TEST_PREFIX, suffix, std::process::id());
             // Clean up any leftover from previous runs
-            let docker = test_docker();
-            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-            rt.block_on(remove_container_force(&docker, &name)).ok();
+            docker_cleanup(&["rm", "-f", &name]);
             Self { name }
         }
     }
 
     impl Drop for TestContainer {
         fn drop(&mut self) {
-            let docker = test_docker();
-            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-            rt.block_on(remove_container_force(&docker, &self.name)).ok();
+            docker_cleanup(&["rm", "-f", &self.name]);
         }
     }
 
@@ -1616,9 +1609,7 @@ mod tests {
 
     impl Drop for TestImage {
         fn drop(&mut self) {
-            let docker = test_docker();
-            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-            rt.block_on(remove_image(&docker, &self.tag)).ok();
+            docker_cleanup(&["rmi", &self.tag]);
         }
     }
 
