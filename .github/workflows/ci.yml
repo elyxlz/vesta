@@ -949,4 +949,4 @@ jobs:
           gh release edit "${{ github.event.release.tag_name }}" --draft=false --prerelease=false
 
       - name: Push to production
-        run: git push origin HEAD:production
+        run: git push --force origin HEAD:production
