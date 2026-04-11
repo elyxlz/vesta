@@ -59,8 +59,10 @@ export default function App() {
           />
           <SidebarInset>
             <SiteHeader title={activePage?.title ?? ""} />
-            <div className="overflow-y-auto flex-1 p-4">
-              {activePage && <activePage.component />}
+            <div className="overflow-y-auto flex-1 min-h-0 px-4 py-4 lg:px-6">
+              <div className="grid gap-4 grid-cols-[repeat(auto-fit,minmax(280px,1fr))]">
+                {activePage && <activePage.component />}
+              </div>
             </div>
           </SidebarInset>
         </SidebarProvider>

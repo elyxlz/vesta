@@ -178,27 +178,38 @@ function Sidebar({
 
   if (isMobile) {
     return (
-      <Sheet open={openMobile} onOpenChange={setOpenMobile} {...props}>
-        <SheetContent
-          dir={dir}
+      <>
+        <div
+          data-slot="sidebar-backdrop"
+          className={cn(
+            "absolute inset-0 z-10 bg-black/40 transition-opacity duration-200 ease-in-out",
+            openMobile ? "opacity-100" : "opacity-0 pointer-events-none",
+          )}
+          onClick={() => setOpenMobile(false)}
+        />
+        <div
           data-sidebar="sidebar"
           data-slot="sidebar"
           data-mobile="true"
-          className="w-(--sidebar-width) bg-sidebar p-0 text-sidebar-foreground [&>button]:hidden"
+          className={cn(
+            "absolute inset-y-0 z-20 flex w-(--sidebar-width) flex-col bg-sidebar text-sidebar-foreground transition-transform duration-200 ease-in-out will-change-transform",
+            side === "left" ? "left-0" : "right-0",
+            openMobile
+              ? "translate-x-0"
+              : side === "left"
+                ? "-translate-x-full"
+                : "translate-x-full",
+          )}
           style={
             {
               "--sidebar-width": SIDEBAR_WIDTH_MOBILE,
             } as React.CSSProperties
           }
-          side={side}
+          {...props}
         >
-          <SheetHeader className="sr-only">
-            <SheetTitle>Sidebar</SheetTitle>
-            <SheetDescription>Displays the mobile sidebar.</SheetDescription>
-          </SheetHeader>
-          <div className="flex h-full w-full flex-col">{children}</div>
-        </SheetContent>
-      </Sheet>
+          {children}
+        </div>
+      </>
     );
   }
 

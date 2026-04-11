@@ -80,17 +80,29 @@ When the user asks to add a widget without specifying which page, **choose a fit
 
 ### Widget sizing and layout
 
-**Widgets must be compact and small.** Don't let cards or widgets stretch to full width — give them explicit max widths or use a grid so multiple widgets sit side by side. Content should be top-left aligned, not centered.
+**Widgets must be compact and small.** Content should be top-left aligned, not centered. Prefer small, dense cards over large sprawling ones.
 
-Page layout pattern — use a grid with auto-fit columns:
+The content area has a built-in auto-fit grid (`grid-cols-[repeat(auto-fit,minmax(280px,1fr))]`). Page components return widgets as siblings (or in a fragment) — **do not wrap them in another grid div**. Each widget automatically fills one grid cell and columns adjust to the available width.
+
+For widgets that need more space (wide charts, tables, timelines), use `col-span-2` or `col-span-full`:
+
 ```tsx
-<div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 p-4 lg:p-6">
-  <MyWidget />        {/* each widget fills one grid cell */}
-  <AnotherWidget />
-</div>
+export function OverviewPage() {
+  return (
+    <>
+      <MetricCard />           {/* 1 column */}
+      <MetricCard />           {/* 1 column */}
+      <WideChart className="col-span-2" />   {/* spans 2 columns */}
+      <FullWidthTable className="col-span-full" />  {/* full width */}
+    </>
+  )
+}
 ```
 
-Individual widgets should be self-contained cards that fit their grid cell. Don't make widgets full-width unless they genuinely need it (e.g. a wide chart). Prefer small, dense cards over large sprawling ones.
+Guidelines for choosing span:
+- **`col-span-1`** (default): small metric cards, counters, status indicators
+- **`col-span-2`**: charts, graphs, medium tables, anything that needs breathing room
+- **`col-span-full`**: wide data tables, timelines, logs — things that genuinely need full width
 
 ### Adding a page
 
@@ -98,9 +110,11 @@ Individual widgets should be self-contained cards that fit their grid cell. Don'
 ```tsx
 export function MyPage() {
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 p-4 lg:p-6">
-      {/* compact widgets here */}
-    </div>
+    <>
+      <SmallWidget />
+      <SmallWidget />
+      <WideWidget className="col-span-2" />
+    </>
   )
 }
 ```
@@ -194,7 +208,7 @@ Try to keep everything compact, dashboard space is at a premium.
 
 ## Rules
 
-- **Keep widgets small and compact** — never full-width by default. Use grid layouts so widgets sit side by side. Content top-left aligned, never centered. Dashboard space is at a premium.
+- **Keep widgets small and compact** — never full-width by default. Use `col-span-2` or `col-span-full` only when the content genuinely needs it. Content top-left aligned, never centered. Don't wrap widgets in extra grid divs — the content area grid handles layout.
 - **No client-side fetches to external APIs** — the dashboard runs in a browser, so cross-origin requests to third-party APIs (Yahoo Finance, weather services, etc.) will be blocked by CORS. Instead, create a skill that fetches the data server-side and expose it as a skill API endpoint, then call it from the widget using `apiFetch`.
 - **Use the UI components** from `@/components/ui/` — read them before building
 - **State**: `useState` / `useEffect` for local state

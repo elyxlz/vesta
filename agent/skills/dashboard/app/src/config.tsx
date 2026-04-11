@@ -36,6 +36,5 @@ export const config: DashboardConfig = {
 
   pages: [
     // Add pages here:
-    { id: "overview", title: "Ma che cazzo", icon: <LayoutDashboardIcon />, component: () => <div>funziona?</div> },
   ],
 }
