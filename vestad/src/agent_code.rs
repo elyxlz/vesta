@@ -162,8 +162,14 @@ fn fetch_agent_code_from_github(config: &Path, tag: &str) -> Result<(), AgentCod
     let tmp_dir = config.join("agent-code.new");
     let old_dir = config.join("agent-code.old");
 
-    let _ = fs::remove_dir_all(&tmp_dir);
-    let _ = fs::remove_dir_all(&old_dir);
+    if tmp_dir.exists() {
+        fs::remove_dir_all(&tmp_dir).map_err(|e|
+            AgentCodeError::Io(format!("failed to clean stale {}: {e}", tmp_dir.display())))?;
+    }
+    if old_dir.exists() {
+        fs::remove_dir_all(&old_dir).map_err(|e|
+            AgentCodeError::Io(format!("failed to clean stale {}: {e}", old_dir.display())))?;
+    }
     fs::create_dir_all(&tmp_dir).map_err(|e| AgentCodeError::Io(e.to_string()))?;
 
     let archive_url = format!("{GITHUB_ARCHIVE_URL}/v{tag}.tar.gz");
@@ -208,7 +214,8 @@ fn fetch_agent_code_from_github(config: &Path, tag: &str) -> Result<(), AgentCod
         return Err(AgentCodeError::Extract("extracted archive missing required files".into()));
     }
 
-    // Atomic swap
+    // Atomic swap — remove stale old_dir from a previous interrupted update
+    let _ = fs::remove_dir_all(&old_dir);
     if dir.exists() {
         fs::rename(&dir, &old_dir).map_err(|e| {
             let _ = fs::remove_dir_all(&tmp_dir);
