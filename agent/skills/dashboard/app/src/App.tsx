@@ -11,13 +11,28 @@ import {
 import { AppSidebar } from "@/components/app-sidebar"
 import { Shell } from "@/components/shell"
 import { SiteHeader } from "@/components/site-header"
-import { config } from "./config"
+import { config, type PageConfig } from "./config"
 
 const SHOW_EMPTY_STATE = config.pages.length === 0
+const STORAGE_KEY = "vesta-dashboard-page-order"
+
+function loadPageOrder(): PageConfig[] {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY)
+    if (!saved) return config.pages
+    const ids: string[] = JSON.parse(saved)
+    const lookup = new Map(config.pages.map((p) => [p.id, p]))
+    const ordered = ids.filter((id) => lookup.has(id)).map((id) => lookup.get(id)!)
+    const newPages = config.pages.filter((p) => !ids.includes(p.id))
+    return [...newPages, ...ordered]
+  } catch {
+    return config.pages
+  }
+}
 
 export default function App() {
   const [activePageId, setActivePageId] = useState(config.pages[0]?.id ?? "")
-  const [pages, setPages] = useState(config.pages)
+  const [pages, setPages] = useState(loadPageOrder)
   const activePage =
     pages.find((p) => p.id === activePageId) ?? pages[0]
 
@@ -53,16 +68,17 @@ export default function App() {
           <AppSidebar
             config={config}
             pages={pages}
-            onReorder={setPages}
+            onReorder={(reordered) => {
+              setPages(reordered)
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(reordered.map((p) => p.id)))
+            }}
             activePageId={activePageId}
             onNavigate={setActivePageId}
           />
           <SidebarInset>
             <SiteHeader title={activePage?.title ?? ""} />
             <div className="overflow-y-auto flex-1 min-h-0 px-4 py-4 lg:px-6">
-              <div className="grid gap-4 grid-cols-[repeat(auto-fit,minmax(280px,1fr))]">
-                {activePage && <activePage.component />}
-              </div>
+              {activePage && <activePage.component />}
             </div>
           </SidebarInset>
         </SidebarProvider>

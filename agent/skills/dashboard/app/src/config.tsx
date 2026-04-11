@@ -25,7 +25,6 @@ export interface DashboardConfig {
   title: string
   titleIcon: ReactNode
   pages: PageConfig[]
-  secondaryNav?: { title: string; icon: ReactNode }[]
 }
 
 // --- Configuration ---

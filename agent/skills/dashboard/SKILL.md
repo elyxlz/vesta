@@ -29,17 +29,15 @@ Only start building once the user has answered. Don't assume — ask.
 ├── main.tsx             ← do NOT modify
 ├── index.css            ← do NOT modify (synced from main app)
 ├── pages/               ← page components (one per sidebar nav item)
-├── examples/            ← reference components from shadcn dashboard-01 (read for inspiration)
+├── examples/            ← reference components (read for inspiration)
 │   ├── section-cards.tsx       ← metric cards with trend badges
 │   ├── chart-area-interactive.tsx ← interactive area chart
-│   ├── data-table.tsx          ← sortable data table with drag-and-drop
-│   └── data.json               ← sample table data
+│   └── layout-example.tsx      ← grid layout with widget span patterns
 ├── components/
 │   ├── ui/              ← shadcn components (synced, do NOT modify)
 │   ├── app-sidebar.tsx  ← sidebar component (reads from config)
 │   ├── site-header.tsx  ← header with page title
 │   ├── nav-main.tsx     ← main nav items
-│   ├── nav-secondary.tsx
 ├── widgets/             ← reusable widget components
 ├── lib/
 │   ├── parent-bridge.ts ← auth + API helpers
@@ -68,7 +66,6 @@ export const config: DashboardConfig = {
     { id: "overview", title: "Overview", icon: <LayoutDashboardIcon />, component: OverviewPage },
     { id: "analytics", title: "Analytics", icon: <ChartBarIcon />, component: AnalyticsPage },
   ],
-  secondaryNav: [],   // optional: sidebar bottom nav items
 }
 ```
 
@@ -82,19 +79,17 @@ When the user asks to add a widget without specifying which page, **choose a fit
 
 **Widgets must be compact and small.** Content should be top-left aligned, not centered. Prefer small, dense cards over large sprawling ones.
 
-The content area has a built-in auto-fit grid (`grid-cols-[repeat(auto-fit,minmax(280px,1fr))]`). Page components return widgets as siblings (or in a fragment) — **do not wrap them in another grid div**. Each widget automatically fills one grid cell and columns adjust to the available width.
-
-For widgets that need more space (wide charts, tables, timelines), use `col-span-2` or `col-span-full`:
+Page components should use an auto-fit grid wrapper for their widgets. This ensures columns adjust to available width automatically:
 
 ```tsx
 export function OverviewPage() {
   return (
-    <>
+    <div className="grid gap-4 grid-cols-[repeat(auto-fit,minmax(280px,1fr))]">
       <MetricCard />           {/* 1 column */}
       <MetricCard />           {/* 1 column */}
       <WideChart className="col-span-2" />   {/* spans 2 columns */}
       <FullWidthTable className="col-span-full" />  {/* full width */}
-    </>
+    </div>
   )
 }
 ```
@@ -110,21 +105,21 @@ Guidelines for choosing span:
 ```tsx
 export function MyPage() {
   return (
-    <>
+    <div className="grid gap-4 grid-cols-[repeat(auto-fit,minmax(280px,1fr))]">
       <SmallWidget />
       <SmallWidget />
       <WideWidget className="col-span-2" />
-    </>
+    </div>
   )
 }
 ```
 
-2. Add it to `config.tsx`:
+2. Add it to the **top** of the `pages` array in `config.tsx` (new pages go first):
 ```tsx
 import { MyPage } from "./pages/my-page"
 import { StarIcon } from "lucide-react"
 
-// In the pages array:
+// First entry in the pages array:
 { id: "my-page", title: "My Page", icon: <StarIcon />, component: MyPage },
 ```
 
@@ -208,7 +203,6 @@ Try to keep everything compact, dashboard space is at a premium.
 
 ## Rules
 
-- **Keep widgets small and compact** — never full-width by default. Use `col-span-2` or `col-span-full` only when the content genuinely needs it. Content top-left aligned, never centered. Don't wrap widgets in extra grid divs — the content area grid handles layout.
 - **No client-side fetches to external APIs** — the dashboard runs in a browser, so cross-origin requests to third-party APIs (Yahoo Finance, weather services, etc.) will be blocked by CORS. Instead, create a skill that fetches the data server-side and expose it as a skill API endpoint, then call it from the widget using `apiFetch`.
 - **Use the UI components** from `@/components/ui/` — read them before building
 - **State**: `useState` / `useEffect` for local state
