@@ -1873,6 +1873,10 @@ pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: S
         vestad_port: port,
         vestad_tunnel: tunnel_url.clone(),
     };
+    if let Err(e) = docker::validate_config_dir(&env_config) {
+        tracing::error!(error = %e, "config directory validation failed — aborting startup");
+        std::process::exit(1);
+    }
     if let Err(e) = crate::agent_code::ensure_agent_code(&env_config.config_dir) {
         tracing::error!(error = %e, "failed to ensure agent code");
     }

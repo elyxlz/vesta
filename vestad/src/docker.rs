@@ -737,6 +737,51 @@ pub struct AgentEnvConfig {
     pub vestad_tunnel: Option<String>,
 }
 
+/// Validate that the config and agents directories exist, are writable, and have
+/// no stale entries (e.g. directories where files should be). Fails fast with a
+/// clear error instead of producing cryptic permission errors later.
+pub fn validate_config_dir(env_config: &AgentEnvConfig) -> Result<(), DockerError> {
+    // Ensure dirs exist
+    std::fs::create_dir_all(&env_config.agents_dir)
+        .map_err(|e| DockerError::Failed(format!(
+            "cannot create agents directory {}: {e} — check ownership (try: sudo chown -R $(whoami) {})",
+            env_config.agents_dir.display(),
+            env_config.config_dir.display(),
+        )))?;
+
+    // Check agents_dir is writable by writing a temp file
+    let probe = env_config.agents_dir.join(".vestad-probe");
+    std::fs::write(&probe, b"")
+        .map_err(|e| DockerError::Failed(format!(
+            "agents directory {} is not writable: {e} — check ownership (try: sudo chown -R $(whoami) {})",
+            env_config.agents_dir.display(),
+            env_config.config_dir.display(),
+        )))?;
+    std::fs::remove_file(&probe).ok();
+
+    // Check for stale entries (directories where .env files should be)
+    if let Ok(entries) = std::fs::read_dir(&env_config.agents_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if name_str.ends_with(".env") && path.is_dir() {
+                tracing::warn!(
+                    path = %path.display(),
+                    "removing stale directory where env file should be"
+                );
+                std::fs::remove_dir_all(&path).map_err(|e| DockerError::Failed(format!(
+                    "cannot remove stale directory {}: {e} — check ownership (try: sudo chown -R $(whoami) {})",
+                    path.display(),
+                    env_config.config_dir.display(),
+                )))?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Write a sourceable env file for a single agent. Returns the file path.
 pub fn write_agent_env_file(
     env_config: &AgentEnvConfig,
@@ -1458,18 +1503,24 @@ pub async fn reconcile_containers(docker: &Docker, env_config: &AgentEnvConfig, 
             was_running.insert(name.clone());
         }
         let env_path = env_config.agents_dir.join(format!("{name}.env"));
-        if !env_path.is_file() {
-            // Remove if it exists but isn't a file (e.g. stale directory)
+        if env_path.is_file() {
+            tracing::debug!(agent = %name, "env file ok");
+        } else {
             if env_path.exists() {
-                std::fs::remove_dir_all(&env_path).ok();
+                tracing::warn!(agent = %name, path = %env_path.display(), "env path is not a file, removing");
+                if let Err(e) = std::fs::remove_dir_all(&env_path) {
+                    tracing::error!(agent = %name, error = %e, "failed to remove stale env path");
+                    continue;
+                }
             }
+            tracing::info!(agent = %name, "env file missing, recreating");
             let port = read_container_env(docker, cname, "WS_PORT").await
                 .and_then(|v| v.parse::<u16>().ok())
                 .or_else(|| allocate_port(&env_config.agents_dir).ok().map(|(p, _)| p));
             if let Some(port) = port {
                 let token = generate_agent_token();
                 if let Err(e) = write_agent_env_file(env_config, &name, port, &token) {
-                    tracing::error!(agent = %name, error = %e, "failed to create missing env file");
+                    tracing::error!(agent = %name, error = %e, "failed to create env file");
                 }
             } else {
                 tracing::error!(agent = %name, "could not determine or allocate port for env file");
