@@ -177,7 +177,7 @@ func (wac *WhatsAppClient) EnsureConnected() error {
 
 	if wac.client.Store.ID == nil {
 		wac.setAuthStatus(AuthStatusNotAuthenticated)
-		return fmt.Errorf("WhatsApp is not authenticated. Run authenticate_whatsapp to pair the device")
+		return fmt.Errorf("WhatsApp is not authenticated. Use 'whatsapp pair-phone --phone <number>' to authenticate")
 	}
 
 	wac.logger.Warnf("WhatsApp is not connected. Attempting to reconnect...")
