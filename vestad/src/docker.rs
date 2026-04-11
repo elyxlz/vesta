@@ -204,6 +204,17 @@ pub fn snapshot_container(cname: &str, tag: &str, changes: &[&str]) -> Result<()
     let export_stdout = export_child.stdout.take()
         .ok_or_else(|| DockerError::Failed("docker export stdout not available".into()))?;
 
+    // Drain export stderr in a background thread to prevent buffer deadlock.
+    // If the 64KB stderr pipe fills up, docker export blocks forever.
+    let export_stderr = export_child.stderr.take();
+    let stderr_thread = std::thread::spawn(move || {
+        let Some(mut stderr) = export_stderr else { return String::new() };
+        let mut buf = String::new();
+        use std::io::Read;
+        stderr.read_to_string(&mut buf).ok();
+        buf
+    });
+
     let mut import_args = Vec::new();
     for change in changes {
         import_args.push("--change");
@@ -222,14 +233,36 @@ pub fn snapshot_container(cname: &str, tag: &str, changes: &[&str]) -> Result<()
     let export_status = export_child.wait()
         .map_err(|e| DockerError::Failed(format!("docker export wait failed: {e}")))?;
 
+    let export_stderr = stderr_thread.join().unwrap_or_default();
+
     if !export_status.success() {
-        return Err(DockerError::Failed("docker export failed".into()));
+        docker_ok(&["rmi", tag]); // clean up partial image
+        let detail = if export_stderr.is_empty() { "unknown error".to_string() } else { export_stderr };
+        return Err(DockerError::Failed(format!("docker export failed: {detail}")));
     }
     if !import_output.status.success() {
         let stderr = String::from_utf8_lossy(&import_output.stderr);
         return Err(DockerError::Failed(format!("docker import failed: {stderr}")));
     }
+
+    // Validate the imported image has intact binaries (not truncated/empty)
+    if !validate_image(tag) {
+        docker_ok(&["rmi", tag]);
+        return Err(DockerError::Failed("snapshot validation failed: image has corrupt or empty binaries".into()));
+    }
+
     Ok(())
+}
+
+/// Quick sanity check that an image's core binaries are intact.
+fn validate_image(tag: &str) -> bool {
+    process::Command::new("docker")
+        .args(["run", "--rm", tag, "test", "-s", "/usr/bin/sh"])
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 pub fn docker_output(args: &[&str]) -> Option<String> {
@@ -1170,8 +1203,9 @@ pub fn destroy_agent(name: &str, agents_dir: &std::path::Path) -> Result<(), Doc
 
 /// Check if a container's config diverges from what create_container would produce.
 fn needs_rebuild(cname: &str, manage_code: bool) -> bool {
-    // docker create puts args after the image into Cmd, not Entrypoint
-    let fmt = "{{json .Mounts}}\\n{{json .Config.Cmd}}\\n{{.HostConfig.NetworkMode}}\\n{{.HostConfig.RestartPolicy.Name}}";
+    // docker create puts args after the image into Cmd, not Entrypoint.
+    // Use Go printf for newlines — bare \n in format strings is not portable across Docker versions.
+    let fmt = r#"{{json .Mounts}}{{printf "\n"}}{{json .Config.Cmd}}{{printf "\n"}}{{.HostConfig.NetworkMode}}{{printf "\n"}}{{.HostConfig.RestartPolicy.Name}}"#;
     let output = match docker_output(&["inspect", "--format", fmt, cname]) {
         Some(s) => s,
         None => return true,
@@ -1419,5 +1453,234 @@ mod tests {
         let t1 = generate_agent_token();
         let t2 = generate_agent_token();
         assert_ne!(t1, t2);
+    }
+
+    // --- Docker integration tests (require Docker daemon) ---
+    // Run with: cargo test -p vestad -- --ignored
+
+    const TEST_PREFIX: &str = "vesta-integration-test";
+
+    /// Create a unique container name for tests and ensure cleanup on drop.
+    struct TestContainer {
+        name: String,
+    }
+
+    impl TestContainer {
+        fn new(suffix: &str) -> Self {
+            let name = format!("{}-{}-{}", TEST_PREFIX, suffix, std::process::id());
+            // Clean up any leftover from previous runs
+            docker_ok(&["rm", "-f", &name]);
+            Self { name }
+        }
+    }
+
+    impl Drop for TestContainer {
+        fn drop(&mut self) {
+            docker_ok(&["rm", "-f", &self.name]);
+        }
+    }
+
+    /// Clean up a test image on drop.
+    struct TestImage {
+        tag: String,
+    }
+
+    impl TestImage {
+        fn new(suffix: &str) -> Self {
+            let tag = format!("{}:{}-{}", TEST_PREFIX, suffix, std::process::id());
+            Self { tag }
+        }
+    }
+
+    impl Drop for TestImage {
+        fn drop(&mut self) {
+            docker_ok(&["rmi", &self.tag]);
+        }
+    }
+
+    fn create_test_container(tc: &TestContainer, mounts: &[(&str, &str)], cmd: &[&str], network: &str, restart: &str) {
+        let mut args = vec![
+            "create", "--name", &tc.name, "-t",
+            "--restart", restart, "--network", network,
+            "--label", "vesta.managed=true",
+        ];
+        let mount_strings: Vec<String> = mounts.iter()
+            .map(|(src, dst)| format!("{}:{}:ro,z", src, dst))
+            .collect();
+        for mount_str in &mount_strings {
+            args.extend(["-v", mount_str.as_str()]);
+        }
+        args.push(VESTA_IMAGE);
+        args.extend_from_slice(cmd);
+        assert!(docker_ok(&args), "failed to create test container");
+    }
+
+    #[test]
+    #[ignore]
+    fn test_snapshot_roundtrip_preserves_binaries() {
+        let tc = TestContainer::new("snapshot-rt");
+        let img = TestImage::new("snapshot-rt");
+
+        // Create container from the real image
+        create_test_container(&tc, &[], ENTRYPOINT, NETWORK_MODE, RESTART_POLICY);
+
+        // Snapshot it
+        snapshot_container(&tc.name, &img.tag, &[]).expect("snapshot should succeed");
+
+        // Verify binaries are intact in the snapshot
+        assert!(validate_image(&img.tag), "/usr/bin/sh should be non-empty in snapshot");
+    }
+
+    #[test]
+    #[ignore]
+    fn test_snapshot_with_changes() {
+        let tc = TestContainer::new("snapshot-labels");
+        let img = TestImage::new("snapshot-labels");
+
+        create_test_container(&tc, &[], ENTRYPOINT, NETWORK_MODE, RESTART_POLICY);
+
+        let label = "LABEL test.marker=integration-test";
+        snapshot_container(&tc.name, &img.tag, &[label]).expect("snapshot with changes should succeed");
+
+        // Verify label was applied
+        let output = docker_output(&["inspect", "--format", "{{index .Config.Labels \"test.marker\"}}", &img.tag]);
+        assert_eq!(output.as_deref(), Some("integration-test"));
+    }
+
+    #[test]
+    #[ignore]
+    fn test_snapshot_nonexistent_container() {
+        let result = snapshot_container("vesta-nonexistent-container-xyz", "vesta-test:garbage", &[]);
+        assert!(result.is_err(), "snapshot of nonexistent container should fail");
+        // Clean up just in case
+        docker_ok(&["rmi", "vesta-test:garbage"]);
+    }
+
+    #[test]
+    #[ignore]
+    fn test_needs_rebuild_false_on_fresh_container() {
+        let tc = TestContainer::new("rebuild-fresh");
+        let env_file = tempfile::NamedTempFile::new().expect("tempfile");
+        std::fs::write(env_file.path(), "export WS_PORT=12345\n").unwrap();
+        let env_mount = (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]);
+
+        create_test_container(&tc, &[env_mount], ENTRYPOINT, NETWORK_MODE, RESTART_POLICY);
+
+        assert!(!needs_rebuild(&tc.name, false), "fresh container should NOT need rebuild");
+    }
+
+    #[test]
+    #[ignore]
+    fn test_needs_rebuild_false_with_all_mounts() {
+        let tc = TestContainer::new("rebuild-mounts");
+        let env_file = tempfile::NamedTempFile::new().expect("tempfile");
+        std::fs::write(env_file.path(), "export WS_PORT=12345\n").unwrap();
+
+        let code_dir = tempfile::TempDir::new().expect("tempdir");
+        std::fs::create_dir_all(code_dir.path().join("src/vesta")).unwrap();
+        std::fs::write(code_dir.path().join("pyproject.toml"), "").unwrap();
+        std::fs::write(code_dir.path().join("uv.lock"), "").unwrap();
+
+        let src_vesta = code_dir.path().join("src/vesta");
+        let pyproject = code_dir.path().join("pyproject.toml");
+        let uv_lock = code_dir.path().join("uv.lock");
+
+        let mounts = [
+            (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]),
+            (src_vesta.to_str().unwrap(), MOUNT_DESTS[1]),
+            (pyproject.to_str().unwrap(), MOUNT_DESTS[2]),
+            (uv_lock.to_str().unwrap(), MOUNT_DESTS[3]),
+        ];
+
+        create_test_container(&tc, &mounts, ENTRYPOINT, NETWORK_MODE, RESTART_POLICY);
+
+        assert!(!needs_rebuild(&tc.name, true), "container with all mounts should NOT need rebuild");
+    }
+
+    #[test]
+    #[ignore]
+    fn test_needs_rebuild_true_on_wrong_cmd() {
+        let tc = TestContainer::new("rebuild-cmd");
+        let env_file = tempfile::NamedTempFile::new().expect("tempfile");
+        std::fs::write(env_file.path(), "export WS_PORT=12345\n").unwrap();
+        let env_mount = (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]);
+
+        create_test_container(&tc, &[env_mount], &["sh", "-c", "echo wrong"], NETWORK_MODE, RESTART_POLICY);
+
+        assert!(needs_rebuild(&tc.name, false), "container with wrong cmd SHOULD need rebuild");
+    }
+
+    #[test]
+    #[ignore]
+    fn test_needs_rebuild_true_on_missing_mount() {
+        let tc = TestContainer::new("rebuild-nomount");
+
+        // No mounts at all
+        create_test_container(&tc, &[], ENTRYPOINT, NETWORK_MODE, RESTART_POLICY);
+
+        assert!(needs_rebuild(&tc.name, false), "container without env mount SHOULD need rebuild");
+    }
+
+    #[test]
+    #[ignore]
+    fn test_needs_rebuild_true_on_missing_code_mounts() {
+        let tc = TestContainer::new("rebuild-nocode");
+        let env_file = tempfile::NamedTempFile::new().expect("tempfile");
+        std::fs::write(env_file.path(), "export WS_PORT=12345\n").unwrap();
+        let env_mount = (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]);
+
+        // Only env mount, but manage_code=true expects all 4
+        create_test_container(&tc, &[env_mount], ENTRYPOINT, NETWORK_MODE, RESTART_POLICY);
+
+        assert!(needs_rebuild(&tc.name, true), "container missing code mounts SHOULD need rebuild when manage_code=true");
+    }
+
+    #[test]
+    #[ignore]
+    fn test_needs_rebuild_true_on_wrong_network() {
+        let tc = TestContainer::new("rebuild-net");
+        let env_file = tempfile::NamedTempFile::new().expect("tempfile");
+        std::fs::write(env_file.path(), "export WS_PORT=12345\n").unwrap();
+        let env_mount = (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]);
+
+        create_test_container(&tc, &[env_mount], ENTRYPOINT, "bridge", RESTART_POLICY);
+
+        assert!(needs_rebuild(&tc.name, false), "container with wrong network SHOULD need rebuild");
+    }
+
+    #[test]
+    #[ignore]
+    fn test_needs_rebuild_true_on_wrong_restart() {
+        let tc = TestContainer::new("rebuild-restart");
+        let env_file = tempfile::NamedTempFile::new().expect("tempfile");
+        std::fs::write(env_file.path(), "export WS_PORT=12345\n").unwrap();
+        let env_mount = (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]);
+
+        create_test_container(&tc, &[env_mount], ENTRYPOINT, NETWORK_MODE, "no");
+
+        assert!(needs_rebuild(&tc.name, false), "container with wrong restart policy SHOULD need rebuild");
+    }
+
+    #[test]
+    #[ignore]
+    fn test_needs_rebuild_false_after_snapshot_rebuild() {
+        let tc = TestContainer::new("rebuild-full");
+        let img = TestImage::new("rebuild-full");
+        let env_file = tempfile::NamedTempFile::new().expect("tempfile");
+        std::fs::write(env_file.path(), "export WS_PORT=12345\n").unwrap();
+        let env_mount = (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]);
+
+        // Create with wrong network to force rebuild
+        create_test_container(&tc, &[env_mount], ENTRYPOINT, "bridge", RESTART_POLICY);
+        assert!(needs_rebuild(&tc.name, false), "precondition: should need rebuild");
+
+        // Snapshot
+        snapshot_container(&tc.name, &img.tag, &[]).expect("snapshot should succeed");
+
+        // Remove old, create new from snapshot with correct config
+        docker_ok(&["rm", "-f", &tc.name]);
+        create_test_container(&tc, &[env_mount], ENTRYPOINT, NETWORK_MODE, RESTART_POLICY);
+
+        assert!(!needs_rebuild(&tc.name, false), "rebuilt container should NOT need rebuild");
     }
 }
