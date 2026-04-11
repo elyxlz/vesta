@@ -87,7 +87,7 @@ const CONTAINER_STOP_TIMEOUT_SECS: i64 = 10;
 const CONTAINER_RESTART_TIMEOUT_SECS: isize = 10;
 const LOADED_IMAGE_PREFIX: &str = "Loaded image: ";
 
-#[derive(PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum ContainerStatus {
     Running,
     Stopped,
@@ -1534,8 +1534,10 @@ pub async fn reconcile_containers(docker: &Docker, env_config: &AgentEnvConfig, 
         let name = get_agent_name(docker, cname).await;
         let manage_code = manages_code(&name);
         if !needs_rebuild(docker, cname, manage_code).await {
+            tracing::debug!(agent = %name, "config ok, no rebuild needed");
             continue;
         }
+        tracing::info!(agent = %name, "rebuild needed");
         if manage_code && !agent_code_ok {
             match crate::agent_code::ensure_agent_code(&env_config.config_dir) {
                 Ok(_) => agent_code_ok = true,
@@ -1563,8 +1565,28 @@ pub async fn reconcile_containers(docker: &Docker, env_config: &AgentEnvConfig, 
                 tracing::info!(agent = %name, "starting after rebuild");
                 start_container(docker, cname).await;
             }
-            _ => {}
+            status => {
+                tracing::debug!(agent = %name, ?status, "not restarting");
+            }
         }
+    }
+
+    // Summary: log which agents are running after reconciliation
+    let mut running = Vec::new();
+    let mut stopped = Vec::new();
+    for cname in &containers {
+        let name = get_agent_name(docker, cname).await;
+        if container_status(docker, cname).await == ContainerStatus::Running {
+            running.push(name);
+        } else {
+            stopped.push(name);
+        }
+    }
+    if !running.is_empty() {
+        tracing::info!(agents = ?running, "running");
+    }
+    if !stopped.is_empty() {
+        tracing::info!(agents = ?stopped, "stopped");
     }
 }
 
