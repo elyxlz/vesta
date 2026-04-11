@@ -118,6 +118,9 @@ fn check_response(resp: Response<Body>) -> Result<Response<Body>, String> {
         401 => Err("invalid API key".into()),
         404 => Err(error_msg.unwrap_or_else(|| "not found".into())),
         409 => Err(error_msg.unwrap_or_else(|| "conflict".into())),
+        502 | 520..=530 => Err(error_msg.unwrap_or_else(|| format!(
+            "server not reachable via tunnel ({}). is vestad running?", status
+        ))),
         503 => Err(error_msg.unwrap_or_else(|| "agent not running".into())),
         _ => Err(error_msg.unwrap_or_else(|| format!("server error ({})", status))),
     }
