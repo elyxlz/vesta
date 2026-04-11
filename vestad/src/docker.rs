@@ -550,6 +550,9 @@ fn env_file_names(agents_dir: &std::path::Path) -> Vec<String> {
     entries
         .flatten()
         .filter_map(|entry| {
+            if !entry.file_type().ok()?.is_file() {
+                return None;
+            }
             let name = entry.file_name().to_str()?.to_string();
             name.strip_suffix(".env").map(|s| s.to_string())
         })
@@ -1134,12 +1137,21 @@ pub fn reconcile_containers(env_config: &AgentEnvConfig, manages_code: &dyn Fn(&
             was_running.insert(name.clone());
         }
         let env_path = env_config.agents_dir.join(format!("{name}.env"));
-        if !env_path.exists() {
-            if let Some(port) = read_container_env(cname, "WS_PORT").and_then(|v| v.parse::<u16>().ok()) {
+        if !env_path.is_file() {
+            // Remove if it exists but isn't a file (e.g. stale directory)
+            if env_path.exists() {
+                std::fs::remove_dir_all(&env_path).ok();
+            }
+            let port = read_container_env(cname, "WS_PORT")
+                .and_then(|v| v.parse::<u16>().ok())
+                .or_else(|| allocate_port(&env_config.agents_dir).ok().map(|(p, _)| p));
+            if let Some(port) = port {
                 let token = generate_agent_token();
                 if let Err(e) = write_agent_env_file(env_config, &name, port, &token) {
                     tracing::error!(agent = %name, error = %e, "failed to create missing env file");
                 }
+            } else {
+                tracing::error!(agent = %name, "could not determine or allocate port for env file");
             }
         }
     }
@@ -1169,7 +1181,7 @@ pub fn reconcile_containers(env_config: &AgentEnvConfig, manages_code: &dyn Fn(&
 
     // Phase 3: restart running agents (picks up new env), start rebuilt ones
     for cname in &containers {
-        let name = name_from_cname(cname);
+        let name = get_agent_name(cname);
         match container_status(cname) {
             ContainerStatus::Running => {
                 tracing::info!(agent = %name, "restarting");
@@ -1237,7 +1249,8 @@ fn needs_rebuild(cname: &str, manage_code: bool) -> bool {
         .map(|actual| actual.iter().zip(ENTRYPOINT).all(|(a, e)| a == e) && actual.len() == ENTRYPOINT.len())
         .unwrap_or(false);
     if !cmd_ok {
-        tracing::info!(container = %cname, actual = %cmd_json, "rebuild needed: command mismatch");
+        let expected: Vec<&str> = ENTRYPOINT.to_vec();
+        tracing::info!(container = %cname, actual = %cmd_json, expected = ?expected, "rebuild needed: command mismatch");
         return true;
     }
 
@@ -1267,10 +1280,17 @@ pub fn rebuild_agent(name: &str, env_config: &AgentEnvConfig, manage_code: bool)
         _ => {}
     }
 
-    // Get port: try env file first, then container's baked-in env vars
-    let port = info.port
+    // Get port: try env file first, then container's baked-in env vars, then allocate new
+    let port = match info.port
         .or_else(|| read_container_env(&cname, "WS_PORT").and_then(|v| v.parse().ok()))
-        .ok_or_else(|| DockerError::Failed("agent has no port".into()))?;
+    {
+        Some(p) => p,
+        None => {
+            tracing::warn!(agent = %name, "no port found in env file or container — allocating new port");
+            let (p, _listener) = allocate_port(&env_config.agents_dir)?;
+            p
+        }
+    };
 
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
