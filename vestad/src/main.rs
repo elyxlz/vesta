@@ -185,6 +185,13 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool) {
     docker::ensure_docker_sync(&docker).unwrap_or_else(|e| die(&e));
 
     let _pid_lock = serve::acquire_pid_lock(&config).unwrap_or_else(|e| die(&e));
+    // Kill orphaned cloudflared from a previous crash so it doesn't hold the port
+    let cf_config = config.join("cloudflared.yml");
+    if cf_config.exists() {
+        std::process::Command::new("pkill")
+            .args(["-f", &format!("cloudflared.*{}", cf_config.display())])
+            .output().ok();
+    }
     let port = resolve_port(port, &config);
     serve::write_port_file(&config, port);
 
