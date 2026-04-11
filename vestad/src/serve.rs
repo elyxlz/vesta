@@ -1865,6 +1865,7 @@ fn spawn_update_check_task(state: SharedState) {
 
 // --- Server start ---
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: String, tunnel_url: Option<String>, config_dir: std::path::PathBuf, docker: bollard::Docker, dev_mode: bool) {
     let env_config = docker::AgentEnvConfig {
         config_dir: config_dir.clone(),

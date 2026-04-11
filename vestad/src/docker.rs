@@ -480,13 +480,14 @@ pub fn find_dockerfile() -> Result<std::path::PathBuf, DockerError> {
 pub async fn resolve_image(docker: &Docker) -> Result<&'static str, DockerError> {
     if let Ok(context) = find_dockerfile() {
         // Build a tar of the build context
-        let tar_data = {
+        let tar_data = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, DockerError> {
             let mut builder = tar::Builder::new(Vec::new());
+            builder.follow_symlinks(true);
             builder.append_dir_all(".", &context)
                 .map_err(|e| DockerError::Failed(format!("failed to create build context tar: {e}")))?;
             builder.into_inner()
-                .map_err(|e| DockerError::Failed(format!("failed to finish build context tar: {e}")))?
-        };
+                .map_err(|e| DockerError::Failed(format!("failed to finish build context tar: {e}")))
+        }).await.unwrap()?;
 
         let opts = BuildImageOptions {
             t: LOCAL_IMAGE_TAG.to_string(),
