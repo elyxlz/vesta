@@ -555,6 +555,11 @@ fn is_dockerignored(rel_path: &str, patterns: &[String]) -> bool {
     ignored
 }
 
+/// Check if `path` starts with `prefix` as a complete directory segment.
+fn is_path_prefix(path: &str, prefix: &str) -> bool {
+    path == prefix || (path.starts_with(prefix) && path.as_bytes().get(prefix.len()) == Some(&b'/'))
+}
+
 /// Match a path against a single dockerignore glob pattern.
 fn docker_pattern_matches(path: &str, pattern: &str) -> bool {
     // "**/" prefix: match against any subpath
@@ -578,13 +583,11 @@ fn docker_pattern_matches(path: &str, pattern: &str) -> bool {
         if glob_match(filename.as_bytes(), pattern.as_bytes()) {
             return true;
         }
-        return path == pattern
-            || (path.starts_with(pattern) && path.as_bytes().get(pattern.len()) == Some(&b'/'));
+        return is_path_prefix(path, pattern);
     }
 
     // Pattern has slashes: match from context root, or as directory prefix
-    glob_match(path.as_bytes(), pattern.as_bytes())
-        || (path.starts_with(pattern) && path.as_bytes().get(pattern.len()) == Some(&b'/'))
+    glob_match(path.as_bytes(), pattern.as_bytes()) || is_path_prefix(path, pattern)
 }
 
 /// Simple glob: `*` matches non-`/` chars, `?` matches single non-`/` char,
@@ -886,14 +889,14 @@ pub async fn remove_image(docker: &Docker, image: &str) -> Result<(), DockerErro
 /// Cleans up the partial file on failure.
 pub async fn export_image_gzip(docker: &Docker, image: &str, output: &std::path::Path) -> Result<(), DockerError> {
     let output = output.to_path_buf();
-    let (tx, rx) = std::sync::mpsc::sync_channel::<bytes::Bytes>(8);
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<bytes::Bytes>(8);
 
     let write_output = output.clone();
     let write_handle = tokio::task::spawn_blocking(move || -> Result<(), DockerError> {
         let file = std::fs::File::create(&write_output)
             .map_err(|e| DockerError::Failed(format!("failed to create output file: {e}")))?;
         let mut encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
-        while let Ok(chunk) = rx.recv() {
+        while let Some(chunk) = rx.blocking_recv() {
             std::io::Write::write_all(&mut encoder, &chunk)
                 .map_err(|e| DockerError::Failed(format!("failed to write export data: {e}")))?;
         }
@@ -907,7 +910,7 @@ pub async fn export_image_gzip(docker: &Docker, image: &str, output: &std::path:
     while let Some(chunk) = stream.next().await {
         match chunk {
             Ok(data) => {
-                if tx.send(data).is_err() {
+                if tx.send(data).await.is_err() {
                     break;
                 }
             }
