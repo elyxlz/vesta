@@ -394,30 +394,12 @@ fn main() {
                         }
 
                         eprintln!("exporting to {}...", output.display());
-                        let mut docker_save = std::process::Command::new("docker")
-                            .args(["save", &temp_tag])
-                            .stdout(std::process::Stdio::piped())
-                            .spawn()
-                            .unwrap_or_else(|e| die(format!("docker save failed: {}", e)));
-
-                        let save_stdout = docker_save.stdout.take().expect("stdout was set to piped");
-                        let output_file = std::fs::File::create(&output)
-                            .unwrap_or_else(|e| die(format!("failed to create output file: {}", e)));
-
-                        let gzip_status = std::process::Command::new("gzip")
-                            .stdin(save_stdout)
-                            .stdout(output_file)
-                            .status()
-                            .unwrap_or_else(|e| die(format!("gzip failed: {}", e)));
-
-                        let _ = docker_save.wait();
+                        docker::export_image_gzip(&docker, &temp_tag, &output).await
+                            .unwrap_or_else(|e| die(format!("export failed: {}", e)));
 
                         docker::remove_image(&docker, &temp_tag).await
                             .unwrap_or_else(|e| die(format!("failed to remove temp image: {}", e)));
 
-                        if !gzip_status.success() {
-                            die("export failed");
-                        }
                         eprintln!("exported: {}", output.display());
                     });
                 }
@@ -437,35 +419,9 @@ fn main() {
                         }
 
                         eprintln!("loading image from {}...", input.display());
-                        let input_file = std::fs::File::open(&input)
-                            .unwrap_or_else(|e| die(format!("failed to open input file: {}", e)));
-
-                        let mut gunzip = std::process::Command::new("gunzip")
-                            .arg("-c")
-                            .stdin(input_file)
-                            .stdout(std::process::Stdio::piped())
-                            .spawn()
-                            .unwrap_or_else(|e| die(format!("gunzip failed: {}", e)));
-
-                        let gunzip_stdout = gunzip.stdout.take().expect("stdout was set to piped");
-                        let output = std::process::Command::new("docker")
-                            .args(["load"])
-                            .stdin(gunzip_stdout)
-                            .output()
-                            .unwrap_or_else(|e| die(format!("docker load failed: {}", e)));
-
-                        let _ = gunzip.wait();
-
-                        if !output.status.success() {
-                            die("docker load failed");
-                        }
-
-                        let stdout = String::from_utf8_lossy(&output.stdout);
-                        let loaded_image = stdout
-                            .lines()
-                            .filter_map(|l| l.strip_prefix("Loaded image: "))
-                            .next_back()
-                            .unwrap_or_else(|| die("could not determine loaded image from docker load output"));
+                        let loaded_image = docker::import_image_gzip(&docker, &input).await
+                            .unwrap_or_else(|e| die(format!("import failed: {}", e)));
+                        let loaded_image = loaded_image.as_str();
 
                         eprintln!("creating agent '{}'...", name);
                         let config = config_dir();

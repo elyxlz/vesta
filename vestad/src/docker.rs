@@ -3,8 +3,8 @@ use bollard::container::{
     RemoveContainerOptions, StartContainerOptions, StopContainerOptions, UploadToContainerOptions,
 };
 use bollard::image::{
-    CommitContainerOptions, CreateImageOptions, ListImagesOptions,
-    RemoveImageOptions, TagImageOptions,
+    BuildImageOptions, CommitContainerOptions, CreateImageOptions, ImportImageOptions,
+    ListImagesOptions, RemoveImageOptions, TagImageOptions,
 };
 use bollard::Docker;
 use futures_util::StreamExt;
@@ -477,20 +477,102 @@ pub fn find_dockerfile() -> Result<std::path::PathBuf, DockerError> {
     Err(DockerError::BuildRequired("--build requires vestad to have access to the Vesta source code (run vestad from the repo root)".into()))
 }
 
+/// Build a tar archive of the given directory for use with `build_image`.
+/// Respects `.dockerignore` if present. Uses `sparse(false)` to avoid GNU sparse
+/// headers (type 83) which Docker's daemon cannot parse.
+fn build_context_tar(context: &std::path::Path) -> Result<bytes::Bytes, DockerError> {
+    let mut builder = tar::Builder::new(Vec::new());
+    builder.sparse(false);
+    builder.follow_symlinks(true);
+
+    let ignore_patterns = load_dockerignore(context);
+
+    fn visit_dir(
+        builder: &mut tar::Builder<Vec<u8>>,
+        base: &std::path::Path,
+        dir: &std::path::Path,
+        ignore: &[String],
+    ) -> Result<(), DockerError> {
+        let entries = std::fs::read_dir(dir)
+            .map_err(|e| DockerError::Failed(format!("failed to read directory {}: {e}", dir.display())))?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let rel = path.strip_prefix(base).unwrap_or(&path);
+            let rel_str = rel.to_string_lossy();
+
+            if is_dockerignored(&rel_str, ignore) {
+                continue;
+            }
+
+            let ft = entry.file_type()
+                .map_err(|e| DockerError::Failed(format!("failed to stat {}: {e}", path.display())))?;
+            if ft.is_dir() {
+                visit_dir(builder, base, &path, ignore)?;
+            } else if ft.is_file() || ft.is_symlink() {
+                builder.append_path_with_name(&path, rel)
+                    .map_err(|e| DockerError::Failed(format!("failed to add {} to tar: {e}", path.display())))?;
+            }
+        }
+        Ok(())
+    }
+
+    visit_dir(&mut builder, context, context, &ignore_patterns)?;
+
+    let tar_bytes = builder.into_inner()
+        .map_err(|e| DockerError::Failed(format!("failed to finalize tar: {e}")))?;
+    Ok(bytes::Bytes::from(tar_bytes))
+}
+
+/// Load and parse `.dockerignore` patterns from a directory.
+fn load_dockerignore(context: &std::path::Path) -> Vec<String> {
+    let path = context.join(".dockerignore");
+    let Ok(content) = std::fs::read_to_string(&path) else { return Vec::new() };
+    content.lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(|l| l.to_string())
+        .collect()
+}
+
+/// Check if a relative path matches any `.dockerignore` pattern.
+/// Supports simple prefix matching and `*` wildcards at start/end.
+fn is_dockerignored(rel_path: &str, patterns: &[String]) -> bool {
+    for pattern in patterns {
+        let pat = pattern.trim_end_matches('/');
+        // Leading segment match: "target" matches "target/debug/foo"
+        if rel_path == pat || rel_path.starts_with(&format!("{pat}/")) {
+            return true;
+        }
+        // Wildcard prefix: "*.pyc" matches "foo.pyc" and "dir/foo.pyc"
+        if let Some(suffix) = pat.strip_prefix('*') {
+            let filename = rel_path.rsplit('/').next().unwrap_or(rel_path);
+            if filename.ends_with(suffix) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 pub async fn resolve_image(docker: &Docker) -> Result<&'static str, DockerError> {
     if let Ok(context) = find_dockerfile() {
-        // Use docker build subprocess — bollard's build_image API has tar header
-        // compatibility issues with Docker daemon (GNU sparse headers not supported)
-        let status = tokio::process::Command::new("docker")
-            .args(["build", "-t", LOCAL_IMAGE_TAG, "."])
-            .current_dir(&context)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::inherit())
-            .status()
-            .await
-            .map_err(|e| DockerError::Failed(format!("docker build failed: {e}")))?;
-        if !status.success() {
-            return Err(DockerError::Failed("image build failed".into()));
+        let tar_body = build_context_tar(&context)?;
+        let opts = BuildImageOptions {
+            t: LOCAL_IMAGE_TAG,
+            q: true,
+            rm: true,
+            ..Default::default()
+        };
+        let mut stream = docker.build_image(opts, None, Some(tar_body));
+        while let Some(msg) = stream.next().await {
+            match msg {
+                Err(e) => return Err(DockerError::Failed(format!("image build failed: {e}"))),
+                Ok(info) => {
+                    if let Some(err) = info.error {
+                        return Err(DockerError::Failed(format!("image build failed: {err}")));
+                    }
+                }
+            }
         }
         Ok(LOCAL_IMAGE_TAG)
     } else {
@@ -726,6 +808,53 @@ pub async fn tag_image(docker: &Docker, source: &str, repo: &str, tag: &str) -> 
 pub async fn remove_image(docker: &Docker, image: &str) -> Result<(), DockerError> {
     docker.remove_image(image, Some(RemoveImageOptions { force: true, ..Default::default() }), None).await?;
     Ok(())
+}
+
+/// Export a Docker image to a gzip-compressed tar file (replaces `docker save | gzip`).
+pub async fn export_image_gzip(docker: &Docker, image: &str, output: &std::path::Path) -> Result<(), DockerError> {
+    let file = std::fs::File::create(output)
+        .map_err(|e| DockerError::Failed(format!("failed to create output file: {e}")))?;
+    let mut encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+
+    let mut stream = docker.export_image(image);
+    while let Some(chunk) = stream.next().await {
+        let data = chunk.map_err(|e| DockerError::Failed(format!("export stream error: {e}")))?;
+        std::io::Write::write_all(&mut encoder, &data)
+            .map_err(|e| DockerError::Failed(format!("failed to write export data: {e}")))?;
+    }
+
+    encoder.finish()
+        .map_err(|e| DockerError::Failed(format!("failed to finalize gzip: {e}")))?;
+    Ok(())
+}
+
+/// Import a Docker image from a gzip-compressed tar file (replaces `gunzip | docker load`).
+/// Returns the loaded image name (e.g. "vesta-backup:name_12345").
+pub async fn import_image_gzip(docker: &Docker, input: &std::path::Path) -> Result<String, DockerError> {
+    let file = std::fs::File::open(input)
+        .map_err(|e| DockerError::Failed(format!("failed to open input file: {e}")))?;
+    let mut decoder = flate2::read::GzDecoder::new(file);
+    let mut tar_data = Vec::new();
+    std::io::Read::read_to_end(&mut decoder, &mut tar_data)
+        .map_err(|e| DockerError::Failed(format!("failed to decompress image: {e}")))?;
+
+    let opts = ImportImageOptions { ..Default::default() };
+    let mut stream = docker.import_image(opts, bytes::Bytes::from(tar_data), None);
+    let mut loaded_image = String::new();
+    while let Some(msg) = stream.next().await {
+        let info = msg.map_err(|e| DockerError::Failed(format!("import failed: {e}")))?;
+        if let Some(status) = info.status {
+            // Docker returns "Loaded image: name:tag"
+            if let Some(name) = status.strip_prefix("Loaded image: ") {
+                loaded_image = name.to_string();
+            }
+        }
+    }
+
+    if loaded_image.is_empty() {
+        return Err(DockerError::Failed("could not determine loaded image from import".into()));
+    }
+    Ok(loaded_image)
 }
 
 pub async fn image_exists(docker: &Docker, image: &str) -> bool {
