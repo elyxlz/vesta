@@ -483,10 +483,22 @@ pub fn find_dockerfile() -> Result<std::path::PathBuf, DockerError> {
     Err(DockerError::BuildRequired("--build requires vestad to have access to the Vesta source code (run vestad from the repo root)".into()))
 }
 
+fn docker_platform() -> &'static str {
+    match std::env::consts::ARCH {
+        "x86_64" => "linux/amd64",
+        "aarch64" => "linux/arm64",
+        arch => {
+            tracing::warn!("unknown architecture {arch}, defaulting to linux/{arch}");
+            // Leak is fine — this is called once and the set of architectures is fixed
+            Box::leak(format!("linux/{arch}").into_boxed_str())
+        }
+    }
+}
+
 pub fn resolve_image() -> Result<&'static str, DockerError> {
     if let Ok(context) = find_dockerfile() {
         let status = process::Command::new("docker")
-            .args(["buildx", "build", "-t", LOCAL_IMAGE_TAG, "."])
+            .args(["buildx", "build", "--platform", docker_platform(), "--load", "-t", LOCAL_IMAGE_TAG, "."])
             .current_dir(&context)
             .stdout(process::Stdio::null())
             .stderr(process::Stdio::inherit())
@@ -497,7 +509,7 @@ pub fn resolve_image() -> Result<&'static str, DockerError> {
         }
         Ok(LOCAL_IMAGE_TAG)
     } else {
-        if !docker_quiet(&["pull", VESTA_IMAGE]) {
+        if !docker_quiet(&["pull", "--platform", docker_platform(), VESTA_IMAGE]) {
             return Err(DockerError::Failed("failed to pull image".into()));
         }
         Ok(VESTA_IMAGE)
