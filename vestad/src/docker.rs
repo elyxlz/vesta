@@ -281,7 +281,10 @@ pub async fn download_from_container(
     while let Some(chunk) = stream.next().await {
         match chunk {
             Ok(data) => bytes.extend_from_slice(&data),
-            Err(_) => return None,
+            Err(e) => {
+                tracing::debug!(container = %cname, path = %container_path, error = %e, "download_from_container failed");
+                return None;
+            }
         }
     }
 
