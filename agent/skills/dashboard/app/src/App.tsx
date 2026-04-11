@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import {
@@ -11,6 +11,7 @@ import {
 import { AppSidebar } from "@/components/app-sidebar"
 import { Shell } from "@/components/shell"
 import { SiteHeader } from "@/components/site-header"
+import { getAgentName, waitForAuth } from "@/lib/parent-bridge"
 import { config, type PageConfig } from "./config"
 
 const SHOW_EMPTY_STATE = config.pages.length === 0
@@ -33,8 +34,13 @@ function loadPageOrder(): PageConfig[] {
 export default function App() {
   const [activePageId, setActivePageId] = useState(config.pages[0]?.id ?? "")
   const [pages, setPages] = useState(loadPageOrder)
+  const [agentName, setAgentName] = useState(getAgentName)
   const activePage =
     pages.find((p) => p.id === activePageId) ?? pages[0]
+
+  useEffect(() => {
+    waitForAuth().then(() => setAgentName(getAgentName()))
+  }, [])
 
   if (SHOW_EMPTY_STATE) {
     return (
@@ -46,7 +52,7 @@ export default function App() {
             </EmptyMedia>
             <EmptyTitle>your dashboard</EmptyTitle>
             <EmptyDescription>
-              ask your agent to set up the dashboard and add some widgets
+              ask {agentName ?? "your agent"} to set up the dashboard and add some widgets
             </EmptyDescription>
           </EmptyHeader>
         </Empty>

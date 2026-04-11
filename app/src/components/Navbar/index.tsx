@@ -42,7 +42,7 @@ export function Navbar({ leading, center, trailing }: NavbarProps) {
     <div
       ref={measureRef}
       data-tauri-drag-region
-      className="absolute top-0 left-0 right-0 z-[99999] flex flex-col shrink-0 min-h-0 select-none overflow-visible p-3"
+      className="absolute top-0 left-0 right-0 z-[99999] flex flex-col shrink-0 min-h-0 select-none overflow-visible px-3 pt-2 pb-3"
     >
       <div
         data-tauri-drag-region
@@ -70,14 +70,14 @@ export function Navbar({ leading, center, trailing }: NavbarProps) {
 
 export function NavbarLeading({ extra }: { extra?: React.ReactNode }) {
   const { connected } = useAuth();
-  const { agentsFetched, agents } = useGateway();
+  const { reachable, agentsFetched, agents } = useGateway();
   const navigate = useNavigate();
   const location = useLocation();
   const isHome = location.pathname === "/home";
 
   return (
     <>
-      {connected && isHome && agentsFetched && (
+      {connected && isHome && reachable && agentsFetched && (
         <Button
           variant="secondary"
           size="lg"

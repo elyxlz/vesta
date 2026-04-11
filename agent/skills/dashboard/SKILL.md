@@ -208,7 +208,7 @@ The dashboard reuses UI components, styles, and utilities from the main Vesta ap
 
 Try to keep everything compact, dashboard space is at a premium.
 
-**Make it fun.** Use emojis freely in labels, headers, and status text (🔥 streaks, ✅ completed, ⚠️ alerts, 💰 finance, etc.). Use colorful Tailwind classes — `text-green-500`, `bg-amber-100`, `border-pink-400` — for badges, indicators, progress bars, and anything that benefits from visual pop. The dashboard should feel lively and personal, not corporate. Semantic colors for structure, raw colors for personality.
+**Make it fun.** Use lucide icons for visual flair in labels, headers, and status text (`<Flame />` for streaks, `<CheckCircle />` for completed, `<AlertTriangle />` for alerts, etc.). Use colorful Tailwind classes — `text-green-500`, `bg-amber-100`, `border-pink-400` — for badges, indicators, progress bars, and anything that benefits from visual pop. The dashboard should feel lively and personal, not corporate. Semantic colors for structure, raw colors for personality.
 
 ## Rules
 

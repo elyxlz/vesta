@@ -57,6 +57,7 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
           type: "vesta-auth",
           token: conn.accessToken,
           baseUrl: `${conn.url}/agents/${encodeURIComponent(name)}`,
+          agentName: name,
         },
         "*",
       );

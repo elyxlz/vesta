@@ -19,7 +19,7 @@ export function AgentDashboard() {
     <div
       className="flex h-full w-full min-h-0 min-w-0 p-0 md:p-3"
       style={{
-        paddingTop: `calc(${navbarHeight}px)`,
+        paddingTop: `calc(${navbarHeight}px - 0.5rem)`,
       }}
     >
       <ResizablePanelGroup

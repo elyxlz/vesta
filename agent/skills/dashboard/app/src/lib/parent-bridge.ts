@@ -1,5 +1,6 @@
 let authToken: string | null = null;
 let baseUrl: string | null = null;
+let _agentName: string | null = null;
 let _resolveAuth: (() => void) | null = null;
 const _authReady = new Promise<void>((r) => { _resolveAuth = r; });
 let _fullscreen = false;
@@ -12,6 +13,14 @@ export function isFullscreen(): boolean {
 export function onLayoutChange(cb: (fullscreen: boolean) => void): () => void {
   _layoutListeners.add(cb);
   return () => _layoutListeners.delete(cb);
+}
+
+export function getAgentName(): string | null {
+  return _agentName;
+}
+
+export function waitForAuth(): Promise<void> {
+  return _authReady;
 }
 
 export function getAuthToken(): string | null {
@@ -43,6 +52,7 @@ export function initParentBridge() {
     if (event.data?.type === "vesta-auth") {
       authToken = event.data.token;
       baseUrl = event.data.baseUrl;
+      _agentName = event.data.agentName ?? null;
       _resolveAuth?.();
     }
     if (event.data?.type === "vesta-layout") {
