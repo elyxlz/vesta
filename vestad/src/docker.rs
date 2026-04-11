@@ -1504,7 +1504,7 @@ pub async fn reconcile_containers(docker: &Docker, env_config: &AgentEnvConfig, 
         }
         let env_path = env_config.agents_dir.join(format!("{name}.env"));
         if env_path.is_file() {
-            tracing::debug!(agent = %name, "env file ok");
+            tracing::info!(agent = %name, "env file ok");
         } else {
             if env_path.exists() {
                 tracing::warn!(agent = %name, path = %env_path.display(), "env path is not a file, removing");
@@ -1534,7 +1534,7 @@ pub async fn reconcile_containers(docker: &Docker, env_config: &AgentEnvConfig, 
         let name = get_agent_name(docker, cname).await;
         let manage_code = manages_code(&name);
         if !needs_rebuild(docker, cname, manage_code).await {
-            tracing::debug!(agent = %name, "config ok, no rebuild needed");
+            tracing::info!(agent = %name, "config ok, no rebuild needed");
             continue;
         }
         tracing::info!(agent = %name, "rebuild needed");
@@ -1566,7 +1566,7 @@ pub async fn reconcile_containers(docker: &Docker, env_config: &AgentEnvConfig, 
                 start_container(docker, cname).await;
             }
             status => {
-                tracing::debug!(agent = %name, ?status, "not restarting");
+                tracing::info!(agent = %name, ?status, "not restarting");
             }
         }
     }
