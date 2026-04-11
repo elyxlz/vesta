@@ -85,6 +85,7 @@ const ENTRYPOINT: &[&str] = &[
 
 const CONTAINER_STOP_TIMEOUT_SECS: i64 = 10;
 const CONTAINER_RESTART_TIMEOUT_SECS: isize = 10;
+const LOADED_IMAGE_PREFIX: &str = "Loaded image: ";
 
 #[derive(PartialEq, Clone, Copy)]
 pub enum ContainerStatus {
@@ -495,7 +496,9 @@ fn build_context_tar(context: &std::path::Path) -> Result<bytes::Bytes, DockerEr
     ) -> Result<(), DockerError> {
         let entries = std::fs::read_dir(dir)
             .map_err(|e| DockerError::Failed(format!("failed to read directory {}: {e}", dir.display())))?;
-        for entry in entries.flatten() {
+        for entry in entries {
+            let entry = entry
+                .map_err(|e| DockerError::Failed(format!("failed to read entry in {}: {e}", dir.display())))?;
             let path = entry.path();
             let rel = path.strip_prefix(base).unwrap_or(&path);
             let rel_str = rel.to_string_lossy();
@@ -539,8 +542,7 @@ fn load_dockerignore(context: &std::path::Path) -> Vec<String> {
 fn is_dockerignored(rel_path: &str, patterns: &[String]) -> bool {
     for pattern in patterns {
         let pat = pattern.trim_end_matches('/');
-        // Leading segment match: "target" matches "target/debug/foo"
-        if rel_path == pat || rel_path.starts_with(&format!("{pat}/")) {
+        if rel_path == pat || (rel_path.starts_with(pat) && rel_path.as_bytes().get(pat.len()) == Some(&b'/')) {
             return true;
         }
         // Wildcard prefix: "*.pyc" matches "foo.pyc" and "dir/foo.pyc"
@@ -829,23 +831,21 @@ pub async fn export_image_gzip(docker: &Docker, image: &str, output: &std::path:
 }
 
 /// Import a Docker image from a gzip-compressed tar file (replaces `gunzip | docker load`).
+/// Streams the file directly — Docker's load API accepts gzip natively.
 /// Returns the loaded image name (e.g. "vesta-backup:name_12345").
 pub async fn import_image_gzip(docker: &Docker, input: &std::path::Path) -> Result<String, DockerError> {
-    let file = std::fs::File::open(input)
+    let file = tokio::fs::File::open(input).await
         .map_err(|e| DockerError::Failed(format!("failed to open input file: {e}")))?;
-    let mut decoder = flate2::read::GzDecoder::new(file);
-    let mut tar_data = Vec::new();
-    std::io::Read::read_to_end(&mut decoder, &mut tar_data)
-        .map_err(|e| DockerError::Failed(format!("failed to decompress image: {e}")))?;
+    let byte_stream = tokio_util::codec::FramedRead::new(file, tokio_util::codec::BytesCodec::new())
+        .filter_map(|r| async { r.ok().map(|b| b.freeze()) });
 
     let opts = ImportImageOptions { ..Default::default() };
-    let mut stream = docker.import_image(opts, bytes::Bytes::from(tar_data), None);
+    let mut stream = docker.import_image_stream(opts, byte_stream, None);
     let mut loaded_image = String::new();
     while let Some(msg) = stream.next().await {
         let info = msg.map_err(|e| DockerError::Failed(format!("import failed: {e}")))?;
         if let Some(status) = info.status {
-            // Docker returns "Loaded image: name:tag"
-            if let Some(name) = status.strip_prefix("Loaded image: ") {
+            if let Some(name) = status.strip_prefix(LOADED_IMAGE_PREFIX) {
                 loaded_image = name.to_string();
             }
         }
