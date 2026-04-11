@@ -24,7 +24,7 @@ export function AgentNavbar({
   const { handleOpenAuth } = useModals();
   const isMobile = useIsMobile();
   const showMobileReauth =
-    isMobile && agent?.status === "running" && !agent?.authenticated;
+    isMobile && agent?.status === "not_authenticated";
   const agentDashboardMatch = useMatch({ path: "/agent/:name", end: true });
   const agentChatMatch = useMatch({ path: "/agent/:name/chat", end: true });
   const agentLogsMatch = useMatch({ path: "/agent/:name/logs", end: true });

@@ -15,7 +15,7 @@ import pathlib as pl
 import aiohttp as _aiohttp
 from aiohttp import web
 
-from vesta.events import ChatEvent, EventBus, HistoryEvent, ServiceUpdateEvent, UserEvent, VestaEvent
+from vesta.events import ChatEvent, EventBus, HistoryEvent, UserEvent, VestaEvent
 from vesta.config import VestaConfig
 
 logger = logging.getLogger("vesta.api")
@@ -179,25 +179,6 @@ async def _usage_handler(request: web.Request) -> web.Response:
         return web.json_response({"error": str(e)}, status=502)
 
 
-async def _service_update_handler(request: web.Request) -> web.Response:
-    event_bus: EventBus = request.app["event_bus"]
-    try:
-        body = await request.json()
-    except (json.JSONDecodeError, ValueError):
-        return web.json_response({"error": "invalid json"}, status=400)
-    try:
-        service = body["service"]
-    except KeyError:
-        return web.json_response({"error": "service is required"}, status=400)
-    try:
-        action = body["action"]
-    except KeyError:
-        action = "updated"
-    if action not in ("registered", "updated", "removed"):
-        return web.json_response({"error": "action must be registered, updated, or removed"}, status=400)
-    event_bus.emit(ServiceUpdateEvent(type="service_update", service=service, action=action))
-    return web.json_response({"ok": True})
-
 
 @web.middleware
 async def _auth_middleware(request: web.Request, handler):
@@ -223,7 +204,7 @@ async def start_ws_server(
     app.router.add_get("/history", _history_handler)
     app.router.add_get("/search", _search_handler)
     app.router.add_get("/usage", _usage_handler)
-    app.router.add_post("/events/service-update", _service_update_handler)
+
 
     runner = web.AppRunner(app)
     await runner.setup()

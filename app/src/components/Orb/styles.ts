@@ -13,11 +13,7 @@ export type OrbVisualState =
   | "dead";
 
 interface AgentLike {
-  alive: boolean;
   status: string;
-  authenticated: boolean;
-  agent_ready: boolean;
-  friendly_status: string;
 }
 
 export function getAgentVisualStatus(
@@ -54,24 +50,24 @@ function resolveStatus(
 
   if (!agent) return { label: "", orbState: "dead" };
 
-  if (agent.alive) {
-    if (activityState === "thinking")
-      return { label: "thinking", orbState: "thinking" };
-    return { label: "alive", orbState: "alive" };
+  switch (agent.status) {
+    case "alive":
+      if (activityState === "thinking")
+        return { label: "thinking", orbState: "thinking" };
+      return { label: "alive", orbState: "alive" };
+    case "starting":
+      return { label: "waking up...", orbState: "booting" };
+    case "not_authenticated":
+      return { label: "not signed in", orbState: "authenticating" };
+    case "restarting":
+      return { label: "restarting...", orbState: "starting" };
+    case "stopped":
+      return { label: "stopped", orbState: "dead" };
+    case "dead":
+      return { label: "broken — delete and recreate", orbState: "dead" };
+    default:
+      return { label: agent.status, orbState: "dead" };
   }
-
-  if (agent.status === "running" && agent.authenticated && !agent.agent_ready)
-    return { label: "waking up...", orbState: "booting" };
-  if (agent.status === "running" && !agent.authenticated)
-    return { label: "not signed in", orbState: "authenticating" };
-  if (agent.status === "restarting")
-    return { label: "restarting...", orbState: "starting" };
-  if (agent.status === "stopped")
-    return { label: "stopped", orbState: "dead" };
-  if (agent.status === "dead")
-    return { label: "broken — delete and recreate", orbState: "dead" };
-
-  return { label: agent.friendly_status || agent.status, orbState: "dead" };
 }
 
 export const orbColors: Record<OrbVisualState, [string, string, string]> = {

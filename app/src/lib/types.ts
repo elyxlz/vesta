@@ -1,20 +1,18 @@
 
 export type AgentStatus =
-  | "running"
+  | "alive"
+  | "starting"
+  | "not_authenticated"
+  | "restarting"
   | "stopped"
   | "dead"
-  | "not_found"
-  | "unknown";
+  | "not_found";
 
 export interface AgentInfo {
   name: string;
   status: AgentStatus;
-  authenticated: boolean;
-  agent_ready: boolean;
-  ws_port: number;
-  alive: boolean;
-  friendly_status: string;
   activityState: AgentActivityState;
+  services: Record<string, number>;
 }
 
 export type AgentActivityState = "idle" | "thinking";
@@ -33,11 +31,6 @@ export type VestaEvent =
   | (BaseEvent & { type: "tool_end"; tool: string })
   | (BaseEvent & { type: "error"; text: string })
   | (BaseEvent & { type: "notification"; source: string; summary: string })
-  | (BaseEvent & {
-      type: "service_update";
-      service: string;
-      action: "registered" | "updated" | "removed";
-    })
   | (BaseEvent & {
       type: "history";
       events: VestaEvent[];

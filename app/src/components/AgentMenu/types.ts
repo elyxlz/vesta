@@ -12,6 +12,7 @@ export interface MenuState {
   onRebuild: () => void;
   onBackup: () => void;
   onDelete: () => void;
+  onDebugInfo?: () => void;
 }
 
 export interface MenuProps {

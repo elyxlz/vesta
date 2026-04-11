@@ -1,5 +1,6 @@
 import {
   Archive,
+  Bug,
   Play,
   RefreshCw,
   ScrollText,
@@ -87,6 +88,15 @@ export function DesktopMenu({
           <Settings data-icon="inline-start" />
           settings
         </DropdownMenuItem>
+        {state.onDebugInfo && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={state.onDebugInfo}>
+              <Bug data-icon="inline-start" />
+              debug info
+            </DropdownMenuItem>
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );

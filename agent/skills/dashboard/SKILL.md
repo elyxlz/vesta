@@ -136,13 +136,10 @@ screen -S dashboard -X quit 2>/dev/null
 screen -dmS dashboard sh -c "cd ~/vesta/skills/dashboard/app && npx vite preview --port $PORT --host 0.0.0.0"
 # Wait for the server to be ready
 for i in $(seq 1 20); do curl -s -o /dev/null http://localhost:$PORT && break; sleep 0.5; done
-# Smoke test: fetch the page and check for runtime errors before notifying
+# Smoke test: fetch the page and check for runtime errors
 SMOKE=$(curl -s http://localhost:$PORT/ | head -50)
-if echo "$SMOKE" | grep -q '<div id="root"'; then
-  curl -s -X POST "http://localhost:$WS_PORT/events/service-update?agent_token=$AGENT_TOKEN" \
-    -H 'Content-Type: application/json' -d '{"service":"dashboard","action":"updated"}'
-else
-  echo "ERROR: Dashboard failed to load, not notifying app. Check the build output."
+if ! echo "$SMOKE" | grep -q '<div id="root"'; then
+  echo "ERROR: Dashboard failed to load. Check the build output."
 fi
 ```
 

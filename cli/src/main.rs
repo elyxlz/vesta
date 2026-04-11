@@ -577,10 +577,7 @@ fn run(cli: Cli) {
                         serde_json::json!({
                             "name": name,
                             "status": "not_found",
-                            "authenticated": false,
-                            "ws_port": 0,
-                            "alive": false,
-                            "friendly_status": "not found"
+                            "ws_port": 0
                         })
                     );
                     process::exit(0);
@@ -595,17 +592,7 @@ fn run(cli: Cli) {
                 if let Some(id) = &status.id {
                     println!("id:     {}", id);
                 }
-                println!(
-                    "auth:   {}",
-                    if status.authenticated { "yes" } else { "no" }
-                );
                 println!("port:   {}", status.ws_port);
-                if status.status == "running" {
-                    println!(
-                        "ready:  {}",
-                        if status.agent_ready { "yes" } else { "no" }
-                    );
-                }
             }
         }
 
@@ -618,19 +605,9 @@ fn run(cli: Cli) {
                 println!("no agents. run: vesta setup");
             } else {
                 for e in &agents {
-                    let ready_str = if e.status == "running" {
-                        if e.agent_ready {
-                            " (ready)"
-                        } else {
-                            " (not ready)"
-                        }
-                    } else {
-                        ""
-                    };
-                    let auth_str = if e.authenticated { "" } else { " [no auth]" };
                     println!(
-                        "  {} — {}{}{}  (port {})",
-                        e.name, e.status, ready_str, auth_str, e.ws_port
+                        "  {} — {}  (port {})",
+                        e.name, e.status, e.ws_port
                     );
                 }
             }

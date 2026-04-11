@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { VestaEvent, AgentActivityState } from "@/lib/types";
 import { wsUrl, fetchHistory } from "@/lib/connection";
-import { SERVICE_UPDATE_EVENT } from "@/hooks/use-service-update";
 
 const RECONNECT_BASE = 1000;
 const RECONNECT_MAX = 30000;
@@ -95,18 +94,12 @@ export function useChat({ name, active, onAssistantMessage }: UseChatOptions) {
               return;
             }
           }
-          if (event.type === "service_update") {
-            window.dispatchEvent(
-              new CustomEvent(SERVICE_UPDATE_EVENT, { detail: event }),
-            );
-          } else {
-            setMessages((prev) => {
-              const updated = [...prev, event];
-              return updated.length > MAX_MESSAGES
-                ? updated.slice(-MAX_MESSAGES)
-                : updated;
-            });
-          }
+          setMessages((prev) => {
+            const updated = [...prev, event];
+            return updated.length > MAX_MESSAGES
+              ? updated.slice(-MAX_MESSAGES)
+              : updated;
+          });
           if (event.type === "chat" && event.text) {
             onAssistantMessageRef.current?.(event.text);
           }

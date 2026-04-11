@@ -16,8 +16,8 @@ pub struct AgentStatusCache {
     agents_rx: watch::Receiver<Vec<ListEntry>>,
     activity_tx: watch::Sender<HashMap<String, String>>,
     activity_rx: watch::Receiver<HashMap<String, String>>,
-    services_tx: watch::Sender<HashMap<String, Vec<String>>>,
-    services_rx: watch::Receiver<HashMap<String, Vec<String>>>,
+    services_tx: watch::Sender<HashMap<String, HashMap<String, u16>>>,
+    services_rx: watch::Receiver<HashMap<String, HashMap<String, u16>>>,
 }
 
 impl AgentStatusCache {
@@ -43,21 +43,17 @@ impl AgentStatusCache {
         self.activity_rx.clone()
     }
 
-    pub fn subscribe_services(&self) -> watch::Receiver<HashMap<String, Vec<String>>> {
+    pub fn subscribe_services(&self) -> watch::Receiver<HashMap<String, HashMap<String, u16>>> {
         self.services_rx.clone()
     }
 
     /// Notify subscribers that services changed for an agent.
     pub fn update_services(&self, all_services: &HashMap<String, HashMap<String, u16>>) {
-        let names_only: HashMap<String, Vec<String>> = all_services
-            .iter()
-            .map(|(agent, svc_map)| (agent.clone(), svc_map.keys().cloned().collect()))
-            .collect();
         self.services_tx.send_if_modified(|current| {
-            if *current == names_only {
+            if *current == *all_services {
                 return false;
             }
-            *current = names_only;
+            *current = all_services.clone();
             true
         });
     }
@@ -90,7 +86,7 @@ pub fn spawn_agent_status_task(cache: Arc<AgentStatusCache>, agents_dir: PathBuf
             // Reconcile internal WS connections for activity state
             let alive_agents: HashMap<String, u16> = agents
                 .iter()
-                .filter(|a| a.alive)
+                .filter(|a| a.status == "alive")
                 .map(|a| (a.name.clone(), a.ws_port))
                 .collect();
 

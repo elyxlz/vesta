@@ -408,6 +408,7 @@ async fn control_ws_handler(
 fn build_agents_message(
     agents: &[docker::ListEntry],
     activity: &HashMap<String, String>,
+    services: &HashMap<String, HashMap<String, u16>>,
 ) -> serde_json::Value {
     let enriched: Vec<serde_json::Value> = agents
         .iter()
@@ -416,6 +417,8 @@ fn build_agents_message(
             if let Some(map) = obj.as_object_mut() {
                 let state = activity.get(&a.name).map(|s| s.as_str()).unwrap_or("idle");
                 map.insert("activityState".into(), serde_json::Value::String(state.into()));
+                let svc_list = services.get(&a.name).cloned().unwrap_or_default();
+                map.insert("services".into(), serde_json::to_value(svc_list).unwrap_or_default());
             }
             obj
         })
@@ -434,6 +437,7 @@ async fn control_ws_session(state: SharedState, socket: axum::extract::ws::WebSo
         "type": "hello",
         "version": env!("CARGO_PKG_VERSION"),
         "api_compat": "0.2",
+        "port": state.env_config.vestad_port,
     });
     if tx.send(Message::Text(hello.to_string().into())).await.is_err() {
         return;
@@ -442,10 +446,12 @@ async fn control_ws_session(state: SharedState, socket: axum::extract::ws::WebSo
     // 2. Send initial agents snapshot
     let mut agents_rx = state.agent_status_cache.subscribe_agents();
     let mut activity_rx = state.agent_status_cache.subscribe_activity();
+    let mut services_rx = state.agent_status_cache.subscribe_services();
 
     let agents = agents_rx.borrow_and_update().clone();
     let activity = activity_rx.borrow_and_update().clone();
-    let msg = build_agents_message(&agents, &activity);
+    let services = services_rx.borrow_and_update().clone();
+    let msg = build_agents_message(&agents, &activity, &services);
     if tx.send(Message::Text(msg.to_string().into())).await.is_err() {
         return;
     }
@@ -455,6 +461,7 @@ async fn control_ws_session(state: SharedState, socket: axum::extract::ws::WebSo
         tokio::select! {
             result = agents_rx.changed() => { if result.is_err() { break; } }
             result = activity_rx.changed() => { if result.is_err() { break; } }
+            result = services_rx.changed() => { if result.is_err() { break; } }
             msg = rx.next() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
@@ -467,10 +474,11 @@ async fn control_ws_session(state: SharedState, socket: axum::extract::ws::WebSo
             }
         }
 
-        // Drain both watches and send a single coalesced snapshot
+        // Drain all watches and send a single coalesced snapshot
         let agents = agents_rx.borrow_and_update().clone();
         let activity = activity_rx.borrow_and_update().clone();
-        let msg = build_agents_message(&agents, &activity);
+        let services = services_rx.borrow_and_update().clone();
+        let msg = build_agents_message(&agents, &activity, &services);
         if tx.send(Message::Text(msg.to_string().into())).await.is_err() {
             break;
         }
@@ -2046,6 +2054,10 @@ pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: S
         });
     });
     let state = Arc::new(AppState::new(api_key, env_config, tunnel_url, dev_mode));
+    {
+        let settings = state.settings.read().await;
+        state.agent_status_cache.update_services(&settings.services);
+    }
     agent_status::spawn_agent_status_task(
         state.agent_status_cache.clone(),
         state.env_config.agents_dir.clone(),

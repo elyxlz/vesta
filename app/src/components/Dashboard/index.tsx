@@ -3,8 +3,6 @@ import { LayoutDashboard, AlertCircle } from "lucide-react";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useTheme } from "@/providers/ThemeProvider";
 import { getConnection } from "@/lib/connection";
-import { apiFetch } from "@/api/client";
-import { useServiceUpdate } from "@/hooks/use-service-update";
 import {
   Empty,
   EmptyHeader,
@@ -13,48 +11,27 @@ import {
   EmptyMedia,
 } from "@/components/ui/empty";
 
-type Status = "loading" | "not-setup" | "ready" | "error";
-
 export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
-  const { name } = useSelectedAgent();
+  const { name, agent } = useSelectedAgent();
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const { resolvedTheme } = useTheme();
-  const [status, setStatus] = useState<Status>("loading");
+  const [error, setError] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [iframeKey, setIframeKey] = useState(0);
+  const handshakeRef = useRef(false);
 
+  const hasDashboard = "dashboard" in (agent.services ?? {});
+
+  // Reset iframe when the dashboard service appears
+  const prevHadDashboard = useRef(hasDashboard);
   useEffect(() => {
-    let cancelled = false;
-    async function check() {
-      try {
-        const resp = await apiFetch(
-          `/agents/${encodeURIComponent(name)}/services`,
-        );
-        if (cancelled) return;
-        const body: { services: Record<string, number> } = await resp.json();
-        setStatus("dashboard" in body.services ? "ready" : "not-setup");
-      } catch {
-        if (!cancelled) setStatus("not-setup");
-      }
+    if (hasDashboard && !prevHadDashboard.current) {
+      setError(false);
+      setLoaded(false);
+      setIframeKey((k) => k + 1);
     }
-    check();
-    return () => {
-      cancelled = true;
-    };
-  }, [name]);
-
-  useServiceUpdate(
-    "dashboard",
-    (action) => {
-      if (action === "removed") {
-        setStatus("not-setup");
-      } else {
-        setStatus("ready");
-        setLoaded(false);
-        setIframeKey((k) => k + 1);
-      }
-    },
-  );
+    prevHadDashboard.current = hasDashboard;
+  }, [hasDashboard]);
 
   useEffect(() => {
     handshakeRef.current = false;
@@ -62,7 +39,7 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
 
   const conn = getConnection();
   const dashboardUrl =
-    status === "ready" && conn
+    hasDashboard && conn
       ? `${conn.url}/agents/${encodeURIComponent(name)}/dashboard/`
       : null;
 
@@ -85,8 +62,6 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
       );
   };
 
-  const handshakeRef = useRef(false);
-
   useEffect(() => {
     const handler = (e: MessageEvent) => {
       if (
@@ -106,9 +81,7 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
     sendContext();
   }, [sendContext, resolvedTheme]);
 
-  if (status === "loading") return null;
-
-  if (status === "not-setup") {
+  if (!hasDashboard) {
     return (
       <Empty className="flex-1 h-full w-full border-0">
         <EmptyHeader>
@@ -124,7 +97,7 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
     );
   }
 
-  if (status === "error") {
+  if (error) {
     return (
       <Empty className="flex-1 h-full w-full border-0">
         <EmptyHeader>
@@ -156,12 +129,12 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
             if (handshakeRef.current) {
               setLoaded(true);
             } else {
-              setStatus("error");
+              setError(true);
             }
           }, 500);
         }
       }}
-      onError={() => setStatus("error")}
+      onError={() => setError(true)}
     />
   );
 }

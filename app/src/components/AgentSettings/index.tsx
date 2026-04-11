@@ -71,9 +71,9 @@ export function AgentSettings() {
   const { showToolCalls, setShowToolCalls } = useChatContext();
   const { sttStatus, ttsStatus, patchStt, patchTts, refreshVoiceStatus } =
     useVoice();
-  const isRunning = agent?.status === "running";
-  const showAuthenticate = isRunning && !agent?.authenticated;
-  const showAliveActions = agent?.alive;
+  const isRunning = agent?.status !== "stopped" && agent?.status !== "dead" && agent?.status !== "not_found";
+  const showAuthenticate = agent?.status === "not_authenticated";
+  const showAliveActions = agent?.status === "alive";
 
   // --- STT state ---
   const sttConfigured = sttStatus?.configured ?? false;

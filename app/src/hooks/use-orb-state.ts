@@ -7,11 +7,7 @@ import { useAgentOps } from "@/stores/use-agent-ops";
 
 interface AgentLike {
   name: string;
-  alive: boolean;
   status: string;
-  authenticated: boolean;
-  agent_ready: boolean;
-  friendly_status: string;
 }
 
 export function useOrbState(

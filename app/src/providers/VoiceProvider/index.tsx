@@ -39,7 +39,7 @@ interface VoiceContextValue {
 const VoiceContext = createContext<VoiceContextValue | null>(null);
 
 export function VoiceProvider({ children }: { children: ReactNode }) {
-  const { name: agentName } = useSelectedAgent();
+  const { name: agentName, agent } = useSelectedAgent();
   const sendRef = useRef<((text: string) => void) | null>(null);
   const draftRef = useRef<((text: string) => void) | null>(null);
 
@@ -63,7 +63,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     refresh: refreshVoiceStatus,
     patchStt,
     patchTts,
-  } = useVoiceStatus(agentName || null);
+  } = useVoiceStatus(agentName || null, agent.services);
 
   const sttAvailable = (sttStatus?.configured && sttStatus?.enabled) ?? false;
   const speechEnabled = (ttsStatus?.configured && ttsStatus?.enabled) ?? false;

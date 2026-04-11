@@ -39,7 +39,7 @@ export function AgentIslandModals() {
     <>
       <Dialog
         drawerOnMobile
-        open={showAuth && agent?.status === "running"}
+        open={showAuth && agent?.status === "not_authenticated"}
         onOpenChange={(open) => {
           if (!open) clearAuthState();
         }}

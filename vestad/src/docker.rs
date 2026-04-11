@@ -74,23 +74,14 @@ pub struct StatusJson {
     pub status: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
-    pub authenticated: bool,
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub agent_ready: bool,
     pub ws_port: u16,
-    pub alive: bool,
-    pub friendly_status: &'static str,
 }
 
 #[derive(Serialize, Clone, PartialEq)]
 pub struct ListEntry {
     pub name: String,
     pub status: &'static str,
-    pub authenticated: bool,
-    pub agent_ready: bool,
     pub ws_port: u16,
-    pub alive: bool,
-    pub friendly_status: &'static str,
 }
 
 pub fn container_name(name: &str) -> String {
@@ -356,20 +347,21 @@ pub struct ContainerInfo {
     pub agent_name: Option<String>,
 }
 
-pub struct AgentDerivedState {
-    pub authenticated: bool,
-    pub agent_ready: bool,
-    pub alive: bool,
-    pub friendly_status: &'static str,
-}
-
-pub fn compute_agent_state(cname: &str, info: &ContainerInfo) -> AgentDerivedState {
-    let authenticated = info.status != ContainerStatus::NotFound && is_authenticated(cname);
-    let agent_ready = info.status == ContainerStatus::Running
-        && info.port.is_some_and(|p| is_agent_ready(p, cname));
-    let alive = info.status == ContainerStatus::Running && authenticated && agent_ready;
-    let friendly_status = friendly_status(&info.status, authenticated, agent_ready);
-    AgentDerivedState { authenticated, agent_ready, alive, friendly_status }
+pub fn combined_status(cname: &str, info: &ContainerInfo) -> &'static str {
+    match info.status {
+        ContainerStatus::Running => {
+            let authenticated = is_authenticated(cname);
+            if !authenticated {
+                return "not_authenticated";
+            }
+            let agent_ready = info.port.is_some_and(|p| is_agent_ready(p, cname));
+            if agent_ready { "alive" } else { "starting" }
+        }
+        ContainerStatus::Restarting => "restarting",
+        ContainerStatus::Dead => "dead",
+        ContainerStatus::Stopped => "stopped",
+        ContainerStatus::NotFound => "not_found",
+    }
 }
 
 /// Read a value from a per-agent env file by key (e.g. "WS_PORT").
@@ -990,51 +982,18 @@ pub fn complete_auth_flow(input: &str, code_verifier: &str, expected_state: &str
     Ok(creds.to_string())
 }
 
-// --- Status helpers ---
-
-pub fn status_label(cs: &ContainerStatus) -> &'static str {
-    match cs {
-        ContainerStatus::Running => "running",
-        ContainerStatus::Restarting => "restarting",
-        ContainerStatus::Dead => "dead",
-        ContainerStatus::NotFound => "not_found",
-        ContainerStatus::Stopped => "stopped",
-    }
-}
-
-pub fn friendly_status(
-    status: &ContainerStatus,
-    authenticated: bool,
-    agent_ready: bool,
-) -> &'static str {
-    match status {
-        ContainerStatus::Running if !authenticated => "not signed in",
-        ContainerStatus::Running if agent_ready => "alive",
-        ContainerStatus::Running => "starting...",
-        ContainerStatus::Restarting => "restarting...",
-        ContainerStatus::Dead => "broken",
-        ContainerStatus::Stopped => "stopped",
-        ContainerStatus::NotFound => "not found",
-    }
-}
-
 // --- High-level operations (used by serve.rs handlers) ---
 
 pub fn get_status(name: &str, agents_dir: &std::path::Path) -> Result<StatusJson, DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
     let info = inspect_container(&cname, Some(agents_dir));
-    let derived = compute_agent_state(&cname, &info);
 
     Ok(StatusJson {
         name: name.to_string(),
-        status: status_label(&info.status),
+        status: combined_status(&cname, &info),
         id: info.id,
-        authenticated: derived.authenticated,
-        agent_ready: derived.agent_ready,
         ws_port: info.port.unwrap_or(0),
-        alive: derived.alive,
-        friendly_status: derived.friendly_status,
     })
 }
 
@@ -1044,16 +1003,11 @@ pub fn list_agents(agents_dir: &std::path::Path) -> Vec<ListEntry> {
         .iter()
         .map(|cname| {
             let info = inspect_container(cname, Some(agents_dir));
-            let derived = compute_agent_state(cname, &info);
             let name = info.agent_name.clone().unwrap_or_else(|| name_from_cname(cname));
             ListEntry {
                 name,
-                status: status_label(&info.status),
-                authenticated: derived.authenticated,
-                agent_ready: derived.agent_ready,
+                status: combined_status(cname, &info),
                 ws_port: info.port.unwrap_or(0),
-                alive: derived.alive,
-                friendly_status: derived.friendly_status,
             }
         })
         .collect()

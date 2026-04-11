@@ -23,7 +23,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const { speak } = useVoice();
   const [showToolCalls, setShowToolCalls] = useState(false);
 
-  const ready = agent?.agent_ready ?? false;
+  const ready = agent?.status === "alive";
   const chat = useChat({ name, active: ready, onAssistantMessage: speak });
 
   useEffect(() => {

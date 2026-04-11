@@ -33,12 +33,7 @@ Once configured, the user can manage voice settings directly from the **agent se
    PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H 'Content-Type: application/json' -d '{"name":"voice"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])")
    SKILL_PORT=$PORT PYTHONPATH=~/vesta/skills screen -dmS voice uv run python -m voice.server
    ```
-6. **Notify the app** so it picks up the new voice config:
-   ```bash
-   curl -s -X POST "http://localhost:$WS_PORT/events/service-update?agent_token=$AGENT_TOKEN" \
-     -H 'Content-Type: application/json' -d '{"service":"voice","action":"updated"}'
-   ```
-7. **Confirm** — e.g. "Voice is ready! You can use the mic button now. You can also change voices, listen to previews, and tweak settings from the settings page in the app."
+6. **Confirm** — e.g. "Voice is ready! You can use the mic button now. You can also change voices, listen to previews, and tweak settings from the settings page in the app."
 
 ## Commands
 

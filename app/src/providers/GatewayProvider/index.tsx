@@ -18,6 +18,7 @@ const RECONNECT_MAX_MS = 30000;
 interface GatewayContextValue {
   reachable: boolean;
   gatewayVersion: string;
+  gatewayPort: number;
   versionChecked: boolean;
   agents: AgentInfo[];
   agentsFetched: boolean;
@@ -29,6 +30,7 @@ const GatewayContext = createContext<GatewayContextValue | null>(null);
 const disconnectedValue: GatewayContextValue = {
   reachable: false,
   gatewayVersion: "",
+  gatewayPort: 0,
   versionChecked: true,
   agents: [],
   agentsFetched: false,
@@ -46,6 +48,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
   const { loading } = useAuth();
   const [reachable, setReachable] = useState(false);
   const [gatewayVersion, setGatewayVersion] = useState("");
+  const [gatewayPort, setGatewayPort] = useState(0);
   const [versionChecked, setVersionChecked] = useState(false);
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [agentsFetched, setAgentsFetched] = useState(false);
@@ -108,6 +111,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
           switch (msg.type) {
             case "hello": {
               setGatewayVersion(msg.version ?? "");
+              setGatewayPort(msg.port ?? 0);
               break;
             }
             case "agents": {
@@ -161,6 +165,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
       value={{
         reachable,
         gatewayVersion,
+        gatewayPort,
         versionChecked,
         agents,
         agentsFetched,

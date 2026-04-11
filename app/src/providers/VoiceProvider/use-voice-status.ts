@@ -5,19 +5,36 @@ import {
   type SttStatus,
   type TtsStatus,
 } from "@/lib/voice";
-import { useServiceUpdate } from "@/hooks/use-service-update";
 
-export function useVoiceStatus(agentName: string | null) {
+export function useVoiceStatus(agentName: string | null, services: Record<string, number>) {
   const [stt, setStt] = useState<SttStatus | null>(null);
   const [tts, setTts] = useState<TtsStatus | null>(null);
-  const [version, setVersion] = useState(0);
 
-  const refresh = useCallback(() => setVersion((v) => v + 1), []);
+  const hasVoice = "voice" in (services ?? {});
 
-  useServiceUpdate("voice", refresh);
+  const refresh = useCallback(() => {
+    if (!agentName) return;
+    const ctrl = new AbortController();
+    Promise.all([
+      fetchSttStatus(agentName, ctrl.signal),
+      fetchTtsStatus(agentName, ctrl.signal),
+    ])
+      .then(([s, t]) => {
+        if (ctrl.signal.aborted) return;
+        setStt((prev) => (prev && same(prev, s) ? prev : s));
+        setTts((prev) => (prev && same(prev, t) ? prev : t));
+      })
+      .catch(() => {});
+    return () => ctrl.abort();
+  }, [agentName]);
 
   useEffect(() => {
     if (!agentName) {
+      setStt(null);
+      setTts(null);
+      return;
+    }
+    if (!hasVoice) {
       setStt(null);
       setTts(null);
       return;
@@ -34,7 +51,7 @@ export function useVoiceStatus(agentName: string | null) {
       })
       .catch(() => {});
     return () => ctrl.abort();
-  }, [agentName, version]);
+  }, [agentName, hasVoice]);
 
   const patchStt = useCallback((patch: Partial<SttStatus>) => {
     setStt((prev) => (prev ? { ...prev, ...patch } : prev));
