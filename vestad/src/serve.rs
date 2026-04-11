@@ -132,6 +132,7 @@ struct AuthSession {
 pub struct AppState {
     api_key: String,
     env_config: docker::AgentEnvConfig,
+    docker: bollard::Docker,
     auth_sessions: Mutex<HashMap<String, AuthSession>>,
     agent_locks: Mutex<HashMap<String, Arc<tokio::sync::RwLock<()>>>>,
     tunnel_url: Mutex<Option<String>>,
@@ -143,11 +144,12 @@ pub struct AppState {
 }
 
 impl AppState {
-    fn new(api_key: String, env_config: docker::AgentEnvConfig, tunnel_url: Option<String>, dev_mode: bool) -> Self {
+    fn new(api_key: String, env_config: docker::AgentEnvConfig, docker: bollard::Docker, tunnel_url: Option<String>, dev_mode: bool) -> Self {
         let settings = load_settings();
         Self {
             api_key,
             env_config,
+            docker,
             auth_sessions: Mutex::new(HashMap::new()),
             agent_locks: Mutex::new(HashMap::new()),
             tunnel_url: Mutex::new(tunnel_url),
@@ -327,10 +329,6 @@ fn err_response(status: StatusCode, msg: &str) -> (StatusCode, Json<serde_json::
     (status, Json(serde_json::json!({"error": msg})))
 }
 
-fn map_join_err(e: tokio::task::JoinError) -> (StatusCode, Json<serde_json::Value>) {
-    err_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("task failed: {e}"))
-}
-
 fn map_docker_err(e: docker::DockerError) -> (StatusCode, Json<serde_json::Value>) {
     use docker::DockerError::*;
     let status = match &e {
@@ -407,10 +405,7 @@ async fn tunnel_handler(
 async fn list_agents_handler(
     State(state): State<SharedState>,
 ) -> impl IntoResponse {
-    let agents_dir = state.env_config.agents_dir.clone();
-    let agents = tokio::task::spawn_blocking(move || docker::list_agents(&agents_dir))
-        .await
-        .unwrap();
+    let agents = docker::list_agents(&state.docker, &state.env_config.agents_dir).await;
     Json(agents)
 }
 
@@ -440,17 +435,13 @@ async fn create_agent_handler(
         save_settings(&settings);
     }
 
-    let env_config = state.env_config.clone();
     let name =
-        tokio::task::spawn_blocking(move || docker::create_agent(&name, &env_config, manage_code))
+        docker::create_agent(&state.docker, &name, &state.env_config, manage_code)
             .await
-            .unwrap()
             .map_err(map_docker_err)?;
 
-    let start_name = name.clone();
-    tokio::task::spawn_blocking(move || docker::start_agent(&start_name))
+    docker::start_agent(&state.docker, &name)
         .await
-        .unwrap()
         .map_err(map_docker_err)?;
 
     Ok((StatusCode::CREATED, Json(serde_json::json!({"name": name}))))
@@ -460,10 +451,8 @@ async fn agent_status_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
 ) -> Result<Json<docker::StatusJson>, (StatusCode, Json<serde_json::Value>)> {
-    let agents_dir = state.env_config.agents_dir.clone();
-    let status = tokio::task::spawn_blocking(move || docker::get_status(&name, &agents_dir))
+    let status = docker::get_status(&state.docker, &name, &state.env_config.agents_dir)
         .await
-        .unwrap()
         .map_err(map_docker_err)?;
     Ok(Json(status))
 }
@@ -476,19 +465,16 @@ async fn start_agent_handler(
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
-    tokio::task::spawn_blocking(move || docker::start_agent(&name))
+    docker::start_agent(&state.docker, &name)
         .await
-        .unwrap()
         .map_err(map_docker_err)?;
     Ok(ok_json())
 }
 
 async fn start_all_handler(
-    State(_state): State<SharedState>,
+    State(state): State<SharedState>,
 ) -> impl IntoResponse {
-    let results = tokio::task::spawn_blocking(docker::start_all_agents)
-        .await
-        .unwrap();
+    let results = docker::start_all_agents(&state.docker).await;
 
     let has_error = results.iter().any(|r| !r.ok);
     let status = if has_error {
@@ -508,10 +494,8 @@ async fn stop_agent_handler(
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
-    let docker_name = name.clone();
-    tokio::task::spawn_blocking(move || docker::stop_agent(&docker_name))
+    docker::stop_agent(&state.docker, &name)
         .await
-        .unwrap()
         .map_err(map_docker_err)?;
     {
         let mut settings = state.settings.write().await;
@@ -529,9 +513,8 @@ async fn restart_agent_handler(
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
-    tokio::task::spawn_blocking(move || docker::restart_agent(&name))
+    docker::restart_agent(&state.docker, &name)
         .await
-        .unwrap()
         .map_err(map_docker_err)?;
     Ok(ok_json())
 }
@@ -544,11 +527,8 @@ async fn destroy_agent_handler(
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
-    let docker_name = name.clone();
-    let agents_dir = state.env_config.agents_dir.clone();
-    tokio::task::spawn_blocking(move || docker::destroy_agent(&docker_name, &agents_dir))
+    docker::destroy_agent(&state.docker, &name, &state.env_config.agents_dir)
         .await
-        .unwrap()
         .map_err(map_docker_err)?;
     {
         let mut settings = state.settings.write().await;
@@ -569,13 +549,11 @@ async fn rebuild_agent_handler(
     let _guard = lock.write().await;
 
     let manage_code = state.settings.read().await.manages_code(&name);
-    let env_config = state.env_config.clone();
-    tokio::task::spawn_blocking(move || {
-        docker::rebuild_agent(&name, &env_config, manage_code)?;
-        docker::start_agent(&name)
-    })
+    docker::rebuild_agent(&state.docker, &name, &state.env_config, manage_code)
         .await
-        .unwrap()
+        .map_err(map_docker_err)?;
+    docker::start_agent(&state.docker, &name)
+        .await
         .map_err(map_docker_err)?;
     Ok(ok_json())
 }
@@ -591,7 +569,7 @@ async fn wait_ready_handler(
     Query(query): Query<WaitReadyQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let timeout = query.timeout.unwrap_or(30);
-    docker::wait_ready_async(&name, timeout, &state.env_config.agents_dir)
+    docker::wait_ready_async(&state.docker, &name, timeout, &state.env_config.agents_dir)
         .await
         .map_err(|e| err_response(StatusCode::SERVICE_UNAVAILABLE, &e.to_string()))?;
     Ok(ok_json())
@@ -611,7 +589,7 @@ async fn start_auth_handler(
 ) -> Result<Json<AuthFlowResponse>, (StatusCode, Json<serde_json::Value>)> {
     docker::validate_name(&name).map_err(map_docker_err)?;
     let cname = docker::container_name(&name);
-    docker::ensure_exists(&cname).map_err(map_docker_err)?;
+    docker::ensure_exists(&state.docker, &cname).await.map_err(map_docker_err)?;
 
     let (auth_url, code_verifier, auth_state) = docker::start_auth_flow();
     let session_id: String = (0..16)
@@ -650,7 +628,7 @@ async fn complete_auth_handler(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     docker::validate_name(&name).map_err(map_docker_err)?;
     let cname = docker::container_name(&name);
-    docker::ensure_exists(&cname).map_err(map_docker_err)?;
+    docker::ensure_exists(&state.docker, &cname).await.map_err(map_docker_err)?;
 
     state.clean_expired_sessions().await;
 
@@ -661,28 +639,21 @@ async fn complete_auth_handler(
             .ok_or_else(|| err_response(StatusCode::BAD_REQUEST, "invalid or expired session"))?
     };
 
-    let code = body.code;
-    let credentials = tokio::task::spawn_blocking(move || {
-        docker::complete_auth_flow(&code, &session.code_verifier, &session.state)
-    })
-    .await
-    .unwrap()
-    .map_err(|e| err_response(StatusCode::BAD_REQUEST, &e.to_string()))?;
-
-    tokio::task::spawn_blocking(move || docker::inject_credentials(&cname, &credentials))
+    let credentials = docker::complete_auth_flow(&state.http_client, &body.code, &session.code_verifier, &session.state)
         .await
-        .unwrap()
+        .map_err(|e| err_response(StatusCode::BAD_REQUEST, &e.to_string()))?;
+
+    docker::inject_credentials(&state.docker, &cname, &credentials)
+        .await
         .map_err(map_docker_err)?;
 
     // Restart the agent so it picks up the new credentials.
     // The client is responsible for polling wait-ready afterwards.
-    let restart_name = name.clone();
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
-    tokio::task::spawn_blocking(move || docker::restart_agent(&restart_name))
+    docker::restart_agent(&state.docker, &name)
         .await
-        .unwrap()
         .map_err(map_docker_err)?;
 
     Ok(ok_json())
@@ -694,17 +665,17 @@ struct AuthTokenBody {
 }
 
 async fn inject_token_handler(
+    State(state): State<SharedState>,
     Path(name): Path<String>,
     Json(body): Json<AuthTokenBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     docker::validate_name(&name).map_err(map_docker_err)?;
     let cname = docker::container_name(&name);
-    docker::ensure_exists(&cname).map_err(map_docker_err)?;
+    docker::ensure_exists(&state.docker, &cname).await.map_err(map_docker_err)?;
 
     let credentials = body.token.to_string();
-    tokio::task::spawn_blocking(move || docker::inject_credentials(&cname, &credentials))
+    docker::inject_credentials(&state.docker, &cname, &credentials)
         .await
-        .unwrap()
         .map_err(map_docker_err)?;
 
     Ok(ok_json())
@@ -718,43 +689,56 @@ struct LogsQuery {
 }
 
 async fn logs_handler(
+    State(state): State<SharedState>,
     Path(name): Path<String>,
     Query(query): Query<LogsQuery>,
 ) -> Result<Sse<impl futures_core::Stream<Item = Result<Event, std::io::Error>>>, (StatusCode, Json<serde_json::Value>)>
 {
     docker::validate_name(&name).map_err(map_docker_err)?;
     let cname = docker::container_name(&name);
-    docker::ensure_running(&cname)
+    docker::ensure_running(&state.docker, &cname).await
         .map_err(|e| err_response(StatusCode::BAD_REQUEST, &e.to_string()))?;
 
     let tail_lines = query.tail.unwrap_or(DEFAULT_LOG_TAIL_LINES).to_string();
+    let docker = state.docker.clone();
     let stream = async_stream::stream! {
-        let mut child = match tokio::process::Command::new("docker")
-            .args(["exec", &cname, "tail", "-n", &tail_lines, "-f", docker::VESTA_LOG_PATH])
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-        {
-            Ok(c) => c,
+        let exec = match docker.create_exec(&cname, bollard::exec::CreateExecOptions {
+            cmd: Some(vec!["tail".to_string(), "-n".to_string(), tail_lines.clone(), "-f".to_string(), docker::VESTA_LOG_PATH.to_string()]),
+            attach_stdout: Some(true),
+            attach_stderr: Some(false),
+            ..Default::default()
+        }).await {
+            Ok(e) => e,
             Err(e) => {
                 yield Ok(Event::default().data(format!("error: {}", e)));
                 return;
             }
         };
 
-        let stdout = child.stdout.take().unwrap();
-        let mut reader = tokio::io::BufReader::new(stdout);
-        let mut line = String::new();
+        let mut output = match docker.start_exec(&exec.id, None).await {
+            Ok(bollard::exec::StartExecResults::Attached { output, .. }) => output,
+            Ok(_) => {
+                yield Ok(Event::default().data("error: exec started in detached mode"));
+                return;
+            }
+            Err(e) => {
+                yield Ok(Event::default().data(format!("error: {}", e)));
+                return;
+            }
+        };
 
-        loop {
-            line.clear();
-            match tokio::io::AsyncBufReadExt::read_line(&mut reader, &mut line).await {
-                Ok(0) => {
-                    yield Ok(Event::default().event("agent_stopped").data(""));
-                    break;
-                }
-                Ok(_) => {
-                    yield Ok(Event::default().data(line.trim_end()));
+        use futures_util::StreamExt;
+        let mut partial_line = String::new();
+        while let Some(chunk) = output.next().await {
+            match chunk {
+                Ok(log_output) => {
+                    let text = log_output.to_string();
+                    partial_line.push_str(&text);
+                    while let Some(newline_pos) = partial_line.find('\n') {
+                        let line = partial_line[..newline_pos].trim_end().to_string();
+                        partial_line = partial_line[newline_pos + 1..].to_string();
+                        yield Ok(Event::default().data(line));
+                    }
                 }
                 Err(e) => {
                     yield Ok(Event::default().data(format!("error: {}", e)));
@@ -762,8 +746,10 @@ async fn logs_handler(
                 }
             }
         }
-
-        child.kill().await.ok();
+        if !partial_line.trim().is_empty() {
+            yield Ok(Event::default().data(partial_line.trim_end()));
+        }
+        yield Ok(Event::default().event("agent_stopped").data(""));
     };
 
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
@@ -1033,9 +1019,7 @@ async fn register_service_handler(
     }
 
     let docker_name = docker::container_name(&name);
-    let exists = tokio::task::spawn_blocking(move || docker::container_status(&docker_name) != docker::ContainerStatus::NotFound)
-        .await
-        .unwrap_or(false);
+    let exists = docker::container_status(&state.docker, &docker_name).await != docker::ContainerStatus::NotFound;
     if !exists {
         return Err(err_response(StatusCode::NOT_FOUND, &format!("agent '{}' not found", name)));
     }
@@ -1096,16 +1080,8 @@ async fn agent_proxy_handler(
     let lock = state.agent_lock(&name).await;
     let guard = lock.read_owned().await;
 
-    let cname_clone = cname.clone();
-    tokio::task::spawn_blocking(move || docker::ensure_running(&cname_clone))
-        .await
-        .map_err(map_join_err)?
-        .map_err(map_docker_err)?;
-    let agents_dir = state.env_config.agents_dir.clone();
-    let agent_name = name.clone();
-    let (agent_port, agent_token) = tokio::task::spawn_blocking(move || docker::read_agent_port_and_token(&agent_name, &agents_dir))
-        .await
-        .map_err(map_join_err)?;
+    docker::ensure_running(&state.docker, &cname).await.map_err(map_docker_err)?;
+    let (agent_port, agent_token) = docker::read_agent_port_and_token(&name, &state.env_config.agents_dir);
     let agent_port = agent_port
         .ok_or_else(|| err_response(StatusCode::INTERNAL_SERVER_ERROR, "agent has no port"))?;
 
@@ -1241,13 +1217,16 @@ async fn create_backup_handler(
         let lock = state.agent_lock(&name).await;
         let _guard = lock.write().await;
 
-        let name_clone = name.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            let _file_lock = backup::agent_file_lock(&name_clone)?;
-            backup::create_backup(&name_clone, crate::types::BackupType::Manual)
-        })
-        .await
-        .unwrap();
+        let _file_lock = match backup::agent_file_lock(&name) {
+            Ok(l) => l,
+            Err(e) => {
+                let (status, body) = map_docker_err(e);
+                let err = serde_json::json!({"status": status.as_u16(), "error": body.0});
+                yield Ok(Event::default().event("error").data(err.to_string()));
+                return;
+            }
+        };
+        let result = backup::create_backup(&state.docker, &name, crate::types::BackupType::Manual).await;
 
         match result {
             Ok(info) => {
@@ -1272,19 +1251,17 @@ async fn list_backups_handler(
     let lock = state.agent_lock(&name).await;
     let _guard = lock.read().await;
 
-    let name_clone = name.clone();
-    let backups = tokio::task::spawn_blocking(move || backup::list_backups(&name_clone))
+    let backups = backup::list_backups(&state.docker, &name)
         .await
-        .unwrap()
         .map_err(map_docker_err)?;
 
     Ok(Json(backups))
 }
 
-async fn list_all_backups_handler() -> Json<Vec<crate::types::BackupInfo>> {
-    let backups = tokio::task::spawn_blocking(backup::list_all_backups)
-        .await
-        .unwrap_or_default();
+async fn list_all_backups_handler(
+    State(state): State<SharedState>,
+) -> Json<Vec<crate::types::BackupInfo>> {
+    let backups = backup::list_all_backups(&state.docker).await;
     Json(backups)
 }
 
@@ -1304,16 +1281,17 @@ async fn restore_backup_handler(
         let lock = state.agent_lock(&path.name).await;
         let _guard = lock.write().await;
 
-        let name = path.name.clone();
-        let backup_id = path.backup_id.clone();
-        let env_config = state.env_config.clone();
-        let manage_code = state.settings.read().await.manages_code(&name);
-        let result = tokio::task::spawn_blocking(move || {
-            let _file_lock = backup::agent_file_lock(&name)?;
-            backup::restore_backup(&name, &backup_id, &env_config, manage_code)
-        })
-        .await
-        .unwrap();
+        let _file_lock = match backup::agent_file_lock(&path.name) {
+            Ok(l) => l,
+            Err(e) => {
+                let (status, body) = map_docker_err(e);
+                let err = serde_json::json!({"status": status.as_u16(), "error": body.0});
+                yield Ok(Event::default().event("error").data(err.to_string()));
+                return;
+            }
+        };
+        let manage_code = state.settings.read().await.manages_code(&path.name);
+        let result = backup::restore_backup(&state.docker, &path.name, &path.backup_id, &state.env_config, manage_code).await;
 
         match result {
             Ok(()) => {
@@ -1345,11 +1323,8 @@ async fn delete_backup_handler(
     let _guard = lock.write().await;
 
     tracing::info!(agent = %path.name, backup_id = %path.backup_id, "deleting backup");
-    let name = path.name.clone();
-    let backup_id = path.backup_id.clone();
-    tokio::task::spawn_blocking(move || backup::delete_backup(&name, &backup_id))
+    backup::delete_backup(&state.docker, &path.name, &path.backup_id)
         .await
-        .unwrap()
         .map_err(map_docker_err)?;
 
     tracing::info!(agent = %path.name, backup_id = %path.backup_id, "backup deleted");
@@ -1482,21 +1457,13 @@ async fn patch_agent_settings_handler(
 
     // Rebuild if the mount config changed
     if old_manage_code != new_manage_code {
-        let env_config = state.env_config.clone();
-        let rebuild_name = name.clone();
-        tokio::task::spawn_blocking(move || {
-            let was_running = docker::container_status(&docker::container_name(&rebuild_name))
-                == docker::ContainerStatus::Running;
-            if let Err(e) = docker::rebuild_agent(&rebuild_name, &env_config, new_manage_code) {
-                tracing::error!(agent = %rebuild_name, error = %e, "rebuild after settings change failed");
-                return;
-            }
-            if was_running {
-                docker::start_agent(&rebuild_name).ok();
-            }
-        })
-        .await
-        .unwrap();
+        let was_running = docker::container_status(&state.docker, &docker::container_name(&name)).await
+            == docker::ContainerStatus::Running;
+        if let Err(e) = docker::rebuild_agent(&state.docker, &name, &state.env_config, new_manage_code).await {
+            tracing::error!(agent = %name, error = %e, "rebuild after settings change failed");
+        } else if was_running {
+            docker::start_agent(&state.docker, &name).await.ok();
+        }
     }
 
     Ok(Json(serde_json::json!({
@@ -1744,9 +1711,7 @@ fn spawn_auto_backup_task(state: SharedState) {
                 continue;
             }
 
-            let agents = tokio::task::spawn_blocking(backup::list_agent_names)
-                .await
-                .unwrap_or_default();
+            let agents = backup::list_agent_names(&state.docker).await;
 
             if agents.is_empty() {
                 tracing::debug!("auto-backup: no agents found, skipping cycle");
@@ -1780,80 +1745,72 @@ fn spawn_auto_backup_task(state: SharedState) {
                 let lock = state.agent_lock(name).await;
                 let _guard = lock.write().await;
 
-                let name_clone = name.clone();
                 let today = today_date.to_string();
                 let week_ago = seven_days_ago.clone();
                 let month_ago = thirty_days_ago.clone();
 
-                let result = tokio::task::spawn_blocking(move || {
-                    if let Some(age) = backup::container_age_secs(&name_clone) {
-                        if age < backup::MIN_AGE_FOR_BACKUP_SECS {
-                            tracing::debug!(agent = %name_clone, age_hours = age / 3600, "auto-backup: skipping young agent");
-                            return;
-                        }
+                if let Some(age) = backup::container_age_secs(&state.docker, name).await {
+                    if age < backup::MIN_AGE_FOR_BACKUP_SECS {
+                        tracing::debug!(agent = %name, age_hours = age / 3600, "auto-backup: skipping young agent");
+                        continue;
                     }
+                }
 
-                    let mut backups = match backup::list_backups(&name_clone) {
-                        Ok(b) => b,
+                let mut backups = match backup::list_backups(&state.docker, name).await {
+                    Ok(b) => b,
+                    Err(e) => {
+                        tracing::error!(agent = %name, error = %e, "auto-backup: failed to list backups");
+                        continue;
+                    }
+                };
+
+                let mut needed = Vec::new();
+
+                let has_daily_today = backups.iter().any(|b| {
+                    b.backup_type == crate::types::BackupType::Daily
+                        && b.created_at.starts_with(&today)
+                });
+                if !has_daily_today {
+                    needed.push(crate::types::BackupType::Daily);
+                }
+
+                let has_recent_weekly = backups.iter().any(|b| {
+                    b.backup_type == crate::types::BackupType::Weekly && b.created_at >= week_ago
+                });
+                if !has_recent_weekly {
+                    needed.push(crate::types::BackupType::Weekly);
+                }
+
+                let has_recent_monthly = backups.iter().any(|b| {
+                    b.backup_type == crate::types::BackupType::Monthly && b.created_at >= month_ago
+                });
+                if !has_recent_monthly {
+                    needed.push(crate::types::BackupType::Monthly);
+                }
+
+                if !needed.is_empty() {
+                    let _file_lock = match backup::agent_file_lock(name) {
+                        Ok(lock) => lock,
                         Err(e) => {
-                            tracing::error!(agent = %name_clone, error = %e, "auto-backup: failed to list backups");
-                            return;
+                            tracing::error!(agent = %name, error = %e, "auto-backup: failed to acquire lock");
+                            continue;
                         }
                     };
-
-                    let mut needed = Vec::new();
-
-                    let has_daily_today = backups.iter().any(|b| {
-                        b.backup_type == crate::types::BackupType::Daily
-                            && b.created_at.starts_with(&today)
-                    });
-                    if !has_daily_today {
-                        needed.push(crate::types::BackupType::Daily);
-                    }
-
-                    let has_recent_weekly = backups.iter().any(|b| {
-                        b.backup_type == crate::types::BackupType::Weekly && b.created_at >= week_ago
-                    });
-                    if !has_recent_weekly {
-                        needed.push(crate::types::BackupType::Weekly);
-                    }
-
-                    let has_recent_monthly = backups.iter().any(|b| {
-                        b.backup_type == crate::types::BackupType::Monthly && b.created_at >= month_ago
-                    });
-                    if !has_recent_monthly {
-                        needed.push(crate::types::BackupType::Monthly);
-                    }
-
-                    if !needed.is_empty() {
-                        let _file_lock = match backup::agent_file_lock(&name_clone) {
-                            Ok(lock) => lock,
-                            Err(e) => {
-                                tracing::error!(agent = %name_clone, error = %e, "auto-backup: failed to acquire lock");
-                                return;
+                    tracing::info!(agent = %name, types = ?needed, "auto-backup: creating backups");
+                    for (bt, result) in backup::create_backups_batch(&state.docker, name, needed).await {
+                        match result {
+                            Ok(info) => {
+                                tracing::info!(agent = %name, backup_type = %bt, backup_id = %info.id, "auto-backup: created");
+                                backups.insert(0, info);
                             }
-                        };
-                        tracing::info!(agent = %name_clone, types = ?needed, "auto-backup: creating backups");
-                        for (bt, result) in backup::create_backups_batch(&name_clone, needed) {
-                            match result {
-                                Ok(info) => {
-                                    tracing::info!(agent = %name_clone, backup_type = %bt, backup_id = %info.id, "auto-backup: created");
-                                    backups.insert(0, info);
-                                }
-                                Err(e) => {
-                                    tracing::error!(agent = %name_clone, backup_type = %bt, error = %e, "auto-backup: failed");
-                                }
+                            Err(e) => {
+                                tracing::error!(agent = %name, backup_type = %bt, error = %e, "auto-backup: failed");
                             }
                         }
                     }
-
-                    backup::cleanup_backups(&backups, &ret);
-                })
-                .await;
-
-                if let Err(e) = result {
-                    tracing::error!(agent = %name, error = %e, "auto-backup: task panicked");
                 }
+
+                backup::cleanup_backups(&state.docker, &backups, &ret).await;
             }
 
             tracing::info!(agent_count = agents.len(), "auto-backup: cycle complete");
@@ -1908,7 +1865,7 @@ fn spawn_update_check_task(state: SharedState) {
 
 // --- Server start ---
 
-pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: String, tunnel_url: Option<String>, config_dir: std::path::PathBuf, dev_mode: bool) {
+pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: String, tunnel_url: Option<String>, config_dir: std::path::PathBuf, docker: bollard::Docker, dev_mode: bool) {
     let env_config = docker::AgentEnvConfig {
         config_dir: config_dir.clone(),
         agents_dir: config_dir.join("agents"),
@@ -1920,12 +1877,13 @@ pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: S
     }
     let env_config_clone = env_config.clone();
     let agent_settings = load_settings().agents.clone();
-    tokio::task::spawn_blocking(move || {
-        docker::reconcile_containers(&env_config_clone, &|name| {
+    let docker_clone = docker.clone();
+    tokio::spawn(async move {
+        docker::reconcile_containers(&docker_clone, &env_config_clone, &|name| {
             agent_settings.get(name).is_none_or(|s| s.manage_agent_code)
-        });
+        }).await;
     });
-    let state = Arc::new(AppState::new(api_key, env_config, tunnel_url, dev_mode));
+    let state = Arc::new(AppState::new(api_key, env_config, docker, tunnel_url, dev_mode));
     let app = build_router(state.clone());
     spawn_auto_backup_task(state.clone());
     if dev_mode {
