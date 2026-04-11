@@ -79,6 +79,13 @@ When the user asks to add a widget without specifying which page, **choose a fit
 
 **Widgets must be compact and small.** Content should be top-left aligned, not centered. Prefer small, dense cards over large sprawling ones.
 
+Default widget style — matches the app shell appearance:
+```tsx
+<div className="rounded-xl border border-border bg-muted p-4">
+  {/* widget content */}
+</div>
+```
+
 Page components should use an auto-fit grid wrapper for their widgets. This ensures columns adjust to available width automatically:
 
 ```tsx
@@ -200,6 +207,8 @@ The dashboard reuses UI components, styles, and utilities from the main Vesta ap
 **Before every UI change**, read the full shadcn skill at [shadcn/SKILL.md](./shadcn/SKILL.md) — including the linked rule files (`styling.md`, `forms.md`, `composition.md`, `icons.md`) relevant to your change. This is not optional. The skill contains critical rules, correct patterns, and component APIs that you must follow. Re-read it every time, not just the first time.
 
 Try to keep everything compact, dashboard space is at a premium.
+
+**Make it fun.** Use emojis freely in labels, headers, and status text (🔥 streaks, ✅ completed, ⚠️ alerts, 💰 finance, etc.). Use colorful Tailwind classes — `text-green-500`, `bg-amber-100`, `border-pink-400` — for badges, indicators, progress bars, and anything that benefits from visual pop. The dashboard should feel lively and personal, not corporate. Semantic colors for structure, raw colors for personality.
 
 ## Rules
 

@@ -13,7 +13,7 @@
 
 function MetricCard({ title, value, change }: { title: string; value: string; change: string }) {
   return (
-    <div className="rounded-xl border bg-card p-6 shadow-sm">
+    <div className="rounded-xl border border-border bg-muted p-4">
       <h3 className="text-sm font-medium text-muted-foreground">{title}</h3>
       <p className="mt-2 text-2xl font-bold">{value}</p>
       <p className="text-xs text-muted-foreground mt-1">{change}</p>
@@ -25,7 +25,7 @@ function MetricCard({ title, value, change }: { title: string; value: string; ch
 
 function WeeklyChart() {
   return (
-    <div className="rounded-xl border bg-card p-6 shadow-sm col-span-2">
+    <div className="rounded-xl border border-border bg-muted p-4 col-span-2">
       <h3 className="text-sm font-medium text-muted-foreground">Weekly Activity</h3>
       <div className="mt-4 flex items-end gap-2 h-32">
         {[40, 65, 45, 80, 55, 90, 70].map((h, i) => (
@@ -43,7 +43,7 @@ function WeeklyChart() {
 
 function TaskList() {
   return (
-    <div className="rounded-xl border bg-card p-6 shadow-sm">
+    <div className="rounded-xl border border-border bg-muted p-4">
       <h3 className="text-sm font-medium text-muted-foreground">Tasks</h3>
       <div className="mt-3 space-y-2">
         {["Review PR #42", "Deploy v2.1", "Update docs"].map((t, i) => (
@@ -68,7 +68,7 @@ function EventLog() {
   ]
 
   return (
-    <div className="rounded-xl border bg-card p-6 shadow-sm col-span-full">
+    <div className="rounded-xl border border-border bg-muted p-4 col-span-full">
       <h3 className="text-sm font-medium text-muted-foreground">Recent Events</h3>
       <div className="mt-3 divide-y">
         {events.map((e, i) => (
@@ -89,13 +89,13 @@ function EventLog() {
 
 export function LayoutExamplePage() {
   return (
-    <>
+    <div className="grid gap-4 grid-cols-[repeat(auto-fit,minmax(280px,1fr))]">
       <MetricCard title="Users" value="1,234" change="+12% from last month" />
       <MetricCard title="Revenue" value="$5,678" change="+8% from last month" />
       <MetricCard title="Uptime" value="99.9%" change="Last 30 days" />
       <WeeklyChart />
       <TaskList />
       <EventLog />
-    </>
+    </div>
   )
 }
