@@ -16,17 +16,22 @@ pub struct AgentStatusCache {
     agents_rx: watch::Receiver<Vec<ListEntry>>,
     activity_tx: watch::Sender<HashMap<String, String>>,
     activity_rx: watch::Receiver<HashMap<String, String>>,
+    services_tx: watch::Sender<HashMap<String, Vec<String>>>,
+    services_rx: watch::Receiver<HashMap<String, Vec<String>>>,
 }
 
 impl AgentStatusCache {
     pub fn new() -> Self {
         let (agents_tx, agents_rx) = watch::channel(Vec::new());
         let (activity_tx, activity_rx) = watch::channel(HashMap::new());
+        let (services_tx, services_rx) = watch::channel(HashMap::new());
         Self {
             agents_tx,
             agents_rx,
             activity_tx,
             activity_rx,
+            services_tx,
+            services_rx,
         }
     }
 
@@ -36,6 +41,25 @@ impl AgentStatusCache {
 
     pub fn subscribe_activity(&self) -> watch::Receiver<HashMap<String, String>> {
         self.activity_rx.clone()
+    }
+
+    pub fn subscribe_services(&self) -> watch::Receiver<HashMap<String, Vec<String>>> {
+        self.services_rx.clone()
+    }
+
+    /// Notify subscribers that services changed for an agent.
+    pub fn update_services(&self, all_services: &HashMap<String, HashMap<String, u16>>) {
+        let names_only: HashMap<String, Vec<String>> = all_services
+            .iter()
+            .map(|(agent, svc_map)| (agent.clone(), svc_map.keys().cloned().collect()))
+            .collect();
+        self.services_tx.send_if_modified(|current| {
+            if *current == names_only {
+                return false;
+            }
+            *current = names_only;
+            true
+        });
     }
 }
 

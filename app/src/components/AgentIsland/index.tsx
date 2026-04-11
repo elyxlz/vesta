@@ -4,8 +4,6 @@ import { cn } from "@/lib/utils";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { AgentIslandExpanded } from "./Expanded";
 import { AgentIslandCollapsed } from "./Collapsed";
-import { agentIslandContentTransition } from "./transitions";
-
 const springTransition = {
   type: "spring" as const,
   bounce: 0.1,
@@ -71,15 +69,7 @@ export function AgentIsland() {
           )}
         >
           <LayoutGroup id="agent-island">
-            <motion.div
-              transition={agentIslandContentTransition}
-              className="will-change-[transform,opacity]"
-              initial={{ opacity: 0 }}
-              animate={{
-                opacity: 1,
-                transition: { ...agentIslandContentTransition, delay: 0.05 },
-              }}
-            >
+            <div className="will-change-transform">
               {expanded ? (
                 <AgentIslandExpanded
                   name={name}
@@ -94,7 +84,7 @@ export function AgentIsland() {
                   onExpand={() => setExpanded(true)}
                 />
               )}
-            </motion.div>
+            </div>
           </LayoutGroup>
         </div>
       </motion.div>

@@ -10,9 +10,7 @@ import {
   clearConnection,
   getConnection,
   initConnection,
-  authHeaders,
 } from "@/lib/connection";
-import { ensureFreshToken } from "@/lib/token-refresh";
 import { useTauri } from "@/providers/TauriProvider";
 
 interface AuthContextValue {
@@ -26,21 +24,8 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-async function checkStoredConnection(): Promise<boolean> {
-  const conn = getConnection();
-  if (!conn) return false;
-
-  const ok = await ensureFreshToken();
-  if (!ok) return false;
-
-  try {
-    const resp = await fetch(`${conn.url}/health`, {
-      headers: authHeaders(),
-    });
-    return resp.ok;
-  } catch {
-    return false;
-  }
+function hasStoredConnection(): boolean {
+  return getConnection() !== null;
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -76,8 +61,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         } catch {}
       }
 
-      const ok = await checkStoredConnection();
-      if (ok) {
+      if (hasStoredConnection()) {
         setConnected(true);
       }
 

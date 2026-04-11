@@ -1,4 +1,5 @@
-import { motion, useTransform } from "motion/react";
+import { motion, useMotionValueEvent, useTransform } from "motion/react";
+import { useState } from "react";
 import { Carousel } from "@/lib/Carousel/index.mjs";
 import { useCarousel } from "@/lib/Carousel/context.mjs";
 import { useTickerItem } from "@/lib/Ticker/use-ticker-item.mjs";
@@ -32,10 +33,16 @@ function Pagination() {
 
 function CarouselCard({ agent }: { agent: AgentInfo }) {
   const { offset } = useTickerItem();
+  const [isCentered, setIsCentered] = useState(() => Math.abs(offset.get()) < ITEM_STRIDE / 2);
 
   const scale = useTransform(offset, (v: number) => {
     const distance = Math.abs(v);
     return 1 - 0.15 * Math.min(distance / ITEM_STRIDE, 1);
+  });
+
+  useMotionValueEvent(offset, "change", (v) => {
+    const centered = Math.abs(v) < ITEM_STRIDE / 2;
+    setIsCentered(centered);
   });
 
   return (
@@ -43,7 +50,7 @@ function CarouselCard({ agent }: { agent: AgentInfo }) {
       className="flex h-full items-center justify-center"
       style={{ width: `${CARD_WIDTH}px`, aspectRatio: "1/1", scale }}
     >
-      <AgentCard agent={agent} />
+      <AgentCard agent={agent} enableTracking={isCentered} />
     </motion.div>
   );
 }

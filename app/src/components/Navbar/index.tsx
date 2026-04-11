@@ -1,13 +1,12 @@
 import { useCallback } from "react";
-import { Home, Plus } from "lucide-react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { Home, Plus, SlidersHorizontal } from "lucide-react";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useGateway } from "@/providers/GatewayProvider";
 import { useAuth } from "@/providers/AuthProvider";
 import { useLayout } from "@/stores/use-layout";
 
 import { Settings } from "@/components/Settings";
 import { StatusPill } from "@/components/StatusPill";
-import { UpdateBar } from "@/components/UpdateBar";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
 import {
@@ -16,18 +15,15 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 
+// ── Shell (no router dependency) ──────────────────────────────
+
 interface NavbarProps {
+  leading?: React.ReactNode;
   center?: React.ReactNode;
   trailing?: React.ReactNode;
-  leadingExtra?: React.ReactNode;
 }
 
-export function Navbar({ center, trailing, leadingExtra }: NavbarProps = {}) {
-  const { connected } = useAuth();
-  const { agents } = useGateway();
-  const navigate = useNavigate();
-  const location = useLocation();
-  const isHome = location.pathname === "/home";
+export function Navbar({ leading, center, trailing }: NavbarProps) {
   const setNavbarHeight = useLayout((s) => s.setNavbarHeight);
 
   const measureRef = useCallback((node: HTMLDivElement | null) => {
@@ -53,33 +49,7 @@ export function Navbar({ center, trailing, leadingExtra }: NavbarProps = {}) {
         className="relative flex flex-row items-center justify-between"
       >
         <div data-tauri-drag-region className="flex flex-1 items-center gap-2">
-          {connected && isHome && (
-            <Button
-              variant="secondary"
-              size="lg"
-              onClick={() => navigate("/new")}
-            >
-              <Plus data-icon="inline-start" />
-              new agent
-            </Button>
-          )}
-          {connected && agents.length > 0 && !isHome && (
-            <ButtonGroup>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="icon-lg"
-                    onClick={() => navigate("/home")}
-                  >
-                    <Home />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>home</TooltipContent>
-              </Tooltip>
-            </ButtonGroup>
-          )}
-          {leadingExtra}
+          {leading}
         </div>
 
         {center && (
@@ -89,15 +59,96 @@ export function Navbar({ center, trailing, leadingExtra }: NavbarProps = {}) {
         )}
 
         <div data-tauri-drag-region className="flex items-center gap-2">
-          {trailing ?? (
-            <>
-              {connected && <StatusPill />}
-              {connected && <Settings />}
-            </>
-          )}
+          {trailing}
         </div>
       </div>
-      <UpdateBar />
     </div>
+  );
+}
+
+// ── Router-dependent defaults ─────────────────────────────────
+
+export function NavbarLeading({ extra }: { extra?: React.ReactNode }) {
+  const { connected } = useAuth();
+  const { agentsFetched, agents } = useGateway();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const isHome = location.pathname === "/home";
+
+  return (
+    <>
+      {connected && isHome && agentsFetched && (
+        <Button
+          variant="secondary"
+          size="lg"
+          onClick={() => navigate("/new")}
+        >
+          <Plus data-icon="inline-start" />
+          new agent
+        </Button>
+      )}
+      {connected && agentsFetched && agents.length > 0 && !isHome && (
+        <ButtonGroup>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="icon-lg"
+                onClick={() => navigate("/home")}
+              >
+                <Home />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>home</TooltipContent>
+          </Tooltip>
+        </ButtonGroup>
+      )}
+      {extra}
+    </>
+  );
+}
+
+function AgentSettingsButton() {
+  const navigate = useNavigate();
+  const { name } = useParams<{ name?: string }>();
+  if (!name) return null;
+  return (
+    <Button
+      variant="default"
+      className="w-full justify-start"
+      onClick={() => navigate(`/agent/${encodeURIComponent(name)}/settings`)}
+    >
+      <SlidersHorizontal data-icon="inline-start" />
+      {name}'s settings
+    </Button>
+  );
+}
+
+export function NavbarTrailing() {
+  const { connected } = useAuth();
+
+  return (
+    <>
+      {connected && <StatusPill />}
+      {connected && <Settings agentSettingsSlot={<AgentSettingsButton />} />}
+    </>
+  );
+}
+
+// ── Composed Navbar for use inside router ─────────────────────
+
+interface ConnectedNavbarProps {
+  center?: React.ReactNode;
+  trailing?: React.ReactNode;
+  leadingExtra?: React.ReactNode;
+}
+
+export function ConnectedNavbar({ center, trailing, leadingExtra }: ConnectedNavbarProps) {
+  return (
+    <Navbar
+      leading={<NavbarLeading extra={leadingExtra} />}
+      center={center}
+      trailing={trailing ?? <NavbarTrailing />}
+    />
   );
 }

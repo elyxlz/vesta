@@ -56,10 +56,14 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
     },
   );
 
+  useEffect(() => {
+    handshakeRef.current = false;
+  }, [iframeKey]);
+
   const conn = getConnection();
   const dashboardUrl =
     status === "ready" && conn
-      ? `${conn.url}/agents/${encodeURIComponent(name)}/dashboard/?token=${encodeURIComponent(conn.accessToken)}`
+      ? `${conn.url}/agents/${encodeURIComponent(name)}/dashboard/`
       : null;
 
   const sendContext = () => {
@@ -81,6 +85,8 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
       );
   };
 
+  const handshakeRef = useRef(false);
+
   useEffect(() => {
     const handler = (e: MessageEvent) => {
       if (
@@ -88,6 +94,7 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
         e.data?.type === "vesta-auth-request" ||
         e.data?.type === "vesta-layout-request"
       ) {
+        handshakeRef.current = true;
         sendContext();
       }
     };
@@ -142,7 +149,17 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
       className={`w-full h-full bg-transparent transition-opacity duration-200 ${loaded ? "opacity-100" : "opacity-0"}`}
       onLoad={() => {
         sendContext();
-        setLoaded(true);
+        if (handshakeRef.current) {
+          setLoaded(true);
+        } else {
+          setTimeout(() => {
+            if (handshakeRef.current) {
+              setLoaded(true);
+            } else {
+              setStatus("error");
+            }
+          }, 500);
+        }
       }}
       onError={() => setStatus("error")}
     />

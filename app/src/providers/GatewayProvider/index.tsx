@@ -6,9 +6,10 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { getConnection } from "@/lib/connection";
+import { getConnection, authHeaders } from "@/lib/connection";
 import { ensureFreshToken } from "@/lib/token-refresh";
 import { useAuth } from "@/providers/AuthProvider";
+import { VersionMismatchDialog } from "@/components/VersionMismatchDialog";
 import type { AgentInfo } from "@/lib/types";
 
 const RECONNECT_BASE_MS = 1000;
@@ -17,6 +18,7 @@ const RECONNECT_MAX_MS = 30000;
 interface GatewayContextValue {
   reachable: boolean;
   gatewayVersion: string;
+  versionChecked: boolean;
   agents: AgentInfo[];
   agentsFetched: boolean;
   send: (event: object) => boolean;
@@ -27,6 +29,7 @@ const GatewayContext = createContext<GatewayContextValue | null>(null);
 const disconnectedValue: GatewayContextValue = {
   reachable: false,
   gatewayVersion: "",
+  versionChecked: true,
   agents: [],
   agentsFetched: false,
   send: () => false,
@@ -40,8 +43,10 @@ function controlWsUrl(): string {
 }
 
 function ConnectedGateway({ children }: { children: ReactNode }) {
+  const { loading } = useAuth();
   const [reachable, setReachable] = useState(false);
   const [gatewayVersion, setGatewayVersion] = useState("");
+  const [versionChecked, setVersionChecked] = useState(false);
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [agentsFetched, setAgentsFetched] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
@@ -65,6 +70,26 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
         reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS);
         return;
       }
+
+      // Fetch version early via HTTP before WS connects
+      try {
+        const conn = getConnection();
+        if (conn) {
+          const resp = await fetch(`${conn.url}/version`, { headers: authHeaders(), signal: AbortSignal.timeout(5000) });
+          if (!cancelled && resp.ok) {
+            const data = await resp.json();
+            if (data.version) {
+              setGatewayVersion(data.version);
+              setVersionChecked(true);
+              // Skip WS if version mismatch — the dialog will render instead
+              if (data.version !== __APP_VERSION__) return;
+            }
+          }
+        }
+      } catch {}
+      if (!cancelled) setVersionChecked(true);
+
+      if (cancelled) return;
 
       socket = new WebSocket(url);
       wsRef.current = socket;
@@ -129,17 +154,22 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
     return true;
   };
 
+  const versionMismatch = !loading && gatewayVersion && gatewayVersion !== __APP_VERSION__;
+
   return (
     <GatewayContext.Provider
       value={{
         reachable,
         gatewayVersion,
+        versionChecked,
         agents,
         agentsFetched,
         send,
       }}
     >
-      {children}
+      {versionMismatch
+        ? <VersionMismatchDialog gatewayVersion={gatewayVersion} />
+        : children}
     </GatewayContext.Provider>
   );
 }

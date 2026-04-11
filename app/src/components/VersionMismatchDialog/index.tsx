@@ -1,28 +1,97 @@
+import { useState } from "react";
+import { Footer } from "@/components/Footer";
+import { Navbar } from "@/components/Navbar";
+import { Settings } from "@/components/Settings";
+import { StatusPill } from "@/components/StatusPill";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
+import { Empty, EmptyHeader, EmptyTitle, EmptyDescription } from "@/components/ui/empty";
+import { apiFetch } from "@/api/client";
+import { isTauri } from "@/lib/env";
 
 interface VersionMismatchDialogProps {
   gatewayVersion: string;
 }
 
+async function updateApp(gatewayVersion: string) {
+  if (!isTauri) {
+    window.location.reload();
+    return;
+  }
+
+  const { detectPlatform } = await import("@/lib/platform");
+  if (detectPlatform() === "linux") {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("install_update", { version: gatewayVersion });
+    return;
+  }
+
+  const { check } = await import("@tauri-apps/plugin-updater");
+  const update = await check();
+  if (update) {
+    await update.downloadAndInstall();
+  }
+}
+
 export function VersionMismatchDialog({
   gatewayVersion,
 }: VersionMismatchDialogProps) {
+  const appIsOlder = gatewayVersion > __APP_VERSION__;
+  const hint = appIsOlder ? "update your app" : "update your gateway";
+  const [updating, setUpdating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleUpdateGateway = async () => {
+    setUpdating(true);
+    setError(null);
+    try {
+      await apiFetch("/self-update", { method: "POST" });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "update failed");
+      setUpdating(false);
+    }
+  };
+
+  const handleUpdateApp = async () => {
+    setUpdating(true);
+    setError(null);
+    try {
+      await updateApp(gatewayVersion);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "update failed");
+      setUpdating(false);
+    }
+  };
+
   return (
-    <div className="fixed inset-0 z-[100000] flex items-center justify-center bg-black/30 supports-backdrop-filter:backdrop-blur-sm">
-      <div className="grid w-full max-w-xs gap-6 rounded-4xl bg-popover p-6 text-popover-foreground shadow-xl ring-1 ring-foreground/5 sm:max-w-md dark:ring-foreground/10">
-        <div className="grid place-items-center gap-1.5 text-center">
-          <h2 className="font-heading text-lg font-medium">
-            Version Mismatch
-          </h2>
-          <p className="text-sm text-balance text-muted-foreground">
-            This app is v{__APP_VERSION__} but the gateway is v{gatewayVersion}.
-            Please update to continue.
-          </p>
-        </div>
-        <div className="flex justify-end">
-          <Button>Update</Button>
-        </div>
-      </div>
-    </div>
+    <>
+      <Navbar
+        center={
+          <span className="text-4xl font-serif font-medium tracking-tight">
+            Vesta
+          </span>
+        }
+        trailing={<><StatusPill /><Settings /></>}
+      />
+      <Empty>
+        <EmptyHeader>
+          <EmptyTitle>version mismatch</EmptyTitle>
+          <EmptyDescription>
+            app v{__APP_VERSION__}, gateway v{gatewayVersion}
+          </EmptyDescription>
+        </EmptyHeader>
+        <Button
+          onClick={appIsOlder ? handleUpdateApp : handleUpdateGateway}
+          disabled={updating}
+        >
+          {updating && <Spinner className="size-4" />}
+          {hint}
+        </Button>
+        {error && (
+          <p className="text-sm text-destructive">{error}</p>
+        )}
+      </Empty>
+      <Footer />
+    </>
   );
 }

@@ -337,7 +337,7 @@ export function Orb({
       const cy = rect.top + rect.height / 2;
       targetTrackRef.current = {
         x: clamp((e.clientX - cx) / (window.innerWidth * 0.4), -1, 1),
-        y: clamp((e.clientY - cy) / (window.innerHeight * 0.4), -1, 1),
+        y: clamp(-(e.clientY - cy) / (window.innerHeight * 0.4), -1, 1),
       };
     };
 

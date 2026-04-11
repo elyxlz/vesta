@@ -484,17 +484,6 @@ async fn handle_control_command(state: &SharedState, text: &str) {
     };
     let cmd_type = parsed.get("type").and_then(|v| v.as_str()).unwrap_or("");
     match cmd_type {
-        "self_update" => {
-            if state.updating.swap(true, std::sync::atomic::Ordering::SeqCst) {
-                return;
-            }
-            tracing::info!("self-update requested via control websocket");
-            let result = tokio::task::spawn_blocking(self_update::perform_update).await;
-            state.updating.store(false, std::sync::atomic::Ordering::SeqCst);
-            if let Ok(Err(err)) = result {
-                tracing::error!(error = %err, "self-update failed");
-            }
-        }
         _ => {
             tracing::debug!(cmd_type, "unknown control command");
         }
@@ -1159,6 +1148,7 @@ async fn register_service_handler(
 
     settings.services.entry(name.clone()).or_default().insert(service_name.clone(), port);
     save_settings(&settings);
+    state.agent_status_cache.update_services(&settings.services);
     tracing::info!(agent = %name, service = %service_name, port, "service registered");
     Ok(Json(serde_json::json!({"ok": true, "port": port})))
 }
@@ -1175,6 +1165,7 @@ async fn unregister_service_handler(
         }
     }
     save_settings(&settings);
+    state.agent_status_cache.update_services(&settings.services);
     tracing::info!(agent = %name, service = %service_name, "service unregistered");
     Ok(ok_json())
 }
@@ -1218,6 +1209,7 @@ async fn agent_proxy_handler(
 
     // Check if the first path segment matches a registered service.
     // If so, route directly to that service's port with the prefix stripped.
+    // Service requests are unauthenticated (assets load freely in iframes).
     let first_segment = path.split('/').next().unwrap_or("");
     let (target_port, stripped_path, is_service) = if !first_segment.is_empty() {
         if let Some(service_port) = resolve_service_port(&state, &name, first_segment).await {
@@ -1230,6 +1222,10 @@ async fn agent_proxy_handler(
     } else {
         (agent_port, format!("/{}", path), false)
     };
+
+    if !is_service && !check_request_auth(&request, &state.api_key) {
+        return Err(err_response(StatusCode::UNAUTHORIZED, "unauthorized"));
+    }
 
     // Append query string.
     let mut target_path = stripped_path;
@@ -1262,19 +1258,30 @@ async fn agent_proxy_handler(
         }))
     } else {
         drop(guard);
-        let token = if is_service {
-            crate::service_proxy::extract_token(request.uri())
-        } else {
-            None
-        };
         let resp =
             forward_http_to_container(&state.http_client, target_port, &target_path, request, agent_token.as_deref())
                 .await?;
-        match token {
-            Some(token) => crate::service_proxy::rewrite_asset_urls(resp, &token).await,
-            None => Ok(resp),
-        }
+        Ok(resp)
     }
+}
+
+fn check_request_auth(request: &Request, api_key: &str) -> bool {
+    let headers = request.headers();
+    let bearer_ok = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(|token| verify_token(token, api_key))
+        .unwrap_or(false);
+    if bearer_ok {
+        return true;
+    }
+    request
+        .uri()
+        .query()
+        .and_then(|q| q.split('&').find_map(|p| p.strip_prefix("token=")))
+        .map(|t| verify_token(t, api_key))
+        .unwrap_or(false)
 }
 
 async fn forward_http_to_container(
@@ -1767,11 +1774,17 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/settings/backup", axum::routing::delete(delete_agent_backup_settings_handler))
         .route("/settings/auto-backup", get(get_auto_backup_handler))
         .route("/settings/auto-backup", axum::routing::put(set_auto_backup_handler))
-        .route("/agents/{name}/{*path}", any(agent_proxy_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
         ));
+
+    // Agent wildcard proxy lives outside the auth middleware so that
+    // registered-service assets (dashboard, etc.) can load without tokens.
+    // Non-service requests are authenticated inside the handler.
+    let proxy = Router::new()
+        .route("/agents/{name}/{*path}", any(agent_proxy_handler))
+        .with_state(state.clone());
 
     // Service registry: localhost (agent containers) can access without auth,
     // external requests (app frontend) require auth
@@ -1789,6 +1802,7 @@ pub fn build_router(state: SharedState) -> Router {
         .merge(public)
         .merge(services)
         .merge(protected)
+        .merge(proxy)
         .layer(
             tower_http::cors::CorsLayer::new()
                 .allow_origin(tower_http::cors::Any)

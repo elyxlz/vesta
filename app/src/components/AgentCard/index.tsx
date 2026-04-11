@@ -15,9 +15,10 @@ import { cn } from "@/lib/utils";
 
 interface AgentCardProps {
   agent: AgentInfo;
+  enableTracking?: boolean;
 }
 
-export function AgentCard({ agent }: AgentCardProps) {
+export function AgentCard({ agent, enableTracking = false }: AgentCardProps) {
   const navigate = useNavigate();
 
   const opState = useAgentOps((s) => s.getOp(agent.name));
@@ -29,7 +30,7 @@ export function AgentCard({ agent }: AgentCardProps) {
       onClick={() => navigate(`/agent/${agent.name}`)}
     >
       <CardContent className="flex flex-col items-center gap-3 px-5 pt-0 pb-0">
-        <Orb state={orbState} size={112} />
+        <Orb state={orbState} size={112} enableTracking={enableTracking} />
         <CardTitle className="font-serif text-center text-2xl -mt-3 font-medium tracking-tight text-foreground">
           {agent.name}
         </CardTitle>

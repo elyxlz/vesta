@@ -12,6 +12,7 @@ export function Shell({ className, ...props }: React.ComponentProps<"div">) {
 
   return (
     <div
+      data-fullscreen={fullscreen}
       className={cn(
         "text-card-foreground overflow-hidden contain-paint",
         fullscreen

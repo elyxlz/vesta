@@ -7,7 +7,6 @@ import {
   LogOut,
   SlidersHorizontal,
 } from "lucide-react";
-import { useNavigate, useParams } from "react-router-dom";
 import {
   Dialog,
   DialogContent,
@@ -28,11 +27,10 @@ import { StatusPill } from "@/components/StatusPill";
 interface SettingsDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  agentSettingsSlot?: React.ReactNode;
 }
 
-export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
-  const navigate = useNavigate();
-  const { name: activeAgentName } = useParams<{ name?: string }>();
+export function SettingsDialog({ open, onOpenChange, agentSettingsSlot }: SettingsDialogProps) {
   const { theme, setTheme } = useTheme();
   const { disconnect } = useAuth();
   const { reachable, gatewayVersion } = useGateway();
@@ -57,22 +55,10 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
           </DialogDescription>
         </DialogHeader>
 
-        {activeAgentName && (
-          <>
-            <Button
-              variant="default"
-              className="w-full justify-start"
-              onClick={() => {
-                onOpenChange(false);
-                navigate(
-                  `/agent/${encodeURIComponent(activeAgentName)}/settings`,
-                );
-              }}
-            >
-              <SlidersHorizontal data-icon="inline-start" />
-              {activeAgentName}'s settings
-            </Button>
-          </>
+        {agentSettingsSlot && (
+          <div onClick={() => onOpenChange(false)}>
+            {agentSettingsSlot}
+          </div>
         )}
 
         <Field orientation="vertical" className="sm:flex-row sm:items-center">
@@ -132,7 +118,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   );
 }
 
-export function Settings() {
+export function Settings({ agentSettingsSlot }: { agentSettingsSlot?: React.ReactNode }) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -140,7 +126,7 @@ export function Settings() {
       <Button variant="outline" size="icon-lg" onClick={() => setOpen(true)}>
         <SettingsIcon />
       </Button>
-      <SettingsDialog open={open} onOpenChange={setOpen} />
+      <SettingsDialog open={open} onOpenChange={setOpen} agentSettingsSlot={agentSettingsSlot} />
     </>
   );
 }

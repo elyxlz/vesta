@@ -5,26 +5,20 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { LoadingScreen } from "@/components/LoadingScreen";
 import { AuthProvider, useAuth } from "@/providers/AuthProvider";
 import { GatewayProvider, useGateway } from "@/providers/GatewayProvider";
-import { VersionMismatchDialog } from "@/components/VersionMismatchDialog";
 import { isTauri } from "@/lib/env";
 import { cn } from "@/lib/utils";
 import { router } from "@/router";
 
-function VersionMismatchGuard() {
-  const { gatewayVersion } = useGateway();
-  if (!gatewayVersion || gatewayVersion === __APP_VERSION__) return null;
-  return <VersionMismatchDialog gatewayVersion={gatewayVersion} />;
-}
-
 function AppContent() {
   const { loading, initialized, setLoading } = useAuth();
+  const { versionChecked } = useGateway();
 
   return (
     <AnimatePresence mode="wait">
       {loading ? (
         <LoadingScreen
           key="loading"
-          ready={initialized}
+          ready={initialized && versionChecked}
           onFinished={() => setLoading(false)}
         />
       ) : (
@@ -60,7 +54,6 @@ export default function App() {
           <TooltipProvider delayDuration={300}>
             <AuthProvider>
               <GatewayProvider>
-                <VersionMismatchGuard />
                 <AppContent />
               </GatewayProvider>
             </AuthProvider>

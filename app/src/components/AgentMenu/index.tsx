@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { MoreVertical } from "lucide-react";
+import { MoreVertical, SlidersHorizontal } from "lucide-react";
 import { SettingsDialog } from "@/components/Settings";
 import { Button } from "@/components/ui/button";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -55,7 +55,12 @@ export function AgentMenu() {
           onOpenChange={setOpen}
           trigger={trigger}
         />
-        <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+        <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} agentSettingsSlot={
+          <Button variant="default" className="w-full justify-start" onClick={() => navigate(`/agent/${encodeURIComponent(name)}/settings`)}>
+            <SlidersHorizontal data-icon="inline-start" />
+            {name}'s settings
+          </Button>
+        } />
       </>
     );
   }
@@ -68,7 +73,12 @@ export function AgentMenu() {
         onOpenChange={setOpen}
         trigger={trigger}
       />
-      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} agentSettingsSlot={
+        <Button variant="default" className="w-full justify-start" onClick={() => navigate(`/agent/${encodeURIComponent(name)}/settings`)}>
+          <SlidersHorizontal data-icon="inline-start" />
+          {name}'s settings
+        </Button>
+      } />
     </>
   );
 }

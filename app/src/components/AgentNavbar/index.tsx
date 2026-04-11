@@ -3,7 +3,7 @@ import { useMatch, useNavigate } from "react-router-dom";
 import { KeyRound, LayoutDashboard, MessageSquare } from "lucide-react";
 import { AgentIsland } from "@/components/AgentIsland";
 import { AgentMenu } from "@/components/AgentMenu";
-import { Navbar } from "@/components/Navbar";
+import { ConnectedNavbar } from "@/components/Navbar";
 import { StatusPill } from "@/components/StatusPill";
 import { Button } from "@/components/ui/button";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -43,7 +43,7 @@ export function AgentNavbar({
     name.length > 0;
 
   return (
-    <Navbar
+    <ConnectedNavbar
       leadingExtra={
         showDashButton ? (
           <Button
@@ -79,6 +79,7 @@ export function AgentNavbar({
       trailing={
         connected ? (
           <div className="flex items-center gap-2">
+            <StatusPill showHostname={false} />
             {showChatButton && (
               <Button
                 variant="default"
@@ -98,7 +99,6 @@ export function AgentNavbar({
                 {!isMobile && "chat"}
               </Button>
             )}
-            <StatusPill showHostname={false} />
             <div data-agent-menu className="flex items-center">
               <AgentMenu />
             </div>

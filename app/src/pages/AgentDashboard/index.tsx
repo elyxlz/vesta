@@ -28,7 +28,7 @@ export function AgentDashboard() {
       >
         <ResizablePanel defaultSize="70%" minSize="300px">
           <div className="h-full">
-            <Dashboard fullscreen />
+            <Dashboard fullscreen={false} />
           </div>
         </ResizablePanel>
 
