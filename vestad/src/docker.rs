@@ -67,7 +67,7 @@ const LABEL_AGENT_NAME: &str = "vesta.agent_name";
 
 pub const OAUTH_CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 pub const OAUTH_REDIRECT_URI: &str = "https://console.anthropic.com/oauth/code/callback";
-pub const OAUTH_TOKEN_URL: &str = "https://api.anthropic.com/v1/oauth/token";
+pub const OAUTH_TOKEN_URL: &str = "https://console.anthropic.com/v1/oauth/token";
 pub const OAUTH_AUTHORIZE_URL: &str = "https://claude.ai/oauth/authorize";
 
 // --- Expected container config (single source of truth) ---
@@ -1273,13 +1273,16 @@ pub async fn complete_auth_flow(client: &reqwest::Client, input: &str, code_veri
         None => (input, expected_state),
     };
 
+    if pasted_state != expected_state {
+        return Err(DockerError::Failed("state mismatch — possible CSRF, please retry auth".into()));
+    }
+
     let body = serde_json::json!({
         "grant_type": "authorization_code",
         "code": auth_code,
         "client_id": OAUTH_CLIENT_ID,
         "redirect_uri": OAUTH_REDIRECT_URI,
         "code_verifier": code_verifier,
-        "state": pasted_state,
     });
 
     let response = client.post(OAUTH_TOKEN_URL)
