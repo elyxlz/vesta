@@ -179,7 +179,6 @@ async def _usage_handler(request: web.Request) -> web.Response:
         return web.json_response({"error": str(e)}, status=502)
 
 
-
 @web.middleware
 async def _auth_middleware(request: web.Request, handler):
     expected = request.app.get("agent_token")
@@ -204,7 +203,6 @@ async def start_ws_server(
     app.router.add_get("/history", _history_handler)
     app.router.add_get("/search", _search_handler)
     app.router.add_get("/usage", _usage_handler)
-
 
     runner = web.AppRunner(app)
     await runner.setup()

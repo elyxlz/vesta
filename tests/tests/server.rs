@@ -175,7 +175,8 @@ fn inject_token_marks_authenticated() {
 
     inject_fake_token(&c, &agent.name);
     let st = c.agent_status(&agent.name).unwrap();
-    assert!(st.authenticated);
+    // authenticated agents get status "starting" or "alive", not "not_authenticated"
+    assert_ne!(st.status, "not_authenticated");
 }
 
 // ── Backup & Restore ───────────────────────────────────────────
@@ -300,8 +301,9 @@ fn rebuild_preserves_auth() {
     c.rebuild_agent(&agent.name).unwrap();
 
     let st = c.agent_status(&agent.name).unwrap();
-    assert_eq!(st.status, "running");
-    assert!(st.authenticated);
+    // rebuild preserves auth: status should not be "not_authenticated"
+    assert_ne!(st.status, "not_authenticated");
+    assert_ne!(st.status, "not_found");
 }
 
 // ── Multi-agent ────────────────────────────────────────────────
@@ -391,20 +393,17 @@ fn creation_flow() {
 
     // Agent is auto-started by create, no separate start needed
     let st = c.agent_status(&agent.name).unwrap();
-    assert_eq!(st.status, "running");
-    assert!(!st.authenticated);
+    assert_eq!(st.status, "not_authenticated");
 
     // Simulate OAuth: inject token then restart + wait (as complete_auth would)
     inject_fake_token(&c, &agent.name);
-    assert!(c.agent_status(&agent.name).unwrap().authenticated);
+    assert_ne!(c.agent_status(&agent.name).unwrap().status, "not_authenticated");
 
     c.restart_agent(&agent.name).unwrap();
     c.wait_ready(&agent.name, 60).unwrap();
 
     let st = c.agent_status(&agent.name).unwrap();
-    assert_eq!(st.status, "running");
-    assert!(st.authenticated);
-    assert!(st.agent_ready);
+    assert_eq!(st.status, "alive");
 }
 
 #[tokio::test]

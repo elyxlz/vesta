@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { MoreVertical, SlidersHorizontal } from "lucide-react";
 import { SettingsDialog } from "@/components/Settings";
@@ -52,12 +52,14 @@ export function AgentMenu() {
   );
 
   const debugJson = import.meta.env.DEV ? JSON.stringify({ gateway: { reachable: gateway.reachable, version: gateway.gatewayVersion, port: gateway.gatewayPort }, agents: gateway.agents }, null, 2) : "";
-  const lastUpdatedRef = useRef(new Date().toLocaleTimeString());
+  const [lastUpdated, setLastUpdated] = useState(() => new Date().toLocaleTimeString());
   const prevJsonRef = useRef(debugJson);
-  if (import.meta.env.DEV && debugJson !== prevJsonRef.current) {
-    prevJsonRef.current = debugJson;
-    lastUpdatedRef.current = new Date().toLocaleTimeString();
-  }
+  useEffect(() => {
+    if (import.meta.env.DEV && debugJson !== prevJsonRef.current) {
+      prevJsonRef.current = debugJson;
+      setLastUpdated(new Date().toLocaleTimeString());
+    }
+  }, [debugJson]);
 
   const agentSettingsSlot = (
     <Button variant="default" className="w-full justify-start" onClick={() => navigate(`/agent/${encodeURIComponent(name)}/settings`)}>
@@ -89,7 +91,7 @@ export function AgentMenu() {
           <DialogContent className="max-w-lg max-h-[80vh] overflow-auto" aria-describedby={undefined}>
             <DialogHeader>
               <DialogTitle>control socket</DialogTitle>
-              <p className="text-xs text-muted-foreground">last updated: {lastUpdatedRef.current}</p>
+              <p className="text-xs text-muted-foreground">last updated: {lastUpdated}</p>
             </DialogHeader>
             <pre className="text-xs whitespace-pre-wrap break-all">
               {debugJson}

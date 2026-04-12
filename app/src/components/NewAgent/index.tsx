@@ -91,11 +91,8 @@ export function NewAgent() {
     setStep("creating");
     setCreatingMsg(0);
 
-    let created = false;
-
     try {
       await createAgent(normalized);
-      created = true;
       const nextAuthStart = await authenticate(normalized);
       setAuthStart(nextAuthStart);
       setStep("auth");
@@ -147,7 +144,7 @@ export function NewAgent() {
 
                 try {
                   await deleteAgent(agentToRemove);
-                } catch {}
+                } catch { /* best-effort cleanup */ }
               }}
               onComplete={async () => {
                 setAuthStart(null);

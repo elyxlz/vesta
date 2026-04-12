@@ -4,7 +4,7 @@ import { useGateway } from "@/providers/GatewayProvider";
 
 export function NavigationGuard() {
   const { initialized, connected } = useAuth();
-  const { reachable, agentsFetched, agents } = useGateway();
+  const { agentsFetched, agents } = useGateway();
   const location = useLocation();
 
   if (!initialized) return null;

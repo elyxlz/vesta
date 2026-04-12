@@ -57,7 +57,7 @@ export const useAgentOps = create<AgentOpsStore>((set, get) => ({
 
   removeAgent: (name) =>
     set((s) => {
-      const { [name]: _, ...rest } = s.states;
+      const { [name]: _removed, ...rest } = s.states;
       return { states: rest };
     }),
 

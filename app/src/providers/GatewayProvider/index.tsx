@@ -89,7 +89,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
             }
           }
         }
-      } catch { }
+      } catch { /* version check failed, proceed with WS */ }
       if (!cancelled) setVersionChecked(true);
 
       if (cancelled) return;

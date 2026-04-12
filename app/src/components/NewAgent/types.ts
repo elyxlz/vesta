@@ -1,5 +1,3 @@
-import type { AuthStartResult } from "@/api";
-
 export type Step = "platform" | "name" | "creating" | "auth" | "done";
 
 export const CREATING_MESSAGES = [

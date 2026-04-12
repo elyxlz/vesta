@@ -5,7 +5,6 @@ import {
   Moon,
   Monitor,
   LogOut,
-  SlidersHorizontal,
 } from "lucide-react";
 import {
   Dialog,

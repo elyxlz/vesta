@@ -112,45 +112,48 @@ export function Console({ name, onClose, fullscreen }: ConsoleProps) {
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeRef = useRef(true);
 
-  const startStreamRef = useRef<() => void>(undefined);
-  startStreamRef.current = () => {
-    if (!name || !activeRef.current) return;
-    stopLogs(name);
-    setEnded(false);
+  const startStream = useRef<() => void>(undefined);
 
-    streamLogs(name, (event) => {
-      switch (event.kind) {
-        case "Line": {
-          const stripped = stripAnsi(event.text);
-          setLines((prev) => {
-            const next = [...prev, stripped];
-            return next.length > MAX_LINES ? next.slice(-MAX_LINES) : next;
-          });
-          break;
-        }
-        case "End":
-        case "Error":
-          setEnded(true);
-          if (activeRef.current) {
-            reconnectTimerRef.current = setTimeout(() => {
-              reconnectDelayRef.current = Math.min(
-                reconnectDelayRef.current * 2,
-                RECONNECT_MAX,
-              );
-              startStreamRef.current?.();
-            }, reconnectDelayRef.current);
+  useEffect(() => {
+    startStream.current = () => {
+      if (!name || !activeRef.current) return;
+      stopLogs(name);
+      setEnded(false);
+
+      streamLogs(name, (event) => {
+        switch (event.kind) {
+          case "Line": {
+            const stripped = stripAnsi(event.text);
+            setLines((prev) => {
+              const next = [...prev, stripped];
+              return next.length > MAX_LINES ? next.slice(-MAX_LINES) : next;
+            });
+            break;
           }
-          break;
-      }
-    }).then(() => {
-      reconnectDelayRef.current = RECONNECT_BASE;
-    });
-  };
+          case "End":
+          case "Error":
+            setEnded(true);
+            if (activeRef.current) {
+              reconnectTimerRef.current = setTimeout(() => {
+                reconnectDelayRef.current = Math.min(
+                  reconnectDelayRef.current * 2,
+                  RECONNECT_MAX,
+                );
+                startStream.current?.();
+              }, reconnectDelayRef.current);
+            }
+            break;
+        }
+      }).then(() => {
+        reconnectDelayRef.current = RECONNECT_BASE;
+      });
+    };
+  });
 
   useEffect(() => {
     activeRef.current = true;
     setLines([]);
-    startStreamRef.current?.();
+    startStream.current?.();
     return () => {
       activeRef.current = false;
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);

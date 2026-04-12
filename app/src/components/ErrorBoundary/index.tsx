@@ -7,7 +7,6 @@ import {
 import {
   useRouteError,
   isRouteErrorResponse,
-  useNavigate,
 } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -100,13 +99,6 @@ function ErrorFallback({
 }: ErrorFallbackProps) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [copied, setCopied] = useState(false);
-  let navigate: ReturnType<typeof useNavigate> | null = null;
-
-  try {
-    navigate = useNavigate();
-  } catch {
-    // Outside router context
-  }
 
   const handleRetry = () => {
     if (onReset) {
@@ -117,11 +109,7 @@ function ErrorFallback({
   };
 
   const handleGoHome = () => {
-    if (navigate) {
-      navigate("/home");
-    } else {
-      window.location.href = "/home";
-    }
+    window.location.href = "/home";
   };
 
   const handleCopy = () => {

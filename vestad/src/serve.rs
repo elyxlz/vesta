@@ -485,17 +485,13 @@ async fn control_ws_session(state: SharedState, socket: axum::extract::ws::WebSo
     }
 }
 
-async fn handle_control_command(state: &SharedState, text: &str) {
+async fn handle_control_command(_state: &SharedState, text: &str) {
     let parsed: serde_json::Value = match serde_json::from_str(text) {
         Ok(v) => v,
         Err(_) => return,
     };
     let cmd_type = parsed.get("type").and_then(|v| v.as_str()).unwrap_or("");
-    match cmd_type {
-        _ => {
-            tracing::debug!(cmd_type, "unknown control command");
-        }
-    }
+    tracing::debug!(cmd_type, "unknown control command");
 }
 
 async fn tunnel_handler(
