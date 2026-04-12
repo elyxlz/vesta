@@ -83,7 +83,7 @@ export default function App() {
           />
           <SidebarInset>
             <SiteHeader title={activePage?.title ?? ""} />
-            <div className="overflow-y-auto flex-1 min-h-0 px-4 py-4 lg:px-6">
+            <div className="@container/main overflow-y-auto flex-1 min-h-0 px-4 py-4 lg:px-6">
               {activePage && <activePage.component />}
             </div>
           </SidebarInset>

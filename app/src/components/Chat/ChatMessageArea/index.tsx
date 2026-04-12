@@ -70,8 +70,7 @@ export function ChatMessageArea({
         ref={scrollRef}
         onScroll={onScroll}
         className={cn(
-          "h-full min-h-0 overflow-y-auto flex flex-col-reverse pb-4",
-          fullscreen ? "px-page" : "px-4",
+          "h-full min-h-0 overflow-y-auto flex flex-col-reverse pb-4 px-4",
         )}
         style={{
           paddingTop: fullscreen

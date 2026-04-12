@@ -20,7 +20,6 @@ import {
 } from "@/api";
 import { fadeSlide } from "@/lib/motion";
 import { useTauri } from "@/providers/TauriProvider";
-import { openExternalUrl } from "@/lib/open-external-url";
 import { useGateway } from "@/providers/GatewayProvider";
 import { useNavigate } from "react-router-dom";
 import { friendlyError } from "./errors";
@@ -100,7 +99,6 @@ export function NewAgent() {
       const nextAuthStart = await authenticate(normalized);
       setAuthStart(nextAuthStart);
       setStep("auth");
-      void openExternalUrl(nextAuthStart.auth_url);
     } catch (e: unknown) {
       const raw = (e as { message?: string })?.message || "creation failed";
       const friendly = friendlyError(raw);

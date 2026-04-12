@@ -86,7 +86,7 @@ export function AgentMenu() {
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} agentSettingsSlot={agentSettingsSlot} />
       {import.meta.env.DEV && (
         <Dialog open={debugOpen} onOpenChange={setDebugOpen}>
-          <DialogContent className="max-w-lg max-h-[80vh] overflow-auto">
+          <DialogContent className="max-w-lg max-h-[80vh] overflow-auto" aria-describedby={undefined}>
             <DialogHeader>
               <DialogTitle>control socket</DialogTitle>
               <p className="text-xs text-muted-foreground">last updated: {lastUpdatedRef.current}</p>

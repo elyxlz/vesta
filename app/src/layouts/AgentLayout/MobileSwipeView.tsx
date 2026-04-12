@@ -37,7 +37,7 @@ export function MobileSwipeView({ scrollRef, onScroll }: MobileSwipeViewProps) {
         className="w-full shrink-0 snap-center flex flex-col px-1"
         style={{
           paddingTop: navbarHeight,
-          paddingBottom: `calc(${bottomBarHeight}px + 0.25rem)`,
+          paddingBottom: `calc(${bottomBarHeight}px + 0rem)`,
         }}
       >
         <Dashboard />
@@ -45,7 +45,7 @@ export function MobileSwipeView({ scrollRef, onScroll }: MobileSwipeViewProps) {
       <div
         className="w-full shrink-0 snap-center flex flex-col px-3"
         style={{
-          paddingBottom: `calc(${bottomBarHeight}px + 0.75rem)`,
+          paddingBottom: `calc(${bottomBarHeight}px + 0.50rem)`,
         }}
       >
         <Chat fullscreen />

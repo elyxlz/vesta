@@ -41,7 +41,7 @@ export function Navbar({ leading, center, trailing }: NavbarProps) {
     <div
       ref={measureRef}
       data-tauri-drag-region
-      className="absolute top-0 left-0 right-0 z-[99999] flex flex-col shrink-0 min-h-0 select-none overflow-visible px-3 pb-3"
+      className="absolute top-0 left-0 right-0 z-[99999] flex flex-col shrink-0 min-h-0 select-none overflow-visible px-3 pb-3.5"
       style={{ paddingTop: "calc(var(--titlebar-pt, 0.5rem) + var(--safe-area-pt, 0.5rem))" }}
     >
       <div

@@ -1,19 +1,19 @@
 /**
  * Example page showing the grid layout system.
  *
- * Page components return widgets as siblings (or in a fragment).
- * The content area has an auto-fit grid built in — don't wrap in another grid.
+ * Each widget is a direct child of the page grid — never wrap widgets
+ * in their own sub-grid. Most widgets should be col-span-1 (the default).
  *
- * - Default: each widget fills 1 column
- * - col-span-2: widget spans 2 columns (charts, medium tables)
- * - col-span-full: widget spans all columns (wide tables, logs)
+ * - Default (col-span-1): metric cards, counters, small lists, trackers
+ * - col-span-2: charts that need horizontal space to be readable
+ * - col-span-full: almost never — only wide data tables with many columns
  */
 
 // --- Small metric card (1 column) ---
 
 function MetricCard({ title, value, change }: { title: string; value: string; change: string }) {
   return (
-    <div className="rounded-xl border border-border bg-muted p-4">
+    <div className="rounded-2xl border border-border bg-muted p-4">
       <h3 className="text-sm font-medium text-muted-foreground">{title}</h3>
       <p className="mt-2 text-2xl font-bold">{value}</p>
       <p className="text-xs text-muted-foreground mt-1">{change}</p>
@@ -25,7 +25,7 @@ function MetricCard({ title, value, change }: { title: string; value: string; ch
 
 function WeeklyChart() {
   return (
-    <div className="rounded-xl border border-border bg-muted p-4 col-span-2">
+    <div className="rounded-2xl border border-border bg-muted p-4 col-span-2">
       <h3 className="text-sm font-medium text-muted-foreground">Weekly Activity</h3>
       <div className="mt-4 flex items-end gap-2 h-32">
         {[40, 65, 45, 80, 55, 90, 70].map((h, i) => (
@@ -43,7 +43,7 @@ function WeeklyChart() {
 
 function TaskList() {
   return (
-    <div className="rounded-xl border border-border bg-muted p-4">
+    <div className="rounded-2xl border border-border bg-muted p-4">
       <h3 className="text-sm font-medium text-muted-foreground">Tasks</h3>
       <div className="mt-3 space-y-2">
         {["Review PR #42", "Deploy v2.1", "Update docs"].map((t, i) => (
@@ -68,7 +68,7 @@ function EventLog() {
   ]
 
   return (
-    <div className="rounded-xl border border-border bg-muted p-4 col-span-full">
+    <div className="rounded-2xl border border-border bg-muted p-4 col-span-full">
       <h3 className="text-sm font-medium text-muted-foreground">Recent Events</h3>
       <div className="mt-3 divide-y">
         {events.map((e, i) => (

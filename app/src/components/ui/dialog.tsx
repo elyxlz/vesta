@@ -114,7 +114,7 @@ function DialogContent({
         <DrawerPrimitive.Content
           data-slot="dialog-content"
           className={cn(
-            "group/drawer-content fixed inset-x-0 bottom-0 z-50 mt-24 flex h-auto max-h-[80vh] flex-col bg-transparent p-4 text-sm before:absolute before:inset-2 before:-z-10 before:rounded-4xl before:border before:border-border before:bg-popover before:shadow-xl",
+            "group/drawer-content fixed inset-x-0 bottom-0 z-50 mt-24 flex h-auto max-h-[80vh] flex-col bg-transparent p-4 text-sm before:absolute before:inset-x-2 before:top-0 before:-bottom-10 before:-z-10 before:rounded-4xl before:rounded-b-none before:border before:border-b-0 before:border-border before:bg-popover before:shadow-xl",
             className,
           )}
         >

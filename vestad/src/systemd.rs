@@ -19,19 +19,18 @@ pub fn ensure_service_installed() -> Result<(), String> {
 
     let unit_path = unit_file_path()?;
 
-    if let Ok(existing) = std::fs::read_to_string(&unit_path) {
-        if existing.contains(&vestad_path) {
-            return Ok(());
-        }
-        eprintln!("updating systemd service (binary path changed)...");
+    let working_dir = if cfg!(debug_assertions) {
+        std::env::current_dir()
+            .ok()
+            .and_then(|p| p.to_str().map(String::from))
     } else {
-        eprintln!("installing systemd user service...");
-    }
+        None
+    };
 
-    if let Some(parent) = std::path::Path::new(&unit_path).parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("failed to create {}: {}", parent.display(), e))?;
-    }
+    let working_dir_line = match &working_dir {
+        Some(dir) => format!("WorkingDirectory={dir}\n"),
+        None => String::new(),
+    };
 
     let unit_content = format!(
         r#"[Unit]
@@ -41,7 +40,7 @@ Wants=network-online.target
 
 [Service]
 ExecStart={vestad_path} serve --standalone
-Restart=always
+{working_dir_line}Restart=always
 RestartSec=5
 
 [Install]
@@ -49,7 +48,21 @@ WantedBy=default.target
 "#
     );
 
-    std::fs::write(&unit_path, unit_content)
+    if let Ok(existing) = std::fs::read_to_string(&unit_path) {
+        if existing == unit_content {
+            return Ok(());
+        }
+        eprintln!("updating systemd service...");
+    } else {
+        eprintln!("installing systemd user service...");
+    }
+
+    if let Some(parent) = std::path::Path::new(&unit_path).parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("failed to create {}: {}", parent.display(), e))?;
+    }
+
+    std::fs::write(&unit_path, &unit_content)
         .map_err(|e| format!("failed to write systemd service: {}", e))?;
 
     run_systemctl(&["daemon-reload"])?;

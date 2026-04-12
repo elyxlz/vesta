@@ -38,8 +38,11 @@ export function AgentNavbar({
   const agentDashboardMatch = useMatch({ path: "/agent/:name", end: true });
   const chatMatch = useMatch({ path: "/agent/:name/chat", end: true });
   const logsMatch = useMatch({ path: "/agent/:name/logs", end: true });
+  const settingsMatch = useMatch({ path: "/agent/:name/settings", end: true });
   const showBottomTabs = isMobile && (!!agentDashboardMatch || !!chatMatch);
-  const isSubpage = !isMobile && (!!chatMatch || !!logsMatch);
+  const showDashboardBack = isMobile
+    ? !!logsMatch || !!settingsMatch
+    : !!chatMatch || !!logsMatch || !!settingsMatch;
   const showChatButton =
     connected &&
     agentDashboardMatch &&
@@ -50,7 +53,7 @@ export function AgentNavbar({
     <>
       <ConnectedNavbar
         leading={
-          isSubpage ? (
+          showDashboardBack ? (
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button

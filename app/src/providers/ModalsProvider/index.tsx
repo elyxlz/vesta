@@ -7,7 +7,6 @@ import {
 } from "react";
 import { useNavigate } from "react-router-dom";
 import { authenticate, type AuthStartResult } from "@/api";
-import { openExternalUrl } from "@/lib/open-external-url";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 
 
@@ -60,7 +59,6 @@ export function ModalsProvider({ children }: { children: ReactNode }) {
       const result = await authenticate(name);
       if (authAttemptRef.current !== attemptId) return;
       setAuthStart(result);
-      void openExternalUrl(result.auth_url);
     } catch (e: unknown) {
       if (authAttemptRef.current !== attemptId) return;
       setAuthError(

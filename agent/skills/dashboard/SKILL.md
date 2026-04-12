@@ -81,7 +81,7 @@ When the user asks to add a widget without specifying which page, **choose a fit
 
 Default widget style — matches the app shell appearance:
 ```tsx
-<div className="rounded-xl border border-border bg-muted p-4">
+<div className="rounded-2xl bg-muted p-4">
   {/* widget content */}
 </div>
 ```
@@ -92,19 +92,25 @@ Page components should use an auto-fit grid wrapper for their widgets. This ensu
 export function OverviewPage() {
   return (
     <div className="grid gap-4 grid-cols-[repeat(auto-fit,minmax(280px,1fr))]">
-      <MetricCard />           {/* 1 column */}
-      <MetricCard />           {/* 1 column */}
-      <WideChart className="col-span-2" />   {/* spans 2 columns */}
-      <FullWidthTable className="col-span-full" />  {/* full width */}
+      <MetricCard />
+      <MetricCard />
+      <MetricCard />
+      <StreakWidget />
+      <TaskList />
+      <QuickChart className="col-span-2" />
     </div>
   )
 }
 ```
 
+**Most widgets should be `col-span-1` (the default).** A page with 5 widgets should typically have 4-5 single-column widgets and at most 1 wider one. Resist the urge to make things wide — small, dense cards look better and use space more efficiently.
+
 Guidelines for choosing span:
-- **`col-span-1`** (default): small metric cards, counters, status indicators
-- **`col-span-2`**: charts, graphs, medium tables, anything that needs breathing room
-- **`col-span-full`**: wide data tables, timelines, logs — things that genuinely need full width
+- **`col-span-1`** (default): metric cards, counters, status indicators, small lists, trackers — **this should be the vast majority of widgets**
+- **`col-span-2`**: only for charts/graphs that genuinely need horizontal space to be readable. Not for lists, cards, or text content
+- **`col-span-full`**: almost never needed. Only for wide data tables with many columns
+
+**Do NOT wrap widgets in their own grid.** Each widget should be a single grid child — the page grid controls the layout. Never use `grid-cols-1` inside a widget or page section.
 
 ### Adding a page
 
@@ -115,7 +121,8 @@ export function MyPage() {
     <div className="grid gap-4 grid-cols-[repeat(auto-fit,minmax(280px,1fr))]">
       <SmallWidget />
       <SmallWidget />
-      <WideWidget className="col-span-2" />
+      <SmallWidget />
+      <SmallWidget />
     </div>
   )
 }
@@ -134,11 +141,7 @@ import { StarIcon } from "lucide-react"
 
 ### Example components
 
-Read `src/examples/` for inspiration when building pages. These are reference implementations from shadcn's dashboard-01 block showing common patterns: metric cards with trends, interactive area charts, and sortable data tables with drag-and-drop. Copy and adapt what you need into your pages.
-
-### Empty state
-
-When no pages are configured, set `SHOW_EMPTY_STATE = true` in `App.tsx` to show the placeholder. Set it to `false` once pages are added.
+Read `src/examples/` for inspiration when building pages. These are reference implementations showing common patterns: individual metric cards with trends (`section-cards.tsx`), interactive area charts (`chart-area-interactive.tsx`), and grid layout with mixed widget sizes (`layout-example.tsx`). Copy and adapt individual components into your page grid — don't copy wrapper grids or layout containers from examples.
 
 ## After every change (IMPORTANT)
 
@@ -166,23 +169,13 @@ fi
 
 ## Data patterns
 
-### Static data (habits, bookmarks, etc.)
+**All meaningful data must persist server-side** so it syncs across devices. Never hardcode user data (habits, bookmarks, lists, settings, etc.) in source files or rely on `localStorage` as the source of truth — the user accesses the dashboard from multiple devices and expects the same data everywhere.
 
-Data that the user dictates and that only changes when they ask you to update it. Two approaches depending on whether the user wants persistence:
+Create a skill with API endpoints to store and retrieve user data, then call those endpoints from widgets using `apiFetch` from `@/lib/parent-bridge`. It handles auth and the base URL automatically and waits for the auth token before making requests, so it's safe to call on mount.
 
-Hardcode defaults in the source. When the user asks to permanently add/remove items, edit the file and rebuild.
-
-If the component has interactive state the user can change (checking items, toggling things, reordering), **always persist it to `localStorage`** so changes survive reloads. Pattern:
-
-Always prefix keys with `vesta-dashboard-` to avoid collisions.
-
-### Dynamic data (skill APIs, third-party services, etc.)
-
-Data that comes from somewhere else and changes dynamically — an existing skill's API, a new skill you create, or a third-party service.
+`localStorage` is only for **visual/navigation state** that is device-specific — sidebar order, collapsed sections, scroll positions, selected tabs. Prefix keys with `vesta-dashboard-` to avoid collisions.
 
 **Never fetch external APIs directly from widget code** — the browser will block cross-origin requests (CORS). Instead, create a skill that fetches the data server-side and exposes it as an endpoint, then call that endpoint from the widget.
-
-To call your skills use `apiFetch` from `@/lib/parent-bridge`. It handles auth and the base URL automatically. `apiFetch` waits for the auth token from the parent app before making requests, so it's safe to call on mount.
 
 Widgets that fetch data **must show a loading state** while waiting — use skeletons or spinners to provide a nice ux while data loads.
 
@@ -201,7 +194,6 @@ Always prefer simpler strategies. Most widgets should fetch on mount with a refr
 1. Remove the page from `config.tsx`
 2. Delete the source file(s) from `pages/`
 3. Rebuild and restart (same as above)
-4. If removing everything, set `SHOW_EMPTY_STATE = true` in `App.tsx`
 
 ## Syncing shared files
 
@@ -224,7 +216,8 @@ Try to keep everything compact, dashboard space is at a premium.
 - **No client-side fetches to external APIs** — the dashboard runs in a browser, so cross-origin requests to third-party APIs (Yahoo Finance, weather services, etc.) will be blocked by CORS. Instead, create a skill that fetches the data server-side and expose it as a skill API endpoint, then call it from the widget using `apiFetch`.
 - **Use the UI components** from `@/components/ui/` — read them before building
 - **State**: `useState` / `useEffect` for local state
-- **localStorage**: use it for persisting UI state (checked items, preferences), not as a primary data store. Always have hardcoded defaults as fallback
+- **localStorage**: only for device-specific visual state (sidebar order, collapsed sections, selected tabs) — never for user data
+- **No hardcoded user data**: all meaningful data (habits, lists, settings, etc.) must live server-side behind skill API endpoints so it syncs across devices
 - **No new dependencies**: only use packages in the dashboard's `package.json`
 
 ## Troubleshooting

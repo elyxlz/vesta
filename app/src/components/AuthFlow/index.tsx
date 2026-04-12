@@ -121,7 +121,7 @@ export function AuthFlow({
           <Button
             variant="link"
             onClick={onCancel}
-            className="self-center h-auto px-0 py-0 text-xs font-normal text-muted-foreground underline underline-offset-4 hover:bg-transparent hover:text-foreground"
+            className="self-center h-auto px-0 py-0 text-xs font-normal text-muted-foreground hover:bg-transparent hover:text-foreground"
           >
             cancel
           </Button>

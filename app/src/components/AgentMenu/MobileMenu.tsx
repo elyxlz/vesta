@@ -24,41 +24,28 @@ export function MobileMenu({ state, open, onOpenChange, trigger }: MenuProps) {
       <DrawerTrigger asChild>{trigger}</DrawerTrigger>
       <DrawerContent>
         <div className="flex flex-col gap-1 px-4 pb-8 max-h-[min(70vh,480px)] overflow-y-auto">
-          {state.showAliveActions && (
-            <>
-              <DrawerClose asChild>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="w-full justify-start"
-                  onClick={state.onLogs}
-                >
-                  <ScrollText data-icon="inline-start" />
-                  logs
-                </Button>
-              </DrawerClose>
+          {state.isRunning && (
+            <DrawerClose asChild>
               <Button
                 size="sm"
                 variant="outline"
                 className="w-full justify-start"
-                onClick={state.onToolCalls}
+                onClick={state.onLogs}
               >
-                <Wrench data-icon="inline-start" />
-                {state.showToolCalls ? "hide tool calls" : "show tool calls"}
+                <ScrollText data-icon="inline-start" />
+                logs
               </Button>
-            </>
+            </DrawerClose>
           )}
-          {!state.showAliveActions && (
-            <Button
-              size="sm"
-              variant="outline"
-              className="w-full justify-start"
-              onClick={state.onToolCalls}
-            >
-              <Wrench data-icon="inline-start" />
-              {state.showToolCalls ? "hide tool calls" : "show tool calls"}
-            </Button>
-          )}
+          <Button
+            size="sm"
+            variant="outline"
+            className="w-full justify-start"
+            onClick={state.onToolCalls}
+          >
+            <Wrench data-icon="inline-start" />
+            {state.showToolCalls ? "hide tool calls" : "show tool calls"}
+          </Button>
           <Separator className="my-1" />
           <DrawerClose asChild>
             <Button

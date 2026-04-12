@@ -28,24 +28,16 @@ export function DesktopMenu({
     <DropdownMenu open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
       <DropdownMenuContent align="end" side="bottom" className="min-w-[180px]">
-        {state.showAliveActions && (
-          <>
-            <DropdownMenuItem onClick={state.onLogs}>
-              <ScrollText data-icon="inline-start" />
-              logs
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={state.onToolCalls}>
-              <Wrench />
-              {state.showToolCalls ? "hide tool calls" : "show tool calls"}
-            </DropdownMenuItem>
-          </>
-        )}
-        {!state.showAliveActions && (
-          <DropdownMenuItem onClick={state.onToolCalls}>
-            <Wrench />
-            {state.showToolCalls ? "hide tool calls" : "show tool calls"}
+        {state.isRunning && (
+          <DropdownMenuItem onClick={state.onLogs}>
+            <ScrollText data-icon="inline-start" />
+            logs
           </DropdownMenuItem>
         )}
+        <DropdownMenuItem onClick={state.onToolCalls}>
+          <Wrench />
+          {state.showToolCalls ? "hide tool calls" : "show tool calls"}
+        </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem disabled={state.isBusy} onClick={state.onToggle}>
           {state.isRunning ? (
