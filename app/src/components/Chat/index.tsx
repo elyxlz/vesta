@@ -95,16 +95,16 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   );
 
   const isThinking = agentState === "thinking";
-  const prevCountRef = useRef(0);
+  const lastMsgRef = useRef<string | null>(null);
 
   useEffect(() => {
-    const prevCount = prevCountRef.current;
-    const newCount = chatMessages.length;
-    prevCountRef.current = newCount;
+    const latest = chatMessages[chatMessages.length - 1];
+    const latestKey = latest ? `${latest.ts}-${latest.type}` : null;
+    const prev = lastMsgRef.current;
+    lastMsgRef.current = latestKey;
 
-    if (newCount > prevCount && prevCount > 0 && !bottomVisibleRef.current) {
-      const latest = chatMessages[newCount - 1];
-      if (latest && latest.type !== "user") setHasNewMessage(true);
+    if (prev && latestKey && latestKey !== prev && !bottomVisibleRef.current) {
+      if (latest.type !== "user") setHasNewMessage(true);
     }
   }, [chatMessages]);
 

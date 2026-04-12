@@ -288,7 +288,7 @@ export class Transcriber {
     if (!navigator.mediaDevices) {
       this.active = false;
       throw new Error(
-        "Microphone requires HTTPS — connect via the tunnel or localhost",
+        "Microphone requires a secure connection",
       );
     }
 
