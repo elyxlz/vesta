@@ -109,7 +109,7 @@ pub struct StatusJson {
     pub friendly_status: &'static str,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, PartialEq)]
 pub struct ListEntry {
     pub name: String,
     pub status: &'static str,
