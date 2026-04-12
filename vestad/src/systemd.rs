@@ -19,19 +19,6 @@ pub fn ensure_service_installed() -> Result<(), String> {
 
     let unit_path = unit_file_path()?;
 
-    let working_dir = if cfg!(debug_assertions) {
-        std::env::current_dir()
-            .ok()
-            .and_then(|p| p.to_str().map(String::from))
-    } else {
-        None
-    };
-
-    let working_dir_line = match &working_dir {
-        Some(dir) => format!("WorkingDirectory={dir}\n"),
-        None => String::new(),
-    };
-
     let unit_content = format!(
         r#"[Unit]
 Description=Vesta API Server
@@ -40,7 +27,7 @@ Wants=network-online.target
 
 [Service]
 ExecStart={vestad_path} serve --standalone
-{working_dir_line}Restart=always
+Restart=always
 RestartSec=5
 
 [Install]
