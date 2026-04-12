@@ -10,8 +10,7 @@ const springTransition = {
   duration: 0.5,
 };
 
-const COLLAPSED_RADIUS = 22;
-const EXPANDED_RADIUS = 22;
+const BORDER_RADIUS = 22;
 
 export function AgentIsland() {
   const { name, error, statusLabel, orbState } = useSelectedAgent();
@@ -48,10 +47,10 @@ export function AgentIsland() {
         layout
         transition={springTransition}
         initial={{
-          borderRadius: COLLAPSED_RADIUS,
+          borderRadius: BORDER_RADIUS,
         }}
         animate={{
-          borderRadius: expanded ? EXPANDED_RADIUS : COLLAPSED_RADIUS,
+          borderRadius: expanded ? BORDER_RADIUS : BORDER_RADIUS,
         }}
         className={cn(
           "mx-auto will-change-[transform,opacity]",

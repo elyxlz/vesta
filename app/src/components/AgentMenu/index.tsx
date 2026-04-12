@@ -51,10 +51,10 @@ export function AgentMenu() {
     </Button>
   );
 
-  const debugJson = JSON.stringify({ gateway: { reachable: gateway.reachable, version: gateway.gatewayVersion, port: gateway.gatewayPort }, agents: gateway.agents }, null, 2);
+  const debugJson = import.meta.env.DEV ? JSON.stringify({ gateway: { reachable: gateway.reachable, version: gateway.gatewayVersion, port: gateway.gatewayPort }, agents: gateway.agents }, null, 2) : "";
   const lastUpdatedRef = useRef(new Date().toLocaleTimeString());
   const prevJsonRef = useRef(debugJson);
-  if (debugJson !== prevJsonRef.current) {
+  if (import.meta.env.DEV && debugJson !== prevJsonRef.current) {
     prevJsonRef.current = debugJson;
     lastUpdatedRef.current = new Date().toLocaleTimeString();
   }
