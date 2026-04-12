@@ -12,21 +12,24 @@ export interface TauriInfo {
   isLinux: boolean;
   isIOS: boolean;
   isAndroid: boolean;
+  vibrancy: boolean;
 }
 
 const platform = detectPlatform();
+const isDesktop =
+  platform === "macos" || platform === "windows" || platform === "linux";
 
 const info: TauriInfo = {
   isTauri,
   platform,
-  isDesktop:
-    platform === "macos" || platform === "windows" || platform === "linux",
+  isDesktop,
   isMobile: platform === "ios" || platform === "android",
   isMacOS: platform === "macos",
   isWindows: platform === "windows",
   isLinux: platform === "linux",
   isIOS: platform === "ios",
   isAndroid: platform === "android",
+  vibrancy: isTauri && (platform === "macos" || platform === "windows"),
 };
 
 export function TauriProvider({ children }: { children: ReactNode }) {

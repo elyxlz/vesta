@@ -11,7 +11,6 @@ import {
   getConnection,
   initConnection,
 } from "@/lib/connection";
-import { useTauri } from "@/providers/TauriProvider";
 
 interface AuthContextValue {
   loading: boolean;
@@ -29,7 +28,6 @@ function hasStoredConnection(): boolean {
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const { isTauri, isDesktop } = useTauri();
   const [loading, setLoading] = useState(true);
   const [initialized, setInitialized] = useState(false);
   const [connected, setConnected] = useState(false);
@@ -37,29 +35,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const init = async () => {
       await initConnection();
-
-      if (isTauri && isDesktop) {
-        try {
-          const { getCurrentWindow } = await import("@tauri-apps/api/window");
-          const win = getCurrentWindow();
-          const monitor = await import("@tauri-apps/api/window").then(
-            (module) => module.currentMonitor(),
-          );
-          if (monitor) {
-            const shortest = Math.min(
-              monitor.size.width / monitor.scaleFactor,
-              monitor.size.height / monitor.scaleFactor,
-            );
-            const size = Math.round(
-              Math.max(400, Math.min(800, shortest * 0.6)),
-            );
-            await win.setSize(
-              new (await import("@tauri-apps/api/dpi")).LogicalSize(size, size),
-            );
-            await win.center();
-          }
-        } catch {}
-      }
 
       if (hasStoredConnection()) {
         setConnected(true);

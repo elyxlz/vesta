@@ -49,6 +49,7 @@ done
 
 # Patch index.css — transparent background for iframe embedding
 sed -i 's/bg-background //g; s/ bg-background//g; s/bg-background//g' "$DASHBOARD_SRC/index.css"
+sed -i '/html {/{n;s|$|\n    background: transparent;|}' "$DASHBOARD_SRC/index.css"
 sed -i '/body {/{n;s|$|\n    background: transparent;|}' "$DASHBOARD_SRC/index.css"
 
 # Tell Tailwind to scan gitignored synced files

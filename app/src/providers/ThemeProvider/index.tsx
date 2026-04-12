@@ -1,5 +1,11 @@
 /* eslint-disable react-refresh/only-export-components */
 import * as React from "react";
+import { isTauri } from "@/lib/env";
+
+const tauriCore = isTauri ? import("@tauri-apps/api/core") : null;
+function tauriInvoke(cmd: string, args?: Record<string, unknown>) {
+  tauriCore?.then(({ invoke }) => invoke(cmd, args));
+}
 
 type Theme = "dark" | "light" | "system";
 type ResolvedTheme = "dark" | "light";
@@ -113,7 +119,12 @@ export function ThemeProvider({
 
     root.classList.remove("light", "dark");
     root.classList.add(resolved);
+    root.style.colorScheme = resolved;
     setResolvedTheme(resolved);
+
+    if (isTauri) {
+      tauriInvoke("set_theme", { theme: resolved });
+    }
 
     if (restoreTransitions) {
       restoreTransitions();

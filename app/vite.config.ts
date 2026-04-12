@@ -40,6 +40,8 @@ export default defineConfig({
   base: "./",
   define: {
     __APP_VERSION__: JSON.stringify(version),
+    __TAURI__: JSON.stringify(isTauri),
+    __PLATFORM__: JSON.stringify(process.env.TAURI_ENV_PLATFORM || ""),
   },
   plugins: [
     react({
@@ -56,16 +58,16 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
       "motion-plus-dom": path.resolve(
         __dirname,
-        "./src/lib/motion-plus-dom/dist/es/index.mjs",
+        "./node_modules/motion-plus-dom/dist/es/index.mjs",
       ),
     },
   },
   clearScreen: false,
   server: {
-    port: 1420,
+    port: isTauri ? 1420 : 1421,
     strictPort: true,
     host: host || "0.0.0.0",
-    hmr: host ? { protocol: "ws", host, port: 1421 } : undefined,
+    hmr: host ? { protocol: "ws", host, port: isTauri ? 1421 : 1422 } : undefined,
     proxy: host
       ? undefined
       : {

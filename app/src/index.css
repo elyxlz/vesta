@@ -7,6 +7,8 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
+    --sat-top: env(safe-area-inset-top, 0px);
+    --sat-bottom: env(safe-area-inset-bottom, 0px);
     --background: oklch(0.995 0.005 80);
     --foreground: oklch(0.147 0.005 80);
     --card: oklch(0.995 0.005 80);
@@ -41,6 +43,24 @@
     --sidebar-border: oklch(0.923 0.01 80);
     --sidebar-ring: oklch(0.709 0.02 80);
     --page-padding-x: 1.5rem;
+}
+
+.vibrancy {
+    --background: oklch(0.995 0.005 80 / 50%);
+    --card: oklch(0.995 0.005 80 / 50%);
+    --muted: oklch(0.97 0.006 80 / 60%);
+    --accent: oklch(0.97 0.006 80 / 50%);
+    --sidebar: oklch(0.985 0.006 80 / 50%);
+    --sidebar-accent: oklch(0.97 0.006 80 / 50%);
+}
+
+.vibrancy.dark {
+    --background: oklch(0.147 0.005 80 / 50%);
+    --card: oklch(0.216 0.007 80 / 50%);
+    --muted: oklch(0.19 0.007 80 / 60%);
+    --accent: oklch(0.268 0.008 80 / 50%);
+    --sidebar: oklch(0.216 0.007 80 / 50%);
+    --sidebar-accent: oklch(0.268 0.008 80 / 50%);
 }
 
 .dark {
@@ -128,10 +148,10 @@
     @apply border-border outline-ring/50;
     }
   html {
-    @apply box-border flex h-dvh flex-col bg-background font-sans;
+    @apply box-border flex h-dvh flex-col bg-background font-sans overscroll-none;
     }
   body {
-    @apply flex min-h-0 flex-1 flex-col bg-background text-foreground;
+    @apply flex min-h-0 flex-1 flex-col bg-background text-foreground overscroll-none;
     }
   #root {
     @apply flex min-h-0 flex-1 flex-col;
@@ -145,6 +165,7 @@
 @utility p-page {
   padding: var(--page-padding-x);
 }
+
 
 @utility py-page {
   padding-block: var(--page-padding-x);

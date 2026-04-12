@@ -5,8 +5,6 @@ import { HomeLayout } from "@/layouts/HomeLayout";
 import { NavigationGuard } from "@/layouts/NavigationGuard";
 import { isTauri } from "@/lib/env";
 import {
-  AgentChat,
-  AgentDashboard,
   AgentLogs,
   AgentSettingsPage,
   Connect,
@@ -42,8 +40,8 @@ export const router = createBrowserRouter([
             element: <AgentLayout />,
             errorElement: <RouteErrorBoundary />,
             children: [
-              { index: true, element: <AgentDashboard /> },
-              { path: "chat", element: <AgentChat /> },
+              { index: true, element: null },
+              { path: "chat", element: null },
               { path: "logs", element: <AgentLogs /> },
               { path: "settings", element: <AgentSettingsPage /> },
             ],

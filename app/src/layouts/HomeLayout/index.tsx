@@ -7,7 +7,7 @@ export function HomeLayout() {
     <>
       <ConnectedNavbar
         center={
-          <span className="text-4xl font-serif font-medium tracking-tight">
+          <span className="text-4xl font-serif font-medium tracking-tight pointer-events-none">
             Vesta
           </span>
         }

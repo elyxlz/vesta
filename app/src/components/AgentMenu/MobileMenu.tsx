@@ -14,7 +14,6 @@ import {
   Drawer,
   DrawerClose,
   DrawerContent,
-  DrawerHeader,
   DrawerTrigger,
 } from "@/components/ui/drawer";
 import type { MenuProps } from "./types";
@@ -24,8 +23,6 @@ export function MobileMenu({ state, open, onOpenChange, trigger }: MenuProps) {
     <Drawer open={open} onOpenChange={onOpenChange}>
       <DrawerTrigger asChild>{trigger}</DrawerTrigger>
       <DrawerContent>
-        <DrawerHeader>
-        </DrawerHeader>
         <div className="flex flex-col gap-1 px-4 pb-8 max-h-[min(70vh,480px)] overflow-y-auto">
           {state.showAliveActions && (
             <>

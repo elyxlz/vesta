@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { LayoutDashboard, AlertCircle } from "lucide-react";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useTheme } from "@/providers/ThemeProvider";
+import { useTauri } from "@/providers/TauriProvider";
 import { getConnection } from "@/lib/connection";
 import {
   Empty,
@@ -15,6 +16,7 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
   const { name, agent } = useSelectedAgent();
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const { resolvedTheme } = useTheme();
+  const { isTauri, platform, isDesktop, isMobile, vibrancy } = useTauri();
   const [error, setError] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [iframeKey, setIframeKey] = useState(0);
@@ -43,7 +45,7 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
       ? `${conn.url}/agents/${encodeURIComponent(name)}/dashboard/`
       : null;
 
-  const sendContext = () => {
+  const sendContext = useCallback(() => {
     const frame = iframeRef.current?.contentWindow;
     if (!frame) return;
     frame.postMessage(
@@ -51,6 +53,10 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
       "*",
     );
     frame.postMessage({ type: "vesta-layout", fullscreen: !!fullscreen }, "*");
+    frame.postMessage(
+      { type: "vesta-platform", isTauri, platform, isDesktop, isMobile, vibrancy },
+      "*",
+    );
     if (conn)
       frame.postMessage(
         {
@@ -61,14 +67,15 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
         },
         "*",
       );
-  };
+  }, [resolvedTheme, fullscreen, isTauri, platform, isDesktop, isMobile, vibrancy, conn, name]);
 
   useEffect(() => {
     const handler = (e: MessageEvent) => {
       if (
         e.data?.type === "vesta-theme-request" ||
         e.data?.type === "vesta-auth-request" ||
-        e.data?.type === "vesta-layout-request"
+        e.data?.type === "vesta-layout-request" ||
+        e.data?.type === "vesta-platform-request"
       ) {
         handshakeRef.current = true;
         sendContext();

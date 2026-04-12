@@ -41,7 +41,8 @@ export function Navbar({ leading, center, trailing }: NavbarProps) {
     <div
       ref={measureRef}
       data-tauri-drag-region
-      className="absolute top-0 left-0 right-0 z-[99999] flex flex-col shrink-0 min-h-0 select-none overflow-visible px-3 pt-2 pb-3"
+      className="absolute top-0 left-0 right-0 z-[99999] flex flex-col shrink-0 min-h-0 select-none overflow-visible px-3 pb-3"
+      style={{ paddingTop: "calc(var(--titlebar-pt, 0.5rem) + var(--safe-area-pt, 0.5rem))" }}
     >
       <div
         data-tauri-drag-region
@@ -52,8 +53,8 @@ export function Navbar({ leading, center, trailing }: NavbarProps) {
         </div>
 
         {center && (
-          <div className="absolute left-1/2 top-0 bottom-0 z-[100001] flex -translate-x-1/2 items-start justify-center overflow-visible">
-            {center}
+          <div className="absolute left-1/2 top-0 bottom-0 z-[100001] flex -translate-x-1/2 items-start justify-center overflow-visible pointer-events-none" style={{ marginTop: "var(--titlebar-center-mt, 0px)" }}>
+            <div className="pointer-events-auto">{center}</div>
           </div>
         )}
 
@@ -67,7 +68,7 @@ export function Navbar({ leading, center, trailing }: NavbarProps) {
 
 // ── Router-dependent defaults ─────────────────────────────────
 
-export function NavbarLeading({ extra }: { extra?: React.ReactNode }) {
+export function NavbarLeading() {
   const { connected } = useAuth();
   const { reachable, agentsFetched, agents } = useGateway();
   const navigate = useNavigate();
@@ -77,14 +78,30 @@ export function NavbarLeading({ extra }: { extra?: React.ReactNode }) {
   return (
     <>
       {connected && isHome && reachable && agentsFetched && (
-        <Button
-          variant="secondary"
-          size="lg"
-          onClick={() => navigate("/new")}
-        >
-          <Plus data-icon="inline-start" />
-          new agent
-        </Button>
+        <>
+          <Button
+            variant="secondary"
+            size="lg"
+            onClick={() => navigate("/new")}
+            className="max-sm:hidden"
+          >
+            <Plus data-icon="inline-start" />
+            new agent
+          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="icon-lg"
+                onClick={() => navigate("/new")}
+                className="sm:hidden"
+              >
+                <Plus />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>new agent</TooltipContent>
+          </Tooltip>
+        </>
       )}
       {connected && agentsFetched && agents.length > 0 && !isHome && (
         <Tooltip>
@@ -100,7 +117,6 @@ export function NavbarLeading({ extra }: { extra?: React.ReactNode }) {
           <TooltipContent>home</TooltipContent>
         </Tooltip>
       )}
-      {extra}
     </>
   );
 }
@@ -137,13 +153,13 @@ export function NavbarTrailing() {
 interface ConnectedNavbarProps {
   center?: React.ReactNode;
   trailing?: React.ReactNode;
-  leadingExtra?: React.ReactNode;
+  leading?: React.ReactNode;
 }
 
-export function ConnectedNavbar({ center, trailing, leadingExtra }: ConnectedNavbarProps) {
+export function ConnectedNavbar({ center, trailing, leading }: ConnectedNavbarProps) {
   return (
     <Navbar
-      leading={<NavbarLeading extra={leadingExtra} />}
+      leading={leading ?? <NavbarLeading />}
       center={center}
       trailing={trailing ?? <NavbarTrailing />}
     />

@@ -20,6 +20,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useTheme } from "@/providers/ThemeProvider";
 type Theme = "dark" | "light" | "system";
 import { useAuth } from "@/providers/AuthProvider";
+import { useTauri } from "@/providers/TauriProvider";
 import { useGateway } from "@/providers/GatewayProvider";
 import { getConnection } from "@/lib/connection";
 import { StatusPill } from "@/components/StatusPill";
@@ -34,6 +35,7 @@ export function SettingsDialog({ open, onOpenChange, agentSettingsSlot }: Settin
   const { theme, setTheme } = useTheme();
   const { disconnect } = useAuth();
   const { reachable, gatewayVersion } = useGateway();
+  const { isTauri } = useTauri();
 
   const hostname = (() => {
     const conn = getConnection();
@@ -72,9 +74,11 @@ export function SettingsDialog({ open, onOpenChange, agentSettingsSlot }: Settin
             variant="outline"
             spacing={2}
           >
-            <ToggleGroupItem value="system">
-              <Monitor /> System
-            </ToggleGroupItem>
+            {!isTauri && (
+              <ToggleGroupItem value="system">
+                <Monitor /> System
+              </ToggleGroupItem>
+            )}
             <ToggleGroupItem value="light">
               <Sun /> Light
             </ToggleGroupItem>

@@ -6,6 +6,32 @@ const _authReady = new Promise<void>((r) => { _resolveAuth = r; });
 let _fullscreen = false;
 const _layoutListeners: Set<(fullscreen: boolean) => void> = new Set();
 
+export interface PlatformInfo {
+  isTauri: boolean;
+  platform: string;
+  isDesktop: boolean;
+  isMobile: boolean;
+  vibrancy: boolean;
+}
+
+let _platform: PlatformInfo = {
+  isTauri: false,
+  platform: "unknown",
+  isDesktop: false,
+  isMobile: false,
+  vibrancy: false,
+};
+const _platformListeners: Set<(info: PlatformInfo) => void> = new Set();
+
+export function getPlatform(): PlatformInfo {
+  return _platform;
+}
+
+export function onPlatformChange(cb: (info: PlatformInfo) => void): () => void {
+  _platformListeners.add(cb);
+  return () => _platformListeners.delete(cb);
+}
+
 export function isFullscreen(): boolean {
   return _fullscreen;
 }
@@ -47,7 +73,9 @@ export async function apiFetch(path: string, init?: RequestInit): Promise<Respon
 export function initParentBridge() {
   window.addEventListener("message", (event) => {
     if (event.data?.type === "vesta-theme") {
-      document.documentElement.classList.toggle("dark", event.data.dark);
+      const dark = !!event.data.dark;
+      document.documentElement.classList.toggle("dark", dark);
+      document.documentElement.style.colorScheme = dark ? "dark" : "light";
     }
     if (event.data?.type === "vesta-auth") {
       authToken = event.data.token;
@@ -59,9 +87,22 @@ export function initParentBridge() {
       _fullscreen = !!event.data.fullscreen;
       _layoutListeners.forEach((cb) => cb(_fullscreen));
     }
+    if (event.data?.type === "vesta-platform") {
+      _platform = {
+        isTauri: !!event.data.isTauri,
+        platform: event.data.platform ?? "unknown",
+        isDesktop: !!event.data.isDesktop,
+        isMobile: !!event.data.isMobile,
+        vibrancy: !!event.data.vibrancy,
+      };
+      document.documentElement.classList.toggle("tauri", _platform.isTauri);
+      document.documentElement.classList.toggle("vibrancy", _platform.vibrancy);
+      _platformListeners.forEach((cb) => cb(_platform));
+    }
   });
 
   window.parent.postMessage({ type: "vesta-theme-request" }, "*");
   window.parent.postMessage({ type: "vesta-auth-request" }, "*");
   window.parent.postMessage({ type: "vesta-layout-request" }, "*");
+  window.parent.postMessage({ type: "vesta-platform-request" }, "*");
 }

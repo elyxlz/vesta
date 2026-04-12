@@ -8,6 +8,7 @@ import { GatewayProvider, useGateway } from "@/providers/GatewayProvider";
 import { isTauri } from "@/lib/env";
 import { cn } from "@/lib/utils";
 import { router } from "@/router";
+import { useIsMobile } from "./hooks/use-mobile";
 
 function AppContent() {
   const { loading, initialized, setLoading } = useAuth();
@@ -37,28 +38,33 @@ function AppContent() {
 }
 
 export default function App() {
+  const isMobile = useIsMobile();
+  const isFullscreen = isMobile || isTauri;
+
   return (
     <div
       className={cn(
         "flex min-h-0 flex-1 flex-col",
-        !isTauri && "p-3.5 max-sm:p-2",
+        isFullscreen ? "bg-muted" : "p-3.5 max-sm:p-2",
       )}
     >
       <div
         className={cn(
-          "relative flex min-h-0 flex-1 flex-col border border-border bg-muted overflow-hidden",
-          !isTauri && "rounded-3xl",
+          "flex min-h-0 flex-1 flex-col overflow-hidden pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]",
+          !isFullscreen && "bg-muted border border-border rounded-3xl",
         )}
       >
-        <ErrorBoundary>
-          <TooltipProvider delayDuration={300}>
-            <AuthProvider>
-              <GatewayProvider>
-                <AppContent />
-              </GatewayProvider>
-            </AuthProvider>
-          </TooltipProvider>
-        </ErrorBoundary>
+        <div className="relative flex min-h-0 flex-1 flex-col">
+          <ErrorBoundary>
+            <TooltipProvider delayDuration={300}>
+              <AuthProvider>
+                <GatewayProvider>
+                  <AppContent />
+                </GatewayProvider>
+              </AuthProvider>
+            </TooltipProvider>
+          </ErrorBoundary>
+        </div>
       </div>
     </div>
   );
