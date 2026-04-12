@@ -101,23 +101,14 @@ pub struct StatusJson {
     pub status: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
-    pub authenticated: bool,
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub agent_ready: bool,
     pub ws_port: u16,
-    pub alive: bool,
-    pub friendly_status: &'static str,
 }
 
 #[derive(Serialize, Clone, PartialEq)]
 pub struct ListEntry {
     pub name: String,
     pub status: &'static str,
-    pub authenticated: bool,
-    pub agent_ready: bool,
     pub ws_port: u16,
-    pub alive: bool,
-    pub friendly_status: &'static str,
 }
 
 // --- Docker connection ---
@@ -307,20 +298,20 @@ pub struct ContainerInfo {
     pub agent_name: Option<String>,
 }
 
-pub struct AgentDerivedState {
-    pub authenticated: bool,
-    pub agent_ready: bool,
-    pub alive: bool,
-    pub friendly_status: &'static str,
-}
-
-pub async fn compute_agent_state(docker: &Docker, cname: &str, info: &ContainerInfo) -> AgentDerivedState {
-    let authenticated = info.status != ContainerStatus::NotFound && is_authenticated(docker, cname).await;
-    let agent_ready = info.status == ContainerStatus::Running
-        && info.port.is_some_and(is_agent_ready_sync);
-    let alive = info.status == ContainerStatus::Running && authenticated;
-    let friendly_status = friendly_status(&info.status, authenticated, agent_ready);
-    AgentDerivedState { authenticated, agent_ready, alive, friendly_status }
+pub async fn combined_status(docker: &Docker, cname: &str, info: &ContainerInfo) -> &'static str {
+    match info.status {
+        ContainerStatus::Running => {
+            let authenticated = is_authenticated(docker, cname).await;
+            if !authenticated {
+                return "not_authenticated";
+            }
+            let agent_ready = info.port.is_some_and(is_agent_ready_sync);
+            if agent_ready { "alive" } else { "starting" }
+        }
+        ContainerStatus::Dead => "dead",
+        ContainerStatus::Stopped => "stopped",
+        ContainerStatus::NotFound => "not_found",
+    }
 }
 
 /// Read the agent name from the `vesta.agent_name` Docker label, falling back
@@ -1338,49 +1329,18 @@ pub async fn complete_auth_flow(client: &reqwest::Client, input: &str, code_veri
     Ok(creds.to_string())
 }
 
-// --- Status helpers ---
-
-pub fn status_label(cs: &ContainerStatus) -> &'static str {
-    match cs {
-        ContainerStatus::Running => "running",
-        ContainerStatus::Dead => "dead",
-        ContainerStatus::NotFound => "not_found",
-        ContainerStatus::Stopped => "stopped",
-    }
-}
-
-pub fn friendly_status(
-    status: &ContainerStatus,
-    authenticated: bool,
-    agent_ready: bool,
-) -> &'static str {
-    match status {
-        ContainerStatus::Running if !authenticated => "not signed in",
-        ContainerStatus::Running if agent_ready => "alive",
-        ContainerStatus::Running => "starting...",
-        ContainerStatus::Dead => "broken",
-        ContainerStatus::Stopped => "stopped",
-        ContainerStatus::NotFound => "not found",
-    }
-}
-
 // --- High-level operations (used by serve.rs handlers) ---
 
 pub async fn get_status(docker: &Docker, name: &str, agents_dir: &std::path::Path) -> Result<StatusJson, DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
     let info = inspect_container(docker, &cname, Some(agents_dir)).await;
-    let derived = compute_agent_state(docker, &cname, &info).await;
 
     Ok(StatusJson {
         name: name.to_string(),
-        status: status_label(&info.status),
+        status: combined_status(docker, &cname, &info).await,
         id: info.id,
-        authenticated: derived.authenticated,
-        agent_ready: derived.agent_ready,
         ws_port: info.port.unwrap_or(0),
-        alive: derived.alive,
-        friendly_status: derived.friendly_status,
     })
 }
 
@@ -1389,16 +1349,11 @@ pub async fn list_agents(docker: &Docker, agents_dir: &std::path::Path) -> Vec<L
     let mut entries = Vec::new();
     for cname in &containers {
         let info = inspect_container(docker, cname, Some(agents_dir)).await;
-        let derived = compute_agent_state(docker, cname, &info).await;
         let name = info.agent_name.clone().unwrap_or_else(|| name_from_cname(cname));
         entries.push(ListEntry {
             name,
-            status: status_label(&info.status),
-            authenticated: derived.authenticated,
-            agent_ready: derived.agent_ready,
+            status: combined_status(docker, cname, &info).await,
             ws_port: info.port.unwrap_or(0),
-            alive: derived.alive,
-            friendly_status: derived.friendly_status,
         });
     }
     entries
