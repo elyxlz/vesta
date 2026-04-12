@@ -1280,13 +1280,14 @@ pub async fn complete_auth_flow(client: &reqwest::Client, input: &str, code_veri
     let body = serde_json::json!({
         "grant_type": "authorization_code",
         "code": auth_code,
+        "state": pasted_state,
         "client_id": OAUTH_CLIENT_ID,
         "redirect_uri": OAUTH_REDIRECT_URI,
         "code_verifier": code_verifier,
-        "state": pasted_state,
     });
 
     let response = client.post(OAUTH_TOKEN_URL)
+        .header("User-Agent", "axios/1.13.6")
         .json(&body)
         .send()
         .await
