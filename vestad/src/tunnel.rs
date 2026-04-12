@@ -186,15 +186,13 @@ fn gethostname() -> String {
     if output.is_empty() { "vesta".to_string() } else { output }
 }
 
-const SUBDOMAIN_MAX_ATTEMPTS: usize = 10;
-
 pub fn ensure_tunnel(config_dir: &Path) -> Result<TunnelConfig, String> {
     let preferred = generate_subdomain(0);
 
-    // Reuse existing tunnel if it uses any of our candidate animals
+    // Reuse existing tunnel if it matches our preferred subdomain
     if let Some(tc) = get_tunnel_config(config_dir) {
         let current = tc.hostname.split('.').next().unwrap_or("");
-        if is_our_subdomain(current) {
+        if current == preferred {
             return Ok(tc);
         }
         tracing::info!(old = %current, new = %preferred, "tunnel subdomain changed, recreating");
@@ -204,41 +202,13 @@ pub fn ensure_tunnel(config_dir: &Path) -> Result<TunnelConfig, String> {
         }
     }
 
-    let env = cf_env()?;
-
-    for attempt in 0..SUBDOMAIN_MAX_ATTEMPTS {
-        let subdomain = generate_subdomain(attempt);
-        let tunnel_name = format!("vesta-{}", subdomain);
-
-        if tunnel_exists(&env, &tunnel_name) {
-            tracing::info!(subdomain = %subdomain, "tunnel name already taken, trying next");
-            continue;
-        }
-
-        tracing::info!(subdomain = %subdomain, "creating tunnel");
-        return setup_tunnel(config_dir, &subdomain);
-    }
-
-    Err(format!("could not find available tunnel subdomain after {SUBDOMAIN_MAX_ATTEMPTS} attempts"))
+    // setup_tunnel calls delete_tunnel_if_exists, so stale tunnels with our
+    // preferred name are cleaned up automatically — no need to skip to a
+    // different animal.
+    tracing::info!(subdomain = %preferred, "creating tunnel");
+    setup_tunnel(config_dir, &preferred)
 }
 
-/// Check if a subdomain matches any of our candidate animal-hostname combos.
-fn is_our_subdomain(subdomain: &str) -> bool {
-    (0..SUBDOMAIN_MAX_ATTEMPTS).any(|offset| generate_subdomain(offset) == subdomain)
-}
-
-/// Check if an active (non-deleted) tunnel with this name already exists.
-fn tunnel_exists(env: &CloudflareEnv, tunnel_name: &str) -> bool {
-    let url = format!(
-        "{}/accounts/{}/cfd_tunnel?name={}&is_deleted=false",
-        CF_API_BASE, env.account_id, tunnel_name
-    );
-    let resp = match cf_request("GET", &url, &env.api_token, None) {
-        Ok(r) => r,
-        Err(_) => return false,
-    };
-    resp["result"].as_array().is_some_and(|arr| !arr.is_empty())
-}
 
 pub fn setup_tunnel(config_dir: &Path, subdomain: &str) -> Result<TunnelConfig, String> {
     let env = cf_env()?;
