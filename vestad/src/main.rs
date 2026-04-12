@@ -466,7 +466,7 @@ fn main() {
                 };
                 agent_code::ensure_agent_code(&config)
                     .unwrap_or_else(|e| die(format!("failed to populate agent code: {e}")));
-                let (port, _listener) = docker::allocate_port(&env_config.agents_dir).unwrap_or_else(|e| die(&e));
+                let port = docker::allocate_port(&env_config.agents_dir).unwrap_or_else(|e| die(&e));
                 docker::create_container(&cname, loaded_image, port, &name, &env_config, true)
                     .unwrap_or_else(|e| die(&e));
 

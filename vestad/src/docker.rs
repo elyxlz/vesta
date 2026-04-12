@@ -1032,7 +1032,7 @@ pub fn create_agent(name: &str, env_config: &AgentEnvConfig, manage_code: bool) 
             .map_err(|e| DockerError::Failed(format!("agent code: {e}")))?;
     }
 
-    let (port, _listener) = allocate_port(&env_config.agents_dir)?;
+    let port = allocate_port(&env_config.agents_dir)?;
     create_container(&cname, image, port, name, env_config, manage_code)?;
     Ok(name.to_string())
 }
