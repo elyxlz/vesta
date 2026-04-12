@@ -32,8 +32,9 @@ export function AgentNavbar({
   const { handleOpenAuth } = useModals();
   const navigate = useNavigate();
   const isMobile = useIsMobile();
-  const showMobileReauth =
-    isMobile && agent?.status === "not_authenticated";
+  const needsAuth = agent?.status === "not_authenticated";
+  const showMobileReauth = isMobile && needsAuth;
+  const showDesktopReauth = !isMobile && needsAuth;
   const agentDashboardMatch = useMatch({ path: "/agent/:name", end: true });
   const chatMatch = useMatch({ path: "/agent/:name/chat", end: true });
   const logsMatch = useMatch({ path: "/agent/:name/logs", end: true });
@@ -87,6 +88,16 @@ export function AgentNavbar({
           connected ? (
             <div className="flex items-center gap-2">
               <StatusPill showHostname={false} />
+              {showDesktopReauth && (
+                <Button
+                  variant="default"
+                  size="lg"
+                  onClick={() => void handleOpenAuth()}
+                >
+                  <KeyRound data-icon="inline-start" />
+                  authenticate
+                </Button>
+              )}
               {showChatButton && (
                 <Button
                   variant="default"

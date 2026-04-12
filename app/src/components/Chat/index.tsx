@@ -137,6 +137,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
       setInput("");
       const ta = textareaRef.current;
       if (ta) ta.style.height = "auto";
+      scrollToBottom();
     }
   };
 

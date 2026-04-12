@@ -67,7 +67,7 @@ export function VersionMismatchDialog({
     <>
       <Navbar
         center={
-          <span className="text-4xl font-serif font-medium tracking-tight">
+          <span className="text-3xl font-serif font-medium tracking-tight">
             Vesta
           </span>
         }

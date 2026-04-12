@@ -22,12 +22,7 @@ else
     ref="$version"
 fi
 
-# Skip if already synced
 last_sync_file="$SCRIPT_DIR/app/.last-sync"
-if [ -f "$last_sync_file" ] && [ "$(cat "$last_sync_file")" = "$version" ]; then
-    echo "Already synced to $version, skipping."
-    exit 0
-fi
 
 # Fetch the ref and use FETCH_HEAD for git show
 git -C "$UPSTREAM_REPO" fetch --depth=1 origin "$ref" 2>/dev/null

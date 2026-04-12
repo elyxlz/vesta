@@ -35,7 +35,7 @@ export function Landing() {
     <div className="flex flex-col items-center justify-center flex-1 min-h-0 p-page gap-5 select-none">
       <div className="flex flex-col items-center gap-8">
         <div className="flex flex-col items-center gap-1">
-          <h1 className="text-4xl font-serif font-medium tracking-tight">
+          <h1 className="text-3xl font-serif font-medium tracking-tight">
             Vesta
           </h1>
           <p className="text-sm text-muted-foreground">
