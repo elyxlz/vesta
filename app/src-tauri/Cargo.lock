@@ -4746,6 +4746,7 @@ name = "vesta-app"
 version = "0.1.128"
 dependencies = [
  "objc2",
+ "objc2-foundation",
  "rustls",
  "serde_json",
  "tauri",
