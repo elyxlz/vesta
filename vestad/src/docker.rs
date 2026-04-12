@@ -551,7 +551,7 @@ fn env_file_names(agents_dir: &std::path::Path) -> Vec<String> {
         .collect()
 }
 
-pub fn allocate_port(agents_dir: &std::path::Path) -> Result<(u16, std::net::TcpListener), DockerError> {
+pub fn allocate_port(agents_dir: &std::path::Path) -> Result<u16, DockerError> {
     let reserved = all_agent_ports(agents_dir);
     for _ in 0..PORT_ALLOC_RETRIES {
         let listener = std::net::TcpListener::bind("127.0.0.1:0")
@@ -559,8 +559,9 @@ pub fn allocate_port(agents_dir: &std::path::Path) -> Result<(u16, std::net::Tcp
         let port = listener.local_addr()
             .map_err(|e| DockerError::Failed(format!("failed to get port: {e}")))?
             .port();
+        drop(listener);
         if !reserved.contains(&port) {
-            return Ok((port, listener));
+            return Ok(port);
         }
     }
     Err(DockerError::Failed("could not allocate a free port after retries".into()))

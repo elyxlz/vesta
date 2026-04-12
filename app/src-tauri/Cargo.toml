@@ -1,6 +1,6 @@
 [package]
 name = "vesta-app"
-version = "0.1.122"
+version = "0.1.127"
 description = "Vesta desktop app"
 license = "MIT"
 repository = "https://github.com/elyxlz/vesta"
@@ -18,8 +18,7 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["macos-private-api"] }
 serde_json = "1"
 tauri-plugin-dialog = "2.7.0"
-tauri-plugin-updater = { version = "2", features = ["rustls-tls"] }
-rustls = { version = "0.23", features = ["ring"] }
+tauri-plugin-updater = "2"
 tauri-plugin-opener = "2.5.3"
 tauri-plugin-store = "2"
 
@@ -34,8 +33,6 @@ webkit2gtk = "2.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 window-vibrancy = "0.7"
-objc2 = "0.6"
-objc2-foundation = { version = "0.3", features = ["NSArray", "NSString", "NSObject"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 window-vibrancy = "0.7"

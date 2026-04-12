@@ -1,6 +1,6 @@
 [project]
 name = "vesta"
-version = "0.1.122"
+version = "0.1.127"
 description = "Personal assistant agent that works autonomously on your behalf"
 license = "MIT"
 authors = [
@@ -35,7 +35,6 @@ build-backend = "hatchling.build"
 [tool.pytest.ini_options]
 python_files = ["e2e.py", "test_*.py", "*_test.py"]
 testpaths = ["tests"]
-pythonpath = ["skills"]
 
 
 [tool.ty.src]
