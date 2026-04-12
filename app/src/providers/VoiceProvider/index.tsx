@@ -1,9 +1,4 @@
-import {
-  createContext,
-  useContext,
-  useRef,
-  type ReactNode,
-} from "react";
+import { createContext, useContext, useRef, type ReactNode } from "react";
 import { useVoiceStatus } from "./use-voice-status";
 import { useVoiceInput } from "./use-voice-input";
 import { useVoiceOutput } from "./use-voice-output";
@@ -63,7 +58,11 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     refresh: refreshVoiceStatus,
     patchStt,
     patchTts,
-  } = useVoiceStatus(agentName || null, agent.services, agent.services?.voice?.rev);
+  } = useVoiceStatus(
+    agentName || null,
+    agent.services,
+    agent.services?.voice?.rev,
+  );
 
   const sttAvailable = (sttStatus?.configured && sttStatus?.enabled) ?? false;
   const speechEnabled = (ttsStatus?.configured && ttsStatus?.enabled) ?? false;

@@ -30,7 +30,11 @@ interface SettingsDialogProps {
   agentSettingsSlot?: React.ReactNode;
 }
 
-export function SettingsDialog({ open, onOpenChange, agentSettingsSlot }: SettingsDialogProps) {
+export function SettingsDialog({
+  open,
+  onOpenChange,
+  agentSettingsSlot,
+}: SettingsDialogProps) {
   const { theme, setTheme } = useTheme();
   const { disconnect } = useAuth();
   const { reachable, gatewayVersion } = useGateway();
@@ -59,9 +63,7 @@ export function SettingsDialog({ open, onOpenChange, agentSettingsSlot }: Settin
         <div className="flex flex-col gap-4">
           {agentSettingsSlot && (
             <MenuSection title="Agent">
-              <div onClick={() => onOpenChange(false)}>
-                {agentSettingsSlot}
-              </div>
+              <div onClick={() => onOpenChange(false)}>{agentSettingsSlot}</div>
             </MenuSection>
           )}
 
@@ -126,7 +128,11 @@ export function SettingsDialog({ open, onOpenChange, agentSettingsSlot }: Settin
   );
 }
 
-export function Settings({ agentSettingsSlot }: { agentSettingsSlot?: React.ReactNode }) {
+export function Settings({
+  agentSettingsSlot,
+}: {
+  agentSettingsSlot?: React.ReactNode;
+}) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -134,7 +140,11 @@ export function Settings({ agentSettingsSlot }: { agentSettingsSlot?: React.Reac
       <Button variant="outline" size="icon-lg" onClick={() => setOpen(true)}>
         <SettingsIcon />
       </Button>
-      <SettingsDialog open={open} onOpenChange={setOpen} agentSettingsSlot={agentSettingsSlot} />
+      <SettingsDialog
+        open={open}
+        onOpenChange={setOpen}
+        agentSettingsSlot={agentSettingsSlot}
+      />
     </>
   );
 }

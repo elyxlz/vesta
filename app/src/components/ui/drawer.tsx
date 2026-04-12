@@ -51,7 +51,9 @@ function DrawerOverlay({
       onPointerDown={(e) => {
         onPointerDown?.(e);
         // Close on pointer down instead of waiting for click
-        const close = (e.target as HTMLElement).closest("[data-slot=drawer-overlay]");
+        const close = (e.target as HTMLElement).closest(
+          "[data-slot=drawer-overlay]",
+        );
         if (close instanceof HTMLElement) close.click();
       }}
       {...props}

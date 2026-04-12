@@ -9,7 +9,6 @@ import { useNavigate } from "react-router-dom";
 import { authenticate, type AuthStartResult } from "@/api";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 
-
 interface ModalsContextValue {
   showAuth: boolean;
   authStarting: boolean;

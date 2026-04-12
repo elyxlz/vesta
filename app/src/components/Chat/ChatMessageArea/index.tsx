@@ -57,9 +57,7 @@ export function ChatMessageArea({
         onScroll={onScroll}
         className="h-full min-h-0 overflow-y-auto flex flex-col-reverse pb-4 px-4"
         style={{
-          paddingTop: fullscreen
-            ? `calc(${navbarHeight}px + 1rem)`
-            : 32,
+          paddingTop: fullscreen ? `calc(${navbarHeight}px + 1rem)` : 32,
           maskImage: `linear-gradient(to bottom, transparent, black ${fullscreen ? navbarHeight : 48}px, black calc(100% - 20px), transparent)`,
         }}
       >
@@ -98,7 +96,13 @@ export function ChatMessageArea({
                         : prev && prev.type === msg.type
                           ? "mt-1.5"
                           : "mt-5";
-                return <ChatBubble key={msg.ts ? `${msg.ts}-${msg.type}` : `idx-${i}`} event={msg} className={gap} />;
+                return (
+                  <ChatBubble
+                    key={msg.ts ? `${msg.ts}-${msg.type}` : `idx-${i}`}
+                    event={msg}
+                    className={gap}
+                  />
+                );
               })}
             </div>
           )}

@@ -14,14 +14,16 @@ export function MobileSwipeView({ scrollRef, onScroll }: MobileSwipeViewProps) {
   const bottomBarHeight = useLayout((s) => s.bottomBarHeight);
   const { name } = useParams<{ name: string }>();
   const location = useLocation();
-  const isChat = location.pathname === `/agent/${encodeURIComponent(name!)}/chat`;
+  const isChat =
+    location.pathname === `/agent/${encodeURIComponent(name!)}/chat`;
   const isChatRef = useRef(isChat);
   isChatRef.current = isChat;
   const mountedRef = useRef(false);
 
   const mountRef = useCallback(
     (node: HTMLDivElement | null) => {
-      (scrollRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
+      (scrollRef as React.MutableRefObject<HTMLDivElement | null>).current =
+        node;
       if (node && !mountedRef.current) {
         mountedRef.current = true;
         if (isChatRef.current) {

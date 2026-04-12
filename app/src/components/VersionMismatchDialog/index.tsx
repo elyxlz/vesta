@@ -5,7 +5,12 @@ import { Settings } from "@/components/Settings";
 import { StatusPill } from "@/components/StatusPill";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
-import { Empty, EmptyHeader, EmptyTitle, EmptyDescription } from "@/components/ui/empty";
+import {
+  Empty,
+  EmptyHeader,
+  EmptyTitle,
+  EmptyDescription,
+} from "@/components/ui/empty";
 import { apiFetch } from "@/api/client";
 import { isTauri } from "@/lib/env";
 
@@ -71,7 +76,12 @@ export function VersionMismatchDialog({
             Vesta
           </span>
         }
-        trailing={<><StatusPill /><Settings /></>}
+        trailing={
+          <>
+            <StatusPill />
+            <Settings />
+          </>
+        }
       />
       <Empty>
         <EmptyHeader>
@@ -87,9 +97,7 @@ export function VersionMismatchDialog({
           {updating && <Spinner className="size-4" />}
           {hint}
         </Button>
-        {error && (
-          <p className="text-sm text-destructive">{error}</p>
-        )}
+        {error && <p className="text-sm text-destructive">{error}</p>}
       </Empty>
       <Footer />
     </>

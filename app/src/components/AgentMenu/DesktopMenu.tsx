@@ -8,12 +8,7 @@ import {
 import { buildActionSections } from "./AgentActions";
 import type { MenuProps } from "./types";
 
-export function DesktopMenu({
-  state,
-  open,
-  onOpenChange,
-  trigger,
-}: MenuProps) {
+export function DesktopMenu({ state, open, onOpenChange, trigger }: MenuProps) {
   const sections = buildActionSections({
     isRunning: state.isRunning,
     showAliveActions: state.showAliveActions,
@@ -33,7 +28,7 @@ export function DesktopMenu({
     <DropdownMenu open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
       <DropdownMenuContent align="end" side="bottom" className="min-w-[180px]">
-        {sections.map((section, i) => (
+        {sections.map((section, _i) => (
           <div key={section.key}>
             <DropdownMenuLabel className="text-xs text-muted-foreground font-medium">
               {section.title}
@@ -43,7 +38,9 @@ export function DesktopMenu({
                 key={item.key}
                 disabled={item.disabled}
                 onClick={item.onClick}
-                variant={item.variant === "destructive" ? "destructive" : undefined}
+                variant={
+                  item.variant === "destructive" ? "destructive" : undefined
+                }
               >
                 {item.icon}
                 {item.label}

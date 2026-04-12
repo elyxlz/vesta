@@ -21,7 +21,8 @@ export function DesktopPanelView({
   const navbarHeight = useLayout((s) => s.navbarHeight);
   const { name } = useParams<{ name: string }>();
   const location = useLocation();
-  const isChat = location.pathname === `/agent/${encodeURIComponent(name!)}/chat`;
+  const isChat =
+    location.pathname === `/agent/${encodeURIComponent(name!)}/chat`;
 
   if (isChat) {
     return <Chat fullscreen />;

@@ -1,13 +1,5 @@
-import {
-  Component,
-  type ErrorInfo,
-  type ReactNode,
-  useState,
-} from "react";
-import {
-  useRouteError,
-  isRouteErrorResponse,
-} from "react-router-dom";
+import { Component, type ErrorInfo, type ReactNode, useState } from "react";
+import { useRouteError, isRouteErrorResponse } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
 import {
   RotateCcw,

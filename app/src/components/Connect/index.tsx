@@ -3,11 +3,7 @@ import { Navigate } from "react-router-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  FieldGroup,
-  Field,
-  FieldLabel,
-} from "@/components/ui/field";
+import { FieldGroup, Field, FieldLabel } from "@/components/ui/field";
 import { fadeSlide } from "@/lib/motion";
 import { useAuth } from "@/providers/AuthProvider";
 
@@ -46,8 +42,6 @@ export function Connect() {
 
   return (
     <div className="flex h-full flex-col p-page">
-
-
       <div className="flex flex-1 items-center justify-center">
         <form
           onSubmit={handleSubmit}

@@ -40,14 +40,16 @@ export function ChatComposer({
   return (
     <div
       className={cn(
-        fullscreen ? "px-[calc(var(--page-padding-x)/2)] pb-[calc(var(--page-padding-x)/2)]" : "px-2.5 pb-2.5",
+        fullscreen
+          ? "px-[calc(var(--page-padding-x)/2)] pb-[calc(var(--page-padding-x)/2)]"
+          : "px-2.5 pb-2.5",
       )}
     >
       <InputGroup
         className={cn(
           "min-h-12 px-1",
           isRecording &&
-          "ring-2 ring-red-500 has-[[data-slot=input-group-control]:focus-visible]:border-transparent has-[[data-slot=input-group-control]:focus-visible]:ring-2 has-[[data-slot=input-group-control]:focus-visible]:ring-red-500",
+            "ring-2 ring-red-500 has-[[data-slot=input-group-control]:focus-visible]:border-transparent has-[[data-slot=input-group-control]:focus-visible]:ring-2 has-[[data-slot=input-group-control]:focus-visible]:ring-red-500",
         )}
       >
         <InputGroupTextarea
@@ -56,11 +58,7 @@ export function ChatComposer({
           onChange={onInputChange}
           onKeyDown={onKeyDown}
           readOnly={isRecording && voiceAutoSend}
-          placeholder={
-            isRecording
-              ? "listening..."
-              : "send a message..."
-          }
+          placeholder={isRecording ? "listening..." : "send a message..."}
           disabled={!connected}
           rows={1}
           enterKeyHint="send"
@@ -76,10 +74,7 @@ export function ChatComposer({
                 onClick={toggleVoice}
               >
                 {isRecording ? (
-                  <Square
-                    className="text-red-500"
-                    fill="currentColor"
-                  />
+                  <Square className="text-red-500" fill="currentColor" />
                 ) : (
                   <Mic />
                 )}

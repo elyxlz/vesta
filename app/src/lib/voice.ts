@@ -43,7 +43,9 @@ export const setVoiceSetting = (
   key: string,
   value: unknown,
 ): Promise<SttStatus | TtsStatus> =>
-  voicePost(n, `${domain}/set`, { key, value }) as Promise<SttStatus | TtsStatus>;
+  voicePost(n, `${domain}/set`, { key, value }) as Promise<
+    SttStatus | TtsStatus
+  >;
 
 // --- STT ---
 
@@ -287,9 +289,7 @@ export class Transcriber {
 
     if (!navigator.mediaDevices) {
       this.active = false;
-      throw new Error(
-        "Microphone requires a secure connection",
-      );
+      throw new Error("Microphone requires a secure connection");
     }
 
     try {

@@ -16,8 +16,14 @@ function resolveBanner({
   return null;
 }
 
-const bannerConfig: Record<Exclude<BannerState, null>, { className: string; clickable?: boolean }> = {
-  "new-message": { className: "border-foreground bg-foreground text-background", clickable: true },
+const bannerConfig: Record<
+  Exclude<BannerState, null>,
+  { className: string; clickable?: boolean }
+> = {
+  "new-message": {
+    className: "border-foreground bg-foreground text-background",
+    clickable: true,
+  },
   reconnecting: { className: "border-warning bg-warning text-white" },
   error: { className: "border-destructive bg-destructive text-white" },
 };
@@ -35,7 +41,11 @@ export function BottomBanner(props: BottomBannerProps) {
 
   const content: Record<Exclude<BannerState, null>, React.ReactNode> = {
     "new-message": "new message",
-    reconnecting: <>Reconnecting <AnimatedEllipsis /></>,
+    reconnecting: (
+      <>
+        Reconnecting <AnimatedEllipsis />
+      </>
+    ),
     error: props.error,
   };
 

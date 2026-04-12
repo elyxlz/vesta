@@ -7,7 +7,10 @@ import { EmptyState } from "./EmptyState";
 
 function SkeletonCard({ opacity }: { opacity: number }) {
   return (
-    <Card className="flex shrink-0 items-center justify-center w-[220px] aspect-square" style={{ opacity }}>
+    <Card
+      className="flex shrink-0 items-center justify-center w-[220px] aspect-square"
+      style={{ opacity }}
+    >
       <div className="flex flex-col items-center gap-3 px-5">
         <Skeleton className="size-28 rounded-full" />
         <Skeleton className="h-6 w-24 rounded-lg" />

@@ -173,7 +173,9 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
         )}
         style={
           fullscreen
-            ? { maskImage: `linear-gradient(to bottom, transparent, black ${navbarHeight * 3.5}px)` }
+            ? {
+                maskImage: `linear-gradient(to bottom, transparent, black ${navbarHeight * 3.5}px)`,
+              }
             : undefined
         }
       >

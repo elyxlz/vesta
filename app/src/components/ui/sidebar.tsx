@@ -184,14 +184,18 @@ function Sidebar({
           data-slot="sidebar"
           data-mobile="true"
           className="max-h-[60vh]"
-          style={{ "--sidebar-width": SIDEBAR_WIDTH_MOBILE } as React.CSSProperties}
+          style={
+            { "--sidebar-width": SIDEBAR_WIDTH_MOBILE } as React.CSSProperties
+          }
           {...props}
         >
           <DrawerHeader className="sr-only">
             <DrawerTitle>navigation</DrawerTitle>
             <DrawerDescription>dashboard navigation</DrawerDescription>
           </DrawerHeader>
-          <div className="flex flex-col gap-2 overflow-y-auto px-4 pb-4">{children}</div>
+          <div className="flex flex-col gap-2 overflow-y-auto px-4 pb-4">
+            {children}
+          </div>
         </DrawerContent>
       </Drawer>
     );

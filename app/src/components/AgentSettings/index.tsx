@@ -65,7 +65,10 @@ export function AgentSettings() {
   const { showToolCalls, setShowToolCalls } = useChatContext();
   const { sttStatus, ttsStatus, patchStt, patchTts, refreshVoiceStatus } =
     useVoice();
-  const isRunning = agent?.status !== "stopped" && agent?.status !== "dead" && agent?.status !== "not_found";
+  const isRunning =
+    agent?.status !== "stopped" &&
+    agent?.status !== "dead" &&
+    agent?.status !== "not_found";
   const showAuthenticate = agent?.status === "not_authenticated";
   const showAliveActions = agent?.status === "alive";
 
@@ -143,13 +146,17 @@ export function AgentSettings() {
               showAliveActions={showAliveActions}
               isBusy={isBusy}
               showToolCalls={showToolCalls}
-              onLogs={() => navigate(`/agent/${encodeURIComponent(agentName)}/logs`)}
+              onLogs={() =>
+                navigate(`/agent/${encodeURIComponent(agentName)}/logs`)
+              }
               onToolCalls={() => setShowToolCalls((value) => !value)}
               onToggle={() => void (isRunning ? stop() : start())}
               onRestart={() => void restart()}
               onRebuild={() => void rebuild()}
               onBackup={() => void backup()}
-              onAuthenticate={showAuthenticate ? () => void handleOpenAuth() : undefined}
+              onAuthenticate={
+                showAuthenticate ? () => void handleOpenAuth() : undefined
+              }
               onDelete={() => setDeleteDialogOpen(true)}
             />
           </CardContent>
@@ -182,7 +189,6 @@ export function AgentSettings() {
                 onSettingChange={(settings) =>
                   patchStt({ settings } as Partial<SttStatus>)
                 }
-
                 usageContent={
                   <Collapsible
                     onOpenChange={(isOpen) => {
@@ -232,7 +238,6 @@ export function AgentSettings() {
                 onSettingChange={(settings) =>
                   patchTts({ settings } as Partial<TtsStatus>)
                 }
-
                 usageContent={
                   <Collapsible
                     onOpenChange={(isOpen) => {
@@ -256,8 +261,8 @@ export function AgentSettings() {
                         </span>
                         <span className="text-foreground tabular-nums">
                           {ttsChars &&
-                            typeof ttsChars.character_count === "number" &&
-                            typeof ttsChars.character_limit === "number"
+                          typeof ttsChars.character_count === "number" &&
+                          typeof ttsChars.character_limit === "number"
                             ? `${ttsChars.character_count.toLocaleString()} / ${ttsChars.character_limit.toLocaleString()}`
                             : "—"}
                         </span>
@@ -508,12 +513,7 @@ function SelectSetting({
   const hasPreview = options.some((o) => o.preview);
 
   if (hasPreview) {
-    return (
-      <VoicePicker
-        setting={setting}
-        onChange={onChange}
-      />
-    );
+    return <VoicePicker setting={setting} onChange={onChange} />;
   }
 
   return (
@@ -618,17 +618,19 @@ function VoicePicker({
             return (
               <button
                 key={opt.value}
-                className={`group relative flex flex-col items-center gap-1.5 rounded-lg p-2 transition-colors cursor-pointer ${selected
-                  ? "bg-primary/10 ring-1 ring-primary/30"
-                  : "hover:bg-muted"
-                  }`}
+                className={`group relative flex flex-col items-center gap-1.5 rounded-lg p-2 transition-colors cursor-pointer ${
+                  selected
+                    ? "bg-primary/10 ring-1 ring-primary/30"
+                    : "hover:bg-muted"
+                }`}
                 onClick={() => select(opt)}
               >
                 <div
-                  className={`relative size-9 rounded-full flex items-center justify-center text-xs font-medium ${selected
-                    ? "bg-primary text-primary-foreground"
-                    : "bg-muted text-muted-foreground"
-                    }`}
+                  className={`relative size-9 rounded-full flex items-center justify-center text-xs font-medium ${
+                    selected
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-muted text-muted-foreground"
+                  }`}
                 >
                   {opt.label[0]}
                   {opt.preview && (
@@ -651,10 +653,11 @@ function VoicePicker({
                   )}
                 </div>
                 <span
-                  className={`text-[10px] leading-tight text-center truncate max-w-full ${selected
-                    ? "text-primary font-medium"
-                    : "text-muted-foreground"
-                    }`}
+                  className={`text-[10px] leading-tight text-center truncate max-w-full ${
+                    selected
+                      ? "text-primary font-medium"
+                      : "text-muted-foreground"
+                  }`}
                 >
                   {opt.label}
                 </span>
@@ -775,7 +778,7 @@ function PlanUsageSection({
               <span className="text-muted-foreground">extra credits</span>
               <span className="text-foreground tabular-nums">
                 {utilization.extra_usage.used_credits != null &&
-                  utilization.extra_usage.monthly_limit != null
+                utilization.extra_usage.monthly_limit != null
                   ? `$${(utilization.extra_usage.used_credits / 100).toFixed(2)} / $${(utilization.extra_usage.monthly_limit / 100).toFixed(2)}`
                   : "—"}
               </span>

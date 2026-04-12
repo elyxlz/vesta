@@ -37,7 +37,8 @@ export function useChatKeyboardFocus(
 
     const syncKeyboardFocus = () => {
       const textarea = textareaRef.current;
-      const isTextareaActive = !!textarea && document.activeElement === textarea;
+      const isTextareaActive =
+        !!textarea && document.activeElement === textarea;
       const viewportHeight = viewport.height;
       const baselineHeight = viewportHeightRef.current;
 

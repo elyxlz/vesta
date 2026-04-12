@@ -11,11 +11,7 @@ import { cn } from "@/lib/utils";
 import { useMeasuredHeight } from "@/hooks/use-measured-height";
 import { useLayout } from "@/stores/use-layout";
 
-export function MobileNavbar({
-  progress,
-}: {
-  progress: MotionValue<number>;
-}) {
+export function MobileNavbar({ progress }: { progress: MotionValue<number> }) {
   const navigate = useNavigate();
   const { name } = useParams<{ name: string }>();
   const location = useLocation();
@@ -33,13 +29,10 @@ export function MobileNavbar({
     endLeft: 0,
   });
 
-  const pillMeasureRef = useCallback(
-    (node: HTMLDivElement | null) => {
-      pillRef.current = node;
-      setPillNode(node);
-    },
-    [],
-  );
+  const pillMeasureRef = useCallback((node: HTMLDivElement | null) => {
+    pillRef.current = node;
+    setPillNode(node);
+  }, []);
 
   const updatePillMetrics = useCallback(() => {
     const node = pillRef.current;

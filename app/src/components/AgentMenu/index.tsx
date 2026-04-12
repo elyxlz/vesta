@@ -2,7 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { MoreVertical, SlidersHorizontal } from "lucide-react";
 import { SettingsDialog } from "@/components/Settings";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useChatContext } from "@/providers/ChatProvider";
@@ -26,7 +31,10 @@ export function AgentMenu() {
   const [debugOpen, setDebugOpen] = useState(false);
   const isMobile = useIsMobile();
 
-  const isRunning = agent?.status !== "stopped" && agent?.status !== "dead" && agent?.status !== "not_found";
+  const isRunning =
+    agent?.status !== "stopped" &&
+    agent?.status !== "dead" &&
+    agent?.status !== "not_found";
 
   const state: MenuState = {
     name,
@@ -51,8 +59,23 @@ export function AgentMenu() {
     </Button>
   );
 
-  const debugJson = import.meta.env.DEV ? JSON.stringify({ gateway: { reachable: gateway.reachable, version: gateway.gatewayVersion, port: gateway.gatewayPort }, agents: gateway.agents }, null, 2) : "";
-  const [lastUpdated, setLastUpdated] = useState(() => new Date().toLocaleTimeString());
+  const debugJson = import.meta.env.DEV
+    ? JSON.stringify(
+        {
+          gateway: {
+            reachable: gateway.reachable,
+            version: gateway.gatewayVersion,
+            port: gateway.gatewayPort,
+          },
+          agents: gateway.agents,
+        },
+        null,
+        2,
+      )
+    : "";
+  const [lastUpdated, setLastUpdated] = useState(() =>
+    new Date().toLocaleTimeString(),
+  );
   const prevJsonRef = useRef(debugJson);
   useEffect(() => {
     if (import.meta.env.DEV && debugJson !== prevJsonRef.current) {
@@ -62,7 +85,11 @@ export function AgentMenu() {
   }, [debugJson]);
 
   const agentSettingsSlot = (
-    <Button variant="default" className="w-full justify-start" onClick={() => navigate(`/agent/${encodeURIComponent(name)}/settings`)}>
+    <Button
+      variant="default"
+      className="w-full justify-start"
+      onClick={() => navigate(`/agent/${encodeURIComponent(name)}/settings`)}
+    >
       <SlidersHorizontal data-icon="inline-start" />
       {name}'s settings
     </Button>
@@ -85,13 +112,22 @@ export function AgentMenu() {
           trigger={trigger}
         />
       )}
-      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} agentSettingsSlot={agentSettingsSlot} />
+      <SettingsDialog
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        agentSettingsSlot={agentSettingsSlot}
+      />
       {import.meta.env.DEV && (
         <Dialog open={debugOpen} onOpenChange={setDebugOpen}>
-          <DialogContent className="max-w-lg max-h-[80vh] overflow-auto" aria-describedby={undefined}>
+          <DialogContent
+            className="max-w-lg max-h-[80vh] overflow-auto"
+            aria-describedby={undefined}
+          >
             <DialogHeader>
               <DialogTitle>control socket</DialogTitle>
-              <p className="text-xs text-muted-foreground">last updated: {lastUpdated}</p>
+              <p className="text-xs text-muted-foreground">
+                last updated: {lastUpdated}
+              </p>
             </DialogHeader>
             <pre className="text-xs whitespace-pre-wrap break-all">
               {debugJson}

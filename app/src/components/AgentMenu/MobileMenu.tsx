@@ -1,9 +1,5 @@
 import { DrawerClose } from "@/components/ui/drawer";
-import {
-  Drawer,
-  DrawerContent,
-  DrawerTrigger,
-} from "@/components/ui/drawer";
+import { Drawer, DrawerContent, DrawerTrigger } from "@/components/ui/drawer";
 import { AgentActions } from "./AgentActions";
 import type { MenuProps } from "./types";
 

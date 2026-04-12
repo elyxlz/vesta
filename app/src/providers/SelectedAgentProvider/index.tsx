@@ -61,14 +61,21 @@ export function SelectedAgentProvider({
   children: ReactNode;
 }) {
   const name = agent.name;
-  const [agentState, setAgentState] = useState<AgentActivityState>(agent.activityState);
+  const [agentState, setAgentState] = useState<AgentActivityState>(
+    agent.activityState,
+  );
 
   const withOp = useAgentOps((s) => s.withOp);
   const removeAgentOp = useAgentOps((s) => s.removeAgent);
   const opState = useAgentOps((s) => s.getOp(name));
   const isBusy = opState.operation !== "idle";
 
-  const { label: statusLabel, orbState } = getAgentVisualStatus(agent, opState.operation, opState.error, agentState);
+  const { label: statusLabel, orbState } = getAgentVisualStatus(
+    agent,
+    opState.operation,
+    opState.error,
+    agentState,
+  );
 
   const start = () => {
     withOp(

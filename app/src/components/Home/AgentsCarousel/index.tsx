@@ -20,10 +20,11 @@ function Pagination() {
       {Array.from({ length: totalPages }, (_, i) => (
         <motion.button
           key={i}
-          className={
-            "size-1.5 rounded-full bg-muted-foreground"
-          }
-          animate={{ opacity: currentPage === i ? 1 : 0.3, scale: currentPage === i ? 1.4 : 1 }}
+          className={"size-1.5 rounded-full bg-muted-foreground"}
+          animate={{
+            opacity: currentPage === i ? 1 : 0.3,
+            scale: currentPage === i ? 1.4 : 1,
+          }}
           onClick={() => gotoPage(i)}
         />
       ))}
@@ -33,7 +34,9 @@ function Pagination() {
 
 function CarouselCard({ agent }: { agent: AgentInfo }) {
   const { offset } = useTickerItem();
-  const [isCentered, setIsCentered] = useState(() => Math.abs(offset.get()) < ITEM_STRIDE / 2);
+  const [isCentered, setIsCentered] = useState(
+    () => Math.abs(offset.get()) < ITEM_STRIDE / 2,
+  );
 
   const scale = useTransform(offset, (v: number) => {
     const distance = Math.abs(v);
@@ -42,7 +45,7 @@ function CarouselCard({ agent }: { agent: AgentInfo }) {
 
   useMotionValueEvent(offset, "change", (v) => {
     const centered = Math.abs(v) < ITEM_STRIDE / 2;
-    setIsCentered((prev) => prev === centered ? prev : centered);
+    setIsCentered((prev) => (prev === centered ? prev : centered));
   });
 
   return (

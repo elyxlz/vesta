@@ -1,4 +1,8 @@
-import { EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
+import {
+  EmptyDescription,
+  EmptyHeader,
+  EmptyTitle,
+} from "@/components/ui/empty";
 
 export function EmptyState() {
   return (

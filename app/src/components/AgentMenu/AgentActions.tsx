@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import {
   Archive,
   Bug,
@@ -54,14 +55,25 @@ export function buildActionSections(input: AgentActionsInput): ActionSection[] {
       key: "setup",
       title: "Setup",
       items: [
-        { key: "authenticate", icon: <KeyRound data-icon="inline-start" />, label: "authenticate", onClick: input.onAuthenticate, variant: "default" },
+        {
+          key: "authenticate",
+          icon: <KeyRound data-icon="inline-start" />,
+          label: "authenticate",
+          onClick: input.onAuthenticate,
+          variant: "default",
+        },
       ],
     });
   }
 
   const viewItems: ActionItem[] = [];
   if (input.showAliveActions) {
-    viewItems.push({ key: "logs", icon: <ScrollText data-icon="inline-start" />, label: "logs", onClick: input.onLogs });
+    viewItems.push({
+      key: "logs",
+      icon: <ScrollText data-icon="inline-start" />,
+      label: "logs",
+      onClick: input.onLogs,
+    });
   }
   viewItems.push({
     key: "tool-calls",
@@ -74,7 +86,11 @@ export function buildActionSections(input: AgentActionsInput): ActionSection[] {
   const controlItems: ActionItem[] = [
     {
       key: "toggle",
-      icon: input.isRunning ? <Square data-icon="inline-start" /> : <Play data-icon="inline-start" />,
+      icon: input.isRunning ? (
+        <Square data-icon="inline-start" />
+      ) : (
+        <Play data-icon="inline-start" />
+      ),
       label: input.isRunning ? "stop" : "start",
       onClick: input.onToggle,
       disabled: input.isBusy,
@@ -82,22 +98,57 @@ export function buildActionSections(input: AgentActionsInput): ActionSection[] {
   ];
   if (input.isRunning) {
     controlItems.push(
-      { key: "restart", icon: <RefreshCw data-icon="inline-start" />, label: "restart", onClick: input.onRestart, disabled: input.isBusy },
-      { key: "rebuild", icon: <Hammer data-icon="inline-start" />, label: "rebuild", onClick: input.onRebuild, disabled: input.isBusy },
+      {
+        key: "restart",
+        icon: <RefreshCw data-icon="inline-start" />,
+        label: "restart",
+        onClick: input.onRestart,
+        disabled: input.isBusy,
+      },
+      {
+        key: "rebuild",
+        icon: <Hammer data-icon="inline-start" />,
+        label: "rebuild",
+        onClick: input.onRebuild,
+        disabled: input.isBusy,
+      },
     );
   }
-  controlItems.push({ key: "backup", icon: <Archive data-icon="inline-start" />, label: "backup", onClick: input.onBackup, disabled: input.isBusy });
+  controlItems.push({
+    key: "backup",
+    icon: <Archive data-icon="inline-start" />,
+    label: "backup",
+    onClick: input.onBackup,
+    disabled: input.isBusy,
+  });
   sections.push({ key: "controls", title: "Controls", items: controlItems });
 
   const generalItems: ActionItem[] = [];
   if (input.onOpenSettings) {
-    generalItems.push({ key: "settings", icon: <Settings data-icon="inline-start" />, label: "settings", onClick: input.onOpenSettings });
+    generalItems.push({
+      key: "settings",
+      icon: <Settings data-icon="inline-start" />,
+      label: "settings",
+      onClick: input.onOpenSettings,
+    });
   }
   if (input.onDebugInfo) {
-    generalItems.push({ key: "debug", icon: <Bug data-icon="inline-start" />, label: "debug info", onClick: input.onDebugInfo });
+    generalItems.push({
+      key: "debug",
+      icon: <Bug data-icon="inline-start" />,
+      label: "debug info",
+      onClick: input.onDebugInfo,
+    });
   }
   if (input.onDelete) {
-    generalItems.push({ key: "delete", icon: <Trash2 data-icon="inline-start" />, label: "delete", onClick: input.onDelete, disabled: input.isBusy, variant: "destructive" });
+    generalItems.push({
+      key: "delete",
+      icon: <Trash2 data-icon="inline-start" />,
+      label: "delete",
+      onClick: input.onDelete,
+      disabled: input.isBusy,
+      variant: "destructive",
+    });
   }
   if (generalItems.length > 0) {
     sections.push({ key: "general", title: "General", items: generalItems });

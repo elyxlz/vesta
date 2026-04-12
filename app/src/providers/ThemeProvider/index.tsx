@@ -111,8 +111,7 @@ export function ThemeProvider({
 
   const applyTheme = (nextTheme: Theme) => {
     const root = document.documentElement;
-    const resolved =
-      nextTheme === "system" ? getSystemTheme() : nextTheme;
+    const resolved = nextTheme === "system" ? getSystemTheme() : nextTheme;
     const restoreTransitions = disableTransitionOnChange
       ? disableTransitionsTemporarily()
       : null;

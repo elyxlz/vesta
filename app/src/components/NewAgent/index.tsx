@@ -144,7 +144,9 @@ export function NewAgent() {
 
                 try {
                   await deleteAgent(agentToRemove);
-                } catch { /* best-effort cleanup */ }
+                } catch {
+                  /* best-effort cleanup */
+                }
               }}
               onComplete={async () => {
                 setAuthStart(null);

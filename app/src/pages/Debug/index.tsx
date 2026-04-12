@@ -1,8 +1,5 @@
 import { Orb } from "@/components/Orb";
-import {
-  orbColors,
-  type OrbVisualState,
-} from "@/components/Orb/styles";
+import { orbColors, type OrbVisualState } from "@/components/Orb/styles";
 
 const states: OrbVisualState[] = [
   "alive",

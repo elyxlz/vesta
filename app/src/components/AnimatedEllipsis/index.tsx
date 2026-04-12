@@ -13,7 +13,9 @@ export function AnimatedEllipsis({
   className,
 }: AnimatedEllipsisProps) {
   return (
-    <span className={cn("inline-flex items-center gap-1 align-middle", className)}>
+    <span
+      className={cn("inline-flex items-center gap-1 align-middle", className)}
+    >
       {[0, 1, 2].map((i) => (
         <motion.div
           key={i}

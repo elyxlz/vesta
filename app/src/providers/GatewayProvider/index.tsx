@@ -78,7 +78,10 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
       try {
         const conn = getConnection();
         if (conn) {
-          const resp = await fetch(`${conn.url}/version`, { headers: authHeaders(), signal: AbortSignal.timeout(5000) });
+          const resp = await fetch(`${conn.url}/version`, {
+            headers: authHeaders(),
+            signal: AbortSignal.timeout(5000),
+          });
           if (!cancelled && resp.ok) {
             const data = await resp.json();
             if (data.version) {
@@ -89,7 +92,9 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
             }
           }
         }
-      } catch { /* version check failed, proceed with WS */ }
+      } catch {
+        /* version check failed, proceed with WS */
+      }
       if (!cancelled) setVersionChecked(true);
 
       if (cancelled) return;
@@ -134,7 +139,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
         reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS);
       };
 
-      socket.onerror = () => { };
+      socket.onerror = () => {};
     };
 
     void doConnect();
@@ -158,7 +163,8 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
     return true;
   };
 
-  const versionMismatch = !loading && gatewayVersion && gatewayVersion !== __APP_VERSION__;
+  const versionMismatch =
+    !loading && gatewayVersion && gatewayVersion !== __APP_VERSION__;
 
   return (
     <GatewayContext.Provider
@@ -172,9 +178,11 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
         send,
       }}
     >
-      {versionMismatch
-        ? <VersionMismatchDialog gatewayVersion={gatewayVersion} />
-        : children}
+      {versionMismatch ? (
+        <VersionMismatchDialog gatewayVersion={gatewayVersion} />
+      ) : (
+        children
+      )}
     </GatewayContext.Provider>
   );
 }

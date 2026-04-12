@@ -17,7 +17,13 @@ const MAX_LINES = 5000;
 const RECONNECT_BASE = 1000;
 const RECONNECT_MAX = 30000;
 
-const LOG_LEVEL_TAGS = new Set(["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]);
+const LOG_LEVEL_TAGS = new Set([
+  "DEBUG",
+  "INFO",
+  "WARNING",
+  "ERROR",
+  "CRITICAL",
+]);
 const FAMILY_TAGS = new Set(["AGENT", "SYSTEM", "USER", "EVENT"]);
 
 const FAMILY_COLOR_CLASS: Record<string, string> = {
@@ -86,14 +92,22 @@ function lineColorClass(line: string): string | null {
   if (familyIndex !== -1) {
     const family = tags[familyIndex];
     const subfamily = tags[familyIndex + 1];
-    return (subfamily && SUBFAMILY_COLOR_CLASS[family]?.[subfamily]) || FAMILY_COLOR_CLASS[family] || null;
+    return (
+      (subfamily && SUBFAMILY_COLOR_CLASS[family]?.[subfamily]) ||
+      FAMILY_COLOR_CLASS[family] ||
+      null
+    );
   }
 
   const legacyTag = tags.find((tag) => tag in LEGACY_TAG_TO_FAMILY);
   if (!legacyTag) return null;
 
   const family = LEGACY_TAG_TO_FAMILY[legacyTag];
-  return SUBFAMILY_COLOR_CLASS[family]?.[legacyTag] || FAMILY_COLOR_CLASS[family] || null;
+  return (
+    SUBFAMILY_COLOR_CLASS[family]?.[legacyTag] ||
+    FAMILY_COLOR_CLASS[family] ||
+    null
+  );
 }
 
 interface ConsoleProps {
@@ -214,9 +228,9 @@ export function Console({ name, onClose, fullscreen }: ConsoleProps) {
         style={
           fullscreen
             ? {
-              paddingTop: `calc(${navbarHeight}px + var(--page-padding-x))`,
-              maskImage: `linear-gradient(to bottom, transparent, black ${navbarHeight * 2}px, black calc(100% - 15px), transparent)`,
-            }
+                paddingTop: `calc(${navbarHeight}px + var(--page-padding-x))`,
+                maskImage: `linear-gradient(to bottom, transparent, black ${navbarHeight * 2}px, black calc(100% - 15px), transparent)`,
+              }
             : undefined
         }
       >
