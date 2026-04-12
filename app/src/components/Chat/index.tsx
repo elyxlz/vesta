@@ -17,6 +17,7 @@ import { BottomBanner } from "./BottomBanner";
 import { ChatComposer } from "./ChatComposer";
 import { ChatHeaderActions } from "./ChatHeaderActions";
 import { ChatMessageArea } from "./ChatMessageArea";
+import { useChatKeyboardFocus } from "./use-chat-keyboard-focus";
 
 interface ChatProps {
   onCollapse?: () => void;
@@ -60,6 +61,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const bottomVisibleRef = useRef(true);
   const [hasNewMessage, setHasNewMessage] = useState(false);
+  useChatKeyboardFocus(textareaRef);
 
   useEffect(() => {
     if (connected) setWasConnected(true);
@@ -164,61 +166,61 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
         fullscreen && "drop-shadow-md",
       )}
     >
-    <Card
-      className={cn(
-        "flex flex-col h-full gap-0 py-0 px-0 overflow-hidden relative text-base",
-        fullscreen && "shadow-none ring-0",
-      )}
-      style={
-        fullscreen
-          ? { maskImage: `linear-gradient(to bottom, transparent, black ${navbarHeight * 3.5}px)` }
-          : undefined
-      }
-    >
-      <ChatHeaderActions
-        fullscreen={fullscreen}
-        onCollapse={onCollapse}
-        agentName={name}
-      />
-
-      <ChatMessageArea
-        scrollRef={scrollRef}
-        bottomRef={bottomRef}
-        onScroll={handleScroll}
-        fullscreen={fullscreen}
-        navbarHeight={navbarHeight}
-        loadingMore={loadingMore}
-        hasMore={hasMore}
-        chatMessages={chatMessages}
-        connected={connected}
-        agentName={name}
-      />
-
-      <div className="relative">
-        <BottomBanner
-          hasNewMessage={hasNewMessage}
-          onScrollToBottom={scrollToBottom}
-          isThinking={isThinking}
-          wasConnected={wasConnected}
-          connected={connected}
-          error={voiceError}
-        />
-        <ChatComposer
+      <Card
+        className={cn(
+          "flex flex-col h-full gap-0 py-0 px-0 overflow-hidden relative text-base",
+          fullscreen && "shadow-none ring-0",
+        )}
+        style={
+          fullscreen
+            ? { maskImage: `linear-gradient(to bottom, transparent, black ${navbarHeight * 3.5}px)` }
+            : undefined
+        }
+      >
+        <ChatHeaderActions
           fullscreen={fullscreen}
-          connected={connected}
-          sttAvailable={sttAvailable}
-          isRecording={isRecording}
-          voiceAutoSend={voiceAutoSend}
-          liveTranscript={liveTranscript}
-          toggleVoice={toggleVoice}
-          input={input}
-          onInputChange={handleInput}
-          onKeyDown={handleKeyDown}
-          onSend={handleSend}
-          textareaRef={textareaRef}
+          onCollapse={onCollapse}
+          agentName={name}
         />
-      </div>
-    </Card>
+
+        <ChatMessageArea
+          scrollRef={scrollRef}
+          bottomRef={bottomRef}
+          onScroll={handleScroll}
+          fullscreen={fullscreen}
+          navbarHeight={navbarHeight}
+          loadingMore={loadingMore}
+          hasMore={hasMore}
+          chatMessages={chatMessages}
+          connected={connected}
+          agentName={name}
+          isThinking={isThinking}
+        />
+
+        <div className="relative">
+          <BottomBanner
+            hasNewMessage={hasNewMessage}
+            onScrollToBottom={scrollToBottom}
+            wasConnected={wasConnected}
+            connected={connected}
+            error={voiceError}
+          />
+          <ChatComposer
+            fullscreen={fullscreen}
+            connected={connected}
+            sttAvailable={sttAvailable}
+            isRecording={isRecording}
+            voiceAutoSend={voiceAutoSend}
+            liveTranscript={liveTranscript}
+            toggleVoice={toggleVoice}
+            input={input}
+            onInputChange={handleInput}
+            onKeyDown={handleKeyDown}
+            onSend={handleSend}
+            textareaRef={textareaRef}
+          />
+        </div>
+      </Card>
     </div>
   );
 }

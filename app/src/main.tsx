@@ -21,12 +21,6 @@ if (isTauri) {
 
 d.style.setProperty("--titlebar-pt", isMacTauri ? "2rem" : "0rem");
 
-const styles = getComputedStyle(d);
-const safeAreaTop = parseFloat(styles.getPropertyValue("--sat-top")) || 0;
-const safeAreaBottom = parseFloat(styles.getPropertyValue("--sat-bottom")) || 0;
-d.style.setProperty("--safe-area-pt", safeAreaTop > 0 ? "0.5rem" : "1rem");
-d.style.setProperty("--safe-area-pb", safeAreaBottom > 0 ? "0rem" : "1.5rem");
-
 await Promise.all([
   document.fonts.load("normal 400 16px 'Public Sans Variable'"),
   document.fonts.load("normal 400 16px 'Outfit Variable'"),

@@ -26,6 +26,7 @@
         "resizable": true,
         "dragDropEnabled": false,
         "acceptFirstMouse": true,
+        "zoomHotkeysEnabled": false,
         "visible": true,
         "windowEffects": {
           "effects": [

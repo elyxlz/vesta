@@ -1,8 +1,8 @@
-import { useCallback } from "react";
 import { Home, Plus, SlidersHorizontal } from "lucide-react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useGateway } from "@/providers/GatewayProvider";
 import { useAuth } from "@/providers/AuthProvider";
+import { useMeasuredHeight } from "@/hooks/use-measured-height";
 import { useLayout } from "@/stores/use-layout";
 
 import { Settings } from "@/components/Settings";
@@ -24,24 +24,13 @@ interface NavbarProps {
 
 export function Navbar({ leading, center, trailing }: NavbarProps) {
   const setNavbarHeight = useLayout((s) => s.setNavbarHeight);
-
-  const measureRef = useCallback((node: HTMLDivElement | null) => {
-    if (!node) return;
-    const observer = new ResizeObserver(([entry]) => {
-      const border = entry.borderBoxSize[0];
-      const height = border
-        ? border.blockSize
-        : entry.target.getBoundingClientRect().height;
-      setNavbarHeight(height);
-    });
-    observer.observe(node);
-  }, [setNavbarHeight]);
+  const measureRef = useMeasuredHeight(setNavbarHeight);
 
   return (
     <div
       ref={measureRef}
       data-tauri-drag-region
-      className="absolute top-0 left-0 right-0 z-[99999] flex flex-col shrink-0 min-h-0 select-none overflow-visible px-3 pb-3.5"
+      className="absolute top-0 left-0 right-0 z-[99999] flex flex-col shrink-0 min-h-0 select-none overflow-visible px-3 pb-1 sm:pb-3.5"
       style={{ paddingTop: "calc(var(--titlebar-pt, 0.5rem) + var(--safe-area-pt, 0.5rem))" }}
     >
       <div

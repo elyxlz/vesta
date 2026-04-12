@@ -2,11 +2,10 @@ import { AnimatePresence, motion } from "motion/react";
 import { cn } from "@/lib/utils";
 import { AnimatedEllipsis } from "@/components/AnimatedEllipsis";
 
-type BannerState = "new-message" | "thinking" | "reconnecting" | "error" | null;
+type BannerState = "new-message" | "reconnecting" | "error" | null;
 
 function resolveBanner({
   hasNewMessage,
-  isThinking,
   wasConnected,
   connected,
   error,
@@ -14,13 +13,11 @@ function resolveBanner({
   if (wasConnected && !connected) return "reconnecting";
   if (error) return "error";
   if (hasNewMessage) return "new-message";
-  if (isThinking) return "thinking";
   return null;
 }
 
 const bannerConfig: Record<Exclude<BannerState, null>, { className: string; clickable?: boolean }> = {
   "new-message": { className: "border-foreground bg-foreground text-background", clickable: true },
-  thinking: { className: "border-[#c4a060] bg-[#c4a060] text-white" },
   reconnecting: { className: "border-warning bg-warning text-white" },
   error: { className: "border-destructive bg-destructive text-white" },
 };
@@ -28,7 +25,6 @@ const bannerConfig: Record<Exclude<BannerState, null>, { className: string; clic
 interface BottomBannerProps {
   hasNewMessage: boolean;
   onScrollToBottom: () => void;
-  isThinking: boolean;
   wasConnected: boolean;
   connected: boolean;
   error: string | null;
@@ -39,7 +35,6 @@ export function BottomBanner(props: BottomBannerProps) {
 
   const content: Record<Exclude<BannerState, null>, React.ReactNode> = {
     "new-message": "new message",
-    thinking: <>Thinking <AnimatedEllipsis color="bg-white" /></>,
     reconnecting: <>Reconnecting <AnimatedEllipsis /></>,
     error: props.error,
   };

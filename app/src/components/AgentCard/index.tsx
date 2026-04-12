@@ -11,6 +11,7 @@ import type { AgentInfo } from "@/lib/types";
 import { useNavigate } from "react-router-dom";
 import { useAgentOps, getOpLabel } from "@/stores/use-agent-ops";
 import { useOrbState } from "@/hooks/use-orb-state";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
 
 interface AgentCardProps {
@@ -20,6 +21,7 @@ interface AgentCardProps {
 
 export function AgentCard({ agent, enableTracking = false }: AgentCardProps) {
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
 
   const opState = useAgentOps((s) => s.getOp(agent.name));
   const orbState = useOrbState(agent, agent.activityState);
@@ -27,7 +29,7 @@ export function AgentCard({ agent, enableTracking = false }: AgentCardProps) {
   return (
     <Card
       className="cursor-pointer flex items-center justify-center gap-3 h-full w-full"
-      onClick={() => navigate(`/agent/${agent.name}`)}
+      onClick={() => navigate(`/agent/${agent.name}${isMobile ? "/chat" : ""}`)}
     >
       <CardContent className="flex flex-col items-center gap-3 px-5 pt-0 pb-0">
         <Orb state={orbState} size={112} enableTracking={enableTracking} />

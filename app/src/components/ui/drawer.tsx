@@ -4,9 +4,18 @@ import { Drawer as DrawerPrimitive } from "vaul";
 import { cn } from "@/lib/utils";
 
 function Drawer({
+  shouldScaleBackground = false,
+  noBodyStyles = true,
   ...props
 }: React.ComponentProps<typeof DrawerPrimitive.Root>) {
-  return <DrawerPrimitive.Root data-slot="drawer" {...props} />;
+  return (
+    <DrawerPrimitive.Root
+      data-slot="drawer"
+      shouldScaleBackground={shouldScaleBackground}
+      noBodyStyles={noBodyStyles}
+      {...props}
+    />
+  );
 }
 
 function DrawerTrigger({

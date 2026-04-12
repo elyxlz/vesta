@@ -8,9 +8,10 @@ import {
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { LayoutDashboard, MessageSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useMeasuredHeight } from "@/hooks/use-measured-height";
 import { useLayout } from "@/stores/use-layout";
 
-export function BottomTabs({
+export function MobileNavbar({
   progress,
 }: {
   progress: MotionValue<number>;
@@ -22,33 +23,15 @@ export function BottomTabs({
   const dashboardRef = useRef<HTMLButtonElement | null>(null);
   const chatRef = useRef<HTMLButtonElement | null>(null);
   const setBottomBarHeight = useLayout((s) => s.setBottomBarHeight);
+  const wrapperRef = useMeasuredHeight(setBottomBarHeight);
   const [pillNode, setPillNode] = useState<HTMLDivElement | null>(null);
   const [tabMetrics, setTabMetrics] = useState({
-    overlayWidth: 74,
+    overlayWidth: 0,
     startLeft: 4,
-    startWidth: 36,
+    startWidth: 0,
     startTop: 4,
-    startHeight: 36,
-    endLeft: 42,
+    endLeft: 0,
   });
-
-  const wrapperRef = useCallback(
-    (node: HTMLDivElement | null) => {
-      if (!node) {
-        setBottomBarHeight(0);
-        return;
-      }
-      const observer = new ResizeObserver(([entry]) => {
-        const border = entry.borderBoxSize[0];
-        const height = border
-          ? border.blockSize
-          : entry.target.getBoundingClientRect().height;
-        setBottomBarHeight(height);
-      });
-      observer.observe(node);
-    },
-    [setBottomBarHeight],
-  );
 
   const pillMeasureRef = useCallback(
     (node: HTMLDivElement | null) => {
@@ -64,8 +47,9 @@ export function BottomTabs({
     const chatNode = chatRef.current;
     if (!node || !dashboardNode || !chatNode) return;
 
-    const overlayLeft = node.getBoundingClientRect().left + node.clientLeft;
-    const overlayTop = node.getBoundingClientRect().top + node.clientTop;
+    const nodeRect = node.getBoundingClientRect();
+    const overlayLeft = nodeRect.left + node.clientLeft;
+    const overlayTop = nodeRect.top + node.clientTop;
     const dashRect = dashboardNode.getBoundingClientRect();
     const chatRect = chatNode.getBoundingClientRect();
 
@@ -74,7 +58,6 @@ export function BottomTabs({
       startLeft: dashRect.left - overlayLeft,
       startWidth: dashRect.width,
       startTop: dashRect.top - overlayTop,
-      startHeight: dashRect.height,
       endLeft: chatRect.left - overlayLeft,
     });
   }, []);
@@ -131,11 +114,12 @@ export function BottomTabs({
         aria-current={isDashboard ? "page" : undefined}
         tabIndex={interactive ? undefined : -1}
         className={cn(
-          "flex size-9 items-center justify-center rounded-2xl",
+          "flex h-9 flex-1 basis-0 items-center justify-center gap-2 rounded-2xl px-3 text-sm font-medium",
           active ? "text-white" : "text-muted-foreground",
         )}
       >
         <LayoutDashboard className="size-4" />
+        <span>dashboard</span>
       </button>
       <button
         type="button"
@@ -144,11 +128,12 @@ export function BottomTabs({
         aria-current={isChat ? "page" : undefined}
         tabIndex={interactive ? undefined : -1}
         className={cn(
-          "flex size-9 items-center justify-center rounded-2xl",
+          "flex h-9 flex-1 basis-0 items-center justify-center gap-2 rounded-2xl px-3 text-sm font-medium",
           active ? "text-white" : "text-muted-foreground",
         )}
       >
         <MessageSquare className="size-4" />
+        <span>chat</span>
       </button>
     </>
   );
@@ -156,21 +141,21 @@ export function BottomTabs({
   return (
     <div
       ref={wrapperRef}
-      className="absolute bottom-0 left-0 right-0 z-40 flex justify-center px-3 pt-2"
+      className="absolute bottom-0 left-0 right-0 z-40 flex justify-center px-3 pt-1"
       style={{ paddingBottom: "var(--safe-area-pb, 0.75rem)" }}
     >
       <div
         ref={pillMeasureRef}
-        className="relative flex gap-0.5 rounded-3xl border border-border bg-popover p-1 shadow-sm"
+        className="relative flex w-[70%] justify-center gap-0.5 overflow-hidden rounded-4xl bg-card p-1 text-card-foreground shadow-md ring-1 ring-foreground/5 dark:ring-foreground/10"
       >
-        <div className="relative flex gap-0.5">
+        <div className="relative flex w-full gap-0.5">
           {renderButtons({ active: false, interactive: true })}
         </div>
         <motion.div
           className="pointer-events-none absolute inset-0 z-10 rounded-3xl bg-primary p-1"
           style={{ clipPath: pillClipPath }}
         >
-          <div className="flex gap-0.5">
+          <div className="flex w-full gap-0.5">
             {renderButtons({ active: true, interactive: false })}
           </div>
         </motion.div>

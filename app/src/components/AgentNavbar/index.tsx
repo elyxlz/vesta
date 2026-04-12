@@ -4,7 +4,7 @@ import { useMatch, useNavigate } from "react-router-dom";
 import { KeyRound, LayoutDashboard, MessageSquare } from "lucide-react";
 import { AgentIsland } from "@/components/AgentIsland";
 import { AgentMenu } from "@/components/AgentMenu";
-import { BottomTabs } from "@/components/BottomTabs";
+import { MobileNavbar } from "@/components/MobileNavbar";
 import { ConnectedNavbar, NavbarLeading } from "@/components/Navbar";
 import { StatusPill } from "@/components/StatusPill";
 import { Button } from "@/components/ui/button";
@@ -17,6 +17,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { useAuth } from "@/providers/AuthProvider";
 import { useModals } from "@/providers/ModalsProvider";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
+import { useLayout } from "@/stores/use-layout";
 
 export function AgentNavbar({
   chatCollapsed,
@@ -32,6 +33,7 @@ export function AgentNavbar({
   const { handleOpenAuth } = useModals();
   const navigate = useNavigate();
   const isMobile = useIsMobile();
+  const chatKeyboardFocused = useLayout((s) => s.chatKeyboardFocused);
   const needsAuth = agent?.status === "not_authenticated";
   const showMobileReauth = isMobile && needsAuth;
   const showDesktopReauth = !isMobile && needsAuth;
@@ -39,7 +41,8 @@ export function AgentNavbar({
   const chatMatch = useMatch({ path: "/agent/:name/chat", end: true });
   const logsMatch = useMatch({ path: "/agent/:name/logs", end: true });
   const settingsMatch = useMatch({ path: "/agent/:name/settings", end: true });
-  const showBottomTabs = isMobile && (!!agentDashboardMatch || !!chatMatch);
+  const showMobileNavbar = isMobile && (!!agentDashboardMatch || !!chatMatch);
+  const hideMobileNavbar = isMobile && !!chatMatch && chatKeyboardFocused;
   const showDashboardBack = isMobile
     ? !!logsMatch || !!settingsMatch
     : !!chatMatch || !!logsMatch || !!settingsMatch;
@@ -49,6 +52,7 @@ export function AgentNavbar({
     name.length > 0 &&
     !isMobile &&
     chatCollapsed;
+
   return (
     <>
       <ConnectedNavbar
@@ -118,7 +122,9 @@ export function AgentNavbar({
           ) : undefined
         }
       />
-      {showBottomTabs && <BottomTabs progress={swipeProgress} />}
+      {showMobileNavbar && !hideMobileNavbar && (
+        <MobileNavbar progress={swipeProgress} />
+      )}
     </>
   );
 }

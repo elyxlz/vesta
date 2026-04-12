@@ -64,10 +64,10 @@ export default defineConfig({
   },
   clearScreen: false,
   server: {
-    port: isTauri ? 1420 : 1421,
+    port: isTauri ? 1420 : 1430,
     strictPort: true,
     host: host || "0.0.0.0",
-    hmr: host ? { protocol: "ws", host, port: isTauri ? 1421 : 1422 } : undefined,
+    hmr: host ? { protocol: "ws", host, port: isTauri ? 1421 : 1431 } : undefined,
     proxy: host
       ? undefined
       : {

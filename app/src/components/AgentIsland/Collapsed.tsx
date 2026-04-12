@@ -34,7 +34,7 @@ export function AgentIslandCollapsed({
       <motion.span
         layoutId="agent-island-name"
         layout
-        className="min-w-0 flex-1 truncate font-serif text-lg font-medium leading-tight tracking-tight will-change-transform"
+        className="min-w-0 flex-1 truncate font-serif text-base sm:text-lg font-medium leading-tight tracking-tight will-change-transform"
         transition={agentIslandContentTransition}
       >
         {name}
