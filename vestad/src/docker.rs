@@ -689,7 +689,7 @@ fn env_file_names(agents_dir: &std::path::Path) -> Vec<String> {
         .collect()
 }
 
-pub fn allocate_port(agents_dir: &std::path::Path) -> Result<(u16, std::net::TcpListener), DockerError> {
+pub fn allocate_port(agents_dir: &std::path::Path) -> Result<u16, DockerError> {
     let reserved = all_agent_ports(agents_dir);
     for _ in 0..PORT_ALLOC_RETRIES {
         let listener = std::net::TcpListener::bind("127.0.0.1:0")
@@ -697,8 +697,9 @@ pub fn allocate_port(agents_dir: &std::path::Path) -> Result<(u16, std::net::Tcp
         let port = listener.local_addr()
             .map_err(|e| DockerError::Failed(format!("failed to get port: {e}")))?
             .port();
+        drop(listener);
         if !reserved.contains(&port) {
-            return Ok((port, listener));
+            return Ok(port);
         }
     }
     Err(DockerError::Failed("could not allocate a free port after retries".into()))
@@ -1416,7 +1417,7 @@ pub async fn create_agent(docker: &Docker, name: &str, env_config: &AgentEnvConf
             .map_err(|e| DockerError::Failed(format!("agent code: {e}")))?;
     }
 
-    let (port, _listener) = allocate_port(&env_config.agents_dir)?;
+    let port = allocate_port(&env_config.agents_dir)?;
     create_container(docker, &cname, image, port, name, env_config, manage_code).await?;
     Ok(name.to_string())
 }
@@ -1519,7 +1520,7 @@ pub async fn reconcile_containers(docker: &Docker, env_config: &AgentEnvConfig, 
             tracing::info!(agent = %name, "env file missing, recreating");
             let port = read_container_env(docker, cname, "WS_PORT").await
                 .and_then(|v| v.parse::<u16>().ok())
-                .or_else(|| allocate_port(&env_config.agents_dir).ok().map(|(p, _)| p));
+                .or_else(|| allocate_port(&env_config.agents_dir).ok());
             if let Some(port) = port {
                 let token = generate_agent_token();
                 if let Err(e) = write_agent_env_file(env_config, &name, port, &token) {
@@ -1689,8 +1690,7 @@ pub async fn rebuild_agent(docker: &Docker, name: &str, env_config: &AgentEnvCon
         Some(p) => p,
         None => {
             tracing::warn!(agent = %name, "no port found in env file or container — allocating new port");
-            let (p, _listener) = allocate_port(&env_config.agents_dir)?;
-            p
+            allocate_port(&env_config.agents_dir)?
         }
     };
 
