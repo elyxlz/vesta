@@ -19,20 +19,6 @@ pub fn ensure_service_installed() -> Result<(), String> {
 
     let unit_path = unit_file_path()?;
 
-    if let Ok(existing) = std::fs::read_to_string(&unit_path) {
-        if existing.contains(&vestad_path) {
-            return Ok(());
-        }
-        eprintln!("updating systemd service (binary path changed)...");
-    } else {
-        eprintln!("installing systemd user service...");
-    }
-
-    if let Some(parent) = std::path::Path::new(&unit_path).parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("failed to create {}: {}", parent.display(), e))?;
-    }
-
     let unit_content = format!(
         r#"[Unit]
 Description=Vesta API Server
@@ -49,7 +35,21 @@ WantedBy=default.target
 "#
     );
 
-    std::fs::write(&unit_path, unit_content)
+    if let Ok(existing) = std::fs::read_to_string(&unit_path) {
+        if existing == unit_content {
+            return Ok(());
+        }
+        eprintln!("updating systemd service...");
+    } else {
+        eprintln!("installing systemd user service...");
+    }
+
+    if let Some(parent) = std::path::Path::new(&unit_path).parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("failed to create {}: {}", parent.display(), e))?;
+    }
+
+    std::fs::write(&unit_path, &unit_content)
         .map_err(|e| format!("failed to write systemd service: {}", e))?;
 
     run_systemctl(&["daemon-reload"])?;
