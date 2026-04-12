@@ -6,6 +6,7 @@ use clap::Parser;
 mod agent_code;
 mod agent_status;
 mod backup;
+mod control_ws;
 mod docker;
 mod jwt;
 mod self_update;

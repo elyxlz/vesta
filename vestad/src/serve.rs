@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, atomic::AtomicBool};
 use tokio::sync::{Mutex, RwLock};
 
-use crate::{agent_status, backup, docker, jwt, self_update, update_check};
+use crate::{agent_status, backup, control_ws, docker, jwt, self_update, update_check};
 
 const API_KEY_BYTES: usize = 32;
 pub(crate) const PROXY_MAX_BODY_BYTES: usize = 10 * 1024 * 1024; // 10 MB
@@ -131,7 +131,7 @@ struct AuthSession {
 
 pub struct AppState {
     api_key: String,
-    env_config: docker::AgentEnvConfig,
+    pub(crate) env_config: docker::AgentEnvConfig,
     docker: bollard::Docker,
     auth_sessions: Mutex<HashMap<String, AuthSession>>,
     agent_locks: Mutex<HashMap<String, Arc<tokio::sync::RwLock<()>>>>,
@@ -139,9 +139,9 @@ pub struct AppState {
     update_info: Mutex<Option<update_check::UpdateInfo>>,
     updating: AtomicBool,
     http_client: reqwest::Client,
-    settings: RwLock<Settings>,
+    pub(crate) settings: RwLock<Settings>,
     dev_mode: bool,
-    agent_status_cache: Arc<agent_status::AgentStatusCache>,
+    pub(crate) agent_status_cache: Arc<agent_status::AgentStatusCache>,
 }
 
 impl AppState {
@@ -178,7 +178,7 @@ impl AppState {
     }
 }
 
-type SharedState = Arc<AppState>;
+pub type SharedState = Arc<AppState>;
 
 // --- Auth middleware ---
 
@@ -320,11 +320,11 @@ struct RefreshRequest {
 
 // --- Response helpers ---
 
-fn ok_json() -> Json<serde_json::Value> {
+pub fn ok_json() -> Json<serde_json::Value> {
     Json(serde_json::json!({"ok": true}))
 }
 
-fn err_response(status: StatusCode, msg: &str) -> (StatusCode, Json<serde_json::Value>) {
+pub fn err_response(status: StatusCode, msg: &str) -> (StatusCode, Json<serde_json::Value>) {
     if status.is_server_error() {
         tracing::error!(status = status.as_u16(), error = msg, "server error");
     }
@@ -834,9 +834,9 @@ async fn ws_proxy(client_ws: axum::extract::ws::WebSocket, agent_port: u16, path
 const DEFAULT_AUTO_BACKUP_HOUR: u8 = 4;
 
 #[derive(Serialize, Deserialize, Default)]
-struct Settings {
+pub(crate) struct Settings {
     #[serde(default)]
-    services: HashMap<String, HashMap<String, u16>>,
+    pub(crate) services: HashMap<String, HashMap<String, u16>>,
     #[serde(default)]
     backup: BackupGlobalSettings,
     #[serde(default)]
@@ -1067,154 +1067,6 @@ async fn list_services_handler(
     let settings = state.settings.read().await;
     let services = settings.services.get(&name).cloned().unwrap_or_default();
     Json(serde_json::json!({"services": services}))
-}
-
-async fn invalidate_service_handler(
-    State(state): State<SharedState>,
-    Path((name, service_name)): Path<(String, String)>,
-    body: Option<Json<serde_json::Value>>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let settings = state.settings.read().await;
-    let exists = settings
-        .services
-        .get(&name)
-        .is_some_and(|s| s.contains_key(&service_name));
-    if !exists {
-        return Err(err_response(
-            StatusCode::NOT_FOUND,
-            &format!("service '{}' not registered for agent '{}'", service_name, name),
-        ));
-    }
-    drop(settings);
-
-    let scope = body
-        .and_then(|Json(v)| v.get("scope").and_then(|s| s.as_str().map(String::from)));
-    state
-        .agent_status_cache
-        .invalidate_service(&name, &service_name, scope.as_deref());
-    tracing::debug!(agent = %name, service = %service_name, ?scope, "service invalidated");
-    Ok(ok_json())
-}
-
-// --- Control WebSocket ---
-
-async fn control_ws_handler(
-    State(state): State<SharedState>,
-    ws: WebSocketUpgrade,
-) -> Response {
-    ws.on_upgrade(move |socket| control_ws_session(state, socket))
-}
-
-fn build_agents_message(
-    agents: &[docker::ListEntry],
-    activity: &HashMap<String, String>,
-    services: &HashMap<String, HashMap<String, u16>>,
-    invalidations: &HashMap<String, HashMap<String, agent_status::DrainedInvalidation>>,
-) -> serde_json::Value {
-    let enriched: Vec<serde_json::Value> = agents
-        .iter()
-        .map(|a| {
-            let mut obj = serde_json::to_value(a).unwrap_or_default();
-            if let Some(map) = obj.as_object_mut() {
-                let state = activity.get(&a.name).map(|s| s.as_str()).unwrap_or("idle");
-                map.insert("activityState".into(), serde_json::Value::String(state.into()));
-
-                let agent_inv = invalidations.get(&a.name);
-                let svc_obj: serde_json::Map<String, serde_json::Value> = services
-                    .get(&a.name)
-                    .map(|svc_map| {
-                        svc_map
-                            .iter()
-                            .map(|(svc_name, port)| {
-                                let inv = agent_inv.and_then(|m| m.get(svc_name));
-                                let val = serde_json::json!({
-                                    "port": port,
-                                    "rev": inv.map(|i| i.rev).unwrap_or(0),
-                                    "scopes": inv.map(|i| &i.scopes).unwrap_or(&Vec::new()),
-                                });
-                                (svc_name.clone(), val)
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                map.insert("services".into(), serde_json::Value::Object(svc_obj));
-            }
-            obj
-        })
-        .collect();
-    serde_json::json!({ "type": "agents", "agents": enriched })
-}
-
-async fn control_ws_session(state: SharedState, socket: axum::extract::ws::WebSocket) {
-    use axum::extract::ws::Message;
-    use futures_util::{SinkExt, StreamExt};
-
-    let (mut tx, mut rx) = socket.split();
-
-    // 1. Send hello handshake
-    let hello = serde_json::json!({
-        "type": "hello",
-        "version": env!("CARGO_PKG_VERSION"),
-        "api_compat": "0.2",
-        "port": state.env_config.vestad_port,
-    });
-    if tx.send(Message::Text(hello.to_string().into())).await.is_err() {
-        return;
-    }
-
-    // 2. Send initial agents snapshot
-    let mut agents_rx = state.agent_status_cache.subscribe_agents();
-    let mut activity_rx = state.agent_status_cache.subscribe_activity();
-    let mut services_rx = state.agent_status_cache.subscribe_services();
-    let mut invalidations_rx = state.agent_status_cache.subscribe_invalidations();
-
-    let agents = agents_rx.borrow_and_update().clone();
-    let activity = activity_rx.borrow_and_update().clone();
-    let services = services_rx.borrow_and_update().clone();
-    let invalidations = state.agent_status_cache.drain_invalidations();
-    let msg = build_agents_message(&agents, &activity, &services, &invalidations);
-    if tx.send(Message::Text(msg.to_string().into())).await.is_err() {
-        return;
-    }
-
-    // 3. Event loop
-    loop {
-        tokio::select! {
-            result = agents_rx.changed() => { if result.is_err() { break; } }
-            result = activity_rx.changed() => { if result.is_err() { break; } }
-            result = services_rx.changed() => { if result.is_err() { break; } }
-            result = invalidations_rx.changed() => { if result.is_err() { break; } }
-            msg = rx.next() => {
-                match msg {
-                    Some(Ok(Message::Text(text))) => {
-                        handle_control_command(&state, &text).await;
-                        continue;
-                    }
-                    Some(Ok(Message::Close(_))) | None => break,
-                    _ => { continue; }
-                }
-            }
-        }
-
-        // Drain all watches and send a single coalesced snapshot
-        let agents = agents_rx.borrow_and_update().clone();
-        let activity = activity_rx.borrow_and_update().clone();
-        let services = services_rx.borrow_and_update().clone();
-        let invalidations = state.agent_status_cache.drain_invalidations();
-        let msg = build_agents_message(&agents, &activity, &services, &invalidations);
-        if tx.send(Message::Text(msg.to_string().into())).await.is_err() {
-            break;
-        }
-    }
-}
-
-async fn handle_control_command(_state: &SharedState, text: &str) {
-    let parsed: serde_json::Value = match serde_json::from_str(text) {
-        Ok(v) => v,
-        Err(_) => return,
-    };
-    let cmd_type = parsed.get("type").and_then(|v| v.as_str()).unwrap_or("");
-    tracing::debug!(cmd_type, "unknown control command");
 }
 
 // --- Agent wildcard proxy (HTTP + WS) for /agents/{name}/* ---
@@ -1781,7 +1633,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/settings/auto-backup", get(get_auto_backup_handler))
         .route("/settings/auto-backup", axum::routing::put(set_auto_backup_handler))
         .route("/agents/{name}/{*path}", any(agent_proxy_handler))
-        .route("/ws", get(control_ws_handler))
+        .route("/ws", get(control_ws::control_ws_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
@@ -1793,7 +1645,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/services", post(register_service_handler))
         .route("/agents/{name}/services", get(list_services_handler))
         .route("/agents/{name}/services/{service}", axum::routing::delete(unregister_service_handler))
-        .route("/agents/{name}/services/{service}/invalidate", post(invalidate_service_handler))
+        .route("/agents/{name}/services/{service}/invalidate", post(control_ws::invalidate_service_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth_middleware_localhost,
