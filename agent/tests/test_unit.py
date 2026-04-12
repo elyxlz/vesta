@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import datetime as dt
+import json
 import typing as tp
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -1095,3 +1096,140 @@ def test_format_search_results():
     formatted = _format_search_results(results)
     assert "hello" in formatted
     assert "user" in formatted
+
+
+# --- Voice handler invalidation ---
+
+
+def _voice_config_with_stt_tts(data_dir: Path) -> None:
+    """Write a minimal voice config with both STT and TTS configured."""
+    cfg = {
+        "stt": {"provider": "deepgram", "enabled": True, "credentials": {"deepgram": {"api_key": "fake"}}},
+        "tts": {"provider": "elevenlabs", "enabled": True, "selected_voice_id": "v1", "credentials": {"elevenlabs": {"api_key": "fake"}}},
+    }
+    data_dir.mkdir(parents=True, exist_ok=True)
+    (data_dir / "voice_config.json").write_text(json.dumps(cfg))
+
+
+@pytest.mark.anyio
+async def test_stt_set_enabled_invalidates(tmp_path):
+    from aiohttp import web
+    from aiohttp.test_utils import TestClient, TestServer
+    from voice import handlers
+
+    _voice_config_with_stt_tts(tmp_path)
+    calls: list[str] = []
+
+    async def mock_notify(scope: str) -> None:
+        calls.append(scope)
+
+    app = web.Application()
+    app.router.add_post("/stt/set-enabled", handlers.stt_set_enabled)
+
+    with patch.object(handlers, "DATA_DIR", tmp_path), patch.object(handlers, "_notify_invalidation", mock_notify):
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.post("/stt/set-enabled", json={"value": False})
+            assert resp.status == 200
+            await asyncio.sleep(0)  # let create_task run
+            assert calls == ["stt"]
+
+
+@pytest.mark.anyio
+async def test_tts_set_enabled_invalidates(tmp_path):
+    from aiohttp import web
+    from aiohttp.test_utils import TestClient, TestServer
+    from voice import handlers
+
+    _voice_config_with_stt_tts(tmp_path)
+    calls: list[str] = []
+
+    async def mock_notify(scope: str) -> None:
+        calls.append(scope)
+
+    app = web.Application()
+    app.router.add_post("/tts/set-enabled", handlers.tts_set_enabled)
+
+    with patch.object(handlers, "DATA_DIR", tmp_path), patch.object(handlers, "_notify_invalidation", mock_notify):
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.post("/tts/set-enabled", json={"value": True})
+            assert resp.status == 200
+            await asyncio.sleep(0)
+            assert calls == ["tts"]
+
+
+@pytest.mark.anyio
+async def test_tts_set_voice_invalidates(tmp_path):
+    from aiohttp import web
+    from aiohttp.test_utils import TestClient, TestServer
+    from voice import handlers
+
+    _voice_config_with_stt_tts(tmp_path)
+    calls: list[str] = []
+
+    async def mock_notify(scope: str) -> None:
+        calls.append(scope)
+
+    app = web.Application()
+    app.router.add_post("/tts/set-voice", handlers.tts_set_voice)
+
+    with patch.object(handlers, "DATA_DIR", tmp_path), patch.object(handlers, "_notify_invalidation", mock_notify):
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.post("/tts/set-voice", json={"voice_id": "v2"})
+            assert resp.status == 200
+            await asyncio.sleep(0)
+            assert calls == ["tts"]
+
+
+@pytest.mark.anyio
+async def test_set_setting_invalidates_with_domain(tmp_path):
+    from aiohttp import web
+    from aiohttp.test_utils import TestClient, TestServer
+    from voice import handlers
+
+    _voice_config_with_stt_tts(tmp_path)
+    calls: list[str] = []
+
+    async def mock_notify(scope: str) -> None:
+        calls.append(scope)
+
+    app = web.Application()
+    app.router.add_post("/{domain:stt|tts}/set", handlers.set_setting)
+
+    with patch.object(handlers, "DATA_DIR", tmp_path), patch.object(handlers, "_notify_invalidation", mock_notify):
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.post("/stt/set", json={"key": "auto_send", "value": True})
+            assert resp.status == 200
+            await asyncio.sleep(0)
+            assert calls == ["stt"]
+
+
+@pytest.mark.anyio
+async def test_stt_set_auto_send_invalidates(tmp_path):
+    from aiohttp import web
+    from aiohttp.test_utils import TestClient, TestServer
+    from voice import handlers
+
+    _voice_config_with_stt_tts(tmp_path)
+    calls: list[str] = []
+
+    async def mock_notify(scope: str) -> None:
+        calls.append(scope)
+
+    app = web.Application()
+    app.router.add_post("/stt/set-auto-send", handlers.stt_set_auto_send)
+
+    with patch.object(handlers, "DATA_DIR", tmp_path), patch.object(handlers, "_notify_invalidation", mock_notify):
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.post("/stt/set-auto-send", json={"value": True})
+            assert resp.status == 200
+            await asyncio.sleep(0)
+            assert calls == ["stt"]
+
+
+@pytest.mark.anyio
+async def test_notify_invalidation_skips_without_env():
+    """_notify_invalidation should no-op when VESTAD_PORT/AGENT_NAME are empty."""
+    from voice.handlers import _notify_invalidation
+
+    with patch("voice.handlers._VESTAD_PORT", ""), patch("voice.handlers._AGENT_NAME", ""):
+        await _notify_invalidation("stt")  # should not raise or make any HTTP call

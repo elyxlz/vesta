@@ -93,6 +93,7 @@ Once [agent_name] knows who they're with (name isn't "[Unknown]"), that's it. No
   - `$VESTAD_PORT` is available as an env var (sourced from `/run/vestad-env` at container start)
   - Use this for anything: skill servers (e.g. voice, dashboard), custom APIs, webhooks, etc.
   - To add a new server: register with vestad to get a port, start it in a screen session, and add the command to `restart.md`
+  - **Invalidation**: after rebuilding/restarting a service or changing its config, notify connected clients by calling: `curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services/<name>/invalidate` — optionally pass `{"scope": "<part>"}` to indicate what changed (e.g. `{"scope": "stt"}`). Omit the body for a full invalidation. This tells the app to reload/refresh that service (e.g. reload the dashboard iframe, re-fetch voice settings).
 
 ### Self-Modification
 - Edit anything: source (`~/vesta/src/vesta/`), config (`config.py`, mechanical settings only), prompts (`~/vesta/prompts/`), skills (`~/vesta/skills/`), MEMORY.md

@@ -1,8 +1,11 @@
 import asyncio
 import logging
+import os
 import pathlib as pl
+import ssl
 import typing as tp
 
+import aiohttp
 from aiohttp import web
 
 from . import config as voice_config
@@ -11,6 +14,30 @@ from . import providers
 logger = logging.getLogger("voice")
 
 DATA_DIR = pl.Path.home() / ".voice"
+
+_VESTAD_PORT = os.environ.get("VESTAD_PORT", "")
+_AGENT_NAME = os.environ.get("AGENT_NAME", "")
+
+
+async def _notify_invalidation(scope: str) -> None:
+    """Fire-and-forget POST to vestad to invalidate the voice service."""
+    if not _VESTAD_PORT or not _AGENT_NAME:
+        return
+    url = f"https://localhost:{_VESTAD_PORT}/agents/{_AGENT_NAME}/services/voice/invalidate"
+    ssl_ctx = ssl.create_default_context()
+    ssl_ctx.check_hostname = False
+    ssl_ctx.verify_mode = ssl.CERT_NONE
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                url,
+                json={"scope": scope},
+                ssl=ssl_ctx,
+                timeout=aiohttp.ClientTimeout(total=5),
+            ):
+                pass
+    except Exception as exc:
+        logger.debug("invalidation notify failed: %s", exc)
 
 
 def _resolve_domain(
@@ -106,11 +133,17 @@ async def _set_bool(request: web.Request, setter: tp.Callable[..., tp.Any]) -> w
 
 
 async def stt_set_enabled(request: web.Request) -> web.Response:
-    return await _set_bool(request, lambda d, v: voice_config.set_enabled(d, "stt", v))
+    resp = await _set_bool(request, lambda d, v: voice_config.set_enabled(d, "stt", v))
+    if resp.status == 200:
+        asyncio.create_task(_notify_invalidation("stt"))
+    return resp
 
 
 async def stt_set_auto_send(request: web.Request) -> web.Response:
-    return await _set_bool(request, voice_config.set_stt_auto_send)
+    resp = await _set_bool(request, voice_config.set_stt_auto_send)
+    if resp.status == 200:
+        asyncio.create_task(_notify_invalidation("stt"))
+    return resp
 
 
 async def stt_set_eot(request: web.Request) -> web.Response:
@@ -126,6 +159,7 @@ async def stt_set_eot(request: web.Request) -> web.Response:
             return web.json_response({"error": "threshold or timeout_ms required"}, status=400)
     except ValueError as e:
         return web.json_response({"error": str(e)}, status=400)
+    asyncio.create_task(_notify_invalidation("stt"))
     return web.json_response({"ok": True})
 
 
@@ -199,7 +233,10 @@ async def tts_usage(request: web.Request) -> web.Response:
 
 
 async def tts_set_enabled(request: web.Request) -> web.Response:
-    return await _set_bool(request, lambda d, v: voice_config.set_enabled(d, "tts", v))
+    resp = await _set_bool(request, lambda d, v: voice_config.set_enabled(d, "tts", v))
+    if resp.status == 200:
+        asyncio.create_task(_notify_invalidation("tts"))
+    return resp
 
 
 async def tts_set_voice(request: web.Request) -> web.Response:
@@ -213,11 +250,12 @@ async def tts_set_voice(request: web.Request) -> web.Response:
         voice_config.set_voice(DATA_DIR, voice_id)
     except ValueError as e:
         return web.json_response({"error": str(e)}, status=400)
+    asyncio.create_task(_notify_invalidation("tts"))
     return web.json_response({"ok": True})
 
 
 async def set_setting(request: web.Request) -> web.Response:
-    """Generic setter for any provider setting."""
+    """Generic setter — saves value and returns the updated domain status."""
     domain = request.match_info["domain"]
     if domain not in ("stt", "tts"):
         return web.json_response({"error": "domain must be stt or tts"}, status=400)
@@ -232,7 +270,11 @@ async def set_setting(request: web.Request) -> web.Response:
         voice_config.set_setting(DATA_DIR, domain, key, value)  # type: ignore[arg-type]
     except ValueError as e:
         return web.json_response({"error": str(e)}, status=400)
-    return web.json_response({"ok": True})
+    asyncio.create_task(_notify_invalidation(domain))
+    # Return the full updated status so the client doesn't need a separate refresh.
+    if domain == "stt":
+        return await stt_status(request)
+    return await tts_status(request)
 
 
 async def tts_speak(request: web.Request) -> web.StreamResponse:

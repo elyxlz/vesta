@@ -8,11 +8,17 @@ export type AgentStatus =
   | "dead"
   | "not_found";
 
+export interface ServiceInfo {
+  port: number;
+  rev: number;
+  scopes: string[];
+}
+
 export interface AgentInfo {
   name: string;
   status: AgentStatus;
   activityState: AgentActivityState;
-  services: Record<string, number>;
+  services: Record<string, ServiceInfo>;
 }
 
 export type AgentActivityState = "idle" | "thinking";

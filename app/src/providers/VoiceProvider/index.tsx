@@ -63,12 +63,15 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     refresh: refreshVoiceStatus,
     patchStt,
     patchTts,
-  } = useVoiceStatus(agentName || null, agent.services);
+  } = useVoiceStatus(agentName || null, agent.services, agent.services?.voice?.rev);
 
   const sttAvailable = (sttStatus?.configured && sttStatus?.enabled) ?? false;
   const speechEnabled = (ttsStatus?.configured && ttsStatus?.enabled) ?? false;
   const voiceAutoSend =
     (sttStatus?.settings?.find((s) => s.key === "auto_send")
+      ?.value as boolean) ?? true;
+  const interruptTts =
+    (sttStatus?.settings?.find((s) => s.key === "interrupt_tts")
       ?.value as boolean) ?? true;
 
   const {
@@ -81,6 +84,10 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     stopSpeech();
   };
 
+  const onTurnStart = () => {
+    if (interruptTts) stopSpeech();
+  };
+
   const {
     isRecording,
     liveTranscript,
@@ -91,6 +98,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     onSend,
     onDraft,
     onRecordingStart,
+    onTurnStart,
     sttAvailable,
     voiceAutoSend,
   });

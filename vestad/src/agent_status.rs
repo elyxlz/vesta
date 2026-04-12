@@ -1,11 +1,27 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use futures_util::StreamExt;
 use tokio::sync::watch;
 
 use crate::docker::{self, ListEntry};
+
+/// Per-service invalidation state (ephemeral, not persisted).
+struct InvalidationEntry {
+    rev: u64,
+    pending_scopes: Vec<String>,
+    /// `true` when any invalidation omitted a scope (= full invalidation).
+    full: bool,
+}
+
+/// Snapshot returned by [`AgentStatusCache::drain_invalidations`].
+#[derive(Clone, Default)]
+pub struct DrainedInvalidation {
+    pub rev: u64,
+    /// Empty vec means full invalidation.
+    pub scopes: Vec<String>,
+}
 
 const POLL_INTERVAL_SECS: u64 = 3;
 
@@ -18,6 +34,11 @@ pub struct AgentStatusCache {
     activity_rx: watch::Receiver<HashMap<String, String>>,
     services_tx: watch::Sender<HashMap<String, HashMap<String, u16>>>,
     services_rx: watch::Receiver<HashMap<String, HashMap<String, u16>>>,
+    /// Notification-only channel — wakes WS loops when any invalidation occurs.
+    invalidations_tx: watch::Sender<()>,
+    invalidations_rx: watch::Receiver<()>,
+    /// Accumulated invalidation state, drained when WS pushes to clients.
+    invalidation_state: Mutex<HashMap<String, HashMap<String, InvalidationEntry>>>,
 }
 
 impl AgentStatusCache {
@@ -25,6 +46,7 @@ impl AgentStatusCache {
         let (agents_tx, agents_rx) = watch::channel(Vec::new());
         let (activity_tx, activity_rx) = watch::channel(HashMap::new());
         let (services_tx, services_rx) = watch::channel(HashMap::new());
+        let (invalidations_tx, invalidations_rx) = watch::channel(());
         Self {
             agents_tx,
             agents_rx,
@@ -32,6 +54,9 @@ impl AgentStatusCache {
             activity_rx,
             services_tx,
             services_rx,
+            invalidations_tx,
+            invalidations_rx,
+            invalidation_state: Mutex::new(HashMap::new()),
         }
     }
 
@@ -56,6 +81,65 @@ impl AgentStatusCache {
             *current = all_services.clone();
             true
         });
+    }
+
+    pub fn subscribe_invalidations(&self) -> watch::Receiver<()> {
+        self.invalidations_rx.clone()
+    }
+
+    /// Bump the revision for a service and accumulate an optional scope.
+    /// If `scope` is `None`, marks it as a full invalidation.
+    pub fn invalidate_service(&self, agent: &str, service: &str, scope: Option<&str>) {
+        {
+            let mut state = self.invalidation_state.lock().unwrap();
+            let entry = state
+                .entry(agent.to_string())
+                .or_default()
+                .entry(service.to_string())
+                .or_insert_with(|| InvalidationEntry {
+                    rev: 0,
+                    pending_scopes: Vec::new(),
+                    full: false,
+                });
+            entry.rev += 1;
+            match scope {
+                Some(s) => {
+                    if !entry.pending_scopes.contains(&s.to_string()) {
+                        entry.pending_scopes.push(s.to_string());
+                    }
+                }
+                None => entry.full = true,
+            }
+        }
+        // Wake all WS loops.
+        let _ = self.invalidations_tx.send(());
+    }
+
+    /// Snapshot current invalidation state and clear pending scopes.
+    /// Returns rev + accumulated scopes for each agent+service.
+    pub fn drain_invalidations(&self) -> HashMap<String, HashMap<String, DrainedInvalidation>> {
+        let mut state = self.invalidation_state.lock().unwrap();
+        let mut result: HashMap<String, HashMap<String, DrainedInvalidation>> = HashMap::new();
+        for (agent, services) in state.iter_mut() {
+            let agent_map = result.entry(agent.clone()).or_default();
+            for (service, entry) in services.iter_mut() {
+                let scopes = if entry.full {
+                    Vec::new()
+                } else {
+                    entry.pending_scopes.clone()
+                };
+                agent_map.insert(
+                    service.clone(),
+                    DrainedInvalidation {
+                        rev: entry.rev,
+                        scopes,
+                    },
+                );
+                entry.pending_scopes.clear();
+                entry.full = false;
+            }
+        }
+        result
     }
 }
 
@@ -148,6 +232,104 @@ pub fn spawn_agent_status_task(cache: Arc<AgentStatusCache>, agents_dir: PathBuf
 
 struct AgentWsHandle {
     abort_handle: tokio::task::AbortHandle,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalidate_bumps_rev() {
+        let cache = AgentStatusCache::new();
+        cache.invalidate_service("agent1", "dashboard", None);
+        let inv = cache.drain_invalidations();
+        let d = &inv["agent1"]["dashboard"];
+        assert_eq!(d.rev, 1);
+    }
+
+    #[test]
+    fn invalidate_multiple_bumps_rev_incrementally() {
+        let cache = AgentStatusCache::new();
+        cache.invalidate_service("a", "voice", Some("stt"));
+        cache.invalidate_service("a", "voice", Some("tts"));
+        let inv = cache.drain_invalidations();
+        assert_eq!(inv["a"]["voice"].rev, 2);
+    }
+
+    #[test]
+    fn scoped_invalidation_accumulates_scopes() {
+        let cache = AgentStatusCache::new();
+        cache.invalidate_service("a", "voice", Some("stt"));
+        cache.invalidate_service("a", "voice", Some("tts"));
+        let inv = cache.drain_invalidations();
+        let scopes = &inv["a"]["voice"].scopes;
+        assert_eq!(scopes.len(), 2);
+        assert!(scopes.contains(&"stt".to_string()));
+        assert!(scopes.contains(&"tts".to_string()));
+    }
+
+    #[test]
+    fn duplicate_scope_not_added_twice() {
+        let cache = AgentStatusCache::new();
+        cache.invalidate_service("a", "voice", Some("stt"));
+        cache.invalidate_service("a", "voice", Some("stt"));
+        let inv = cache.drain_invalidations();
+        assert_eq!(inv["a"]["voice"].scopes.len(), 1);
+        assert_eq!(inv["a"]["voice"].rev, 2);
+    }
+
+    #[test]
+    fn full_invalidation_clears_scopes() {
+        let cache = AgentStatusCache::new();
+        cache.invalidate_service("a", "voice", Some("stt"));
+        cache.invalidate_service("a", "voice", None); // full
+        let inv = cache.drain_invalidations();
+        assert!(inv["a"]["voice"].scopes.is_empty());
+    }
+
+    #[test]
+    fn drain_clears_pending_scopes_but_keeps_rev() {
+        let cache = AgentStatusCache::new();
+        cache.invalidate_service("a", "dash", Some("pages"));
+        let inv1 = cache.drain_invalidations();
+        assert_eq!(inv1["a"]["dash"].rev, 1);
+        assert_eq!(inv1["a"]["dash"].scopes, vec!["pages"]);
+
+        // Second drain without new invalidations: rev preserved, scopes empty
+        let inv2 = cache.drain_invalidations();
+        assert_eq!(inv2["a"]["dash"].rev, 1);
+        assert!(inv2["a"]["dash"].scopes.is_empty());
+    }
+
+    #[test]
+    fn drain_resets_full_flag() {
+        let cache = AgentStatusCache::new();
+        cache.invalidate_service("a", "dash", None);
+        let _ = cache.drain_invalidations();
+
+        // After drain, a scoped invalidation should produce scopes (not full)
+        cache.invalidate_service("a", "dash", Some("widgets"));
+        let inv = cache.drain_invalidations();
+        assert_eq!(inv["a"]["dash"].scopes, vec!["widgets"]);
+    }
+
+    #[test]
+    fn multiple_agents_and_services() {
+        let cache = AgentStatusCache::new();
+        cache.invalidate_service("a1", "voice", Some("stt"));
+        cache.invalidate_service("a2", "dashboard", None);
+        let inv = cache.drain_invalidations();
+        assert_eq!(inv["a1"]["voice"].rev, 1);
+        assert_eq!(inv["a2"]["dashboard"].rev, 1);
+        assert!(inv["a2"]["dashboard"].scopes.is_empty()); // full
+    }
+
+    #[test]
+    fn empty_drain_returns_empty() {
+        let cache = AgentStatusCache::new();
+        let inv = cache.drain_invalidations();
+        assert!(inv.is_empty());
+    }
 }
 
 /// Connects to a single agent's WebSocket and relays activity state changes

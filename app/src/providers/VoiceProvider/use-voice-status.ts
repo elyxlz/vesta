@@ -5,8 +5,13 @@ import {
   type SttStatus,
   type TtsStatus,
 } from "@/lib/voice";
+import type { ServiceInfo } from "@/lib/types";
 
-export function useVoiceStatus(agentName: string | null, services: Record<string, number>) {
+export function useVoiceStatus(
+  agentName: string | null,
+  services: Record<string, ServiceInfo>,
+  voiceRev?: number,
+) {
   const [stt, setStt] = useState<SttStatus | null>(null);
   const [tts, setTts] = useState<TtsStatus | null>(null);
 
@@ -51,7 +56,7 @@ export function useVoiceStatus(agentName: string | null, services: Record<string
       })
       .catch(() => {});
     return () => ctrl.abort();
-  }, [agentName, hasVoice]);
+  }, [agentName, hasVoice, voiceRev]);
 
   const patchStt = useCallback((patch: Partial<SttStatus>) => {
     setStt((prev) => (prev ? { ...prev, ...patch } : prev));
