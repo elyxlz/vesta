@@ -122,7 +122,7 @@ func (wac *WhatsAppClient) SetGroupDescription(groupIdentifier, description stri
 	if err := wac.EnsureConnected(); err != nil {
 		return false, err.Error()
 	}
-	if err := wac.client.SetGroupDescription(context.Background(), jid, description); err != nil {
+	if err := wac.client.SetGroupTopic(context.Background(), jid, "", "", description); err != nil {
 		return false, fmt.Sprintf("Failed to set group description: %v", err)
 	}
 	return true, "Group description updated"

@@ -57,45 +57,64 @@ go build -tags "fts5" -o /usr/local/bin/whatsapp .
 ## 5. Start the daemon and authenticate
 
 ```bash
-screen -dmS whatsapp whatsapp serve
+screen -dmS whatsapp whatsapp serve --notifications-dir ~/vesta/notifications
 sleep 3
-whatsapp authenticate
 ```
 
-**Before showing the QR code**, confirm with the user that they should scan it from a dedicated WhatsApp account for the assistant — NOT their personal WhatsApp. Scanning from their personal account would link their own WhatsApp to Vesta and she'd be reading/sending from their personal chats.
+**Before authenticating**, confirm with the user that they should link from a dedicated WhatsApp account for the assistant — NOT their personal WhatsApp. Linking their personal account would mean the assistant reads/sends from their personal chats.
 
 If the user doesn't have a separate number yet, read [PHONE_NUMBER.md](PHONE_NUMBER.md) and guide them through getting a cheap prepaid SIM/eSIM and setting up a second WhatsApp account on their phone.
 
-If not authenticated, a QR code image is saved to `~/vesta/data/whatsapp/qr-code.png`.
-Upload it to a temporary hosting service so the user can open it from any device:
+### Phone pairing (preferred)
+
+Phone pairing is the default and preferred method. It sends a push notification to the phone and generates a short code — much faster and more reliable than QR codes.
+
 ```bash
-curl -sF 'reqtype=fileupload' -F 'time=1h' -F 'fileToUpload=@~/vesta/data/whatsapp/qr-code.png' https://litterbox.catbox.moe/resources/internals/api.php
+whatsapp pair-phone --phone '+1234567890'
 ```
-This returns a URL (e.g. `https://litter.catbox.moe/abc123.png`) that expires in 1 hour. Send the link to the user and tell them to open it and scan immediately.
+
+This returns a pairing code (e.g. `4YGP-5174`). Send it to the user and tell them:
+WhatsApp > Linked Devices > Link a Device > Link with phone number > enter code.
+
+Pairing codes last longer than QR codes and don't require image transfer, making them ideal for remote setups.
+
+### QR code (fallback)
+
+If phone pairing fails or the user prefers QR:
+
+```bash
+whatsapp authenticate
+```
+
+A QR code image is saved to `~/.whatsapp/qr-code.png`. Upload it to a temporary host:
+
+```bash
+curl -sF 'reqtype=fileupload' -F 'time=1h' -F 'fileToUpload=@~/.whatsapp/qr-code.png' https://litterbox.catbox.moe/resources/internals/api.php
+```
 
 **QR codes expire in ~20 seconds.** Warn the user to have WhatsApp ready before opening the link.
 
-After the user says they scanned, wait 10 seconds then check:
+### After authentication
+
+Check status:
+
 ```bash
-sleep 10 && whatsapp authenticate
+whatsapp authenticate
 ```
-**NEVER restart the daemon after the user has scanned** — restarting invalidates the session. If `authenticate` still says not authenticated, wait longer and check again (up to 30 seconds). Only restart the daemon if the user confirms they didn't scan in time or the QR visually expired.
+
+**NEVER restart the daemon after the user has authenticated** — restarting can invalidate the session. If `authenticate` still says not authenticated, wait longer and check again (up to 30 seconds). Only restart if the user confirms they didn't complete auth in time.
 
 ### Troubleshooting: "Can't link at this time"
 
-If the user scans the QR code but WhatsApp shows **"Can't link at this time"**, the daemon's WebSocket connection to WhatsApp's servers is stale. This is different from an expired QR — the scan succeeded on the phone but the server rejected the session establishment.
-
-**Fix:** Fully restart the daemon (not just generate a new QR):
+If the user scans the QR code but WhatsApp shows **"Can't link at this time"**, the daemon's WebSocket connection is stale. Fully restart the daemon and try again:
 
 ```bash
-screen -S whatsapp -X quit          # stop the old daemon
+screen -S whatsapp -X quit
 sleep 2
 screen -dmS whatsapp whatsapp serve --notifications-dir ~/vesta/notifications
 sleep 3
-whatsapp authenticate               # get a fresh QR on a fresh connection
+whatsapp pair-phone --phone '+1234567890'   # or: whatsapp authenticate (for QR)
 ```
-
-Then have the user scan the new QR immediately. The "Can't link at this time" error is caused by a dead WebSocket — the daemon auto-reconnects on incoming commands, but the QR pairing flow requires a freshly-established connection. Restarting the daemon guarantees a clean WebSocket.
 
 ## 6. Add to restart.md
 
