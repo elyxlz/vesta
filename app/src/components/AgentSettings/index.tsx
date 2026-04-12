@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  Archive,
   Mic,
   Volume2,
   Play,
@@ -8,11 +7,6 @@ import {
   ChevronDown,
   Activity,
   RefreshCw,
-  Hammer,
-  KeyRound,
-  ScrollText,
-  Trash2,
-  Wrench,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
@@ -28,7 +22,7 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import { Card, CardContent } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
+import { AgentActions } from "@/components/AgentMenu/AgentActions";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
@@ -144,130 +138,20 @@ export function AgentSettings() {
       <div className="grid w-full max-w-5xl mx-auto gap-4 pb-6 lg:grid-cols-[280px_minmax(0,1fr)] lg:items-start">
         <Card size="sm" className="lg:sticky lg:top-6">
           <CardContent>
-            <Field orientation="vertical" className="gap-3">
-              <FieldLabel>agent actions</FieldLabel>
-
-              {showAuthenticate && (
-                <>
-                  <Button
-                    size="sm"
-                    className="w-full justify-start"
-                    onClick={() => void handleOpenAuth()}
-                  >
-                    <KeyRound data-icon="inline-start" />
-                    authenticate
-                  </Button>
-                  <Separator className="my-0.5" />
-                </>
-              )}
-
-              {showAliveActions && (
-                <>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="w-full justify-start"
-                    onClick={() =>
-                      navigate(`/agent/${encodeURIComponent(agentName)}/logs`)
-                    }
-                  >
-                    <ScrollText data-icon="inline-start" />
-                    logs
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="w-full justify-start"
-                    onClick={() => setShowToolCalls((value) => !value)}
-                  >
-                    <Wrench data-icon="inline-start" />
-                    {showToolCalls ? "hide tool calls" : "show tool calls"}
-                  </Button>
-                </>
-              )}
-
-              {!showAliveActions && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="w-full justify-start"
-                  onClick={() => setShowToolCalls((value) => !value)}
-                >
-                  <Wrench data-icon="inline-start" />
-                  {showToolCalls ? "hide tool calls" : "show tool calls"}
-                </Button>
-              )}
-
-              <Separator className="my-0.5" />
-
-              <Button
-                size="sm"
-                variant="outline"
-                className="w-full justify-start"
-                disabled={isBusy}
-                onClick={() => void (isRunning ? stop() : start())}
-              >
-                {isRunning ? (
-                  <>
-                    <Square data-icon="inline-start" />
-                    stop
-                  </>
-                ) : (
-                  <>
-                    <Play data-icon="inline-start" />
-                    start
-                  </>
-                )}
-              </Button>
-
-              {isRunning && (
-                <>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="w-full justify-start"
-                    disabled={isBusy}
-                    onClick={() => void restart()}
-                  >
-                    <RefreshCw data-icon="inline-start" />
-                    restart
-                  </Button>
-
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="w-full justify-start"
-                    disabled={isBusy}
-                    onClick={() => void rebuild()}
-                  >
-                    <Hammer data-icon="inline-start" />
-                    rebuild
-                  </Button>
-                </>
-              )}
-
-              <Button
-                size="sm"
-                variant="outline"
-                className="w-full justify-start"
-                disabled={isBusy}
-                onClick={() => void backup()}
-              >
-                <Archive data-icon="inline-start" />
-                backup
-              </Button>
-
-              <Button
-                size="sm"
-                variant="destructive"
-                className="w-full justify-start"
-                disabled={isBusy}
-                onClick={() => setDeleteDialogOpen(true)}
-              >
-                <Trash2 data-icon="inline-start" />
-                delete
-              </Button>
-            </Field>
+            <AgentActions
+              isRunning={isRunning}
+              showAliveActions={showAliveActions}
+              isBusy={isBusy}
+              showToolCalls={showToolCalls}
+              onLogs={() => navigate(`/agent/${encodeURIComponent(agentName)}/logs`)}
+              onToolCalls={() => setShowToolCalls((value) => !value)}
+              onToggle={() => void (isRunning ? stop() : start())}
+              onRestart={() => void restart()}
+              onRebuild={() => void rebuild()}
+              onBackup={() => void backup()}
+              onAuthenticate={showAuthenticate ? () => void handleOpenAuth() : undefined}
+              onDelete={() => setDeleteDialogOpen(true)}
+            />
           </CardContent>
         </Card>
 
@@ -298,7 +182,7 @@ export function AgentSettings() {
                 onSettingChange={(settings) =>
                   patchStt({ settings } as Partial<SttStatus>)
                 }
-                onRefresh={refreshVoiceStatus}
+
                 usageContent={
                   <Collapsible
                     onOpenChange={(isOpen) => {
@@ -348,7 +232,7 @@ export function AgentSettings() {
                 onSettingChange={(settings) =>
                   patchTts({ settings } as Partial<TtsStatus>)
                 }
-                onRefresh={refreshVoiceStatus}
+
                 usageContent={
                   <Collapsible
                     onOpenChange={(isOpen) => {
@@ -403,7 +287,6 @@ function DomainSection({
   domain,
   agentName,
   onSettingChange,
-  onRefresh,
   usageContent,
 }: {
   icon: React.ReactNode;
@@ -416,7 +299,6 @@ function DomainSection({
   domain: "stt" | "tts";
   agentName: string | null;
   onSettingChange: (settings: SettingDef[]) => void;
-  onRefresh: () => void;
   usageContent: React.ReactNode;
 }) {
   return (
@@ -452,7 +334,6 @@ function DomainSection({
               domain={domain}
               agentName={agentName}
               onSettingChange={onSettingChange}
-              onRefresh={onRefresh}
             />
           )}
           {usageContent}
@@ -469,20 +350,17 @@ function DynamicSettings({
   domain,
   agentName,
   onSettingChange,
-  onRefresh,
 }: {
   settings: SettingDef[];
   domain: "stt" | "tts";
   agentName: string | null;
   onSettingChange: (settings: SettingDef[]) => void;
-  onRefresh: () => void;
 }) {
   const updateSetting = (key: string, value: unknown) => {
-    onSettingChange(
-      settings.map((s) => (s.key === key ? { ...s, value } : s)),
-    );
     if (agentName) {
-      setVoiceSetting(agentName, domain, key, value).catch(() => onRefresh());
+      setVoiceSetting(agentName, domain, key, value).then((status) => {
+        if (status.settings) onSettingChange(status.settings);
+      });
     }
   };
 
@@ -505,7 +383,6 @@ function DynamicSettings({
           key={s.key}
           setting={s}
           onChange={(v) => updateSetting(s.key, v)}
-          onRefresh={onRefresh}
         />
       ))}
 
@@ -623,11 +500,9 @@ function NumberSetting({
 function SelectSetting({
   setting,
   onChange,
-  onRefresh,
 }: {
   setting: SettingDef;
   onChange: (v: string) => void;
-  onRefresh: () => void;
 }) {
   const options = setting.options ?? [];
   const hasPreview = options.some((o) => o.preview);
@@ -637,7 +512,6 @@ function SelectSetting({
       <VoicePicker
         setting={setting}
         onChange={onChange}
-        onRefresh={onRefresh}
       />
     );
   }
@@ -679,14 +553,11 @@ function SelectSetting({
 function VoicePicker({
   setting,
   onChange,
-  onRefresh,
 }: {
   setting: SettingDef;
   onChange: (v: string) => void;
-  onRefresh: () => void;
 }) {
   const options = setting.options ?? [];
-  const [pendingId, setPendingId] = useState<string | null>(null);
   const [playingId, setPlayingId] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -699,14 +570,11 @@ function VoicePicker({
     };
   }, []);
 
-  const selectedId = pendingId ?? (setting.value as string) ?? null;
+  const selectedId = (setting.value as string) ?? null;
   const selectedOption = options.find((o) => o.value === selectedId);
 
   const select = (opt: { value: string }) => {
-    setPendingId(opt.value);
     onChange(opt.value);
-    onRefresh();
-    setPendingId(null);
   };
 
   const playPreview = (opt: { value: string; preview?: string }) => {

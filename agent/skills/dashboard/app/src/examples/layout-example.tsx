@@ -89,7 +89,7 @@ function EventLog() {
 
 export function LayoutExamplePage() {
   return (
-    <div className="grid gap-4 grid-cols-[repeat(auto-fit,minmax(280px,1fr))]">
+    <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(280px,1fr))]">
       <MetricCard title="Users" value="1,234" change="+12% from last month" />
       <MetricCard title="Revenue" value="$5,678" change="+8% from last month" />
       <MetricCard title="Uptime" value="99.9%" change="Last 30 days" />

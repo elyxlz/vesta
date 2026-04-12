@@ -1,21 +1,11 @@
 import {
-  Archive,
-  Bug,
-  Play,
-  RefreshCw,
-  ScrollText,
-  Settings,
-  Square,
-  Wrench,
-  Hammer,
-} from "lucide-react";
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
+  DropdownMenuLabel,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { buildActionSections } from "./AgentActions";
 import type { MenuProps } from "./types";
 
 export function DesktopMenu({
@@ -24,71 +14,43 @@ export function DesktopMenu({
   onOpenChange,
   trigger,
 }: MenuProps) {
+  const sections = buildActionSections({
+    isRunning: state.isRunning,
+    showAliveActions: state.showAliveActions,
+    isBusy: state.isBusy,
+    showToolCalls: state.showToolCalls,
+    onLogs: state.onLogs,
+    onToolCalls: state.onToolCalls,
+    onToggle: state.onToggle,
+    onRestart: state.onRestart,
+    onRebuild: state.onRebuild,
+    onBackup: state.onBackup,
+    onOpenSettings: state.onOpenSettings,
+    onDebugInfo: state.onDebugInfo,
+  });
+
   return (
     <DropdownMenu open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
       <DropdownMenuContent align="end" side="bottom" className="min-w-[180px]">
-        {state.isRunning && (
-          <DropdownMenuItem onClick={state.onLogs}>
-            <ScrollText data-icon="inline-start" />
-            logs
-          </DropdownMenuItem>
-        )}
-        <DropdownMenuItem onClick={state.onToolCalls}>
-          <Wrench />
-          {state.showToolCalls ? "hide tool calls" : "show tool calls"}
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem disabled={state.isBusy} onClick={state.onToggle}>
-          {state.isRunning ? (
-            <>
-              <Square data-icon="inline-start" />
-              stop
-            </>
-          ) : (
-            <>
-              <Play data-icon="inline-start" />
-              start
-            </>
-          )}
-        </DropdownMenuItem>
-        {state.isRunning && (
-          <>
-            <DropdownMenuItem
-              disabled={state.isBusy}
-              onClick={state.onRestart}
-            >
-              <RefreshCw data-icon="inline-start" />
-              restart
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              disabled={state.isBusy}
-              onClick={state.onRebuild}
-            >
-              <Hammer data-icon="inline-start" />
-              rebuild
-            </DropdownMenuItem>
-          </>
-        )}
-        <DropdownMenuSeparator />
-        <DropdownMenuItem disabled={state.isBusy} onClick={state.onBackup}>
-          <Archive data-icon="inline-start" />
-          backup
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={state.onOpenSettings}>
-          <Settings data-icon="inline-start" />
-          settings
-        </DropdownMenuItem>
-        {state.onDebugInfo && (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={state.onDebugInfo}>
-              <Bug data-icon="inline-start" />
-              debug info
-            </DropdownMenuItem>
-          </>
-        )}
+        {sections.map((section, i) => (
+          <div key={section.key}>
+            <DropdownMenuLabel className="text-xs text-muted-foreground font-medium">
+              {section.title}
+            </DropdownMenuLabel>
+            {section.items.map((item) => (
+              <DropdownMenuItem
+                key={item.key}
+                disabled={item.disabled}
+                onClick={item.onClick}
+                variant={item.variant === "destructive" ? "destructive" : undefined}
+              >
+                {item.icon}
+                {item.label}
+              </DropdownMenuItem>
+            ))}
+          </div>
+        ))}
       </DropdownMenuContent>
     </DropdownMenu>
   );

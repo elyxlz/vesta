@@ -1,7 +1,6 @@
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -14,6 +13,7 @@ import { useChatContext } from "@/providers/ChatProvider";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useVoice } from "@/providers/VoiceProvider";
 import { cn } from "@/lib/utils";
+import { BottomBanner } from "./BottomBanner";
 import { ChatComposer } from "./ChatComposer";
 import { ChatHeaderActions } from "./ChatHeaderActions";
 import { ChatMessageArea } from "./ChatMessageArea";
@@ -56,9 +56,9 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   const [wasConnected, setWasConnected] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const prevMsgCountRef = useRef(0);
-  const [isNearBottom, setIsNearBottom] = useState(true);
+  const bottomVisibleRef = useRef(true);
   const [hasNewMessage, setHasNewMessage] = useState(false);
 
   useEffect(() => {
@@ -66,8 +66,19 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   }, [connected]);
 
   useEffect(() => {
-    if (isNearBottom) setHasNewMessage(false);
-  }, [isNearBottom]);
+    const el = bottomRef.current;
+    const root = scrollRef.current;
+    if (!el || !root) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        bottomVisibleRef.current = entry.isIntersecting;
+        if (entry.isIntersecting) setHasNewMessage(false);
+      },
+      { root, threshold: 0 },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   const chatMessages = useMemo(
     () =>
@@ -84,24 +95,19 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   );
 
   const isThinking = agentState === "thinking";
+  const prevCountRef = useRef(0);
 
-  // column-reverse: scrollTop=0 is bottom, browser keeps scrollTop stable on prepend
-  useLayoutEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const prevCount = prevMsgCountRef.current;
+  useEffect(() => {
+    const prevCount = prevCountRef.current;
     const newCount = chatMessages.length;
+    prevCountRef.current = newCount;
 
-    if (newCount > prevCount && prevCount > 0) {
-      if (!isNearBottom) {
-        const latest = chatMessages[newCount - 1];
-        if (latest && latest.type !== "user") setHasNewMessage(true);
-      }
+    if (newCount > prevCount && prevCount > 0 && !bottomVisibleRef.current) {
+      const latest = chatMessages[newCount - 1];
+      if (latest && latest.type !== "user") setHasNewMessage(true);
     }
-    prevMsgCountRef.current = newCount;
-  }, [chatMessages, isNearBottom]);
+  }, [chatMessages]);
 
-  // Initial fill: if content doesn't fill the viewport, load more
   useEffect(() => {
     const el = scrollRef.current;
     if (!el || !hasMore || loadingMore) return;
@@ -114,20 +120,16 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     const el = scrollRef.current;
     if (!el) return;
 
-    const nearBottom = el.scrollTop <= 80;
-    if (nearBottom !== isNearBottom) setIsNearBottom(nearBottom);
-
     const distanceFromTop = el.scrollHeight - el.clientHeight + el.scrollTop;
     if (distanceFromTop < 100 && hasMore && !loadingMore) {
       loadMore();
     }
-  }, [isNearBottom, hasMore, loadingMore, loadMore]);
+  }, [hasMore, loadingMore, loadMore]);
 
   const scrollToBottom = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
-    el.scrollTop = 0;
-    setIsNearBottom(true);
+    el.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
 
   const handleSend = () => {
@@ -181,11 +183,10 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
 
       <ChatMessageArea
         scrollRef={scrollRef}
+        bottomRef={bottomRef}
         onScroll={handleScroll}
         fullscreen={fullscreen}
         navbarHeight={navbarHeight}
-        hasNewMessage={hasNewMessage}
-        onScrollToBottom={scrollToBottom}
         loadingMore={loadingMore}
         hasMore={hasMore}
         chatMessages={chatMessages}
@@ -193,23 +194,30 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
         agentName={name}
       />
 
-      <ChatComposer
-        fullscreen={fullscreen}
-        isThinking={isThinking}
-        wasConnected={wasConnected}
-        connected={connected}
-        voiceError={voiceError}
-        sttAvailable={sttAvailable}
-        isRecording={isRecording}
-        voiceAutoSend={voiceAutoSend}
-        liveTranscript={liveTranscript}
-        toggleVoice={toggleVoice}
-        input={input}
-        onInputChange={handleInput}
-        onKeyDown={handleKeyDown}
-        onSend={handleSend}
-        textareaRef={textareaRef}
-      />
+      <div className="relative">
+        <BottomBanner
+          hasNewMessage={hasNewMessage}
+          onScrollToBottom={scrollToBottom}
+          isThinking={isThinking}
+          wasConnected={wasConnected}
+          connected={connected}
+          error={voiceError}
+        />
+        <ChatComposer
+          fullscreen={fullscreen}
+          connected={connected}
+          sttAvailable={sttAvailable}
+          isRecording={isRecording}
+          voiceAutoSend={voiceAutoSend}
+          liveTranscript={liveTranscript}
+          toggleVoice={toggleVoice}
+          input={input}
+          onInputChange={handleInput}
+          onKeyDown={handleKeyDown}
+          onSend={handleSend}
+          textareaRef={textareaRef}
+        />
+      </div>
     </Card>
     </div>
   );

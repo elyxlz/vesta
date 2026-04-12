@@ -6,6 +6,7 @@ interface VoiceInputCallbacks {
   onSend: (text: string) => void;
   onDraft: (text: string) => void;
   onRecordingStart?: () => void;
+  onTurnStart?: () => void;
   sttAvailable: boolean;
   voiceAutoSend: boolean;
 }
@@ -15,6 +16,7 @@ export function useVoiceInput({
   onSend,
   onDraft,
   onRecordingStart,
+  onTurnStart,
   sttAvailable,
   voiceAutoSend,
 }: VoiceInputCallbacks) {
@@ -24,9 +26,11 @@ export function useVoiceInput({
   const streamRef = useRef<Transcriber | null>(null);
   const onSendRef = useRef(onSend);
   const onDraftRef = useRef(onDraft);
+  const onTurnStartRef = useRef(onTurnStart);
   const autoSendRef = useRef(voiceAutoSend);
   onSendRef.current = onSend;
   onDraftRef.current = onDraft;
+  onTurnStartRef.current = onTurnStart;
   autoSendRef.current = voiceAutoSend;
 
   const toggle = useCallback(() => {
@@ -56,7 +60,7 @@ export function useVoiceInput({
         else onDraftRef.current(text);
         setLiveTranscript("");
       },
-      onTurnStart: () => {},
+      onTurnStart: () => onTurnStartRef.current?.(),
       onError: (err) => {
         setError(err);
         setIsRecording(false);

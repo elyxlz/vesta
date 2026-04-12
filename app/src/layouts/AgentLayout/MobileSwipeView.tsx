@@ -1,4 +1,4 @@
-import { useCallback, type RefObject } from "react";
+import { useCallback, useRef, type RefObject } from "react";
 import { useLocation, useParams } from "react-router-dom";
 import { Chat } from "@/components/Chat";
 import { Dashboard } from "@/components/Dashboard";
@@ -15,15 +15,21 @@ export function MobileSwipeView({ scrollRef, onScroll }: MobileSwipeViewProps) {
   const { name } = useParams<{ name: string }>();
   const location = useLocation();
   const isChat = location.pathname === `/agent/${encodeURIComponent(name!)}/chat`;
+  const isChatRef = useRef(isChat);
+  isChatRef.current = isChat;
+  const mountedRef = useRef(false);
 
   const mountRef = useCallback(
     (node: HTMLDivElement | null) => {
       (scrollRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
-      if (node && isChat) {
-        node.scrollLeft = node.scrollWidth;
+      if (node && !mountedRef.current) {
+        mountedRef.current = true;
+        if (isChatRef.current) {
+          node.scrollLeft = node.scrollWidth;
+        }
       }
     },
-    [scrollRef, isChat],
+    [scrollRef],
   );
 
   return (

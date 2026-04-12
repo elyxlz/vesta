@@ -86,12 +86,12 @@ Default widget style — matches the app shell appearance:
 </div>
 ```
 
-Page components should use an auto-fit grid wrapper for their widgets. This ensures columns adjust to available width automatically:
+Page components should use an auto-fill grid wrapper for their widgets. This ensures columns adjust to available width automatically:
 
 ```tsx
 export function OverviewPage() {
   return (
-    <div className="grid gap-4 grid-cols-[repeat(auto-fit,minmax(280px,1fr))]">
+    <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(280px,1fr))]">
       <MetricCard />
       <MetricCard />
       <MetricCard />
@@ -118,7 +118,7 @@ Guidelines for choosing span:
 ```tsx
 export function MyPage() {
   return (
-    <div className="grid gap-4 grid-cols-[repeat(auto-fit,minmax(280px,1fr))]">
+    <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(280px,1fr))]">
       <SmallWidget />
       <SmallWidget />
       <SmallWidget />
@@ -160,6 +160,8 @@ SMOKE=$(curl -s http://localhost:$PORT/ | head -50)
 if ! echo "$SMOKE" | grep -q '<div id="root"'; then
   echo "ERROR: Dashboard failed to load. Check the build output."
 fi
+# Notify the app to reload the dashboard iframe
+curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services/dashboard/invalidate
 ```
 
 **Before notifying the app**, always verify your page renders without errors. After the server starts, open the page in a headless check or review your code for these common crash sources:

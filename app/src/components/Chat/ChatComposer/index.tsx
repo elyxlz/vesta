@@ -1,7 +1,5 @@
 import type { ChangeEvent, KeyboardEvent, RefObject } from "react";
 import { Mic, SendHorizontal, Square } from "lucide-react";
-import { AnimatePresence, motion } from "motion/react";
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   InputGroup,
   InputGroupAddon,
@@ -9,15 +7,10 @@ import {
   InputGroupTextarea,
 } from "@/components/ui/input-group";
 import { cn } from "@/lib/utils";
-import { ThinkingDots } from "../ThinkingDots";
-import { thinkingIndicatorVariants } from "../thinking-indicator-variants";
 
 interface ChatComposerProps {
   fullscreen?: boolean;
-  isThinking: boolean;
-  wasConnected: boolean;
   connected: boolean;
-  voiceError: string | null;
   sttAvailable: boolean;
   isRecording: boolean;
   voiceAutoSend: boolean;
@@ -32,10 +25,7 @@ interface ChatComposerProps {
 
 export function ChatComposer({
   fullscreen,
-  isThinking,
-  wasConnected,
   connected,
-  voiceError,
   sttAvailable,
   isRecording,
   voiceAutoSend,
@@ -51,70 +41,13 @@ export function ChatComposer({
     <div
       className={cn(
         fullscreen ? "px-[calc(var(--page-padding-x)/2)] pb-[calc(var(--page-padding-x)/2)]" : "px-2.5 pb-2.5",
-   
       )}
     >
-      <AnimatePresence>
-        {isThinking && (
-          <motion.div
-            variants={thinkingIndicatorVariants}
-            initial="hidden"
-            animate="visible"
-            exit="exit"
-            className="shrink-0 overflow-hidden"
-          >
-            <div className="px-4 py-2">
-              <ThinkingDots className="py-0" />
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-      <AnimatePresence>
-        {wasConnected && !connected && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="overflow-hidden"
-          >
-            <div className="flex justify-center p-2">
-              <Alert className="w-fit rounded-full border-warning/20 bg-warning/5 px-3 py-1.5">
-                <AlertDescription className="text-xs text-warning">
-                  reconnecting...
-                </AlertDescription>
-              </Alert>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-      <AnimatePresence>
-        {voiceError && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="overflow-hidden"
-          >
-            <div className="flex justify-center pb-2">
-              <Alert
-                variant="destructive"
-                className="w-fit rounded-full border-destructive/20 bg-destructive/5 px-3 py-1"
-              >
-                <AlertDescription className="text-xs">
-                  {voiceError}
-                </AlertDescription>
-              </Alert>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
       <InputGroup
         className={cn(
           "min-h-12 px-1",
           isRecording &&
-          "border-red-500/50 has-[[data-slot=input-group-control]:focus-visible]:border-red-500/50 has-[[data-slot=input-group-control]:focus-visible]:ring-red-500/20",
+          "ring-2 ring-red-500 has-[[data-slot=input-group-control]:focus-visible]:border-transparent has-[[data-slot=input-group-control]:focus-visible]:ring-2 has-[[data-slot=input-group-control]:focus-visible]:ring-red-500",
         )}
       >
         <InputGroupTextarea

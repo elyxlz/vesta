@@ -16,6 +16,7 @@ import { config, type PageConfig } from "./config"
 
 const SHOW_EMPTY_STATE = config.pages.length === 0
 const STORAGE_KEY = "vesta-dashboard-page-order"
+const ACTIVE_PAGE_KEY = "vesta-dashboard-active-page"
 
 function loadPageOrder(): PageConfig[] {
   try {
@@ -31,9 +32,15 @@ function loadPageOrder(): PageConfig[] {
   }
 }
 
+function loadActivePage(pages: PageConfig[]): string {
+  const saved = localStorage.getItem(ACTIVE_PAGE_KEY)
+  if (saved && pages.some((p) => p.id === saved)) return saved
+  return pages[0]?.id ?? ""
+}
+
 export default function App() {
-  const [activePageId, setActivePageId] = useState(config.pages[0]?.id ?? "")
   const [pages, setPages] = useState(loadPageOrder)
+  const [activePageId, setActivePageId] = useState(() => loadActivePage(pages))
   const [agentName, setAgentName] = useState(getAgentName)
   const activePage =
     pages.find((p) => p.id === activePageId) ?? pages[0]
@@ -79,7 +86,10 @@ export default function App() {
               localStorage.setItem(STORAGE_KEY, JSON.stringify(reordered.map((p) => p.id)))
             }}
             activePageId={activePageId}
-            onNavigate={setActivePageId}
+            onNavigate={(id) => {
+              setActivePageId(id)
+              localStorage.setItem(ACTIVE_PAGE_KEY, id)
+            }}
           />
           <SidebarInset>
             <SiteHeader title={activePage?.title ?? ""} />

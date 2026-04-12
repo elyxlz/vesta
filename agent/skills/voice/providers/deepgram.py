@@ -30,6 +30,13 @@ class DeepgramStt:
                 "default": True,
             },
             {
+                "key": "interrupt_tts",
+                "type": "bool",
+                "label": "interrupt speech on talk",
+                "description": "stop text-to-speech playback when you start speaking",
+                "default": True,
+            },
+            {
                 "key": "eot_threshold",
                 "type": "number",
                 "label": "end-of-turn sensitivity",

@@ -42,7 +42,8 @@ export const setVoiceSetting = (
   domain: "stt" | "tts",
   key: string,
   value: unknown,
-) => voicePost(n, `${domain}/set`, { key, value });
+): Promise<SttStatus | TtsStatus> =>
+  voicePost(n, `${domain}/set`, { key, value }) as Promise<SttStatus | TtsStatus>;
 
 // --- STT ---
 

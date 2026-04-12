@@ -14,7 +14,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Field, FieldLabel } from "@/components/ui/field";
+import { MenuSection } from "@/components/ui/menu-section";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useTheme } from "@/providers/ThemeProvider";
 type Theme = "dark" | "light" | "system";
@@ -56,65 +56,70 @@ export function SettingsDialog({ open, onOpenChange, agentSettingsSlot }: Settin
           </DialogDescription>
         </DialogHeader>
 
-        {agentSettingsSlot && (
-          <div onClick={() => onOpenChange(false)}>
-            {agentSettingsSlot}
-          </div>
-        )}
+        <div className="flex flex-col gap-4">
+          {agentSettingsSlot && (
+            <MenuSection title="Agent">
+              <div onClick={() => onOpenChange(false)}>
+                {agentSettingsSlot}
+              </div>
+            </MenuSection>
+          )}
 
-        <Field orientation="vertical" className="sm:flex-row sm:items-center">
-          <FieldLabel>Theme</FieldLabel>
-          <ToggleGroup
-            type="single"
-            value={theme}
-            onValueChange={(value) => {
-              if (value) setTheme(value as Theme);
-            }}
-            variant="outline"
-            spacing={2}
-          >
-            {!isTauri && (
-              <ToggleGroupItem value="system">
-                <Monitor /> System
-              </ToggleGroupItem>
-            )}
-            <ToggleGroupItem value="light">
-              <Sun /> Light
-            </ToggleGroupItem>
-            <ToggleGroupItem value="dark">
-              <Moon /> Dark
-            </ToggleGroupItem>
-          </ToggleGroup>
-        </Field>
-
-        <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:flex-nowrap sm:items-center">
-          <div className="flex min-w-0 flex-1 items-center gap-2 text-sm">
-            <StatusPill showHostname={false} />
-            <div className="flex min-w-0 flex-1 flex-col">
-              <span className="text-muted-foreground">
-                {reachable ? "Connected to" : "Cannot reach"}
-              </span>
-              <span className="min-w-0 truncate font-medium text-foreground">
-                {hostname}
-              </span>
-              {gatewayVersion && (
-                <span className="text-xs text-muted-foreground">
-                  gateway v{gatewayVersion}
-                </span>
+          <MenuSection title="Appearance">
+            <ToggleGroup
+              type="single"
+              value={theme}
+              onValueChange={(value) => {
+                if (value) setTheme(value as Theme);
+              }}
+              variant="outline"
+              spacing={2}
+            >
+              {!isTauri && (
+                <ToggleGroupItem value="system">
+                  <Monitor /> System
+                </ToggleGroupItem>
               )}
+              <ToggleGroupItem value="light">
+                <Sun /> Light
+              </ToggleGroupItem>
+              <ToggleGroupItem value="dark">
+                <Moon /> Dark
+              </ToggleGroupItem>
+            </ToggleGroup>
+          </MenuSection>
+
+          <MenuSection title="Connection">
+            <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:flex-nowrap sm:items-center">
+              <div className="flex min-w-0 flex-1 items-center gap-2 text-sm">
+                <StatusPill showHostname={false} />
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <span className="text-muted-foreground">
+                    {reachable ? "Connected to" : "Cannot reach"}
+                  </span>
+                  <span className="min-w-0 truncate font-medium text-foreground">
+                    {hostname}
+                  </span>
+                  {gatewayVersion && (
+                    <span className="text-xs text-muted-foreground">
+                      gateway v{gatewayVersion}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <Button
+                variant="destructive"
+                className="w-full shrink-0 whitespace-nowrap sm:w-auto"
+                onClick={() => {
+                  onOpenChange(false);
+                  disconnect();
+                }}
+              >
+                <LogOut data-icon="inline-start" />
+                Disconnect
+              </Button>
             </div>
-          </div>
-          <Button
-            variant="destructive"
-            className="w-full shrink-0 whitespace-nowrap sm:w-auto"
-            onClick={() => {
-              onOpenChange(false);
-              disconnect();
-            }}
-          >
-            <LogOut data-icon="inline-start" />
-            Disconnect
-          </Button>
+          </MenuSection>
         </div>
       </DialogContent>
     </Dialog>

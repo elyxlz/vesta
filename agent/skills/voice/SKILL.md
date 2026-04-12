@@ -52,7 +52,7 @@ uv run ~/vesta/skills/voice/scripts/voice_keys.py disable --domain {stt|tts}
 
 # TTS voice selection
 uv run ~/vesta/skills/voice/scripts/voice_keys.py set-voice --id <voice_id>
-uv run ~/vesta/skills/voice/scripts/voice_keys.py add-voice --id <voice_id> --name <name>
+uv run ~/vesta/skills/voice/scripts/voice_keys.py add-voice --id <voice_id> --name <name> --description "..."
 uv run ~/vesta/skills/voice/scripts/voice_keys.py remove-voice --id <voice_id>
 
 # STT keyterms (words the transcription should bias toward)
@@ -70,8 +70,32 @@ uv run ~/vesta/skills/voice/scripts/voice_keys.py set-eot --timeout-ms 10000
 - **"Enable TTS / start speaking again"** → `enable --domain tts`
 - **"Disable STT / turn off the mic"** → `disable --domain stt`
 - **"Remove voice completely"** → `clear --domain tts` (wipes provider + keys)
-- **"Add the voice with id X named Y"** → `add-voice --id X --name Y` (description auto-fetched from ElevenLabs)
 - **"I want you to sound like <name>"** → `set-voice --id <matching voice_id from status>` (or tell them they can browse and preview voices in the app settings)
 - **"Make sure you recognize '{AGENT_NAME}'"** → `add-keyterm {AGENT_NAME}`
 - **"Finalize my turns faster"** → lower `--threshold` (e.g. 0.6)
 - **"Stop cutting me off"** → raise `--threshold` (e.g. 0.9) or raise `--timeout-ms`
+
+## Providers
+
+### Deepgram (STT — voice input)
+
+- Domain: `stt`, provider name: `deepgram`
+- Model: `flux-general-en` (~$0.0048/min)
+- New accounts get $200 free credit
+- Keyterms bias the transcription toward specific words (e.g. the agent's name)
+- End-of-turn detection is tuned via `--threshold` (confidence, 0-1) and `--timeout-ms` (silence timeout)
+
+### ElevenLabs (TTS — voice output)
+
+- Domain: `tts`, provider name: `elevenlabs`
+- Model: `eleven_flash_v2_5`, output format: `mp3_22050_32`
+- Free tier: 10k characters/month
+- Ships with premade voices; users can also add custom/cloned voices from their ElevenLabs account
+- **Adding a voice**: when the user provides an ElevenLabs voice ID without a name or description, fetch them from the API before calling `add-voice`:
+  ```bash
+  curl -s https://api.elevenlabs.io/v1/voices/<id> | python3 -c "
+  import sys,json; v=json.load(sys.stdin); l=v.get('labels',{})
+  print(v.get('name',''))
+  print(', '.join(p for p in [l.get('description',''),l.get('accent',''),l.get('gender','')] if p))"
+  ```
+  Use the first line as `--name` and the second as `--description`. If the fetch fails, ask the user.

@@ -7,11 +7,10 @@ import { ChatBubble } from "../ChatBubble";
 
 interface ChatMessageAreaProps {
   scrollRef: RefObject<HTMLDivElement | null>;
+  bottomRef: RefObject<HTMLDivElement | null>;
   onScroll: () => void;
   fullscreen?: boolean;
   navbarHeight: number;
-  hasNewMessage: boolean;
-  onScrollToBottom: () => void;
   loadingMore: boolean;
   hasMore: boolean;
   chatMessages: VestaEvent[];
@@ -21,11 +20,10 @@ interface ChatMessageAreaProps {
 
 export function ChatMessageArea({
   scrollRef,
+  bottomRef,
   onScroll,
   fullscreen,
   navbarHeight,
-  hasNewMessage,
-  onScrollToBottom,
   loadingMore,
   hasMore,
   chatMessages,
@@ -34,20 +32,6 @@ export function ChatMessageArea({
 }: ChatMessageAreaProps) {
   return (
     <CardContent className="flex-1 min-h-0 overflow-hidden p-0 relative">
-      <AnimatePresence>
-        {hasNewMessage && (
-          <motion.button
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 8 }}
-            transition={{ duration: 0.18 }}
-            onClick={onScrollToBottom}
-            className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 rounded-lg border border-primary/20 bg-primary/5 px-3 py-1.5 text-xs text-primary cursor-pointer hover:bg-primary/10 transition-colors"
-          >
-            new message
-          </motion.button>
-        )}
-      </AnimatePresence>
       <AnimatePresence>
         {loadingMore && (
           <motion.div
@@ -69,16 +53,15 @@ export function ChatMessageArea({
       <div
         ref={scrollRef}
         onScroll={onScroll}
-        className={cn(
-          "h-full min-h-0 overflow-y-auto flex flex-col-reverse pb-4 px-4",
-        )}
+        className="h-full min-h-0 overflow-y-auto flex flex-col-reverse pb-4 px-4"
         style={{
           paddingTop: fullscreen
             ? `calc(${navbarHeight}px + 1rem)`
             : 32,
-          maskImage: `linear-gradient(to bottom, transparent, black ${fullscreen ? navbarHeight * 2 : 48}px, black calc(100% - 20px), transparent)`,
+          maskImage: `linear-gradient(to bottom, transparent, black ${fullscreen ? navbarHeight : 48}px, black calc(100% - 20px), transparent)`,
         }}
       >
+        <div ref={bottomRef} className="h-px shrink-0" />
         <div>
           {chatMessages.length === 0 ? (
             <div className="flex flex-col items-center gap-2 py-2">
