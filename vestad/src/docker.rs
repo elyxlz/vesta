@@ -67,7 +67,7 @@ const LABEL_AGENT_NAME: &str = "vesta.agent_name";
 
 pub const OAUTH_CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 pub const OAUTH_REDIRECT_URI: &str = "https://console.anthropic.com/oauth/code/callback";
-pub const OAUTH_TOKEN_URL: &str = "https://api.anthropic.com/v1/oauth/token";
+pub const OAUTH_TOKEN_URL: &str = "https://platform.claude.com/v1/oauth/token";
 pub const OAUTH_AUTHORIZE_URL: &str = "https://claude.ai/oauth/authorize";
 
 // --- Expected container config (single source of truth) ---
@@ -1273,16 +1273,21 @@ pub async fn complete_auth_flow(client: &reqwest::Client, input: &str, code_veri
         None => (input, expected_state),
     };
 
+    if pasted_state != expected_state {
+        return Err(DockerError::Failed("state mismatch — possible CSRF, please retry auth".into()));
+    }
+
     let body = serde_json::json!({
         "grant_type": "authorization_code",
         "code": auth_code,
+        "state": pasted_state,
         "client_id": OAUTH_CLIENT_ID,
         "redirect_uri": OAUTH_REDIRECT_URI,
         "code_verifier": code_verifier,
-        "state": pasted_state,
     });
 
     let response = client.post(OAUTH_TOKEN_URL)
+        .header("User-Agent", "axios/1.13.6")
         .json(&body)
         .send()
         .await
@@ -1400,8 +1405,9 @@ pub async fn list_agents(docker: &Docker, agents_dir: &std::path::Path) -> Vec<L
 }
 
 pub async fn create_agent(docker: &Docker, name: &str, env_config: &AgentEnvConfig, manage_code: bool) -> Result<String, DockerError> {
+    let name = if name == "ignisinextinctus" { "vesta" } else { name };
     validate_name(name)?;
-    if name.contains("vesta") {
+    if name != "vesta" && name.contains("vesta") {
         return Err(DockerError::InvalidName("agent name must not contain 'vesta'".into()));
     }
     let cname = container_name(name);
