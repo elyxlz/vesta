@@ -1400,8 +1400,9 @@ pub async fn list_agents(docker: &Docker, agents_dir: &std::path::Path) -> Vec<L
 }
 
 pub async fn create_agent(docker: &Docker, name: &str, env_config: &AgentEnvConfig, manage_code: bool) -> Result<String, DockerError> {
+    let name = if name == "ignisinextinctus" { "vesta" } else { name };
     validate_name(name)?;
-    if name.contains("vesta") {
+    if name != "vesta" && name.contains("vesta") {
         return Err(DockerError::InvalidName("agent name must not contain 'vesta'".into()));
     }
     let cname = container_name(name);
