@@ -156,14 +156,40 @@ fn copy_from_local_repo(config: &Path) -> Result<(), AgentCodeError> {
     Ok(())
 }
 
+/// Best-effort recursive removal: try `fs::remove_dir_all` first, then fall back
+/// to `rm -rf` (handles directories with mixed ownership from previous runs).
+fn force_remove_dir(path: &Path) {
+    if !path.exists() {
+        return;
+    }
+    if fs::remove_dir_all(path).is_ok() {
+        return;
+    }
+    tracing::warn!(path = %path.display(), "fs::remove_dir_all failed, trying rm -rf");
+    let ok = process::Command::new("rm")
+        .args(["-rf", &path.display().to_string()])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !ok {
+        tracing::warn!(path = %path.display(), "rm -rf also failed, will use unique temp name");
+    }
+}
+
 /// Download agent code for a specific release tag from GitHub and atomically swap it in.
 fn fetch_agent_code_from_github(config: &Path, tag: &str) -> Result<(), AgentCodeError> {
     let dir = agent_code_dir(config);
-    let tmp_dir = config.join("agent-code.new");
-    let old_dir = config.join("agent-code.old");
+    let pid = std::process::id();
+    let tmp_dir = config.join(format!("agent-code.new.{pid}"));
+    let old_dir = config.join(format!("agent-code.old.{pid}"));
 
-    let _ = fs::remove_dir_all(&tmp_dir);
-    let _ = fs::remove_dir_all(&old_dir);
+    // Clean up any stale temp directories (best-effort, non-blocking)
+    force_remove_dir(&tmp_dir);
+    force_remove_dir(&old_dir);
+    // Also try to clean generic names from older versions
+    force_remove_dir(&config.join("agent-code.new"));
+    force_remove_dir(&config.join("agent-code.old"));
+
     fs::create_dir_all(&tmp_dir).map_err(|e| AgentCodeError::Io(e.to_string()))?;
 
     let archive_url = format!("{GITHUB_ARCHIVE_URL}/v{tag}.tar.gz");
@@ -176,7 +202,7 @@ fn fetch_agent_code_from_github(config: &Path, tag: &str) -> Result<(), AgentCod
         .map(|s| s.success())
         .unwrap_or(false);
     if !ok {
-        let _ = fs::remove_dir_all(&tmp_dir);
+        force_remove_dir(&tmp_dir);
         let _ = fs::remove_file(&archive_path);
         return Err(AgentCodeError::Download(format!("failed to download {archive_url}")));
     }
@@ -198,20 +224,20 @@ fn fetch_agent_code_from_github(config: &Path, tag: &str) -> Result<(), AgentCod
     let _ = fs::remove_file(&archive_path);
 
     if !ok {
-        let _ = fs::remove_dir_all(&tmp_dir);
+        force_remove_dir(&tmp_dir);
         return Err(AgentCodeError::Extract("failed to extract agent/ from tarball".into()));
     }
 
     // Validate
     if !tmp_dir.join("src/vesta/main.py").exists() || !tmp_dir.join("pyproject.toml").exists() {
-        let _ = fs::remove_dir_all(&tmp_dir);
+        force_remove_dir(&tmp_dir);
         return Err(AgentCodeError::Extract("extracted archive missing required files".into()));
     }
 
     // Atomic swap
     if dir.exists() {
         fs::rename(&dir, &old_dir).map_err(|e| {
-            let _ = fs::remove_dir_all(&tmp_dir);
+            force_remove_dir(&tmp_dir);
             AgentCodeError::Io(format!("failed to move old agent-code: {e}"))
         })?;
     }
@@ -223,7 +249,7 @@ fn fetch_agent_code_from_github(config: &Path, tag: &str) -> Result<(), AgentCod
         AgentCodeError::Io(format!("failed to move new agent-code into place: {e}"))
     })?;
 
-    let _ = fs::remove_dir_all(&old_dir);
+    force_remove_dir(&old_dir);
     tracing::info!(tag = %tag, "agent code updated successfully");
     Ok(())
 }
