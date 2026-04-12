@@ -7,13 +7,20 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
+import {
+  Drawer,
+  DrawerContent,
+  DrawerDescription,
+  DrawerHeader,
+  DrawerTitle,
+} from "@/components/ui/drawer";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { PanelLeftIcon } from "lucide-react";
+import { MenuIcon, PanelLeftIcon } from "lucide-react";
 
 const SIDEBAR_COOKIE_NAME = "sidebar_state";
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
@@ -171,38 +178,22 @@ function Sidebar({
 
   if (isMobile) {
     return (
-      <>
-        <div
-          data-slot="sidebar-backdrop"
-          className={cn(
-            "absolute inset-0 z-10 bg-black/40 transition-opacity duration-200 ease-in-out",
-            openMobile ? "opacity-100" : "opacity-0 pointer-events-none",
-          )}
-          onClick={() => setOpenMobile(false)}
-        />
-        <div
+      <Drawer open={openMobile} onOpenChange={setOpenMobile}>
+        <DrawerContent
           data-sidebar="sidebar"
           data-slot="sidebar"
           data-mobile="true"
-          className={cn(
-            "absolute inset-y-0 z-20 flex w-(--sidebar-width) flex-col bg-sidebar text-sidebar-foreground transition-transform duration-200 ease-in-out will-change-transform",
-            side === "left" ? "left-0" : "right-0",
-            openMobile
-              ? "translate-x-0"
-              : side === "left"
-                ? "-translate-x-full"
-                : "translate-x-full",
-          )}
-          style={
-            {
-              "--sidebar-width": SIDEBAR_WIDTH_MOBILE,
-            } as React.CSSProperties
-          }
+          className="max-h-[60vh]"
+          style={{ "--sidebar-width": SIDEBAR_WIDTH_MOBILE } as React.CSSProperties}
           {...props}
         >
-          {children}
-        </div>
-      </>
+          <DrawerHeader className="sr-only">
+            <DrawerTitle>navigation</DrawerTitle>
+            <DrawerDescription>dashboard navigation</DrawerDescription>
+          </DrawerHeader>
+          <div className="flex flex-col gap-2 overflow-y-auto px-4 pb-4">{children}</div>
+        </DrawerContent>
+      </Drawer>
     );
   }
 
@@ -257,7 +248,7 @@ function SidebarTrigger({
   onClick,
   ...props
 }: React.ComponentProps<typeof Button>) {
-  const { toggleSidebar } = useSidebar();
+  const { toggleSidebar, isMobile } = useSidebar();
 
   return (
     <Button
@@ -272,7 +263,7 @@ function SidebarTrigger({
       }}
       {...props}
     >
-      <PanelLeftIcon />
+      {isMobile ? <MenuIcon /> : <PanelLeftIcon />}
       <span className="sr-only">Toggle Sidebar</span>
     </Button>
   );
