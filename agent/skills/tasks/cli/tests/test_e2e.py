@@ -946,8 +946,13 @@ class TestRecurringNextRun:
         original_time = (datetime.now(UTC) - timedelta(days=1)).isoformat()
         conn.execute(
             "INSERT INTO reminders (id, message, schedule_type, scheduled_time, completed, trigger_data) VALUES (?, ?, ?, ?, 0, ?)",
-            ("cron_weekly", "friday review", "weekly on fri at 17:00 UTC", original_time,
-             json.dumps({"type": "cron", "day_of_week": "fri", "hour": 17, "minute": 0})),
+            (
+                "cron_weekly",
+                "friday review",
+                "weekly on fri at 17:00 UTC",
+                original_time,
+                json.dumps({"type": "cron", "day_of_week": "fri", "hour": 17, "minute": 0}),
+            ),
         )
         conn.commit()
         conn.close()
@@ -974,8 +979,13 @@ class TestRecurringNextRun:
         original_time = (datetime.now(UTC) - timedelta(days=1)).isoformat()
         conn.execute(
             "INSERT INTO reminders (id, message, schedule_type, scheduled_time, completed, trigger_data) VALUES (?, ?, ?, ?, 0, ?)",
-            ("cron_monthly", "pay bills", "monthly on day 15 at 09:00 UTC", original_time,
-             json.dumps({"type": "cron", "day": 15, "hour": 9, "minute": 0})),
+            (
+                "cron_monthly",
+                "pay bills",
+                "monthly on day 15 at 09:00 UTC",
+                original_time,
+                json.dumps({"type": "cron", "day": 15, "hour": 9, "minute": 0}),
+            ),
         )
         conn.commit()
         conn.close()
