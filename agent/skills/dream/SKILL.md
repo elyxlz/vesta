@@ -94,7 +94,7 @@ Replace rather than append. it's a snapshot, not a log. Be honest but not dramat
 
 ## Memory Curation
 
-MEMORY.md has a **hard limit of 10,000 characters**. it's injected into every system prompt. Run `~/vesta/skills/dream/scripts/memory_size.sh` to check usage. Things needed at all times live here permanently. Anything large or situational lives elsewhere and MEMORY.md points to it. Above 80%, consolidate aggressively. Never exceed the cap.
+MEMORY.md has a **hard limit of 12,000 characters**. it's injected into every system prompt. Run `~/vesta/skills/dream/scripts/memory_size.sh` to check usage. Things needed at all times live here permanently. Anything large or situational lives elsewhere and MEMORY.md points to it. When you hit the cap, consolidate. Don't let it overflow.
 
 **Cut:**
 - Full documents, email bodies, transcripts, task-specific junk
