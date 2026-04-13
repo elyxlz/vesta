@@ -22,7 +22,8 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
   const [iframeKey, setIframeKey] = useState(0);
   const handshakeRef = useRef(false);
 
-  const hasDashboard = "dashboard" in (agent.services ?? {});
+  const dashboardService = agent.services?.dashboard;
+  const hasDashboard = !!dashboardService;
 
   // Reset iframe when the dashboard service appears
   const prevHadDashboard = useRef(hasDashboard);
@@ -34,6 +35,18 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
     }
     prevHadDashboard.current = hasDashboard;
   }, [hasDashboard]);
+
+  // Reload iframe when the dashboard service is invalidated
+  const dashboardRev = dashboardService?.rev ?? 0;
+  const prevDashboardRev = useRef(dashboardRev);
+  useEffect(() => {
+    if (dashboardRev !== prevDashboardRev.current && hasDashboard) {
+      setError(false);
+      setLoaded(false);
+      setIframeKey((k) => k + 1);
+    }
+    prevDashboardRev.current = dashboardRev;
+  }, [dashboardRev, hasDashboard]);
 
   useEffect(() => {
     handshakeRef.current = false;
