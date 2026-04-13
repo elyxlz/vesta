@@ -139,9 +139,9 @@ async fn ws_proxy(client_ws: axum::extract::ws::WebSocket, agent_port: u16, path
         while let Some(Ok(msg)) = client_rx.next().await {
             let tung_msg = match msg {
                 AxumMsg::Text(t) => TungMsg::Text(t.as_str().into()),
-                AxumMsg::Binary(b) => TungMsg::Binary(b.into()),
-                AxumMsg::Ping(p) => TungMsg::Ping(p.into()),
-                AxumMsg::Pong(p) => TungMsg::Pong(p.into()),
+                AxumMsg::Binary(b) => TungMsg::Binary(b),
+                AxumMsg::Ping(p) => TungMsg::Ping(p),
+                AxumMsg::Pong(p) => TungMsg::Pong(p),
                 AxumMsg::Close(_) => break,
             };
             if agent_tx.send(tung_msg).await.is_err() {
@@ -154,9 +154,9 @@ async fn ws_proxy(client_ws: axum::extract::ws::WebSocket, agent_port: u16, path
         while let Some(Ok(msg)) = agent_rx.next().await {
             let axum_msg = match msg {
                 TungMsg::Text(t) => AxumMsg::Text(t.as_str().into()),
-                TungMsg::Binary(b) => AxumMsg::Binary(b.into()),
-                TungMsg::Ping(p) => AxumMsg::Ping(p.into()),
-                TungMsg::Pong(p) => AxumMsg::Pong(p.into()),
+                TungMsg::Binary(b) => AxumMsg::Binary(b),
+                TungMsg::Ping(p) => AxumMsg::Ping(p),
+                TungMsg::Pong(p) => AxumMsg::Pong(p),
                 TungMsg::Close(_) => break,
                 _ => continue,
             };
