@@ -96,7 +96,7 @@ def test_typescript_types_match_spec():
 
 def test_all_stream_events_serializable():
     """Construct a minimal instance of each event type and verify json.dumps succeeds."""
-    test_instances: list[dict] = [
+    test_instances: list[tp.Any] = [
         StatusEvent(type="status", state="idle"),
         UserEvent(type="user", text="hello"),
         AssistantEvent(type="assistant", text="hi"),
@@ -121,7 +121,7 @@ def test_eventbus_roundtrip_all_types(tmp_path):
     """Emit each persistable event type, read back, verify fields survive."""
     bus = EventBus(data_dir=tmp_path)
 
-    events_to_emit: list[dict] = [
+    events_to_emit: list[tp.Any] = [
         UserEvent(type="user", text="hello"),
         AssistantEvent(type="assistant", text="hi"),
         ChatEvent(type="chat", text="yo"),
