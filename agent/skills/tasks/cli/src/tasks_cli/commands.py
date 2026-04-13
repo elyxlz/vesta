@@ -359,7 +359,7 @@ def _restore_row(scheduler: BackgroundScheduler, row, now: datetime, notif_dir: 
             logger.warning(f"Reminder {reminder_id}: unknown trigger type '{trigger_type}', skipping")
             return False
 
-        scheduler.add_job(
+        add_job_kwargs: dict = dict(
             func=send_reminder_job,
             trigger=trigger,
             args=[reminder_id],
@@ -371,6 +371,10 @@ def _restore_row(scheduler: BackgroundScheduler, row, now: datetime, notif_dir: 
             id=reminder_id,
             replace_existing=True,
         )
+        if trigger_type in ("cron", "interval"):
+            add_job_kwargs["misfire_grace_time"] = 3600
+            add_job_kwargs["coalesce"] = True
+        scheduler.add_job(**add_job_kwargs)
         logger.info(f"Restored reminder {reminder_id} ({trigger_type})")
         return True
 
