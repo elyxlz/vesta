@@ -1,3 +1,9 @@
 Read `/run/vestad-env` to check your environment variables from vestad (e.g. ports, tunnel URLs, version).
 
 Run each command below if the service isn't already running (`screen -ls` to check). Then check your User State in MEMORY.md and reach out on their preferred channel. Match the tone to the situation - if it's a new day, greet them warmly. If you just restarted mid-conversation, keep it brief. If you crashed, mention it. If it's the middle of the night, wait until morning.
+
+## Services
+```bash
+# Add startup commands here, e.g.:
+# screen -dmS microsoft microsoft serve --notifications-dir ~/vesta/notifications
+```
