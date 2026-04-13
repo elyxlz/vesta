@@ -254,7 +254,7 @@ async def process_nightly_memory(queue: asyncio.Queue[tuple[str, bool]], *, stat
     if config.nightly_memory_hour is not None and now.hour == config.nightly_memory_hour:
         if state.last_dreamer_run is None or now.date() > state.last_dreamer_run.date():
             logger.dreamer("Nightly dreamer starting...")
-            prompt = load_prompt("dream", config) or ""
+            prompt = load_prompt("nightly_dream", config) or ""
             state.dreamer_active = True
             await queue.put((prompt, False))
             state.last_dreamer_run = now
