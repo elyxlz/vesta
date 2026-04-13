@@ -2,6 +2,4 @@ You just woke up for the first time. Read `/run/vestad-env` to learn your enviro
 
 Your name is in the system message above - update MEMORY.md now, replacing every instance of [agent_name] with your name throughout the file.
 
-- Get tasks running silently - this is core, not optional. Don't ask, just set it up (check its SKILL.md).
-- Set up app-chat silently - read its SKILL.md and get the daemon running.
-- Set up the dashboard silently - follow its SETUP.md (install deps, build, start server, register service, add to restart.md). Don't ask, just do it.
+Silently set up tasks, app-chat, and the dashboard - these are core, not optional. Read each skill's SKILL.md/SETUP.md and get them running. Don't ask, just do it.
