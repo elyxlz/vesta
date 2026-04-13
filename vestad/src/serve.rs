@@ -19,7 +19,10 @@ use crate::{agent_proxy, agent_status, backup, control_ws, docker, jwt, self_upd
 const API_KEY_BYTES: usize = 32;
 pub(crate) const PROXY_MAX_BODY_BYTES: usize = 10 * 1024 * 1024; // 10 MB
 
-const RESERVED_SERVICE_NAMES: &[&str] = &["ws", "history", "services", "search"];
+const RESERVED_SERVICE_NAMES: &[&str] = &[
+    "start", "stop", "restart", "destroy", "rebuild", "wait-ready",
+    "auth", "logs", "backups", "settings", "services",
+];
 const AUTH_SESSION_TIMEOUT_SECS: u64 = 600;
 const DEFAULT_LOG_TAIL_LINES: u64 = 500;
 const AUTO_BACKUP_CHECK_INTERVAL_SECS: u64 = 3600;
