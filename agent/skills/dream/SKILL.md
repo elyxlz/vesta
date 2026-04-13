@@ -40,6 +40,7 @@ Prefer the simplest, most reliable change that addresses the root cause - a one-
 - Rewrite skill instructions or prompts
 - Fix or improve scripts, CLIs, or tools
 - Write new code - a script, a tool, a config change
+- Create a new skill for a recurring need or capability that doesn't fit existing skills
 
 You can change anything. If a fix requires code, write the code.
 
