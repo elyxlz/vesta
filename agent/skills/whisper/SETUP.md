@@ -19,7 +19,7 @@ curl -L -o /usr/local/share/ggml-small.en.bin \
 | Model | Size | Use when |
 |-------|------|----------|
 | ggml-tiny.en.bin | 75 MB | Speed matters more than accuracy |
-| ggml-small.en.bin | 466 MB | Default. good balance |
+| ggml-small.en.bin | 466 MB | Default — good balance |
 | ggml-medium.en.bin | 1.5 GB | Higher accuracy needed |
 | ggml-large-v3-turbo.bin | 1.6 GB | Best quality, non-English support |
 

@@ -1,9 +1,9 @@
 ---
 name: tasks
-description: This skill should be used when the user asks about "tasks", "to-do", "todo", "task list", "reminders", "remind me", "alert", "notify", or needs to create, manage, track, or organize tasks, to-do items, reminders, and time-based notifications. Everything actionable becomes a task immediately. All work, progress, drafts go in task metadata. Reminders are nudges about when to think about something. standalone or linked to a task. IMPORTANT. this skill requires a background daemon. Before doing anything, immediately make sure the daemon is running. Read this skill to learn how.
+description: This skill should be used when the user asks about "tasks", "to-do", "todo", "task list", "reminders", "remind me", "alert", "notify", or needs to create, manage, track, or organize tasks, to-do items, reminders, and time-based notifications. Everything actionable becomes a task immediately. All work, progress, drafts go in task metadata. Reminders are nudges about when to think about something — standalone or linked to a task. IMPORTANT — this skill requires a background daemon. Before doing anything, immediately make sure the daemon is running. Read this skill to learn how.
 ---
 
-# Tasks + Reminders. CLI: tasks
+# Tasks + Reminders — CLI: tasks
 
 One CLI, one daemon, one SQLite DB. Tasks are what needs doing; reminders are nudges about when.
 
@@ -118,7 +118,7 @@ PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/servic
 screen -dmS tasks tasks serve --notifications-dir ~/vesta/notifications --port $PORT
 ```
 
-One daemon handles everything. both task due-date monitoring and reminder scheduling. No separate reminder daemon needed.
+One daemon handles everything — both task due-date monitoring and reminder scheduling. No separate reminder daemon needed.
 
 **Restart**: Add to `~/vesta/prompts/restart.md`:
 ```

@@ -34,7 +34,7 @@ components/AgentIsland/
 └── transitions.ts
 ```
 
-Self-contained components read from providers directly. prefer zero-prop components over prop drilling when the data comes from context.
+Self-contained components read from providers directly — prefer zero-prop components over prop drilling when the data comes from context.
 
 ## Providers
 
@@ -54,20 +54,20 @@ providers/ChatProvider/
 └── use-chat.ts         # private to this provider
 ```
 
-Providers read the agent name from `useSelectedAgent()` internally. don't pass it as a prop.
+Providers read the agent name from `useSelectedAgent()` internally — don't pass it as a prop.
 
 ## Hooks
 
 `hooks/` is **only** for hooks shared across multiple unrelated consumers:
-- `use-mobile.ts`. responsive breakpoint detection
-- `use-auto-scroll.ts`. scroll-to-bottom behavior
-- `use-optimistic-toggle.ts`. optimistic boolean toggle
+- `use-mobile.ts` — responsive breakpoint detection
+- `use-auto-scroll.ts` — scroll-to-bottom behavior
+- `use-optimistic-toggle.ts` — optimistic boolean toggle
 
 If a hook is only used by one provider or component, colocate it.
 
 ## Pages
 
-Thin route-level components in `pages/<Name>/index.tsx`. Pages render components but own minimal state. shared state lives in providers.
+Thin route-level components in `pages/<Name>/index.tsx`. Pages render components but own minimal state — shared state lives in providers.
 
 ## Routing & Layouts
 
@@ -98,8 +98,8 @@ SelectedAgentProvider → VoiceProvider → ChatProvider → ModalsProvider
 
 ## Key Conventions
 
-- "Agent" terminology everywhere. never "box"
-- Minimize comments. only for truly complex logic
-- Use shadcn/ui components wherever possible. never build custom markup when a shadcn component exists (Button, Dialog, Card, Badge, Separator, Skeleton, Alert, etc.). See the [shadcn skill](../shadcn/SKILL.md) for component selection and rules.
+- "Agent" terminology everywhere — never "box"
+- Minimize comments — only for truly complex logic
+- Use shadcn/ui components wherever possible — never build custom markup when a shadcn component exists (Button, Dialog, Card, Badge, Separator, Skeleton, Alert, etc.). See the [shadcn skill](../shadcn/SKILL.md) for component selection and rules.
 - Use `cn()` for conditional classes
 - Use semantic colors (`bg-primary`, `text-muted-foreground`), never raw values

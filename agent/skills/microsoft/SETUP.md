@@ -21,7 +21,7 @@
 ## Authentication
 
 ```bash
-microsoft auth login                         # Start device flow. gives you a URL and code
+microsoft auth login                         # Start device flow — gives you a URL and code
 microsoft auth complete --flow-cache <cache>  # Complete after signing in at the URL
 microsoft auth list                           # List authenticated accounts
 ```
@@ -31,20 +31,20 @@ microsoft auth list                           # List authenticated accounts
 When adding new API permissions (e.g. MailboxSettings.ReadWrite) to an existing app registration:
 
 1. Add the permission in Azure portal → App Registration → API Permissions
-2. Click **"Grant admin consent"** (separate button. easy to miss)
-3. **Delete the MSAL cache**: `rm ~/.microsoft/auth_cache.bin`. cached tokens retain old scopes and won't pick up new permissions
+2. Click **"Grant admin consent"** (separate button — easy to miss)
+3. **Delete the MSAL cache**: `rm ~/.microsoft/auth_cache.bin` — cached tokens retain old scopes and won't pick up new permissions
 4. Re-authenticate all accounts: `microsoft auth login` → complete flow
-5. For **multi-tenant apps** (e.g. pascarelli.com + audiogen.co), repeat steps 1-2 in **each tenant's** Azure portal. admin consent is per-tenant
+5. For **multi-tenant apps** (e.g. pascarelli.com + audiogen.co), repeat steps 1-2 in **each tenant's** Azure portal — admin consent is per-tenant
 
-## First Use. Data Gathering
+## First Use — Data Gathering
 
 On first activation with a new user, spend significant time analyzing their email and calendar data to learn their patterns. This is critical for being immediately useful:
 
-1. **Read sent emails** (`email list --account <acct> --folder sentitems --limit 50`). reveals writing style, tone, sign-offs, key contacts
-2. **Read inbox** (`email list --account <acct> --limit 50`). shows what they receive, subscriptions, who contacts them
-3. **Read calendar** (`calendar list --account <acct>`). schedule, recurring commitments, timezone
-4. **Get full content** of important sent emails (`email get --account <acct> --id <id>`). understand tone variations by recipient
-5. **Update this skill file**. fill in every section below with what you learned
-6. **Update MEMORY.md**. add any life details discovered (job, interests, contacts, location, relationships, etc.)
+1. **Read sent emails** (`email list --account <acct> --folder sentitems --limit 50`) — reveals writing style, tone, sign-offs, key contacts
+2. **Read inbox** (`email list --account <acct> --limit 50`) — shows what they receive, subscriptions, who contacts them
+3. **Read calendar** (`calendar list --account <acct>`) — schedule, recurring commitments, timezone
+4. **Get full content** of important sent emails (`email get --account <acct> --id <id>`) — understand tone variations by recipient
+5. **Update this skill file** — fill in every section below with what you learned
+6. **Update MEMORY.md** — add any life details discovered (job, interests, contacts, location, relationships, etc.)
 
 Be thorough. Read dozens of emails. The more context you gather now, the better you can draft emails in their voice, manage their calendar, and anticipate needs.
