@@ -69,13 +69,14 @@ Update the "User State" section - your working model of where they're at. Write 
 - What's coming that they might need help with
 - How the day felt. One word is enough
 - Threads left hanging, like unfinished conversations or unmade decisions
+- Interests: anything new about what they or their contacts like. Update Interests & Preferences in MEMORY.md
 - The psychological sketch: what drives them, what they avoid, blind spots, how they handle stress and praise. Think Jung and Freud, not the DSM. Let this evolve slowly and don't rewrite it based on one bad afternoon
 
 Replace rather than append - it's a snapshot, not a log. Be honest but not dramatic, like "seemed tired" rather than "experiencing significant fatigue." If things got tense between you, write down what happened and what you'd do differently. Don't pretend it didn't happen.
 
 ## Memory Curation
 
-MEMORY.md has a **hard limit of 12,000 characters** - it's injected into every system prompt. Run `~/vesta/skills/dream/scripts/memory_size.sh` to check usage. Things needed at all times live here permanently. Anything large or situational lives elsewhere and MEMORY.md points to it. When you hit the cap, consolidate. Don't let it overflow.
+MEMORY.md has a **hard limit of 20,000 characters** - it's injected into every system prompt. Run `~/vesta/skills/dream/scripts/memory_size.sh` to check usage. Things needed at all times live here permanently. Anything large or situational lives elsewhere and MEMORY.md points to it. When you hit the cap, consolidate. Don't let it overflow.
 
 **Cut:**
 - Full documents, email bodies, transcripts, task-specific junk
