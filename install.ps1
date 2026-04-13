@@ -71,7 +71,7 @@ try {
         }
         $env:Path = "$BinDir;$env:Path"
 
-        Write-Host "  ✓ vesta CLI → $BinDir\vesta.exe"
+        Write-Host "  OK: vesta CLI -> $BinDir\vesta.exe"
     }
 
     if ($InstallApp) {
@@ -85,7 +85,7 @@ try {
 
         Write-Host "Running installer..."
         Start-Process -FilePath $AppExe -ArgumentList "/S" -Wait
-        Write-Host "  ✓ Vesta desktop app"
+        Write-Host "  OK: Vesta desktop app"
     }
 
     Write-Host ""
