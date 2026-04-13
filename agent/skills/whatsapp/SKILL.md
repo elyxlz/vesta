@@ -3,7 +3,7 @@ name: whatsapp
 description: This skill should be used when the user asks about "whatsapp", "message", "text", "chat", or needs to send/receive messages via WhatsApp. Requires a background daemon.
 ---
 
-# WhatsApp — CLI: whatsapp
+# WhatsApp - CLI: whatsapp
 
 **Setup**: See [SETUP.md](SETUP.md)
 **Background**: `screen -dmS whatsapp whatsapp serve --notifications-dir ~/vesta/notifications`
@@ -11,16 +11,16 @@ description: This skill should be used when the user asks about "whatsapp", "mes
 ## Gotchas
 - CLI syntax: command MUST come before flags. `whatsapp serve --instance name` NOT `whatsapp --instance name serve`
 - `send` uses flags, not positional args: `whatsapp send --to 'Name' --message 'text'`
-- `--to` accepts contact names, phone numbers, or group names — the CLI resolves them to JIDs
-- `--notifications-dir` is REQUIRED for `serve` — it will exit silently without it
-- **Never send multiple messages in parallel tool calls.** If one parallel call is rejected/fails while another succeeds, you may mistakenly resend the successful one — causing duplicates. Always send WhatsApp messages sequentially (one tool call at a time)
+- `--to` accepts contact names, phone numbers, or group names - the CLI resolves them to JIDs
+- `--notifications-dir` is REQUIRED for `serve` - it will exit silently without it
+- **Never send multiple messages in parallel tool calls.** If one parallel call is rejected/fails while another succeeds, you may mistakenly resend the successful one, causing duplicates. Always send WhatsApp messages sequentially (one tool call at a time)
 
 ## Authentication
-Pair-phone is the default (and preferred) auth method. It sends a push notification to the phone and is much faster than scanning a QR code.
+QR code is the default (and preferred) auth method. Run `whatsapp authenticate`, upload the QR image, and have the user scan it from WhatsApp > Linked Devices.
 ```bash
-whatsapp pair-phone --phone '+1234567890'  # generates a pairing code
+whatsapp authenticate
 ```
-QR code auth (`whatsapp authenticate`) still works as a fallback but is slower — requires emailing the QR image and scanning before it expires (~60s).
+Phone pairing (`whatsapp pair-phone --phone '+1234567890'`) works as a fallback if QR scanning isn't convenient.
 
 ## Quick Reference
 ```bash

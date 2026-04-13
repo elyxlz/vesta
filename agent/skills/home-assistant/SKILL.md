@@ -1,9 +1,9 @@
 ---
 name: home-assistant
-description: This skill should be used when the user asks about "home", "house", "energy", "power", "temperature", "climate", "weather", "security", "cameras", "motion", "alarm", "location", "where am I", "battery", or needs to interact with Home Assistant devices, sensors, or automations. No daemon required — queries HA API on demand.
+description: This skill should be used when the user asks about "home", "house", "energy", "power", "temperature", "climate", "weather", "security", "cameras", "motion", "alarm", "location", "where am I", "battery", or needs to interact with Home Assistant devices, sensors, or automations. No daemon required - queries HA API on demand.
 ---
 
-# Home Assistant — CLI: ha
+# Home Assistant - CLI: ha
 
 ## Quick Reference
 ```bash
@@ -20,26 +20,26 @@ ha ping                              # check API connectivity
 ## Commands
 
 ### Entity Commands
-- `ha state <entity_id>` — get current state (compact). Add `--full` for all attributes
-- `ha states` — list all entities. Filter with `--domain <domain>` or `--search <query>`
-- `ha history <entity_id>` — state history. Default 24h, override with `--hours N`
+- `ha state <entity_id>` - get current state (compact). Add `--full` for all attributes
+- `ha states` - list all entities. Filter with `--domain <domain>` or `--search <query>`
+- `ha history <entity_id>` - state history. Default 24h, override with `--hours N`
 
 ### Weather
-- `ha weather` — condition, temperature, humidity, wind, sunrise/sunset
+- `ha weather` - condition, temperature, humidity, wind, sunrise/sunset
 
 ### Service Commands
-- `ha service <domain> <service>` — call any HA service
-  - `--entity-id <id>` — target entity
-  - `--data '{"key": "value"}'` — JSON payload
+- `ha service <domain> <service>` - call any HA service
+  - `--entity-id <id>` - target entity
+  - `--data '{"key": "value"}'`. JSON payload
 
 ### Connectivity
-- `ha ping` — verify API connection
+- `ha ping` - verify API connection
 
 ## Setup
 ```bash
 # Requires environment variables:
-#   HASS_TOKEN  — long-lived access token from HA
-#   HASS_URL    — HA base URL (default: http://homeassistant.local:8123)
+#   HASS_TOKEN - long-lived access token from HA
+#   HASS_URL   - HA base URL (default: http://homeassistant.local:8123)
 source /etc/environment
 uv tool install ~/vesta/skills/home-assistant/cli
 ```

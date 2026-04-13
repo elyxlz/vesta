@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import vesta.models as vm
+from vesta.core.client import process_message
 
 
 async def _run_processor_test(
@@ -134,3 +135,61 @@ async def test_client_cleared_on_cancellation(tmp_path):
             await task
 
     assert state.client is None
+
+
+# --- Em/en dash correction in process_message ---
+
+
+@pytest.mark.anyio
+async def test_process_message_sends_correction_on_em_dash(tmp_path):
+    """process_message should call converse a second time when an em dash is detected."""
+    config = vm.VestaConfig(root=tmp_path)
+    state = vm.State()
+    converse_calls: list[str] = []
+
+    async def mock_converse(prompt, *, state, config, show_output):
+        converse_calls.append(prompt)
+        if len(converse_calls) == 1:
+            return ["something \u2014 with an em dash"]
+        return ["corrected response"]
+
+    with patch("vesta.core.client.converse", side_effect=mock_converse):
+        responses, _ = await process_message("hello", state=state, config=config, is_user=True)
+
+    assert len(converse_calls) == 2
+    assert "em dash" in converse_calls[1].lower()
+    assert responses == ["something \u2014 with an em dash"]
+
+
+@pytest.mark.anyio
+async def test_process_message_no_correction_without_dashes(tmp_path):
+    """process_message should not send a correction when no dashes are present."""
+    config = vm.VestaConfig(root=tmp_path)
+    state = vm.State()
+    converse_calls: list[str] = []
+
+    async def mock_converse(prompt, *, state, config, show_output):
+        converse_calls.append(prompt)
+        return ["clean response, no dashes here"]
+
+    with patch("vesta.core.client.converse", side_effect=mock_converse):
+        await process_message("hello", state=state, config=config, is_user=True)
+
+    assert len(converse_calls) == 1
+
+
+@pytest.mark.anyio
+async def test_process_message_no_correction_on_empty_response(tmp_path):
+    """process_message should not send a correction when there are no responses."""
+    config = vm.VestaConfig(root=tmp_path)
+    state = vm.State()
+    converse_calls: list[str] = []
+
+    async def mock_converse(prompt, *, state, config, show_output):
+        converse_calls.append(prompt)
+        return []
+
+    with patch("vesta.core.client.converse", side_effect=mock_converse):
+        await process_message("hello", state=state, config=config, is_user=True)
+
+    assert len(converse_calls) == 1

@@ -43,7 +43,7 @@ Every color follows the `name` / `name-foreground` convention. The base variable
 | `--sidebar-*`                                | Sidebar-specific colors          |
 | `--surface` / `--surface-foreground`         | Secondary surface                |
 
-Colors use OKLCH: `--primary: oklch(0.205 0 0)` where values are lightness (0–1), chroma (0 = gray), and hue (0–360).
+Colors use OKLCH: `--primary: oklch(0.205 0 0)` where values are lightness (0, 1), chroma (0 = gray), and hue (0, 360).
 
 ---
 

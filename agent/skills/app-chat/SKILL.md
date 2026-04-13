@@ -3,7 +3,7 @@ name: app-chat
 description: This skill handles messages from the Vesta app (desktop/web). When a user sends a message through the Vesta app, it arrives as a notification. Reply using the `app-chat` CLI. Requires a background daemon.
 ---
 
-# App Chat — CLI: app-chat
+# App Chat - CLI: app-chat
 
 **Background**: `screen -dmS app-chat app-chat serve --notifications-dir ~/vesta/notifications`
 **Restart**: Add to `~/vesta/prompts/restart.md`:
