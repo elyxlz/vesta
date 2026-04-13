@@ -6,9 +6,6 @@ __pycache__/
 .ruff_cache/
 .pytest_cache/
 *.egg-info/
-agent/tests/
-agent/skills/generate-index.py
-agent/skills/index.json
 app/
 cli/
 vestad/
@@ -18,3 +15,7 @@ target/
 Cargo.toml
 Cargo.lock
 .github/
+!agent/
+agent/tests/
+agent/skills/generate-index.py
+agent/skills/index.json

@@ -571,13 +571,19 @@ fn docker_pattern_matches(path: &str, pattern: &str) -> bool {
         return false;
     }
 
-    // No slash in pattern: match against filename, or as directory prefix
+    // No slash in pattern.
     if !pattern.contains('/') {
-        let filename = path.rsplit('/').next().unwrap_or(path);
-        if glob_match(filename.as_bytes(), pattern.as_bytes()) {
-            return true;
+        // Glob patterns (*, ?) match against the filename component at any depth —
+        // e.g. "*.pyc" matches "dir/foo.pyc".
+        if pattern.contains('*') || pattern.contains('?') {
+            let filename = path.rsplit('/').next().unwrap_or(path);
+            if glob_match(filename.as_bytes(), pattern.as_bytes()) {
+                return true;
+            }
         }
-        return is_path_prefix(path, pattern);
+        // Literal names match only from the context root — "app" matches "./app"
+        // but not "agent/skills/dashboard/app".
+        return glob_match(path.as_bytes(), pattern.as_bytes()) || is_path_prefix(path, pattern);
     }
 
     // Pattern has slashes: match from context root, or as directory prefix
@@ -730,6 +736,7 @@ pub struct AgentEnvConfig {
     pub agents_dir: std::path::PathBuf,
     pub vestad_port: u16,
     pub vestad_tunnel: Option<String>,
+    pub git_branch: Option<String>,
 }
 
 /// Validate that the config and agents directories exist, are writable, and have
@@ -783,6 +790,7 @@ pub fn write_agent_env_file(
     agent_name: &str,
     ws_port: u16,
     agent_token: &str,
+    timezone: Option<&str>,
 ) -> Result<std::path::PathBuf, DockerError> {
     std::fs::create_dir_all(&env_config.agents_dir)
         .map_err(|e| DockerError::Failed(format!("failed to create agents dir: {e}")))?;
@@ -797,6 +805,13 @@ pub fn write_agent_env_file(
     );
     if let Some(url) = &env_config.vestad_tunnel {
         content.push_str(&format!("export VESTAD_TUNNEL={url}\n"));
+    }
+    content.push_str(&format!("export VESTA_VERSION={}\n", env!("CARGO_PKG_VERSION")));
+    if let Some(branch) = &env_config.git_branch {
+        content.push_str(&format!("export VESTA_BRANCH={branch}\n"));
+    }
+    if let Some(tz) = timezone {
+        content.push_str(&format!("export TZ={tz}\n"));
     }
     std::fs::write(&env_path, &content)
         .map_err(|e| DockerError::Failed(format!("failed to write agent env file: {e}")))?;
@@ -813,9 +828,9 @@ fn delete_agent_env_file(agents_dir: &std::path::Path, agent_name: &str) {
     std::fs::remove_file(&env_path).ok();
 }
 
-/// Update VESTAD_PORT and VESTAD_TUNNEL in all existing per-agent env files.
+/// Update VESTAD_PORT, VESTAD_TUNNEL, and VESTA_VERSION in all existing per-agent env files.
 /// Called at vestad startup so running containers pick up the new values on restart.
-pub fn update_all_agent_env_files(agents_dir: &std::path::Path, vestad_port: u16, vestad_tunnel: Option<&str>) {
+pub fn update_all_agent_env_files(agents_dir: &std::path::Path, vestad_port: u16, vestad_tunnel: Option<&str>, git_branch: Option<&str>) {
     for name in env_file_names(agents_dir) {
         let path = agents_dir.join(format!("{name}.env"));
         let Ok(content) = std::fs::read_to_string(&path) else { continue };
@@ -823,13 +838,20 @@ pub fn update_all_agent_env_files(agents_dir: &std::path::Path, vestad_port: u16
             .lines()
             .filter(|line| {
                 let stripped = line.strip_prefix("export ").unwrap_or(line);
-                !stripped.starts_with("VESTAD_PORT=") && !stripped.starts_with("VESTAD_TUNNEL=")
+                !stripped.starts_with("VESTAD_PORT=")
+                    && !stripped.starts_with("VESTAD_TUNNEL=")
+                    && !stripped.starts_with("VESTA_VERSION=")
+                    && !stripped.starts_with("VESTA_BRANCH=")
             })
             .map(|l| l.to_string())
             .collect();
         new_lines.push(format!("export VESTAD_PORT={vestad_port}"));
         if let Some(url) = vestad_tunnel {
             new_lines.push(format!("export VESTAD_TUNNEL={url}"));
+        }
+        new_lines.push(format!("export VESTA_VERSION={}", env!("CARGO_PKG_VERSION")));
+        if let Some(branch) = git_branch {
+            new_lines.push(format!("export VESTA_BRANCH={branch}"));
         }
         new_lines.push(String::new());
         std::fs::write(&path, new_lines.join("\n")).ok();
@@ -1077,9 +1099,10 @@ pub async fn snapshot_container(docker: &Docker, cname: &str, tag: &str, changes
 
 // --- Container creation ---
 
-pub async fn create_container(docker: &Docker, cname: &str, image: &str, port: u16, agent_name: &str, env_config: &AgentEnvConfig, manage_code: bool) -> Result<(), DockerError> {
+#[allow(clippy::too_many_arguments)]
+pub async fn create_container(docker: &Docker, cname: &str, image: &str, port: u16, agent_name: &str, env_config: &AgentEnvConfig, manage_code: bool, timezone: Option<&str>) -> Result<(), DockerError> {
     let agent_token = generate_agent_token();
-    let env_path = write_agent_env_file(env_config, agent_name, port, &agent_token)?;
+    let env_path = write_agent_env_file(env_config, agent_name, port, &agent_token, timezone)?;
     let env_mount = format!("{}:{}:ro,z", env_path.display(), MOUNT_DESTS[0]);
 
     let code_dir = crate::agent_code::agent_code_dir(&env_config.config_dir);
@@ -1359,7 +1382,7 @@ pub async fn list_agents(docker: &Docker, agents_dir: &std::path::Path) -> Vec<L
     entries
 }
 
-pub async fn create_agent(docker: &Docker, name: &str, env_config: &AgentEnvConfig, manage_code: bool) -> Result<String, DockerError> {
+pub async fn create_agent(docker: &Docker, name: &str, env_config: &AgentEnvConfig, manage_code: bool, timezone: Option<&str>) -> Result<String, DockerError> {
     let name = if name == "ignisinextinctus" { "vesta" } else { name };
     validate_name(name)?;
     if name != "vesta" && name.contains("vesta") {
@@ -1379,7 +1402,7 @@ pub async fn create_agent(docker: &Docker, name: &str, env_config: &AgentEnvConf
     }
 
     let port = allocate_port(&env_config.agents_dir)?;
-    create_container(docker, &cname, image, port, name, env_config, manage_code).await?;
+    create_container(docker, &cname, image, port, name, env_config, manage_code, timezone).await?;
     Ok(name.to_string())
 }
 
@@ -1484,7 +1507,7 @@ pub async fn reconcile_containers(docker: &Docker, env_config: &AgentEnvConfig, 
                 .or_else(|| allocate_port(&env_config.agents_dir).ok());
             if let Some(port) = port {
                 let token = generate_agent_token();
-                if let Err(e) = write_agent_env_file(env_config, &name, port, &token) {
+                if let Err(e) = write_agent_env_file(env_config, &name, port, &token, None) {
                     tracing::error!(agent = %name, error = %e, "failed to create env file");
                 }
             } else {
@@ -1668,7 +1691,7 @@ pub async fn rebuild_agent(docker: &Docker, name: &str, env_config: &AgentEnvCon
     remove_container_force(docker, &cname).await.ok();
 
     tracing::info!(agent = %name, "[3/3] creating container with new config...");
-    create_container(docker, &cname, &backup_tag, port, name, env_config, manage_code).await?;
+    create_container(docker, &cname, &backup_tag, port, name, env_config, manage_code, None).await?;
 
     Ok(())
 }
@@ -1838,13 +1861,19 @@ mod tests {
         assert!(is_dockerignored("target", &pats));
         assert!(is_dockerignored("target/debug/foo", &pats));
         assert!(!is_dockerignored("targets", &pats));
+        assert!(!is_dockerignored("some/nested/target", &pats));
+        assert!(!is_dockerignored("some/nested/target/file.txt", &pats));
     }
 
     #[test]
     fn dockerignore_trailing_slash() {
         let pats = patterns(&["app/"]);
+        // Matches root-level app/ directory
         assert!(is_dockerignored("app", &pats));
-        assert!(is_dockerignored("app/src/main.rs", &pats));
+        assert!(is_dockerignored("app/package.json", &pats));
+        // Must NOT match nested directories with the same name
+        assert!(!is_dockerignored("agent/skills/dashboard/app", &pats));
+        assert!(!is_dockerignored("agent/skills/dashboard/app/src/App.tsx", &pats));
     }
 
     #[test]
