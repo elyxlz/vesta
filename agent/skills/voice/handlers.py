@@ -17,6 +17,7 @@ DATA_DIR = pl.Path.home() / ".voice"
 
 _VESTAD_PORT = os.environ.get("VESTAD_PORT", "")
 _AGENT_NAME = os.environ.get("AGENT_NAME", "")
+_AGENT_TOKEN = os.environ.get("AGENT_TOKEN", "")
 
 
 async def _notify_invalidation(scope: str) -> None:
@@ -27,11 +28,15 @@ async def _notify_invalidation(scope: str) -> None:
     ssl_ctx = ssl.create_default_context()
     ssl_ctx.check_hostname = False
     ssl_ctx.verify_mode = ssl.CERT_NONE
+    headers = {}
+    if _AGENT_TOKEN:
+        headers["X-Agent-Token"] = _AGENT_TOKEN
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 url,
                 json={"scope": scope},
+                headers=headers,
                 ssl=ssl_ctx,
                 timeout=aiohttp.ClientTimeout(total=5),
             ):

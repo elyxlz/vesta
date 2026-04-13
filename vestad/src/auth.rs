@@ -1,5 +1,5 @@
 use axum::{
-    extract::{ConnectInfo, Request, State},
+    extract::{Request, State},
     http::{HeaderMap, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
@@ -30,24 +30,23 @@ pub async fn auth_middleware(
     request: Request,
     next: Next,
 ) -> Response {
-    check_auth(state, None, headers, request, next).await
+    if request.method() == axum::http::Method::OPTIONS {
+        return next.run(request).await;
+    }
+
+    if has_valid_api_auth(&headers, request.uri(), &state.api_key) {
+        return next.run(request).await;
+    }
+
+    let path = request.uri().path().to_string();
+    tracing::warn!(path = %path, "client auth failed");
+    (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "unauthorized"}))).into_response()
 }
 
-/// Like `auth_middleware` but allows unauthenticated access from localhost
-/// (agent containers registering services).
-pub async fn auth_middleware_localhost(
+/// Accepts either API auth (JWT/key) or the agent's own token.
+/// The agent name is extracted from the path `/agents/{name}/...`.
+pub async fn auth_middleware_agent_token(
     State(state): State<SharedState>,
-    connect_info: ConnectInfo<std::net::SocketAddr>,
-    headers: HeaderMap,
-    request: Request,
-    next: Next,
-) -> Response {
-    check_auth(state, Some(connect_info), headers, request, next).await
-}
-
-async fn check_auth(
-    state: SharedState,
-    connect_info: Option<ConnectInfo<std::net::SocketAddr>>,
     headers: HeaderMap,
     request: Request,
     next: Next,
@@ -56,45 +55,55 @@ async fn check_auth(
         return next.run(request).await;
     }
 
-    if let Some(ci) = connect_info {
-        if ci.0.ip().is_loopback() {
-            return next.run(request).await;
+    // Try normal API auth first
+    if has_valid_api_auth(&headers, request.uri(), &state.api_key) {
+        return next.run(request).await;
+    }
+
+    // Try agent token: extract agent name from path, validate token
+    if let Some(agent_name) = extract_agent_name(request.uri().path()) {
+        if let Some(provided) = headers.get("x-agent-token").and_then(|v| v.to_str().ok()) {
+            let (_, expected) = crate::docker::read_agent_port_and_token(&agent_name, &state.env_config.agents_dir);
+            if let Some(expected) = expected {
+                if provided == expected {
+                    return next.run(request).await;
+                }
+            }
         }
     }
 
+    let path = request.uri().path().to_string();
+    tracing::warn!(path = %path, "service auth failed");
+    (StatusCode::UNAUTHORIZED, Json(serde_json::json!({
+        "error": "unauthorized — pass X-Agent-Token header with the AGENT_TOKEN from the agent's environment"
+    }))).into_response()
+}
+
+fn has_valid_api_auth(headers: &HeaderMap, uri: &axum::http::Uri, api_key: &str) -> bool {
     let bearer_ok = headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
-        .map(|token| verify_token(token, &state.api_key))
+        .map(|token| verify_token(token, api_key))
         .unwrap_or(false);
-
-    let query_ok = if !bearer_ok {
-        request
-            .uri()
-            .query()
-            .and_then(|q| {
-                q.split('&')
-                    .find_map(|p| p.strip_prefix("token="))
-            })
-            .map(|t| verify_token(t, &state.api_key))
-            .unwrap_or(false)
-    } else {
-        false
-    };
-
-    if !bearer_ok && !query_ok {
-        let path = request.uri().path().to_string();
-        tracing::warn!(path = %path, "client auth failed");
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({"error": "unauthorized"})),
-        )
-            .into_response();
+    if bearer_ok {
+        return true;
     }
-
-    next.run(request).await
+    uri.query()
+        .and_then(|q| q.split('&').find_map(|p| p.strip_prefix("token=")))
+        .map(|t| verify_token(t, api_key))
+        .unwrap_or(false)
 }
+
+fn extract_agent_name(path: &str) -> Option<String> {
+    let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+    if parts.len() >= 2 && parts[0] == "agents" {
+        Some(parts[1].to_string())
+    } else {
+        None
+    }
+}
+
 
 /// Accept raw API key or JWT access token.
 pub(crate) fn verify_token(token: &str, api_key: &str) -> bool {

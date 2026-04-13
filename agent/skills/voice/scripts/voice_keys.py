@@ -38,14 +38,18 @@ def _notify_invalidation(scope: str) -> None:
     """Best-effort POST to vestad to invalidate the voice service."""
     vestad_port = os.environ.get("VESTAD_PORT", "")
     agent_name = os.environ.get("AGENT_NAME", "")
+    agent_token = os.environ.get("AGENT_TOKEN", "")
     if not vestad_port or not agent_name:
         return
     url = f"https://localhost:{vestad_port}/agents/{agent_name}/services/voice/invalidate"
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
+    headers = {"Content-Type": "application/json"}
+    if agent_token:
+        headers["X-Agent-Token"] = agent_token
     data = json.dumps({"scope": scope}).encode()
-    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"}, method="POST")
+    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
     try:
         urllib.request.urlopen(req, context=ctx, timeout=5)
     except Exception:

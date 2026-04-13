@@ -1282,22 +1282,30 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/{*path}", any(agent_proxy::agent_proxy_handler))
         .with_state(state.clone());
 
-    // Service registry: localhost (agent containers) can access without auth,
-    // external requests (app frontend) require auth
-    let services = Router::new()
+    // Service registry: mutating endpoints require agent token,
+    // read-only GET uses normal API auth
+    let services_agent = Router::new()
         .route("/agents/{name}/services", post(register_service_handler))
-        .route("/agents/{name}/services", get(list_services_handler))
         .route("/agents/{name}/services/{service}", axum::routing::delete(unregister_service_handler))
         .route("/agents/{name}/services/{service}/invalidate", post(control_ws::invalidate_service_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
-            auth::auth_middleware_localhost,
+            auth::auth_middleware_agent_token,
+        ))
+        .with_state(state.clone());
+
+    let services_read = Router::new()
+        .route("/agents/{name}/services", get(list_services_handler))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::auth_middleware,
         ))
         .with_state(state.clone());
 
     Router::new()
         .merge(public)
-        .merge(services)
+        .merge(services_agent)
+        .merge(services_read)
         .merge(proxy)
         .merge(protected)
         .layer(
