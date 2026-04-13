@@ -68,6 +68,39 @@ def test_skills_index_valid():
         assert name in skill_names, f"{skill_dir_name} missing from skills/index.json"
 
 
+def test_no_em_or_en_dashes_in_prompt_and_skill_files():
+    """All prompt, skill, and memory markdown files must be free of em/en dashes."""
+    agent_root = Path(__file__).resolve().parent.parent
+
+    md_globs = [
+        (agent_root, "MEMORY.md"),
+        (agent_root / "skills", "**/*.md"),
+        (agent_root / "prompts", "**/*.md"),
+    ]
+
+    em_dash = "\u2014"
+    en_dash = "\u2013"
+
+    files: list[Path] = []
+    for base, pattern in md_globs:
+        files.extend(base.glob(pattern))
+    files = sorted(set(files))
+    assert files, "No markdown files found - glob patterns may be wrong"
+
+    violations: list[str] = []
+    for path in files:
+        text = path.read_text(encoding="utf-8")
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            if em_dash in line or en_dash in line:
+                rel = path.relative_to(agent_root.parent)
+                violations.append(f"  {rel}:{lineno}: {line.strip()[:120]}")
+
+    assert not violations, (
+        "Em dash (\u2014) or en dash (\u2013) found in markdown files. Use hyphens (-) or rewrite the sentence.\n"
+        + "\n".join(violations)
+    )
+
+
 def test_skills_registry_scripts_executable():
     scripts_dir = Path(__file__).parent.parent / "skills" / "skills-registry" / "scripts"
     for script in scripts_dir.iterdir():

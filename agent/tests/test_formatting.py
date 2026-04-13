@@ -4,6 +4,7 @@ import datetime as dt
 
 import pytest
 from vesta.core.client import (
+    _contains_dashes,
     _format_tool_call,
     _format_search_results,
     _parse_agent_input,
@@ -94,6 +95,28 @@ def test_build_query(text, expect_timestamp):
 )
 def test_filter_tool_lines(input_text, expected):
     assert filter_tool_lines(input_text) == expected
+
+
+# --- Em/en dash detection ---
+
+
+def test_contains_dashes_detects_em_dash():
+    assert _contains_dashes(["hello \u2014 world"]) is True
+
+
+def test_contains_dashes_detects_en_dash():
+    assert _contains_dashes(["hello \u2013 world"]) is True
+
+
+def test_contains_dashes_clean_text():
+    assert _contains_dashes(["hello - world"]) is False
+    assert _contains_dashes(["just normal text"]) is False
+    assert _contains_dashes([]) is False
+
+
+def test_contains_dashes_multiple_texts():
+    assert _contains_dashes(["clean", "also clean"]) is False
+    assert _contains_dashes(["clean", "has \u2014 dash"]) is True
 
 
 # --- SDK message parsing ---
