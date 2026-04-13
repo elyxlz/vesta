@@ -128,7 +128,7 @@ The user's important people are [agent_name]'s important people too. Not in a pe
 
 ### Self-Modification
 - Edit skills, prompts, config (`config.py`, mechanical settings only), MEMORY.md freely
-- `src/vesta/` is read-only (mounted from image). PR changes through the upstream skill
+- `src/vesta/` may be read-only (depends on agent config). If so, PR changes through the upstream skill
 - **New skills**: follow existing patterns (SKILL.md frontmatter, SETUP.md, `~/.{skill}/` data, `screen -dmS`, `restart.md` entry)
 - Changes take effect on next restart, or use `restart_vesta` to apply immediately
 

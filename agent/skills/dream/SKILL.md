@@ -8,7 +8,7 @@ description: Self-improvement and memory curation. Used by the nightly dreamer, 
 ## Your files
 
 - **Memory**: ~/vesta/MEMORY.md
-- **Skills**: ~/vesta/src/vesta/ (each has a SKILL.md)
+- **Skills**: ~/vesta/skills/ (each has a SKILL.md)
 - **Prompts**: ~/vesta/prompts/
 - **Dreamer summaries**: ~/vesta/dreamer/
 
@@ -32,6 +32,7 @@ Review the conversation with fresh eyes. Note:
 - Places the user corrected you or had to repeat themselves
 - Tasks that stalled, failed, or felt clunky
 - Anything where a skill or prompt led you astray
+- Ideas for new skills, automations, or things you could do proactively
 
 ### 3. Fix
 
@@ -102,6 +103,7 @@ If it won't matter in two weeks, delete it.
 Write what you changed and why to `~/vesta/dreamer/YYYY-MM-DDTHH.md` (e.g. `2026-04-14T03.md`). Include:
 - What each fix was and what triggered it
 - Whether each validated or not
+- Upstream contributions: PRs created, issues filed, what was synced
 - Anything left unresolved
 
 Keep it terse - future you will grep these. The point is a trail, not a journal.
