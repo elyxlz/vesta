@@ -1,6 +1,6 @@
 # Telegram Setup
 
-1. Install dependencies (gcc for CGO and Go from https://go.dev/dl/ - NOT the system package manager):
+1. Install dependencies (gcc for CGO and Go from https://go.dev/dl/, NOT the system package manager):
    ```bash
    apt-get install -y gcc
    ARCH=$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/')

@@ -1,7 +1,7 @@
 # Keeper Setup
 
 1. Install: `uv tool install keepercommander`
-2. First-time login (interactive - only needed once):
+2. First-time login (interactive, only needed once):
    ```bash
    keeper shell
    ```
@@ -27,4 +27,4 @@ keeper_push                      # push notification to mobile
 
 Region selection (before login): `server EU` (options: EU, US, AU, GOV, CA, JP)
 
-IMPORTANT: Use `quit` (not `logout`) to exit - `logout` expires the session.
+IMPORTANT: Use `quit` (not `logout`) to exit. `logout` expires the session.

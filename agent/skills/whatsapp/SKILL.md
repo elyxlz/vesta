@@ -11,8 +11,8 @@ description: This skill should be used when the user asks about "whatsapp", "mes
 ## Gotchas
 - CLI syntax: command MUST come before flags. `whatsapp serve --instance name` NOT `whatsapp --instance name serve`
 - `send` uses flags, not positional args: `whatsapp send --to 'Name' --message 'text'`
-- `--to` accepts contact names, phone numbers, or group names - the CLI resolves them to JIDs
-- `--notifications-dir` is REQUIRED for `serve` - it will exit silently without it
+- `--to` accepts contact names, phone numbers, or group names (the CLI resolves them to JIDs)
+- `--notifications-dir` is REQUIRED for `serve`. It will exit silently without it
 - **Never send multiple messages in parallel tool calls.** If one parallel call is rejected/fails while another succeeds, you may mistakenly resend the successful one, causing duplicates. Always send WhatsApp messages sequentially (one tool call at a time)
 
 ## Authentication

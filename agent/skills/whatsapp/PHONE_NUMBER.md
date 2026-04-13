@@ -1,6 +1,6 @@
 # Getting a Separate Phone Number for WhatsApp
 
-Vesta needs its own WhatsApp account with a dedicated phone number. **Do not use your personal WhatsApp** - Vesta will read and send messages from whatever account it's linked to.
+Vesta needs its own WhatsApp account with a dedicated phone number. **Do not use your personal WhatsApp.** Vesta will read and send messages from whatever account it's linked to.
 
 You need a real mobile number from an actual carrier. Most VoIP/virtual numbers (Google Voice, TextNow, Skype) are blocked by WhatsApp.
 
@@ -34,7 +34,7 @@ You need a real mobile number from an actual carrier. Most VoIP/virtual numbers 
 | Lebara | SIM / eSIM | From 5 EUR/month PAYG | Varies by country |
 | Lycamobile | SIM / eSIM | From 5 EUR/month PAYG | Use within 90 days |
 
-**Other Regions** - look for the cheapest prepaid PAYG SIM from a local carrier. Avoid data-only eSIMs (Airalo, Holafly, etc.) as they don't provide a phone number and can't receive the WhatsApp verification SMS.
+**Other Regions**: look for the cheapest prepaid PAYG SIM from a local carrier. Avoid data-only eSIMs (Airalo, Holafly, etc.) as they don't provide a phone number and can't receive the WhatsApp verification SMS.
 
 ### eSIM vs Physical SIM
 
@@ -65,7 +65,7 @@ WhatsApp now natively supports two accounts on a single device (Android and iPho
 Creates a fully isolated second copy of WhatsApp. Good if you want complete separation.
 
 1. Install **Shelter** (F-Droid, open source) or **Island** (Play Store)
-2. These apps create an Android Work Profile - a sandboxed environment
+2. These apps create an Android Work Profile (a sandboxed environment)
 3. Clone WhatsApp into the work profile
 4. Open the cloned WhatsApp and register with your new number
 
@@ -79,7 +79,7 @@ Install both "WhatsApp" (personal) and "WhatsApp Business" (for the agent) from 
 
 ### Option D: Cheap Spare Phone
 
-Buy any cheap Android phone (even used, even without its own SIM after initial setup). Register WhatsApp on it with the new number. WhatsApp's multi-device feature means the agent can operate independently once linked - the spare phone doesn't need to stay online permanently, but WhatsApp may require periodic re-verification.
+Buy any cheap Android phone (even used, even without its own SIM after initial setup). Register WhatsApp on it with the new number. WhatsApp's multi-device feature means the agent can operate independently once linked. The spare phone doesn't need to stay online permanently, but WhatsApp may require periodic re-verification.
 
 ## Step 3: Link to Vesta
 

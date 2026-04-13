@@ -102,6 +102,60 @@ def test_no_em_or_en_dashes_in_prompt_and_skill_files():
     )
 
 
+def test_no_space_dash_space_separator_in_prose():
+    """Prose lines must not use ' - ' as a separator (em-dash substitute). Allowed in code blocks, headings, CLI comments, and markdown tables."""
+    agent_root = Path(__file__).resolve().parent.parent
+
+    md_globs = [
+        (agent_root, "MEMORY.md"),
+        (agent_root / "skills", "*/SKILL.md"),
+        (agent_root / "skills", "*/SETUP.md"),
+        (agent_root / "skills", "*/PHONE_NUMBER.md"),
+        (agent_root / "prompts", "**/*.md"),
+    ]
+
+    files: list[Path] = []
+    for base, pattern in md_globs:
+        files.extend(base.glob(pattern))
+    files = sorted(set(files))
+    assert files, "No markdown files found"
+
+    import re
+    # Pattern: ` - ` used as prose separator. Skip when preceded by backtick (CLI desc),
+    # UPPER_SNAKE (env var desc), or when the line quotes the literal pattern.
+    definition_re = re.compile(r'(`[^`]+`|[A-Z][A-Z_0-9]+)\s+-\s+')
+
+    violations: list[str] = []
+    for path in files:
+        text = path.read_text(encoding="utf-8")
+        in_code_block = False
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            stripped = line.strip()
+            if stripped.startswith("```"):
+                in_code_block = not in_code_block
+                continue
+            if in_code_block:
+                continue
+            if " - " not in stripped:
+                continue
+            # Skip markdown headings and table rows
+            if stripped.startswith("#") or stripped.startswith("|"):
+                continue
+            # Skip lines that quote the literal pattern (e.g. the ban rule itself)
+            if '" - "' in stripped or "' - '" in stripped:
+                continue
+            # Remove all definition-list patterns (backtick-desc and ENV_VAR-desc) then check
+            cleaned = definition_re.sub("", stripped)
+            if " - " not in cleaned:
+                continue
+            rel = path.relative_to(agent_root.parent)
+            violations.append(f"  {rel}:{lineno}: {stripped[:120]}")
+
+    assert not violations, (
+        "Found ' - ' used as a prose separator. Use commas, periods, colons, or restructure.\n" + "\n".join(violations)
+    )
+
+
 def test_skills_registry_scripts_executable():
     scripts_dir = Path(__file__).parent.parent / "skills" / "skills-registry" / "scripts"
     for script in scripts_dir.iterdir():

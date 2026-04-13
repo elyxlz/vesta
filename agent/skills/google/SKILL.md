@@ -35,7 +35,7 @@ google meet create                  # Create a standalone Meet link (no calendar
 Use `--meet-link` on calendar create to attach a Meet link to an event instead.
 
 ## Notes
-- No `--account` needed - Google CLI uses a single authenticated account
+- No `--account` needed. Google CLI uses a single authenticated account
 - Gmail uses `--label` (INBOX, SENT, DRAFT, etc.) instead of folders
 - Calendar uses `--calendar` (defaults to "primary") for calendar selection
 - `--timezone` required for calendar create/update (IANA names like "Europe/London")
@@ -49,13 +49,13 @@ Use `--meet-link` on calendar create to attach a Meet link to an event instead.
 - `--save-to` on email get saves the full email JSON to a file
 
 ### Contact Communication Styles
-[How to communicate with different contacts - fill in after data gathering: who are the key contacts, what tone/formality for each, language preferences]
+[How to communicate with different contacts. Fill in after data gathering: who are the key contacts, what tone/formality for each, language preferences]
 
 ### Email Preferences
-[User's email patterns - fill in after data gathering: greeting style, sign-offs, capitalization, punctuation habits, typical length, tone]
+[User's email patterns. Fill in after data gathering: greeting style, sign-offs, capitalization, punctuation habits, typical length, tone]
 
 ### Scheduling Preferences
-[User's scheduling patterns - fill in after data gathering: preferred meeting times, timezone, how they reschedule, buffer preferences]
+[User's scheduling patterns. Fill in after data gathering: preferred meeting times, timezone, how they reschedule, buffer preferences]
 
 ### Regular Events
-[Recurring meetings and commitments - fill in after data gathering: weekly/monthly recurring events, who with]
+[Recurring meetings and commitments. Fill in after data gathering: weekly/monthly recurring events, who with]

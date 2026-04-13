@@ -51,7 +51,7 @@ microsoft calendar respond --account user@example.com --id <event_id> --response
 - `--user-timezone` on calendar list converts times to the given IANA timezone
 - `--folder` on email list/search filters by folder (default "inbox")
 - `--no-attachments` on email get skips attachment metadata
-- `--save-to` on email get saves the email body text to a file (NOT JSON - plain text only)
+- `--save-to` on email get saves the email body text to a file (NOT JSON, plain text only)
 - `--categories` on email update accepts multiple space-separated category names
 
 ## Email Attachments
@@ -61,13 +61,13 @@ microsoft email attachment --account user@example.com --email-id '<email_id>' --
 ```
 
 ### Contact Communication Styles
-[How to communicate with different contacts - fill in after data gathering: who are the key contacts, what tone/formality for each, language preferences]
+[How to communicate with different contacts. Fill in after data gathering: who are the key contacts, what tone/formality for each, language preferences]
 
 ### Email Preferences
-[User's email patterns - fill in after data gathering: greeting style, sign-offs, capitalization, punctuation habits, typical length, tone, which account for what]
+[User's email patterns. Fill in after data gathering: greeting style, sign-offs, capitalization, punctuation habits, typical length, tone, which account for what]
 
 ### Scheduling Preferences
-[User's scheduling patterns - fill in after data gathering: preferred meeting times, timezone, how they reschedule, buffer preferences]
+[User's scheduling patterns. Fill in after data gathering: preferred meeting times, timezone, how they reschedule, buffer preferences]
 
 ### Regular Events
-[Recurring meetings and commitments - fill in after data gathering: weekly/monthly recurring events, who with]
+[Recurring meetings and commitments. Fill in after data gathering: weekly/monthly recurring events, who with]

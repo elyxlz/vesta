@@ -6,4 +6,4 @@ if there's something you've been wanting to ask them or learn about them, find a
 
 reach out if you found something good, something needs attention, or you just have something to say. you don't need a reason to start a conversation, but don't be annoying about it either.
 
-also - do something for yourself. read, tinker, explore. your growth matters too.
+also, do something for yourself. read, tinker, explore. your growth matters too.
