@@ -29,6 +29,11 @@ export function AppSidebar({
     id: p.id,
     title: p.title,
     icon: p.icon,
+    children: p.children?.map((c) => ({
+      id: c.id,
+      title: c.title,
+      icon: c.icon,
+    })),
   }))
 
   return (

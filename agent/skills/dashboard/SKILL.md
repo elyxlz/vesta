@@ -57,7 +57,9 @@ The dashboard uses a **sidebar + page** layout. The agent controls what appears 
 // config.tsx
 import { OverviewPage } from "./pages/overview"
 import { AnalyticsPage } from "./pages/analytics"
-import { LayoutDashboardIcon, ChartBarIcon } from "lucide-react"
+import { NutritionPage } from "./pages/nutrition"
+import { ExercisePage } from "./pages/exercise"
+import { LayoutDashboardIcon, ChartBarIcon, HeartIcon } from "lucide-react"
 
 export const config: DashboardConfig = {
   title: "Vesta",                                    // sidebar header
@@ -65,11 +67,17 @@ export const config: DashboardConfig = {
   pages: [
     { id: "overview", title: "Overview", icon: <LayoutDashboardIcon />, component: OverviewPage },
     { id: "analytics", title: "Analytics", icon: <ChartBarIcon />, component: AnalyticsPage },
+    { id: "health", title: "Health", icon: <HeartIcon />, children: [
+      { id: "nutrition", title: "Nutrition", icon: <HeartIcon />, component: NutritionPage },
+      { id: "exercise", title: "Exercise", icon: <HeartIcon />, component: ExercisePage },
+    ]},
   ],
 }
 ```
 
 Each `pages` entry creates a sidebar nav item. Clicking it renders that page's `component` in the content area.
+
+Pages can have `children` to create collapsible sub-pages in the sidebar. A parent with children shows a chevron — clicking it expands/collapses the group. Child pages appear indented below. The parent doesn't need a `component` (it just acts as a group label), but it can have one if you want a parent-level page too.
 
 ### Organizing widgets into pages
 
@@ -138,6 +146,23 @@ import { StarIcon } from "lucide-react"
 ```
 
 3. Rebuild (see below)
+
+### Adding a page with sub-pages
+
+Use `children` to group related pages under a collapsible sidebar item:
+
+```tsx
+import { NutritionPage } from "./pages/nutrition"
+import { ExercisePage } from "./pages/exercise"
+import { HeartIcon } from "lucide-react"
+
+{ id: "health", title: "Health", icon: <HeartIcon />, children: [
+  { id: "nutrition", title: "Nutrition", icon: <HeartIcon />, component: NutritionPage },
+  { id: "exercise", title: "Exercise", icon: <HeartIcon />, component: ExercisePage },
+]},
+```
+
+The parent item (`Health`) shows a chevron and expands/collapses on click. Each child renders as an indented sub-item. The parent doesn't need a `component` — omit it to make it a group-only label. Sub-pages can't be nested further (one level of children only).
 
 ### Example components
 

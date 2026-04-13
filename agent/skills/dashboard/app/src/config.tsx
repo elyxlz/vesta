@@ -6,7 +6,6 @@
 // To add a page:
 //   1. Create a component in src/pages/ (e.g. src/pages/analytics.tsx)
 //   2. Import it here and add an entry to the `pages` array
-//   3. Rebuild: cd app && npx vite build
 // ============================================================================
 
 import type { ComponentType, ReactNode } from "react"
@@ -18,7 +17,8 @@ export interface PageConfig {
   id: string
   title: string
   icon: ReactNode
-  component: ComponentType
+  component?: ComponentType
+  children?: PageConfig[]
 }
 
 export interface DashboardConfig {

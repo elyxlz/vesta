@@ -18,6 +18,32 @@ const SHOW_EMPTY_STATE = config.pages.length === 0
 const STORAGE_KEY = "vesta-dashboard-page-order"
 const ACTIVE_PAGE_KEY = "vesta-dashboard-active-page"
 
+function findPage(pages: PageConfig[], id: string): PageConfig | undefined {
+  for (const p of pages) {
+    if (p.id === id) return p
+    if (p.children) {
+      const found = findPage(p.children, id)
+      if (found) return found
+    }
+  }
+  return undefined
+}
+
+function firstNavigablePage(pages: PageConfig[]): string {
+  for (const p of pages) {
+    if (p.component) return p.id
+    if (p.children) {
+      const id = firstNavigablePage(p.children)
+      if (id) return id
+    }
+  }
+  return ""
+}
+
+function hasPage(pages: PageConfig[], id: string): boolean {
+  return findPage(pages, id) !== undefined
+}
+
 function loadPageOrder(): PageConfig[] {
   try {
     const saved = localStorage.getItem(STORAGE_KEY)
@@ -34,16 +60,15 @@ function loadPageOrder(): PageConfig[] {
 
 function loadActivePage(pages: PageConfig[]): string {
   const saved = localStorage.getItem(ACTIVE_PAGE_KEY)
-  if (saved && pages.some((p) => p.id === saved)) return saved
-  return pages[0]?.id ?? ""
+  if (saved && hasPage(pages, saved)) return saved
+  return firstNavigablePage(pages)
 }
 
 export default function App() {
   const [pages, setPages] = useState(loadPageOrder)
   const [activePageId, setActivePageId] = useState(() => loadActivePage(pages))
   const [agentName, setAgentName] = useState(getAgentName)
-  const activePage =
-    pages.find((p) => p.id === activePageId) ?? pages[0]
+  const activePage = findPage(pages, activePageId)
 
   useEffect(() => {
     waitForAuth().then(() => setAgentName(getAgentName()))
@@ -94,7 +119,7 @@ export default function App() {
           <SidebarInset>
             <SiteHeader title={activePage?.title ?? ""} />
             <div className="@container/main overflow-y-auto flex-1 min-h-0 px-4 py-4 lg:px-6">
-              {activePage && <activePage.component />}
+              {activePage?.component && <activePage.component />}
             </div>
           </SidebarInset>
         </SidebarProvider>
