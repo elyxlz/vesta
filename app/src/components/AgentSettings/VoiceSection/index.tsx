@@ -29,7 +29,7 @@ import {
 } from "@/lib/voice";
 import { useOptimisticToggle } from "@/hooks/use-optimistic-toggle";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
-import { useVoice } from "@/providers/VoiceProvider";
+import { useVoice } from "@/stores/use-voice";
 
 const DEBOUNCE_MS = 400;
 

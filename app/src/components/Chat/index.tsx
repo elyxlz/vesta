@@ -11,7 +11,7 @@ import { Card } from "@/components/ui/card";
 import { useLayout } from "@/stores/use-layout";
 import { useChatContext } from "@/providers/ChatProvider";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
-import { useVoice } from "@/providers/VoiceProvider";
+import { useVoice } from "@/stores/use-voice";
 import { cn } from "@/lib/utils";
 import { BottomBanner } from "./BottomBanner";
 import { ChatComposer } from "./ChatComposer";

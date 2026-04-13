@@ -8,7 +8,7 @@ import { useGateway } from "@/providers/GatewayProvider";
 import { ChatProvider } from "@/providers/ChatProvider";
 import { ModalsProvider } from "@/providers/ModalsProvider";
 import { SelectedAgentProvider } from "@/providers/SelectedAgentProvider";
-import { VoiceProvider } from "@/providers/VoiceProvider";
+import { VoiceStoreEffects } from "@/providers/VoiceProvider";
 import { DesktopPanelView } from "./DesktopPanelView";
 import { MobileSwipeView } from "./MobileSwipeView";
 
@@ -38,7 +38,7 @@ function AgentLayoutInner() {
   }, [isMobile]);
 
   return (
-    <VoiceProvider>
+    <VoiceStoreEffects>
       <ChatProvider>
         <ModalsProvider>
           <AgentNavbar
@@ -61,6 +61,6 @@ function AgentLayoutInner() {
           <AgentIslandModals />
         </ModalsProvider>
       </ChatProvider>
-    </VoiceProvider>
+    </VoiceStoreEffects>
   );
 }

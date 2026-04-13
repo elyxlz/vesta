@@ -9,7 +9,7 @@ import {
 } from "react";
 import { useChat } from "./use-chat";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
-import { useVoice } from "@/providers/VoiceProvider";
+import { useVoice } from "@/stores/use-voice";
 
 type ChatContextValue = ReturnType<typeof useChat> & {
   showToolCalls: boolean;
