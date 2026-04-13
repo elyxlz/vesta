@@ -46,7 +46,8 @@ const modeOptions: { value: SpacebarMode; label: string }[] = [
 ];
 
 export function KeybindsCard() {
-  const [spacebarMode, setSpacebarMode] = useSpacebarMode();
+  const spacebarMode = useSpacebarMode((s) => s.mode);
+  const setSpacebarMode = useSpacebarMode((s) => s.setMode);
 
   return (
     <Card size="sm">

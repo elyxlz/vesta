@@ -1,4 +1,5 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
+import { create } from "zustand";
 import { isEditableTarget } from "@/lib/dom";
 import { useVoice } from "@/stores/use-voice";
 import { useTheme } from "@/providers/ThemeProvider";
@@ -6,26 +7,22 @@ import { useTheme } from "@/providers/ThemeProvider";
 export type SpacebarMode = "toggle" | "hold";
 const STORAGE_KEY = "spacebar-mode";
 
-function getStoredMode(): SpacebarMode {
-  const stored = localStorage.getItem(STORAGE_KEY);
-  if (stored === "hold") return "hold";
-  return "toggle";
+interface SpacebarModeState {
+  mode: SpacebarMode;
+  setMode: (mode: SpacebarMode) => void;
 }
 
-export function useSpacebarMode() {
-  const [mode, setModeState] = useState<SpacebarMode>(getStoredMode);
-
-  const setMode = (next: SpacebarMode) => {
-    localStorage.setItem(STORAGE_KEY, next);
-    setModeState(next);
-  };
-
-  return [mode, setMode] as const;
-}
+export const useSpacebarMode = create<SpacebarModeState>((set) => ({
+  mode: (localStorage.getItem(STORAGE_KEY) === "hold" ? "hold" : "toggle") as SpacebarMode,
+  setMode: (mode) => {
+    localStorage.setItem(STORAGE_KEY, mode);
+    set({ mode });
+  },
+}));
 
 export function KeybindProvider({ children }: { children: ReactNode }) {
   const { cycleTheme } = useTheme();
-  const [spacebarMode] = useSpacebarMode();
+  const spacebarMode = useSpacebarMode((s) => s.mode);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -38,7 +35,6 @@ export function KeybindProvider({ children }: { children: ReactNode }) {
         if (!sttAvailable) return;
         event.preventDefault();
         if (spacebarMode === "hold") {
-          // Hold mode: start recording on keydown
           if (!useVoice.getState().isRecording) {
             toggleVoice();
           }
