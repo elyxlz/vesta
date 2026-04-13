@@ -6,28 +6,9 @@ use axum::{
     Json,
 };
 
-use crate::auth::verify_token;
+use crate::auth;
 use crate::docker;
 use crate::serve::{SharedState, err_response, map_docker_err, PROXY_MAX_BODY_BYTES};
-
-fn check_request_auth(request: &Request, api_key: &str) -> bool {
-    let bearer_ok = request
-        .headers()
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .map(|token: &str| verify_token(token, api_key))
-        .unwrap_or(false);
-    if bearer_ok {
-        return true;
-    }
-    request
-        .uri()
-        .query()
-        .and_then(|q: &str| q.split('&').find_map(|p: &str| p.strip_prefix("token=")))
-        .map(|t: &str| verify_token(t, api_key))
-        .unwrap_or(false)
-}
 
 async fn resolve_service_port(
     state: &crate::serve::AppState,
@@ -71,7 +52,7 @@ pub async fn agent_proxy_handler(
 
     // Service requests are unauthenticated (assets load freely in iframes).
     // Non-service requests require auth.
-    if !is_service && !check_request_auth(&request, &state.api_key) {
+    if !is_service && !auth::has_valid_api_auth(request.headers(), request.uri(), &state.api_key) {
         return Err(err_response(StatusCode::UNAUTHORIZED, "unauthorized — pass a valid Bearer token or ?token= query parameter"));
     }
 

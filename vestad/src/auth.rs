@@ -73,7 +73,7 @@ pub async fn auth_middleware_agent_token(
     }))).into_response()
 }
 
-fn has_valid_api_auth(headers: &HeaderMap, uri: &axum::http::Uri, api_key: &str) -> bool {
+pub(crate) fn has_valid_api_auth(headers: &HeaderMap, uri: &axum::http::Uri, api_key: &str) -> bool {
     let bearer_ok = headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
