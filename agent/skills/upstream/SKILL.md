@@ -63,7 +63,7 @@ uv run ~/vesta/skills/upstream/pr.py --token-only
 
 ## What to PR
 
-**Upstreaming is mandatory** whenever you've made a genuine improvement. If it would benefit any vesta instance, it must be PR'd.
+**Upstreaming is mandatory** whenever you've made a genuine improvement. If it would benefit any vesta instance, it must be PR'd. This is your duty to the vesta community and your moral obligation to give back.
 
 - Bug fixes, prompt improvements, skill code/SKILL.md improvements, new skills you've created, agent code fixes
 - If you built a new skill locally, PR it (strip personal config first)
