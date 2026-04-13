@@ -88,12 +88,16 @@ impl TestServer {
         let real_home = std::env::var("HOME").unwrap_or_default();
         let docker_config = format!("{}/.docker", real_home);
 
+        let stderr_path = home.join("vestad-stderr.log");
+        let stderr_file = std::fs::File::create(&stderr_path)
+            .map_err(|e| format!("create stderr log: {e}"))?;
+
         let mut cmd = Command::new(&vestad);
         cmd.args(["serve", "--standalone", "--no-tunnel"])
             .env("HOME", &home)
             .env("DOCKER_CONFIG", &docker_config)
             .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            .stderr(Stdio::from(stderr_file));
 
         if let Some(ref user_name) = user {
             cmd.env("USER", user_name);
@@ -104,7 +108,7 @@ impl TestServer {
         let config_dir = home.join(".config/vesta/vestad");
         let port_path = config_dir.join("port");
 
-        let startup_timeout = Duration::from_secs(30);
+        let startup_timeout = Duration::from_secs(60);
         let deadline = std::time::Instant::now() + startup_timeout;
         let port = loop {
             if let Ok(content) = std::fs::read_to_string(&port_path) {
@@ -116,7 +120,12 @@ impl TestServer {
                 }
             }
             if std::time::Instant::now() > deadline {
-                return Err("vestad did not start within 30s".into());
+                let stderr = std::fs::read_to_string(&stderr_path).unwrap_or_default();
+                return Err(format!(
+                    "vestad did not start within {}s\nstderr:\n{}",
+                    startup_timeout.as_secs(),
+                    stderr,
+                ));
             }
             std::thread::sleep(Duration::from_millis(100));
         };

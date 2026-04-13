@@ -169,9 +169,7 @@ def test_batch_with_suffix():
 
 
 def test_notification_format_for_display():
-    notif = vm.Notification.model_validate(
-        {"timestamp": "2025-01-01T00:00:00", "source": "email", "type": "message", "sender": "alice"}
-    )
+    notif = vm.Notification.model_validate({"timestamp": "2025-01-01T00:00:00", "source": "email", "type": "message", "sender": "alice"})
     display = notif.format_for_display()
     assert "[message from email]" in display
     assert "sender=alice" in display
