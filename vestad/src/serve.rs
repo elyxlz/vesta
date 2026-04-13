@@ -719,7 +719,11 @@ fn load_settings() -> Settings {
     // Try loading unified settings.json
     if let Ok(data) = std::fs::read_to_string(&path) {
         match serde_json::from_str(&data) {
-            Ok(settings) => return settings,
+            Ok(settings) => {
+                // Re-write to persist any new fields added with defaults
+                save_settings(&settings);
+                return settings;
+            }
             Err(err) => {
                 tracing::warn!(path = %path.display(), error = %err, "corrupt settings.json, using defaults");
             }
@@ -732,7 +736,6 @@ fn load_settings() -> Settings {
     if let Ok(data) = std::fs::read_to_string(&old_services) {
         if let Ok(services) = serde_json::from_str(&data) {
             settings.services = services;
-            save_settings(&settings);
             if let Err(err) = std::fs::remove_file(&old_services) {
                 tracing::warn!(error = %err, "failed to remove old services.json after migration");
             } else {
@@ -740,6 +743,9 @@ fn load_settings() -> Settings {
             }
         }
     }
+
+    // Always write settings to disk so users can edit the file
+    save_settings(&settings);
 
     settings
 }
