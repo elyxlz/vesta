@@ -3,7 +3,7 @@ name: media-server
 description: This skill should be used when the user asks about "plex", "movies", "tv shows", "torrents", "downloads", "qbittorrent", "media", "streaming", or needs to search for, download, or browse their media library.
 ---
 
-# Media Server — Plex & Torrent Management
+# Media Server - Plex & Torrent Management
 
 Home media server running qBittorrent + Plex on a Linux box.
 
@@ -14,9 +14,9 @@ ssh -p $MEDIA_SERVER_SSH_PORT $MEDIA_SERVER_USER@$MEDIA_SERVER_HOST
 ```
 
 Set the following environment variables:
-- `MEDIA_SERVER_HOST` — hostname or IP of the media server
-- `MEDIA_SERVER_SSH_PORT` — SSH port (e.g. 22)
-- `MEDIA_SERVER_USER` — SSH username
+- `MEDIA_SERVER_HOST` - hostname or IP of the media server
+- `MEDIA_SERVER_SSH_PORT` - SSH port (e.g. 22)
+- `MEDIA_SERVER_USER` - SSH username
 
 Vesta's SSH key should be pre-installed. No password needed once configured.
 
@@ -83,14 +83,14 @@ A helper script is available at `~/skills/media-server/qb`. Run it with:
 qBittorrent supports search plugins for torrent sites. Configure tracker credentials in the plugin files.
 
 **Required env vars for tracker search:**
-- `TRACKER_USERNAME` — tracker site username
-- `TRACKER_PASSWORD` — tracker site password
-- `TRACKER_COOKIE_UID` — tracker cookie UID (if cookie-based auth)
-- `TRACKER_COOKIE_PASS` — tracker cookie pass hash
-- `SOCKS5_USER` — SOCKS5 proxy username (e.g. VPN provider)
-- `SOCKS5_PASS` — SOCKS5 proxy password
-- `SOCKS5_HOST` — SOCKS5 proxy host (e.g. `amsterdam.nl.socks.nordhold.net`)
-- `SOCKS5_PORT` — SOCKS5 proxy port (default: 1080)
+- `TRACKER_USERNAME` - tracker site username
+- `TRACKER_PASSWORD` - tracker site password
+- `TRACKER_COOKIE_UID` - tracker cookie UID (if cookie-based auth)
+- `TRACKER_COOKIE_PASS` - tracker cookie pass hash
+- `SOCKS5_USER` - SOCKS5 proxy username (e.g. VPN provider)
+- `SOCKS5_PASS` - SOCKS5 proxy password
+- `SOCKS5_HOST` - SOCKS5 proxy host (e.g. `amsterdam.nl.socks.nordhold.net`)
+- `SOCKS5_PORT` - SOCKS5 proxy port (default: 1080)
 
 ### Search via qBittorrent plugin API
 
@@ -151,7 +151,7 @@ $PLEX_MEDIA_PATH/
 ## Checking Download Progress
 
 ```bash
-# Quick status check — shows name, progress, state, speed
+# Quick status check - shows name, progress, state, speed
 ssh -p $MEDIA_SERVER_SSH_PORT $MEDIA_SERVER_USER@$MEDIA_SERVER_HOST "curl -s 'http://localhost:$QB_PORT/api/v2/torrents/info' | python3 -c \"
 import json, sys
 data = json.load(sys.stdin)
@@ -197,8 +197,8 @@ ssh -p $MEDIA_SERVER_SSH_PORT $MEDIA_SERVER_USER@$MEDIA_SERVER_HOST \
 ## qBittorrent Config Notes
 
 Recommended settings for the main instance:
-- `WebUI\LocalHostAuth=false` — no login needed from localhost
-- `WebUI\AuthSubnetWhitelist=192.168.0.0/24` — LAN also whitelisted (adjust to your subnet)
+- `WebUI\LocalHostAuth=false` - no login needed from localhost
+- `WebUI\AuthSubnetWhitelist=192.168.0.0/24` - LAN also whitelisted (adjust to your subnet)
 - SOCKS5 proxy configured for all torrent traffic (VPN recommended)
 - Torrent export dir: `$PLEX_MEDIA_PATH/Torrents`
 

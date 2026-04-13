@@ -1,23 +1,23 @@
 ---
 name: dashboard
-description: Use when you need to build, modify, or customize anything on the user's dashboard. widgets, layouts, pages, views, or any custom UI.
+description: Use when you need to build, modify, or customize anything on the user's dashboard - widgets, layouts, pages, views, or any custom UI.
 serve: PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' -d '{"name":"dashboard"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])") && screen -dmS dashboard sh -c "cd ~/vesta/skills/dashboard/app && npx vite preview --port $PORT --host 0.0.0.0"
 ---
 
 # Dashboard
 
-A React app embedded in the main Vesta app that serves as the user's **life HQ**, a personal command center for health, finances, productivity, habits, goals, and anything else they want to track and manage. Uses a sidebar layout with page-based navigation. The agent configures pages, sidebar items, and content by editing `config.tsx` and creating page components.
+A React app embedded in the main Vesta app that serves as the user's **life HQ** - a personal command center for health, finances, productivity, habits, goals, and anything else they want to track and manage. Uses a sidebar layout with page-based navigation. The agent configures pages, sidebar items, and content by editing `config.tsx` and creating page components.
 
 ## Before building (REQUIRED)
 
 **1. Check if shared files need syncing:** Compare `${VESTA_BRANCH:-v$VESTA_VERSION}` against `cat ~/vesta/skills/dashboard/app/.last-sync`. If they differ (or `.last-sync` doesn't exist), run `~/vesta/skills/dashboard/sync-app.sh` and rebuild. This ensures the dashboard uses the correct UI components.
 
 **2. Ask clarifying questions:** You MUST ask the user before writing any code. Go through these:
-*   **Goal**. if the request is vague, clarify what they actually want to see or do.
-*   **Interaction**. display-only, or do they want to tap/click/toggle/input things?
-*   **Data**. should it show fixed sample data, or pull in live data from a skill or API? Does the info need to stay in sync and look the same across different Vesta apps (like mobile)?
+1. **Goal** - if the request is vague, clarify what they actually want to see or do
+2. **Interaction** - display-only, or do they want to tap/click/toggle/input things?
+3. **Data** - should it show fixed sample data, or pull in live data from a skill or API? Does the info need to stay in sync and look the same across different Vesta apps (like mobile)?
 
-Only start building once the user has answered. Don't assume. ask.
+Only start building once the user has answered. Don't assume - ask.
 
 ## Project structure
 
@@ -52,7 +52,7 @@ When adding a widget without a specified page, **choose a fitting page name your
 
 ## Density & Sizing Rules (IMPORTANT)
 
-The dashboard is a high-density UI, not a standard app interface. By default, shadcn components are too large. **you MUST override them**. Everything should feel compact. Large elements are the exception, not the norm.
+The dashboard is a high-density UI, not a standard app interface. By default, shadcn components are too large. **You MUST override them**. Everything should feel compact. Large elements are the exception, not the norm.
 
 **1. Typography (MANDATORY)**
 *   Default text: `text-sm`
@@ -65,7 +65,7 @@ The dashboard is a high-density UI, not a standard app interface. By default, sh
 *   Dense widgets: `p-2`. Avoid `p-4` unless absolutely necessary.
 *   Grid gap: Use `gap-2` (preferred) or `gap-3`. Avoid `gap-4`.
 *   Inside widgets: Use `space-y-2` instead of `space-y-4`.
-*   Avoid tall widgets, prefer horizontal density. Combine related info into single rows.
+*   Avoid tall widgets. Prefer horizontal density. Combine related info into single rows.
 
 **3. Buttons & Controls (MANDATORY)**
 *   All buttons must be compact: `<Button size="sm" className="h-8 px-2 text-xs">`
@@ -81,7 +81,7 @@ The dashboard is a high-density UI, not a standard app interface. By default, sh
 
 1. Create `src/pages/my-page.tsx` with whatever layout fits the content (single column, tables, etc.).
 
-**Example: grid layout page** for a widget-heavy page: a responsive auto-fill grid with compact gaps.
+**Example - grid layout page** for a widget-heavy page: a responsive auto-fill grid with compact gaps.
 
 ```tsx
 export function MyPage() {
