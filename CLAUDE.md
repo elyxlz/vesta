@@ -21,10 +21,12 @@ Client/server architecture. `vestad` daemon runs on the host (manages Docker con
 ### Agent (run from `agent/`)
 
 ```bash
-uv run pytest tests/test_unit.py           # Unit tests
-uv run pytest tests/test_unit.py::test_foo # Single test
-uv run ruff check                          # Lint
-uv run ty check                            # Type check
+uv run pytest tests/ --ignore=tests/test_e2e.py  # Unit tests
+uv run pytest tests/test_notifications.py         # Single module
+uv run pytest tests/ -k "test_batch"              # Single test by name
+uv run pytest skills/tasks/cli/tests/             # Skill CLI tests
+uv run ruff check                                 # Lint
+uv run ty check                                   # Type check
 ```
 
 ### Rust (run from repo root)

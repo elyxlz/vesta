@@ -32,10 +32,12 @@ export type VestaEvent =
   | (BaseEvent & { type: "assistant"; text: string })
   | (BaseEvent & { type: "thinking"; text: string; signature: string })
   | (BaseEvent & { type: "chat"; text: string })
-  | (BaseEvent & { type: "tool_start"; tool: string; input: string })
-  | (BaseEvent & { type: "tool_end"; tool: string })
+  | (BaseEvent & { type: "tool_start"; tool: string; input: string; subagent?: boolean })
+  | (BaseEvent & { type: "tool_end"; tool: string; subagent?: boolean })
   | (BaseEvent & { type: "error"; text: string })
   | (BaseEvent & { type: "notification"; source: string; summary: string })
+  | (BaseEvent & { type: "subagent_start"; agent_id: string; agent_type: string })
+  | (BaseEvent & { type: "subagent_stop"; agent_id: string; agent_type: string })
   | (BaseEvent & {
       type: "history";
       events: VestaEvent[];

@@ -166,6 +166,33 @@ pub fn version_less_than(a: &str, b: &str) -> bool {
 const GITHUB_RELEASES_LATEST_URL: &str =
     "https://api.github.com/repos/elyxlz/vesta/releases/latest";
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_url_cases() {
+        for (input, expected) in [
+            ("example.com", "https://example.com"),
+            ("https://example.com", "https://example.com"),
+            ("http://example.com", "http://example.com"),
+            ("192.168.1.1:8080", "https://192.168.1.1:8080"),
+        ] {
+            assert_eq!(normalize_url(input), expected, "normalize_url({input:?})");
+        }
+    }
+
+    #[test]
+    fn version_comparison() {
+        assert!(version_less_than("0.1.0", "0.2.0"));
+        assert!(version_less_than("0.1.9", "0.1.10"));
+        assert!(version_less_than("0.9.9", "1.0.0"));
+        assert!(!version_less_than("1.0.0", "0.9.9"));
+        assert!(!version_less_than("1.0.0", "1.0.0"));
+        assert!(!version_less_than("0.2.0", "0.1.0"));
+    }
+}
+
 pub fn fetch_latest_release_tag(timeout_secs: Option<u64>) -> Option<String> {
     let mut args: Vec<String> = vec![
         "-fsSL".into(),
