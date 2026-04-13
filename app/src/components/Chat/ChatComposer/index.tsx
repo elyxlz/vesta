@@ -47,7 +47,7 @@ export function ChatComposer({
     >
       <InputGroup
         className={cn(
-          "min-h-12 px-1",
+          "min-h-12 px-1 bg-secondary",
           isRecording &&
             "ring-2 ring-red-500 has-[[data-slot=input-group-control]:focus-visible]:border-transparent has-[[data-slot=input-group-control]:focus-visible]:ring-2 has-[[data-slot=input-group-control]:focus-visible]:ring-red-500",
         )}
