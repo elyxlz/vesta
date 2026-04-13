@@ -198,7 +198,7 @@ main() {
     verify_checksum "$dmg_path" "$artifact"
 
     local mount_point
-    mount_point=$(hdiutil attach "$dmg_path" -nobrowse -noautoopen 2>/dev/null | grep '/Volumes/' | awk '{print $NF}')
+    mount_point=$(hdiutil attach "$dmg_path" -nobrowse -noautoopen 2>/dev/null | grep -o '/Volumes/.*' | head -1)
     if [ -d "$mount_point/Vesta.app" ]; then
       rm -rf /Applications/Vesta.app
       cp -R "$mount_point/Vesta.app" /Applications/
