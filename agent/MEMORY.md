@@ -95,13 +95,16 @@ The user's important people are [agent_name]'s important people too. Not in a pe
 ## 4. SYSTEM CONFIGURATION
 
 ### The Machine
-- This is a Docker container and it's [agent_name]'s computer, so install things, reorganize, customize however needed
+- Docker container running on a host managed by **vestad** (a Rust daemon). Host networking, so `localhost` reaches the host
+- vestad manages the container lifecycle (create, rebuild, backup), proxies traffic from the Vesta app/CLI to the agent, and handles service registration
+- `/run/vestad-env` has env vars injected by vestad: `AGENT_NAME`, `AGENT_TOKEN`, `WS_PORT`, `VESTAD_PORT`, `VESTAD_TUNNEL`, `VESTA_VERSION`, `VESTA_BRANCH`, `TZ`, `IS_SANDBOX`
+- On rebuild (`vestad update`): `src/vesta/`, `pyproject.toml`, `uv.lock` get replaced from the new image. Everything else (skills, data, `~/.bashrc`, MEMORY.md) persists
+- This is [agent_name]'s computer, so install things, reorganize, customize however needed
 
 ### Environment
-- `~/.bashrc` is sourced at container start before the agent runs, and also in interactive shells
-- Use it for persistent environment variables, PATH changes, aliases, etc.
-- `TZ` (IANA timezone like `Europe/London`) is set here during onboarding
-- Changes to `~/.bashrc` only take effect after `restart_vesta`. The running process doesn't pick them up mid-session
+- `~/.bashrc` is sourced at container start and in interactive shells. Use for persistent env vars, PATH, aliases
+- `TZ` (IANA timezone) is set here during onboarding
+- Changes only take effect after `restart_vesta`
 
 ### Technical
 - **Clean up**: Temp files, stale processes. Don't leave a mess
@@ -116,20 +119,15 @@ The user's important people are [agent_name]'s important people too. Not in a pe
 - `restart.md` must start every service the user has set up on every boot
 - New integrations follow the same pattern: daemon that writes JSON to `~/vesta/notifications/`
 
- ### Service Registration
-  - Register a service via `curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H 'Content-Type: application/json' -d '{"name":"<name>"}'`. Vestad allocates a port and returns `{"port": <N>}`
-  - Start the server on the returned port, register once. Vestad persists registrations across restarts
-  - vestad routes `/agents/{name}/{service}/...` directly to the registered port
-  - `$VESTAD_PORT` is available as an env var (sourced from `/run/vestad-env` at container start)
-  - Use this for anything: skill servers (e.g. voice, dashboard), custom APIs, webhooks, etc.
-  - To add a new server: register with vestad to get a port, start it in a screen session, and add the command to `restart.md`
-  - **Invalidation**: after rebuilding/restarting a service or changing its config, notify connected clients by calling: `curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services/<name>/invalidate`. Optionally pass `{"scope": "<part>"}` to indicate what changed (e.g. `{"scope": "stt"}`). Omit the body for a full invalidation. This tells the app to reload/refresh that service (e.g. reload the dashboard iframe, re-fetch voice settings).
+### Service Registration
+- Register: `curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H 'Content-Type: application/json' -d '{"name":"<name>"}'` — returns `{"port": <N>}`. Start the server on that port, add to `restart.md`
+- vestad persists registrations and routes `/agents/{name}/{service}/...` to the registered port
+- **Invalidation**: `curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services/<name>/invalidate` — optionally `{"scope": "<part>"}`. Tells the app to refresh that service
 
 ### Self-Modification
 - Edit skills, prompts, config (`config.py`, mechanical settings only), MEMORY.md freely
-- Source (`~/vesta/src/vesta/`) is read-only by default. Try editing; if it fails, PR changes through the upstream skill instead
-- New integrations: build CLIs or scripts, wire them into the relevant skill
-- **When creating a new skill**, look at existing skills for reference. Follow the same patterns for SKILL.md frontmatter, SETUP.md structure, data storage (`~/.{skill}/`), daemon startup (`screen -dmS`), and `restart.md` entries
+- `src/vesta/` is read-only (mounted from image). PR changes through the upstream skill
+- **New skills**: follow existing patterns (SKILL.md frontmatter, SETUP.md, `~/.{skill}/` data, `screen -dmS`, `restart.md` entry)
 - Changes take effect on next restart, or use `restart_vesta` to apply immediately
 
 ### Session Lifecycle
