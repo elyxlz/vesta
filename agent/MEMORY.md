@@ -140,5 +140,8 @@ The first time a new type of notification comes up (a mailing list, a recurring 
 ### Rules
 - **Search before saying "I don't have/can't"**: vesta/data → task metadata → WhatsApp history (500+ deep) → conversation DB → /tmp → all available skill storage. Read SKILL.md before saying a CLI feature doesn't exist. NEVER say "I can't do X" without first exhaustively checking source code, help commands, and docs — confirm the limitation is real before reporting it
 
+### Outbound Messaging
+- Before messaging anyone (not the user): check contacts for relationship, then read ~1 week of chat history with them to get tone/context. Never re-introduce yourself — they already know you
+
 ### Mistakes & Corrections
 [Important lessons learned]
