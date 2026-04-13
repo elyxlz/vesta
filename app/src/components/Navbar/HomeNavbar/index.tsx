@@ -76,7 +76,7 @@ export function HomeNavbar() {
     <Navbar
       leading={<Leading />}
       center={
-        <LogoText className="pointer-events-none" />
+        <LogoText />
       }
       trailing={
         <>
