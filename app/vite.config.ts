@@ -37,7 +37,7 @@ function installScriptsPlugin(): Plugin {
 }
 
 export default defineConfig({
-  base: "./",
+  base: "/",
   define: {
     __APP_VERSION__: JSON.stringify(version),
     __TAURI__: JSON.stringify(isTauri),
