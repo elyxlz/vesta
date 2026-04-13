@@ -4,6 +4,5 @@ Run each command below if the service isn't already running (`screen -ls` to che
 
 ## Services
 ```bash
-# Add startup commands here, e.g.:
-# screen -dmS microsoft microsoft serve --notifications-dir ~/vesta/notifications
+# [startup commands go here]
 ```
