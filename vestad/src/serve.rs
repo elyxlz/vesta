@@ -1,6 +1,5 @@
 use axum::{
-    body::Body,
-    extract::{ConnectInfo, Path, Query, Request, State, WebSocketUpgrade},
+    extract::{ConnectInfo, Path, Query, Request, State},
     http::{HeaderMap, StatusCode},
     middleware::{self, Next},
     response::{
@@ -15,7 +14,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, atomic::AtomicBool};
 use tokio::sync::{Mutex, RwLock};
 
-use crate::{agent_status, backup, control_ws, docker, jwt, self_update, update_check};
+use crate::{agent_proxy, agent_status, backup, control_ws, docker, jwt, self_update, update_check};
 
 const API_KEY_BYTES: usize = 32;
 pub(crate) const PROXY_MAX_BODY_BYTES: usize = 10 * 1024 * 1024; // 10 MB
@@ -130,15 +129,15 @@ struct AuthSession {
 }
 
 pub struct AppState {
-    api_key: String,
+    pub(crate) api_key: String,
     pub(crate) env_config: docker::AgentEnvConfig,
-    docker: bollard::Docker,
+    pub(crate) docker: bollard::Docker,
     auth_sessions: Mutex<HashMap<String, AuthSession>>,
     agent_locks: Mutex<HashMap<String, Arc<tokio::sync::RwLock<()>>>>,
     tunnel_url: Mutex<Option<String>>,
     update_info: Mutex<Option<update_check::UpdateInfo>>,
     updating: AtomicBool,
-    http_client: reqwest::Client,
+    pub(crate) http_client: reqwest::Client,
     pub(crate) settings: RwLock<Settings>,
     dev_mode: bool,
     pub(crate) agent_status_cache: Arc<agent_status::AgentStatusCache>,
@@ -163,7 +162,7 @@ impl AppState {
         }
     }
 
-    async fn agent_lock(&self, name: &str) -> Arc<tokio::sync::RwLock<()>> {
+    pub(crate) async fn agent_lock(&self, name: &str) -> Arc<tokio::sync::RwLock<()>> {
         let mut locks = self.agent_locks.lock().await;
         locks
             .entry(name.to_string())
@@ -255,25 +254,6 @@ async fn check_auth(
     }
 
     next.run(request).await
-}
-
-fn check_request_auth(request: &Request, api_key: &str) -> bool {
-    let bearer_ok = request
-        .headers()
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .map(|token| verify_token(token, api_key))
-        .unwrap_or(false);
-    if bearer_ok {
-        return true;
-    }
-    request
-        .uri()
-        .query()
-        .and_then(|q| q.split('&').find_map(|p| p.strip_prefix("token=")))
-        .map(|t| verify_token(t, api_key))
-        .unwrap_or(false)
 }
 
 /// Accept raw API key or JWT access token.
@@ -776,77 +756,6 @@ async fn logs_handler(
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
-// --- WebSocket proxy (used by agent wildcard) ---
-
-async fn ws_proxy(client_ws: axum::extract::ws::WebSocket, agent_port: u16, path: &str, agent_token: Option<&str>) {
-    use axum::extract::ws::Message as AxumMsg;
-    use futures_util::{SinkExt, StreamExt};
-    use tokio_tungstenite::tungstenite::Message as TungMsg;
-
-    let url = if let Some(token) = agent_token {
-        let sep = if path.contains('?') { "&" } else { "?" };
-        format!("ws://localhost:{}{}{}agent_token={}", agent_port, path, sep, token)
-    } else {
-        format!("ws://localhost:{}{}", agent_port, path)
-    };
-    let agent_ws = match tokio_tungstenite::connect_async(&url).await {
-        Ok((ws, _)) => ws,
-        Err(e) => {
-            tracing::warn!(url = %url, error = %e, "agent websocket not reachable");
-            let mut client_ws = client_ws;
-            let _ = client_ws
-                .send(AxumMsg::Close(Some(axum::extract::ws::CloseFrame {
-                    code: 1011,
-                    reason: format!("agent not reachable: {e}").into(),
-                })))
-                .await;
-            return;
-        }
-    };
-
-    tracing::info!(port = agent_port, "client websocket connected");
-
-    let (mut client_tx, mut client_rx) = client_ws.split();
-    let (mut agent_tx, mut agent_rx) = agent_ws.split();
-
-    let client_to_agent = async {
-        while let Some(Ok(msg)) = client_rx.next().await {
-            let tung_msg = match msg {
-                AxumMsg::Text(t) => TungMsg::Text(t.as_str().into()),
-                AxumMsg::Binary(b) => TungMsg::Binary(bytes::Bytes::from(b.to_vec())),
-                AxumMsg::Ping(p) => TungMsg::Ping(bytes::Bytes::from(p.to_vec())),
-                AxumMsg::Pong(p) => TungMsg::Pong(bytes::Bytes::from(p.to_vec())),
-                AxumMsg::Close(_) => break,
-            };
-            if agent_tx.send(tung_msg).await.is_err() {
-                break;
-            }
-        }
-    };
-
-    let agent_to_client = async {
-        while let Some(Ok(msg)) = agent_rx.next().await {
-            let axum_msg = match msg {
-                TungMsg::Text(t) => AxumMsg::Text(t.as_str().into()),
-                TungMsg::Binary(b) => AxumMsg::Binary(bytes::Bytes::from(b.to_vec())),
-                TungMsg::Ping(p) => AxumMsg::Ping(bytes::Bytes::from(p.to_vec())),
-                TungMsg::Pong(p) => AxumMsg::Pong(bytes::Bytes::from(p.to_vec())),
-                TungMsg::Close(_) => break,
-                _ => continue,
-            };
-            if client_tx.send(axum_msg).await.is_err() {
-                break;
-            }
-        }
-    };
-
-    tokio::select! {
-        _ = client_to_agent => {},
-        _ = agent_to_client => {},
-    }
-
-    tracing::info!(port = agent_port, "client websocket disconnected");
-}
 
 // --- Unified settings ---
 
@@ -984,14 +893,6 @@ fn save_settings(settings: &Settings) {
     }
 }
 
-async fn resolve_service_port(
-    state: &AppState,
-    agent_name: &str,
-    service_name: &str,
-) -> Option<u16> {
-    let settings = state.settings.read().await;
-    settings.services.get(agent_name)?.get(service_name).copied()
-}
 
 const SERVICE_PORT_MIN: u16 = 49152;
 const SERVICE_PORT_MAX: u16 = 65535;
@@ -1086,152 +987,6 @@ async fn list_services_handler(
     let settings = state.settings.read().await;
     let services = settings.services.get(&name).cloned().unwrap_or_default();
     Json(serde_json::json!({"services": services}))
-}
-
-// --- Agent wildcard proxy (HTTP + WS) for /agents/{name}/* ---
-
-async fn agent_proxy_handler(
-    State(state): State<SharedState>,
-    Path((name, path)): Path<(String, String)>,
-    request: Request,
-) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
-    use axum::extract::FromRequestParts;
-
-    docker::validate_name(&name).map_err(map_docker_err)?;
-    let cname = docker::container_name(&name);
-
-    let lock = state.agent_lock(&name).await;
-    let guard = lock.read_owned().await;
-
-    docker::ensure_running(&state.docker, &cname).await.map_err(map_docker_err)?;
-    let (agent_port, agent_token) = docker::read_agent_port_and_token(&name, &state.env_config.agents_dir);
-    let agent_port = agent_port
-        .ok_or_else(|| err_response(StatusCode::INTERNAL_SERVER_ERROR, "agent has no port"))?;
-
-    // Check if the first path segment matches a registered service.
-    // If so, route directly to that service's port with the prefix stripped.
-    let first_segment = path.split('/').next().unwrap_or("");
-    let (target_port, stripped_path, is_service) = if !first_segment.is_empty() {
-        if let Some(service_port) = resolve_service_port(&state, &name, first_segment).await {
-            let rest = &path[first_segment.len()..];
-            let rest = if rest.is_empty() { "/" } else { rest };
-            (service_port, rest.to_string(), true)
-        } else {
-            (agent_port, format!("/{}", path), false)
-        }
-    } else {
-        (agent_port, format!("/{}", path), false)
-    };
-
-    // Service requests are unauthenticated (assets load freely in iframes).
-    // Non-service requests require auth.
-    if !is_service && !check_request_auth(&request, &state.api_key) {
-        return Err(err_response(StatusCode::UNAUTHORIZED, "unauthorized"));
-    }
-
-    // Append query string.
-    let mut target_path = stripped_path;
-    if let Some(q) = request.uri().query() {
-        target_path.push('?');
-        target_path.push_str(q);
-    }
-
-    let is_ws_upgrade = request
-        .headers()
-        .get("upgrade")
-        .map(|v| v.as_bytes().eq_ignore_ascii_case(b"websocket"))
-        .unwrap_or(false);
-
-    if is_ws_upgrade {
-        let (mut parts, _body) = request.into_parts();
-        let ws = match WebSocketUpgrade::from_request_parts(&mut parts, &state).await {
-            Ok(ws) => ws,
-            Err(e) => {
-                return Err(err_response(
-                    StatusCode::BAD_REQUEST,
-                    &format!("invalid ws upgrade: {}", e),
-                ));
-            }
-        };
-        let ws_token = agent_token.clone();
-        Ok(ws.on_upgrade(move |socket| async move {
-            drop(guard);
-            ws_proxy(socket, target_port, &target_path, ws_token.as_deref()).await;
-        }))
-    } else {
-        drop(guard);
-        let is_service_root = is_service
-            && path.strip_suffix('/').unwrap_or(&path) == first_segment;
-        let token = if is_service_root {
-            crate::service_proxy::extract_token(request.uri())
-        } else {
-            None
-        };
-        let resp =
-            forward_http_to_container(&state.http_client, target_port, &target_path, request, agent_token.as_deref())
-                .await?;
-        match token {
-            Some(token) => crate::service_proxy::rewrite_asset_urls(resp, &token).await,
-            None => Ok(resp),
-        }
-    }
-}
-
-async fn forward_http_to_container(
-    client: &reqwest::Client,
-    port: u16,
-    target_path: &str,
-    request: Request,
-    agent_token: Option<&str>,
-) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
-    let (parts, body) = request.into_parts();
-    let url = format!("http://localhost:{}{}", port, target_path);
-
-    let method = reqwest::Method::from_bytes(parts.method.as_str().as_bytes())
-        .map_err(|e| err_response(StatusCode::BAD_REQUEST, &format!("bad method: {}", e)))?;
-
-    let body_bytes = axum::body::to_bytes(body, PROXY_MAX_BODY_BYTES)
-        .await
-        .map_err(|e| err_response(StatusCode::BAD_REQUEST, &format!("read body: {}", e)))?;
-
-    let mut req_builder = client.request(method, &url);
-    for (name, value) in parts.headers.iter() {
-        let n = name.as_str().to_ascii_lowercase();
-        if matches!(n.as_str(), "host" | "connection" | "transfer-encoding" | "content-length") {
-            continue;
-        }
-        req_builder = req_builder.header(name.as_str(), value.as_bytes());
-    }
-    if let Some(token) = agent_token {
-        req_builder = req_builder.header("X-Agent-Token", token);
-    }
-    if !body_bytes.is_empty() {
-        req_builder = req_builder.body(body_bytes.to_vec());
-    }
-
-    let upstream = req_builder.send().await.map_err(|e| {
-        err_response(
-            StatusCode::BAD_GATEWAY,
-            &format!("container unreachable: {}", e),
-        )
-    })?;
-
-    let status = StatusCode::from_u16(upstream.status().as_u16())
-        .unwrap_or(StatusCode::BAD_GATEWAY);
-    let mut builder = Response::builder().status(status);
-    for (name, value) in upstream.headers().iter() {
-        let n = name.as_str().to_ascii_lowercase();
-        if matches!(n.as_str(), "transfer-encoding" | "connection" | "content-length") {
-            continue;
-        }
-        builder = builder.header(name.as_str(), value.as_bytes());
-    }
-
-    let stream = upstream.bytes_stream();
-    let body = Body::from_stream(stream);
-    builder
-        .body(body)
-        .map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("build response: {}", e)))
 }
 
 // --- Backup/Restore ---
@@ -1666,7 +1421,7 @@ pub fn build_router(state: SharedState) -> Router {
     // Agent proxy: auth is checked inside the handler — service requests
     // (dashboard, voice, etc.) are unauthenticated so assets load in iframes.
     let proxy = Router::new()
-        .route("/agents/{name}/{*path}", any(agent_proxy_handler))
+        .route("/agents/{name}/{*path}", any(agent_proxy::agent_proxy_handler))
         .with_state(state.clone());
 
     // Service registry: localhost (agent containers) can access without auth,
