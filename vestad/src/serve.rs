@@ -257,7 +257,7 @@ async fn check_auth(
 }
 
 /// Accept raw API key or JWT access token.
-fn verify_token(token: &str, api_key: &str) -> bool {
+pub(crate) fn verify_token(token: &str, api_key: &str) -> bool {
     if token == api_key {
         return true;
     }
@@ -330,7 +330,7 @@ pub fn err_response(status: StatusCode, msg: &str) -> (StatusCode, Json<serde_js
     (status, Json(serde_json::json!({"error": msg})))
 }
 
-fn map_docker_err(e: docker::DockerError) -> (StatusCode, Json<serde_json::Value>) {
+pub(crate) fn map_docker_err(e: docker::DockerError) -> (StatusCode, Json<serde_json::Value>) {
     use docker::DockerError::*;
     let status = match &e {
         NotFound(_) => StatusCode::NOT_FOUND,

@@ -94,7 +94,6 @@ async fn control_ws_session(state: SharedState, socket: axum::extract::ws::WebSo
     let hello = serde_json::json!({
         "type": "hello",
         "version": env!("CARGO_PKG_VERSION"),
-        "api_compat": "0.2",
         "port": state.env_config.vestad_port,
     });
     if tx.send(Message::Text(hello.to_string().into())).await.is_err() {
@@ -125,10 +124,6 @@ async fn control_ws_session(state: SharedState, socket: axum::extract::ws::WebSo
             result = invalidations_rx.changed() => { if result.is_err() { break; } }
             msg = rx.next() => {
                 match msg {
-                    Some(Ok(Message::Text(text))) => {
-                        handle_control_command(&state, &text).await;
-                        continue;
-                    }
                     Some(Ok(Message::Close(_))) | None => break,
                     _ => { continue; }
                 }
@@ -145,13 +140,4 @@ async fn control_ws_session(state: SharedState, socket: axum::extract::ws::WebSo
             break;
         }
     }
-}
-
-async fn handle_control_command(_state: &SharedState, text: &str) {
-    let parsed: serde_json::Value = match serde_json::from_str(text) {
-        Ok(v) => v,
-        Err(_) => return,
-    };
-    let cmd_type = parsed.get("type").and_then(|v| v.as_str()).unwrap_or("");
-    tracing::debug!(cmd_type, "unknown control command");
 }

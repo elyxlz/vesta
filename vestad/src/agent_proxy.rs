@@ -6,8 +6,8 @@ use axum::{
     Json,
 };
 
-use crate::{docker, jwt};
-use crate::serve::{SharedState, err_response, PROXY_MAX_BODY_BYTES};
+use crate::docker;
+use crate::serve::{SharedState, err_response, map_docker_err, verify_token, PROXY_MAX_BODY_BYTES};
 
 fn check_request_auth(request: &Request, api_key: &str) -> bool {
     let bearer_ok = request
@@ -28,16 +28,6 @@ fn check_request_auth(request: &Request, api_key: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn verify_token(token: &str, api_key: &str) -> bool {
-    if token == api_key {
-        return true;
-    }
-    if token.contains('.') {
-        return jwt::validate_token(api_key, token, "access").is_ok();
-    }
-    false
-}
-
 async fn resolve_service_port(
     state: &crate::serve::AppState,
     agent_name: &str,
@@ -45,16 +35,6 @@ async fn resolve_service_port(
 ) -> Option<u16> {
     let settings = state.settings.read().await;
     settings.services.get(agent_name)?.get(service_name).copied()
-}
-
-fn map_docker_err(e: docker::DockerError) -> (StatusCode, Json<serde_json::Value>) {
-    let (status, msg) = match &e {
-        docker::DockerError::NotFound(_) => (StatusCode::NOT_FOUND, e.to_string()),
-        docker::DockerError::AlreadyExists(_) => (StatusCode::CONFLICT, e.to_string()),
-        docker::DockerError::InvalidName(_) => (StatusCode::BAD_REQUEST, e.to_string()),
-        _ => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
-    };
-    (status, Json(serde_json::json!({"error": msg})))
 }
 
 pub async fn agent_proxy_handler(
@@ -75,8 +55,6 @@ pub async fn agent_proxy_handler(
     let agent_port = agent_port
         .ok_or_else(|| err_response(StatusCode::INTERNAL_SERVER_ERROR, "agent has no port"))?;
 
-    // Check if the first path segment matches a registered service.
-    // If so, route directly to that service's port with the prefix stripped.
     let first_segment = path.split('/').next().unwrap_or("");
     let (target_port, stripped_path, is_service) = if !first_segment.is_empty() {
         if let Some(service_port) = resolve_service_port(&state, &name, first_segment).await {
@@ -179,9 +157,9 @@ async fn ws_proxy(client_ws: axum::extract::ws::WebSocket, agent_port: u16, path
         while let Some(Ok(msg)) = client_rx.next().await {
             let tung_msg = match msg {
                 AxumMsg::Text(t) => TungMsg::Text(t.as_str().into()),
-                AxumMsg::Binary(b) => TungMsg::Binary(bytes::Bytes::from(b.to_vec())),
-                AxumMsg::Ping(p) => TungMsg::Ping(bytes::Bytes::from(p.to_vec())),
-                AxumMsg::Pong(p) => TungMsg::Pong(bytes::Bytes::from(p.to_vec())),
+                AxumMsg::Binary(b) => TungMsg::Binary(b.into()),
+                AxumMsg::Ping(p) => TungMsg::Ping(p.into()),
+                AxumMsg::Pong(p) => TungMsg::Pong(p.into()),
                 AxumMsg::Close(_) => break,
             };
             if agent_tx.send(tung_msg).await.is_err() {
@@ -194,9 +172,9 @@ async fn ws_proxy(client_ws: axum::extract::ws::WebSocket, agent_port: u16, path
         while let Some(Ok(msg)) = agent_rx.next().await {
             let axum_msg = match msg {
                 TungMsg::Text(t) => AxumMsg::Text(t.as_str().into()),
-                TungMsg::Binary(b) => AxumMsg::Binary(bytes::Bytes::from(b.to_vec())),
-                TungMsg::Ping(p) => AxumMsg::Ping(bytes::Bytes::from(p.to_vec())),
-                TungMsg::Pong(p) => AxumMsg::Pong(bytes::Bytes::from(p.to_vec())),
+                TungMsg::Binary(b) => AxumMsg::Binary(b.into()),
+                TungMsg::Ping(p) => AxumMsg::Ping(p.into()),
+                TungMsg::Pong(p) => AxumMsg::Pong(p.into()),
                 TungMsg::Close(_) => break,
                 _ => continue,
             };
