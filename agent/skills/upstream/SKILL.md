@@ -62,8 +62,11 @@ uv run ~/vesta/skills/upstream/pr.py --token-only
 ```
 
 ## What to PR
+
+**Upstreaming is mandatory** whenever you've made a genuine improvement. If it would benefit any vesta instance, it must be PR'd.
+
 - Bug fixes, prompt improvements, skill code/SKILL.md improvements, new skills you've created, agent code fixes
-- If you built a new skill locally that would benefit any vesta instance, PR it (strip personal config first)
+- If you built a new skill locally, PR it (strip personal config first)
 - Don't PR: personal config, memory files, credentials, user-specific customizations
 - **Always create a GitHub issue first**, then reference it in the PR. Use `--token-only` to get a token for the GitHub API
 
