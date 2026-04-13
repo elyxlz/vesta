@@ -3,7 +3,7 @@ mod fps_unlock;
 
 #[tauri::command]
 fn set_theme(window: tauri::Window, theme: String) {
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
     {
         let tauri_theme = match theme.as_str() {
             "dark" => Some(tauri::Theme::Dark),
@@ -12,7 +12,7 @@ fn set_theme(window: tauri::Window, theme: String) {
         };
         let _ = window.set_theme(tauri_theme);
     }
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "android"))]
     let _ = (window, theme);
 }
 

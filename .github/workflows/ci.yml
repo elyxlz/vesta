@@ -565,10 +565,14 @@ jobs:
           name: tauri-${{ matrix.target }}
           path: tauri-out/*
 
-  # ── Build Tauri app (Windows, non-PR) ────────────────────────────────
+  # ── Build Tauri app (Windows) ─────────────────────────────────────────
   build-tauri-windows:
-    needs: [build-windows]
-    if: ${{ !failure() && !cancelled() && github.event_name != 'pull_request' }}
+    needs: [build-windows, detect-changes]
+    if: >-
+      !failure() && !cancelled() && (
+      github.event_name != 'pull_request' ||
+      needs.detect-changes.outputs.app == 'true'
+      )
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
@@ -621,6 +625,7 @@ jobs:
           args: --target x86_64-pc-windows-msvc --bundles nsis
 
       - name: Collect artifacts
+        if: github.event_name != 'pull_request'
         shell: bash
         run: |
           mkdir -p tauri-out
@@ -628,14 +633,19 @@ jobs:
           find app/src-tauri/target/x86_64-pc-windows-msvc/release/bundle -name '*.sig' -exec cp {} tauri-out/ \;
 
       - uses: actions/upload-artifact@v7
+        if: github.event_name != 'pull_request'
         with:
           name: tauri-x86_64-pc-windows-msvc
           path: tauri-out/*
 
-  # ── Build Tauri app (Android APK, non-PR only) ──────────────────────
+  # ── Build Tauri app (Android APK) ────────────────────────────────────
   build-tauri-android:
-    needs: [test-frontend]
-    if: ${{ !failure() && !cancelled() && github.event_name != 'pull_request' }}
+    needs: [test-frontend, detect-changes]
+    if: >-
+      !failure() && !cancelled() && (
+      github.event_name != 'pull_request' ||
+      needs.detect-changes.outputs.app == 'true'
+      )
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -682,6 +692,7 @@ jobs:
         run: npx tauri android build --apk
 
       - name: Collect artifacts
+        if: github.event_name != 'pull_request'
         run: |
           mkdir -p tauri-out
           find app/src-tauri/gen/android -name '*.apk' -exec cp {} tauri-out/ \;
@@ -692,14 +703,19 @@ jobs:
           ls -lh tauri-out/
 
       - uses: actions/upload-artifact@v7
+        if: github.event_name != 'pull_request'
         with:
           name: tauri-android
           path: tauri-out/*
 
-  # ── Build Tauri app (iOS, non-PR only) ──────────────────────────────
+  # ── Build Tauri app (iOS) ────────────────────────────────────────────
   build-tauri-ios:
-    needs: [test-frontend]
-    if: ${{ !failure() && !cancelled() && github.event_name != 'pull_request' }}
+    needs: [test-frontend, detect-changes]
+    if: >-
+      !failure() && !cancelled() && (
+      github.event_name != 'pull_request' ||
+      needs.detect-changes.outputs.app == 'true'
+      )
     runs-on: macos-latest
     steps:
       - name: Check for Apple signing secrets
@@ -823,6 +839,9 @@ jobs:
       - clippy-windows
       - build-windows
       - build-tauri
+      - build-tauri-windows
+      - build-tauri-android
+      - build-tauri-ios
     runs-on: ubuntu-latest
     steps:
       - name: Check for failures
