@@ -93,7 +93,7 @@ export default function App() {
   }
 
   return (
-    <Shell className="m-2 h-[calc(100%-1rem)] w-[calc(100%-1rem)]">
+    <Shell>
       <TooltipProvider>
         <SidebarProvider
           style={

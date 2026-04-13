@@ -3,8 +3,8 @@ import { ProgressBar } from "@/components/ProgressBar";
 
 const MESSAGES = [
   "setting things up...",
-  "preparing email & calendar access...",
-  "loading browser & research tools...",
+  "preparing email &\ncalendar access...",
+  "loading browser &\nresearch tools...",
   "setting up reminders & tasks...",
   "almost there...",
 ];

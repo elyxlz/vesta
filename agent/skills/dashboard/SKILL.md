@@ -10,29 +10,25 @@ A React app embedded in the main Vesta app that serves as the user's **life HQ**
 
 ## Before building (REQUIRED)
 
-**Check if shared files need syncing:** Compare `${VESTA_BRANCH:-v$VESTA_VERSION}` against `cat ~/vesta/skills/dashboard/app/.last-sync`. If they differ (or `.last-sync` doesn't exist), run `~/vesta/skills/dashboard/sync-app.sh` and rebuild. This ensures the dashboard uses the same UI components and styles as the main app.
+**1. Check if shared files need syncing:** Compare `${VESTA_BRANCH:-v$VESTA_VERSION}` against `cat ~/vesta/skills/dashboard/app/.last-sync`. If they differ (or `.last-sync` doesn't exist), run `~/vesta/skills/dashboard/sync-app.sh` and rebuild. This ensures the dashboard uses the correct UI components.
 
-You MUST ask the user clarifying questions before writing any code. Go through these:
-
-1. **Goal** — if the request is vague, clarify what they actually want to see or do
-2. **Interaction** — display-only, or do they want to tap/click/toggle/input things?
-3. **Data** — should it show fixed sample data, or pull in live data from a skill or API? Does the info need to stay in sync and look the same across different Vesta apps (like mobile)?
+**2. Ask clarifying questions:** You MUST ask the user before writing any code. Go through these:
+*   **Goal** — if the request is vague, clarify what they actually want to see or do.
+*   **Interaction** — display-only, or do they want to tap/click/toggle/input things?
+*   **Data** — should it show fixed sample data, or pull in live data from a skill or API? Does the info need to stay in sync and look the same across different Vesta apps (like mobile)?
 
 Only start building once the user has answered. Don't assume — ask.
 
 ## Project structure
 
-```
+```text
 ~/vesta/skills/dashboard/app/src/
 ├── App.tsx              ← layout shell (sidebar + content area)
 ├── config.tsx           ← EDIT THIS: define pages, sidebar nav, branding
 ├── main.tsx             ← do NOT modify
 ├── index.css            ← do NOT modify (synced from main app)
 ├── pages/               ← page components (one per sidebar nav item)
-├── examples/            ← reference components (read for inspiration)
-│   ├── section-cards.tsx       ← metric cards with trend badges
-│   ├── chart-area-interactive.tsx ← interactive area chart
-│   └── layout-example.tsx      ← grid layout with widget span patterns
+├── examples/            ← reference components (read for inspiration, BUT scale down their sizes)
 ├── components/
 │   ├── ui/              ← shadcn components (synced, do NOT modify)
 │   ├── app-sidebar.tsx  ← sidebar component (reads from config)
@@ -45,90 +41,52 @@ Only start building once the user has answered. Don't assume — ask.
 └── hooks/               ← synced hooks (do NOT modify)
 ```
 
-**You can freely edit:** `config.tsx`, `App.tsx`, anything in `pages/`, `components/`, `widgets/`, and any new files you create
-
+**You can freely edit:** `config.tsx`, `App.tsx`, anything in `pages/`, `components/`, `widgets/`, and any new files you create.
 **Do NOT modify:** `main.tsx`, `index.css`, `lib/utils.ts`, `hooks/`, `components/ui/`
 
 ## How it works
 
-The dashboard uses a **sidebar + page** layout. The agent controls what appears by editing `config.tsx`:
+The dashboard uses a **sidebar + page** layout controlled by `config.tsx`. Each `pages` entry creates a sidebar nav item. Clicking it renders that page's component. Pages can have `children` to create collapsible sub-pages in the sidebar.
 
-```tsx
-// config.tsx
-import { OverviewPage } from "./pages/overview"
-import { AnalyticsPage } from "./pages/analytics"
-import { NutritionPage } from "./pages/nutrition"
-import { ExercisePage } from "./pages/exercise"
-import { LayoutDashboardIcon, ChartBarIcon, HeartIcon } from "lucide-react"
+When adding a widget without a specified page, **choose a fitting page name yourself**. Group related widgets under a meaningful category (e.g., "Health" with `<HeartIcon />`, "Finance" with `<DollarSignIcon />`). If a suitable page already exists, add the widget there.
 
-export const config: DashboardConfig = {
-  title: "Vesta",                                    // sidebar header
-  titleIcon: <CommandIcon className="size-5!" />,    // sidebar header icon
-  pages: [
-    { id: "overview", title: "Overview", icon: <LayoutDashboardIcon />, component: OverviewPage },
-    { id: "analytics", title: "Analytics", icon: <ChartBarIcon />, component: AnalyticsPage },
-    { id: "health", title: "Health", icon: <HeartIcon />, children: [
-      { id: "nutrition", title: "Nutrition", icon: <HeartIcon />, component: NutritionPage },
-      { id: "exercise", title: "Exercise", icon: <HeartIcon />, component: ExercisePage },
-    ]},
-  ],
-}
-```
+## Density & Sizing Rules (IMPORTANT)
 
-Each `pages` entry creates a sidebar nav item. Clicking it renders that page's `component` in the content area.
+The dashboard is a high-density UI, not a standard app interface. By default, shadcn components are too large — **you MUST override them**. Everything should feel compact. Large elements are the exception, not the norm.
 
-Pages can have `children` to create collapsible sub-pages in the sidebar. A parent with children shows a chevron — clicking it expands/collapses the group. Child pages appear indented below. The parent doesn't need a `component` (it just acts as a group label), but it can have one if you want a parent-level page too.
+**1. Typography (MANDATORY)**
+*   Default text: `text-sm`
+*   Secondary text / labels: `text-xs text-muted-foreground`
+*   Large numbers only: `text-lg` or `text-xl font-semibold`
+*   Do not use `text-lg` or larger for normal text unless absolutely necessary or the user explicitly requests it.
 
-### Organizing widgets into pages
+**2. Padding, Spacing & Layout (MANDATORY)**
+*   Default widget wrapper: `<div className="rounded-2xl bg-muted p-3 text-sm">`
+*   Dense widgets: `p-2`. Avoid `p-4` unless absolutely necessary.
+*   Grid gap: Use `gap-2` (preferred) or `gap-3`. Avoid `gap-4`.
+*   Inside widgets: Use `space-y-2` instead of `space-y-4`.
+*   Avoid tall widgets — prefer horizontal density. Combine related info into single rows.
 
-When the user asks to add a widget without specifying which page, **choose a fitting page name yourself**. Group related widgets under a meaningful category with an appropriate lucide icon. For example, a water intake tracker would go under a "Health" page with `<HeartIcon />`, a stock ticker under "Finance" with `<DollarSignIcon />`, a to-do list under "Productivity" with `<CheckSquareIcon />`. If a suitable page already exists, add the widget there instead of creating a new one. The sidebar should feel like a natural, well-organized set of tabs — not one page per widget.
+**3. Buttons & Controls (MANDATORY)**
+*   All buttons must be compact: `<Button size="sm" className="h-8 px-2 text-xs">`
+*   Inputs: `h-8 text-xs`. Avoid full-width inputs unless necessary.
+*   Do not use the default `<Button>` size unless absolutely necessary or the user explicitly requests it.
 
-### Widget sizing and layout
-
-**Widgets must be compact and small.** Content should be top-left aligned, not centered. Prefer small, dense cards over large sprawling ones.
-
-Default widget style — matches the app shell appearance:
-```tsx
-<div className="rounded-2xl bg-muted p-4">
-  {/* widget content */}
-</div>
-```
-
-Page components should use an auto-fill grid wrapper for their widgets. This ensures columns adjust to available width automatically:
-
-```tsx
-export function OverviewPage() {
-  return (
-    <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(280px,1fr))]">
-      <MetricCard />
-      <MetricCard />
-      <MetricCard />
-      <StreakWidget />
-      <TaskList />
-      <QuickChart className="col-span-2" />
-    </div>
-  )
-}
-```
-
-**Most widgets should be `col-span-1` (the default).** A page with 5 widgets should typically have 4-5 single-column widgets and at most 1 wider one. Resist the urge to make things wide — small, dense cards look better and use space more efficiently.
-
-Guidelines for choosing span:
-- **`col-span-1`** (default): metric cards, counters, status indicators, small lists, trackers — **this should be the vast majority of widgets**
-- **`col-span-2`**: only for charts/graphs that genuinely need horizontal space to be readable. Not for lists, cards, or text content
-- **`col-span-full`**: almost never needed. Only for wide data tables with many columns
-
-**Do NOT wrap widgets in their own grid.** Each widget should be a single grid child — the page grid controls the layout. Never use `grid-cols-1` inside a widget or page section.
+**4. Grid Span Rules**
+*   **col-span-1** (default): metric cards, counters, status indicators, trackers. *This is 90% of widgets.*
+*   **col-span-2**: Only for charts/graphs that genuinely need horizontal space.
+*   **col-span-full**: Almost never needed (only wide data tables).
 
 ### Adding a page
 
-1. Create `src/pages/my-page.tsx`:
+1. Create `src/pages/my-page.tsx` with whatever layout fits the content (single column, tables, etc.).
+
+**Example — grid layout page** for a widget-heavy page: a responsive auto-fill grid with compact gaps.
+
 ```tsx
 export function MyPage() {
   return (
-    <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(280px,1fr))]">
-      <SmallWidget />
-      <SmallWidget />
+    <div className="grid gap-2 grid-cols-[repeat(auto-fill,minmax(280px,1fr))]">
       <SmallWidget />
       <SmallWidget />
     </div>
@@ -136,37 +94,34 @@ export function MyPage() {
 }
 ```
 
-2. Add it to the **top** of the `pages` array in `config.tsx` (new pages go first):
+2. Add it to the **top** of the `pages` array in `config.tsx`:
 ```tsx
 import { MyPage } from "./pages/my-page"
 import { StarIcon } from "lucide-react"
 
-// First entry in the pages array:
+// Inside config.pages:
 { id: "my-page", title: "My Page", icon: <StarIcon />, component: MyPage },
 ```
 
-3. Rebuild (see below)
+## Data Patterns & Strict Rules
 
-### Adding a page with sub-pages
+**1. No client-side external API fetches:** The dashboard runs in a browser; cross-origin requests to third-party APIs (weather, finance) will fail due to CORS. You MUST create a skill that fetches data server-side, expose it as an endpoint, and call it using `apiFetch` from `@/lib/parent-bridge`.
 
-Use `children` to group related pages under a collapsible sidebar item:
+**2. All user data must persist server-side:** Do not hardcode user data or rely on `localStorage` as the source of truth. The user accesses the dashboard across devices. Create a skill with API endpoints to store/retrieve data.
 
-```tsx
-import { NutritionPage } from "./pages/nutrition"
-import { ExercisePage } from "./pages/exercise"
-import { HeartIcon } from "lucide-react"
+**3. `localStorage` is ONLY for local visual state:** Use it strictly for device-specific UI states (sidebar order, collapsed sections, selected tabs). Prefix keys with `vesta-dashboard-`.
 
-{ id: "health", title: "Health", icon: <HeartIcon />, children: [
-  { id: "nutrition", title: "Nutrition", icon: <HeartIcon />, component: NutritionPage },
-  { id: "exercise", title: "Exercise", icon: <HeartIcon />, component: ExercisePage },
-]},
-```
+**4. Handle loading and missing data:**
+*   Widgets fetching data **must** show a skeleton or spinner while loading.
+*   Prevent crashes: Arrays/objects may be undefined on first render. Always default to `[]` or `{}`. Protect `.reduce()`, `.map()`, and charts from undefined data.
 
-The parent item (`Health`) shows a chevron and expands/collapses on click. Each child renders as an indented sub-item. The parent doesn't need a `component` — omit it to make it a group-only label. Sub-pages can't be nested further (one level of children only).
+**5. Data freshness:** Default to fetching on mount (`useEffect`). For data that updates throughout the day, add a compact refresh button. Only use polling (`setInterval`) for live data like timers or stock tickers (ask the user how often it should auto refresh).
 
-### Example components
+## UI & Styling
 
-Read `src/examples/` for inspiration when building pages. These are reference implementations showing common patterns: individual metric cards with trends (`section-cards.tsx`), interactive area charts (`chart-area-interactive.tsx`), and grid layout with mixed widget sizes (`layout-example.tsx`). Copy and adapt individual components into your page grid — don't copy wrapper grids or layout containers from examples.
+*   **Read the docs:** Before every UI change, read `shadcn/SKILL.md` and its linked rules.
+*   **Make it fun:** Use lucide icons for visual flair (like `<Flame />` for streaks, `<CheckCircle />` for completed).
+*   **Use semantic colors:** Use Tailwind classes (like `text-green-500`, `bg-amber-100`, `border-pink-400`) for badges, progress bars, and status indicators.
 
 ## After every change (IMPORTANT)
 
@@ -189,66 +144,13 @@ fi
 curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services/dashboard/invalidate -H "X-Agent-Token: $AGENT_TOKEN"
 ```
 
-**Before notifying the app**, always verify your page renders without errors. After the server starts, open the page in a headless check or review your code for these common crash sources:
-- Arrays/objects that may be `undefined` on first render (empty localStorage, no API response yet) — always default to `[]` or `{}`
-- Chart components that receive `undefined` config or data
-- `.reduce()`, `.map()`, `.filter()` on values that might not be arrays yet
-
-## Data patterns
-
-**All meaningful data must persist server-side** so it syncs across devices. Never hardcode user data (habits, bookmarks, lists, settings, etc.) in source files or rely on `localStorage` as the source of truth — the user accesses the dashboard from multiple devices and expects the same data everywhere.
-
-Create a skill with API endpoints to store and retrieve user data, then call those endpoints from widgets using `apiFetch` from `@/lib/parent-bridge`. It handles auth and the base URL automatically and waits for the auth token before making requests, so it's safe to call on mount.
-
-`localStorage` is only for **visual/navigation state** that is device-specific — sidebar order, collapsed sections, scroll positions, selected tabs. Prefix keys with `vesta-dashboard-` to avoid collisions.
-
-**Never fetch external APIs directly from widget code** — the browser will block cross-origin requests (CORS). Instead, create a skill that fetches the data server-side and exposes it as an endpoint, then call that endpoint from the widget.
-
-Widgets that fetch data **must show a loading state** while waiting — use skeletons or spinners to provide a nice ux while data loads.
-
-### Keeping data fresh
-
-The dashboard should always show current information. Choose the right strategy based on how often the data changes:
-
-1. **Fetch on mount** (default) — fetch data in a `useEffect` when the widget mounts. Good for data that doesn't change frequently (daily stats, settings, lists).
-2. **Fetch on mount + refresh button** — same as above but add a visible refresh button so the user can manually update. Good for data that changes throughout the day (notifications, task lists, feeds).
-3. **Polling** — fetch on an interval (`setInterval` in a `useEffect`). Only use for data that changes frequently and the user expects to see live (stock prices, active timers, live metrics). Keep intervals reasonable (30s+).
-
-Always prefer simpler strategies. Most widgets should fetch on mount with a refresh button. Polling is rarely needed.
-
-## Removing components
-
-1. Remove the page from `config.tsx`
-2. Delete the source file(s) from `pages/`
-3. Rebuild and restart (same as above)
-
-## Syncing shared files
-
-The dashboard reuses UI components, styles, and utilities from the main Vesta app. Run `sync-app.sh` to sync them — it uses `$VESTA_BRANCH` (dev) or `$VESTA_VERSION` (release), both set by vestad, to fetch from the correct branch or release tag. It's idempotent and skips if already up to date:
-
-```bash
-~/vesta/skills/dashboard/sync-app.sh
-```
-
-## UI components
-
-**Before every UI change**, read the full shadcn skill at [shadcn/SKILL.md](./shadcn/SKILL.md) — including the linked rule files (`styling.md`, `forms.md`, `composition.md`, `icons.md`) relevant to your change. This is not optional. The skill contains critical rules, correct patterns, and component APIs that you must follow. Re-read it every time, not just the first time.
-
-Try to keep everything compact, dashboard space is at a premium.
-
-**Make it fun.** Use lucide icons for visual flair in labels, headers, and status text (`<Flame />` for streaks, `<CheckCircle />` for completed, `<AlertTriangle />` for alerts, etc.). Use colorful Tailwind classes — `text-green-500`, `bg-amber-100`, `border-pink-400` — for badges, indicators, progress bars, and anything that benefits from visual pop. The dashboard should feel lively and personal, not corporate. Semantic colors for structure, raw colors for personality.
-
-## Rules
-
-- **No client-side fetches to external APIs** — the dashboard runs in a browser, so cross-origin requests to third-party APIs (Yahoo Finance, weather services, etc.) will be blocked by CORS. Instead, create a skill that fetches the data server-side and expose it as a skill API endpoint, then call it from the widget using `apiFetch`.
-- **Use the UI components** from `@/components/ui/` — read them before building
-- **State**: `useState` / `useEffect` for local state
-- **localStorage**: only for device-specific visual state (sidebar order, collapsed sections, selected tabs) — never for user data
-- **No hardcoded user data**: all meaningful data (habits, lists, settings, etc.) must live server-side behind skill API endpoints so it syncs across devices
-- **No new dependencies**: only use packages in the dashboard's `package.json`
-
 ## Troubleshooting
-
-- **Dashboard not showing?** `screen -ls | grep dashboard`
-- **Check registration:** `curl -sk https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services`
-- **Restart server:** Rebuild, get port from vestad, restart screen (same as "After every change")
+*   **Dashboard not showing?** `screen -ls | grep dashboard`
+*   **Check registration:** `curl -sk https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services`
+*   **Restart server:** Run the rebuild/restart block above.
+*   **Build failed or blank after deploy?** Run `cd ~/vesta/skills/dashboard/app && npx vite build` and fix reported errors; confirm `app/dist/` exists before starting preview.
+*   **Iframe stuck on an old build?** After a successful build and preview restart, run the `.../services/dashboard/invalidate` `curl` from the block above (the parent app keeps the iframe until invalidated).
+*   **Preview errors or 404?** Attach to logs with `screen -r dashboard`, then detach with Ctrl+A then `d`. If the session is wedged, `screen -S dashboard -X quit` and rerun the restart line from the block above.
+*   **No port from vestad?** Run the `POST .../services` `curl` alone and inspect the body; the `python3` one-liner errors on bad JSON. Verify `VESTAD_PORT`, `AGENT_NAME`, and `AGENT_TOKEN`.
+*   **Widgets or API calls failing?** Use devtools on the dashboard (network tab): wrong `apiFetch` paths, skill server down, or auth not ready yet (`waitForAuth` in `parent-bridge.ts`).
+*   **Wrong or missing shadcn styles?** Run `~/vesta/skills/dashboard/sync-app.sh`, then rebuild (see Before building).

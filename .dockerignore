@@ -16,6 +16,9 @@ Cargo.toml
 Cargo.lock
 .github/
 !agent/
+agent/.venv/
+agent/.ruff_cache/
+agent/.pytest_cache/
 agent/tests/
 agent/skills/generate-index.py
 agent/skills/index.json

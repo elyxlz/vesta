@@ -28,7 +28,7 @@ export function ProgressBar({ message }: ProgressBarProps) {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.15 }}
-            className="text-xs text-muted-foreground"
+            className="text-xs text-muted-foreground whitespace-pre-line"
           >
             {message}
           </motion.p>
