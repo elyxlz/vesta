@@ -95,10 +95,44 @@ jobs:
           fi
           echo '✅ vite base path is correct'
 
+  install-script-check:
+    if: github.event_name == 'pull_request'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Syntax-check install.ps1 (PowerShell 5.1)
+        shell: powershell
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            "$PWD\install.ps1", [ref]$null, [ref]$errors
+          )
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Host "❌ $_" }
+            exit 1
+          }
+          Write-Host "✅ install.ps1 has no syntax errors"
+
+      - name: Check for PowerShell 5.1 incompatibilities
+        shell: powershell
+        run: |
+          $content = Get-Content install.ps1 -Raw
+          $issues = @()
+          # Join-Path with 3+ args requires PowerShell 6+
+          if ($content -match 'Join-Path\s+\S+\s+"[^"]+"\s+"[^"]+"') {
+            $issues += "Join-Path with 3+ arguments is not supported in PowerShell 5.1"
+          }
+          if ($issues.Count -gt 0) {
+            $issues | ForEach-Object { Write-Host "❌ $_" }
+            exit 1
+          }
+          Write-Host "✅ No PowerShell 5.1 compatibility issues found"
+
   # ── Merge gate (single required check for branch protection) ─────────
   merge-gate-pr:
     if: always()
-    needs: [lockfile, agent-tests, go-checks, vite-base-check]
+    needs: [lockfile, agent-tests, go-checks, vite-base-check, install-script-check]
     runs-on: ubuntu-latest
     steps:
       - name: Check for failures

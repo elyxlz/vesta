@@ -61,7 +61,7 @@ try {
 
         $BinDir = Join-Path $env:LOCALAPPDATA "vesta\bin"
         New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
-        Copy-Item (Join-Path $TmpDir "vesta-windows" "vesta.exe") -Destination (Join-Path $BinDir "vesta.exe") -Force
+        Copy-Item (Join-Path (Join-Path $TmpDir "vesta-windows") "vesta.exe") -Destination (Join-Path $BinDir "vesta.exe") -Force
 
         # Add to PATH if not already there
         $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
