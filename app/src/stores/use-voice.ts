@@ -191,6 +191,8 @@ export const useVoice = create<VoiceState>((set, get) => {
     stopSpeech: () => {
       ttsQueue = [];
       ttsAbort?.abort();
+      ttsProcessing = false;
+      set({ isSpeaking: false });
     },
 
     registerChatCallbacks: (send, draft) => {

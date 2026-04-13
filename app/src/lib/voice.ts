@@ -28,6 +28,8 @@ export interface SettingDef {
   max?: number;
   step?: number;
   unit?: string;
+  config?: SettingDef[];
+  config_label?: string;
   options?: Array<{
     value: string;
     label: string;

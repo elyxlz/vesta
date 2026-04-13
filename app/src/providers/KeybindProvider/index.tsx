@@ -1,10 +1,31 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { isEditableTarget } from "@/lib/dom";
 import { useVoice } from "@/stores/use-voice";
 import { useTheme } from "@/providers/ThemeProvider";
 
+export type SpacebarMode = "toggle" | "hold";
+const STORAGE_KEY = "spacebar-mode";
+
+function getStoredMode(): SpacebarMode {
+  const stored = localStorage.getItem(STORAGE_KEY);
+  if (stored === "hold") return "hold";
+  return "toggle";
+}
+
+export function useSpacebarMode() {
+  const [mode, setModeState] = useState<SpacebarMode>(getStoredMode);
+
+  const setMode = (next: SpacebarMode) => {
+    localStorage.setItem(STORAGE_KEY, next);
+    setModeState(next);
+  };
+
+  return [mode, setMode] as const;
+}
+
 export function KeybindProvider({ children }: { children: ReactNode }) {
   const { cycleTheme } = useTheme();
+  const [spacebarMode] = useSpacebarMode();
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -16,7 +37,14 @@ export function KeybindProvider({ children }: { children: ReactNode }) {
         const { sttAvailable, toggleVoice } = useVoice.getState();
         if (!sttAvailable) return;
         event.preventDefault();
-        toggleVoice();
+        if (spacebarMode === "hold") {
+          // Hold mode: start recording on keydown
+          if (!useVoice.getState().isRecording) {
+            toggleVoice();
+          }
+        } else {
+          toggleVoice();
+        }
         return;
       }
 
@@ -26,9 +54,24 @@ export function KeybindProvider({ children }: { children: ReactNode }) {
       }
     };
 
+    const handleKeyUp = (event: KeyboardEvent) => {
+      if (event.key !== " ") return;
+      if (spacebarMode !== "hold") return;
+      if (isEditableTarget(event.target)) return;
+
+      const { isRecording, toggleVoice } = useVoice.getState();
+      if (isRecording) {
+        toggleVoice();
+      }
+    };
+
     window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [cycleTheme]);
+    window.addEventListener("keyup", handleKeyUp);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+    };
+  }, [cycleTheme, spacebarMode]);
 
   return <>{children}</>;
 }
