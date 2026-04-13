@@ -98,8 +98,7 @@ def test_no_em_or_en_dashes_in_prompt_and_skill_files():
                 violations.append(f"  {rel}:{lineno}: {line.strip()[:120]}")
 
     assert not violations, (
-        "Em dash (\u2014) or en dash (\u2013) found in markdown files. Use hyphens (-) or rewrite the sentence.\n"
-        + "\n".join(violations)
+        "Em dash (\u2014) or en dash (\u2013) found in markdown files. Use hyphens (-) or rewrite the sentence.\n" + "\n".join(violations)
     )
 
 
