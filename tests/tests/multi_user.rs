@@ -142,14 +142,15 @@ fn stop_start_independent() {
 
     let alice_running = alice_client.agent_status("independence").unwrap();
     let bob_running = bob_client.agent_status("independence").unwrap();
-    assert_eq!(alice_running.status, "running");
-    assert_eq!(bob_running.status, "running");
+    // Agents are unauthenticated in tests, so combined_status reports "not_authenticated"
+    assert_eq!(alice_running.status, "not_authenticated");
+    assert_eq!(bob_running.status, "not_authenticated");
 
     alice_client.stop_agent("independence").unwrap();
 
     let alice_stopped = alice_client.agent_status("independence").unwrap();
-    assert_ne!(alice_stopped.status, "running", "alice's agent should be stopped");
+    assert_eq!(alice_stopped.status, "stopped", "alice's agent should be stopped");
 
     let bob_still_running = bob_client.agent_status("independence").unwrap();
-    assert_eq!(bob_still_running.status, "running", "bob's agent should still be running");
+    assert_eq!(bob_still_running.status, "not_authenticated", "bob's agent should still be running");
 }
