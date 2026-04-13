@@ -43,7 +43,7 @@ pub async fn auth_middleware(
     (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "unauthorized"}))).into_response()
 }
 
-/// Accepts either API auth (JWT/key) or the agent's own token.
+/// Requires the agent's own token via X-Agent-Token header.
 /// The agent name is extracted from the path `/agents/{name}/...`.
 pub async fn auth_middleware_agent_token(
     State(state): State<SharedState>,
@@ -55,12 +55,6 @@ pub async fn auth_middleware_agent_token(
         return next.run(request).await;
     }
 
-    // Try normal API auth first
-    if has_valid_api_auth(&headers, request.uri(), &state.api_key) {
-        return next.run(request).await;
-    }
-
-    // Try agent token: extract agent name from path, validate token
     if let Some(agent_name) = extract_agent_name(request.uri().path()) {
         if let Some(provided) = headers.get("x-agent-token").and_then(|v| v.to_str().ok()) {
             let (_, expected) = crate::docker::read_agent_port_and_token(&agent_name, &state.env_config.agents_dir);
@@ -73,7 +67,7 @@ pub async fn auth_middleware_agent_token(
     }
 
     let path = request.uri().path().to_string();
-    tracing::warn!(path = %path, "service auth failed");
+    tracing::warn!(path = %path, "agent token auth failed");
     (StatusCode::UNAUTHORIZED, Json(serde_json::json!({
         "error": "unauthorized — pass X-Agent-Token header with the AGENT_TOKEN from the agent's environment"
     }))).into_response()
