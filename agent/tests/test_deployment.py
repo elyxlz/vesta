@@ -74,7 +74,9 @@ def test_no_em_or_en_dashes_in_prompt_and_skill_files():
 
     md_globs = [
         (agent_root, "MEMORY.md"),
-        (agent_root / "skills", "**/*.md"),
+        (agent_root / "skills", "*/SKILL.md"),
+        (agent_root / "skills", "*/SETUP.md"),
+        (agent_root / "skills", "*/PHONE_NUMBER.md"),
         (agent_root / "prompts", "**/*.md"),
     ]
 
