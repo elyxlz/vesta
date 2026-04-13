@@ -13,7 +13,7 @@ class SettingDef(tp.TypedDict, total=False):
     label: str
     description: str
     default: tp.Any
-    config: list["SettingDef"]
+    config: list[SettingDef]
     config_label: str
     # number:
     min: float

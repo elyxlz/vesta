@@ -128,7 +128,7 @@ export const useVoice = create<VoiceState>((set, get) => {
         return;
       }
 
-      const { sttAvailable, agentName, voiceAutoSend } = get();
+      const { sttAvailable, agentName } = get();
       if (!sttAvailable || !agentName) {
         set({
           voiceError:
