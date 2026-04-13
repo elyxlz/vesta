@@ -45,7 +45,9 @@ function CarouselCard({ agent }: { agent: AgentInfo }) {
 
   useMotionValueEvent(offset, "change", (v) => {
     const centered = Math.abs(v) < ITEM_STRIDE / 2;
-    setIsCentered((prev) => (prev === centered ? prev : centered));
+    queueMicrotask(() => {
+      setIsCentered((prev) => (prev === centered ? prev : centered));
+    });
   });
 
   return (

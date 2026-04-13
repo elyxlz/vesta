@@ -10,7 +10,7 @@ A React app embedded in the main Vesta app that serves as the user's **life HQ**
 
 ## Before building (REQUIRED)
 
-**Check if shared files need syncing:** Compare `$VESTA_VERSION` against `cat ~/vesta/skills/dashboard/app/.last-sync`. If they differ (or `.last-sync` doesn't exist), run `~/vesta/skills/dashboard/sync-app.sh` and rebuild. This ensures the dashboard uses the same UI components and styles as the main app.
+**Check if shared files need syncing:** Compare `${VESTA_BRANCH:-v$VESTA_VERSION}` against `cat ~/vesta/skills/dashboard/app/.last-sync`. If they differ (or `.last-sync` doesn't exist), run `~/vesta/skills/dashboard/sync-app.sh` and rebuild. This ensures the dashboard uses the same UI components and styles as the main app.
 
 You MUST ask the user clarifying questions before writing any code. Go through these:
 
@@ -224,7 +224,7 @@ Always prefer simpler strategies. Most widgets should fetch on mount with a refr
 
 ## Syncing shared files
 
-The dashboard reuses UI components, styles, and utilities from the main Vesta app. Run `sync-app.sh` to sync them — it uses `$VESTA_VERSION` (set by vestad) to fetch from the correct branch or release tag. It's idempotent and skips if already up to date:
+The dashboard reuses UI components, styles, and utilities from the main Vesta app. Run `sync-app.sh` to sync them — it uses `$VESTA_BRANCH` (dev) or `$VESTA_VERSION` (release), both set by vestad, to fetch from the correct branch or release tag. It's idempotent and skips if already up to date:
 
 ```bash
 ~/vesta/skills/dashboard/sync-app.sh

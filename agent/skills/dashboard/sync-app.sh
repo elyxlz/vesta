@@ -12,14 +12,15 @@ if [ ! -d "$UPSTREAM_REPO/.git" ]; then
     exit 1
 fi
 
-# Use VESTA_VERSION from vestad env (set automatically by vestad)
-# Format: "v0.1.116" (release) or "v0.1.116 (branch-name)" (dev)
-# Extract the git ref: branch name for dev, version tag for releases
-version="${VESTA_VERSION:-HEAD}"
-if [[ "$version" =~ \((.+)\)$ ]]; then
-    ref="${BASH_REMATCH[1]}"
+# Use VESTA_BRANCH (dev) or VESTA_VERSION (release) from vestad env.
+# In dev mode, VESTA_BRANCH is set to the git branch vestad was started from.
+# In release mode, only VESTA_VERSION is set (e.g. "0.1.116").
+if [ -n "${VESTA_BRANCH:-}" ]; then
+    ref="$VESTA_BRANCH"
+elif [ -n "${VESTA_VERSION:-}" ]; then
+    ref="v${VESTA_VERSION}"
 else
-    ref="$version"
+    ref="HEAD"
 fi
 
 last_sync_file="$SCRIPT_DIR/app/.last-sync"
@@ -51,7 +52,7 @@ sed -i '/body {/{n;s|$|\n    background: transparent;|}' "$DASHBOARD_SRC/index.c
 sed -i '1s|^|@source "./components/ui";\n@source "./lib";\n@source "./hooks";\n|' "$DASHBOARD_SRC/index.css"
 
 # Record the synced version so we can skip next time
-echo "$version" > "$last_sync_file"
+echo "$ref" > "$last_sync_file"
 
 echo "Synced $(ls "$DASHBOARD_SRC/components/ui/" | wc -l) UI components"
 echo "Done."

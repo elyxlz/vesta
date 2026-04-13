@@ -18,6 +18,7 @@ const RECONNECT_MAX_MS = 30000;
 interface GatewayContextValue {
   reachable: boolean;
   gatewayVersion: string;
+  gatewayBranch: string | null;
   gatewayPort: number;
   versionChecked: boolean;
   agents: AgentInfo[];
@@ -30,6 +31,7 @@ const GatewayContext = createContext<GatewayContextValue | null>(null);
 const disconnectedValue: GatewayContextValue = {
   reachable: false,
   gatewayVersion: "",
+  gatewayBranch: null,
   gatewayPort: 0,
   versionChecked: true,
   agents: [],
@@ -48,6 +50,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
   const { loading } = useAuth();
   const [reachable, setReachable] = useState(false);
   const [gatewayVersion, setGatewayVersion] = useState("");
+  const [gatewayBranch, setGatewayBranch] = useState<string | null>(null);
   const [gatewayPort, setGatewayPort] = useState(0);
   const [versionChecked, setVersionChecked] = useState(false);
   const [agents, setAgents] = useState<AgentInfo[]>([]);
@@ -86,6 +89,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
             const data = await resp.json();
             if (data.version) {
               setGatewayVersion(data.version);
+              setGatewayBranch(data.branch || null);
               setVersionChecked(true);
               // Skip WS if version mismatch — the dialog will render instead
               if (data.version !== __APP_VERSION__) return;
@@ -171,6 +175,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
       value={{
         reachable,
         gatewayVersion,
+        gatewayBranch,
         gatewayPort,
         versionChecked,
         agents,

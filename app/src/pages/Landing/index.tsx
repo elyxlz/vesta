@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, Navigate } from "react-router-dom";
 import { Check, Copy } from "lucide-react";
+import { LogoText } from "@/components/Logo/LogoText";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/providers/AuthProvider";
 const INSTALL_UNIX = "curl -fsSL https://vesta.run/install.sh | bash";
@@ -35,9 +36,7 @@ export function Landing() {
     <div className="flex flex-col items-center justify-center flex-1 min-h-0 p-page gap-5 select-none">
       <div className="flex flex-col items-center gap-8">
         <div className="flex flex-col items-center gap-1">
-          <h1 className="text-3xl font-serif font-medium tracking-tight">
-            Vesta
-          </h1>
+          <LogoText />
           <p className="text-sm text-muted-foreground">
             Your personal assistant
           </p>

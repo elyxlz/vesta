@@ -26,6 +26,22 @@ const RESERVED_SERVICE_NAMES: &[&str] = &[
 const DEFAULT_LOG_TAIL_LINES: u64 = 500;
 const AUTO_BACKUP_CHECK_INTERVAL_SECS: u64 = 3600;
 
+/// Detect the current git branch by walking up from cwd to find a repo.
+fn detect_git_branch() -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let branch = String::from_utf8(output.stdout).ok()?.trim().to_string();
+    if branch.is_empty() || branch == "HEAD" {
+        return None;
+    }
+    Some(branch)
+}
+
 // --- TLS cert generation ---
 
 pub fn ensure_tls(config_dir: &std::path::Path) -> (String, String, String) {
@@ -225,6 +241,7 @@ async fn version(State(state): State<SharedState>) -> Json<serde_json::Value> {
         "latest_version": latest,
         "update_available": update_available,
         "dev_mode": state.dev_mode,
+        "branch": state.env_config.git_branch,
     }))
 }
 
@@ -272,6 +289,7 @@ async fn list_agents_handler(
 struct CreateBody {
     name: Option<String>,
     manage_agent_code: Option<bool>,
+    timezone: Option<String>,
 }
 
 async fn create_agent_handler(
@@ -295,7 +313,7 @@ async fn create_agent_handler(
     }
 
     let name =
-        docker::create_agent(&state.docker, &name, &state.env_config, manage_code)
+        docker::create_agent(&state.docker, &name, &state.env_config, manage_code, body.timezone.as_deref())
             .await
             .map_err(map_docker_err)?;
 
@@ -1196,11 +1214,12 @@ pub fn write_port_file(config_dir: &std::path::Path, port: u16) {
     std::fs::write(&port_path, port.to_string()).ok();
 }
 
-/// Update VESTAD_PORT and VESTAD_TUNNEL in all existing per-agent env files.
+/// Update VESTAD_PORT, VESTAD_TUNNEL, and VESTA_VERSION in all existing per-agent env files.
 /// Called at vestad startup so containers pick up the new values on restart.
 pub fn update_agent_env_files(config_dir: &std::path::Path, port: u16, tunnel_url: Option<&str>) {
     let agents_dir = config_dir.join("agents");
-    docker::update_all_agent_env_files(&agents_dir, port, tunnel_url);
+    let branch = detect_git_branch();
+    docker::update_all_agent_env_files(&agents_dir, port, tunnel_url, branch.as_deref());
 }
 
 // --- PID file ---
@@ -1524,6 +1543,7 @@ pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: S
         agents_dir: config_dir.join("agents"),
         vestad_port: port,
         vestad_tunnel: tunnel_url.clone(),
+        git_branch: detect_git_branch(),
     };
     if let Err(e) = docker::validate_config_dir(&env_config) {
         tracing::error!(error = %e, "config directory validation failed — aborting startup");

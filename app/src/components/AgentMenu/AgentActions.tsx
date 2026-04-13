@@ -81,7 +81,7 @@ export function buildActionSections(input: AgentActionsInput): ActionSection[] {
     label: input.showToolCalls ? "hide tool calls" : "show tool calls",
     onClick: input.onToolCalls,
   });
-  sections.push({ key: "view", title: "View", items: viewItems });
+  sections.push({ key: "view", title: "Tools", items: viewItems });
 
   const controlItems: ActionItem[] = [
     {
@@ -151,7 +151,7 @@ export function buildActionSections(input: AgentActionsInput): ActionSection[] {
     });
   }
   if (generalItems.length > 0) {
-    sections.push({ key: "general", title: "General", items: generalItems });
+    sections.push({ key: "general", title: "Other", items: generalItems });
   }
 
   return sections;

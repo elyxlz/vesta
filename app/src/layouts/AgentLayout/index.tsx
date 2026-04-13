@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Navigate, Outlet, useParams } from "react-router-dom";
 import { AgentIslandModals } from "@/components/AgentIslandModals";
-import { AgentNavbar } from "@/components/AgentNavbar";
+import { AgentNavbar } from "@/components/Navbar/AgentNavbar";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useSwipeNavigation } from "@/hooks/use-swipe-navigation";
 import { useGateway } from "@/providers/GatewayProvider";

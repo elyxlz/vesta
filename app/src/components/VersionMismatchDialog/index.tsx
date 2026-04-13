@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Footer } from "@/components/Footer";
+import { LogoText } from "@/components/Logo/LogoText";
 import { Navbar } from "@/components/Navbar";
 import { Settings } from "@/components/Settings";
 import { StatusPill } from "@/components/StatusPill";
@@ -72,9 +73,7 @@ export function VersionMismatchDialog({
     <>
       <Navbar
         center={
-          <span className="text-3xl font-serif font-medium tracking-tight">
-            Vesta
-          </span>
+          <LogoText />
         }
         trailing={
           <>

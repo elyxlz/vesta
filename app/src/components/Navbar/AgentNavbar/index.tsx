@@ -1,11 +1,15 @@
 import { type Dispatch, type SetStateAction } from "react";
 import { type MotionValue } from "motion/react";
 import { useMatch, useNavigate } from "react-router-dom";
-import { KeyRound, LayoutDashboard, MessageSquare } from "lucide-react";
+import {
+  Home,
+  KeyRound,
+  LayoutDashboard,
+  MessageSquare,
+} from "lucide-react";
 import { AgentIsland } from "@/components/AgentIsland";
 import { AgentMenu } from "@/components/AgentMenu";
 import { MobileNavbar } from "@/components/MobileNavbar";
-import { ConnectedNavbar, NavbarLeading } from "@/components/Navbar";
 import { StatusPill } from "@/components/StatusPill";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,6 +22,7 @@ import { useAuth } from "@/providers/AuthProvider";
 import { useModals } from "@/providers/ModalsProvider";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useLayout } from "@/stores/use-layout";
+import { Navbar } from "..";
 
 export function AgentNavbar({
   chatCollapsed,
@@ -35,12 +40,12 @@ export function AgentNavbar({
   const isMobile = useIsMobile();
   const chatKeyboardFocused = useLayout((s) => s.chatKeyboardFocused);
   const needsAuth = agent?.status === "not_authenticated";
-  const showMobileReauth = isMobile && needsAuth;
-  const showDesktopReauth = !isMobile && needsAuth;
+
   const agentDashboardMatch = useMatch({ path: "/agent/:name", end: true });
   const chatMatch = useMatch({ path: "/agent/:name/chat", end: true });
   const logsMatch = useMatch({ path: "/agent/:name/logs", end: true });
   const settingsMatch = useMatch({ path: "/agent/:name/settings", end: true });
+
   const showMobileNavbar = isMobile && (!!agentDashboardMatch || !!chatMatch);
   const hideMobileNavbar = isMobile && !!chatMatch && chatKeyboardFocused;
   const showDashboardBack = isMobile
@@ -55,7 +60,7 @@ export function AgentNavbar({
 
   return (
     <>
-      <ConnectedNavbar
+      <Navbar
         leading={
           showDashboardBack ? (
             <Tooltip>
@@ -63,7 +68,9 @@ export function AgentNavbar({
                 <Button
                   variant="outline"
                   size="icon-lg"
-                  onClick={() => navigate(`/agent/${encodeURIComponent(name)}`)}
+                  onClick={() =>
+                    navigate(`/agent/${encodeURIComponent(name)}`)
+                  }
                 >
                   <LayoutDashboard />
                 </Button>
@@ -71,13 +78,24 @@ export function AgentNavbar({
               <TooltipContent>dashboard</TooltipContent>
             </Tooltip>
           ) : (
-            <NavbarLeading />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="icon-lg"
+                  onClick={() => navigate("/home")}
+                >
+                  <Home />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>home</TooltipContent>
+            </Tooltip>
           )
         }
         center={
           <>
             <AgentIsland />
-            {showMobileReauth && (
+            {isMobile && needsAuth && (
               <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 flex flex-col items-center gap-2">
                 <Button
                   variant="default"
@@ -95,7 +113,7 @@ export function AgentNavbar({
           connected ? (
             <div className="flex items-center gap-2">
               <StatusPill showHostname={false} />
-              {showDesktopReauth && (
+              {!isMobile && needsAuth && (
                 <Button
                   variant="default"
                   size="lg"

@@ -447,11 +447,12 @@ fn main() {
                             agents_dir: config.join("agents"),
                             vestad_port,
                             vestad_tunnel,
+                            git_branch: None,
                         };
                         agent_code::ensure_agent_code(&config)
                             .unwrap_or_else(|e| die(format!("failed to populate agent code: {e}")));
                         let port = docker::allocate_port(&env_config.agents_dir).unwrap_or_else(|e| die(&e));
-                        docker::create_container(&docker, &cname, loaded_image, port, &name, &env_config, true).await
+                        docker::create_container(&docker, &cname, loaded_image, port, &name, &env_config, true, None).await
                             .unwrap_or_else(|e| die(&e));
 
                         if !docker::start_container(&docker, &cname).await {

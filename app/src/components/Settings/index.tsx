@@ -37,7 +37,7 @@ export function SettingsDialog({
 }: SettingsDialogProps) {
   const { theme, setTheme } = useTheme();
   const { disconnect } = useAuth();
-  const { reachable, gatewayVersion } = useGateway();
+  const { reachable, gatewayVersion, gatewayBranch } = useGateway();
   const { isTauri } = useTauri();
 
   const hostname = (() => {
@@ -102,9 +102,11 @@ export function SettingsDialog({
                   <span className="min-w-0 truncate font-medium text-foreground">
                     {hostname}
                   </span>
-                  {gatewayVersion && (
+                  {(gatewayVersion || gatewayBranch) && (
                     <span className="text-xs text-muted-foreground">
-                      gateway v{gatewayVersion}
+                      {gatewayVersion && <>gateway v{gatewayVersion}</>}
+                      {gatewayVersion && gatewayBranch && " "}
+                      {gatewayBranch && <>({gatewayBranch})</>}
                     </span>
                   )}
                 </div>

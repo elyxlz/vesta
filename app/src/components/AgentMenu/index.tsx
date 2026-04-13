@@ -50,7 +50,7 @@ export function AgentMenu() {
     onRebuild: () => void rebuild(),
     onBackup: () => void backup(),
     onDelete: () => setDeleteDialogOpen(true),
-    ...(import.meta.env.DEV && { onDebugInfo: () => setDebugOpen(true) }),
+    onDebugInfo: () => setDebugOpen(true),
   };
 
   const trigger = (
@@ -59,26 +59,24 @@ export function AgentMenu() {
     </Button>
   );
 
-  const debugJson = import.meta.env.DEV
-    ? JSON.stringify(
-        {
-          gateway: {
-            reachable: gateway.reachable,
-            version: gateway.gatewayVersion,
-            port: gateway.gatewayPort,
-          },
-          agents: gateway.agents,
-        },
-        null,
-        2,
-      )
-    : "";
+  const debugJson = JSON.stringify(
+    {
+      gateway: {
+        reachable: gateway.reachable,
+        version: gateway.gatewayVersion,
+        port: gateway.gatewayPort,
+      },
+      agents: gateway.agents,
+    },
+    null,
+    2,
+  );
   const [lastUpdated, setLastUpdated] = useState(() =>
     new Date().toLocaleTimeString(),
   );
   const prevJsonRef = useRef(debugJson);
   useEffect(() => {
-    if (import.meta.env.DEV && debugJson !== prevJsonRef.current) {
+    if (debugJson !== prevJsonRef.current) {
       prevJsonRef.current = debugJson;
       setLastUpdated(new Date().toLocaleTimeString());
     }
@@ -117,24 +115,22 @@ export function AgentMenu() {
         onOpenChange={setSettingsOpen}
         agentSettingsSlot={agentSettingsSlot}
       />
-      {import.meta.env.DEV && (
-        <Dialog open={debugOpen} onOpenChange={setDebugOpen}>
-          <DialogContent
-            className="max-w-lg max-h-[80vh] overflow-auto"
-            aria-describedby={undefined}
-          >
-            <DialogHeader>
-              <DialogTitle>control socket</DialogTitle>
-              <p className="text-xs text-muted-foreground">
-                last updated: {lastUpdated}
-              </p>
-            </DialogHeader>
-            <pre className="text-xs whitespace-pre-wrap break-all">
-              {debugJson}
-            </pre>
-          </DialogContent>
-        </Dialog>
-      )}
+      <Dialog open={debugOpen} onOpenChange={setDebugOpen}>
+        <DialogContent
+          className="max-w-lg max-h-[80vh] overflow-auto"
+          aria-describedby={undefined}
+        >
+          <DialogHeader>
+            <DialogTitle>control socket</DialogTitle>
+            <p className="text-xs text-muted-foreground">
+              last updated: {lastUpdated}
+            </p>
+          </DialogHeader>
+          <pre className="text-xs whitespace-pre-wrap break-all">
+            {debugJson}
+          </pre>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

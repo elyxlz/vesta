@@ -432,6 +432,27 @@ fn check_update_cached() -> Option<std::thread::JoinHandle<Option<String>>> {
     }))
 }
 
+fn detect_timezone() -> Option<String> {
+    if let Ok(tz) = std::env::var("TZ") {
+        if !tz.is_empty() {
+            return Some(tz);
+        }
+    }
+    if let Ok(content) = std::fs::read_to_string("/etc/timezone") {
+        let tz = content.trim().to_string();
+        if !tz.is_empty() {
+            return Some(tz);
+        }
+    }
+    if let Ok(link) = std::fs::read_link("/etc/localtime") {
+        let path = link.to_string_lossy();
+        if let Some(tz) = path.strip_prefix("/usr/share/zoneinfo/") {
+            return Some(tz.to_string());
+        }
+    }
+    None
+}
+
 fn print_welcome() {
     println!("vesta — your personal AI assistant");
     println!();
@@ -466,8 +487,8 @@ fn run(cli: Cli) {
                 .map(|name| name.trim().to_string())
                 .unwrap_or_else(prompt_name);
 
-            // Create agent
-            match c.create_agent(&name, build, !no_manage_code) {
+            let timezone = detect_timezone();
+            match c.create_agent(&name, build, !no_manage_code, timezone.as_deref()) {
                 Ok(name) => eprintln!("created agent '{}'", name),
                 Err(e) if e.contains("already exists") && yes => {
                     eprintln!("agent '{}' already exists, continuing...", name);
@@ -489,7 +510,8 @@ fn run(cli: Cli) {
             let name = name
                 .map(|name| name.trim().to_string())
                 .unwrap_or_else(prompt_name);
-            let name = c.create_agent(&name, build, !no_manage_code).unwrap_or_else(|e| platform::die(&e));
+            let timezone = detect_timezone();
+            let name = c.create_agent(&name, build, !no_manage_code, timezone.as_deref()).unwrap_or_else(|e| platform::die(&e));
             eprintln!("created (run 'vesta auth {}' to authenticate)", name);
         }
 
