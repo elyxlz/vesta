@@ -33,7 +33,7 @@ Sync against **GitHub releases**, not individual master commits. Releases are th
 4. Only look at changes under `agent/`
 5. **NEVER modify `src/vesta/`, `pyproject.toml`, or `uv.lock`** - these are mounted read-only and updated automatically by `vestad update`. Only sync `skills/`, `prompts/`, and other agent-managed files.
 5. For each interesting commit in the range: `git -C ~/vesta show <hash>` - understand what it does
-6. Manually apply the relevant changes to `~/vesta` source (don't paste diffs blindly - local may have diverged, adapt the intent)
+6. Manually apply the relevant changes to `~/vesta` source (don't paste diffs blindly - local may have diverged, adapt the intent). When in doubt, prefer the upstream version and re-apply local customizations on top
 7. Track the last processed **release tag** (e.g. `v0.4.2`) in MEMORY.md so you don't redo it next time
 
 If no new release exists since the last processed tag, there's nothing to sync - don't crawl master.

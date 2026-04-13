@@ -99,7 +99,7 @@ If it won't matter in two weeks, delete it.
 
 ## Summary
 
-Write what you changed and why to `~/vesta/dreamer/YYYY-MM-DDTHH.md` using the current date and hour (e.g. `2026-04-14T03.md` for 3am on Apr 14). Include:
+Write what you changed and why to `~/vesta/dreamer/YYYY-MM-DDTHH.md` (e.g. `2026-04-14T03.md`). Include:
 - What each fix was and what triggered it
 - Whether each validated or not
 - Anything left unresolved
