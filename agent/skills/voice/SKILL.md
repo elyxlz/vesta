@@ -1,6 +1,6 @@
 ---
 name: voice
-description: Use when the user asks to enable/disable voice input/output, set up transcription or text-to-speech, rotate API keys, add custom voices, adjust the transcription sensitivity, or talks about the microphone/speaker in the Vesta app. This skill manages ~/.voice/voice_config.json — the single source of truth for STT/TTS keys, voice selection, keyterms, and thresholds. Use enable/disable to toggle without removing configuration; use clear only to wipe keys entirely.
+description: Use when the user asks to enable/disable voice input/output, set up transcription or text-to-speech, rotate API keys, add custom voices, adjust the transcription sensitivity, or talks about the microphone/speaker in the Vesta app. This skill manages ~/.voice/voice_config.json, the single source of truth for STT/TTS keys, voice selection, keyterms, and thresholds. Use enable/disable to toggle without removing configuration; use clear only to wipe keys entirely.
 serve: PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' -d '{"name":"voice"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])") && SKILL_PORT=$PORT PYTHONPATH=~/vesta/skills screen -dmS voice uv run python -m voice.server
 ---
 
@@ -8,18 +8,18 @@ serve: PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME
 
 Voice lets the user talk to you through the mic and hear your responses spoken aloud in the Vesta app.
 
-Once configured, the user can manage voice settings directly from the **agent settings page** in the app — including changing voices, listening to voice previews, toggling STT/TTS on or off, and adjusting sensitivity. Let them know this after setup.
+Once configured, the user can manage voice settings directly from the **agent settings page** in the app. including changing voices, listening to voice previews, toggling STT/TTS on or off, and adjusting sensitivity. Let them know this after setup.
 
 ## When to offer setup
 
 - User mentions voice, microphone, speaking aloud, hearing you, TTS, STT, transcription
 - User complains the mic button is disabled or they can't hear you
-- New container, user hasn't set up voice yet — offer once early, then drop it (track in memory so you don't nag)
+- New container, user hasn't set up voice yet. offer once early, then drop it (track in memory so you don't nag)
 
 ## The setup flow
 
-1. **Ask which they want** — Deepgram for input (speech-to-text), ElevenLabs for output (text-to-speech). Both are independent; the user may configure only one.
-2. **Walk them through getting a key** — see [SETUP.md](SETUP.md) for the per-provider link and where to find the key.
+1. **Ask which they want**. Deepgram for input (speech-to-text), ElevenLabs for output (text-to-speech). Both are independent; the user may configure only one.
+2. **Walk them through getting a key**. see [SETUP.md](SETUP.md) for the per-provider link and where to find the key.
 3. **Validate the key** before saving:
    ```bash
    uv run ~/vesta/skills/voice/scripts/voice_keys.py validate --provider deepgram --key <key>
@@ -28,12 +28,12 @@ Once configured, the user can manage voice settings directly from the **agent se
    ```bash
    uv run ~/vesta/skills/voice/scripts/voice_keys.py set-key --domain stt --provider deepgram --key <key>
    ```
-5. **Ensure the voice server is running** — the app fetches config from it. Check with `screen -ls | grep voice`. If it's not running, start it:
+5. **Ensure the voice server is running**. the app fetches config from it. Check with `screen -ls | grep voice`. If it's not running, start it:
    ```bash
    PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' -d '{"name":"voice"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])")
    SKILL_PORT=$PORT PYTHONPATH=~/vesta/skills screen -dmS voice uv run python -m voice.server
    ```
-6. **Confirm** — e.g. "Voice is ready! You can use the mic button now. You can also change voices, listen to previews, and tweak settings from the settings page in the app."
+6. **Confirm**. e.g. "Voice is ready! You can use the mic button now. You can also change voices, listen to previews, and tweak settings from the settings page in the app."
 
 ## Commands
 
@@ -77,7 +77,7 @@ uv run ~/vesta/skills/voice/scripts/voice_keys.py set-eot --timeout-ms 10000
 
 ## Providers
 
-### Deepgram (STT — voice input)
+### Deepgram (STT, voice input)
 
 - Domain: `stt`, provider name: `deepgram`
 - Model: `flux-general-en` (~$0.0048/min)
@@ -85,7 +85,7 @@ uv run ~/vesta/skills/voice/scripts/voice_keys.py set-eot --timeout-ms 10000
 - Keyterms bias the transcription toward specific words (e.g. the agent's name)
 - End-of-turn detection is tuned via `--threshold` (confidence, 0-1) and `--timeout-ms` (silence timeout)
 
-### ElevenLabs (TTS — voice output)
+### ElevenLabs (TTS, voice output)
 
 - Domain: `tts`, provider name: `elevenlabs`
 - Model: `eleven_flash_v2_5`, output format: `mp3_22050_32`

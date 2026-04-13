@@ -19,7 +19,7 @@ Components reference semantic CSS variable tokens. Change the variables to chang
 
 1. CSS variables defined in `:root` (light) and `.dark` (dark mode).
 2. Tailwind maps them to utilities: `bg-primary`, `text-muted-foreground`, etc.
-3. Components use these utilities — changing a variable changes all components that reference it.
+3. Components use these utilities. changing a variable changes all components that reference it.
 
 ---
 
@@ -43,7 +43,7 @@ Every color follows the `name` / `name-foreground` convention. The base variable
 | `--sidebar-*`                                | Sidebar-specific colors          |
 | `--surface` / `--surface-foreground`         | Secondary surface                |
 
-Colors use OKLCH: `--primary: oklch(0.205 0 0)` where values are lightness (0–1), chroma (0 = gray), and hue (0–360).
+Colors use OKLCH: `--primary: oklch(0.205 0 0)` where values are lightness (0, 1), chroma (0 = gray), and hue (0, 360).
 
 ---
 

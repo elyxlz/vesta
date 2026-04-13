@@ -18,7 +18,7 @@ weather --hours 24             # Show next 24 hours (default: 12)
 
 ## Features
 
-- **Auto-location**: Uses Home Assistant GPS to detect current position — no need to ask where the user is
+- **Auto-location**: Uses Home Assistant GPS to detect current position. no need to ask where the user is
 - **GFS model**: Global forecast data from Windy API with 3-hour resolution
 - **Parameters**: Temperature, precipitation, wind speed/direction, humidity
 - **Smart summary**: Returns a human-readable summary, not raw data
@@ -30,7 +30,7 @@ weather --hours 24             # Show next 24 hours (default: 12)
 
 ## Notes
 
-- Requires a [Windy API key](https://api.windy.com) — free tier available
+- Requires a [Windy API key](https://api.windy.com). free tier available
 - Auto-location requires Home Assistant with a GPS-reporting device; use `--lat`/`--lon` as fallback
 - Always present temperatures in Celsius and wind in km/h
 - Always state the location used (auto-detected or specified)

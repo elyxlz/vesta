@@ -3,7 +3,7 @@ name: keeper
 description: This skill should be used when the user asks about "passwords", "credentials", "vault", "secrets", "keeper", "password manager", "logins", "TOTP", "2FA codes", or needs to store, retrieve, search, share, or manage passwords and secure records.
 ---
 
-# Keeper — CLI: keeper
+# Keeper. CLI: keeper
 
 All commands are run as one-shot calls from bash (not inside the interactive shell):
 ```bash

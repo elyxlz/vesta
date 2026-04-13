@@ -90,15 +90,15 @@ browser launch --stealth
 - It sends a 6-digit verification code to email
 - Retrieve code from your email inbox
 - Enter code to log in
-- Login is sometimes dismissible — guest checkout also works but saved passengers won't be available
+- Login is sometimes dismissible. guest checkout also works but saved passengers won't be available
 
 **Step 3: Passenger Details**
-- If logged in, Trip.com shows saved passengers — select the correct passenger
-- If manual entry, fill: given name, family name, gender (combobox — click to open, then click gender), DOB (3 separate fields: day/month/year), nationality (autocomplete — type and select), passport number, passport expiry
+- If logged in, Trip.com shows saved passengers. select the correct passenger
+- If manual entry, fill: given name, family name, gender (combobox. click to open, then click gender), DOB (3 separate fields: day/month/year), nationality (autocomplete. type and select), passport number, passport expiry
 - Country code for phone: dropdown, scroll or type to find the correct code
 - **Quirk**: gender field is a combobox, not a dropdown. Click the field, wait for options, click the value
 - **Quirk**: DOB is 3 separate input fields (DD, MM, YYYY), not a single date picker
-- **Quirk**: nationality is an autocomplete — type first few letters, wait, select from dropdown
+- **Quirk**: nationality is an autocomplete. type first few letters, wait, select from dropdown
 
 **Step 4: Seat Selection + Extras**
 - Skip seat selection (click "skip" or "no thanks" or equivalent)
@@ -110,7 +110,7 @@ browser launch --stealth
 - Otherwise enter: card number, expiry (MM/YY), CVC
 - Click pay/confirm
 - **3DS**: may trigger depending on card/airline. Check email for verification if needed
-- Wait for confirmation page — capture booking number
+- Wait for confirmation page. capture booking number
 
 ### Post-Booking Checklist
 1. Capture booking confirmation number from the confirmation page
@@ -209,21 +209,21 @@ cd ~/vesta/skills/flights/cli && uv tool install --force --reinstall .
 
 Duffel API token stored at `~/.config/duffel/token`. Passenger profiles at `~/.config/duffel/passengers.json`.
 
-To configure your home airports for the `cheapest` command, edit `LONDON_AIRPORTS` in `cli/src/flights_cli/cli.py` — rename it to something like `HOME_AIRPORTS` and set your preferred departure airports.
+To configure your home airports for the `cheapest` command, edit `LONDON_AIRPORTS` in `cli/src/flights_cli/cli.py`. rename it to something like `HOME_AIRPORTS` and set your preferred departure airports.
 
 ## How It Works
 
-**Search**: Uses the `fli` Python library which reverse-engineers the Google Flights API — sends direct POST requests to Google's `FlightsFrontendService` endpoint.
+**Search**: Uses the `fli` Python library which reverse-engineers the Google Flights API. sends direct POST requests to Google's `FlightsFrontendService` endpoint.
 
-**Trip.com booking**: Browser automation via stealth Chromium (`browser` CLI). Navigates Trip.com as a real user — fills forms, handles login, completes payment.
+**Trip.com booking**: Browser automation via stealth Chromium (`browser` CLI). Navigates Trip.com as a real user. fills forms, handles login, completes payment.
 
 **Duffel booking**: REST API v2. Acts as a flight consolidator. Supports easyJet, Vueling, BA, and many others. Ryanair and Wizz Air excluded from API.
 
 ## Gotchas
 
-- **Google Flights destination must be single IATA code** — multi-origin works, multi-destination does NOT
-- **Duffel offers expire** — typically ~30 minutes. Always search fresh before booking
-- **Duffel does NOT support Wizz Air or Ryanair** — use Trip.com for these
+- **Google Flights destination must be single IATA code**. multi-origin works, multi-destination does NOT
+- **Duffel offers expire**. typically ~30 minutes. Always search fresh before booking
+- **Duffel does NOT support Wizz Air or Ryanair**. use Trip.com for these
 - **Duffel balance**: must be funded before live bookings. Check balance before attempting
 - Prices from Google Flights are in USD; Trip.com and Duffel prices depend on currency/locale
 - **Trip.com browser sessions**: always use `--stealth` mode. Regular browser gets blocked by Cloudflare

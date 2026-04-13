@@ -6,7 +6,7 @@
 2. Control panel: https://enablebanking.com/cp/applications
 3. Create an application and note the UUID
 4. Generate an RS256 private key and upload the public key to the Enable Banking console
-5. Enable restricted mode (own accounts only — no contract needed)
+5. Enable restricted mode (own accounts only. no contract needed)
 
 ## 2. Install CLI
 

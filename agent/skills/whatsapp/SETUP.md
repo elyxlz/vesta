@@ -61,13 +61,13 @@ screen -dmS whatsapp whatsapp serve --notifications-dir ~/vesta/notifications
 sleep 3
 ```
 
-**Before authenticating**, confirm with the user that they should link from a dedicated WhatsApp account for the assistant — NOT their personal WhatsApp. Linking their personal account would mean the assistant reads/sends from their personal chats.
+**Before authenticating**, confirm with the user that they should link from a dedicated WhatsApp account for the assistant, NOT their personal WhatsApp. Linking their personal account would mean the assistant reads/sends from their personal chats.
 
 If the user doesn't have a separate number yet, read [PHONE_NUMBER.md](PHONE_NUMBER.md) and guide them through getting a cheap prepaid SIM/eSIM and setting up a second WhatsApp account on their phone.
 
 ### Phone pairing (preferred)
 
-Phone pairing is the default and preferred method. It sends a push notification to the phone and generates a short code — much faster and more reliable than QR codes.
+Phone pairing is the default and preferred method. It sends a push notification to the phone and generates a short code, much faster and more reliable than QR codes.
 
 ```bash
 whatsapp pair-phone --phone '+1234567890'
@@ -101,8 +101,7 @@ Check status:
 ```bash
 whatsapp authenticate
 ```
-
-**NEVER restart the daemon after the user has authenticated** — restarting can invalidate the session. If `authenticate` still says not authenticated, wait longer and check again (up to 30 seconds). Only restart if the user confirms they didn't complete auth in time.
+**NEVER restart the daemon after the user has authenticated**. restarting can invalidate the session. If `authenticate` still says not authenticated, wait longer and check again (up to 30 seconds). Only restart if the user confirms they didn't complete auth in time.
 
 ### Troubleshooting: "Can't link at this time"
 
@@ -129,14 +128,14 @@ screen -dmS whatsapp whatsapp serve --notifications-dir ~/vesta/notifications
 3. The built-in whisper.cpp bindings transcribe the audio to text
 4. The transcription replaces the `[audio]` placeholder in the notification
 
-All transcription runs in-process — no external scripts or services needed.
+All transcription runs in-process. no external scripts or services needed.
 
 ## Contact card support
 
 When someone sends a WhatsApp contact card (vCard), it is parsed and stored as:
 
 ```
-[Contact: Name — +phonenumber]
+[Contact: Name. +phonenumber]
 ```
 
 The phone number is extracted from the `TEL` field of the vCard. Use `list-received-contacts` to list all received contact cards:
