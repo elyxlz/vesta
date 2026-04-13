@@ -6,6 +6,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { apiFetch } from "@/api/client";
 import { getConnection, authHeaders } from "@/lib/connection";
 import { ensureFreshToken } from "@/lib/token-refresh";
 import { useAuth } from "@/providers/AuthProvider";
@@ -24,6 +25,7 @@ interface GatewayContextValue {
   agents: AgentInfo[];
   agentsFetched: boolean;
   send: (event: object) => boolean;
+  triggerGatewayUpdate: () => void;
 }
 
 const GatewayContext = createContext<GatewayContextValue | null>(null);
@@ -37,6 +39,7 @@ const disconnectedValue: GatewayContextValue = {
   agents: [],
   agentsFetched: false,
   send: () => false,
+  triggerGatewayUpdate: () => {},
 };
 
 function controlWsUrl(): string {
@@ -52,10 +55,22 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
   const [gatewayVersion, setGatewayVersion] = useState("");
   const [gatewayBranch, setGatewayBranch] = useState<string | null>(null);
   const [gatewayPort, setGatewayPort] = useState(0);
+
   const [versionChecked, setVersionChecked] = useState(false);
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [agentsFetched, setAgentsFetched] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
+
+  const [connectEpoch, setConnectEpoch] = useState(0);
+  const skipVersionGateRef = useRef(false);
+
+  const triggerGatewayUpdate = () => {
+    apiFetch("/self-update", { method: "POST" }).catch((err) => {
+      console.warn("[gateway] self-update request failed:", err);
+    });
+    skipVersionGateRef.current = true;
+    setConnectEpoch((e) => e + 1);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -91,8 +106,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
               setGatewayVersion(data.version);
               setGatewayBranch(data.branch || null);
               setVersionChecked(true);
-              // Skip WS if version mismatch — the dialog will render instead
-              if (data.version !== __APP_VERSION__) return;
+              if (data.version !== __APP_VERSION__ && !skipVersionGateRef.current) return;
             }
           }
         }
@@ -121,6 +135,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
             case "hello": {
               setGatewayVersion(msg.version ?? "");
               setGatewayPort(msg.port ?? 0);
+              skipVersionGateRef.current = false;
               break;
             }
             case "agents": {
@@ -158,7 +173,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
       }
       wsRef.current = null;
     };
-  }, []);
+  }, [connectEpoch]);
 
   const send = (event: object): boolean => {
     const ws = wsRef.current;
@@ -181,10 +196,14 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
         agents,
         agentsFetched,
         send,
+        triggerGatewayUpdate,
       }}
     >
       {versionMismatch ? (
-        <VersionMismatchDialog gatewayVersion={gatewayVersion} />
+        <VersionMismatchDialog
+          gatewayVersion={gatewayVersion}
+          onUpdateGateway={triggerGatewayUpdate}
+        />
       ) : (
         children
       )}
