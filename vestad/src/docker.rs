@@ -2028,6 +2028,12 @@ mod tests {
                 name: Some(restart_policy),
                 ..Default::default()
             }),
+            devices: Some(vec![bollard::models::DeviceMapping {
+                path_on_host: Some("/dev/fuse".to_string()),
+                path_in_container: Some("/dev/fuse".to_string()),
+                cgroup_permissions: Some("rwm".to_string()),
+            }]),
+            cap_add: Some(vec!["SYS_ADMIN".to_string()]),
             ..Default::default()
         };
 
