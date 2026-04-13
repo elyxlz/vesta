@@ -93,7 +93,7 @@ jobs:
             echo '❌ app/vite.config.ts has base: "./" — must be "/" for Cloudflare deployments'
             exit 1
           fi
-          echo '✓ vite base path is correct'
+          echo '✅ vite base path is correct'
 
   # ── Merge gate (single required check for branch protection) ─────────
   merge-gate-pr:
