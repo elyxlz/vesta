@@ -257,6 +257,25 @@ async fn check_auth(
     next.run(request).await
 }
 
+fn check_request_auth(request: &Request, api_key: &str) -> bool {
+    let bearer_ok = request
+        .headers()
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(|token| verify_token(token, api_key))
+        .unwrap_or(false);
+    if bearer_ok {
+        return true;
+    }
+    request
+        .uri()
+        .query()
+        .and_then(|q| q.split('&').find_map(|p| p.strip_prefix("token=")))
+        .map(|t| verify_token(t, api_key))
+        .unwrap_or(false)
+}
+
 /// Accept raw API key or JWT access token.
 fn verify_token(token: &str, api_key: &str) -> bool {
     if token == api_key {
@@ -1104,6 +1123,12 @@ async fn agent_proxy_handler(
         (agent_port, format!("/{}", path), false)
     };
 
+    // Service requests are unauthenticated (assets load freely in iframes).
+    // Non-service requests require auth.
+    if !is_service && !check_request_auth(&request, &state.api_key) {
+        return Err(err_response(StatusCode::UNAUTHORIZED, "unauthorized"));
+    }
+
     // Append query string.
     let mut target_path = stripped_path;
     if let Some(q) = request.uri().query() {
@@ -1632,12 +1657,17 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/settings/backup", axum::routing::delete(delete_agent_backup_settings_handler))
         .route("/settings/auto-backup", get(get_auto_backup_handler))
         .route("/settings/auto-backup", axum::routing::put(set_auto_backup_handler))
-        .route("/agents/{name}/{*path}", any(agent_proxy_handler))
         .route("/ws", get(control_ws::control_ws_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
         ));
+
+    // Agent proxy: auth is checked inside the handler — service requests
+    // (dashboard, voice, etc.) are unauthenticated so assets load in iframes.
+    let proxy = Router::new()
+        .route("/agents/{name}/{*path}", any(agent_proxy_handler))
+        .with_state(state.clone());
 
     // Service registry: localhost (agent containers) can access without auth,
     // external requests (app frontend) require auth
@@ -1655,6 +1685,7 @@ pub fn build_router(state: SharedState) -> Router {
     Router::new()
         .merge(public)
         .merge(services)
+        .merge(proxy)
         .merge(protected)
         .layer(
             tower_http::cors::CorsLayer::new()
