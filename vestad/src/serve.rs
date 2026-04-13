@@ -1286,8 +1286,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/{*path}", any(agent_proxy::agent_proxy_handler))
         .with_state(state.clone());
 
-    // Service registry: mutating endpoints require agent token,
-    // read-only GET uses normal API auth
+    // Service registry: mutating endpoints require agent token
     let agents_services = Router::new()
         .route("/agents/{name}/services", post(register_service_handler))
         .route("/agents/{name}/services/{service}", axum::routing::delete(unregister_service_handler))

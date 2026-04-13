@@ -22,8 +22,7 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
   const [iframeKey, setIframeKey] = useState(0);
   const handshakeRef = useRef(false);
 
-  const dashboardService = agent.services?.dashboard;
-  const hasDashboard = !!dashboardService;
+  const hasDashboard = "dashboard" in (agent.services ?? {});
 
   // Reset iframe when the dashboard service appears
   const prevHadDashboard = useRef(hasDashboard);
@@ -35,18 +34,6 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
     }
     prevHadDashboard.current = hasDashboard;
   }, [hasDashboard]);
-
-  // Reload iframe when the dashboard service is invalidated
-  const dashboardRev = dashboardService?.rev ?? 0;
-  const prevDashboardRev = useRef(dashboardRev);
-  useEffect(() => {
-    if (dashboardRev !== prevDashboardRev.current && hasDashboard) {
-      setError(false);
-      setLoaded(false);
-      setIframeKey((k) => k + 1);
-    }
-    prevDashboardRev.current = dashboardRev;
-  }, [dashboardRev, hasDashboard]);
 
   useEffect(() => {
     handshakeRef.current = false;
@@ -67,14 +54,7 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
     );
     frame.postMessage({ type: "vesta-layout", fullscreen: !!fullscreen }, "*");
     frame.postMessage(
-      {
-        type: "vesta-platform",
-        isTauri,
-        platform,
-        isDesktop,
-        isMobile,
-        vibrancy,
-      },
+      { type: "vesta-platform", isTauri, platform, isDesktop, isMobile, vibrancy },
       "*",
     );
     if (conn)
@@ -87,17 +67,7 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
         },
         "*",
       );
-  }, [
-    resolvedTheme,
-    fullscreen,
-    isTauri,
-    platform,
-    isDesktop,
-    isMobile,
-    vibrancy,
-    conn,
-    name,
-  ]);
+  }, [resolvedTheme, fullscreen, isTauri, platform, isDesktop, isMobile, vibrancy, conn, name]);
 
   useEffect(() => {
     const handler = (e: MessageEvent) => {
@@ -123,10 +93,7 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
     return (
       <Empty className="flex-1 h-full w-full border-0">
         <EmptyHeader>
-          <EmptyMedia
-            variant="icon"
-            className="size-12 rounded-full bg-sidebar-primary text-sidebar-primary-foreground [&_svg:not([class*='size-'])]:size-6"
-          >
+          <EmptyMedia variant="icon" className="size-12 rounded-full bg-sidebar-primary text-sidebar-primary-foreground [&_svg:not([class*='size-'])]:size-6">
             <LayoutDashboard />
           </EmptyMedia>
           <EmptyTitle>your dashboard</EmptyTitle>
@@ -142,10 +109,7 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
     return (
       <Empty className="flex-1 h-full w-full border-0">
         <EmptyHeader>
-          <EmptyMedia
-            variant="icon"
-            className="size-12 rounded-full bg-sidebar-primary text-sidebar-primary-foreground [&_svg:not([class*='size-'])]:size-6"
-          >
+          <EmptyMedia variant="icon" className="size-12 rounded-full bg-sidebar-primary text-sidebar-primary-foreground [&_svg:not([class*='size-'])]:size-6">
             <AlertCircle />
           </EmptyMedia>
           <EmptyTitle>dashboard unavailable</EmptyTitle>

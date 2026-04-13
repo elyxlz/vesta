@@ -134,11 +134,18 @@ function AgentSettingsButton() {
 
 export function NavbarTrailing() {
   const { connected } = useAuth();
+  const { name: agentRouteName } = useParams<{ name?: string }>();
 
   return (
     <>
       {connected && <StatusPill />}
-      {connected && <Settings agentSettingsSlot={<AgentSettingsButton />} />}
+      {connected && (
+        <Settings
+          agentSettingsSlot={
+            agentRouteName ? <AgentSettingsButton /> : undefined
+          }
+        />
+      )}
     </>
   );
 }
