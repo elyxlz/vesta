@@ -1102,8 +1102,17 @@ struct PatchAgentSettingsBody {
 async fn patch_agent_settings_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
+    headers: axum::http::HeaderMap,
     Json(body): Json<PatchAgentSettingsBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    // Reject requests from the agent itself — agents must not change their own settings.
+    if let Some(provided) = headers.get("x-agent-token").and_then(|v| v.to_str().ok()) {
+        let (_, expected) = docker::read_agent_port_and_token(&name, &state.env_config.agents_dir);
+        if expected.as_deref() == Some(provided) {
+            return Err(err_response(StatusCode::FORBIDDEN, "agents cannot modify their own settings"));
+        }
+    }
+
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
