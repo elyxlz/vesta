@@ -883,3 +883,25 @@ fn main() {
     let cli = Cli::parse();
     run(cli);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_size_cases() {
+        for (input, expected) in [
+            (0u64, "0B"),
+            (1, "1B"),
+            (999, "999B"),
+            (1_000, "1kB"),
+            (1_500, "2kB"),
+            (1_000_000, "1.0MB"),
+            (1_500_000, "1.5MB"),
+            (1_000_000_000, "1.0GB"),
+            (2_500_000_000, "2.5GB"),
+        ] {
+            assert_eq!(format_size(input), expected, "format_size({input})");
+        }
+    }
+}
