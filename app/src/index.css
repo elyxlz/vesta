@@ -49,8 +49,8 @@
 
 @supports not (corner-shape: squircle) {
     :root {
-        --rounded-squircle-lg: calc(var(--radius) * 2.2);
-        --rounded-squircle-md: calc(var(--radius) * 1.8);
+        --rounded-squircle-lg: calc(var(--radius) * 3);
+        --rounded-squircle-md: calc(var(--radius) * 2.6);
     }
 }
 
