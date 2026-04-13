@@ -75,5 +75,6 @@ app/src-tauri/target/
 app/src-tauri/binaries/vesta-*
 app/src-tauri/resources/*.tar.gz
 app/src-tauri/resources/vestad
-.claude/
+.claude/settings.json
+.claude/settings.local.json
 ROADMAP.md
