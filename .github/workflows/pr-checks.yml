@@ -129,5 +129,7 @@ jobs:
         run: uv run pytest tests/ --ignore=tests/test_e2e.py -v
 
       - name: Run skill CLI tests
-        working-directory: agent
-        run: uv run pytest skills/tasks/cli/tests/ -v
+        working-directory: agent/skills/tasks/cli
+        run: |
+          uv sync
+          uv run pytest tests/ -v
