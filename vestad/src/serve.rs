@@ -495,7 +495,7 @@ async fn complete_auth_handler(
         let mut sessions = state.auth_sessions.lock().await;
         sessions
             .remove(&body.session_id)
-            .ok_or_else(|| err_response(StatusCode::BAD_REQUEST, "invalid or expired session"))?
+            .ok_or_else(|| err_response(StatusCode::BAD_REQUEST, "invalid or expired auth session — restart the auth flow with POST /agents/{name}/auth"))?
     };
 
     let credentials = docker::complete_auth_flow(&state.http_client, &body.code, &session.code_verifier, &session.state)
@@ -795,13 +795,16 @@ async fn register_service_handler(
         return Err(err_response(StatusCode::BAD_REQUEST, "name is required"));
     }
     if RESERVED_SERVICE_NAMES.contains(&service_name.as_str()) {
-        return Err(err_response(StatusCode::BAD_REQUEST, &format!("reserved service name: {}", service_name)));
+        return Err(err_response(StatusCode::BAD_REQUEST, &format!(
+            "'{}' is a reserved name (conflicts with vestad routes: {}) — pick a different service name",
+            service_name, RESERVED_SERVICE_NAMES.join(", ")
+        )));
     }
 
     let docker_name = docker::container_name(&name);
     let exists = docker::container_status(&state.docker, &docker_name).await != docker::ContainerStatus::NotFound;
     if !exists {
-        return Err(err_response(StatusCode::NOT_FOUND, &format!("agent '{}' not found", name)));
+        return Err(err_response(StatusCode::NOT_FOUND, &format!("agent '{}' not found — is the container running? check with: docker ps | grep vesta", name)));
     }
 
     let mut settings = state.settings.write().await;
@@ -811,7 +814,7 @@ async fn register_service_handler(
         existing
     } else {
         allocate_service_port(&settings.services)
-            .ok_or_else(|| err_response(StatusCode::SERVICE_UNAVAILABLE, "no free ports available"))?
+            .ok_or_else(|| err_response(StatusCode::SERVICE_UNAVAILABLE, "no free ports available in range 49152-65535 — too many services registered, or all ports are in use"))?
     };
 
     settings.services.entry(name.clone()).or_default().insert(service_name.clone(), port);
@@ -1235,12 +1238,12 @@ pub fn acquire_pid_lock(config_dir: &std::path::Path) -> Result<std::fs::File, S
 
 pub fn build_router(state: SharedState) -> Router {
 
-    let public = Router::new()
+    let vestad_public = Router::new()
         .route("/health", get(health))
         .route("/auth/session", post(auth::create_session_handler))
         .route("/auth/refresh", post(auth::refresh_session_handler));
 
-    let protected = Router::new()
+    let vestad_protected = Router::new()
         .route("/version", get(version))
         .route("/self-update", post(self_update_handler))
         .route("/tunnel", get(tunnel_handler))
@@ -1271,6 +1274,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/settings/auto-backup", get(get_auto_backup_handler))
         .route("/settings/auto-backup", axum::routing::put(set_auto_backup_handler))
         .route("/ws", get(control_ws::control_ws_handler))
+        .route("/agents/{name}/services", get(list_services_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::auth_middleware,
@@ -1278,13 +1282,13 @@ pub fn build_router(state: SharedState) -> Router {
 
     // Agent proxy: auth is checked inside the handler — service requests
     // (dashboard, voice, etc.) are unauthenticated so assets load in iframes.
-    let proxy = Router::new()
+    let agents_proxy = Router::new()
         .route("/agents/{name}/{*path}", any(agent_proxy::agent_proxy_handler))
         .with_state(state.clone());
 
     // Service registry: mutating endpoints require agent token,
     // read-only GET uses normal API auth
-    let services_agent = Router::new()
+    let agents_services = Router::new()
         .route("/agents/{name}/services", post(register_service_handler))
         .route("/agents/{name}/services/{service}", axum::routing::delete(unregister_service_handler))
         .route("/agents/{name}/services/{service}/invalidate", post(control_ws::invalidate_service_handler))
@@ -1294,20 +1298,11 @@ pub fn build_router(state: SharedState) -> Router {
         ))
         .with_state(state.clone());
 
-    let services_read = Router::new()
-        .route("/agents/{name}/services", get(list_services_handler))
-        .layer(middleware::from_fn_with_state(
-            state.clone(),
-            auth::auth_middleware,
-        ))
-        .with_state(state.clone());
-
     Router::new()
-        .merge(public)
-        .merge(services_agent)
-        .merge(services_read)
-        .merge(proxy)
-        .merge(protected)
+        .merge(vestad_public)
+        .merge(vestad_protected)
+        .merge(agents_services)
+        .merge(agents_proxy)
         .layer(
             tower_http::cors::CorsLayer::new()
                 .allow_origin(tower_http::cors::Any)

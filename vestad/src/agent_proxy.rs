@@ -54,7 +54,7 @@ pub async fn agent_proxy_handler(
     docker::ensure_running(&state.docker, &cname).await.map_err(map_docker_err)?;
     let (agent_port, agent_token) = docker::read_agent_port_and_token(&name, &state.env_config.agents_dir);
     let agent_port = agent_port
-        .ok_or_else(|| err_response(StatusCode::INTERNAL_SERVER_ERROR, "agent has no port"))?;
+        .ok_or_else(|| err_response(StatusCode::INTERNAL_SERVER_ERROR, "agent has no port — check the agent's .env file in ~/.config/vesta/vestad/agents/"))?;
 
     let first_segment = path.split('/').next().unwrap_or("");
     let (target_port, stripped_path, is_service) = if !first_segment.is_empty() {
@@ -72,7 +72,7 @@ pub async fn agent_proxy_handler(
     // Service requests are unauthenticated (assets load freely in iframes).
     // Non-service requests require auth.
     if !is_service && !check_request_auth(&request, &state.api_key) {
-        return Err(err_response(StatusCode::UNAUTHORIZED, "unauthorized"));
+        return Err(err_response(StatusCode::UNAUTHORIZED, "unauthorized — pass a valid Bearer token or ?token= query parameter"));
     }
 
     // Append query string.
@@ -228,7 +228,7 @@ async fn forward_http_to_container(
     let upstream = req_builder.send().await.map_err(|e| {
         err_response(
             StatusCode::BAD_GATEWAY,
-            &format!("container unreachable: {}", e),
+            &format!("container unreachable on port {} ({}): {} — is the service running?", port, target_path, e),
         )
     })?;
 
