@@ -101,6 +101,7 @@ If it won't matter in two weeks, delete it.
 ## Summary
 
 Write what you changed and why to `~/vesta/dreamer/YYYY-MM-DDTHH.md` (e.g. `2026-04-14T03.md`). Include:
+- Key things that happened or were accomplished today
 - What each fix was and what triggered it
 - Whether each validated or not
 - Upstream contributions: PRs created, issues filed, what was synced
