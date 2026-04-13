@@ -28,7 +28,7 @@ export function ActionsCard() {
   const showAliveActions = agent?.status === "alive";
 
   return (
-    <Card size="sm" className="lg:sticky lg:top-6">
+    <Card size="sm">
       <CardContent>
         <AgentActions
           isRunning={isRunning}

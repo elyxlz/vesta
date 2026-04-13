@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import "./index.css";
 import App from "./App.tsx";
 import { ThemeProvider } from "@/providers/ThemeProvider";
+import { KeybindProvider } from "@/providers/KeybindProvider";
 import { isTauri } from "@/lib/env";
 import { detectPlatform } from "@/lib/platform";
 
@@ -31,6 +32,8 @@ await Promise.all([
 
 createRoot(document.getElementById("root")!).render(
   <ThemeProvider defaultTheme={isTauri ? "light" : "system"}>
-    <App />
+    <KeybindProvider>
+      <App />
+    </KeybindProvider>
   </ThemeProvider>,
 );

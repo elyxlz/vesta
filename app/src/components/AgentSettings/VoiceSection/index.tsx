@@ -29,7 +29,7 @@ import {
 } from "@/lib/voice";
 import { useOptimisticToggle } from "@/hooks/use-optimistic-toggle";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
-import { useVoice } from "@/providers/VoiceProvider";
+import { useVoice } from "@/stores/use-voice";
 
 const DEBOUNCE_MS = 400;
 
@@ -150,8 +150,8 @@ export function TtsCard() {
                 </span>
                 <span className="text-foreground tabular-nums">
                   {chars &&
-                  typeof chars.character_count === "number" &&
-                  typeof chars.character_limit === "number"
+                    typeof chars.character_count === "number" &&
+                    typeof chars.character_limit === "number"
                     ? `${chars.character_count.toLocaleString()} / ${chars.character_limit.toLocaleString()}`
                     : "—"}
                 </span>
@@ -244,6 +244,7 @@ function DomainSection({
         </p>
       ) : enabled ? (
         <>
+          {usageContent}
           {settings && settings.length > 0 && (
             <DynamicSettings
               settings={settings}
@@ -252,7 +253,6 @@ function DomainSection({
               onSettingChange={onSettingChange}
             />
           )}
-          {usageContent}
         </>
       ) : null}
     </Field>
@@ -280,54 +280,68 @@ function DynamicSettings({
     }
   };
 
-  const boolSettings = settings.filter((s) => s.type === "bool");
-  const numberSettings = settings.filter((s) => s.type === "number");
-  const selectSettings = settings.filter((s) => s.type === "select");
-
   return (
     <>
-      {boolSettings.map((s) => (
-        <BoolSetting
-          key={s.key}
-          setting={s}
-          onChange={(v) => updateSetting(s.key, v)}
-        />
+      {settings.map((s) => (
+        <SettingByType key={s.key} setting={s} updateSetting={updateSetting} />
       ))}
-
-      {selectSettings.map((s) => (
-        <SelectSetting
-          key={s.key}
-          setting={s}
-          onChange={(v) => updateSetting(s.key, v)}
-        />
-      ))}
-
-      {numberSettings.length > 0 && (
-        <Collapsible>
-          <CollapsibleTrigger asChild>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="w-full justify-start gap-2 px-0 text-sm text-muted-foreground hover:text-foreground"
-            >
-              <ChevronDown className="size-4 transition-transform [[data-state=closed]_&]:-rotate-90" />
-              configuration
-            </Button>
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <div className="flex flex-col gap-3 pt-2 px-6">
-              {numberSettings.map((s) => (
-                <NumberSetting
-                  key={s.key}
-                  setting={s}
-                  onChange={(v) => updateSetting(s.key, v)}
-                />
-              ))}
-            </div>
-          </CollapsibleContent>
-        </Collapsible>
-      )}
     </>
+  );
+}
+
+function SettingByType({
+  setting,
+  updateSetting,
+}: {
+  setting: SettingDef;
+  updateSetting: (key: string, value: unknown) => void;
+}) {
+  switch (setting.type) {
+    case "bool":
+      return <BoolSetting setting={setting} updateSetting={updateSetting} />;
+    case "number":
+      return <NumberSetting setting={setting} updateSetting={updateSetting} />;
+    case "select":
+      return <SelectSetting setting={setting} updateSetting={updateSetting} />;
+    default:
+      return null;
+  }
+}
+
+function SubSettingsCollapsible({
+  setting,
+  updateSetting,
+}: {
+  setting: SettingDef;
+  updateSetting: (key: string, value: unknown) => void;
+}) {
+  const items = setting.config;
+  if (!items?.length) return null;
+  const label = setting.config_label ?? "configuration";
+  return (
+    <Collapsible>
+      <CollapsibleTrigger asChild>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="w-full justify-start gap-2 px-0 text-sm text-muted-foreground hover:text-foreground"
+        >
+          <ChevronDown className="size-4 transition-transform [[data-state=closed]_&]:-rotate-90" />
+          {label}
+        </Button>
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div className="flex flex-col gap-3 pt-2 px-6">
+          {items.map((child) => (
+            <SettingByType
+              key={child.key}
+              setting={child}
+              updateSetting={updateSetting}
+            />
+          ))}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
@@ -335,35 +349,38 @@ function DynamicSettings({
 
 function BoolSetting({
   setting,
-  onChange,
+  updateSetting,
 }: {
   setting: SettingDef;
-  onChange: (v: boolean) => void;
+  updateSetting: (key: string, value: unknown) => void;
 }) {
   const [value, toggle] = useOptimisticToggle(
     setting.value as boolean | undefined,
     (setting.default as boolean) ?? false,
-    onChange,
+    (v) => updateSetting(setting.key, v),
   );
   return (
-    <Field orientation="horizontal" className="items-center justify-between">
-      <FieldContent>
-        <FieldLabel className="text-sm">{setting.label}</FieldLabel>
-        {setting.description && (
-          <FieldDescription>{setting.description}</FieldDescription>
-        )}
-      </FieldContent>
-      <Switch checked={value} onCheckedChange={toggle} />
-    </Field>
+    <>
+      <Field orientation="horizontal" className="items-center justify-between">
+        <FieldContent>
+          <FieldLabel className="text-sm">{setting.label}</FieldLabel>
+          {setting.description && (
+            <FieldDescription>{setting.description}</FieldDescription>
+          )}
+        </FieldContent>
+        <Switch checked={value} onCheckedChange={toggle} />
+      </Field>
+      <SubSettingsCollapsible setting={setting} updateSetting={updateSetting} />
+    </>
   );
 }
 
 function NumberSetting({
   setting,
-  onChange,
+  updateSetting,
 }: {
   setting: SettingDef;
-  onChange: (v: number) => void;
+  updateSetting: (key: string, value: unknown) => void;
 }) {
   const [localValue, setLocalValue] = useState(
     (setting.value as number) ?? (setting.default as number) ?? 0,
@@ -383,7 +400,10 @@ function NumberSetting({
   const handleChange = (v: number) => {
     setLocalValue(v);
     if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => onChange(v), DEBOUNCE_MS);
+    timerRef.current = setTimeout(
+      () => updateSetting(setting.key, v),
+      DEBOUNCE_MS,
+    );
   };
 
   const formatValue = (v: number) => {
@@ -392,70 +412,82 @@ function NumberSetting({
   };
 
   return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex items-center justify-between">
-        <span className="text-sm text-foreground">{setting.label}</span>
-        <span className="text-[10px] text-muted-foreground/70 tabular-nums">
-          {formatValue(localValue)}
-        </span>
+    <>
+      <div className="flex flex-col gap-1.5">
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-foreground">{setting.label}</span>
+          <span className="text-[10px] text-muted-foreground/70 tabular-nums">
+            {formatValue(localValue)}
+          </span>
+        </div>
+        <Slider
+          min={setting.min ?? 0}
+          max={setting.max ?? 1}
+          step={setting.step ?? 0.01}
+          value={[localValue]}
+          onValueChange={([v]) => handleChange(v)}
+        />
+        {setting.description && (
+          <p className="text-xs text-muted-foreground">{setting.description}</p>
+        )}
       </div>
-      <Slider
-        min={setting.min ?? 0}
-        max={setting.max ?? 1}
-        step={setting.step ?? 0.01}
-        value={[localValue]}
-        onValueChange={([v]) => handleChange(v)}
-      />
-      {setting.description && (
-        <p className="text-xs text-muted-foreground">{setting.description}</p>
-      )}
-    </div>
+      <SubSettingsCollapsible setting={setting} updateSetting={updateSetting} />
+    </>
   );
 }
 
 function SelectSetting({
   setting,
-  onChange,
+  updateSetting,
 }: {
   setting: SettingDef;
-  onChange: (v: string) => void;
+  updateSetting: (key: string, value: unknown) => void;
 }) {
   const options = setting.options ?? [];
   const hasPreview = options.some((o) => o.preview);
+  const onChange = (v: string) => updateSetting(setting.key, v);
 
   if (hasPreview) {
-    return <VoicePicker setting={setting} onChange={onChange} />;
+    return (
+      <>
+        <VoicePicker setting={setting} onChange={onChange} />
+        <SubSettingsCollapsible setting={setting} updateSetting={updateSetting} />
+      </>
+    );
   }
 
   return (
-    <Collapsible>
-      <CollapsibleTrigger asChild>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="w-full justify-start gap-2 px-0 text-sm text-muted-foreground hover:text-foreground"
-        >
-          <ChevronDown className="size-4 transition-transform [[data-state=closed]_&]:-rotate-90" />
-          {setting.label}:{" "}
-          <span className="text-foreground font-medium">
-            {options.find((o) => o.value === setting.value)?.label ?? "Unknown"}
-          </span>
-        </Button>
-      </CollapsibleTrigger>
-      <CollapsibleContent>
-        <div className="flex flex-col gap-1 pt-2 px-6">
-          {options.map((opt) => (
-            <button
-              key={opt.value}
-              className={`text-left text-sm px-2 py-1 rounded ${opt.value === setting.value ? "bg-primary/10 text-primary" : "hover:bg-muted text-foreground"}`}
-              onClick={() => onChange(opt.value)}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
-      </CollapsibleContent>
-    </Collapsible>
+    <>
+      <Collapsible>
+        <CollapsibleTrigger asChild>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="w-full justify-start gap-2 px-0 text-sm text-muted-foreground hover:text-foreground"
+          >
+            <ChevronDown className="size-4 transition-transform [[data-state=closed]_&]:-rotate-90" />
+            {setting.label}:{" "}
+            <span className="text-foreground font-medium">
+              {options.find((o) => o.value === setting.value)?.label ?? "Unknown"}
+            </span>
+          </Button>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <div className="flex flex-col gap-1 pt-2 px-6">
+            {options.map((opt) => (
+              <button
+                key={opt.value}
+                className={`text-left text-sm px-2 py-1 rounded ${opt.value === setting.value ? "bg-primary/10 text-primary" : "hover:bg-muted text-foreground"}`}
+                onClick={() => onChange(opt.value)}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
+      <SubSettingsCollapsible setting={setting} updateSetting={updateSetting} />
+    </>
   );
 }
 
@@ -529,19 +561,17 @@ function VoicePicker({
             return (
               <button
                 key={opt.value}
-                className={`group relative flex flex-col items-center gap-1.5 rounded-lg p-2 transition-colors cursor-pointer ${
-                  selected
+                className={`group relative flex flex-col items-center gap-1.5 rounded-lg p-2 transition-colors cursor-pointer ${selected
                     ? "bg-primary/10 ring-1 ring-primary/30"
                     : "hover:bg-muted"
-                }`}
+                  }`}
                 onClick={() => select(opt)}
               >
                 <div
-                  className={`relative size-9 rounded-full flex items-center justify-center text-xs font-medium ${
-                    selected
+                  className={`relative size-9 rounded-full flex items-center justify-center text-xs font-medium ${selected
                       ? "bg-primary text-primary-foreground"
                       : "bg-muted text-muted-foreground"
-                  }`}
+                    }`}
                 >
                   {opt.label[0]}
                   {opt.preview && (
@@ -564,11 +594,10 @@ function VoicePicker({
                   )}
                 </div>
                 <span
-                  className={`text-[10px] leading-tight text-center truncate max-w-full ${
-                    selected
+                  className={`text-[10px] leading-tight text-center truncate max-w-full ${selected
                       ? "text-primary font-medium"
                       : "text-muted-foreground"
-                  }`}
+                    }`}
                 >
                   {opt.label}
                 </span>

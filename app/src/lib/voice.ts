@@ -28,6 +28,8 @@ export interface SettingDef {
   max?: number;
   step?: number;
   unit?: string;
+  config?: SettingDef[];
+  config_label?: string;
   options?: Array<{
     value: string;
     label: string;
@@ -254,6 +256,30 @@ async function playStreamedAudio(
   });
 }
 
+// --- Audio preload ---
+
+const WORKLET_URL = new URL("./pcm-worklet.js", import.meta.url).href;
+let preloadPromise: Promise<void> | null = null;
+
+/**
+ * Compile the PCM worklet module ahead of time via a throwaway AudioContext.
+ * Browsers cache compiled worklet modules by URL, so subsequent
+ * AudioContext.addModule calls resolve near-instantly.
+ */
+export function preloadAudio(): Promise<void> {
+  if (preloadPromise) return preloadPromise;
+  preloadPromise = (async () => {
+    try {
+      const ctx = new AudioContext({ sampleRate: SAMPLE_RATE });
+      await ctx.audioWorklet.addModule(WORKLET_URL);
+      await ctx.close();
+    } catch {
+      preloadPromise = null;
+    }
+  })();
+  return preloadPromise;
+}
+
 // --- STT streaming ---
 
 export interface TranscriberOptions {
@@ -388,9 +414,7 @@ export class Transcriber {
     }
 
     try {
-      await this.audioCtx.audioWorklet.addModule(
-        new URL("./pcm-worklet.js", import.meta.url).href,
-      );
+      await this.audioCtx.audioWorklet.addModule(WORKLET_URL);
     } catch {
       this.cleanup();
       throw new Error("Could not load audio worklet");

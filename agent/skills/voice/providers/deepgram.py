@@ -28,6 +28,30 @@ class DeepgramStt:
                 "label": "auto-send on pause",
                 "description": "send message automatically when you stop speaking",
                 "default": True,
+                "config_label": "configuration",
+                "config": [
+                    {
+                        "key": "eot_threshold",
+                        "type": "number",
+                        "label": "end-of-turn sensitivity",
+                        "description": "lower finalizes turns faster; higher waits for more confidence before ending the turn",
+                        "default": 0.8,
+                        "min": 0.5,
+                        "max": 0.9,
+                        "step": 0.05,
+                    },
+                    {
+                        "key": "eot_timeout_ms",
+                        "type": "number",
+                        "label": "max silence timeout",
+                        "description": "max silence before forcing end of turn; timer resets when speech resumes",
+                        "default": 5000,
+                        "min": 500,
+                        "max": 10000,
+                        "step": 500,
+                        "unit": "ms",
+                    },
+                ],
             },
             {
                 "key": "interrupt_tts",
@@ -35,27 +59,6 @@ class DeepgramStt:
                 "label": "interrupt speech on talk",
                 "description": "stop text-to-speech playback when you start speaking",
                 "default": True,
-            },
-            {
-                "key": "eot_threshold",
-                "type": "number",
-                "label": "end-of-turn sensitivity",
-                "description": "lower finalizes turns faster; higher waits longer",
-                "default": 0.8,
-                "min": 0.3,
-                "max": 0.95,
-                "step": 0.05,
-            },
-            {
-                "key": "eot_timeout_ms",
-                "type": "number",
-                "label": "max silence timeout",
-                "description": "max silence before forcing end of turn",
-                "default": 10000,
-                "min": 2000,
-                "max": 15000,
-                "step": 500,
-                "unit": "ms",
             },
         ]
 
@@ -78,8 +81,20 @@ class DeepgramStt:
         from .. import config as voice_config
 
         keyterms: list[str] = stt_domain.get("keyterms") or []
-        eot_threshold = stt_domain.get("eot_threshold", voice_config.DEFAULT_EOT_THRESHOLD)
-        eot_timeout_ms = stt_domain.get("eot_timeout_ms", voice_config.DEFAULT_EOT_TIMEOUT_MS)
+        eot_threshold = float(
+            stt_domain.get("eot_threshold", voice_config.DEFAULT_EOT_THRESHOLD),
+        )
+        eot_threshold = max(
+            voice_config.EOT_THRESHOLD_MIN,
+            min(voice_config.EOT_THRESHOLD_MAX, eot_threshold),
+        )
+        eot_timeout_ms = int(
+            stt_domain.get("eot_timeout_ms", voice_config.DEFAULT_EOT_TIMEOUT_MS),
+        )
+        eot_timeout_ms = max(
+            voice_config.EOT_TIMEOUT_MS_MIN,
+            min(voice_config.EOT_TIMEOUT_MS_MAX, eot_timeout_ms),
+        )
 
         params: list[tuple[str, str]] = [
             ("model", MODEL),

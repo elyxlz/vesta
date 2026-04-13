@@ -1,4 +1,5 @@
 import { ActionsCard } from "./ActionsCard";
+import { KeybindsCard } from "./KeybindsSection";
 import { PlanUsage } from "./PlanUsage";
 import { SttCard, TtsCard } from "./VoiceSection";
 
@@ -10,7 +11,10 @@ export function AgentSettings() {
       </div>
 
       <div className="grid w-full max-w-5xl mx-auto gap-4 pb-6 lg:grid-cols-[280px_minmax(0,1fr)] lg:items-start">
-        <ActionsCard />
+        <div className="flex flex-col gap-4 lg:sticky lg:top-6">
+          <ActionsCard />
+          <KeybindsCard />
+        </div>
         <div className="flex min-w-0 flex-col gap-4">
           <PlanUsage />
           <SttCard />
