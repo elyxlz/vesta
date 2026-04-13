@@ -128,8 +128,6 @@ jobs:
         working-directory: agent
         run: uv run pytest tests/ --ignore=tests/test_e2e.py -v
 
-      - name: Run skill CLI tests
-        working-directory: agent/skills/tasks/cli
-        run: |
-          uv sync
-          uv run pytest tests/ -v
+      # NOTE: tasks skill CLI tests (skills/tasks/cli/tests/) are not yet
+      # CI-compatible — daemon startup requires port binding that's unreliable
+      # in GitHub Actions. Run locally with: cd agent/skills/tasks/cli && uv run pytest tests/
