@@ -198,7 +198,7 @@ function Sidebar({
             <DrawerTitle>navigation</DrawerTitle>
             <DrawerDescription>dashboard navigation</DrawerDescription>
           </DrawerHeader>
-          <div className="flex flex-col gap-2 overflow-y-auto px-2 pb-2 [&_[data-sidebar=header]]:p-0">
+          <div className="flex flex-col gap-2 overflow-y-auto px-1 pb-1 sm:px-2 sm:pb-2 md:px-4 md:pb-4 [&_[data-sidebar=header]]:p-0">
             {children}
           </div>
         </DrawerContent>
