@@ -307,18 +307,17 @@ def send_reminder_job(reminder_id: str, *, message: str, data_dir: str, notif_di
                     task_id=task_id,
                 )
 
-                trigger_type = trigger_data.get("type")
+                trigger_type = trigger_data["type"] if "type" in trigger_data else None
                 if trigger_type == "date":
                     conn.execute("UPDATE reminders SET completed = 1 WHERE id = ?", (reminder_id,))
                     conn.commit()
                 elif trigger_type == "cron":
-                    # Advance scheduled_time to the next occurrence
                     trigger = CronTrigger(
-                        month=trigger_data.get("month"),
-                        day=trigger_data.get("day"),
-                        day_of_week=trigger_data.get("day_of_week"),
-                        hour=trigger_data.get("hour"),
-                        minute=trigger_data.get("minute"),
+                        month=trigger_data["month"] if "month" in trigger_data else None,
+                        day=trigger_data["day"] if "day" in trigger_data else None,
+                        day_of_week=trigger_data["day_of_week"] if "day_of_week" in trigger_data else None,
+                        hour=trigger_data["hour"] if "hour" in trigger_data else None,
+                        minute=trigger_data["minute"] if "minute" in trigger_data else None,
                     )
                     next_fire = trigger.get_next_fire_time(None, _now_utc())
                     if next_fire is not None:
@@ -328,8 +327,7 @@ def send_reminder_job(reminder_id: str, *, message: str, data_dir: str, notif_di
                         )
                         conn.commit()
                 elif trigger_type == "interval":
-                    # Advance scheduled_time by the interval
-                    hours = trigger_data.get("hours", 1)
+                    hours = trigger_data["hours"] if "hours" in trigger_data else 1
                     next_fire = _now_utc() + timedelta(hours=hours)
                     conn.execute(
                         "UPDATE reminders SET scheduled_time = ? WHERE id = ?",
