@@ -6,8 +6,9 @@ use axum::{
     Json,
 };
 
+use crate::auth::verify_token;
 use crate::docker;
-use crate::serve::{SharedState, err_response, map_docker_err, verify_token, PROXY_MAX_BODY_BYTES};
+use crate::serve::{SharedState, err_response, map_docker_err, PROXY_MAX_BODY_BYTES};
 
 fn check_request_auth(request: &Request, api_key: &str) -> bool {
     let bearer_ok = request

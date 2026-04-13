@@ -1,10 +1,10 @@
 use axum::{
-    extract::{ConnectInfo, Path, Query, Request, State},
-    http::{HeaderMap, StatusCode},
-    middleware::{self, Next},
+    extract::{Path, Query, State},
+    http::StatusCode,
+    middleware,
     response::{
         sse::{Event, KeepAlive},
-        IntoResponse, Response, Sse,
+        IntoResponse, Sse,
     },
     routing::{any, get, post},
     Json, Router,
@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, atomic::AtomicBool};
 use tokio::sync::{Mutex, RwLock};
 
-use crate::{agent_proxy, agent_status, backup, control_ws, docker, jwt, self_update, update_check};
+use crate::{agent_proxy, agent_status, auth, backup, control_ws, docker, self_update, update_check};
 
 const API_KEY_BYTES: usize = 32;
 pub(crate) const PROXY_MAX_BODY_BYTES: usize = 10 * 1024 * 1024; // 10 MB
@@ -23,7 +23,6 @@ const RESERVED_SERVICE_NAMES: &[&str] = &[
     "start", "stop", "restart", "destroy", "rebuild", "wait-ready",
     "auth", "logs", "backups", "settings", "services",
 ];
-const AUTH_SESSION_TIMEOUT_SECS: u64 = 600;
 const DEFAULT_LOG_TAIL_LINES: u64 = 500;
 const AUTO_BACKUP_CHECK_INTERVAL_SECS: u64 = 3600;
 
@@ -125,17 +124,12 @@ pub fn ensure_api_key(config_dir: &std::path::Path) -> String {
 
 // --- App state ---
 
-struct AuthSession {
-    code_verifier: String,
-    state: String,
-    created: std::time::Instant,
-}
 
 pub struct AppState {
     pub(crate) api_key: String,
     pub(crate) env_config: docker::AgentEnvConfig,
     pub(crate) docker: bollard::Docker,
-    auth_sessions: Mutex<HashMap<String, AuthSession>>,
+    pub(crate) auth_sessions: Mutex<HashMap<String, crate::auth::AuthSession>>,
     agent_locks: Mutex<HashMap<String, Arc<tokio::sync::RwLock<()>>>>,
     tunnel_url: Mutex<Option<String>>,
     update_info: Mutex<Option<update_check::UpdateInfo>>,
@@ -173,152 +167,13 @@ impl AppState {
             .clone()
     }
 
-    async fn clean_expired_sessions(&self) {
+    pub(crate) async fn clean_expired_sessions(&self) {
         let mut sessions = self.auth_sessions.lock().await;
-        let now = std::time::Instant::now();
-        sessions.retain(|_, s| now.duration_since(s.created) < std::time::Duration::from_secs(AUTH_SESSION_TIMEOUT_SECS));
+        sessions.retain(|_, s| !s.is_expired());
     }
 }
 
 pub type SharedState = Arc<AppState>;
-
-// --- Auth middleware ---
-
-async fn auth_middleware(
-    State(state): State<SharedState>,
-    headers: HeaderMap,
-    request: Request,
-    next: Next,
-) -> Response {
-    check_auth(state, None, headers, request, next).await
-}
-
-/// Like `auth_middleware` but allows unauthenticated access from localhost
-/// (agent containers registering services).
-async fn auth_middleware_localhost(
-    State(state): State<SharedState>,
-    connect_info: ConnectInfo<std::net::SocketAddr>,
-    headers: HeaderMap,
-    request: Request,
-    next: Next,
-) -> Response {
-    check_auth(state, Some(connect_info), headers, request, next).await
-}
-
-async fn check_auth(
-    state: SharedState,
-    connect_info: Option<ConnectInfo<std::net::SocketAddr>>,
-    headers: HeaderMap,
-    request: Request,
-    next: Next,
-) -> Response {
-    // Let CORS preflight through — the CorsLayer handles the response.
-    if request.method() == axum::http::Method::OPTIONS {
-        return next.run(request).await;
-    }
-
-    // Localhost (agent containers) can access without auth when allowed.
-    if let Some(ci) = connect_info {
-        if ci.0.ip().is_loopback() {
-            return next.run(request).await;
-        }
-    }
-
-    // Check Bearer header first, then query param ?token= (for WebSocket / dashboard assets)
-    let bearer_ok = headers
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .map(|token| verify_token(token, &state.api_key))
-        .unwrap_or(false);
-
-    let query_ok = if !bearer_ok {
-        request
-            .uri()
-            .query()
-            .and_then(|q| {
-                q.split('&')
-                    .find_map(|p| p.strip_prefix("token="))
-            })
-            .map(|t| verify_token(t, &state.api_key))
-            .unwrap_or(false)
-    } else {
-        false
-    };
-
-    if !bearer_ok && !query_ok {
-        let path = request.uri().path().to_string();
-        tracing::warn!(path = %path, "client auth failed");
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({"error": "unauthorized"})),
-        )
-            .into_response();
-    }
-
-    next.run(request).await
-}
-
-/// Accept raw API key or JWT access token.
-pub(crate) fn verify_token(token: &str, api_key: &str) -> bool {
-    if token == api_key {
-        return true;
-    }
-    if token.contains('.') {
-        return jwt::validate_token(api_key, token, "access").is_ok();
-    }
-    false
-}
-
-// --- Session endpoints ---
-
-#[derive(Deserialize)]
-struct SessionRequest {
-    api_key: String,
-}
-
-#[derive(Serialize)]
-struct SessionResponse {
-    access_token: String,
-    refresh_token: String,
-    expires_in: u64,
-}
-
-async fn create_session_handler(
-    State(state): State<SharedState>,
-    Json(body): Json<SessionRequest>,
-) -> Result<Json<SessionResponse>, (StatusCode, Json<serde_json::Value>)> {
-    if body.api_key != state.api_key {
-        tracing::warn!("client session auth failed: invalid API key");
-        return Err(err_response(StatusCode::UNAUTHORIZED, "invalid API key"));
-    }
-
-    tracing::info!("client connected (new session)");
-    Ok(Json(SessionResponse {
-        access_token: jwt::create_token(&state.api_key, "access", jwt::ACCESS_TOKEN_TTL),
-        refresh_token: jwt::create_token(&state.api_key, "refresh", jwt::REFRESH_TOKEN_TTL),
-        expires_in: jwt::ACCESS_TOKEN_TTL,
-    }))
-}
-
-async fn refresh_session_handler(
-    State(state): State<SharedState>,
-    Json(body): Json<RefreshRequest>,
-) -> Result<Json<SessionResponse>, (StatusCode, Json<serde_json::Value>)> {
-    jwt::validate_token(&state.api_key, &body.refresh_token, "refresh")
-        .map_err(|e| err_response(StatusCode::UNAUTHORIZED, &e.to_string()))?;
-
-    Ok(Json(SessionResponse {
-        access_token: jwt::create_token(&state.api_key, "access", jwt::ACCESS_TOKEN_TTL),
-        refresh_token: jwt::create_token(&state.api_key, "refresh", jwt::REFRESH_TOKEN_TTL),
-        expires_in: jwt::ACCESS_TOKEN_TTL,
-    }))
-}
-
-#[derive(Deserialize)]
-struct RefreshRequest {
-    refresh_token: String,
-}
 
 // --- Response helpers ---
 
@@ -606,7 +461,7 @@ async fn start_auth_handler(
     let now = std::time::Instant::now();
     sessions.insert(
         session_id.clone(),
-        AuthSession {
+        auth::AuthSession {
             code_verifier,
             state: auth_state,
             created: now,
@@ -1382,8 +1237,8 @@ pub fn build_router(state: SharedState) -> Router {
 
     let public = Router::new()
         .route("/health", get(health))
-        .route("/auth/session", post(create_session_handler))
-        .route("/auth/refresh", post(refresh_session_handler));
+        .route("/auth/session", post(auth::create_session_handler))
+        .route("/auth/refresh", post(auth::refresh_session_handler));
 
     let protected = Router::new()
         .route("/version", get(version))
@@ -1418,7 +1273,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/ws", get(control_ws::control_ws_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
-            auth_middleware,
+            auth::auth_middleware,
         ));
 
     // Agent proxy: auth is checked inside the handler — service requests
@@ -1436,7 +1291,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/services/{service}/invalidate", post(control_ws::invalidate_service_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
-            auth_middleware_localhost,
+            auth::auth_middleware_localhost,
         ))
         .with_state(state.clone());
 
