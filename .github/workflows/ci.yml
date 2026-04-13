@@ -464,7 +464,7 @@ jobs:
           path: target/x86_64-pc-windows-msvc/release/vesta.exe
 
   # ── Build Tauri app (unix) ────────────────────────────────────────────
-  build-tauri:
+  build-tauri-unix:
     needs: [test-frontend, detect-changes, build-vestad]
     if: >-
       !failure() && !cancelled() && (
@@ -838,7 +838,7 @@ jobs:
       - test-linux
       - clippy-windows
       - build-windows
-      - build-tauri
+      - build-tauri-unix
       - build-tauri-windows
       - build-tauri-android
       - build-tauri-ios
@@ -883,7 +883,7 @@ jobs:
 
   # ── Upload artifacts to release and publish ──────────────────────────
   release:
-    needs: [build-vesta, build-vestad, test-frontend, test-integration, test-linux, build-windows, build-tauri, build-tauri-windows, build-tauri-android, build-tauri-ios, push-image]
+    needs: [build-vesta, build-vestad, test-frontend, test-integration, test-linux, build-windows, build-tauri-unix, build-tauri-windows, build-tauri-android, build-tauri-ios, push-image]
     if: ${{ !failure() && !cancelled() && github.event_name == 'release' }}
     runs-on: ubuntu-latest
     steps:
