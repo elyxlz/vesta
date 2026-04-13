@@ -29,6 +29,7 @@ export function AppSidebar({
     id: p.id,
     title: p.title,
     icon: p.icon,
+    hasComponent: !!p.component,
     children: p.children?.map((c) => ({
       id: c.id,
       title: c.title,

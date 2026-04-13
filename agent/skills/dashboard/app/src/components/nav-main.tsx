@@ -17,6 +17,7 @@ export type NavItem = {
   id: string
   title: string
   icon?: React.ReactNode
+  hasComponent?: boolean
   children?: NavItem[]
 }
 
@@ -51,6 +52,7 @@ export function NavMain({
               item={item}
               activeId={activeId}
               onNavigate={onNavigate}
+              hasComponent={!!item.hasComponent}
             />
           ) : (
             <Reorder.Item
@@ -83,11 +85,14 @@ function CollapsibleNavItem({
   item,
   activeId,
   onNavigate,
+  hasComponent,
 }: {
   item: NavItem
   activeId: string
   onNavigate: (id: string) => void
+  hasComponent: boolean
 }) {
+  const isParentActive = item.id === activeId
   const hasActiveChild = item.children?.some((c) => c.id === activeId) ?? false
 
   return (
@@ -101,14 +106,33 @@ function CollapsibleNavItem({
       whileDrag={{ scale: 1.03, background: "var(--sidebar)", boxShadow: "0 4px 12px rgba(0,0,0,.1)" }}
       transition={{ duration: 0.15 }}
     >
-      <Collapsible defaultOpen={hasActiveChild} className="group/collapsible">
-        <CollapsibleTrigger asChild>
-          <SidebarMenuButton tooltip={item.title}>
-            {item.icon}
-            <span>{item.title}</span>
-            <ChevronRightIcon className="ml-auto transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90" />
-          </SidebarMenuButton>
-        </CollapsibleTrigger>
+      <Collapsible defaultOpen={hasActiveChild || isParentActive} className="group/collapsible">
+        {hasComponent ? (
+          <div className="flex items-center">
+            <SidebarMenuButton
+              tooltip={item.title}
+              isActive={isParentActive}
+              onClick={() => onNavigate(item.id)}
+              className="flex-1"
+            >
+              {item.icon}
+              <span>{item.title}</span>
+            </SidebarMenuButton>
+            <CollapsibleTrigger asChild>
+              <button className="flex items-center justify-center size-8 shrink-0 rounded-xl text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground cursor-pointer">
+                <ChevronRightIcon className="size-4 transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90" />
+              </button>
+            </CollapsibleTrigger>
+          </div>
+        ) : (
+          <CollapsibleTrigger asChild>
+            <SidebarMenuButton tooltip={item.title}>
+              {item.icon}
+              <span>{item.title}</span>
+              <ChevronRightIcon className="ml-auto transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90" />
+            </SidebarMenuButton>
+          </CollapsibleTrigger>
+        )}
         <CollapsibleContent>
           <SidebarMenuSub>
             {item.children!.map((child) => (
