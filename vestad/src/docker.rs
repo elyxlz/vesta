@@ -1146,6 +1146,12 @@ pub async fn create_container(docker: &Docker, cname: &str, image: &str, port: u
             ..Default::default()
         }),
         device_requests,
+        devices: Some(vec![bollard::models::DeviceMapping {
+            path_on_host: Some("/dev/fuse".to_string()),
+            path_in_container: Some("/dev/fuse".to_string()),
+            cgroup_permissions: Some("rwm".to_string()),
+        }]),
+        cap_add: Some(vec!["SYS_ADMIN".to_string()]),
         ..Default::default()
     };
 
@@ -1651,6 +1657,27 @@ async fn needs_rebuild(docker: &Docker, cname: &str, manage_code: bool) -> bool 
         return true;
     }
 
+    // Check /dev/fuse device
+    let devices = info.host_config.as_ref()
+        .and_then(|h| h.devices.as_deref())
+        .unwrap_or(&[]);
+    let has_fuse = devices.iter().any(|d| {
+        d.path_on_host.as_deref() == Some("/dev/fuse")
+    });
+    if !has_fuse {
+        tracing::info!(container = %cname, "rebuild needed: missing /dev/fuse device");
+        return true;
+    }
+
+    // Check SYS_ADMIN capability
+    let caps = info.host_config.as_ref()
+        .and_then(|h| h.cap_add.as_deref())
+        .unwrap_or(&[]);
+    if !caps.iter().any(|c| c == "SYS_ADMIN") {
+        tracing::info!(container = %cname, "rebuild needed: missing SYS_ADMIN capability");
+        return true;
+    }
+
     false
 }
 
@@ -2001,6 +2028,12 @@ mod tests {
                 name: Some(restart_policy),
                 ..Default::default()
             }),
+            devices: Some(vec![bollard::models::DeviceMapping {
+                path_on_host: Some("/dev/fuse".to_string()),
+                path_in_container: Some("/dev/fuse".to_string()),
+                cgroup_permissions: Some("rwm".to_string()),
+            }]),
+            cap_add: Some(vec!["SYS_ADMIN".to_string()]),
             ..Default::default()
         };
 
