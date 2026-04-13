@@ -51,31 +51,11 @@ Re-read the failing exchange and simulate: would the updated version have change
 
 ### 5. Upstream sync - MANDATORY
 
-**This step is NOT optional.** Every dream must include upstream sync. Skipping it causes debt that compounds - 30+ commits piled up when this was neglected. Do it every single time.
-
-#### Pull
-1. `git -C ~/vesta fetch origin`
-2. `git -C ~/vesta log HEAD..FETCH_HEAD --oneline` - check for new upstream commits
-3. For commits touching `agent/`: read the diff, understand the intent, manually apply relevant changes to local. Don't blindly paste - adapt to local divergences
-4. For Go CLI changes: rebuild the binary after applying
-5. For Python changes: run `uv lock` if dependencies changed, verify imports
+**This step is NOT optional.** Every dream must include upstream sync. Skipping it causes debt that compounds. Read the `upstream` skill and follow its pull/push workflow. The dream summary must list what was synced. If nothing, explain why.
 
 #### Dashboard check
 
 If the dashboard is set up, have a look and be proactive - read its SKILL.md and see if anything needs attention.
-
-#### Push
-Audit **every** local divergence - not just the obvious ones. Check:
-- `~/vesta/skills/*/SKILL.md` vs `git show FETCH_HEAD:agent/skills/*/SKILL.md` - any doc improvements, gotchas, or workflow fixes
-- `~/vesta/skills/*/scripts/` - any new or improved scripts
-- `~/vesta/skills/*/cli/` - any code bug fixes or features
-- `~/vesta/prompts/` - any prompt improvements
-- `~/vesta/src/` (or `agent/src/`) - any Python agent code fixes
-- New skills that don't exist upstream - strip personal config, PR as skeleton skills
-
-For each divergence: if it would help any vesta instance (not just this one), PR it. Use the `upstream` skill workflow (worktree from FETCH_HEAD, apply changes, pr.py).
-
-**The dream summary must list what was synced.** If nothing was synced, explain why - "no new upstream commits and no local divergences" is fine. "Skipped" is not.
 
 ## User State (in MEMORY.md)
 
@@ -119,7 +99,7 @@ If it won't matter in two weeks, delete it.
 
 ## Summary
 
-Write what you changed and why to `~/vesta/dreamer/YYYY-MM-DDTHH.md` (e.g. `2026-04-14T03.md`). Include:
+Write what you changed and why to `~/vesta/dreamer/YYYY-MM-DDTHH.md` using the current date and hour (e.g. `2026-04-14T03.md` for 3am on Apr 14). Include:
 - What each fix was and what triggered it
 - Whether each validated or not
 - Anything left unresolved
