@@ -38,9 +38,8 @@ Review the conversation with fresh eyes. Note:
 Prefer the simplest, most reliable change that addresses the root cause - a one-line rule beats a clever rewrite. Options, from lightest to heaviest:
 - Add a rule to memory
 - Rewrite skill instructions or prompts
-- Fix or improve scripts, CLIs, or tools
-- Write new code - a script, a tool, a config change
-- Create a new skill for a recurring need or capability that doesn't fit existing skills
+- Fix or improve existing skills (scripts, CLIs, configs)
+- Create a new skill for a recurring need or capability
 
 You can change anything. If a fix requires code, write the code.
 
