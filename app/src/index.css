@@ -47,6 +47,13 @@
     --page-padding-x: 1.5rem;
 }
 
+@supports not (corner-shape: squircle) {
+    :root {
+        --rounded-squircle-lg: calc(var(--radius) * 2.2);
+        --rounded-squircle-md: calc(var(--radius) * 1.8);
+    }
+}
+
 .vibrancy {
     --background: oklch(0.995 0.005 80 / 50%);
     --card: oklch(0.995 0.005 80 / 50%);
