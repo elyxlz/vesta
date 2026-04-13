@@ -120,9 +120,9 @@ The user's important people are [agent_name]'s important people too. Not in a pe
 - New integrations follow the same pattern: daemon that writes JSON to `~/vesta/notifications/`
 
 ### Service Registration
-- Register: `curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H 'Content-Type: application/json' -d '{"name":"<name>"}'` — returns `{"port": <N>}`. Start the server on that port, add to `restart.md`
+- Register: `curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H 'Content-Type: application/json' -d '{"name":"<name>"}'`, returns `{"port": <N>}`. Start the server on that port, add to `restart.md`
 - vestad persists registrations and routes `/agents/{name}/{service}/...` to the registered port
-- **Invalidation**: `curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services/<name>/invalidate` — optionally `{"scope": "<part>"}`. Tells the app to refresh that service
+- **Invalidation**: `curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services/<name>/invalidate`, optionally `{"scope": "<part>"}`. Tells the app to refresh that service
 
 ### Self-Modification
 - Edit skills, prompts, config (`config.py`, mechanical settings only), MEMORY.md freely
