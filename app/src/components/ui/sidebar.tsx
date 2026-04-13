@@ -198,7 +198,14 @@ function Sidebar({
             <DrawerTitle>navigation</DrawerTitle>
             <DrawerDescription>dashboard navigation</DrawerDescription>
           </DrawerHeader>
-          <div className="flex flex-col gap-2 overflow-y-auto px-1 sm:px-2 md:px-4 [&_[data-sidebar=header]]:p-0">
+          <div
+            className="flex flex-col gap-2 overflow-y-auto px-1 sm:px-2 md:px-4 [&_[data-sidebar=header]]:p-0"
+            onClick={(e) => {
+              const target = e.target as HTMLElement;
+              const button = target.closest("[data-sidebar=menu-button]:not([data-slot=collapsible-trigger]), [data-sidebar=menu-sub-button]");
+              if (button) setOpenMobile(false);
+            }}
+          >
             {children}
           </div>
         </DrawerContent>
