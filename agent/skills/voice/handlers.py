@@ -77,16 +77,20 @@ async def _json_body(request: web.Request) -> dict | web.Response:
 # --- STT ---
 
 
+def _merge_setting_values(setting: dict, entry: dict) -> dict:
+    merged = dict(setting)
+    merged["value"] = entry.get(merged["key"], merged.get("default"))
+    raw_config = merged.get("config")
+    if isinstance(raw_config, list):
+        merged["config"] = [_merge_setting_values(dict(ch), entry) for ch in raw_config]
+    return merged
+
+
 def _build_settings(provider: tp.Any, entry: tp.Any) -> list[dict]:
     """Merge provider schema with current config values."""
     if not hasattr(provider, "settings_schema"):
         return []
-    settings: list[dict] = []
-    for s in provider.settings_schema():
-        setting = dict(s)
-        setting["value"] = entry.get(s["key"], s.get("default"))
-        settings.append(setting)
-    return settings
+    return [_merge_setting_values(dict(s), entry) for s in provider.settings_schema()]
 
 
 async def stt_status(request: web.Request) -> web.Response:

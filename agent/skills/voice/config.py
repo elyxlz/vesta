@@ -7,9 +7,12 @@ import typing as tp
 
 VOICE_CONFIG_FILENAME = "voice_config.json"
 
-# Default values — single source of truth for STT tuning defaults.
 DEFAULT_EOT_THRESHOLD = 0.8
-DEFAULT_EOT_TIMEOUT_MS = 10000
+DEFAULT_EOT_TIMEOUT_MS = 5000
+EOT_THRESHOLD_MIN = 0.5
+EOT_THRESHOLD_MAX = 0.9
+EOT_TIMEOUT_MS_MIN = 500
+EOT_TIMEOUT_MS_MAX = 10000
 
 
 class VoiceDomain(tp.TypedDict, total=False):
@@ -171,8 +174,10 @@ def remove_keyterm(data_dir: pl.Path, term: str) -> VoiceConfig:
 
 
 def set_eot_threshold(data_dir: pl.Path, threshold: float) -> VoiceConfig:
-    if not 0.0 < threshold <= 1.0:
-        raise ValueError(f"threshold must be in (0, 1], got {threshold}")
+    if not EOT_THRESHOLD_MIN <= threshold <= EOT_THRESHOLD_MAX:
+        raise ValueError(
+            f"threshold must be in [{EOT_THRESHOLD_MIN}, {EOT_THRESHOLD_MAX}], got {threshold}",
+        )
 
     def _update(cfg: VoiceConfig) -> VoiceConfig:
         stt = dict(cfg.get("stt") or {})
@@ -186,8 +191,10 @@ def set_eot_threshold(data_dir: pl.Path, threshold: float) -> VoiceConfig:
 
 
 def set_eot_timeout_ms(data_dir: pl.Path, timeout_ms: int) -> VoiceConfig:
-    if timeout_ms < 1000:
-        raise ValueError(f"timeout_ms must be >= 1000, got {timeout_ms}")
+    if not EOT_TIMEOUT_MS_MIN <= timeout_ms <= EOT_TIMEOUT_MS_MAX:
+        raise ValueError(
+            f"timeout_ms must be in [{EOT_TIMEOUT_MS_MIN}, {EOT_TIMEOUT_MS_MAX}], got {timeout_ms}",
+        )
 
     def _update(cfg: VoiceConfig) -> VoiceConfig:
         stt = dict(cfg.get("stt") or {})
@@ -212,6 +219,20 @@ def set_stt_auto_send(data_dir: pl.Path, value: bool) -> VoiceConfig:
 
 def set_setting(data_dir: pl.Path, domain: tp.Literal["stt", "tts"], key: str, value: tp.Any) -> VoiceConfig:
     """Generic setter — stores value at cfg[domain][key]."""
+    if domain == "stt" and key == "eot_threshold":
+        t = float(value)
+        if not EOT_THRESHOLD_MIN <= t <= EOT_THRESHOLD_MAX:
+            raise ValueError(
+                f"eot_threshold must be in [{EOT_THRESHOLD_MIN}, {EOT_THRESHOLD_MAX}], got {t}",
+            )
+        value = t
+    elif domain == "stt" and key == "eot_timeout_ms":
+        ms = int(value)
+        if not EOT_TIMEOUT_MS_MIN <= ms <= EOT_TIMEOUT_MS_MAX:
+            raise ValueError(
+                f"eot_timeout_ms must be in [{EOT_TIMEOUT_MS_MIN}, {EOT_TIMEOUT_MS_MAX}], got {ms}",
+            )
+        value = ms
 
     def _update(cfg: VoiceConfig) -> VoiceConfig:
         d = dict(cfg.get(domain) or {})
