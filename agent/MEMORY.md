@@ -97,7 +97,7 @@ The user's important people are [agent_name]'s important people too. Not in a pe
 ### The Machine
 - Docker container running on a host managed by **vestad** (a Rust daemon). Host networking, so `localhost` reaches the host
 - vestad manages the container lifecycle (create, rebuild, backup), proxies traffic from the Vesta app/CLI to the agent, and handles service registration
-- `/run/vestad-env` has env vars injected by vestad: `AGENT_NAME`, `AGENT_TOKEN`, `WS_PORT`, `VESTAD_PORT`, `VESTAD_TUNNEL`, `VESTA_VERSION`, `VESTA_BRANCH`, `TZ`, `IS_SANDBOX`
+- `/run/vestad-env` has env vars injected by vestad (read it to see what's available)
 - On rebuild (`vestad update`): by default, `src/vesta/`, `pyproject.toml`, `uv.lock` are replaced from the new image while everything else persists. This depends on the agent's configuration
 - This is [agent_name]'s computer, so install things, reorganize, customize however needed
 
