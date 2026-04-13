@@ -19,8 +19,11 @@ Commands:
 import argparse
 import asyncio
 import json
+import os
 import pathlib as pl
+import ssl
 import sys
+import urllib.request
 
 # Add the skill dir to sys.path so config.py + providers/ are importable
 # as top-level modules.
@@ -29,6 +32,28 @@ sys.path.insert(0, str(_SKILL_DIR))
 
 import config as vc  # noqa: E402
 import providers  # noqa: E402
+
+
+def _notify_invalidation(scope: str) -> None:
+    """Best-effort POST to vestad to invalidate the voice service."""
+    vestad_port = os.environ.get("VESTAD_PORT", "")
+    agent_name = os.environ.get("AGENT_NAME", "")
+    agent_token = os.environ.get("AGENT_TOKEN", "")
+    if not vestad_port or not agent_name:
+        return
+    url = f"https://localhost:{vestad_port}/agents/{agent_name}/services/voice/invalidate"
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    headers = {"Content-Type": "application/json"}
+    if agent_token:
+        headers["X-Agent-Token"] = agent_token
+    data = json.dumps({"scope": scope}).encode()
+    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+    try:
+        urllib.request.urlopen(req, context=ctx, timeout=5)
+    except Exception:
+        pass
 
 
 def _data_dir() -> pl.Path:
@@ -70,24 +95,28 @@ def cmd_set_key(args: argparse.Namespace) -> int:
         return 1
     cfg = vc.set_key(_data_dir(), args.domain, args.provider, args.key)
     _print(cfg)
+    _notify_invalidation(args.domain)
     return 0
 
 
 def cmd_clear(args: argparse.Namespace) -> int:
     cfg = vc.clear_domain(_data_dir(), args.domain)
     _print(cfg)
+    _notify_invalidation(args.domain)
     return 0
 
 
 def cmd_enable(args: argparse.Namespace) -> int:
     cfg = vc.set_enabled(_data_dir(), args.domain, True)
     _print(cfg)
+    _notify_invalidation(args.domain)
     return 0
 
 
 def cmd_disable(args: argparse.Namespace) -> int:
     cfg = vc.set_enabled(_data_dir(), args.domain, False)
     _print(cfg)
+    _notify_invalidation(args.domain)
     return 0
 
 
@@ -98,48 +127,26 @@ def cmd_set_voice(args: argparse.Namespace) -> int:
         print(str(e), file=sys.stderr)
         return 1
     _print(cfg)
+    _notify_invalidation("tts")
     return 0
-
-
-async def _fetch_voice_description(voice_id: str) -> str:
-    """Fetch voice description from ElevenLabs API."""
-    try:
-        import aiohttp
-
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                f"https://api.elevenlabs.io/v1/voices/{voice_id}",
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                if resp.status != 200:
-                    return ""
-                body = await resp.json()
-                labels = body.get("labels") or {}
-                desc = labels.get("description", "")
-                accent = labels.get("accent", "")
-                gender = labels.get("gender", "")
-                parts = [p for p in [desc, accent, gender] if p]
-                return ", ".join(parts)
-    except Exception:
-        return ""
 
 
 def cmd_add_voice(args: argparse.Namespace) -> int:
     description = args.description or ""
-    if not description:
-        description = asyncio.run(_fetch_voice_description(args.id))
     try:
         cfg = vc.add_custom_voice(_data_dir(), args.id, args.name, description)
     except ValueError as e:
         print(str(e), file=sys.stderr)
         return 1
     _print(cfg)
+    _notify_invalidation("tts")
     return 0
 
 
 def cmd_remove_voice(args: argparse.Namespace) -> int:
     cfg = vc.remove_custom_voice(_data_dir(), args.id)
     _print(cfg)
+    _notify_invalidation("tts")
     return 0
 
 
@@ -150,12 +157,14 @@ def cmd_add_keyterm(args: argparse.Namespace) -> int:
         print(str(e), file=sys.stderr)
         return 1
     _print(cfg)
+    _notify_invalidation("stt")
     return 0
 
 
 def cmd_remove_keyterm(args: argparse.Namespace) -> int:
     cfg = vc.remove_keyterm(_data_dir(), args.term)
     _print(cfg)
+    _notify_invalidation("stt")
     return 0
 
 
@@ -172,6 +181,7 @@ def cmd_set_eot(args: argparse.Namespace) -> int:
         print(str(e), file=sys.stderr)
         return 1
     _print(cfg)
+    _notify_invalidation("stt")
     return 0
 
 

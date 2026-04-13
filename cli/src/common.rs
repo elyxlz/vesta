@@ -22,25 +22,14 @@ pub struct StatusJson {
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
-    pub authenticated: bool,
-    #[serde(default)]
-    pub agent_ready: bool,
     pub ws_port: u16,
-    pub alive: bool,
-    pub friendly_status: String,
 }
 
 #[derive(Deserialize, Serialize, Clone)]
 pub struct ListEntry {
     pub name: String,
     pub status: String,
-    pub authenticated: bool,
-    pub agent_ready: bool,
     pub ws_port: u16,
-    #[serde(default)]
-    pub alive: bool,
-    #[serde(default)]
-    pub friendly_status: String,
 }
 
 #[derive(Deserialize)]

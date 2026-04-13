@@ -6,20 +6,31 @@ interface VoiceInputCallbacks {
   onSend: (text: string) => void;
   onDraft: (text: string) => void;
   onRecordingStart?: () => void;
+  onTurnStart?: () => void;
   sttAvailable: boolean;
   voiceAutoSend: boolean;
 }
 
-export function useVoiceInput({ agentName, onSend, onDraft, onRecordingStart, sttAvailable, voiceAutoSend }: VoiceInputCallbacks) {
+export function useVoiceInput({
+  agentName,
+  onSend,
+  onDraft,
+  onRecordingStart,
+  onTurnStart,
+  sttAvailable,
+  voiceAutoSend,
+}: VoiceInputCallbacks) {
   const [isRecording, setIsRecording] = useState(false);
   const [liveTranscript, setLiveTranscript] = useState("");
   const [error, setError] = useState<string | null>(null);
   const streamRef = useRef<Transcriber | null>(null);
   const onSendRef = useRef(onSend);
   const onDraftRef = useRef(onDraft);
+  const onTurnStartRef = useRef(onTurnStart);
   const autoSendRef = useRef(voiceAutoSend);
   onSendRef.current = onSend;
   onDraftRef.current = onDraft;
+  onTurnStartRef.current = onTurnStart;
   autoSendRef.current = voiceAutoSend;
 
   const toggle = useCallback(() => {
@@ -49,7 +60,7 @@ export function useVoiceInput({ agentName, onSend, onDraft, onRecordingStart, st
         else onDraftRef.current(text);
         setLiveTranscript("");
       },
-      onTurnStart: () => {},
+      onTurnStart: () => onTurnStartRef.current?.(),
       onError: (err) => {
         setError(err);
         setIsRecording(false);
@@ -59,13 +70,17 @@ export function useVoiceInput({ agentName, onSend, onDraft, onRecordingStart, st
     });
 
     streamRef.current = stream;
-    stream.start().then(() => {
-      setIsRecording(true);
-    }).catch((err) => {
-      const msg = err instanceof Error ? err.message : "Microphone access denied";
-      setError(msg);
-      streamRef.current = null;
-    });
+    stream
+      .start()
+      .then(() => {
+        setIsRecording(true);
+      })
+      .catch((err) => {
+        const msg =
+          err instanceof Error ? err.message : "Microphone access denied";
+        setError(msg);
+        streamRef.current = null;
+      });
   }, [agentName, onRecordingStart, sttAvailable]);
 
   useEffect(() => {

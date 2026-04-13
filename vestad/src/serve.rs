@@ -1,11 +1,10 @@
 use axum::{
-    body::Body,
-    extract::{ConnectInfo, Path, Query, Request, State, WebSocketUpgrade},
-    http::{HeaderMap, StatusCode},
-    middleware::{self, Next},
+    extract::{Path, Query, State},
+    http::StatusCode,
+    middleware,
     response::{
         sse::{Event, KeepAlive},
-        IntoResponse, Response, Sse,
+        IntoResponse, Sse,
     },
     routing::{any, get, post},
     Json, Router,
@@ -15,15 +14,33 @@ use std::collections::HashMap;
 use std::sync::{Arc, atomic::AtomicBool};
 use tokio::sync::{Mutex, RwLock};
 
-use crate::{backup, docker, jwt, self_update, update_check};
+use crate::{agent_proxy, agent_status, auth, backup, control_ws, docker, self_update, update_check};
 
 const API_KEY_BYTES: usize = 32;
 pub(crate) const PROXY_MAX_BODY_BYTES: usize = 10 * 1024 * 1024; // 10 MB
 
-const RESERVED_SERVICE_NAMES: &[&str] = &["ws", "history", "services", "search"];
-const AUTH_SESSION_TIMEOUT_SECS: u64 = 600;
+const RESERVED_SERVICE_NAMES: &[&str] = &[
+    "start", "stop", "restart", "destroy", "rebuild", "wait-ready",
+    "auth", "logs", "backups", "settings", "services",
+];
 const DEFAULT_LOG_TAIL_LINES: u64 = 500;
 const AUTO_BACKUP_CHECK_INTERVAL_SECS: u64 = 3600;
+
+/// Detect the current git branch by walking up from cwd to find a repo.
+fn detect_git_branch() -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let branch = String::from_utf8(output.stdout).ok()?.trim().to_string();
+    if branch.is_empty() || branch == "HEAD" {
+        return None;
+    }
+    Some(branch)
+}
 
 // --- TLS cert generation ---
 
@@ -123,24 +140,20 @@ pub fn ensure_api_key(config_dir: &std::path::Path) -> String {
 
 // --- App state ---
 
-struct AuthSession {
-    code_verifier: String,
-    state: String,
-    created: std::time::Instant,
-}
 
 pub struct AppState {
-    api_key: String,
-    env_config: docker::AgentEnvConfig,
-    docker: bollard::Docker,
-    auth_sessions: Mutex<HashMap<String, AuthSession>>,
+    pub(crate) api_key: String,
+    pub(crate) env_config: docker::AgentEnvConfig,
+    pub(crate) docker: bollard::Docker,
+    pub(crate) auth_sessions: Mutex<HashMap<String, crate::auth::AuthSession>>,
     agent_locks: Mutex<HashMap<String, Arc<tokio::sync::RwLock<()>>>>,
     tunnel_url: Mutex<Option<String>>,
     update_info: Mutex<Option<update_check::UpdateInfo>>,
     updating: AtomicBool,
-    http_client: reqwest::Client,
-    settings: RwLock<Settings>,
+    pub(crate) http_client: reqwest::Client,
+    pub(crate) settings: RwLock<Settings>,
     dev_mode: bool,
+    pub(crate) agent_status_cache: Arc<agent_status::AgentStatusCache>,
 }
 
 impl AppState {
@@ -158,10 +171,11 @@ impl AppState {
             http_client: reqwest::Client::new(),
             settings: RwLock::new(settings),
             dev_mode,
+            agent_status_cache: Arc::new(agent_status::AgentStatusCache::new()),
         }
     }
 
-    async fn agent_lock(&self, name: &str) -> Arc<tokio::sync::RwLock<()>> {
+    pub(crate) async fn agent_lock(&self, name: &str) -> Arc<tokio::sync::RwLock<()>> {
         let mut locks = self.agent_locks.lock().await;
         locks
             .entry(name.to_string())
@@ -169,167 +183,28 @@ impl AppState {
             .clone()
     }
 
-    async fn clean_expired_sessions(&self) {
+    pub(crate) async fn clean_expired_sessions(&self) {
         let mut sessions = self.auth_sessions.lock().await;
-        let now = std::time::Instant::now();
-        sessions.retain(|_, s| now.duration_since(s.created) < std::time::Duration::from_secs(AUTH_SESSION_TIMEOUT_SECS));
+        sessions.retain(|_, s| !s.is_expired());
     }
 }
 
-type SharedState = Arc<AppState>;
-
-// --- Auth middleware ---
-
-async fn auth_middleware(
-    State(state): State<SharedState>,
-    headers: HeaderMap,
-    request: Request,
-    next: Next,
-) -> Response {
-    check_auth(state, None, headers, request, next).await
-}
-
-/// Like `auth_middleware` but allows unauthenticated access from localhost
-/// (agent containers registering services).
-async fn auth_middleware_localhost(
-    State(state): State<SharedState>,
-    connect_info: ConnectInfo<std::net::SocketAddr>,
-    headers: HeaderMap,
-    request: Request,
-    next: Next,
-) -> Response {
-    check_auth(state, Some(connect_info), headers, request, next).await
-}
-
-async fn check_auth(
-    state: SharedState,
-    connect_info: Option<ConnectInfo<std::net::SocketAddr>>,
-    headers: HeaderMap,
-    request: Request,
-    next: Next,
-) -> Response {
-    // Let CORS preflight through — the CorsLayer handles the response.
-    if request.method() == axum::http::Method::OPTIONS {
-        return next.run(request).await;
-    }
-
-    // Localhost (agent containers) can access without auth when allowed.
-    if let Some(ci) = connect_info {
-        if ci.0.ip().is_loopback() {
-            return next.run(request).await;
-        }
-    }
-
-    // Check Bearer header first, then query param ?token= (for WebSocket / dashboard assets)
-    let bearer_ok = headers
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .map(|token| verify_token(token, &state.api_key))
-        .unwrap_or(false);
-
-    let query_ok = if !bearer_ok {
-        request
-            .uri()
-            .query()
-            .and_then(|q| {
-                q.split('&')
-                    .find_map(|p| p.strip_prefix("token="))
-            })
-            .map(|t| verify_token(t, &state.api_key))
-            .unwrap_or(false)
-    } else {
-        false
-    };
-
-    if !bearer_ok && !query_ok {
-        let path = request.uri().path().to_string();
-        tracing::warn!(path = %path, "client auth failed");
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({"error": "unauthorized"})),
-        )
-            .into_response();
-    }
-
-    next.run(request).await
-}
-
-/// Accept raw API key or JWT access token.
-fn verify_token(token: &str, api_key: &str) -> bool {
-    if token == api_key {
-        return true;
-    }
-    if token.contains('.') {
-        return jwt::validate_token(api_key, token, "access").is_ok();
-    }
-    false
-}
-
-// --- Session endpoints ---
-
-#[derive(Deserialize)]
-struct SessionRequest {
-    api_key: String,
-}
-
-#[derive(Serialize)]
-struct SessionResponse {
-    access_token: String,
-    refresh_token: String,
-    expires_in: u64,
-}
-
-async fn create_session_handler(
-    State(state): State<SharedState>,
-    Json(body): Json<SessionRequest>,
-) -> Result<Json<SessionResponse>, (StatusCode, Json<serde_json::Value>)> {
-    if body.api_key != state.api_key {
-        tracing::warn!("client session auth failed: invalid API key");
-        return Err(err_response(StatusCode::UNAUTHORIZED, "invalid API key"));
-    }
-
-    tracing::info!("client connected (new session)");
-    Ok(Json(SessionResponse {
-        access_token: jwt::create_token(&state.api_key, "access", jwt::ACCESS_TOKEN_TTL),
-        refresh_token: jwt::create_token(&state.api_key, "refresh", jwt::REFRESH_TOKEN_TTL),
-        expires_in: jwt::ACCESS_TOKEN_TTL,
-    }))
-}
-
-async fn refresh_session_handler(
-    State(state): State<SharedState>,
-    Json(body): Json<RefreshRequest>,
-) -> Result<Json<SessionResponse>, (StatusCode, Json<serde_json::Value>)> {
-    jwt::validate_token(&state.api_key, &body.refresh_token, "refresh")
-        .map_err(|e| err_response(StatusCode::UNAUTHORIZED, &e.to_string()))?;
-
-    Ok(Json(SessionResponse {
-        access_token: jwt::create_token(&state.api_key, "access", jwt::ACCESS_TOKEN_TTL),
-        refresh_token: jwt::create_token(&state.api_key, "refresh", jwt::REFRESH_TOKEN_TTL),
-        expires_in: jwt::ACCESS_TOKEN_TTL,
-    }))
-}
-
-#[derive(Deserialize)]
-struct RefreshRequest {
-    refresh_token: String,
-}
+pub type SharedState = Arc<AppState>;
 
 // --- Response helpers ---
 
-fn ok_json() -> Json<serde_json::Value> {
+pub fn ok_json() -> Json<serde_json::Value> {
     Json(serde_json::json!({"ok": true}))
 }
 
-fn err_response(status: StatusCode, msg: &str) -> (StatusCode, Json<serde_json::Value>) {
+pub fn err_response(status: StatusCode, msg: &str) -> (StatusCode, Json<serde_json::Value>) {
     if status.is_server_error() {
         tracing::error!(status = status.as_u16(), error = msg, "server error");
     }
     (status, Json(serde_json::json!({"error": msg})))
 }
 
-fn map_docker_err(e: docker::DockerError) -> (StatusCode, Json<serde_json::Value>) {
+pub(crate) fn map_docker_err(e: docker::DockerError) -> (StatusCode, Json<serde_json::Value>) {
     use docker::DockerError::*;
     let status = match &e {
         NotFound(_) => StatusCode::NOT_FOUND,
@@ -366,6 +241,7 @@ async fn version(State(state): State<SharedState>) -> Json<serde_json::Value> {
         "latest_version": latest,
         "update_available": update_available,
         "dev_mode": state.dev_mode,
+        "branch": state.env_config.git_branch,
     }))
 }
 
@@ -413,6 +289,7 @@ async fn list_agents_handler(
 struct CreateBody {
     name: Option<String>,
     manage_agent_code: Option<bool>,
+    timezone: Option<String>,
 }
 
 async fn create_agent_handler(
@@ -436,7 +313,7 @@ async fn create_agent_handler(
     }
 
     let name =
-        docker::create_agent(&state.docker, &name, &state.env_config, manage_code)
+        docker::create_agent(&state.docker, &name, &state.env_config, manage_code, body.timezone.as_deref())
             .await
             .map_err(map_docker_err)?;
 
@@ -602,7 +479,7 @@ async fn start_auth_handler(
     let now = std::time::Instant::now();
     sessions.insert(
         session_id.clone(),
-        AuthSession {
+        auth::AuthSession {
             code_verifier,
             state: auth_state,
             created: now,
@@ -636,7 +513,7 @@ async fn complete_auth_handler(
         let mut sessions = state.auth_sessions.lock().await;
         sessions
             .remove(&body.session_id)
-            .ok_or_else(|| err_response(StatusCode::BAD_REQUEST, "invalid or expired session"))?
+            .ok_or_else(|| err_response(StatusCode::BAD_REQUEST, "invalid or expired auth session — restart the auth flow with POST /agents/{name}/auth"))?
     };
 
     let credentials = docker::complete_auth_flow(&state.http_client, &body.code, &session.code_verifier, &session.state)
@@ -755,86 +632,15 @@ async fn logs_handler(
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
-// --- WebSocket proxy (used by agent wildcard) ---
-
-async fn ws_proxy(client_ws: axum::extract::ws::WebSocket, agent_port: u16, path: &str, agent_token: Option<&str>) {
-    use axum::extract::ws::Message as AxumMsg;
-    use futures_util::{SinkExt, StreamExt};
-    use tokio_tungstenite::tungstenite::Message as TungMsg;
-
-    let url = if let Some(token) = agent_token {
-        let sep = if path.contains('?') { "&" } else { "?" };
-        format!("ws://localhost:{}{}{}agent_token={}", agent_port, path, sep, token)
-    } else {
-        format!("ws://localhost:{}{}", agent_port, path)
-    };
-    let agent_ws = match tokio_tungstenite::connect_async(&url).await {
-        Ok((ws, _)) => ws,
-        Err(e) => {
-            tracing::warn!(url = %url, error = %e, "agent websocket not reachable");
-            let mut client_ws = client_ws;
-            let _ = client_ws
-                .send(AxumMsg::Close(Some(axum::extract::ws::CloseFrame {
-                    code: 1011,
-                    reason: format!("agent not reachable: {e}").into(),
-                })))
-                .await;
-            return;
-        }
-    };
-
-    tracing::info!(port = agent_port, "client websocket connected");
-
-    let (mut client_tx, mut client_rx) = client_ws.split();
-    let (mut agent_tx, mut agent_rx) = agent_ws.split();
-
-    let client_to_agent = async {
-        while let Some(Ok(msg)) = client_rx.next().await {
-            let tung_msg = match msg {
-                AxumMsg::Text(t) => TungMsg::Text(t.as_str().into()),
-                AxumMsg::Binary(b) => TungMsg::Binary(bytes::Bytes::from(b.to_vec())),
-                AxumMsg::Ping(p) => TungMsg::Ping(bytes::Bytes::from(p.to_vec())),
-                AxumMsg::Pong(p) => TungMsg::Pong(bytes::Bytes::from(p.to_vec())),
-                AxumMsg::Close(_) => break,
-            };
-            if agent_tx.send(tung_msg).await.is_err() {
-                break;
-            }
-        }
-    };
-
-    let agent_to_client = async {
-        while let Some(Ok(msg)) = agent_rx.next().await {
-            let axum_msg = match msg {
-                TungMsg::Text(t) => AxumMsg::Text(t.as_str().into()),
-                TungMsg::Binary(b) => AxumMsg::Binary(bytes::Bytes::from(b.to_vec())),
-                TungMsg::Ping(p) => AxumMsg::Ping(bytes::Bytes::from(p.to_vec())),
-                TungMsg::Pong(p) => AxumMsg::Pong(bytes::Bytes::from(p.to_vec())),
-                TungMsg::Close(_) => break,
-                _ => continue,
-            };
-            if client_tx.send(axum_msg).await.is_err() {
-                break;
-            }
-        }
-    };
-
-    tokio::select! {
-        _ = client_to_agent => {},
-        _ = agent_to_client => {},
-    }
-
-    tracing::info!(port = agent_port, "client websocket disconnected");
-}
 
 // --- Unified settings ---
 
 const DEFAULT_AUTO_BACKUP_HOUR: u8 = 4;
 
 #[derive(Serialize, Deserialize, Default)]
-struct Settings {
+pub(crate) struct Settings {
     #[serde(default)]
-    services: HashMap<String, HashMap<String, u16>>,
+    pub(crate) services: HashMap<String, HashMap<String, u16>>,
     #[serde(default)]
     backup: BackupGlobalSettings,
     #[serde(default)]
@@ -963,14 +769,6 @@ fn save_settings(settings: &Settings) {
     }
 }
 
-async fn resolve_service_port(
-    state: &AppState,
-    agent_name: &str,
-    service_name: &str,
-) -> Option<u16> {
-    let settings = state.settings.read().await;
-    settings.services.get(agent_name)?.get(service_name).copied()
-}
 
 const SERVICE_PORT_MIN: u16 = 49152;
 const SERVICE_PORT_MAX: u16 = 65535;
@@ -1015,13 +813,16 @@ async fn register_service_handler(
         return Err(err_response(StatusCode::BAD_REQUEST, "name is required"));
     }
     if RESERVED_SERVICE_NAMES.contains(&service_name.as_str()) {
-        return Err(err_response(StatusCode::BAD_REQUEST, &format!("reserved service name: {}", service_name)));
+        return Err(err_response(StatusCode::BAD_REQUEST, &format!(
+            "'{}' is a reserved name (conflicts with vestad routes: {}) — pick a different service name",
+            service_name, RESERVED_SERVICE_NAMES.join(", ")
+        )));
     }
 
     let docker_name = docker::container_name(&name);
     let exists = docker::container_status(&state.docker, &docker_name).await != docker::ContainerStatus::NotFound;
     if !exists {
-        return Err(err_response(StatusCode::NOT_FOUND, &format!("agent '{}' not found", name)));
+        return Err(err_response(StatusCode::NOT_FOUND, &format!("agent '{}' not found — is the container running? check with: docker ps | grep vesta", name)));
     }
 
     let mut settings = state.settings.write().await;
@@ -1031,11 +832,12 @@ async fn register_service_handler(
         existing
     } else {
         allocate_service_port(&settings.services)
-            .ok_or_else(|| err_response(StatusCode::SERVICE_UNAVAILABLE, "no free ports available"))?
+            .ok_or_else(|| err_response(StatusCode::SERVICE_UNAVAILABLE, "no free ports available in range 49152-65535 — too many services registered, or all ports are in use"))?
     };
 
     settings.services.entry(name.clone()).or_default().insert(service_name.clone(), port);
     save_settings(&settings);
+    state.agent_status_cache.update_services(&settings.services);
     tracing::info!(agent = %name, service = %service_name, port, "service registered");
     Ok(Json(serde_json::json!({"ok": true, "port": port})))
 }
@@ -1052,6 +854,7 @@ async fn unregister_service_handler(
         }
     }
     save_settings(&settings);
+    state.agent_status_cache.update_services(&settings.services);
     tracing::info!(agent = %name, service = %service_name, "service unregistered");
     Ok(ok_json())
 }
@@ -1063,146 +866,6 @@ async fn list_services_handler(
     let settings = state.settings.read().await;
     let services = settings.services.get(&name).cloned().unwrap_or_default();
     Json(serde_json::json!({"services": services}))
-}
-
-// --- Agent wildcard proxy (HTTP + WS) for /agents/{name}/* ---
-
-async fn agent_proxy_handler(
-    State(state): State<SharedState>,
-    Path((name, path)): Path<(String, String)>,
-    request: Request,
-) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
-    use axum::extract::FromRequestParts;
-
-    docker::validate_name(&name).map_err(map_docker_err)?;
-    let cname = docker::container_name(&name);
-
-    let lock = state.agent_lock(&name).await;
-    let guard = lock.read_owned().await;
-
-    docker::ensure_running(&state.docker, &cname).await.map_err(map_docker_err)?;
-    let (agent_port, agent_token) = docker::read_agent_port_and_token(&name, &state.env_config.agents_dir);
-    let agent_port = agent_port
-        .ok_or_else(|| err_response(StatusCode::INTERNAL_SERVER_ERROR, "agent has no port"))?;
-
-    // Check if the first path segment matches a registered service.
-    // If so, route directly to that service's port with the prefix stripped.
-    let first_segment = path.split('/').next().unwrap_or("");
-    let (target_port, stripped_path, is_service) = if !first_segment.is_empty() {
-        if let Some(service_port) = resolve_service_port(&state, &name, first_segment).await {
-            let rest = &path[first_segment.len()..];
-            let rest = if rest.is_empty() { "/" } else { rest };
-            (service_port, rest.to_string(), true)
-        } else {
-            (agent_port, format!("/{}", path), false)
-        }
-    } else {
-        (agent_port, format!("/{}", path), false)
-    };
-
-    // Append query string.
-    let mut target_path = stripped_path;
-    if let Some(q) = request.uri().query() {
-        target_path.push('?');
-        target_path.push_str(q);
-    }
-
-    let is_ws_upgrade = request
-        .headers()
-        .get("upgrade")
-        .map(|v| v.as_bytes().eq_ignore_ascii_case(b"websocket"))
-        .unwrap_or(false);
-
-    if is_ws_upgrade {
-        let (mut parts, _body) = request.into_parts();
-        let ws = match WebSocketUpgrade::from_request_parts(&mut parts, &state).await {
-            Ok(ws) => ws,
-            Err(e) => {
-                return Err(err_response(
-                    StatusCode::BAD_REQUEST,
-                    &format!("invalid ws upgrade: {}", e),
-                ));
-            }
-        };
-        let ws_token = agent_token.clone();
-        Ok(ws.on_upgrade(move |socket| async move {
-            drop(guard);
-            ws_proxy(socket, target_port, &target_path, ws_token.as_deref()).await;
-        }))
-    } else {
-        drop(guard);
-        let is_service_root = is_service
-            && path.strip_suffix('/').unwrap_or(&path) == first_segment;
-        let token = if is_service_root {
-            crate::service_proxy::extract_token(request.uri())
-        } else {
-            None
-        };
-        let resp =
-            forward_http_to_container(&state.http_client, target_port, &target_path, request, agent_token.as_deref())
-                .await?;
-        match token {
-            Some(token) => crate::service_proxy::rewrite_asset_urls(resp, &token).await,
-            None => Ok(resp),
-        }
-    }
-}
-
-async fn forward_http_to_container(
-    client: &reqwest::Client,
-    port: u16,
-    target_path: &str,
-    request: Request,
-    agent_token: Option<&str>,
-) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
-    let (parts, body) = request.into_parts();
-    let url = format!("http://localhost:{}{}", port, target_path);
-
-    let method = reqwest::Method::from_bytes(parts.method.as_str().as_bytes())
-        .map_err(|e| err_response(StatusCode::BAD_REQUEST, &format!("bad method: {}", e)))?;
-
-    let body_bytes = axum::body::to_bytes(body, PROXY_MAX_BODY_BYTES)
-        .await
-        .map_err(|e| err_response(StatusCode::BAD_REQUEST, &format!("read body: {}", e)))?;
-
-    let mut req_builder = client.request(method, &url);
-    for (name, value) in parts.headers.iter() {
-        let n = name.as_str().to_ascii_lowercase();
-        if matches!(n.as_str(), "host" | "connection" | "transfer-encoding" | "content-length") {
-            continue;
-        }
-        req_builder = req_builder.header(name.as_str(), value.as_bytes());
-    }
-    if let Some(token) = agent_token {
-        req_builder = req_builder.header("X-Agent-Token", token);
-    }
-    if !body_bytes.is_empty() {
-        req_builder = req_builder.body(body_bytes.to_vec());
-    }
-
-    let upstream = req_builder.send().await.map_err(|e| {
-        err_response(
-            StatusCode::BAD_GATEWAY,
-            &format!("container unreachable: {}", e),
-        )
-    })?;
-
-    let status = StatusCode::from_u16(upstream.status().as_u16())
-        .unwrap_or(StatusCode::BAD_GATEWAY);
-    let mut builder = Response::builder().status(status);
-    for (name, value) in upstream.headers().iter() {
-        let n = name.as_str().to_ascii_lowercase();
-        if matches!(n.as_str(), "transfer-encoding" | "connection" | "content-length") {
-            continue;
-        }
-        builder = builder.header(name.as_str(), value.as_bytes());
-    }
-
-    let stream = upstream.bytes_stream();
-    let body = Body::from_stream(stream);
-    builder
-        .body(body)
-        .map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("build response: {}", e)))
 }
 
 // --- Backup/Restore ---
@@ -1551,11 +1214,12 @@ pub fn write_port_file(config_dir: &std::path::Path, port: u16) {
     std::fs::write(&port_path, port.to_string()).ok();
 }
 
-/// Update VESTAD_PORT and VESTAD_TUNNEL in all existing per-agent env files.
+/// Update VESTAD_PORT, VESTAD_TUNNEL, and VESTA_VERSION in all existing per-agent env files.
 /// Called at vestad startup so containers pick up the new values on restart.
 pub fn update_agent_env_files(config_dir: &std::path::Path, port: u16, tunnel_url: Option<&str>) {
     let agents_dir = config_dir.join("agents");
-    docker::update_all_agent_env_files(&agents_dir, port, tunnel_url);
+    let branch = detect_git_branch();
+    docker::update_all_agent_env_files(&agents_dir, port, tunnel_url, branch.as_deref());
 }
 
 // --- PID file ---
@@ -1593,12 +1257,12 @@ pub fn acquire_pid_lock(config_dir: &std::path::Path) -> Result<std::fs::File, S
 
 pub fn build_router(state: SharedState) -> Router {
 
-    let public = Router::new()
+    let vestad_public = Router::new()
         .route("/health", get(health))
-        .route("/auth/session", post(create_session_handler))
-        .route("/auth/refresh", post(refresh_session_handler));
+        .route("/auth/session", post(auth::create_session_handler))
+        .route("/auth/refresh", post(auth::refresh_session_handler));
 
-    let protected = Router::new()
+    let vestad_protected = Router::new()
         .route("/version", get(version))
         .route("/self-update", post(self_update_handler))
         .route("/tunnel", get(tunnel_handler))
@@ -1628,28 +1292,35 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/settings/backup", axum::routing::delete(delete_agent_backup_settings_handler))
         .route("/settings/auto-backup", get(get_auto_backup_handler))
         .route("/settings/auto-backup", axum::routing::put(set_auto_backup_handler))
-        .route("/agents/{name}/{*path}", any(agent_proxy_handler))
+        .route("/ws", get(control_ws::control_ws_handler))
+        .route("/agents/{name}/services", get(list_services_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
-            auth_middleware,
+            auth::auth_middleware,
         ));
 
-    // Service registry: localhost (agent containers) can access without auth,
-    // external requests (app frontend) require auth
-    let services = Router::new()
+    // Agent proxy: auth is checked inside the handler — service requests
+    // (dashboard, voice, etc.) are unauthenticated so assets load in iframes.
+    let agents_proxy = Router::new()
+        .route("/agents/{name}/{*path}", any(agent_proxy::agent_proxy_handler))
+        .with_state(state.clone());
+
+    // Service registry: mutating endpoints require agent token
+    let agents_services = Router::new()
         .route("/agents/{name}/services", post(register_service_handler))
-        .route("/agents/{name}/services", get(list_services_handler))
         .route("/agents/{name}/services/{service}", axum::routing::delete(unregister_service_handler))
+        .route("/agents/{name}/services/{service}/invalidate", post(control_ws::invalidate_service_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
-            auth_middleware_localhost,
+            auth::auth_middleware_agent_token,
         ))
         .with_state(state.clone());
 
     Router::new()
-        .merge(public)
-        .merge(services)
-        .merge(protected)
+        .merge(vestad_public)
+        .merge(vestad_protected)
+        .merge(agents_services)
+        .merge(agents_proxy)
         .layer(
             tower_http::cors::CorsLayer::new()
                 .allow_origin(tower_http::cors::Any)
@@ -1872,6 +1543,7 @@ pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: S
         agents_dir: config_dir.join("agents"),
         vestad_port: port,
         vestad_tunnel: tunnel_url.clone(),
+        git_branch: detect_git_branch(),
     };
     if let Err(e) = docker::validate_config_dir(&env_config) {
         tracing::error!(error = %e, "config directory validation failed — aborting startup");
@@ -1888,7 +1560,12 @@ pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: S
             agent_settings.get(name).is_none_or(|s| s.manage_agent_code)
         }).await;
     });
-    let state = Arc::new(AppState::new(api_key, env_config, docker, tunnel_url, dev_mode));
+    let state = Arc::new(AppState::new(api_key, env_config, docker.clone(), tunnel_url, dev_mode));
+    agent_status::spawn_agent_status_task(
+        state.agent_status_cache.clone(),
+        docker,
+        state.env_config.agents_dir.clone(),
+    );
     let app = build_router(state.clone());
     spawn_auto_backup_task(state.clone());
     if dev_mode {

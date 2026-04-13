@@ -1,5 +1,11 @@
 import { useState } from "react";
-import { Settings as SettingsIcon, Sun, Moon, Monitor, LogOut } from "lucide-react";
+import {
+  Settings as SettingsIcon,
+  Sun,
+  Moon,
+  Monitor,
+  LogOut,
+} from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -7,82 +13,140 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
-import { Field, FieldLabel } from "@/components/ui/field";
-import { Separator } from "@/components/ui/separator";
+import { MenuSection } from "@/components/ui/menu-section";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { useTheme, type Theme } from "@/stores/use-theme";
+import { useTheme } from "@/providers/ThemeProvider";
+type Theme = "dark" | "light" | "system";
 import { useAuth } from "@/providers/AuthProvider";
+import { useTauri } from "@/providers/TauriProvider";
+import { useGateway } from "@/providers/GatewayProvider";
 import { getConnection } from "@/lib/connection";
 import { StatusPill } from "@/components/StatusPill";
 
-export function Settings() {
-  const [open, setOpen] = useState(false);
-  const theme = useTheme((s) => s.theme);
-  const setTheme = useTheme((s) => s.setTheme);
-  const { reachable, disconnect } = useAuth();
+interface SettingsDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  agentSettingsSlot?: React.ReactNode;
+}
+
+export function SettingsDialog({
+  open,
+  onOpenChange,
+  agentSettingsSlot,
+}: SettingsDialogProps) {
+  const { theme, setTheme } = useTheme();
+  const { disconnect } = useAuth();
+  const { reachable, gatewayVersion, gatewayBranch } = useGateway();
+  const { isTauri } = useTauri();
 
   const hostname = (() => {
     const conn = getConnection();
     if (!conn) return "";
-    try { return new URL(conn.url).hostname; } catch { return conn.url; }
+    try {
+      return new URL(conn.url).hostname;
+    } catch {
+      return conn.url;
+    }
   })();
 
   return (
-    <>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button variant="ghost" size="icon-sm" onClick={() => setOpen(true)}>
-            <SettingsIcon />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>settings</TooltipContent>
-      </Tooltip>
+    <Dialog drawerOnMobile open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Settings</DialogTitle>
+          <DialogDescription className="sr-only">
+            Application settings
+          </DialogDescription>
+        </DialogHeader>
 
-      <Dialog drawerOnMobile open={open} onOpenChange={setOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Settings</DialogTitle>
-            <DialogDescription className="sr-only">Application settings</DialogDescription>
-          </DialogHeader>
+        <div className="flex flex-col gap-4">
+          {agentSettingsSlot && (
+            <MenuSection title="Agent">
+              <div onClick={() => onOpenChange(false)}>{agentSettingsSlot}</div>
+            </MenuSection>
+          )}
 
-          <Field orientation="vertical" className="sm:flex-row sm:items-center">
-            <FieldLabel>Theme</FieldLabel>
+          <MenuSection title="Appearance">
             <ToggleGroup
               type="single"
               value={theme}
-              onValueChange={(value) => { if (value) setTheme(value as Theme); }}
+              onValueChange={(value) => {
+                if (value) setTheme(value as Theme);
+              }}
               variant="outline"
               spacing={2}
             >
-              <ToggleGroupItem value="system"><Monitor /> System</ToggleGroupItem>
-              <ToggleGroupItem value="light"><Sun /> Light</ToggleGroupItem>
-              <ToggleGroupItem value="dark"><Moon /> Dark</ToggleGroupItem>
+              {!isTauri && (
+                <ToggleGroupItem value="system">
+                  <Monitor /> System
+                </ToggleGroupItem>
+              )}
+              <ToggleGroupItem value="light">
+                <Sun /> Light
+              </ToggleGroupItem>
+              <ToggleGroupItem value="dark">
+                <Moon /> Dark
+              </ToggleGroupItem>
             </ToggleGroup>
-          </Field>
+          </MenuSection>
 
-          <Separator />
-
-          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-            <div className="flex-1 flex items-center gap-2 text-sm text-muted-foreground">
-              <StatusPill showHostname={false} /> {reachable ? "Connected to" : "Cannot reach"} <span className="font-medium text-foreground">{hostname}</span>
+          <MenuSection title="Connection">
+            <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:flex-nowrap sm:items-center">
+              <div className="flex min-w-0 flex-1 items-center gap-2 text-sm">
+                <StatusPill showHostname={false} />
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <span className="text-muted-foreground">
+                    {reachable ? "Connected to" : "Cannot reach"}
+                  </span>
+                  <span className="min-w-0 truncate font-medium text-foreground">
+                    {hostname}
+                  </span>
+                  {(gatewayVersion || gatewayBranch) && (
+                    <span className="text-xs text-muted-foreground">
+                      {gatewayVersion && <>gateway v{gatewayVersion}</>}
+                      {gatewayVersion && gatewayBranch && " "}
+                      {gatewayBranch && <>({gatewayBranch})</>}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <Button
+                variant="destructive"
+                className="w-full shrink-0 whitespace-nowrap sm:w-auto"
+                onClick={() => {
+                  onOpenChange(false);
+                  disconnect();
+                }}
+              >
+                <LogOut data-icon="inline-start" />
+                Disconnect
+              </Button>
             </div>
-            <Button
-              variant="outline"
-              className="w-full sm:w-auto shrink-0"
-              onClick={() => { setOpen(false); disconnect(); }}
-            >
-              <LogOut data-icon="inline-start" />
-              Disconnect
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+          </MenuSection>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+export function Settings({
+  agentSettingsSlot,
+}: {
+  agentSettingsSlot?: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <>
+      <Button variant="outline" size="icon-lg" onClick={() => setOpen(true)}>
+        <SettingsIcon />
+      </Button>
+      <SettingsDialog
+        open={open}
+        onOpenChange={setOpen}
+        agentSettingsSlot={agentSettingsSlot}
+      />
     </>
   );
 }

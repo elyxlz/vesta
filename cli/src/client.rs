@@ -118,9 +118,6 @@ fn check_response(resp: Response<Body>) -> Result<Response<Body>, String> {
         401 => Err("invalid API key".into()),
         404 => Err(error_msg.unwrap_or_else(|| "not found".into())),
         409 => Err(error_msg.unwrap_or_else(|| "conflict".into())),
-        502 | 520..=530 => Err(error_msg.unwrap_or_else(|| format!(
-            "server not reachable via tunnel ({}). is vestad running?", status
-        ))),
         503 => Err(error_msg.unwrap_or_else(|| "agent not running".into())),
         _ => Err(error_msg.unwrap_or_else(|| format!("server error ({})", status))),
     }
@@ -319,8 +316,11 @@ impl Client {
             .map_err(|e| format!("parse error: {}", e))
     }
 
-    pub fn create_agent(&self, name: &str, build: bool, manage_agent_code: bool) -> Result<String, String> {
-        let body = serde_json::json!({"name": name, "build": build, "manage_agent_code": manage_agent_code});
+    pub fn create_agent(&self, name: &str, build: bool, manage_agent_code: bool, timezone: Option<&str>) -> Result<String, String> {
+        let mut body = serde_json::json!({"name": name, "build": build, "manage_agent_code": manage_agent_code});
+        if let Some(tz) = timezone {
+            body["timezone"] = serde_json::json!(tz);
+        }
         let resp = self.post_json("/agents", &body)?;
         let v: serde_json::Value = resp
             .into_body()

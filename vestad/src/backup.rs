@@ -455,7 +455,7 @@ pub async fn restore_backup(
         .port
         .ok_or_else(|| DockerError::Failed("agent has no port in env file".into()))?;
     tracing::debug!(agent = %name, backup_id = %backup_id, "creating container from backup image");
-    create_container(docker, &cname, backup_id, port, name, env_config, manage_code).await?;
+    create_container(docker, &cname, backup_id, port, name, env_config, manage_code, None).await?;
 
     if !start_container(docker, &cname).await {
         return Err(DockerError::Failed(

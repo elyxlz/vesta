@@ -114,7 +114,7 @@ uv tool install ~/vesta/skills/tasks/cli
 Register with vestad to get a port, then start:
 ```bash
 PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services \
-  -H 'Content-Type: application/json' -d '{"name":"tasks"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])")
+  -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' -d '{"name":"tasks"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])")
 screen -dmS tasks tasks serve --notifications-dir ~/vesta/notifications --port $PORT
 ```
 
@@ -122,7 +122,7 @@ One daemon handles everything — both task due-date monitoring and reminder sch
 
 **Restart**: Add to `~/vesta/prompts/restart.md`:
 ```
-PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H 'Content-Type: application/json' -d '{"name":"tasks"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])") && screen -dmS tasks tasks serve --notifications-dir ~/vesta/notifications --port $PORT
+PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' -d '{"name":"tasks"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])") && screen -dmS tasks tasks serve --notifications-dir ~/vesta/notifications --port $PORT
 ```
 
 ### Reminder Patterns

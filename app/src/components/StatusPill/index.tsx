@@ -1,12 +1,12 @@
 import { getConnection } from "@/lib/connection";
-import { useAuth } from "@/providers/AuthProvider";
+import { useGateway } from "@/providers/GatewayProvider";
 
 interface StatusPillProps {
   showHostname?: boolean;
 }
 
 export function StatusPill({ showHostname = true }: StatusPillProps) {
-  const { reachable } = useAuth();
+  const { reachable } = useGateway();
 
   const hostname = (() => {
     const conn = getConnection();
@@ -19,10 +19,14 @@ export function StatusPill({ showHostname = true }: StatusPillProps) {
   })();
 
   return (
-    <div className="flex items-center gap-1.5">
-      <div className={`size-2 rounded-full shrink-0 ${reachable ? "bg-green-500" : "bg-red-500"}`} />
+    <div className="flex items-center gap-2">
+      <div
+        className={`size-2 rounded-full shrink-0 ${reachable ? "bg-green-500" : "bg-red-500"}`}
+      />
       {showHostname && hostname && (
-        <span className="text-sm text-foreground truncate hidden sm:block">{hostname}</span>
+        <span className="text-sm text-secondary-foreground truncate hidden sm:block">
+          {hostname}
+        </span>
       )}
     </div>
   );

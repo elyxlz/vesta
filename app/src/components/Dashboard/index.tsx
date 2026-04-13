@@ -1,10 +1,9 @@
-import { useEffect, useRef, useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { LayoutDashboard, AlertCircle } from "lucide-react";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
-import { useTheme } from "@/stores/use-theme";
+import { useTheme } from "@/providers/ThemeProvider";
+import { useTauri } from "@/providers/TauriProvider";
 import { getConnection } from "@/lib/connection";
-import { apiFetch } from "@/api/client";
-import { useServiceUpdate } from "@/hooks/use-service-update";
 import {
   Empty,
   EmptyHeader,
@@ -13,64 +12,85 @@ import {
   EmptyMedia,
 } from "@/components/ui/empty";
 
-type Status = "loading" | "not-setup" | "ready" | "error";
-
 export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
-  const { name } = useSelectedAgent();
+  const { name, agent } = useSelectedAgent();
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const theme = useTheme((s) => s.theme);
-  const resolved = useTheme((s) => s.resolved);
-  const [status, setStatus] = useState<Status>("loading");
+  const { resolvedTheme } = useTheme();
+  const { isTauri, platform, isDesktop, isMobile, vibrancy } = useTauri();
+  const [error, setError] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [iframeKey, setIframeKey] = useState(0);
+  const handshakeRef = useRef(false);
 
+  const dashboardService = agent.services?.dashboard;
+  const hasDashboard = !!dashboardService;
+
+  // Reset iframe when the dashboard service appears
+  const prevHadDashboard = useRef(hasDashboard);
   useEffect(() => {
-    let cancelled = false;
-    async function check() {
-      try {
-        const resp = await apiFetch(`/agents/${encodeURIComponent(name)}/services`);
-        if (cancelled) return;
-        const body: { services: Record<string, number> } = await resp.json();
-        setStatus("dashboard" in body.services ? "ready" : "not-setup");
-      } catch {
-        if (!cancelled) setStatus("not-setup");
-      }
-    }
-    check();
-    return () => { cancelled = true; };
-  }, [name]);
-
-  useServiceUpdate("dashboard", useCallback((action) => {
-    if (action === "removed") {
-      setStatus("not-setup");
-    } else {
-      setStatus("ready");
+    if (hasDashboard && !prevHadDashboard.current) {
+      setError(false);
       setLoaded(false);
       setIframeKey((k) => k + 1);
     }
-  }, []));
+    prevHadDashboard.current = hasDashboard;
+  }, [hasDashboard]);
+
+  // Reload iframe when the dashboard service is invalidated
+  const dashboardRev = dashboardService?.rev ?? 0;
+  const prevDashboardRev = useRef(dashboardRev);
+  useEffect(() => {
+    if (dashboardRev !== prevDashboardRev.current && hasDashboard) {
+      setError(false);
+      setLoaded(false);
+      setIframeKey((k) => k + 1);
+    }
+    prevDashboardRev.current = dashboardRev;
+  }, [dashboardRev, hasDashboard]);
+
+  useEffect(() => {
+    handshakeRef.current = false;
+  }, [iframeKey]);
 
   const conn = getConnection();
   const dashboardUrl =
-    status === "ready" && conn
-      ? `${conn.url}/agents/${encodeURIComponent(name)}/dashboard/?token=${encodeURIComponent(conn.accessToken)}`
+    hasDashboard && conn
+      ? `${conn.url}/agents/${encodeURIComponent(name)}/dashboard/`
       : null;
 
   const sendContext = useCallback(() => {
     const frame = iframeRef.current?.contentWindow;
     if (!frame) return;
-    frame.postMessage({ type: "vesta-theme", dark: resolved() === "dark" }, "*");
+    frame.postMessage(
+      { type: "vesta-theme", dark: resolvedTheme === "dark" },
+      "*",
+    );
     frame.postMessage({ type: "vesta-layout", fullscreen: !!fullscreen }, "*");
-    if (conn) frame.postMessage({
-      type: "vesta-auth",
-      token: conn.accessToken,
-      baseUrl: `${conn.url}/agents/${encodeURIComponent(name)}`,
-    }, "*");
-  }, [resolved, conn, fullscreen]);
+    frame.postMessage(
+      { type: "vesta-platform", isTauri, platform, isDesktop, isMobile, vibrancy },
+      "*",
+    );
+    if (conn)
+      frame.postMessage(
+        {
+          type: "vesta-auth",
+          token: conn.accessToken,
+          baseUrl: `${conn.url}/agents/${encodeURIComponent(name)}`,
+          agentName: name,
+        },
+        "*",
+      );
+  }, [resolvedTheme, fullscreen, isTauri, platform, isDesktop, isMobile, vibrancy, conn, name]);
 
   useEffect(() => {
     const handler = (e: MessageEvent) => {
-      if (e.data?.type === "vesta-theme-request" || e.data?.type === "vesta-auth-request" || e.data?.type === "vesta-layout-request") {
+      if (
+        e.data?.type === "vesta-theme-request" ||
+        e.data?.type === "vesta-auth-request" ||
+        e.data?.type === "vesta-layout-request" ||
+        e.data?.type === "vesta-platform-request"
+      ) {
+        handshakeRef.current = true;
         sendContext();
       }
     };
@@ -80,15 +100,13 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
 
   useEffect(() => {
     sendContext();
-  }, [sendContext, theme]);
+  }, [sendContext, resolvedTheme]);
 
-  if (status === "loading") return null;
-
-  if (status === "not-setup") {
+  if (!hasDashboard) {
     return (
       <Empty className="flex-1 h-full w-full border-0">
         <EmptyHeader>
-          <EmptyMedia variant="icon">
+          <EmptyMedia variant="icon" className="size-12 rounded-full bg-sidebar-primary text-sidebar-primary-foreground [&_svg:not([class*='size-'])]:size-6">
             <LayoutDashboard />
           </EmptyMedia>
           <EmptyTitle>your dashboard</EmptyTitle>
@@ -100,16 +118,17 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
     );
   }
 
-  if (status === "error") {
+  if (error) {
     return (
       <Empty className="flex-1 h-full w-full border-0">
         <EmptyHeader>
-          <EmptyMedia variant="icon">
+          <EmptyMedia variant="icon" className="size-12 rounded-full bg-sidebar-primary text-sidebar-primary-foreground [&_svg:not([class*='size-'])]:size-6">
             <AlertCircle />
           </EmptyMedia>
           <EmptyTitle>dashboard unavailable</EmptyTitle>
           <EmptyDescription>
-            the dashboard server isn't responding — ask your agent to check on it
+            the dashboard server isn't responding — ask your agent to check on
+            it
           </EmptyDescription>
         </EmptyHeader>
       </Empty>
@@ -121,12 +140,22 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
       key={iframeKey}
       ref={iframeRef}
       src={dashboardUrl!}
-      className={`w-full h-full border-0 bg-transparent transition-opacity duration-200 ${loaded ? "opacity-100" : "opacity-0"}`}
+      className={`w-full h-full bg-transparent transition-opacity duration-200 ${loaded ? "opacity-100" : "opacity-0"}`}
       onLoad={() => {
         sendContext();
-        setLoaded(true);
+        if (handshakeRef.current) {
+          setLoaded(true);
+        } else {
+          setTimeout(() => {
+            if (handshakeRef.current) {
+              setLoaded(true);
+            } else {
+              setError(true);
+            }
+          }, 500);
+        }
       }}
-      onError={() => setStatus("error")}
+      onError={() => setError(true)}
     />
   );
 }

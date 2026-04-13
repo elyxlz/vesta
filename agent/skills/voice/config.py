@@ -112,12 +112,18 @@ def add_custom_voice(data_dir: pl.Path, voice_id: str, name: str, description: s
             raise ValueError("TTS not configured; set a provider key first")
         provider = tts.get("provider") or "elevenlabs"
         voices = list(tts.get("custom_voices") or [])
-        if any(v.get("id") == voice_id for v in voices):
-            return cfg
-        entry: dict[str, str] = {"provider": provider, "id": voice_id, "name": name}
-        if description:
-            entry["description"] = description
-        voices.append(entry)
+        existing = next((v for v in voices if v.get("id") == voice_id), None)
+        if existing:
+            existing["name"] = name
+            if description:
+                existing["description"] = description
+            elif "description" in existing:
+                del existing["description"]
+        else:
+            entry: dict[str, str] = {"provider": provider, "id": voice_id, "name": name}
+            if description:
+                entry["description"] = description
+            voices.append(entry)
         tts["custom_voices"] = voices
         cfg["tts"] = tts  # type: ignore[typeddict-item]
         return cfg

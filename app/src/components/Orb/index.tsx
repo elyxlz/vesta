@@ -6,6 +6,8 @@ interface OrbProps {
   size?: number;
   enableTracking?: boolean;
   suppressMotion?: boolean;
+  glowSpreadScale?: number;
+  glowGradientFade?: number;
 }
 
 const LIVE_STATES = new Set<OrbVisualState>([
@@ -86,8 +88,8 @@ void main() {
       (-0.24 + u_highlight.y * 0.08) * u_scene_scale * u_orb_scale
     );
     vec2 highlight_delta = uv - highlight_center;
-    highlight_delta.x /= 0.38 * u_scene_scale * u_orb_scale;
-    highlight_delta.y /= 0.26 * u_scene_scale * u_orb_scale;
+    highlight_delta.x /= 0.29 * u_scene_scale * u_orb_scale;
+    highlight_delta.y /= 0.19 * u_scene_scale * u_orb_scale;
     float highlight = exp(-dot(highlight_delta, highlight_delta) * 2.6) * 0.35;
 
     color += sphere_color + vec3(highlight);
@@ -138,7 +140,10 @@ function parseRgbColor(value: string): [number, number, number] {
     .slice(0, 3)
     .map((channel) => Number.parseFloat(channel) / 255);
 
-  if (channels.length !== 3 || channels.some((channel) => Number.isNaN(channel))) {
+  if (
+    channels.length !== 3 ||
+    channels.some((channel) => Number.isNaN(channel))
+  ) {
     return [1, 1, 1];
   }
 
@@ -157,11 +162,7 @@ function resolveCssColor(value: string, container: HTMLElement) {
   return parseRgbColor(resolved);
 }
 
-function createShader(
-  gl: WebGLRenderingContext,
-  type: number,
-  source: string,
-) {
+function createShader(gl: WebGLRenderingContext, type: number, source: string) {
   const shader = gl.createShader(type);
 
   if (!shader) {
@@ -222,7 +223,11 @@ function getVisualTarget(
 ): VisualTarget {
   const [lightColor, midColor, darkColor] = orbColors[state].map((color) =>
     resolveCssColor(color, container),
-  ) as [VisualTarget["lightColor"], VisualTarget["midColor"], VisualTarget["darkColor"]];
+  ) as [
+    VisualTarget["lightColor"],
+    VisualTarget["midColor"],
+    VisualTarget["darkColor"],
+  ];
   const isLive = LIVE_STATES.has(state);
 
   if (suppressMotion) {
@@ -272,7 +277,14 @@ function createInitialVisualState(target: VisualTarget): VisualState {
   };
 }
 
-export function Orb({ state, size = 140, enableTracking = false, suppressMotion = false }: OrbProps) {
+export function Orb({
+  state,
+  size = 140,
+  enableTracking = false,
+  suppressMotion = false,
+  glowSpreadScale = 2,
+  glowGradientFade = 60,
+}: OrbProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const isLive = LIVE_STATES.has(state);
@@ -283,7 +295,14 @@ export function Orb({ state, size = 140, enableTracking = false, suppressMotion 
   const glowColor = orbColors[state][1];
   const glowOpacity = state === "thinking" ? 0.62 : isLive ? 0.46 : 0.18;
   const glowSize = state === "thinking" ? 1.25 : 1.12;
-  const glowInset = Math.round(size * 0.18);
+  const glowInset = Math.round(size * 0.18 * glowSpreadScale);
+  const fadePct = Math.min(100, Math.max(0, glowGradientFade));
+  const coreGlowPct = Math.max(0, fadePct - 48);
+  const innerGlowPct = Math.max(0, fadePct - 32);
+  const midGlowPct = Math.max(0, fadePct - 18);
+  const outerGlowPct = Math.max(0, fadePct - 8);
+  const edgeGlowPct = Math.max(0, fadePct - 2);
+  const glowGradient = `radial-gradient(circle, ${glowColor}b8 0%, ${glowColor}84 ${coreGlowPct}%, ${glowColor}52 ${innerGlowPct}%, ${glowColor}2c ${midGlowPct}%, ${glowColor}14 ${outerGlowPct}%, ${glowColor}08 ${edgeGlowPct}%, transparent ${fadePct}%)`;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -318,7 +337,7 @@ export function Orb({ state, size = 140, enableTracking = false, suppressMotion 
       const cy = rect.top + rect.height / 2;
       targetTrackRef.current = {
         x: clamp((e.clientX - cx) / (window.innerWidth * 0.4), -1, 1),
-        y: clamp((e.clientY - cy) / (window.innerHeight * 0.4), -1, 1),
+        y: clamp(-(e.clientY - cy) / (window.innerHeight * 0.4), -1, 1),
       };
     };
 
@@ -334,12 +353,14 @@ export function Orb({ state, size = 140, enableTracking = false, suppressMotion 
       return;
     }
 
+    const webglAttributes: WebGLContextAttributes = {
+      alpha: true,
+      antialias: true,
+      premultipliedAlpha: false,
+    };
     const gl =
-      canvas.getContext("webgl", {
-        alpha: true,
-        antialias: true,
-        premultipliedAlpha: true,
-      }) ?? canvas.getContext("experimental-webgl");
+      canvas.getContext("webgl", webglAttributes) ??
+      canvas.getContext("experimental-webgl", webglAttributes);
 
     if (!gl || !(gl instanceof WebGLRenderingContext)) {
       return;
@@ -358,11 +379,17 @@ export function Orb({ state, size = 140, enableTracking = false, suppressMotion 
     const darkColorLocation = gl.getUniformLocation(program, "u_dark_color");
     const trackLocation = gl.getUniformLocation(program, "u_track");
     const highlightLocation = gl.getUniformLocation(program, "u_highlight");
-    const glowOpacityLocation = gl.getUniformLocation(program, "u_glow_opacity");
+    const glowOpacityLocation = gl.getUniformLocation(
+      program,
+      "u_glow_opacity",
+    );
     const glowScaleLocation = gl.getUniformLocation(program, "u_glow_scale");
     const orbScaleLocation = gl.getUniformLocation(program, "u_orb_scale");
     const sceneScaleLocation = gl.getUniformLocation(program, "u_scene_scale");
-    const floatOffsetLocation = gl.getUniformLocation(program, "u_float_offset");
+    const floatOffsetLocation = gl.getUniformLocation(
+      program,
+      "u_float_offset",
+    );
     const buffer = gl.createBuffer();
 
     if (
@@ -388,14 +415,7 @@ export function Orb({ state, size = 140, enableTracking = false, suppressMotion 
     gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
     gl.bufferData(
       gl.ARRAY_BUFFER,
-      new Float32Array([
-        -1, -1,
-        1, -1,
-        -1, 1,
-        -1, 1,
-        1, -1,
-        1, 1,
-      ]),
+      new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]),
       gl.STATIC_DRAW,
     );
 
@@ -406,7 +426,8 @@ export function Orb({ state, size = 140, enableTracking = false, suppressMotion 
     gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
 
     const initialTarget =
-      targetVisualRef.current ?? getVisualTarget(state, container, suppressMotion);
+      targetVisualRef.current ??
+      getVisualTarget(state, container, suppressMotion);
     targetVisualRef.current = initialTarget;
     visualStateRef.current ??= createInitialVisualState(initialTarget);
 
@@ -496,8 +517,14 @@ export function Orb({ state, size = 140, enableTracking = false, suppressMotion 
       const devicePixelRatio = window.devicePixelRatio || 1;
       const glowPad = Math.round(size * 0.25);
       const renderSize = size + glowPad * 2;
-      const canvasWidth = Math.max(1, Math.round(renderSize * devicePixelRatio));
-      const canvasHeight = Math.max(1, Math.round(renderSize * devicePixelRatio));
+      const canvasWidth = Math.max(
+        1,
+        Math.round(renderSize * devicePixelRatio),
+      );
+      const canvasHeight = Math.max(
+        1,
+        Math.round(renderSize * devicePixelRatio),
+      );
 
       if (canvas.width !== canvasWidth || canvas.height !== canvasHeight) {
         canvas.width = canvasWidth;
@@ -506,7 +533,9 @@ export function Orb({ state, size = 140, enableTracking = false, suppressMotion 
       }
 
       const floatOffset =
-        Math.sin((frameTime / 1000 / visualTarget.floatDuration) * Math.PI * 2) *
+        Math.sin(
+          (frameTime / 1000 / visualTarget.floatDuration) * Math.PI * 2,
+        ) *
         ((visualState.floatAmplitudePx * 2) / renderSize);
       const sceneScale = size / renderSize;
 
@@ -552,8 +581,7 @@ export function Orb({ state, size = 140, enableTracking = false, suppressMotion 
           position: "absolute",
           inset: -glowInset,
           borderRadius: "50%",
-          background: `radial-gradient(circle, ${glowColor} 0%, transparent 68%)`,
-          filter: `blur(${Math.round(size * 0.18)}px)`,
+          background: glowGradient,
           opacity: glowOpacity,
           transform: `scale(${glowSize})`,
           pointerEvents: "none",

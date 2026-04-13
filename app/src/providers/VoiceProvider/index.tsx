@@ -1,11 +1,4 @@
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useMemo,
-  useRef,
-  type ReactNode,
-} from "react";
+import { createContext, useContext, useRef, type ReactNode } from "react";
 import { useVoiceStatus } from "./use-voice-status";
 import { useVoiceInput } from "./use-voice-input";
 import { useVoiceOutput } from "./use-voice-output";
@@ -32,47 +25,84 @@ interface VoiceContextValue {
   speak: (text: string) => void;
   stopSpeech: () => void;
 
-  registerChatCallbacks: (send: (text: string) => void, draft: (text: string) => void) => void;
+  registerChatCallbacks: (
+    send: (text: string) => void,
+    draft: (text: string) => void,
+  ) => void;
 }
 
 const VoiceContext = createContext<VoiceContextValue | null>(null);
 
 export function VoiceProvider({ children }: { children: ReactNode }) {
-  const { name: agentName } = useSelectedAgent();
+  const { name: agentName, agent } = useSelectedAgent();
   const sendRef = useRef<((text: string) => void) | null>(null);
   const draftRef = useRef<((text: string) => void) | null>(null);
 
-  const onSend = useCallback((text: string) => { sendRef.current?.(text); }, []);
-  const onDraft = useCallback((text: string) => { draftRef.current?.(text); }, []);
-  const registerChatCallbacks = useCallback(
-    (send: (text: string) => void, draft: (text: string) => void) => {
-      sendRef.current = send;
-      draftRef.current = draft;
-    },
-    [],
-  );
+  const onSend = (text: string) => {
+    sendRef.current?.(text);
+  };
+  const onDraft = (text: string) => {
+    draftRef.current?.(text);
+  };
+  const registerChatCallbacks = (
+    send: (text: string) => void,
+    draft: (text: string) => void,
+  ) => {
+    sendRef.current = send;
+    draftRef.current = draft;
+  };
 
-  const { stt: sttStatus, tts: ttsStatus, refresh: refreshVoiceStatus, patchStt, patchTts } =
-    useVoiceStatus(agentName || null);
+  const {
+    stt: sttStatus,
+    tts: ttsStatus,
+    refresh: refreshVoiceStatus,
+    patchStt,
+    patchTts,
+  } = useVoiceStatus(
+    agentName || null,
+    agent.services,
+    agent.services?.voice?.rev,
+  );
 
   const sttAvailable = (sttStatus?.configured && sttStatus?.enabled) ?? false;
   const speechEnabled = (ttsStatus?.configured && ttsStatus?.enabled) ?? false;
-  const voiceAutoSend = (sttStatus?.settings?.find(s => s.key === "auto_send")?.value as boolean) ?? true;
+  const voiceAutoSend =
+    (sttStatus?.settings?.find((s) => s.key === "auto_send")
+      ?.value as boolean) ?? true;
+  const interruptTts =
+    (sttStatus?.settings?.find((s) => s.key === "interrupt_tts")
+      ?.value as boolean) ?? true;
 
-  const { isSpeaking, speak, stop: stopSpeech } = useVoiceOutput(agentName || null, speechEnabled);
+  const {
+    isSpeaking,
+    speak,
+    stop: stopSpeech,
+  } = useVoiceOutput(agentName || null, speechEnabled);
 
-  const onRecordingStart = useCallback(() => { stopSpeech(); }, [stopSpeech]);
+  const onRecordingStart = () => {
+    stopSpeech();
+  };
 
-  const { isRecording, liveTranscript, toggle: toggleVoice, error: voiceError } = useVoiceInput({
+  const onTurnStart = () => {
+    if (interruptTts) stopSpeech();
+  };
+
+  const {
+    isRecording,
+    liveTranscript,
+    toggle: toggleVoice,
+    error: voiceError,
+  } = useVoiceInput({
     agentName: agentName || "",
     onSend,
     onDraft,
     onRecordingStart,
+    onTurnStart,
     sttAvailable,
     voiceAutoSend,
   });
 
-  const value = useMemo<VoiceContextValue>(() => ({
+  const value: VoiceContextValue = {
     sttStatus,
     ttsStatus,
     sttAvailable,
@@ -89,17 +119,10 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     speak,
     stopSpeech,
     registerChatCallbacks,
-  }), [
-    sttStatus, ttsStatus, sttAvailable, speechEnabled, voiceAutoSend,
-    patchStt, patchTts, refreshVoiceStatus,
-    isRecording, liveTranscript, toggleVoice, voiceError,
-    isSpeaking, speak, stopSpeech, registerChatCallbacks,
-  ]);
+  };
 
   return (
-    <VoiceContext.Provider value={value}>
-      {children}
-    </VoiceContext.Provider>
+    <VoiceContext.Provider value={value}>{children}</VoiceContext.Provider>
   );
 }
 

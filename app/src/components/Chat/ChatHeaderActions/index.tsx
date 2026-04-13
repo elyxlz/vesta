@@ -9,29 +9,28 @@ interface ChatHeaderActionsProps {
   agentName: string;
 }
 
-export function ChatHeaderActions({ fullscreen, onCollapse, agentName }: ChatHeaderActionsProps) {
+export function ChatHeaderActions({
+  fullscreen,
+  onCollapse,
+  agentName,
+}: ChatHeaderActionsProps) {
   const navigate = useNavigate();
 
   if (fullscreen) return null;
 
   return (
-    <div
-      className="absolute right-3 top-3 z-10"
-    >
+    <div className="absolute right-3 top-3 z-10">
       <ButtonGroup>
-
         <Button
-          size="icon-sm"
           variant="outline"
-          className="text-muted-foreground dark:bg-card"
+          className="text-muted-foreground"
           onClick={() => navigate(`/agent/${agentName}/chat`)}
         >
           <Maximize2 />
         </Button>
         <Button
-          size="icon-sm"
           variant="outline"
-          className="text-muted-foreground dark:bg-card"
+          className="text-muted-foreground"
           onClick={onCollapse}
         >
           <PanelRightClose />

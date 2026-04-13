@@ -1,52 +1,66 @@
 import { AnimatePresence, motion } from "motion/react";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardTitle,
+} from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
 import { Orb } from "@/components/Orb";
-import type { ListEntry, AgentActivityState } from "@/lib/types";
+import type { AgentInfo } from "@/lib/types";
 import { useNavigate } from "react-router-dom";
 import { useAgentOps, getOpLabel } from "@/stores/use-agent-ops";
 import { useOrbState } from "@/hooks/use-orb-state";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
 
 interface AgentCardProps {
-  agent: ListEntry;
-  activityState: AgentActivityState;
+  agent: AgentInfo;
+  enableTracking?: boolean;
 }
 
-export function AgentCard({ agent, activityState }: AgentCardProps) {
+export function AgentCard({ agent, enableTracking = false }: AgentCardProps) {
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
 
   const opState = useAgentOps((s) => s.getOp(agent.name));
-  const orbState = useOrbState(agent, activityState);
+  const orbState = useOrbState(agent, agent.activityState);
 
   return (
-    <div
-      className="flex flex-col items-center gap-3 p-5 cursor-pointer"
-      onClick={() => navigate(`/agent/${agent.name}`)}
+    <Card
+      className="cursor-pointer flex items-center justify-center gap-3 h-full w-full"
+      onClick={() => navigate(`/agent/${agent.name}${isMobile ? "/chat" : ""}`)}
     >
-      <Orb state={orbState} size={112} />
-      <span className="text-2xl font-medium text-foreground">
-        {agent.name}
-      </span>
+      <CardContent className="flex flex-col items-center gap-3 px-5 pt-0 pb-0">
+        <Orb state={orbState} size={112} enableTracking={enableTracking} />
+        <CardTitle className="font-serif text-center text-2xl -mt-3 font-medium tracking-tight text-foreground">
+          {agent.name}
+        </CardTitle>
 
-      <AnimatePresence>
-        {(opState.operation !== "idle" || opState.error) && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.15 }}
-            className={cn(
-              "flex items-center gap-1.5 text-xs",
-              opState.error ? "text-destructive" : "text-foreground/50",
-            )}
-          >
-            {opState.operation !== "idle" && (
-              <Spinner className="size-3" />
-            )}
-            <span>{opState.error || getOpLabel(opState.operation)}</span>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
+        <AnimatePresence>
+          {(opState.operation !== "idle" || opState.error) && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.15 }}
+              className="flex items-center gap-1.5"
+            >
+              {opState.operation !== "idle" && (
+                <Spinner className="size-3 text-muted-foreground" />
+              )}
+              <CardDescription
+                className={cn(
+                  "text-xs",
+                  opState.error ? "text-destructive" : "text-muted-foreground",
+                )}
+              >
+                {opState.error || getOpLabel(opState.operation)}
+              </CardDescription>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </CardContent>
+    </Card>
   );
 }

@@ -35,6 +35,7 @@ build-backend = "hatchling.build"
 [tool.pytest.ini_options]
 python_files = ["e2e.py", "test_*.py", "*_test.py"]
 testpaths = ["tests"]
+pythonpath = ["skills"]
 
 
 [tool.ty.src]

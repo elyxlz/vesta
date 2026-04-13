@@ -1,0 +1,148 @@
+import { type Dispatch, type SetStateAction } from "react";
+import { type MotionValue } from "motion/react";
+import { useMatch, useNavigate } from "react-router-dom";
+import {
+  Home,
+  KeyRound,
+  LayoutDashboard,
+  MessageSquare,
+} from "lucide-react";
+import { AgentIsland } from "@/components/AgentIsland";
+import { AgentMenu } from "@/components/AgentMenu";
+import { MobileNavbar } from "@/components/MobileNavbar";
+import { StatusPill } from "@/components/StatusPill";
+import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { useAuth } from "@/providers/AuthProvider";
+import { useModals } from "@/providers/ModalsProvider";
+import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
+import { useLayout } from "@/stores/use-layout";
+import { Navbar } from "..";
+
+export function AgentNavbar({
+  chatCollapsed,
+  setChatCollapsed,
+  swipeProgress,
+}: {
+  chatCollapsed: boolean;
+  setChatCollapsed: Dispatch<SetStateAction<boolean>>;
+  swipeProgress: MotionValue<number>;
+}) {
+  const { connected } = useAuth();
+  const { name, agent } = useSelectedAgent();
+  const { handleOpenAuth } = useModals();
+  const navigate = useNavigate();
+  const isMobile = useIsMobile();
+  const chatKeyboardFocused = useLayout((s) => s.chatKeyboardFocused);
+  const needsAuth = agent?.status === "not_authenticated";
+
+  const agentDashboardMatch = useMatch({ path: "/agent/:name", end: true });
+  const chatMatch = useMatch({ path: "/agent/:name/chat", end: true });
+  const logsMatch = useMatch({ path: "/agent/:name/logs", end: true });
+  const settingsMatch = useMatch({ path: "/agent/:name/settings", end: true });
+
+  const showMobileNavbar = isMobile && (!!agentDashboardMatch || !!chatMatch);
+  const hideMobileNavbar = isMobile && !!chatMatch && chatKeyboardFocused;
+  const showDashboardBack = isMobile
+    ? !!logsMatch || !!settingsMatch
+    : !!chatMatch || !!logsMatch || !!settingsMatch;
+  const showChatButton =
+    connected &&
+    agentDashboardMatch &&
+    name.length > 0 &&
+    !isMobile &&
+    chatCollapsed;
+
+  return (
+    <>
+      <Navbar
+        leading={
+          showDashboardBack ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="icon-lg"
+                  onClick={() =>
+                    navigate(`/agent/${encodeURIComponent(name)}`)
+                  }
+                >
+                  <LayoutDashboard />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>dashboard</TooltipContent>
+            </Tooltip>
+          ) : (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="icon-lg"
+                  onClick={() => navigate("/home")}
+                >
+                  <Home />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>home</TooltipContent>
+            </Tooltip>
+          )
+        }
+        center={
+          <>
+            <AgentIsland />
+            {isMobile && needsAuth && (
+              <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 flex flex-col items-center gap-2">
+                <Button
+                  variant="default"
+                  size="lg"
+                  onClick={() => void handleOpenAuth()}
+                >
+                  <KeyRound data-icon="inline-start" />
+                  reauthenticate
+                </Button>
+              </div>
+            )}
+          </>
+        }
+        trailing={
+          connected ? (
+            <div className="flex items-center gap-2">
+              <StatusPill showHostname={false} />
+              {!isMobile && needsAuth && (
+                <Button
+                  variant="default"
+                  size="lg"
+                  onClick={() => void handleOpenAuth()}
+                >
+                  <KeyRound data-icon="inline-start" />
+                  authenticate
+                </Button>
+              )}
+              {showChatButton && (
+                <Button
+                  variant="default"
+                  size="lg"
+                  onClick={() => setChatCollapsed(false)}
+                >
+                  <MessageSquare data-icon="inline-start" />
+                  chat
+                </Button>
+              )}
+              <div data-agent-menu className="flex items-center">
+                <AgentMenu />
+              </div>
+            </div>
+          ) : undefined
+        }
+      />
+      {showMobileNavbar && !hideMobileNavbar && (
+        <MobileNavbar progress={swipeProgress} />
+      )}
+    </>
+  );
+}

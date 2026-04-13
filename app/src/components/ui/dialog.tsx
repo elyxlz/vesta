@@ -1,97 +1,97 @@
-import * as React from "react"
-import { XIcon } from "lucide-react"
-import { Dialog as DialogPrimitive } from "radix-ui"
-import { Drawer as DrawerPrimitive } from "vaul"
+"use client";
 
-import { cn } from "@/lib/utils"
-import { Button } from "@/components/ui/button"
-import { useIsMobile } from "@/hooks/use-mobile"
+import * as React from "react";
+import { Dialog as DialogPrimitive } from "radix-ui";
+import { Drawer as DrawerPrimitive } from "vaul";
 
-interface DialogModeValue {
-  mode: "dialog" | "drawer"
-  responsive: boolean
-}
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { XIcon } from "lucide-react";
+import { useIsMobile } from "@/hooks/use-mobile";
 
-const DialogModeContext = React.createContext<DialogModeValue>({ mode: "dialog", responsive: false })
+const DrawerModeContext = React.createContext(false);
 
 function Dialog({
   drawerOnMobile,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Root> & {
-  drawerOnMobile?: boolean
+  drawerOnMobile?: boolean;
 }) {
-  const isMobile = useIsMobile()
-  const isDrawer = drawerOnMobile && isMobile
-  const ctx = React.useMemo<DialogModeValue>(
-    () => ({ mode: isDrawer ? "drawer" : "dialog", responsive: !!drawerOnMobile }),
-    [isDrawer, drawerOnMobile],
-  )
+  const isMobile = useIsMobile();
+  const isDrawer = !!drawerOnMobile && isMobile;
+
+  if (isDrawer) {
+    return (
+      <DrawerModeContext.Provider value={true}>
+        <DrawerPrimitive.Root data-slot="dialog" {...props} />
+      </DrawerModeContext.Provider>
+    );
+  }
 
   return (
-    <DialogModeContext.Provider value={ctx}>
-      {isDrawer ? (
-        <DrawerPrimitive.Root data-slot="dialog" {...props} />
-      ) : (
-        <DialogPrimitive.Root data-slot="dialog" {...props} />
-      )}
-    </DialogModeContext.Provider>
-  )
+    <DrawerModeContext.Provider value={false}>
+      <DialogPrimitive.Root data-slot="dialog" {...props} />
+    </DrawerModeContext.Provider>
+  );
 }
 
 function DialogTrigger({
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Trigger>) {
-  const { mode } = React.useContext(DialogModeContext)
-  if (mode === "drawer") {
-    return <DrawerPrimitive.Trigger data-slot="dialog-trigger" {...(props as React.ComponentProps<typeof DrawerPrimitive.Trigger>)} />
+  const isDrawer = React.useContext(DrawerModeContext);
+  if (isDrawer) {
+    return <DrawerPrimitive.Trigger data-slot="dialog-trigger" {...props} />;
   }
-  return <DialogPrimitive.Trigger data-slot="dialog-trigger" {...props} />
+  return <DialogPrimitive.Trigger data-slot="dialog-trigger" {...props} />;
 }
 
 function DialogPortal({
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Portal>) {
-  const { mode } = React.useContext(DialogModeContext)
-  if (mode === "drawer") {
-    return <DrawerPrimitive.Portal data-slot="dialog-portal" {...(props as React.ComponentProps<typeof DrawerPrimitive.Portal>)} />
+  const isDrawer = React.useContext(DrawerModeContext);
+  if (isDrawer) {
+    return <DrawerPrimitive.Portal data-slot="dialog-portal" {...props} />;
   }
-  return <DialogPrimitive.Portal data-slot="dialog-portal" {...props} />
+  return <DialogPrimitive.Portal data-slot="dialog-portal" {...props} />;
 }
 
 function DialogClose({
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Close>) {
-  const { mode } = React.useContext(DialogModeContext)
-  if (mode === "drawer") {
-    return <DrawerPrimitive.Close data-slot="dialog-close" {...(props as React.ComponentProps<typeof DrawerPrimitive.Close>)} />
+  const isDrawer = React.useContext(DrawerModeContext);
+  if (isDrawer) {
+    return <DrawerPrimitive.Close data-slot="dialog-close" {...props} />;
   }
-  return <DialogPrimitive.Close data-slot="dialog-close" {...props} />
+  return <DialogPrimitive.Close data-slot="dialog-close" {...props} />;
 }
 
 function DialogOverlay({
   className,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Overlay>) {
-  const { mode } = React.useContext(DialogModeContext)
-  if (mode === "drawer") {
+  const isDrawer = React.useContext(DrawerModeContext);
+  if (isDrawer) {
     return (
       <DrawerPrimitive.Overlay
         data-slot="dialog-overlay"
-        className={cn("fixed inset-0 z-50 bg-black/50", className)}
-        {...(props as React.ComponentProps<typeof DrawerPrimitive.Overlay>)}
+        className={cn(
+          "fixed inset-0 z-50 bg-black/30 supports-backdrop-filter:backdrop-blur-sm data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
+          className,
+        )}
+        {...props}
       />
-    )
+    );
   }
   return (
     <DialogPrimitive.Overlay
       data-slot="dialog-overlay"
       className={cn(
-        "fixed inset-0 z-50 bg-black/50 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0",
-        className
+        "fixed inset-0 isolate z-50 bg-black/30 duration-100 supports-backdrop-filter:backdrop-blur-sm data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
+        className,
       )}
       {...props}
     />
-  )
+  );
 }
 
 function DialogContent({
@@ -100,65 +100,70 @@ function DialogContent({
   showCloseButton = true,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
-  showCloseButton?: boolean
+  showCloseButton?: boolean;
 }) {
-  const { mode, responsive } = React.useContext(DialogModeContext)
+  const isDrawer = React.useContext(DrawerModeContext);
 
-  if (mode === "drawer") {
+  if (isDrawer) {
     return (
       <DrawerPrimitive.Portal data-slot="dialog-portal">
         <DrawerPrimitive.Overlay
           data-slot="dialog-overlay"
-          className="fixed inset-0 z-50 bg-black/50"
+          className="fixed inset-0 z-50 bg-black/30 supports-backdrop-filter:backdrop-blur-sm data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0"
         />
         <DrawerPrimitive.Content
           data-slot="dialog-content"
-          className="group/drawer-content fixed inset-x-0 bottom-0 z-50 mt-24 flex h-auto max-h-[80vh] flex-col rounded-t-lg border-t bg-background"
+          className={cn(
+            "group/drawer-content fixed inset-x-0 bottom-0 z-50 mt-24 flex h-auto max-h-[80vh] flex-col bg-transparent p-4 text-sm before:absolute before:inset-x-2 before:top-0 before:-bottom-10 before:-z-10 before:rounded-4xl before:rounded-b-none before:border before:border-b-0 before:border-border before:bg-popover before:shadow-xl",
+            className,
+          )}
         >
-          <div className="mx-auto mt-4 h-2 w-[100px] shrink-0 rounded-full bg-muted" />
-          <div className="flex flex-col gap-4 overflow-y-auto p-6">
+          <div className="mx-auto mt-4 h-1.5 w-[100px] shrink-0 rounded-full bg-muted" />
+          <div className="flex flex-col gap-6 p-4 pb-8 overflow-y-auto">
             {children}
           </div>
         </DrawerPrimitive.Content>
       </DrawerPrimitive.Portal>
-    )
+    );
   }
 
   return (
-    <DialogPortal data-slot="dialog-portal">
+    <DialogPortal>
       <DialogOverlay />
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(
-          "fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border bg-background p-6 shadow-lg duration-200 outline-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95",
-          responsive ? "lg:max-w-lg" : "sm:max-w-lg",
-          className
+          "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-6 rounded-4xl bg-popover p-6 text-sm text-popover-foreground shadow-xl ring-1 ring-foreground/5 duration-100 outline-none sm:max-w-md dark:ring-foreground/10 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          className,
         )}
         {...props}
       >
         {children}
         {showCloseButton && (
-          <DialogPrimitive.Close
-            data-slot="dialog-close"
-            className="absolute top-4 right-4 rounded-xs opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
-          >
-            <XIcon />
-            <span className="sr-only">Close</span>
+          <DialogPrimitive.Close data-slot="dialog-close" asChild>
+            <Button
+              variant="ghost"
+              className="absolute top-4 right-4 bg-secondary"
+              size="icon-sm"
+            >
+              <XIcon />
+              <span className="sr-only">Close</span>
+            </Button>
           </DialogPrimitive.Close>
         )}
       </DialogPrimitive.Content>
     </DialogPortal>
-  )
+  );
 }
 
 function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="dialog-header"
-      className={cn("flex flex-col gap-2", className)}
+      className={cn("flex flex-col gap-1.5 text-left", className)}
       {...props}
     />
-  )
+  );
 }
 
 function DialogFooter({
@@ -167,71 +172,99 @@ function DialogFooter({
   children,
   ...props
 }: React.ComponentProps<"div"> & {
-  showCloseButton?: boolean
+  showCloseButton?: boolean;
 }) {
+  const isDrawer = React.useContext(DrawerModeContext);
+
+  if (isDrawer) {
+    return (
+      <div
+        data-slot="dialog-footer"
+        className={cn("mt-auto flex flex-col gap-2", className)}
+        {...props}
+      >
+        {children}
+        {showCloseButton && (
+          <DrawerPrimitive.Close asChild>
+            <Button variant="outline">Close</Button>
+          </DrawerPrimitive.Close>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div
       data-slot="dialog-footer"
       className={cn(
         "flex flex-col-reverse gap-2 sm:flex-row sm:justify-end",
-        className
+        className,
       )}
       {...props}
     >
       {children}
       {showCloseButton && (
-        <DialogClose asChild>
+        <DialogPrimitive.Close asChild>
           <Button variant="outline">Close</Button>
-        </DialogClose>
+        </DialogPrimitive.Close>
       )}
     </div>
-  )
+  );
 }
 
 function DialogTitle({
   className,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Title>) {
-  const { mode } = React.useContext(DialogModeContext)
-  if (mode === "drawer") {
+  const isDrawer = React.useContext(DrawerModeContext);
+  if (isDrawer) {
     return (
       <DrawerPrimitive.Title
         data-slot="dialog-title"
-        className={cn("text-lg leading-none font-semibold", className)}
-        {...(props as React.ComponentProps<typeof DrawerPrimitive.Title>)}
+        className={cn(
+          "font-heading text-base font-medium text-foreground",
+          className,
+        )}
+        {...props}
       />
-    )
+    );
   }
   return (
     <DialogPrimitive.Title
       data-slot="dialog-title"
-      className={cn("text-lg leading-none font-semibold", className)}
+      className={cn(
+        "font-heading text-base leading-none font-medium",
+        className,
+      )}
       {...props}
     />
-  )
+  );
 }
 
 function DialogDescription({
   className,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Description>) {
-  const { mode } = React.useContext(DialogModeContext)
-  if (mode === "drawer") {
+  const isDrawer = React.useContext(DrawerModeContext);
+  if (isDrawer) {
     return (
       <DrawerPrimitive.Description
         data-slot="dialog-description"
         className={cn("text-sm text-muted-foreground", className)}
-        {...(props as React.ComponentProps<typeof DrawerPrimitive.Description>)}
+        {...props}
       />
-    )
+    );
   }
   return (
     <DialogPrimitive.Description
       data-slot="dialog-description"
-      className={cn("text-sm text-muted-foreground", className)}
+      className={cn(
+        "text-sm text-muted-foreground *:[a]:underline *:[a]:underline-offset-3 *:[a]:hover:text-foreground",
+        className,
+      )}
       {...props}
     />
-  )
+  );
 }
 
 export {
@@ -245,4 +278,4 @@ export {
   DialogPortal,
   DialogTitle,
   DialogTrigger,
-}
+};

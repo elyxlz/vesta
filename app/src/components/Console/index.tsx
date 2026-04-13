@@ -17,7 +17,13 @@ const MAX_LINES = 5000;
 const RECONNECT_BASE = 1000;
 const RECONNECT_MAX = 30000;
 
-const LOG_LEVEL_TAGS = new Set(["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]);
+const LOG_LEVEL_TAGS = new Set([
+  "DEBUG",
+  "INFO",
+  "WARNING",
+  "ERROR",
+  "CRITICAL",
+]);
 const FAMILY_TAGS = new Set(["AGENT", "SYSTEM", "USER", "EVENT"]);
 
 const FAMILY_COLOR_CLASS: Record<string, string> = {
@@ -86,14 +92,22 @@ function lineColorClass(line: string): string | null {
   if (familyIndex !== -1) {
     const family = tags[familyIndex];
     const subfamily = tags[familyIndex + 1];
-    return (subfamily && SUBFAMILY_COLOR_CLASS[family]?.[subfamily]) || FAMILY_COLOR_CLASS[family] || null;
+    return (
+      (subfamily && SUBFAMILY_COLOR_CLASS[family]?.[subfamily]) ||
+      FAMILY_COLOR_CLASS[family] ||
+      null
+    );
   }
 
   const legacyTag = tags.find((tag) => tag in LEGACY_TAG_TO_FAMILY);
   if (!legacyTag) return null;
 
   const family = LEGACY_TAG_TO_FAMILY[legacyTag];
-  return SUBFAMILY_COLOR_CLASS[family]?.[legacyTag] || FAMILY_COLOR_CLASS[family] || null;
+  return (
+    SUBFAMILY_COLOR_CLASS[family]?.[legacyTag] ||
+    FAMILY_COLOR_CLASS[family] ||
+    null
+  );
 }
 
 interface ConsoleProps {
@@ -112,45 +126,48 @@ export function Console({ name, onClose, fullscreen }: ConsoleProps) {
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeRef = useRef(true);
 
-  const startStreamRef = useRef<() => void>(undefined);
-  startStreamRef.current = () => {
-    if (!name || !activeRef.current) return;
-    stopLogs(name);
-    setEnded(false);
+  const startStream = useRef<() => void>(undefined);
 
-    streamLogs(name, (event) => {
-      switch (event.kind) {
-        case "Line": {
-          const stripped = stripAnsi(event.text);
-          setLines((prev) => {
-            const next = [...prev, stripped];
-            return next.length > MAX_LINES ? next.slice(-MAX_LINES) : next;
-          });
-          break;
-        }
-        case "End":
-        case "Error":
-          setEnded(true);
-          if (activeRef.current) {
-            reconnectTimerRef.current = setTimeout(() => {
-              reconnectDelayRef.current = Math.min(
-                reconnectDelayRef.current * 2,
-                RECONNECT_MAX,
-              );
-              startStreamRef.current?.();
-            }, reconnectDelayRef.current);
+  useEffect(() => {
+    startStream.current = () => {
+      if (!name || !activeRef.current) return;
+      stopLogs(name);
+      setEnded(false);
+
+      streamLogs(name, (event) => {
+        switch (event.kind) {
+          case "Line": {
+            const stripped = stripAnsi(event.text);
+            setLines((prev) => {
+              const next = [...prev, stripped];
+              return next.length > MAX_LINES ? next.slice(-MAX_LINES) : next;
+            });
+            break;
           }
-          break;
-      }
-    }).then(() => {
-      reconnectDelayRef.current = RECONNECT_BASE;
-    });
-  };
+          case "End":
+          case "Error":
+            setEnded(true);
+            if (activeRef.current) {
+              reconnectTimerRef.current = setTimeout(() => {
+                reconnectDelayRef.current = Math.min(
+                  reconnectDelayRef.current * 2,
+                  RECONNECT_MAX,
+                );
+                startStream.current?.();
+              }, reconnectDelayRef.current);
+            }
+            break;
+        }
+      }).then(() => {
+        reconnectDelayRef.current = RECONNECT_BASE;
+      });
+    };
+  });
 
   useEffect(() => {
     activeRef.current = true;
     setLines([]);
-    startStreamRef.current?.();
+    startStream.current?.();
     return () => {
       activeRef.current = false;
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
@@ -176,10 +193,12 @@ export function Console({ name, onClose, fullscreen }: ConsoleProps) {
   }, [onClose]);
 
   return (
-    <div className={cn(
-      "flex flex-col h-full",
-      fullscreen && "dark dark-overlay bg-[#1a1a1a] text-[#e8e8e8]",
-    )}>
+    <div
+      className={cn(
+        "flex flex-col h-full",
+        fullscreen && "dark dark-overlay bg-[#1a1a1a] text-[#e8e8e8]",
+      )}
+    >
       {!fullscreen && (
         <div className="flex items-center justify-between px-4 py-3 min-h-11 shrink-0 border-b border-white/5">
           <span className="text-sm font-medium">{name} logs</span>
@@ -206,10 +225,14 @@ export function Console({ name, onClose, fullscreen }: ConsoleProps) {
           "flex-1 overflow-y-auto font-mono text-xs leading-[1.6] text-white/70",
           fullscreen ? "px-page pb-page" : "px-3 py-2",
         )}
-        style={fullscreen ? {
-          paddingTop: `calc(${navbarHeight}px + var(--page-padding-x))`,
-          maskImage: `linear-gradient(to bottom, transparent, black ${navbarHeight * 2}px, black calc(100% - 20px), transparent)`,
-        } : undefined}
+        style={
+          fullscreen
+            ? {
+                paddingTop: `calc(${navbarHeight}px + var(--page-padding-x))`,
+                maskImage: `linear-gradient(to bottom, transparent, black ${navbarHeight * 2}px, black calc(100% - 15px), transparent)`,
+              }
+            : undefined
+        }
       >
         <div className="min-h-full flex flex-col justify-end">
           <div>

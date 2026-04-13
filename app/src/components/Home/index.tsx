@@ -1,102 +1,77 @@
-import { useEffect, useRef, useState } from "react";
-import { motion } from "motion/react";
-import { AgentCard } from "@/components/AgentCard";
-import { wsUrl } from "@/lib/connection";
-import { staggerContainer, staggerItem } from "@/lib/motion";
-import type { AgentActivityState } from "@/lib/types";
-import { useAgents } from "@/providers/AgentsProvider";
-import { cn } from "@/lib/utils";
+import { AnimatePresence, motion } from "motion/react";
+import { useGateway } from "@/providers/GatewayProvider";
+import { Card } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+import { AgentsCarousel } from "./AgentsCarousel";
+import { EmptyState } from "./EmptyState";
+
+function SkeletonCard({ opacity }: { opacity: number }) {
+  return (
+    <Card
+      className="flex shrink-0 items-center justify-center w-[220px] aspect-square"
+      style={{ opacity }}
+    >
+      <div className="flex flex-col items-center gap-3 px-5">
+        <Skeleton className="size-28 rounded-full" />
+        <Skeleton className="h-6 w-24 rounded-lg" />
+      </div>
+    </Card>
+  );
+}
+
+const SKELETON_COUNT = 6;
+
+function SkeletonList() {
+  return (
+    <motion.div
+      key="skeletons"
+      className="relative flex min-h-0 w-full flex-1 items-center gap-4 overflow-hidden"
+      style={{ paddingLeft: "calc(50% - 110px)" }}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.3 }}
+    >
+      {Array.from({ length: SKELETON_COUNT }, (_, i) => (
+        <SkeletonCard key={i} opacity={1 - i / SKELETON_COUNT} />
+      ))}
+      <p className="absolute bottom-12 left-0 right-0 text-center text-sm text-muted-foreground">
+        loading agents…
+      </p>
+    </motion.div>
+  );
+}
 
 export function Home() {
-  const { agents, agentsLoaded, refreshAgents } = useAgents();
-
-  const [activityStates, setActivityStates] = useState<
-    Record<string, AgentActivityState>
-  >({});
-  const wsRefs = useRef<Map<string, WebSocket>>(new Map());
-
-  useEffect(() => {
-    void refreshAgents();
-    const interval = setInterval(() => void refreshAgents(), 5000);
-    return () => clearInterval(interval);
-  }, [refreshAgents]);
-
-  useEffect(() => {
-    return () => {
-      for (const ws of wsRefs.current.values()) ws.close();
-      wsRefs.current.clear();
-    };
-  }, []);
-
-  useEffect(() => {
-    const aliveNames = new Set(
-      agents.filter((a) => a.alive).map((a) => a.name),
-    );
-    const current = wsRefs.current;
-
-    for (const [name, ws] of current.entries()) {
-      if (!aliveNames.has(name)) {
-        ws.close();
-        current.delete(name);
-      }
-    }
-
-    for (const name of aliveNames) {
-      if (current.has(name)) continue;
-      try {
-        const url = wsUrl(name);
-        const ws = new WebSocket(url);
-        current.set(name, ws);
-        ws.onmessage = (e) => {
-          if (typeof e.data !== "string") return;
-          try {
-            const data = JSON.parse(e.data);
-            if (data.type === "status") {
-              setActivityStates((prev) => ({ ...prev, [name]: data.state }));
-            } else if (data.type === "history" && data.state) {
-              setActivityStates((prev) => ({ ...prev, [name]: data.state }));
-            }
-          } catch {
-            // ignore
-          }
-        };
-        ws.onclose = () => {
-          current.delete(name);
-        };
-      } catch {
-        // ignore ws errors
-      }
-    }
-  }, [agents]);
-
-  if (!agentsLoaded || agents.length === 0) return null;
-
-  const gridCols =
-    agents.length === 1
-      ? "grid-cols-1 max-w-[300px]"
-      : agents.length === 2
-        ? "grid-cols-2 max-w-[520px]"
-        : "grid-cols-3";
+  const { agentsFetched, agents } = useGateway();
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex-1 flex items-center justify-center overflow-y-auto px-4">
+    <AnimatePresence mode="wait">
+      {!agentsFetched ? (
+        <SkeletonList />
+      ) : agents.length === 0 ? (
         <motion.div
-          className={cn("grid gap-6 mx-auto", gridCols)}
-          variants={staggerContainer}
-          initial="hidden"
-          animate="show"
+          key="empty"
+          className="flex min-h-0 w-full flex-1"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.3 }}
         >
-          {agents.map((agent) => (
-            <motion.div key={agent.name} variants={staggerItem}>
-              <AgentCard
-                agent={agent}
-                activityState={activityStates[agent.name] ?? "idle"}
-              />
-            </motion.div>
-          ))}
+          <EmptyState />
         </motion.div>
-      </div>
-    </div>
+      ) : (
+        <motion.div
+          key="agents"
+          className="flex min-h-0 w-full flex-1"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.3 }}
+        >
+          <AgentsCarousel agents={agents} />
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }
