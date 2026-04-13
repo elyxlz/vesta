@@ -9,7 +9,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty"
 import { AppSidebar } from "@/components/app-sidebar"
-import { Shell } from "@/components/shell"
+import { Shell, useShellRef } from "@/components/shell"
 import { SiteHeader } from "@/components/site-header"
 import { getAgentName, waitForAuth } from "@/lib/parent-bridge"
 import { config, type PageConfig } from "./config"
@@ -64,11 +64,49 @@ function loadActivePage(pages: PageConfig[]): string {
   return firstNavigablePage(pages)
 }
 
-export default function App() {
+function DashboardContent() {
+  const shellRef = useShellRef()
   const [pages, setPages] = useState(loadPageOrder)
   const [activePageId, setActivePageId] = useState(() => loadActivePage(pages))
-  const [agentName, setAgentName] = useState(getAgentName)
   const activePage = findPage(pages, activePageId)
+
+  return (
+    <TooltipProvider>
+      <SidebarProvider
+        container={shellRef.current}
+        style={
+          {
+            "--sidebar-width": "calc(var(--spacing) * 52)",
+            "--header-height": "calc(var(--spacing) * 12)",
+          } as React.CSSProperties
+        }
+      >
+        <AppSidebar
+          config={config}
+          pages={pages}
+          onReorder={(reordered) => {
+            setPages(reordered)
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(reordered.map((p) => p.id)))
+          }}
+          activePageId={activePageId}
+          onNavigate={(id) => {
+            setActivePageId(id)
+            localStorage.setItem(ACTIVE_PAGE_KEY, id)
+          }}
+        />
+        <SidebarInset>
+          <SiteHeader title={activePage?.title ?? ""} />
+          <div className="@container/main overflow-y-auto flex-1 min-h-0 px-4 py-4 lg:px-6">
+            {activePage?.component && <activePage.component />}
+          </div>
+        </SidebarInset>
+      </SidebarProvider>
+    </TooltipProvider>
+  )
+}
+
+export default function App() {
+  const [agentName, setAgentName] = useState(getAgentName)
 
   useEffect(() => {
     waitForAuth().then(() => setAgentName(getAgentName()))
@@ -94,36 +132,7 @@ export default function App() {
 
   return (
     <Shell>
-      <TooltipProvider>
-        <SidebarProvider
-          style={
-            {
-              "--sidebar-width": "calc(var(--spacing) * 52)",
-              "--header-height": "calc(var(--spacing) * 12)",
-            } as React.CSSProperties
-          }
-        >
-          <AppSidebar
-            config={config}
-            pages={pages}
-            onReorder={(reordered) => {
-              setPages(reordered)
-              localStorage.setItem(STORAGE_KEY, JSON.stringify(reordered.map((p) => p.id)))
-            }}
-            activePageId={activePageId}
-            onNavigate={(id) => {
-              setActivePageId(id)
-              localStorage.setItem(ACTIVE_PAGE_KEY, id)
-            }}
-          />
-          <SidebarInset>
-            <SiteHeader title={activePage?.title ?? ""} />
-            <div className="@container/main overflow-y-auto flex-1 min-h-0 px-4 py-4 lg:px-6">
-              {activePage?.component && <activePage.component />}
-            </div>
-          </SidebarInset>
-        </SidebarProvider>
-      </TooltipProvider>
+      <DashboardContent />
     </Shell>
   )
 }
