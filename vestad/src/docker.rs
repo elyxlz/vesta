@@ -82,7 +82,7 @@ const MOUNT_DESTS: &[&str] = &["/run/vestad-env", "/root/vesta/agent/src/vesta",
 /// local branch if it doesn't exist yet, then exec the agent.
 const ENTRYPOINT: &[&str] = &[
     "sh", "-c",
-    ". /run/vestad-env; . ~/.bashrc || true; \
+    "cp /run/vestad-env ~/.bashrc; . ~/.bashrc; \
      git -C ~/vesta config user.name \"$AGENT_NAME\" && \
      git -C ~/vesta config user.email \"$AGENT_NAME@vesta\"; \
      uv sync --frozen --project /root/vesta/agent; \
