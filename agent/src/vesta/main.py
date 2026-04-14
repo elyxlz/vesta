@@ -179,7 +179,6 @@ def init_state(*, config: vm.VestaConfig) -> vm.State:
     return vm.State(last_dreamer_run=last_dreamer_run, session_id=session_id, event_bus=event_bus)
 
 
-
 async def async_main() -> None:
     config = vm.VestaConfig()
     logger.init("Config:")
