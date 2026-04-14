@@ -131,7 +131,7 @@ The user's important people are [agent_name]'s important people too. Keeps track
 - `$VESTAD_PORT` is available as an env var (sourced from `/run/vestad-env` at container start)
 - Use this for anything: skill servers (e.g. voice, dashboard), custom APIs, webhooks, etc.
 - To add a new server: register with vestad to get a port, start it in a screen session, and add the command to `restart.md`
-- **Public services**: pass `"public": true` in the registration body to make a service accessible without authentication (e.g. hosting a website). Public services are fully open — no auth token needed. Example: `curl -sk -X POST ... -d '{"name":"my-site", "public": true}'`. Default is `false` (requires auth).
+- **Public services**: pass `"public": true` in the registration body to make a service accessible without authentication (e.g. hosting a website). Public services are fully open, no auth token needed. Example: `curl -sk -X POST ... -d '{"name":"my-site", "public": true}'`. Default is `false` (requires auth).
 - **Invalidation**: after rebuilding/restarting a service or changing its config, notify connected clients by calling: `curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services/<name>/invalidate`. Optionally pass `{"scope": "<part>"}` to indicate what changed (e.g. `{"scope": "stt"}`). Omit the body for a full invalidation. This tells the app to reload/refresh that service (e.g. reload the dashboard iframe, re-fetch voice settings).
 
 ### Self-Modification
