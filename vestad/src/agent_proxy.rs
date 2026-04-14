@@ -50,8 +50,9 @@ pub async fn agent_proxy_handler(
         (agent_port, format!("/{}", path), None)
     };
 
-    // Non-public services skip auth so assets load in iframes via token injection.
-    if service.is_none() && !auth::has_valid_api_auth(request.headers(), request.uri(), &state.api_key) {
+    // Public services are fully open; everything else requires auth.
+    let is_public = service.as_ref().is_some_and(|s| s.public);
+    if !is_public && !auth::has_valid_api_auth(request.headers(), request.uri(), &state.api_key) {
         return Err(err_response(StatusCode::UNAUTHORIZED, "unauthorized — pass a valid Bearer token or ?token= query parameter"));
     }
 
@@ -86,20 +87,8 @@ pub async fn agent_proxy_handler(
         }))
     } else {
         drop(guard);
-        let is_service_root = service.as_ref().is_some_and(|s| !s.public)
-            && path.strip_suffix('/').unwrap_or(&path) == first_segment;
-        let token = if is_service_root {
-            crate::service_proxy::extract_token(request.uri())
-        } else {
-            None
-        };
-        let resp =
-            forward_http_to_container(&state.http_client, target_port, &target_path, request, agent_token.as_deref())
-                .await?;
-        match token {
-            Some(token) => crate::service_proxy::rewrite_asset_urls(resp, &token).await,
-            None => Ok(resp),
-        }
+        forward_http_to_container(&state.http_client, target_port, &target_path, request, agent_token.as_deref())
+            .await
     }
 }
 
