@@ -107,7 +107,6 @@ Keep the container's filesystem organized and disk usage under control.
 
 - Delete temp files, stale downloads, leftover build artifacts, and anything in `/tmp` that's no longer needed
 - Clean up old log files (`~/vesta/logs/`). Keep the last few days, remove the rest
-- Prune old dreamer summaries if they're piling up. Keep the last ~30, archive or delete older ones
 - Check `df -h` and `du -sh ~/` periodically. If disk usage is growing unexpectedly, investigate and clean up
 - Kill orphaned screen sessions that are no longer needed (`screen -ls`, `screen -S name -X quit`)
 - Remove unused packages or build caches if they're taking significant space (`uv cache clean`, `apt clean`)
@@ -116,11 +115,7 @@ The goal: a tidy workspace where everything has a purpose. If something is left 
 
 ## Sensitive Data Cleanup
 
-Scan conversation history for leaked secrets: API keys, tokens, passwords, private keys, connection strings. Run `~/vesta/skills/dream/scripts/redact_secrets.sh` to check. If it finds matches, review them — if they're genuine secrets (not just the word "password" in a normal sentence), run with `--delete` to purge those events from the database.
-
-Also search MEMORY.md, dreamer summaries, and any skill files you touched tonight for accidentally written-down credentials. If you find any, remove them.
-
-The goal: no secrets persist in conversation history or agent-writable files. If a secret was needed during the day (e.g., user pasted a token for setup), it should live only in environment variables or encrypted config — not in the event DB or memory.
+Run `~/vesta/skills/dream/scripts/redact_secrets.sh` to scan the event DB for API keys, tokens, passwords, private keys, and connection strings. Review matches (skip false positives), then rerun with `--delete` to purge. Also grep MEMORY.md and dreamer summaries for credentials and remove any you find. Secrets belong in env vars, not in history or files.
 
 ## Summary
 
