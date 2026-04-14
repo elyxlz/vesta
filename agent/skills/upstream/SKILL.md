@@ -19,12 +19,12 @@ The upstream repo contains agent code under `agent/`, plus non-agent code (app/,
 On first boot, the agent creates a branch named after itself (e.g. `athena`) starting from the release tag it was deployed on (`v$VESTA_VERSION`). All local customizations are committed to this branch. The branch never tracks or pushes to any remote.
 
 ```
-v0.1.132 (tag) ← branch starts here
-  → local: "add stocks skill"
-  → local: "tweak dashboard config"
-  → merge: "Merge tag v0.1.133"
-  → local: "add reminder tests"
-  → merge: "Merge tag v0.1.134"
+v0.1.132 (tag)  <-- branch starts here
+  * local: "add stocks skill"
+  * local: "tweak dashboard config"
+  * merge: "Merge tag v0.1.133"
+  * local: "add reminder tests"
+  * merge: "Merge tag v0.1.134"
 ```
 
 To see all local customizations vs upstream: `git diff v0.1.134..$AGENT_NAME`
@@ -39,24 +39,11 @@ git -C ~/vesta checkout -b "$AGENT_NAME" "v$VESTA_VERSION"
 
 ## Pulling upstream changes (sync)
 
-Sync against **release tags**, not master. Use `$VESTA_VERSION` to know your current version. Your local branch already exists (created at first boot) — all local work must be committed to it before merging.
+Sync against **release tags**, not master. Use `$VESTA_VERSION` to know your current version.
 
 ### Steps
 
-1. **Commit all local work first:**
-   The merge will fail if there are uncommitted changes. Stage and commit everything:
-   ```bash
-   cd ~/vesta
-   git add agent/
-   git status
-   ```
-   If there are uncommitted changes:
-   ```bash
-   git commit -m "local: <describe what changed>"
-   ```
-   Repeat until `git status` shows a clean working tree. Do not proceed with uncommitted work.
-
-2. **Fetch and find latest release:**
+1. **Fetch and find latest release:**
    ```bash
    git -C ~/vesta fetch origin --tags --prune --prune-tags
    LATEST=$(git -C ~/vesta tag --sort=-v:refname | grep '^v' | head -1)
@@ -64,37 +51,24 @@ Sync against **release tags**, not master. Use `$VESTA_VERSION` to know your cur
    ```
    If `$LATEST` matches `v$VESTA_VERSION`, there's nothing to sync. Stop here.
 
+2. **Commit any uncommitted local changes:**
+   ```bash
+   git -C ~/vesta add agent/ && git -C ~/vesta commit -m "Local state before merge v$VESTA_VERSION to $LATEST"
+   ```
+   Skip if working tree is clean.
+
 3. **Merge the release tag:**
    ```bash
-   git -C ~/vesta merge "$LATEST" --no-edit
+   git -C ~/vesta merge -X theirs "$LATEST" --no-edit
    ```
-   If the merge completes cleanly, skip to step 5.
+   `-X theirs` auto-resolves conflicts in favor of upstream. If there are still conflicts (rare), git will stop and list them.
 
-4. **Resolve conflicts:**
-   If git reports conflicts, handle each file using these rules:
-
-   **Small conflicts** (a few lines, clear what changed):
-   - Accept the upstream (release) version of the conflicting lines
-   - Then re-apply your local change on top if it's still relevant
-   - `git add <file>`
-
-   **Large conflicts** (whole sections rewritten, hard to untangle):
-   - Take the entire upstream version of the file: `git checkout --theirs <file>`
-   - `git add <file>`
-   - After the merge is complete, review what local changes you lost (`git diff v$VESTA_VERSION..$AGENT_NAME -- <file>` shows your old customizations)
-   - Re-implement your changes cleanly on top of the new upstream code in a separate commit
-
-   **Conflicts in files you customized meaningfully** (SKILL.md you rewrote, config you tuned, skill code you modified):
-   - Show the user both versions — your local version and the upstream version
-   - Ask the user which parts to keep and how to combine them
-   - Do not auto-resolve these without user input
-
-   **MEMORY.md**: Always keep yours. `git checkout --ours agent/MEMORY.md && git add agent/MEMORY.md`
-
-   After all conflicts are resolved:
-   ```bash
-   git commit --no-edit
-   ```
+4. **Resolve any remaining conflicts:**
+   For each conflicted file:
+   - Read the conflict markers
+   - **Default to keeping upstream (theirs)** unless the local change is a meaningful customization
+   - If unsure, show the user both versions and ask which to keep
+   - After resolving: `git add <file>` then `git commit --no-edit`
 
 5. **Rebuild affected services:**
    - If dashboard files changed: rebuild and restart dashboard
@@ -102,9 +76,6 @@ Sync against **release tags**, not master. Use `$VESTA_VERSION` to know your cur
    - If Python deps changed (`pyproject.toml`): `cd ~/vesta/agent && uv sync`
 
 6. **Verify:** Check that services are running (`screen -ls`), test key endpoints.
-
-7. **PR any improvements:**
-   After syncing, review what you changed locally since the last sync (`git diff $LATEST..$AGENT_NAME`). If any of those changes are universal improvements (bug fixes, prompt improvements, new skills, skill code improvements), PR them following the "Pushing local changes upstream" instructions below. See "What to PR" for what qualifies.
 
 ### What NOT to sync
 - `agent/MEMORY.md` (yours is personal, never overwrite)
@@ -124,13 +95,13 @@ Local diverges from upstream, so never branch from local HEAD for a PR. Instead:
    ```bash
    cd /tmp/vesta-pr
    git add ... && git commit -m "..."
-   uv run ~/vesta/agent/skills/upstream/pr.py --title "..." --body "..."
+   uv run ~/vesta/skills/upstream/pr.py --title "..." --body "..."
    ```
 4. Clean up worktree when done: `git -C ~/vesta worktree remove /tmp/vesta-pr`
 
 To get a raw GitHub token for API access:
 ```bash
-uv run ~/vesta/agent/skills/upstream/pr.py --token-only
+uv run ~/vesta/skills/upstream/pr.py --token-only
 ```
 
 ## What to PR
@@ -144,7 +115,7 @@ uv run ~/vesta/agent/skills/upstream/pr.py --token-only
 
 ## How it works
 - Authenticates via the `vesta-upstream` GitHub App (ID 2990557)
-- Private key lives at `~/vesta/agent/skills/upstream/private-key.pem`
+- Private key lives at `~/vesta/skills/upstream/private-key.pem`
 - Generates a short-lived installation token, pushes the branch, creates the PR
 - No personal GitHub account or CLI auth needed
 
