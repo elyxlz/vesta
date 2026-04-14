@@ -1084,14 +1084,14 @@ pub async fn snapshot_container(_docker: &Docker, cname: &str, tag: &str, change
     tokio::time::timeout(
         std::time::Duration::from_secs(SNAPSHOT_TIMEOUT_SECS),
         tokio::task::spawn_blocking(move || {
-            let export_child = std::process::Command::new("docker")
+            let mut export_child = std::process::Command::new("docker")
                 .args(["export", &cname])
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
                 .spawn()
                 .map_err(|e| DockerError::Failed(format!("failed to start docker export: {e}")))?;
 
-            let export_stdout = export_child.stdout
+            let export_stdout = export_child.stdout.take()
                 .ok_or_else(|| DockerError::Failed("docker export stdout not available".into()))?;
 
             let mut import_args = vec!["import".to_string()];
@@ -1108,6 +1108,12 @@ pub async fn snapshot_container(_docker: &Docker, cname: &str, tag: &str, change
                 .output()
                 .map_err(|e| DockerError::Failed(format!("failed to run docker import: {e}")))?;
 
+            let export_output = export_child.wait_with_output()
+                .map_err(|e| DockerError::Failed(format!("docker export wait failed: {e}")))?;
+            if !export_output.status.success() {
+                let stderr = String::from_utf8_lossy(&export_output.stderr);
+                return Err(DockerError::Failed(format!("docker export failed: {stderr}")));
+            }
             if !import_output.status.success() {
                 let stderr = String::from_utf8_lossy(&import_output.stderr);
                 return Err(DockerError::Failed(format!("docker import failed: {stderr}")));
