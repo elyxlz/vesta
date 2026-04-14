@@ -27,7 +27,7 @@ Core code (`agent/src/vesta/`, `agent/pyproject.toml`, `agent/uv.lock`) is manag
 
 2. **Fetch and check for updates.**
    ```bash
-   git -C ~/vesta fetch --depth 1 origin "$VESTA_UPSTREAM_REF"
+   git -C ~/vesta fetch origin "$VESTA_UPSTREAM_REF"
    CURRENT=$(git -C ~/vesta rev-parse HEAD)
    LATEST=$(git -C ~/vesta rev-parse FETCH_HEAD)
    echo "Current: $CURRENT, Latest: $LATEST"
