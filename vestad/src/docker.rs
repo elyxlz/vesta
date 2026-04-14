@@ -3,7 +3,7 @@ use bollard::container::{
     RemoveContainerOptions, StartContainerOptions, StopContainerOptions, UploadToContainerOptions,
 };
 use bollard::image::{
-    BuildImageOptions, CommitContainerOptions, CreateImageOptions, ImportImageOptions,
+    BuildImageOptions, CreateImageOptions, ImportImageOptions,
     ListImagesOptions, RemoveImageOptions, TagImageOptions,
 };
 use bollard::Docker;
@@ -1071,30 +1071,53 @@ pub async fn remove_container_force(docker: &Docker, cname: &str) -> Result<(), 
 
 // --- Snapshot ---
 
-/// Snapshot a container's filesystem as a new image using docker commit.
-/// Optional `changes` apply Dockerfile instructions (e.g. LABEL) to the committed image.
-pub async fn snapshot_container(docker: &Docker, cname: &str, tag: &str, changes: &[&str]) -> Result<(), DockerError> {
-    let (repo, tag_name) = match tag.rsplit_once(':') {
-        Some((r, t)) => (r.to_string(), t.to_string()),
-        None => (tag.to_string(), "latest".to_string()),
-    };
+const SNAPSHOT_TIMEOUT_SECS: u64 = 7200; // 2 hours — 25GB+ containers can take a long time
 
-    let changes_opt = if changes.is_empty() {
-        None
-    } else {
-        Some(changes.join("\n"))
-    };
+/// Snapshot a container's filesystem as a new image using `docker export | docker import`.
+/// Unlike `docker commit`, this doesn't depend on parent image layers existing.
+/// Optional `changes` apply Dockerfile instructions (e.g. LABEL) to the imported image.
+pub async fn snapshot_container(_docker: &Docker, cname: &str, tag: &str, changes: &[&str]) -> Result<(), DockerError> {
+    let cname = cname.to_string();
+    let tag = tag.to_string();
+    let changes: Vec<String> = changes.iter().map(|s| s.to_string()).collect();
 
-    let opts = CommitContainerOptions {
-        container: cname.to_string(),
-        repo: repo.clone(),
-        tag: tag_name.clone(),
-        changes: changes_opt,
-        ..Default::default()
-    };
+    tokio::time::timeout(
+        std::time::Duration::from_secs(SNAPSHOT_TIMEOUT_SECS),
+        tokio::task::spawn_blocking(move || {
+            let export_child = std::process::Command::new("docker")
+                .args(["export", &cname])
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .map_err(|e| DockerError::Failed(format!("failed to start docker export: {e}")))?;
 
-    docker.commit_container(opts, Config::<String>::default()).await?;
-    Ok(())
+            let export_stdout = export_child.stdout
+                .ok_or_else(|| DockerError::Failed("docker export stdout not available".into()))?;
+
+            let mut import_args = vec!["import".to_string()];
+            for change in &changes {
+                import_args.push("--change".to_string());
+                import_args.push(change.clone());
+            }
+            import_args.push("-".to_string());
+            import_args.push(tag);
+
+            let import_output = std::process::Command::new("docker")
+                .args(&import_args)
+                .stdin(export_stdout)
+                .output()
+                .map_err(|e| DockerError::Failed(format!("failed to run docker import: {e}")))?;
+
+            if !import_output.status.success() {
+                let stderr = String::from_utf8_lossy(&import_output.stderr);
+                return Err(DockerError::Failed(format!("docker import failed: {stderr}")));
+            }
+            Ok(())
+        }),
+    )
+    .await
+    .map_err(|_| DockerError::Failed(format!("snapshot timed out after {SNAPSHOT_TIMEOUT_SECS}s")))?
+    .map_err(|e| DockerError::Failed(format!("snapshot task failed: {e}")))?
 }
 
 // --- Container creation ---
