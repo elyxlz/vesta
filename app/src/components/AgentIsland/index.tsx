@@ -53,7 +53,7 @@ export function AgentIsland() {
           "will-change-[transform,opacity]",
           "border border-border bg-popover text-base text-popover-foreground shadow-sm",
           expanded
-            ? "absolute top-0 left-1/2 -translate-x-1/2 aspect-square w-[min(100vw-2rem,178px)] shrink-0 overflow-visible"
+            ? "absolute top-0 left-1/2 -translate-x-1/2 aspect-square w-[min(100vw-2rem,178px)] shrink-0 overflow-hidden"
             : "mx-auto h-full w-fit max-w-[min(100vw-2rem,280px)] overflow-hidden flex items-center",
         )}
       >
