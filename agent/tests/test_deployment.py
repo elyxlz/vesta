@@ -121,9 +121,10 @@ def test_no_space_dash_space_separator_in_prose():
     assert files, "No markdown files found"
 
     import re
+
     # Pattern: ` - ` used as prose separator. Skip when preceded by backtick (CLI desc),
     # UPPER_SNAKE (env var desc), or when the line quotes the literal pattern.
-    definition_re = re.compile(r'(`[^`]+`|[A-Z][A-Z_0-9]+)\s+-\s+')
+    definition_re = re.compile(r"(`[^`]+`|[A-Z][A-Z_0-9]+)\s+-\s+")
 
     violations: list[str] = []
     for path in files:
@@ -151,9 +152,7 @@ def test_no_space_dash_space_separator_in_prose():
             rel = path.relative_to(agent_root.parent)
             violations.append(f"  {rel}:{lineno}: {stripped[:120]}")
 
-    assert not violations, (
-        "Found ' - ' used as a prose separator. Use commas, periods, colons, or restructure.\n" + "\n".join(violations)
-    )
+    assert not violations, "Found ' - ' used as a prose separator. Use commas, periods, colons, or restructure.\n" + "\n".join(violations)
 
 
 def test_skills_registry_scripts_executable():
