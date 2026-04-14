@@ -29,7 +29,7 @@ const info: TauriInfo = {
   isLinux: platform === "linux",
   isIOS: platform === "ios",
   isAndroid: platform === "android",
-  vibrancy: isTauri && (platform === "macos" || platform === "windows"),
+  vibrancy: isTauri && (platform === "macos" || platform === "windows" || platform === "linux"),
 };
 
 export function TauriProvider({ children }: { children: ReactNode }) {

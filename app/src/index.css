@@ -72,6 +72,24 @@
     --sidebar-accent: oklch(0.268 0.008 80 / 50%);
 }
 
+[data-platform="linux"].vibrancy {
+    --background: oklch(0.995 0.005 80 / 85%);
+    --card: oklch(0.995 0.005 80 / 85%);
+    --muted: oklch(0.97 0.006 80 / 90%);
+    --accent: oklch(0.97 0.006 80 / 85%);
+    --sidebar: oklch(0.985 0.006 80 / 85%);
+    --sidebar-accent: oklch(0.97 0.006 80 / 85%);
+}
+
+[data-platform="linux"].vibrancy.dark {
+    --background: oklch(0.147 0.005 80 / 85%);
+    --card: oklch(0.216 0.007 80 / 85%);
+    --muted: oklch(0.19 0.007 80 / 90%);
+    --accent: oklch(0.268 0.008 80 / 85%);
+    --sidebar: oklch(0.216 0.007 80 / 85%);
+    --sidebar-accent: oklch(0.268 0.008 80 / 85%);
+}
+
 .dark {
     --background: oklch(0.147 0.005 80);
     --foreground: oklch(0.985 0.006 80);
@@ -161,8 +179,14 @@
   html {
     @apply box-border flex h-dvh flex-col bg-background font-sans overscroll-none;
     }
+  .vibrancy {
+    background: transparent;
+    }
   body {
     @apply flex min-h-0 flex-1 flex-col bg-background text-foreground overscroll-none;
+    }
+  .vibrancy body {
+    background: transparent;
     }
   #root {
     @apply flex min-h-0 flex-1 flex-col;

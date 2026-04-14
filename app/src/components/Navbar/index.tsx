@@ -1,5 +1,6 @@
 import { useMeasuredHeight } from "@/hooks/use-measured-height";
 import { useLayout } from "@/stores/use-layout";
+import { WindowControls } from "@/components/WindowControls";
 
 interface NavbarProps {
   leading?: React.ReactNode;
@@ -40,6 +41,7 @@ export function Navbar({ leading, center, trailing }: NavbarProps) {
 
         <div data-tauri-drag-region className="flex items-center gap-2">
           {trailing}
+          <WindowControls />
         </div>
       </div>
     </div>

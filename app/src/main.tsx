@@ -15,7 +15,7 @@ d.style.setProperty("--titlebar-center-mt", isMacTauri ? "-0.25rem" : "0px");
 
 if (isTauri) {
   d.classList.add("tauri");
-  if (platform === "macos" || platform === "windows") {
+  if (platform === "macos" || platform === "windows" || platform === "linux") {
     d.classList.add("vibrancy");
   }
   if (import.meta.env.PROD) {

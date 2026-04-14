@@ -9,6 +9,7 @@ import { isTauri } from "@/lib/env";
 import { cn } from "@/lib/utils";
 import { router } from "@/router";
 import { useIsMobile } from "./hooks/use-mobile";
+import { useTauri } from "@/providers/TauriProvider";
 
 function AppContent() {
   const { loading, initialized, setLoading } = useAuth();
@@ -39,6 +40,7 @@ function AppContent() {
 
 export default function App() {
   const isMobile = useIsMobile();
+  const { isLinux } = useTauri();
   const isFullscreen = isMobile || isTauri;
 
   return (
@@ -46,6 +48,7 @@ export default function App() {
       className={cn(
         "flex min-h-0 flex-1 flex-col",
         isFullscreen ? "bg-muted" : "p-3.5 max-sm:p-2",
+        isLinux && isTauri && "overflow-hidden rounded-xl",
       )}
     >
       <div
