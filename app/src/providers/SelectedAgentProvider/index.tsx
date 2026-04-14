@@ -1,16 +1,11 @@
 import {
   createContext,
-  useCallback,
   useContext,
   useEffect,
-  useMemo,
-  useRef,
   useState,
   type ReactNode,
 } from "react";
-import { useParams } from "react-router-dom";
 import {
-  agentStatus,
   startAgent,
   stopAgent,
   restartAgent,
@@ -21,23 +16,27 @@ import {
   deleteBackup,
   deleteAgent,
   waitForReady,
-  waitForStopped,
   type BackupInfo,
 } from "@/api";
 import { useAgentOps, type AgentOperation } from "@/stores/use-agent-ops";
 import type { AgentInfo, AgentActivityState } from "@/lib/types";
+import {
+  getAgentVisualStatus,
+  type OrbVisualState,
+} from "@/components/Orb/styles";
 
 interface SelectedAgentContextValue {
   name: string;
-  agent: AgentInfo | null;
+  agent: AgentInfo;
   agentState: AgentActivityState;
   setAgentState: (state: AgentActivityState) => void;
 
   operation: AgentOperation;
   error: string;
+  statusLabel: string;
+  orbState: OrbVisualState;
   isBusy: boolean;
 
-  refreshAgent: () => Promise<void>;
   start: () => void;
   stop: () => void;
   restart: () => void;
@@ -50,128 +49,148 @@ interface SelectedAgentContextValue {
   remove: () => Promise<void>;
 }
 
-const SelectedAgentContext = createContext<SelectedAgentContextValue | null>(null);
+const SelectedAgentContext = createContext<SelectedAgentContextValue | null>(
+  null,
+);
 
-const POLL_INTERVAL = 5000;
-
-export function SelectedAgentProvider({ children }: { children: ReactNode }) {
-  const { name: routeName } = useParams<{ name: string }>();
-  const name = routeName ?? "";
-
-  const [agent, setAgent] = useState<AgentInfo | null>(null);
-  const [agentState, setAgentState] = useState<AgentActivityState>("idle");
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+export function SelectedAgentProvider({
+  agent,
+  children,
+}: {
+  agent: AgentInfo;
+  children: ReactNode;
+}) {
+  const name = agent.name;
+  const [agentState, setAgentState] = useState<AgentActivityState>(
+    agent.activityState,
+  );
 
   const withOp = useAgentOps((s) => s.withOp);
   const removeAgentOp = useAgentOps((s) => s.removeAgent);
   const opState = useAgentOps((s) => s.getOp(name));
   const isBusy = opState.operation !== "idle";
 
-  const refreshAgent = useCallback(async () => {
-    if (!name) return;
-    try {
-      setAgent(await agentStatus(name));
-    } catch { /* poll will catch up */ }
-  }, [name]);
+  const { label: statusLabel, orbState } = getAgentVisualStatus(
+    agent,
+    opState.operation,
+    opState.error,
+    agentState,
+  );
 
-  useEffect(() => {
-    if (!name) return;
-    const fetchStatus = async () => {
-      if (opState.operation !== "idle") return;
-      try {
-        setAgent(await agentStatus(name));
-      } catch {
-        // ignore
-      }
-    };
-    fetchStatus();
-    pollRef.current = setInterval(fetchStatus, POLL_INTERVAL);
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
-  }, [name, opState.operation]);
+  const start = () => {
+    withOp(
+      name,
+      "starting",
+      async () => {
+        await startAgent(name);
+        await waitForReady(name);
+      },
+      "start failed",
+    );
+  };
 
-  const start = useCallback(() => {
-    withOp(name, "starting", async () => {
-      await startAgent(name);
-      await waitForReady(name);
-      await refreshAgent();
-    }, "start failed");
-  }, [name, withOp, refreshAgent]);
+  const stop = () => {
+    withOp(
+      name,
+      "stopping",
+      async () => {
+        await stopAgent(name);
+      },
+      "stop failed",
+    );
+  };
 
-  const stop = useCallback(() => {
-    withOp(name, "stopping", async () => {
-      await stopAgent(name);
-      await waitForStopped(name);
-      await refreshAgent();
-    }, "stop failed");
-  }, [name, withOp, refreshAgent]);
+  const restart = () => {
+    withOp(
+      name,
+      "starting",
+      async () => {
+        await restartAgent(name);
+        await waitForReady(name);
+      },
+      "restart failed",
+    );
+  };
 
-  const restart = useCallback(() => {
-    withOp(name, "starting", async () => {
-      await restartAgent(name);
-      await refreshAgent();
-    }, "restart failed");
-  }, [name, withOp, refreshAgent]);
-
-  const rebuild = useCallback(() => {
-    withOp(name, "rebuilding", async () => {
-      await rebuildAgent(name);
-      await waitForReady(name);
-      await refreshAgent();
-    }, "rebuild failed");
-  }, [name, withOp, refreshAgent]);
+  const rebuild = () => {
+    withOp(
+      name,
+      "rebuilding",
+      async () => {
+        await rebuildAgent(name);
+        await waitForReady(name);
+      },
+      "rebuild failed",
+    );
+  };
 
   const [backups, setBackups] = useState<BackupInfo[]>([]);
 
-  const refreshBackups = useCallback(async () => {
+  const refreshBackups = async () => {
     if (!name) return;
     try {
       setBackups(await listBackups(name));
-    } catch { /* ignore */ }
-  }, [name]);
+    } catch {
+      /* ignore */
+    }
+  };
 
   useEffect(() => {
     refreshBackups();
-  }, [refreshBackups]);
+  }, [name]);
 
-  const backup = useCallback(() => {
-    withOp(name, "backing-up", async () => {
-      await createBackup(name);
-      await refreshBackups();
-    }, "backup failed");
-  }, [name, withOp, refreshBackups]);
+  const backup = () => {
+    withOp(
+      name,
+      "backing-up",
+      async () => {
+        await createBackup(name);
+        await refreshBackups();
+      },
+      "backup failed",
+    );
+  };
 
-  const restore = useCallback((backupId: string) => {
-    withOp(name, "restoring", async () => {
-      await restoreBackup(name, backupId);
-      await waitForReady(name);
-      await refreshAgent();
-      await refreshBackups();
-    }, "restore failed");
-  }, [name, withOp, refreshAgent, refreshBackups]);
+  const restore = (backupId: string) => {
+    withOp(
+      name,
+      "restoring",
+      async () => {
+        await restoreBackup(name, backupId);
+        await waitForReady(name);
+        await refreshBackups();
+      },
+      "restore failed",
+    );
+  };
 
-  const removeBackup = useCallback((backupId: string) => {
-    withOp(name, "deleting", async () => {
-      await deleteBackup(name, backupId);
-      await refreshBackups();
-    }, "delete backup failed");
-  }, [name, withOp, refreshBackups]);
+  const removeBackup = (backupId: string) => {
+    withOp(
+      name,
+      "deleting",
+      async () => {
+        await deleteBackup(name, backupId);
+        await refreshBackups();
+      },
+      "delete backup failed",
+    );
+  };
 
-  const remove = useCallback(async () => {
+  const remove = async () => {
     await withOp(name, "deleting", () => deleteAgent(name), "delete failed");
     removeAgentOp(name);
-  }, [name, withOp, removeAgentOp]);
+  };
 
-  const value = useMemo<SelectedAgentContextValue>(() => ({
+  const value: SelectedAgentContextValue = {
     name,
     agent,
     agentState,
     setAgentState,
     operation: opState.operation,
     error: opState.error,
+    statusLabel,
+    orbState,
     isBusy,
-    refreshAgent,
     start,
     stop,
     restart,
@@ -182,10 +201,7 @@ export function SelectedAgentProvider({ children }: { children: ReactNode }) {
     restore,
     removeBackup,
     remove,
-  }), [
-    name, agent, agentState, setAgentState, opState.operation, opState.error, isBusy,
-    refreshAgent, start, stop, restart, rebuild, backup, backups, refreshBackups, restore, removeBackup, remove,
-  ]);
+  };
 
   return (
     <SelectedAgentContext.Provider value={value}>
@@ -197,7 +213,9 @@ export function SelectedAgentProvider({ children }: { children: ReactNode }) {
 export function useSelectedAgent() {
   const context = useContext(SelectedAgentContext);
   if (!context) {
-    throw new Error("useSelectedAgent must be used within SelectedAgentProvider");
+    throw new Error(
+      "useSelectedAgent must be used within SelectedAgentProvider",
+    );
   }
   return context;
 }

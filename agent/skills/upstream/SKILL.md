@@ -1,12 +1,12 @@
 ---
 name: upstream
-description: Use when you need to contribute code, push a branch, open a pull request, submit a PR, sync with upstream, or do any git/GitHub operations on the vesta repo (elyxlz/vesta). IMPORTANT — always use this skill for GitHub access. Never use personal tokens or manual git push. Authentication is handled via the vesta-upstream GitHub App — no credentials needed from the user.
+description: Use when you need to contribute code, push a branch, open a pull request, submit a PR, sync with upstream, or do any git/GitHub operations on the vesta repo (elyxlz/vesta). IMPORTANT, always use this skill for GitHub access. Never use personal tokens or manual git push. Authentication is handled via the vesta-upstream GitHub App, no credentials needed from the user.
 ---
 
 # Upstream Integration
 
 Source repo: https://github.com/elyxlz/vesta
-Local fork: `~/vesta` (this is a fork — it diverges from upstream as local changes accumulate. Never try to merge or rebase; always apply changes manually and deliberately)
+Local fork: `~/vesta` (this is a fork that diverges from upstream as local changes accumulate. Never try to merge or rebase; always apply changes manually and deliberately)
 
 ## Path mapping
 
@@ -25,18 +25,18 @@ When running `git diff` or `git log` against upstream, always scope to `agent/` 
 
 ## Pulling upstream changes into local
 
-Sync against **GitHub releases**, not individual master commits. Releases are the stable, intentional milestones — master commits are noisy work-in-progress.
+Sync against **GitHub releases**, not individual master commits. Releases are the stable, intentional milestones; master commits are noisy work-in-progress.
 
 1. `git -C ~/vesta fetch origin --tags --prune --prune-tags`
 2. Find the latest release tag: `git -C ~/vesta tag --sort=-v:refname | head -5` (or `gh release list` via `--token-only` + API)
 3. Compare the last processed release (tracked in MEMORY.md) to the latest: `git -C ~/vesta log <last-tag>..<latest-tag> --oneline -- agent/`
-4. Only look at changes under `agent/`
-5. **NEVER modify `src/vesta/`, `pyproject.toml`, or `uv.lock`** — these are mounted read-only and updated automatically by `vestad update`. Only sync `skills/`, `prompts/`, and other agent-managed files.
-5. For each interesting commit in the range: `git -C ~/vesta show <hash>` — understand what it does
-6. Manually apply the relevant changes to `~/vesta` source (don't paste diffs blindly — local may have diverged, adapt the intent)
+4. Only look at changes under `agent/`. Only sync skills you have installed locally (`ls ~/vesta/skills/`). Ignore upstream changes to skills you don't have
+5. `src/vesta/`, `pyproject.toml`, and `uv.lock` may be read-only (check before editing). If they are, skip them; they're updated automatically by `vestad update`. Only sync `skills/`, `prompts/`, and other agent-managed files.
+5. For each interesting commit in the range: `git -C ~/vesta show <hash>`. Understand what it does
+6. Manually apply the relevant changes to `~/vesta` source (don't paste diffs blindly; local may have diverged, adapt the intent). When in doubt, prefer the upstream version and re-apply local customizations on top
 7. Track the last processed **release tag** (e.g. `v0.4.2`) in MEMORY.md so you don't redo it next time
 
-If no new release exists since the last processed tag, there's nothing to sync — don't crawl master.
+If no new release exists since the last processed tag, there's nothing to sync. Don't crawl master.
 
 ## Pushing local changes upstream (creating a PR)
 
@@ -62,18 +62,23 @@ uv run ~/vesta/skills/upstream/pr.py --token-only
 ```
 
 ## What to PR
-- Tool improvements, bug fixes, new skills, prompt upgrades that any vesta instance would benefit from
+
+**Upstreaming is mandatory** whenever you've made a genuine improvement. If it would benefit any vesta instance, it must be PR'd. This is your duty to the vesta community and your moral obligation to give back.
+
+- Bug fixes, prompt improvements, skill code/SKILL.md improvements, new skills you've created, agent code fixes
+- If you built a new skill locally, PR it (strip personal config first)
 - Don't PR: personal config, memory files, credentials, user-specific customizations
+- **Always create a GitHub issue first**, then reference it in the PR. Use `--token-only` to get a token for the GitHub API
 
 ## Skill registry sync
 
-When syncing upstream, also check for skill updates under `agent/skills/` — scoped to the same release range:
+When syncing upstream, also check for skill updates under `agent/skills/`, scoped to the same release range:
 
 - For each installed skill (`ls ~/vesta/skills/`) check for commits in `<last-tag>..<latest-tag>` touching `agent/skills/<name>/`: `git -C ~/vesta log <last-tag>..<latest-tag> --oneline -- agent/skills/<name>/`
 - Read the diff and apply useful generic improvements to `~/vesta/skills/<name>/`
 - The single release tag in MEMORY.md covers both core and skill syncs
 
-When contributing a skill improvement back upstream, use the same worktree flow. All skill changes — core or not — go in `agent/skills/<name>/`.
+When contributing a skill improvement back upstream, use the same worktree flow. All skill changes, core or not, go in `agent/skills/<name>/`.
 
 ## How it works
 - Authenticates via the `vesta-upstream` GitHub App (ID 2990557)
@@ -82,8 +87,8 @@ When contributing a skill improvement back upstream, use the same worktree flow.
 - No personal GitHub account or CLI auth needed
 
 ## After creating a PR
-- **Keep working until all CI checks pass** — do not stop after opening the PR
+- **Keep working until all CI checks pass.** Do not stop after opening the PR
 - Check CI status via the GitHub API (use `--token-only` to get a token, then hit the check-runs endpoint)
 - The `lockfile` check requires `uv lock` to be run in `~/vesta` if any Python dependencies changed
-- If any check fails: diagnose, fix, commit to the same branch, push — the PR updates automatically and CI reruns
+- If any check fails: diagnose, fix, commit to the same branch, push. The PR updates automatically and CI reruns
 - Only report the PR as done to the user once every check is green

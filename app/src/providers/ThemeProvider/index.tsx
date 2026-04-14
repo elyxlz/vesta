@@ -1,0 +1,196 @@
+import * as React from "react";
+import { isTauri } from "@/lib/env";
+
+const tauriCore = isTauri ? import("@tauri-apps/api/core") : null;
+function tauriInvoke(cmd: string, args?: Record<string, unknown>) {
+  tauriCore?.then(({ invoke }) => invoke(cmd, args));
+}
+
+type Theme = "dark" | "light" | "system";
+type ResolvedTheme = "dark" | "light";
+
+type ThemeProviderProps = {
+  children: React.ReactNode;
+  defaultTheme?: Theme;
+  storageKey?: string;
+  disableTransitionOnChange?: boolean;
+};
+
+type ThemeProviderState = {
+  theme: Theme;
+  resolvedTheme: ResolvedTheme;
+  setTheme: (theme: Theme) => void;
+  cycleTheme: () => void;
+};
+
+const COLOR_SCHEME_QUERY = "(prefers-color-scheme: dark)";
+const THEME_VALUES: Theme[] = ["dark", "light", "system"];
+
+const ThemeProviderContext = React.createContext<
+  ThemeProviderState | undefined
+>(undefined);
+
+function isTheme(value: string | null): value is Theme {
+  if (value === null) {
+    return false;
+  }
+
+  return THEME_VALUES.includes(value as Theme);
+}
+
+function getSystemTheme(): ResolvedTheme {
+  if (window.matchMedia(COLOR_SCHEME_QUERY).matches) {
+    return "dark";
+  }
+
+  return "light";
+}
+
+function disableTransitionsTemporarily() {
+  const style = document.createElement("style");
+  style.appendChild(
+    document.createTextNode(
+      "*,*::before,*::after{-webkit-transition:none!important;transition:none!important}",
+    ),
+  );
+  document.head.appendChild(style);
+
+  return () => {
+    window.getComputedStyle(document.body);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        style.remove();
+      });
+    });
+  };
+}
+
+export function ThemeProvider({
+  children,
+  defaultTheme = "system",
+  storageKey = "theme",
+  disableTransitionOnChange = true,
+  ...props
+}: ThemeProviderProps) {
+  const [theme, setThemeState] = React.useState<Theme>(() => {
+    const storedTheme = localStorage.getItem(storageKey);
+    if (isTheme(storedTheme)) {
+      return storedTheme;
+    }
+
+    return defaultTheme;
+  });
+
+  const [resolvedTheme, setResolvedTheme] = React.useState<ResolvedTheme>(() =>
+    theme === "system" ? getSystemTheme() : theme,
+  );
+
+  const setTheme = (nextTheme: Theme) => {
+    localStorage.setItem(storageKey, nextTheme);
+    setThemeState(nextTheme);
+  };
+
+  const applyTheme = (nextTheme: Theme) => {
+    const root = document.documentElement;
+    const resolved = nextTheme === "system" ? getSystemTheme() : nextTheme;
+    const restoreTransitions = disableTransitionOnChange
+      ? disableTransitionsTemporarily()
+      : null;
+
+    root.classList.remove("light", "dark");
+    root.classList.add(resolved);
+    root.style.colorScheme = resolved;
+    setResolvedTheme(resolved);
+
+    if (isTauri) {
+      tauriInvoke("set_theme", { theme: resolved });
+    }
+
+    if (restoreTransitions) {
+      restoreTransitions();
+    }
+  };
+
+  React.useEffect(() => {
+    applyTheme(theme);
+
+    if (theme !== "system") {
+      return undefined;
+    }
+
+    const mediaQuery = window.matchMedia(COLOR_SCHEME_QUERY);
+    const handleChange = () => {
+      applyTheme("system");
+    };
+
+    mediaQuery.addEventListener("change", handleChange);
+
+    return () => {
+      mediaQuery.removeEventListener("change", handleChange);
+    };
+  }, [theme, disableTransitionOnChange]);
+
+  const cycleTheme = React.useCallback(() => {
+    setThemeState((currentTheme) => {
+      const nextTheme =
+        currentTheme === "dark"
+          ? "light"
+          : currentTheme === "light"
+            ? "dark"
+            : getSystemTheme() === "dark"
+              ? "light"
+              : "dark";
+
+      localStorage.setItem(storageKey, nextTheme);
+      return nextTheme;
+    });
+  }, [storageKey]);
+
+  React.useEffect(() => {
+    const handleStorageChange = (event: StorageEvent) => {
+      if (event.storageArea !== localStorage) {
+        return;
+      }
+
+      if (event.key !== storageKey) {
+        return;
+      }
+
+      if (isTheme(event.newValue)) {
+        setThemeState(event.newValue);
+        return;
+      }
+
+      setThemeState(defaultTheme);
+    };
+
+    window.addEventListener("storage", handleStorageChange);
+
+    return () => {
+      window.removeEventListener("storage", handleStorageChange);
+    };
+  }, [defaultTheme, storageKey]);
+
+  const value: ThemeProviderState = {
+    theme,
+    resolvedTheme,
+    setTheme,
+    cycleTheme,
+  };
+
+  return (
+    <ThemeProviderContext.Provider {...props} value={value}>
+      {children}
+    </ThemeProviderContext.Provider>
+  );
+}
+
+export const useTheme = () => {
+  const context = React.useContext(ThemeProviderContext);
+
+  if (context === undefined) {
+    throw new Error("useTheme must be used within a ThemeProvider");
+  }
+
+  return context;
+};

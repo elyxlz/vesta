@@ -3,7 +3,15 @@ import { ChevronRight, Wrench } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { cn } from "@/lib/utils";
 
-export function ToolCallLabel({ tool, input, className }: { tool: string; input: string; className?: string }) {
+export function ToolCallLabel({
+  tool,
+  input,
+  className,
+}: {
+  tool: string;
+  input: string;
+  className?: string;
+}) {
   const [expanded, setExpanded] = useState(false);
 
   return (

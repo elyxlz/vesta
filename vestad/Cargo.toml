@@ -33,7 +33,14 @@ futures-core = "0.3"
 futures-util = "0.3"
 async-stream = "0.3"
 bytes = "1"
-reqwest = { version = "0.12", default-features = false, features = ["stream", "json"] }
+reqwest = { version = "0.12", default-features = false, features = ["stream", "json", "rustls-tls"] }
 dotenvy = "0.15"
 time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
+bollard = "0.18"
+tar = "0.4"
+flate2 = "1"
+tokio-util = { version = "0.7", features = ["io"] }
+
+[dev-dependencies]
+tempfile = "3"
 

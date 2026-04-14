@@ -37,7 +37,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Set up uv
-        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+        uses: astral-sh/setup-uv@v7
 
       - name: Check lockfile is up to date
         working-directory: agent
@@ -61,7 +61,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: '1.25'
 
@@ -81,10 +81,58 @@ jobs:
       # available in the Docker build environment. Compilation is verified
       # by the container image build in CI.
 
+  vite-base-check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Ensure vite base is "/" (required for Cloudflare Pages)
+        run: |
+          if grep -q 'base:\s*"\.\/"' app/vite.config.ts; then
+            echo '❌ app/vite.config.ts has base: "./" — must be "/" for Cloudflare deployments'
+            exit 1
+          fi
+          echo '✅ vite base path is correct'
+
+  install-script-check:
+    if: github.event_name == 'pull_request'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Syntax-check install.ps1 (PowerShell 5.1)
+        shell: powershell
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            "$PWD\install.ps1", [ref]$null, [ref]$errors
+          )
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Host "❌ $_" }
+            exit 1
+          }
+          Write-Host "✅ install.ps1 has no syntax errors"
+
+      - name: Check for PowerShell 5.1 incompatibilities
+        shell: powershell
+        run: |
+          $content = Get-Content install.ps1 -Raw
+          $issues = @()
+          # Join-Path with 3+ args requires PowerShell 6+
+          if ($content -match 'Join-Path\s+\S+\s+"[^"]+"\s+"[^"]+"') {
+            $issues += "Join-Path with 3+ arguments is not supported in PowerShell 5.1"
+          }
+          if ($issues.Count -gt 0) {
+            $issues | ForEach-Object { Write-Host "❌ $_" }
+            exit 1
+          }
+          Write-Host "✅ No PowerShell 5.1 compatibility issues found"
+
   # ── Merge gate (single required check for branch protection) ─────────
   merge-gate-pr:
     if: always()
-    needs: [lockfile, agent-tests, go-checks]
+    needs: [lockfile, agent-tests, go-checks, vite-base-check, install-script-check]
     runs-on: ubuntu-latest
     steps:
       - name: Check for failures
@@ -102,7 +150,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Set up uv
-        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+        uses: astral-sh/setup-uv@v7
 
       - name: Lint
         working-directory: agent
@@ -126,4 +174,8 @@ jobs:
 
       - name: Run tests
         working-directory: agent
-        run: uv run pytest tests/test_unit.py
+        run: uv run pytest tests/ --ignore=tests/test_e2e.py -v
+
+      # NOTE: tasks skill CLI tests (skills/tasks/cli/tests/) are not yet
+      # CI-compatible — daemon startup requires port binding that's unreliable
+      # in GitHub Actions. Run locally with: cd agent/skills/tasks/cli && uv run pytest tests/

@@ -22,7 +22,7 @@ import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useModals } from "@/providers/ModalsProvider";
 
 export function AgentIslandModals() {
-  const { name, agent, refreshAgent } = useSelectedAgent();
+  const { name, agent } = useSelectedAgent();
   const {
     showAuth,
     authStarting,
@@ -39,7 +39,7 @@ export function AgentIslandModals() {
     <>
       <Dialog
         drawerOnMobile
-        open={showAuth && agent?.status === "running"}
+        open={showAuth && agent?.status === "not_authenticated"}
         onOpenChange={(open) => {
           if (!open) clearAuthState();
         }}
@@ -47,7 +47,9 @@ export function AgentIslandModals() {
         <DialogContent className="sm:max-w-lg" showCloseButton>
           <DialogHeader>
             <DialogTitle>authenticate {name}</DialogTitle>
-            <DialogDescription className="sr-only">complete sign-in for this agent</DialogDescription>
+            <DialogDescription className="sr-only">
+              complete sign-in for this agent
+            </DialogDescription>
           </DialogHeader>
           {authStart ? (
             <AuthFlow
@@ -55,14 +57,15 @@ export function AgentIslandModals() {
               authUrl={authStart.auth_url}
               sessionId={authStart.session_id}
               onCancel={clearAuthState}
-              onComplete={async () => {
+              onComplete={() => {
                 clearAuthState();
-                await refreshAgent();
               }}
             />
           ) : authStarting ? (
             <div className="flex flex-col items-center gap-3 py-2">
-              <p className="text-sm text-muted-foreground">starting authentication...</p>
+              <p className="text-sm text-muted-foreground">
+                starting authentication...
+              </p>
               <ProgressBar message="waiting..." />
               <Button variant="link" size="sm" onClick={clearAuthState}>
                 cancel
@@ -70,7 +73,9 @@ export function AgentIslandModals() {
             </div>
           ) : (
             <div className="flex flex-col items-center gap-3 py-2">
-              <p className="text-xs text-destructive text-center">{authError || "authentication failed"}</p>
+              <p className="text-xs text-destructive text-center">
+                {authError || "authentication failed"}
+              </p>
               <Button size="sm" onClick={() => void handleOpenAuth()}>
                 retry
               </Button>
@@ -87,21 +92,18 @@ export function AgentIslandModals() {
           <AlertDialogHeader>
             <AlertDialogTitle>delete {name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              this will permanently destroy the agent and all its data. this action cannot be undone.
+              this will permanently destroy the agent and all its data. this
+              action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>cancel</AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              onClick={handleDelete}
-            >
+            <AlertDialogAction variant="destructive" onClick={handleDelete}>
               delete
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-
     </>
   );
 }

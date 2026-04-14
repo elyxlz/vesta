@@ -1,3 +1,21 @@
+#[cfg(target_os = "macos")]
+mod fps_unlock;
+
+#[tauri::command]
+fn set_theme(window: tauri::Window, theme: String) {
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    {
+        let tauri_theme = match theme.as_str() {
+            "dark" => Some(tauri::Theme::Dark),
+            "light" => Some(tauri::Theme::Light),
+            _ => None,
+        };
+        let _ = window.set_theme(tauri_theme);
+    }
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    let _ = (window, theme);
+}
+
 #[cfg(target_os = "linux")]
 #[tauri::command]
 async fn install_update(version: String) -> Result<(), String> {
@@ -81,12 +99,15 @@ pub fn mobile_entry_point() {
 }
 
 pub fn run() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|_app| {
+            #[cfg(not(target_os = "android"))]
             use tauri::Manager;
 
             #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -100,6 +121,10 @@ pub fn run() {
                         None,
                         None,
                     );
+
+                    window.with_webview(|webview| unsafe {
+                        fps_unlock::unlock(webview.inner().cast());
+                    }).ok();
                 }
                 #[cfg(target_os = "windows")]
                 {
@@ -116,6 +141,13 @@ pub fn run() {
                     unsafe {
                         let wv: *mut std::ffi::c_void = webview.inner();
                         let wv_ref = &*(wv as *const objc2::runtime::AnyObject);
+
+                        // Enable native swipe back/forward navigation
+                        let _: () = objc2::msg_send![
+                            wv_ref,
+                            setAllowsBackForwardNavigationGestures: objc2::runtime::Bool::YES
+                        ];
+
                         let scroll_view: *mut std::ffi::c_void =
                             objc2::msg_send![wv_ref, scrollView];
                         if !scroll_view.is_null() {
@@ -129,7 +161,7 @@ pub fn run() {
                 }).ok();
             }
 
-            // Auto-grant microphone permission for the webview
+            // On Linux, disable decorations so Wayland transparency works
             #[cfg(any(
                 target_os = "linux",
                 target_os = "dragonfly",
@@ -138,9 +170,13 @@ pub fn run() {
                 target_os = "openbsd"
             ))]
             if let Some(window) = _app.get_webview_window("main") {
+                let _ = window.set_decorations(false);
+                let _ = window.set_shadow(false);
+
                 window.with_webview(|webview| {
                     use webkit2gtk::{WebViewExt, PermissionRequestExt};
                     let wv = webview.inner();
+
                     wv.connect_permission_request(|_wv, request: &webkit2gtk::PermissionRequest| {
                         request.allow();
                         true
@@ -153,11 +189,11 @@ pub fn run() {
         .invoke_handler({
             #[cfg(target_os = "linux")]
             {
-                tauri::generate_handler![install_update]
+                tauri::generate_handler![set_theme, install_update]
             }
             #[cfg(not(target_os = "linux"))]
             {
-                tauri::generate_handler![]
+                tauri::generate_handler![set_theme]
             }
         })
         .build(tauri::generate_context!())

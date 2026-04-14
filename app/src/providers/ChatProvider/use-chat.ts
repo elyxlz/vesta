@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { VestaEvent, AgentActivityState } from "@/lib/types";
 import { wsUrl, fetchHistory } from "@/lib/connection";
-import { useAuth } from "@/providers/AuthProvider";
-import { SERVICE_UPDATE_EVENT } from "@/hooks/use-service-update";
 
 const RECONNECT_BASE = 1000;
 const RECONNECT_MAX = 30000;
@@ -23,7 +21,6 @@ interface UseChatOptions {
 }
 
 export function useChat({ name, active, onAssistantMessage }: UseChatOptions) {
-  const { setReachable } = useAuth();
   const [messages, setMessages] = useState<VestaEvent[]>([]);
   const [agentState, setAgentState] = useState<AgentActivityState>("idle");
   const [connected, setConnected] = useState(false);
@@ -70,7 +67,6 @@ export function useChat({ name, active, onAssistantMessage }: UseChatOptions) {
         reconnectDelay = RECONNECT_BASE;
         setConnected(true);
         setHistoryLoaded(false);
-        setReachable(true);
         setMessages([]);
         cursorRef.current = null;
         pendingEchoesRef.current = [];
@@ -98,16 +94,12 @@ export function useChat({ name, active, onAssistantMessage }: UseChatOptions) {
               return;
             }
           }
-          if (event.type === "service_update") {
-            window.dispatchEvent(new CustomEvent(SERVICE_UPDATE_EVENT, { detail: event }));
-          } else {
-            setMessages((prev) => {
-              const updated = [...prev, event];
-              return updated.length > MAX_MESSAGES
-                ? updated.slice(-MAX_MESSAGES)
-                : updated;
-            });
-          }
+          setMessages((prev) => {
+            const updated = [...prev, event];
+            return updated.length > MAX_MESSAGES
+              ? updated.slice(-MAX_MESSAGES)
+              : updated;
+          });
           if (event.type === "chat" && event.text) {
             onAssistantMessageRef.current?.(event.text);
           }
@@ -124,13 +116,12 @@ export function useChat({ name, active, onAssistantMessage }: UseChatOptions) {
         socket = null;
         wsRef.current = null;
         setConnected(false);
-        setReachable(false);
         setAgentState("idle");
         reconnectTimer = setTimeout(doConnect, reconnectDelay);
         reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX);
       };
 
-      socket.onerror = () => { };
+      socket.onerror = () => {};
     };
 
     doConnect();
@@ -154,7 +145,10 @@ export function useChat({ name, active, onAssistantMessage }: UseChatOptions) {
     ws.send(JSON.stringify({ type: "message", text }));
     pendingEchoesRef.current.push(text);
     setMessages((prev) => {
-      const updated: VestaEvent[] = [...prev, { type: "user", text, ts: new Date().toISOString() }];
+      const updated: VestaEvent[] = [
+        ...prev,
+        { type: "user", text, ts: new Date().toISOString() },
+      ];
       return updated.length > MAX_MESSAGES
         ? updated.slice(-MAX_MESSAGES)
         : updated;
@@ -171,7 +165,9 @@ export function useChat({ name, active, onAssistantMessage }: UseChatOptions) {
 
   useEffect(() => {
     activeSender = sendEvent;
-    return () => { activeSender = null; };
+    return () => {
+      activeSender = null;
+    };
   }, [sendEvent]);
 
   const hasMore = cursorRef.current !== null;
@@ -193,5 +189,15 @@ export function useChat({ name, active, onAssistantMessage }: UseChatOptions) {
     }
   }, [name]);
 
-  return { messages, agentState, connected, historyLoaded, hasMore, loadingMore, loadMore, send, sendEvent };
+  return {
+    messages,
+    agentState,
+    connected,
+    historyLoaded,
+    hasMore,
+    loadingMore,
+    loadMore,
+    send,
+    sendEvent,
+  };
 }

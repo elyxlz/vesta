@@ -4,20 +4,20 @@
 
 1. Register with vestad to get a port, then start the server in a background screen session:
    ```bash
-   PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services \
+   PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H "X-Agent-Token: $AGENT_TOKEN" \
      -H 'Content-Type: application/json' -d '{"name":"voice"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])")
    SKILL_PORT=$PORT PYTHONPATH=~/vesta/skills screen -dmS voice uv run python -m voice.server
    ```
 2. Add to `~/vesta/prompts/restart.md`:
    ```
-   PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H 'Content-Type: application/json' -d '{"name":"voice"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])") && SKILL_PORT=$PORT PYTHONPATH=~/vesta/skills screen -dmS voice uv run python -m voice.server
+   PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' -d '{"name":"voice"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])") && SKILL_PORT=$PORT PYTHONPATH=~/vesta/skills screen -dmS voice uv run python -m voice.server
    ```
 
 ## 2. API keys
 
-Each user needs their own API keys — one Deepgram key for STT (voice input) and one ElevenLabs key for TTS (voice output). Keys stay on this container; they never transit vestad's configuration.
+Each user needs their own API keys: one Deepgram key for STT (voice input) and one ElevenLabs key for TTS (voice output). Keys stay on this container; they never transit vestad's configuration.
 
-## Deepgram (STT — voice input)
+## Deepgram (STT, voice input)
 
 **Dashboard:** https://console.deepgram.com
 
@@ -26,9 +26,9 @@ Each user needs their own API keys — one Deepgram key for STT (voice input) an
 2. Go to **API Keys** in the left sidebar.
 3. Click **Create a New API Key**.
 4. Pick a role with at least these scopes:
-   - `projects:read` — list project
-   - `usage:read` — fetch the monthly usage shown in Settings
-   - `billing:read` — fetch the remaining balance shown in Settings
+   - `projects:read` (list project)
+   - `usage:read` (fetch the monthly usage shown in Settings)
+   - `billing:read` (fetch the remaining balance shown in Settings)
    - scopes for real-time transcription (the "Member" preset covers all of these)
    
    The **Admin** preset is the easiest choice if you don't want to think about scopes.
@@ -37,7 +37,7 @@ Each user needs their own API keys — one Deepgram key for STT (voice input) an
 
 **Note:** Deepgram gives new accounts $200 of free credit. The `flux-general-en` model used here is billed at roughly $0.0048/min of audio.
 
-## ElevenLabs (TTS — voice output)
+## ElevenLabs (TTS, voice output)
 
 **Dashboard:** https://elevenlabs.io
 

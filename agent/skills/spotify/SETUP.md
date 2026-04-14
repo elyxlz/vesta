@@ -13,7 +13,7 @@
 2. Click "Create app"
 3. Fill in a name and description (any values work)
 4. Set the Redirect URI to: `https://example.com`
-   (This is used for the OAuth flow — you will manually copy the redirect URL)
+   (This is used for the OAuth flow; you will manually copy the redirect URL)
 5. Note your **Client ID** and **Client Secret**
 
 ## Step 2: Install the CLI
@@ -59,8 +59,8 @@ spotify organize config --init
 ```
 
 Edit `~/.spotify/organize.json` to customize:
-- `skip_playlists` — playlists to exclude from auto-sorting
-- `genre_rules` — keyword → playlist name mappings for genre-based sorting
+- `skip_playlists`: playlists to exclude from auto-sorting
+- `genre_rules`: keyword → playlist name mappings for genre-based sorting
 
 ## Step 6: Add to restart.md
 

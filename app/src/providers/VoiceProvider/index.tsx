@@ -1,112 +1,72 @@
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useMemo,
-  useRef,
-  type ReactNode,
-} from "react";
-import { useVoiceStatus } from "./use-voice-status";
-import { useVoiceInput } from "./use-voice-input";
-import { useVoiceOutput } from "./use-voice-output";
+import { useEffect, type ReactNode } from "react";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
-import type { SttStatus, TtsStatus } from "@/lib/voice";
+import { useVoice } from "@/stores/use-voice";
+import { fetchSttStatus, fetchTtsStatus, preloadAudio } from "@/lib/voice";
 
-interface VoiceContextValue {
-  sttStatus: SttStatus | null;
-  ttsStatus: TtsStatus | null;
-  sttAvailable: boolean;
-  speechEnabled: boolean;
-  voiceAutoSend: boolean;
+export function VoiceStoreEffects({ children }: { children: ReactNode }) {
+  const { name: agentName, agent } = useSelectedAgent();
+  const services = agent.services;
+  const voiceRev = agent.services?.voice?.rev;
 
-  patchStt: (patch: Partial<SttStatus>) => void;
-  patchTts: (patch: Partial<TtsStatus>) => void;
-  refreshVoiceStatus: () => void;
+  const _setAgentContext = useVoice((s) => s._setAgentContext);
+  const _setSttStatus = useVoice((s) => s._setSttStatus);
+  const _setTtsStatus = useVoice((s) => s._setTtsStatus);
+  const _setVoiceError = useVoice((s) => s._setVoiceError);
+  const _cleanup = useVoice((s) => s._cleanup);
+  const voiceError = useVoice((s) => s.voiceError);
 
-  isRecording: boolean;
-  liveTranscript: string;
-  toggleVoice: () => void;
-  voiceError: string | null;
+  // Sync agent context into store
+  useEffect(() => {
+    _setAgentContext(agentName || null, services ?? {}, voiceRev);
+  }, [agentName, services, voiceRev, _setAgentContext]);
 
-  isSpeaking: boolean;
-  speak: (text: string) => void;
-  stopSpeech: () => void;
+  // Fetch voice status when agent/services change
+  useEffect(() => {
+    if (!agentName) {
+      _setSttStatus(null);
+      _setTtsStatus(null);
+      return;
+    }
 
-  registerChatCallbacks: (send: (text: string) => void, draft: (text: string) => void) => void;
-}
+    const hasVoice = "voice" in (services ?? {});
+    if (!hasVoice) {
+      _setSttStatus(null);
+      _setTtsStatus(null);
+      return;
+    }
 
-const VoiceContext = createContext<VoiceContextValue | null>(null);
+    const ctrl = new AbortController();
+    Promise.all([
+      fetchSttStatus(agentName, ctrl.signal),
+      fetchTtsStatus(agentName, ctrl.signal),
+    ])
+      .then(([stt, tts]) => {
+        if (ctrl.signal.aborted) return;
+        _setSttStatus(stt);
+        _setTtsStatus(tts);
+      })
+      .catch(() => {});
 
-export function VoiceProvider({ children }: { children: ReactNode }) {
-  const { name: agentName } = useSelectedAgent();
-  const sendRef = useRef<((text: string) => void) | null>(null);
-  const draftRef = useRef<((text: string) => void) | null>(null);
+    return () => ctrl.abort();
+  }, [agentName, services, voiceRev, _setSttStatus, _setTtsStatus]);
 
-  const onSend = useCallback((text: string) => { sendRef.current?.(text); }, []);
-  const onDraft = useCallback((text: string) => { draftRef.current?.(text); }, []);
-  const registerChatCallbacks = useCallback(
-    (send: (text: string) => void, draft: (text: string) => void) => {
-      sendRef.current = send;
-      draftRef.current = draft;
-    },
-    [],
-  );
+  // Preload worklet module when STT is available
+  const sttAvailable = useVoice((s) => s.sttAvailable);
+  useEffect(() => {
+    if (sttAvailable) preloadAudio();
+  }, [sttAvailable]);
 
-  const { stt: sttStatus, tts: ttsStatus, refresh: refreshVoiceStatus, patchStt, patchTts } =
-    useVoiceStatus(agentName || null);
+  // Auto-dismiss errors after 5s
+  useEffect(() => {
+    if (!voiceError) return;
+    const timer = setTimeout(() => _setVoiceError(null), 5000);
+    return () => clearTimeout(timer);
+  }, [voiceError, _setVoiceError]);
 
-  const sttAvailable = (sttStatus?.configured && sttStatus?.enabled) ?? false;
-  const speechEnabled = (ttsStatus?.configured && ttsStatus?.enabled) ?? false;
-  const voiceAutoSend = (sttStatus?.settings?.find(s => s.key === "auto_send")?.value as boolean) ?? true;
+  // Cleanup transcriber on unmount
+  useEffect(() => {
+    return () => _cleanup();
+  }, [_cleanup]);
 
-  const { isSpeaking, speak, stop: stopSpeech } = useVoiceOutput(agentName || null, speechEnabled);
-
-  const onRecordingStart = useCallback(() => { stopSpeech(); }, [stopSpeech]);
-
-  const { isRecording, liveTranscript, toggle: toggleVoice, error: voiceError } = useVoiceInput({
-    agentName: agentName || "",
-    onSend,
-    onDraft,
-    onRecordingStart,
-    sttAvailable,
-    voiceAutoSend,
-  });
-
-  const value = useMemo<VoiceContextValue>(() => ({
-    sttStatus,
-    ttsStatus,
-    sttAvailable,
-    speechEnabled,
-    voiceAutoSend,
-    patchStt,
-    patchTts,
-    refreshVoiceStatus,
-    isRecording,
-    liveTranscript,
-    toggleVoice,
-    voiceError,
-    isSpeaking,
-    speak,
-    stopSpeech,
-    registerChatCallbacks,
-  }), [
-    sttStatus, ttsStatus, sttAvailable, speechEnabled, voiceAutoSend,
-    patchStt, patchTts, refreshVoiceStatus,
-    isRecording, liveTranscript, toggleVoice, voiceError,
-    isSpeaking, speak, stopSpeech, registerChatCallbacks,
-  ]);
-
-  return (
-    <VoiceContext.Provider value={value}>
-      {children}
-    </VoiceContext.Provider>
-  );
-}
-
-export function useVoice() {
-  const context = useContext(VoiceContext);
-  if (!context) {
-    throw new Error("useVoice must be used within VoiceProvider");
-  }
-  return context;
+  return <>{children}</>;
 }

@@ -14,6 +14,26 @@ pub static SERVER: LazyLock<TestServer> = LazyLock::new(|| {
     TestServer::start().unwrap_or_else(|e| panic!("failed to start test server: {e}"))
 });
 
+#[derive(Default)]
+pub struct TestServerBuilder {
+    user: Option<String>,
+}
+
+impl TestServerBuilder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn user(mut self, user: &str) -> Self {
+        self.user = Some(user.to_string());
+        self
+    }
+
+    pub fn start(self) -> Result<TestServer, String> {
+        TestServer::start_with_user(self.user)
+    }
+}
+
 /// Kill vestad processes left behind by previous test runs (those whose HOME is a
 /// temp directory). Ignores the user's real vestad instance.
 fn kill_orphan_vestads() {
@@ -53,6 +73,10 @@ pub struct TestServer {
 
 impl TestServer {
     pub fn start() -> Result<Self, String> {
+        Self::start_with_user(None)
+    }
+
+    fn start_with_user(user: Option<String>) -> Result<Self, String> {
         rustls::crypto::ring::default_provider()
             .install_default()
             .ok();
@@ -64,19 +88,28 @@ impl TestServer {
         let real_home = std::env::var("HOME").unwrap_or_default();
         let docker_config = format!("{}/.docker", real_home);
 
-        let process = Command::new(&vestad)
-            .args(["serve", "--standalone", "--no-tunnel"])
+        let stderr_path = home.join("vestad-stderr.log");
+        let stderr_file = std::fs::File::create(&stderr_path)
+            .map_err(|e| format!("create stderr log: {e}"))?;
+
+        let mut cmd = Command::new(&vestad);
+        cmd.args(["serve", "--standalone", "--no-tunnel"])
             .env("HOME", &home)
             .env("DOCKER_CONFIG", &docker_config)
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|e| format!("spawn vestad: {e}"))?;
+            .stderr(Stdio::from(stderr_file));
+
+        if let Some(ref user_name) = user {
+            cmd.env("USER", user_name);
+        }
+
+        let process = cmd.spawn().map_err(|e| format!("spawn vestad: {e}"))?;
 
         let config_dir = home.join(".config/vesta/vestad");
         let port_path = config_dir.join("port");
 
-        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        let startup_timeout = Duration::from_secs(60);
+        let deadline = std::time::Instant::now() + startup_timeout;
         let port = loop {
             if let Ok(content) = std::fs::read_to_string(&port_path) {
                 if let Ok(p) = content.trim().parse::<u16>() {
@@ -87,7 +120,12 @@ impl TestServer {
                 }
             }
             if std::time::Instant::now() > deadline {
-                return Err("vestad did not start within 30s".into());
+                let stderr = std::fs::read_to_string(&stderr_path).unwrap_or_default();
+                return Err(format!(
+                    "vestad did not start within {}s\nstderr:\n{}",
+                    startup_timeout.as_secs(),
+                    stderr,
+                ));
             }
             std::thread::sleep(Duration::from_millis(100));
         };

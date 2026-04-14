@@ -11,7 +11,9 @@ const vestad = process.env.VITE_VESTAD_URL || "https://localhost:7860";
 const isTauri = !!process.env.TAURI_ENV_PLATFORM;
 const useHttps = !isTauri && process.env.HTTPS !== "false";
 
-const pkg = JSON.parse(readFileSync(path.resolve(__dirname, "package.json"), "utf-8"));
+const pkg = JSON.parse(
+  readFileSync(path.resolve(__dirname, "package.json"), "utf-8"),
+);
 const version = pkg.version;
 
 function installScriptsPlugin(): Plugin {
@@ -35,8 +37,11 @@ function installScriptsPlugin(): Plugin {
 }
 
 export default defineConfig({
+  base: "/",
   define: {
     __APP_VERSION__: JSON.stringify(version),
+    __TAURI__: JSON.stringify(isTauri),
+    __PLATFORM__: JSON.stringify(process.env.TAURI_ENV_PLATFORM || ""),
   },
   plugins: [
     react({
@@ -51,14 +56,18 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      "motion-plus-dom": path.resolve(
+        __dirname,
+        "./node_modules/motion-plus-dom/dist/es/index.mjs",
+      ),
     },
   },
   clearScreen: false,
   server: {
-    port: 1420,
+    port: isTauri ? 1420 : 1430,
     strictPort: true,
     host: host || "0.0.0.0",
-    hmr: host ? { protocol: "ws", host, port: 1421 } : undefined,
+    hmr: host ? { protocol: "ws", host, port: isTauri ? 1421 : 1431 } : undefined,
     proxy: host
       ? undefined
       : {

@@ -5,58 +5,54 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DASHBOARD_SRC="$SCRIPT_DIR/app/src"
-REPO_APP_SRC="$SCRIPT_DIR/../../../app/src"
+UPSTREAM_REPO="$HOME/vesta"
 
-sync_from_local() {
-    local app_root
-    app_root="$(dirname "$1")"
-    echo "Syncing from local app source: $1"
-    cp "$app_root/components.json" "$SCRIPT_DIR/app/components.json"
-    cp "$1/styles/globals.css" "$DASHBOARD_SRC/globals.css"
-    mkdir -p "$DASHBOARD_SRC/lib" "$DASHBOARD_SRC/hooks" "$DASHBOARD_SRC/components/ui"
-    cp "$1/lib/utils.ts" "$DASHBOARD_SRC/lib/utils.ts"
-    cp "$1/hooks/use-mobile.ts" "$DASHBOARD_SRC/hooks/use-mobile.ts"
-    cp "$1/components/ui/"*.tsx "$DASHBOARD_SRC/components/ui/"
-}
-
-sync_from_git() {
-    local repo_dir="$1"
-    local ref
-    # Use the current commit's tag if it has one (i.e. a release build), otherwise HEAD
-    ref=$(git -C "$repo_dir" describe --exact-match --tags HEAD 2>/dev/null || echo "HEAD")
-
-    echo "Syncing from git repo: $repo_dir (ref: $ref)"
-    mkdir -p "$DASHBOARD_SRC/lib" "$DASHBOARD_SRC/hooks" "$DASHBOARD_SRC/components/ui"
-
-    git -C "$repo_dir" show "$ref:app/components.json" > "$SCRIPT_DIR/app/components.json"
-    git -C "$repo_dir" show "$ref:app/src/styles/globals.css" > "$DASHBOARD_SRC/globals.css"
-    git -C "$repo_dir" show "$ref:app/src/lib/utils.ts" > "$DASHBOARD_SRC/lib/utils.ts"
-    git -C "$repo_dir" show "$ref:app/src/hooks/use-mobile.ts" > "$DASHBOARD_SRC/hooks/use-mobile.ts"
-
-    git -C "$repo_dir" ls-tree --name-only "$ref:app/src/components/ui/" | while read -r file; do
-        case "$file" in *.tsx)
-            git -C "$repo_dir" show "$ref:app/src/components/ui/$file" > "$DASHBOARD_SRC/components/ui/$file"
-        ;; esac
-    done
-}
-
-if [ -d "$REPO_APP_SRC" ]; then
-    sync_from_local "$(cd "$REPO_APP_SRC" && pwd)"
-elif [ -d "$HOME/vesta/.git" ]; then
-    sync_from_git "$HOME/vesta"
-else
-    echo "Error: no app source found (no local app/ dir and no git repo at ~/vesta/)" >&2
+if [ ! -d "$UPSTREAM_REPO/.git" ]; then
+    echo "Error: no git repo found at $UPSTREAM_REPO" >&2
     exit 1
 fi
 
-# Patch globals.css — transparent body for iframe
-sed -i 's/@apply bg-background text-foreground;/@apply text-foreground;\n    background: transparent;/' "$DASHBOARD_SRC/globals.css"
+# Use VESTA_BRANCH (dev) or VESTA_VERSION (release) from vestad env.
+# In dev mode, VESTA_BRANCH is set to the git branch vestad was started from.
+# In release mode, only VESTA_VERSION is set (e.g. "0.1.116").
+if [ -n "${VESTA_BRANCH:-}" ]; then
+    ref="$VESTA_BRANCH"
+elif [ -n "${VESTA_VERSION:-}" ]; then
+    ref="v${VESTA_VERSION}"
+else
+    ref="HEAD"
+fi
+
+last_sync_file="$SCRIPT_DIR/app/.last-sync"
+
+# Fetch the ref and use FETCH_HEAD for git show
+git -C "$UPSTREAM_REPO" fetch --depth=1 origin "$ref" 2>/dev/null
+show_ref="FETCH_HEAD"
+
+echo "Syncing from $ref"
+mkdir -p "$DASHBOARD_SRC/lib" "$DASHBOARD_SRC/hooks" "$DASHBOARD_SRC/components/ui"
+
+git -C "$UPSTREAM_REPO" show "$show_ref:app/components.json" > "$SCRIPT_DIR/app/components.json"
+git -C "$UPSTREAM_REPO" show "$show_ref:app/src/index.css" > "$DASHBOARD_SRC/index.css"
+git -C "$UPSTREAM_REPO" show "$show_ref:app/src/lib/utils.ts" > "$DASHBOARD_SRC/lib/utils.ts"
+git -C "$UPSTREAM_REPO" show "$show_ref:app/src/hooks/use-mobile.ts" > "$DASHBOARD_SRC/hooks/use-mobile.ts"
+
+git -C "$UPSTREAM_REPO" ls-tree --name-only "$show_ref:app/src/components/ui/" | while read -r file; do
+    case "$file" in *.tsx)
+        git -C "$UPSTREAM_REPO" show "$show_ref:app/src/components/ui/$file" > "$DASHBOARD_SRC/components/ui/$file"
+    ;; esac
+done
+
+# Patch index.css — transparent background for iframe embedding
+sed -i 's/bg-background //g; s/ bg-background//g; s/bg-background//g' "$DASHBOARD_SRC/index.css"
+sed -i '/html {/{n;s|$|\n    background: transparent;|}' "$DASHBOARD_SRC/index.css"
+sed -i '/body {/{n;s|$|\n    background: transparent;|}' "$DASHBOARD_SRC/index.css"
 
 # Tell Tailwind to scan gitignored synced files
-sed -i '1s|^|@source "./components/ui";\n@source "./lib";\n@source "./hooks";\n|' "$DASHBOARD_SRC/globals.css"
+sed -i '1s|^|@source "./components/ui";\n@source "./lib";\n@source "./hooks";\n|' "$DASHBOARD_SRC/index.css"
 
-# Patch components.json — point CSS path to dashboard location
-sed -i 's|src/styles/globals.css|src/globals.css|' "$SCRIPT_DIR/app/components.json"
+# Record the synced version so we can skip next time
+echo "$ref" > "$last_sync_file"
 
 echo "Synced $(ls "$DASHBOARD_SRC/components/ui/" | wc -l) UI components"
 echo "Done."

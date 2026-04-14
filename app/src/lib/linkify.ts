@@ -4,18 +4,23 @@ const ITALIC_RE = /(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g;
 const CODE_RE = /`([^`]+)`/g;
 
 function escapeHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 export function linkify(text: string): string {
   const urls: string[] = [];
-  let stripped = text.replace(URL_RE, (url) => {
+  const stripped = text.replace(URL_RE, (url) => {
     urls.push(url);
     return `\x00URL${urls.length - 1}\x00`;
   });
 
   let out = escapeHtml(stripped);
 
+  // eslint-disable-next-line no-control-regex
   out = out.replace(/\x00URL(\d+)\x00/g, (_, i) => {
     const url = urls[Number(i)];
     const display = escapeHtml(url);

@@ -184,7 +184,7 @@ func runServe(logger waLog.Logger) {
 	}
 
 	if !wac.IsAuthenticated() {
-		fmt.Fprintln(os.Stderr, "Not authenticated. Use 'whatsapp authenticate' to get QR code.")
+		fmt.Fprintln(os.Stderr, "Not authenticated. Use 'whatsapp pair-phone --phone <number>' to authenticate.")
 	}
 
 	printJSON(map[string]string{"status": "serving"})

@@ -17,7 +17,7 @@ Control a Samsung Smart TV via the WebSocket API.
 
 ## Quick Start
 
-**IMPORTANT: Always auto-discover the TV's IP first.** The IP can change after power cycles. Never hardcode a static IP — always check the ARP table for the TV's MAC address.
+**IMPORTANT: Always auto-discover the TV's IP first.** The IP can change after power cycles. Never hardcode a static IP. Always check the ARP table for the TV's MAC address.
 
 ```python
 import subprocess, re
@@ -36,7 +36,7 @@ def find_tv_ip(mac='<TV_MAC>'):
 
 TV_IP = find_tv_ip()
 if not TV_IP:
-    raise Exception("TV not found on network — may be powered off")
+    raise Exception("TV not found on network - may be powered off")
 
 from samsungtvws import SamsungTVWS
 
@@ -275,7 +275,7 @@ asyncio.run(play_youtube_video("VIDEO_ID"))
 
 **Notes on auth persistence:**
 - `screen_id` is stable as long as YouTube stays running on the TV. If YouTube restarts, a new screen_id is fetched via DIAL automatically.
-- `refresh_auth()` only needs `screen_id` — it's a server-side call, no TV popup.
+- `refresh_auth()` only needs `screen_id`. It's a server-side call, no TV popup.
 - The popup only fires when `connect()` creates a brand-new session with an unknown device.
 - Use `api.auth.serialize()` / `api.auth.deserialize()` (NOT `store_auth_state()` which has a key naming bug in v3.2.0).
 - If saved auth fails, the code gracefully falls back to full pairing.

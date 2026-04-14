@@ -23,7 +23,7 @@ built-in stealth but **headless mode still gets caught**. For maximum stealth:
 
 ### Xvfb (Virtual Display)
 
-Xvfb lets you run a headed browser without a physical screen — sites see a normal browser
+Xvfb lets you run a headed browser without a physical screen. Sites see a normal browser
 window, not headless automation.
 
 ```bash
@@ -38,18 +38,18 @@ screen -dmS xvfb Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp
 
 The browser CLI applies multiple layers automatically:
 
-1. **`navigator.webdriver` hidden** — injected via `addInitScript` on every page, so
+1. **`navigator.webdriver` hidden**: injected via `addInitScript` on every page, so
    `navigator.webdriver` returns `undefined` instead of `true`
-2. **`--disable-blink-features=AutomationControlled`** — Chrome flag that removes the
+2. **`--disable-blink-features=AutomationControlled`**: Chrome flag that removes the
    `AutomationControlled` feature, preventing sites from detecting Chromium automation
-3. **Headed via Xvfb** — runs a real browser window on a virtual display, avoiding all
+3. **Headed via Xvfb**: runs a real browser window on a virtual display, avoiding all
    the fingerprinting differences between headless and headed Chrome (screen dimensions,
    WebGL renderer, missing plugins, etc.)
 
 ## Remote Assist Setup (noVNC)
 
 When the automated browser gets stuck on CAPTCHAs, sign-in blocks, or fingerprint detection,
-you can hand control to the user via noVNC — they get a link, interact with the browser from
+you can hand control to the user via noVNC. They get a link, interact with the browser from
 their phone/laptop, and you take back over. This is the preferred approach when vesta runs on
 the same network as the user.
 
@@ -60,7 +60,7 @@ apt-get install -y novnc x11vnc scrot
 
 See the "Remote Assist" section in SKILL.md for the full flow.
 
-## Troubleshooting — Remote Control (Alternative)
+## Troubleshooting: Remote Control (Alternative)
 
 If noVNC isn't suitable (e.g. vesta is on a remote server, not the user's LAN), you can
 connect to the user's own browser remotely instead:
@@ -72,7 +72,7 @@ connect to the user's own browser remotely instead:
    - Or add `--remote-debugging-port=9222` to their browser shortcut for always-on access
 2. Ask the user for their machine's IP address (or `localhost` if Vesta runs on the same machine)
 3. Connect: `browser connect http://<ip>:9222`
-4. Now you control their actual browser — with all their cookies, logins, and extensions
+4. Now you control their actual browser, with all their cookies, logins, and extensions
 
 ## Restart
 

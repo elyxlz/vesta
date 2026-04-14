@@ -85,6 +85,8 @@ main() {
     fi
   }
 
+  PATH_UPDATED=""
+
   ensure_path() {
     local bin_dir="$HOME/.local/bin"
     case ":$PATH:" in
@@ -98,6 +100,7 @@ main() {
         echo "# Added by Vesta installer" >> "$rc"
         echo "$line" >> "$rc"
         echo "Added $bin_dir to PATH in $(basename "$rc")"
+        PATH_UPDATED=1
       fi
     done
 
@@ -195,7 +198,7 @@ main() {
     verify_checksum "$dmg_path" "$artifact"
 
     local mount_point
-    mount_point=$(hdiutil attach "$dmg_path" -nobrowse -noautoopen 2>/dev/null | grep '/Volumes/' | awk '{print $NF}')
+    mount_point=$(hdiutil attach "$dmg_path" -nobrowse -noautoopen 2>/dev/null | grep -o '/Volumes/.*' | head -1)
     if [ -d "$mount_point/Vesta.app" ]; then
       rm -rf /Applications/Vesta.app
       cp -R "$mount_point/Vesta.app" /Applications/
@@ -254,6 +257,10 @@ main() {
   fi
   if has_gui; then
     echo "  Open Vesta app and connect to your server"
+  fi
+  if [ -n "$PATH_UPDATED" ]; then
+    echo ""
+    echo "NOTE: Run 'source ~/.bashrc' or open a new terminal first."
   fi
 }
 

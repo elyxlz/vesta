@@ -36,10 +36,7 @@ export async function apiFetch(
   return resp;
 }
 
-export async function apiJson<T>(
-  path: string,
-  init?: RequestInit,
-): Promise<T> {
+export async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   const resp = await apiFetch(path, init);
   return resp.json();
 }

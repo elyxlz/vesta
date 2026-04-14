@@ -11,7 +11,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 def create_scheduler() -> BackgroundScheduler:
     return BackgroundScheduler(
-        job_defaults={"coalesce": True, "max_instances": 1},
+        job_defaults={"coalesce": True, "max_instances": 1, "misfire_grace_time": 3600},
     )
 
 

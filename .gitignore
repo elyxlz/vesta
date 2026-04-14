@@ -1,3 +1,6 @@
+# Claude Code
+.claude/worktrees/
+
 # Personal data
 
 # Python
@@ -76,4 +79,5 @@ app/src-tauri/binaries/vesta-*
 app/src-tauri/resources/*.tar.gz
 app/src-tauri/resources/vestad
 .claude/
+!.claude/skills/
 ROADMAP.md

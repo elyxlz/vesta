@@ -71,6 +71,9 @@ enum Command {
         /// Agent name (prompted interactively if omitted)
         #[arg(long)]
         name: Option<String>,
+        /// Use the Docker image's baked-in code instead of vestad-managed code
+        #[arg(long)]
+        no_manage_code: bool,
     },
     /// Create an agent container (without starting or authenticating)
     Create {
@@ -80,6 +83,9 @@ enum Command {
         /// Agent name (prompted interactively if omitted)
         #[arg(long)]
         name: Option<String>,
+        /// Use the Docker image's baked-in code instead of vestad-managed code
+        #[arg(long)]
+        no_manage_code: bool,
     },
     /// Start an agent (or all agents if no name given)
     Start {
@@ -129,6 +135,17 @@ enum Command {
     Backup {
         #[command(subcommand)]
         action: BackupAction,
+    },
+    /// View or update agent settings
+    Settings {
+        /// Agent name
+        name: String,
+        /// Enable vestad-managed code (mount from host)
+        #[arg(long)]
+        manage_code: bool,
+        /// Disable vestad-managed code (use image's baked-in code)
+        #[arg(long, conflicts_with = "manage_code")]
+        no_manage_code: bool,
     },
     /// Destroy an agent (irreversible)
     Destroy {
@@ -415,6 +432,27 @@ fn check_update_cached() -> Option<std::thread::JoinHandle<Option<String>>> {
     }))
 }
 
+fn detect_timezone() -> Option<String> {
+    if let Ok(tz) = std::env::var("TZ") {
+        if !tz.is_empty() {
+            return Some(tz);
+        }
+    }
+    if let Ok(content) = std::fs::read_to_string("/etc/timezone") {
+        let tz = content.trim().to_string();
+        if !tz.is_empty() {
+            return Some(tz);
+        }
+    }
+    if let Ok(link) = std::fs::read_link("/etc/localtime") {
+        let path = link.to_string_lossy();
+        if let Some(tz) = path.strip_prefix("/usr/share/zoneinfo/") {
+            return Some(tz.to_string());
+        }
+    }
+    None
+}
+
 fn print_welcome() {
     println!("vesta — your personal AI assistant");
     println!();
@@ -442,15 +480,15 @@ fn run(cli: Cli) {
     let token_ref = cli.token.as_deref();
 
     match command {
-        Command::Setup { build, yes, name } => {
+        Command::Setup { build, yes, name, no_manage_code } => {
             let c = get_client(host_ref, token_ref);
 
             let name = name
                 .map(|name| name.trim().to_string())
                 .unwrap_or_else(prompt_name);
 
-            // Create agent
-            match c.create_agent(&name, build) {
+            let timezone = detect_timezone();
+            match c.create_agent(&name, build, !no_manage_code, timezone.as_deref()) {
                 Ok(name) => eprintln!("created agent '{}'", name),
                 Err(e) if e.contains("already exists") && yes => {
                     eprintln!("agent '{}' already exists, continuing...", name);
@@ -467,13 +505,28 @@ fn run(cli: Cli) {
 
         }
 
-        Command::Create { build, name } => {
+        Command::Create { build, name, no_manage_code } => {
             let c = get_client(host_ref, token_ref);
             let name = name
                 .map(|name| name.trim().to_string())
                 .unwrap_or_else(prompt_name);
-            let name = c.create_agent(&name, build).unwrap_or_else(|e| platform::die(&e));
+            let timezone = detect_timezone();
+            let name = c.create_agent(&name, build, !no_manage_code, timezone.as_deref()).unwrap_or_else(|e| platform::die(&e));
             eprintln!("created (run 'vesta auth {}' to authenticate)", name);
+        }
+
+        Command::Settings { name, manage_code, no_manage_code } => {
+            let c = get_client(host_ref, token_ref);
+            if manage_code || no_manage_code {
+                let body = serde_json::json!({"manage_agent_code": !no_manage_code});
+                let result = c.patch_agent_settings(&name, &body).unwrap_or_else(|e| platform::die(&e));
+                let val = result["manage_agent_code"].as_bool().unwrap_or(true);
+                eprintln!("{}: manage_agent_code = {}", name, val);
+            } else {
+                let result = c.get_agent_settings(&name).unwrap_or_else(|e| platform::die(&e));
+                let val = result["manage_agent_code"].as_bool().unwrap_or(true);
+                eprintln!("manage_agent_code = {}", val);
+            }
         }
 
         Command::Start { name } => {
@@ -546,10 +599,7 @@ fn run(cli: Cli) {
                         serde_json::json!({
                             "name": name,
                             "status": "not_found",
-                            "authenticated": false,
-                            "ws_port": 0,
-                            "alive": false,
-                            "friendly_status": "not found"
+                            "ws_port": 0
                         })
                     );
                     process::exit(0);
@@ -564,17 +614,7 @@ fn run(cli: Cli) {
                 if let Some(id) = &status.id {
                     println!("id:     {}", id);
                 }
-                println!(
-                    "auth:   {}",
-                    if status.authenticated { "yes" } else { "no" }
-                );
                 println!("port:   {}", status.ws_port);
-                if status.status == "running" {
-                    println!(
-                        "ready:  {}",
-                        if status.agent_ready { "yes" } else { "no" }
-                    );
-                }
             }
         }
 
@@ -587,19 +627,9 @@ fn run(cli: Cli) {
                 println!("no agents. run: vesta setup");
             } else {
                 for e in &agents {
-                    let ready_str = if e.status == "running" {
-                        if e.agent_ready {
-                            " (ready)"
-                        } else {
-                            " (not ready)"
-                        }
-                    } else {
-                        ""
-                    };
-                    let auth_str = if e.authenticated { "" } else { " [no auth]" };
                     println!(
-                        "  {} — {}{}{}  (port {})",
-                        e.name, e.status, ready_str, auth_str, e.ws_port
+                        "  {} — {}  (port {})",
+                        e.name, e.status, e.ws_port
                     );
                 }
             }
@@ -852,4 +882,26 @@ fn run(cli: Cli) {
 fn main() {
     let cli = Cli::parse();
     run(cli);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_size_cases() {
+        for (input, expected) in [
+            (0u64, "0B"),
+            (1, "1B"),
+            (999, "999B"),
+            (1_000, "1kB"),
+            (1_500, "2kB"),
+            (1_000_000, "1.0MB"),
+            (1_500_000, "1.5MB"),
+            (1_000_000_000, "1.0GB"),
+            (2_500_000_000, "2.5GB"),
+        ] {
+            assert_eq!(format_size(input), expected, "format_size({input})");
+        }
+    }
 }

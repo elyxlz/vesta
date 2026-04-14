@@ -1,5 +1,7 @@
 """Provider interfaces for STT/TTS backends."""
 
+from __future__ import annotations
+
 import typing as tp
 
 from aiohttp import web
@@ -11,6 +13,8 @@ class SettingDef(tp.TypedDict, total=False):
     label: str
     description: str
     default: tp.Any
+    config: list[SettingDef]
+    config_label: str
     # number:
     min: float
     max: float

@@ -9,25 +9,50 @@ fn unit_file_path() -> Result<String, String> {
     Ok(format!("{}/.config/systemd/user/vestad.service", home))
 }
 
-pub fn reinstall_service() -> Result<(), String> {
-    std::fs::remove_file(&unit_file_path()?).ok();
-    ensure_service_installed()
-}
-
 pub fn ensure_service_installed() -> Result<(), String> {
     let vestad_path = std::env::current_exe()
         .map_err(|e| format!("cannot determine binary path: {}", e))?
         .to_str()
         .ok_or("binary path is not valid UTF-8")?
+        .trim_end_matches(" (deleted)")
         .to_string();
 
     let unit_path = unit_file_path()?;
 
+    let working_dir = if cfg!(debug_assertions) {
+        std::env::current_dir()
+            .ok()
+            .and_then(|p| p.to_str().map(String::from))
+    } else {
+        None
+    };
+
+    let working_dir_line = match &working_dir {
+        Some(dir) => format!("WorkingDirectory={dir}\n"),
+        None => String::new(),
+    };
+
+    let unit_content = format!(
+        r#"[Unit]
+Description=Vesta API Server
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart={vestad_path} serve --standalone
+{working_dir_line}Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+"#
+    );
+
     if let Ok(existing) = std::fs::read_to_string(&unit_path) {
-        if existing.contains(&vestad_path) {
+        if existing == unit_content {
             return Ok(());
         }
-        eprintln!("updating systemd service (binary path changed)...");
+        eprintln!("updating systemd service...");
     } else {
         eprintln!("installing systemd user service...");
     }
@@ -37,22 +62,7 @@ pub fn ensure_service_installed() -> Result<(), String> {
             .map_err(|e| format!("failed to create {}: {}", parent.display(), e))?;
     }
 
-    let unit_content = format!(
-        r#"[Unit]
-Description=Vesta API Server
-After=docker.service
-
-[Service]
-ExecStart={vestad_path} serve --standalone
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=default.target
-"#
-    );
-
-    std::fs::write(&unit_path, unit_content)
+    std::fs::write(&unit_path, &unit_content)
         .map_err(|e| format!("failed to write systemd service: {}", e))?;
 
     run_systemctl(&["daemon-reload"])?;

@@ -106,12 +106,8 @@ async def queue_greeting(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.V
     flag = config.data_dir / "show_dreamer_summary"
     if flag.exists():
         flag.unlink()
-        today = _now().strftime("%Y-%m-%d")
-        try:
-            summary = (config.dreamer_dir / f"{today}.md").read_text().strip()
-            extras.append(f"[Dreamer Summary]\n{summary}")
-        except FileNotFoundError:
-            pass
+        for path in sorted(config.dreamer_dir.glob("*.md"), reverse=True)[:3]:
+            extras.append(f"[Dreamer Summary — {path.stem}]\n{path.read_text().strip()}")
     prompt = build_restart_context(reason, config, extras=extras)
     if not prompt or not prompt.strip():
         return
@@ -140,7 +136,7 @@ async def _process_message_safely(msg: str, *, is_user: bool, state: vm.State, c
             error_msg = str(e) or type(e).__name__
         if not state.session_id and state.client:
             try:
-                sid = state.client.session_id  # type: ignore[attr-defined]
+                sid = state.client.session_id  # ty: ignore[unresolved-attribute]
                 if sid:
                     persist_session_id(sid, state=state, config=config)
             except (AttributeError, TypeError):
@@ -254,7 +250,7 @@ async def process_nightly_memory(queue: asyncio.Queue[tuple[str, bool]], *, stat
     if config.nightly_memory_hour is not None and now.hour == config.nightly_memory_hour:
         if state.last_dreamer_run is None or now.date() > state.last_dreamer_run.date():
             logger.dreamer("Nightly dreamer starting...")
-            prompt = load_prompt("dream", config) or ""
+            prompt = load_prompt("nightly_dream", config) or ""
             state.dreamer_active = True
             await queue.put((prompt, False))
             state.last_dreamer_run = now

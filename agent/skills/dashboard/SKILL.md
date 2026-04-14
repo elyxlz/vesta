@@ -1,149 +1,156 @@
 ---
 name: dashboard
-description: Use when you need to build, modify, or customize anything on the user's dashboard — widgets, layouts, pages, views, or any custom UI.
-serve: PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H 'Content-Type: application/json' -d '{"name":"dashboard"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])") && screen -dmS dashboard sh -c "cd ~/vesta/skills/dashboard/app && npx vite preview --port $PORT --host 0.0.0.0"
+description: Use when you need to build, modify, or customize anything on the user's dashboard (widgets, layouts, pages, views, or any custom UI).
+serve: PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' -d '{"name":"dashboard"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])") && screen -dmS dashboard sh -c "cd ~/vesta/skills/dashboard/app && npx vite preview --port $PORT --host 0.0.0.0"
 ---
 
 # Dashboard
 
-A React app embedded in the main Vesta app. You have full control over `App.tsx` and can build anything: widgets, custom layouts, multi-page views, interactive tools, data visualizations, or any other UI the user wants.
+A React app embedded in the main Vesta app that serves as the user's **life HQ**, a personal command center for health, finances, productivity, habits, goals, and anything else they want to track and manage. Uses a sidebar layout with page-based navigation. The agent configures pages, sidebar items, and content by editing `config.tsx` and creating page components.
 
 ## Before building (REQUIRED)
 
-You MUST ask the user clarifying questions before writing any code. Go through these:
+**1. Check if shared files need syncing:** Compare `${VESTA_BRANCH:-v$VESTA_VERSION}` against `cat ~/vesta/skills/dashboard/app/.last-sync`. If they differ (or `.last-sync` doesn't exist), run `~/vesta/skills/dashboard/sync-app.sh` and rebuild. This ensures the dashboard uses the correct UI components.
 
-1. **Goal** — if the request is vague, clarify what they actually want to see or do
-2. **Interaction** — display-only, or do they want to tap/click/toggle/input things?
-3. **Data** — should it show fixed sample data, or pull in live data from a skill or API? Does the info need to stay in sync and look the same across different Vesta apps (like mobile)?
+**2. Ask clarifying questions:** You MUST ask the user before writing any code. Go through these:
+1. **Goal**: if the request is vague, clarify what they actually want to see or do
+2. **Interaction**: display-only, or do they want to tap/click/toggle/input things?
+3. **Data**: should it show fixed sample data, or pull in live data from a skill or API? Does the info need to stay in sync and look the same across different Vesta apps (like mobile)?
 
-Only start building once the user has answered. Don't assume — ask.
+Only start building once the user has answered. Don't assume. Ask.
 
 ## Project structure
 
-```
+```text
 ~/vesta/skills/dashboard/app/src/
-├── App.tsx              ← entry point, you edit this freely
+├── App.tsx              ← layout shell (sidebar + content area)
+├── config.tsx           ← EDIT THIS: define pages, sidebar nav, branding
 ├── main.tsx             ← do NOT modify
-├── globals.css          ← do NOT modify (synced from main app)
+├── index.css            ← do NOT modify (synced from main app)
+├── pages/               ← page components (one per sidebar nav item)
+├── examples/            ← reference components (read for inspiration, BUT scale down their sizes)
 ├── components/
 │   ├── ui/              ← shadcn components (synced, do NOT modify)
-│   └── FadeScroll.tsx   ← shared scroll wrapper
-├── widgets/             ← widget components (one file per widget)
+│   ├── app-sidebar.tsx  ← sidebar component (reads from config)
+│   ├── site-header.tsx  ← header with page title
+│   ├── nav-main.tsx     ← main nav items
+├── widgets/             ← reusable widget components
 ├── lib/
 │   ├── parent-bridge.ts ← auth + API helpers
 │   └── utils.ts         ← synced utility (do NOT modify)
 └── hooks/               ← synced hooks (do NOT modify)
 ```
 
-**You can freely edit:** `App.tsx`, anything in `widgets/`, and any new files/folders you create (custom components, helpers, etc.)
+**You can freely edit:** `config.tsx`, `App.tsx`, anything in `pages/`, `components/`, `widgets/`, and any new files you create.
+**Do NOT modify:** `main.tsx`, `index.css`, `lib/utils.ts`, `hooks/`, `components/ui/`
 
-**Do NOT modify:** `main.tsx`, `globals.css`, `lib/utils.ts`, `hooks/`, `components/ui/`
+## How it works
 
-## Building components
+The dashboard uses a **sidebar + page** layout controlled by `config.tsx`. Each `pages` entry creates a sidebar nav item. Clicking it renders that page's component. Pages can have `children` to create collapsible sub-pages in the sidebar.
 
-### Widgets
+When adding a widget without a specified page, **choose a fitting page name yourself**. Group related widgets under a meaningful category (e.g., "Health" with `<HeartIcon />`, "Finance" with `<DollarSignIcon />`). If a suitable page already exists, add the widget there.
 
-For self-contained UI blocks, create files in `src/widgets/`:
+## Density & Sizing Rules (IMPORTANT)
+
+The dashboard is a high-density UI, not a standard app interface. By default, shadcn components are too large. **You MUST override them**. Everything should feel compact. Large elements are the exception, not the norm.
+
+**1. Typography (MANDATORY)**
+*   Default text: `text-sm`
+*   Secondary text / labels: `text-xs text-muted-foreground`
+*   Large numbers only: `text-lg` or `text-xl font-semibold`
+*   Do not use `text-lg` or larger for normal text unless absolutely necessary or the user explicitly requests it.
+
+**2. Padding, Spacing & Layout (MANDATORY)**
+*   Default widget wrapper: `<div className="rounded-2xl bg-secondary p-3 text-sm">`
+*   Dense widgets: `p-2`. Avoid `p-4` unless absolutely necessary.
+*   Grid gap: Use `gap-2` (preferred) or `gap-3`. Avoid `gap-4`.
+*   Inside widgets: Use `space-y-2` instead of `space-y-4`.
+*   Avoid tall widgets. Prefer horizontal density. Combine related info into single rows.
+
+**3. Buttons & Controls (MANDATORY)**
+*   All buttons must be compact: `<Button size="sm" className="h-8 px-2 text-xs">`
+*   Inputs: `h-8 text-xs`. Avoid full-width inputs unless necessary.
+*   Do not use the default `<Button>` size unless absolutely necessary or the user explicitly requests it.
+
+**4. Grid Span Rules**
+*   **col-span-1** (default): metric cards, counters, status indicators, trackers. *This is 90% of widgets.*
+*   **col-span-2**: Only for charts/graphs that genuinely need horizontal space.
+*   **col-span-full**: Almost never needed (only wide data tables).
+
+### Adding a page
+
+1. Create `src/pages/my-page.tsx` with whatever layout fits the content (single column, tables, etc.).
+
+**Example (grid layout page)** for a widget-heavy page: a responsive auto-fill grid with compact gaps.
 
 ```tsx
-export default function MyWidget() {
+export function MyPage() {
   return (
-    <div className="p-4 bg-card border border-border rounded-lg shadow-sm">
-      {/* widget content */}
+    <div className="grid gap-2 grid-cols-[repeat(auto-fill,minmax(280px,1fr))]">
+      <SmallWidget />
+      <SmallWidget />
     </div>
-  );
+  )
 }
 ```
 
-### Custom components
+2. Add it to the **top** of the `pages` array in `config.tsx`:
+```tsx
+import { MyPage } from "./pages/my-page"
+import { StarIcon } from "lucide-react"
 
-For shared components, layouts, or anything more complex, create files anywhere in `src/` (e.g. `src/components/MyComponent.tsx`, `src/views/`, etc.). Organize however makes sense for what you're building.
+// Inside config.pages:
+{ id: "my-page", title: "My Page", icon: <StarIcon />, component: MyPage },
+```
 
-### Editing App.tsx
+## Data Patterns & Strict Rules
 
-`App.tsx` is the root component. Import your widgets/components and arrange them however the user wants — grid layouts, tabs, sidebars, stacked views, anything. You have full control over the layout and structure.
+**1. No client-side external API fetches:** The dashboard runs in a browser; cross-origin requests to third-party APIs (weather, finance) will fail due to CORS. You MUST create a skill that fetches data server-side, expose it as an endpoint, and call it using `apiFetch` from `@/lib/parent-bridge`.
 
-When adding the first component, set `SHOW_EMPTY_STATE = false` to disable the placeholder.
+**2. All user data must persist server-side:** Do not hardcode user data or rely on `localStorage` as the source of truth. The user accesses the dashboard across devices. Create a skill with API endpoints to store/retrieve data.
+
+**3. `localStorage` is ONLY for local visual state:** Use it strictly for device-specific UI states (sidebar order, collapsed sections, selected tabs). Prefix keys with `vesta-dashboard-`.
+
+**4. Handle loading and missing data:**
+*   Widgets fetching data **must** show a skeleton or spinner while loading.
+*   Prevent crashes: Arrays/objects may be undefined on first render. Always default to `[]` or `{}`. Protect `.reduce()`, `.map()`, and charts from undefined data.
+
+**5. Data freshness:** Default to fetching on mount (`useEffect`). For data that updates throughout the day, add a compact refresh button. Only use polling (`setInterval`) for live data like timers or stock tickers (ask the user how often it should auto refresh).
+
+## UI & Styling
+
+*   **Read the docs:** Before every UI change, read `shadcn/SKILL.md` and its linked rules.
+*   **Make it fun:** Use lucide icons for visual flair (like `<Flame />` for streaks, `<CheckCircle />` for completed).
+*   **Use semantic colors:** Use Tailwind classes (like `text-green-500`, `bg-amber-100`, `border-pink-400`) for badges, progress bars, and status indicators.
 
 ## After every change (IMPORTANT)
 
-**Rebuild and restart the server:**
+**Rebuild, Register with VESTAD, Restart the server and Notify the Vesta App**
 
 ```bash
 cd ~/vesta/skills/dashboard/app && npx vite build
 PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services \
-  -H 'Content-Type: application/json' -d '{"name":"dashboard"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])")
+  -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' -d '{"name":"dashboard"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])")
 screen -S dashboard -X quit 2>/dev/null
 screen -dmS dashboard sh -c "cd ~/vesta/skills/dashboard/app && npx vite preview --port $PORT --host 0.0.0.0"
-# Wait for the server to be ready before notifying the app
+# Wait for the server to be ready
 for i in $(seq 1 20); do curl -s -o /dev/null http://localhost:$PORT && break; sleep 0.5; done
-curl -s -X POST "http://localhost:$WS_PORT/events/service-update?agent_token=$AGENT_TOKEN" \
-  -H 'Content-Type: application/json' -d '{"service":"dashboard","action":"updated"}'
+# Smoke test: fetch the page and check for runtime errors
+SMOKE=$(curl -s http://localhost:$PORT/ | head -50)
+if ! echo "$SMOKE" | grep -q '<div id="root"'; then
+  echo "ERROR: Dashboard failed to load. Check the build output."
+fi
+# Notify the app to reload the dashboard iframe
+curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services/dashboard/invalidate -H "X-Agent-Token: $AGENT_TOKEN"
 ```
-
-## Data patterns
-
-### Static data (habits, bookmarks, etc.)
-
-Data that the user dictates and that only changes when they ask you to update it. Two approaches depending on whether the user wants persistence:
-
-Hardcode defaults in the source. When the user asks to permanently add/remove items, edit the file and rebuild.
-
-If the component has interactive state the user can change (checking items, toggling things, reordering), **always persist it to `localStorage`** so changes survive reloads. Pattern:
-
-Always prefix keys with `vesta-dashboard-` to avoid collisions.
-
-### Dynamic data (skill APIs, third-party services, etc.)
-
-Data that comes from somewhere else and changes dynamically — an existing skill's API, a new skill you create, or a third-party service.
-
-**Never fetch external APIs directly from widget code** — the browser will block cross-origin requests (CORS). Instead, create a skill that fetches the data server-side and exposes it as an endpoint, then call that endpoint from the widget.
-
-To call your skills use `apiFetch` from `@/lib/parent-bridge`. It handles auth and the base URL automatically. `apiFetch` waits for the auth token from the parent app before making requests, so it's safe to call on mount.
-
-Widgets that fetch data **must show a loading state** while waiting — use skeletons or spinners to provide a nice ux while data loads.
-
-
-## Removing components
-
-1. Remove the import and usage from `App.tsx`
-2. Delete the source file(s)
-3. Rebuild and restart (same as above)
-4. If removing everything, set `SHOW_EMPTY_STATE = true` in `App.tsx`
-
-## Syncing shared files
-
-The dashboard reuses UI components, styles, and utilities from the main Vesta app. Run `sync-app.sh` to pull the latest versions into the dashboard automatically:
-
-```bash
-~/vesta/skills/dashboard/sync-app.sh
-```
-
-## UI components
-
-The dashboard uses the same shadcn/ui components as the main Vesta app, synced via `sync-app.sh`. Before building, check `~/vesta/skills/dashboard/app/src/components/ui/` for what's available and read `~/vesta/skills/dashboard/shadcn/README.md` for usage patterns.
-
-Import from `@/components/ui/<name>`:
-
-```tsx
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-```
-
-Styling uses Tailwind CSS. Use semantic color classes like `text-foreground`, `text-muted-foreground`, `bg-primary`, `bg-secondary`, `bg-accent`, `bg-destructive`.
-
-Try to keep everything compact, dashboard space is at a premium.
-
-## Rules
-
-- **No client-side fetches to external APIs** — the dashboard runs in a browser, so cross-origin requests to third-party APIs (Yahoo Finance, weather services, etc.) will be blocked by CORS. Instead, create a skill that fetches the data server-side and expose it as a skill API endpoint, then call it from the widget using `apiFetch`.
-- **Use the UI components** from `@/components/ui/` — read them before building
-- **State**: `useState` / `useEffect` for local state
-- **localStorage only when the user opts in**: use it for persisting UI state (checked items, preferences), not as a primary data store. Always have hardcoded defaults as fallback
-- **No new dependencies**: only use packages in the dashboard's `package.json`
 
 ## Troubleshooting
-
-- **Dashboard not showing?** `screen -ls | grep dashboard`
-- **Check registration:** `curl -sk https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services`
-- **Restart server:** Rebuild, get port from vestad, restart screen (same as "After every change")
+*   **Dashboard not showing?** `screen -ls | grep dashboard`
+*   **Check registration:** `curl -sk https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services`
+*   **Restart server:** Run the rebuild/restart block above.
+*   **Build failed or blank after deploy?** Run `cd ~/vesta/skills/dashboard/app && npx vite build` and fix reported errors; confirm `app/dist/` exists before starting preview.
+*   **Iframe stuck on an old build?** After a successful build and preview restart, run the `.../services/dashboard/invalidate` `curl` from the block above (the parent app keeps the iframe until invalidated).
+*   **Preview errors or 404?** Attach to logs with `screen -r dashboard`, then detach with Ctrl+A then `d`. If the session is wedged, `screen -S dashboard -X quit` and rerun the restart line from the block above.
+*   **No port from vestad?** Run the `POST .../services` `curl` alone and inspect the body; the `python3` one-liner errors on bad JSON. Verify `VESTAD_PORT`, `AGENT_NAME`, and `AGENT_TOKEN`.
+*   **Widgets or API calls failing?** Use devtools on the dashboard (network tab): wrong `apiFetch` paths, skill server down, or auth not ready yet (`waitForAuth` in `parent-bridge.ts`).
+*   **Wrong or missing shadcn styles?** Run `~/vesta/skills/dashboard/sync-app.sh`, then rebuild (see Before building).

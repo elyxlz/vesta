@@ -1,6 +1,6 @@
 ---
 name: skills-registry
-description: Discover and install new capabilities from the skill registry. Use this when asked to add a new feature, when you want to explore what you could do, or when a user asks if you can do something you don't have a skill for yet. The registry lives on GitHub — search it to find skills, then install them to give yourself new abilities.
+description: Discover and install new capabilities from the skill registry. Use this when asked to add a new feature, when you want to explore what you could do, or when a user asks if you can do something you don't have a skill for yet. The registry lives on GitHub. Search it to find skills, then install them to give yourself new abilities.
 ---
 
 # Skills Manager

@@ -8,6 +8,11 @@ fn inject_fake_token(c: &Client, name: &str) {
     c.inject_token(name, FAKE_TOKEN).unwrap();
 }
 
+/// Container is up (regardless of auth/readiness state).
+fn is_up(status: &str) -> bool {
+    matches!(status, "not_authenticated" | "starting" | "alive" | "restarting")
+}
+
 // ── Helper: WS URL ────────────────────────────────────────────
 
 fn ws_base_url(url: &str) -> String {
@@ -98,16 +103,16 @@ fn start_stop_restart() {
 
     c.start_agent(&agent.name).unwrap();
     let st = c.agent_status(&agent.name).unwrap();
-    assert_eq!(st.status, "running");
+    assert!(is_up(&st.status), "expected up, got {}", st.status);
 
     c.stop_agent(&agent.name).unwrap();
     let st = c.agent_status(&agent.name).unwrap();
-    assert_ne!(st.status, "running");
+    assert!(!is_up(&st.status), "expected stopped, got {}", st.status);
 
     c.start_agent(&agent.name).unwrap();
     c.restart_agent(&agent.name).unwrap();
     let st = c.agent_status(&agent.name).unwrap();
-    assert_eq!(st.status, "running");
+    assert!(is_up(&st.status), "expected up after restart, got {}", st.status);
 }
 
 #[test]
@@ -175,7 +180,8 @@ fn inject_token_marks_authenticated() {
 
     inject_fake_token(&c, &agent.name);
     let st = c.agent_status(&agent.name).unwrap();
-    assert!(st.authenticated);
+    // authenticated agents get status "starting" or "alive", not "not_authenticated"
+    assert_ne!(st.status, "not_authenticated");
 }
 
 // ── Backup & Restore ───────────────────────────────────────────
@@ -229,7 +235,7 @@ fn backup_restore() {
     c.restore_backup(&agent.name, &backup.id).unwrap();
 
     let st = c.agent_status(&agent.name).unwrap();
-    assert_eq!(st.status, "running");
+    assert!(is_up(&st.status), "expected up after restore, got {}", st.status);
 
     let backups = c.list_backups(&agent.name).unwrap();
     for b in &backups {
@@ -300,8 +306,9 @@ fn rebuild_preserves_auth() {
     c.rebuild_agent(&agent.name).unwrap();
 
     let st = c.agent_status(&agent.name).unwrap();
-    assert_eq!(st.status, "running");
-    assert!(st.authenticated);
+    // rebuild preserves auth: status should not be "not_authenticated"
+    assert_ne!(st.status, "not_authenticated");
+    assert_ne!(st.status, "not_found");
 }
 
 // ── Multi-agent ────────────────────────────────────────────────
@@ -336,8 +343,8 @@ fn start_all_starts_authenticated_agents() {
 
     c.start_all().unwrap();
 
-    assert_eq!(c.agent_status(&a1.name).unwrap().status, "running");
-    assert_eq!(c.agent_status(&a2.name).unwrap().status, "running");
+    assert!(is_up(&c.agent_status(&a1.name).unwrap().status));
+    assert!(is_up(&c.agent_status(&a2.name).unwrap().status));
 }
 
 // ── Destroy auto-stops ─────────────────────────────────────────
@@ -348,7 +355,7 @@ fn destroy_stops_running_agent() {
     let name = c.create_agent("test-destroy-running", false).unwrap();
     inject_fake_token(&c, &name);
     c.start_agent(&name).unwrap();
-    assert_eq!(c.agent_status(&name).unwrap().status, "running");
+    assert!(is_up(&c.agent_status(&name).unwrap().status));
 
     c.destroy_agent(&name).unwrap();
     assert_eq!(c.agent_status(&name).unwrap().status, "not_found");
@@ -379,7 +386,7 @@ fn create_auto_starts() {
     let agent = TestAgent::create(&c, "test-create-autostart").unwrap();
 
     let st = c.agent_status(&agent.name).unwrap();
-    assert_eq!(st.status, "running");
+    assert!(is_up(&st.status), "expected up after create, got {}", st.status);
 }
 
 #[test]
@@ -391,20 +398,17 @@ fn creation_flow() {
 
     // Agent is auto-started by create, no separate start needed
     let st = c.agent_status(&agent.name).unwrap();
-    assert_eq!(st.status, "running");
-    assert!(!st.authenticated);
+    assert_eq!(st.status, "not_authenticated");
 
     // Simulate OAuth: inject token then restart + wait (as complete_auth would)
     inject_fake_token(&c, &agent.name);
-    assert!(c.agent_status(&agent.name).unwrap().authenticated);
+    assert_ne!(c.agent_status(&agent.name).unwrap().status, "not_authenticated");
 
     c.restart_agent(&agent.name).unwrap();
     c.wait_ready(&agent.name, 60).unwrap();
 
     let st = c.agent_status(&agent.name).unwrap();
-    assert_eq!(st.status, "running");
-    assert!(st.authenticated);
-    assert!(st.agent_ready);
+    assert_eq!(st.status, "alive");
 }
 
 #[tokio::test]
