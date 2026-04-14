@@ -637,7 +637,7 @@ async fn logs_handler(
 
 const DEFAULT_AUTO_BACKUP_HOUR: u8 = 4;
 
-#[derive(Serialize, Clone, PartialEq)]
+#[derive(Serialize, Copy, Clone, PartialEq)]
 pub(crate) struct ServiceEntry {
     pub(crate) port: u16,
     #[serde(default)]

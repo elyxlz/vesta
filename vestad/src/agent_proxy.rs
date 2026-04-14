@@ -16,7 +16,7 @@ async fn resolve_service(
     service_name: &str,
 ) -> Option<ServiceEntry> {
     let settings = state.settings.read().await;
-    settings.services.get(agent_name)?.get(service_name).cloned()
+    settings.services.get(agent_name)?.get(service_name).copied()
 }
 
 pub async fn agent_proxy_handler(
@@ -80,14 +80,15 @@ pub async fn agent_proxy_handler(
                 ));
             }
         };
-        let ws_token = agent_token.clone();
+        let ws_token = if is_public { None } else { agent_token.clone() };
         Ok(ws.on_upgrade(move |socket| async move {
             drop(guard);
             ws_proxy(socket, target_port, &target_path, ws_token.as_deref()).await;
         }))
     } else {
         drop(guard);
-        forward_http_to_container(&state.http_client, target_port, &target_path, request, agent_token.as_deref())
+        let token = if is_public { None } else { agent_token.as_deref() };
+        forward_http_to_container(&state.http_client, target_port, &target_path, request, token)
             .await
     }
 }
