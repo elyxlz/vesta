@@ -5,18 +5,11 @@ import { useCarousel } from "@/lib/Carousel/context.mjs";
 import { useTickerItem } from "@/lib/Ticker/use-ticker-item.mjs";
 import { AgentCard } from "@/components/AgentCard";
 import type { AgentInfo } from "@/lib/types";
-
-export const AGENT_CAROUSEL_GAP = 16;
-export const AGENT_CAROUSEL_CARD_WIDTH = 220;
-export const AGENT_CAROUSEL_ITEM_STRIDE =
-  AGENT_CAROUSEL_CARD_WIDTH + AGENT_CAROUSEL_GAP;
-
-export function scaleForCarouselItemOffset(offsetPx: number) {
-  const distance = Math.abs(offsetPx);
-  return (
-    1 - 0.15 * Math.min(distance / AGENT_CAROUSEL_ITEM_STRIDE, 1)
-  );
-}
+import {
+  AGENT_CAROUSEL_GAP,
+  AGENT_CAROUSEL_CARD_WIDTH,
+  AGENT_CAROUSEL_ITEM_STRIDE,
+} from "./constants";
 
 function Pagination() {
   const { currentPage, totalPages, gotoPage } = useCarousel();

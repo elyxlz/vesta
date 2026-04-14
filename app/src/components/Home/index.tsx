@@ -2,13 +2,13 @@ import { AnimatePresence, motion } from "motion/react";
 import { useGateway } from "@/providers/GatewayProvider";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { AgentsCarousel } from "./AgentsCarousel";
 import {
-  AgentsCarousel,
   AGENT_CAROUSEL_CARD_WIDTH,
   AGENT_CAROUSEL_GAP,
   AGENT_CAROUSEL_ITEM_STRIDE,
   scaleForCarouselItemOffset,
-} from "./AgentsCarousel";
+} from "./AgentsCarousel/constants";
 import { EmptyState } from "./EmptyState";
 
 function SkeletonCard({
