@@ -9,6 +9,7 @@ import {
   AGENT_CAROUSEL_GAP,
   AGENT_CAROUSEL_CARD_WIDTH,
   AGENT_CAROUSEL_ITEM_STRIDE,
+  scaleForCarouselItemOffset,
 } from "./constants";
 
 function Pagination() {
