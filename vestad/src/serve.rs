@@ -26,19 +26,23 @@ const RESERVED_SERVICE_NAMES: &[&str] = &[
 const DEFAULT_LOG_TAIL_LINES: u64 = 500;
 const AUTO_BACKUP_CHECK_INTERVAL_SECS: u64 = 3600;
 
-fn detect_git_branch() -> Option<String> {
-    let output = std::process::Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
+fn detect_upstream_ref() -> Option<String> {
+    if cfg!(debug_assertions) {
+        let output = std::process::Command::new("git")
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let branch = String::from_utf8(output.stdout).ok()?.trim().to_string();
+        if branch.is_empty() || branch == "HEAD" {
+            return None;
+        }
+        Some(branch)
+    } else {
+        Some(format!("v{}", env!("CARGO_PKG_VERSION")))
     }
-    let branch = String::from_utf8(output.stdout).ok()?.trim().to_string();
-    if branch.is_empty() || branch == "HEAD" {
-        return None;
-    }
-    Some(branch)
 }
 
 // --- TLS cert generation ---
@@ -1247,11 +1251,7 @@ pub fn write_port_file(config_dir: &std::path::Path, port: u16) {
 /// Called at vestad startup so containers pick up the new values on restart.
 pub fn update_agent_env_files(config_dir: &std::path::Path, port: u16, tunnel_url: Option<&str>) {
     let agents_dir = config_dir.join("agents");
-    let upstream_ref = if cfg!(debug_assertions) {
-        detect_git_branch()
-    } else {
-        Some(format!("v{}", env!("CARGO_PKG_VERSION")))
-    };
+    let upstream_ref = detect_upstream_ref();
     docker::update_all_agent_env_files(&agents_dir, port, tunnel_url, upstream_ref.as_deref());
 }
 
@@ -1576,11 +1576,7 @@ pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: S
         agents_dir: config_dir.join("agents"),
         vestad_port: port,
         vestad_tunnel: tunnel_url.clone(),
-        upstream_ref: if cfg!(debug_assertions) {
-            detect_git_branch()
-        } else {
-            Some(format!("v{}", env!("CARGO_PKG_VERSION")))
-        },
+        upstream_ref: detect_upstream_ref(),
     };
     if let Err(e) = docker::validate_config_dir(&env_config) {
         tracing::error!(error = %e, "config directory validation failed — aborting startup");

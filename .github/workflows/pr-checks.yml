@@ -140,7 +140,7 @@ jobs:
           bash scripts/sync-dashboard.sh
           if ! git diff --quiet agent/skills/dashboard/app/; then
             echo "❌ Dashboard shared files are out of sync with app/"
-            echo "Run 'bash agent/skills/dashboard/sync-app.sh' and commit the changes"
+            echo "Run 'bash scripts/sync-dashboard.sh' and commit the changes"
             git diff --stat agent/skills/dashboard/app/
             exit 1
           fi
