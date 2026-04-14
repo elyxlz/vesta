@@ -10,16 +10,9 @@ Local clone: `~/vesta` with sparse checkout (`agent/` only)
 
 ## Repo layout
 
-The upstream repo nests all agent code under `agent/`. Locally, the runtime files live at root level (`~/vesta/skills/`, `~/vesta/prompts/`, etc.) while git tracks them under `agent/`.
+The upstream repo contains agent code under `agent/`, plus non-agent code (app/, cli/, vestad/). The agent reads directly from `agent/` at runtime, so git-tracked paths and runtime paths are identical.
 
-| Git-tracked (in `agent/`)       | Runtime (root level)       |
-|---------------------------------|----------------------------|
-| `agent/skills/<name>/`          | `skills/<name>/`           |
-| `agent/prompts/`                | `prompts/`                 |
-| `agent/src/vesta/`              | `src/vesta/`               |
-| `agent/MEMORY.md`               | `MEMORY.md`                |
-
-**Sparse checkout** is enabled so only `agent/` is materialized by git. Non-agent files (app/, cli/, Cargo, etc.) are ignored.
+**Sparse checkout** is enabled so only `agent/` is materialized. Non-agent files are ignored.
 
 ## Pulling upstream changes (sync)
 
@@ -35,63 +28,33 @@ Sync against **release tags**, not master. Use `$VESTA_VERSION` to know your cur
    ```
    If `$LATEST` matches `v$VESTA_VERSION`, there's nothing to sync. Stop here.
 
-2. **Sync runtime → agent/ (pre-merge snapshot):**
-   Before merging, copy current runtime files back to `agent/` so git knows the local state:
+2. **Commit any uncommitted local changes:**
    ```bash
-   # For each installed skill
-   for skill in ~/vesta/skills/*/; do
-     name=$(basename "$skill")
-     target=~/vesta/agent/skills/$name
-     if [ -d "$target" ]; then
-       rsync -a --delete "$skill" "$target/"
-     fi
-   done
-   # Prompts and source
-   rsync -a ~/vesta/prompts/ ~/vesta/agent/prompts/
-   rsync -a ~/vesta/src/ ~/vesta/agent/src/
+   git -C ~/vesta add agent/ && git -C ~/vesta commit -m "Local state before merge v$VESTA_VERSION → $LATEST"
    ```
-   Commit this snapshot:
-   ```bash
-   git -C ~/vesta add agent/ && git -C ~/vesta commit -m "Sync local state before merge v$VESTA_VERSION → $LATEST"
-   ```
+   Skip if working tree is clean.
 
 3. **Merge the release tag:**
    ```bash
    git -C ~/vesta merge -X theirs "$LATEST" --no-edit
    ```
-   `-X theirs` auto-resolves conflicts in favor of upstream. If there are still conflicts (rare, means both sides changed the same lines), git will stop and list them.
+   `-X theirs` auto-resolves conflicts in favor of upstream. If there are still conflicts (rare), git will stop and list them.
 
 4. **Resolve any remaining conflicts:**
-   For each conflicted file in `agent/`:
+   For each conflicted file:
    - Read the conflict markers
    - **Default to keeping upstream (theirs)** unless the local change is a meaningful customization
    - If unsure, show the user both versions and ask which to keep
    - After resolving: `git add <file>` then `git commit --no-edit`
 
-5. **Sync agent/ → runtime (post-merge):**
-   Copy the merged files back to the runtime locations:
-   ```bash
-   for skill in ~/vesta/agent/skills/*/; do
-     name=$(basename "$skill")
-     target=~/vesta/skills/$name
-     if [ -d "$target" ]; then
-       rsync -a "$skill" "$target/"
-     fi
-   done
-   rsync -a ~/vesta/agent/prompts/ ~/vesta/prompts/
-   rsync -a ~/vesta/agent/src/ ~/vesta/src/
-   ```
-   Only sync skills that exist locally. Don't create new skill dirs from upstream.
-
-6. **Rebuild affected services:**
+5. **Rebuild affected services:**
    - If dashboard files changed: rebuild and restart dashboard
    - If voice/tasks/stocks code changed: restart those services
-   - If Python deps changed (`pyproject.toml`): `cd ~/vesta && uv sync`
+   - If Python deps changed (`pyproject.toml`): `cd ~/vesta/agent && uv sync`
 
-7. **Verify:** Check that services are running (`screen -ls`), test key endpoints.
+6. **Verify:** Check that services are running (`screen -ls`), test key endpoints.
 
 ### What NOT to sync
-- Skills you don't have installed locally
 - `agent/MEMORY.md` (yours is personal, never overwrite)
 - Non-agent files (app/, cli/, Cargo, etc.) are handled by vestad
 
@@ -136,6 +99,6 @@ uv run ~/vesta/skills/upstream/pr.py --token-only
 ## After creating a PR
 - **Keep working until all CI checks pass.** Do not stop after opening the PR
 - Check CI status via the GitHub API (use `--token-only` to get a token, then hit the check-runs endpoint)
-- The `lockfile` check requires `uv lock` to be run in `~/vesta` if any Python dependencies changed
+- The `lockfile` check requires `uv lock` to be run in `~/vesta/agent` if any Python dependencies changed
 - If any check fails: diagnose, fix, commit to the same branch, push. The PR updates automatically and CI reruns
 - Only report the PR as done to the user once every check is green
