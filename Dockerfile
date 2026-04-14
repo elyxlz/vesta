@@ -34,7 +34,8 @@ RUN for d in agent/skills/*/; do \
     done && rm -f agent/skills/default-skills.txt
 
 # SDK discovers skills from .claude/skills/ relative to cwd
-RUN mkdir -p .claude && ln -s ../agent/skills .claude/skills
+RUN mkdir -p .claude && ln -s ../agent/skills .claude/skills && \
+    printf '{"permissions":{"allow":["Edit(~/.bashrc)","Write(~/.bashrc)"]}}\n' > .claude/settings.json
 
 # Deps (cached unless lockfile changes). These files are also mounted at
 # runtime, but we COPY them here so uv can install dependencies into the
