@@ -14,6 +14,29 @@ The upstream repo contains agent code under `agent/`, plus non-agent code (app/,
 
 **Sparse checkout** is enabled so only `agent/` is materialized. Non-agent files are ignored.
 
+## Local branch
+
+On first boot, the agent creates a branch named after itself (e.g. `athena`) starting from the release tag it was deployed on (`v$VESTA_VERSION`). All local customizations are committed to this branch. The branch never tracks or pushes to any remote.
+
+```
+v0.1.132 (tag) ← branch starts here
+  → local: "add stocks skill"
+  → local: "tweak dashboard config"
+  → merge: "Merge tag v0.1.133"
+  → local: "add reminder tests"
+  → merge: "Merge tag v0.1.134"
+```
+
+To see all local customizations vs upstream: `git diff v0.1.134..$AGENT_NAME`
+
+### First-time setup
+
+If the local branch doesn't exist yet (fresh deploy or migration):
+```bash
+git -C ~/vesta fetch origin --tags --prune --prune-tags
+git -C ~/vesta checkout -b "$AGENT_NAME" "v$VESTA_VERSION"
+```
+
 ## Pulling upstream changes (sync)
 
 Sync against **release tags**, not master. Use `$VESTA_VERSION` to know your current version.
