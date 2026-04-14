@@ -1,6 +1,10 @@
 import type { RefObject } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { CardContent } from "@/components/ui/card";
+import {
+  calendarDayKey,
+  formatChatDayStampLabel,
+} from "@/lib/chat-day-stamp";
 import type { VestaEvent } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { ChatBubble } from "../ChatBubble";
@@ -82,28 +86,55 @@ export function ChatMessageArea({
             </div>
           ) : (
             <div className="flex flex-col">
-              {chatMessages.map((msg, i) => {
-                const prev = chatMessages[i - 1];
-                const isTool = msg.type === "tool_start";
-                const prevIsTool = prev?.type === "tool_start";
-                const gap =
-                  i === 0
-                    ? ""
-                    : isTool && prevIsTool
-                      ? "mt-1"
-                      : isTool || prevIsTool
-                        ? "mt-2"
-                        : prev && prev.type === msg.type
-                          ? "mt-1.5"
-                          : "mt-5";
-                return (
-                  <ChatBubble
-                    key={msg.ts ? `${msg.ts}-${msg.type}` : `idx-${i}`}
-                    event={msg}
-                    className={gap}
-                  />
-                );
-              })}
+              {(() => {
+                let lastDayKey: string | null = null;
+                return chatMessages.map((msg, i) => {
+                  const prev = chatMessages[i - 1];
+                  const dayKey = calendarDayKey(msg.ts);
+                  const showDayStamp = Boolean(
+                    dayKey &&
+                      (lastDayKey === null || dayKey !== lastDayKey),
+                  );
+                  if (dayKey) lastDayKey = dayKey;
+                  const isTool = msg.type === "tool_start";
+                  const prevIsTool = prev?.type === "tool_start";
+                  const gap = showDayStamp
+                    ? "mt-2"
+                    : i === 0
+                      ? ""
+                      : isTool && prevIsTool
+                        ? "mt-1"
+                        : isTool || prevIsTool
+                          ? "mt-2"
+                          : prev && prev.type === msg.type
+                            ? "mt-1.5"
+                            : "mt-5";
+                  const dayLabel =
+                    showDayStamp && msg.ts
+                      ? formatChatDayStampLabel(msg.ts)
+                      : "";
+                  return (
+                    <div
+                      key={msg.ts ? `${msg.ts}-${msg.type}` : `idx-${i}`}
+                      className="flex flex-col"
+                    >
+                      {showDayStamp && dayLabel && (
+                        <div
+                          className={cn(
+                            "flex justify-center",
+                            i > 0 ? "mt-5" : "",
+                          )}
+                        >
+                          <span className="text-[11px] text-muted-foreground/60 select-none">
+                            {dayLabel}
+                          </span>
+                        </div>
+                      )}
+                      <ChatBubble event={msg} className={gap} />
+                    </div>
+                  );
+                });
+              })()}
             </div>
           )}
         </div>

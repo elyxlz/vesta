@@ -106,7 +106,7 @@ function CollapsibleNavItem({
           <SidebarMenuButton tooltip={item.title}>
             {item.icon}
             <span>{item.title}</span>
-            <ChevronRightIcon className="ml-auto transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90" />
+            <ChevronRightIcon className="ml-auto transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90 group-data-[collapsible=icon]:hidden" />
           </SidebarMenuButton>
         </CollapsibleTrigger>
         <CollapsibleContent>
@@ -117,6 +117,7 @@ function CollapsibleNavItem({
                   isActive={child.id === activeId}
                   onClick={() => onNavigate(child.id)}
                 >
+                  {child.icon}
                   <span>{child.title}</span>
                 </SidebarMenuSubButton>
               </SidebarMenuSubItem>

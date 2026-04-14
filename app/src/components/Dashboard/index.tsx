@@ -140,6 +140,7 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
       key={iframeKey}
       ref={iframeRef}
       src={dashboardUrl!}
+      allow="microphone; camera; display-capture; autoplay; fullscreen; picture-in-picture; clipboard-read; clipboard-write; geolocation; screen-wake-lock; web-share; payment; publickey-credentials-get; publickey-credentials-create; encrypted-media; midi; gamepad; xr-spatial-tracking; hid; serial; usb; bluetooth; idle-detection; local-fonts; storage-access; compute-pressure; window-management"
       className={`w-full h-full bg-transparent transition-opacity duration-200 ${loaded ? "opacity-100" : "opacity-0"}`}
       onLoad={() => {
         sendContext();
