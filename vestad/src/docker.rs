@@ -1208,7 +1208,7 @@ pub async fn create_container(docker: &Docker, cname: &str, image: &str, port: u
         GpuStatus::NoGpu => {}
     }
 
-    tracing::info!(agent = %agent_name, manage_code, "creating container");
+    tracing::info!(agent = %agent_name, image = %image, manage_code, "creating container");
 
     let host_config = bollard::models::HostConfig {
         binds: Some(binds),
@@ -1475,6 +1475,8 @@ pub async fn create_agent(docker: &Docker, name: &str, env_config: &AgentEnvConf
     let image = resolve_image(docker).await?;
 
     if manage_code {
+        let code_source = if cfg!(debug_assertions) { "local repo" } else { "github" };
+        tracing::info!(agent = %name, source = code_source, "fetching agent code");
         crate::agent_code::ensure_agent_code(&env_config.config_dir)
             .map_err(|e| DockerError::Failed(format!("agent code: {e}")))?;
     }
