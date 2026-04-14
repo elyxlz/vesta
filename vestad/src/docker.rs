@@ -86,7 +86,7 @@ const ENTRYPOINT: &[&str] = &[
      git -C ~/vesta config user.name \"$AGENT_NAME\" && \
      git -C ~/vesta config user.email \"$AGENT_NAME@vesta\"; \
      uv sync --frozen --project /root/vesta/agent; \
-     git -C ~/vesta add agent/ --ignore-errors && \
+     git -C ~/vesta add agent/ .gitignore --ignore-errors && \
        (git -C ~/vesta diff --cached --quiet || git -C ~/vesta commit -m 'initial'); \
      if ! git -C ~/vesta describe --tags --abbrev=0 >/dev/null 2>&1 && [ -n \"${VESTA_UPSTREAM_REF:-}\" ]; then \
        git -C ~/vesta fetch --depth 1 origin \"$VESTA_UPSTREAM_REF\" 2>/dev/null && \
