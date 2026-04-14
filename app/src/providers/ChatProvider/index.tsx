@@ -20,11 +20,11 @@ const ChatContext = createContext<ChatContextValue | null>(null);
 
 export function ChatProvider({ children }: { children: ReactNode }) {
   const { name, agent, setAgentState } = useSelectedAgent();
-  const { speak } = useVoice();
+  const { speak, prefetch } = useVoice();
   const [showToolCalls, setShowToolCalls] = useState(false);
 
   const ready = agent?.status === "alive";
-  const chat = useChat({ name, active: ready, onAssistantMessage: speak });
+  const chat = useChat({ name, active: ready, onAssistantMessage: speak, onPrefetch: prefetch });
 
   useEffect(() => {
     setAgentState(chat.agentState);

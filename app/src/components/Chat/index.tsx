@@ -41,7 +41,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
 
   const {
     messages,
-    agentState,
+    isTyping,
     connected,
     hasMore,
     loadingMore,
@@ -98,7 +98,6 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     [messages, showToolCalls],
   );
 
-  const isThinking = agentState === "thinking";
   const lastMsgRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -143,7 +142,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
       setInput("");
       const ta = textareaRef.current;
       if (ta) ta.style.height = "auto";
-      scrollToBottom();
+      requestAnimationFrame(scrollToBottom);
     }
   };
 
@@ -198,7 +197,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
           chatMessages={chatMessages}
           connected={connected}
           agentName={name}
-          isThinking={isThinking}
+          isTyping={isTyping}
         />
 
         <div className="relative">

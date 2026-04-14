@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import {
   Transcriber,
+  prefetchSpeech,
   streamSpeech,
   fetchSttStatus,
   fetchTtsStatus,
@@ -32,6 +33,7 @@ interface VoiceState {
 
   // Actions
   toggleVoice: () => void;
+  prefetch: (text: string) => void;
   speak: (text: string) => void;
   stopSpeech: () => void;
   registerChatCallbacks: (
@@ -63,6 +65,7 @@ let draftCallback: ((text: string) => void) | null = null;
 let ttsAbort: AbortController | null = null;
 let ttsQueue: string[] = [];
 let ttsProcessing = false;
+const ttsPrefetchCache = new Map<string, Promise<Response>>();
 
 function deriveStatus(stt: SttStatus | null, tts: TtsStatus | null) {
   const sttAvailable = (stt?.configured && stt?.enabled) ?? false;
@@ -85,7 +88,10 @@ export const useVoice = create<VoiceState>((set, get) => {
       const controller = new AbortController();
       ttsAbort = controller;
       try {
-        await streamSpeech(text, agentName, controller.signal);
+        const cached = ttsPrefetchCache.get(text);
+        ttsPrefetchCache.delete(text);
+        const prefetched = cached ? await cached.catch(() => undefined) : undefined;
+        await streamSpeech(text, agentName, controller.signal, prefetched);
       } catch (err) {
         if (!controller.signal.aborted) {
           console.warn("[tts] playback failed:", err);
@@ -180,6 +186,14 @@ export const useVoice = create<VoiceState>((set, get) => {
         });
     },
 
+    prefetch: (text: string) => {
+      const { speechEnabled, agentName } = get();
+      if (!speechEnabled || !agentName) return;
+      if (ttsPrefetchCache.has(text)) return;
+      console.debug("[tts] prefetching:", text.slice(0, 60));
+      ttsPrefetchCache.set(text, prefetchSpeech(text, agentName));
+    },
+
     speak: (text: string) => {
       const { speechEnabled, agentName } = get();
       if (!speechEnabled || !agentName) return;
@@ -190,6 +204,7 @@ export const useVoice = create<VoiceState>((set, get) => {
 
     stopSpeech: () => {
       ttsQueue = [];
+      ttsPrefetchCache.clear();
       ttsAbort?.abort();
       ttsProcessing = false;
       set({ isSpeaking: false });
