@@ -6,9 +6,17 @@ import { useTickerItem } from "@/lib/Ticker/use-ticker-item.mjs";
 import { AgentCard } from "@/components/AgentCard";
 import type { AgentInfo } from "@/lib/types";
 
-const GAP = 16;
-const CARD_WIDTH = 220;
-const ITEM_STRIDE = CARD_WIDTH + GAP;
+export const AGENT_CAROUSEL_GAP = 16;
+export const AGENT_CAROUSEL_CARD_WIDTH = 220;
+export const AGENT_CAROUSEL_ITEM_STRIDE =
+  AGENT_CAROUSEL_CARD_WIDTH + AGENT_CAROUSEL_GAP;
+
+export function scaleForCarouselItemOffset(offsetPx: number) {
+  const distance = Math.abs(offsetPx);
+  return (
+    1 - 0.15 * Math.min(distance / AGENT_CAROUSEL_ITEM_STRIDE, 1)
+  );
+}
 
 function Pagination() {
   const { currentPage, totalPages, gotoPage } = useCarousel();
@@ -35,16 +43,13 @@ function Pagination() {
 function CarouselCard({ agent }: { agent: AgentInfo }) {
   const { offset } = useTickerItem();
   const [isCentered, setIsCentered] = useState(
-    () => Math.abs(offset.get()) < ITEM_STRIDE / 2,
+    () => Math.abs(offset.get()) < AGENT_CAROUSEL_ITEM_STRIDE / 2,
   );
 
-  const scale = useTransform(offset, (v: number) => {
-    const distance = Math.abs(v);
-    return 1 - 0.15 * Math.min(distance / ITEM_STRIDE, 1);
-  });
+  const scale = useTransform(offset, scaleForCarouselItemOffset);
 
   useMotionValueEvent(offset, "change", (v) => {
-    const centered = Math.abs(v) < ITEM_STRIDE / 2;
+    const centered = Math.abs(v) < AGENT_CAROUSEL_ITEM_STRIDE / 2;
     queueMicrotask(() => {
       setIsCentered((prev) => (prev === centered ? prev : centered));
     });
@@ -53,7 +58,7 @@ function CarouselCard({ agent }: { agent: AgentInfo }) {
   return (
     <motion.div
       className="flex h-full items-center justify-center"
-      style={{ width: `${CARD_WIDTH}px`, aspectRatio: "1/1", scale }}
+      style={{ width: `${AGENT_CAROUSEL_CARD_WIDTH}px`, aspectRatio: "1/1", scale }}
     >
       <AgentCard agent={agent} enableTracking={isCentered} />
     </motion.div>
@@ -69,7 +74,7 @@ export function AgentsCarousel({ agents }: { agents: AgentInfo[] }) {
     <Carousel
       className="relative flex min-h-0 w-full flex-1 items-center"
       items={items}
-      gap={GAP}
+      gap={AGENT_CAROUSEL_GAP}
       loop={false}
       snap="item"
       overflow
@@ -77,7 +82,7 @@ export function AgentsCarousel({ agents }: { agents: AgentInfo[] }) {
       transition={{ type: "spring", stiffness: 500, damping: 40 }}
       style={{
         cursor: "grab",
-        paddingInline: `calc(50% - ${CARD_WIDTH / 2}px)`,
+        paddingInline: `calc(50% - ${AGENT_CAROUSEL_CARD_WIDTH / 2}px)`,
         touchAction: "pan-y",
         overscrollBehaviorX: "none",
       }}

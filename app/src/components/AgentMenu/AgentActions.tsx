@@ -27,6 +27,7 @@ export interface AgentActionsInput {
   onRebuild: () => void;
   onBackup: () => void;
   onAuthenticate?: () => void;
+  isAuthenticated?: boolean;
   onOpenSettings?: () => void;
   onDelete?: () => void;
   onDebugInfo?: () => void;
@@ -49,22 +50,6 @@ export interface ActionSection {
 
 export function buildActionSections(input: AgentActionsInput): ActionSection[] {
   const sections: ActionSection[] = [];
-
-  if (input.onAuthenticate) {
-    sections.push({
-      key: "setup",
-      title: "Setup",
-      items: [
-        {
-          key: "authenticate",
-          icon: <KeyRound data-icon="inline-start" />,
-          label: "authenticate",
-          onClick: input.onAuthenticate,
-          variant: "default",
-        },
-      ],
-    });
-  }
 
   const viewItems: ActionItem[] = [];
   if (input.showAliveActions) {
@@ -138,6 +123,14 @@ export function buildActionSections(input: AgentActionsInput): ActionSection[] {
       icon: <Bug data-icon="inline-start" />,
       label: "debug info",
       onClick: input.onDebugInfo,
+    });
+  }
+  if (input.onAuthenticate) {
+    generalItems.push({
+      key: "authenticate",
+      icon: <KeyRound data-icon="inline-start" />,
+      label: input.isAuthenticated ? "reauthenticate" : "authenticate",
+      onClick: input.onAuthenticate,
     });
   }
   if (input.onDelete) {

@@ -24,8 +24,10 @@ export function ActionsCard() {
     agent?.status !== "stopped" &&
     agent?.status !== "dead" &&
     agent?.status !== "not_found";
-  const showAuthenticate = agent?.status === "not_authenticated";
   const showAliveActions = agent?.status === "alive";
+  const isAuthenticated = Boolean(
+    agent && agent.status !== "not_authenticated",
+  );
 
   return (
     <Card size="sm">
@@ -43,9 +45,8 @@ export function ActionsCard() {
           onRestart={() => void restart()}
           onRebuild={() => void rebuild()}
           onBackup={() => void backup()}
-          onAuthenticate={
-            showAuthenticate ? () => void handleOpenAuth() : undefined
-          }
+          onAuthenticate={() => void handleOpenAuth()}
+          isAuthenticated={isAuthenticated}
           onDelete={() => setDeleteDialogOpen(true)}
         />
       </CardContent>

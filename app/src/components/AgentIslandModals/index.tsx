@@ -22,7 +22,7 @@ import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useModals } from "@/providers/ModalsProvider";
 
 export function AgentIslandModals() {
-  const { name, agent } = useSelectedAgent();
+  const { name } = useSelectedAgent();
   const {
     showAuth,
     authStarting,
@@ -39,7 +39,7 @@ export function AgentIslandModals() {
     <>
       <Dialog
         drawerOnMobile
-        open={showAuth && agent?.status === "not_authenticated"}
+        open={showAuth}
         onOpenChange={(open) => {
           if (!open) clearAuthState();
         }}

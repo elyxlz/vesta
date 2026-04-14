@@ -23,7 +23,7 @@ if (isTauri) {
 }
 
 const isMacTauri = isTauri && platform === "macos";
-d.style.setProperty("--titlebar-center-mt", isMacTauri ? "-0.5rem" : "0px");
+d.style.setProperty("--titlebar-center-mt", isMacTauri ? "-0.75rem" : "0px");
 d.style.setProperty("--titlebar-pt", isMacTauri ? "1.1rem" : "0rem");
 
 await Promise.all([
