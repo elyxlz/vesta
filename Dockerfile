@@ -17,12 +17,16 @@ WORKDIR /root/vesta
 
 # Git repo — agent tracks local changes (skills, prompts, memory) on its branch.
 # Core code (src/vesta, pyproject.toml, uv.lock) is mounted by vestad at runtime.
-RUN git clone --bare https://github.com/elyxlz/vesta.git .git && \
-    git config core.bare false && \
-    git sparse-checkout init --cone && \
-    git sparse-checkout set agent
+RUN git init && git config user.email "vesta@local" && git config user.name "vesta" && \
+    git remote add origin https://github.com/elyxlz/vesta.git
 
-# Reduce image size: remove non-default skills from git checkout
+# Copy agent-owned files from build context (matches local code in dev,
+# release code in prod).
+COPY agent/MEMORY.md agent/MEMORY.md
+COPY agent/prompts/ agent/prompts/
+COPY agent/skills/ agent/skills/
+
+# Reduce image size: remove non-default skills
 RUN for d in agent/skills/*/; do \
       name="$(basename "$d")"; \
       grep -qx "$name" agent/skills/default-skills.txt || rm -rf "$d"; \

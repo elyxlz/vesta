@@ -87,6 +87,10 @@ const ENTRYPOINT: &[&str] = &[
      git -C ~/vesta diff --quiet agent/ 2>/dev/null || \
        (git -C ~/vesta add agent/ --ignore-errors && \
         git -C ~/vesta diff --cached --quiet || git -C ~/vesta commit -m 'initial'); \
+     if ! git -C ~/vesta describe --tags --abbrev=0 >/dev/null 2>&1; then \
+       git -C ~/vesta fetch --depth 1 origin tag \"v$VESTA_VERSION\" 2>/dev/null && \
+       git -C ~/vesta merge \"v$VESTA_VERSION\" --no-edit --allow-unrelated-histories 2>/dev/null; \
+     fi; \
      git -C ~/vesta rev-parse --verify \"$AGENT_NAME\" 2>/dev/null || git -C ~/vesta checkout -b \"$AGENT_NAME\"; \
      exec uv run --frozen --project /root/vesta/agent python -m vesta.main",
 ];

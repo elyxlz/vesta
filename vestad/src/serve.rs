@@ -1610,8 +1610,6 @@ pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: S
         spawn_update_check_task(state);
     }
 
-    tracing::info!(port, "server listening");
-
     let rustls_config = axum_server::tls_rustls::RustlsConfig::from_pem(
         cert_pem.into_bytes(),
         key_pem.into_bytes(),
@@ -1626,7 +1624,8 @@ pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: S
     let http_port = port + 1;
     let http_addr = std::net::SocketAddr::from(([127, 0, 0, 1], http_port));
 
-    tracing::info!(http_port, "http server listening on localhost");
+    tracing::info!(port, "https listening on 0.0.0.0");
+    tracing::info!(http_port, "http listening on 127.0.0.1");
 
     let http_app = app.clone();
     let http_handle = tokio::spawn(async move {

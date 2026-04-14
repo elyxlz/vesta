@@ -181,15 +181,15 @@ def init_state(*, config: vm.VestaConfig) -> vm.State:
 
 
 def _log_git_status(root: os.PathLike[str]) -> None:
-    """Log git branch, tag, and dirty file count at startup."""
+    """Log git branch, commit, and dirty file count at startup."""
     try:
         def _git(*args: str) -> str:
             return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True).stdout.strip()
 
         branch = _git("rev-parse", "--abbrev-ref", "HEAD")
-        tag = _git("describe", "--tags", "--abbrev=0") or "none"
-        dirty = len(_git("status", "--porcelain", "agent/").splitlines())
-        logger.init(f"git: branch={branch} tag={tag} dirty={dirty}")
+        commit = _git("rev-parse", "--short", "HEAD")
+        dirty = len(_git("diff", "--name-only", "agent/").splitlines())
+        logger.init(f"git: branch={branch} commit={commit} dirty={dirty}")
     except Exception:
         pass
 

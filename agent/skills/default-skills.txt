@@ -6,6 +6,7 @@ dream
 flights
 skills-registry
 tasks
-upstream
+upstream-pr
+upstream-sync
 voice
 what-day
