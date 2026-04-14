@@ -49,29 +49,50 @@ export function useChat({ name, active, onAssistantMessage }: UseChatOptions) {
   const drainingRef = useRef(false);
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const flushQueue = useCallback(() => {
+    for (const event of chatQueueRef.current) {
+      setMessages((prev) => {
+        const updated = [...prev, event];
+        return updated.length > MAX_MESSAGES ? updated.slice(-MAX_MESSAGES) : updated;
+      });
+      if (event.type === "chat") {
+        onAssistantMessageRef.current?.(event.text);
+      }
+    }
+    chatQueueRef.current = [];
+    drainingRef.current = false;
+    setIsTyping(false);
+  }, []);
+
   const drainQueue = useCallback(() => {
     if (drainingRef.current) return;
-    const next = chatQueueRef.current[0];
-    if (!next) {
+    const queue = chatQueueRef.current;
+    if (queue.length === 0) {
       setIsTyping(false);
       return;
     }
+    if (queue.length > 3) {
+      flushQueue();
+      return;
+    }
+    const next = queue[0];
     drainingRef.current = true;
     setIsTyping(true);
-    const delay = typingDelay((next as { text?: string }).text?.length ?? 0);
+    const text = next.type === "chat" ? next.text : undefined;
+    const delay = typingDelay(text?.length ?? 0);
     typingTimerRef.current = setTimeout(() => {
-      chatQueueRef.current.shift();
+      queue.shift();
       setMessages((prev) => {
         const updated = [...prev, next];
         return updated.length > MAX_MESSAGES ? updated.slice(-MAX_MESSAGES) : updated;
       });
-      if ((next as { text?: string }).text) {
-        onAssistantMessageRef.current?.((next as { text: string }).text);
+      if (text) {
+        onAssistantMessageRef.current?.(text);
       }
       drainingRef.current = false;
       drainQueue();
     }, delay);
-  }, []);
+  }, [flushQueue]);
 
   const enqueueChatMessage = useCallback((event: VestaEvent) => {
     chatQueueRef.current.push(event);
@@ -118,6 +139,10 @@ export function useChat({ name, active, onAssistantMessage }: UseChatOptions) {
         setMessages([]);
         cursorRef.current = null;
         pendingEchoesRef.current = [];
+        if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+        chatQueueRef.current = [];
+        drainingRef.current = false;
+        setIsTyping(false);
       };
 
       socket.onmessage = (e) => {
