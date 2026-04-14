@@ -24,6 +24,8 @@ whatsapp groups
 whatsapp react --chat-id "<jid>" --message-id "<id>" --emoji "👍"
 whatsapp backfill --chat-id "<jid>"
 whatsapp send-file --to "+1234567890" --file-path /path/to/document.pdf
+whatsapp revoke-message --to 'Name' --message-id '<id>'  # delete/unsend a message
+whatsapp download-media --to 'Name' --message-id '<id>'  # download image/video/doc, saved to ~/.whatsapp/downloads/
 ```
 
 ## Notes
