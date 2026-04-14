@@ -7,10 +7,10 @@ description: Self-improvement and memory curation. Used by the nightly dreamer, 
 
 ## Your files
 
-- **Memory**: ~/vesta/MEMORY.md
-- **Skills**: ~/vesta/skills/ (each has a SKILL.md)
-- **Prompts**: ~/vesta/prompts/
-- **Dreamer summaries**: ~/vesta/dreamer/
+- **Memory**: ~/vesta/agent/MEMORY.md
+- **Skills**: ~/vesta/agent/skills/ (each has a SKILL.md)
+- **Prompts**: ~/vesta/agent/prompts/
+- **Dreamer summaries**: ~/vesta/agent/dreamer/
 
 ## Order of operations
 
@@ -29,7 +29,7 @@ Write a thorough plan first. For each phase: what you intend to fix, what to pru
 
 ### 1. Retrospective
 
-Read the last 5-7 files in `~/vesta/dreamer/` (sorted by date) to spot recurring patterns: fixes that keep resurfacing, problems marked "resolved" that came back, and improvements that actually stuck. For each fix in the recent summaries, check today's conversation: did that situation come up again? Did it go better? If a fix didn't help or made things worse, revisit it now. If it worked, note it in tonight's summary.
+Read the last 5-7 files in `~/vesta/agent/dreamer/` (sorted by date) to spot recurring patterns: fixes that keep resurfacing, problems marked "resolved" that came back, and improvements that actually stuck. For each fix in the recent summaries, check today's conversation: did that situation come up again? Did it go better? If a fix didn't help or made things worse, revisit it now. If it worked, note it in tonight's summary.
 
 ### 2. Review the conversation
 
@@ -89,7 +89,7 @@ Replace rather than append. It's a snapshot, not a log. Be honest but not dramat
 
 ## Memory Curation
 
-MEMORY.md has a **hard limit of 20,000 characters**. It's injected into every system prompt. Run `~/vesta/skills/dream/scripts/memory_size.sh` to check usage. Things needed at all times live here permanently. Anything large or situational lives elsewhere and MEMORY.md points to it. When you hit the cap, consolidate. Don't let it overflow.
+MEMORY.md has a **hard limit of 20,000 characters**. It's injected into every system prompt. Run `~/vesta/agent/skills/dream/scripts/memory_size.sh` to check usage. Things needed at all times live here permanently. Anything large or situational lives elsewhere and MEMORY.md points to it. When you hit the cap, consolidate. Don't let it overflow.
 
 **Cut:**
 - Full documents, email bodies, transcripts, task-specific junk
@@ -126,11 +126,11 @@ The goal: a tidy workspace where everything has a purpose. If something is left 
 
 ## Sensitive Data Cleanup
 
-Run `~/vesta/skills/dream/scripts/redact_secrets.sh` to scan the event DB for API keys, tokens, passwords, private keys, and connection strings. Review matches (skip false positives), then rerun with `--delete` to purge. Also grep MEMORY.md and dreamer summaries for credentials and remove any you find. Secrets belong in env vars, not in history or files.
+Run `~/vesta/agent/skills/dream/scripts/redact_secrets.sh` to scan the event DB for API keys, tokens, passwords, private keys, and connection strings. Review matches (skip false positives), then rerun with `--delete` to purge. Also grep MEMORY.md and dreamer summaries for credentials and remove any you find. Secrets belong in env vars, not in history or files.
 
 ## Summary
 
-Write what you changed and why to `~/vesta/dreamer/YYYY-MM-DDTHH.md` (e.g. `2026-04-14T03.md`). Include:
+Write what you changed and why to `~/vesta/agent/dreamer/YYYY-MM-DDTHH.md` (e.g. `2026-04-14T03.md`). Include:
 - Key things that happened or were accomplished today
 - What each fix was and what triggered it
 - Whether each validated or not

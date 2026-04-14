@@ -74,13 +74,14 @@ pub const OAUTH_AUTHORIZE_URL: &str = "https://claude.ai/oauth/authorize";
 
 const NETWORK_MODE: &str = "host";
 const RESTART_POLICY: &str = "unless-stopped";
-const MOUNT_DESTS: &[&str] = &["/run/vestad-env", "/root/vesta/src/vesta", "/root/vesta/pyproject.toml", "/root/vesta/uv.lock"];
+const MOUNT_DESTS: &[&str] = &["/run/vestad-env", "/root/vesta/agent/src/vesta", "/root/vesta/agent/pyproject.toml", "/root/vesta/agent/uv.lock"];
 
 /// Container entrypoint: source the bind-mounted env file (so vestad can inject
-/// new vars without rebuilding images), then exec the agent.
+/// new vars without rebuilding images), create the agent's local git branch if
+/// it doesn't exist yet, then exec the agent.
 const ENTRYPOINT: &[&str] = &[
     "sh", "-c",
-    ". /run/vestad-env; . ~/.bashrc || true; exec uv run --frozen --project /root/vesta python -m vesta.main",
+    ". /run/vestad-env; . ~/.bashrc || true; git -C ~/vesta rev-parse --verify \"$AGENT_NAME\" 2>/dev/null || git -C ~/vesta checkout -b \"$AGENT_NAME\"; exec uv run --frozen --project /root/vesta/agent python -m vesta.main",
 ];
 
 const CONTAINER_STOP_TIMEOUT_SECS: i64 = 10;

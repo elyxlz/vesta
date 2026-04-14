@@ -30,7 +30,7 @@ CREDENTIALS_PATH = Path.home() / ".claude" / ".credentials.json"
 CONTAINER_CREDS = "/root/.claude/.credentials.json"
 NOTIFICATIONS_DIR = "/root/vesta/notifications"
 WORKSPACE_DIR = "/root/vesta/workspace"
-MEMORY_PATH = "/root/vesta/MEMORY.md"
+MEMORY_PATH = "/root/vesta/agent/MEMORY.md"
 WS_PORT = 17865
 
 TEST_MEMORY = """\

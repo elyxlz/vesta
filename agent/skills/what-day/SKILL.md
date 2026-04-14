@@ -12,7 +12,7 @@ CRITICAL: Use this skill when working with ANY date to avoid mistakes about whic
 ## How to Determine Day of Week
 
 ```bash
-uv run ~/vesta/skills/what-day/scripts/what_day.py 2025-11-14
+uv run ~/vesta/agent/skills/what-day/scripts/what_day.py 2025-11-14
 ```
 
 Output:

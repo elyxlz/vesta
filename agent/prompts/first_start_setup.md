@@ -4,4 +4,4 @@ Your name is in the system message above. Update MEMORY.md now, replacing every 
 
 Silently set up tasks, app-chat, and the dashboard. These are core, not optional. Read each skill's SKILL.md/SETUP.md and get them running. Don't ask, just do it.
 
-Then explore your environment: browse `~/vesta/skills/`, read the available SKILL.md files, check what tools and CLIs are installed. Get a sense of what you can do.
+Then explore your environment: browse `~/vesta/agent/skills/`, read the available SKILL.md files, check what tools and CLIs are installed. Get a sense of what you can do.

@@ -16,29 +16,35 @@ ENV PATH="/root/.local/bin:${PATH}"
 WORKDIR /root/vesta
 
 # Dependencies (cached unless lockfile changes)
-COPY agent/pyproject.toml agent/uv.lock ./
+COPY agent/pyproject.toml agent/uv.lock ./agent/
+WORKDIR /root/vesta/agent
 RUN uv sync --frozen --no-install-project
 
 # Source (changes often, but deps are cached above)
 COPY agent/src ./src
 COPY agent/prompts ./prompts
 RUN uv sync --frozen
+WORKDIR /root/vesta
 
 # Everything else
-COPY agent/ .
+COPY agent/ ./agent/
 
 # Remove non-default skills (keep only those listed in default-skills.txt)
-RUN for d in skills/*/; do \
+RUN for d in agent/skills/*/; do \
       name="$(basename "$d")"; \
-      grep -qx "$name" skills/default-skills.txt || rm -rf "$d"; \
-    done && rm -f skills/default-skills.txt
+      grep -qx "$name" agent/skills/default-skills.txt || rm -rf "$d"; \
+    done && rm -f agent/skills/default-skills.txt
 
 # SDK discovers skills from .claude/skills/ relative to cwd
-RUN mkdir -p .claude && ln -s ../skills .claude/skills
+RUN mkdir -p .claude && ln -s ../agent/skills .claude/skills
 
-# Bare repo for upstream skill (fetch/worktree/show without exposing cli/app as working files)
+# Git repo: sparse checkout (agent/ only), HEAD at release tag.
+# At first boot the agent creates its named branch from here.
 RUN git clone --bare https://github.com/elyxlz/vesta.git .git && \
-    git config core.bare false
+    git config core.bare false && \
+    git sparse-checkout set agent && \
+    VERSION=$(grep '^version' agent/pyproject.toml | sed 's/.*"\(.*\)"/\1/') && \
+    git reset "v${VERSION}"
 
 RUN rm -f /usr/bin/pkill /usr/bin/killall
 

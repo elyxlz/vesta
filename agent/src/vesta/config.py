@@ -49,6 +49,10 @@ class VestaConfig(pyd_settings.BaseSettings):
         return pl.Path(value).expanduser().resolve()
 
     @property
+    def source_dir(self) -> pl.Path:
+        return self.root / "agent"
+
+    @property
     def notifications_dir(self) -> pl.Path:
         return self.root / "notifications"
 
@@ -62,7 +66,7 @@ class VestaConfig(pyd_settings.BaseSettings):
 
     @property
     def skills_dir(self) -> pl.Path:
-        return self.root / "skills"
+        return self.source_dir / "skills"
 
     def skill_dirs(self) -> list[pl.Path]:
         """Return every existing skills/<name>/ directory with a SKILL.md."""
@@ -73,11 +77,11 @@ class VestaConfig(pyd_settings.BaseSettings):
 
     @property
     def prompts_dir(self) -> pl.Path:
-        return self.root / "prompts"
+        return self.source_dir / "prompts"
 
     @property
     def dreamer_dir(self) -> pl.Path:
-        return self.root / "dreamer"
+        return self.source_dir / "dreamer"
 
     @property
     def session_file(self) -> pl.Path:

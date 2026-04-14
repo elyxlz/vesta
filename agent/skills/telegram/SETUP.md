@@ -9,7 +9,7 @@
    ```
 2. Build the Telegram CLI (CGO required for SQLite with FTS5):
    ```bash
-   cd ~/vesta/skills/telegram/cli && CGO_ENABLED=1 CGO_CFLAGS="-DSQLITE_ENABLE_FTS5" CGO_LDFLAGS="-lm" go build -o /usr/local/bin/telegram .
+   cd ~/vesta/agent/skills/telegram/cli && CGO_ENABLED=1 CGO_CFLAGS="-DSQLITE_ENABLE_FTS5" CGO_LDFLAGS="-lm" go build -o /usr/local/bin/telegram .
    ```
 3. Create a Telegram bot and authenticate:
    - Tell the user to message [@BotFather](https://t.me/BotFather) on Telegram
@@ -24,7 +24,7 @@
    screen -dmS telegram telegram serve --notifications-dir ~/vesta/notifications
    ```
 5. **Important**: The user must `/start` the bot from their Telegram account before Vesta can send them messages. After that first interaction, Vesta can message them anytime (including autonomously, e.g., morning reports).
-6. Add to `~/vesta/prompts/restart.md`:
+6. Add to `~/vesta/agent/prompts/restart.md`:
    ```
    screen -dmS telegram telegram serve --notifications-dir ~/vesta/notifications
    ```

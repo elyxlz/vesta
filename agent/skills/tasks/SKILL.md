@@ -108,7 +108,7 @@ Written to the notifications directory as JSON:
 
 ## Setup
 ```bash
-uv tool install ~/vesta/skills/tasks/cli
+uv tool install ~/vesta/agent/skills/tasks/cli
 ```
 
 ## Background Daemon
@@ -122,7 +122,7 @@ screen -dmS tasks tasks serve --notifications-dir ~/vesta/notifications --port $
 
 One daemon handles everything, both task due-date monitoring and reminder scheduling. No separate reminder daemon needed.
 
-**Restart**: Add to `~/vesta/prompts/restart.md`:
+**Restart**: Add to `~/vesta/agent/prompts/restart.md`:
 ```
 PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' -d '{"name":"tasks"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])") && screen -dmS tasks tasks serve --notifications-dir ~/vesta/notifications --port $PORT
 ```

@@ -64,7 +64,7 @@ Edit `~/.spotify/organize.json` to customize:
 
 ## Step 6: Add to restart.md
 
-If using the watch daemon, add to `~/vesta/prompts/restart.md`:
+If using the watch daemon, add to `~/vesta/agent/prompts/restart.md`:
 ```
 screen -dmS spotify-watch spotify organize watch
 ```

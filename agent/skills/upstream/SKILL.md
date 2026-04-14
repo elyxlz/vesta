@@ -43,7 +43,20 @@ Sync against **release tags**, not master. Use `$VESTA_VERSION` to know your cur
 
 ### Steps
 
-1. **Fetch and find latest release:**
+1. **Commit all local work:**
+   Everything must be committed before syncing. Stage and commit all changes on your local branch:
+   ```bash
+   cd ~/vesta
+   git add agent/
+   git status
+   ```
+   If there are changes:
+   ```bash
+   git commit -m "local: <describe what changed>"
+   ```
+   If the working tree is already clean, continue.
+
+2. **Fetch and find latest release:**
    ```bash
    git -C ~/vesta fetch origin --tags --prune --prune-tags
    LATEST=$(git -C ~/vesta tag --sort=-v:refname | grep '^v' | head -1)
@@ -51,19 +64,13 @@ Sync against **release tags**, not master. Use `$VESTA_VERSION` to know your cur
    ```
    If `$LATEST` matches `v$VESTA_VERSION`, there's nothing to sync. Stop here.
 
-2. **Commit any uncommitted local changes:**
-   ```bash
-   git -C ~/vesta add agent/ && git -C ~/vesta commit -m "Local state before merge v$VESTA_VERSION → $LATEST"
-   ```
-   Skip if working tree is clean.
-
 3. **Merge the release tag:**
    ```bash
-   git -C ~/vesta merge -X theirs "$LATEST" --no-edit
+   git -C ~/vesta merge "$LATEST" --no-edit
    ```
-   `-X theirs` auto-resolves conflicts in favor of upstream. If there are still conflicts (rare), git will stop and list them.
+   If there are conflicts, git will stop and list them.
 
-4. **Resolve any remaining conflicts:**
+4. **Resolve any conflicts:**
    For each conflicted file:
    - Read the conflict markers
    - **Default to keeping upstream (theirs)** unless the local change is a meaningful customization
@@ -95,13 +102,13 @@ Local diverges from upstream, so never branch from local HEAD for a PR. Instead:
    ```bash
    cd /tmp/vesta-pr
    git add ... && git commit -m "..."
-   uv run ~/vesta/skills/upstream/pr.py --title "..." --body "..."
+   uv run ~/vesta/agent/skills/upstream/pr.py --title "..." --body "..."
    ```
 4. Clean up worktree when done: `git -C ~/vesta worktree remove /tmp/vesta-pr`
 
 To get a raw GitHub token for API access:
 ```bash
-uv run ~/vesta/skills/upstream/pr.py --token-only
+uv run ~/vesta/agent/skills/upstream/pr.py --token-only
 ```
 
 ## What to PR
@@ -115,7 +122,7 @@ uv run ~/vesta/skills/upstream/pr.py --token-only
 
 ## How it works
 - Authenticates via the `vesta-upstream` GitHub App (ID 2990557)
-- Private key lives at `~/vesta/skills/upstream/private-key.pem`
+- Private key lives at `~/vesta/agent/skills/upstream/private-key.pem`
 - Generates a short-lived installation token, pushes the branch, creates the PR
 - No personal GitHub account or CLI auth needed
 

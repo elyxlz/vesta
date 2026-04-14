@@ -1,7 +1,7 @@
 ---
 name: dashboard
 description: Use when you need to build, modify, or customize anything on the user's dashboard (widgets, layouts, pages, views, or any custom UI).
-serve: PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' -d '{"name":"dashboard","public":true}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])") && screen -dmS dashboard sh -c "cd ~/vesta/skills/dashboard/app && npx vite preview --port $PORT --host 0.0.0.0"
+serve: PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' -d '{"name":"dashboard","public":true}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])") && screen -dmS dashboard sh -c "cd ~/vesta/agent/skills/dashboard/app && npx vite preview --port $PORT --host 0.0.0.0"
 ---
 
 # Dashboard
@@ -10,7 +10,7 @@ A React app embedded in the main Vesta app that serves as the user's **life HQ**
 
 ## Before building (REQUIRED)
 
-**1. Check if shared files need syncing:** Compare `${VESTA_BRANCH:-v$VESTA_VERSION}` against `cat ~/vesta/skills/dashboard/app/.last-sync`. If they differ (or `.last-sync` doesn't exist), run `~/vesta/skills/dashboard/sync-app.sh` and rebuild. This ensures the dashboard uses the correct UI components.
+**1. Check if shared files need syncing:** Compare `${VESTA_BRANCH:-v$VESTA_VERSION}` against `cat ~/vesta/agent/skills/dashboard/app/.last-sync`. If they differ (or `.last-sync` doesn't exist), run `~/vesta/agent/skills/dashboard/sync-app.sh` and rebuild. This ensures the dashboard uses the correct UI components.
 
 **2. Ask clarifying questions:** You MUST ask the user before writing any code. Go through these:
 1. **Goal**: if the request is vague, clarify what they actually want to see or do
@@ -22,7 +22,7 @@ Only start building once the user has answered. Don't assume. Ask.
 ## Project structure
 
 ```text
-~/vesta/skills/dashboard/app/src/
+~/vesta/agent/skills/dashboard/app/src/
 ├── App.tsx              ← layout shell (sidebar + content area)
 ├── config.tsx           ← EDIT THIS: define pages, sidebar nav, branding
 ├── main.tsx             ← do NOT modify
@@ -128,11 +128,11 @@ import { StarIcon } from "lucide-react"
 **Rebuild, Register with VESTAD, Restart the server and Notify the Vesta App**
 
 ```bash
-cd ~/vesta/skills/dashboard/app && npx vite build
+cd ~/vesta/agent/skills/dashboard/app && npx vite build
 PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services \
   -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' -d '{"name":"dashboard","public":true}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])")
 screen -S dashboard -X quit 2>/dev/null
-screen -dmS dashboard sh -c "cd ~/vesta/skills/dashboard/app && npx vite preview --port $PORT --host 0.0.0.0"
+screen -dmS dashboard sh -c "cd ~/vesta/agent/skills/dashboard/app && npx vite preview --port $PORT --host 0.0.0.0"
 # Wait for the server to be ready
 for i in $(seq 1 20); do curl -s -o /dev/null http://localhost:$PORT && break; sleep 0.5; done
 # Smoke test: fetch the page and check for runtime errors
@@ -148,9 +148,9 @@ curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services/dash
 *   **Dashboard not showing?** `screen -ls | grep dashboard`
 *   **Check registration:** `curl -sk https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services`
 *   **Restart server:** Run the rebuild/restart block above.
-*   **Build failed or blank after deploy?** Run `cd ~/vesta/skills/dashboard/app && npx vite build` and fix reported errors; confirm `app/dist/` exists before starting preview.
+*   **Build failed or blank after deploy?** Run `cd ~/vesta/agent/skills/dashboard/app && npx vite build` and fix reported errors; confirm `app/dist/` exists before starting preview.
 *   **Iframe stuck on an old build?** After a successful build and preview restart, run the `.../services/dashboard/invalidate` `curl` from the block above (the parent app keeps the iframe until invalidated).
 *   **Preview errors or 404?** Attach to logs with `screen -r dashboard`, then detach with Ctrl+A then `d`. If the session is wedged, `screen -S dashboard -X quit` and rerun the restart line from the block above.
 *   **No port from vestad?** Run the `POST .../services` `curl` alone and inspect the body; the `python3` one-liner errors on bad JSON. Verify `VESTAD_PORT`, `AGENT_NAME`, and `AGENT_TOKEN`.
 *   **Widgets or API calls failing?** Use devtools on the dashboard (network tab): wrong `apiFetch` paths, skill server down, or auth not ready yet (`waitForAuth` in `parent-bridge.ts`).
-*   **Wrong or missing shadcn styles?** Run `~/vesta/skills/dashboard/sync-app.sh`, then rebuild (see Before building).
+*   **Wrong or missing shadcn styles?** Run `~/vesta/agent/skills/dashboard/sync-app.sh`, then rebuild (see Before building).

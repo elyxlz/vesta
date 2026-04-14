@@ -11,7 +11,7 @@
 ## 2. Install CLI
 
 ```bash
-cd ~/vesta/skills/finance/cli && uv tool install --force --reinstall .
+cd ~/vesta/agent/skills/finance/cli && uv tool install --force --reinstall .
 ```
 
 ## 3. Configure
