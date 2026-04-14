@@ -39,22 +39,22 @@ git -C ~/vesta checkout -b "$AGENT_NAME" "v$VESTA_VERSION"
 
 ## Pulling upstream changes (sync)
 
-Sync against **release tags**, not master. Use `$VESTA_VERSION` to know your current version.
+Sync against **release tags**, not master. Use `$VESTA_VERSION` to know your current version. Your local branch already exists (created at first boot) — all local work must be committed to it before merging.
 
 ### Steps
 
-1. **Commit all local work:**
-   Everything must be committed before syncing. Stage and commit all changes on your local branch:
+1. **Commit all local work first:**
+   The merge will fail if there are uncommitted changes. Stage and commit everything:
    ```bash
    cd ~/vesta
    git add agent/
    git status
    ```
-   If there are changes:
+   If there are uncommitted changes:
    ```bash
    git commit -m "local: <describe what changed>"
    ```
-   If the working tree is already clean, continue.
+   Repeat until `git status` shows a clean working tree. Do not proceed with uncommitted work.
 
 2. **Fetch and find latest release:**
    ```bash
@@ -68,14 +68,33 @@ Sync against **release tags**, not master. Use `$VESTA_VERSION` to know your cur
    ```bash
    git -C ~/vesta merge "$LATEST" --no-edit
    ```
-   If there are conflicts, git will stop and list them.
+   If the merge completes cleanly, skip to step 5.
 
-4. **Resolve any conflicts:**
-   For each conflicted file:
-   - Read the conflict markers
-   - **Default to keeping upstream (theirs)** unless the local change is a meaningful customization
-   - If unsure, show the user both versions and ask which to keep
-   - After resolving: `git add <file>` then `git commit --no-edit`
+4. **Resolve conflicts:**
+   If git reports conflicts, handle each file using these rules:
+
+   **Small conflicts** (a few lines, clear what changed):
+   - Accept the upstream (release) version of the conflicting lines
+   - Then re-apply your local change on top if it's still relevant
+   - `git add <file>`
+
+   **Large conflicts** (whole sections rewritten, hard to untangle):
+   - Take the entire upstream version of the file: `git checkout --theirs <file>`
+   - `git add <file>`
+   - After the merge is complete, review what local changes you lost (`git diff v$VESTA_VERSION..$AGENT_NAME -- <file>` shows your old customizations)
+   - Re-implement your changes cleanly on top of the new upstream code in a separate commit
+
+   **Conflicts in files you customized meaningfully** (SKILL.md you rewrote, config you tuned, skill code you modified):
+   - Show the user both versions — your local version and the upstream version
+   - Ask the user which parts to keep and how to combine them
+   - Do not auto-resolve these without user input
+
+   **MEMORY.md**: Always keep yours. `git checkout --ours agent/MEMORY.md && git add agent/MEMORY.md`
+
+   After all conflicts are resolved:
+   ```bash
+   git commit --no-edit
+   ```
 
 5. **Rebuild affected services:**
    - If dashboard files changed: rebuild and restart dashboard
@@ -83,6 +102,9 @@ Sync against **release tags**, not master. Use `$VESTA_VERSION` to know your cur
    - If Python deps changed (`pyproject.toml`): `cd ~/vesta/agent && uv sync`
 
 6. **Verify:** Check that services are running (`screen -ls`), test key endpoints.
+
+7. **PR any improvements:**
+   After syncing, review what you changed locally since the last sync (`git diff $LATEST..$AGENT_NAME`). If any of those changes are universal improvements (bug fixes, prompt improvements, new skills, skill code improvements), PR them following the "Pushing local changes upstream" instructions below. See "What to PR" for what qualifies.
 
 ### What NOT to sync
 - `agent/MEMORY.md` (yours is personal, never overwrite)
