@@ -76,12 +76,18 @@ const NETWORK_MODE: &str = "host";
 const RESTART_POLICY: &str = "unless-stopped";
 const MOUNT_DESTS: &[&str] = &["/run/vestad-env", "/root/vesta/agent/src/vesta", "/root/vesta/agent/pyproject.toml", "/root/vesta/agent/uv.lock"];
 
-/// Container entrypoint: source the bind-mounted env file (so vestad can inject
-/// new vars without rebuilding images), create the agent's local git branch if
-/// it doesn't exist yet, then exec the agent.
+/// Container entrypoint: source the bind-mounted env file, sync deps (mounts
+/// may have newer lockfile), commit the current working tree so git status is
+/// clean (mounted code may differ from the git checkout), create the agent's
+/// local branch if it doesn't exist yet, then exec the agent.
 const ENTRYPOINT: &[&str] = &[
     "sh", "-c",
-    ". /run/vestad-env; . ~/.bashrc || true; git -C ~/vesta rev-parse --verify \"$AGENT_NAME\" 2>/dev/null || git -C ~/vesta checkout -b \"$AGENT_NAME\"; exec uv run --frozen --project /root/vesta/agent python -m vesta.main",
+    ". /run/vestad-env; . ~/.bashrc || true; \
+     uv sync --frozen --project /root/vesta/agent; \
+     git -C ~/vesta add agent/ --ignore-errors; \
+     git -C ~/vesta diff --cached --quiet || git -C ~/vesta commit -m 'initial'; \
+     git -C ~/vesta rev-parse --verify \"$AGENT_NAME\" 2>/dev/null || git -C ~/vesta checkout -b \"$AGENT_NAME\"; \
+     exec uv run --frozen --project /root/vesta/agent python -m vesta.main",
 ];
 
 const CONTAINER_STOP_TIMEOUT_SECS: i64 = 10;

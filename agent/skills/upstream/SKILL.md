@@ -1,127 +1,119 @@
 ---
 name: upstream
-description: Use when you need to contribute code, push a branch, open a pull request, submit a PR, sync with upstream, or do any git/GitHub operations on the vesta repo (elyxlz/vesta). IMPORTANT, always use this skill for GitHub access. Never use personal tokens or manual git push. Authentication is handled via the vesta-upstream GitHub App, no credentials needed from the user.
+description: Use when syncing with upstream releases, creating PRs, pushing branches, or doing any git/GitHub operations on elyxlz/vesta. Also use for GitHub API access (tokens, issues, check-runs).
 ---
 
 # Upstream Integration
 
-Source repo: https://github.com/elyxlz/vesta
-Local clone: `~/vesta` with sparse checkout (`agent/` only)
+Authentication is handled by the `vesta-upstream` GitHub App — no personal tokens or manual git push. Use `pr.py` for all authenticated GitHub operations.
 
-## Repo layout
+Source repo: `elyxlz/vesta` on GitHub
+Local clone: `~/vesta` (sparse checkout, `agent/` only)
 
-The upstream repo contains agent code under `agent/`, plus non-agent code (app/, cli/, vestad/). The agent reads directly from `agent/` at runtime, so git-tracked paths and runtime paths are identical.
+## Ownership split
 
-**Sparse checkout** is enabled so only `agent/` is materialized. Non-agent files are ignored.
+Core code (`agent/src/vesta/`, `agent/pyproject.toml`, `agent/uv.lock`) is managed by vestad via read-only mounts. You cannot modify these files. vestad updates them by swapping the mounted code and restarting the container.
 
-## Local branch
+You own everything else: `agent/skills/`, `agent/prompts/`, `agent/memory/`, `.claude/`. These are tracked on your git branch and updated by merging release tags.
 
-On first boot, the agent creates a branch named after itself (e.g. `athena`) starting from the release tag it was deployed on (`v$VESTA_VERSION`). All local customizations are committed to this branch. The branch never tracks or pushes to any remote.
+## Local branch model
+
+Your branch (named `$AGENT_NAME`, e.g. `athena`) starts from the release tag you were deployed on. All local work is committed here.
 
 ```
-v0.1.132 (tag)  <-- branch starts here
-  * local: "add stocks skill"
-  * local: "tweak dashboard config"
+v0.1.132 (tag) <-- branch starts here
+  * local commits
   * merge: "Merge tag v0.1.133"
-  * local: "add reminder tests"
+  * more local commits
   * merge: "Merge tag v0.1.134"
 ```
 
-To see all local customizations vs upstream: `git diff v0.1.134..$AGENT_NAME`
+View local customizations vs upstream: `git diff <latest-tag>..$AGENT_NAME`
 
-### First-time setup
+## Syncing upstream changes
 
-If the local branch doesn't exist yet (fresh deploy or migration):
-```bash
-git -C ~/vesta fetch origin --tags --prune --prune-tags
-git -C ~/vesta checkout -b "$AGENT_NAME" "v$VESTA_VERSION"
-```
+Sync against **release tags**, not master.
 
-## Pulling upstream changes (sync)
+1. **Commit all local work.**
+   The merge will fail with uncommitted changes. Stage everything under `agent/`, excluding large/generated files:
+   ```bash
+   cd ~/vesta
+   git add agent/ --ignore-errors
+   git reset HEAD -- '*.bin' '*.onnx' '*.pt' '*.db' '*.sqlite' '*.mp3' '*.mp4' '*.wav' '*.zip' '*.tar.gz' '**/node_modules' '**/dist' '**/.venv' '**/__pycache__'
+   git status
+   ```
+   Commit if there are staged changes. Add untracked large files to `.gitignore`.
+   Repeat until `git status` is clean. Do not proceed with uncommitted work.
 
-Sync against **release tags**, not master. Use `$VESTA_VERSION` to know your current version.
-
-### Steps
-
-1. **Fetch and find latest release:**
+2. **Fetch tags and check for updates.**
    ```bash
    git -C ~/vesta fetch origin --tags --prune --prune-tags
+   CURRENT=$(git -C ~/vesta describe --tags --abbrev=0)
    LATEST=$(git -C ~/vesta tag --sort=-v:refname | grep '^v' | head -1)
-   echo "Current: v$VESTA_VERSION, Latest: $LATEST"
+   echo "Current: $CURRENT, Latest: $LATEST"
    ```
-   If `$LATEST` matches `v$VESTA_VERSION`, there's nothing to sync. Stop here.
+   If `$LATEST == $CURRENT`, stop — already up to date.
 
-2. **Commit any uncommitted local changes:**
+3. **Merge the release tag.**
    ```bash
-   git -C ~/vesta add agent/ && git -C ~/vesta commit -m "Local state before merge v$VESTA_VERSION to $LATEST"
+   git -C ~/vesta merge "$LATEST" --no-edit
    ```
-   Skip if working tree is clean.
+   If clean, skip to step 5.
 
-3. **Merge the release tag:**
-   ```bash
-   git -C ~/vesta merge -X theirs "$LATEST" --no-edit
-   ```
-   `-X theirs` auto-resolves conflicts in favor of upstream. If there are still conflicts (rare), git will stop and list them.
+4. **Resolve conflicts** using these rules:
 
-4. **Resolve any remaining conflicts:**
-   For each conflicted file:
-   - Read the conflict markers
-   - **Default to keeping upstream (theirs)** unless the local change is a meaningful customization
-   - If unsure, show the user both versions and ask which to keep
-   - After resolving: `git add <file>` then `git commit --no-edit`
+   - **Conflicts in vestad-managed paths** (`src/vesta/`, `pyproject.toml`, `uv.lock`): always accept upstream: `git checkout --theirs <file> && git add <file>`. These are read-only mounts — vestad controls the running version.
+   - **Small conflicts in agent-owned paths** (skills, prompts, config): accept upstream, re-apply your local change on top if still relevant, then `git add <file>`.
+   - **Large conflicts in agent-owned paths**: take upstream (`git checkout --theirs <file> && git add <file>`), finish the merge, then review lost customizations with `git diff $CURRENT..$AGENT_NAME -- <file>` and re-implement in a separate commit.
+   - **Conflicts in files you meaningfully customized** (SKILL.md you rewrote, config you tuned): show the user both versions and ask how to combine. Do not auto-resolve.
 
-5. **Rebuild affected services:**
-   - If dashboard files changed: rebuild and restart dashboard
-   - If voice/tasks/stocks code changed: restart those services
-   - If Python deps changed (`pyproject.toml`): `cd ~/vesta/agent && uv sync`
+   After all conflicts are resolved: `git commit --no-edit`
 
-6. **Verify:** Check that services are running (`screen -ls`), test key endpoints.
+5. **Restart services** per `restart.md`.
 
-### What NOT to sync
-- `agent/MEMORY.md` (yours is personal, never overwrite)
-- Non-agent files (app/, cli/, Cargo, etc.) are handled by vestad
+6. **PR any improvements.** Review local changes since last sync (`git diff $LATEST..$AGENT_NAME`). If any are universal improvements, see "Creating a PR" below.
 
-## Pushing local changes upstream (creating a PR)
+**Verify:** after the merge, `git describe --tags --abbrev=0` should show `$LATEST` and `git status` should be clean.
 
-Local diverges from upstream, so never branch from local HEAD for a PR. Instead:
+## Creating a PR
 
-1. Create a clean worktree from upstream master:
+Local diverges from upstream, so never branch from local HEAD. Use a clean worktree from upstream master.
+
+1. **Create a worktree:**
    ```bash
    git -C ~/vesta fetch origin
    git -C ~/vesta worktree add /tmp/vesta-pr -b feature/<name> origin/master
    ```
-2. Manually apply only the universal changes (no personal config, memory, credentials) to `/tmp/vesta-pr`
-3. Commit and submit:
+
+2. **Apply changes** to `/tmp/vesta-pr`. Only universal improvements — no personal config, memory, or credentials.
+
+3. **Create a GitHub issue first** (use `--token-only` for API access), then reference it in the PR.
+
+4. **Commit and submit:**
    ```bash
    cd /tmp/vesta-pr
-   git add ... && git commit -m "..."
-   uv run ~/vesta/skills/upstream/pr.py --title "..." --body "..."
+   git add <files> && git commit -m "<description>"
+   uv run ~/vesta/agent/skills/upstream/pr.py --title "..." --body "..."
    ```
-4. Clean up worktree when done: `git -C ~/vesta worktree remove /tmp/vesta-pr`
 
-To get a raw GitHub token for API access:
-```bash
-uv run ~/vesta/skills/upstream/pr.py --token-only
-```
+5. **Clean up:** `git -C ~/vesta worktree remove /tmp/vesta-pr`
+
+6. **Wait for CI to pass.** Check status via the GitHub API (`--token-only` for a token, then query the check-runs endpoint). If a check fails: diagnose, fix, commit to the same branch, push. The PR updates automatically. The `lockfile` check requires `uv lock` in `~/vesta/agent` if Python dependencies changed.
+
+**Verify:** only report the PR as done once every CI check is green.
 
 ## What to PR
 
-**Upstreaming is mandatory** whenever you've made a genuine improvement. If it would benefit any vesta instance, it must be PR'd.
+Upstreaming is your duty to the vesta community. If an improvement would benefit any vesta instance, it must be PR'd:
+- Bug fixes, prompt improvements, skill code/SKILL.md improvements, new skills, agent code fixes
+- New skills you built locally (strip personal config first)
 
-- Bug fixes, prompt improvements, skill code/SKILL.md improvements, new skills you've created, agent code fixes
-- If you built a new skill locally, PR it (strip personal config first)
-- Don't PR: personal config, memory files, credentials, user-specific customizations
-- **Always create a GitHub issue first**, then reference it in the PR. Use `--token-only` to get a token for the GitHub API
+Do not PR: personal config, memory files, credentials, user-specific customizations.
 
-## How it works
-- Authenticates via the `vesta-upstream` GitHub App (ID 2990557)
-- Private key lives at `~/vesta/skills/upstream/private-key.pem`
-- Generates a short-lived installation token, pushes the branch, creates the PR
-- No personal GitHub account or CLI auth needed
+## GitHub token access
 
-## After creating a PR
-- **Keep working until all CI checks pass.** Do not stop after opening the PR
-- Check CI status via the GitHub API (use `--token-only` to get a token, then hit the check-runs endpoint)
-- The `lockfile` check requires `uv lock` to be run in `~/vesta/agent` if any Python dependencies changed
-- If any check fails: diagnose, fix, commit to the same branch, push. The PR updates automatically and CI reruns
-- Only report the PR as done to the user once every check is green
+For any GitHub API call (issues, check-runs, etc.):
+```bash
+uv run ~/vesta/agent/skills/upstream/pr.py --token-only
+```
+Returns a short-lived installation token. No personal credentials needed.

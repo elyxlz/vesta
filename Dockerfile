@@ -15,21 +15,14 @@ ENV PATH="/root/.local/bin:${PATH}"
 
 WORKDIR /root/vesta
 
-# Dependencies (cached unless lockfile changes)
-COPY agent/pyproject.toml agent/uv.lock ./agent/
-WORKDIR /root/vesta/agent
-RUN uv sync --frozen --no-install-project
+# Git repo — agent tracks local changes (skills, prompts, memory) on its branch.
+# Core code (src/vesta, pyproject.toml, uv.lock) is mounted by vestad at runtime.
+RUN git clone --bare https://github.com/elyxlz/vesta.git .git && \
+    git config core.bare false && \
+    git sparse-checkout init --cone && \
+    git sparse-checkout set agent
 
-# Source (changes often, but deps are cached above)
-COPY agent/src ./src
-COPY agent/prompts ./prompts
-RUN uv sync --frozen
-WORKDIR /root/vesta
-
-# Everything else
-COPY agent/ ./agent/
-
-# Remove non-default skills (keep only those listed in default-skills.txt)
+# Remove non-default skills (from git checkout)
 RUN for d in agent/skills/*/; do \
       name="$(basename "$d")"; \
       grep -qx "$name" agent/skills/default-skills.txt || rm -rf "$d"; \
@@ -38,13 +31,13 @@ RUN for d in agent/skills/*/; do \
 # SDK discovers skills from .claude/skills/ relative to cwd
 RUN mkdir -p .claude && ln -s ../agent/skills .claude/skills
 
-# Git repo: sparse checkout (agent/ only), HEAD at release tag.
-# At first boot the agent creates its named branch from here.
-RUN git clone --bare https://github.com/elyxlz/vesta.git .git && \
-    git config core.bare false && \
-    git sparse-checkout set agent && \
-    VERSION=$(grep '^version' agent/pyproject.toml | sed 's/.*"\(.*\)"/\1/') && \
-    git reset "v${VERSION}"
+# Deps (cached unless lockfile changes). These files are also mounted at
+# runtime, but we COPY them here so uv can install dependencies into the
+# image layer — the mount overlays these copies at runtime.
+COPY agent/pyproject.toml agent/uv.lock ./agent/
+WORKDIR /root/vesta/agent
+RUN uv sync --frozen --no-install-project
+WORKDIR /root/vesta
 
 RUN rm -f /usr/bin/pkill /usr/bin/killall
 
