@@ -23,6 +23,7 @@ whatsapp authenticate
 Phone pairing (`whatsapp pair-phone --phone '+1234567890'`) works as a fallback if QR scanning isn't convenient.
 
 ## Quick Reference
+Run `whatsapp --help` or `whatsapp <command> --help` for full flags and options not listed here.
 ```bash
 whatsapp send --to '+1234567890' --message 'Hello!'
 whatsapp chats
@@ -33,6 +34,7 @@ whatsapp react --chat-id "<jid>" --message-id "<id>" --emoji "👍"
 whatsapp backfill --to 'Name'
 whatsapp send-file --to "+1234567890" --file-path /path/to/document.pdf
 whatsapp revoke-message --to 'Name' --message-id '<id>'  # delete/unsend a message
+whatsapp download-media --to 'Name' --message-id '<id>'  # download image/video/doc, saved to ~/.whatsapp/downloads/
 ```
 
 ## Notes
