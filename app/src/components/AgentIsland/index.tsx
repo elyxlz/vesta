@@ -38,10 +38,7 @@ export function AgentIsland() {
       onPointerLeave={(e) => {
         if (e.pointerType === "mouse") setExpanded(false);
       }}
-      className={cn(
-        "relative z-[999999] flex justify-center overflow-visible",
-        expanded ? "h-auto min-h-0" : "h-10",
-      )}
+      className="relative z-[999999] flex h-10 justify-center overflow-visible"
     >
       <motion.div
         layout
@@ -53,11 +50,11 @@ export function AgentIsland() {
           borderRadius: expanded ? BORDER_RADIUS : BORDER_RADIUS,
         }}
         className={cn(
-          "mx-auto will-change-[transform,opacity]",
+          "will-change-[transform,opacity]",
           "border border-border bg-popover text-base text-popover-foreground shadow-sm",
           expanded
-            ? "aspect-square w-[min(100vw-2rem,178px)] shrink-0 overflow-visible"
-            : "h-full w-fit max-w-[min(100vw-2rem,280px)] overflow-hidden flex items-center",
+            ? "absolute top-0 left-1/2 -translate-x-1/2 aspect-square w-[min(100vw-2rem,178px)] shrink-0 overflow-visible"
+            : "mx-auto h-full w-fit max-w-[min(100vw-2rem,280px)] overflow-hidden flex items-center",
         )}
       >
         <div

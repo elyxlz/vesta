@@ -35,6 +35,8 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     toggleVoice,
     voiceError,
     registerChatCallbacks,
+    isSpeaking,
+    stopSpeech,
   } = useVoice();
 
   const {
@@ -215,6 +217,8 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
             voiceAutoSend={voiceAutoSend}
             liveTranscript={liveTranscript}
             toggleVoice={toggleVoice}
+            isSpeaking={isSpeaking}
+            onStopSpeech={stopSpeech}
             input={input}
             onInputChange={handleInput}
             onKeyDown={handleKeyDown}

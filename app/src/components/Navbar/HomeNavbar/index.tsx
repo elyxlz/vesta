@@ -26,7 +26,7 @@ function Leading() {
     return (
       <>
         <Button
-          variant="secondary"
+          variant="ghost"
           size="lg"
           onClick={() => navigate("/new")}
           className="max-sm:hidden"

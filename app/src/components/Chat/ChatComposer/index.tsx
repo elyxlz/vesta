@@ -1,5 +1,5 @@
 import type { ChangeEvent, KeyboardEvent, RefObject } from "react";
-import { Mic, SendHorizontal, Square } from "lucide-react";
+import { Mic, SendHorizontal, Square, VolumeX } from "lucide-react";
 import {
   InputGroup,
   InputGroupAddon,
@@ -16,6 +16,8 @@ interface ChatComposerProps {
   voiceAutoSend: boolean;
   liveTranscript: string;
   toggleVoice: () => void;
+  isSpeaking: boolean;
+  onStopSpeech: () => void;
   input: string;
   onInputChange: (e: ChangeEvent<HTMLTextAreaElement>) => void;
   onKeyDown: (e: KeyboardEvent) => void;
@@ -31,6 +33,8 @@ export function ChatComposer({
   voiceAutoSend,
   liveTranscript,
   toggleVoice,
+  isSpeaking,
+  onStopSpeech,
   input,
   onInputChange,
   onKeyDown,
@@ -64,8 +68,22 @@ export function ChatComposer({
           enterKeyHint="send"
           className="max-h-[120px] md:text-base"
         />
-        {(sttAvailable || !isRecording || !voiceAutoSend) && (
-          <InputGroupAddon align="inline-end">
+        {(sttAvailable ||
+          !isRecording ||
+          !voiceAutoSend ||
+          isSpeaking) && (
+          <InputGroupAddon align="inline-end" className="gap-0">
+            {isSpeaking && (
+              <InputGroupButton
+                size="icon-sm"
+                variant="ghost"
+                onClick={onStopSpeech}
+                aria-label="Stop voice playback"
+                title="Stop voice playback"
+              >
+                <VolumeX />
+              </InputGroupButton>
+            )}
             {sttAvailable && (
               <InputGroupButton
                 size="icon-sm"
