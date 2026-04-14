@@ -67,7 +67,7 @@ def _make_converse_harness(*, use_shared_queue: bool = False):
             emitted.append((event["text"], time.monotonic()))
         original_emit(event)
 
-    state.event_bus.emit = tracking_emit  # type: ignore[assignment]
+    state.event_bus.emit = tracking_emit  # ty: ignore[invalid-assignment]
 
     mock_client = MagicMock()
     mock_client.query = AsyncMock()

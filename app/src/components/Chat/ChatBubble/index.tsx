@@ -56,7 +56,7 @@ export function ChatBubble({
           "flex items-end max-w-[85%] rounded-2xl px-3 py-1.5 text-sm leading-relaxed",
           isUser
             ? "bg-primary text-primary-foreground rounded-br-sm"
-            : "bg-muted text-foreground rounded-bl-sm",
+            : "bg-secondary text-secondary-foreground rounded-bl-sm",
         )}
       >
         <span

@@ -139,7 +139,7 @@ async def _process_message_safely(msg: str, *, is_user: bool, state: vm.State, c
             error_msg = str(e) or type(e).__name__
         if not state.session_id and state.client:
             try:
-                sid = state.client.session_id  # type: ignore[attr-defined]
+                sid = state.client.session_id  # ty: ignore[unresolved-attribute]
                 if sid:
                     persist_session_id(sid, state=state, config=config)
             except (AttributeError, TypeError):

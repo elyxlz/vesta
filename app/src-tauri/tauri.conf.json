@@ -1,6 +1,6 @@
 {
   "productName": "Vesta",
-  "version": "0.1.130",
+  "version": "0.1.131",
   "identifier": "com.vestarun.app",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -18,8 +18,8 @@
         "hiddenTitle": true,
         "titleBarStyle": "Overlay",
         "transparent": true,
-        "height": 380,
-        "width": 380,
+        "height": 750,
+        "width": 1200,
         "minWidth": 380,
         "minHeight": 380,
         "center": false,

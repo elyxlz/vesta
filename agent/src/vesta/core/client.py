@@ -4,6 +4,7 @@ import json
 import os
 import signal
 import typing as tp
+from collections.abc import Mapping
 
 from claude_agent_sdk import (
     AssistantMessage,
@@ -176,7 +177,7 @@ def _subagent_hook(state: vm.State, *, verb: str, event_type: str) -> HookCallba
     return tp.cast(HookCallback, hook)
 
 
-def _subagent_prefix(input_data: dict[str, object]) -> tuple[str, bool]:
+def _subagent_prefix(input_data: Mapping[str, object]) -> tuple[str, bool]:
     """Extract sub-agent prefix from hook input. SDK adds agent_id/agent_type for sub-agent calls."""
     if "agent_id" not in input_data:
         return "", False
@@ -191,14 +192,14 @@ def _make_hooks(
     async def log_tool_start(input_data: PreToolUseHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
         name = input_data["tool_name"]
         summary = _tool_summary(name, input_data["tool_input"])
-        prefix, is_sub = _subagent_prefix(input_data)  # type: ignore[arg-type]
+        prefix, is_sub = _subagent_prefix(input_data)
         logger.tool(f"{prefix}{summary}")
         state.event_bus.emit({"type": "tool_start", "tool": name, "input": summary, "subagent": is_sub})
         return tp.cast(HookJSONOutput, {})
 
     async def log_tool_finish(input_data: PostToolUseHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
         name = input_data["tool_name"]
-        prefix, is_sub = _subagent_prefix(input_data)  # type: ignore[arg-type]
+        prefix, is_sub = _subagent_prefix(input_data)
         logger.tool(f"{prefix}done: {name}")
         state.event_bus.emit({"type": "tool_end", "tool": name, "subagent": is_sub})
         return tp.cast(HookJSONOutput, {})
@@ -305,7 +306,7 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
                 try:
                     drain = client.receive_response().__aiter__()
                     while (leftover := await asyncio.wait_for(anext(drain, None), timeout=5.0)) is not None:
-                        texts, thinking_blocks, _, _, _ = _parse_sdk_message(tp.cast(Message, leftover), sub_agent_context=sub_agent_context)
+                        texts, thinking_blocks, _, _, _ = _parse_sdk_message(leftover, sub_agent_context=sub_agent_context)
                         if show_output:
                             for block in thinking_blocks:
                                 _emit_thinking(block)

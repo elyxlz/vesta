@@ -63,7 +63,10 @@ export function BottomBanner(props: BottomBannerProps) {
           transition={{ duration: 0.18 }}
           onClick={config.clickable ? props.onScrollToBottom : undefined}
           className={cn(
-            "absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 z-10 rounded-full border px-3 py-0.5 text-xs whitespace-nowrap shadow-sm",
+            "absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 z-10 rounded-full border px-3 py-0.5 text-xs shadow-sm",
+            active === "error"
+              ? "max-w-[100%] text-center"
+              : "whitespace-nowrap",
             config.clickable && "cursor-pointer",
             config.className,
           )}

@@ -34,6 +34,8 @@
     --chart-4: oklch(0.374 0.012 80);
     --chart-5: oklch(0.268 0.008 80);
     --radius: 0.625rem;
+    --rounded-squircle-lg: 64px;
+    --rounded-squircle-md: 56px;
     --sidebar: oklch(0.985 0.006 80);
     --sidebar-foreground: oklch(0.147 0.005 80);
     --sidebar-primary: oklch(0.216 0.006 80);
@@ -43,6 +45,13 @@
     --sidebar-border: oklch(0.923 0.01 80);
     --sidebar-ring: oklch(0.709 0.02 80);
     --page-padding-x: 1.5rem;
+}
+
+@supports not (corner-shape: squircle) {
+    :root {
+        --rounded-squircle-lg: calc(var(--radius) * 3);
+        --rounded-squircle-md: calc(var(--radius) * 2.6);
+    }
 }
 
 .vibrancy {
@@ -61,6 +70,24 @@
     --accent: oklch(0.268 0.008 80 / 50%);
     --sidebar: oklch(0.216 0.007 80 / 50%);
     --sidebar-accent: oklch(0.268 0.008 80 / 50%);
+}
+
+[data-platform="linux"].vibrancy {
+    --background: oklch(0.995 0.005 80 / 85%);
+    --card: oklch(0.995 0.005 80 / 85%);
+    --muted: oklch(0.97 0.006 80 / 90%);
+    --accent: oklch(0.97 0.006 80 / 85%);
+    --sidebar: oklch(0.985 0.006 80 / 85%);
+    --sidebar-accent: oklch(0.97 0.006 80 / 85%);
+}
+
+[data-platform="linux"].vibrancy.dark {
+    --background: oklch(0.147 0.005 80 / 85%);
+    --card: oklch(0.216 0.007 80 / 85%);
+    --muted: oklch(0.19 0.007 80 / 90%);
+    --accent: oklch(0.268 0.008 80 / 85%);
+    --sidebar: oklch(0.216 0.007 80 / 85%);
+    --sidebar-accent: oklch(0.268 0.008 80 / 85%);
 }
 
 .dark {
@@ -141,6 +168,8 @@
     --radius-2xl: calc(var(--radius) * 1.8);
     --radius-3xl: calc(var(--radius) * 2.2);
     --radius-4xl: calc(var(--radius) * 2.6);
+    --radius-squircle-lg: var(--rounded-squircle-lg);
+    --radius-squircle-md: var(--rounded-squircle-md);
 }
 
 @layer base {
@@ -150,8 +179,14 @@
   html {
     @apply box-border flex h-dvh flex-col bg-background font-sans overscroll-none;
     }
+  .vibrancy {
+    background: transparent;
+    }
   body {
     @apply flex min-h-0 flex-1 flex-col bg-background text-foreground overscroll-none;
+    }
+  .vibrancy body {
+    background: transparent;
     }
   #root {
     @apply flex min-h-0 flex-1 flex-col;

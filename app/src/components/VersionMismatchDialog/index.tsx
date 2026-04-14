@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Footer } from "@/components/Footer";
 import { LogoText } from "@/components/Logo/LogoText";
 import { Navbar } from "@/components/Navbar";
@@ -12,11 +12,11 @@ import {
   EmptyTitle,
   EmptyDescription,
 } from "@/components/ui/empty";
-import { apiFetch } from "@/api/client";
 import { isTauri } from "@/lib/env";
 
 interface VersionMismatchDialogProps {
   gatewayVersion: string;
+  onUpdateGateway: () => void;
 }
 
 async function updateApp(gatewayVersion: string) {
@@ -41,21 +41,22 @@ async function updateApp(gatewayVersion: string) {
 
 export function VersionMismatchDialog({
   gatewayVersion,
+  onUpdateGateway,
 }: VersionMismatchDialogProps) {
   const appIsOlder = gatewayVersion > __APP_VERSION__;
   const hint = appIsOlder ? "update your app" : "update your gateway";
   const [updating, setUpdating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleUpdateGateway = async () => {
+  // Reset if gateway version changes (e.g. update failed, vestad restarted with old version)
+  useEffect(() => {
+    setUpdating(false);
+  }, [gatewayVersion]);
+
+  const handleUpdateGateway = () => {
     setUpdating(true);
     setError(null);
-    try {
-      await apiFetch("/self-update", { method: "POST" });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "update failed");
-      setUpdating(false);
-    }
+    onUpdateGateway();
   };
 
   const handleUpdateApp = async () => {

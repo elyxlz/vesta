@@ -161,7 +161,7 @@ pub fn run() {
                 }).ok();
             }
 
-            // Auto-grant microphone permission for the webview
+            // On Linux, disable decorations so Wayland transparency works
             #[cfg(any(
                 target_os = "linux",
                 target_os = "dragonfly",
@@ -170,9 +170,13 @@ pub fn run() {
                 target_os = "openbsd"
             ))]
             if let Some(window) = _app.get_webview_window("main") {
+                let _ = window.set_decorations(false);
+                let _ = window.set_shadow(false);
+
                 window.with_webview(|webview| {
                     use webkit2gtk::{WebViewExt, PermissionRequestExt};
                     let wv = webview.inner();
+
                     wv.connect_permission_request(|_wv, request: &webkit2gtk::PermissionRequest| {
                         request.allow();
                         true

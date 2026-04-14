@@ -61,7 +61,7 @@ The dashboard is a high-density UI, not a standard app interface. By default, sh
 *   Do not use `text-lg` or larger for normal text unless absolutely necessary or the user explicitly requests it.
 
 **2. Padding, Spacing & Layout (MANDATORY)**
-*   Default widget wrapper: `<div className="rounded-2xl bg-muted p-3 text-sm">`
+*   Default widget wrapper: `<div className="rounded-2xl bg-secondary p-3 text-sm">`
 *   Dense widgets: `p-2`. Avoid `p-4` unless absolutely necessary.
 *   Grid gap: Use `gap-2` (preferred) or `gap-3`. Avoid `gap-4`.
 *   Inside widgets: Use `space-y-2` instead of `space-y-4`.
