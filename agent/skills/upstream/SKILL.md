@@ -62,10 +62,9 @@ Sync against **release tags**, not master.
 
 4. **Resolve conflicts** using these rules:
 
-   - **Conflicts in vestad-managed paths** (`src/vesta/`, `pyproject.toml`, `uv.lock`): always accept upstream: `git checkout --theirs <file> && git add <file>`. These are read-only mounts — vestad controls the running version.
-   - **Small conflicts in agent-owned paths** (skills, prompts, config): accept upstream, re-apply your local change on top if still relevant, then `git add <file>`.
-   - **Large conflicts in agent-owned paths**: take upstream (`git checkout --theirs <file> && git add <file>`), finish the merge, then review lost customizations with `git diff $CURRENT..$AGENT_NAME -- <file>` and re-implement in a separate commit.
-   - **Conflicts in files you meaningfully customized** (SKILL.md you rewrote, config you tuned): show the user both versions and ask how to combine. Do not auto-resolve.
+   - **Vestad-managed paths** (`src/vesta/`, `pyproject.toml`, `uv.lock`): always accept upstream: `git checkout --theirs <file> && git add <file>`. These are read-only mounts — vestad controls the running version.
+   - **Agent-owned paths you haven't customized**: accept upstream (`git checkout --theirs <file> && git add <file>`).
+   - **Agent-owned paths you meaningfully customized** (SKILL.md you rewrote, config you tuned, skill code you modified): show the user both versions and ask how to combine. Do not auto-resolve.
 
    After all conflicts are resolved: `git commit --no-edit`
 

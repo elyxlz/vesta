@@ -84,8 +84,9 @@ const ENTRYPOINT: &[&str] = &[
     "sh", "-c",
     ". /run/vestad-env; . ~/.bashrc || true; \
      uv sync --frozen --project /root/vesta/agent; \
-     git -C ~/vesta add agent/ --ignore-errors; \
-     git -C ~/vesta diff --cached --quiet || git -C ~/vesta commit -m 'initial'; \
+     git -C ~/vesta diff --quiet agent/ 2>/dev/null || \
+       (git -C ~/vesta add agent/ --ignore-errors && \
+        git -C ~/vesta diff --cached --quiet || git -C ~/vesta commit -m 'initial'); \
      git -C ~/vesta rev-parse --verify \"$AGENT_NAME\" 2>/dev/null || git -C ~/vesta checkout -b \"$AGENT_NAME\"; \
      exec uv run --frozen --project /root/vesta/agent python -m vesta.main",
 ];

@@ -22,7 +22,7 @@ RUN git clone --bare https://github.com/elyxlz/vesta.git .git && \
     git sparse-checkout init --cone && \
     git sparse-checkout set agent
 
-# Remove non-default skills (from git checkout)
+# Reduce image size: remove non-default skills from git checkout
 RUN for d in agent/skills/*/; do \
       name="$(basename "$d")"; \
       grep -qx "$name" agent/skills/default-skills.txt || rm -rf "$d"; \
