@@ -124,12 +124,12 @@ export const setTtsVoice = (n: string, voiceId: string) =>
 
 // --- TTS playback ---
 
-export async function streamSpeech(
+export function prefetchSpeech(
   text: string,
   agentName: string,
   signal?: AbortSignal,
-): Promise<void> {
-  const res = await apiFetch(
+): Promise<Response> {
+  return apiFetch(
     `/agents/${encodeURIComponent(agentName)}/voice/tts/speak`,
     {
       method: "POST",
@@ -138,6 +138,15 @@ export async function streamSpeech(
       signal,
     },
   );
+}
+
+export async function streamSpeech(
+  text: string,
+  agentName: string,
+  signal?: AbortSignal,
+  prefetched?: Response,
+): Promise<void> {
+  const res = prefetched ?? await prefetchSpeech(text, agentName, signal);
 
   const contentType = res.headers.get("content-type") || "";
   if (contentType.includes("audio/mpeg") || contentType.includes("audio/mp3")) {

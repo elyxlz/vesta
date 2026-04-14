@@ -29,9 +29,10 @@ interface UseChatOptions {
   name: string | null;
   active: boolean;
   onAssistantMessage?: (text: string) => void;
+  onPrefetch?: (text: string) => void;
 }
 
-export function useChat({ name, active, onAssistantMessage }: UseChatOptions) {
+export function useChat({ name, active, onAssistantMessage, onPrefetch }: UseChatOptions) {
   const [messages, setMessages] = useState<VestaEvent[]>([]);
   const [agentState, setAgentState] = useState<AgentActivityState>("idle");
   const [isTyping, setIsTyping] = useState(false);
@@ -45,6 +46,8 @@ export function useChat({ name, active, onAssistantMessage }: UseChatOptions) {
   const cursorRef = useRef<number | null>(null);
   const onAssistantMessageRef = useRef(onAssistantMessage);
   onAssistantMessageRef.current = onAssistantMessage;
+  const onPrefetchRef = useRef(onPrefetch);
+  onPrefetchRef.current = onPrefetch;
   const chatQueueRef = useRef<VestaEvent[]>([]);
   const drainingRef = useRef(false);
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -79,6 +82,7 @@ export function useChat({ name, active, onAssistantMessage }: UseChatOptions) {
     drainingRef.current = true;
     setIsTyping(true);
     const text = next.type === "chat" ? next.text : undefined;
+    if (text) onPrefetchRef.current?.(text);
     const delay = typingDelay(text?.length ?? 0);
     typingTimerRef.current = setTimeout(() => {
       queue.shift();
