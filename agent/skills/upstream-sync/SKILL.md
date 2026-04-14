@@ -5,7 +5,7 @@ description: Sync local agent code with upstream. Use when checking for updates,
 
 # Upstream Sync
 
-Merge upstream changes into your local branch. The env var `$VESTA_UPSTREAM_REF` tells you what to sync against - a release tag in prod (e.g. `v0.1.132`) or a branch in dev (e.g. `feat/agent-source-dir`).
+Merge upstream changes into your local branch. The env var `$VESTA_UPSTREAM_REF` tells you what to sync against: a release tag in prod (e.g. `v0.1.132`) or a branch in dev (e.g. `feat/agent-source-dir`).
 
 ## Ownership
 
