@@ -83,13 +83,14 @@ const MOUNT_DESTS: &[&str] = &["/run/vestad-env", "/root/vesta/agent/src/vesta",
 const ENTRYPOINT: &[&str] = &[
     "sh", "-c",
     ". /run/vestad-env; . ~/.bashrc || true; \
+     git -C ~/vesta config user.name \"$AGENT_NAME\" && \
+     git -C ~/vesta config user.email \"$AGENT_NAME@vesta\"; \
      uv sync --frozen --project /root/vesta/agent; \
-     git -C ~/vesta diff --quiet agent/ 2>/dev/null || \
-       (git -C ~/vesta add agent/ --ignore-errors && \
-        git -C ~/vesta diff --cached --quiet || git -C ~/vesta commit -m 'initial'); \
-     if ! git -C ~/vesta describe --tags --abbrev=0 >/dev/null 2>&1; then \
-       git -C ~/vesta fetch --depth 1 origin tag \"v$VESTA_VERSION\" 2>/dev/null && \
-       git -C ~/vesta merge \"v$VESTA_VERSION\" --no-edit --allow-unrelated-histories 2>/dev/null; \
+     git -C ~/vesta add agent/ --ignore-errors && \
+       (git -C ~/vesta diff --cached --quiet || git -C ~/vesta commit -m 'initial'); \
+     if ! git -C ~/vesta describe --tags --abbrev=0 >/dev/null 2>&1 && [ -n \"${VESTA_UPSTREAM_REF:-}\" ]; then \
+       git -C ~/vesta fetch --depth 1 origin \"$VESTA_UPSTREAM_REF\" 2>/dev/null && \
+       git -C ~/vesta merge -s ours FETCH_HEAD --no-edit --allow-unrelated-histories 2>/dev/null; \
      fi; \
      git -C ~/vesta rev-parse --verify \"$AGENT_NAME\" 2>/dev/null || git -C ~/vesta checkout -b \"$AGENT_NAME\"; \
      exec uv run --frozen --project /root/vesta/agent python -m vesta.main",
@@ -783,7 +784,7 @@ pub struct AgentEnvConfig {
     pub agents_dir: std::path::PathBuf,
     pub vestad_port: u16,
     pub vestad_tunnel: Option<String>,
-    pub git_branch: Option<String>,
+    pub upstream_ref: Option<String>,
 }
 
 /// Validate that the config and agents directories exist, are writable, and have
@@ -853,9 +854,8 @@ pub fn write_agent_env_file(
     if let Some(url) = &env_config.vestad_tunnel {
         content.push_str(&format!("export VESTAD_TUNNEL={url}\n"));
     }
-    content.push_str(&format!("export VESTA_VERSION={}\n", env!("CARGO_PKG_VERSION")));
-    if let Some(branch) = &env_config.git_branch {
-        content.push_str(&format!("export VESTA_BRANCH={branch}\n"));
+    if let Some(upstream) = &env_config.upstream_ref {
+        content.push_str(&format!("export VESTA_UPSTREAM_REF={upstream}\n"));
     }
     if let Some(tz) = timezone {
         content.push_str(&format!("export TZ={tz}\n"));
@@ -875,9 +875,9 @@ fn delete_agent_env_file(agents_dir: &std::path::Path, agent_name: &str) {
     std::fs::remove_file(&env_path).ok();
 }
 
-/// Update VESTAD_PORT, VESTAD_TUNNEL, and VESTA_VERSION in all existing per-agent env files.
+/// Update VESTAD_PORT, VESTAD_TUNNEL, and VESTA_UPSTREAM_REF in all existing per-agent env files.
 /// Called at vestad startup so running containers pick up the new values on restart.
-pub fn update_all_agent_env_files(agents_dir: &std::path::Path, vestad_port: u16, vestad_tunnel: Option<&str>, git_branch: Option<&str>) {
+pub fn update_all_agent_env_files(agents_dir: &std::path::Path, vestad_port: u16, vestad_tunnel: Option<&str>, upstream_ref: Option<&str>) {
     for name in env_file_names(agents_dir) {
         let path = agents_dir.join(format!("{name}.env"));
         let Ok(content) = std::fs::read_to_string(&path) else { continue };
@@ -887,8 +887,7 @@ pub fn update_all_agent_env_files(agents_dir: &std::path::Path, vestad_port: u16
                 let stripped = line.strip_prefix("export ").unwrap_or(line);
                 !stripped.starts_with("VESTAD_PORT=")
                     && !stripped.starts_with("VESTAD_TUNNEL=")
-                    && !stripped.starts_with("VESTA_VERSION=")
-                    && !stripped.starts_with("VESTA_BRANCH=")
+                    && !stripped.starts_with("VESTA_UPSTREAM_REF=")
             })
             .map(|l| l.to_string())
             .collect();
@@ -896,9 +895,8 @@ pub fn update_all_agent_env_files(agents_dir: &std::path::Path, vestad_port: u16
         if let Some(url) = vestad_tunnel {
             new_lines.push(format!("export VESTAD_TUNNEL={url}"));
         }
-        new_lines.push(format!("export VESTA_VERSION={}", env!("CARGO_PKG_VERSION")));
-        if let Some(branch) = git_branch {
-            new_lines.push(format!("export VESTA_BRANCH={branch}"));
+        if let Some(upstream) = upstream_ref {
+            new_lines.push(format!("export VESTA_UPSTREAM_REF={upstream}"));
         }
         new_lines.push(String::new());
         std::fs::write(&path, new_lines.join("\n")).ok();

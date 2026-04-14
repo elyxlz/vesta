@@ -10,9 +10,7 @@ A React app embedded in the main Vesta app that serves as the user's **life HQ**
 
 ## Before building (REQUIRED)
 
-**1. Check if shared files need syncing:** Compare `${VESTA_BRANCH:-v$VESTA_VERSION}` against `cat ~/vesta/agent/skills/dashboard/app/.last-sync`. If they differ (or `.last-sync` doesn't exist), run `~/vesta/agent/skills/dashboard/sync-app.sh` and rebuild. This ensures the dashboard uses the correct UI components.
-
-**2. Ask clarifying questions:** You MUST ask the user before writing any code. Go through these:
+**1. Ask clarifying questions:** You MUST ask the user before writing any code. Go through these:
 1. **Goal**: if the request is vague, clarify what they actually want to see or do
 2. **Interaction**: display-only, or do they want to tap/click/toggle/input things?
 3. **Data**: should it show fixed sample data, or pull in live data from a skill or API? Does the info need to stay in sync and look the same across different Vesta apps (like mobile)?
@@ -153,4 +151,4 @@ curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services/dash
 *   **Preview errors or 404?** Attach to logs with `screen -r dashboard`, then detach with Ctrl+A then `d`. If the session is wedged, `screen -S dashboard -X quit` and rerun the restart line from the block above.
 *   **No port from vestad?** Run the `POST .../services` `curl` alone and inspect the body; the `python3` one-liner errors on bad JSON. Verify `VESTAD_PORT`, `AGENT_NAME`, and `AGENT_TOKEN`.
 *   **Widgets or API calls failing?** Use devtools on the dashboard (network tab): wrong `apiFetch` paths, skill server down, or auth not ready yet (`waitForAuth` in `parent-bridge.ts`).
-*   **Wrong or missing shadcn styles?** Run `~/vesta/agent/skills/dashboard/sync-app.sh`, then rebuild (see Before building).
+*   **Wrong or missing shadcn styles?** Shared UI components are updated via upstream sync. Check that the latest release tag has been merged.

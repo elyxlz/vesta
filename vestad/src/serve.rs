@@ -26,7 +26,6 @@ const RESERVED_SERVICE_NAMES: &[&str] = &[
 const DEFAULT_LOG_TAIL_LINES: u64 = 500;
 const AUTO_BACKUP_CHECK_INTERVAL_SECS: u64 = 3600;
 
-/// Detect the current git branch by walking up from cwd to find a repo.
 fn detect_git_branch() -> Option<String> {
     let output = std::process::Command::new("git")
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
@@ -241,7 +240,6 @@ async fn version(State(state): State<SharedState>) -> Json<serde_json::Value> {
         "latest_version": latest,
         "update_available": update_available,
         "dev_mode": state.dev_mode,
-        "branch": state.env_config.git_branch,
     }))
 }
 
@@ -1245,12 +1243,16 @@ pub fn write_port_file(config_dir: &std::path::Path, port: u16) {
     std::fs::write(&port_path, port.to_string()).ok();
 }
 
-/// Update VESTAD_PORT, VESTAD_TUNNEL, and VESTA_VERSION in all existing per-agent env files.
+/// Update VESTAD_PORT, VESTAD_TUNNEL, and VESTA_UPSTREAM_REF in all existing per-agent env files.
 /// Called at vestad startup so containers pick up the new values on restart.
 pub fn update_agent_env_files(config_dir: &std::path::Path, port: u16, tunnel_url: Option<&str>) {
     let agents_dir = config_dir.join("agents");
-    let branch = detect_git_branch();
-    docker::update_all_agent_env_files(&agents_dir, port, tunnel_url, branch.as_deref());
+    let upstream_ref = if cfg!(debug_assertions) {
+        detect_git_branch()
+    } else {
+        Some(format!("v{}", env!("CARGO_PKG_VERSION")))
+    };
+    docker::update_all_agent_env_files(&agents_dir, port, tunnel_url, upstream_ref.as_deref());
 }
 
 // --- PID file ---
@@ -1574,14 +1576,18 @@ pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: S
         agents_dir: config_dir.join("agents"),
         vestad_port: port,
         vestad_tunnel: tunnel_url.clone(),
-        git_branch: detect_git_branch(),
+        upstream_ref: if cfg!(debug_assertions) {
+            detect_git_branch()
+        } else {
+            Some(format!("v{}", env!("CARGO_PKG_VERSION")))
+        },
     };
     if let Err(e) = docker::validate_config_dir(&env_config) {
         tracing::error!(error = %e, "config directory validation failed — aborting startup");
         std::process::exit(1);
     }
     if cfg!(debug_assertions) {
-        tracing::info!(branch = env_config.git_branch.as_deref().unwrap_or("unknown"), "mode: dev (debug build, agent code from local repo)");
+        tracing::info!("mode: dev (debug build, agent code from local repo)");
     } else {
         tracing::info!(version = env!("CARGO_PKG_VERSION"), "mode: prod (release build, agent code from github)");
     }

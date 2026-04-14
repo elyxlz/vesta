@@ -5,7 +5,6 @@ import datetime as dt
 import errno
 import os
 import signal
-import subprocess
 import types
 import typing as tp
 
@@ -180,19 +179,6 @@ def init_state(*, config: vm.VestaConfig) -> vm.State:
     return vm.State(last_dreamer_run=last_dreamer_run, session_id=session_id, event_bus=event_bus)
 
 
-def _log_git_status(root: os.PathLike[str]) -> None:
-    """Log git branch, commit, and dirty file count at startup."""
-    try:
-        def _git(*args: str) -> str:
-            return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True).stdout.strip()
-
-        branch = _git("rev-parse", "--abbrev-ref", "HEAD")
-        commit = _git("rev-parse", "--short", "HEAD")
-        dirty = len(_git("diff", "--name-only", "agent/").splitlines())
-        logger.init(f"git: branch={branch} commit={commit} dirty={dirty}")
-    except Exception:
-        pass
-
 
 async def async_main() -> None:
     config = vm.VestaConfig()
@@ -203,7 +189,6 @@ async def async_main() -> None:
         path.mkdir(parents=True, exist_ok=True)
 
     logger.setup(config.logs_dir, log_level=config.log_level)
-    _log_git_status(config.root)
     logger.init(f"{config.agent_name} starting")
 
     restart_reason = _read_restart_reason(config)

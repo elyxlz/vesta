@@ -1,11 +1,11 @@
 ---
 name: upstream-sync
-description: Sync local agent code with new upstream releases. Use when checking for updates, merging release tags, or resolving merge conflicts with upstream vesta.
+description: Sync local agent code with upstream. Use when checking for updates, merging new releases or branch changes, or resolving merge conflicts with upstream vesta.
 ---
 
 # Upstream Sync
 
-Merge new vesta releases into your local branch. Sync against **release tags**, not master.
+Merge upstream changes into your local branch. The env var `$VESTA_UPSTREAM_REF` tells you what to sync against — it's a release tag in prod (e.g. `v0.1.132`) or a branch in dev (e.g. `feat/agent-source-dir`).
 
 ## Ownership
 
@@ -25,18 +25,18 @@ Core code (`agent/src/vesta/`, `agent/pyproject.toml`, `agent/uv.lock`) is manag
    Commit if there are staged changes. Add untracked large files to `.gitignore`.
    Repeat until `git status` is clean.
 
-2. **Fetch tags and check for updates.**
+2. **Fetch and check for updates.**
    ```bash
-   git -C ~/vesta fetch origin --tags --prune --prune-tags
-   CURRENT=$(git -C ~/vesta describe --tags --abbrev=0 2>/dev/null || echo "none")
-   LATEST=$(git -C ~/vesta tag --sort=-v:refname | grep '^v' | head -1)
+   git -C ~/vesta fetch --depth 1 origin "$VESTA_UPSTREAM_REF"
+   CURRENT=$(git -C ~/vesta rev-parse HEAD)
+   LATEST=$(git -C ~/vesta rev-parse FETCH_HEAD)
    echo "Current: $CURRENT, Latest: $LATEST"
    ```
-   If `$LATEST == $CURRENT`, stop -- already up to date.
+   If `$CURRENT == $LATEST`, stop -- already up to date.
 
-3. **Merge the release tag.**
+3. **Merge upstream.**
    ```bash
-   git -C ~/vesta merge "$LATEST" --no-edit
+   git -C ~/vesta merge FETCH_HEAD --no-edit
    ```
    If clean, skip to step 5.
 
@@ -51,18 +51,18 @@ Core code (`agent/src/vesta/`, `agent/pyproject.toml`, `agent/uv.lock`) is manag
 
    After all conflicts are resolved: `git commit --no-edit`
 
-5. **Verify.** `git describe --tags --abbrev=0` should show `$LATEST` and `git status` should be clean.
+5. **Verify.** `git status` should be clean.
 
 ## Branch model
 
-Your branch (named `$AGENT_NAME`) starts from the release tag you were deployed on. All local work is committed here. Merging release tags brings in upstream changes while preserving your customizations.
+Your branch (named `$AGENT_NAME`) starts from the upstream ref you were deployed on. All local work is committed here. Merging upstream brings in changes while preserving your customizations.
 
 ```
-v0.1.132 (tag)
+v0.1.132 (upstream ref)
   * local commits
-  * merge v0.1.133
+  * merge upstream
   * more local commits
-  * merge v0.1.134
+  * merge upstream
 ```
 
-View local customizations vs upstream: `git diff <latest-tag>..$AGENT_NAME`
+View local customizations vs upstream: `git diff FETCH_HEAD..$AGENT_NAME` (after a fetch)
