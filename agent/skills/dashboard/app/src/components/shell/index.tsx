@@ -26,7 +26,7 @@ export function Shell({ className, ...props }: React.ComponentProps<"div">) {
           "bg-card text-card-foreground overflow-hidden contain-paint",
           fullscreen
             ? "h-full w-full"
-            : "m-2 h-[calc(100%-1rem)] w-[calc(100%-1rem)] rounded-4xl shadow-md ring-1 ring-foreground/5 dark:ring-foreground/10",
+            : "m-2 h-[calc(100%-1rem)] w-[calc(100%-1rem)] rounded-squircle-md [corner-shape:squircle] shadow-md ring-1 ring-foreground/5 dark:ring-foreground/10",
           className,
         )}
         {...props}

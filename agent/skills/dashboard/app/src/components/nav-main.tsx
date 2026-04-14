@@ -1,3 +1,4 @@
+import type { ReactNode } from "react"
 import { Reorder } from "motion/react"
 import { ChevronRightIcon } from "lucide-react"
 import {
@@ -11,12 +12,18 @@ import {
   SidebarMenuSub,
   SidebarMenuSubButton,
   SidebarMenuSubItem,
+  useSidebar,
 } from "@/components/ui/sidebar"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 
 export type NavItem = {
   id: string
   title: string
-  icon?: React.ReactNode
+  icon?: ReactNode
   children?: NavItem[]
 }
 
@@ -88,6 +95,8 @@ function CollapsibleNavItem({
   activeId: string
   onNavigate: (id: string) => void
 }) {
+  const { state, isMobile } = useSidebar()
+  const collapsed = state === "collapsed" && !isMobile
   const hasActiveChild = item.children?.some((c) => c.id === activeId) ?? false
 
   return (
@@ -102,28 +111,47 @@ function CollapsibleNavItem({
       transition={{ duration: 0.15 }}
     >
       <Collapsible defaultOpen={hasActiveChild} className="group/collapsible">
-        <CollapsibleTrigger asChild>
-          <SidebarMenuButton tooltip={item.title}>
-            {item.icon}
-            <span>{item.title}</span>
-            <ChevronRightIcon className="ml-auto transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90 group-data-[collapsible=icon]:hidden" />
-          </SidebarMenuButton>
-        </CollapsibleTrigger>
-        <CollapsibleContent>
-          <SidebarMenuSub>
-            {item.children!.map((child) => (
-              <SidebarMenuSubItem key={child.id}>
-                <SidebarMenuSubButton
-                  isActive={child.id === activeId}
-                  onClick={() => onNavigate(child.id)}
-                >
-                  {child.icon}
-                  <span>{child.title}</span>
-                </SidebarMenuSubButton>
-              </SidebarMenuSubItem>
-            ))}
-          </SidebarMenuSub>
-        </CollapsibleContent>
+        <div className="rounded-lg [[data-collapsible=icon]_&]:rounded-xl [[data-collapsible=icon]_&]:group-data-[state=open]/collapsible:ring-1 [[data-collapsible=icon]_&]:group-data-[state=open]/collapsible:ring-sidebar-border [[data-collapsible=icon]_&]:group-data-[state=open]/collapsible:my-1">
+          <CollapsibleTrigger asChild>
+            <SidebarMenuButton tooltip={item.title} className="transition-colors duration-0 group-data-[state=open]/collapsible:duration-200 [[data-collapsible=icon]_&]:group-data-[state=open]/collapsible:bg-primary/40 [[data-collapsible=icon]_&]:group-data-[state=open]/collapsible:hover:bg-primary/45">
+              {item.icon}
+              <span>{item.title}</span>
+              <ChevronRightIcon className="ml-auto transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90 group-data-[collapsible=icon]:hidden" />
+            </SidebarMenuButton>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <SidebarMenuSub>
+              {item.children!.map((child) => (
+                <SidebarMenuSubItem key={child.id}>
+                  {collapsed ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <SidebarMenuSubButton
+                          isActive={child.id === activeId}
+                          onClick={() => onNavigate(child.id)}
+                        >
+                          {child.icon}
+                          <span>{child.title}</span>
+                        </SidebarMenuSubButton>
+                      </TooltipTrigger>
+                      <TooltipContent side="right" align="center">
+                        {child.title}
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    <SidebarMenuSubButton
+                      isActive={child.id === activeId}
+                      onClick={() => onNavigate(child.id)}
+                    >
+                      {child.icon}
+                      <span>{child.title}</span>
+                    </SidebarMenuSubButton>
+                  )}
+                </SidebarMenuSubItem>
+              ))}
+            </SidebarMenuSub>
+          </CollapsibleContent>
+        </div>
       </Collapsible>
     </Reorder.Item>
   )
