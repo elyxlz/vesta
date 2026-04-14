@@ -35,7 +35,7 @@ spotify auth status
 
 ### Organize (Library Management)
 
-Keeps the library tidy - ensures all playlist tracks are liked, and sorts orphan liked songs into the right playlists by genre.
+Keeps the library tidy: ensures all playlist tracks are liked, and sorts orphan liked songs into the right playlists by genre.
 
 ```bash
 # Like all tracks from own playlists that aren't liked yet
@@ -63,17 +63,17 @@ spotify organize watch --init            # initialize state file without process
 ```
 
 **How it works:**
-1. **sync** - Fetches all playlists owned by the user, collects every track, and likes any that aren't already saved
-2. **sort** - Finds liked songs that aren't in any own playlist, looks up artist genres via Spotify API, and matches them to playlists using keyword rules (e.g. "jazz" → Jazz playlist, "rock" → Rock playlist)
+1. **sync**: Fetches all playlists owned by the user, collects every track, and likes any that aren't already saved
+2. **sort**: Finds liked songs that aren't in any own playlist, looks up artist genres via Spotify API, and matches them to playlists using keyword rules (e.g. "jazz" → Jazz playlist, "rock" → Rock playlist)
 3. Songs can go into multiple playlists if their genres match multiple rules
-4. **watch** - Runs as a daemon, polling the most recent 20 liked songs every 60 seconds. Detects new likes, fetches genre info, and writes a notification file for the agent to process.
+4. **watch**: Runs as a daemon, polling the most recent 20 liked songs every 60 seconds. Detects new likes, fetches genre info, and writes a notification file for the agent to process.
 
 **Watch daemon details:**
-- The daemon only DETECTS and NOTIFIES - playlist sorting decisions are left to the agent
+- The daemon only DETECTS and NOTIFIES. Playlist sorting decisions are left to the agent
 - Run `spotify organize watch --init` once first to snapshot your existing liked songs (otherwise the daemon auto-inits on first start)
-- After init, only songs liked AFTER the daemon starts will be detected - not the full backlog
+- After init, only songs liked AFTER the daemon starts will be detected, not the full backlog
 - Notification includes: track name, artist, track ID, track URI, and artist genres from Spotify
-- Logs progress to stderr - works well in a screen session: `screen -S spotify-watch spotify organize watch`
+- Logs progress to stderr, works well in a screen session: `screen -S spotify-watch spotify organize watch`
 - State file: `~/.spotify/watch_state.json` - tracks known liked IDs and last poll time
 - Notifications written to: `~/vesta/notifications/spotify_liked_{timestamp}.json`
 
@@ -85,7 +85,7 @@ spotify organize watch --init            # initialize state file without process
 - Only processes playlists owned by the user, not followed playlists
 - Always use `--dry-run` first to preview what would change
 - The sort step can take a few minutes for large libraries (artist genre lookups)
-- Unmatched tracks stay as liked-only - review them manually and consider creating new playlists
+- Unmatched tracks stay as liked-only. Review them manually and consider creating new playlists
 - After creating new playlists, run `spotify organize config --init` to refresh defaults, or edit `~/.spotify/organize.json` directly to add new genre rules
 
 ### Playlists
@@ -189,4 +189,4 @@ spotify auth setup     # Save app credentials
 - CLI built with spotipy (Python Spotify Web API wrapper)
 - Install via: `uv tool install <path-to-skill>/cli`
 - Spotify API doesn't expose playlist folders (client-side only feature)
-- To delete/unfollow a playlist, use the Spotify API directly via spotipy (no CLI command yet - use `sp.current_user_unfollow_playlist(id)`)
+- To delete/unfollow a playlist, use the Spotify API directly via spotipy (no CLI command yet, use `sp.current_user_unfollow_playlist(id)`)

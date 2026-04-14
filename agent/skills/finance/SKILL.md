@@ -5,7 +5,7 @@ description: Use this skill when the user asks about personal finance, spending,
 
 # Finance - CLI: finance / finance-watcher
 
-Tracks personal bank spending via Enable Banking open banking API (restricted mode - own accounts only, no commercial contract required).
+Tracks personal bank spending via Enable Banking open banking API (restricted mode, own accounts only, no commercial contract required).
 
 ## Daemon Requirement
 
@@ -86,7 +86,7 @@ Notification format:
 
 ## Auth & Consent
 
-- **Auth method**: RS256 JWT, self-signed - JWTs generated fresh per request, no OAuth token refresh needed
+- **Auth method**: RS256 JWT, self-signed. JWTs generated fresh per request, no OAuth token refresh needed
 - **Consent duration**: 90 days
 - **Re-auth**: when expired, run `finance auth login`, visit the URL in browser, authorize your bank
 
@@ -124,7 +124,7 @@ See [SETUP.md](SETUP.md) for initial configuration instructions.
 - For EU banks, use the country code of the bank's licensed entity (e.g. `LT` for Revolut Bank UAB, the EU-licensed entity)
 - The `aspsp` name and country in `enablebanking.py` can be customized to your bank
 - **Callback port**: 7866. Must be free during `finance auth login`. Port is forwarded from container to host.
-- **Redirect URL**: `https://localhost:7866/callback` (HTTPS with self-signed cert - browser SSL warning is expected, just copy the URL)
+- **Redirect URL**: `https://localhost:7866/callback` (HTTPS with self-signed cert; browser SSL warning is expected, just copy the URL)
 
 ## How It Works
 
@@ -133,4 +133,4 @@ See [SETUP.md](SETUP.md) for initial configuration instructions.
 - **Restricted mode**: Enable Banking allows linking your own bank accounts without a commercial contract. Only your linked accounts are accessible.
 - **Consent**: The `valid_until` field in the auth request controls consent expiry (default 90 days).
 - **Pagination**: transaction fetching automatically paginates via `continuation_key`
-- **All output is JSON** - suitable for piping/parsing
+- **All output is JSON**, suitable for piping/parsing

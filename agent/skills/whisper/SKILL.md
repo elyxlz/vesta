@@ -40,7 +40,7 @@ Transcribe audio/video files locally using whisper.cpp. No API calls, no data le
 ## Notes
 
 - Accepts any format ffmpeg can read: mp3, m4a, wav, ogg, flac, mp4, webm, etc.
-- Runs entirely local - no network, no API keys
+- Runs entirely local, no network, no API keys
 - small.en processes ~15-30x faster than real-time on ARM64
 - For long recordings (1h+), expect a few minutes of processing
-- Output goes to stdout - pipe or redirect as needed
+- Output goes to stdout. Pipe or redirect as needed

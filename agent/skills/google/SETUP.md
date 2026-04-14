@@ -22,15 +22,15 @@ google auth login-local             # Alternative: runs local server to handle r
 google auth list                    # Show authenticated account
 ```
 
-## First Use - Data Gathering
+## First Use: Data Gathering
 
-On first activation with a new user, spend significant time analyzing their email and calendar data to learn their patterns. This is critical for being immediately useful:
+On first activation with a new user, go deep into their email and calendar to learn who they are. This is the single most important onboarding step.
 
-1. **Read sent emails** (`email list --label SENT --limit 50`) - reveals writing style, tone, sign-offs, key contacts
-2. **Read inbox** (`email list --limit 50`) - shows what they receive, subscriptions, who contacts them
-3. **Read calendar** (`calendar list`) - schedule, recurring commitments, timezone
-4. **Get full content** of important sent emails (`email get --id <id>`) - understand tone variations by recipient
-5. **Update this skill file** - fill in every section below with what you learned
-6. **Update MEMORY.md** - add any life details discovered (job, interests, contacts, location, relationships, etc.)
+1. **Read sent emails** (`email list --label SENT --limit 200`): writing style, tone, sign-offs, key contacts. Read the full content of interesting ones (`email get --id <id>`) to understand tone variations by recipient
+2. **Read inbox** (`email list --limit 200`): what they receive, subscriptions, who contacts them. Skim subject lines, read anything that looks important or personal
+3. **Read calendar** (`calendar list`): schedule, recurring commitments, timezone
+4. **Update MEMORY.md**: add everything you learn: job, contacts, relationships, habits, what they care about, what stresses them out, what they enjoy, hobbies, music, events. Fill in the Interests & Preferences section
+5. **Update this skill file**: fill in every section below with what you learned
+6. **Look for opportunities**: pain points, recurring annoyances, things they do manually that you could automate. Note ideas for proactive help, new skills, or automations that would make their life easier
 
-Be thorough. Read dozens of emails. The more context you gather now, the better you can draft emails in their voice, manage their calendar, and anticipate needs.
+Don't rush this. Go through hundreds of emails. The more context you gather now, the better you'll be at everything going forward.

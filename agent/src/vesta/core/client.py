@@ -351,14 +351,14 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
 _EM_DASH = "\u2014"
 _EN_DASH = "\u2013"
 _DASH_WARNING = (
-    "[System: your last response contained an em dash or en dash. "
-    "Never use these. Use commas, periods, or restructure the sentence. "
+    "[System: your last response contained an em dash, en dash, or ' - ' used as a separator. "
+    "Never use these. Use commas, periods, colons, or restructure the sentence. "
     "Resend your last message without them.]"
 )
 
 
 def _contains_dashes(texts: list[str]) -> bool:
-    return any(_EM_DASH in t or _EN_DASH in t for t in texts)
+    return any(_EM_DASH in t or _EN_DASH in t or " - " in t for t in texts)
 
 
 async def process_message(msg: str, *, state: vm.State, config: vm.VestaConfig, is_user: bool) -> tuple[list[str], vm.State]:

@@ -108,8 +108,12 @@ def test_contains_dashes_detects_en_dash():
     assert _contains_dashes(["hello \u2013 world"]) is True
 
 
+def test_contains_dashes_detects_space_dash_space():
+    assert _contains_dashes(["hello - world"]) is True
+
+
 def test_contains_dashes_clean_text():
-    assert _contains_dashes(["hello - world"]) is False
+    assert _contains_dashes(["hello-world"]) is False
     assert _contains_dashes(["just normal text"]) is False
     assert _contains_dashes([]) is False
 
