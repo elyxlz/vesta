@@ -17,7 +17,9 @@ description: Self-improvement and memory curation. Used by the nightly dreamer, 
 1. **Self-improvement**: retrospective, review, fix, validate, upstream sync
 2. **User State**: update the snapshot in MEMORY.md
 3. **Memory curation**: prune, consolidate, move things out
-4. **Summary**: write tonight's dreamer summary
+4. **Workspace cleanup**: keep the filesystem clean and disk usage manageable
+5. **Sensitive data cleanup**: purge secrets from history and files
+6. **Summary**: write tonight's dreamer summary
 
 ## Self-Improvement
 
@@ -98,6 +100,27 @@ MEMORY.md has a **hard limit of 20,000 characters**. It's injected into every sy
 - Birthdays into calendar. Contact details into skills. Domain data into its proper home
 
 If it won't matter in two weeks, delete it.
+
+## Workspace Cleanup
+
+Keep the container's filesystem organized and disk usage under control.
+
+- Delete temp files, stale downloads, leftover build artifacts, and anything in `/tmp` that's no longer needed
+- Clean up old log files (`~/vesta/logs/`). Keep the last few days, remove the rest
+- Prune old dreamer summaries if they're piling up. Keep the last ~30, archive or delete older ones
+- Check `df -h` and `du -sh ~/` periodically. If disk usage is growing unexpectedly, investigate and clean up
+- Kill orphaned screen sessions that are no longer needed (`screen -ls`, `screen -S name -X quit`)
+- Remove unused packages or build caches if they're taking significant space (`uv cache clean`, `apt clean`)
+
+The goal: a tidy workspace where everything has a purpose. If something is left over from a one-off task, remove it.
+
+## Sensitive Data Cleanup
+
+Scan conversation history for leaked secrets: API keys, tokens, passwords, private keys, connection strings. Run `~/vesta/skills/dream/scripts/redact_secrets.sh` to check. If it finds matches, review them — if they're genuine secrets (not just the word "password" in a normal sentence), run with `--delete` to purge those events from the database.
+
+Also search MEMORY.md, dreamer summaries, and any skill files you touched tonight for accidentally written-down credentials. If you find any, remove them.
+
+The goal: no secrets persist in conversation history or agent-writable files. If a secret was needed during the day (e.g., user pasted a token for setup), it should live only in environment variables or encrypted config — not in the event DB or memory.
 
 ## Summary
 
