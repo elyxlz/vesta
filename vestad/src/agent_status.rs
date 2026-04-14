@@ -7,6 +7,7 @@ use futures_util::StreamExt;
 use tokio::sync::watch;
 
 use crate::docker::{self, ListEntry};
+use crate::serve::ServiceEntry;
 
 /// Per-service invalidation state (ephemeral, not persisted).
 struct InvalidationEntry {
@@ -33,8 +34,8 @@ pub struct AgentStatusCache {
     agents_rx: watch::Receiver<Vec<ListEntry>>,
     activity_tx: watch::Sender<HashMap<String, String>>,
     activity_rx: watch::Receiver<HashMap<String, String>>,
-    services_tx: watch::Sender<HashMap<String, HashMap<String, u16>>>,
-    services_rx: watch::Receiver<HashMap<String, HashMap<String, u16>>>,
+    services_tx: watch::Sender<HashMap<String, HashMap<String, ServiceEntry>>>,
+    services_rx: watch::Receiver<HashMap<String, HashMap<String, ServiceEntry>>>,
     /// Notification-only channel -- wakes WS loops when any invalidation occurs.
     invalidations_tx: watch::Sender<()>,
     invalidations_rx: watch::Receiver<()>,
@@ -69,12 +70,12 @@ impl AgentStatusCache {
         self.activity_rx.clone()
     }
 
-    pub fn subscribe_services(&self) -> watch::Receiver<HashMap<String, HashMap<String, u16>>> {
+    pub fn subscribe_services(&self) -> watch::Receiver<HashMap<String, HashMap<String, ServiceEntry>>> {
         self.services_rx.clone()
     }
 
     /// Notify subscribers that services changed for an agent.
-    pub fn update_services(&self, all_services: &HashMap<String, HashMap<String, u16>>) {
+    pub fn update_services(&self, all_services: &HashMap<String, HashMap<String, ServiceEntry>>) {
         self.services_tx.send_if_modified(|current| {
             if *current == *all_services {
                 return false;

@@ -8,7 +8,7 @@ use axum::{
 };
 
 use crate::{agent_status, docker};
-use crate::serve::{SharedState, err_response, ok_json};
+use crate::serve::{ServiceEntry, SharedState, err_response, ok_json};
 
 pub async fn invalidate_service_handler(
     State(state): State<SharedState>,
@@ -47,7 +47,7 @@ pub async fn control_ws_handler(
 fn build_agents_message(
     agents: &[docker::ListEntry],
     activity: &HashMap<String, String>,
-    services: &HashMap<String, HashMap<String, u16>>,
+    services: &HashMap<String, HashMap<String, ServiceEntry>>,
     invalidations: &HashMap<String, HashMap<String, agent_status::DrainedInvalidation>>,
 ) -> serde_json::Value {
     let enriched: Vec<serde_json::Value> = agents
@@ -64,10 +64,11 @@ fn build_agents_message(
                     .map(|svc_map| {
                         svc_map
                             .iter()
-                            .map(|(svc_name, port)| {
+                            .map(|(svc_name, entry)| {
                                 let inv = agent_inv.and_then(|m| m.get(svc_name));
                                 let val = serde_json::json!({
-                                    "port": port,
+                                    "port": entry.port,
+                                    "public": entry.public,
                                     "rev": inv.map(|i| i.rev).unwrap_or(0),
                                     "scopes": inv.map(|i| &i.scopes).unwrap_or(&Vec::new()),
                                 });
