@@ -66,6 +66,15 @@ pub fn agent_container_legacy_sh() -> &'static str {
          done; \
        fi; \
      done && \
+     find . -maxdepth 1 -mindepth 1 ! -name agent ! -name .git ! -name .gitignore ! -name .claude ! -name data ! -name logs ! -name notifications ! -name vesta ! -path './.git.*' 2>/dev/null | while IFS= read -r p; do \
+       b=$(basename "$p") && \
+       if [ ! -e "agent/$b" ]; then mv "$p" agent/; \
+       elif [ -d "$p" ] && [ -d "agent/$b" ]; then \
+         find "$p" -mindepth 1 -maxdepth 1 2>/dev/null | while IFS= read -r i; do \
+           bn=$(basename "$i") && [ ! -e "agent/$b/$bn" ] && mv "$i" "agent/$b/"; \
+         done; \
+       fi; \
+     done && \
      ([ -d agent/skills ] && ln -sf ../agent/skills .claude/skills) || true && \
      if ! ( git rev-parse --is-inside-work-tree >/dev/null 2>&1 && \
            [ "$(git rev-parse --is-bare-repository 2>/dev/null)" != "true" ] && \
