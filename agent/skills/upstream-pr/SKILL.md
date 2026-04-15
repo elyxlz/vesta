@@ -17,6 +17,8 @@ Returns a short-lived installation token.
 
 ## Creating a PR
 
+In your normal **`~/vesta`** agent workspace, `.gitignore` ignores **everything outside `agent/`** (only `agent/` and `.gitignore` are tracked there). Do not expect to commit monorepo paths from that tree.
+
 Local code diverges from upstream, so never branch from local HEAD. Use a clean worktree from upstream master.
 
 1. **Create a worktree:**

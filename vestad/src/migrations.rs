@@ -54,7 +54,7 @@ pub fn agent_container_legacy_sh() -> &'static str {
        git init && \
        (git remote get-url origin >/dev/null 2>&1 || git remote add origin https://github.com/elyxlz/vesta.git) && \
        git sparse-checkout init --cone && git sparse-checkout set agent && \
-       printf '.claude/\ndata/\nlogs/\n' > .gitignore; \
+       printf '/*\n!.gitignore\n!/agent/\n' > .gitignore; \
      fi && \
 "#
 }

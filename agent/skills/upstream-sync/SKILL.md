@@ -9,7 +9,9 @@ Merge upstream changes into your local branch. The env var `$VESTA_UPSTREAM_REF`
 
 ## Ownership
 
-You own `agent/skills/`, `agent/prompts/`, `agent/MEMORY.md`, `.claude/`. These are tracked on your git branch.
+At `~/vesta`, the repo `.gitignore` ignores **everything outside `agent/`** (except `.gitignore` itself). Only files under `agent/` are meant to be committed on your branch. Runtime dirs (`data/`, `logs/`, etc.) and repo-root `.claude/` stay local and do not show up as untracked noise.
+
+You own `agent/skills/`, `agent/prompts/`, `agent/MEMORY.md`, and repo-root `.claude/` (symlink / SDK layout) on disk; git commits focus on `agent/`.
 
 Core code (`agent/src/vesta/`, `agent/pyproject.toml`, `agent/uv.lock`) is managed by vestad via read-only mounts. Always accept upstream for these paths during merges.
 

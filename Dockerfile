@@ -17,9 +17,10 @@ WORKDIR /root/vesta
 
 # Git repo — agent tracks local changes (skills, prompts, memory) on its branch.
 # Core code (src/vesta, pyproject.toml, uv.lock) is mounted by vestad at runtime.
+# .gitignore ensures only relevant files are tracked and that mounts do not pollute the repo
 RUN git init && git remote add origin https://github.com/elyxlz/vesta.git && \
     git sparse-checkout init --cone && git sparse-checkout set agent && \
-    printf '.claude/\ndata/\nlogs/\n' > .gitignore
+    printf '/*\n!.gitignore\n!/agent/\n' > .gitignore
 
 # Copy agent-owned files from build context (matches local code in dev,
 # release code in prod).
