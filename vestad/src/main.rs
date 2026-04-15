@@ -9,6 +9,7 @@ mod agent_status;
 mod auth;
 mod backup;
 mod control_ws;
+mod migrations;
 mod docker;
 mod jwt;
 mod self_update;

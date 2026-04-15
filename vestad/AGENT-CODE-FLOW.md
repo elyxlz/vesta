@@ -19,15 +19,17 @@ At this point the image has:
 - `agent/.venv/` — installed deps
 - No `agent/src/` — that comes from mounts
 
-## Container creation (vestad, `docker.rs`)
+## Container creation (vestad, `docker.rs` + `agent_code.rs`)
 
-vestad calls `create_container` which:
+Host paths use vestad’s config dir: `$HOME/.config/vesta/vestad/` (see `main.rs` `config_dir`).
 
-1. **Writes `{agent}.env`** to host disk — contains `WS_PORT`, `AGENT_NAME`, `AGENT_TOKEN`, `IS_SANDBOX=1`, `VESTAD_PORT`, `VESTA_UPSTREAM_REF`, etc.
-2. **Resolves `agent-code/` dir** on host (`~/.config/vesta/agent-code/`):
-   - **Dev** (`debug_assertions`): copies `src/vesta/`, `pyproject.toml`, `uv.lock` from local repo into `agent-code/`
-   - **Prod**: downloads release tarball matching vestad's version, extracts the same three items into `agent-code/`
-3. **Bind mounts** (all `:ro`):
+When `manage_core_code` is true, `create_agent` calls `ensure_agent_code` first, then `create_container`:
+
+1. **`ensure_agent_code`** — populates `agent-code/` under the config dir (`.../vestad/agent-code/`):
+   - **Dev** (`debug_assertions`): copies `src/vesta/`, `pyproject.toml`, `uv.lock` from the discovered local repo; skips the copy when `agent-code/` is already at least as new as the source tree (mtime check).
+   - **Prod**: if `agent-code/` is missing or its `pyproject.toml` version does not match vestad’s `CARGO_PKG_VERSION`, downloads the GitHub release tarball for that version and extracts the same three paths into `agent-code/`.
+2. **`create_container`** — writes `agents/{agent}.env` (same config dir) with `WS_PORT`, `AGENT_NAME`, `AGENT_TOKEN`, `IS_SANDBOX=1`, `VESTAD_PORT`, optional `VESTAD_TUNNEL`, optional `VESTA_UPSTREAM_REF`, etc.
+3. **Bind mounts** when `manage_core_code` (all `:ro`):
    - `{agent}.env` -> `/run/vestad-env`
    - `agent-code/src/vesta/` -> `/root/vesta/agent/src/vesta/`
    - `agent-code/pyproject.toml` -> `/root/vesta/agent/pyproject.toml`
@@ -39,13 +41,13 @@ So vestad owns `src/vesta/`, `pyproject.toml`, `uv.lock` via mounts. The image o
 
 The `sh -c` entrypoint runs:
 
-1. **`. /run/vestad-env`** — sources env vars (`IS_SANDBOX`, `AGENT_NAME`, `VESTA_UPSTREAM_REF`, ports, etc.)
-2. **Git config** — sets `user.name` and `user.email` to `$AGENT_NAME`
-3. **`uv sync --frozen`** — ensures deps match the mounted lockfile (mounts may be newer than image)
+1. **`. /run/vestad-env`** then **`. ~/.bashrc`** (best effort) — env vars (`IS_SANDBOX`, `AGENT_NAME`, `VESTA_UPSTREAM_REF`, ports, etc.)
+2. **Git config** — `user.name` is `$AGENT_NAME`; `user.email` is `$AGENT_NAME@vesta`
+3. **`uv sync --frozen --project /root/vesta/agent`** — ensures deps match the mounted lockfile (mounts may be newer than image)
 4. **Git commit** — `git add agent/ .gitignore` then commits if anything is staged. On first boot, everything gets committed. On restarts, only actual changes are committed.
-5. **Upstream merge (first boot only)** — if no tags exist locally, fetches `$VESTA_UPSTREAM_REF` from origin and does `git merge -s ours` to establish shared ancestry without modifying any files on disk. This gives future upstream syncs a merge base.
-6. **Agent branch** — creates branch named `$AGENT_NAME` if it doesn't exist. Agent commits its changes here.
-7. **`exec uv run python -m vesta.main`** — starts the agent
+5. **Upstream merge (first boot only)** — when `git describe --tags --abbrev=0` fails (no current tag to describe) and `VESTA_UPSTREAM_REF` is set, fetches that ref from `origin` and runs `git merge -s ours FETCH_HEAD` with `--allow-unrelated-histories` to establish shared ancestry without changing tracked files.
+6. **Agent branch** — `git checkout -b "$AGENT_NAME"` if that ref does not exist yet.
+7. **`exec uv run --frozen --project /root/vesta/agent python -m vesta.main`** — starts the agent
 
 ## VESTA_UPSTREAM_REF
 
@@ -53,7 +55,7 @@ Single env var that tells the agent what to sync against:
 - **Dev**: set to the git branch vestad was started from (e.g. `feat/agent-source-dir`)
 - **Prod**: set to the release tag (e.g. `v0.1.132`)
 
-Updated by vestad on restart via `update_all_agent_env_files`, so agents always sync against the current upstream.
+Updated when vestad starts via `update_all_agent_env_files` (rewrites port, tunnel, and upstream lines in each `agents/*.env`), so the next container start picks up the current upstream.
 
 ## What the agent sees at runtime
 
@@ -69,8 +71,8 @@ Updated by vestad on restart via `update_all_agent_env_files`, so agents always 
 
 | | Dev | Prod |
 |---|---|---|
-| Image | `vesta:local` (built locally) | `ghcr.io/elyxlz/vesta:v0.1.x` (CI) |
-| `agent-code/` source | copied from local repo | downloaded from release tarball |
+| Image | Dockerfile next to cwd or vestad binary → build `vesta:local`; else pull `ghcr.io/elyxlz/vesta:latest` | same |
+| `agent-code/` source | copied from local repo | downloaded from release tarball when missing or version mismatch |
 | Mounted code | your working tree's `src/vesta/` | release version's `src/vesta/` |
 | MEMORY/prompts/skills | from local repo at image build time | from release at image build time |
 | `VESTA_UPSTREAM_REF` | git branch (e.g. `feat/foo`) | release tag (e.g. `v0.1.132`) |

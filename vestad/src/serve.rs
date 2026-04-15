@@ -303,19 +303,19 @@ async fn create_agent_handler(
     if name.is_empty() {
         return Err(err_response(StatusCode::BAD_REQUEST, "invalid agent name"));
     }
-    let manage_code = body.manage_agent_code.unwrap_or(true);
-    tracing::info!(name = %name, manage_code, "creating agent");
+    let manage_core_code = body.manage_agent_code.unwrap_or(true);
+    tracing::info!(name = %name, manage_core_code, "creating agent");
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
-    if !manage_code {
+    if !manage_core_code {
         let mut settings = state.settings.write().await;
         settings.agents.entry(name.clone()).or_default().manage_agent_code = false;
         save_settings(&settings);
     }
 
     let name =
-        docker::create_agent(&state.docker, &name, &state.env_config, manage_code, body.timezone.as_deref())
+        docker::create_agent(&state.docker, &name, &state.env_config, manage_core_code, body.timezone.as_deref())
             .await
             .map_err(map_docker_err)?;
 
@@ -427,8 +427,8 @@ async fn rebuild_agent_handler(
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
-    let manage_code = state.settings.read().await.manages_code(&name);
-    docker::rebuild_agent(&state.docker, &name, &state.env_config, manage_code)
+    let manage_core_code = state.settings.read().await.manages_core_code(&name);
+    docker::rebuild_agent(&state.docker, &name, &state.env_config, manage_core_code)
         .await
         .map_err(map_docker_err)?;
     docker::start_agent(&state.docker, &name)
@@ -684,7 +684,7 @@ impl Default for AgentSettings {
 }
 
 impl Settings {
-    fn manages_code(&self, name: &str) -> bool {
+    fn manages_core_code(&self, name: &str) -> bool {
         self.agents.get(name).is_none_or(|s| s.manage_agent_code)
     }
 }
@@ -754,18 +754,9 @@ fn load_settings() -> Settings {
         }
     }
 
-    // Migrate from old services.json if it exists
-    let old_services = path.with_file_name("services.json");
     let mut settings = Settings::default();
-    if let Ok(data) = std::fs::read_to_string(&old_services) {
-        if let Ok(services) = serde_json::from_str(&data) {
-            settings.services = services;
-            if let Err(err) = std::fs::remove_file(&old_services) {
-                tracing::warn!(error = %err, "failed to remove old services.json after migration");
-            } else {
-                tracing::info!("migrated services.json into settings.json");
-            }
-        }
+    if let Some(services) = crate::migrations::migrate_legacy_services_json(&path) {
+        settings.services = services;
     }
 
     // Always write settings to disk so users can edit the file
@@ -986,8 +977,8 @@ async fn restore_backup_handler(
                 return;
             }
         };
-        let manage_code = state.settings.read().await.manages_code(&path.name);
-        let result = backup::restore_backup(&state.docker, &path.name, &path.backup_id, &state.env_config, manage_code).await;
+        let manage_core_code = state.settings.read().await.manages_core_code(&path.name);
+        let result = backup::restore_backup(&state.docker, &path.name, &path.backup_id, &state.env_config, manage_core_code).await;
 
         match result {
             Ok(()) => {
@@ -1140,22 +1131,22 @@ async fn patch_agent_settings_handler(
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
-    let (old_manage_code, new_manage_code) = {
+    let (old_manage_core_code, new_manage_core_code) = {
         let mut settings = state.settings.write().await;
-        let old = settings.manages_code(&name);
+        let old = settings.manages_core_code(&name);
         if let Some(val) = body.manage_agent_code {
             settings.agents.entry(name.clone()).or_default().manage_agent_code = val;
         }
-        let new = settings.manages_code(&name);
+        let new = settings.manages_core_code(&name);
         save_settings(&settings);
         (old, new)
     };
 
     // Rebuild if the mount config changed
-    if old_manage_code != new_manage_code {
+    if old_manage_core_code != new_manage_core_code {
         let was_running = docker::container_status(&state.docker, &docker::container_name(&name)).await
             == docker::ContainerStatus::Running;
-        if let Err(e) = docker::rebuild_agent(&state.docker, &name, &state.env_config, new_manage_code).await {
+        if let Err(e) = docker::rebuild_agent(&state.docker, &name, &state.env_config, new_manage_core_code).await {
             tracing::error!(agent = %name, error = %e, "rebuild after settings change failed");
         } else if was_running {
             docker::start_agent(&state.docker, &name).await.ok();
@@ -1163,7 +1154,7 @@ async fn patch_agent_settings_handler(
     }
 
     Ok(Json(serde_json::json!({
-        "manage_agent_code": new_manage_code,
+        "manage_agent_code": new_manage_core_code,
     })))
 }
 

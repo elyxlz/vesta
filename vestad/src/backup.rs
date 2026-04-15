@@ -83,33 +83,7 @@ pub fn parse_backup_tag(tag: &str) -> Option<(String, BackupType, String)> {
     }
 
     // Legacy format: {name}-{type}-{YYYYMMDD-HHMMSS} — ambiguous, uses suffix guessing
-    parse_backup_tag_legacy(repo_tag)
-}
-
-fn parse_backup_tag_legacy(repo_tag: &str) -> Option<(String, BackupType, String)> {
-    if repo_tag.len() < 17 {
-        return None;
-    }
-    let timestamp = &repo_tag[repo_tag.len() - 15..];
-    if timestamp.len() != 15 || timestamp.as_bytes()[8] != b'-' {
-        return None;
-    }
-    let name_and_type = &repo_tag[..repo_tag.len() - 16];
-
-    for (suffix, bt) in [
-        ("-pre-restore", BackupType::PreRestore),
-        ("-manual", BackupType::Manual),
-        ("-daily", BackupType::Daily),
-        ("-weekly", BackupType::Weekly),
-        ("-monthly", BackupType::Monthly),
-    ] {
-        if let Some(name) = name_and_type.strip_suffix(suffix) {
-            if !name.is_empty() {
-                return Some((name.to_string(), bt, timestamp.to_string()));
-            }
-        }
-    }
-    None
+    crate::migrations::parse_backup_tag_legacy(repo_tag)
 }
 
 pub fn now_timestamp() -> String {
@@ -415,7 +389,7 @@ pub async fn restore_backup(
     name: &str,
     backup_id: &str,
     env_config: &AgentEnvConfig,
-    manage_code: bool,
+    manage_core_code: bool,
 ) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
@@ -455,7 +429,7 @@ pub async fn restore_backup(
         .port
         .ok_or_else(|| DockerError::Failed("agent has no port in env file".into()))?;
     tracing::debug!(agent = %name, backup_id = %backup_id, "creating container from backup image");
-    create_container(docker, &cname, backup_id, port, name, env_config, manage_code, None).await?;
+    create_container(docker, &cname, backup_id, port, name, env_config, manage_core_code, None).await?;
 
     if !start_container(docker, &cname).await {
         return Err(DockerError::Failed(
