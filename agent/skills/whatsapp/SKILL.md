@@ -6,7 +6,7 @@ description: This skill should be used when the user asks about "whatsapp", "mes
 # WhatsApp - CLI: whatsapp
 
 **Setup**: See [SETUP.md](SETUP.md)
-**Background**: `screen -dmS whatsapp whatsapp serve --notifications-dir ~/vesta/notifications`
+**Background**: `screen -dmS whatsapp whatsapp serve --notifications-dir ~/notifications`
 
 ## Gotchas
 - CLI syntax: command MUST come before flags. `whatsapp serve --instance name` NOT `whatsapp --instance name serve`

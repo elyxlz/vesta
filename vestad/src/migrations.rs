@@ -35,9 +35,29 @@ pub fn agent_container_legacy_sh() -> &'static str {
     if !AGENT_CONTAINER_LEGACY_ENABLED {
         return "";
     }
-    r#"cd ~/vesta && \
+    r#"cd ~ && \
+     if [ -d "$HOME/vesta" ]; then \
+       [ -d "$HOME/vesta/agent" ] && [ ! -e "$HOME/agent" ] && mv "$HOME/vesta/agent" "$HOME/agent"; \
+       [ -d "$HOME/vesta/agent" ] && [ -d "$HOME/agent" ] && \
+         find "$HOME/vesta/agent" -mindepth 1 -maxdepth 1 2>/dev/null | while IFS= read -r x; do \
+           bn=$(basename "$x") && [ ! -e "$HOME/agent/$bn" ] && mv "$x" "$HOME/agent/"; \
+         done; \
+       [ -d "$HOME/vesta/logs" ] && [ ! -e "$HOME/logs" ] && mv "$HOME/vesta/logs" "$HOME/logs"; \
+       [ -d "$HOME/vesta/data" ] && [ ! -e "$HOME/data" ] && mv "$HOME/vesta/data" "$HOME/data"; \
+       [ -d "$HOME/vesta/notifications" ] && [ ! -e "$HOME/notifications" ] && mv "$HOME/vesta/notifications" "$HOME/notifications"; \
+       [ -d "$HOME/vesta/.git" ] && [ ! -d "$HOME/.git" ] && mv "$HOME/vesta/.git" "$HOME/.git"; \
+       [ -f "$HOME/vesta/.gitignore" ] && [ ! -f "$HOME/.gitignore" ] && mv "$HOME/vesta/.gitignore" "$HOME/.gitignore"; \
+       if [ -d "$HOME/vesta/.claude" ] && [ ! -d "$HOME/.claude" ]; then mv "$HOME/vesta/.claude" "$HOME/.claude"; fi; \
+       if [ -d "$HOME/vesta" ]; then \
+         find "$HOME/vesta" -maxdepth 1 -mindepth 1 ! -name .git 2>/dev/null | while IFS= read -r vp; do \
+           vb=$(basename "$vp") && [ "$vb" = "agent" ] && continue; \
+           [ ! -e "$HOME/agent/$vb" ] && mv "$vp" "$HOME/agent/"; \
+         done; \
+         rm -rf "$HOME/vesta" 2>/dev/null || true; \
+       fi; \
+     fi && \
      mkdir -p agent .claude && \
-     find . -maxdepth 1 -mindepth 1 ! -name agent ! -name .git ! -name .gitignore ! -name .claude ! -name data ! -name logs ! -path './.git.*' 2>/dev/null | while IFS= read -r p; do \
+     find . -maxdepth 1 -mindepth 1 ! -name agent ! -name .git ! -name .gitignore ! -name .claude ! -name data ! -name logs ! -name notifications ! -name vesta ! -path './.git.*' 2>/dev/null | while IFS= read -r p; do \
        b=$(basename "$p") && \
        if [ ! -e "agent/$b" ]; then mv "$p" agent/; \
        elif [ -d "$p" ] && [ -d "agent/$b" ]; then \

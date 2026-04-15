@@ -31,9 +31,9 @@ When `manage_core_code` is true, `create_agent` calls `ensure_agent_code` first,
 2. **`create_container`** — writes `agents/{agent}.env` (same config dir) with `WS_PORT`, `AGENT_NAME`, `AGENT_TOKEN`, `IS_SANDBOX=1`, `VESTAD_PORT`, optional `VESTAD_TUNNEL`, optional `VESTA_UPSTREAM_REF`, etc.
 3. **Bind mounts** when `manage_core_code` (all `:ro`):
    - `{agent}.env` -> `/run/vestad-env`
-   - `agent-code/src/vesta/` -> `/root/vesta/agent/src/vesta/`
-   - `agent-code/pyproject.toml` -> `/root/vesta/agent/pyproject.toml`
-   - `agent-code/uv.lock` -> `/root/vesta/agent/uv.lock`
+   - `agent-code/src/vesta/` -> `/root/agent/src/vesta/`
+   - `agent-code/pyproject.toml` -> `/root/agent/pyproject.toml`
+   - `agent-code/uv.lock` -> `/root/agent/uv.lock`
 
 So vestad owns `src/vesta/`, `pyproject.toml`, `uv.lock` via mounts. The image owns `MEMORY.md`, `prompts/`, `skills/` — these are the agent's to modify.
 
@@ -43,11 +43,11 @@ The `sh -c` entrypoint runs:
 
 1. **`. /run/vestad-env`** then **`. ~/.bashrc`** (best effort) — env vars (`IS_SANDBOX`, `AGENT_NAME`, `VESTA_UPSTREAM_REF`, ports, etc.)
 2. **Git config** — `user.name` is `$AGENT_NAME`; `user.email` is `$AGENT_NAME@vesta`
-3. **`uv sync --frozen --project /root/vesta/agent`** — ensures deps match the mounted lockfile (mounts may be newer than image)
+3. **`uv sync --frozen --project /root/agent`** — ensures deps match the mounted lockfile (mounts may be newer than image)
 4. **Git commit** — `git add agent/ .gitignore` then commits if anything is staged. On first boot, everything gets committed. On restarts, only actual changes are committed.
 5. **Upstream merge (first boot only)** — when `git describe --tags --abbrev=0` fails (no current tag to describe) and `VESTA_UPSTREAM_REF` is set, fetches that ref from `origin` and runs `git merge -s ours FETCH_HEAD` with `--allow-unrelated-histories` to establish shared ancestry without changing tracked files.
 6. **Agent branch** — `git checkout -b "$AGENT_NAME"` if that ref does not exist yet.
-7. **`exec uv run --frozen --project /root/vesta/agent python -m vesta.main`** — starts the agent
+7. **`exec uv run --frozen --project /root/agent python -m vesta.main`** — starts the agent
 
 ## VESTA_UPSTREAM_REF
 
@@ -59,12 +59,14 @@ Updated when vestad starts via `update_all_agent_env_files` (rewrites port, tunn
 
 ## What the agent sees at runtime
 
+Git repo root is `$HOME` (`/root` in the image). Tracked tree is under `agent/`.
+
 - `agent/src/vesta/` — vestad's code (mounted, read-only)
 - `agent/pyproject.toml` + `uv.lock` — vestad's versions (mounted, read-only)
 - `agent/MEMORY.md` — from image build, agent can modify and commit
 - `agent/prompts/` — from image build, agent can modify and commit
 - `agent/skills/` — from image build, agent can modify and commit
-- `.git/` — fresh repo with upstream merge base, agent's branch for tracking its changes
+- `.git/` — at `$HOME`, upstream merge base, agent's branch for tracking its changes
 - Clean `git status` — runtime dirs hidden by `.gitignore`, sparse checkout hides non-agent files from merges
 
 ## Dev vs Prod difference

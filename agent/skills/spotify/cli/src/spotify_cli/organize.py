@@ -12,7 +12,7 @@ from .auth import get_client
 
 ORGANIZE_CONFIG = Path.home() / ".spotify" / "organize.json"
 WATCH_STATE_FILE = Path.home() / ".spotify" / "watch_state.json"
-NOTIFICATIONS_DIR = Path.home() / "vesta" / "notifications"
+NOTIFICATIONS_DIR = Path.home() / "notifications"
 
 # Default skip list — playlists too ambiguous or personal for auto-sorting.
 # Customize this in ~/.spotify/organize.json after running: spotify organize config --init

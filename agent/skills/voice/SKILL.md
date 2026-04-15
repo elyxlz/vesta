@@ -1,7 +1,7 @@
 ---
 name: voice
 description: Use when the user asks to enable/disable voice input/output, set up transcription or text-to-speech, rotate API keys, add custom voices, adjust the transcription sensitivity, or talks about the microphone/speaker in the Vesta app. This skill manages ~/.voice/voice_config.json, the single source of truth for STT/TTS keys, voice selection, keyterms, and thresholds. Use enable/disable to toggle without removing configuration; use clear only to wipe keys entirely.
-serve: PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' -d '{"name":"voice"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])") && SKILL_PORT=$PORT PYTHONPATH=~/vesta/agent/skills screen -dmS voice uv run python -m voice.server
+serve: PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' -d '{"name":"voice"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])") && SKILL_PORT=$PORT PYTHONPATH=~/agent/skills screen -dmS voice uv run python -m voice.server
 ---
 
 # Voice setup (STT/TTS)
@@ -22,23 +22,23 @@ Once configured, the user can manage voice settings directly from the **agent se
 2. **Walk them through getting a key**: see [SETUP.md](SETUP.md) for the per-provider link and where to find the key.
 3. **Validate the key** before saving:
    ```bash
-   uv run ~/vesta/agent/skills/voice/scripts/voice_keys.py validate --provider deepgram --key <key>
+   uv run ~/agent/skills/voice/scripts/voice_keys.py validate --provider deepgram --key <key>
    ```
 4. **Save the key**:
    ```bash
-   uv run ~/vesta/agent/skills/voice/scripts/voice_keys.py set-key --domain stt --provider deepgram --key <key>
+   uv run ~/agent/skills/voice/scripts/voice_keys.py set-key --domain stt --provider deepgram --key <key>
    ```
 5. **Pick a voice** (TTS only). Ask the user if they'd prefer a male or female voice, then set an appropriate default:
    - Male voices: Roger (laid-back), Charlie (deep, Australian), George (warm, British), Liam (energetic), Chris (charming), Brian (deep, resonant), Daniel (steady, British)
    - Female voices: Sarah (mature), Laura (enthusiastic), Alice (clear, British), Matilda (professional), Jessica (playful), Lily (velvety, British)
    ```bash
-   uv run ~/vesta/agent/skills/voice/scripts/voice_keys.py set-voice --id <voice_id>
+   uv run ~/agent/skills/voice/scripts/voice_keys.py set-voice --id <voice_id>
    ```
    Let them know they can browse all voices and listen to previews in the app settings later.
 6. **Ensure the voice server is running.** The app fetches config from it. Check with `screen -ls | grep voice`. If it's not running, start it:
    ```bash
    PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' -d '{"name":"voice"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])")
-   SKILL_PORT=$PORT PYTHONPATH=~/vesta/agent/skills screen -dmS voice uv run python -m voice.server
+   SKILL_PORT=$PORT PYTHONPATH=~/agent/skills screen -dmS voice uv run python -m voice.server
    ```
 7. **Confirm**, e.g. "Voice is ready! You can use the mic button now. You can also change voices, listen to previews, and tweak settings from the settings page in the app."
 
@@ -46,29 +46,29 @@ Once configured, the user can manage voice settings directly from the **agent se
 
 ```bash
 # See current state
-uv run ~/vesta/agent/skills/voice/scripts/voice_keys.py status
+uv run ~/agent/skills/voice/scripts/voice_keys.py status
 
 # Keys
-uv run ~/vesta/agent/skills/voice/scripts/voice_keys.py validate --provider {deepgram|elevenlabs} --key <k>
-uv run ~/vesta/agent/skills/voice/scripts/voice_keys.py set-key --domain {stt|tts} --provider {deepgram|elevenlabs} --key <k>
-uv run ~/vesta/agent/skills/voice/scripts/voice_keys.py clear --domain {stt|tts}   # removes provider + keys entirely
+uv run ~/agent/skills/voice/scripts/voice_keys.py validate --provider {deepgram|elevenlabs} --key <k>
+uv run ~/agent/skills/voice/scripts/voice_keys.py set-key --domain {stt|tts} --provider {deepgram|elevenlabs} --key <k>
+uv run ~/agent/skills/voice/scripts/voice_keys.py clear --domain {stt|tts}   # removes provider + keys entirely
 
 # Enable/disable (keeps configuration intact, just toggles on/off)
-uv run ~/vesta/agent/skills/voice/scripts/voice_keys.py enable --domain {stt|tts}
-uv run ~/vesta/agent/skills/voice/scripts/voice_keys.py disable --domain {stt|tts}
+uv run ~/agent/skills/voice/scripts/voice_keys.py enable --domain {stt|tts}
+uv run ~/agent/skills/voice/scripts/voice_keys.py disable --domain {stt|tts}
 
 # TTS voice selection
-uv run ~/vesta/agent/skills/voice/scripts/voice_keys.py set-voice --id <voice_id>
-uv run ~/vesta/agent/skills/voice/scripts/voice_keys.py add-voice --id <voice_id> --name <name> --description "..."
-uv run ~/vesta/agent/skills/voice/scripts/voice_keys.py remove-voice --id <voice_id>
+uv run ~/agent/skills/voice/scripts/voice_keys.py set-voice --id <voice_id>
+uv run ~/agent/skills/voice/scripts/voice_keys.py add-voice --id <voice_id> --name <name> --description "..."
+uv run ~/agent/skills/voice/scripts/voice_keys.py remove-voice --id <voice_id>
 
 # STT keyterms (words the transcription should bias toward)
-uv run ~/vesta/agent/skills/voice/scripts/voice_keys.py add-keyterm <term>
-uv run ~/vesta/agent/skills/voice/scripts/voice_keys.py remove-keyterm <term>
+uv run ~/agent/skills/voice/scripts/voice_keys.py add-keyterm <term>
+uv run ~/agent/skills/voice/scripts/voice_keys.py remove-keyterm <term>
 
 # STT end-of-turn tuning
-uv run ~/vesta/agent/skills/voice/scripts/voice_keys.py set-eot --threshold 0.8
-uv run ~/vesta/agent/skills/voice/scripts/voice_keys.py set-eot --timeout-ms 10000
+uv run ~/agent/skills/voice/scripts/voice_keys.py set-eot --threshold 0.8
+uv run ~/agent/skills/voice/scripts/voice_keys.py set-eot --timeout-ms 10000
 ```
 
 ## Common asks

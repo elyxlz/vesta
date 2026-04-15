@@ -2,7 +2,7 @@
 """Twitter/X monitoring daemon via Nitter RSS.
 
 Usage:
-    python3 monitor.py serve --notifications-dir ~/vesta/notifications
+    python3 monitor.py serve --notifications-dir ~/notifications
     python3 monitor.py follow @FAOClimate
     python3 monitor.py unfollow @FAOClimate
     python3 monitor.py list
@@ -35,7 +35,7 @@ HEADERS = {
     "Accept": "application/rss+xml, application/xml, text/xml, */*",
 }
 
-DATA_DIR = Path.home() / "vesta" / "data" / "twitter"
+DATA_DIR = Path.home() / "data" / "twitter"
 CONFIG_FILE = DATA_DIR / "config.json"
 STATE_FILE = DATA_DIR / "state.json"
 

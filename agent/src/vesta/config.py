@@ -6,7 +6,7 @@ import pydantic_settings as pyd_settings
 from claude_agent_sdk.types import ThinkingConfigAdaptive, ThinkingConfigDisabled, ThinkingConfigEnabled
 
 
-_DEFAULT_ROOT = pl.Path.home() / "vesta"
+_DEFAULT_ROOT = pl.Path.home()
 
 
 class VestaConfig(pyd_settings.BaseSettings):
@@ -25,7 +25,7 @@ class VestaConfig(pyd_settings.BaseSettings):
         RESPONSE_TIMEOUT         - max seconds for a single response (default: 600)
     """
 
-    model_config = pyd_settings.SettingsConfigDict(extra="ignore")
+    model_config = pyd_settings.SettingsConfigDict(extra="ignore", populate_by_name=True)
 
     ephemeral: bool = False
     log_level: tp.Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
@@ -39,7 +39,11 @@ class VestaConfig(pyd_settings.BaseSettings):
     ws_port: int = 0
     agent_token: str | None = None
 
-    root: pl.Path = pyd.Field(default=_DEFAULT_ROOT)
+    root: pl.Path = pyd.Field(
+        default=_DEFAULT_ROOT,
+        validation_alias=pyd.AliasChoices("VESTA_ROOT", "root"),
+        description="Layout root ($HOME in containers). Env VESTA_ROOT overrides (e.g. ~/vesta for local dev).",
+    )
 
     @pyd.field_validator("root", mode="before")
     @classmethod

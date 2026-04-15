@@ -233,7 +233,7 @@ func runOneShot(command string) {
 	sockPath := getSocketPath()
 	output, exitCode, connected := trySocketCommand(sockPath, command, stripGlobalFlags(os.Args[1:]))
 	if !connected {
-		printJSON(map[string]interface{}{"error": "daemon not running — start with: screen -dmS telegram telegram serve --notifications-dir ~/vesta/notifications"})
+		printJSON(map[string]interface{}{"error": "daemon not running — start with: screen -dmS telegram telegram serve --notifications-dir ~/notifications"})
 		os.Exit(1)
 	}
 	fmt.Println(string(output))

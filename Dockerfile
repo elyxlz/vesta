@@ -13,9 +13,9 @@ RUN curl -fsSL https://claude.ai/install.sh | bash
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:${PATH}"
 
-WORKDIR /root/vesta
+WORKDIR /root
 
-# Git repo — agent tracks local changes (skills, prompts, memory) on its branch.
+# Git repo at $HOME — agent tracks local changes (skills, prompts, memory) on its branch.
 # Core code (src/vesta, pyproject.toml, uv.lock) is mounted by vestad at runtime.
 # .gitignore ensures only relevant files are tracked and that mounts do not pollute the repo
 RUN git init && git remote add origin https://github.com/elyxlz/vesta.git && \
@@ -34,7 +34,7 @@ RUN for d in agent/skills/*/; do \
       grep -qx "$name" agent/skills/default-skills.txt || rm -rf "$d"; \
     done && rm -f agent/skills/default-skills.txt
 
-# SDK discovers skills from .claude/skills/ relative to cwd
+# SDK discovers skills from .claude/skills/ relative to cwd (shared with Claude credentials under ~/.claude)
 RUN mkdir -p .claude && ln -s ../agent/skills .claude/skills && \
     printf '{"permissions":{"allow":["Edit(~/.bashrc)","Write(~/.bashrc)"]}}\n' > .claude/settings.json
 
@@ -42,9 +42,9 @@ RUN mkdir -p .claude && ln -s ../agent/skills .claude/skills && \
 # runtime, but we COPY them here so uv can install dependencies into the
 # image layer — the mount overlays these copies at runtime.
 COPY agent/pyproject.toml agent/uv.lock ./agent/
-WORKDIR /root/vesta/agent
+WORKDIR /root/agent
 RUN uv sync --frozen --no-install-project
-WORKDIR /root/vesta
+WORKDIR /root
 
 RUN rm -f /usr/bin/pkill /usr/bin/killall
 

@@ -11,20 +11,20 @@ Contribute improvements back to `elyxlz/vesta`. Authentication is handled by the
 
 For any GitHub API call (issues, check-runs, PR status):
 ```bash
-uv run ~/vesta/agent/skills/upstream-pr/pr.py --token-only
+uv run ~/agent/skills/upstream-pr/pr.py --token-only
 ```
 Returns a short-lived installation token.
 
 ## Creating a PR
 
-In your normal **`~/vesta`** agent workspace, `.gitignore` ignores **everything outside `agent/`** (only `agent/` and `.gitignore` are tracked there). Do not expect to commit monorepo paths from that tree.
+In your normal **`~`** (home) agent workspace, `.gitignore` ignores **everything outside `agent/`** (only `agent/` and `.gitignore` are tracked there). Do not expect to commit monorepo paths from that tree.
 
 Local code diverges from upstream, so never branch from local HEAD. Use a clean worktree from upstream master.
 
 1. **Create a worktree:**
    ```bash
-   git -C ~/vesta fetch origin
-   git -C ~/vesta worktree add /tmp/vesta-pr -b feature/<name> origin/master
+   git -C ~ fetch origin
+   git -C ~ worktree add /tmp/vesta-pr -b feature/<name> origin/master
    ```
 
 2. **Apply changes** to `/tmp/vesta-pr`. Only universal improvements -- no personal config, memory, or credentials.
@@ -35,12 +35,12 @@ Local code diverges from upstream, so never branch from local HEAD. Use a clean 
    ```bash
    cd /tmp/vesta-pr
    git add <files> && git commit -m "<description>"
-   uv run ~/vesta/agent/skills/upstream-pr/pr.py --title "..." --body "..."
+   uv run ~/agent/skills/upstream-pr/pr.py --title "..." --body "..."
    ```
 
-5. **Clean up:** `git -C ~/vesta worktree remove /tmp/vesta-pr`
+5. **Clean up:** `git -C ~ worktree remove /tmp/vesta-pr`
 
-6. **Wait for CI to pass.** Check status via the GitHub API (`--token-only` for a token, then query the check-runs endpoint). If a check fails: diagnose, fix, commit to the same branch, push. The PR updates automatically. The `lockfile` check requires `uv lock` in `~/vesta/agent` if Python dependencies changed.
+6. **Wait for CI to pass.** Check status via the GitHub API (`--token-only` for a token, then query the check-runs endpoint). If a check fails: diagnose, fix, commit to the same branch, push. The PR updates automatically. The `lockfile` check requires `uv lock` in `~/agent` if Python dependencies changed.
 
 Only report a PR as done once every CI check is green.
 
@@ -58,11 +58,11 @@ Do not PR: personal config, memory files, credentials, user-specific customizati
 
 ```
 # Create a PR
-uv run ~/vesta/agent/skills/upstream-pr/pr.py --title "fix: ..." --body "..."
+uv run ~/agent/skills/upstream-pr/pr.py --title "fix: ..." --body "..."
 
 # Custom branch name and base
-uv run ~/vesta/agent/skills/upstream-pr/pr.py --title "..." --branch my-branch --base master
+uv run ~/agent/skills/upstream-pr/pr.py --title "..." --branch my-branch --base master
 
 # Just get a GitHub API token
-uv run ~/vesta/agent/skills/upstream-pr/pr.py --token-only
+uv run ~/agent/skills/upstream-pr/pr.py --token-only
 ```

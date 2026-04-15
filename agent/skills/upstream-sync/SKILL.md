@@ -9,7 +9,7 @@ Merge upstream changes into your local branch. The env var `$VESTA_UPSTREAM_REF`
 
 ## Ownership
 
-At `~/vesta`, the repo `.gitignore` ignores **everything outside `agent/`** (except `.gitignore` itself). Only files under `agent/` are meant to be committed on your branch. Runtime dirs (`data/`, `logs/`, etc.) and repo-root `.claude/` stay local and do not show up as untracked noise.
+At `~` (repo root is `$HOME`), the `.gitignore` ignores **everything outside `agent/`** (except `.gitignore` itself). Only files under `agent/` are meant to be committed on your branch. Runtime dirs (`data/`, `logs/`, etc.) and repo-root `.claude/` stay local and do not show up as untracked noise.
 
 You own `agent/skills/`, `agent/prompts/`, `agent/MEMORY.md`, and repo-root `.claude/` (symlink / SDK layout) on disk; git commits focus on `agent/`.
 
@@ -19,7 +19,7 @@ Core code (`agent/src/vesta/`, `agent/pyproject.toml`, `agent/uv.lock`) is manag
 
 1. **Commit all local work.** The merge will fail with uncommitted changes.
    ```bash
-   cd ~/vesta
+   cd ~
    git add agent/ --ignore-errors
    git reset HEAD -- '*.bin' '*.onnx' '*.pt' '*.db' '*.sqlite' '*.mp3' '*.mp4' '*.wav' '*.zip' '*.tar.gz' '**/node_modules' '**/dist' '**/.venv' '**/__pycache__'
    git status
@@ -29,16 +29,16 @@ Core code (`agent/src/vesta/`, `agent/pyproject.toml`, `agent/uv.lock`) is manag
 
 2. **Fetch and check for updates.**
    ```bash
-   git -C ~/vesta fetch origin "$VESTA_UPSTREAM_REF"
-   CURRENT=$(git -C ~/vesta rev-parse HEAD)
-   LATEST=$(git -C ~/vesta rev-parse FETCH_HEAD)
+   git -C ~ fetch origin "$VESTA_UPSTREAM_REF"
+   CURRENT=$(git -C ~ rev-parse HEAD)
+   LATEST=$(git -C ~ rev-parse FETCH_HEAD)
    echo "Current: $CURRENT, Latest: $LATEST"
    ```
    If `$CURRENT == $LATEST`, stop -- already up to date.
 
 3. **Merge upstream.**
    ```bash
-   git -C ~/vesta merge FETCH_HEAD --no-edit
+   git -C ~ merge FETCH_HEAD --no-edit
    ```
    If clean, skip to step 5.
 

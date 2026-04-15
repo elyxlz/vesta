@@ -6,7 +6,7 @@ description: This skill should be used when the user asks about "gmail", "google
 # Google - CLI: google
 
 **Setup**: See [SETUP.md](SETUP.md)
-**Background**: `screen -dmS google google serve --notifications-dir ~/vesta/notifications`
+**Background**: `screen -dmS google google serve --notifications-dir ~/notifications`
 
 ## Email (Gmail)
 

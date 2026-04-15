@@ -204,7 +204,7 @@ flights passenger show myprofile       # show profile
 
 Install with:
 ```bash
-cd ~/vesta/agent/skills/flights/cli && uv tool install --force --reinstall .
+cd ~/agent/skills/flights/cli && uv tool install --force --reinstall .
 ```
 
 Duffel API token stored at `~/.config/duffel/token`. Passenger profiles at `~/.config/duffel/passengers.json`.

@@ -68,14 +68,14 @@ ssh -p $MEDIA_SERVER_SSH_PORT $MEDIA_SERVER_USER@$MEDIA_SERVER_HOST "curl -s 'ht
 
 ### Use the `qb` wrapper script
 
-A helper script is available at `~/vesta/agent/skills/media-server/qb`. Run it with:
+A helper script is available at `~/agent/skills/media-server/qb`. Run it with:
 
 ```bash
-~/vesta/agent/skills/media-server/qb status
-~/vesta/agent/skills/media-server/qb add "magnet:?xt=..."
-~/vesta/agent/skills/media-server/qb add "magnet:?xt=..." --path /path/to/save
-~/vesta/agent/skills/media-server/qb ls
-~/vesta/agent/skills/media-server/qb ls movies    # filter by save path keyword
+~/agent/skills/media-server/qb status
+~/agent/skills/media-server/qb add "magnet:?xt=..."
+~/agent/skills/media-server/qb add "magnet:?xt=..." --path /path/to/save
+~/agent/skills/media-server/qb ls
+~/agent/skills/media-server/qb ls movies    # filter by save path keyword
 ```
 
 ## Torrent Search

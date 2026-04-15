@@ -49,11 +49,11 @@ impl From<bollard::errors::Error> for DockerError {
 }
 
 pub const VESTA_IMAGE: &str = "ghcr.io/elyxlz/vesta:latest";
-pub const VESTA_LOG_PATH: &str = "/root/vesta/logs/vesta.log";
+pub const VESTA_LOG_PATH: &str = "/root/logs/vesta.log";
 pub const LOCAL_IMAGE_TAG: &str = "vesta:local";
 const MAX_DOCKERFILE_SEARCH_DEPTH: usize = 5;
 pub const CREDENTIALS_PATH: &str = "/root/.claude/.credentials.json";
-pub const AGENT_READY_MARKER_PATH: &str = "/root/vesta/data/agent_ready";
+pub const AGENT_READY_MARKER_PATH: &str = "/root/data/agent_ready";
 const CLAUDE_JSON_PATH: &str = "/root/.claude.json";
 const AGENT_TOKEN_BYTES: usize = 32;
 const PORT_ALLOC_RETRIES: usize = 10;
@@ -74,19 +74,19 @@ pub const OAUTH_AUTHORIZE_URL: &str = "https://claude.ai/oauth/authorize";
 
 const NETWORK_MODE: &str = "host";
 const RESTART_POLICY: &str = "unless-stopped";
-const MOUNT_DESTS: &[&str] = &["/run/vestad-env", "/root/vesta/agent/src/vesta", "/root/vesta/agent/pyproject.toml", "/root/vesta/agent/uv.lock"];
+const MOUNT_DESTS: &[&str] = &["/run/vestad-env", "/root/agent/src/vesta", "/root/agent/pyproject.toml", "/root/agent/uv.lock"];
 
-const AGENT_ENTRYPOINT_TAIL: &str = "     git -C ~/vesta config user.name \"$AGENT_NAME\" && \
-     git -C ~/vesta config user.email \"$AGENT_NAME@vesta\"; \
-     uv sync --frozen --project /root/vesta/agent; \
-     git -C ~/vesta add agent/ .gitignore --ignore-errors && \
-       (git -C ~/vesta diff --cached --quiet || git -C ~/vesta commit -m 'initial'); \
-     if ! git -C ~/vesta describe --tags --abbrev=0 >/dev/null 2>&1 && [ -n \"${VESTA_UPSTREAM_REF:-}\" ]; then \
-       git -C ~/vesta fetch --depth 1 origin \"$VESTA_UPSTREAM_REF\" 2>/dev/null && \
-       git -C ~/vesta merge -s ours FETCH_HEAD --no-edit --allow-unrelated-histories 2>/dev/null; \
+const AGENT_ENTRYPOINT_TAIL: &str = "     git -C ~ config user.name \"$AGENT_NAME\" && \
+     git -C ~ config user.email \"$AGENT_NAME@vesta\"; \
+     uv sync --frozen --project /root/agent; \
+     git -C ~ add agent/ .gitignore --ignore-errors && \
+       (git -C ~ diff --cached --quiet || git -C ~ commit -m 'initial'); \
+     if ! git -C ~ describe --tags --abbrev=0 >/dev/null 2>&1 && [ -n \"${VESTA_UPSTREAM_REF:-}\" ]; then \
+       git -C ~ fetch --depth 1 origin \"$VESTA_UPSTREAM_REF\" 2>/dev/null && \
+       git -C ~ merge -s ours FETCH_HEAD --no-edit --allow-unrelated-histories 2>/dev/null; \
      fi; \
-     git -C ~/vesta rev-parse --verify \"$AGENT_NAME\" 2>/dev/null || git -C ~/vesta checkout -b \"$AGENT_NAME\"; \
-     exec uv run --frozen --project /root/vesta/agent python -m vesta.main";
+     git -C ~ rev-parse --verify \"$AGENT_NAME\" 2>/dev/null || git -C ~ checkout -b \"$AGENT_NAME\"; \
+     exec uv run --frozen --project /root/agent python -m vesta.main";
 
 pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
     let script = format!(

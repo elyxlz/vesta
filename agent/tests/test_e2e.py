@@ -28,9 +28,9 @@ IMAGE_TAG = "vesta:e2e-test"
 CONTAINER_PREFIX = "vesta-e2e"
 CREDENTIALS_PATH = Path.home() / ".claude" / ".credentials.json"
 CONTAINER_CREDS = "/root/.claude/.credentials.json"
-NOTIFICATIONS_DIR = "/root/vesta/notifications"
-WORKSPACE_DIR = "/root/vesta/workspace"
-MEMORY_PATH = "/root/vesta/agent/MEMORY.md"
+NOTIFICATIONS_DIR = "/root/notifications"
+WORKSPACE_DIR = "/root/workspace"
+MEMORY_PATH = "/root/agent/MEMORY.md"
 WS_PORT = 17865
 
 TEST_MEMORY = """\
@@ -105,7 +105,7 @@ def _wait_for_file(container: str, path: str, *, timeout: float = 120.0) -> str:
 def _wait_for_agent_ready(container: str, *, timeout: float = 120.0) -> None:
     deadline = time.time() + timeout
     while time.time() < deadline:
-        if _exec_ok(container, "grep -q 'WebSocket server started' /root/vesta/logs/vesta.log 2>/dev/null"):
+        if _exec_ok(container, "grep -q 'WebSocket server started' /root/logs/vesta.log 2>/dev/null"):
             return
         time.sleep(2.0)
     raise AssertionError(f"Agent did not become ready within {timeout}s")
@@ -295,8 +295,8 @@ def test_passive_notification_waits_for_idle(container):
 
 def test_graceful_shutdown(container):
     """Container starts and has a valid log file."""
-    assert _exec_ok(container, "test -f /root/vesta/logs/vesta.log")
-    log = _exec(container, "head -20 /root/vesta/logs/vesta.log")
+    assert _exec_ok(container, "test -f /root/logs/vesta.log")
+    log = _exec(container, "head -20 /root/logs/vesta.log")
     assert "started" in log.lower() or "init" in log.lower()
 
 

@@ -6,11 +6,11 @@
    - Application type: **Desktop app**
    - Download the JSON file
 4. Place the credentials file at `~/.google/credentials.json`
-5. Install: `uv tool install ~/vesta/agent/skills/google/cli`
+5. Install: `uv tool install ~/agent/skills/google/cli`
 6. Start background daemon: `screen -dmS google google serve`
-7. Add to `~/vesta/agent/prompts/restart.md`:
+7. Add to `~/agent/prompts/restart.md`:
    ```
-   screen -dmS google google serve --notifications-dir ~/vesta/notifications
+   screen -dmS google google serve --notifications-dir ~/notifications
    ```
 
 ## Authentication

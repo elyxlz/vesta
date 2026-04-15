@@ -13,17 +13,17 @@ Transcribe audio/video files locally using whisper.cpp. No API calls, no data le
 
 ```bash
 # Basic transcription (any audio/video format - ffmpeg converts automatically)
-~/vesta/agent/skills/whisper/scripts/whisper_transcribe.sh recording.mp3
-~/vesta/agent/skills/whisper/scripts/whisper_transcribe.sh meeting.m4a
-~/vesta/agent/skills/whisper/scripts/whisper_transcribe.sh video.mp4
+~/agent/skills/whisper/scripts/whisper_transcribe.sh recording.mp3
+~/agent/skills/whisper/scripts/whisper_transcribe.sh meeting.m4a
+~/agent/skills/whisper/scripts/whisper_transcribe.sh video.mp4
 
 # With options
-~/vesta/agent/skills/whisper/scripts/whisper_transcribe.sh audio.wav --language es
-~/vesta/agent/skills/whisper/scripts/whisper_transcribe.sh audio.mp3 --translate
-~/vesta/agent/skills/whisper/scripts/whisper_transcribe.sh audio.mp3 --srt
-~/vesta/agent/skills/whisper/scripts/whisper_transcribe.sh audio.mp3 --json
-~/vesta/agent/skills/whisper/scripts/whisper_transcribe.sh audio.mp3 --model /usr/local/share/ggml-medium.en.bin
-~/vesta/agent/skills/whisper/scripts/whisper_transcribe.sh audio.mp3 --threads 8
+~/agent/skills/whisper/scripts/whisper_transcribe.sh audio.wav --language es
+~/agent/skills/whisper/scripts/whisper_transcribe.sh audio.mp3 --translate
+~/agent/skills/whisper/scripts/whisper_transcribe.sh audio.mp3 --srt
+~/agent/skills/whisper/scripts/whisper_transcribe.sh audio.mp3 --json
+~/agent/skills/whisper/scripts/whisper_transcribe.sh audio.mp3 --model /usr/local/share/ggml-medium.en.bin
+~/agent/skills/whisper/scripts/whisper_transcribe.sh audio.mp3 --threads 8
 ```
 
 ### Options
