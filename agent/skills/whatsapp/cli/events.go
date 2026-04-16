@@ -224,6 +224,18 @@ func (wac *WhatsAppClient) handleHistorySync(evt *events.HistorySync) {
 
 		name := wac.getChatName(jid)
 
+		// Store chat FIRST so the FTS AFTER INSERT trigger can look up chat name.
+		// Chats with no messages in this sync batch must still be recorded.
+		chatTimestamp := time.Now()
+		if len(conversation.Messages) > 0 {
+			if m0 := conversation.Messages[0]; m0 != nil && m0.Message != nil {
+				chatTimestamp = time.Unix(int64(m0.Message.GetMessageTimestamp()), 0)
+			}
+		}
+		if err := wac.store.StoreChatTx(tx, chatJID, name, chatTimestamp); err != nil {
+			wac.logger.Warnf("Failed to store history chat: %v", err)
+		}
+
 		for _, msg := range conversation.Messages {
 			if msg == nil || msg.Message == nil {
 				continue
@@ -266,16 +278,6 @@ func (wac *WhatsAppClient) handleHistorySync(evt *events.HistorySync) {
 				MediaKey: mediaKey, FileSHA256: fileSHA256, FileEncSHA256: fileEncSHA256, FileLength: fileLength,
 			}); err != nil {
 				wac.logger.Warnf("Failed to store history message: %v", err)
-			}
-		}
-
-		if len(conversation.Messages) > 0 {
-			latestMsg := conversation.Messages[0]
-			if latestMsg != nil && latestMsg.Message != nil {
-				timestamp := time.Unix(int64(latestMsg.Message.GetMessageTimestamp()), 0)
-				if err := wac.store.StoreChatTx(tx, chatJID, name, timestamp); err != nil {
-					wac.logger.Warnf("Failed to store history chat: %v", err)
-				}
 			}
 		}
 	}

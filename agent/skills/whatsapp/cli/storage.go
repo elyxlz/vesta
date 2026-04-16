@@ -151,6 +151,19 @@ func (ms *MessageStore) rebuildFTS() error {
 		return fmt.Errorf("failed to check FTS index: %v", err)
 	}
 	if count > 0 {
+		// Repair FTS entries where chat_name is NULL — caused by messages being
+		// stored before their chat row existed (fixed in handleHistorySync, but
+		// repairs any entries created by older versions).
+		ms.db.Exec(`DELETE FROM messages_fts WHERE chat_name IS NULL`)
+		ms.db.Exec(`
+			INSERT INTO messages_fts(rowid, content, chat_name, sender)
+			SELECT m.rowid, m.content,
+				(SELECT name FROM chats WHERE jid = m.chat_jid),
+				m.sender
+			FROM messages m
+			WHERE m.content IS NOT NULL AND m.content != ''
+			AND NOT EXISTS (SELECT 1 FROM messages_fts f WHERE f.rowid = m.rowid)
+		`)
 		return nil
 	}
 	var msgCount int
@@ -823,6 +836,35 @@ func (ms *MessageStore) GetStaleOutgoingMessages(olderThan time.Duration) ([]str
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+const sqliteMaxVars = 500
+
+func (ms *MessageStore) MarkMessagesFiltered(ids []string) error {
+	for len(ids) > 0 {
+		batch := ids
+		if len(batch) > sqliteMaxVars {
+			batch = ids[:sqliteMaxVars]
+		}
+		ids = ids[len(batch):]
+
+		args := make([]any, 0, len(batch)+2)
+		args = append(args, DeliveryStatusFiltered)
+		for _, id := range batch {
+			args = append(args, id)
+		}
+		args = append(args, DeliveryStatusSent)
+
+		placeholders := strings.Repeat("?,", len(batch))
+		placeholders = placeholders[:len(placeholders)-1]
+		if _, err := ms.db.Exec(
+			"UPDATE messages SET delivery_status = ? WHERE id IN ("+placeholders+") AND delivery_status = ?",
+			args...,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (ms *MessageStore) ListAllChatJIDs() ([]string, error) {

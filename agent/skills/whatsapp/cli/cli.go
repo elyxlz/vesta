@@ -403,7 +403,11 @@ func cmdListMessages(args []string, wac *WhatsAppClient) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"messages": messages}, nil
+	result := map[string]any{"messages": messages}
+	if len(messages) == 0 && to != "" {
+		result["note"] = "No messages found for this chat. If history exists on the phone, run 'backfill --to <contact>' to request it. If the contact is unknown, run 'add-contact' first."
+	}
+	return result, nil
 }
 
 func cmdListChats(args []string, wac *WhatsAppClient) (any, error) {
@@ -438,7 +442,11 @@ func cmdSendMessage(args []string, wac *WhatsAppClient) (any, error) {
 		return nil, fmt.Errorf("--to and --message are required")
 	}
 	success, msg := wac.SendMessageWithPresence(to, message)
-	return successResult(success, msg), nil
+	result := successResult(success, msg)
+	if success && userAtIPPattern.MatchString(message) {
+		result["delivery_warning"] = "Message contains a user@IP pattern which WhatsApp spam filters may silently drop. Use 'check-delivery' to verify delivery."
+	}
+	return result, nil
 }
 
 func cmdSendFile(args []string, wac *WhatsAppClient) (any, error) {

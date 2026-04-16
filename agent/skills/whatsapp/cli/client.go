@@ -354,10 +354,12 @@ func (wac *WhatsAppClient) startStaleMessageDetector() {
 					continue
 				}
 				if len(staleIDs) > 0 {
-					wac.logger.Warnf("Detected %d stale outgoing messages (stuck in 'sent' >%v): %v — forcing reconnect", len(staleIDs), StaleMessageThreshold, staleIDs)
-					wac.client.Disconnect()
-					if err := wac.client.Connect(); err != nil {
-						wac.logger.Errorf("Failed to reconnect after stale message detection: %v", err)
+					wac.logger.Warnf("Detected %d stale outgoing messages (stuck in 'sent' >%v): %v, marking as filtered and writing notification", len(staleIDs), StaleMessageThreshold, staleIDs)
+					if err := wac.store.MarkMessagesFiltered(staleIDs); err != nil {
+						wac.logger.Warnf("Failed to mark stale messages as filtered: %v", err)
+					}
+					if err := WriteDeliveryFailureNotification(wac.notificationsDir, wac.instance, staleIDs); err != nil {
+						wac.logger.Warnf("Failed to write delivery failure notification: %v", err)
 					}
 				}
 			}
