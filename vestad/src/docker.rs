@@ -132,15 +132,13 @@ pub async fn ensure_docker(docker: &Docker) -> Result<(), DockerError> {
                 ));
             }
 
-            let mut running = false;
-            for _ in 0..DOCKER_DAEMON_PING_RETRIES {
-                if docker.ping().await.is_ok() {
-                    running = true;
-                    break;
+            'retry: {
+                for _ in 0..DOCKER_DAEMON_PING_RETRIES {
+                    if docker.ping().await.is_ok() {
+                        break 'retry;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                 }
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-            }
-            if !running {
                 return Err(DockerError::Failed("docker daemon is not running. start it with: sudo systemctl start docker".into()));
             }
         }
@@ -662,8 +660,8 @@ async fn verify_image_runnable(image: &str) -> Result<(), DockerError> {
     .map_err(|e| DockerError::Failed(format!("image sanity check failed to run: {e}")))?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).to_lowercase();
-        if stderr.contains("exec format error") {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.to_lowercase().contains("exec format error") {
             return Err(DockerError::Failed(
                 "image sanity check failed with 'exec format error'. \
                  docker may be using the containerd snapshotter, which corrupts multi-layer images.\n\
@@ -674,7 +672,6 @@ async fn verify_image_runnable(image: &str) -> Result<(), DockerError> {
                  {\n  \"features\": { \"containerd-snapshotter\": false },\n  \"storage-driver\": \"overlay2\"\n}".to_string()
             ));
         }
-        let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(DockerError::Failed(format!("image sanity check failed: {stderr}")));
     }
 

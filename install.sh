@@ -143,20 +143,22 @@ main() {
     local driver
     driver=$(docker info --format '{{.Driver}}' 2>/dev/null || true)
     if [ "$driver" = "overlayfs" ]; then
-      echo ""
-      echo "WARNING: docker is using the containerd snapshotter (storage driver: overlayfs)."
-      echo "This corrupts multi-layer image extraction on Docker 29+ and will cause vesta to"
-      echo "fail with 'exec format error'."
-      echo ""
-      echo "Fix: add the following to /etc/docker/daemon.json and restart docker:"
-      echo ""
-      echo '  {'
-      echo '    "features": { "containerd-snapshotter": false },'
-      echo '    "storage-driver": "overlay2"'
-      echo '  }'
-      echo ""
-      echo "Then run: sudo systemctl restart docker"
-      echo ""
+      cat <<'EOF'
+
+WARNING: docker is using the containerd snapshotter (storage driver: overlayfs).
+This corrupts multi-layer image extraction on Docker 29+ and will cause vesta to
+fail with 'exec format error'.
+
+Fix: add the following to /etc/docker/daemon.json and restart docker:
+
+  {
+    "features": { "containerd-snapshotter": false },
+    "storage-driver": "overlay2"
+  }
+
+Then run: sudo systemctl restart docker
+
+EOF
     fi
   }
 
