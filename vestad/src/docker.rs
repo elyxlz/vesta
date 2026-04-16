@@ -83,7 +83,10 @@ const AGENT_ENTRYPOINT_STEPS: &[&str] = &[
     "git -C ~ config user.name \"$AGENT_NAME\"",
     "git -C ~ config user.email \"$AGENT_NAME@vesta\"",
     "uv sync --frozen --project /root/agent",
-    "if mount | grep -q '/root/agent/core '; then git -C ~ update-index --skip-worktree agent/core agent/pyproject.toml agent/uv.lock 2>/dev/null || true; fi",
+    "if [ ! -f ~/agent/data/.skip-worktree-done ] && mount | grep -q '/root/agent/core '; then \
+       git -C ~ update-index --skip-worktree agent/core agent/pyproject.toml agent/uv.lock 2>/dev/null; \
+       mkdir -p ~/agent/data && touch ~/agent/data/.skip-worktree-done; \
+     fi",
     "cd /root/agent && exec uv run --frozen python -m core.main",
 ];
 
