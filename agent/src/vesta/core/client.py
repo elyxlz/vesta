@@ -283,7 +283,6 @@ def _make_hooks(state: vm.State) -> dict[HookEvent, list[HookMatcher]]:
 
 
 def _format_hang_diagnostics(state: vm.State) -> str:
-    """Build a diagnostic string for SDK hang events."""
     parts = [f"idle={state.sdk_idle_seconds():.0f}s", f"last_activity={state.last_sdk_activity_label}"]
     longest = state.longest_running_tool()
     if longest:
@@ -302,17 +301,18 @@ async def attempt_interrupt(state: vm.State, *, config: vm.VestaConfig, reason: 
     if not client:
         return False
 
-    diag = _format_hang_diagnostics(state)
     try:
         await asyncio.wait_for(client.interrupt(), timeout=config.interrupt_timeout)
         logger.debug(f"Interrupt sent: {reason}")
         return True
     except TimeoutError:
+        diag = _format_hang_diagnostics(state)
         logger.error(f"SDK unresponsive, sending SIGTERM for graceful shutdown | reason={reason} | {diag}")
         os.kill(os.getpid(), signal.SIGTERM)
         await asyncio.sleep(10)
         os._exit(1)
     except (OSError, RuntimeError) as e:
+        diag = _format_hang_diagnostics(state)
         logger.error(f"Interrupt failed: {e} | {diag}")
         return False
 
@@ -345,13 +345,12 @@ def _check_sdk_subprocess_alive(state: vm.State) -> bool | None:
         process = transport._process  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
         if process is None:
             return False
-        return process.returncode is None  # None means still running
+        return process.returncode is None
     except (AttributeError, TypeError):
         return None
 
 
 async def _sdk_watchdog(state: vm.State, *, stop: asyncio.Event) -> None:
-    """Log escalating warnings when no SDK messages arrive for extended periods."""
     warned_at: set[int] = set()
     while not stop.is_set():
         try:
