@@ -151,7 +151,12 @@ def container(docker_image):
         "NOTIFICATION_BUFFER_DELAY=0",
         "-e",
         "EPHEMERAL=true",
+        "-e",
+        "IS_SANDBOX=1",
         docker_image,
+        "sh",
+        "-c",
+        ". ~/.bashrc || true; exec uv run --frozen --project /root/vesta python -m vesta.main",
     )
 
     try:
