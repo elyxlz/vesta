@@ -7,7 +7,7 @@ description: Use when the user wants to allow another computer to SSH into this 
 
 Exposes this machine over the internet via [bore](https://github.com/ekzhang/bore), a free TCP relay. Runs its own sshd on port 2222 inside the container (independent of the host SSH server) so all auth is fully controlled. No account required. The connecting machine only needs a standard SSH client.
 
-## Before running start.sh — get the client's public key
+## Before running start.sh: get the client's public key
 
 Ask the user to run this on the machine that will be connecting:
 
@@ -49,7 +49,7 @@ The script prints the exact command. It will look like:
 ssh -o StrictHostKeyChecking=accept-new root@bore.pub -p 12345
 ```
 
-`StrictHostKeyChecking=accept-new` accepts the host key on first connect and warns if it changes later — safer than `no`. The host key is the container's sshd key and stays stable across bore reconnects.
+`StrictHostKeyChecking=accept-new` accepts the host key on first connect and warns if it changes later (safer than `no`). The host key is the container's sshd key and stays stable across bore reconnects.
 
 If the connecting machine has multiple SSH keys and the wrong one is picked:
 ```bash
@@ -75,8 +75,8 @@ Stops both the bore tunnel and the sshd process. Authorized keys remain in `/roo
 ## Notes
 
 - Auth is key-only. Password auth and root password login are disabled.
-- The bore port changes each time `start.sh` is run — share the new port with the connecting machine.
+- The bore port changes each time `start.sh` is run. Share the new port with the connecting machine.
 - Tunnel runs in a `screen` session named `bore-ssh`. If bore dies unexpectedly: `screen -r bore-ssh` to inspect, then re-run `start.sh`.
-- bore.pub is a public free service operated by the bore project. Don't use it for long-term persistent access — it's for temporary sessions.
+- bore.pub is a public free service. Don't use it for long-term persistent access; it's for temporary sessions.
 - To copy files over the tunnel: `scp -P 12345 -o StrictHostKeyChecking=accept-new file root@bore.pub:~/destination/`
 - To use rsync: `rsync -e "ssh -p 12345 -o StrictHostKeyChecking=accept-new" file root@bore.pub:~/destination/`
