@@ -84,7 +84,7 @@ const AGENT_ENTRYPOINT_STEPS: &[&str] = &[
     "git -C ~ config user.email \"$AGENT_NAME@vesta\"",
     "uv sync --frozen --project /root/agent",
     "git -C ~ add agent/ .gitignore --ignore-errors",
-    "(git -C ~ diff --cached --quiet || git -C ~ commit -m 'initial')",
+    "(git -C ~ diff --cached --quiet || git -C ~ commit -m \"vesta v$(cat /root/agent/pyproject.toml | grep '^version' | head -1 | sed 's/.*\"\\(.*\\)\"/\\1/')\")",
     "if ! git -C ~ describe --tags --abbrev=0 >/dev/null 2>&1 && [ -n \"${VESTA_UPSTREAM_REF:-}\" ]; then \
        git -C ~ fetch --depth 1 origin \"$VESTA_UPSTREAM_REF\" 2>/dev/null && \
        git -C ~ merge -s ours FETCH_HEAD --no-edit --allow-unrelated-histories 2>/dev/null; \
