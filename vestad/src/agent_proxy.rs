@@ -8,13 +8,13 @@ use axum::{
 
 use crate::auth;
 use crate::docker;
-use crate::serve::{SharedState, err_response, map_docker_err, PROXY_MAX_BODY_BYTES};
+use crate::serve::{ServiceEntry, SharedState, err_response, map_docker_err, PROXY_MAX_BODY_BYTES};
 
-async fn resolve_service_port(
+async fn resolve_service(
     state: &crate::serve::AppState,
     agent_name: &str,
     service_name: &str,
-) -> Option<u16> {
+) -> Option<ServiceEntry> {
     let settings = state.settings.read().await;
     settings.services.get(agent_name)?.get(service_name).copied()
 }
@@ -38,21 +38,21 @@ pub async fn agent_proxy_handler(
         .ok_or_else(|| err_response(StatusCode::INTERNAL_SERVER_ERROR, "agent has no port — check the agent's .env file in ~/.config/vesta/vestad/agents/"))?;
 
     let first_segment = path.split('/').next().unwrap_or("");
-    let (target_port, stripped_path, is_service) = if !first_segment.is_empty() {
-        if let Some(service_port) = resolve_service_port(&state, &name, first_segment).await {
+    let (target_port, stripped_path, service) = if !first_segment.is_empty() {
+        if let Some(entry) = resolve_service(&state, &name, first_segment).await {
             let rest = &path[first_segment.len()..];
             let rest = if rest.is_empty() { "/" } else { rest };
-            (service_port, rest.to_string(), true)
+            (entry.port, rest.to_string(), Some(entry))
         } else {
-            (agent_port, format!("/{}", path), false)
+            (agent_port, format!("/{}", path), None)
         }
     } else {
-        (agent_port, format!("/{}", path), false)
+        (agent_port, format!("/{}", path), None)
     };
 
-    // Service requests are unauthenticated (assets load freely in iframes).
-    // Non-service requests require auth.
-    if !is_service && !auth::has_valid_api_auth(request.headers(), request.uri(), &state.api_key) {
+    // Public services are fully open; everything else requires auth.
+    let is_public = service.as_ref().is_some_and(|s| s.public);
+    if !is_public && !auth::has_valid_api_auth(request.headers(), request.uri(), &state.api_key) {
         return Err(err_response(StatusCode::UNAUTHORIZED, "unauthorized — pass a valid Bearer token or ?token= query parameter"));
     }
 
@@ -80,27 +80,16 @@ pub async fn agent_proxy_handler(
                 ));
             }
         };
-        let ws_token = agent_token.clone();
+        let ws_token = if is_public { None } else { agent_token.clone() };
         Ok(ws.on_upgrade(move |socket| async move {
             drop(guard);
             ws_proxy(socket, target_port, &target_path, ws_token.as_deref()).await;
         }))
     } else {
         drop(guard);
-        let is_service_root = is_service
-            && path.strip_suffix('/').unwrap_or(&path) == first_segment;
-        let token = if is_service_root {
-            crate::service_proxy::extract_token(request.uri())
-        } else {
-            None
-        };
-        let resp =
-            forward_http_to_container(&state.http_client, target_port, &target_path, request, agent_token.as_deref())
-                .await?;
-        match token {
-            Some(token) => crate::service_proxy::rewrite_asset_urls(resp, &token).await,
-            None => Ok(resp),
-        }
+        let token = if is_public { None } else { agent_token.as_deref() };
+        forward_http_to_container(&state.http_client, target_port, &target_path, request, token)
+            .await
     }
 }
 

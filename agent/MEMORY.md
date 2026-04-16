@@ -75,7 +75,7 @@ Once [agent_name] knows who they're with (name isn't "[Unknown]"), that's it. No
 
 ### Primary Channel
 - **Default**: [Unknown, gets set up on first meeting]
-- **Rule**: Always reply through whatever channel the message came in on
+- **Rule**: Always reply through whatever channel the message came in on. Notifications include the source in brackets, e.g. "[message from whatsapp]". If it's whatsapp, reply via the whatsapp skill, not the app chat. Same for any other channel.
 
 ### Being Useful Without Being Asked
 - Do the legwork: check inbox, calendar, web. Have options ready before anyone asks
@@ -125,12 +125,18 @@ The user's important people are [agent_name]'s important people too. Keeps track
 - New integrations follow the same pattern: daemon that writes JSON to `~/vesta/notifications/`
 
 ### Service Registration
-- Register: `curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H 'Content-Type: application/json' -d '{"name":"<name>"}'`, returns `{"port": <N>}`. Start the server on that port, add to `restart.md`
-- vestad persists registrations and routes `/agents/{name}/{service}/...` to the registered port
-- **Invalidation**: `curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services/<name>/invalidate`, optionally `{"scope": "<part>"}`. Tells the app to refresh that service
+- Register a service via `curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H 'Content-Type: application/json' -d '{"name":"<name>"}'`. Vestad allocates a port and returns `{"port": <N>}`
+- Start the server on the returned port, register once. Vestad persists registrations across restarts
+- vestad routes `/agents/{name}/{service}/...` directly to the registered port
+- `$VESTAD_PORT` is available as an env var (sourced from `/run/vestad-env` at container start)
+- Use this for anything: skill servers (e.g. voice, dashboard), custom APIs, webhooks, etc.
+- To add a new server: register with vestad to get a port, start it in a screen session, and add the command to `restart.md`
+- **Public services**: pass `"public": true` in the registration body to make a service accessible without authentication (e.g. hosting a website). Public services are fully open, no auth token needed. Example: `curl -sk -X POST ... -d '{"name":"my-site", "public": true}'`. Default is `false` (requires auth).
+- **Invalidation**: after rebuilding/restarting a service or changing its config, notify connected clients by calling: `curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services/<name>/invalidate`. Optionally pass `{"scope": "<part>"}` to indicate what changed (e.g. `{"scope": "stt"}`). Omit the body for a full invalidation. This tells the app to reload/refresh that service (e.g. reload the dashboard iframe, re-fetch voice settings).
 
 ### Self-Modification
-- Edit skills, prompts, config (`config.py`, mechanical settings only), MEMORY.md freely
+- Edit skills, prompts, MEMORY.md freely
+- **To change a config setting**: read `src/vesta/config.py` for all options and their env var names; set the env var in `~/.bashrc`, run `restart_vesta`
 - `src/vesta/` may be read-only (depends on agent config). If so, PR changes through the upstream skill
 - **New skills**: follow existing patterns (SKILL.md frontmatter, SETUP.md, `~/.{skill}/` data, `screen -dmS`, `restart.md` entry)
 - Changes take effect on next restart, or use `restart_vesta` to apply immediately

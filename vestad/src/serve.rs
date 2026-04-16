@@ -637,10 +637,32 @@ async fn logs_handler(
 
 const DEFAULT_AUTO_BACKUP_HOUR: u8 = 4;
 
+#[derive(Serialize, Copy, Clone, PartialEq)]
+pub(crate) struct ServiceEntry {
+    pub(crate) port: u16,
+    #[serde(default)]
+    pub(crate) public: bool,
+}
+
+impl<'de> serde::Deserialize<'de> for ServiceEntry {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            Legacy(u16),
+            Full { port: u16, #[serde(default)] public: bool },
+        }
+        match Raw::deserialize(deserializer)? {
+            Raw::Legacy(port) => Ok(ServiceEntry { port, public: false }),
+            Raw::Full { port, public } => Ok(ServiceEntry { port, public }),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Default)]
 pub(crate) struct Settings {
     #[serde(default)]
-    pub(crate) services: HashMap<String, HashMap<String, u16>>,
+    pub(crate) services: HashMap<String, HashMap<String, ServiceEntry>>,
     #[serde(default)]
     backup: BackupGlobalSettings,
     #[serde(default)]
@@ -782,18 +804,20 @@ const SERVICE_PORT_MAX: u16 = 65535;
 #[derive(Deserialize)]
 struct RegisterServiceBody {
     name: String,
+    #[serde(default)]
+    public: bool,
 }
 
 /// Collect all ports in use across all agents in the service registry.
-fn all_registered_ports(registry: &HashMap<String, HashMap<String, u16>>) -> Vec<u16> {
-    registry.values().flat_map(|services| services.values().copied()).collect()
+fn all_registered_ports(registry: &HashMap<String, HashMap<String, ServiceEntry>>) -> Vec<u16> {
+    registry.values().flat_map(|services| services.values().map(|e| e.port)).collect()
 }
 
 const SERVICE_PORT_ALLOC_RETRIES: usize = 5;
 
 /// Find a free port not used by any registered service or other process.
 /// Uses OS-assigned ports with retries to avoid races with other vestad instances.
-fn allocate_service_port(registry: &HashMap<String, HashMap<String, u16>>) -> Option<u16> {
+fn allocate_service_port(registry: &HashMap<String, HashMap<String, ServiceEntry>>) -> Option<u16> {
     let used = all_registered_ports(registry);
     for _ in 0..SERVICE_PORT_ALLOC_RETRIES {
         let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).ok()?;
@@ -834,18 +858,19 @@ async fn register_service_handler(
     let mut settings = state.settings.write().await;
 
     // Reuse existing port if already registered, otherwise allocate a new one
-    let port = if let Some(existing) = settings.services.get(&name).and_then(|s| s.get(&service_name)).copied() {
-        existing
+    let port = if let Some(existing) = settings.services.get(&name).and_then(|s| s.get(&service_name)) {
+        existing.port
     } else {
         allocate_service_port(&settings.services)
             .ok_or_else(|| err_response(StatusCode::SERVICE_UNAVAILABLE, "no free ports available in range 49152-65535 — too many services registered, or all ports are in use"))?
     };
 
-    settings.services.entry(name.clone()).or_default().insert(service_name.clone(), port);
+    let entry = ServiceEntry { port, public: body.public };
+    settings.services.entry(name.clone()).or_default().insert(service_name.clone(), entry);
     save_settings(&settings);
     state.agent_status_cache.update_services(&settings.services);
-    tracing::info!(agent = %name, service = %service_name, port, "service registered");
-    Ok(Json(serde_json::json!({"ok": true, "port": port})))
+    tracing::info!(agent = %name, service = %service_name, port, public = body.public, "service registered");
+    Ok(Json(serde_json::json!({"ok": true, "port": port, "public": body.public})))
 }
 
 async fn unregister_service_handler(
