@@ -182,7 +182,7 @@ async def _process_interruptible(
                 if queue_task in done:
                     pending.append(queue_task.result())
                     state.interrupt_event.set()
-                    logger.interrupt(f"New message queued, interrupting current processing ({len(pending)} pending)")
+                    logger.client(f"Interrupting: new message queued ({len(pending)} pending)")
                     await process_task
                     break
                 else:
