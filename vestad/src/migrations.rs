@@ -99,10 +99,21 @@ pub fn parse_backup_tag_legacy(repo_tag: &str) -> Option<(String, BackupType, St
 
 pub fn migrate_legacy_services_json(
     settings_json_path: &Path,
-) -> Option<HashMap<String, HashMap<String, u16>>> {
+) -> Option<HashMap<String, HashMap<String, crate::serve::ServiceEntry>>> {
     let old_services = settings_json_path.with_file_name("services.json");
     let data = std::fs::read_to_string(&old_services).ok()?;
-    let services: HashMap<String, HashMap<String, u16>> = serde_json::from_str(&data).ok()?;
+    // Legacy format stored plain u16 ports; new format uses ServiceEntry with public flag
+    let legacy: HashMap<String, HashMap<String, u16>> = serde_json::from_str(&data).ok()?;
+    let services = legacy
+        .into_iter()
+        .map(|(agent, svc_map)| {
+            let entries = svc_map
+                .into_iter()
+                .map(|(name, port)| (name, crate::serve::ServiceEntry { port, public: false }))
+                .collect();
+            (agent, entries)
+        })
+        .collect();
     if let Err(err) = std::fs::remove_file(&old_services) {
         tracing::warn!(error = %err, "failed to remove old services.json after migration");
     } else {
