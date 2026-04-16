@@ -35,6 +35,7 @@ Review the conversation with fresh eyes. Note:
 - Tasks that stalled, failed, or felt clunky
 - Anything where a skill or prompt led you astray
 - Ideas for new skills, automations, or things you could do proactively
+- **Capability gaps**: moments where you claimed inability ("I can't do X", "I don't have access to Y") and the user revealed you actually could, or where you asked the user for something you should have been able to self-serve. These are high-signal — a local fix (memory rule, skill update) prevents the same miss tomorrow; if it's a general pattern, it likely affects other instances too
 
 ### 3. Fix
 
@@ -55,6 +56,12 @@ Re-read the failing exchange and simulate: would the updated version have change
 ### 5. Upstream sync (MANDATORY)
 
 **This step is NOT optional.** Every dream must include upstream sync. Skipping it causes debt that compounds. Read the `upstream` skill and follow its pull/push workflow. The dream summary must list what was synced. If nothing, explain why.
+
+**What to push upstream:**
+- PRs for concrete fixes (skill improvements, new rules, bug fixes) — the usual path
+- **Issues** for patterns you've identified but don't have a fix for yet: a recurring gap, a structural problem, an idea worth discussing. File an issue instead of a PR when the right solution isn't clear
+
+**Privacy rule:** Before filing anything upstream, strip all personal information. No names, no contact details, no private context, no specifics that would identify the user or their data. Describe the pattern in general terms ("agent claimed inability to access calendar when google skill was installed") not the specific instance ("user asked about tuesday's meeting with..."). When in doubt, leave it out.
 
 #### Dashboard check
 
