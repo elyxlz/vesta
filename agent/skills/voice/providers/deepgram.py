@@ -15,7 +15,6 @@ DEEPGRAM_API = "https://api.deepgram.com"
 DEEPGRAM_WS = "wss://api.deepgram.com"
 MODEL = "flux-general-en"
 MODEL_MULTI = "nova-3"
-LANGUAGE_MULTI = "multi"
 ENCODING = "linear16"
 SAMPLE_RATE = 16000
 
@@ -112,14 +111,13 @@ class DeepgramStt:
             # Nova-3 only works on /v1/listen; v2 returns 400 for non-Flux models.
             params: list[tuple[str, str]] = [
                 ("model", MODEL_MULTI),
-                ("language", LANGUAGE_MULTI),
+                ("language", "multi"),
                 ("encoding", ENCODING),
                 ("sample_rate", str(SAMPLE_RATE)),
                 ("interim_results", "true"),
                 ("utterance_end_ms", str(eot_timeout_ms)),
             ]
-            for term in keyterms:
-                params.append(("keywords", term))
+            keyterm_param = "keywords"
             url = f"{DEEPGRAM_WS}/v1/listen?{urlencode(params)}"
         else:
             params = [
@@ -129,9 +127,10 @@ class DeepgramStt:
                 ("eot_threshold", str(eot_threshold)),
                 ("eot_timeout_ms", str(eot_timeout_ms)),
             ]
-            for term in keyterms:
-                params.append(("keyterm", term))
+            keyterm_param = "keyterm"
             url = f"{DEEPGRAM_WS}/v2/listen?{urlencode(params)}"
+        for term in keyterms:
+            params.append((keyterm_param, term))
 
         headers = {"Authorization": f"Token {api_key}"}
 
@@ -190,7 +189,6 @@ class DeepgramStt:
                         elif msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSING, aiohttp.WSMsgType.CLOSED):
                             break
             else:
-                # v2/Flux sends TurnInfo natively — pass through unchanged.
                 async def deepgram_to_browser() -> None:
                     async for msg in dg_ws:
                         if msg.type == aiohttp.WSMsgType.TEXT:
