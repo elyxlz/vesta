@@ -14,6 +14,7 @@ DEEPGRAM_API = "https://api.deepgram.com"
 DEEPGRAM_WS = "wss://api.deepgram.com"
 MODEL = "flux-general-en"
 MODEL_MULTI = "nova-3"
+LANGUAGE_MULTI = "multi"
 ENCODING = "linear16"
 SAMPLE_RATE = 16000
 
@@ -104,7 +105,7 @@ class DeepgramStt:
             min(voice_config.EOT_TIMEOUT_MS_MAX, eot_timeout_ms),
         )
 
-        multi_language: bool = bool(stt_domain.get("multi_language"))
+        multi_language = stt_domain.get("multi_language", False)
         model = MODEL_MULTI if multi_language else MODEL
         params: list[tuple[str, str]] = [
             ("model", model),
@@ -114,7 +115,7 @@ class DeepgramStt:
             ("eot_timeout_ms", str(eot_timeout_ms)),
         ]
         if multi_language:
-            params.append(("language", "multi"))
+            params.append(("language", LANGUAGE_MULTI))
         for term in keyterms:
             params.append(("keyterm", term))
 
