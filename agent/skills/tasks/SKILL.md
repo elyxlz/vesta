@@ -29,8 +29,10 @@ tasks delete <id>                # CASCADE: linked reminders are deleted too
 - `--initial-metadata`: string of metadata to attach when adding a task
 
 ## Reminder Commands
+
+**IMPORTANT**: there is NO `create` subcommand. To set a reminder, put the message as the first argument directly:
 ```bash
-# Set a reminder (default action, no subcommand needed)
+# Set a reminder (the message IS the first argument, no subcommand needed)
 tasks remind "Call mom" --in-minutes 30
 tasks remind "Check report" --in-hours 2
 tasks remind "Weekly review" --in-days 7
