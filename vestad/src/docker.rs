@@ -84,6 +84,7 @@ const AGENT_ENTRYPOINT_STEPS: &[&str] = &[
     "git -C ~ config user.email \"$AGENT_NAME@vesta\"",
     "uv sync --frozen --project /root/agent",
     "git -C ~ sparse-checkout list 2>/dev/null | grep -q '^agent' || { git -C ~ sparse-checkout init --cone 2>/dev/null && git -C ~ sparse-checkout add agent 2>/dev/null; } || true",
+    "if mount | grep -q '/root/agent/core '; then git -C ~ update-index --skip-worktree agent/core agent/pyproject.toml agent/uv.lock 2>/dev/null || true; fi",
     "git -C ~ add agent/ .gitignore --ignore-errors",
     "(git -C ~ diff --cached --quiet || git -C ~ commit -m \"vesta v$(cat /root/agent/pyproject.toml | grep '^version' | head -1 | sed 's/.*\"\\(.*\\)\"/\\1/')\")",
     "if ! git -C ~ describe --tags --abbrev=0 >/dev/null 2>&1 && [ -n \"${VESTA_UPSTREAM_REF:-}\" ]; then \
