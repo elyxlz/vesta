@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"go.mau.fi/whatsmeow/types"
@@ -136,7 +137,9 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 			defer func() { <-wac.transcribeSem }()
 
 			notifContent := content
-			if transcription := wac.transcribeAudioMessage(msgID, chatJIDStr); transcription != "" {
+			if transcription, err := wac.transcribeAudioMessage(msgID, chatJIDStr); err != nil {
+				notifContent = fmt.Sprintf("⚠️ Audio message received but transcription failed: %s", err)
+			} else if transcription != "" {
 				notifContent = transcription
 			}
 			if shouldNotify {
