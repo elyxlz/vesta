@@ -144,23 +144,6 @@ pub async fn ensure_docker(docker: &Docker) -> Result<(), DockerError> {
         }
     }
 
-    // Detect Docker's containerd snapshotter (Docker 29+), which silently corrupts
-    // multi-layer image extraction and causes "exec format error" on every binary.
-    if let Ok(info) = docker.info().await {
-        if info.driver.as_deref() == Some("overlayfs") {
-            return Err(DockerError::Failed(
-                "docker is using the containerd snapshotter (storage driver: overlayfs), \
-                 which corrupts multi-layer images on Docker 29+.\n\
-                 \n\
-                 Fix: add the following to /etc/docker/daemon.json and restart docker:\n\
-                 \n\
-                 {\n  \"features\": { \"containerd-snapshotter\": false },\n  \"storage-driver\": \"overlay2\"\n}\n\
-                 \n\
-                 Then run: sudo systemctl restart docker".to_string()
-            ));
-        }
-    }
-
     Ok(())
 }
 
