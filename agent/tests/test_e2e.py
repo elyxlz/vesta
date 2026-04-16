@@ -154,7 +154,9 @@ def container(docker_image):
         "-e",
         "IS_SANDBOX=1",
         docker_image,
-        "sh", "-c", ". ~/.bashrc || true; exec uv run --frozen --project /root/vesta python -m vesta.main",
+        "sh",
+        "-c",
+        ". ~/.bashrc || true; exec uv run --frozen --project /root/vesta python -m vesta.main",
     )
 
     try:
