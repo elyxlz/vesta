@@ -31,7 +31,7 @@ dev = [
 [tool.pytest.ini_options]
 python_files = ["e2e.py", "test_*.py", "*_test.py"]
 testpaths = ["tests"]
-pythonpath = ["skills"]
+pythonpath = [".", "skills"]
 
 
 [tool.ty.src]
