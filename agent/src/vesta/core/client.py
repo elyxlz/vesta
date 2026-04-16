@@ -4,6 +4,7 @@ import datetime as dt
 import json
 import os
 import signal
+import time
 import typing as tp
 from collections.abc import Mapping
 
@@ -225,13 +226,23 @@ def _make_hooks(state: vm.State) -> dict[HookEvent, list[HookMatcher]]:
         prefix, is_sub = _subagent_prefix(input_data)
         logger.tool(f"{prefix}{summary}")
         state.event_bus.emit({"type": "tool_start", "tool": name, "input": summary, "subagent": is_sub})
+        state.touch_activity(f"tool_start:{name}")
+        tool_id = tool_use_id or name
+        state.active_tools[tool_id] = vm.ActiveTool(name=name, summary=summary, started_at=time.monotonic(), is_subagent=is_sub)
         return tp.cast(HookJSONOutput, {})
 
     async def log_tool_finish(input_data: PostToolUseHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
         name = input_data["tool_name"]
         prefix, is_sub = _subagent_prefix(input_data)
-        logger.tool(f"{prefix}done: {name}")
+        tool_id = tool_use_id or name
+        elapsed = ""
+        active = state.active_tools.pop(tool_id, None)
+        if active:
+            duration = time.monotonic() - active.started_at
+            elapsed = f" ({duration:.1f}s)"
+        logger.tool(f"{prefix}done: {name}{elapsed}")
         state.event_bus.emit({"type": "tool_end", "tool": name, "subagent": is_sub})
+        state.touch_activity(f"tool_end:{name}")
         return tp.cast(HookJSONOutput, {})
 
     async def log_tool_failure(input_data: PostToolUseFailureHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
@@ -239,6 +250,9 @@ def _make_hooks(state: vm.State) -> dict[HookEvent, list[HookMatcher]]:
         error = input_data["error"]
         prefix, _ = _subagent_prefix(input_data)
         logger.warning(f"{prefix}Tool failed: {name}: {error}")
+        tool_id = tool_use_id or name
+        state.active_tools.pop(tool_id, None)
+        state.touch_activity(f"tool_fail:{name}")
         return tp.cast(HookJSONOutput, {})
 
     async def log_compact(input_data: PreCompactHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
@@ -268,22 +282,38 @@ def _make_hooks(state: vm.State) -> dict[HookEvent, list[HookMatcher]]:
     }
 
 
+def _format_hang_diagnostics(state: vm.State) -> str:
+    """Build a diagnostic string for SDK hang events."""
+    parts = [f"idle={state.sdk_idle_seconds():.0f}s", f"last_activity={state.last_sdk_activity_label}"]
+    longest = state.longest_running_tool()
+    if longest:
+        duration = time.monotonic() - longest.started_at
+        parts.append(f"longest_tool={longest.name} ({duration:.0f}s, sub={longest.is_subagent})")
+    if state.active_tools:
+        parts.append(f"active_tools={len(state.active_tools)}")
+    stderr_tail = list(state.stderr_buffer)[-5:] if state.stderr_buffer else []
+    if stderr_tail:
+        parts.append(f"stderr_tail={' | '.join(stderr_tail)}")
+    return ", ".join(parts)
+
+
 async def attempt_interrupt(state: vm.State, *, config: vm.VestaConfig, reason: str) -> bool:
     client = state.client
     if not client:
         return False
 
+    diag = _format_hang_diagnostics(state)
     try:
         await asyncio.wait_for(client.interrupt(), timeout=config.interrupt_timeout)
         logger.debug(f"Interrupt sent: {reason}")
         return True
     except TimeoutError:
-        logger.error("SDK unresponsive, sending SIGTERM for graceful shutdown")
+        logger.error(f"SDK unresponsive, sending SIGTERM for graceful shutdown | reason={reason} | {diag}")
         os.kill(os.getpid(), signal.SIGTERM)
         await asyncio.sleep(10)
         os._exit(1)
     except (OSError, RuntimeError) as e:
-        logger.error(f"Interrupt failed: {e}")
+        logger.error(f"Interrupt failed: {e} | {diag}")
         return False
 
 
@@ -305,16 +335,56 @@ async def _cancel_task(task: asyncio.Task[tp.Any]) -> None:
         pass
 
 
+_WATCHDOG_THRESHOLDS_S = (60, 120, 300)
+
+
+def _check_sdk_subprocess_alive(state: vm.State) -> bool | None:
+    """Check if the SDK subprocess is still running. Returns None if we can't determine."""
+    try:
+        transport = state.client._transport  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        process = transport._process  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        if process is None:
+            return False
+        return process.returncode is None  # None means still running
+    except (AttributeError, TypeError):
+        return None
+
+
+async def _sdk_watchdog(state: vm.State, *, stop: asyncio.Event) -> None:
+    """Log escalating warnings when no SDK messages arrive for extended periods."""
+    warned_at: set[int] = set()
+    while not stop.is_set():
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=15)
+            break
+        except TimeoutError:
+            pass
+        idle = state.sdk_idle_seconds()
+        for threshold in _WATCHDOG_THRESHOLDS_S:
+            if idle >= threshold and threshold not in warned_at:
+                warned_at.add(threshold)
+                alive = _check_sdk_subprocess_alive(state)
+                alive_str = f"process_alive={alive}" if alive is not None else "process_alive=unknown"
+                diag = _format_hang_diagnostics(state)
+                logger.warning(f"SDK silent for {threshold}s | {alive_str} | {diag}")
+        # Reset warnings when activity resumes
+        if idle < _WATCHDOG_THRESHOLDS_S[0]:
+            warned_at.clear()
+
+
 async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show_output: bool) -> list[str]:
     assert state.client is not None
     client = state.client
 
     query = _build_query(prompt, timestamp=dt.datetime.now())
+    state.touch_activity("query_start")
+    state.active_tools.clear()
     try:
         await asyncio.wait_for(client.query(query), timeout=config.query_timeout)
     except TimeoutError:
         await attempt_interrupt(state, config=config, reason="Query timeout")
         raise
+    state.touch_activity("query_sent")
 
     responses: list[str] = []
     assistant_texts: list[str] = []
@@ -334,6 +404,9 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
     interrupt_task: asyncio.Task[tp.Any] | None = None
     if state.interrupt_event and not state.interrupt_event.is_set():
         interrupt_task = asyncio.create_task(state.interrupt_event.wait())
+
+    watchdog_stop = asyncio.Event()
+    watchdog_task = asyncio.create_task(_sdk_watchdog(state, stop=watchdog_stop))
 
     try:
         while True:
@@ -375,6 +448,7 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
             if result is _STOP:
                 break
 
+            state.touch_activity("sdk_message")
             msg = tp.cast(Message, result)
             texts, thinking_blocks, sub_agent_context, session_id, _ = _parse_sdk_message(msg, sub_agent_context=sub_agent_context)
             if session_id and session_id != state.session_id:
@@ -394,6 +468,8 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
             if filtered:
                 _emit(filtered)
     finally:
+        watchdog_stop.set()
+        await _cancel_task(watchdog_task)
         if interrupt_task and not interrupt_task.done():
             await _cancel_task(interrupt_task)
 
@@ -495,6 +571,9 @@ async def _approve_all_tools(tool_name: str, tool_input: dict[str, tp.Any], cont
     return PermissionResultAllow()
 
 
+_STREAM_IDLE_TIMEOUT_MS = 300_000  # 5 minutes: abort stalled API streams
+
+
 def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgentOptions:
     memory_path = get_memory_path(config)
     if not memory_path.exists():
@@ -503,6 +582,9 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
 
     name = config.agent_name
     system_prompt = f"Your name is {name}.\n\n{system_prompt}"
+
+    # Tell the underlying CLI to abort stalled API streams rather than hanging indefinitely
+    os.environ.setdefault("CLAUDE_STREAM_IDLE_TIMEOUT_MS", str(_STREAM_IDLE_TIMEOUT_MS))
 
     return ClaudeAgentOptions(
         system_prompt=system_prompt,
