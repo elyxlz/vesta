@@ -146,13 +146,9 @@ def container(docker_image):
         "-e",
         "AGENT_NAME=e2e-test",
         "-e",
-        "NOTIFICATION_CHECK_INTERVAL=1",
-        "-e",
-        "NOTIFICATION_BUFFER_DELAY=0",
+        "MONITOR_TICK_INTERVAL=1",
         "-e",
         "EPHEMERAL=true",
-        "-e",
-        "IS_SANDBOX=1",
         docker_image,
         "sh",
         "-c",
@@ -167,6 +163,16 @@ def container(docker_image):
             tmp = f.name
         _docker("cp", tmp, f"{name}:{MEMORY_PATH}")
         Path(tmp).unlink()
+
+        # Blank out the first-start setup prompt so the agent skips interactive
+        # onboarding and goes straight to processing notifications.
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
+            f.write("")
+            tmp_setup = f.name
+        try:
+            _docker("cp", tmp_setup, f"{name}:/root/vesta/prompts/first_start_setup.md")
+        finally:
+            Path(tmp_setup).unlink(missing_ok=True)
 
         _docker("start", name)
         _exec(container=name, cmd=f"mkdir -p {WORKSPACE_DIR}")
@@ -290,3 +296,19 @@ def test_graceful_shutdown(container):
     assert _exec_ok(container, "test -f /root/vesta/logs/vesta.log")
     log = _exec(container, "head -20 /root/vesta/logs/vesta.log")
     assert "started" in log.lower() or "init" in log.lower()
+
+
+def test_bashrc_write(container):
+    """Agent can write to ~/.bashrc (sensitive file allowlist is configured correctly)."""
+    marker = f"E2E_TEST_{uuid.uuid4().hex[:8]}"
+
+    _write_notification(container, f'Append the line "export {marker}=1" to /root/.bashrc using the Edit or Write tool (not bash).')
+
+    deadline = time.time() + 90
+    while time.time() < deadline:
+        content = _exec(container, "cat /root/.bashrc")
+        if marker in content:
+            return
+        time.sleep(2)
+
+    raise AssertionError(f"Marker {marker} not found in /root/.bashrc after 90s")
