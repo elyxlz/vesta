@@ -32,7 +32,7 @@ RUN for d in agent/skills/*/; do \
 
 # SDK discovers skills from .claude/skills/ relative to cwd (shared with Claude credentials under ~/.claude)
 RUN mkdir -p .claude && ln -s ../agent/skills .claude/skills && \
-    printf '{"permissions":{"allow":["Edit(~/.bashrc)","Write(~/.bashrc)"]}}\n' > .claude/settings.json
+    printf '{"permissions":{"allow":[]}}\n' > .claude/settings.json
 
 WORKDIR /root/agent
 RUN uv sync --frozen --no-install-project

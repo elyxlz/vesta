@@ -1,7 +1,7 @@
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use vesta_tests::{download_latest_released_vestad, find_vestad, TestServerBuilder};
+use vesta_tests::{download_latest_released_vestad, find_vestad, unique_user, TestServerBuilder};
 
 const FAKE_TOKEN: &str = r#"{"claudeAiOauth":{"accessToken":"test","refreshToken":"test","expiresAt":4102444800000}}"#;
 
@@ -61,11 +61,11 @@ fn latest_released_vestad_upgrades_to_current_and_agent_git_state_is_valid() {
     let released = download_latest_released_vestad().expect("download released vestad");
     let current = find_vestad().expect("find current vestad");
     let home = tempfile::TempDir::new().expect("tmp home");
-    let user = "upgradee";
+    let user = unique_user("upgradee");
     let agent_name = "upgrade-agent";
 
     let mut released_server = TestServerBuilder::new()
-        .user(user)
+        .user(&user)
         .home(home.path().to_path_buf())
         .vestad_bin(released.bin_path.clone())
         .start()
@@ -85,12 +85,12 @@ fn latest_released_vestad_upgrades_to_current_and_agent_git_state_is_valid() {
         .expect("status under released vestad");
     assert_ne!(initial_status.status, "not_found");
 
-    let old_container = agent_container_name(user, agent_name).expect("find initial container");
+    let old_container = agent_container_name(&user, agent_name).expect("find initial container");
     released_server.shutdown();
     drop(released_server);
 
     let upgraded_server = TestServerBuilder::new()
-        .user(user)
+        .user(&user)
         .home(home.path().to_path_buf())
         .vestad_bin(current)
         .start()
@@ -112,7 +112,7 @@ fn latest_released_vestad_upgrades_to_current_and_agent_git_state_is_valid() {
         .expect("status after upgrade");
     assert_ne!(upgraded_status.status, "not_found");
 
-    let new_container = agent_container_name(user, agent_name).expect("find upgraded container");
+    let new_container = agent_container_name(&user, agent_name).expect("find upgraded container");
     assert!(
         !new_container.is_empty(),
         "container name should still resolve after upgrade"

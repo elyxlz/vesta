@@ -1,24 +1,26 @@
 use std::collections::HashSet;
 
-use vesta_tests::{TestAgent, TestServerBuilder};
+use vesta_tests::{TestAgent, TestServerBuilder, unique_user};
 
-fn start_pair() -> (vesta_tests::TestServer, vesta_tests::TestServer) {
+fn start_pair() -> (vesta_tests::TestServer, vesta_tests::TestServer, String, String) {
+    let alice_user = unique_user("alice");
+    let bob_user = unique_user("bob");
     let alice = TestServerBuilder::new()
-        .user("alice")
+        .user(&alice_user)
         .start()
         .expect("failed to start alice's server");
     let bob = TestServerBuilder::new()
-        .user("bob")
+        .user(&bob_user)
         .start()
         .expect("failed to start bob's server");
-    (alice, bob)
+    (alice, bob, alice_user, bob_user)
 }
 
 // ── Two servers on different ports ────────────────────────────
 
 #[test]
 fn two_servers_start_different_ports() {
-    let (alice, bob) = start_pair();
+    let (alice, bob, _, _) = start_pair();
 
     assert_ne!(alice.port, bob.port, "servers should bind to different ports");
 
@@ -30,7 +32,7 @@ fn two_servers_start_different_ports() {
 
 #[test]
 fn agents_isolated_between_users() {
-    let (alice, bob) = start_pair();
+    let (alice, bob, _, _) = start_pair();
     let alice_client = alice.client();
     let bob_client = bob.client();
 
@@ -55,7 +57,7 @@ fn agents_isolated_between_users() {
 
 #[test]
 fn container_names_include_user() {
-    let (alice, bob) = start_pair();
+    let (alice, bob, alice_user, bob_user) = start_pair();
     let alice_client = alice.client();
     let bob_client = bob.client();
 
@@ -70,20 +72,20 @@ fn container_names_include_user() {
 
     let has_alice_container = container_names
         .lines()
-        .any(|name| name.contains("alice") && name.contains("prefix-test"));
+        .any(|name| name.contains(&alice_user) && name.contains("prefix-test"));
     let has_bob_container = container_names
         .lines()
-        .any(|name| name.contains("bob") && name.contains("prefix-test"));
+        .any(|name| name.contains(&bob_user) && name.contains("prefix-test"));
 
-    assert!(has_alice_container, "expected a container with 'alice' and 'prefix-test' in name, got:\n{container_names}");
-    assert!(has_bob_container, "expected a container with 'bob' and 'prefix-test' in name, got:\n{container_names}");
+    assert!(has_alice_container, "expected a container with '{alice_user}' and 'prefix-test' in name, got:\n{container_names}");
+    assert!(has_bob_container, "expected a container with '{bob_user}' and 'prefix-test' in name, got:\n{container_names}");
 }
 
 // ── Agent WS ports don't collide across users ─────────────────
 
 #[test]
 fn agent_ports_dont_collide() {
-    let (alice, bob) = start_pair();
+    let (alice, bob, _, _) = start_pair();
     let alice_client = alice.client();
     let bob_client = bob.client();
 
@@ -110,7 +112,7 @@ fn agent_ports_dont_collide() {
 
 #[test]
 fn destroy_on_one_doesnt_affect_other() {
-    let (alice, bob) = start_pair();
+    let (alice, bob, _, _) = start_pair();
     let alice_client = alice.client();
     let bob_client = bob.client();
 
@@ -130,7 +132,7 @@ fn destroy_on_one_doesnt_affect_other() {
 
 #[test]
 fn stop_start_independent() {
-    let (alice, bob) = start_pair();
+    let (alice, bob, _, _) = start_pair();
     let alice_client = alice.client();
     let bob_client = bob.client();
 

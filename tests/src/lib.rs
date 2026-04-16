@@ -4,6 +4,7 @@ pub mod types;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::LazyLock;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use client::Client;
@@ -13,6 +14,17 @@ pub static SERVER: LazyLock<TestServer> = LazyLock::new(|| {
     kill_orphan_vestads();
     TestServer::start().unwrap_or_else(|e| panic!("failed to start test server: {e}"))
 });
+
+static TEST_USER_COUNTER: AtomicU32 = AtomicU32::new(0);
+
+/// Generate a unique user name for test isolation. Includes PID for cross-run
+/// uniqueness and an atomic counter for intra-run uniqueness. This prevents
+/// tests from seeing each other's Docker containers (vestad scopes by
+/// `vesta.user` label).
+pub fn unique_user(prefix: &str) -> String {
+    let id = TEST_USER_COUNTER.fetch_add(1, Ordering::SeqCst);
+    format!("{prefix}-t{}-{id}", std::process::id())
+}
 
 #[derive(Default)]
 pub struct TestServerBuilder {
@@ -26,6 +38,8 @@ impl TestServerBuilder {
         Self::default()
     }
 
+    /// Set an explicit user name. Prefer `unique_user()` to avoid cross-test
+    /// Docker container collisions.
     pub fn user(mut self, user: &str) -> Self {
         self.user = Some(user.to_string());
         self
@@ -42,7 +56,8 @@ impl TestServerBuilder {
     }
 
     pub fn start(self) -> Result<TestServer, String> {
-        TestServer::start_with_options(self.user, self.home, self.vestad_bin)
+        let user = self.user.unwrap_or_else(|| unique_user("test"));
+        TestServer::start_with_options(Some(user), self.home, self.vestad_bin)
     }
 }
 
