@@ -233,9 +233,9 @@ async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm
 
                         if state.dreamer_active:
                             state.dreamer_active = False
-                            logger.dreamer("Dreamer complete, running /compact...")
-                            await _process_interruptible("/compact", is_user=False, queue=queue, state=state, config=config)
-                            logger.dreamer("Compact complete, triggering nightly restart (session preserved)...")
+                            logger.dreamer("Dreamer complete, clearing session for fresh context...")
+                            config.session_file.unlink(missing_ok=True)
+                            state.session_id = None
                             (config.data_dir / "show_dreamer_summary").write_text("1")
                             state.restart_reason = vm.NIGHTLY_RESTART
                             state.graceful_shutdown.set()
