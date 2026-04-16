@@ -58,8 +58,8 @@ Re-read the failing exchange and simulate: would the updated version have change
 **This step is NOT optional.** Every dream must include upstream sync. Skipping it causes debt that compounds. Read the `upstream` skill and follow its pull/push workflow. The dream summary must list what was synced. If nothing, explain why.
 
 **What to push upstream:**
-- PRs for concrete fixes (skill improvements, new rules, bug fixes) — the usual path
-- **Issues** for patterns you've identified but don't have a fix for yet: a recurring gap, a structural problem, an idea worth discussing. File an issue instead of a PR when the right solution isn't clear
+- Simple fixes (skill improvements, new rules, bug fixes): **PR + issue** — the issue describes the problem, the PR resolves it
+- Complex problems where the right solution isn't clear: **issue only** — describe the pattern, leave the fix open
 
 **Privacy rule:** Before filing anything upstream, strip all personal information. No names, no contact details, no private context, no specifics that would identify the user or their data. Describe the pattern in general terms ("agent claimed inability to access calendar when google skill was installed") not the specific instance ("user asked about tuesday's meeting with..."). When in doubt, leave it out.
 
