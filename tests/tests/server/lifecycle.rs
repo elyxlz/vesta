@@ -1,9 +1,9 @@
-use vesta_tests::{TestAgent, SERVER, inject_fake_token, is_up};
+use vesta_tests::{TestAgent, SERVER, inject_fake_token, is_up, unique_agent};
 
 #[test]
 fn create_and_list() {
     let c = SERVER.client();
-    let agent = TestAgent::create(&c, "test-create-list").unwrap();
+    let agent = TestAgent::create(&c, &unique_agent("create-list")).unwrap();
     let list = c.list_agents().unwrap();
     assert!(list.iter().any(|a| a.name == agent.name));
 }
@@ -11,8 +11,8 @@ fn create_and_list() {
 #[test]
 fn create_duplicate_fails() {
     let c = SERVER.client();
-    let _agent = TestAgent::create(&c, "test-dup").unwrap();
-    let result = c.create_agent("test-dup", false);
+    let agent = TestAgent::create(&c, &unique_agent("dup")).unwrap();
+    let result = c.create_agent(&agent.name, false);
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(err.contains("already exists"), "unexpected error: {err}");
@@ -28,7 +28,7 @@ fn status_not_found() {
 #[test]
 fn start_stop_restart() {
     let c = SERVER.client();
-    let agent = TestAgent::create(&c, "test-start-stop").unwrap();
+    let agent = TestAgent::create(&c, &unique_agent("start-stop")).unwrap();
 
     c.start_agent(&agent.name).unwrap();
     let st = c.agent_status(&agent.name).unwrap();
@@ -47,7 +47,7 @@ fn start_stop_restart() {
 #[test]
 fn destroy_removes_agent() {
     let c = SERVER.client();
-    let name = c.create_agent("test-destroy", false).unwrap();
+    let name = c.create_agent(&unique_agent("destroy"), false).unwrap();
     c.destroy_agent(&name).unwrap();
     let st = c.agent_status(&name).unwrap();
     assert_eq!(st.status, "not_found");
@@ -56,7 +56,7 @@ fn destroy_removes_agent() {
 #[test]
 fn destroy_stops_running_agent() {
     let c = SERVER.client();
-    let name = c.create_agent("test-destroy-running", false).unwrap();
+    let name = c.create_agent(&unique_agent("destroy-run"), false).unwrap();
     inject_fake_token(&c, &name);
     c.start_agent(&name).unwrap();
     assert!(is_up(&c.agent_status(&name).unwrap().status));
@@ -78,7 +78,7 @@ fn stop_nonexistent_fails() {
 #[test]
 fn create_auto_starts() {
     let c = SERVER.client();
-    let agent = TestAgent::create(&c, "test-create-autostart").unwrap();
+    let agent = TestAgent::create(&c, &unique_agent("autostart")).unwrap();
 
     let st = c.agent_status(&agent.name).unwrap();
     assert!(is_up(&st.status), "expected up after create, got {}", st.status);
@@ -87,7 +87,7 @@ fn create_auto_starts() {
 #[test]
 fn creation_flow() {
     let c = SERVER.client();
-    let agent = TestAgent::create(&c, "test-creation-flow").unwrap();
+    let agent = TestAgent::create(&c, &unique_agent("flow")).unwrap();
 
     let st = c.agent_status(&agent.name).unwrap();
     assert_eq!(st.status, "not_authenticated");
@@ -105,8 +105,8 @@ fn creation_flow() {
 #[test]
 fn start_all_starts_authenticated_agents() {
     let c = SERVER.client();
-    let a1 = TestAgent::create(&c, "test-startall-1").unwrap();
-    let a2 = TestAgent::create(&c, "test-startall-2").unwrap();
+    let a1 = TestAgent::create(&c, &unique_agent("startall")).unwrap();
+    let a2 = TestAgent::create(&c, &unique_agent("startall")).unwrap();
     inject_fake_token(&c, &a1.name);
     inject_fake_token(&c, &a2.name);
 

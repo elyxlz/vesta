@@ -16,6 +16,7 @@ pub static SERVER: LazyLock<TestServer> = LazyLock::new(|| {
 });
 
 static TEST_USER_COUNTER: AtomicU32 = AtomicU32::new(0);
+static TEST_AGENT_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 /// Generate a unique user name for test isolation. Includes PID for cross-run
 /// uniqueness and an atomic counter for intra-run uniqueness. This prevents
@@ -24,6 +25,12 @@ static TEST_USER_COUNTER: AtomicU32 = AtomicU32::new(0);
 pub fn unique_user(prefix: &str) -> String {
     let id = TEST_USER_COUNTER.fetch_add(1, Ordering::SeqCst);
     format!("{prefix}-t{}-{id}", std::process::id())
+}
+
+/// Generate a unique agent name for parallel test execution.
+pub fn unique_agent(prefix: &str) -> String {
+    let id = TEST_AGENT_COUNTER.fetch_add(1, Ordering::SeqCst);
+    format!("{prefix}-{id}")
 }
 
 #[derive(Default)]
