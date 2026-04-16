@@ -149,6 +149,8 @@ def container(docker_image):
         "MONITOR_TICK_INTERVAL=1",
         "-e",
         "EPHEMERAL=true",
+        "-e",
+        "IS_SANDBOX=1",
         docker_image,
         "sh",
         "-c",

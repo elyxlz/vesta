@@ -509,9 +509,7 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
         model=config.agent_model,
         betas=["context-1m-2025-08-07"],
         hooks=_make_hooks(state),
-        # bypassPermissions is blocked when running as root (Claude Code v2.1.97+).
-        # acceptEdits mode + can_use_tool handles both normal and sensitive-file permissions.
-        permission_mode="acceptEdits",
+        permission_mode="bypassPermissions",
         can_use_tool=_approve_all_tools,
         cwd=config.root,
         setting_sources=["project"],
