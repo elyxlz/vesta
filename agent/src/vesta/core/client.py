@@ -1,4 +1,5 @@
 import asyncio
+import collections
 import datetime as dt
 import json
 import os
@@ -39,6 +40,18 @@ import vesta.models as vm
 from vesta import logger
 from vesta.core.init import get_memory_path
 from vesta.events import SubagentStartEvent, SubagentStopEvent, StreamEvent
+
+
+def format_crash_detail(
+    exc: BaseException, stderr_buffer: collections.deque[str], *, fallback: str = "(no stderr captured)"
+) -> tuple[int | None, str]:
+    """Extract exit_code and format stderr tail from an SDK exception."""
+    try:
+        exit_code: int | None = exc.exit_code  # ty: ignore[unresolved-attribute]
+    except AttributeError:
+        exit_code = None
+    stderr_tail = "\n".join(stderr_buffer) if stderr_buffer else fallback
+    return exit_code, stderr_tail
 
 
 def _format_search_results(results: list[dict[str, str]], *, max_chars: int = 50000) -> str:
@@ -130,7 +143,8 @@ def _parse_sdk_message(msg: Message, *, sub_agent_context: str | None) -> tuple[
         return ([], [], sub_agent_context, None, False)
 
     if isinstance(msg, SystemMessage):
-        logger.system(f"[{msg.subtype}] {json.dumps(msg.data, default=str)}")
+        raw = json.dumps(msg.data, default=str)
+        logger.system(f"[{msg.subtype}] {raw[:500]}")
         return ([], [], sub_agent_context, None, False)
 
     if not isinstance(msg, AssistantMessage):
@@ -407,7 +421,7 @@ async def _log_context_usage(state: vm.State) -> None:
         max_tok = usage["maxTokens"]
         log_fn = logger.warning if pct > 80 else logger.usage
         log_fn(f"Context: {pct:.0f}% ({total:,}/{max_tok:,} tokens)")
-    except Exception:
+    except (OSError, RuntimeError, KeyError, TypeError):
         pass
 
 

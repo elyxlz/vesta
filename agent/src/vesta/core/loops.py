@@ -12,7 +12,7 @@ from watchfiles import awatch, Change
 
 import vesta.models as vm
 from vesta import logger
-from vesta.core.client import process_message, build_client_options, attempt_interrupt, persist_session_id, _cancel_task
+from vesta.core.client import process_message, build_client_options, attempt_interrupt, persist_session_id, format_crash_detail, _cancel_task
 from vesta.core.init import load_prompt, build_restart_context
 
 
@@ -141,11 +141,7 @@ async def _process_message_safely(msg: str, *, is_user: bool, state: vm.State, c
                     persist_session_id(sid, state=state, config=config)
             except (AttributeError, TypeError):
                 pass
-        try:
-            exit_code = e.exit_code  # ty: ignore[unresolved-attribute]
-        except AttributeError:
-            exit_code = None
-        stderr_tail = "\n".join(state.stderr_buffer) if state.stderr_buffer else None
+        exit_code, stderr_tail = format_crash_detail(e, state.stderr_buffer, fallback="")
         detail = f"Error processing message: {error_msg} | exit_code={exit_code}"
         if stderr_tail:
             detail += f"\nRecent stderr:\n{stderr_tail}"
@@ -244,11 +240,7 @@ async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm
         except (ClaudeSDKError, OSError, RuntimeError) as exc:
             if retried or not state.session_id:
                 raise
-            try:
-                exit_code = exc.exit_code  # ty: ignore[unresolved-attribute]
-            except AttributeError:
-                exit_code = None
-            stderr_tail = "\n".join(state.stderr_buffer) if state.stderr_buffer else "(no stderr captured)"
+            exit_code, stderr_tail = format_crash_detail(exc, state.stderr_buffer)
             logger.warning(
                 f"Session resume failed ({state.session_id[:16]}...): {type(exc).__name__}: {exc}"
                 f" | exit_code={exit_code}"

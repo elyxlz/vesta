@@ -14,6 +14,7 @@ from rich import print_json
 import vesta.models as vm
 from vesta import logger
 from vesta.api import start_ws_server
+from vesta.core.client import format_crash_detail
 from vesta.core.loops import message_processor, monitor_loop, queue_greeting
 
 SignalHandler = tp.Callable[[int, types.FrameType | None], None]
@@ -87,11 +88,7 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
             return
         exc = task.exception()
         if exc is not None:
-            try:
-                exit_code = exc.exit_code  # ty: ignore[unresolved-attribute]
-            except AttributeError:
-                exit_code = None
-            stderr_tail = "\n".join(state.stderr_buffer) if state.stderr_buffer else "(no stderr captured)"
+            exit_code, stderr_tail = format_crash_detail(exc, state.stderr_buffer)
             logger.error(f"message_processor crashed: {type(exc).__name__}: {exc} | exit_code={exit_code}\nRecent stderr:\n{stderr_tail}")
             state.restart_reason = f"crash — {type(exc).__name__}: {exc}"
             state.graceful_shutdown.set()
