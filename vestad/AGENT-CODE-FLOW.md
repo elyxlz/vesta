@@ -47,7 +47,7 @@ The `sh -c` entrypoint runs:
 4. **Git commit** — `git add agent/ .gitignore` then commits if anything is staged. On first boot, everything gets committed. On restarts, only actual changes are committed.
 5. **Upstream merge (first boot only)** — when `git describe --tags --abbrev=0` fails (no current tag to describe) and `VESTA_UPSTREAM_REF` is set, fetches that ref from `origin` and runs `git merge -s ours FETCH_HEAD` with `--allow-unrelated-histories` to establish shared ancestry without changing tracked files.
 6. **Agent branch** — `git checkout -b "$AGENT_NAME"` if that ref does not exist yet.
-7. **`exec uv run --frozen --project /root/agent python -m vesta.main`** — starts the agent
+7. **`exec uv run --frozen --project /root/agent python -m core.main`** — starts the agent
 
 There is no automatic filesystem migration shell anymore. If a container wakes up with legacy layout drift, the agent is expected to repair that state explicitly using `agent/skills/upstream-sync/SETUP.md`, get to a commit-ready branch, commit local state, and merge `VESTA_UPSTREAM_REF`.
 
