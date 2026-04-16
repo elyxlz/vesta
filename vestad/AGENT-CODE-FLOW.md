@@ -16,7 +16,7 @@ At this point the image has:
 - `agent/prompts/` — from build context
 - `agent/skills/` — from build context (pruned)
 - `agent/pyproject.toml` + `agent/uv.lock` — from build context
-- `agent/src/vesta/` — from build context (overlaid by mounts when `manage_agent_code` is true)
+- `agent/core/` — from build context (overlaid by mounts when `manage_agent_code` is true)
 - `agent/.venv/` — installed deps
 
 ## Container creation (vestad, `docker.rs` + `agent_code.rs`)
@@ -26,16 +26,16 @@ Host paths use vestad’s config dir: `$HOME/.config/vesta/vestad/` (see `main.r
 When `manage_core_code` is true, `create_agent` calls `ensure_agent_code` first, then `create_container`:
 
 1. **`ensure_agent_code`** — populates `agent-code/` under the config dir (`.../vestad/agent-code/`):
-   - **Dev** (`debug_assertions`): copies `src/vesta/`, `pyproject.toml`, `uv.lock` from the discovered local repo; skips the copy when `agent-code/` is already at least as new as the source tree (mtime check).
+   - **Dev** (`debug_assertions`): copies `core/`, `pyproject.toml`, `uv.lock` from the discovered local repo; skips the copy when `agent-code/` is already at least as new as the source tree (mtime check).
    - **Prod**: if `agent-code/` is missing or its `pyproject.toml` version does not match vestad’s `CARGO_PKG_VERSION`, downloads the GitHub release tarball for that version and extracts the same three paths into `agent-code/`.
 2. **`create_container`** — writes `agents/{agent}.env` (same config dir) with `WS_PORT`, `AGENT_NAME`, `AGENT_TOKEN`, `IS_SANDBOX=1`, `VESTAD_PORT`, optional `VESTAD_TUNNEL`, optional `VESTA_UPSTREAM_REF`, etc.
 3. **Bind mounts** when `manage_core_code` (all `:ro`):
    - `{agent}.env` -> `/run/vestad-env`
-   - `agent-code/src/vesta/` -> `/root/agent/src/vesta/`
+   - `agent-code/core/` -> `/root/agent/core/`
    - `agent-code/pyproject.toml` -> `/root/agent/pyproject.toml`
    - `agent-code/uv.lock` -> `/root/agent/uv.lock`
 
-So vestad owns `src/vesta/`, `pyproject.toml`, `uv.lock` via mounts. The image owns `MEMORY.md`, `prompts/`, `skills/` — these are the agent's to modify.
+So vestad owns `core/`, `pyproject.toml`, `uv.lock` via mounts. The image owns `MEMORY.md`, `prompts/`, `skills/` — these are the agent's to modify.
 
 ## Container startup (entrypoint, `docker.rs`)
 
@@ -63,7 +63,7 @@ Updated when vestad starts via `update_all_agent_env_files` (rewrites port, tunn
 
 Git repo root is `$HOME` (`/root` in the image). Tracked tree is under `agent/`.
 
-- `agent/src/vesta/` — vestad's code (mounted read-only when `manage_agent_code` is true; otherwise image copy)
+- `agent/core/` — vestad's code (mounted read-only when `manage_agent_code` is true; otherwise image copy)
 - `agent/pyproject.toml` + `uv.lock` — vestad's versions (mounted, read-only)
 - `agent/MEMORY.md` — from image build, agent can modify and commit
 - `agent/prompts/` — from image build, agent can modify and commit
@@ -78,6 +78,6 @@ Git repo root is `$HOME` (`/root` in the image). Tracked tree is under `agent/`.
 |---|---|---|
 | Image | Dockerfile next to cwd or vestad binary → build `vesta:local`; else pull `ghcr.io/elyxlz/vesta:latest` | same |
 | `agent-code/` source | copied from local repo | downloaded from release tarball when missing or version mismatch |
-| Mounted code | your working tree's `src/vesta/` | release version's `src/vesta/` |
+| Mounted code | your working tree's `core/` | release version's `core/` |
 | MEMORY/prompts/skills | from local repo at image build time | from release at image build time |
 | `VESTA_UPSTREAM_REF` | git branch (e.g. `feat/foo`) | release tag (e.g. `v0.1.132`) |

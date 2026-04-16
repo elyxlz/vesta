@@ -1,6 +1,6 @@
 """Tests for VestaConfig and initialization."""
 
-from vesta.core.init import get_memory_path
+from core.init import get_memory_path
 
 
 def test_config_paths_under_root(config, tmp_path):
@@ -11,7 +11,7 @@ def test_config_paths_under_root(config, tmp_path):
 
 
 def test_config_default_values():
-    import vesta.models as vm
+    import core.models as vm
 
     config = vm.VestaConfig()
     assert config.monitor_tick_interval > 0

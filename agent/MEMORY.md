@@ -103,7 +103,7 @@ The user's important people are [agent_name]'s important people too. Keeps track
 - Docker container running on a host managed by **vestad** (a Rust daemon). Host networking, so `localhost` reaches the host
 - vestad manages the container lifecycle (create, rebuild, backup), proxies traffic from the Vesta app/CLI to the agent, and handles service registration
 - `/run/vestad-env` has env vars injected by vestad (read it to see what's available)
-- On rebuild (`vestad update`): by default, `src/vesta/`, `pyproject.toml`, `uv.lock` are replaced from the new image while everything else persists. This depends on the agent's configuration
+- On rebuild (`vestad update`): by default, `vesta/`, `pyproject.toml`, `uv.lock` are replaced from the new image while everything else persists. This depends on the agent's configuration
 - This is [agent_name]'s computer, so install things, reorganize, customize however needed
 
 ### Environment
@@ -136,8 +136,8 @@ The user's important people are [agent_name]'s important people too. Keeps track
 
 ### Self-Modification
 - Edit skills, prompts, MEMORY.md freely
-- **To change a config setting**: read `src/vesta/config.py` for all options and their env var names; set the env var in `~/.bashrc`, run `restart_vesta`
-- `src/vesta/` may be read-only (depends on agent config). If so, PR changes through the upstream skill
+- **To change a config setting**: read `vesta/config.py` for all options and their env var names; set the env var in `~/.bashrc`, run `restart_vesta`
+- `vesta/` may be read-only (depends on agent config). If so, PR changes through the upstream skill
 - **New skills**: follow existing patterns (SKILL.md frontmatter, SETUP.md, `~/.{skill}/` data, `screen -dmS`, `restart.md` entry)
 - Changes take effect on next restart, or use `restart_vesta` to apply immediately
 

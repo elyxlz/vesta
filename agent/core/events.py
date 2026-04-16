@@ -170,7 +170,7 @@ class EventBus:
         if state == self._state:
             return
         self._state = state
-        from vesta import logger
+        from core import logger
 
         logger.system(f"state → {state}")
         self.emit(StatusEvent(type="status", state=state))

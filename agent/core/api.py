@@ -15,8 +15,8 @@ import pathlib as pl
 import aiohttp as _aiohttp
 from aiohttp import web
 
-from vesta.events import ChatEvent, EventBus, HistoryEvent, UserEvent, VestaEvent
-from vesta.config import VestaConfig
+from core.events import ChatEvent, EventBus, HistoryEvent, UserEvent, VestaEvent
+from core.config import VestaConfig
 
 logger = logging.getLogger("vesta.api")
 

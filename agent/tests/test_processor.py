@@ -5,8 +5,8 @@ import contextlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import vesta.models as vm
-from vesta.core.client import process_message
+import core.models as vm
+from core.client import process_message
 
 
 async def _run_processor_test(
@@ -18,7 +18,7 @@ async def _run_processor_test(
     extra_patches: dict | None = None,
 ):
     """Shared helper for message_processor tests."""
-    from vesta.core.loops import message_processor
+    from core.loops import message_processor
 
     config = vm.VestaConfig(root=tmp_path)
     state = pre_state or vm.State()
@@ -54,9 +54,9 @@ async def _run_processor_test(
         state.shutdown_event.set()
 
     patches = {
-        "vesta.core.loops.ClaudeSDKClient": mock_client,
-        "vesta.core.loops.process_message": tracking_process_message,
-        "vesta.core.loops.build_client_options": MagicMock(),
+        "core.loops.ClaudeSDKClient": mock_client,
+        "core.loops.process_message": tracking_process_message,
+        "core.loops.build_client_options": MagicMock(),
     }
     if extra_patches:
         patches.update(extra_patches)
@@ -98,7 +98,7 @@ async def test_restarts_on_timeout(tmp_path):
 
 
 def test_restart_reason_round_trip(tmp_path):
-    from vesta.main import _write_restart_reason, _read_restart_reason
+    from core.main import _write_restart_reason, _read_restart_reason
 
     config = vm.VestaConfig(root=tmp_path)
     config.data_dir.mkdir(parents=True, exist_ok=True)
@@ -111,7 +111,7 @@ def test_restart_reason_round_trip(tmp_path):
 
 @pytest.mark.anyio
 async def test_client_cleared_on_cancellation(tmp_path):
-    from vesta.core.loops import message_processor
+    from core.loops import message_processor
 
     config = vm.VestaConfig(root=tmp_path)
     state = vm.State()
@@ -123,8 +123,8 @@ async def test_client_cleared_on_cancellation(tmp_path):
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
     with (
-        patch("vesta.core.loops.ClaudeSDKClient", return_value=mock_client),
-        patch("vesta.core.loops.build_client_options", return_value=MagicMock()),
+        patch("core.loops.ClaudeSDKClient", return_value=mock_client),
+        patch("core.loops.build_client_options", return_value=MagicMock()),
     ):
         task = asyncio.create_task(message_processor(queue, state=state, config=config))
         await asyncio.sleep(0.05)
@@ -153,7 +153,7 @@ async def test_process_message_sends_correction_on_em_dash(tmp_path):
             return ["something \u2014 with an em dash"]
         return ["corrected response"]
 
-    with patch("vesta.core.client.converse", side_effect=mock_converse):
+    with patch("core.client.converse", side_effect=mock_converse):
         responses, _ = await process_message("hello", state=state, config=config, is_user=True)
 
     assert len(converse_calls) == 2
@@ -172,7 +172,7 @@ async def test_process_message_no_correction_without_dashes(tmp_path):
         converse_calls.append(prompt)
         return ["clean response, no dashes here"]
 
-    with patch("vesta.core.client.converse", side_effect=mock_converse):
+    with patch("core.client.converse", side_effect=mock_converse):
         await process_message("hello", state=state, config=config, is_user=True)
 
     assert len(converse_calls) == 1
@@ -189,7 +189,7 @@ async def test_process_message_no_correction_on_empty_response(tmp_path):
         converse_calls.append(prompt)
         return []
 
-    with patch("vesta.core.client.converse", side_effect=mock_converse):
+    with patch("core.client.converse", side_effect=mock_converse):
         await process_message("hello", state=state, config=config, is_user=True)
 
     assert len(converse_calls) == 1

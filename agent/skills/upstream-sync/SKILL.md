@@ -13,7 +13,7 @@ At `~` (repo root is `$HOME`), the repo tracks `agent/` and `.gitignore`. Repo-r
 
 You own `agent/skills/`, `agent/prompts/`, `agent/MEMORY.md`, `agent/.gitignore`, and repo-root `.claude/` (symlink / SDK layout) on disk; git commits focus on `agent/`.
 
-Core code (`agent/src/vesta/`, `agent/pyproject.toml`, `agent/uv.lock`) is managed by vestad via read-only mounts, but merge conflicts there still need integration work if both sides carry meaningful behavior.
+Core code (`agent/core/`, `agent/pyproject.toml`, `agent/uv.lock`) is managed by vestad via read-only mounts, but merge conflicts there still need integration work if both sides carry meaningful behavior.
 
 ## Sync steps
 
@@ -58,7 +58,7 @@ Core code (`agent/src/vesta/`, `agent/pyproject.toml`, `agent/uv.lock`) is manag
      - split responsibilities
      - keep both call paths or behaviors
      - rename or reorganize logic to avoid collisions
-   - **Vestad-managed paths** (`src/vesta/`, `pyproject.toml`, `uv.lock`) are not automatic `--theirs` files. If local behavior matters, carry it forward into the merged version.
+   - **Vestad-managed paths** (`vesta/`, `pyproject.toml`, `uv.lock`) are not automatic `--theirs` files. If local behavior matters, carry it forward into the merged version.
    - Only take one side wholesale when the other side is clearly obsolete, redundant, generated, or a strict subset.
    - Do not stop at “conflict markers removed”. Re-read the merged file and verify both sides' behavior still exists.
 

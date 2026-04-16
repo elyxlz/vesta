@@ -39,10 +39,10 @@ from claude_agent_sdk.types import (
     ToolPermissionContext,
 )
 
-import vesta.models as vm
-from vesta import logger
-from vesta.core.init import get_memory_path
-from vesta.events import SubagentStartEvent, SubagentStopEvent, StreamEvent
+import core.models as vm
+from core import logger
+from core.init import get_memory_path
+from core.events import SubagentStartEvent, SubagentStopEvent, StreamEvent
 
 
 def format_crash_detail(

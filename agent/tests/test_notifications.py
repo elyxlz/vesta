@@ -6,8 +6,8 @@ import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
-import vesta.models as vm
-from vesta.core.loops import (
+import core.models as vm
+from core.loops import (
     _is_new_json,
     _load_notification_files,
     delete_notification_files,
@@ -209,7 +209,7 @@ async def test_process_batch_queues_prompt(tmp_path):
     f.write_text("x")
     notif = vm.Notification(timestamp=dt.datetime(2025, 1, 1), source="test", type="message", file_path=str(f))
 
-    with patch("vesta.core.loops.load_prompt", return_value=""), patch("vesta.core.loops.attempt_interrupt", new_callable=AsyncMock):
+    with patch("core.loops.load_prompt", return_value=""), patch("core.loops.attempt_interrupt", new_callable=AsyncMock):
         await process_batch([notif], queue=queue, state=state, config=config)
 
     assert not queue.empty()
@@ -239,7 +239,7 @@ async def test_process_batch_deletes_files(tmp_path):
     f.write_text("x")
     notif = vm.Notification(timestamp=dt.datetime(2025, 1, 1), source="t", type="m", file_path=str(f))
 
-    with patch("vesta.core.loops.load_prompt", return_value=""):
+    with patch("core.loops.load_prompt", return_value=""):
         await process_batch([notif], queue=queue, state=state, config=config)
 
     assert not f.exists(), "notification file should be deleted after processing"

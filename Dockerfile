@@ -18,13 +18,19 @@ WORKDIR /root
 # Git repo at $HOME — agent tracks local changes (skills, prompts, memory) on its branch.
 # Core code is baked into the image; with manage_agent_code=true, vestad mounts newer copies.
 # .gitignore ensures only relevant files are tracked and that mounts do not pollute the repo
-RUN git init && git remote add origin https://github.com/elyxlz/vesta.git && \
-    git sparse-checkout init --cone && git sparse-checkout set agent && \
-    printf '/*\n!.gitignore\n!/agent/\n' > .gitignore
-
 COPY agent/ ./agent/
 
-# Reduce image size: remove non-default skills
+# Set up git repo with sparse checkout limited to default skills.
+# Non-default skills are removed from the image and excluded from sparse checkout,
+# so upstream merges won't pull them in. The skills-registry install command adds
+# skills to sparse checkout on demand, opting them into future upstream merges.
+RUN git init && git remote add origin https://github.com/elyxlz/vesta.git && \
+    git sparse-checkout init --cone && \
+    SKILL_DIRS=$(cat agent/skills/default-skills.txt | sed 's|^|agent/skills/|') && \
+    git sparse-checkout set agent/core agent/prompts agent/dreamer $SKILL_DIRS && \
+    printf '/*\n!.gitignore\n!/agent/\n' > .gitignore
+
+# Remove non-default skills from the image (they'll be installed via sparse checkout on demand)
 RUN for d in agent/skills/*/; do \
       name="$(basename "$d")"; \
       grep -qx "$name" agent/skills/default-skills.txt || rm -rf "$d"; \

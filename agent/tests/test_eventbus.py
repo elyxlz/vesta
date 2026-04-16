@@ -2,7 +2,7 @@
 
 import typing as tp
 
-from vesta.events import ChatEvent, EventBus, SubagentStartEvent, UserEvent
+from core.events import ChatEvent, EventBus, SubagentStartEvent, UserEvent
 
 
 # --- Emit & persist ---

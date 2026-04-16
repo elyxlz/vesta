@@ -30,6 +30,7 @@ ls ~/agent/skills/
 
 ## Notes
 
-- Skills you install are downloaded from `agent/skills/` in the GitHub repo
-- Core skills ship pre-installed; optional skills are downloaded on demand
+- Skills are installed via git sparse checkout from the upstream repo
+- Installed skills receive updates automatically during upstream sync merges
+- Core skills ship pre-installed; optional skills are checked out on demand
 - After installing a skill that requires setup, read its `SETUP.md`

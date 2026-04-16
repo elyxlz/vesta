@@ -6,7 +6,7 @@ import typing as tp
 from pathlib import Path
 
 import pytest
-from vesta.events import (
+from core.events import (
     AssistantEvent,
     ChatEvent,
     ErrorEvent,

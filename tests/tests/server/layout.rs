@@ -35,7 +35,7 @@ fn fresh_agent_has_expected_directory_structure() {
         "/root/agent/dreamer",
         "/root/agent/prompts",
         "/root/agent/skills",
-        "/root/agent/src/vesta",
+        "/root/agent/core",
     ] {
         exec_in_container(&cid, &format!("test -d {dir}"))
             .unwrap_or_else(|_| panic!("expected directory {dir} to exist"));
@@ -54,9 +54,9 @@ fn fresh_agent_has_expected_directory_structure() {
     let branch = exec_in_container(&cid, "git -C /root branch --show-current").unwrap();
     assert_eq!(branch, agent.name, "should be on agent's branch");
 
-    // Sparse checkout includes agent
+    // Sparse checkout includes agent subdirectories
     let sparse = exec_in_container(&cid, "git -C /root sparse-checkout list").unwrap();
-    assert!(sparse.lines().any(|l| l.trim() == "agent"), "sparse-checkout should include agent, got: {sparse}");
+    assert!(sparse.lines().any(|l| l.trim().starts_with("agent/")), "sparse-checkout should include agent/ paths, got: {sparse}");
 
     // Nothing at repo root that shouldn't be there
     let root_entries = exec_in_container(&cid, "ls -1 /root").unwrap();

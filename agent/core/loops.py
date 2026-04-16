@@ -10,10 +10,10 @@ import pydantic
 from claude_agent_sdk import ClaudeSDKClient, ClaudeSDKError
 from watchfiles import awatch, Change
 
-import vesta.models as vm
-from vesta import logger
-from vesta.core.client import process_message, build_client_options, attempt_interrupt, persist_session_id, format_crash_detail, _cancel_task
-from vesta.core.init import load_prompt, build_restart_context
+import core.models as vm
+from core import logger
+from core.client import process_message, build_client_options, attempt_interrupt, persist_session_id, format_crash_detail, _cancel_task
+from core.init import load_prompt, build_restart_context
 
 
 def _now() -> dt.datetime:

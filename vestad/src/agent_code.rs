@@ -27,7 +27,7 @@ pub fn agent_code_dir(config: &Path) -> PathBuf {
 
 fn is_populated(config: &Path) -> bool {
     let dir = agent_code_dir(config);
-    dir.join("src/vesta/main.py").exists()
+    dir.join("core/main.py").exists()
         && dir.join("pyproject.toml").is_file()
         && dir.join("uv.lock").is_file()
 }
@@ -78,12 +78,12 @@ pub fn ensure_agent_code(config: &Path) -> Result<PathBuf, AgentCodeError> {
     Ok(dir)
 }
 
-/// Find the repo root by walking up from cwd looking for agent/src/vesta/main.py.
+/// Find the repo root by walking up from cwd looking for agent/core/main.py.
 fn find_repo_agent_dir() -> Option<PathBuf> {
     let mut dir = std::env::current_dir().ok()?;
     for _ in 0..10 {
         let candidate = dir.join("agent");
-        if candidate.join("src/vesta/main.py").exists() {
+        if candidate.join("core/main.py").exists() {
             return Some(candidate);
         }
         dir = dir.parent()?.to_path_buf();
@@ -122,8 +122,8 @@ fn copy_from_local_repo(config: &Path) -> Result<(), AgentCodeError> {
 
     // Skip if dest is already up-to-date
     if dest.exists() {
-        let src_mtime = newest_mtime(&agent_dir.join("src/vesta"));
-        let dest_mtime = newest_mtime(&dest.join("src/vesta"));
+        let src_mtime = newest_mtime(&agent_dir.join("core"));
+        let dest_mtime = newest_mtime(&dest.join("core"));
         if let (Some(src), Some(dst)) = (src_mtime, dest_mtime) {
             if dst >= src {
                 return Ok(());
@@ -134,18 +134,18 @@ fn copy_from_local_repo(config: &Path) -> Result<(), AgentCodeError> {
     tracing::info!("dev mode: copying agent code from local repo");
 
     let _ = fs::remove_dir_all(&dest);
-    fs::create_dir_all(dest.join("src")).map_err(|e| AgentCodeError::Io(e.to_string()))?;
+    fs::create_dir_all(&dest).map_err(|e| AgentCodeError::Io(e.to_string()))?;
 
     let status = process::Command::new("cp")
         .args([
             "-r",
-            &agent_dir.join("src/vesta").display().to_string(),
-            &dest.join("src/vesta").display().to_string(),
+            &agent_dir.join("core").display().to_string(),
+            &dest.join("core").display().to_string(),
         ])
         .status()
         .map_err(|e| AgentCodeError::Io(e.to_string()))?;
     if !status.success() {
-        return Err(AgentCodeError::Extract("failed to copy src/vesta".into()));
+        return Err(AgentCodeError::Extract("failed to copy core".into()));
     }
 
     for file in ["pyproject.toml", "uv.lock"] {
@@ -208,7 +208,7 @@ fn fetch_agent_code_from_github(config: &Path, tag: &str) -> Result<(), AgentCod
     }
 
     // GitHub archives have prefix vesta-{tag}/ (v is stripped from directory name).
-    // --strip-components=2 turns vesta-{tag}/agent/src/vesta/... into src/vesta/...
+    // --strip-components=2 turns vesta-{tag}/agent/core/... into core/...
     let prefix = format!("vesta-{tag}/agent");
     let ok = process::Command::new("tar")
         .args([
@@ -229,7 +229,7 @@ fn fetch_agent_code_from_github(config: &Path, tag: &str) -> Result<(), AgentCod
     }
 
     // Validate
-    if !tmp_dir.join("src/vesta/main.py").exists() || !tmp_dir.join("pyproject.toml").exists() {
+    if !tmp_dir.join("core/main.py").exists() || !tmp_dir.join("pyproject.toml").exists() {
         force_remove_dir(&tmp_dir);
         return Err(AgentCodeError::Extract("extracted archive missing required files".into()));
     }
@@ -265,7 +265,7 @@ mod tests {
         // Use a known released tag
         fetch_agent_code_from_github(config, "0.1.118").unwrap();
         let dir = agent_code_dir(config);
-        assert!(dir.join("src/vesta/main.py").exists(), "main.py missing");
+        assert!(dir.join("core/main.py").exists(), "main.py missing");
         assert!(dir.join("pyproject.toml").exists(), "pyproject.toml missing");
         assert!(dir.join("uv.lock").exists(), "uv.lock missing");
     }

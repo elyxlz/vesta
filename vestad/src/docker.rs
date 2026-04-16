@@ -74,7 +74,7 @@ pub const OAUTH_AUTHORIZE_URL: &str = "https://claude.ai/oauth/authorize";
 
 const NETWORK_MODE: &str = "host";
 const RESTART_POLICY: &str = "unless-stopped";
-const MOUNT_DESTS: &[&str] = &["/run/vestad-env", "/root/agent/src/vesta", "/root/agent/pyproject.toml", "/root/agent/uv.lock"];
+const MOUNT_DESTS: &[&str] = &["/run/vestad-env", "/root/agent/core", "/root/agent/pyproject.toml", "/root/agent/uv.lock"];
 
 const AGENT_ENTRYPOINT_STEPS: &[&str] = &[
     ". /run/vestad-env",
@@ -89,7 +89,7 @@ const AGENT_ENTRYPOINT_STEPS: &[&str] = &[
        git -C ~ merge -s ours FETCH_HEAD --no-edit --allow-unrelated-histories 2>/dev/null; \
      fi",
     "git -C ~ rev-parse --verify \"$AGENT_NAME\" 2>/dev/null || git -C ~ checkout -b \"$AGENT_NAME\"",
-    "exec uv run --frozen --project /root/agent python -m vesta.main",
+    "exec uv run --frozen --project /root/agent python -m core.main",
 ];
 
 pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
@@ -1185,7 +1185,7 @@ pub async fn create_container(docker: &Docker, cname: &str, image: &str, port: u
     let env_mount = format!("{}:{}:ro,z", env_path.display(), MOUNT_DESTS[0]);
 
     let code_dir = crate::agent_code::agent_code_dir(&env_config.config_dir);
-    let src_mount = format!("{}:{}:ro,z", code_dir.join("src/vesta").display(), MOUNT_DESTS[1]);
+    let src_mount = format!("{}:{}:ro,z", code_dir.join("core").display(), MOUNT_DESTS[1]);
     let pyproject_mount = format!("{}:{}:ro,z", code_dir.join("pyproject.toml").display(), MOUNT_DESTS[2]);
     let lock_mount = format!("{}:{}:ro,z", code_dir.join("uv.lock").display(), MOUNT_DESTS[3]);
 
@@ -2223,11 +2223,11 @@ mod tests {
         std::fs::write(env_file.path(), "export WS_PORT=12345\n").unwrap();
 
         let code_dir = tempfile::TempDir::new().expect("tempdir");
-        std::fs::create_dir_all(code_dir.path().join("src/vesta")).unwrap();
+        std::fs::create_dir_all(code_dir.path().join("vesta")).unwrap();
         std::fs::write(code_dir.path().join("pyproject.toml"), "").unwrap();
         std::fs::write(code_dir.path().join("uv.lock"), "").unwrap();
 
-        let src_vesta = code_dir.path().join("src/vesta");
+        let src_vesta = code_dir.path().join("vesta");
         let pyproject = code_dir.path().join("pyproject.toml");
         let uv_lock = code_dir.path().join("uv.lock");
 

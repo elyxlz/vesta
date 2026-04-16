@@ -3,7 +3,7 @@ use vesta_tests::{TestAgent, SERVER, inject_fake_token, agent_container_name, do
 fn assert_agent_core_paths_permissions(container: &str, expect_readonly_mounts: bool) -> Result<(), String> {
     let script = if expect_readonly_mounts {
         r#"set -e
-for p in /root/agent/src/vesta /root/agent/pyproject.toml /root/agent/uv.lock; do
+for p in /root/agent/core /root/agent/pyproject.toml /root/agent/uv.lock; do
   if [ ! -e "$p" ]; then echo "missing $p"; exit 1; fi
   if [ -w "$p" ]; then echo "expected read-only mount: $p"; exit 1; fi
 done
@@ -11,7 +11,7 @@ if [ ! -w /root/agent/MEMORY.md ]; then echo "MEMORY.md should remain writable";
 "#
     } else {
         r#"set -e
-for p in /root/agent/src/vesta /root/agent/pyproject.toml /root/agent/uv.lock; do
+for p in /root/agent/core /root/agent/pyproject.toml /root/agent/uv.lock; do
   if [ ! -e "$p" ]; then echo "missing $p"; exit 1; fi
   if [ ! -w "$p" ]; then echo "expected writable (image copy): $p"; exit 1; fi
 done
