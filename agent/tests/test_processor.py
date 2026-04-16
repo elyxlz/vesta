@@ -5,8 +5,11 @@ import contextlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from claude_agent_sdk import ClaudeSDKError
+
 import vesta.models as vm
 from vesta.core.client import process_message
+from vesta.core.loops import _is_transient, _MAX_TRANSIENT_RETRIES
 
 
 async def _run_processor_test(
@@ -193,3 +196,142 @@ async def test_process_message_no_correction_on_empty_response(tmp_path):
         await process_message("hello", state=state, config=config, is_user=True)
 
     assert len(converse_calls) == 1
+
+
+# --- Transient error handling ---
+
+
+@pytest.mark.parametrize(
+    "msg",
+    ["HTTP 500 error", "502 bad gateway", "503 service unavailable", "529 overloaded", "overloaded_error", "internal_error"],
+)
+def test_is_transient_matches(msg):
+    assert _is_transient(RuntimeError(msg))
+
+
+@pytest.mark.parametrize("msg", ["connection refused", "timeout", "invalid request", "401 unauthorized"])
+def test_is_transient_no_match(msg):
+    assert not _is_transient(RuntimeError(msg))
+
+
+@pytest.mark.anyio
+async def test_transient_error_no_restart(tmp_path):
+    from vesta.core.loops import _process_message_safely
+
+    config = vm.VestaConfig(root=tmp_path)
+    state = vm.State()
+    state.shutdown_event = asyncio.Event()
+
+    async def side_effect(msg, *, state, config, is_user):
+        raise ClaudeSDKError("HTTP 500 Internal Server Error")
+
+    with patch("vesta.core.loops.process_message", side_effect=side_effect):
+        await _process_message_safely("hello", is_user=True, state=state, config=config)
+
+    assert not state.graceful_shutdown.is_set()
+    assert state.api_failures == 1
+
+
+@pytest.mark.anyio
+async def test_transient_error_resets_on_success(tmp_path):
+    from vesta.core.loops import _process_message_safely
+
+    config = vm.VestaConfig(root=tmp_path)
+    state = vm.State()
+    state.shutdown_event = asyncio.Event()
+    state.api_failures = 2
+
+    async def side_effect(msg, *, state, config, is_user):
+        return ([], state)
+
+    with patch("vesta.core.loops.process_message", side_effect=side_effect):
+        await _process_message_safely("hello", is_user=True, state=state, config=config)
+
+    assert state.api_failures == 0
+    assert not state.graceful_shutdown.is_set()
+
+
+@pytest.mark.anyio
+async def test_retry_loop_recovers(tmp_path):
+    from vesta.core.loops import _process_message_safely
+
+    config = vm.VestaConfig(root=tmp_path)
+    state = vm.State()
+    state.shutdown_event = asyncio.Event()
+    state.api_failures = _MAX_TRANSIENT_RETRIES - 1
+
+    call_count = 0
+
+    async def side_effect(msg, *, state, config, is_user):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise ClaudeSDKError("HTTP 503 Service Unavailable")
+        return ([], state)
+
+    with (
+        patch("vesta.core.loops.process_message", side_effect=side_effect),
+        patch("vesta.core.loops._RETRY_INTERVAL", 0.01),
+    ):
+        await _process_message_safely("hello", is_user=True, state=state, config=config)
+
+    assert not state.graceful_shutdown.is_set()
+    assert state.api_failures == 0
+    assert call_count == 2
+
+
+@pytest.mark.anyio
+async def test_retry_loop_exits_on_shutdown(tmp_path):
+    from vesta.core.loops import _process_message_safely
+
+    config = vm.VestaConfig(root=tmp_path)
+    state = vm.State()
+    state.shutdown_event = asyncio.Event()
+    state.api_failures = _MAX_TRANSIENT_RETRIES - 1
+
+    call_count = 0
+
+    async def side_effect(msg, *, state, config, is_user):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 2:
+            state.shutdown_event.set()
+        raise ClaudeSDKError("HTTP 503 Service Unavailable")
+
+    with (
+        patch("vesta.core.loops.process_message", side_effect=side_effect),
+        patch("vesta.core.loops._RETRY_INTERVAL", 0.01),
+    ):
+        await _process_message_safely("hello", is_user=True, state=state, config=config)
+
+    assert not state.graceful_shutdown.is_set()
+    assert call_count == 2
+
+
+@pytest.mark.anyio
+async def test_retry_loop_non_transient_triggers_restart(tmp_path):
+    from vesta.core.loops import _process_message_safely
+
+    config = vm.VestaConfig(root=tmp_path)
+    state = vm.State()
+    state.shutdown_event = asyncio.Event()
+    state.api_failures = _MAX_TRANSIENT_RETRIES - 1
+
+    call_count = 0
+
+    async def side_effect(msg, *, state, config, is_user):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise ClaudeSDKError("HTTP 503 Service Unavailable")
+        raise RuntimeError("Unexpected buffer overflow")
+
+    with (
+        patch("vesta.core.loops.process_message", side_effect=side_effect),
+        patch("vesta.core.loops._RETRY_INTERVAL", 0.01),
+    ):
+        await _process_message_safely("hello", is_user=True, state=state, config=config)
+
+    assert state.graceful_shutdown.is_set()
+    assert "buffer overflow" in state.restart_reason
+    assert call_count == 2
