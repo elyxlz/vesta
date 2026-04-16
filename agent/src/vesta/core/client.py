@@ -12,7 +12,9 @@ from claude_agent_sdk import (
     HookMatcher,
     HookContext,
     Message,
+    RateLimitEvent,
     ResultMessage,
+    SystemMessage,
     TextBlock,
     ThinkingBlock,
     ToolUseBlock,
@@ -20,6 +22,7 @@ from claude_agent_sdk import (
     create_sdk_mcp_server,
 )
 from claude_agent_sdk.types import (
+    PreCompactHookInput,
     PreToolUseHookInput,
     PostToolUseHookInput,
     SubagentStartHookInput,
@@ -117,6 +120,15 @@ def _parse_sdk_message(msg: Message, *, sub_agent_context: str | None) -> tuple[
             pass
         return ([], [], sub_agent_context, session_id, False)
 
+    if isinstance(msg, RateLimitEvent):
+        info = msg.rate_limit_info
+        logger.warning(f"Rate limit {info.status} (utilization={info.utilization}, type={info.rate_limit_type})")
+        return ([], [], sub_agent_context, None, False)
+
+    if isinstance(msg, SystemMessage):
+        logger.system(f"[{msg.subtype}] {json.dumps(msg.data, default=str)}")
+        return ([], [], sub_agent_context, None, False)
+
     if not isinstance(msg, AssistantMessage):
         return ([msg] if isinstance(msg, str) else [], [], sub_agent_context, None, False)
 
@@ -188,7 +200,7 @@ def _subagent_prefix(input_data: Mapping[str, object]) -> tuple[str, bool]:
 
 def _make_hooks(
     state: vm.State,
-) -> tuple[HookCallback, HookCallback, HookCallback, HookCallback]:
+) -> tuple[HookCallback, HookCallback, HookCallback, HookCallback, HookCallback]:
     async def log_tool_start(input_data: PreToolUseHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
         name = input_data["tool_name"]
         summary = _tool_summary(name, input_data["tool_input"])
@@ -204,25 +216,28 @@ def _make_hooks(
         state.event_bus.emit({"type": "tool_end", "tool": name, "subagent": is_sub})
         return tp.cast(HookJSONOutput, {})
 
+    async def log_compact(input_data: PreCompactHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
+        trigger = input_data["trigger"]
+        logger.client(f"Context compaction starting (trigger={trigger})")
+        return tp.cast(HookJSONOutput, {})
+
     return (
         tp.cast(HookCallback, log_tool_start),
         tp.cast(HookCallback, log_tool_finish),
         _subagent_hook(state, verb="started", event_type="subagent_start"),
         _subagent_hook(state, verb="stopped", event_type="subagent_stop"),
+        tp.cast(HookCallback, log_compact),
     )
 
 
 async def attempt_interrupt(state: vm.State, *, config: vm.VestaConfig, reason: str) -> bool:
-    logger.interrupt(f"Starting interrupt attempt: {reason}")
-
     client = state.client
     if not client:
-        logger.interrupt("No client, aborting")
         return False
 
     try:
         await asyncio.wait_for(client.interrupt(), timeout=config.interrupt_timeout)
-        logger.interrupt(f"{reason}: interrupt sent")
+        logger.debug(f"Interrupt sent: {reason}")
         return True
     except TimeoutError:
         logger.error("SDK unresponsive, sending SIGTERM for graceful shutdown")
@@ -297,7 +312,6 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
                 raise TimeoutError
 
             if interrupt_task and interrupt_task in done:
-                logger.interrupt("Conversation interrupted by new message")
                 await attempt_interrupt(state, config=config, reason="New message interrupt")
                 await _cancel_task(anext_task)
                 # Cancelling anext_task finalizes response_iter, so drain leftover
@@ -433,7 +447,7 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
     name = config.agent_name
     system_prompt = f"Your name is {name}.\n\n{system_prompt}"
 
-    pre_hook, post_hook, subagent_start_hook, subagent_stop_hook = _make_hooks(state)
+    pre_hook, post_hook, subagent_start_hook, subagent_stop_hook, compact_hook = _make_hooks(state)
 
     return ClaudeAgentOptions(
         system_prompt=system_prompt,
@@ -444,6 +458,7 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
             "PostToolUse": [HookMatcher(hooks=[post_hook])],
             "SubagentStart": [HookMatcher(hooks=[subagent_start_hook])],
             "SubagentStop": [HookMatcher(hooks=[subagent_stop_hook])],
+            "PreCompact": [HookMatcher(hooks=[compact_hook])],
         },
         permission_mode="bypassPermissions",
         cwd=config.root,
