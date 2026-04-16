@@ -48,7 +48,9 @@ def _require_daemon(config):
         pid_file.unlink(missing_ok=True)
         print(
             json.dumps(
-                {"error": "daemon not running (stale pid file) — start with: screen -dmS tasks tasks serve --notifications-dir ~/agent/notifications"}
+                {
+                    "error": "daemon not running (stale pid file) — start with: screen -dmS tasks tasks serve --notifications-dir ~/agent/notifications"
+                }
             ),
             file=sys.stderr,
         )
