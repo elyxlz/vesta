@@ -94,9 +94,9 @@ When both sides contain meaningful content for the same path, inspect both and m
 
 Examples:
 
-- `~/data`
-- `~/logs`
-- `~/notifications`
+- `~/agent/data`
+- `~/agent/logs`
+- `~/agent/notifications`
 - leftover runtime dirs
 - exports or caches created by earlier layouts
 - files that clearly belong to the agent rather than repo root

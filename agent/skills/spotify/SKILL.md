@@ -75,7 +75,7 @@ spotify organize watch --init            # initialize state file without process
 - Notification includes: track name, artist, track ID, track URI, and artist genres from Spotify
 - Logs progress to stderr, works well in a screen session: `screen -S spotify-watch spotify organize watch`
 - State file: `~/.spotify/watch_state.json` - tracks known liked IDs and last poll time
-- Notifications written to: `~/notifications/spotify_liked_{timestamp}.json`
+- Notifications written to: `~/agent/notifications/spotify_liked_{timestamp}.json`
 
 **Config** lives at `~/.spotify/organize.json`:
 - `skip_playlists` - playlist names to exclude from auto-sorting (queues, mixtapes, ambiguous ones)

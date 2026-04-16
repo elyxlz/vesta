@@ -2,7 +2,7 @@
 """Twitter/X monitoring daemon via Nitter RSS.
 
 Usage:
-    python3 monitor.py serve --notifications-dir ~/notifications
+    python3 monitor.py serve --notifications-dir ~/agent/notifications
     python3 monitor.py follow @FAOClimate
     python3 monitor.py unfollow @FAOClimate
     python3 monitor.py list
