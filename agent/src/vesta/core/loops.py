@@ -14,6 +14,7 @@ import vesta.models as vm
 from vesta import logger
 from vesta.core.client import process_message, build_client_options, attempt_interrupt, persist_session_id, _cancel_task
 from vesta.core.init import load_prompt, build_restart_context
+from vesta.events import ApiOutageEvent, ApiRecoveredEvent
 
 
 def _now() -> dt.datetime:
@@ -119,6 +120,29 @@ async def queue_greeting(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.V
 # --- Message processing ---
 
 
+_TRANSIENT_MARKERS = ("500", "502", "503", "529", "overloaded", "internal_error")
+_MAX_TRANSIENT_RETRIES = 3
+_RETRY_INTERVAL = 60  # seconds
+
+
+def _is_transient(error: Exception) -> bool:
+    msg = str(error).lower()
+    return any(marker in msg for marker in _TRANSIENT_MARKERS)
+
+
+async def _send_outage_notification(message: str, *, config: vm.VestaConfig) -> None:
+    if not config.user_phone:
+        return
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "whatsapp", "send", "--to", config.user_phone, "--message", message,
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+        )
+        await asyncio.wait_for(proc.wait(), timeout=10)
+    except Exception as e:
+        logger.warning(f"Outage notification failed: {e}")
+
+
 async def _process_message_safely(msg: str, *, is_user: bool, state: vm.State, config: vm.VestaConfig) -> None:
     try:
         if is_user:
@@ -129,7 +153,40 @@ async def _process_message_safely(msg: str, *, is_user: bool, state: vm.State, c
             logger.system(preview.replace("\n", " "))
         state.event_bus.set_state("thinking")
         await process_message(msg, state=state, config=config, is_user=is_user)
+        state.api_failures = 0
     except (ClaudeSDKError, OSError, RuntimeError, ValueError, TimeoutError) as e:
+        if _is_transient(e):
+            state.api_failures += 1
+            logger.warning(f"Transient API error ({state.api_failures}/{_MAX_TRANSIENT_RETRIES}): {e}")
+            state.event_bus.emit(ApiOutageEvent(type="api_outage", text=str(e), retry_count=state.api_failures))
+
+            if state.api_failures >= _MAX_TRANSIENT_RETRIES:
+                await _send_outage_notification(
+                    "Anthropic API is currently down. "
+                    "Status: https://status.anthropic.com — "
+                    "I'll retry automatically and message you when I'm back.",
+                    config=config,
+                )
+                while not state.shutdown_event.is_set() and not state.graceful_shutdown.is_set():
+                    await asyncio.sleep(_RETRY_INTERVAL)
+                    try:
+                        await process_message(msg, state=state, config=config, is_user=is_user)
+                        state.api_failures = 0
+                        await _send_outage_notification("API is back online, I'm operational again.", config=config)
+                        state.event_bus.emit(ApiRecoveredEvent(type="api_recovered"))
+                        return
+                    except Exception as retry_e:
+                        if _is_transient(retry_e):
+                            logger.warning(f"API still down, retrying in {_RETRY_INTERVAL}s...")
+                        else:
+                            error_msg = str(retry_e) or type(retry_e).__name__
+                            logger.error(f"Error processing message: {error_msg} — triggering restart")
+                            state.event_bus.emit({"type": "error", "text": error_msg})
+                            state.restart_reason = f"error — {error_msg}"
+                            state.graceful_shutdown.set()
+                            return
+            return
+
         if isinstance(e, TimeoutError):
             error_msg = "Response timed out"
         else:
