@@ -84,8 +84,11 @@ fn latest_released_vestad_upgrades_to_current_and_agent_git_state_is_valid() {
     let sparse = exec_in_container(&new_container, "git -C ~ sparse-checkout list")
         .expect("sparse-checkout list");
     assert!(
-        sparse.lines().any(|line| line.trim().starts_with("agent/")),
-        "expected sparse-checkout to include agent/ paths, got: {sparse}"
+        sparse.lines().any(|line| {
+            let trimmed = line.trim();
+            trimmed == "agent" || trimmed.starts_with("agent/")
+        }),
+        "expected sparse-checkout to include agent paths, got: {sparse}"
     );
 
     let porcelain = exec_in_container(&new_container, "git -C ~ status --porcelain --untracked-files=all")
