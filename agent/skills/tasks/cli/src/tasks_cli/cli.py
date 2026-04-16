@@ -212,8 +212,7 @@ def _main_remind():
     rejected = {"create", "add", "new", "set", "get", "show"}
     if subcmd in rejected:
         print(
-            f'Error: "{subcmd}" is not a valid subcommand. '
-            f"To set a reminder, use: tasks remind \"your message\" [options]",
+            f'Error: "{subcmd}" is not a valid subcommand. To set a reminder, use: tasks remind "your message" [options]',
             file=sys.stderr,
         )
         sys.exit(1)
