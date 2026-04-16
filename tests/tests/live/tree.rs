@@ -2,11 +2,12 @@ use vesta_tests::exec_in_container;
 
 use super::common::setup_live_agent;
 
-/// Create a live agent with an old-style ~/vesta/ layout injected before first
-/// start. The agent's first_start_setup prompt instructs it to migrate ~/vesta/
-/// into ~/agent/ using upstream-sync/SETUP.md. Since wait_ready only returns
-/// after the first-start setup prompt is fully processed, the migration must
-/// be complete by the time we run assertions.
+/// Create a live agent with an old-style ~/vesta/ layout and a pre-existing
+/// first_start_done marker. This simulates a rebuild where vestad normalized
+/// the filesystem but the agent still needs to run its migration prompt
+/// (which fires on non-first-start restarts). Since wait_ready only returns
+/// after the migration prompt is fully processed, the migration must be
+/// complete by the time we run assertions.
 #[test]
 fn first_start_migrates_old_layout() {
     let Some((_agent, container)) = setup_live_agent(
@@ -61,7 +62,8 @@ fn first_start_migrates_old_layout() {
         .expect(".claude/skills should be a symlink after migration");
 }
 
-/// Seed the container with an old-style layout before credentials are injected.
+/// Seed the container with an old-style layout and mark first_start as done
+/// so the agent takes the restart path (which runs the migration prompt).
 fn seed_old_layout(container: &str) {
     exec_in_container(container, r#"
         mkdir -p ~/vesta/agent/prompts ~/vesta/agent/skills ~/vesta/data ~/vesta/notifications
@@ -69,5 +71,7 @@ fn seed_old_layout(container: &str) {
         echo 'old data' > ~/vesta/data/custom.txt
         mkdir -p ~/vesta/random-dir
         echo 'junk' > ~/vesta/random-dir/file.txt
+        mkdir -p ~/agent/data
+        echo '1' > ~/agent/data/first_start_done
     "#).expect("seed old layout");
 }

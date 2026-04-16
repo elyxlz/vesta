@@ -93,21 +93,19 @@ async def queue_greeting(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.V
         return
 
     if reason == "first_start":
-        parts = []
-        migration_prompt = load_prompt("migration", config)
-        if migration_prompt:
-            parts.append(migration_prompt.strip())
         setup_prompt = load_prompt("first_start_setup", config)
         if setup_prompt:
-            parts.append(setup_prompt.strip())
-
-        if parts:
-            combined = f"[System: your name is {config.agent_name}]\n\n" + "\n\n---\n\n".join(parts)
+            combined = f"[System: your name is {config.agent_name}]\n\n{setup_prompt.strip()}"
             await queue.put((combined, False))
-            logger.startup("Queued first_start (migration + setup)")
+            logger.startup("Queued first_start setup")
 
         (config.data_dir / "first_start_done").write_text("1")
         return
+
+    migration_prompt = load_prompt("migration", config)
+    if migration_prompt:
+        await queue.put((migration_prompt.strip(), False))
+        logger.startup("Queued migration prompt")
 
     extras = []
     flag = config.data_dir / "show_dreamer_summary"
