@@ -13,6 +13,7 @@ logger = logging.getLogger("voice.deepgram")
 DEEPGRAM_API = "https://api.deepgram.com"
 DEEPGRAM_WS = "wss://api.deepgram.com"
 MODEL = "flux-general-en"
+MODEL_MULTI = "nova-3"
 ENCODING = "linear16"
 SAMPLE_RATE = 16000
 
@@ -60,6 +61,13 @@ class DeepgramStt:
                 "description": "stop text-to-speech playback when you start speaking",
                 "default": True,
             },
+            {
+                "key": "multi_language",
+                "type": "bool",
+                "label": "multi-language detection",
+                "description": "automatically detect spoken language per utterance (English, Italian, and more); uses Nova-3 model",
+                "default": False,
+            },
         ]
 
     def __init__(self) -> None:
@@ -96,13 +104,17 @@ class DeepgramStt:
             min(voice_config.EOT_TIMEOUT_MS_MAX, eot_timeout_ms),
         )
 
+        multi_language: bool = bool(stt_domain.get("multi_language"))
+        model = MODEL_MULTI if multi_language else MODEL
         params: list[tuple[str, str]] = [
-            ("model", MODEL),
+            ("model", model),
             ("encoding", ENCODING),
             ("sample_rate", str(SAMPLE_RATE)),
             ("eot_threshold", str(eot_threshold)),
             ("eot_timeout_ms", str(eot_timeout_ms)),
         ]
+        if multi_language:
+            params.append(("language", "multi"))
         for term in keyterms:
             params.append(("keyterm", term))
 
