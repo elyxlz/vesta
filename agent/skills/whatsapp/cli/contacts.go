@@ -31,7 +31,7 @@ func (wac *WhatsAppClient) requireManualContact(jid types.JID) error {
 			phone = "this contact"
 		}
 		return fmt.Errorf(
-			"No saved contact found for %s. Ask the user who this is and run add_contact before sending messages.",
+			"No saved contact found for %s. Ask the user who this is, then run add-contact --name <name> --phone <number>.",
 			phone,
 		)
 	}

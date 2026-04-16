@@ -72,7 +72,7 @@ func (wac *WhatsAppClient) RequestBackfill(chatIdentifier string, count int) (bo
 
 	msgID, senderJID, isFromMe, ts, err := wac.store.GetOldestMessage(jid.String())
 	if err != nil {
-		return false, fmt.Sprintf("No messages found for this chat to anchor backfill: %v", err)
+		return false, "No local message history for this chat. WhatsApp history sync requires an existing message as an anchor — send a message to this contact first (or ask them to send one), then retry backfill."
 	}
 
 	senderParsed, err := types.ParseJID(senderJID)
@@ -95,7 +95,7 @@ func (wac *WhatsAppClient) RequestBackfill(chatIdentifier string, count int) (bo
 		return false, fmt.Sprintf("Failed to request backfill: %v", err)
 	}
 
-	return true, fmt.Sprintf("Backfill requested for %d messages before %s. Messages will arrive asynchronously.", count, ts.Format(time.RFC3339))
+	return true, fmt.Sprintf("Backfill requested for %d messages before %s. Messages will arrive asynchronously — wait a few seconds then use list-messages to check.", count, ts.Format(time.RFC3339))
 }
 
 // DeleteChat clears all messages in a chat both locally and on the WhatsApp servers
