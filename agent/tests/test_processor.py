@@ -9,7 +9,7 @@ from claude_agent_sdk import ClaudeSDKError
 
 import vesta.models as vm
 from vesta.core.client import process_message
-from vesta.core.loops import _is_transient, _MAX_TRANSIENT_RETRIES
+from vesta.core.loops import _is_transient, _MAX_TRANSIENT_RETRIES, _process_message_safely
 
 
 async def _run_processor_test(
@@ -215,13 +215,7 @@ def test_is_transient_no_match(msg):
 
 
 @pytest.mark.anyio
-async def test_transient_error_no_restart(tmp_path):
-    from vesta.core.loops import _process_message_safely
-
-    config = vm.VestaConfig(root=tmp_path)
-    state = vm.State()
-    state.shutdown_event = asyncio.Event()
-
+async def test_transient_error_no_restart(config, state):
     async def side_effect(msg, *, state, config, is_user):
         raise ClaudeSDKError("HTTP 500 Internal Server Error")
 
@@ -233,12 +227,7 @@ async def test_transient_error_no_restart(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_transient_error_resets_on_success(tmp_path):
-    from vesta.core.loops import _process_message_safely
-
-    config = vm.VestaConfig(root=tmp_path)
-    state = vm.State()
-    state.shutdown_event = asyncio.Event()
+async def test_transient_error_resets_on_success(config, state):
     state.api_failures = 2
 
     async def side_effect(msg, *, state, config, is_user):
@@ -252,14 +241,8 @@ async def test_transient_error_resets_on_success(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_retry_loop_recovers(tmp_path):
-    from vesta.core.loops import _process_message_safely
-
-    config = vm.VestaConfig(root=tmp_path)
-    state = vm.State()
-    state.shutdown_event = asyncio.Event()
+async def test_retry_loop_recovers(config, state):
     state.api_failures = _MAX_TRANSIENT_RETRIES - 1
-
     call_count = 0
 
     async def side_effect(msg, *, state, config, is_user):
@@ -281,14 +264,8 @@ async def test_retry_loop_recovers(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_retry_loop_exits_on_shutdown(tmp_path):
-    from vesta.core.loops import _process_message_safely
-
-    config = vm.VestaConfig(root=tmp_path)
-    state = vm.State()
-    state.shutdown_event = asyncio.Event()
+async def test_retry_loop_exits_on_shutdown(config, state):
     state.api_failures = _MAX_TRANSIENT_RETRIES - 1
-
     call_count = 0
 
     async def side_effect(msg, *, state, config, is_user):
@@ -309,14 +286,8 @@ async def test_retry_loop_exits_on_shutdown(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_retry_loop_non_transient_triggers_restart(tmp_path):
-    from vesta.core.loops import _process_message_safely
-
-    config = vm.VestaConfig(root=tmp_path)
-    state = vm.State()
-    state.shutdown_event = asyncio.Event()
+async def test_retry_loop_non_transient_triggers_restart(config, state):
     state.api_failures = _MAX_TRANSIENT_RETRIES - 1
-
     call_count = 0
 
     async def side_effect(msg, *, state, config, is_user):
