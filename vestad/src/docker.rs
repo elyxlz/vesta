@@ -89,7 +89,7 @@ const AGENT_ENTRYPOINT_STEPS: &[&str] = &[
        git -C ~ merge -s ours FETCH_HEAD --no-edit --allow-unrelated-histories 2>/dev/null; \
      fi",
     "git -C ~ rev-parse --verify \"$AGENT_NAME\" 2>/dev/null || git -C ~ checkout -b \"$AGENT_NAME\"",
-    "exec uv run --frozen --project /root/agent python -m core.main",
+    "cd /root/agent && exec uv run --frozen python -m core.main",
 ];
 
 pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
