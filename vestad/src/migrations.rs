@@ -72,34 +72,20 @@ if [ -d /root/vesta/.git ] && [ ! -d /root/.git ]; then
   printf '%s\n' '/*' '!.gitignore' '!/agent/' > /root/.gitignore
 fi
 
-# Also handle src/vesta → core flatten+rename if present after layout normalization
+# Also handle src/vesta → core flatten+rename if present after layout normalization.
+# Only moves files into the expected directory structure; the host-mounted code
+# (manage_agent_code=true) or new Docker image provides correct source files.
 V=/root/agent/src/vesta
 if [ -d "$V" ] && [ ! -d /root/agent/core ]; then
   if [ -d "$V/core" ]; then
     for f in "$V"/core/*.py; do
       [ -f "$f" ] || continue
-      name="$(basename "$f")"
-      if [ "$name" = "__init__.py" ] || [ "$name" = "init.py" ]; then
-        mv "$f" "$V/helpers.py"
-      else
-        mv "$f" "$V/$name"
-      fi
+      mv "$f" "$V/$(basename "$f")"
     done
     rm -rf "$V/core"
   fi
   mv "$V" /root/agent/core
   rm -rf /root/agent/src
-
-  for f in /root/agent/core/*.py; do
-    [ -f "$f" ] || continue
-    sed -i \
-      -e 's/^from vesta\.core\.init import/from .helpers import/' \
-      -e 's/^from vesta\.core\.\(.*\)/from .\1/' \
-      -e 's/^from vesta\.\(.*\)/from .\1/' \
-      -e 's/^import vesta\.\(.*\) as /from . import \1 as /' \
-      -e 's/from \.init import/from .helpers import/' \
-      "$f"
-  done
 fi
 "#;
 
@@ -275,36 +261,25 @@ async fn run_migration_script(
 
 // One-time migration for the agent/src/vesta/ → agent/core/ rename.
 //
-// Pre-0.1.135 images stored Python source at /root/agent/src/vesta/. The
-// current layout expects /root/agent/core/. During rebuild we detect the old
-// layout in the snapshot and rename it. Also updates sparse-checkout config
-// and cleans up the now-empty src/ directory.
-// The old layout had a nested core/ sub-package inside src/vesta/:
-//   src/vesta/{api,config,events,logger,main,models}.py
-//   src/vesta/core/{client,loops,init}.py
-//
-// We flatten by moving core/* up into src/vesta/, rename init.py → helpers.py,
-// delete the empty core/ subdir, then rename src/vesta/ → core/.
-// Finally, rewrite all imports from absolute (from vesta.X) to relative (from .X).
+// Pre-0.1.135 images stored Python source at /root/agent/src/vesta/ with a
+// nested core/ sub-package. The current layout expects a flat /root/agent/core/.
+// During rebuild we flatten and rename the directory structure. No import
+// rewriting is needed: with manage_agent_code=true the host-mounted code
+// provides correct source files; with manage_agent_code=false the new Docker
+// image provides them.
 const SRC_VESTA_TO_CORE_SCRIPT: &str = r#"set -euo pipefail
 if [ -d /root/agent/src/vesta ] && [ ! -d /root/agent/core ]; then
   V=/root/agent/src/vesta
 
-  # Flatten core/ sub-package: move files up, rename init.py → helpers.py
+  # Flatten core/ sub-package into parent
   if [ -d "$V/core" ]; then
     for f in "$V"/core/*.py; do
       [ -f "$f" ] || continue
-      name="$(basename "$f")"
-      if [ "$name" = "__init__.py" ] || [ "$name" = "init.py" ]; then
-        mv "$f" "$V/helpers.py"
-      else
-        mv "$f" "$V/$name"
-      fi
+      mv "$f" "$V/$(basename "$f")"
     done
     rm -rf "$V/core"
   fi
 
-  # Rename src/vesta/ → core/
   mv "$V" /root/agent/core
   rm -rf /root/agent/src
 
@@ -313,18 +288,6 @@ if [ -d /root/agent/src/vesta ] && [ ! -d /root/agent/core ]; then
   if [ -f "$SC" ] && grep -q 'agent/src' "$SC"; then
     sed -i 's|agent/src/vesta|agent/core|g; s|agent/src|agent/core|g' "$SC"
   fi
-
-  # Rewrite imports: absolute → relative
-  for f in /root/agent/core/*.py; do
-    [ -f "$f" ] || continue
-    sed -i \
-      -e 's/^from vesta\.core\.init import/from .helpers import/' \
-      -e 's/^from vesta\.core\.\(.*\)/from .\1/' \
-      -e 's/^from vesta\.\(.*\)/from .\1/' \
-      -e 's/^import vesta\.\(.*\) as /from . import \1 as /' \
-      -e 's/from \.init import/from .helpers import/' \
-      "$f"
-  done
 fi
 "#;
 
