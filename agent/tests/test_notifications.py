@@ -69,7 +69,7 @@ VALID_NOTIF = json.dumps({"timestamp": "2025-01-01T00:00:00", "source": "test", 
 )
 @pytest.mark.anyio
 async def test_load_notifications_parsing(tmp_path, content, should_parse):
-    config = vm.VestaConfig(root=tmp_path)
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
     config.notifications_dir.mkdir(parents=True, exist_ok=True)
     (config.notifications_dir / "test.json").write_text(content)
 
@@ -84,7 +84,7 @@ async def test_load_notifications_parsing(tmp_path, content, should_parse):
 
 @pytest.mark.anyio
 async def test_load_notifications_deletes_bad_files(tmp_path):
-    config = vm.VestaConfig(root=tmp_path)
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
     config.notifications_dir.mkdir(parents=True, exist_ok=True)
     bad_file = config.notifications_dir / "bad.json"
     bad_file.write_text("not json")
@@ -97,7 +97,7 @@ async def test_load_notifications_deletes_bad_files(tmp_path):
 @pytest.mark.anyio
 async def test_load_notifications_partial_success(tmp_path):
     """Mix of valid and invalid files: valid ones parse, invalid ones are deleted."""
-    config = vm.VestaConfig(root=tmp_path)
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
     config.notifications_dir.mkdir(parents=True, exist_ok=True)
     (config.notifications_dir / "good.json").write_text(VALID_NOTIF)
     bad_file = config.notifications_dir / "bad.json"
@@ -180,7 +180,7 @@ def test_notification_format_for_display():
 
 @pytest.mark.anyio
 async def test_load_new_notifications_emits_events(tmp_path):
-    config = vm.VestaConfig(root=tmp_path)
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
     config.notifications_dir.mkdir(parents=True, exist_ok=True)
     (config.notifications_dir / "n.json").write_text(VALID_NOTIF)
 
@@ -200,7 +200,7 @@ async def test_load_new_notifications_emits_events(tmp_path):
 
 @pytest.mark.anyio
 async def test_process_batch_queues_prompt(tmp_path):
-    config = vm.VestaConfig(root=tmp_path)
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
     config.notifications_dir.mkdir(parents=True, exist_ok=True)
     state = vm.State()
     queue: asyncio.Queue = asyncio.Queue()
@@ -230,7 +230,7 @@ async def test_process_batch_empty_is_noop():
 
 @pytest.mark.anyio
 async def test_process_batch_deletes_files(tmp_path):
-    config = vm.VestaConfig(root=tmp_path)
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
     config.notifications_dir.mkdir(parents=True, exist_ok=True)
     state = vm.State()
     queue: asyncio.Queue = asyncio.Queue()

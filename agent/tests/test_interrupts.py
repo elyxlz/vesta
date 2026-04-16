@@ -111,7 +111,7 @@ async def test_message_processor_interrupts_on_new_message(tmp_path):
                 await asyncio.sleep(0.05)
         return (["OK"], state)
 
-    config = vm.VestaConfig(root=tmp_path)
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
     state = vm.State()
     state.shutdown_event = asyncio.Event()
     queue: asyncio.Queue = asyncio.Queue()
@@ -159,7 +159,7 @@ async def test_process_interruptible_cancels_process_task(tmp_path):
     """Cancelling _process_interruptible must cancel its in-flight process_task (no orphaned tasks)."""
     from core.loops import _process_interruptible
 
-    config = vm.VestaConfig(root=tmp_path)
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
     state = vm.State()
     state.shutdown_event = asyncio.Event()
     queue: asyncio.Queue = asyncio.Queue()
@@ -192,7 +192,7 @@ async def test_run_vesta_force_exits_on_hung_cleanup(tmp_path):
     """run_vesta must force-exit if task cleanup hangs (e.g. SDK __aexit__ blocking)."""
     from core.main import run_vesta
 
-    config = vm.VestaConfig(root=tmp_path)
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
     config.data_dir.mkdir(parents=True, exist_ok=True)
     state = vm.State()
 

@@ -18,7 +18,7 @@ async def test_queues_prompt_and_archives(tmp_path):
     queue: asyncio.Queue = asyncio.Queue()
 
     dreamer_hour = 4
-    config = vm.VestaConfig(root=tmp_path, nightly_memory_hour=dreamer_hour)
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent", nightly_memory_hour=dreamer_hour)
     fake_now = dt.datetime(2025, 6, 15, dreamer_hour, 0, 0)
 
     with (
@@ -40,7 +40,7 @@ async def test_skips_when_already_run_today(tmp_path):
     from core.loops import process_nightly_memory
 
     dreamer_hour = 4
-    config = vm.VestaConfig(root=tmp_path, nightly_memory_hour=dreamer_hour)
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent", nightly_memory_hour=dreamer_hour)
     fake_now = dt.datetime(2025, 6, 15, dreamer_hour, 0, 0)
 
     state = vm.State()

@@ -59,7 +59,7 @@ async def test_resume_fallback_clears_session_and_retries(tmp_path):
     """When ClaudeSDKClient.__aenter__ fails with a session_id set, it should clear the session and retry."""
     from core.loops import message_processor
 
-    config = vm.VestaConfig(root=tmp_path)
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
     config.data_dir.mkdir(parents=True, exist_ok=True)
     config.session_file.write_text("stale-session-id-1234567890")
 
@@ -104,7 +104,7 @@ async def test_resume_fallback_raises_without_session(tmp_path):
     """When __aenter__ fails and there's no session_id, it should raise immediately."""
     from core.loops import message_processor
 
-    config = vm.VestaConfig(root=tmp_path)
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
     config.data_dir.mkdir(parents=True, exist_ok=True)
     state = vm.State(session_id=None)
     state.shutdown_event = asyncio.Event()
@@ -132,7 +132,7 @@ async def test_resume_fallback_raises_on_second_failure(tmp_path):
     """When retry also fails, it should raise."""
     from core.loops import message_processor
 
-    config = vm.VestaConfig(root=tmp_path)
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
     config.data_dir.mkdir(parents=True, exist_ok=True)
     config.session_file.write_text("stale-session")
 
@@ -165,7 +165,7 @@ async def test_processor_crash_triggers_graceful_shutdown(tmp_path):
     """When message_processor crashes, _on_processor_done should set graceful_shutdown."""
     from core.main import run_vesta
 
-    config = vm.VestaConfig(root=tmp_path)
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
     for path in [config.data_dir, config.notifications_dir, config.logs_dir, config.dreamer_dir]:
         path.mkdir(parents=True, exist_ok=True)
 

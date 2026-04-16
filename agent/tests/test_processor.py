@@ -20,7 +20,7 @@ async def _run_processor_test(
     """Shared helper for message_processor tests."""
     from core.loops import message_processor
 
-    config = vm.VestaConfig(root=tmp_path)
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
     state = pre_state or vm.State()
     state.shutdown_event = asyncio.Event()
     queue: asyncio.Queue = asyncio.Queue()
@@ -100,7 +100,7 @@ async def test_restarts_on_timeout(tmp_path):
 def test_restart_reason_round_trip(tmp_path):
     from core.main import _write_restart_reason, _read_restart_reason
 
-    config = vm.VestaConfig(root=tmp_path)
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
     config.data_dir.mkdir(parents=True, exist_ok=True)
 
     _write_restart_reason(config, "nightly — conversation history reset, dreamer ran")
@@ -113,7 +113,7 @@ def test_restart_reason_round_trip(tmp_path):
 async def test_client_cleared_on_cancellation(tmp_path):
     from core.loops import message_processor
 
-    config = vm.VestaConfig(root=tmp_path)
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
     state = vm.State()
     state.shutdown_event = asyncio.Event()
     queue: asyncio.Queue = asyncio.Queue()
@@ -143,7 +143,7 @@ async def test_client_cleared_on_cancellation(tmp_path):
 @pytest.mark.anyio
 async def test_process_message_sends_correction_on_em_dash(tmp_path):
     """process_message should call converse a second time when an em dash is detected."""
-    config = vm.VestaConfig(root=tmp_path)
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
     state = vm.State()
     converse_calls: list[str] = []
 
@@ -164,7 +164,7 @@ async def test_process_message_sends_correction_on_em_dash(tmp_path):
 @pytest.mark.anyio
 async def test_process_message_no_correction_without_dashes(tmp_path):
     """process_message should not send a correction when no dashes are present."""
-    config = vm.VestaConfig(root=tmp_path)
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
     state = vm.State()
     converse_calls: list[str] = []
 
@@ -181,7 +181,7 @@ async def test_process_message_no_correction_without_dashes(tmp_path):
 @pytest.mark.anyio
 async def test_process_message_no_correction_on_empty_response(tmp_path):
     """process_message should not send a correction when there are no responses."""
-    config = vm.VestaConfig(root=tmp_path)
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
     state = vm.State()
     converse_calls: list[str] = []
 
