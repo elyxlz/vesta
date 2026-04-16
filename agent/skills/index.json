@@ -56,6 +56,10 @@
     "description": "This skill should be used when the user asks about \"spotify\", \"music\", \"playlist\", \"playlists\", \"song\", \"songs\", \"track\", \"tracks\", \"now playing\", \"what's playing\", \"play\", \"pause\", \"skip\", \"queue\", or needs to search for music, manage playlists, or control playback."
   },
   {
+    "name": "ssh",
+    "description": "Use when the user wants to allow another computer to SSH into this machine, share remote access, or set up a public SSH tunnel. Creates an internet-accessible SSH endpoint via bore."
+  },
+  {
     "name": "tasks",
     "description": "This skill should be used when the user asks about \"tasks\", \"to-do\", \"todo\", \"task list\", \"reminders\", \"remind me\", \"alert\", \"notify\", or needs to create, manage, track, or organize tasks, to-do items, reminders, and time-based notifications. Everything actionable becomes a task immediately. All work, progress, drafts go in task metadata. Reminders are nudges about when to think about something, standalone or linked to a task. IMPORTANT: this skill requires a background daemon. Before doing anything, immediately make sure the daemon is running. Read this skill to learn how."
   },
