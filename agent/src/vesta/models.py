@@ -27,6 +27,7 @@ class State:
     dreamer_active: bool = False
     interrupt_event: asyncio.Event | None = None
     event_bus: EventBus = dc.field(default_factory=EventBus)
+    api_failures: int = 0
 
 
 class Notification(pyd.BaseModel):

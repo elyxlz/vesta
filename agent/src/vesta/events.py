@@ -76,6 +76,16 @@ class ChatEvent(_BaseEvent):
     text: str
 
 
+class ApiOutageEvent(_BaseEvent):
+    type: tp.Literal["api_outage"]
+    text: str
+    retry_count: int
+
+
+class ApiRecoveredEvent(_BaseEvent):
+    type: tp.Literal["api_recovered"]
+
+
 type StreamEvent = (
     StatusEvent
     | ToolStartEvent
@@ -88,6 +98,8 @@ type StreamEvent = (
     | SubagentStartEvent
     | SubagentStopEvent
     | ChatEvent
+    | ApiOutageEvent
+    | ApiRecoveredEvent
 )
 
 

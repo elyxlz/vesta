@@ -85,3 +85,4 @@ class VestaConfig(pyd_settings.BaseSettings):
 
     agent_name: str = "vesta"
     agent_model: str = "opus"
+    user_phone: str | None = None
