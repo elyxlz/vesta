@@ -11,6 +11,8 @@ use crate::types::BackupType;
 const LEGACY_REPO_ROOT: &str = "/root/vesta";
 const LEGACY_MARKER_PATH: &str = "/root/vesta/.git/HEAD";
 const ROOT_GIT_MARKER_PATH: &str = "/root/.git/HEAD";
+const OLD_SRC_VESTA_MARKER: &str = "/root/agent/src/vesta/main.py";
+const NEW_CORE_MARKER: &str = "/root/agent/core/main.py";
 const NORMALIZE_HELPER_SLEEP_SECS: &str = "600";
 // One-time container-layout migration for pre-agent-dir releases.
 //
@@ -68,6 +70,36 @@ if [ -d /root/vesta/.git ] && [ ! -d /root/.git ]; then
   git -C /root sparse-checkout init --cone
   git -C /root sparse-checkout set agent
   printf '%s\n' '/*' '!.gitignore' '!/agent/' > /root/.gitignore
+fi
+
+# Also handle src/vesta → core flatten+rename if present after layout normalization
+V=/root/agent/src/vesta
+if [ -d "$V" ] && [ ! -d /root/agent/core ]; then
+  if [ -d "$V/core" ]; then
+    for f in "$V"/core/*.py; do
+      [ -f "$f" ] || continue
+      name="$(basename "$f")"
+      if [ "$name" = "__init__.py" ] || [ "$name" = "init.py" ]; then
+        mv "$f" "$V/helpers.py"
+      else
+        mv "$f" "$V/$name"
+      fi
+    done
+    rm -rf "$V/core"
+  fi
+  mv "$V" /root/agent/core
+  rm -rf /root/agent/src
+
+  for f in /root/agent/core/*.py; do
+    [ -f "$f" ] || continue
+    sed -i \
+      -e 's/^from vesta\.core\.init import/from .helpers import/' \
+      -e 's/^from vesta\.core\.\(.*\)/from .\1/' \
+      -e 's/^from vesta\.\(.*\)/from .\1/' \
+      -e 's/^import vesta\.\(.*\) as /from . import \1 as /' \
+      -e 's/from \.init import/from .helpers import/' \
+      "$f"
+  done
 fi
 "#;
 
@@ -200,11 +232,12 @@ async fn remove_container_force_if_exists(docker: &Docker, cname: &str) {
     let _ = remove_container_force(docker, cname).await;
 }
 
-async fn normalize_legacy_snapshot_image(
+async fn run_migration_script(
     docker: &Docker,
     image: &str,
     helper_name: &str,
     normalized_tag: &str,
+    script: &str,
 ) -> Result<(), DockerError> {
     let mut labels = HashMap::new();
     labels.insert("vesta.managed".to_string(), "false".to_string());
@@ -229,10 +262,8 @@ async fn normalize_legacy_snapshot_image(
     docker.create_container(Some(create_opts), config).await?;
     docker.start_container(helper_name, None::<StartContainerOptions<String>>).await?;
 
-    // Rewrite the legacy /root/vesta snapshot in place, then commit the helper
-    // container as the normalized image used for the actual rebuild.
-    let normalize_result = exec_container_script(docker, helper_name, LEGACY_LAYOUT_NORMALIZE_SCRIPT).await;
-    if let Err(err) = normalize_result {
+    let result = exec_container_script(docker, helper_name, script).await;
+    if let Err(err) = result {
         remove_container_force_if_exists(docker, helper_name).await;
         return Err(err);
     }
@@ -240,6 +271,80 @@ async fn normalize_legacy_snapshot_image(
     let commit_result = snapshot_container(docker, helper_name, normalized_tag, &[]).await;
     remove_container_force_if_exists(docker, helper_name).await;
     commit_result
+}
+
+// One-time migration for the agent/src/vesta/ → agent/core/ rename.
+//
+// Pre-0.1.135 images stored Python source at /root/agent/src/vesta/. The
+// current layout expects /root/agent/core/. During rebuild we detect the old
+// layout in the snapshot and rename it. Also updates sparse-checkout config
+// and cleans up the now-empty src/ directory.
+// The old layout had a nested core/ sub-package inside src/vesta/:
+//   src/vesta/{api,config,events,logger,main,models}.py
+//   src/vesta/core/{client,loops,init}.py
+//
+// We flatten by moving core/* up into src/vesta/, rename init.py → helpers.py,
+// delete the empty core/ subdir, then rename src/vesta/ → core/.
+// Finally, rewrite all imports from absolute (from vesta.X) to relative (from .X).
+const SRC_VESTA_TO_CORE_SCRIPT: &str = r#"set -euo pipefail
+if [ -d /root/agent/src/vesta ] && [ ! -d /root/agent/core ]; then
+  V=/root/agent/src/vesta
+
+  # Flatten core/ sub-package: move files up, rename init.py → helpers.py
+  if [ -d "$V/core" ]; then
+    for f in "$V"/core/*.py; do
+      [ -f "$f" ] || continue
+      name="$(basename "$f")"
+      if [ "$name" = "__init__.py" ] || [ "$name" = "init.py" ]; then
+        mv "$f" "$V/helpers.py"
+      else
+        mv "$f" "$V/$name"
+      fi
+    done
+    rm -rf "$V/core"
+  fi
+
+  # Rename src/vesta/ → core/
+  mv "$V" /root/agent/core
+  rm -rf /root/agent/src
+
+  # Update sparse-checkout if it references old paths
+  SC=/root/.git/info/sparse-checkout
+  if [ -f "$SC" ] && grep -q 'agent/src' "$SC"; then
+    sed -i 's|agent/src/vesta|agent/core|g; s|agent/src|agent/core|g' "$SC"
+  fi
+
+  # Rewrite imports: absolute → relative
+  for f in /root/agent/core/*.py; do
+    [ -f "$f" ] || continue
+    sed -i \
+      -e 's/^from vesta\.core\.init import/from .helpers import/' \
+      -e 's/^from vesta\.core\.\(.*\)/from .\1/' \
+      -e 's/^from vesta\.\(.*\)/from .\1/' \
+      -e 's/^import vesta\.\(.*\) as /from . import \1 as /' \
+      -e 's/from \.init import/from .helpers import/' \
+      "$f"
+  done
+fi
+"#;
+
+pub async fn maybe_rename_src_vesta_to_core(
+    docker: &Docker,
+    cname: &str,
+    snapshot_tag: &str,
+    helper_name: &str,
+    normalized_tag: &str,
+) -> Result<bool, DockerError> {
+    let has_old = container_has_path(docker, cname, OLD_SRC_VESTA_MARKER).await;
+    let has_new = container_has_path(docker, cname, NEW_CORE_MARKER).await;
+    if !has_old || has_new {
+        return Ok(false);
+    }
+
+    tracing::info!(container = %cname, "migrating agent/src/vesta/ → agent/core/");
+    run_migration_script(docker, snapshot_tag, helper_name, normalized_tag, SRC_VESTA_TO_CORE_SCRIPT).await?;
+
+    Ok(true)
 }
 
 pub async fn maybe_normalize_legacy_agent_snapshot(
@@ -260,6 +365,6 @@ pub async fn maybe_normalize_legacy_agent_snapshot(
     }
 
     tracing::info!(container = %cname, legacy_root = LEGACY_REPO_ROOT, "normalizing legacy filesystem layout before rebuild");
-    normalize_legacy_snapshot_image(docker, snapshot_tag, helper_name, normalized_tag).await?;
+    run_migration_script(docker, snapshot_tag, helper_name, normalized_tag, LEGACY_LAYOUT_NORMALIZE_SCRIPT).await?;
     Ok(true)
 }

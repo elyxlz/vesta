@@ -6,7 +6,6 @@ use super::common::{agent_container_name, wait_for_agent_visible};
 
 #[test]
 #[cfg(target_os = "linux")]
-#[ignore] // TODO: re-enable after first release with agent/core/ layout (latest image still has src/vesta/)
 fn latest_released_vestad_upgrades_to_current_and_agent_git_state_is_valid() {
     let released = download_latest_released_vestad().expect("download released vestad");
     let current = find_vestad().expect("find current vestad");

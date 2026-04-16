@@ -1802,28 +1802,41 @@ pub async fn rebuild_agent(docker: &Docker, name: &str, env_config: &AgentEnvCon
     tracing::info!(agent = %name, "[1/3] snapshotting container filesystem...");
     snapshot_container(docker, &cname, &backup_tag, &[]).await?;
 
-    // Pre-agent-dir releases stored the repo at /root/vesta. If we detect that
-    // legacy layout in the preserved snapshot, migrations.rs rewrites the
-    // snapshot into the modern /root + /root/agent layout before we recreate
-    // the managed container. Once a container already has /root/.git, this is
-    // a no-op and we rebuild directly from the raw snapshot.
-    let rebuild_image = if crate::migrations::maybe_normalize_legacy_agent_snapshot(
+    // Chain migrations on the snapshot. Each migration produces a new image
+    // tag if it modifies the filesystem; subsequent migrations inspect the
+    // latest image's helper container.
+    let mut current_image = backup_tag.clone();
+
+    // Migration 1: /root/vesta/ → /root + /root/agent/ (very old layout)
+    if crate::migrations::maybe_normalize_legacy_agent_snapshot(
         docker,
         &cname,
-        &backup_tag,
+        &current_image,
         &helper_name,
         &normalized_tag,
     ).await? {
-        normalized_tag.as_str()
-    } else {
-        backup_tag.as_str()
-    };
+        current_image = normalized_tag.clone();
+    }
+
+    // Migration 2: agent/src/vesta/ → agent/core/ (pre-0.1.135 layout)
+    let core_tag = format!("{normalized_tag}-core");
+    if crate::migrations::maybe_rename_src_vesta_to_core(
+        docker,
+        &cname,
+        &current_image,
+        &helper_name,
+        &core_tag,
+    ).await? {
+        current_image = core_tag;
+    }
+
+    let rebuild_image = current_image;
 
     tracing::info!(agent = %name, "[2/3] removing old container...");
     remove_container_force(docker, &cname).await.ok();
 
     tracing::info!(agent = %name, "[3/3] creating container with new config...");
-    create_container(docker, &cname, rebuild_image, port, name, env_config, manage_core_code, None).await?;
+    create_container(docker, &cname, &rebuild_image, port, name, env_config, manage_core_code, None).await?;
 
     Ok(())
 }
