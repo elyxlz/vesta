@@ -1,1 +1,1 @@
-Think about what they're probably doing and what time it is. Mention it at an appropriate moment. If it's late or they're deep in something, hold it for later. Match tone to the moment. Skip things they've said to stop notifying about (check Learned Patterns in MEMORY.md).
+Consider timing and context before responding. Reply on the same channel it came from (whatsapp message → whatsapp skill). Check Learned Patterns in MEMORY.md for what to skip.
