@@ -490,10 +490,12 @@ impl Client {
 
 // ── WebSocket chat (CLI-only) ──────────────────────────────────
 
+const CHAT_READ_TIMEOUT_MS: u64 = 100;
+
 /// Connect to Chat WebSocket and run interactive chat (CLI-only).
 pub fn chat(client: &Client, name: &str) -> Result<(), String> {
     let url = format!(
-        "{}/agents/{}/ws/app-chat?token={}",
+        "{}/agents/{}/ws?token={}",
         ws_base_url(&client.base_url),
         name,
         client.api_key()
@@ -505,11 +507,15 @@ pub fn chat(client: &Client, name: &str) -> Result<(), String> {
     let port = parsed.port_or_known_default().unwrap_or(443);
     let tcp = std::net::TcpStream::connect((host, port))
         .map_err(|e| format!("ws tcp connect failed: {}", e))?;
+    tcp.set_read_timeout(Some(std::time::Duration::from_millis(CHAT_READ_TIMEOUT_MS)))
+        .map_err(|e| format!("failed to set read timeout: {}", e))?;
     let connector =
         tungstenite::Connector::Rustls(make_ws_rustls_config(client.cert_fingerprint().map(|s| s.to_string())));
     let (mut socket, _) =
         tungstenite::client_tls_with_config(url, tcp, None, Some(connector))
             .map_err(|e| format!("ws connect failed: {}", e))?;
+
+    eprintln!("connected to {}. type a message and press enter.", name);
 
     let (tx, rx) = std::sync::mpsc::channel::<String>();
 
@@ -532,32 +538,80 @@ pub fn chat(client: &Client, name: &str) -> Result<(), String> {
 
     loop {
         if let Ok(input) = rx.try_recv() {
-            let msg = serde_json::json!({"type": "message", "text": input});
-            if socket
-                .send(tungstenite::Message::Text(msg.to_string().into()))
-                .is_err()
-            {
-                break;
+            if !input.is_empty() {
+                let msg = serde_json::json!({"type": "message", "text": input});
+                if socket
+                    .send(tungstenite::Message::Text(msg.to_string().into()))
+                    .is_err()
+                {
+                    break;
+                }
             }
         }
 
         match socket.read() {
             Ok(tungstenite::Message::Text(text)) => {
                 if let Ok(msg) = serde_json::from_str::<serde_json::Value>(text.as_ref()) {
-                    if msg["type"].as_str() == Some("chat") {
-                        if let Some(content) = msg["text"].as_str() {
-                            println!("{}", content);
-                            std::io::stdout().flush().ok();
+                    match msg["type"].as_str() {
+                        Some("chat") => {
+                            if let Some(content) = msg["text"].as_str() {
+                                println!("{}", content);
+                                std::io::stdout().flush().ok();
+                            }
                         }
+                        Some("history") => {
+                            if let Some(events) = msg["events"].as_array() {
+                                for event in events {
+                                    if event["type"].as_str() == Some("chat") {
+                                        if let Some(content) = event["text"].as_str() {
+                                            println!("{}", content);
+                                        }
+                                    }
+                                }
+                                std::io::stdout().flush().ok();
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
-            Ok(tungstenite::Message::Close(_)) => break,
+            Ok(tungstenite::Message::Close(_)) | Err(tungstenite::Error::ConnectionClosed) => break,
             Ok(_) => {}
-            Err(tungstenite::Error::ConnectionClosed) => break,
+            Err(tungstenite::Error::Io(ref e))
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut => {}
             Err(_) => break,
         }
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ws_base_url_converts_schemes() {
+        assert_eq!(ws_base_url("https://example.com"), "wss://example.com");
+        assert_eq!(ws_base_url("http://localhost:8080"), "ws://localhost:8080");
+        assert_eq!(ws_base_url("http://127.0.0.1:9001"), "ws://127.0.0.1:9001");
+    }
+
+    #[test]
+    fn chat_url_uses_ws_route() {
+        // The URL must use /ws, not /ws/app-chat (agent only exposes /ws).
+        let base = "http://127.0.0.1:9001";
+        let name = "myagent";
+        let token = "mytoken";
+        let url = format!(
+            "{}/agents/{}/ws?token={}",
+            ws_base_url(base),
+            name,
+            token
+        );
+        assert!(url.contains("/ws?"), "chat URL must use /ws, got: {}", url);
+        assert!(!url.contains("/ws/app-chat"), "chat URL must not use /ws/app-chat, got: {}", url);
+        assert_eq!(url, "ws://127.0.0.1:9001/agents/myagent/ws?token=mytoken");
+    }
 }
