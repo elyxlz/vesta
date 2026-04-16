@@ -5,7 +5,7 @@ description: Use when the user wants to allow another computer to SSH into this 
 
 # SSH Access
 
-Exposes this machine over the internet via [bore](https://github.com/ekzhang/bore), a free TCP relay. Runs its own sshd on port 2222 inside the container (independent of the host SSH server) so all auth is fully controlled. No account required. The connecting machine only needs a standard SSH client.
+Exposes this machine over the internet via [bore](https://github.com/ekzhang/bore), a free TCP relay. Runs its own sshd on a dynamically allocated port inside the container (independent of the host SSH server, no port conflicts between containers) so all auth is fully controlled. No account required. The connecting machine only needs a standard SSH client.
 
 ## Before running start.sh: get the client's public key
 
@@ -34,7 +34,7 @@ They should paste the full output (one line starting with `ssh-ed25519` or `ssh-
 This will:
 1. Install `openssh-server` if not already present
 2. Generate SSH host keys if missing
-3. Start sshd on port 2222 with key-only auth (no passwords)
+3. Start sshd on a free port (dynamically allocated, no conflicts between containers)
 4. Add the provided public key to `/root/.ssh/authorized_keys`
 5. Download `bore` if not already installed
 6. Open a public bore.pub tunnel and print the connection command

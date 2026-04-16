@@ -3,10 +3,10 @@ set -euo pipefail
 
 BORE_BIN="$HOME/.local/bin/bore"
 BORE_VERSION="0.5.1"
-BORE_LOG="/tmp/bore-ssh.log"
+BORE_LOG="/tmp/vesta-bore-ssh.log"
 BORE_SCREEN="bore-ssh"
-SSHD_PORT=2222
 SSHD_PID="/tmp/vesta-sshd.pid"
+SSHD_PORT_FILE="/tmp/vesta-sshd.port"
 SSHD_CONFIG="/tmp/vesta-sshd.conf"
 
 if [ -z "${1:-}" ]; then
@@ -30,6 +30,9 @@ if ! command -v sshd &>/dev/null; then
 fi
 
 ssh-keygen -A -q 2>/dev/null || true
+
+SSHD_PORT=$(python3 -c "import socket; s=socket.socket(); s.bind(('',0)); p=s.getsockname()[1]; s.close(); print(p)")
+echo "$SSHD_PORT" > "$SSHD_PORT_FILE"
 
 cat > "$SSHD_CONFIG" <<EOF
 Port $SSHD_PORT
