@@ -354,22 +354,12 @@ func (wac *WhatsAppClient) startStaleMessageDetector() {
 					continue
 				}
 				if len(staleIDs) > 0 {
-					wac.logger.Warnf("Detected %d stale outgoing messages (stuck in 'sent' >%v): %v — marking as filtered and writing notification", len(staleIDs), StaleMessageThreshold, staleIDs)
+					wac.logger.Warnf("Detected %d stale outgoing messages (stuck in 'sent' >%v): %v, marking as filtered and writing notification", len(staleIDs), StaleMessageThreshold, staleIDs)
 					if err := wac.store.MarkMessagesFiltered(staleIDs); err != nil {
 						wac.logger.Warnf("Failed to mark stale messages as filtered: %v", err)
 					}
-					if wac.notificationsDir != "" {
-						notif := map[string]any{
-							"source":      "whatsapp",
-							"type":        "delivery_failure",
-							"instance":    wac.instance,
-							"message_ids": staleIDs,
-							"message":     fmt.Sprintf("%d message(s) were never delivered — likely silently dropped by WhatsApp. Check content for user@IP patterns or other spam-triggering strings.", len(staleIDs)),
-							"timestamp":   time.Now().UTC().Format(time.RFC3339),
-						}
-						if err := writeNotificationFile(wac.notificationsDir, notif, "delivery_failure"); err != nil {
-							wac.logger.Warnf("Failed to write delivery failure notification: %v", err)
-						}
+					if err := WriteDeliveryFailureNotification(wac.notificationsDir, wac.instance, staleIDs); err != nil {
+						wac.logger.Warnf("Failed to write delivery failure notification: %v", err)
 					}
 				}
 			}

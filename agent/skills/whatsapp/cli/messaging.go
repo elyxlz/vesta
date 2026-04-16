@@ -18,7 +18,7 @@ import (
 // mentionPattern matches @word patterns in message text.
 var mentionPattern = regexp.MustCompile(`@(\+?\w+)`)
 
-// userAtIPPattern matches strings like "root@192.168.1.1" which WhatsApp spam filters may silently drop.
+// WhatsApp spam filters silently drop messages containing user@IP patterns.
 var userAtIPPattern = regexp.MustCompile(`\w+@\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}`)
 
 func (wac *WhatsAppClient) SendMessageWithPresence(recipient, message string) (bool, string) {

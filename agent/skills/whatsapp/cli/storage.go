@@ -825,21 +825,33 @@ func (ms *MessageStore) GetStaleOutgoingMessages(olderThan time.Duration) ([]str
 	return ids, rows.Err()
 }
 
+const sqliteMaxVars = 500
+
 func (ms *MessageStore) MarkMessagesFiltered(ids []string) error {
-	if len(ids) == 0 {
-		return nil
+	for len(ids) > 0 {
+		batch := ids
+		if len(batch) > sqliteMaxVars {
+			batch = ids[:sqliteMaxVars]
+		}
+		ids = ids[len(batch):]
+
+		args := make([]any, 0, len(batch)+2)
+		args = append(args, DeliveryStatusFiltered)
+		for _, id := range batch {
+			args = append(args, id)
+		}
+		args = append(args, DeliveryStatusSent)
+
+		placeholders := strings.Repeat("?,", len(batch))
+		placeholders = placeholders[:len(placeholders)-1]
+		if _, err := ms.db.Exec(
+			"UPDATE messages SET delivery_status = ? WHERE id IN ("+placeholders+") AND delivery_status = ?",
+			args...,
+		); err != nil {
+			return err
+		}
 	}
-	placeholders := strings.Repeat("?,", len(ids))
-	placeholders = placeholders[:len(placeholders)-1]
-	args := make([]any, len(ids))
-	for i, id := range ids {
-		args[i] = id
-	}
-	_, err := ms.db.Exec(
-		"UPDATE messages SET delivery_status = ? WHERE id IN ("+placeholders+") AND delivery_status = ?",
-		append([]any{DeliveryStatusFiltered}, append(args, DeliveryStatusSent)...)...,
-	)
-	return err
+	return nil
 }
 
 func (ms *MessageStore) ListAllChatJIDs() ([]string, error) {
