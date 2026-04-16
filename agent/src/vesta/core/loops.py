@@ -130,25 +130,6 @@ def _is_transient(error: Exception) -> bool:
     return any(marker in msg for marker in _TRANSIENT_MARKERS)
 
 
-async def _send_outage_notification(message: str, *, config: vm.VestaConfig) -> None:
-    if not config.user_phone:
-        return
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "whatsapp",
-            "send",
-            "--to",
-            config.user_phone,
-            "--message",
-            message,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        await asyncio.wait_for(proc.wait(), timeout=10)
-    except Exception as e:
-        logger.warning(f"Outage notification failed: {e}")
-
-
 async def _process_message_safely(msg: str, *, is_user: bool, state: vm.State, config: vm.VestaConfig) -> None:
     try:
         if is_user:
@@ -167,18 +148,13 @@ async def _process_message_safely(msg: str, *, is_user: bool, state: vm.State, c
             state.event_bus.emit(ApiOutageEvent(type="api_outage", text=str(e), retry_count=state.api_failures))
 
             if state.api_failures >= _MAX_TRANSIENT_RETRIES:
-                await _send_outage_notification(
-                    "Anthropic API is currently down. "
-                    "Status: https://status.anthropic.com — "
-                    "I'll retry automatically and message you when I'm back.",
-                    config=config,
-                )
+                logger.warning("API outage detected, entering retry loop...")
                 while not state.shutdown_event.is_set() and not state.graceful_shutdown.is_set():
                     await asyncio.sleep(_RETRY_INTERVAL)
                     try:
                         await process_message(msg, state=state, config=config, is_user=is_user)
                         state.api_failures = 0
-                        await _send_outage_notification("API is back online, I'm operational again.", config=config)
+                        logger.startup("API recovered, resuming normal operation")
                         state.event_bus.emit(ApiRecoveredEvent(type="api_recovered"))
                         return
                     except Exception as retry_e:
