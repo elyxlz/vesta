@@ -77,18 +77,23 @@ If `~/agent` does not exist yet:
 mv ~/vesta/agent ~/agent
 ```
 
-If both exist, merge missing entries from `~/vesta/agent` into `~/agent`:
+If both exist, merge entries from `~/vesta/agent` into `~/agent`. For each item: if the target doesn't exist, move it directly. If both are directories, recurse into them. If the target file already exists, keep the existing one (it's newer).
 
 ```bash
-find ~/vesta/agent -mindepth 1 -maxdepth 1 2>/dev/null | while IFS= read -r item; do
-  name=$(basename "$item")
-  if [ ! -e "$HOME/agent/$name" ]; then
-    mv "$item" ~/agent/
-  fi
-done
+merge_dirs() {
+  local src="$1" dst="$2"
+  find "$src" -mindepth 1 -maxdepth 1 2>/dev/null | while IFS= read -r item; do
+    local name
+    name=$(basename "$item")
+    if [ ! -e "$dst/$name" ]; then
+      mv "$item" "$dst/"
+    elif [ -d "$item" ] && [ -d "$dst/$name" ]; then
+      merge_dirs "$item" "$dst/$name"
+    fi
+  done
+}
+merge_dirs ~/vesta/agent ~/agent
 ```
-
-When both sides contain meaningful content for the same path, inspect both and merge them carefully. Do not overwrite blindly.
 
 ### If agent-owned paths exist at repo root
 
