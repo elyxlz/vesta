@@ -11,7 +11,7 @@ def load_prompt(name: str, config: vm.VestaConfig) -> str | None:
     agent_path = config.prompts_dir / f"{name}.md"
     if agent_path.exists():
         return agent_path.read_text()
-    core_path = config.agent_dir / "core" / "prompts" / f"{name}.md"
+    core_path = config.core_prompts_dir / f"{name}.md"
     if core_path.exists():
         return core_path.read_text()
     return None

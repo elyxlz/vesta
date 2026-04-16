@@ -11,10 +11,10 @@ OUTPUT_FILE = pathlib.Path(__file__).parent / "index.json"
 
 if __name__ == "__main__":
     skills = []
-    skill_mds = sorted(SKILLS_DIR.glob("*/SKILL.md"))
+    skill_mds = list(SKILLS_DIR.glob("*/SKILL.md"))
     if CORE_SKILLS_DIR.exists():
-        skill_mds = sorted(CORE_SKILLS_DIR.glob("*/SKILL.md")) + skill_mds
-    for skill_md in skill_mds:
+        skill_mds.extend(CORE_SKILLS_DIR.glob("*/SKILL.md"))
+    for skill_md in sorted(skill_mds):
         skill_name = skill_md.parent.name
         text = skill_md.read_text()
         match = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
