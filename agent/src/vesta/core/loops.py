@@ -240,6 +240,7 @@ async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm
         except (ClaudeSDKError, OSError, RuntimeError) as exc:
             if retried or not state.session_id:
                 raise
+            await asyncio.sleep(0)  # yield to event loop so stderr handler can drain buffered output
             exit_code, stderr_tail = format_crash_detail(exc, state.stderr_buffer)
             logger.warning(
                 f"Session resume failed ({state.session_id[:16]}...): {type(exc).__name__}: {exc}"
