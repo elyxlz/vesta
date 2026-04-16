@@ -254,19 +254,4 @@ fn fetch_agent_code_from_github(config: &Path, tag: &str) -> Result<(), AgentCod
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    #[ignore] // requires a released tag with agent/core/ layout (pending first release after this PR)
-    fn fetch_agent_code_known_tag() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let config = tmp.path();
-        fetch_agent_code_from_github(config, env!("CARGO_PKG_VERSION")).unwrap();
-        let dir = agent_code_dir(config);
-        assert!(dir.join("core/main.py").exists(), "main.py missing");
-        assert!(dir.join("pyproject.toml").exists(), "pyproject.toml missing");
-        assert!(dir.join("uv.lock").exists(), "uv.lock missing");
-    }
-}
+// TODO: re-add fetch_agent_code_known_tag test after first release with agent/core/ layout
