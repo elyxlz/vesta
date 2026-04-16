@@ -1,6 +1,7 @@
-"""Deepgram STT provider — Flux v2 realtime streaming."""
+"""Deepgram STT provider — Flux v2 realtime streaming, Nova-3 v1 for multi-language."""
 
 import asyncio
+import json
 import logging
 import typing as tp
 from urllib.parse import urlencode
@@ -105,21 +106,33 @@ class DeepgramStt:
             min(voice_config.EOT_TIMEOUT_MS_MAX, eot_timeout_ms),
         )
 
-        multi_language = stt_domain.get("multi_language", False)
-        model = MODEL_MULTI if multi_language else MODEL
-        params: list[tuple[str, str]] = [
-            ("model", model),
-            ("encoding", ENCODING),
-            ("sample_rate", str(SAMPLE_RATE)),
-            ("eot_threshold", str(eot_threshold)),
-            ("eot_timeout_ms", str(eot_timeout_ms)),
-        ]
-        if multi_language:
-            params.append(("language", LANGUAGE_MULTI))
-        for term in keyterms:
-            params.append(("keyterm", term))
+        multi_language: bool = bool(stt_domain.get("multi_language"))
 
-        url = f"{DEEPGRAM_WS}/v2/listen?{urlencode(params)}"
+        if multi_language:
+            # Nova-3 only works on /v1/listen; v2 returns 400 for non-Flux models.
+            params: list[tuple[str, str]] = [
+                ("model", MODEL_MULTI),
+                ("language", LANGUAGE_MULTI),
+                ("encoding", ENCODING),
+                ("sample_rate", str(SAMPLE_RATE)),
+                ("interim_results", "true"),
+                ("utterance_end_ms", str(eot_timeout_ms)),
+            ]
+            for term in keyterms:
+                params.append(("keywords", term))
+            url = f"{DEEPGRAM_WS}/v1/listen?{urlencode(params)}"
+        else:
+            params = [
+                ("model", MODEL),
+                ("encoding", ENCODING),
+                ("sample_rate", str(SAMPLE_RATE)),
+                ("eot_threshold", str(eot_threshold)),
+                ("eot_timeout_ms", str(eot_timeout_ms)),
+            ]
+            for term in keyterms:
+                params.append(("keyterm", term))
+            url = f"{DEEPGRAM_WS}/v2/listen?{urlencode(params)}"
+
         headers = {"Authorization": f"Token {api_key}"}
 
         session = aiohttp.ClientSession()
@@ -140,14 +153,52 @@ class DeepgramStt:
                     elif msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSING, aiohttp.WSMsgType.CLOSED):
                         break
 
-            async def deepgram_to_browser() -> None:
-                async for msg in dg_ws:
-                    if msg.type == aiohttp.WSMsgType.TEXT:
-                        await browser_ws.send_str(msg.data)
-                    elif msg.type == aiohttp.WSMsgType.BINARY:
-                        await browser_ws.send_bytes(msg.data)
-                    elif msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSING, aiohttp.WSMsgType.CLOSED):
-                        break
+            if multi_language:
+                # v1 emits Results + UtteranceEnd; translate to the TurnInfo format the app expects.
+                async def deepgram_to_browser() -> None:
+                    accumulated = ""
+                    in_turn = False
+                    async for msg in dg_ws:
+                        if msg.type == aiohttp.WSMsgType.TEXT:
+                            try:
+                                data = json.loads(msg.data)
+                            except json.JSONDecodeError:
+                                await browser_ws.send_str(msg.data)
+                                continue
+                            msg_type = data.get("type")
+                            if msg_type == "Results":
+                                alts = (data.get("channel") or {}).get("alternatives") or []
+                                transcript = alts[0].get("transcript", "") if alts else ""
+                                is_final = data.get("is_final", False)
+                                if transcript and not in_turn:
+                                    in_turn = True
+                                    await browser_ws.send_str(json.dumps({"type": "TurnInfo", "event": "StartOfTurn"}))
+                                if transcript:
+                                    display = (accumulated + " " + transcript).strip() if accumulated else transcript
+                                    await browser_ws.send_str(json.dumps({"type": "TurnInfo", "transcript": display}))
+                                if is_final and transcript:
+                                    accumulated = (accumulated + " " + transcript).strip() if accumulated else transcript
+                            elif msg_type == "UtteranceEnd":
+                                if in_turn:
+                                    await browser_ws.send_str(json.dumps({"type": "TurnInfo", "event": "EndOfTurn"}))
+                                    accumulated = ""
+                                    in_turn = False
+                            elif msg_type in ("Error", "ConfigureFailure"):
+                                await browser_ws.send_str(msg.data)
+                        elif msg.type == aiohttp.WSMsgType.BINARY:
+                            await browser_ws.send_bytes(msg.data)
+                        elif msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSING, aiohttp.WSMsgType.CLOSED):
+                            break
+            else:
+                # v2/Flux sends TurnInfo natively — pass through unchanged.
+                async def deepgram_to_browser() -> None:
+                    async for msg in dg_ws:
+                        if msg.type == aiohttp.WSMsgType.TEXT:
+                            await browser_ws.send_str(msg.data)
+                        elif msg.type == aiohttp.WSMsgType.BINARY:
+                            await browser_ws.send_bytes(msg.data)
+                        elif msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSING, aiohttp.WSMsgType.CLOSED):
+                            break
 
             tasks = [
                 asyncio.create_task(browser_to_deepgram()),
