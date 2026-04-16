@@ -10,7 +10,7 @@
 6. Start background daemon: `screen -dmS google google serve`
 7. Add to `~/agent/prompts/restart.md`:
    ```
-   screen -dmS google google serve --notifications-dir ~/notifications
+   screen -dmS google google serve --notifications-dir ~/agent/notifications
    ```
 
 ## Authentication

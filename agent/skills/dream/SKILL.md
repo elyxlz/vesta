@@ -117,7 +117,7 @@ If it won't matter in two weeks, delete it.
 Keep the container's filesystem organized and disk usage under control.
 
 - Delete temp files, stale downloads, leftover build artifacts, and anything in `/tmp` that's no longer needed
-- Clean up old log files (`~/logs/`). Keep the last few days, remove the rest
+- Clean up old log files (`~/agent/logs/`). Keep the last few days, remove the rest
 - Check `df -h` and `du -sh ~/` periodically. If disk usage is growing unexpectedly, investigate and clean up
 - Kill orphaned screen sessions that are no longer needed (`screen -ls`, `screen -S name -X quit`)
 - Remove unused packages or build caches if they're taking significant space (`uv cache clean`, `apt clean`)

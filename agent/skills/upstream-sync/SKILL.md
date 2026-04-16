@@ -5,29 +5,35 @@ description: Sync local agent code with upstream. Use when checking for updates,
 
 # Upstream Sync
 
-Merge upstream changes into your local branch. The env var `$VESTA_UPSTREAM_REF` tells you what to sync against: a release tag in prod (e.g. `v0.1.132`) or a branch in dev (e.g. `feat/agent-source-dir`).
+Bring your local workspace into order, checkpoint your current state on your branch, then merge upstream. The goal is to get your branch into a clean, easy-to-merge shape relative to `$VESTA_UPSTREAM_REF`: current local state committed first, then upstream integrated on top. The env var `$VESTA_UPSTREAM_REF` tells you what to sync against: a release tag in prod (e.g. `v0.1.132`) or a branch in dev (e.g. `feat/agent-source-dir`).
 
 ## Ownership
 
-At `~` (repo root is `$HOME`), the `.gitignore` ignores **everything outside `agent/`** (except `.gitignore` itself). Only files under `agent/` are meant to be committed on your branch. Runtime dirs (`data/`, `logs/`, etc.) and repo-root `.claude/` stay local and do not show up as untracked noise.
+At `~` (repo root is `$HOME`), the repo tracks `agent/` and `.gitignore`. Repo-root `.claude/` stays local and does not show up as untracked noise. Use `~/agent/.gitignore` for large or local-only files you discover during setup so `git status` ends up commit-ready.
 
-You own `agent/skills/`, `agent/prompts/`, `agent/MEMORY.md`, and repo-root `.claude/` (symlink / SDK layout) on disk; git commits focus on `agent/`.
+You own `agent/skills/`, `agent/prompts/`, `agent/MEMORY.md`, `agent/.gitignore`, and repo-root `.claude/` (symlink / SDK layout) on disk; git commits focus on `agent/`.
 
-Core code (`agent/src/vesta/`, `agent/pyproject.toml`, `agent/uv.lock`) is managed by vestad via read-only mounts. Always accept upstream for these paths during merges.
+Core code (`agent/src/vesta/`, `agent/pyproject.toml`, `agent/uv.lock`) is managed by vestad via read-only mounts, but merge conflicts there still need integration work if both sides carry meaningful behavior.
 
 ## Sync steps
 
-1. **Commit all local work.** The merge will fail with uncommitted changes.
+1. **Normalize local state first.** If the workspace is not already in the expected shape, read and follow [SETUP.md](SETUP.md) before continuing. The goal is: branch `$AGENT_NAME`, working tree under `~/agent`, bulky local-only files ignored in `~/agent/.gitignore`, and current code ready to commit as one clean checkpoint before upstreaming.
+
+2. **Commit all local work.** The merge will fail with uncommitted changes, and the checkpoint commit gives you a clean local base before you bring in upstream.
    ```bash
    cd ~
    git add agent/ --ignore-errors
    git reset HEAD -- '*.bin' '*.onnx' '*.pt' '*.db' '*.sqlite' '*.mp3' '*.mp4' '*.wav' '*.zip' '*.tar.gz' '**/node_modules' '**/dist' '**/.venv' '**/__pycache__'
    git status
    ```
-   Commit if there are staged changes. Add untracked large files to `.gitignore`.
+   Add untracked large files to `~/agent/.gitignore`. If there are staged changes, commit them with this exact message format:
+   ```bash
+   git -C ~ commit -m "chore: checkpoint local state before $VESTA_UPSTREAM_REF upstream sync"
+   ```
+   If there is nothing to commit, continue.
    Repeat until `git status` is clean.
 
-2. **Fetch and check for updates.**
+3. **Fetch and check for updates.**
    ```bash
    git -C ~ fetch origin "$VESTA_UPSTREAM_REF"
    CURRENT=$(git -C ~ rev-parse HEAD)
@@ -36,28 +42,33 @@ Core code (`agent/src/vesta/`, `agent/pyproject.toml`, `agent/uv.lock`) is manag
    ```
    If `$CURRENT == $LATEST`, stop -- already up to date.
 
-3. **Merge upstream.**
+4. **Merge upstream.** At this point your local state should already be captured in a checkpoint commit, so you are integrating upstream into a clean local history instead of mixing file cleanup, local edits, and upstream changes in one step.
    ```bash
    git -C ~ merge FETCH_HEAD --no-edit
    ```
-   If clean, skip to step 5.
+   If clean, skip to step 6.
 
-4. **Resolve conflicts** using these rules:
+5. **Resolve conflicts** using these rules:
 
-   - **Vestad-managed paths** (`src/vesta/`, `pyproject.toml`, `uv.lock`): always accept upstream.
-     ```bash
-     git checkout --theirs <file> && git add <file>
-     ```
-   - **Agent-owned paths you haven't customized**: accept upstream the same way.
-   - **Agent-owned paths you meaningfully customized** (SKILL.md you rewrote, config you tuned, skill code you modified): show the user both versions and ask how to combine. Do not auto-resolve.
+   - Treat conflicts as integration work, not a choice between `ours` and `theirs`.
+   - Default goal: preserve both functionalities and both intent sets in the merged result.
+   - If the conflict is small, rewrite the merged file so both changes coexist directly.
+   - If the conflict is structural, decouple the implementations:
+     - extract helpers
+     - split responsibilities
+     - keep both call paths or behaviors
+     - rename or reorganize logic to avoid collisions
+   - **Vestad-managed paths** (`src/vesta/`, `pyproject.toml`, `uv.lock`) are not automatic `--theirs` files. If local behavior matters, carry it forward into the merged version.
+   - Only take one side wholesale when the other side is clearly obsolete, redundant, generated, or a strict subset.
+   - Do not stop at “conflict markers removed”. Re-read the merged file and verify both sides' behavior still exists.
 
    After all conflicts are resolved: `git commit --no-edit`
 
-5. **Verify.** `git status` should be clean.
+6. **Verify.** `git status` should be clean, branch should be `$AGENT_NAME`, and the merged code should still preserve both sides' functionality. The history should read cleanly as: local checkpoint first, then upstream merge.
 
 ## Branch model
 
-Your branch (named `$AGENT_NAME`) starts from the upstream ref you were deployed on. All local work is committed here. Merging upstream brings in changes while preserving your customizations.
+Your branch (named `$AGENT_NAME`) starts from the upstream ref you were deployed on. All local work is committed here. Before syncing, checkpoint your current local state so the history stays clean. Then merge upstream while preserving your customizations.
 
 ```
 v0.1.132 (upstream ref)

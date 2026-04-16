@@ -185,7 +185,7 @@ pub async fn create_backup(
             docker,
             &cname,
             "backup — paused for backup",
-            "/root/data/restart_reason",
+            "/root/agent/data/restart_reason",
         )
         .await
         {
@@ -265,7 +265,7 @@ pub async fn create_backups_batch(
             docker,
             &cname,
             "backup — paused for backup",
-            "/root/data/restart_reason",
+            "/root/agent/data/restart_reason",
         )
         .await
         {

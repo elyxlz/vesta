@@ -19,5 +19,5 @@ def test_config_default_values():
 
 
 def test_memory_paths(config):
-    assert get_memory_path(config) == config.source_dir / "MEMORY.md"
-    assert config.skills_dir == config.source_dir / "skills"
+    assert get_memory_path(config) == config.agent_dir / "MEMORY.md"
+    assert config.skills_dir == config.agent_dir / "skills"

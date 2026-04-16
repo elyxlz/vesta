@@ -1,151 +1,252 @@
-# Legacy layout migration (`~/vesta` → canonical `$HOME`)
+# Setup Local State for Upstream Sync
 
-**One sentence:** If the workspace still lives under **`$HOME/vesta`** or runtime dirs sit under **`agent/`** instead of beside it, restructure once so **`VestaConfig`** paths match reality, then use **[SKILL.md](SKILL.md)** for upstream sync.
+Use this when your filesystem or git state is not in the expected shape yet. The goal is not just to move files around. The goal is to end on branch `$AGENT_NAME`, with your current code under `~/agent`, large local-only files ignored via `~/agent/.gitignore`, your current state captured in a clean checkpoint commit, and `$VESTA_UPSTREAM_REF` merged afterward.
 
-## When to run
+## Success condition
 
-| Situation | Action |
-|-----------|--------|
-| **`test -d "$HOME/vesta"`** | Run the steps below |
-| **`$HOME/agent/data`**, **`.../logs`**, or **`.../notifications`** exists as dirs | Run — lift them to **`$HOME`** (step 3) |
-| No **`vesta`**, **`agent/`** exists, **`data` / `logs` / `notifications`** at **`$HOME`** (or empty dirs OK) | **Stop** — nothing to migrate |
+At the end, all of this should be true:
 
-If a previous run stopped mid-way, resume from the first step whose condition is still true; repeat **`mv`** only when source still exists.
+- `git -C ~ rev-parse --show-toplevel` prints `~`
+- `git -C ~ branch --show-current` prints `$AGENT_NAME`
+- your real local code and customizations live under `~/agent`
+- repo-root `~` keeps `.git`, `.gitignore`, and `.claude`; agent-owned content lives under `~/agent`
+- `~/agent/.gitignore` excludes large or local-only artifacts that should not be committed
+- `git -C ~ status` is commit-ready
+- your local state has been committed
+- you have merged `origin/$VESTA_UPSTREAM_REF`, resolving conflicts by preserving both functionalities
+- the history is easy to reason about: local checkpoint commit first, then upstream merge
 
-## Rules
+## 1. Read the environment
 
-1. **No** **`rm -rf "$HOME/vesta"`** or **`rm -rf "$HOME/agent"`** from this document without explicit user approval after showing what is left.
-2. **Do not** move unrelated **`$HOME`** trees (**`go/`**, tool caches, etc.) into **`agent/`**. Only **`vesta/`** leftovers and **`data` / `logs` / `notifications`** belong here.
-3. If **`$HOME/agent`** already is the real workspace, **never** **`mv vesta agent`** on top of it — merge and lift only.
-4. Prefer **`mv`** (same filesystem). **`mkdir -p`** parents before **`mv`** when needed.
-
-## Target layout
-
-| Path | Purpose |
-|------|---------|
-| **`$HOME/agent/`** | Git workspace: **`skills/`**, **`prompts/`**, **`dreamer/`**, **`MEMORY.md`**, **`src/`**, … |
-| **`$HOME/data/`**, **`logs/`**, **`notifications/`** | Siblings of **`agent/`** — local state, not committed |
-| **`$HOME/.git`** | Repo root when deploy uses **`git -C ~`** |
-| **`$HOME/.claude/`** | Local; **`ln -sf ../agent/skills .claude/skills`** when **`agent/skills`** exists |
-
-Reference: **`agent/src/vesta/config.py`** (`source_dir`, `data_dir`, `logs_dir`, `notifications_dir`).
-
-### Before → after
-
-```text
-# Monolithic legacy
-~/vesta/MEMORY.md          →  ~/agent/MEMORY.md
-~/vesta/data/session_id   →  ~/data/session_id
-~/vesta/logs/vesta.log    →  ~/logs/vesta.log
-
-# Nested legacy
-~/vesta/agent/…  →  ~/agent/…
-~/vesta/data/…   →  ~/data/…   (after lift)
-```
-
-**`vesta`** should become empty enough to remove with **`rmdir`**, not **`rm -rf`**.
-
----
-
-## Steps (in order)
-
-Skip any step whose **if** is false.
-
-### 1 — Nested: promote `vesta/agent` to `~/agent`
-
-If **`[ -d "$HOME/vesta/agent" ] && [ ! -e "$HOME/agent" ]`:**
+Start by reading the env file:
 
 ```bash
-mv "$HOME/vesta/agent" "$HOME/agent"
+cat /run/vestad-env
 ```
 
-If **`[ -d "$HOME/vesta/agent" ] && [ -d "$HOME/agent" ]`** (both exist):
+You need these values:
+
+- `AGENT_NAME`
+- `VESTA_UPSTREAM_REF`
+
+## 2. Inspect filesystem and git state
+
+Check the current layout:
 
 ```bash
-find "$HOME/vesta/agent" -mindepth 1 -maxdepth 1 2>/dev/null | while IFS= read -r x; do
-  bn=$(basename "$x")
-  [ ! -e "$HOME/agent/$bn" ] && mv "$x" "$HOME/agent/"
-done
-rmdir "$HOME/vesta/agent" 2>/dev/null || true
+cd ~
+pwd
+ls -la
+find ~/agent -maxdepth 1 -mindepth 1 2>/dev/null | sort
+git -C ~ rev-parse --show-toplevel
+git -C ~ branch --show-current
+git -C ~ status
+git -C ~ sparse-checkout list
 ```
 
-### 2 — Monolithic: rename `vesta` → `agent`
-
-If **`[ -d "$HOME/vesta" ] && [ ! -e "$HOME/agent" ]`:**
+If `~/vesta` exists, inspect it too:
 
 ```bash
-mv "$HOME/vesta" "$HOME/agent"
+find ~/vesta -maxdepth 2 -mindepth 1 2>/dev/null | sort
 ```
 
-### 3 — Lift `data`, `logs`, `notifications`
+## 3. Normalize the layout
 
-For each **`x`** in **`data`**, **`logs`**, **`notifications`**:
+Target layout:
 
-- If **`[ -d "$HOME/agent/$x" ] && [ ! -e "$HOME/$x" ]`:** `mv "$HOME/agent/$x" "$HOME/$x"`
-- Else if **`[ -d "$HOME/vesta/$x" ] && [ ! -e "$HOME/$x" ]`:** `mv "$HOME/vesta/$x" "$HOME/$x"`
+- `~/.git` is the repo metadata
+- `~/.claude` stays local
+- `~/agent` contains the agent workspace and local state
+- `~/agent/data`, `~/agent/logs`, and `~/agent/notifications` live under `agent`
+- any other agent-related/owned files or directories also move under `~/agent`
 
-Then **`rmdir`** empty **`$HOME/agent/$x`** if safe.
+Keep at repo root:
 
-### 4 — Leftover `vesta` next to `agent`
+- `.git`
+- `.gitignore`
+- `.claude`
+- `agent`
 
-If **`[ -d "$HOME/vesta" ] && [ -d "$HOME/agent" ]`:**
+Everything else that belongs to the agent should end up under `~/agent`.
+
+### If `~/vesta/agent` exists
+
+If `~/agent` does not exist yet:
 
 ```bash
-mkdir -p "$HOME/agent"
-find "$HOME/vesta" -maxdepth 1 -mindepth 1 ! -name .git 2>/dev/null | while IFS= read -r vp; do
-  vb=$(basename "$vp")
-  [ "$vb" = "agent" ] && continue
-  [ ! -e "$HOME/agent/$vb" ] && mv "$vp" "$HOME/agent/"
+mv ~/vesta/agent ~/agent
+```
+
+If both exist, merge missing entries from `~/vesta/agent` into `~/agent`:
+
+```bash
+find ~/vesta/agent -mindepth 1 -maxdepth 1 2>/dev/null | while IFS= read -r item; do
+  name=$(basename "$item")
+  if [ ! -e "$HOME/agent/$name" ]; then
+    mv "$item" ~/agent/
+  fi
 done
 ```
 
-Git / metadata (only if target missing at **`$HOME`**):
+When both sides contain meaningful content for the same path, inspect both and merge them carefully. Do not overwrite blindly.
+
+### If agent-owned paths exist at repo root
+
+Examples:
+
+- `~/data`
+- `~/logs`
+- `~/notifications`
+- leftover runtime dirs
+- exports or caches created by earlier layouts
+- files that clearly belong to the agent rather than repo root
+
+Move them under `~/agent`:
 
 ```bash
-[ -d "$HOME/vesta/.git" ] && [ ! -d "$HOME/.git" ] && mv "$HOME/vesta/.git" "$HOME/.git"
-[ -f "$HOME/vesta/.gitignore" ] && [ ! -f "$HOME/.gitignore" ] && mv "$HOME/vesta/.gitignore" "$HOME/.gitignore"
-[ -d "$HOME/vesta/.claude" ] && [ ! -d "$HOME/.claude" ] && mv "$HOME/vesta/.claude" "$HOME/.claude"
+mkdir -p ~/agent
 ```
 
-If **`[ -d "$HOME/agent/.git" ] && [ ! -d "$HOME/.git" ]`:**
+For each root-level path that belongs under `agent`:
+
+- if `~/agent/<name>` does not exist, move it directly
+- if both source and target exist, merge carefully so functionality and data are preserved
+
+Do not move:
+
+- `.git`
+- `.gitignore`
+- `.claude`
+- `agent`
+
+### Fix the skills symlink
 
 ```bash
-mv "$HOME/agent/.git" "$HOME/.git"
+mkdir -p ~/.claude
+ln -sf ../agent/skills ~/.claude/skills
 ```
 
-Try **`rmdir "$HOME/vesta" 2>/dev/null`**. If it fails, **`ls -la "$HOME/vesta"`**, resolve conflicts, ask the user before any recursive delete.
+## 4. Fix ignore rules
 
-### 5 — `.claude` and skills symlink
+Your goal is a commit-ready `git status`, not a dump of every bulky local file. The point is to create one clean local checkpoint commit before upstream sync.
+
+Create or update `~/agent/.gitignore` and add local-only or bulky artifacts such as:
+
+- model files: `*.bin`, `*.onnx`, `*.pt`
+- local databases: `*.db`, `*.sqlite`
+- media: `*.mp3`, `*.mp4`, `*.wav`
+- archives: `*.zip`, `*.tar.gz`
+- dependency/build outputs: `node_modules/`, `dist/`, `.venv/`, `__pycache__/`
+- any other large or machine-specific files you discover during setup
+
+Use `~/agent/.gitignore` for these rules.
+
+## 5. Ensure the branch exists
+
+You should be on `$AGENT_NAME`.
+
+Check:
 
 ```bash
-mkdir -p "$HOME/agent" "$HOME/.claude"
-[ -d "$HOME/agent/skills" ] && ln -sf ../agent/skills "$HOME/.claude/skills"
+git -C ~ branch --show-current
+git -C ~ rev-parse --verify "$AGENT_NAME"
 ```
 
-### 6 — Git only with real deploy facts
-
-If **`git -C ~ rev-parse --is-inside-work-tree`** fails or sparse-checkout does not match what the image expects: do **not** guess **`origin`**. Use **`$VESTA_UPSTREAM_REF`**, image documentation, or vestad behavior.
-
----
-
-## Verify
+If the branch is missing, create it:
 
 ```bash
-test -d "$HOME/agent" || { echo "FAIL: missing $HOME/agent"; exit 1; }
-mkdir -p "$HOME/data" "$HOME/logs" "$HOME/notifications"
-if test -d "$HOME/vesta"; then
-  echo "WARN: $HOME/vesta still exists"
-  ls -la "$HOME/vesta"
-fi
-if git -C ~ rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  echo "OK: git repository at ~"
-else
-  echo "WARN: fix git (step 6) if deploy requires it"
-fi
+git -C ~ checkout -b "$AGENT_NAME"
 ```
 
-Ensure the process supervisor still runs **`python -m vesta.main`** (or equivalent) with **`$HOME`** as layout root unless **`VESTA_ROOT`** overrides **`root`** in **`config.py`**.
+If it exists but is not checked out:
 
-## Next
+```bash
+git -C ~ checkout "$AGENT_NAME"
+```
 
-**[SKILL.md](SKILL.md)** — commit under **`agent/`**, **`git fetch`**, merge **`$VESTA_UPSTREAM_REF`**.
+## 6. Stage only meaningful local state
+
+```bash
+git -C ~ add agent/ --ignore-errors
+git -C ~ reset HEAD -- '*.bin' '*.onnx' '*.pt' '*.db' '*.sqlite' '*.mp3' '*.mp4' '*.wav' '*.zip' '*.tar.gz' '**/node_modules' '**/dist' '**/.venv' '**/__pycache__'
+git -C ~ status
+```
+
+If more bulky or local-only files still appear, add them to `~/agent/.gitignore`, then re-run:
+
+```bash
+git -C ~ add agent/ --ignore-errors
+git -C ~ status
+```
+
+Do not continue until `git status` shows only meaningful code, prompt, skill, config, or local-state changes you actually want represented on your branch.
+
+## 7. Commit your current state
+
+If there are staged changes, commit them:
+
+```bash
+git -C ~ commit -m "chore: checkpoint local state before $VESTA_UPSTREAM_REF upstream sync"
+```
+
+Use that exact message format for the local checkpoint commit. This commit is your clean local checkpoint before upstream sync. If there is nothing to commit, continue.
+
+## 8. Merge upstream
+
+Fetch upstream:
+
+```bash
+git -C ~ fetch origin "$VESTA_UPSTREAM_REF"
+```
+
+Merge it:
+
+```bash
+git -C ~ merge FETCH_HEAD --no-edit
+```
+
+If there are conflicts, resolve them with this rule:
+
+- preserve both functionalities
+- preserve both intent sets
+- if needed, decouple the implementations so both behaviors survive
+
+Do not default to `git checkout --ours` or `git checkout --theirs` for meaningful logic.
+
+Good resolutions:
+
+- combine both logic branches into one coherent function
+- extract separate helpers and call both where appropriate
+- split responsibilities so upstream behavior and local behavior both remain
+- rename or reorganize code to avoid collisions
+
+Only take one side wholesale if the other side is clearly obsolete, redundant, generated, or a strict subset.
+
+After resolving conflicts:
+
+```bash
+git -C ~ add <resolved-files>
+git -C ~ commit --no-edit
+```
+
+## 9. Verify the result
+
+Run:
+
+```bash
+git -C ~ rev-parse --show-toplevel
+git -C ~ branch --show-current
+git -C ~ status
+git -C ~ diff FETCH_HEAD..$AGENT_NAME
+```
+
+You are done only if:
+
+- top-level repo is still `~`
+- current branch is `$AGENT_NAME`
+- your current code is under `~/agent`
+- bulky local-only files are ignored by `~/agent/.gitignore`
+- local state is committed
+- upstream merge is complete
+- the merged result still preserves both local and upstream functionality
+- the history is clean and easy to follow: checkpoint commit before merge

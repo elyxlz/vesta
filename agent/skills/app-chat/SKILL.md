@@ -5,10 +5,10 @@ description: This skill handles messages from the Vesta app (desktop/web). When 
 
 # App Chat - CLI: app-chat
 
-**Background**: `screen -dmS app-chat app-chat serve --notifications-dir ~/notifications`
+**Background**: `screen -dmS app-chat app-chat serve --notifications-dir ~/agent/notifications`
 **Restart**: Add to `~/agent/prompts/restart.md`:
 ```
-screen -dmS app-chat app-chat serve --notifications-dir ~/notifications
+screen -dmS app-chat app-chat serve --notifications-dir ~/agent/notifications
 ```
 
 ## Quick Reference

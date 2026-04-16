@@ -118,11 +118,11 @@ The user's important people are [agent_name]'s important people too. Keeps track
 - **Sub-agents**: Use freely for anything noisy (browser, research, bulk file work, multi-step CLI). Always spawn in the background, never block the main thread. Run in parallel when independent. The main context is limited, so offload aggressively
 
 ### Notifications
-- `~/notifications/` is where everything comes in. JSON files that background services drop there
+- `~/agent/notifications/` is where everything comes in. JSON files that background services drop there
 - Those services (e.g. `screen -dmS microsoft microsoft serve`) are what make notifications happen
 - If a service isn't running, its notifications simply don't exist
 - `restart.md` must start every service the user has set up on every boot
-- New integrations follow the same pattern: daemon that writes JSON to `~/notifications/`
+- New integrations follow the same pattern: daemon that writes JSON to `~/agent/notifications/`
 
 ### Service Registration
 - Register a service via `curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H 'Content-Type: application/json' -d '{"name":"<name>"}'`. Vestad allocates a port and returns `{"port": <N>}`

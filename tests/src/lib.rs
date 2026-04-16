@@ -17,6 +17,8 @@ pub static SERVER: LazyLock<TestServer> = LazyLock::new(|| {
 #[derive(Default)]
 pub struct TestServerBuilder {
     user: Option<String>,
+    home: Option<PathBuf>,
+    vestad_bin: Option<PathBuf>,
 }
 
 impl TestServerBuilder {
@@ -29,8 +31,18 @@ impl TestServerBuilder {
         self
     }
 
+    pub fn home(mut self, home: PathBuf) -> Self {
+        self.home = Some(home);
+        self
+    }
+
+    pub fn vestad_bin(mut self, vestad_bin: PathBuf) -> Self {
+        self.vestad_bin = Some(vestad_bin);
+        self
+    }
+
     pub fn start(self) -> Result<TestServer, String> {
-        TestServer::start_with_user(self.user)
+        TestServer::start_with_options(self.user, self.home, self.vestad_bin)
     }
 }
 
@@ -66,24 +78,34 @@ fn kill_orphan_vestads() {
 
 pub struct TestServer {
     process: Option<Child>,
-    _tmpdir: tempfile::TempDir,
+    _tmpdir: Option<tempfile::TempDir>,
+    home: PathBuf,
     pub config: ServerConfig,
     pub port: u16,
 }
 
 impl TestServer {
     pub fn start() -> Result<Self, String> {
-        Self::start_with_user(None)
+        Self::start_with_options(None, None, None)
     }
 
-    fn start_with_user(user: Option<String>) -> Result<Self, String> {
+    fn start_with_options(user: Option<String>, home: Option<PathBuf>, vestad_bin: Option<PathBuf>) -> Result<Self, String> {
         rustls::crypto::ring::default_provider()
             .install_default()
             .ok();
 
-        let tmpdir = tempfile::TempDir::new().map_err(|e| format!("tmpdir: {e}"))?;
-        let home = tmpdir.path().to_path_buf();
-        let vestad = find_vestad()?;
+        let (tmpdir, home) = match home {
+            Some(home) => {
+                std::fs::create_dir_all(&home).map_err(|e| format!("create home: {e}"))?;
+                (None, home)
+            }
+            None => {
+                let tmpdir = tempfile::TempDir::new().map_err(|e| format!("tmpdir: {e}"))?;
+                let home = tmpdir.path().to_path_buf();
+                (Some(tmpdir), home)
+            }
+        };
+        let vestad = vestad_bin.unwrap_or(find_vestad()?);
 
         let real_home = std::env::var("HOME").unwrap_or_default();
         let docker_config = format!("{}/.docker", real_home);
@@ -141,6 +163,7 @@ impl TestServer {
 
         Ok(Self {
             process: Some(process),
+            home,
             _tmpdir: tmpdir,
             config: ServerConfig {
                 url: format!("https://127.0.0.1:{port}"),
@@ -156,17 +179,26 @@ impl TestServer {
         Client::new(&self.config)
     }
 
+    pub fn home_path(&self) -> &std::path::Path {
+        &self.home
+    }
+
     pub fn _tmpdir_path(&self) -> &std::path::Path {
-        self._tmpdir.path()
+        self.home_path()
+    }
+
+    pub fn shutdown(&mut self) {
+        if let Some(ref mut p) = self.process {
+            let _ = p.kill();
+            let _ = p.wait();
+        }
+        self.process = None;
     }
 }
 
 impl Drop for TestServer {
     fn drop(&mut self) {
-        if let Some(ref mut p) = self.process {
-            let _ = p.kill();
-            let _ = p.wait();
-        }
+        self.shutdown();
     }
 }
 
@@ -180,6 +212,20 @@ impl<'a> TestAgent<'a> {
         let _ = client.stop_agent(name);
         let _ = client.destroy_agent(name);
         let name = client.create_agent(name, false)?;
+        Ok(Self { name, client })
+    }
+
+    pub fn create_with_manage_agent_code(client: &'a Client, name: &str) -> Result<Self, String> {
+        let _ = client.stop_agent(name);
+        let _ = client.destroy_agent(name);
+        let name = client.create_agent_ex(name, false, Some(true))?;
+        Ok(Self { name, client })
+    }
+
+    pub fn create_without_manage_agent_code(client: &'a Client, name: &str) -> Result<Self, String> {
+        let _ = client.stop_agent(name);
+        let _ = client.destroy_agent(name);
+        let name = client.create_agent_ex(name, false, Some(false))?;
         Ok(Self { name, client })
     }
 }
@@ -206,4 +252,80 @@ pub fn find_vestad() -> Result<PathBuf, String> {
         }
     }
     Err("vestad not found. Run `cargo build -p vestad` first, or set VESTAD_BIN".into())
+}
+
+pub struct ReleasedVestad {
+    _tmpdir: tempfile::TempDir,
+    pub tag: String,
+    pub bin_path: PathBuf,
+}
+
+pub fn download_latest_released_vestad() -> Result<ReleasedVestad, String> {
+    let output = Command::new("curl")
+        .args([
+            "-fsSL",
+            "-H",
+            "Accept: application/vnd.github+json",
+            "-H",
+            "User-Agent: vesta-tests",
+            "https://api.github.com/repos/elyxlz/vesta/releases/latest",
+        ])
+        .output()
+        .map_err(|e| format!("fetch latest release metadata: {e}"))?;
+    if !output.status.success() {
+        return Err("failed to fetch latest release metadata".into());
+    }
+    let body = String::from_utf8_lossy(&output.stdout);
+    let data: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("parse latest release metadata: {e}"))?;
+    let tag = data
+        .get("tag_name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "latest release tag missing".to_string())?
+        .to_string();
+
+    let rust_target = match std::env::consts::ARCH {
+        "x86_64" => "x86_64-unknown-linux-gnu",
+        "aarch64" => "aarch64-unknown-linux-gnu",
+        other => return Err(format!("unsupported architecture for released vestad test: {other}")),
+    };
+    let artifact = format!("vestad-{rust_target}.tar.gz");
+    let url = format!(
+        "https://github.com/elyxlz/vesta/releases/download/{}/{}",
+        tag, artifact
+    );
+
+    let tmpdir = tempfile::TempDir::new().map_err(|e| format!("tmpdir: {e}"))?;
+    let archive_path = tmpdir.path().join("vestad.tar.gz");
+    let output = Command::new("curl")
+        .args(["-fsSL", "-o"])
+        .arg(&archive_path)
+        .arg(&url)
+        .output()
+        .map_err(|e| format!("download released vestad: {e}"))?;
+    if !output.status.success() {
+        return Err(format!("failed to download released vestad artifact from {url}"));
+    }
+
+    let output = Command::new("tar")
+        .args(["-xzf"])
+        .arg(&archive_path)
+        .args(["-C"])
+        .arg(tmpdir.path())
+        .output()
+        .map_err(|e| format!("extract released vestad: {e}"))?;
+    if !output.status.success() {
+        return Err("failed to extract released vestad artifact".into());
+    }
+
+    let bin_path = tmpdir.path().join("vestad");
+    if !bin_path.exists() {
+        return Err("released vestad binary missing after extraction".into());
+    }
+
+    Ok(ReleasedVestad {
+        _tmpdir: tmpdir,
+        tag,
+        bin_path,
+    })
 }

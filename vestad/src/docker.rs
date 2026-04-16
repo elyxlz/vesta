@@ -49,11 +49,11 @@ impl From<bollard::errors::Error> for DockerError {
 }
 
 pub const VESTA_IMAGE: &str = "ghcr.io/elyxlz/vesta:latest";
-pub const VESTA_LOG_PATH: &str = "/root/logs/vesta.log";
+pub const VESTA_LOG_PATH: &str = "/root/agent/logs/vesta.log";
 pub const LOCAL_IMAGE_TAG: &str = "vesta:local";
 const MAX_DOCKERFILE_SEARCH_DEPTH: usize = 5;
 pub const CREDENTIALS_PATH: &str = "/root/.claude/.credentials.json";
-pub const AGENT_READY_MARKER_PATH: &str = "/root/data/agent_ready";
+pub const AGENT_READY_MARKER_PATH: &str = "/root/agent/data/agent_ready";
 const CLAUDE_JSON_PATH: &str = "/root/.claude.json";
 const AGENT_TOKEN_BYTES: usize = 32;
 const PORT_ALLOC_RETRIES: usize = 10;
@@ -76,24 +76,24 @@ const NETWORK_MODE: &str = "host";
 const RESTART_POLICY: &str = "unless-stopped";
 const MOUNT_DESTS: &[&str] = &["/run/vestad-env", "/root/agent/src/vesta", "/root/agent/pyproject.toml", "/root/agent/uv.lock"];
 
-const AGENT_ENTRYPOINT_TAIL: &str = "     git -C ~ config user.name \"$AGENT_NAME\" && \
-     git -C ~ config user.email \"$AGENT_NAME@vesta\"; \
-     uv sync --frozen --project /root/agent; \
-     git -C ~ add agent/ .gitignore --ignore-errors && \
-       (git -C ~ diff --cached --quiet || git -C ~ commit -m 'initial'); \
-     if ! git -C ~ describe --tags --abbrev=0 >/dev/null 2>&1 && [ -n \"${VESTA_UPSTREAM_REF:-}\" ]; then \
+const AGENT_ENTRYPOINT_STEPS: &[&str] = &[
+    ". /run/vestad-env",
+    ". ~/.bashrc || true",
+    "git -C ~ config user.name \"$AGENT_NAME\"",
+    "git -C ~ config user.email \"$AGENT_NAME@vesta\"",
+    "uv sync --frozen --project /root/agent",
+    "git -C ~ add agent/ .gitignore --ignore-errors",
+    "(git -C ~ diff --cached --quiet || git -C ~ commit -m 'initial')",
+    "if ! git -C ~ describe --tags --abbrev=0 >/dev/null 2>&1 && [ -n \"${VESTA_UPSTREAM_REF:-}\" ]; then \
        git -C ~ fetch --depth 1 origin \"$VESTA_UPSTREAM_REF\" 2>/dev/null && \
        git -C ~ merge -s ours FETCH_HEAD --no-edit --allow-unrelated-histories 2>/dev/null; \
-     fi; \
-     git -C ~ rev-parse --verify \"$AGENT_NAME\" 2>/dev/null || git -C ~ checkout -b \"$AGENT_NAME\"; \
-     exec uv run --frozen --project /root/agent python -m vesta.main";
+     fi",
+    "git -C ~ rev-parse --verify \"$AGENT_NAME\" 2>/dev/null || git -C ~ checkout -b \"$AGENT_NAME\"",
+    "exec uv run --frozen --project /root/agent python -m vesta.main",
+];
 
 pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
-    let script = format!(
-        ". /run/vestad-env; . ~/.bashrc || true; \\\n{}{}",
-        crate::migrations::agent_container_legacy_sh(),
-        AGENT_ENTRYPOINT_TAIL
-    );
+    let script = AGENT_ENTRYPOINT_STEPS.join("; \\\n");
     vec!["sh".into(), "-c".into(), script]
 }
 
@@ -175,11 +175,10 @@ pub fn container_name(name: &str) -> String {
     format!("vesta-{}-{}", current_user(), name)
 }
 
+// Modern containers carry `vesta.agent_name`, so this fallback only exists for
+// older managed containers that predate that label.
 pub fn name_from_cname(cname: &str) -> String {
-    let without_vesta = cname.strip_prefix("vesta-").unwrap_or(cname);
-    let user = current_user();
-    let user_prefix = format!("{}-", user);
-    without_vesta.strip_prefix(&user_prefix).unwrap_or(without_vesta).to_string()
+    crate::migrations::legacy_agent_name_from_container_name(cname, &current_user())
 }
 
 pub fn normalize_name(raw: &str) -> String {
@@ -331,8 +330,9 @@ pub async fn combined_status(docker: &Docker, cname: &str, info: &ContainerInfo)
     }
 }
 
-/// Read the agent name from the `vesta.agent_name` Docker label, falling back
-/// to parsing the container name for legacy containers that lack the label.
+/// Read the agent name from the `vesta.agent_name` Docker label. Older managed
+/// containers may not have that label yet, so we fall back to the legacy
+/// `vesta-{user}-{agent}` container naming scheme via migrations.rs.
 pub async fn get_agent_name(docker: &Docker, cname: &str) -> String {
     match docker.inspect_container(cname, None).await {
         Ok(info) => {
@@ -929,7 +929,11 @@ pub async fn list_managed_containers(docker: &Docker) -> Vec<String> {
             let name = names.first()?.strip_prefix('/')?.to_string();
             let labels = c.labels.unwrap_or_default();
             let owner = labels.get(LABEL_USER).cloned().unwrap_or_default();
-            if owner == user || owner.is_empty() {
+            let modern_owned_by_user =
+                crate::migrations::modern_container_owned_by_user(&owner, &user);
+            let legacy_owned_by_user =
+                crate::migrations::legacy_container_owned_by_user(&name, &owner, &user);
+            if modern_owned_by_user || legacy_owned_by_user {
                 Some(name)
             } else {
                 None
@@ -1235,6 +1239,7 @@ pub async fn create_container(docker: &Docker, cname: &str, image: &str, port: u
         tty: Some(true),
         labels: Some(labels),
         cmd: Some(agent_container_entrypoint_cmd()),
+        working_dir: Some("/root".to_string()),
         host_config: Some(host_config),
         ..Default::default()
     };
@@ -1791,15 +1796,34 @@ pub async fn rebuild_agent(docker: &Docker, name: &str, env_config: &AgentEnvCon
         .unwrap()
         .as_secs();
     let backup_tag = format!("vesta-rebuild:{}_{}", name, ts);
+    let normalized_tag = format!("vesta-rebuild:{}_{}-normalized", name, ts);
+    let helper_name = format!("{}-normalize", cname);
 
     tracing::info!(agent = %name, "[1/3] snapshotting container filesystem...");
     snapshot_container(docker, &cname, &backup_tag, &[]).await?;
+
+    // Pre-agent-dir releases stored the repo at /root/vesta. If we detect that
+    // legacy layout in the preserved snapshot, migrations.rs rewrites the
+    // snapshot into the modern /root + /root/agent layout before we recreate
+    // the managed container. Once a container already has /root/.git, this is
+    // a no-op and we rebuild directly from the raw snapshot.
+    let rebuild_image = if crate::migrations::maybe_normalize_legacy_agent_snapshot(
+        docker,
+        &cname,
+        &backup_tag,
+        &helper_name,
+        &normalized_tag,
+    ).await? {
+        normalized_tag.as_str()
+    } else {
+        backup_tag.as_str()
+    };
 
     tracing::info!(agent = %name, "[2/3] removing old container...");
     remove_container_force(docker, &cname).await.ok();
 
     tracing::info!(agent = %name, "[3/3] creating container with new config...");
-    create_container(docker, &cname, &backup_tag, port, name, env_config, manage_core_code, None).await?;
+    create_container(docker, &cname, rebuild_image, port, name, env_config, manage_core_code, None).await?;
 
     Ok(())
 }

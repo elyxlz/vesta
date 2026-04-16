@@ -15,7 +15,7 @@
 5. Start background daemon: `screen -dmS microsoft microsoft serve`
 6. Add to `~/agent/prompts/restart.md`:
    ```
-   screen -dmS microsoft microsoft serve --notifications-dir ~/notifications
+   screen -dmS microsoft microsoft serve --notifications-dir ~/agent/notifications
    ```
 
 ## Authentication

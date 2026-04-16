@@ -1581,14 +1581,10 @@ pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: S
     if let Err(e) = crate::agent_code::ensure_agent_code(&env_config.config_dir) {
         tracing::error!(error = %e, "failed to ensure agent code");
     }
-    let env_config_clone = env_config.clone();
     let agent_settings = load_settings().agents.clone();
-    let docker_clone = docker.clone();
-    tokio::spawn(async move {
-        docker::reconcile_containers(&docker_clone, &env_config_clone, &|name| {
-            agent_settings.get(name).is_none_or(|s| s.manage_agent_code)
-        }).await;
-    });
+    docker::reconcile_containers(&docker, &env_config, &|name| {
+        agent_settings.get(name).is_none_or(|s| s.manage_agent_code)
+    }).await;
     let state = Arc::new(AppState::new(api_key, env_config, docker.clone(), tunnel_url, dev_mode));
     agent_status::spawn_agent_status_task(
         state.agent_status_cache.clone(),

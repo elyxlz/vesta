@@ -57,7 +57,7 @@ go build -tags "fts5" -o /usr/local/bin/whatsapp .
 ## 5. Start the daemon and authenticate
 
 ```bash
-screen -dmS whatsapp whatsapp serve --notifications-dir ~/notifications
+screen -dmS whatsapp whatsapp serve --notifications-dir ~/agent/notifications
 sleep 3
 ```
 
@@ -109,7 +109,7 @@ If the user scans the QR code but WhatsApp shows **"Can't link at this time"**, 
 ```bash
 screen -S whatsapp -X quit
 sleep 2
-screen -dmS whatsapp whatsapp serve --notifications-dir ~/notifications
+screen -dmS whatsapp whatsapp serve --notifications-dir ~/agent/notifications
 sleep 3
 whatsapp pair-phone --phone '+1234567890'   # or: whatsapp authenticate (for QR)
 ```
@@ -117,7 +117,7 @@ whatsapp pair-phone --phone '+1234567890'   # or: whatsapp authenticate (for QR)
 ## 6. Add to restart.md
 
 ```
-screen -dmS whatsapp whatsapp serve --notifications-dir ~/notifications
+screen -dmS whatsapp whatsapp serve --notifications-dir ~/agent/notifications
 ```
 
 ## How transcription works

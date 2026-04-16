@@ -1,3 +1,5 @@
+use std::process::Command;
+
 use vesta_tests::{TestAgent, SERVER, find_vestad};
 use vesta_tests::client::Client;
 use vesta_tests::types::{BackupType, ServerConfig};
@@ -6,6 +8,47 @@ const FAKE_TOKEN: &str = r#"{"claudeAiOauth":{"accessToken":"test","refreshToken
 
 fn inject_fake_token(c: &Client, name: &str) {
     c.inject_token(name, FAKE_TOKEN).unwrap();
+}
+
+fn docker_output(args: &[&str]) -> Result<String, String> {
+    let output = Command::new("docker")
+        .args(args)
+        .output()
+        .map_err(|e| format!("docker {:?}: {e}", args))?;
+    if !output.status.success() {
+        return Err(format!(
+            "docker {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn agent_container_name(agent_name: &str) -> String {
+    let user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+    format!("vesta-{}-{}", user, agent_name)
+}
+
+fn assert_agent_core_paths_permissions(container: &str, expect_readonly_mounts: bool) -> Result<(), String> {
+    let script = if expect_readonly_mounts {
+        r#"set -e
+for p in /root/agent/src/vesta /root/agent/pyproject.toml /root/agent/uv.lock; do
+  if [ ! -e "$p" ]; then echo "missing $p"; exit 1; fi
+  if [ -w "$p" ]; then echo "expected read-only mount: $p"; exit 1; fi
+done
+if [ ! -w /root/agent/MEMORY.md ]; then echo "MEMORY.md should remain writable"; exit 1; fi
+"#
+    } else {
+        r#"set -e
+for p in /root/agent/src/vesta /root/agent/pyproject.toml /root/agent/uv.lock; do
+  if [ ! -e "$p" ]; then echo "missing $p"; exit 1; fi
+  if [ ! -w "$p" ]; then echo "expected writable (image copy): $p"; exit 1; fi
+done
+"#
+    };
+    docker_output(&["exec", container, "bash", "-lc", script])?;
+    Ok(())
 }
 
 /// Container is up (regardless of auth/readiness state).
@@ -182,6 +225,26 @@ fn inject_token_marks_authenticated() {
     let st = c.agent_status(&agent.name).unwrap();
     // authenticated agents get status "starting" or "alive", not "not_authenticated"
     assert_ne!(st.status, "not_authenticated");
+}
+
+#[test]
+fn manage_agent_code_true_reaches_ready() {
+    let c = SERVER.client();
+    let agent = TestAgent::create_with_manage_agent_code(&c, "test-manage-agent-code").unwrap();
+    inject_fake_token(&c, &agent.name);
+    c.wait_ready(&agent.name, 180).expect("agent should become ready with core-code mounts");
+    let container = agent_container_name(&agent.name);
+    assert_agent_core_paths_permissions(&container, true).expect("core paths should be read-only mounts");
+}
+
+#[test]
+fn manage_agent_code_false_reaches_ready() {
+    let c = SERVER.client();
+    let agent = TestAgent::create_without_manage_agent_code(&c, "test-no-manage-agent-code").unwrap();
+    inject_fake_token(&c, &agent.name);
+    c.wait_ready(&agent.name, 180).expect("agent should become ready without core-code mounts");
+    let container = agent_container_name(&agent.name);
+    assert_agent_core_paths_permissions(&container, false).expect("core paths should be writable from image");
 }
 
 // ── Backup & Restore ───────────────────────────────────────────

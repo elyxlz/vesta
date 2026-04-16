@@ -4,20 +4,20 @@ How agent code gets into the container, in both dev and prod modes.
 
 ## Image build (Dockerfile)
 
-1. **`git init`** — fresh repo with `origin` remote, sparse checkout set to `agent/` only, `.gitignore` hides runtime dirs (`.claude/`, `data/`, `logs/`)
-2. **COPY from build context** — `MEMORY.md`, `prompts/`, `skills/` come from whoever built the image (your local repo in dev, CI release tarball in prod)
+1. **`git init`** — fresh repo with `origin` remote, sparse checkout set to `agent/` only, `.gitignore` hides everything except `agent/` and itself
+2. **`COPY agent/`** — full agent tree from the build context (`.dockerignore` excludes tests, caches, etc.); local dev vs CI release determines contents
 3. **Skills pruned** — non-default skills removed to shrink the image
-4. **COPY `pyproject.toml` + `uv.lock`** — deps installed into `.venv` in the image layer
+4. **`uv sync`** — deps installed into `.venv` in the image layer; core Python is baked in so `manage_agent_code=false` works without host mounts
 
 At this point the image has:
 - `.git/` — fresh repo, no commits yet, `origin` remote configured, sparse checkout for `agent/`
-- `.gitignore` — ignores `.claude/`, `data/`, `logs/`
+- `.gitignore` — ignores everything except `agent/` and `.gitignore`
 - `agent/MEMORY.md` — from build context
 - `agent/prompts/` — from build context
 - `agent/skills/` — from build context (pruned)
 - `agent/pyproject.toml` + `agent/uv.lock` — from build context
+- `agent/src/vesta/` — from build context (overlaid by mounts when `manage_agent_code` is true)
 - `agent/.venv/` — installed deps
-- No `agent/src/` — that comes from mounts
 
 ## Container creation (vestad, `docker.rs` + `agent_code.rs`)
 
@@ -49,6 +49,8 @@ The `sh -c` entrypoint runs:
 6. **Agent branch** — `git checkout -b "$AGENT_NAME"` if that ref does not exist yet.
 7. **`exec uv run --frozen --project /root/agent python -m vesta.main`** — starts the agent
 
+There is no automatic filesystem migration shell anymore. If a container wakes up with legacy layout drift, the agent is expected to repair that state explicitly using `agent/skills/upstream-sync/SETUP.md`, get to a commit-ready branch, commit local state, and merge `VESTA_UPSTREAM_REF`.
+
 ## VESTA_UPSTREAM_REF
 
 Single env var that tells the agent what to sync against:
@@ -61,13 +63,14 @@ Updated when vestad starts via `update_all_agent_env_files` (rewrites port, tunn
 
 Git repo root is `$HOME` (`/root` in the image). Tracked tree is under `agent/`.
 
-- `agent/src/vesta/` — vestad's code (mounted, read-only)
+- `agent/src/vesta/` — vestad's code (mounted read-only when `manage_agent_code` is true; otherwise image copy)
 - `agent/pyproject.toml` + `uv.lock` — vestad's versions (mounted, read-only)
 - `agent/MEMORY.md` — from image build, agent can modify and commit
 - `agent/prompts/` — from image build, agent can modify and commit
 - `agent/skills/` — from image build, agent can modify and commit
 - `.git/` — at `$HOME`, upstream merge base, agent's branch for tracking its changes
-- Clean `git status` — runtime dirs hidden by `.gitignore`, sparse checkout hides non-agent files from merges
+- Clean `git status` — sparse checkout hides non-agent files from merges; agent-local ignore rules belong in `agent/.gitignore`
+- Setup and sync are explicit agent work — normalize the workspace into `~/agent`, keep local-only heavy files in `agent/.gitignore`, commit local state, then merge upstream while preserving both sides' functionality
 
 ## Dev vs Prod difference
 

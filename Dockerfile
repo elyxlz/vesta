@@ -16,17 +16,13 @@ ENV PATH="/root/.local/bin:${PATH}"
 WORKDIR /root
 
 # Git repo at $HOME — agent tracks local changes (skills, prompts, memory) on its branch.
-# Core code (src/vesta, pyproject.toml, uv.lock) is mounted by vestad at runtime.
+# Core code is baked into the image; with manage_agent_code=true, vestad mounts newer copies.
 # .gitignore ensures only relevant files are tracked and that mounts do not pollute the repo
 RUN git init && git remote add origin https://github.com/elyxlz/vesta.git && \
     git sparse-checkout init --cone && git sparse-checkout set agent && \
     printf '/*\n!.gitignore\n!/agent/\n' > .gitignore
 
-# Copy agent-owned files from build context (matches local code in dev,
-# release code in prod).
-COPY agent/MEMORY.md agent/MEMORY.md
-COPY agent/prompts/ agent/prompts/
-COPY agent/skills/ agent/skills/
+COPY agent/ ./agent/
 
 # Reduce image size: remove non-default skills
 RUN for d in agent/skills/*/; do \
@@ -38,10 +34,6 @@ RUN for d in agent/skills/*/; do \
 RUN mkdir -p .claude && ln -s ../agent/skills .claude/skills && \
     printf '{"permissions":{"allow":["Edit(~/.bashrc)","Write(~/.bashrc)"]}}\n' > .claude/settings.json
 
-# Deps (cached unless lockfile changes). These files are also mounted at
-# runtime, but we COPY them here so uv can install dependencies into the
-# image layer — the mount overlays these copies at runtime.
-COPY agent/pyproject.toml agent/uv.lock ./agent/
 WORKDIR /root/agent
 RUN uv sync --frozen --no-install-project
 WORKDIR /root

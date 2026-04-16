@@ -42,7 +42,7 @@ class VestaConfig(pyd_settings.BaseSettings):
     root: pl.Path = pyd.Field(
         default=_DEFAULT_ROOT,
         validation_alias=pyd.AliasChoices("VESTA_ROOT", "root"),
-        description="Layout root ($HOME in containers). Env VESTA_ROOT overrides (e.g. ~/vesta for local dev).",
+        description="Layout root ($HOME in containers). Env VESTA_ROOT overrides the base path used for agent/ directory.",
     )
 
     @pyd.field_validator("root", mode="before")
@@ -53,24 +53,24 @@ class VestaConfig(pyd_settings.BaseSettings):
         return pl.Path(value).expanduser().resolve()
 
     @property
-    def source_dir(self) -> pl.Path:
+    def agent_dir(self) -> pl.Path:
         return self.root / "agent"
 
     @property
     def notifications_dir(self) -> pl.Path:
-        return self.root / "notifications"
+        return self.agent_dir / "notifications"
 
     @property
     def data_dir(self) -> pl.Path:
-        return self.root / "data"
+        return self.agent_dir / "data"
 
     @property
     def logs_dir(self) -> pl.Path:
-        return self.root / "logs"
+        return self.agent_dir / "logs"
 
     @property
     def skills_dir(self) -> pl.Path:
-        return self.source_dir / "skills"
+        return self.agent_dir / "skills"
 
     def skill_dirs(self) -> list[pl.Path]:
         """Return every existing skills/<name>/ directory with a SKILL.md."""
@@ -81,11 +81,11 @@ class VestaConfig(pyd_settings.BaseSettings):
 
     @property
     def prompts_dir(self) -> pl.Path:
-        return self.source_dir / "prompts"
+        return self.agent_dir / "prompts"
 
     @property
     def dreamer_dir(self) -> pl.Path:
-        return self.source_dir / "dreamer"
+        return self.agent_dir / "dreamer"
 
     @property
     def session_file(self) -> pl.Path:
