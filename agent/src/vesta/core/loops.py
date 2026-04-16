@@ -14,7 +14,7 @@ import vesta.models as vm
 from vesta import logger
 from vesta.core.client import process_message, build_client_options, attempt_interrupt, persist_session_id, _cancel_task
 from vesta.core.init import load_prompt, build_restart_context
-from vesta.events import ApiOutageEvent, ApiRecoveredEvent
+from vesta.events import ApiOutageEvent, ApiRecoveredEvent, ErrorEvent
 
 
 def _now() -> dt.datetime:
@@ -150,20 +150,26 @@ async def _process_message_safely(msg: str, *, is_user: bool, state: vm.State, c
             if state.api_failures >= _MAX_TRANSIENT_RETRIES:
                 logger.warning("API outage detected, entering retry loop...")
                 while not state.shutdown_event.is_set() and not state.graceful_shutdown.is_set():
-                    await asyncio.sleep(_RETRY_INTERVAL)
+                    try:
+                        await asyncio.wait_for(state.shutdown_event.wait(), timeout=_RETRY_INTERVAL)
+                        return  # shutdown fired during sleep
+                    except TimeoutError:
+                        pass
+                    if state.graceful_shutdown.is_set():
+                        return
                     try:
                         await process_message(msg, state=state, config=config, is_user=is_user)
                         state.api_failures = 0
-                        logger.startup("API recovered, resuming normal operation")
+                        logger.client("API recovered, resuming normal operation")
                         state.event_bus.emit(ApiRecoveredEvent(type="api_recovered"))
                         return
-                    except Exception as retry_e:
+                    except (ClaudeSDKError, OSError, RuntimeError, ValueError, TimeoutError) as retry_e:
                         if _is_transient(retry_e):
                             logger.warning(f"API still down, retrying in {_RETRY_INTERVAL}s...")
                         else:
                             error_msg = str(retry_e) or type(retry_e).__name__
                             logger.error(f"Error processing message: {error_msg} — triggering restart")
-                            state.event_bus.emit({"type": "error", "text": error_msg})
+                            state.event_bus.emit(ErrorEvent(type="error", text=error_msg))
                             state.restart_reason = f"error — {error_msg}"
                             state.graceful_shutdown.set()
                             return
