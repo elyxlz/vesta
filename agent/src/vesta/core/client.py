@@ -416,6 +416,14 @@ def _build_vesta_tools_server(state: vm.State, config: vm.VestaConfig) -> tp.Any
     return create_sdk_mcp_server("vesta-tools", tools=[restart_vesta, search_conversation_history])
 
 
+def _make_stderr_handler(state: vm.State) -> tp.Callable[[str], None]:
+    def handler(line: str) -> None:
+        logger.sdk(line)
+        state.stderr_buffer.append(line)
+
+    return handler
+
+
 def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgentOptions:
     memory_path = get_memory_path(config)
     if not memory_path.exists():
@@ -443,7 +451,7 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
         add_dirs=[str(config.root)],
         thinking=config.thinking,
         max_buffer_size=10 * 1024 * 1024,
-        stderr=lambda line: logger.sdk(line),
+        stderr=_make_stderr_handler(state),
         mcp_servers={"vesta": _build_vesta_tools_server(state, config)},
         resume=state.session_id,
     )

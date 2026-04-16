@@ -141,7 +141,15 @@ async def _process_message_safely(msg: str, *, is_user: bool, state: vm.State, c
                     persist_session_id(sid, state=state, config=config)
             except (AttributeError, TypeError):
                 pass
-        logger.error(f"Error processing message: {error_msg} — triggering restart")
+        try:
+            exit_code = e.exit_code  # ty: ignore[unresolved-attribute]
+        except AttributeError:
+            exit_code = None
+        stderr_tail = "\n".join(state.stderr_buffer) if state.stderr_buffer else None
+        detail = f"Error processing message: {error_msg} | exit_code={exit_code}"
+        if stderr_tail:
+            detail += f"\nRecent stderr:\n{stderr_tail}"
+        logger.error(f"{detail} — triggering restart")
         state.event_bus.emit({"type": "error", "text": error_msg})
         state.restart_reason = f"error — {error_msg}"
         state.graceful_shutdown.set()
@@ -236,8 +244,18 @@ async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm
         except (ClaudeSDKError, OSError, RuntimeError) as exc:
             if retried or not state.session_id:
                 raise
-            logger.warning(f"Session resume failed ({state.session_id[:16]}...): {exc} — starting fresh")
+            try:
+                exit_code = exc.exit_code  # ty: ignore[unresolved-attribute]
+            except AttributeError:
+                exit_code = None
+            stderr_tail = "\n".join(state.stderr_buffer) if state.stderr_buffer else "(no stderr captured)"
+            logger.warning(
+                f"Session resume failed ({state.session_id[:16]}...): {type(exc).__name__}: {exc}"
+                f" | exit_code={exit_code}"
+                f" — starting fresh\nRecent stderr:\n{stderr_tail}"
+            )
             state.session_id = None
+            state.stderr_buffer.clear()
             config.session_file.unlink(missing_ok=True)
             options = build_client_options(config, state)
             retried = True
