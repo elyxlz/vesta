@@ -21,6 +21,10 @@ description: Self-improvement and memory curation. Used by the nightly dreamer, 
 5. **Sensitive data cleanup**: purge secrets from history and files
 6. **Summary**: write tonight's dreamer summary
 
+## Before you start
+
+Write a thorough plan first. For each phase: what you intend to fix, what to prune from memory, what to file upstream, what to clean up. Be specific. Then execute it step by step.
+
 ## Self-Improvement
 
 ### 1. Retrospective
