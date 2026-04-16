@@ -169,8 +169,42 @@ jobs:
       - name: Build vestad
         run: cargo build -p vestad
 
-      - name: Run integration tests
-        run: cargo test -p vesta-tests -- --test-threads=1
+      - name: Run integration tests (excludes live tests)
+        run: cargo test -p vesta-tests --test server --test multi_user --test oauth --test migrations -- --test-threads=1
+
+  # ── Live e2e tests (release only, requires Claude credentials) ────────
+  test-live:
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Login to ghcr.io
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull agent image
+        run: docker pull ghcr.io/elyxlz/vesta:latest
+
+      - name: Build vestad
+        run: cargo build -p vestad
+
+      - name: Inject Claude credentials
+        run: |
+          mkdir -p ~/.claude
+          echo '${{ secrets.CLAUDE_CREDENTIALS }}' > ~/.claude/.credentials.json
+
+      - name: Run live e2e tests
+        run: cargo test -p vesta-tests --test live -- --test-threads=1
 
   # ── Check vesta (clippy + tests, PRs only) ────────────────────────────
   check-vesta:
@@ -890,6 +924,7 @@ jobs:
       - skills-index-check
       - test-frontend
       - test-integration
+      - test-live
       - check-vesta
       - build-vesta
       - build-vestad
@@ -942,7 +977,7 @@ jobs:
 
   # ── Upload artifacts to release and publish ──────────────────────────
   release:
-    needs: [build-vesta, build-vestad, test-frontend, test-integration, test-linux, build-windows, build-tauri-macos, build-tauri-linux, build-tauri-windows, build-tauri-android, build-tauri-ios, push-image]
+    needs: [build-vesta, build-vestad, test-frontend, test-integration, test-live, test-linux, build-windows, build-tauri-macos, build-tauri-linux, build-tauri-windows, build-tauri-android, build-tauri-ios, push-image]
     if: ${{ !failure() && !cancelled() && github.event_name == 'release' }}
     runs-on: ubuntu-latest
     steps:

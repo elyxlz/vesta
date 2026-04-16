@@ -10,23 +10,29 @@ if [ -d "$DEST" ]; then
     exit 0
 fi
 
-REPO="https://github.com/elyxlz/vesta"
-TMP_CLONE_DIR=$(mktemp -d)
-trap 'rm -rf "$TMP_CLONE_DIR"' EXIT
+# Add the skill to sparse checkout so it appears from the git repo.
+# This means upstream merges will update it, and local changes are tracked.
+echo "Installing '$SKILL_NAME' via sparse checkout..."
 
-echo "Downloading '$SKILL_NAME' from registry..."
-git clone --no-checkout --depth=1 --filter=blob:none "$REPO" "$TMP_CLONE_DIR/repo"
-cd "$TMP_CLONE_DIR/repo"
-git sparse-checkout init --no-cone
-git sparse-checkout set "agent/skills/$SKILL_NAME"
-git checkout
+REPO_ROOT=$(git -C ~ rev-parse --show-toplevel)
+git -C "$REPO_ROOT" sparse-checkout add "agent/skills/$SKILL_NAME"
 
-if [ ! -d "agent/skills/$SKILL_NAME" ]; then
+# Fetch the skill content from upstream if not already available locally
+if [ ! -d "$DEST" ]; then
+    UPSTREAM_REF="${VESTA_UPSTREAM_REF:-}"
+    if [ -n "$UPSTREAM_REF" ]; then
+        git -C "$REPO_ROOT" fetch --depth 1 origin "$UPSTREAM_REF" 2>/dev/null || true
+        git -C "$REPO_ROOT" checkout FETCH_HEAD -- "agent/skills/$SKILL_NAME" 2>/dev/null || true
+    fi
+fi
+
+if [ ! -d "$DEST" ]; then
+    # Remove from sparse checkout since the skill doesn't exist upstream
+    git -C "$REPO_ROOT" sparse-checkout set $(git -C "$REPO_ROOT" sparse-checkout list | grep -v "^agent/skills/$SKILL_NAME$")
     echo "Error: skill '$SKILL_NAME' not found in registry."
     exit 1
 fi
 
-cp -r "agent/skills/$SKILL_NAME" "$DEST"
 echo "Installed '$SKILL_NAME'. Restart Vesta to activate it."
 if [ -f "$DEST/SETUP.md" ]; then
     echo "This skill requires setup — read $DEST/SETUP.md for instructions."

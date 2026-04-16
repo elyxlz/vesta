@@ -10,14 +10,14 @@ Vesta's skills come from a registry on GitHub (`agent/skills/`). You can search 
 ## Search the registry
 
 ```bash
-~/vesta/skills/skills-registry/scripts/skills-search                  # list all available skills
-~/vesta/skills/skills-registry/scripts/skills-search email            # search by keyword
+~/agent/skills/skills-registry/scripts/skills-search                  # list all available skills
+~/agent/skills/skills-registry/scripts/skills-search email            # search by keyword
 ```
 
 ## Install a skill
 
 ```bash
-~/vesta/skills/skills-registry/scripts/skills-install <name>
+~/agent/skills/skills-registry/scripts/skills-install <name>
 ```
 
 After installing, restart yourself with the `restart_vesta` tool to load the new skill into context.
@@ -25,11 +25,12 @@ After installing, restart yourself with the `restart_vesta` tool to load the new
 ## Check what's installed
 
 ```bash
-ls ~/vesta/skills/
+ls ~/agent/skills/
 ```
 
 ## Notes
 
-- Skills you install are downloaded from `agent/skills/` in the GitHub repo
-- Core skills ship pre-installed; optional skills are downloaded on demand
+- Skills are installed via git sparse checkout from the upstream repo
+- Installed skills receive updates automatically during upstream sync merges
+- Core skills ship pre-installed; optional skills are checked out on demand
 - After installing a skill that requires setup, read its `SETUP.md`

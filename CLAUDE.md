@@ -10,7 +10,7 @@ Vesta is a personal AI assistant that runs as a persistent daemon in Docker, pow
 
 Client/server architecture. `vestad` daemon runs on the host (manages Docker containers, serves HTTP+WS API). `vesta` CLI and Tauri desktop app connect to vestad. On Linux, the CLI/app bootstraps vestad locally via systemd. On macOS/Windows, users connect to a remote vestad via `vesta connect`. Python agent runs inside the container.
 
-- **Agent** (`agent/src/vesta/`): Async Python. Entry point `main.py`. Core loop in `core/loops.py` (message processing, notification monitoring). WebSocket server in `api.py`.
+- **Agent** (`agent/core/`): Async Python. Entry point `main.py`. Core loop in `core/loops.py` (message processing, notification monitoring). WebSocket server in `api.py`.
 - **CLI** (`cli/`): Rust `vesta` client binary. Connects to vestad over HTTPS.
 - **Server** (`vestad/`): Rust `vestad` daemon. Manages Docker containers, serves API.
 - **Desktop App** (`app/`): Tauri + React (TypeScript). Components in `app/src/components/`, providers in `app/src/providers/`.
@@ -19,21 +19,21 @@ Client/server architecture. `vestad` daemon runs on the host (manages Docker con
 
 ### Key Flows
 
-**Agent creation**: CLI/app -> `POST /agents` on vestad -> allocates unique WS port, generates agent token, writes `~/.config/vesta/vestad/agents/{agent}.env` -> builds/pulls Docker image -> creates container with host networking and bind-mounted env file (`/run/vestad-env`) -> container starts, sources env, runs `uv run python -m vesta.main` -> initializes EventBus (SQLite), starts WS server on allocated port, starts message processor and notification monitor tasks.
+**Agent creation**: CLI/app -> `POST /agents` on vestad -> allocates unique WS port, generates agent token, writes `~/.config/vesta/vestad/agents/{agent}.env` -> builds/pulls Docker image -> creates container with host networking and bind-mounted env file (`/run/vestad-env`) -> container starts, sources env, runs `uv run python -m core.main` -> initializes EventBus (SQLite), starts WS server on allocated port, starts message processor and notification monitor tasks.
 
 **Message flow**: Client connects to vestad WS -> vestad proxies to agent container's WS port -> agent's `api.py` receives message, emits `UserEvent` to EventBus -> `message_processor` in `core/loops.py` picks it up, calls Claude Agent SDK (`client.query()`) -> streams response blocks (text, thinking, tool use) back through EventBus -> all WS subscribers receive events in real time. Supports message interruption: new message during processing triggers `client.interrupt()`.
 
-**Notification flow**: External systems write JSON files to `~/vesta/notifications/` inside the container. `monitor_loop` in `core/loops.py` watches with `watchfiles.awatch()`. Notifications marked `interrupt: true` immediately interrupt current processing and queue for the agent. Passive notifications batch and wait until agent is idle.
+**Notification flow**: External systems write JSON files to `~/agent/notifications/` inside the container. `monitor_loop` in `core/loops.py` watches with `watchfiles.awatch()`. Notifications marked `interrupt: true` immediately interrupt current processing and queue for the agent. Passive notifications batch and wait until agent is idle.
 
-**Session persistence**: Agent persists a Claude SDK `session_id` to `~/vesta/data/session_id`, allowing conversation resume across container restarts. All events stored in `~/vesta/data/events.db` (SQLite with FTS5 for full-text search). The "dreamer" runs nightly at `NIGHTLY_MEMORY_HOUR`, curates memory, runs `/compact`, then restarts with a fresh session.
+**Session persistence**: Agent persists a Claude SDK `session_id` to `~/agent/data/session_id`, allowing conversation resume across container restarts. All events stored in `~/agent/data/events.db` (SQLite with FTS5 for full-text search). The "dreamer" runs nightly at `NIGHTLY_MEMORY_HOUR`, curates memory, runs `/compact`, then restarts with a fresh session.
 
-**Config injection**: vestad writes env vars to `agents/{agent}.env` on host, bind-mounted into container. Agent's `config.py` reads `VestaConfig` from env vars (`AGENT_NAME`, `AGENT_MODEL`, `WS_PORT`, `AGENT_TOKEN`, etc.). Custom prompts live in `~/vesta/prompts/` (MEMORY.md, notification_suffix.md, nightly_dream.md, etc.).
+**Config injection**: vestad writes env vars to `agents/{agent}.env` on host, bind-mounted into container. Agent's `config.py` reads `VestaConfig` from env vars (`AGENT_NAME`, `AGENT_MODEL`, `WS_PORT`, `AGENT_TOKEN`, etc.). Custom prompts live in `~/agent/prompts/` (MEMORY.md, notification_suffix.md, nightly_dream.md, etc.).
 
 **Auth**: vestad generates an API key at `~/.config/vesta/vestad/api-key` (clients use `Bearer` token or `?token=` query param). Each agent gets a unique `AGENT_TOKEN` for agent-to-vestad auth via `X-Agent-Token` header. TLS uses self-signed certs with fingerprint verification (no CA chain).
 
 **Skills**: Each skill in `agent/skills/{name}/` has `SKILL.md` (YAML frontmatter with name/description) + CLI tools. Skills are registered as tools via Claude Agent SDK. `skills/index.json` is auto-generated and must be committed when skills change.
 
-**Backup/restore**: `docker commit` creates image snapshots (`vesta-backup:{name}_{type}_{timestamp}`). Retention: 3 daily, 2 weekly, 1 monthly. Export/import via `docker save/load` for cross-machine transfer. All `~/vesta/` state (events.db, session_id) survives backup/restore.
+**Backup/restore**: `docker commit` creates image snapshots (`vesta-backup:{name}_{type}_{timestamp}`). Retention: 3 daily, 2 weekly, 1 monthly. Export/import via `docker save/load` for cross-machine transfer. All `~/agent/` state (events.db, session_id) survives backup/restore.
 
 ## Commands
 

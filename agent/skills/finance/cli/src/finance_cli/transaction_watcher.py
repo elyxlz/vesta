@@ -7,7 +7,7 @@ from datetime import datetime, UTC, timedelta
 from pathlib import Path
 
 SEEN_FILE = Path.home() / ".finance" / "seen_transactions.json"
-NOTIFICATIONS_DIR = Path.home() / "vesta" / "notifications"
+NOTIFICATIONS_DIR = Path.home() / "notifications"
 POLL_INTERVAL = 300  # 5 minutes
 
 

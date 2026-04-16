@@ -72,8 +72,12 @@
     "description": "Use for \"TV\", \"Samsung TV\", \"television\", \"watch\", \"play on TV\", \"YouTube on TV\", \"volume\", \"turn on TV\", \"turn off TV\", or any Samsung Smart TV control."
   },
   {
-    "name": "upstream",
-    "description": "Use when you need to contribute code, push a branch, open a pull request, submit a PR, sync with upstream, or do any git/GitHub operations on the vesta repo (elyxlz/vesta). IMPORTANT, always use this skill for GitHub access. Never use personal tokens or manual git push. Authentication is handled via the vesta-upstream GitHub App, no credentials needed from the user."
+    "name": "upstream-pr",
+    "description": "Create PRs, issues, and contributions to the upstream elyxlz/vesta repo. Use for any GitHub operations -- pushing branches, creating PRs, checking CI status, or accessing the GitHub API."
+  },
+  {
+    "name": "upstream-sync",
+    "description": "Sync local agent code with upstream. Use when checking for updates, merging new releases or branch changes, or resolving merge conflicts with upstream vesta."
   },
   {
     "name": "voice",

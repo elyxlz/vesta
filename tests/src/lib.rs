@@ -4,6 +4,7 @@ pub mod types;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::LazyLock;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use client::Client;
@@ -14,9 +15,22 @@ pub static SERVER: LazyLock<TestServer> = LazyLock::new(|| {
     TestServer::start().unwrap_or_else(|e| panic!("failed to start test server: {e}"))
 });
 
+static TEST_USER_COUNTER: AtomicU32 = AtomicU32::new(0);
+
+/// Generate a unique user name for test isolation. Includes PID for cross-run
+/// uniqueness and an atomic counter for intra-run uniqueness. This prevents
+/// tests from seeing each other's Docker containers (vestad scopes by
+/// `vesta.user` label).
+pub fn unique_user(prefix: &str) -> String {
+    let id = TEST_USER_COUNTER.fetch_add(1, Ordering::SeqCst);
+    format!("{prefix}-t{}-{id}", std::process::id())
+}
+
 #[derive(Default)]
 pub struct TestServerBuilder {
     user: Option<String>,
+    home: Option<PathBuf>,
+    vestad_bin: Option<PathBuf>,
 }
 
 impl TestServerBuilder {
@@ -24,13 +38,26 @@ impl TestServerBuilder {
         Self::default()
     }
 
+    /// Set an explicit user name. Prefer `unique_user()` to avoid cross-test
+    /// Docker container collisions.
     pub fn user(mut self, user: &str) -> Self {
         self.user = Some(user.to_string());
         self
     }
 
+    pub fn home(mut self, home: PathBuf) -> Self {
+        self.home = Some(home);
+        self
+    }
+
+    pub fn vestad_bin(mut self, vestad_bin: PathBuf) -> Self {
+        self.vestad_bin = Some(vestad_bin);
+        self
+    }
+
     pub fn start(self) -> Result<TestServer, String> {
-        TestServer::start_with_user(self.user)
+        let user = self.user.unwrap_or_else(|| unique_user("test"));
+        TestServer::start_with_options(Some(user), self.home, self.vestad_bin)
     }
 }
 
@@ -66,24 +93,34 @@ fn kill_orphan_vestads() {
 
 pub struct TestServer {
     process: Option<Child>,
-    _tmpdir: tempfile::TempDir,
+    _tmpdir: Option<tempfile::TempDir>,
+    home: PathBuf,
     pub config: ServerConfig,
     pub port: u16,
 }
 
 impl TestServer {
     pub fn start() -> Result<Self, String> {
-        Self::start_with_user(None)
+        Self::start_with_options(None, None, None)
     }
 
-    fn start_with_user(user: Option<String>) -> Result<Self, String> {
+    fn start_with_options(user: Option<String>, home: Option<PathBuf>, vestad_bin: Option<PathBuf>) -> Result<Self, String> {
         rustls::crypto::ring::default_provider()
             .install_default()
             .ok();
 
-        let tmpdir = tempfile::TempDir::new().map_err(|e| format!("tmpdir: {e}"))?;
-        let home = tmpdir.path().to_path_buf();
-        let vestad = find_vestad()?;
+        let (tmpdir, home) = match home {
+            Some(home) => {
+                std::fs::create_dir_all(&home).map_err(|e| format!("create home: {e}"))?;
+                (None, home)
+            }
+            None => {
+                let tmpdir = tempfile::TempDir::new().map_err(|e| format!("tmpdir: {e}"))?;
+                let home = tmpdir.path().to_path_buf();
+                (Some(tmpdir), home)
+            }
+        };
+        let vestad = vestad_bin.unwrap_or(find_vestad()?);
 
         let real_home = std::env::var("HOME").unwrap_or_default();
         let docker_config = format!("{}/.docker", real_home);
@@ -141,6 +178,7 @@ impl TestServer {
 
         Ok(Self {
             process: Some(process),
+            home,
             _tmpdir: tmpdir,
             config: ServerConfig {
                 url: format!("https://127.0.0.1:{port}"),
@@ -156,17 +194,26 @@ impl TestServer {
         Client::new(&self.config)
     }
 
+    pub fn home_path(&self) -> &std::path::Path {
+        &self.home
+    }
+
     pub fn _tmpdir_path(&self) -> &std::path::Path {
-        self._tmpdir.path()
+        self.home_path()
+    }
+
+    pub fn shutdown(&mut self) {
+        if let Some(ref mut p) = self.process {
+            let _ = p.kill();
+            let _ = p.wait();
+        }
+        self.process = None;
     }
 }
 
 impl Drop for TestServer {
     fn drop(&mut self) {
-        if let Some(ref mut p) = self.process {
-            let _ = p.kill();
-            let _ = p.wait();
-        }
+        self.shutdown();
     }
 }
 
@@ -180,6 +227,27 @@ impl<'a> TestAgent<'a> {
         let _ = client.stop_agent(name);
         let _ = client.destroy_agent(name);
         let name = client.create_agent(name, false)?;
+        Ok(Self { name, client })
+    }
+
+    pub fn create_built(client: &'a Client, name: &str) -> Result<Self, String> {
+        let _ = client.stop_agent(name);
+        let _ = client.destroy_agent(name);
+        let name = client.create_agent(name, true)?;
+        Ok(Self { name, client })
+    }
+
+    pub fn create_with_manage_agent_code(client: &'a Client, name: &str) -> Result<Self, String> {
+        let _ = client.stop_agent(name);
+        let _ = client.destroy_agent(name);
+        let name = client.create_agent_ex(name, false, Some(true))?;
+        Ok(Self { name, client })
+    }
+
+    pub fn create_without_manage_agent_code(client: &'a Client, name: &str) -> Result<Self, String> {
+        let _ = client.stop_agent(name);
+        let _ = client.destroy_agent(name);
+        let name = client.create_agent_ex(name, false, Some(false))?;
         Ok(Self { name, client })
     }
 }
@@ -206,4 +274,115 @@ pub fn find_vestad() -> Result<PathBuf, String> {
         }
     }
     Err("vestad not found. Run `cargo build -p vestad` first, or set VESTAD_BIN".into())
+}
+
+pub const FAKE_TOKEN: &str = r#"{"claudeAiOauth":{"accessToken":"test","refreshToken":"test","expiresAt":4102444800000}}"#;
+
+pub fn inject_fake_token(c: &Client, name: &str) {
+    c.inject_token(name, FAKE_TOKEN).unwrap();
+}
+
+pub fn docker_cmd(args: &[&str]) -> Result<String, String> {
+    let output = std::process::Command::new("docker")
+        .args(args)
+        .output()
+        .map_err(|e| format!("docker {:?}: {e}", args))?;
+    if !output.status.success() {
+        return Err(format!(
+            "docker {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+pub fn exec_in_container(container: &str, script: &str) -> Result<String, String> {
+    docker_cmd(&["exec", container, "bash", "-lc", script])
+}
+
+pub fn agent_container_name(agent_name: &str) -> String {
+    let user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+    format!("vesta-{}-{}", user, agent_name)
+}
+
+/// Container is up (regardless of auth/readiness state).
+pub fn is_up(status: &str) -> bool {
+    matches!(status, "not_authenticated" | "starting" | "alive" | "restarting")
+}
+
+pub struct ReleasedVestad {
+    _tmpdir: tempfile::TempDir,
+    pub tag: String,
+    pub bin_path: PathBuf,
+}
+
+pub fn download_latest_released_vestad() -> Result<ReleasedVestad, String> {
+    let output = Command::new("curl")
+        .args([
+            "-fsSL",
+            "-H",
+            "Accept: application/vnd.github+json",
+            "-H",
+            "User-Agent: vesta-tests",
+            "https://api.github.com/repos/elyxlz/vesta/releases/latest",
+        ])
+        .output()
+        .map_err(|e| format!("fetch latest release metadata: {e}"))?;
+    if !output.status.success() {
+        return Err("failed to fetch latest release metadata".into());
+    }
+    let body = String::from_utf8_lossy(&output.stdout);
+    let data: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("parse latest release metadata: {e}"))?;
+    let tag = data
+        .get("tag_name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "latest release tag missing".to_string())?
+        .to_string();
+
+    let rust_target = match std::env::consts::ARCH {
+        "x86_64" => "x86_64-unknown-linux-gnu",
+        "aarch64" => "aarch64-unknown-linux-gnu",
+        other => return Err(format!("unsupported architecture for released vestad test: {other}")),
+    };
+    let artifact = format!("vestad-{rust_target}.tar.gz");
+    let url = format!(
+        "https://github.com/elyxlz/vesta/releases/download/{}/{}",
+        tag, artifact
+    );
+
+    let tmpdir = tempfile::TempDir::new().map_err(|e| format!("tmpdir: {e}"))?;
+    let archive_path = tmpdir.path().join("vestad.tar.gz");
+    let output = Command::new("curl")
+        .args(["-fsSL", "-o"])
+        .arg(&archive_path)
+        .arg(&url)
+        .output()
+        .map_err(|e| format!("download released vestad: {e}"))?;
+    if !output.status.success() {
+        return Err(format!("failed to download released vestad artifact from {url}"));
+    }
+
+    let output = Command::new("tar")
+        .args(["-xzf"])
+        .arg(&archive_path)
+        .args(["-C"])
+        .arg(tmpdir.path())
+        .output()
+        .map_err(|e| format!("extract released vestad: {e}"))?;
+    if !output.status.success() {
+        return Err("failed to extract released vestad artifact".into());
+    }
+
+    let bin_path = tmpdir.path().join("vestad");
+    if !bin_path.exists() {
+        return Err("released vestad binary missing after extraction".into());
+    }
+
+    Ok(ReleasedVestad {
+        _tmpdir: tmpdir,
+        tag,
+        bin_path,
+    })
 }

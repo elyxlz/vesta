@@ -41,7 +41,7 @@ ha ping                              # check API connectivity
 #   HASS_TOKEN - long-lived access token from HA
 #   HASS_URL   - HA base URL (default: http://homeassistant.local:8123)
 source /etc/environment
-uv tool install ~/vesta/skills/home-assistant/cli
+uv tool install ~/agent/skills/home-assistant/cli
 ```
 
 ## Usage Tips

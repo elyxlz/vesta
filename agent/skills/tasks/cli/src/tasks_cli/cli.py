@@ -38,7 +38,7 @@ def _require_daemon(config):
     pid_file = config.data_dir / "serve.pid"
     if not pid_file.exists():
         print(
-            json.dumps({"error": "daemon not running — start with: screen -dmS tasks tasks serve --notifications-dir ~/vesta/notifications"}),
+            json.dumps({"error": "daemon not running — start with: screen -dmS tasks tasks serve --notifications-dir ~/agent/notifications"}),
             file=sys.stderr,
         )
         sys.exit(1)
@@ -49,7 +49,7 @@ def _require_daemon(config):
         print(
             json.dumps(
                 {
-                    "error": "daemon not running (stale pid file) — start with: screen -dmS tasks tasks serve --notifications-dir ~/vesta/notifications"
+                    "error": "daemon not running (stale pid file) — start with: screen -dmS tasks tasks serve --notifications-dir ~/agent/notifications"
                 }
             ),
             file=sys.stderr,

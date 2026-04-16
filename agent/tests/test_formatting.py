@@ -3,7 +3,7 @@
 import datetime as dt
 
 import pytest
-from vesta.core.client import (
+from core.client import (
     _contains_dashes,
     _format_tool_call,
     _format_search_results,
@@ -69,7 +69,7 @@ def test_format_tool_call_task_and_agent(tool_name, agent_type):
     ids=["slash-command", "slash-command-with-args", "normal-message"],
 )
 def test_build_query(text, expect_timestamp):
-    from vesta.core.client import _build_query
+    from core.client import _build_query
 
     result = _build_query(text, timestamp=dt.datetime(2025, 6, 15, 12, 0, 0))
     if expect_timestamp:
@@ -150,7 +150,7 @@ def test_process_message_always_streams():
     import ast
     import inspect
 
-    from vesta.core.client import process_message
+    from core.client import process_message
 
     source = inspect.getsource(process_message)
     tree = ast.parse(source)

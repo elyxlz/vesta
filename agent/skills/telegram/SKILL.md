@@ -6,7 +6,7 @@ description: This skill should be used when the user asks about "telegram", "tg"
 # Telegram - CLI: telegram
 
 **Setup**: See [SETUP.md](SETUP.md)
-**Background**: `screen -dmS telegram telegram serve --notifications-dir ~/vesta/notifications`
+**Background**: `screen -dmS telegram telegram serve --notifications-dir ~/agent/notifications`
 
 ## Quick Reference
 ```bash

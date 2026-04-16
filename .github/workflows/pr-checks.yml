@@ -129,10 +129,27 @@ jobs:
           }
           Write-Host "✅ No PowerShell 5.1 compatibility issues found"
 
+  dashboard-sync-check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check dashboard shared files are in sync
+        run: |
+          bash scripts/sync-dashboard.sh
+          if ! git diff --quiet agent/skills/dashboard/app/; then
+            echo "❌ Dashboard shared files are out of sync with app/"
+            echo "Run 'bash scripts/sync-dashboard.sh' and commit the changes"
+            git diff --stat agent/skills/dashboard/app/
+            exit 1
+          fi
+          echo "✅ Dashboard shared files are in sync"
+
   # ── Merge gate (single required check for branch protection) ─────────
   merge-gate-pr:
     if: always()
-    needs: [lockfile, agent-tests, go-checks, vite-base-check, install-script-check]
+    needs: [lockfile, agent-tests, go-checks, vite-base-check, install-script-check, dashboard-sync-check]
     runs-on: ubuntu-latest
     steps:
       - name: Check for failures

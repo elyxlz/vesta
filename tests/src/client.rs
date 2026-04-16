@@ -154,7 +154,14 @@ impl Client {
     }
 
     pub fn create_agent(&self, name: &str, build: bool) -> Result<String, String> {
-        let body = serde_json::json!({"name": name, "build": build});
+        self.create_agent_ex(name, build, None)
+    }
+
+    pub fn create_agent_ex(&self, name: &str, build: bool, manage_agent_code: Option<bool>) -> Result<String, String> {
+        let mut body = serde_json::json!({"name": name, "build": build});
+        if let Some(m) = manage_agent_code {
+            body["manage_agent_code"] = serde_json::json!(m);
+        }
         let resp = self.post_json("/agents", &body)?;
         let v: serde_json::Value = resp.into_body().read_json().map_err(|e| format!("parse error: {}", e))?;
         Ok(v["name"].as_str().unwrap_or(name).to_string())

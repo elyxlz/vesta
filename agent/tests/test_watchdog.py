@@ -6,8 +6,8 @@ import typing as tp
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-import vesta.models as vm
-from vesta.core.client import (
+import core.models as vm
+from core.client import (
     _check_sdk_subprocess_alive,
     _format_hang_diagnostics,
     _sdk_watchdog,
@@ -133,7 +133,7 @@ async def test_watchdog_warns_at_thresholds():
     """Patch the sleep to 0 so the watchdog ticks immediately."""
     from unittest.mock import patch as _patch
 
-    import vesta.core.client as client_mod
+    import core.client as client_mod
 
     state = vm.State()
     state.last_sdk_activity = time.monotonic() - 65  # Idle for 65s
@@ -158,7 +158,7 @@ async def test_watchdog_warns_at_thresholds():
             await asyncio.sleep(0.05)
             stop.set()
 
-        with _patch("vesta.core.client.asyncio.wait_for", fast_wait_for):
+        with _patch("core.client.asyncio.wait_for", fast_wait_for):
             await asyncio.gather(_sdk_watchdog(state, stop=stop), stop_after_tick())
     finally:
         client_mod.logger.warning = original_warning
@@ -170,7 +170,7 @@ async def test_watchdog_warns_at_thresholds():
 async def test_watchdog_resets_after_activity_resumes():
     from unittest.mock import patch as _patch
 
-    import vesta.core.client as client_mod
+    import core.client as client_mod
 
     state = vm.State()
     state.last_sdk_activity = time.monotonic() - 65  # Idle
@@ -199,7 +199,7 @@ async def test_watchdog_resets_after_activity_resumes():
             await asyncio.sleep(0.05)
             stop.set()
 
-        with _patch("vesta.core.client.asyncio.wait_for", fast_wait_for):
+        with _patch("core.client.asyncio.wait_for", fast_wait_for):
             await asyncio.gather(_sdk_watchdog(state, stop=stop), resume_then_idle_again())
     finally:
         client_mod.logger.warning = original_warning
@@ -225,7 +225,7 @@ async def test_tool_hooks_track_active_tools():
     from claude_agent_sdk import HookContext
     from claude_agent_sdk.types import PostToolUseHookInput, PreToolUseHookInput
 
-    import vesta.core.client as client_mod
+    import core.client as client_mod
 
     state = vm.State()
     hooks = client_mod._make_hooks(state)
@@ -252,7 +252,7 @@ async def test_tool_failure_hook_cleans_up():
     from claude_agent_sdk import HookContext
     from claude_agent_sdk.types import PostToolUseFailureHookInput, PreToolUseHookInput
 
-    import vesta.core.client as client_mod
+    import core.client as client_mod
 
     state = vm.State()
     hooks = client_mod._make_hooks(state)

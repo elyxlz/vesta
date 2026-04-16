@@ -2,8 +2,8 @@ import asyncio
 import os
 
 import pytest
-import vesta.models as vm
-from vesta.events import EventBus
+import core.models as vm
+from core.events import EventBus
 
 os.environ.pop("CLAUDECODE", None)
 os.environ.setdefault("WS_PORT", "17865")

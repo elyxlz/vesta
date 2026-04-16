@@ -7,10 +7,10 @@ description: Self-improvement and memory curation. Used by the nightly dreamer, 
 
 ## Your files
 
-- **Memory**: ~/vesta/MEMORY.md
-- **Skills**: ~/vesta/skills/ (each has a SKILL.md)
-- **Prompts**: ~/vesta/prompts/
-- **Dreamer summaries**: ~/vesta/dreamer/
+- **Memory**: ~/agent/MEMORY.md
+- **Skills**: ~/agent/skills/ (each has a SKILL.md)
+- **Prompts**: ~/agent/prompts/
+- **Dreamer summaries**: ~/agent/dreamer/
 
 ## Order of operations
 
@@ -29,7 +29,7 @@ Write a thorough plan first. For each phase: what you intend to fix, what to pru
 
 ### 1. Retrospective
 
-Read the last 5-7 files in `~/vesta/dreamer/` (sorted by date) to spot recurring patterns: fixes that keep resurfacing, problems marked "resolved" that came back, and improvements that actually stuck. For each fix in the recent summaries, check today's conversation: did that situation come up again? Did it go better? If a fix didn't help or made things worse, revisit it now. If it worked, note it in tonight's summary.
+Read the last 5-7 files in `~/agent/dreamer/` (sorted by date) to spot recurring patterns: fixes that keep resurfacing, problems marked "resolved" that came back, and improvements that actually stuck. For each fix in the recent summaries, check today's conversation: did that situation come up again? Did it go better? If a fix didn't help or made things worse, revisit it now. If it worked, note it in tonight's summary.
 
 ### 2. Review the conversation
 
@@ -89,7 +89,7 @@ Replace rather than append. It's a snapshot, not a log. Be honest but not dramat
 
 ## Memory Curation
 
-MEMORY.md has a **hard limit of 20,000 characters**. It's injected into every system prompt. Run `~/vesta/skills/dream/scripts/memory_size.sh` to check usage. Things needed at all times live here permanently. Anything large or situational lives elsewhere and MEMORY.md points to it. When you hit the cap, consolidate. Don't let it overflow.
+MEMORY.md has a **hard limit of 20,000 characters**. It's injected into every system prompt. Run `~/agent/skills/dream/scripts/memory_size.sh` to check usage. Things needed at all times live here permanently. Anything large or situational lives elsewhere and MEMORY.md points to it. When you hit the cap, consolidate. Don't let it overflow.
 
 **Cut:**
 - Full documents, email bodies, transcripts, task-specific junk
@@ -117,7 +117,7 @@ If it won't matter in two weeks, delete it.
 Keep the container's filesystem organized and disk usage under control.
 
 - Delete temp files, stale downloads, leftover build artifacts, and anything in `/tmp` that's no longer needed
-- Clean up old log files (`~/vesta/logs/`). Keep the last few days, remove the rest
+- Clean up old log files (`~/agent/logs/`). Keep the last few days, remove the rest
 - Check `df -h` and `du -sh ~/` periodically. If disk usage is growing unexpectedly, investigate and clean up
 - Kill orphaned screen sessions that are no longer needed (`screen -ls`, `screen -S name -X quit`)
 - Remove unused packages or build caches if they're taking significant space (`uv cache clean`, `apt clean`)
@@ -126,11 +126,11 @@ The goal: a tidy workspace where everything has a purpose. If something is left 
 
 ## Sensitive Data Cleanup
 
-Run `~/vesta/skills/dream/scripts/redact_secrets.sh` to scan the event DB for API keys, tokens, passwords, private keys, and connection strings. Review matches (skip false positives), then rerun with `--delete` to purge. Also grep MEMORY.md and dreamer summaries for credentials and remove any you find. Secrets belong in env vars, not in history or files.
+Run `~/agent/skills/dream/scripts/redact_secrets.sh` to scan the event DB for API keys, tokens, passwords, private keys, and connection strings. Review matches (skip false positives), then rerun with `--delete` to purge. Also grep MEMORY.md and dreamer summaries for credentials and remove any you find. Secrets belong in env vars, not in history or files.
 
 ## Summary
 
-Write what you changed and why to `~/vesta/dreamer/YYYY-MM-DDTHH.md` (e.g. `2026-04-14T03.md`). Include:
+Write what you changed and why to `~/agent/dreamer/YYYY-MM-DDTHH.md` (e.g. `2026-04-14T03.md`). Include:
 - Key things that happened or were accomplished today
 - What each fix was and what triggered it
 - Whether each validated or not

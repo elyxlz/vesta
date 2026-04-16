@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from claude_agent_sdk import ClaudeSDKError
 
-import vesta.models as vm
-from vesta.core.client import format_crash_detail
+import core.models as vm
+from core.client import format_crash_detail
 
 
 # --- format_crash_detail ---
@@ -57,7 +57,7 @@ def test_format_crash_detail_custom_fallback():
 @pytest.mark.anyio
 async def test_resume_fallback_clears_session_and_retries(tmp_path):
     """When ClaudeSDKClient.__aenter__ fails with a session_id set, it should clear the session and retry."""
-    from vesta.core.loops import message_processor
+    from core.loops import message_processor
 
     config = vm.VestaConfig(root=tmp_path)
     config.data_dir.mkdir(parents=True, exist_ok=True)
@@ -86,8 +86,8 @@ async def test_resume_fallback_clears_session_and_retries(tmp_path):
         state.shutdown_event.set()
 
     with (
-        patch("vesta.core.loops.ClaudeSDKClient", mock_client),
-        patch("vesta.core.loops.build_client_options", return_value=MagicMock()),
+        patch("core.loops.ClaudeSDKClient", mock_client),
+        patch("core.loops.build_client_options", return_value=MagicMock()),
     ):
         await asyncio.gather(
             message_processor(queue, state=state, config=config),
@@ -102,7 +102,7 @@ async def test_resume_fallback_clears_session_and_retries(tmp_path):
 @pytest.mark.anyio
 async def test_resume_fallback_raises_without_session(tmp_path):
     """When __aenter__ fails and there's no session_id, it should raise immediately."""
-    from vesta.core.loops import message_processor
+    from core.loops import message_processor
 
     config = vm.VestaConfig(root=tmp_path)
     config.data_dir.mkdir(parents=True, exist_ok=True)
@@ -120,8 +120,8 @@ async def test_resume_fallback_raises_without_session(tmp_path):
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
     with (
-        patch("vesta.core.loops.ClaudeSDKClient", mock_client),
-        patch("vesta.core.loops.build_client_options", return_value=MagicMock()),
+        patch("core.loops.ClaudeSDKClient", mock_client),
+        patch("core.loops.build_client_options", return_value=MagicMock()),
     ):
         with pytest.raises(ClaudeSDKError, match="connection failed"):
             await message_processor(queue, state=state, config=config)
@@ -130,7 +130,7 @@ async def test_resume_fallback_raises_without_session(tmp_path):
 @pytest.mark.anyio
 async def test_resume_fallback_raises_on_second_failure(tmp_path):
     """When retry also fails, it should raise."""
-    from vesta.core.loops import message_processor
+    from core.loops import message_processor
 
     config = vm.VestaConfig(root=tmp_path)
     config.data_dir.mkdir(parents=True, exist_ok=True)
@@ -150,8 +150,8 @@ async def test_resume_fallback_raises_on_second_failure(tmp_path):
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
     with (
-        patch("vesta.core.loops.ClaudeSDKClient", mock_client),
-        patch("vesta.core.loops.build_client_options", return_value=MagicMock()),
+        patch("core.loops.ClaudeSDKClient", mock_client),
+        patch("core.loops.build_client_options", return_value=MagicMock()),
     ):
         with pytest.raises(ClaudeSDKError, match="always fails"):
             await message_processor(queue, state=state, config=config)
@@ -163,7 +163,7 @@ async def test_resume_fallback_raises_on_second_failure(tmp_path):
 @pytest.mark.anyio
 async def test_processor_crash_triggers_graceful_shutdown(tmp_path):
     """When message_processor crashes, _on_processor_done should set graceful_shutdown."""
-    from vesta.main import run_vesta
+    from core.main import run_vesta
 
     config = vm.VestaConfig(root=tmp_path)
     for path in [config.data_dir, config.notifications_dir, config.logs_dir, config.dreamer_dir]:
@@ -175,11 +175,11 @@ async def test_processor_crash_triggers_graceful_shutdown(tmp_path):
         raise RuntimeError("processor exploded")
 
     with (
-        patch("vesta.main.start_ws_server", new_callable=AsyncMock) as mock_ws,
-        patch("vesta.main.message_processor", side_effect=crashing_processor),
-        patch("vesta.main.monitor_loop", new_callable=AsyncMock),
-        patch("vesta.main.input_handler", new_callable=AsyncMock),
-        patch("vesta.main.queue_greeting", new_callable=AsyncMock),
+        patch("core.main.start_ws_server", new_callable=AsyncMock) as mock_ws,
+        patch("core.main.message_processor", side_effect=crashing_processor),
+        patch("core.main.monitor_loop", new_callable=AsyncMock),
+        patch("core.main.input_handler", new_callable=AsyncMock),
+        patch("core.main.queue_greeting", new_callable=AsyncMock),
     ):
         mock_runner = MagicMock()
         mock_runner.cleanup = AsyncMock()

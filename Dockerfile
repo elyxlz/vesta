@@ -13,32 +13,36 @@ RUN curl -fsSL https://claude.ai/install.sh | bash
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:${PATH}"
 
-WORKDIR /root/vesta
+WORKDIR /root
 
-# Dependencies (cached unless lockfile changes)
-COPY agent/pyproject.toml agent/uv.lock ./
-RUN uv sync --frozen --no-install-project
+# Git repo at $HOME — agent tracks local changes (skills, prompts, memory) on its branch.
+# Core code is baked into the image; with manage_agent_code=true, vestad mounts newer copies.
+# .gitignore ensures only relevant files are tracked and that mounts do not pollute the repo
+COPY agent/ ./agent/
 
-# Source (changes often, but deps are cached above)
-COPY agent/src ./src
-COPY agent/prompts ./prompts
-RUN uv sync --frozen
+# Set up git repo with sparse checkout limited to default skills.
+# Non-default skills are removed from the image and excluded from sparse checkout,
+# so upstream merges won't pull them in. The skills-registry install command adds
+# skills to sparse checkout on demand, opting them into future upstream merges.
+RUN git init && git remote add origin https://github.com/elyxlz/vesta.git && \
+    git sparse-checkout init --cone && \
+    SKILL_DIRS=$(cat agent/skills/default-skills.txt | sed 's|^|agent/skills/|') && \
+    git sparse-checkout set agent/core agent/prompts agent/dreamer $SKILL_DIRS && \
+    printf '/*\n!.gitignore\n!/agent/\n' > .gitignore
 
-# Everything else
-COPY agent/ .
-
-# Remove non-default skills (keep only those listed in default-skills.txt)
-RUN for d in skills/*/; do \
+# Remove non-default skills from the image (they'll be installed via sparse checkout on demand)
+RUN for d in agent/skills/*/; do \
       name="$(basename "$d")"; \
-      grep -qx "$name" skills/default-skills.txt || rm -rf "$d"; \
-    done && rm -f skills/default-skills.txt
+      grep -qx "$name" agent/skills/default-skills.txt || rm -rf "$d"; \
+    done && rm -f agent/skills/default-skills.txt
 
-# SDK discovers skills from .claude/skills/ relative to cwd
-RUN mkdir -p .claude && ln -s ../skills .claude/skills
+# SDK discovers skills from .claude/skills/ relative to cwd (shared with Claude credentials under ~/.claude)
+RUN mkdir -p .claude && ln -s ../agent/skills .claude/skills && \
+    printf '{"permissions":{"allow":[]}}\n' > .claude/settings.json
 
-# Bare repo for upstream skill (fetch/worktree/show without exposing cli/app as working files)
-RUN git clone --bare https://github.com/elyxlz/vesta.git .git && \
-    git config core.bare false
+WORKDIR /root/agent
+RUN uv sync --frozen --no-install-project
+WORKDIR /root
 
 RUN rm -f /usr/bin/pkill /usr/bin/killall
 

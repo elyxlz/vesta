@@ -26,20 +26,23 @@ const RESERVED_SERVICE_NAMES: &[&str] = &[
 const DEFAULT_LOG_TAIL_LINES: u64 = 500;
 const AUTO_BACKUP_CHECK_INTERVAL_SECS: u64 = 3600;
 
-/// Detect the current git branch by walking up from cwd to find a repo.
-fn detect_git_branch() -> Option<String> {
-    let output = std::process::Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
+fn detect_upstream_ref() -> Option<String> {
+    if cfg!(debug_assertions) {
+        let output = std::process::Command::new("git")
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let branch = String::from_utf8(output.stdout).ok()?.trim().to_string();
+        if branch.is_empty() || branch == "HEAD" {
+            return None;
+        }
+        Some(branch)
+    } else {
+        Some(format!("v{}", env!("CARGO_PKG_VERSION")))
     }
-    let branch = String::from_utf8(output.stdout).ok()?.trim().to_string();
-    if branch.is_empty() || branch == "HEAD" {
-        return None;
-    }
-    Some(branch)
 }
 
 // --- TLS cert generation ---
@@ -241,7 +244,6 @@ async fn version(State(state): State<SharedState>) -> Json<serde_json::Value> {
         "latest_version": latest,
         "update_available": update_available,
         "dev_mode": state.dev_mode,
-        "branch": state.env_config.git_branch,
     }))
 }
 
@@ -301,19 +303,19 @@ async fn create_agent_handler(
     if name.is_empty() {
         return Err(err_response(StatusCode::BAD_REQUEST, "invalid agent name"));
     }
-    let manage_code = body.manage_agent_code.unwrap_or(true);
-    tracing::info!(name = %name, manage_code, "creating agent");
+    let manage_core_code = body.manage_agent_code.unwrap_or(true);
+    tracing::info!(name = %name, manage_core_code, "creating agent");
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
-    if !manage_code {
+    if !manage_core_code {
         let mut settings = state.settings.write().await;
         settings.agents.entry(name.clone()).or_default().manage_agent_code = false;
         save_settings(&settings);
     }
 
     let name =
-        docker::create_agent(&state.docker, &name, &state.env_config, manage_code, body.timezone.as_deref())
+        docker::create_agent(&state.docker, &name, &state.env_config, manage_core_code, body.timezone.as_deref())
             .await
             .map_err(map_docker_err)?;
 
@@ -425,8 +427,8 @@ async fn rebuild_agent_handler(
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
-    let manage_code = state.settings.read().await.manages_code(&name);
-    docker::rebuild_agent(&state.docker, &name, &state.env_config, manage_code)
+    let manage_core_code = state.settings.read().await.manages_core_code(&name);
+    docker::rebuild_agent(&state.docker, &name, &state.env_config, manage_core_code)
         .await
         .map_err(map_docker_err)?;
     docker::start_agent(&state.docker, &name)
@@ -682,7 +684,7 @@ impl Default for AgentSettings {
 }
 
 impl Settings {
-    fn manages_code(&self, name: &str) -> bool {
+    fn manages_core_code(&self, name: &str) -> bool {
         self.agents.get(name).is_none_or(|s| s.manage_agent_code)
     }
 }
@@ -752,18 +754,9 @@ fn load_settings() -> Settings {
         }
     }
 
-    // Migrate from old services.json if it exists
-    let old_services = path.with_file_name("services.json");
     let mut settings = Settings::default();
-    if let Ok(data) = std::fs::read_to_string(&old_services) {
-        if let Ok(services) = serde_json::from_str(&data) {
-            settings.services = services;
-            if let Err(err) = std::fs::remove_file(&old_services) {
-                tracing::warn!(error = %err, "failed to remove old services.json after migration");
-            } else {
-                tracing::info!("migrated services.json into settings.json");
-            }
-        }
+    if let Some(services) = crate::migrations::migrate_legacy_services_json(&path) {
+        settings.services = services;
     }
 
     // Always write settings to disk so users can edit the file
@@ -984,8 +977,8 @@ async fn restore_backup_handler(
                 return;
             }
         };
-        let manage_code = state.settings.read().await.manages_code(&path.name);
-        let result = backup::restore_backup(&state.docker, &path.name, &path.backup_id, &state.env_config, manage_code).await;
+        let manage_core_code = state.settings.read().await.manages_core_code(&path.name);
+        let result = backup::restore_backup(&state.docker, &path.name, &path.backup_id, &state.env_config, manage_core_code).await;
 
         match result {
             Ok(()) => {
@@ -1138,22 +1131,22 @@ async fn patch_agent_settings_handler(
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
-    let (old_manage_code, new_manage_code) = {
+    let (old_manage_core_code, new_manage_core_code) = {
         let mut settings = state.settings.write().await;
-        let old = settings.manages_code(&name);
+        let old = settings.manages_core_code(&name);
         if let Some(val) = body.manage_agent_code {
             settings.agents.entry(name.clone()).or_default().manage_agent_code = val;
         }
-        let new = settings.manages_code(&name);
+        let new = settings.manages_core_code(&name);
         save_settings(&settings);
         (old, new)
     };
 
     // Rebuild if the mount config changed
-    if old_manage_code != new_manage_code {
+    if old_manage_core_code != new_manage_core_code {
         let was_running = docker::container_status(&state.docker, &docker::container_name(&name)).await
             == docker::ContainerStatus::Running;
-        if let Err(e) = docker::rebuild_agent(&state.docker, &name, &state.env_config, new_manage_code).await {
+        if let Err(e) = docker::rebuild_agent(&state.docker, &name, &state.env_config, new_manage_core_code).await {
             tracing::error!(agent = %name, error = %e, "rebuild after settings change failed");
         } else if was_running {
             docker::start_agent(&state.docker, &name).await.ok();
@@ -1161,7 +1154,7 @@ async fn patch_agent_settings_handler(
     }
 
     Ok(Json(serde_json::json!({
-        "manage_agent_code": new_manage_code,
+        "manage_agent_code": new_manage_core_code,
     })))
 }
 
@@ -1245,12 +1238,12 @@ pub fn write_port_file(config_dir: &std::path::Path, port: u16) {
     std::fs::write(&port_path, port.to_string()).ok();
 }
 
-/// Update VESTAD_PORT, VESTAD_TUNNEL, and VESTA_VERSION in all existing per-agent env files.
+/// Update VESTAD_PORT, VESTAD_TUNNEL, and VESTA_UPSTREAM_REF in all existing per-agent env files.
 /// Called at vestad startup so containers pick up the new values on restart.
 pub fn update_agent_env_files(config_dir: &std::path::Path, port: u16, tunnel_url: Option<&str>) {
     let agents_dir = config_dir.join("agents");
-    let branch = detect_git_branch();
-    docker::update_all_agent_env_files(&agents_dir, port, tunnel_url, branch.as_deref());
+    let upstream_ref = detect_upstream_ref();
+    docker::update_all_agent_env_files(&agents_dir, port, tunnel_url, upstream_ref.as_deref());
 }
 
 // --- PID file ---
@@ -1574,23 +1567,24 @@ pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: S
         agents_dir: config_dir.join("agents"),
         vestad_port: port,
         vestad_tunnel: tunnel_url.clone(),
-        git_branch: detect_git_branch(),
+        upstream_ref: detect_upstream_ref(),
     };
     if let Err(e) = docker::validate_config_dir(&env_config) {
         tracing::error!(error = %e, "config directory validation failed — aborting startup");
         std::process::exit(1);
     }
+    if cfg!(debug_assertions) {
+        tracing::info!("mode: dev (debug build, agent code from local repo)");
+    } else {
+        tracing::info!(version = env!("CARGO_PKG_VERSION"), "mode: prod (release build, agent code from github)");
+    }
     if let Err(e) = crate::agent_code::ensure_agent_code(&env_config.config_dir) {
         tracing::error!(error = %e, "failed to ensure agent code");
     }
-    let env_config_clone = env_config.clone();
     let agent_settings = load_settings().agents.clone();
-    let docker_clone = docker.clone();
-    tokio::spawn(async move {
-        docker::reconcile_containers(&docker_clone, &env_config_clone, &|name| {
-            agent_settings.get(name).is_none_or(|s| s.manage_agent_code)
-        }).await;
-    });
+    docker::reconcile_containers(&docker, &env_config, &|name| {
+        agent_settings.get(name).is_none_or(|s| s.manage_agent_code)
+    }).await;
     let state = Arc::new(AppState::new(api_key, env_config, docker.clone(), tunnel_url, dev_mode));
     agent_status::spawn_agent_status_task(
         state.agent_status_cache.clone(),
@@ -1604,8 +1598,6 @@ pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: S
     } else {
         spawn_update_check_task(state);
     }
-
-    tracing::info!(port, "server listening");
 
     let rustls_config = axum_server::tls_rustls::RustlsConfig::from_pem(
         cert_pem.into_bytes(),
@@ -1621,7 +1613,8 @@ pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: S
     let http_port = port + 1;
     let http_addr = std::net::SocketAddr::from(([127, 0, 0, 1], http_port));
 
-    tracing::info!(http_port, "http server listening on localhost");
+    tracing::info!(port, "https listening on 0.0.0.0");
+    tracing::info!(http_port, "http listening on 127.0.0.1");
 
     let http_app = app.clone();
     let http_handle = tokio::spawn(async move {

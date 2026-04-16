@@ -5,13 +5,13 @@ import datetime as dt
 from unittest.mock import patch
 
 import pytest
-import vesta.models as vm
+import core.models as vm
 from test_processor import _run_processor_test
 
 
 @pytest.mark.anyio
 async def test_queues_prompt_and_archives(tmp_path):
-    from vesta.core.loops import process_nightly_memory
+    from core.loops import process_nightly_memory
 
     state = vm.State()
     state.last_dreamer_run = None
@@ -22,8 +22,8 @@ async def test_queues_prompt_and_archives(tmp_path):
     fake_now = dt.datetime(2025, 6, 15, dreamer_hour, 0, 0)
 
     with (
-        patch("vesta.core.loops._now", return_value=fake_now),
-        patch("vesta.core.loops.load_prompt", return_value="dreamer prompt"),
+        patch("core.loops._now", return_value=fake_now),
+        patch("core.loops.load_prompt", return_value="dreamer prompt"),
     ):
         await process_nightly_memory(queue, state=state, config=config)
 
@@ -37,7 +37,7 @@ async def test_queues_prompt_and_archives(tmp_path):
 
 @pytest.mark.anyio
 async def test_skips_when_already_run_today(tmp_path):
-    from vesta.core.loops import process_nightly_memory
+    from core.loops import process_nightly_memory
 
     dreamer_hour = 4
     config = vm.VestaConfig(root=tmp_path, nightly_memory_hour=dreamer_hour)
@@ -48,8 +48,8 @@ async def test_skips_when_already_run_today(tmp_path):
     queue: asyncio.Queue = asyncio.Queue()
 
     with (
-        patch("vesta.core.loops._now", return_value=fake_now),
-        patch("vesta.core.loops.load_prompt", return_value="dreamer prompt"),
+        patch("core.loops._now", return_value=fake_now),
+        patch("core.loops.load_prompt", return_value="dreamer prompt"),
     ):
         await process_nightly_memory(queue, state=state, config=config)
 
@@ -72,7 +72,7 @@ async def test_compacts_and_restarts(tmp_path):
         message_side_effect=side_effect,
         pre_state=pre_state,
         initial_queue=[("dreamer prompt content", False)],
-        extra_patches={"vesta.core.loops._now": lambda: fake_now},
+        extra_patches={"core.loops._now": lambda: fake_now},
     )
     assert state.session_id == "pre-dreamer-session"
     assert state.dreamer_active is False

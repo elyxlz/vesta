@@ -37,12 +37,12 @@ export function AuthStep({
         }}
         onComplete={async () => {
           setStep("finalizing");
-          for (let i = 0; i < 18; i++) {
+          for (let i = 0; i < 9; i++) {
             try {
-              await waitForReady(agentName, 10);
+              await waitForReady(agentName, 20);
               break;
             } catch {
-              if (i === 17) break;
+              if (i === 8) break;
             }
           }
           onDone();

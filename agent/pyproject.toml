@@ -28,18 +28,14 @@ dev = [
     "ty>=0.0.29",
 ]
 
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
 [tool.pytest.ini_options]
 python_files = ["e2e.py", "test_*.py", "*_test.py"]
 testpaths = ["tests"]
-pythonpath = ["skills"]
+pythonpath = [".", "skills"]
 
 
 [tool.ty.src]
-include = ["src", "tests"]
+include = ["core", "tests"]
 
 [tool.ty.environment]
 extra-paths = ["skills"]

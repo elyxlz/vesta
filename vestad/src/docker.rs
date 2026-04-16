@@ -49,11 +49,11 @@ impl From<bollard::errors::Error> for DockerError {
 }
 
 pub const VESTA_IMAGE: &str = "ghcr.io/elyxlz/vesta:latest";
-pub const VESTA_LOG_PATH: &str = "/root/vesta/logs/vesta.log";
+pub const VESTA_LOG_PATH: &str = "/root/agent/logs/vesta.log";
 pub const LOCAL_IMAGE_TAG: &str = "vesta:local";
 const MAX_DOCKERFILE_SEARCH_DEPTH: usize = 5;
 pub const CREDENTIALS_PATH: &str = "/root/.claude/.credentials.json";
-pub const AGENT_READY_MARKER_PATH: &str = "/root/vesta/data/agent_ready";
+pub const AGENT_READY_MARKER_PATH: &str = "/root/agent/data/agent_ready";
 const CLAUDE_JSON_PATH: &str = "/root/.claude.json";
 const AGENT_TOKEN_BYTES: usize = 32;
 const PORT_ALLOC_RETRIES: usize = 10;
@@ -74,14 +74,29 @@ pub const OAUTH_AUTHORIZE_URL: &str = "https://claude.ai/oauth/authorize";
 
 const NETWORK_MODE: &str = "host";
 const RESTART_POLICY: &str = "unless-stopped";
-const MOUNT_DESTS: &[&str] = &["/run/vestad-env", "/root/vesta/src/vesta", "/root/vesta/pyproject.toml", "/root/vesta/uv.lock"];
+const MOUNT_DESTS: &[&str] = &["/run/vestad-env", "/root/agent/core", "/root/agent/pyproject.toml", "/root/agent/uv.lock"];
 
-/// Container entrypoint: source the bind-mounted env file (so vestad can inject
-/// new vars without rebuilding images), then exec the agent.
-const ENTRYPOINT: &[&str] = &[
-    "sh", "-c",
-    ". /run/vestad-env; . ~/.bashrc || true; exec uv run --frozen --project /root/vesta python -m vesta.main",
+const AGENT_ENTRYPOINT_STEPS: &[&str] = &[
+    "export PATH=\"/root/.local/bin:/root/.claude/local/bin:$PATH\"",
+    ". /run/vestad-env",
+    ". ~/.bashrc || true",
+    "git -C ~ config user.name \"$AGENT_NAME\"",
+    "git -C ~ config user.email \"$AGENT_NAME@vesta\"",
+    "uv sync --frozen --project /root/agent",
+    "git -C ~ add agent/ .gitignore --ignore-errors",
+    "(git -C ~ diff --cached --quiet || git -C ~ commit -m \"vesta v$(cat /root/agent/pyproject.toml | grep '^version' | head -1 | sed 's/.*\"\\(.*\\)\"/\\1/')\")",
+    "if ! git -C ~ describe --tags --abbrev=0 >/dev/null 2>&1 && [ -n \"${VESTA_UPSTREAM_REF:-}\" ]; then \
+       git -C ~ fetch --depth 1 origin \"$VESTA_UPSTREAM_REF\" 2>/dev/null && \
+       git -C ~ merge -s ours FETCH_HEAD --no-edit --allow-unrelated-histories 2>/dev/null; \
+     fi",
+    "git -C ~ rev-parse --verify \"$AGENT_NAME\" 2>/dev/null || git -C ~ checkout -b \"$AGENT_NAME\"",
+    "cd /root/agent && exec uv run --frozen python -m core.main",
 ];
+
+pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
+    let script = AGENT_ENTRYPOINT_STEPS.join("; \\\n");
+    vec!["sh".into(), "-c".into(), script]
+}
 
 const CONTAINER_STOP_TIMEOUT_SECS: i64 = 10;
 const CONTAINER_RESTART_TIMEOUT_SECS: isize = 10;
@@ -161,11 +176,10 @@ pub fn container_name(name: &str) -> String {
     format!("vesta-{}-{}", current_user(), name)
 }
 
+// Modern containers carry `vesta.agent_name`, so this fallback only exists for
+// older managed containers that predate that label.
 pub fn name_from_cname(cname: &str) -> String {
-    let without_vesta = cname.strip_prefix("vesta-").unwrap_or(cname);
-    let user = current_user();
-    let user_prefix = format!("{}-", user);
-    without_vesta.strip_prefix(&user_prefix).unwrap_or(without_vesta).to_string()
+    crate::migrations::legacy_agent_name_from_container_name(cname, &current_user())
 }
 
 pub fn normalize_name(raw: &str) -> String {
@@ -317,8 +331,9 @@ pub async fn combined_status(docker: &Docker, cname: &str, info: &ContainerInfo)
     }
 }
 
-/// Read the agent name from the `vesta.agent_name` Docker label, falling back
-/// to parsing the container name for legacy containers that lack the label.
+/// Read the agent name from the `vesta.agent_name` Docker label. Older managed
+/// containers may not have that label yet, so we fall back to the legacy
+/// `vesta-{user}-{agent}` container naming scheme via migrations.rs.
 pub async fn get_agent_name(docker: &Docker, cname: &str) -> String {
     match docker.inspect_container(cname, None).await {
         Ok(info) => {
@@ -771,7 +786,7 @@ pub struct AgentEnvConfig {
     pub agents_dir: std::path::PathBuf,
     pub vestad_port: u16,
     pub vestad_tunnel: Option<String>,
-    pub git_branch: Option<String>,
+    pub upstream_ref: Option<String>,
 }
 
 /// Validate that the config and agents directories exist, are writable, and have
@@ -841,9 +856,8 @@ pub fn write_agent_env_file(
     if let Some(url) = &env_config.vestad_tunnel {
         content.push_str(&format!("export VESTAD_TUNNEL={url}\n"));
     }
-    content.push_str(&format!("export VESTA_VERSION={}\n", env!("CARGO_PKG_VERSION")));
-    if let Some(branch) = &env_config.git_branch {
-        content.push_str(&format!("export VESTA_BRANCH={branch}\n"));
+    if let Some(upstream) = &env_config.upstream_ref {
+        content.push_str(&format!("export VESTA_UPSTREAM_REF={upstream}\n"));
     }
     if let Some(tz) = timezone {
         content.push_str(&format!("export TZ={tz}\n"));
@@ -863,9 +877,9 @@ fn delete_agent_env_file(agents_dir: &std::path::Path, agent_name: &str) {
     std::fs::remove_file(&env_path).ok();
 }
 
-/// Update VESTAD_PORT, VESTAD_TUNNEL, and VESTA_VERSION in all existing per-agent env files.
+/// Update VESTAD_PORT, VESTAD_TUNNEL, and VESTA_UPSTREAM_REF in all existing per-agent env files.
 /// Called at vestad startup so running containers pick up the new values on restart.
-pub fn update_all_agent_env_files(agents_dir: &std::path::Path, vestad_port: u16, vestad_tunnel: Option<&str>, git_branch: Option<&str>) {
+pub fn update_all_agent_env_files(agents_dir: &std::path::Path, vestad_port: u16, vestad_tunnel: Option<&str>, upstream_ref: Option<&str>) {
     for name in env_file_names(agents_dir) {
         let path = agents_dir.join(format!("{name}.env"));
         let Ok(content) = std::fs::read_to_string(&path) else { continue };
@@ -875,8 +889,7 @@ pub fn update_all_agent_env_files(agents_dir: &std::path::Path, vestad_port: u16
                 let stripped = line.strip_prefix("export ").unwrap_or(line);
                 !stripped.starts_with("VESTAD_PORT=")
                     && !stripped.starts_with("VESTAD_TUNNEL=")
-                    && !stripped.starts_with("VESTA_VERSION=")
-                    && !stripped.starts_with("VESTA_BRANCH=")
+                    && !stripped.starts_with("VESTA_UPSTREAM_REF=")
             })
             .map(|l| l.to_string())
             .collect();
@@ -884,9 +897,8 @@ pub fn update_all_agent_env_files(agents_dir: &std::path::Path, vestad_port: u16
         if let Some(url) = vestad_tunnel {
             new_lines.push(format!("export VESTAD_TUNNEL={url}"));
         }
-        new_lines.push(format!("export VESTA_VERSION={}", env!("CARGO_PKG_VERSION")));
-        if let Some(branch) = git_branch {
-            new_lines.push(format!("export VESTA_BRANCH={branch}"));
+        if let Some(upstream) = upstream_ref {
+            new_lines.push(format!("export VESTA_UPSTREAM_REF={upstream}"));
         }
         new_lines.push(String::new());
         std::fs::write(&path, new_lines.join("\n")).ok();
@@ -918,7 +930,11 @@ pub async fn list_managed_containers(docker: &Docker) -> Vec<String> {
             let name = names.first()?.strip_prefix('/')?.to_string();
             let labels = c.labels.unwrap_or_default();
             let owner = labels.get(LABEL_USER).cloned().unwrap_or_default();
-            if owner == user || owner.is_empty() {
+            let modern_owned_by_user =
+                crate::migrations::modern_container_owned_by_user(&owner, &user);
+            let legacy_owned_by_user =
+                crate::migrations::legacy_container_owned_by_user(&name, &owner, &user);
+            if modern_owned_by_user || legacy_owned_by_user {
                 Some(name)
             } else {
                 None
@@ -1164,13 +1180,13 @@ pub async fn snapshot_container(_docker: &Docker, cname: &str, tag: &str, change
 // --- Container creation ---
 
 #[allow(clippy::too_many_arguments)]
-pub async fn create_container(docker: &Docker, cname: &str, image: &str, port: u16, agent_name: &str, env_config: &AgentEnvConfig, manage_code: bool, timezone: Option<&str>) -> Result<(), DockerError> {
+pub async fn create_container(docker: &Docker, cname: &str, image: &str, port: u16, agent_name: &str, env_config: &AgentEnvConfig, manage_core_code: bool, timezone: Option<&str>) -> Result<(), DockerError> {
     let agent_token = generate_agent_token();
     let env_path = write_agent_env_file(env_config, agent_name, port, &agent_token, timezone)?;
     let env_mount = format!("{}:{}:ro,z", env_path.display(), MOUNT_DESTS[0]);
 
     let code_dir = crate::agent_code::agent_code_dir(&env_config.config_dir);
-    let src_mount = format!("{}:{}:ro,z", code_dir.join("src/vesta").display(), MOUNT_DESTS[1]);
+    let src_mount = format!("{}:{}:ro,z", code_dir.join("core").display(), MOUNT_DESTS[1]);
     let pyproject_mount = format!("{}:{}:ro,z", code_dir.join("pyproject.toml").display(), MOUNT_DESTS[2]);
     let lock_mount = format!("{}:{}:ro,z", code_dir.join("uv.lock").display(), MOUNT_DESTS[3]);
 
@@ -1180,7 +1196,7 @@ pub async fn create_container(docker: &Docker, cname: &str, image: &str, port: u
     labels.insert(LABEL_AGENT_NAME.to_string(), agent_name.to_string());
 
     let mut binds = vec![env_mount];
-    if manage_code {
+    if manage_core_code {
         binds.extend([src_mount, pyproject_mount, lock_mount]);
     }
 
@@ -1200,7 +1216,7 @@ pub async fn create_container(docker: &Docker, cname: &str, image: &str, port: u
         GpuStatus::NoGpu => {}
     }
 
-    tracing::info!(agent = %agent_name, manage_code, "creating container");
+    tracing::info!(agent = %agent_name, image = %image, manage_core_code, "creating container");
 
     let host_config = bollard::models::HostConfig {
         binds: Some(binds),
@@ -1223,7 +1239,8 @@ pub async fn create_container(docker: &Docker, cname: &str, image: &str, port: u
         image: Some(image.to_string()),
         tty: Some(true),
         labels: Some(labels),
-        cmd: Some(ENTRYPOINT.iter().map(|s| s.to_string()).collect()),
+        cmd: Some(agent_container_entrypoint_cmd()),
+        working_dir: Some("/root".to_string()),
         host_config: Some(host_config),
         ..Default::default()
     };
@@ -1452,7 +1469,7 @@ pub async fn list_agents(docker: &Docker, agents_dir: &std::path::Path) -> Vec<L
     entries
 }
 
-pub async fn create_agent(docker: &Docker, name: &str, env_config: &AgentEnvConfig, manage_code: bool, timezone: Option<&str>) -> Result<String, DockerError> {
+pub async fn create_agent(docker: &Docker, name: &str, env_config: &AgentEnvConfig, manage_core_code: bool, timezone: Option<&str>) -> Result<String, DockerError> {
     let name = if name == "ignisinextinctus" { "vesta" } else { name };
     validate_name(name)?;
     if name != "vesta" && name.contains("vesta") {
@@ -1466,13 +1483,15 @@ pub async fn create_agent(docker: &Docker, name: &str, env_config: &AgentEnvConf
 
     let image = resolve_image(docker).await?;
 
-    if manage_code {
+    if manage_core_code {
+        let code_source = if cfg!(debug_assertions) { "local repo" } else { "github" };
+        tracing::info!(agent = %name, source = code_source, "fetching agent code");
         crate::agent_code::ensure_agent_code(&env_config.config_dir)
             .map_err(|e| DockerError::Failed(format!("agent code: {e}")))?;
     }
 
     let port = allocate_port(&env_config.agents_dir)?;
-    create_container(docker, &cname, image, port, name, env_config, manage_code, timezone).await?;
+    create_container(docker, &cname, image, port, name, env_config, manage_core_code, timezone).await?;
     Ok(name.to_string())
 }
 
@@ -1546,8 +1565,8 @@ pub async fn restart_agent(docker: &Docker, name: &str) -> Result<(), DockerErro
 
 /// Ensure all containers match expected config and running agents are restarted.
 /// Called once at startup after agent code and env files are ready.
-/// `manages_code` returns whether a given agent name has managed code (default true).
-pub async fn reconcile_containers(docker: &Docker, env_config: &AgentEnvConfig, manages_code: &(dyn Fn(&str) -> bool + Send + Sync)) {
+/// `manages_core_code` returns whether a given agent name has vestad-managed core code mounts (default true).
+pub async fn reconcile_containers(docker: &Docker, env_config: &AgentEnvConfig, manages_core_code: &(dyn Fn(&str) -> bool + Send + Sync)) {
     let containers = list_managed_containers(docker).await;
     if containers.is_empty() {
         return;
@@ -1590,13 +1609,13 @@ pub async fn reconcile_containers(docker: &Docker, env_config: &AgentEnvConfig, 
     let mut agent_code_ok = false;
     for cname in &containers {
         let name = get_agent_name(docker, cname).await;
-        let manage_code = manages_code(&name);
-        if !needs_rebuild(docker, cname, manage_code).await {
+        let manage_core_code = manages_core_code(&name);
+        if !needs_rebuild(docker, cname, manage_core_code).await {
             tracing::info!(agent = %name, "config ok, no rebuild needed");
             continue;
         }
         tracing::info!(agent = %name, "rebuild needed");
-        if manage_code && !agent_code_ok {
+        if manage_core_code && !agent_code_ok {
             match crate::agent_code::ensure_agent_code(&env_config.config_dir) {
                 Ok(_) => agent_code_ok = true,
                 Err(e) => {
@@ -1605,7 +1624,7 @@ pub async fn reconcile_containers(docker: &Docker, env_config: &AgentEnvConfig, 
                 }
             }
         }
-        match rebuild_agent(docker, &name, env_config, manage_code).await {
+        match rebuild_agent(docker, &name, env_config, manage_core_code).await {
             Ok(()) => tracing::info!(agent = %name, "rebuild complete"),
             Err(e) => tracing::error!(agent = %name, error = %e, "rebuild failed"),
         }
@@ -1664,7 +1683,7 @@ pub async fn destroy_agent(docker: &Docker, name: &str, agents_dir: &std::path::
 }
 
 /// Check if a container's config diverges from what create_container would produce.
-async fn needs_rebuild(docker: &Docker, cname: &str, manage_code: bool) -> bool {
+async fn needs_rebuild(docker: &Docker, cname: &str, manage_core_code: bool) -> bool {
     let info = match docker.inspect_container(cname, None).await {
         Ok(i) => i,
         Err(_) => return true,
@@ -1676,16 +1695,16 @@ async fn needs_rebuild(docker: &Docker, cname: &str, manage_code: bool) -> bool 
         .filter_map(|m| m.destination.as_deref())
         .collect();
 
-    let expected_mounts: &[&str] = if manage_code { MOUNT_DESTS } else { &MOUNT_DESTS[..1] };
+    let expected_mounts: &[&str] = if manage_core_code { MOUNT_DESTS } else { &MOUNT_DESTS[..1] };
     let missing: Vec<_> = expected_mounts.iter().filter(|d| !mount_dests.contains(*d)).collect();
     if !missing.is_empty() {
         tracing::info!(container = %cname, missing = ?missing, "rebuild needed: missing mounts");
         return true;
     }
-    if !manage_code {
+    if !manage_core_code {
         let unexpected: Vec<_> = MOUNT_DESTS[1..].iter().filter(|d| mount_dests.contains(*d)).collect();
         if !unexpected.is_empty() {
-            tracing::info!(container = %cname, unexpected = ?unexpected, "rebuild needed: has code mounts but manage_agent_code=false");
+            tracing::info!(container = %cname, unexpected = ?unexpected, "rebuild needed: has core code mounts while manage_core_code is false");
             return true;
         }
     }
@@ -1693,11 +1712,15 @@ async fn needs_rebuild(docker: &Docker, cname: &str, manage_code: bool) -> bool 
     // Check cmd
     let cmd = info.config.as_ref()
         .and_then(|c| c.cmd.as_ref());
+    let expected_cmd = agent_container_entrypoint_cmd();
     let cmd_ok = cmd
-        .map(|actual| actual.iter().zip(ENTRYPOINT).all(|(a, e)| a == e) && actual.len() == ENTRYPOINT.len())
+        .map(|actual| {
+            actual.len() == expected_cmd.len()
+                && actual.iter().zip(expected_cmd.iter()).all(|(a, e)| a == e)
+        })
         .unwrap_or(false);
     if !cmd_ok {
-        tracing::info!(container = %cname, actual = ?cmd, expected = ?ENTRYPOINT, "rebuild needed: command mismatch");
+        tracing::info!(container = %cname, actual = ?cmd, expected = ?expected_cmd, "rebuild needed: command mismatch");
         return true;
     }
 
@@ -1748,7 +1771,7 @@ async fn needs_rebuild(docker: &Docker, cname: &str, manage_code: bool) -> bool 
 /// Recreate a container with the latest container config (entrypoint, mounts, env file)
 /// while preserving the filesystem. Commits the old container, removes it, and creates
 /// a new one from the committed image.
-pub async fn rebuild_agent(docker: &Docker, name: &str, env_config: &AgentEnvConfig, manage_code: bool) -> Result<(), DockerError> {
+pub async fn rebuild_agent(docker: &Docker, name: &str, env_config: &AgentEnvConfig, manage_core_code: bool) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
     let info = inspect_container(docker, &cname, Some(&env_config.agents_dir)).await;
@@ -1774,15 +1797,47 @@ pub async fn rebuild_agent(docker: &Docker, name: &str, env_config: &AgentEnvCon
         .unwrap()
         .as_secs();
     let backup_tag = format!("vesta-rebuild:{}_{}", name, ts);
+    let normalized_tag = format!("vesta-rebuild:{}_{}-normalized", name, ts);
+    let helper_name = format!("{}-normalize", cname);
 
     tracing::info!(agent = %name, "[1/3] snapshotting container filesystem...");
     snapshot_container(docker, &cname, &backup_tag, &[]).await?;
+
+    // Chain migrations on the snapshot. Each migration produces a new image
+    // tag if it modifies the filesystem; subsequent migrations inspect the
+    // latest image's helper container.
+    let mut current_image = backup_tag.clone();
+
+    // Migration 1: /root/vesta/ → /root + /root/agent/ (very old layout)
+    if crate::migrations::maybe_normalize_legacy_agent_snapshot(
+        docker,
+        &cname,
+        &current_image,
+        &helper_name,
+        &normalized_tag,
+    ).await? {
+        current_image = normalized_tag.clone();
+    }
+
+    // Migration 2: agent/src/vesta/ → agent/core/ (pre-0.1.135 layout)
+    let core_tag = format!("{normalized_tag}-core");
+    if crate::migrations::maybe_rename_src_vesta_to_core(
+        docker,
+        &cname,
+        &current_image,
+        &helper_name,
+        &core_tag,
+    ).await? {
+        current_image = core_tag;
+    }
+
+    let rebuild_image = current_image;
 
     tracing::info!(agent = %name, "[2/3] removing old container...");
     remove_container_force(docker, &cname).await.ok();
 
     tracing::info!(agent = %name, "[3/3] creating container with new config...");
-    create_container(docker, &cname, &backup_tag, port, name, env_config, manage_code, None).await?;
+    create_container(docker, &cname, &rebuild_image, port, name, env_config, manage_core_code, None).await?;
 
     Ok(())
 }
@@ -2070,7 +2125,7 @@ mod tests {
         }
     }
 
-    async fn create_test_container_async(docker: &Docker, tc: &TestContainer, mounts: &[(&str, &str)], cmd: &[&str], network: &str, restart: &str) {
+    async fn create_test_container_async(docker: &Docker, tc: &TestContainer, mounts: &[(&str, &str)], cmd: Vec<String>, network: &str, restart: &str) {
         let binds: Vec<String> = mounts.iter()
             .map(|(src, dst)| format!("{}:{}:ro,z", src, dst))
             .collect();
@@ -2105,7 +2160,7 @@ mod tests {
             image: Some(VESTA_IMAGE.to_string()),
             tty: Some(true),
             labels: Some(labels),
-            cmd: Some(cmd.iter().map(|s| s.to_string()).collect()),
+            cmd: Some(cmd),
             host_config: Some(host_config),
             ..Default::default()
         };
@@ -2123,7 +2178,7 @@ mod tests {
         let tc = TestContainer::new("snapshot-rt");
         let img = TestImage::new("snapshot-rt");
 
-        create_test_container_async(&docker, &tc, &[], ENTRYPOINT, NETWORK_MODE, RESTART_POLICY).await;
+        create_test_container_async(&docker, &tc, &[], agent_container_entrypoint_cmd(), NETWORK_MODE, RESTART_POLICY).await;
 
         snapshot_container(&docker, &tc.name, &img.tag, &[]).await.expect("snapshot should succeed");
 
@@ -2138,7 +2193,7 @@ mod tests {
         let tc = TestContainer::new("snapshot-labels");
         let img = TestImage::new("snapshot-labels");
 
-        create_test_container_async(&docker, &tc, &[], ENTRYPOINT, NETWORK_MODE, RESTART_POLICY).await;
+        create_test_container_async(&docker, &tc, &[], agent_container_entrypoint_cmd(), NETWORK_MODE, RESTART_POLICY).await;
 
         let label = "LABEL test.marker=integration-test";
         snapshot_container(&docker, &tc.name, &img.tag, &[label]).await.expect("snapshot with changes should succeed");
@@ -2168,7 +2223,7 @@ mod tests {
         std::fs::write(env_file.path(), "export WS_PORT=12345\n").unwrap();
         let env_mount = (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]);
 
-        create_test_container_async(&docker, &tc, &[env_mount], ENTRYPOINT, NETWORK_MODE, RESTART_POLICY).await;
+        create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), NETWORK_MODE, RESTART_POLICY).await;
 
         assert!(!needs_rebuild(&docker, &tc.name, false).await, "fresh container should NOT need rebuild");
     }
@@ -2182,11 +2237,11 @@ mod tests {
         std::fs::write(env_file.path(), "export WS_PORT=12345\n").unwrap();
 
         let code_dir = tempfile::TempDir::new().expect("tempdir");
-        std::fs::create_dir_all(code_dir.path().join("src/vesta")).unwrap();
+        std::fs::create_dir_all(code_dir.path().join("vesta")).unwrap();
         std::fs::write(code_dir.path().join("pyproject.toml"), "").unwrap();
         std::fs::write(code_dir.path().join("uv.lock"), "").unwrap();
 
-        let src_vesta = code_dir.path().join("src/vesta");
+        let src_vesta = code_dir.path().join("vesta");
         let pyproject = code_dir.path().join("pyproject.toml");
         let uv_lock = code_dir.path().join("uv.lock");
 
@@ -2197,7 +2252,7 @@ mod tests {
             (uv_lock.to_str().unwrap(), MOUNT_DESTS[3]),
         ];
 
-        create_test_container_async(&docker, &tc, &mounts, ENTRYPOINT, NETWORK_MODE, RESTART_POLICY).await;
+        create_test_container_async(&docker, &tc, &mounts, agent_container_entrypoint_cmd(), NETWORK_MODE, RESTART_POLICY).await;
 
         assert!(!needs_rebuild(&docker, &tc.name, true).await, "container with all mounts should NOT need rebuild");
     }
@@ -2211,7 +2266,7 @@ mod tests {
         std::fs::write(env_file.path(), "export WS_PORT=12345\n").unwrap();
         let env_mount = (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]);
 
-        create_test_container_async(&docker, &tc, &[env_mount], &["sh", "-c", "echo wrong"], NETWORK_MODE, RESTART_POLICY).await;
+        create_test_container_async(&docker, &tc, &[env_mount], vec!["sh".into(), "-c".into(), "echo wrong".into()], NETWORK_MODE, RESTART_POLICY).await;
 
         assert!(needs_rebuild(&docker, &tc.name, false).await, "container with wrong cmd SHOULD need rebuild");
     }
@@ -2222,7 +2277,7 @@ mod tests {
         let docker = test_docker();
         let tc = TestContainer::new("rebuild-nomount");
 
-        create_test_container_async(&docker, &tc, &[], ENTRYPOINT, NETWORK_MODE, RESTART_POLICY).await;
+        create_test_container_async(&docker, &tc, &[], agent_container_entrypoint_cmd(), NETWORK_MODE, RESTART_POLICY).await;
 
         assert!(needs_rebuild(&docker, &tc.name, false).await, "container without env mount SHOULD need rebuild");
     }
@@ -2236,9 +2291,9 @@ mod tests {
         std::fs::write(env_file.path(), "export WS_PORT=12345\n").unwrap();
         let env_mount = (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]);
 
-        create_test_container_async(&docker, &tc, &[env_mount], ENTRYPOINT, NETWORK_MODE, RESTART_POLICY).await;
+        create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), NETWORK_MODE, RESTART_POLICY).await;
 
-        assert!(needs_rebuild(&docker, &tc.name, true).await, "container missing code mounts SHOULD need rebuild when manage_code=true");
+        assert!(needs_rebuild(&docker, &tc.name, true).await, "container missing code mounts SHOULD need rebuild when manage_core_code=true");
     }
 
     #[tokio::test]
@@ -2250,7 +2305,7 @@ mod tests {
         std::fs::write(env_file.path(), "export WS_PORT=12345\n").unwrap();
         let env_mount = (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]);
 
-        create_test_container_async(&docker, &tc, &[env_mount], ENTRYPOINT, "bridge", RESTART_POLICY).await;
+        create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), "bridge", RESTART_POLICY).await;
 
         assert!(needs_rebuild(&docker, &tc.name, false).await, "container with wrong network SHOULD need rebuild");
     }
@@ -2264,7 +2319,7 @@ mod tests {
         std::fs::write(env_file.path(), "export WS_PORT=12345\n").unwrap();
         let env_mount = (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]);
 
-        create_test_container_async(&docker, &tc, &[env_mount], ENTRYPOINT, NETWORK_MODE, "no").await;
+        create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), NETWORK_MODE, "no").await;
 
         assert!(needs_rebuild(&docker, &tc.name, false).await, "container with wrong restart policy SHOULD need rebuild");
     }
@@ -2280,7 +2335,7 @@ mod tests {
         let env_mount = (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]);
 
         // Create with wrong network to force rebuild
-        create_test_container_async(&docker, &tc, &[env_mount], ENTRYPOINT, "bridge", RESTART_POLICY).await;
+        create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), "bridge", RESTART_POLICY).await;
         assert!(needs_rebuild(&docker, &tc.name, false).await, "precondition: should need rebuild");
 
         // Snapshot
@@ -2288,7 +2343,7 @@ mod tests {
 
         // Remove old, create new from snapshot with correct config
         remove_container_force(&docker, &tc.name).await.ok();
-        create_test_container_async(&docker, &tc, &[env_mount], ENTRYPOINT, NETWORK_MODE, RESTART_POLICY).await;
+        create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), NETWORK_MODE, RESTART_POLICY).await;
 
         assert!(!needs_rebuild(&docker, &tc.name, false).await, "rebuilt container should NOT need rebuild");
     }

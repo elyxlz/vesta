@@ -5,10 +5,10 @@ import typing as tp
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import vesta.models as vm
+import core.models as vm
 from claude_agent_sdk.types import SubagentStartHookInput
-from vesta.core.client import _subagent_hook
-from vesta.events import EventBus, SubagentStartEvent, SubagentStopEvent
+from core.client import _subagent_hook
+from core.events import EventBus, SubagentStartEvent, SubagentStopEvent
 
 
 # --- Subagent hooks ---
@@ -137,12 +137,12 @@ async def test_message_processor_interrupts_on_new_message(tmp_path):
         assert state.shutdown_event is not None
         state.shutdown_event.set()
 
-    from vesta.core.loops import message_processor
+    from core.loops import message_processor
 
     with (
-        patch("vesta.core.loops.ClaudeSDKClient", return_value=mock_client),
-        patch("vesta.core.loops.process_message", tracking),
-        patch("vesta.core.loops.build_client_options", return_value=MagicMock()),
+        patch("core.loops.ClaudeSDKClient", return_value=mock_client),
+        patch("core.loops.process_message", tracking),
+        patch("core.loops.build_client_options", return_value=MagicMock()),
     ):
         await asyncio.gather(
             message_processor(queue, state=state, config=config),
@@ -157,7 +157,7 @@ async def test_message_processor_interrupts_on_new_message(tmp_path):
 @pytest.mark.anyio
 async def test_process_interruptible_cancels_process_task(tmp_path):
     """Cancelling _process_interruptible must cancel its in-flight process_task (no orphaned tasks)."""
-    from vesta.core.loops import _process_interruptible
+    from core.loops import _process_interruptible
 
     config = vm.VestaConfig(root=tmp_path)
     state = vm.State()
@@ -177,7 +177,7 @@ async def test_process_interruptible_cancels_process_task(tmp_path):
             raise
         return (["OK"], state)
 
-    with patch("vesta.core.loops._process_message_safely", hanging_process):
+    with patch("core.loops._process_message_safely", hanging_process):
         interruptible_task = asyncio.create_task(_process_interruptible("test msg", is_user=True, queue=queue, state=state, config=config))
         await task_started.wait()
         interruptible_task.cancel()
@@ -190,7 +190,7 @@ async def test_process_interruptible_cancels_process_task(tmp_path):
 @pytest.mark.anyio
 async def test_run_vesta_force_exits_on_hung_cleanup(tmp_path):
     """run_vesta must force-exit if task cleanup hangs (e.g. SDK __aexit__ blocking)."""
-    from vesta.main import run_vesta
+    from core.main import run_vesta
 
     config = vm.VestaConfig(root=tmp_path)
     config.data_dir.mkdir(parents=True, exist_ok=True)
@@ -214,11 +214,11 @@ async def test_run_vesta_force_exits_on_hung_cleanup(tmp_path):
                     continue
 
     with (
-        patch("vesta.main.start_ws_server", new_callable=AsyncMock) as mock_ws,
-        patch("vesta.main.input_handler", hanging_on_cancel),
-        patch("vesta.main.message_processor", hanging_on_cancel),
-        patch("vesta.main.monitor_loop", hanging_on_cancel),
-        patch("vesta.main.queue_greeting", new_callable=AsyncMock),
+        patch("core.main.start_ws_server", new_callable=AsyncMock) as mock_ws,
+        patch("core.main.input_handler", hanging_on_cancel),
+        patch("core.main.message_processor", hanging_on_cancel),
+        patch("core.main.monitor_loop", hanging_on_cancel),
+        patch("core.main.queue_greeting", new_callable=AsyncMock),
         patch("os._exit", fake_exit),
     ):
         mock_ws.return_value = MagicMock()
@@ -241,7 +241,7 @@ async def test_run_vesta_force_exits_on_hung_cleanup(tmp_path):
 @pytest.mark.anyio
 async def test_converse_breaks_on_interrupt_event():
     """converse exits promptly when interrupt_event is set."""
-    from vesta.core.client import converse
+    from core.client import converse
 
     yielded_count = 0
 
@@ -286,7 +286,7 @@ async def test_converse_breaks_on_interrupt_event():
 @pytest.mark.anyio
 async def test_converse_works_normally_without_interrupt():
     """converse processes all messages when no interrupt is set."""
-    from vesta.core.client import converse
+    from core.client import converse
 
     messages_yielded = 0
 
@@ -320,7 +320,7 @@ async def test_converse_works_normally_without_interrupt():
 async def test_converse_emits_text_immediately_with_tool_use():
     """Text in messages that also have tool_use must be emitted immediately, not buffered."""
     from claude_agent_sdk import TextBlock, ToolUseBlock
-    from vesta.core.client import converse
+    from core.client import converse
 
     state, config, mock_client, emitted, _ = _make_converse_harness()
 
@@ -340,7 +340,7 @@ async def test_converse_emits_text_immediately_with_tool_use():
 @pytest.mark.anyio
 async def test_converse_emits_thinking_events():
     from claude_agent_sdk import TextBlock, ThinkingBlock
-    from vesta.core.client import converse
+    from core.client import converse
 
     state, config, mock_client, emitted, _ = _make_converse_harness()
     thinking_events: list[tuple[str, str]] = []
@@ -372,7 +372,7 @@ async def test_interrupt_drains_stream_and_emits_leftovers():
     import time
 
     from claude_agent_sdk import TextBlock, ToolUseBlock
-    from vesta.core.client import converse
+    from core.client import converse
 
     state, config, mock_client, emitted, message_queue = _make_converse_harness(use_shared_queue=True)
     assert message_queue is not None
@@ -420,7 +420,7 @@ async def test_interrupt_then_response_arrives_without_user_input():
     import time
 
     from claude_agent_sdk import TextBlock, ToolUseBlock
-    from vesta.core.client import converse
+    from core.client import converse
 
     state, config, mock_client, emitted, message_queue = _make_converse_harness(use_shared_queue=True)
     assert message_queue is not None
@@ -470,7 +470,7 @@ async def test_drain_timeout_does_not_block_forever():
     """If the SDK is slow to send ResultMessage after interrupt, the drain must
     time out and not block the next conversation forever."""
     from claude_agent_sdk import ToolUseBlock
-    from vesta.core.client import converse
+    from core.client import converse
 
     state, config, mock_client, _, _ = _make_converse_harness()
 

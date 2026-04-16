@@ -10,7 +10,7 @@ curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y 
 apt-get install -y xvfb
 
 # 3. Build and install the browser CLI
-cd ~/vesta/skills/browser/cli && npm install && npm run build && npm install -g .
+cd ~/agent/skills/browser/cli && npm install && npm run build && npm install -g .
 
 # 4. Install Chromium (matched to playwright-core version)
 npx playwright-core install --with-deps chromium
@@ -76,7 +76,7 @@ connect to the user's own browser remotely instead:
 
 ## Restart
 
-Add to `~/vesta/prompts/restart.md`:
+Add to `~/agent/prompts/restart.md`:
 ```
 screen -dmS xvfb Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp
 ```
