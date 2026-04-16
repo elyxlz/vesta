@@ -170,7 +170,7 @@ jobs:
         run: cargo build -p vestad
 
       - name: Run integration tests (excludes live tests)
-        run: cargo test -p vesta-tests --test server --test multi_user --test oauth --test migrations -- --test-threads=1
+        run: cargo test -p vesta-tests --test server --test multi_user --test oauth --test migrations -- --test-threads=8
 
   # ── Check vesta (clippy + tests, PRs only) ────────────────────────────
   check-vesta:
