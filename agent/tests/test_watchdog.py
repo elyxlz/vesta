@@ -153,6 +153,7 @@ async def test_watchdog_warns_at_thresholds():
         return await original_wait_for(coro, timeout=0.01)
 
     try:
+
         async def stop_after_tick():
             await asyncio.sleep(0.05)
             stop.set()
@@ -189,6 +190,7 @@ async def test_watchdog_resets_after_activity_resumes():
         return await original_wait_for(coro, timeout=0.01)
 
     try:
+
         async def resume_then_idle_again():
             await asyncio.sleep(0.05)
             state.touch_activity("sdk_message")
