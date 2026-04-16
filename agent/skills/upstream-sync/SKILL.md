@@ -58,7 +58,7 @@ Core code (`agent/core/`, `agent/pyproject.toml`, `agent/uv.lock`) is managed by
      - split responsibilities
      - keep both call paths or behaviors
      - rename or reorganize logic to avoid collisions
-   - **Vestad-managed paths** (`vesta/`, `pyproject.toml`, `uv.lock`) are not automatic `--theirs` files. If local behavior matters, carry it forward into the merged version.
+   - **Vestad-managed paths** (`core/`, `pyproject.toml`, `uv.lock`) are not automatic `--theirs` files. If local behavior matters, carry it forward into the merged version.
    - Only take one side wholesale when the other side is clearly obsolete, redundant, generated, or a strict subset.
    - Do not stop at “conflict markers removed”. Re-read the merged file and verify both sides' behavior still exists.
 
