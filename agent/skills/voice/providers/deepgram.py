@@ -189,6 +189,7 @@ class DeepgramStt:
                         elif msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSING, aiohttp.WSMsgType.CLOSED):
                             break
             else:
+
                 async def deepgram_to_browser() -> None:
                     async for msg in dg_ws:
                         if msg.type == aiohttp.WSMsgType.TEXT:
