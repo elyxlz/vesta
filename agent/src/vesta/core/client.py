@@ -22,9 +22,13 @@ from claude_agent_sdk import (
     create_sdk_mcp_server,
 )
 from claude_agent_sdk.types import (
+    HookEvent,
+    NotificationHookInput,
+    PostToolUseFailureHookInput,
     PreCompactHookInput,
     PreToolUseHookInput,
     PostToolUseHookInput,
+    StopHookInput,
     SubagentStartHookInput,
     SubagentStopHookInput,
     HookJSONOutput,
@@ -198,9 +202,7 @@ def _subagent_prefix(input_data: Mapping[str, object]) -> tuple[str, bool]:
     return prefix, True
 
 
-def _make_hooks(
-    state: vm.State,
-) -> tuple[HookCallback, HookCallback, HookCallback, HookCallback, HookCallback]:
+def _make_hooks(state: vm.State) -> dict[HookEvent, list[HookMatcher]]:
     async def log_tool_start(input_data: PreToolUseHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
         name = input_data["tool_name"]
         summary = _tool_summary(name, input_data["tool_input"])
@@ -216,18 +218,38 @@ def _make_hooks(
         state.event_bus.emit({"type": "tool_end", "tool": name, "subagent": is_sub})
         return tp.cast(HookJSONOutput, {})
 
+    async def log_tool_failure(input_data: PostToolUseFailureHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
+        name = input_data["tool_name"]
+        error = input_data["error"]
+        prefix, _ = _subagent_prefix(input_data)
+        logger.warning(f"{prefix}Tool failed: {name}: {error}")
+        return tp.cast(HookJSONOutput, {})
+
     async def log_compact(input_data: PreCompactHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
         trigger = input_data["trigger"]
         logger.client(f"Context compaction starting (trigger={trigger})")
         return tp.cast(HookJSONOutput, {})
 
-    return (
-        tp.cast(HookCallback, log_tool_start),
-        tp.cast(HookCallback, log_tool_finish),
-        _subagent_hook(state, verb="started", event_type="subagent_start"),
-        _subagent_hook(state, verb="stopped", event_type="subagent_stop"),
-        tp.cast(HookCallback, log_compact),
-    )
+    async def log_notification(input_data: NotificationHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
+        title = input_data["title"] if "title" in input_data else None
+        prefix = f"{title}: " if title else ""
+        logger.system(f"[{input_data['notification_type']}] {prefix}{input_data['message']}")
+        return tp.cast(HookJSONOutput, {})
+
+    async def log_stop(input_data: StopHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
+        logger.client("Agent execution stopped")
+        return tp.cast(HookJSONOutput, {})
+
+    return {
+        "PreToolUse": [HookMatcher(hooks=[tp.cast(HookCallback, log_tool_start)])],
+        "PostToolUse": [HookMatcher(hooks=[tp.cast(HookCallback, log_tool_finish)])],
+        "PostToolUseFailure": [HookMatcher(hooks=[tp.cast(HookCallback, log_tool_failure)])],
+        "SubagentStart": [HookMatcher(hooks=[_subagent_hook(state, verb="started", event_type="subagent_start")])],
+        "SubagentStop": [HookMatcher(hooks=[_subagent_hook(state, verb="stopped", event_type="subagent_stop")])],
+        "PreCompact": [HookMatcher(hooks=[tp.cast(HookCallback, log_compact)])],
+        "Notification": [HookMatcher(hooks=[tp.cast(HookCallback, log_notification)])],
+        "Stop": [HookMatcher(hooks=[tp.cast(HookCallback, log_stop)])],
+    }
 
 
 async def attempt_interrupt(state: vm.State, *, config: vm.VestaConfig, reason: str) -> bool:
@@ -375,11 +397,26 @@ def _contains_dashes(texts: list[str]) -> bool:
     return any(_EM_DASH in t or _EN_DASH in t or " - " in t for t in texts)
 
 
+async def _log_context_usage(state: vm.State) -> None:
+    if not state.client:
+        return
+    try:
+        usage = await state.client.get_context_usage()
+        pct = usage["percentage"]
+        total = usage["totalTokens"]
+        max_tok = usage["maxTokens"]
+        log_fn = logger.warning if pct > 80 else logger.usage
+        log_fn(f"Context: {pct:.0f}% ({total:,}/{max_tok:,} tokens)")
+    except Exception:
+        pass
+
+
 async def process_message(msg: str, *, state: vm.State, config: vm.VestaConfig, is_user: bool) -> tuple[list[str], vm.State]:
     responses = await converse(msg, state=state, config=config, show_output=True)
     if responses and _contains_dashes(responses):
         logger.warning("Em/en dash detected in response, sending correction")
         await converse(_DASH_WARNING, state=state, config=config, show_output=True)
+    await _log_context_usage(state)
     return responses, state
 
 
@@ -447,19 +484,11 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
     name = config.agent_name
     system_prompt = f"Your name is {name}.\n\n{system_prompt}"
 
-    pre_hook, post_hook, subagent_start_hook, subagent_stop_hook, compact_hook = _make_hooks(state)
-
     return ClaudeAgentOptions(
         system_prompt=system_prompt,
         model=config.agent_model,
         betas=["context-1m-2025-08-07"],
-        hooks={
-            "PreToolUse": [HookMatcher(hooks=[pre_hook])],
-            "PostToolUse": [HookMatcher(hooks=[post_hook])],
-            "SubagentStart": [HookMatcher(hooks=[subagent_start_hook])],
-            "SubagentStop": [HookMatcher(hooks=[subagent_stop_hook])],
-            "PreCompact": [HookMatcher(hooks=[compact_hook])],
-        },
+        hooks=_make_hooks(state),
         permission_mode="bypassPermissions",
         cwd=config.root,
         setting_sources=["project"],
