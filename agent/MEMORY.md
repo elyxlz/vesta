@@ -130,8 +130,8 @@ The user's important people are [agent_name]'s important people too. Keeps track
 - **Invalidation**: `curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services/<name>/invalidate`, optionally `{"scope": "<part>"}`. Tells the app to refresh that service
 
 ### Self-Modification
-- Edit skills, prompts, config (`config.py`, mechanical settings only), MEMORY.md freely
-- **To change a config setting**: read `src/vesta/config.py` for all options and their env var names, set in `~/.bashrc`, run `restart_vesta`
+- Edit skills, prompts, MEMORY.md freely
+- **To change a config setting**: read `src/vesta/config.py` for all options and their env var names; set the env var in `~/.bashrc`, run `restart_vesta`
 - `src/vesta/` may be read-only (depends on agent config). If so, PR changes through the upstream skill
 - **New skills**: follow existing patterns (SKILL.md frontmatter, SETUP.md, `~/.{skill}/` data, `screen -dmS`, `restart.md` entry)
 - Changes take effect on next restart, or use `restart_vesta` to apply immediately
