@@ -135,8 +135,14 @@ async def _send_outage_notification(message: str, *, config: vm.VestaConfig) -> 
         return
     try:
         proc = await asyncio.create_subprocess_exec(
-            "whatsapp", "send", "--to", config.user_phone, "--message", message,
-            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+            "whatsapp",
+            "send",
+            "--to",
+            config.user_phone,
+            "--message",
+            message,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
         )
         await asyncio.wait_for(proc.wait(), timeout=10)
     except Exception as e:
