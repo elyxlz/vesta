@@ -136,6 +136,30 @@ main() {
     ensure_path
   }
 
+  check_docker_snapshotter() {
+    if ! command -v docker >/dev/null 2>&1; then
+      return
+    fi
+    local driver
+    driver=$(docker info --format '{{.Driver}}' 2>/dev/null || true)
+    if [ "$driver" = "overlayfs" ]; then
+      echo ""
+      echo "WARNING: docker is using the containerd snapshotter (storage driver: overlayfs)."
+      echo "This corrupts multi-layer image extraction on Docker 29+ and will cause vesta to"
+      echo "fail with 'exec format error'."
+      echo ""
+      echo "Fix: add the following to /etc/docker/daemon.json and restart docker:"
+      echo ""
+      echo '  {'
+      echo '    "features": { "containerd-snapshotter": false },'
+      echo '    "storage-driver": "overlay2"'
+      echo '  }'
+      echo ""
+      echo "Then run: sudo systemctl restart docker"
+      echo ""
+    fi
+  }
+
   install_vestad() {
     case "$ARCH" in
       x86_64) local rust_target="x86_64-unknown-linux-gnu" ;;
@@ -153,6 +177,7 @@ main() {
     install -m 755 "$WORK_DIR/vestad" "$bin_dir/vestad"
     echo "  ✓ vestad server → $bin_dir/vestad"
     ensure_path
+    check_docker_snapshotter
   }
 
   install_app_linux() {
