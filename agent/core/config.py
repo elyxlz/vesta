@@ -6,7 +6,7 @@ import pydantic_settings as pyd_settings
 from claude_agent_sdk.types import ThinkingConfigAdaptive, ThinkingConfigDisabled, ThinkingConfigEnabled
 
 
-_DEFAULT_ROOT = pl.Path.home()
+_DEFAULT_AGENT_DIR = pl.Path.home() / "agent"
 
 
 class VestaConfig(pyd_settings.BaseSettings):
@@ -39,22 +39,14 @@ class VestaConfig(pyd_settings.BaseSettings):
     ws_port: int = 0
     agent_token: str | None = None
 
-    root: pl.Path = pyd.Field(
-        default=_DEFAULT_ROOT,
-        validation_alias=pyd.AliasChoices("VESTA_ROOT", "root"),
-        description="Layout root ($HOME in containers). Env VESTA_ROOT overrides the base path used for agent/ directory.",
-    )
+    agent_dir: pl.Path = pyd.Field(default=_DEFAULT_AGENT_DIR)
 
-    @pyd.field_validator("root", mode="before")
+    @pyd.field_validator("agent_dir", mode="before")
     @classmethod
-    def _normalize_root(cls, value: pl.Path | str | None) -> pl.Path:
+    def _normalize_agent_dir(cls, value: pl.Path | str | None) -> pl.Path:
         if value is None or value == "":
-            return _DEFAULT_ROOT
+            return _DEFAULT_AGENT_DIR
         return pl.Path(value).expanduser().resolve()
-
-    @property
-    def agent_dir(self) -> pl.Path:
-        return self.root / "agent"
 
     @property
     def notifications_dir(self) -> pl.Path:

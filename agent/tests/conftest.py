@@ -11,7 +11,7 @@ os.environ.setdefault("WS_PORT", "17865")
 
 @pytest.fixture
 def config(tmp_path):
-    return vm.VestaConfig(root=tmp_path)
+    return vm.VestaConfig(agent_dir=tmp_path / "agent")
 
 
 @pytest.fixture

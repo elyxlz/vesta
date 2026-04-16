@@ -3,11 +3,11 @@
 from core.helpers import get_memory_path
 
 
-def test_config_paths_under_root(config, tmp_path):
-    assert config.notifications_dir.is_relative_to(tmp_path)
-    assert config.data_dir.is_relative_to(tmp_path)
-    assert config.logs_dir.is_relative_to(tmp_path)
-    assert config.skills_dir.is_relative_to(config.root)
+def test_config_paths_under_agent_dir(config, tmp_path):
+    assert config.notifications_dir.is_relative_to(config.agent_dir)
+    assert config.data_dir.is_relative_to(config.agent_dir)
+    assert config.logs_dir.is_relative_to(config.agent_dir)
+    assert config.skills_dir.is_relative_to(config.agent_dir)
 
 
 def test_config_default_values():
