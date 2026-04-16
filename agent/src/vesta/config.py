@@ -10,6 +10,21 @@ _DEFAULT_ROOT = pl.Path.home() / "vesta"
 
 
 class VestaConfig(pyd_settings.BaseSettings):
+    """Vesta agent configuration.
+
+    Every field can be overridden via env var (uppercased field name, no prefix).
+    Set in ~/.bashrc and run restart_vesta to apply.
+
+    Key overrides:
+        AGENT_MODEL   - model name, e.g. "sonnet", "opus", "haiku" (default: "opus")
+        AGENT_NAME    - agent name (default: "vesta")
+        LOG_LEVEL     - DEBUG | INFO | WARNING | ERROR (default: "INFO")
+        THINKING      - adaptive | enabled | disabled (default: "adaptive")
+        PROACTIVE_CHECK_INTERVAL - seconds between proactive checks (default: 60)
+        NIGHTLY_MEMORY_HOUR      - hour 0-23 for nightly dream, unset to disable (default: 3)
+        RESPONSE_TIMEOUT         - max seconds for a single response (default: 600)
+    """
+
     model_config = pyd_settings.SettingsConfigDict(extra="ignore")
 
     ephemeral: bool = False

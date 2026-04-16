@@ -135,7 +135,8 @@ The user's important people are [agent_name]'s important people too. Keeps track
 - **Invalidation**: after rebuilding/restarting a service or changing its config, notify connected clients by calling: `curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services/<name>/invalidate`. Optionally pass `{"scope": "<part>"}` to indicate what changed (e.g. `{"scope": "stt"}`). Omit the body for a full invalidation. This tells the app to reload/refresh that service (e.g. reload the dashboard iframe, re-fetch voice settings).
 
 ### Self-Modification
-- Edit skills, prompts, config (`config.py`, mechanical settings only), MEMORY.md freely
+- Edit skills, prompts, MEMORY.md freely
+- **To change a config setting**: read `src/vesta/config.py` for all options and their env var names; set the env var in `~/.bashrc`, run `restart_vesta`
 - `src/vesta/` may be read-only (depends on agent config). If so, PR changes through the upstream skill
 - **New skills**: follow existing patterns (SKILL.md frontmatter, SETUP.md, `~/.{skill}/` data, `screen -dmS`, `restart.md` entry)
 - Changes take effect on next restart, or use `restart_vesta` to apply immediately
