@@ -21,6 +21,10 @@ description: Self-improvement and memory curation. Used by the nightly dreamer, 
 5. **Sensitive data cleanup**: purge secrets from history and files
 6. **Summary**: write tonight's dreamer summary
 
+## Before you start
+
+Write a thorough plan first. For each phase: what you intend to fix, what to prune from memory, what to file upstream, what to clean up. Be specific. Then execute it step by step.
+
 ## Self-Improvement
 
 ### 1. Retrospective
@@ -35,6 +39,7 @@ Review the conversation with fresh eyes. Note:
 - Tasks that stalled, failed, or felt clunky
 - Anything where a skill or prompt led you astray
 - Ideas for new skills, automations, or things you could do proactively
+- **Capability gaps**: moments where you claimed inability ("I can't do X", "I don't have access to Y") and the user revealed you actually could, or where you asked the user for something you should have been able to self-serve. These are high-signal. A local fix (memory rule, skill update) prevents the same miss tomorrow. If it's a general pattern, it likely affects other instances too
 
 ### 3. Fix
 
@@ -55,6 +60,12 @@ Re-read the failing exchange and simulate: would the updated version have change
 ### 5. Upstream sync (MANDATORY)
 
 **This step is NOT optional.** Every dream must include upstream sync. Skipping it causes debt that compounds. Read the `upstream` skill and follow its pull/push workflow. The dream summary must list what was synced. If nothing, explain why.
+
+**What to push upstream:**
+- Simple fixes (skill improvements, new rules, bug fixes): **PR + issue**. The issue describes the problem, the PR resolves it
+- Complex problems where the right solution isn't clear: **issue only**. Describe the pattern, leave the fix open
+
+**Privacy rule:** Before filing anything upstream, strip all personal information. No names, no contact details, no private context, no specifics that would identify the user or their data. Describe the pattern in general terms ("agent claimed inability to access calendar when google skill was installed") not the specific instance ("user asked about tuesday's meeting with..."). When in doubt, leave it out.
 
 #### Dashboard check
 

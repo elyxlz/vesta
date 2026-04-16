@@ -121,7 +121,7 @@ pub fn connect() -> Result<Docker, DockerError> {
 pub async fn ensure_docker(docker: &Docker) -> Result<(), DockerError> {
     // First attempt — check for permission errors
     match docker.ping().await {
-        Ok(_) => return Ok(()),
+        Ok(_) => {}
         Err(e) => {
             let msg = e.to_string().to_lowercase();
             if msg.contains("permission denied") {
@@ -131,17 +131,37 @@ pub async fn ensure_docker(docker: &Docker) -> Result<(), DockerError> {
                      then log out and back in (or run: newgrp docker)".to_string()
                 ));
             }
+
+            'retry: {
+                for _ in 0..DOCKER_DAEMON_PING_RETRIES {
+                    if docker.ping().await.is_ok() {
+                        break 'retry;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                }
+                return Err(DockerError::Failed("docker daemon is not running. start it with: sudo systemctl start docker".into()));
+            }
         }
     }
 
-    for _ in 0..DOCKER_DAEMON_PING_RETRIES {
-        if docker.ping().await.is_ok() {
-            return Ok(());
+    // Detect Docker's containerd snapshotter (Docker 29+), which silently corrupts
+    // multi-layer image extraction and causes "exec format error" on every binary.
+    if let Ok(info) = docker.info().await {
+        if info.driver.as_deref() == Some("overlayfs") {
+            return Err(DockerError::Failed(
+                "docker is using the containerd snapshotter (storage driver: overlayfs), \
+                 which corrupts multi-layer images on Docker 29+.\n\
+                 \n\
+                 Fix: add the following to /etc/docker/daemon.json and restart docker:\n\
+                 \n\
+                 {\n  \"features\": { \"containerd-snapshotter\": false },\n  \"storage-driver\": \"overlay2\"\n}\n\
+                 \n\
+                 Then run: sudo systemctl restart docker".to_string()
+            ));
         }
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 
-    Err(DockerError::Failed("docker daemon is not running. start it with: sudo systemctl start docker".into()))
+    Ok(())
 }
 
 pub fn ensure_docker_sync(docker: &Docker) -> Result<(), DockerError> {
@@ -628,6 +648,36 @@ fn glob_match(text: &[u8], pattern: &[u8]) -> bool {
     }
 }
 
+async fn verify_image_runnable(image: &str) -> Result<(), DockerError> {
+    let image = image.to_string();
+    let output = tokio::task::spawn_blocking(move || {
+        std::process::Command::new("docker")
+            .args(["run", "--rm", &image, "/bin/true"])
+            .output()
+    })
+    .await
+    .map_err(|e| DockerError::Failed(format!("image sanity check task failed: {e}")))?
+    .map_err(|e| DockerError::Failed(format!("image sanity check failed to run: {e}")))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.to_lowercase().contains("exec format error") {
+            return Err(DockerError::Failed(
+                "image sanity check failed with 'exec format error'. \
+                 docker may be using the containerd snapshotter, which corrupts multi-layer images.\n\
+                 \n\
+                 Check your storage driver: docker info --format '{{.Driver}}'\n\
+                 If it shows 'overlayfs', add to /etc/docker/daemon.json and restart docker:\n\
+                 \n\
+                 {\n  \"features\": { \"containerd-snapshotter\": false },\n  \"storage-driver\": \"overlay2\"\n}".to_string()
+            ));
+        }
+        return Err(DockerError::Failed(format!("image sanity check failed: {stderr}")));
+    }
+
+    Ok(())
+}
+
 pub async fn resolve_image(docker: &Docker) -> Result<&'static str, DockerError> {
     if let Ok(context) = find_dockerfile() {
         let tar_body = build_context_tar(&context)?;
@@ -648,6 +698,7 @@ pub async fn resolve_image(docker: &Docker) -> Result<&'static str, DockerError>
                 }
             }
         }
+        verify_image_runnable(LOCAL_IMAGE_TAG).await?;
         Ok(LOCAL_IMAGE_TAG)
     } else {
         let opts = CreateImageOptions {
@@ -660,6 +711,7 @@ pub async fn resolve_image(docker: &Docker) -> Result<&'static str, DockerError>
                 return Err(DockerError::Failed(format!("failed to pull image: {e}")));
             }
         }
+        verify_image_runnable(VESTA_IMAGE).await?;
         Ok(VESTA_IMAGE)
     }
 }

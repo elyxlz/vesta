@@ -1,4 +1,5 @@
 import asyncio
+import collections
 import datetime as dt
 import json
 import os
@@ -12,7 +13,9 @@ from claude_agent_sdk import (
     HookMatcher,
     HookContext,
     Message,
+    RateLimitEvent,
     ResultMessage,
+    SystemMessage,
     TextBlock,
     ThinkingBlock,
     ToolUseBlock,
@@ -20,8 +23,13 @@ from claude_agent_sdk import (
     create_sdk_mcp_server,
 )
 from claude_agent_sdk.types import (
+    HookEvent,
+    NotificationHookInput,
+    PostToolUseFailureHookInput,
+    PreCompactHookInput,
     PreToolUseHookInput,
     PostToolUseHookInput,
+    StopHookInput,
     SubagentStartHookInput,
     SubagentStopHookInput,
     HookJSONOutput,
@@ -32,6 +40,18 @@ import vesta.models as vm
 from vesta import logger
 from vesta.core.init import get_memory_path
 from vesta.events import SubagentStartEvent, SubagentStopEvent, StreamEvent
+
+
+def format_crash_detail(
+    exc: BaseException, stderr_buffer: collections.deque[str], *, fallback: str = "(no stderr captured)"
+) -> tuple[int | None, str]:
+    """Extract exit_code and format stderr tail from an SDK exception."""
+    try:
+        exit_code: int | None = exc.exit_code  # ty: ignore[unresolved-attribute]
+    except AttributeError:
+        exit_code = None
+    stderr_tail = "\n".join(stderr_buffer) if stderr_buffer else fallback
+    return exit_code, stderr_tail
 
 
 def _format_search_results(results: list[dict[str, str]], *, max_chars: int = 50000) -> str:
@@ -117,6 +137,16 @@ def _parse_sdk_message(msg: Message, *, sub_agent_context: str | None) -> tuple[
             pass
         return ([], [], sub_agent_context, session_id, False)
 
+    if isinstance(msg, RateLimitEvent):
+        info = msg.rate_limit_info
+        logger.warning(f"Rate limit {info.status} (utilization={info.utilization}, type={info.rate_limit_type})")
+        return ([], [], sub_agent_context, None, False)
+
+    if isinstance(msg, SystemMessage):
+        raw = json.dumps(msg.data, default=str)
+        logger.system(f"[{msg.subtype}] {raw[:500]}")
+        return ([], [], sub_agent_context, None, False)
+
     if not isinstance(msg, AssistantMessage):
         return ([msg] if isinstance(msg, str) else [], [], sub_agent_context, None, False)
 
@@ -186,9 +216,7 @@ def _subagent_prefix(input_data: Mapping[str, object]) -> tuple[str, bool]:
     return prefix, True
 
 
-def _make_hooks(
-    state: vm.State,
-) -> tuple[HookCallback, HookCallback, HookCallback, HookCallback]:
+def _make_hooks(state: vm.State) -> dict[HookEvent, list[HookMatcher]]:
     async def log_tool_start(input_data: PreToolUseHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
         name = input_data["tool_name"]
         summary = _tool_summary(name, input_data["tool_input"])
@@ -204,25 +232,48 @@ def _make_hooks(
         state.event_bus.emit({"type": "tool_end", "tool": name, "subagent": is_sub})
         return tp.cast(HookJSONOutput, {})
 
-    return (
-        tp.cast(HookCallback, log_tool_start),
-        tp.cast(HookCallback, log_tool_finish),
-        _subagent_hook(state, verb="started", event_type="subagent_start"),
-        _subagent_hook(state, verb="stopped", event_type="subagent_stop"),
-    )
+    async def log_tool_failure(input_data: PostToolUseFailureHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
+        name = input_data["tool_name"]
+        error = input_data["error"]
+        prefix, _ = _subagent_prefix(input_data)
+        logger.warning(f"{prefix}Tool failed: {name}: {error}")
+        return tp.cast(HookJSONOutput, {})
+
+    async def log_compact(input_data: PreCompactHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
+        trigger = input_data["trigger"]
+        logger.client(f"Context compaction starting (trigger={trigger})")
+        return tp.cast(HookJSONOutput, {})
+
+    async def log_notification(input_data: NotificationHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
+        title = input_data["title"] if "title" in input_data else None
+        prefix = f"{title}: " if title else ""
+        logger.system(f"[{input_data['notification_type']}] {prefix}{input_data['message']}")
+        return tp.cast(HookJSONOutput, {})
+
+    async def log_stop(input_data: StopHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
+        logger.client("Agent execution stopped")
+        return tp.cast(HookJSONOutput, {})
+
+    return {
+        "PreToolUse": [HookMatcher(hooks=[tp.cast(HookCallback, log_tool_start)])],
+        "PostToolUse": [HookMatcher(hooks=[tp.cast(HookCallback, log_tool_finish)])],
+        "PostToolUseFailure": [HookMatcher(hooks=[tp.cast(HookCallback, log_tool_failure)])],
+        "SubagentStart": [HookMatcher(hooks=[_subagent_hook(state, verb="started", event_type="subagent_start")])],
+        "SubagentStop": [HookMatcher(hooks=[_subagent_hook(state, verb="stopped", event_type="subagent_stop")])],
+        "PreCompact": [HookMatcher(hooks=[tp.cast(HookCallback, log_compact)])],
+        "Notification": [HookMatcher(hooks=[tp.cast(HookCallback, log_notification)])],
+        "Stop": [HookMatcher(hooks=[tp.cast(HookCallback, log_stop)])],
+    }
 
 
 async def attempt_interrupt(state: vm.State, *, config: vm.VestaConfig, reason: str) -> bool:
-    logger.interrupt(f"Starting interrupt attempt: {reason}")
-
     client = state.client
     if not client:
-        logger.interrupt("No client, aborting")
         return False
 
     try:
         await asyncio.wait_for(client.interrupt(), timeout=config.interrupt_timeout)
-        logger.interrupt(f"{reason}: interrupt sent")
+        logger.debug(f"Interrupt sent: {reason}")
         return True
     except TimeoutError:
         logger.error("SDK unresponsive, sending SIGTERM for graceful shutdown")
@@ -297,7 +348,6 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
                 raise TimeoutError
 
             if interrupt_task and interrupt_task in done:
-                logger.interrupt("Conversation interrupted by new message")
                 await attempt_interrupt(state, config=config, reason="New message interrupt")
                 await _cancel_task(anext_task)
                 # Cancelling anext_task finalizes response_iter, so drain leftover
@@ -361,11 +411,26 @@ def _contains_dashes(texts: list[str]) -> bool:
     return any(_EM_DASH in t or _EN_DASH in t or " - " in t for t in texts)
 
 
+async def _log_context_usage(state: vm.State) -> None:
+    if not state.client:
+        return
+    try:
+        usage = await state.client.get_context_usage()
+        pct = usage["percentage"]
+        total = usage["totalTokens"]
+        max_tok = usage["maxTokens"]
+        log_fn = logger.warning if pct > 80 else logger.usage
+        log_fn(f"Context: {pct:.0f}% ({total:,}/{max_tok:,} tokens)")
+    except (OSError, RuntimeError, KeyError, TypeError):
+        pass
+
+
 async def process_message(msg: str, *, state: vm.State, config: vm.VestaConfig, is_user: bool) -> tuple[list[str], vm.State]:
     responses = await converse(msg, state=state, config=config, show_output=True)
     if responses and _contains_dashes(responses):
         logger.warning("Em/en dash detected in response, sending correction")
         await converse(_DASH_WARNING, state=state, config=config, show_output=True)
+    await _log_context_usage(state)
     return responses, state
 
 
@@ -416,6 +481,14 @@ def _build_vesta_tools_server(state: vm.State, config: vm.VestaConfig) -> tp.Any
     return create_sdk_mcp_server("vesta-tools", tools=[restart_vesta, search_conversation_history])
 
 
+def _make_stderr_handler(state: vm.State) -> tp.Callable[[str], None]:
+    def handler(line: str) -> None:
+        logger.sdk(line)
+        state.stderr_buffer.append(line)
+
+    return handler
+
+
 def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgentOptions:
     memory_path = get_memory_path(config)
     if not memory_path.exists():
@@ -425,25 +498,18 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
     name = config.agent_name
     system_prompt = f"Your name is {name}.\n\n{system_prompt}"
 
-    pre_hook, post_hook, subagent_start_hook, subagent_stop_hook = _make_hooks(state)
-
     return ClaudeAgentOptions(
         system_prompt=system_prompt,
         model=config.agent_model,
         betas=["context-1m-2025-08-07"],
-        hooks={
-            "PreToolUse": [HookMatcher(hooks=[pre_hook])],
-            "PostToolUse": [HookMatcher(hooks=[post_hook])],
-            "SubagentStart": [HookMatcher(hooks=[subagent_start_hook])],
-            "SubagentStop": [HookMatcher(hooks=[subagent_stop_hook])],
-        },
+        hooks=_make_hooks(state),
         permission_mode="bypassPermissions",
         cwd=config.root,
         setting_sources=["project"],
         add_dirs=[str(config.root)],
         thinking=config.thinking,
         max_buffer_size=10 * 1024 * 1024,
-        stderr=lambda line: logger.sdk(line),
+        stderr=_make_stderr_handler(state),
         mcp_servers={"vesta": _build_vesta_tools_server(state, config)},
         resume=state.session_id,
     )
