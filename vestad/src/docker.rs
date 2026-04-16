@@ -86,6 +86,7 @@ const ENTRYPOINT: &[&str] = &[
 const CONTAINER_STOP_TIMEOUT_SECS: i64 = 10;
 const CONTAINER_RESTART_TIMEOUT_SECS: isize = 10;
 const LOADED_IMAGE_PREFIX: &str = "Loaded image: ";
+const DRIVER_MIGRATION_DIR: &str = "driver-migration";
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum ContainerStatus {
@@ -148,16 +149,86 @@ pub async fn ensure_docker(docker: &Docker) -> Result<(), DockerError> {
     // multi-layer image extraction and causes "exec format error" on every binary.
     if let Ok(info) = docker.info().await {
         if info.driver.as_deref() == Some("overlayfs") {
-            return Err(DockerError::Failed(
+            let containers = list_managed_containers(docker).await;
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+            let migration_dir = std::path::PathBuf::from(home)
+                .join(".config/vesta/vestad")
+                .join(DRIVER_MIGRATION_DIR);
+            std::fs::create_dir_all(&migration_dir).ok();
+
+            let mut exported = Vec::new();
+            let mut failed = Vec::new();
+
+            for cname in &containers {
+                let agent_name = get_agent_name(docker, cname).await;
+                let output_path = migration_dir.join(format!("{agent_name}.tar.gz"));
+                let was_running = container_status(docker, cname).await == ContainerStatus::Running;
+
+                if was_running {
+                    if let Err(err) = stop_container_with_timeout(docker, cname, crate::backup::BACKUP_STOP_TIMEOUT_SECS).await {
+                        tracing::error!(agent = %agent_name, error = %err, "failed to stop for migration export");
+                        failed.push(agent_name);
+                        continue;
+                    }
+                }
+
+                let temp_tag = format!("vesta-migration:{agent_name}-temp");
+                let export_result = async {
+                    snapshot_container(docker, cname, &temp_tag, &[]).await?;
+                    export_image_gzip(docker, &temp_tag, &output_path).await?;
+                    remove_image(docker, &temp_tag).await.ok();
+                    Ok::<(), DockerError>(())
+                }.await;
+
+                if was_running {
+                    start_container(docker, cname).await;
+                }
+
+                match export_result {
+                    Ok(()) => {
+                        tracing::info!(agent = %agent_name, path = %output_path.display(), "exported for driver migration");
+                        exported.push(agent_name);
+                    }
+                    Err(err) => {
+                        tracing::error!(agent = %agent_name, error = %err, "migration export failed");
+                        let _ = remove_image(docker, &temp_tag).await;
+                        tokio::fs::remove_file(&output_path).await.ok();
+                        failed.push(agent_name);
+                    }
+                }
+            }
+
+            let mut msg = String::from(
                 "docker is using the containerd snapshotter (storage driver: overlayfs), \
-                 which corrupts multi-layer images on Docker 29+.\n\
-                 \n\
-                 Fix: add the following to /etc/docker/daemon.json and restart docker:\n\
-                 \n\
-                 {\n  \"features\": { \"containerd-snapshotter\": false },\n  \"storage-driver\": \"overlay2\"\n}\n\
-                 \n\
-                 Then run: sudo systemctl restart docker".to_string()
-            ));
+                 which corrupts multi-layer images on Docker 29+.\n\n"
+            );
+
+            if !exported.is_empty() {
+                msg.push_str(&format!(
+                    "auto-exported {} agent(s) to {}/:\n  {}\n\n\
+                     after switching to overlay2, agents will be auto-restored on next startup.\n\n",
+                    exported.len(),
+                    migration_dir.display(),
+                    exported.join(", "),
+                ));
+            }
+
+            if !failed.is_empty() {
+                msg.push_str(&format!(
+                    "WARNING: failed to export {} agent(s): {}\n\
+                     these agents may need manual backup before switching drivers.\n\n",
+                    failed.len(),
+                    failed.join(", "),
+                ));
+            }
+
+            msg.push_str(
+                "Fix: add the following to /etc/docker/daemon.json and restart docker:\n\n\
+                 {\n  \"features\": { \"containerd-snapshotter\": false },\n  \"storage-driver\": \"overlay2\"\n}\n\n\
+                 Then run: sudo systemctl restart docker"
+            );
+
+            return Err(DockerError::Failed(msg));
         }
     }
 
@@ -170,6 +241,85 @@ pub fn ensure_docker_sync(docker: &Docker) -> Result<(), DockerError> {
         .build()
         .map_err(|e| DockerError::Failed(format!("failed to create runtime: {e}")))?;
     rt.block_on(ensure_docker(docker))
+}
+
+/// Restore agents that were auto-exported during a storage driver migration.
+/// Checks for `driver-migration/*.tar.gz` files, imports each as a new agent
+/// (skipping if the container already exists), then cleans up.
+pub async fn restore_driver_migration(docker: &Docker, env_config: &AgentEnvConfig) {
+    let migration_dir = env_config.config_dir.join(DRIVER_MIGRATION_DIR);
+    if !migration_dir.is_dir() {
+        return;
+    }
+
+    let entries: Vec<_> = match std::fs::read_dir(&migration_dir) {
+        Ok(rd) => rd.flatten().collect(),
+        Err(err) => {
+            tracing::error!(error = %err, "failed to read driver-migration directory");
+            return;
+        }
+    };
+
+    if entries.is_empty() {
+        std::fs::remove_dir(&migration_dir).ok();
+        return;
+    }
+
+    let mut restored = Vec::new();
+    let mut failed = Vec::new();
+
+    for entry in &entries {
+        let path = entry.path();
+        let file_name = entry.file_name();
+        let file_name_str = file_name.to_string_lossy();
+        let agent_name = match file_name_str.strip_suffix(".tar.gz") {
+            Some(name) => name.to_string(),
+            None => continue,
+        };
+
+        let cname = container_name(&agent_name);
+        if container_status(docker, &cname).await != ContainerStatus::NotFound {
+            tracing::info!(agent = %agent_name, "container already exists, skipping migration restore");
+            std::fs::remove_file(&path).ok();
+            continue;
+        }
+
+        tracing::info!(agent = %agent_name, "restoring from driver migration export");
+
+        let result: Result<(), DockerError> = async {
+            let loaded_image = import_image_gzip(docker, &path).await?;
+            let port = allocate_port(&env_config.agents_dir)?;
+            create_container(docker, &cname, &loaded_image, port, &agent_name, env_config, true, None).await?;
+            if !start_container(docker, &cname).await {
+                return Err(DockerError::Failed("failed to start restored agent".into()));
+            }
+            tracing::info!(agent = %agent_name, port, "migration restore complete");
+            Ok(())
+        }.await;
+
+        match result {
+            Ok(()) => {
+                std::fs::remove_file(&path).ok();
+                restored.push(agent_name);
+            }
+            Err(err) => {
+                tracing::error!(agent = %agent_name, error = %err, "migration restore failed");
+                failed.push(agent_name);
+            }
+        }
+    }
+
+    if !restored.is_empty() {
+        tracing::info!(agents = ?restored, "restored from driver migration");
+    }
+    if !failed.is_empty() {
+        tracing::warn!(agents = ?failed, "failed to restore from driver migration");
+    }
+
+    // Remove migration dir if empty
+    if std::fs::read_dir(&migration_dir).is_ok_and(|mut rd| rd.next().is_none()) {
+        std::fs::remove_dir(&migration_dir).ok();
+    }
 }
 
 // --- Pure / sync helpers ---

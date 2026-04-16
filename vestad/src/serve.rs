@@ -1587,6 +1587,7 @@ pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: S
     let agent_settings = load_settings().agents.clone();
     let docker_clone = docker.clone();
     tokio::spawn(async move {
+        docker::restore_driver_migration(&docker_clone, &env_config_clone).await;
         docker::reconcile_containers(&docker_clone, &env_config_clone, &|name| {
             agent_settings.get(name).is_none_or(|s| s.manage_agent_code)
         }).await;
