@@ -26,6 +26,7 @@ class SttDomain(VoiceDomain, total=False):
     eot_threshold: float
     eot_timeout_ms: int
     auto_send: bool
+    multi_language: bool
 
 
 class TtsDomain(VoiceDomain, total=False):
