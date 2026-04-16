@@ -152,7 +152,7 @@ async def _process_message_safely(msg: str, *, is_user: bool, state: vm.State, c
                 while not state.shutdown_event.is_set() and not state.graceful_shutdown.is_set():
                     try:
                         await asyncio.wait_for(state.shutdown_event.wait(), timeout=_RETRY_INTERVAL)
-                        return  # shutdown fired during sleep
+                        return
                     except TimeoutError:
                         pass
                     if state.graceful_shutdown.is_set():
