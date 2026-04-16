@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+set -euo pipefail
+
 BORE_SCREEN="bore-ssh"
 SSHD_PID="/tmp/vesta-sshd.pid"
 
@@ -8,9 +10,9 @@ else
     echo "No active bore tunnel found."
 fi
 
-if [ -f "$SSHD_PID" ] && kill -0 "$(cat "$SSHD_PID")" 2>/dev/null; then
-    kill "$(cat "$SSHD_PID")"
-    echo "sshd stopped."
+if [ -f "$SSHD_PID" ]; then
+    kill "$(cat "$SSHD_PID")" 2>/dev/null && echo "sshd stopped." || echo "No active sshd found."
+    rm -f "$SSHD_PID"
 else
     echo "No active sshd found."
 fi

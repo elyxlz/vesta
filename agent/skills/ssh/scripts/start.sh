@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Usage: start.sh "<public key string>"
-# Example: start.sh "ssh-ed25519 AAAA... user@laptop"
-
 BORE_BIN="$HOME/.local/bin/bore"
 BORE_VERSION="0.5.1"
 BORE_LOG="/tmp/bore-ssh.log"
@@ -27,17 +24,13 @@ fi
 
 PUBLIC_KEY="$1"
 
-# --- sshd setup ---
-
 if ! command -v sshd &>/dev/null; then
     echo "Installing openssh-server..."
     apt-get install -y -q openssh-server
 fi
 
-# Generate host keys if missing
 ssh-keygen -A -q 2>/dev/null || true
 
-# Write a self-contained sshd config (doesn't touch system config)
 cat > "$SSHD_CONFIG" <<EOF
 Port $SSHD_PORT
 ListenAddress 0.0.0.0
@@ -50,7 +43,6 @@ HostKey /etc/ssh/ssh_host_rsa_key
 PidFile $SSHD_PID
 EOF
 
-# Add the public key to authorized_keys (idempotent)
 mkdir -p /root/.ssh
 chmod 700 /root/.ssh
 AUTHKEYS="/root/.ssh/authorized_keys"
@@ -62,15 +54,12 @@ else
 fi
 chmod 600 "$AUTHKEYS"
 
-# Start (or restart) sshd
-if [ -f "$SSHD_PID" ] && kill -0 "$(cat "$SSHD_PID")" 2>/dev/null; then
-    kill "$(cat "$SSHD_PID")"
+if [ -f "$SSHD_PID" ]; then
+    kill "$(cat "$SSHD_PID")" 2>/dev/null || true
     sleep 0.5
 fi
 /usr/sbin/sshd -f "$SSHD_CONFIG"
 echo "sshd running on port $SSHD_PORT."
-
-# --- bore setup ---
 
 if [ ! -x "$BORE_BIN" ]; then
     echo "Installing bore..."
@@ -87,13 +76,11 @@ if [ ! -x "$BORE_BIN" ]; then
     echo "bore installed."
 fi
 
-# Stop any existing bore session
 screen -S "$BORE_SCREEN" -X quit 2>/dev/null || true
 rm -f "$BORE_LOG"
 
 screen -dmS "$BORE_SCREEN" bash -c "$BORE_BIN local $SSHD_PORT --to bore.pub > $BORE_LOG 2>&1"
 
-# Wait up to 10s for bore to report the port
 PORT=""
 for i in $(seq 1 20); do
     PORT=$(grep -oP 'bore\.pub:\K[0-9]+' "$BORE_LOG" 2>/dev/null || true)
