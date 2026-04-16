@@ -1,10 +1,12 @@
 """CLI commands: send and history."""
 
+import argparse
 import asyncio
 import json
 import os
 import pathlib as pl
 import sys
+import typing as tp
 import urllib.request
 import urllib.error
 import urllib.parse
@@ -18,7 +20,7 @@ def _default_agent_url() -> str:
     return f"http://localhost:{port}"
 
 
-def cmd_send(args: object) -> None:
+def cmd_send(args: argparse.Namespace) -> None:
     message = args.message
     sock_path = pl.Path(args.socket or (pl.Path.home() / ".app-chat" / "app-chat.sock"))
 
@@ -66,7 +68,7 @@ def _api_get(base_url: str, path: str, params: dict[str, str]) -> dict[str, obje
         return {"error": str(exc)}
 
 
-def cmd_history(args: object) -> None:
+def cmd_history(args: argparse.Namespace) -> None:
     query = args.search
     limit = args.limit
     base_url = args.url or _default_agent_url()
@@ -90,7 +92,7 @@ def cmd_history(args: object) -> None:
         if "events" not in data:
             print(json.dumps({"error": "unexpected response from /history"}))
             sys.exit(1)
-        events = data["events"]
+        events = tp.cast(list[dict[str, str]], data["events"])
         results = [
             {"timestamp": e["ts"], "role": e["type"], "content": e["text"]} for e in events if e["type"] in ("user", "assistant", "chat")
         ]
