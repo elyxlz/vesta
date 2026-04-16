@@ -25,6 +25,7 @@ from claude_agent_sdk import (
 from claude_agent_sdk.types import (
     HookEvent,
     NotificationHookInput,
+    PermissionResultAllow,
     PostToolUseFailureHookInput,
     PreCompactHookInput,
     PreToolUseHookInput,
@@ -34,6 +35,7 @@ from claude_agent_sdk.types import (
     SubagentStopHookInput,
     HookJSONOutput,
     HookCallback,
+    ToolPermissionContext,
 )
 
 import vesta.models as vm
@@ -489,6 +491,10 @@ def _make_stderr_handler(state: vm.State) -> tp.Callable[[str], None]:
     return handler
 
 
+async def _approve_all_tools(tool_name: str, tool_input: dict[str, tp.Any], context: ToolPermissionContext) -> PermissionResultAllow:
+    return PermissionResultAllow()
+
+
 def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgentOptions:
     memory_path = get_memory_path(config)
     if not memory_path.exists():
@@ -504,9 +510,10 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
         betas=["context-1m-2025-08-07"],
         hooks=_make_hooks(state),
         permission_mode="bypassPermissions",
+        can_use_tool=_approve_all_tools,
         cwd=config.root,
         setting_sources=["project"],
-        add_dirs=[str(config.root)],
+        add_dirs=[str(config.root), os.path.expanduser("~")],
         thinking=config.thinking,
         max_buffer_size=10 * 1024 * 1024,
         stderr=_make_stderr_handler(state),
