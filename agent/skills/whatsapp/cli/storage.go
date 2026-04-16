@@ -825,6 +825,23 @@ func (ms *MessageStore) GetStaleOutgoingMessages(olderThan time.Duration) ([]str
 	return ids, rows.Err()
 }
 
+func (ms *MessageStore) MarkMessagesFiltered(ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	placeholders := strings.Repeat("?,", len(ids))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	_, err := ms.db.Exec(
+		"UPDATE messages SET delivery_status = ? WHERE id IN ("+placeholders+") AND delivery_status = ?",
+		append([]any{DeliveryStatusFiltered}, append(args, DeliveryStatusSent)...)...,
+	)
+	return err
+}
+
 func (ms *MessageStore) ListAllChatJIDs() ([]string, error) {
 	rows, err := ms.db.Query(`SELECT jid FROM chats ORDER BY last_message_time DESC`)
 	if err != nil {

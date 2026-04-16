@@ -45,6 +45,7 @@ const (
 	DeliveryStatusDelivered = "delivered"
 	DeliveryStatusRead      = "read"
 	DeliveryStatusPlayed    = "played"
+	DeliveryStatusFiltered  = "filtered"
 
 	MediaTypeImage    = "image"
 	MediaTypeVideo    = "video"
