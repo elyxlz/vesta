@@ -310,6 +310,36 @@ pub async fn maybe_rename_src_vesta_to_core(
     Ok(true)
 }
 
+const OLD_UPSTREAM_SKILL_MARKER: &str = "/root/agent/skills/upstream/SKILL.md";
+
+const REMOVE_OLD_UPSTREAM_SCRIPT: &str = r#"set -euo pipefail
+rm -rf /root/agent/skills/upstream
+
+# Fetch replacement skills from upstream if missing
+for skill in upstream-sync upstream-pr; do
+  if [ ! -d "/root/agent/skills/$skill" ]; then
+    git -C /root fetch --depth 1 origin HEAD 2>/dev/null && \
+      git -C /root checkout FETCH_HEAD -- "agent/skills/$skill" 2>/dev/null || true
+  fi
+done
+"#;
+
+pub async fn maybe_remove_old_upstream_skill(
+    docker: &Docker,
+    cname: &str,
+    snapshot_tag: &str,
+    helper_name: &str,
+    normalized_tag: &str,
+) -> Result<bool, DockerError> {
+    if !container_has_path(docker, cname, OLD_UPSTREAM_SKILL_MARKER).await {
+        return Ok(false);
+    }
+
+    tracing::info!(container = %cname, "removing old upstream skill (replaced by upstream-sync + upstream-pr)");
+    run_migration_script(docker, snapshot_tag, helper_name, normalized_tag, REMOVE_OLD_UPSTREAM_SCRIPT).await?;
+    Ok(true)
+}
+
 pub async fn maybe_normalize_legacy_agent_snapshot(
     docker: &Docker,
     cname: &str,

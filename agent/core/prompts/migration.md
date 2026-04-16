@@ -24,4 +24,4 @@ git -C ~ diff --quiet && echo "OK: clean tree"
 
 If ALL layout checks pass, you're done.
 
-If any check fails, read `~/agent/core/skills/upstream-sync/SETUP.md` and follow it to fix the layout.
+If any check fails, read `~/agent/skills/upstream-sync/SETUP.md` and follow it to fix the layout.

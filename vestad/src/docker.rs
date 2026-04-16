@@ -1825,6 +1825,18 @@ pub async fn rebuild_agent(docker: &Docker, name: &str, env_config: &AgentEnvCon
         current_image = core_tag;
     }
 
+    // Migration 3: remove old unified upstream skill (replaced by upstream-sync + upstream-pr)
+    let upstream_tag = format!("{normalized_tag}-upstream");
+    if crate::migrations::maybe_remove_old_upstream_skill(
+        docker,
+        &cname,
+        &current_image,
+        &helper_name,
+        &upstream_tag,
+    ).await? {
+        current_image = upstream_tag;
+    }
+
     let rebuild_image = current_image;
 
     tracing::info!(agent = %name, "[2/3] removing old container...");
