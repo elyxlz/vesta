@@ -1,4 +1,5 @@
 import asyncio
+import collections
 import dataclasses as dc
 import datetime as dt
 
@@ -27,6 +28,7 @@ class State:
     dreamer_active: bool = False
     interrupt_event: asyncio.Event | None = None
     event_bus: EventBus = dc.field(default_factory=EventBus)
+    stderr_buffer: collections.deque[str] = dc.field(default_factory=lambda: collections.deque(maxlen=50))
 
 
 class Notification(pyd.BaseModel):
