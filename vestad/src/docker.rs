@@ -77,6 +77,7 @@ const RESTART_POLICY: &str = "unless-stopped";
 const MOUNT_DESTS: &[&str] = &["/run/vestad-env", "/root/agent/core", "/root/agent/pyproject.toml", "/root/agent/uv.lock"];
 
 const AGENT_ENTRYPOINT_STEPS: &[&str] = &[
+    "export PATH=\"/root/.local/bin:/root/.claude/local/bin:$PATH\"",
     ". /run/vestad-env",
     ". ~/.bashrc || true",
     "git -C ~ config user.name \"$AGENT_NAME\"",
