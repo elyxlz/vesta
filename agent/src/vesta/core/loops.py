@@ -194,41 +194,53 @@ async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm
     logger.client("Creating new client session...")
     options = build_client_options(config, state)
     ready_marker = config.data_dir / "agent_ready"
-    async with ClaudeSDKClient(options=options) as client:
-        state.client = client
-        logger.client("Client session started")
-
+    retried = False
+    while True:
         try:
-            while not state.shutdown_event.is_set():
+            async with ClaudeSDKClient(options=options) as client:
+                state.client = client
+                logger.client("Client session started")
+
                 try:
-                    msg, is_user = await asyncio.wait_for(queue.get(), timeout=1.0)
-                except TimeoutError:
-                    continue
+                    while not state.shutdown_event.is_set():
+                        try:
+                            msg, is_user = await asyncio.wait_for(queue.get(), timeout=1.0)
+                        except TimeoutError:
+                            continue
 
-                await _process_interruptible(msg, is_user=is_user, queue=queue, state=state, config=config)
+                        await _process_interruptible(msg, is_user=is_user, queue=queue, state=state, config=config)
 
-                if not ready_marker.exists():
-                    ready_marker.parent.mkdir(parents=True, exist_ok=True)
-                    ready_marker.write_text("1")
-                    logger.startup("Agent ready")
+                        if not ready_marker.exists():
+                            ready_marker.parent.mkdir(parents=True, exist_ok=True)
+                            ready_marker.write_text("1")
+                            logger.startup("Agent ready")
 
-                    greeting_prompt = load_prompt("first_start_greeting", config)
-                    if greeting_prompt:
-                        await queue.put((greeting_prompt.strip(), False))
-                        logger.startup("Queued first_start greeting")
+                            greeting_prompt = load_prompt("first_start_greeting", config)
+                            if greeting_prompt:
+                                await queue.put((greeting_prompt.strip(), False))
+                                logger.startup("Queued first_start greeting")
 
-                if state.dreamer_active:
-                    state.dreamer_active = False
-                    logger.dreamer("Dreamer complete, running /compact...")
-                    await _process_interruptible("/compact", is_user=False, queue=queue, state=state, config=config)
-                    logger.dreamer("Compact complete, triggering nightly restart (session preserved)...")
-                    (config.data_dir / "show_dreamer_summary").write_text("1")
-                    state.restart_reason = vm.NIGHTLY_RESTART
-                    state.graceful_shutdown.set()
-        finally:
-            state.client = None
-            state.interrupt_event = None
-            logger.client("Client session closed")
+                        if state.dreamer_active:
+                            state.dreamer_active = False
+                            logger.dreamer("Dreamer complete, running /compact...")
+                            await _process_interruptible("/compact", is_user=False, queue=queue, state=state, config=config)
+                            logger.dreamer("Compact complete, triggering nightly restart (session preserved)...")
+                            (config.data_dir / "show_dreamer_summary").write_text("1")
+                            state.restart_reason = vm.NIGHTLY_RESTART
+                            state.graceful_shutdown.set()
+                finally:
+                    state.client = None
+                    state.interrupt_event = None
+                    logger.client("Client session closed")
+            break
+        except (ClaudeSDKError, OSError, RuntimeError) as exc:
+            if retried or not state.session_id:
+                raise
+            logger.warning(f"Session resume failed ({state.session_id[:16]}...): {exc} — starting fresh")
+            state.session_id = None
+            config.session_file.unlink(missing_ok=True)
+            options = build_client_options(config, state)
+            retried = True
 
 
 # --- Proactive & dreamer ---

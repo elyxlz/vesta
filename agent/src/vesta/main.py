@@ -80,9 +80,22 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
     ws_runner = await start_ws_server(state.event_bus, config)
     logger.init(f"WebSocket server started on port {config.ws_port}")
 
+    processor_task = asyncio.create_task(message_processor(message_queue, state=state, config=config))
+
+    def _on_processor_done(task: asyncio.Task[None]) -> None:
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error(f"message_processor crashed: {type(exc).__name__}: {exc}")
+            state.restart_reason = f"crash — {type(exc).__name__}: {exc}"
+            state.graceful_shutdown.set()
+
+    processor_task.add_done_callback(_on_processor_done)
+
     tasks = [
         asyncio.create_task(input_handler(message_queue, state=state)),
-        asyncio.create_task(message_processor(message_queue, state=state, config=config)),
+        processor_task,
         asyncio.create_task(monitor_loop(message_queue, state=state, config=config)),
     ]
 
