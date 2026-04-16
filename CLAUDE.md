@@ -15,8 +15,11 @@ Client/server architecture. `vestad` daemon runs on the host (manages Docker con
 - **Server** (`vestad/`): Rust `vestad` daemon. Manages Docker containers, serves API.
 - **Desktop App** (`app/`): Tauri + React (TypeScript). Components in `app/src/components/`, providers in `app/src/providers/`.
 - **Skills** (`agent/skills/`): Each skill directory has `SKILL.md` + scripts. No MCP servers.
+- **Integration Tests** (`tests/`): Separate Rust crate with end-to-end tests (real vestad + client, requires Docker).
 
 ## Commands
+
+> **Skills index**: When adding or modifying skills, run `uv run python agent/skills/generate-index.py` and commit `agent/skills/index.json`. CI fails if the index is stale.
 
 ### Agent (run from `agent/`)
 
@@ -36,7 +39,16 @@ cargo build                                # Build all crates
 cargo build -p vesta                       # Build CLI only
 cargo build -p vestad                      # Build server only
 cargo clippy                               # Lint
-cargo test                                 # Test
+cargo test                                 # Unit tests
+cargo test -p tests                        # Integration tests (requires Docker)
+```
+
+### Frontend (run from `app/`)
+
+```bash
+npm run test                               # Tests
+npm run lint                               # Lint
+npm run check                              # Type check
 ```
 
 ### Releasing
