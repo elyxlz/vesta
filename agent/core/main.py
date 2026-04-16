@@ -11,11 +11,11 @@ import typing as tp
 import aioconsole
 from rich import print_json
 
-import core.models as vm
-from core import logger
-from core.api import start_ws_server
-from core.client import format_crash_detail
-from core.loops import message_processor, monitor_loop, queue_greeting
+from . import models as vm
+from . import logger
+from .api import start_ws_server
+from .client import format_crash_detail
+from .loops import message_processor, monitor_loop, queue_greeting
 
 SignalHandler = tp.Callable[[int, types.FrameType | None], None]
 
@@ -173,7 +173,7 @@ def init_state(*, config: vm.VestaConfig) -> vm.State:
 
     if session_id:
         logger.init(f"Resuming session {session_id[:16]}...")
-    from core.events import EventBus
+    from .events import EventBus
 
     event_bus = EventBus(data_dir=config.data_dir)
     return vm.State(last_dreamer_run=last_dreamer_run, session_id=session_id, event_bus=event_bus)

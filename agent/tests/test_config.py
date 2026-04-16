@@ -1,6 +1,6 @@
 """Tests for VestaConfig and initialization."""
 
-from core.init import get_memory_path
+from core.helpers import get_memory_path
 
 
 def test_config_paths_under_root(config, tmp_path):

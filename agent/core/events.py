@@ -170,7 +170,7 @@ class EventBus:
         if state == self._state:
             return
         self._state = state
-        from core import logger
+        from . import logger
 
         logger.system(f"state → {state}")
         self.emit(StatusEvent(type="status", state=state))

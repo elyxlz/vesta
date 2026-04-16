@@ -1,6 +1,6 @@
 import pathlib as pl
 
-import core.models as vm
+from . import models as vm
 
 
 def get_memory_path(config: vm.VestaConfig) -> pl.Path:

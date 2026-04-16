@@ -10,10 +10,10 @@ import pydantic
 from claude_agent_sdk import ClaudeSDKClient, ClaudeSDKError
 from watchfiles import awatch, Change
 
-import core.models as vm
-from core import logger
-from core.client import process_message, build_client_options, attempt_interrupt, persist_session_id, format_crash_detail, _cancel_task
-from core.init import load_prompt, build_restart_context
+from . import models as vm
+from . import logger
+from .client import process_message, build_client_options, attempt_interrupt, persist_session_id, format_crash_detail, _cancel_task
+from .helpers import load_prompt, build_restart_context
 
 
 def _now() -> dt.datetime:
