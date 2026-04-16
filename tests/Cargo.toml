@@ -16,3 +16,23 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 tokio-tungstenite = { version = "0.29", features = ["__rustls-tls"] }
 rustls = "0.23"
 ring = "0.17"
+
+[[test]]
+name = "server"
+path = "tests/server/mod.rs"
+
+[[test]]
+name = "multi_user"
+path = "tests/multi_user/mod.rs"
+
+[[test]]
+name = "live"
+path = "tests/live/mod.rs"
+
+[[test]]
+name = "oauth"
+path = "tests/oauth/mod.rs"
+
+[[test]]
+name = "migrations"
+path = "tests/migrations/mod.rs"

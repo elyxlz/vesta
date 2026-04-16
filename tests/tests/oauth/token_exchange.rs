@@ -1,41 +1,4 @@
-/// Verify Anthropic's OAuth endpoints are reachable and accept the expected request format.
-/// Catches endpoint migrations and request format changes.
-
-const OAUTH_TOKEN_URL: &str = "https://platform.claude.com/v1/oauth/token";
-const OAUTH_CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
-const OAUTH_REDIRECT_URI: &str = "https://console.anthropic.com/oauth/code/callback";
-
-fn check_endpoint(url: &str) {
-    let agent = ureq::Agent::new_with_defaults();
-    let result = agent.get(url).call();
-    match result {
-        Ok(resp) => assert!(
-            resp.status().as_u16() < 500,
-            "{url} returned {}",
-            resp.status()
-        ),
-        Err(ureq::Error::StatusCode(code)) => assert!(
-            code < 500,
-            "{url} returned {code}"
-        ),
-        Err(e) => panic!("{url} unreachable: {e}"),
-    }
-}
-
-#[test]
-fn oauth_authorize_endpoint_reachable() {
-    check_endpoint("https://claude.ai/oauth/authorize");
-}
-
-#[test]
-fn oauth_token_endpoint_reachable() {
-    check_endpoint(OAUTH_TOKEN_URL);
-}
-
-#[test]
-fn oauth_callback_endpoint_reachable() {
-    check_endpoint("https://console.anthropic.com/oauth/code/callback");
-}
+use super::common::{OAUTH_CLIENT_ID, OAUTH_REDIRECT_URI, OAUTH_TOKEN_URL};
 
 /// POST a dummy token exchange with the exact headers/format we use in production.
 /// A working endpoint returns a JSON error about the invalid code (400/401/403).
@@ -69,7 +32,7 @@ fn oauth_token_exchange_format_accepted() {
 
     let response_str = match result {
         Ok(resp) => resp.into_body().read_to_string().unwrap(),
-        Err(ureq::Error::StatusCode(_)) => return, // 4xx without body is fine
+        Err(ureq::Error::StatusCode(_)) => return,
         Err(_) => unreachable!(),
     };
 

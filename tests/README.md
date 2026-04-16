@@ -1,91 +1,64 @@
 # Vesta Tests
 
-This crate contains the Rust integration test harness for `vestad` and related end-to-end flows.
+Integration test harness for `vestad` and related end-to-end flows.
 
 ## Layout
 
-- `src/`
-  Shared test harness code:
-  - `lib.rs`: starts/stops test `vestad` servers, finds binaries, downloads released `vestad` builds, and provides `TestAgent` helpers
-  - `client.rs`: HTTP client for the `vestad` API used by the tests
-  - `types.rs`: response/request data types used by the harness
+```
+src/
+  lib.rs          shared harness (TestServer, TestAgent, docker helpers, unique_user)
+  client.rs       HTTP client for the vestad API
+  types.rs        response/request types
 
-- `tests/server.rs`
-  Main API and lifecycle coverage for a single `vestad` instance.
-  Covers:
-  - health/auth behavior
-  - agent create/start/stop/restart/destroy
-  - naming rules
-  - WebSocket connectivity
-  - backups and restore-related flows
-  - rebuild and core-code-management behavior
+tests/
+  server/         single-vestad API and lifecycle (43 tests)
+    health.rs       health endpoints, port/api-key files, duplicate server rejection
+    lifecycle.rs    create/start/stop/restart/destroy, creation flow, start_all
+    auth.rs         OAuth flow, token injection
+    names.rs        normalization, empty/special chars
+    backup.rs       create/list/restore/delete, safety snapshots
+    websocket.rs    WS connect, auth rejection
+    ports.rs        port uniqueness, env files, agent tokens
+    agent_code.rs   manage_agent_code mounts, rebuild
+    layout.rs       fresh agent container filesystem structure
 
-- `tests/multi_user.rs`
-  Multi-user isolation coverage.
-  Covers:
-  - separate `vestad` servers for different Unix users
-  - agent visibility isolation between users
-  - user-specific container naming
-  - independent lifecycle operations across users
-  - WS port uniqueness across both servers
+  multi_user/     multi-user isolation (6 tests)
+    common.rs       start_pair helper (unique users per test)
+    isolation.rs    server separation, agent visibility isolation
+    containers.rs   user-prefixed container names
+    ports.rs        WS port uniqueness across users
+    lifecycle.rs    independent stop/destroy across users
 
-- `tests/oauth.rs`
-  OAuth and auth-session specific coverage.
-  Covers:
-  - auth session creation/refresh behavior
-  - invalid or expired auth handling
+  live/           live agent e2e — requires Claude credentials (3 tests)
+    common.rs       setup_live_agent, notifications, container helpers
+    file_ops.rs     notification-driven file create/modify
+    tree.rs         first-start migration (seeds old ~/vesta/ layout, verifies agent migrates it)
 
-- `tests/upgrade.rs`
-  Upgrade-path coverage from the latest released `vestad` binary to the current repo build.
-  Covers:
-  - creating an agent under the latest release
-  - starting current `vestad` against the same HOME/config state
-  - reconciliation/rebuild of older containers
-  - upgraded container git/layout invariants
-  - ancestry against `VESTA_UPSTREAM_REF`
-  - migration of legacy runtime/state directories into `/root/agent/...`
+  oauth/          Anthropic OAuth endpoint reachability (4 tests)
+    common.rs       endpoint checker, constants
+    endpoints.rs    authorize, token, callback endpoints
+    token_exchange.rs  token exchange format validation
 
-- `tests/live.rs`
-  Entry point for live-agent tests that require real Claude credentials and available usage quota.
-  The actual tests live under `tests/live/`.
-
-- `tests/live/agent_e2e.rs`
-  Ignored-by-default live agent E2E tests.
-  Covers:
-  - notification-driven file creation
-  - notification-driven file modification
-  - reporting the migrated `/root` tree after using `agent/skills/upstream-sync/SETUP.md`
-  - reporting the default fresh-install `/root` tree
+  migrations/     upgrade path from latest release (1 test)
+    common.rs       container lookup by label, wait helpers
+    upgrade.rs      create agent under released vestad, upgrade to current, verify git state
+```
 
 ## Running
 
-- Build/compile-only check:
-  ```bash
-  cargo test -p vesta-tests --no-run
-  ```
-
-- Run the normal integration suite:
-  ```bash
-  cargo test -p vesta-tests
-  ```
-
-- Run only the upgrade test:
-  ```bash
-  cargo test -p vesta-tests latest_released_vestad_upgrades_to_current_and_agent_git_state_is_valid -- --test-threads=1
-  ```
-
-- Run only multi-user tests:
-  ```bash
-  cargo test -p vesta-tests --test multi_user -- --test-threads=1
-  ```
-
-- Run the live ignored tests explicitly:
-  ```bash
-  cargo test -p vesta-tests --test live -- --ignored --test-threads=1
-  ```
+```bash
+cargo test -p vesta-tests                    # all tests
+cargo test -p vesta-tests --test server      # server tests only
+cargo test -p vesta-tests --test multi_user  # multi-user tests only
+cargo test -p vesta-tests --test live        # live e2e (needs credentials)
+cargo test -p vesta-tests --test oauth       # oauth endpoint checks
+cargo test -p vesta-tests --test migrations  # upgrade path test
+```
 
 ## Notes
 
-- The live tests require `~/.claude/.credentials.json` and available Claude usage quota.
+- Live tests skip when `~/.claude/.credentials.json` is missing. In CI, set the `CLAUDE_CREDENTIALS` secret to the contents of this file.
+- The live migration test (`tree.rs`) seeds an old-style `~/vesta/` layout before auth, then verifies the agent's first-start prompt (`migration.md` + `first_start_setup.md`) migrates it correctly. `wait_ready` returns only after both prompts finish processing.
 - The upgrade test downloads the latest released `vestad` binary from GitHub at runtime.
-- Many tests use Docker directly; they expect a working local Docker daemon.
+- All tests require a working local Docker daemon.
+- Multi-user and live tests use `unique_user()` for Docker container isolation across concurrent and repeated runs.

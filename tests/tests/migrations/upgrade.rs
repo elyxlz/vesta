@@ -1,59 +1,8 @@
-use std::process::Command;
 use std::time::{Duration, Instant};
 
-use vesta_tests::{download_latest_released_vestad, find_vestad, unique_user, TestServerBuilder};
+use vesta_tests::{download_latest_released_vestad, find_vestad, unique_user, TestServerBuilder, FAKE_TOKEN, exec_in_container};
 
-const FAKE_TOKEN: &str = r#"{"claudeAiOauth":{"accessToken":"test","refreshToken":"test","expiresAt":4102444800000}}"#;
-
-fn docker(args: &[&str]) -> Result<String, String> {
-    let output = Command::new("docker")
-        .args(args)
-        .output()
-        .map_err(|e| format!("docker {:?}: {e}", args))?;
-    if !output.status.success() {
-        return Err(format!(
-            "docker {:?} failed: {}",
-            args,
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
-
-fn agent_container_name(user: &str, agent_name: &str) -> Result<String, String> {
-    let output = docker(&[
-        "ps",
-        "-a",
-        "--filter",
-        &format!("label=vesta.user={user}"),
-        "--filter",
-        &format!("label=vesta.agent_name={agent_name}"),
-        "--format",
-        "{{.Names}}",
-    ])?;
-    output
-        .lines()
-        .find(|line| !line.trim().is_empty())
-        .map(|line| line.trim().to_string())
-        .ok_or_else(|| format!("no managed container found for user={user} agent={agent_name}"))
-}
-
-fn exec_in_container(container: &str, script: &str) -> Result<String, String> {
-    docker(&["exec", container, "bash", "-lc", script])
-}
-
-fn wait_for_agent_visible<C>(deadline: Instant, mut check: C) -> Result<(), String>
-where
-    C: FnMut() -> Result<bool, String>,
-{
-    while Instant::now() < deadline {
-        if check()? {
-            return Ok(());
-        }
-        std::thread::sleep(Duration::from_millis(500));
-    }
-    Err("timed out waiting for upgraded agent state".into())
-}
+use super::common::{agent_container_name, wait_for_agent_visible};
 
 #[test]
 #[cfg(target_os = "linux")]

@@ -230,6 +230,13 @@ impl<'a> TestAgent<'a> {
         Ok(Self { name, client })
     }
 
+    pub fn create_built(client: &'a Client, name: &str) -> Result<Self, String> {
+        let _ = client.stop_agent(name);
+        let _ = client.destroy_agent(name);
+        let name = client.create_agent(name, true)?;
+        Ok(Self { name, client })
+    }
+
     pub fn create_with_manage_agent_code(client: &'a Client, name: &str) -> Result<Self, String> {
         let _ = client.stop_agent(name);
         let _ = client.destroy_agent(name);
@@ -267,6 +274,41 @@ pub fn find_vestad() -> Result<PathBuf, String> {
         }
     }
     Err("vestad not found. Run `cargo build -p vestad` first, or set VESTAD_BIN".into())
+}
+
+pub const FAKE_TOKEN: &str = r#"{"claudeAiOauth":{"accessToken":"test","refreshToken":"test","expiresAt":4102444800000}}"#;
+
+pub fn inject_fake_token(c: &Client, name: &str) {
+    c.inject_token(name, FAKE_TOKEN).unwrap();
+}
+
+pub fn docker_cmd(args: &[&str]) -> Result<String, String> {
+    let output = std::process::Command::new("docker")
+        .args(args)
+        .output()
+        .map_err(|e| format!("docker {:?}: {e}", args))?;
+    if !output.status.success() {
+        return Err(format!(
+            "docker {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+pub fn exec_in_container(container: &str, script: &str) -> Result<String, String> {
+    docker_cmd(&["exec", container, "bash", "-lc", script])
+}
+
+pub fn agent_container_name(agent_name: &str) -> String {
+    let user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+    format!("vesta-{}-{}", user, agent_name)
+}
+
+/// Container is up (regardless of auth/readiness state).
+pub fn is_up(status: &str) -> bool {
+    matches!(status, "not_authenticated" | "starting" | "alive" | "restarting")
 }
 
 pub struct ReleasedVestad {
