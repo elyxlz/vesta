@@ -92,11 +92,7 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
             except AttributeError:
                 exit_code = None
             stderr_tail = "\n".join(state.stderr_buffer) if state.stderr_buffer else "(no stderr captured)"
-            logger.error(
-                f"message_processor crashed: {type(exc).__name__}: {exc}"
-                f" | exit_code={exit_code}"
-                f"\nRecent stderr:\n{stderr_tail}"
-            )
+            logger.error(f"message_processor crashed: {type(exc).__name__}: {exc} | exit_code={exit_code}\nRecent stderr:\n{stderr_tail}")
             state.restart_reason = f"crash — {type(exc).__name__}: {exc}"
             state.graceful_shutdown.set()
 
