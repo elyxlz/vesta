@@ -83,6 +83,8 @@ const AGENT_ENTRYPOINT_STEPS: &[&str] = &[
     "git -C ~ config user.name \"$AGENT_NAME\"",
     "git -C ~ config user.email \"$AGENT_NAME@vesta\"",
     "uv sync --frozen --project /root/agent",
+    "git -C ~ sparse-checkout init --cone 2>/dev/null || true",
+    "git -C ~ sparse-checkout add agent 2>/dev/null || true",
     "git -C ~ add agent/ .gitignore --ignore-errors",
     "(git -C ~ diff --cached --quiet || git -C ~ commit -m \"vesta v$(cat /root/agent/pyproject.toml | grep '^version' | head -1 | sed 's/.*\"\\(.*\\)\"/\\1/')\")",
     "if ! git -C ~ describe --tags --abbrev=0 >/dev/null 2>&1 && [ -n \"${VESTA_UPSTREAM_REF:-}\" ]; then \
@@ -1186,7 +1188,7 @@ pub async fn create_container(docker: &Docker, cname: &str, image: &str, port: u
     let env_mount = format!("{}:{}:ro,z", env_path.display(), MOUNT_DESTS[0]);
 
     let code_dir = crate::agent_code::agent_code_dir(&env_config.config_dir);
-    let src_mount = format!("{}:{}:ro,z", code_dir.join("core").display(), MOUNT_DESTS[1]);
+    let core_mount = format!("{}:{}:ro,z", code_dir.join("core").display(), MOUNT_DESTS[1]);
     let pyproject_mount = format!("{}:{}:ro,z", code_dir.join("pyproject.toml").display(), MOUNT_DESTS[2]);
     let lock_mount = format!("{}:{}:ro,z", code_dir.join("uv.lock").display(), MOUNT_DESTS[3]);
 
@@ -1197,7 +1199,7 @@ pub async fn create_container(docker: &Docker, cname: &str, image: &str, port: u
 
     let mut binds = vec![env_mount];
     if manage_core_code {
-        binds.extend([src_mount, pyproject_mount, lock_mount]);
+        binds.extend([core_mount, pyproject_mount, lock_mount]);
     }
 
     let mut device_requests = None;
@@ -2237,17 +2239,17 @@ mod tests {
         std::fs::write(env_file.path(), "export WS_PORT=12345\n").unwrap();
 
         let code_dir = tempfile::TempDir::new().expect("tempdir");
-        std::fs::create_dir_all(code_dir.path().join("vesta")).unwrap();
+        std::fs::create_dir_all(code_dir.path().join("core")).unwrap();
         std::fs::write(code_dir.path().join("pyproject.toml"), "").unwrap();
         std::fs::write(code_dir.path().join("uv.lock"), "").unwrap();
 
-        let src_vesta = code_dir.path().join("vesta");
+        let src_core = code_dir.path().join("core");
         let pyproject = code_dir.path().join("pyproject.toml");
         let uv_lock = code_dir.path().join("uv.lock");
 
         let mounts = [
             (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]),
-            (src_vesta.to_str().unwrap(), MOUNT_DESTS[1]),
+            (src_core.to_str().unwrap(), MOUNT_DESTS[1]),
             (pyproject.to_str().unwrap(), MOUNT_DESTS[2]),
             (uv_lock.to_str().unwrap(), MOUNT_DESTS[3]),
         ];

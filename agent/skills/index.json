@@ -1,5 +1,13 @@
 [
   {
+    "name": "upstream-pr",
+    "description": "Create PRs, issues, and contributions to the upstream elyxlz/vesta repo. Use for any GitHub operations -- pushing branches, creating PRs, checking CI status, or accessing the GitHub API."
+  },
+  {
+    "name": "upstream-sync",
+    "description": "Sync local agent code with upstream. Use when checking for updates, merging new releases or branch changes, or resolving merge conflicts with upstream vesta."
+  },
+  {
     "name": "app-chat",
     "description": "This skill handles messages from the Vesta app (desktop/web). When a user sends a message through the Vesta app, it arrives as a notification. Reply using the `app-chat` CLI. Requires a background daemon."
   },
@@ -70,14 +78,6 @@
   {
     "name": "tv",
     "description": "Use for \"TV\", \"Samsung TV\", \"television\", \"watch\", \"play on TV\", \"YouTube on TV\", \"volume\", \"turn on TV\", \"turn off TV\", or any Samsung Smart TV control."
-  },
-  {
-    "name": "upstream-pr",
-    "description": "Create PRs, issues, and contributions to the upstream elyxlz/vesta repo. Use for any GitHub operations -- pushing branches, creating PRs, checking CI status, or accessing the GitHub API."
-  },
-  {
-    "name": "upstream-sync",
-    "description": "Sync local agent code with upstream. Use when checking for updates, merging new releases or branch changes, or resolving merge conflicts with upstream vesta."
   },
   {
     "name": "voice",
