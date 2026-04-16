@@ -64,12 +64,21 @@ class VestaConfig(pyd_settings.BaseSettings):
     def skills_dir(self) -> pl.Path:
         return self.agent_dir / "skills"
 
+    @property
+    def core_skills_dir(self) -> pl.Path:
+        return self.agent_dir / "core" / "skills"
+
     def skill_dirs(self) -> list[pl.Path]:
         """Return every existing skills/<name>/ directory with a SKILL.md."""
-        sd = self.skills_dir
-        if not sd.exists():
-            return []
-        return sorted(p for p in sd.iterdir() if p.is_dir() and (p / "SKILL.md").exists())
+        dirs: list[pl.Path] = []
+        for sd in [self.core_skills_dir, self.skills_dir]:
+            if sd.exists():
+                dirs.extend(p for p in sd.iterdir() if p.is_dir() and (p / "SKILL.md").exists())
+        return sorted(dirs)
+
+    @property
+    def core_prompts_dir(self) -> pl.Path:
+        return self.agent_dir / "core" / "prompts"
 
     @property
     def prompts_dir(self) -> pl.Path:

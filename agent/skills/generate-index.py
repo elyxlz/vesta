@@ -6,11 +6,15 @@ import pathlib
 import re
 
 SKILLS_DIR = pathlib.Path(__file__).parent
+CORE_SKILLS_DIR = pathlib.Path(__file__).parent.parent / "core" / "skills"
 OUTPUT_FILE = pathlib.Path(__file__).parent / "index.json"
 
 if __name__ == "__main__":
     skills = []
-    for skill_md in sorted(SKILLS_DIR.glob("*/SKILL.md")):
+    skill_mds = list(SKILLS_DIR.glob("*/SKILL.md"))
+    if CORE_SKILLS_DIR.exists():
+        skill_mds.extend(CORE_SKILLS_DIR.glob("*/SKILL.md"))
+    for skill_md in sorted(skill_mds):
         skill_name = skill_md.parent.name
         text = skill_md.read_text()
         match = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)

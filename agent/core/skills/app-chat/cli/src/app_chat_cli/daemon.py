@@ -4,6 +4,7 @@ Connects to the agent's /ws endpoint. Writes notification files for inbound
 user messages and accepts CLI commands via Unix socket to send replies.
 """
 
+import argparse
 import asyncio
 import datetime as dt
 import json
@@ -50,7 +51,7 @@ def _update_last_seen_ts(state: DaemonState, ts: str) -> None:
     _ts_path(state).write_text(ts)
 
 
-def cmd_serve(args: object) -> None:
+def cmd_serve(args: argparse.Namespace) -> None:
     notifications_dir = pl.Path(args.notifications_dir)
     ws_url = args.ws_url
     data_dir = pl.Path(args.data_dir or pl.Path.home() / ".app-chat")

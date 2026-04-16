@@ -30,33 +30,33 @@ if [ -d /root/vesta/.git ] && [ ! -d /root/.git ]; then
   mkdir -p /root/agent
   shopt -s dotglob nullglob
 
-  merge_into_agent() {
-    src="$1"
-    name="$(basename "$src")"
-    dest="/root/agent/$name"
-    if [ ! -e "$dest" ]; then
-      mv "$src" "$dest"
-      return
-    fi
-    if [ -d "$src" ] && [ -d "$dest" ]; then
-      for child in "$src"/* "$src"/.[!.]* "$src"/..?*; do
-        [ -e "$child" ] || continue
-        merge_into_agent "$child"
-      done
-      rmdir "$src" 2>/dev/null || true
-      return
-    fi
+  merge_dirs() {
+    local src="$1" dst="$2"
+    mkdir -p "$dst"
+    for child in "$src"/* "$src"/.[!.]* "$src"/..?*; do
+      [ -e "$child" ] || continue
+      local name
+      name="$(basename "$child")"
+      if [ ! -e "$dst/$name" ]; then
+        mv "$child" "$dst/"
+      elif [ -d "$child" ] && [ -d "$dst/$name" ]; then
+        merge_dirs "$child" "$dst/$name"
+      fi
+    done
+    rmdir "$src" 2>/dev/null || true
   }
 
-  for path in /root/vesta/* /root/vesta/.[!.]* /root/vesta/..?*; do
-    [ -e "$path" ] || continue
-    [ "$(basename "$path")" = ".git" ] && continue
-    merge_into_agent "$path"
-  done
+  # Only merge ~/vesta/agent/* contents into ~/agent/ — not repo-level files
+  if [ -d /root/vesta/agent ]; then
+    merge_dirs /root/vesta/agent /root/agent
+  fi
 
-  for path in /root/data /root/logs /root/notifications; do
-    [ -e "$path" ] || continue
-    merge_into_agent "$path"
+  # Move agent-owned paths from ~/vesta/ root (old layouts stored data/logs/notifications here)
+  for name in data logs notifications dreamer; do
+    for path in /root/vesta/$name /root/$name; do
+      [ -d "$path" ] || continue
+      merge_dirs "$path" "/root/agent/$name"
+    done
   done
 
   rm -rf /root/vesta
@@ -307,6 +307,36 @@ pub async fn maybe_rename_src_vesta_to_core(
     tracing::info!(container = %cname, "migrating agent/src/vesta/ → agent/core/");
     run_migration_script(docker, snapshot_tag, helper_name, normalized_tag, SRC_VESTA_TO_CORE_SCRIPT).await?;
 
+    Ok(true)
+}
+
+const OLD_UPSTREAM_SKILL_MARKER: &str = "/root/agent/skills/upstream/SKILL.md";
+
+const REMOVE_OLD_UPSTREAM_SCRIPT: &str = r#"set -euo pipefail
+rm -rf /root/agent/skills/upstream
+
+# Fetch replacement skills from upstream if missing
+for skill in upstream-sync upstream-pr; do
+  if [ ! -d "/root/agent/skills/$skill" ]; then
+    git -C /root fetch --depth 1 origin HEAD 2>/dev/null && \
+      git -C /root checkout FETCH_HEAD -- "agent/skills/$skill" 2>/dev/null || true
+  fi
+done
+"#;
+
+pub async fn maybe_remove_old_upstream_skill(
+    docker: &Docker,
+    cname: &str,
+    snapshot_tag: &str,
+    helper_name: &str,
+    normalized_tag: &str,
+) -> Result<bool, DockerError> {
+    if !container_has_path(docker, cname, OLD_UPSTREAM_SKILL_MARKER).await {
+        return Ok(false);
+    }
+
+    tracing::info!(container = %cname, "removing old upstream skill (replaced by upstream-sync + upstream-pr)");
+    run_migration_script(docker, snapshot_tag, helper_name, normalized_tag, REMOVE_OLD_UPSTREAM_SCRIPT).await?;
     Ok(true)
 }
 

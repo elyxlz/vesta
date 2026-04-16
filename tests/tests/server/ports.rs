@@ -1,11 +1,11 @@
-use vesta_tests::{TestAgent, SERVER};
+use vesta_tests::{TestAgent, SERVER, unique_agent};
 
 #[test]
 fn multi_agent_unique_ports() {
     let c = SERVER.client();
-    let a1 = TestAgent::create(&c, "test-multi-1").unwrap();
-    let a2 = TestAgent::create(&c, "test-multi-2").unwrap();
-    let a3 = TestAgent::create(&c, "test-multi-3").unwrap();
+    let a1 = TestAgent::create(&c, &unique_agent("multi")).unwrap();
+    let a2 = TestAgent::create(&c, &unique_agent("multi")).unwrap();
+    let a3 = TestAgent::create(&c, &unique_agent("multi")).unwrap();
 
     let list = c.list_agents().unwrap();
     let ports: Vec<u16> = [&a1.name, &a2.name, &a3.name]
@@ -23,7 +23,7 @@ fn multi_agent_unique_ports() {
 #[test]
 fn stopped_agent_port_not_stolen() {
     let c = SERVER.client();
-    let a1 = TestAgent::create(&c, "test-port-theft-1").unwrap();
+    let a1 = TestAgent::create(&c, &unique_agent("port-theft")).unwrap();
     c.start_agent(&a1.name).unwrap();
     let port1 = c.agent_status(&a1.name).unwrap().ws_port;
     assert!(port1 > 0, "agent should have a non-zero port");
@@ -32,9 +32,8 @@ fn stopped_agent_port_not_stolen() {
 
     let mut other_ports = Vec::new();
     let mut agents = Vec::new();
-    for i in 2..=5 {
-        let name = format!("test-port-theft-{i}");
-        let agent = TestAgent::create(&c, &name).unwrap();
+    for _ in 0..4 {
+        let agent = TestAgent::create(&c, &unique_agent("port-theft")).unwrap();
         let port = c.agent_status(&agent.name).unwrap().ws_port;
         other_ports.push(port);
         agents.push(agent);
@@ -49,7 +48,7 @@ fn stopped_agent_port_not_stolen() {
 #[test]
 fn agent_env_file_includes_vestad_port() {
     let c = SERVER.client();
-    let agent = TestAgent::create(&c, "test-env-port").unwrap();
+    let agent = TestAgent::create(&c, &unique_agent("env-port")).unwrap();
 
     let env_path = SERVER._tmpdir_path()
         .join(format!(".config/vesta/vestad/agents/{}.env", agent.name));
@@ -62,7 +61,7 @@ fn agent_env_file_includes_vestad_port() {
 #[test]
 fn agent_has_env_file_with_token() {
     let c = SERVER.client();
-    let agent = TestAgent::create(&c, "test-token-env").unwrap();
+    let agent = TestAgent::create(&c, &unique_agent("token-env")).unwrap();
 
     let agents_dir = SERVER._tmpdir_path().join(".config/vesta/vestad/agents");
     let env_path = agents_dir.join(format!("{}.env", agent.name));

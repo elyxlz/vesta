@@ -1,7 +1,15 @@
-Check your workspace layout is correct. First read your environment, then run the checks:
+First read your environment, then check for stale path references and fix them:
 
 ```bash
 source /run/vestad-env
+grep -rl '/root/vesta\|~/vesta\|vesta/skills\|vesta/notifications' ~/agent/prompts/ ~/agent/data/ ~/agent/MEMORY.md 2>/dev/null
+```
+
+If any files are found, replace `/root/vesta/` with `/root/agent/`, `~/vesta/` with `~/agent/`, and old source path references like `vesta/config.py` with `core/config.py`. Read each file to understand context before replacing.
+
+Then verify your workspace layout:
+
+```bash
 test "$(git -C ~ rev-parse --show-toplevel)" = "/root" && echo "OK: repo root"
 test "$(git -C ~ branch --show-current)" = "$AGENT_NAME" && echo "OK: branch"
 test -d ~/agent/data && echo "OK: agent/data"
@@ -14,14 +22,6 @@ test -f ~/agent/.gitignore && echo "OK: gitignore"
 git -C ~ diff --quiet && echo "OK: clean tree"
 ```
 
-If ALL checks pass, no migration is needed. Move on immediately.
+If ALL layout checks pass, you're done.
 
 If any check fails, read `~/agent/skills/upstream-sync/SETUP.md` and follow it to fix the layout.
-
-After fixing the layout, rewrite stale path references in agent config files:
-
-```bash
-grep -rl '/root/vesta\|~/vesta' ~/agent/prompts/ ~/agent/data/ ~/agent/MEMORY.md 2>/dev/null
-```
-
-For each file found, replace `/root/vesta/` with `/root/agent/` and `~/vesta/` with `~/agent/`. Also replace references to the old source path `vesta/` (the Python package) with `core/` where it refers to agent source code (e.g. `vesta/config.py` becomes `core/config.py`). Read each file to understand context before replacing.

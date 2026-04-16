@@ -1,4 +1,4 @@
-use vesta_tests::{TestAgent, SERVER, inject_fake_token};
+use vesta_tests::{TestAgent, SERVER, inject_fake_token, unique_agent};
 
 fn ws_base_url(url: &str) -> String {
     url.replace("https://", "wss://").replace("http://", "ws://")
@@ -39,7 +39,7 @@ fn make_ws_rustls_config(fingerprint: Option<String>) -> std::sync::Arc<rustls::
 #[tokio::test]
 async fn ws_connect_to_running_agent() {
     let c = SERVER.client();
-    let agent = TestAgent::create(&c, "test-ws").unwrap();
+    let agent = TestAgent::create(&c, &unique_agent("ws")).unwrap();
     inject_fake_token(&c, &agent.name);
     c.start_agent(&agent.name).unwrap();
 
@@ -74,8 +74,9 @@ async fn ws_connect_to_running_agent() {
 #[tokio::test]
 async fn ws_rejected_without_auth() {
     let ws_url = format!(
-        "{}/agents/test-ws-noauth/ws",
+        "{}/agents/{}/ws",
         ws_base_url(&SERVER.config.url),
+        unique_agent("ws-noauth"),
     );
 
     let tls = make_ws_rustls_config(SERVER.config.cert_fingerprint.clone());

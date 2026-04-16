@@ -1,4 +1,4 @@
-use vesta_tests::{TestAgent, SERVER, exec_in_container};
+use vesta_tests::{TestAgent, SERVER, exec_in_container, unique_agent};
 
 fn container_id(agent_name: &str) -> String {
     let status = SERVER.client().agent_status(agent_name).unwrap();
@@ -8,7 +8,7 @@ fn container_id(agent_name: &str) -> String {
 #[test]
 fn fresh_agent_has_expected_directory_structure() {
     let c = SERVER.client();
-    let agent = TestAgent::create_built(&c, "test-layout-fresh").unwrap();
+    let agent = TestAgent::create_built(&c, &unique_agent("layout")).unwrap();
     let cid = container_id(&agent.name);
 
     // Wait for entrypoint to finish setting up the filesystem

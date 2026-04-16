@@ -1,10 +1,10 @@
-use vesta_tests::{TestAgent, SERVER, is_up};
+use vesta_tests::{TestAgent, SERVER, is_up, unique_agent};
 use vesta_tests::types::BackupType;
 
 #[test]
 fn backup_create() {
     let c = SERVER.client();
-    let agent = TestAgent::create(&c, "test-backup-create").unwrap();
+    let agent = TestAgent::create(&c, &unique_agent("bk-create")).unwrap();
 
     let backup = c.create_backup(&agent.name).unwrap();
     assert_eq!(backup.agent_name, agent.name);
@@ -18,7 +18,7 @@ fn backup_create() {
 #[test]
 fn backup_list() {
     let c = SERVER.client();
-    let agent = TestAgent::create(&c, "test-backup-list").unwrap();
+    let agent = TestAgent::create(&c, &unique_agent("bk-list")).unwrap();
 
     let b1 = c.create_backup(&agent.name).unwrap();
     let b2 = c.create_backup(&agent.name).unwrap();
@@ -34,7 +34,7 @@ fn backup_list() {
 #[test]
 fn backup_list_empty() {
     let c = SERVER.client();
-    let agent = TestAgent::create(&c, "test-backup-empty").unwrap();
+    let agent = TestAgent::create(&c, &unique_agent("bk-empty")).unwrap();
 
     let backups = c.list_backups(&agent.name).unwrap();
     assert!(backups.is_empty());
@@ -44,7 +44,7 @@ fn backup_list_empty() {
 #[test]
 fn backup_restore() {
     let c = SERVER.client();
-    let agent = TestAgent::create(&c, "test-backup-restore").unwrap();
+    let agent = TestAgent::create(&c, &unique_agent("bk-restore")).unwrap();
 
     let backup = c.create_backup(&agent.name).unwrap();
     c.restore_backup(&agent.name, &backup.id).unwrap();
@@ -61,7 +61,7 @@ fn backup_restore() {
 #[test]
 fn backup_restore_creates_safety_snapshot() {
     let c = SERVER.client();
-    let agent = TestAgent::create(&c, "test-backup-safety").unwrap();
+    let agent = TestAgent::create(&c, &unique_agent("bk-safety")).unwrap();
 
     let backup = c.create_backup(&agent.name).unwrap();
     c.restore_backup(&agent.name, &backup.id).unwrap();
@@ -80,7 +80,7 @@ fn backup_restore_creates_safety_snapshot() {
 #[test]
 fn backup_delete() {
     let c = SERVER.client();
-    let agent = TestAgent::create(&c, "test-backup-delete").unwrap();
+    let agent = TestAgent::create(&c, &unique_agent("bk-delete")).unwrap();
 
     let backup = c.create_backup(&agent.name).unwrap();
     c.delete_backup(&agent.name, &backup.id).unwrap();
@@ -92,7 +92,7 @@ fn backup_delete() {
 #[test]
 fn backup_delete_nonexistent_fails() {
     let c = SERVER.client();
-    let agent = TestAgent::create(&c, "test-backup-del-bad").unwrap();
+    let agent = TestAgent::create(&c, &unique_agent("bk-del-bad")).unwrap();
 
     let result = c.delete_backup(&agent.name, "vesta-backup:fake-manual-20260101-000000");
     assert!(result.is_err());
@@ -102,7 +102,7 @@ fn backup_delete_nonexistent_fails() {
 #[test]
 fn backup_restore_nonexistent_fails() {
     let c = SERVER.client();
-    let agent = TestAgent::create(&c, "test-backup-res-bad").unwrap();
+    let agent = TestAgent::create(&c, &unique_agent("bk-res-bad")).unwrap();
 
     let result = c.restore_backup(&agent.name, "vesta-backup:fake-manual-20260101-000000");
     assert!(result.is_err());
