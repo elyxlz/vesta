@@ -134,8 +134,8 @@ func readWAVSamples(path string) ([]float32, error) {
 	return samples, nil
 }
 
-// Convenience wrapper used by handleMessage
-func (wac *WhatsAppClient) transcribeAudioMessage(messageID, chatJID string) string {
+// Convenience wrapper used by handleMessage. Returns the transcription text and any error.
+func (wac *WhatsAppClient) transcribeAudioMessage(messageID, chatJID string) (string, error) {
 	// Download audio to temp file
 	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("wa_audio_%s.ogg", messageID))
 	defer os.Remove(tmpFile)
@@ -143,17 +143,17 @@ func (wac *WhatsAppClient) transcribeAudioMessage(messageID, chatJID string) str
 	path, err := wac.DownloadMedia(messageID, chatJID, tmpFile)
 	if err != nil {
 		wac.logger.Warnf("Failed to download audio for transcription: %v", err)
-		return ""
+		return "", fmt.Errorf("failed to download audio: %w", err)
 	}
 
 	text, err := transcribeAudioBuiltIn(path)
 	if err != nil {
 		wac.logger.Warnf("Transcription failed: %v", err)
-		return ""
+		return "", err
 	}
 
 	if text != "" {
 		wac.logger.Infof("Transcribed audio %s: %s", messageID, text)
 	}
-	return text
+	return text, nil
 }
