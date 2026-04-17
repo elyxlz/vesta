@@ -1,6 +1,6 @@
 #!/bin/sh
-file="$HOME/vesta/MEMORY.md"
+file="$HOME/agent/MEMORY.md"
 chars=$(wc -c < "$file")
-limit=12000
+limit=20000
 pct=$((chars * 100 / limit))
 echo "${chars}/${limit} chars (${pct}%)"
