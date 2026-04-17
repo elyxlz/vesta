@@ -1455,6 +1455,7 @@ pub fn build_router(state: SharedState) -> Router {
         .merge(vestad_protected)
         .merge(agents_services)
         .merge(agents_proxy)
+        .merge(crate::app_static::router())
         .layer(
             tower_http::cors::CorsLayer::new()
                 .allow_origin(tower_http::cors::Any)

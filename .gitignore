@@ -1,23 +1,4 @@
-# Claude Code
-.claude/worktrees/
-
-# Personal data
-
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-.venv/
-venv/
-ENV/
-env/
-*.egg-info/
-dist/
-build/
-
-# IDE
+# Editor / OS
 .vscode/
 .idea/
 *.swp
@@ -25,59 +6,22 @@ build/
 *~
 .DS_Store
 
-# Local development
-.env
-
 # Temporary files
 *.bak
 *.orig
 tmp/
-
-# OneDrive mount
-
-# Test artifacts
-.coverage
-htmlcov/
-.pytest_cache/
-.tox/
-
-# MCP data
-
-# WhatsApp session
-mcps/whatsapp-mcp/whatsapp-bridge/session/
-mcps/whatsapp-mcp/whatsapp-bridge/whatsapp-bridge
-
-# Go binaries
-mcps/whatsapp-mcp-go/whatsapp-mcp
-
-# Scheduler data
-
-# Microsoft MCP tokens
-
-# Old vesta folder (if still present)
-old_vesta/
 .cache
 
-# Rust build artifacts
+# Environment
+.env
+
+# Rust workspace build output
 target/
 
-# VM build artifacts
-vm/vesta-wsl-rootfs.tar.gz
-vm/vestad
-
-# Runtime memory directories (created at startup, not tracked)
-agent/memory/conversations/
-agent/memory/dreamer/
-
-# Node modules
-node_modules/
-
-# Tauri build artifacts
-app/src-tauri/gen/
-app/src-tauri/target/
-app/src-tauri/binaries/vesta-*
-app/src-tauri/resources/*.tar.gz
-app/src-tauri/resources/vestad
+# Claude Code
 .claude/
 !.claude/skills/
-ROADMAP.md
+
+# Cursor / editor config
+.cursor/
+.editorconfig

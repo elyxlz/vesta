@@ -1,10 +1,10 @@
 [package]
 name = "vesta"
-version.workspace = true
-license.workspace = true
-repository.workspace = true
-authors.workspace = true
-edition.workspace = true
+version = "0.1.140"
+license = "MIT"
+repository = "https://github.com/elyxlz/vesta"
+authors = ["elyxlz"]
+edition = "2021"
 description = "Vesta CLI for managing personal assistant agents"
 
 [[bin]]
@@ -22,3 +22,10 @@ serde_json = "1"
 dirs = "6"
 self-replace = "1"
 url = "2"
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+opt-level = "z"
+panic = "abort"

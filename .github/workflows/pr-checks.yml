@@ -89,8 +89,8 @@ jobs:
 
       - name: Ensure vite base is "/" (required for Cloudflare Pages)
         run: |
-          if grep -q 'base:\s*"\.\/"' app/vite.config.ts; then
-            echo '❌ app/vite.config.ts has base: "./" — must be "/" for Cloudflare deployments'
+          if grep -q 'base:\s*"\.\/"' apps/web/vite.config.ts; then
+            echo '❌ apps/web/vite.config.ts has base: "./" — must be "/" for Cloudflare deployments'
             exit 1
           fi
           echo '✅ vite base path is correct'
@@ -139,7 +139,7 @@ jobs:
         run: |
           bash scripts/sync-dashboard.sh
           if ! git diff --quiet agent/skills/dashboard/app/; then
-            echo "❌ Dashboard shared files are out of sync with app/"
+            echo "❌ Dashboard shared files are out of sync with apps/web/"
             echo "Run 'bash scripts/sync-dashboard.sh' and commit the changes"
             git diff --stat agent/skills/dashboard/app/
             exit 1

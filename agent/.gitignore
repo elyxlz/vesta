@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+*.egg-info/
+dist/
+build/
+
+# Test / coverage / linters
+.coverage
+htmlcov/
+.pytest_cache/
+.ruff_cache/
+.tox/
+
+# Runtime memory (created at startup, not tracked)
+memory/conversations/
+memory/dreamer/

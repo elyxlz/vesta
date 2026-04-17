@@ -463,10 +463,14 @@ pub async fn read_container_env(docker: &Docker, cname: &str, key: &str) -> Opti
 
 // --- Image and port operations ---
 
+/// Relative path of the Dockerfile from the build context root.
+pub const DOCKERFILE_REL: &str = "vestad/Dockerfile";
+
+/// Locate the repo root (build context) by finding `vestad/Dockerfile`.
 pub fn find_dockerfile() -> Result<std::path::PathBuf, DockerError> {
     let cwd = std::env::current_dir()
         .map_err(|_| DockerError::BuildRequired("cannot determine working directory".into()))?;
-    if cwd.join("Dockerfile").exists() {
+    if cwd.join(DOCKERFILE_REL).exists() {
         return Ok(cwd);
     }
 
@@ -478,13 +482,13 @@ pub fn find_dockerfile() -> Result<std::path::PathBuf, DockerError> {
         if depth >= MAX_DOCKERFILE_SEARCH_DEPTH {
             break;
         }
-        if d.join("Dockerfile").exists() {
+        if d.join(DOCKERFILE_REL).exists() {
             return Ok(d);
         }
         dir = d.parent().map(std::path::Path::to_path_buf);
         depth += 1;
     }
-    Err(DockerError::BuildRequired("--build requires vestad to have access to the Vesta source code (run vestad from the repo root)".into()))
+    Err(DockerError::BuildRequired("--build requires vestad to have access to the Vesta source code (run vestad from the repo root, which must contain vestad/Dockerfile)".into()))
 }
 
 /// Build a tar archive of the given directory for use with `build_image`.
@@ -535,10 +539,13 @@ fn build_context_tar(context: &std::path::Path) -> Result<bytes::Bytes, DockerEr
     Ok(bytes::Bytes::from(tar_bytes))
 }
 
-/// Load and parse `.dockerignore` patterns from a directory.
+/// Load and parse dockerignore patterns. Prefers `<dockerfile>.dockerignore`
+/// next to the Dockerfile (Docker 20.10+ convention); falls back to a
+/// `.dockerignore` at the build context root.
 fn load_dockerignore(context: &std::path::Path) -> Vec<String> {
-    let path = context.join(".dockerignore");
-    let Ok(content) = std::fs::read_to_string(&path) else { return Vec::new() };
+    let content = std::fs::read_to_string(context.join(format!("{DOCKERFILE_REL}.dockerignore")))
+        .or_else(|_| std::fs::read_to_string(context.join(".dockerignore")))
+        .unwrap_or_default();
     content.lines()
         .map(|l| l.trim())
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
@@ -678,6 +685,7 @@ pub async fn resolve_image(docker: &Docker) -> Result<&'static str, DockerError>
         let tar_body = build_context_tar(&context)?;
         let opts = BuildImageOptions {
             t: LOCAL_IMAGE_TAG,
+            dockerfile: DOCKERFILE_REL,
             q: true,
             rm: true,
             ..Default::default()

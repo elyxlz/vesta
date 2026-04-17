@@ -1,0 +1,18 @@
+{
+  "name": "vesta-apps",
+  "private": true,
+  "workspaces": [
+    "web",
+    "desktop"
+  ],
+  "scripts": {
+    "web:dev": "npm -w @vesta/web run dev",
+    "web:build": "npm -w @vesta/web run build",
+    "web:check": "npm -w @vesta/web run check",
+    "web:lint": "npm -w @vesta/web run lint",
+    "web:test": "npm -w @vesta/web run test",
+    "desktop:dev": "npm -w @vesta/desktop run dev",
+    "desktop:build": "npm -w @vesta/desktop run build",
+    "tauri": "npm -w @vesta/desktop run tauri"
+  }
+}

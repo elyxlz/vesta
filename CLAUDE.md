@@ -11,9 +11,10 @@ Vesta is a personal AI assistant that runs as a persistent daemon in Docker, pow
 Client/server architecture. `vestad` daemon runs on the host (manages Docker containers, serves HTTP+WS API). `vesta` CLI and Tauri desktop app connect to vestad. On Linux, the CLI/app bootstraps vestad locally via systemd. On macOS/Windows, users connect to a remote vestad via `vesta connect`. Python agent runs inside the container.
 
 - **Agent** (`agent/core/`): Async Python. Entry point `main.py`. Core loop in `core/loops.py` (message processing, notification monitoring). WebSocket server in `api.py`.
-- **CLI** (`cli/`): Rust `vesta` client binary. Connects to vestad over HTTPS.
-- **Server** (`vestad/`): Rust `vestad` daemon. Manages Docker containers, serves API.
-- **Desktop App** (`app/`): Tauri + React (TypeScript). Components in `app/src/components/`, providers in `app/src/providers/`.
+- **CLI** (`cli/`): standalone Rust crate — `vesta` client binary. Connects to vestad over HTTPS.
+- **Server** (`vestad/`): standalone Rust crate — `vestad` daemon. Manages Docker containers, serves API. Contains `vestad/tests-integration/` as a workspace member for end-to-end tests.
+- **Web App** (`apps/web/`): React + TypeScript SPA served by vestad at `/app` and embedded in the Tauri desktop wrapper. Components in `apps/web/src/components/`, providers in `apps/web/src/providers/`.
+- **Desktop App** (`apps/desktop/`): Tauri wrapper around `@vesta/web`. Only `src-tauri/` + a thin `package.json` — no frontend code of its own.
 - **Skills** (`agent/skills/`): Each skill directory has `SKILL.md` + scripts. No MCP servers.
 - **Integration Tests** (`tests/`): Separate Rust crate with end-to-end tests (real vestad + client, requires Docker).
 
@@ -50,23 +51,29 @@ uv run ruff check                                 # Lint
 uv run ty check                                   # Type check
 ```
 
-### Rust (run from repo root)
+### Rust (each crate is standalone)
 
 ```bash
-cargo build                                # Build all crates
-cargo build -p vesta                       # Build CLI only
-cargo build -p vestad                      # Build server only
-cargo clippy                               # Lint
-cargo test                                 # Unit tests
-cargo test -p tests                        # Integration tests (requires Docker)
+# CLI (run from cli/)
+cd cli && cargo build                      # Debug build
+cd cli && cargo clippy                     # Lint
+cd cli && cargo test                       # Unit tests
+
+# Server (run from vestad/ — triggers `npm -w @vesta/web run build` via build.rs; set VESTAD_SKIP_APP_BUILD=1 to skip)
+cd vestad && cargo build                   # Debug build
+cd vestad && cargo clippy -p vestad        # Lint vestad only (not tests-integration)
+cd vestad && cargo test -p vestad          # Unit tests
+cd vestad && cargo test -p vesta-tests     # Integration tests (requires Docker)
 ```
 
-### Frontend (run from `app/`)
+### Frontend (run from `apps/`)
 
 ```bash
-npm run test                               # Tests
-npm run lint                               # Lint
-npm run check                              # Type check
+npm install                                # Installs workspace deps (one-time / after package.json changes)
+npm -w @vesta/web run test                 # Web tests
+npm -w @vesta/web run lint                 # Web lint
+npm -w @vesta/web run check                # Web type check
+npm -w @vesta/desktop run tauri -- <args>  # Run the Tauri CLI (dev, build, etc.)
 ```
 
 ### Releasing
@@ -97,7 +104,7 @@ Run locally on master. Bumps versions, updates lockfiles, commits, pushes, and c
 - **Minimize `.clone()`** — move values into closures when possible, only clone when the value is genuinely needed afterward.
 - **Extract repeated patterns** — if 3+ lines appear twice, extract a helper function.
 
-### Frontend (app/src/)
+### Frontend (apps/web/src/)
 - **"Agent" terminology everywhere** — never "box". Types: `AgentInfo`, `AgentConnection`, `AgentActivityState`.
 - **Tauri invoke() names must match Rust backend** — the invoke command strings are the contract, don't rename them.
 - **Hook placement** — hooks used only by a single provider live in that provider's folder (e.g. `providers/VoiceProvider/use-voice-input.ts`). `hooks/` is reserved for shared hooks used across multiple components/providers.
@@ -105,7 +112,7 @@ Run locally on master. Bumps versions, updates lockfiles, commits, pushes, and c
 
 ## CI
 
-Runs on push to `master` and PRs. Checks: version sync across 5 sources (`agent/pyproject.toml`, `Cargo.toml`, `app/src-tauri/Cargo.toml`, `app/src-tauri/tauri.conf.json`, `app/package.json`), ruff, ty, cargo clippy, pytest, `uv.lock` freshness. Releases are triggered by `gh release create` (via `./release.sh`).
+Runs on push to `master` and PRs. Checks: version sync across sources (`agent/pyproject.toml`, `vestad/Cargo.toml`, `cli/Cargo.toml`, `vestad/tests-integration/Cargo.toml`, `apps/desktop/src-tauri/Cargo.toml`, `apps/desktop/src-tauri/tauri.conf.json`, `apps/web/package.json`), ruff, ty, cargo clippy, pytest, `uv.lock` freshness. Releases are triggered by `gh release create` (via `./release.sh`).
 
 ## Karpathy Guidelines
 

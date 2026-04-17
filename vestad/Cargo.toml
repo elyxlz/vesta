@@ -1,10 +1,14 @@
+[workspace]
+members = [".", "tests-integration"]
+resolver = "2"
+
 [package]
 name = "vestad"
-version.workspace = true
-license.workspace = true
-repository.workspace = true
-authors.workspace = true
-edition.workspace = true
+version = "0.1.140"
+license = "MIT"
+repository = "https://github.com/elyxlz/vesta"
+authors = ["elyxlz"]
+edition = "2021"
 description = "Vesta API server daemon (Linux only)"
 
 [[bin]]
@@ -40,7 +44,15 @@ bollard = "0.18"
 tar = "0.4"
 flate2 = "1"
 tokio-util = { version = "0.7", features = ["io"] }
+rust-embed = { version = "8", features = ["compression"] }
+mime_guess = "2"
 
 [dev-dependencies]
 tempfile = "3"
 
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+opt-level = "z"
+panic = "abort"
