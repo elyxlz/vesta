@@ -4,6 +4,7 @@ compile_error!("vestad only supports Linux");
 use clap::Parser;
 
 mod agent_code;
+mod agent_embed;
 mod agent_proxy;
 mod agent_status;
 mod app_static;
@@ -153,12 +154,15 @@ fn config_dir() -> std::path::PathBuf {
 
 fn print_server_info(tunnel_url: Option<&str>, local_url: &str, api_key: &str) {
     eprintln!();
-    eprintln!("  \x1b[36mapp\x1b[0m  \x1b[2m(open in a browser and paste the key)\x1b[0m");
+    if let Some(url) = tunnel_url {
+        eprintln!("  \x1b[36mtunnel\x1b[0m  \x1b[1m{}\x1b[0m", url);
+    }
+    eprintln!("  \x1b[36mkey\x1b[0m     \x1b[33m{}\x1b[0m", api_key);
+    eprintln!("  \x1b[36mapp\x1b[0m     \x1b[2m(open in a browser and paste the key)\x1b[0m");
     if let Some(url) = tunnel_url {
         eprintln!("    \x1b[36mremote\x1b[0m  \x1b[1m{}/app\x1b[0m  \x1b[32m(recommended)\x1b[0m", url);
     }
     eprintln!("    \x1b[36mlocal\x1b[0m   \x1b[1m{}/app\x1b[0m  \x1b[2m(same machine only)\x1b[0m", local_url);
-    eprintln!("  \x1b[36mkey\x1b[0m   \x1b[33m{}\x1b[0m", api_key);
     if tunnel_url.is_none() {
         eprintln!();
         eprintln!("  \x1b[33mtip:\x1b[0m run without --no-tunnel to get a remote URL");

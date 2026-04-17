@@ -29,6 +29,15 @@ fn main() {
         println!("cargo:rerun-if-changed={}", root_lock.display());
     }
 
+    // Agent source is embedded into the binary via rust-embed in src/agent_embed.rs.
+    // Rebuild when any embedded input changes so release binaries stay in sync.
+    for rel in ["agent/core", "agent/pyproject.toml", "agent/uv.lock"] {
+        let p = repo_root.join(rel);
+        if p.exists() {
+            println!("cargo:rerun-if-changed={}", p.display());
+        }
+    }
+
     if std::env::var_os("VESTAD_SKIP_APP_BUILD").is_some() {
         std::fs::create_dir_all(web_dir.join("dist")).ok();
         let placeholder = web_dir.join("dist").join("index.html");
