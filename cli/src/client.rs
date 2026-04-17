@@ -363,6 +363,16 @@ impl Client {
         Ok(())
     }
 
+    pub fn restart_gateway(&self) -> Result<(), String> {
+        self.post("/gateway/restart")?;
+        Ok(())
+    }
+
+    pub fn stream_gateway_logs(&self, tail: u64, follow: bool) -> Result<(), String> {
+        let resp = self.get(&format!("/gateway/logs?tail={}&follow={}", tail, follow))?;
+        consume_sse_log_stream(resp, "gateway_stopped", None)
+    }
+
     pub fn destroy_agent(&self, name: &str) -> Result<(), String> {
         self.post(&format!("/agents/{}/destroy", name))?;
         Ok(())
@@ -474,18 +484,29 @@ impl Client {
 
     pub fn stream_logs(&self, name: &str, tail: u64) -> Result<(), String> {
         let resp = self.get(&format!("/agents/{}/logs?tail={}", name, tail))?;
-        let reader = std::io::BufReader::new(resp.into_body().into_reader());
-        for line in std::io::BufRead::lines(reader) {
-            let line = line.map_err(|e| format!("read error: {}", e))?;
-            if let Some(data) = line.strip_prefix("data:") {
-                println!("{}", data.trim_start());
-            } else if line.starts_with("event:agent_stopped") {
-                eprintln!("agent stopped");
-                break;
-            }
-        }
-        Ok(())
+        consume_sse_log_stream(resp, "agent_stopped", Some("agent stopped"))
     }
+}
+
+fn consume_sse_log_stream(
+    resp: Response<Body>,
+    stop_event: &str,
+    stop_message: Option<&str>,
+) -> Result<(), String> {
+    let reader = std::io::BufReader::new(resp.into_body().into_reader());
+    let stop_marker = format!("event:{stop_event}");
+    for line in std::io::BufRead::lines(reader) {
+        let line = line.map_err(|e| format!("read error: {}", e))?;
+        if let Some(data) = line.strip_prefix("data:") {
+            println!("{}", data.trim_start());
+        } else if line.starts_with(&stop_marker) {
+            if let Some(msg) = stop_message {
+                eprintln!("{msg}");
+            }
+            break;
+        }
+    }
+    Ok(())
 }
 
 // ── WebSocket chat (CLI-only) ──────────────────────────────────

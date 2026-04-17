@@ -14,7 +14,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, atomic::AtomicBool};
 use tokio::sync::{Mutex, RwLock};
 
-use crate::{agent_proxy, agent_status, auth, backup, control_ws, docker, self_update, update_check};
+use crate::{agent_proxy, agent_status, auth, backup, control_ws, docker, self_update, systemd, update_check};
+
+const GATEWAY_RESTART_DELAY_MS: u64 = 200;
 
 const API_KEY_BYTES: usize = 32;
 pub(crate) const PROXY_MAX_BODY_BYTES: usize = 10 * 1024 * 1024; // 10 MB
@@ -245,6 +247,66 @@ async fn version(State(state): State<SharedState>) -> Json<serde_json::Value> {
         "update_available": update_available,
         "dev_mode": state.dev_mode,
     }))
+}
+
+#[derive(Deserialize)]
+struct GatewayLogsQuery {
+    tail: Option<u64>,
+    #[serde(default)]
+    follow: bool,
+}
+
+async fn gateway_logs_handler(
+    Query(query): Query<GatewayLogsQuery>,
+) -> Result<Sse<impl futures_core::Stream<Item = Result<Event, std::io::Error>>>, (StatusCode, Json<serde_json::Value>)> {
+    let tail = query.tail.unwrap_or(DEFAULT_LOG_TAIL_LINES) as usize;
+
+    let mut child = systemd::spawn_journal_stream(tail, query.follow)
+        .map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+
+    let stdout = child.stdout.take().ok_or_else(|| {
+        err_response(StatusCode::INTERNAL_SERVER_ERROR, "journalctl stdout not captured")
+    })?;
+
+    let stream = async_stream::stream! {
+        use tokio::io::AsyncBufReadExt;
+        let reader = tokio::io::BufReader::new(stdout);
+        let mut lines = reader.lines();
+        loop {
+            match lines.next_line().await {
+                Ok(Some(line)) => yield Ok(Event::default().data(line)),
+                Ok(None) => break,
+                Err(e) => {
+                    yield Ok(Event::default().data(format!("error: {}", e)));
+                    break;
+                }
+            }
+        }
+        let _ = child.wait().await;
+        yield Ok(Event::default().event("gateway_stopped").data(""));
+    };
+
+    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
+}
+
+async fn restart_gateway_handler() -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    if !systemd::is_active() {
+        return Err(err_response(
+            StatusCode::PRECONDITION_FAILED,
+            "vestad is not running under systemd — cannot self-restart",
+        ));
+    }
+    tracing::info!("gateway restart requested via API");
+    // Delay so the HTTP response can flush before systemctl kills this process.
+    tokio::spawn(async {
+        tokio::time::sleep(tokio::time::Duration::from_millis(GATEWAY_RESTART_DELAY_MS)).await;
+        match tokio::task::spawn_blocking(systemd::restart).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => tracing::error!(error = %e, "gateway restart failed"),
+            Err(e) => tracing::error!(error = %e, "gateway restart task panicked"),
+        }
+    });
+    Ok(Json(serde_json::json!({"ok": true, "restarting": true})))
 }
 
 async fn self_update_handler(
@@ -1334,6 +1396,8 @@ pub fn build_router(state: SharedState) -> Router {
     let vestad_protected = Router::new()
         .route("/version", get(version))
         .route("/self-update", post(self_update_handler))
+        .route("/gateway/restart", post(restart_gateway_handler))
+        .route("/gateway/logs", get(gateway_logs_handler))
         .route("/tunnel", get(tunnel_handler))
         .route("/agents", get(list_agents_handler))
         .route("/agents", post(create_agent_handler))
