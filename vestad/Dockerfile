@@ -34,10 +34,9 @@ RUN for d in agent/skills/*/; do \
 # Git repo with sparse checkout — only tracks installed skills so upstream merges
 # don't pull in uninstalled ones. Must run AFTER skill pruning above.
 RUN git init && git remote add origin https://github.com/elyxlz/vesta.git && \
-    git sparse-checkout init --cone && \
-    AGENT_DIRS=$(find agent -mindepth 1 -maxdepth 1 -type d ! -name skills ! -name .venv | tr '\n' ' ') && \
-    SKILL_DIRS=$(find agent/skills -mindepth 1 -maxdepth 1 -type d | tr '\n' ' ') && \
-    git sparse-checkout set $AGENT_DIRS $SKILL_DIRS && \
+    git sparse-checkout init --no-cone && \
+    printf '/agent/\n!/agent/core/\n!/agent/pyproject.toml\n!/agent/uv.lock\n/.gitignore\n' > .git/info/sparse-checkout && \
+    git sparse-checkout reapply && \
     printf '/*\n!.gitignore\n!/agent/\n' > .gitignore
 
 # SDK discovers skills from .claude/skills/ relative to cwd (shared with Claude credentials under ~/.claude)
