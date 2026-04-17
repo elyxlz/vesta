@@ -12,6 +12,7 @@ use types::ServerConfig;
 
 pub static SERVER: LazyLock<TestServer> = LazyLock::new(|| {
     kill_orphan_vestads();
+    cleanup_orphan_test_containers();
     TestServer::start().unwrap_or_else(|e| panic!("failed to start test server: {e}"))
 });
 
@@ -70,6 +71,34 @@ impl TestServerBuilder {
 
 /// Kill vestad processes left behind by previous test runs (those whose HOME is a
 /// temp directory). Ignores the user's real vestad instance.
+/// Remove Docker containers left behind by previous test runs that crashed
+/// before TestAgent::drop could clean up. Targets containers from test users
+/// (unique_user generates names like "prefix-tPID-N") and e2e test containers.
+fn cleanup_orphan_test_containers() {
+    let Ok(output) = Command::new("docker")
+        .args(["ps", "-a", "--filter", "label=vesta.managed=true", "--format", "{{.Names}}\t{{.Label \"vesta.user\"}}"])
+        .output()
+    else {
+        return;
+    };
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        let parts: Vec<&str> = line.split('\t').collect();
+        let (name, user_label) = match parts.as_slice() {
+            [n, u] => (n.trim(), u.trim()),
+            _ => continue,
+        };
+        if name.is_empty() { continue; }
+        // Test users from unique_user() contain "-t{pid}-"
+        // E2e containers use "test-e2e-" prefix
+        let is_test_user = user_label.contains("-t") && user_label.chars().any(|c| c.is_ascii_digit());
+        let is_e2e = name.contains("test-e2e-");
+        if is_test_user || is_e2e {
+            let _ = Command::new("docker").args(["rm", "-f", name]).output();
+        }
+    }
+}
+
 fn kill_orphan_vestads() {
     let Ok(output) = Command::new("sh")
         .args(["-c", "ps -eo pid,args | grep '[v]estad serve'"])
