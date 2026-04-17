@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -126,6 +128,87 @@ func (wac *WhatsAppClient) SetGroupDescription(groupIdentifier, description stri
 		return false, fmt.Sprintf("Failed to set group description: %v", err)
 	}
 	return true, "Group description updated"
+}
+
+func (wac *WhatsAppClient) GetProfilePicture(jidStr, outputPath string) (bool, string) {
+	if jidStr == "" || outputPath == "" {
+		return false, "JID and output path are required"
+	}
+	jid, err := types.ParseJID(jidStr)
+	if err != nil {
+		// Try resolving as contact/group name
+		resolved, resolveErr := wac.ResolveRecipient(jidStr)
+		if resolveErr != nil {
+			return false, fmt.Sprintf("Invalid JID and couldn't resolve: %v", err)
+		}
+		jid = resolved
+	}
+	if err := wac.EnsureConnected(); err != nil {
+		return false, err.Error()
+	}
+
+	info, err := wac.client.GetProfilePictureInfo(context.Background(), jid, nil)
+	if err != nil {
+		return false, fmt.Sprintf("Failed to get profile picture: %v", err)
+	}
+	if info == nil || info.URL == "" {
+		return false, "No profile picture set"
+	}
+
+	resp, err := http.Get(info.URL)
+	if err != nil {
+		return false, fmt.Sprintf("Failed to download picture: %v", err)
+	}
+	defer resp.Body.Close()
+
+	f, err := os.Create(outputPath)
+	if err != nil {
+		return false, fmt.Sprintf("Failed to create file: %v", err)
+	}
+	defer f.Close()
+
+	if _, err := io.Copy(f, resp.Body); err != nil {
+		return false, fmt.Sprintf("Failed to write file: %v", err)
+	}
+	return true, fmt.Sprintf("Profile picture saved to %s", outputPath)
+}
+
+func (wac *WhatsAppClient) GetGroupInfo(groupIdentifier string) (map[string]any, error) {
+	if groupIdentifier == "" {
+		return nil, fmt.Errorf("group identifier is required")
+	}
+	jid, err := wac.resolveGroup(groupIdentifier)
+	if err != nil {
+		return nil, err
+	}
+	if err := wac.EnsureConnected(); err != nil {
+		return nil, err
+	}
+
+	info, err := wac.client.GetGroupInfo(context.Background(), jid)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get group info: %v", err)
+	}
+
+	participants := make([]map[string]any, 0, len(info.Participants))
+	for _, p := range info.Participants {
+		participants = append(participants, map[string]any{
+			"jid":      p.JID.String(),
+			"is_admin": p.IsAdmin,
+		})
+	}
+
+	return map[string]any{
+		"jid":          info.JID.String(),
+		"name":         info.Name,
+		"description":  info.Topic,
+		"topic_id":     info.TopicID,
+		"owner":        info.OwnerJID.String(),
+		"created_at":   info.GroupCreated.String(),
+		"participants":  participants,
+		"is_locked":    info.IsLocked,
+		"is_announce":  info.IsAnnounce,
+	}, nil
 }
 
 func (wac *WhatsAppClient) GetGroupInviteLink(groupIdentifier string) (bool, string, string) {
