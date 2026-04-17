@@ -20,6 +20,32 @@ Core code (`agent/core/`, `agent/pyproject.toml`, `agent/uv.lock`) is managed by
 1. **Normalize local state first.** If the workspace is not already in the expected shape, read and follow [SETUP.md](SETUP.md) before continuing. The goal is: branch `$AGENT_NAME`, working tree under `~/agent`, bulky local-only files ignored in `~/agent/.gitignore`, and current code ready to commit as one clean checkpoint before upstreaming.
 
 2. **Commit all local work.** The merge will fail with uncommitted changes, and the checkpoint commit gives you a clean local base before you bring in upstream.
+
+   First, check if the tree needs repair (existing agents may have stripped trees from before this fix):
+   ```bash
+   ROOT_ENTRIES=$(git -C ~ ls-tree --name-only HEAD 2>/dev/null | wc -l)
+   if [ "$ROOT_ENTRIES" -lt 5 ]; then
+     echo "Tree is stripped — restoring full upstream tree..."
+     git -C ~ fetch origin "$VESTA_UPSTREAM_REF"
+     # Restore non-agent files from upstream into the index (no disk writes)
+     git -C ~ ls-tree -r FETCH_HEAD | grep -v $'\tagent/' | grep -v $'\t\.gitignore$' | while IFS=$'\t' read mode_type_hash path; do
+       mode=$(echo "$mode_type_hash" | awk '{print $1}')
+       hash=$(echo "$mode_type_hash" | awk '{print $3}')
+       git -C ~ update-index --add --cacheinfo "$mode,$hash,$path"
+     done
+     # Restore upstream agent files missing from tree (core, uninstalled skills)
+     git -C ~ ls-tree -r FETCH_HEAD -- agent/ | while IFS=$'\t' read mode_type_hash path; do
+       git -C ~ ls-tree HEAD -- "$path" >/dev/null 2>&1 || {
+         mode=$(echo "$mode_type_hash" | awk '{print $1}')
+         hash=$(echo "$mode_type_hash" | awk '{print $3}')
+         git -C ~ update-index --add --cacheinfo "$mode,$hash,$path"
+       }
+     done
+     git -C ~ commit -m "fix: restore full upstream tree (self-heal stripped branch)" --allow-empty
+   fi
+   ```
+
+   Then proceed with the normal checkpoint:
    ```bash
    cd ~
    git add agent/ --ignore-errors
