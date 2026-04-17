@@ -30,13 +30,14 @@ RUN for d in agent/skills/*/; do \
       grep -qx "$name" agent/skills/default-skills.txt || rm -rf "$d"; \
     done && rm -f agent/skills/default-skills.txt
 
-# Git repo with sparse checkout — only tracks installed skills so upstream merges
-# don't pull in uninstalled ones. Must run AFTER skill pruning above.
+# Git repo with restrictive sparse checkout — only agent/ is tracked, with
+# bind-mounted paths and all skills excluded by default. Each installed skill
+# is explicitly added so upstream merges only touch files the agent uses.
+# Must run AFTER skill pruning above.
 RUN git init && git remote add origin https://github.com/elyxlz/vesta.git && \
-    git sparse-checkout init --cone && \
-    AGENT_DIRS=$(find agent -mindepth 1 -maxdepth 1 -type d ! -name skills ! -name .venv | tr '\n' ' ') && \
-    SKILL_DIRS=$(find agent/skills -mindepth 1 -maxdepth 1 -type d | tr '\n' ' ') && \
-    git sparse-checkout set $AGENT_DIRS $SKILL_DIRS && \
+    git sparse-checkout init && \
+    printf 'agent/\n!agent/core/\n!agent/pyproject.toml\n!agent/uv.lock\n!agent/skills/\n' > .git/info/sparse-checkout && \
+    find agent/skills -mindepth 1 -maxdepth 1 -type d | sort >> .git/info/sparse-checkout && \
     printf '/*\n!.gitignore\n!/agent/\n' > .gitignore
 
 # SDK discovers skills from .claude/skills/ relative to cwd (shared with Claude credentials under ~/.claude)
