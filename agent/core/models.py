@@ -2,6 +2,7 @@ import asyncio
 import collections
 import dataclasses as dc
 import datetime as dt
+import pathlib as pl
 import time
 
 import pydantic as pyd
@@ -38,6 +39,7 @@ class State:
     interrupt_event: asyncio.Event | None = None
     event_bus: EventBus = dc.field(default_factory=EventBus)
     stderr_buffer: collections.deque[str] = dc.field(default_factory=lambda: collections.deque(maxlen=50))
+    pending_migration_flags: collections.deque[pl.Path] = dc.field(default_factory=collections.deque)
 
     # SDK activity tracking for hang detection
     last_sdk_activity: float = dc.field(default_factory=time.monotonic)
