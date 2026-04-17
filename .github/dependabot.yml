@@ -17,7 +17,15 @@ updates:
         patterns: ["*"]
 
   - package-ecosystem: cargo
-    directory: /app/src-tauri
+    directory: /vestad
+    schedule:
+      interval: weekly
+    groups:
+      vestad-deps:
+        patterns: ["*"]
+
+  - package-ecosystem: cargo
+    directory: /apps/desktop/src-tauri
     schedule:
       interval: weekly
     groups:
@@ -25,7 +33,7 @@ updates:
         patterns: ["*"]
 
   - package-ecosystem: npm
-    directory: /app
+    directory: /apps
     schedule:
       interval: weekly
     groups:

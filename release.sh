@@ -21,8 +21,8 @@ fi
 
 git pull --ff-only origin master
 
-# Compute new version
-CURRENT=$(grep '^version = ' agent/pyproject.toml | cut -d'"' -f2)
+# Compute new version (vestad/Cargo.toml is the source of truth)
+CURRENT=$(grep -A2 '^\[package\]' vestad/Cargo.toml | grep '^version = ' | cut -d'"' -f2)
 IFS='.' read -r major minor patch_v <<< "$CURRENT"
 
 case "$BUMP" in
@@ -35,14 +35,18 @@ echo "Bumping ${CURRENT} -> ${NEW}"
 
 # Bump version in all sources
 sed -i "s|^version = \"${CURRENT}\"|version = \"${NEW}\"|" agent/pyproject.toml
-sed -i "s|^version = \"${CURRENT}\"|version = \"${NEW}\"|" Cargo.toml
-sed -i "0,/^version = \"${CURRENT}\"/s|^version = \"${CURRENT}\"|version = \"${NEW}\"|" app/src-tauri/Cargo.toml
-sed -i "s|\"version\": \"${CURRENT}\"|\"version\": \"${NEW}\"|" app/src-tauri/tauri.conf.json
-sed -i "s|\"version\": \"${CURRENT}\"|\"version\": \"${NEW}\"|" app/package.json
+sed -i "0,/^version = \"${CURRENT}\"/s|^version = \"${CURRENT}\"|version = \"${NEW}\"|" vestad/Cargo.toml
+sed -i "0,/^version = \"${CURRENT}\"/s|^version = \"${CURRENT}\"|version = \"${NEW}\"|" vestad/tests-integration/Cargo.toml
+sed -i "0,/^version = \"${CURRENT}\"/s|^version = \"${CURRENT}\"|version = \"${NEW}\"|" cli/Cargo.toml
+sed -i "0,/^version = \"${CURRENT}\"/s|^version = \"${CURRENT}\"|version = \"${NEW}\"|" apps/desktop/src-tauri/Cargo.toml
+sed -i "s|\"version\": \"${CURRENT}\"|\"version\": \"${NEW}\"|" apps/desktop/src-tauri/tauri.conf.json
+sed -i "s|\"version\": \"${CURRENT}\"|\"version\": \"${NEW}\"|" apps/web/package.json
+sed -i "s|\"version\": \"${CURRENT}\"|\"version\": \"${NEW}\"|" apps/desktop/package.json
 
 # Update lockfiles
-cargo check --quiet
-(cd app/src-tauri && cargo check --quiet)
+(cd vestad && cargo check --quiet)
+(cd cli && cargo check --quiet)
+(cd apps/desktop/src-tauri && cargo check --quiet)
 (cd agent && uv lock --quiet)
 
 # Commit, push, create release

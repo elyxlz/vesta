@@ -37,10 +37,8 @@ jobs:
             cli:
               - 'cli/**'
               - 'vestad/**'
-              - 'Cargo.toml'
-              - 'Cargo.lock'
             app:
-              - 'app/**'
+              - 'apps/**'
             agent:
               - 'agent/**'
 
@@ -53,19 +51,23 @@ jobs:
       - name: Check version sync across sources
         run: |
           AGENT=$(grep '^version = ' agent/pyproject.toml | cut -d'"' -f2)
-          CLI=$(grep '^version = ' Cargo.toml | head -1 | cut -d'"' -f2)
-          TAURI_CONF=$(python3 -c "import json; print(json.load(open('app/src-tauri/tauri.conf.json'))['version'])")
-          TAURI_CARGO=$(grep '^version = ' app/src-tauri/Cargo.toml | head -1 | cut -d'"' -f2)
-          APP=$(python3 -c "import json; print(json.load(open('app/package.json'))['version'])")
+          VESTAD=$(grep '^version = ' vestad/Cargo.toml | head -1 | cut -d'"' -f2)
+          CLI=$(grep '^version = ' cli/Cargo.toml | head -1 | cut -d'"' -f2)
+          TESTS=$(grep '^version = ' vestad/tests-integration/Cargo.toml | head -1 | cut -d'"' -f2)
+          TAURI_CONF=$(python3 -c "import json; print(json.load(open('apps/desktop/src-tauri/tauri.conf.json'))['version'])")
+          TAURI_CARGO=$(grep '^version = ' apps/desktop/src-tauri/Cargo.toml | head -1 | cut -d'"' -f2)
+          APP=$(python3 -c "import json; print(json.load(open('apps/web/package.json'))['version'])")
 
           echo "agent:       $AGENT"
+          echo "vestad:      $VESTAD"
           echo "cli:         $CLI"
+          echo "tests:       $TESTS"
           echo "tauri.conf:  $TAURI_CONF"
           echo "tauri cargo: $TAURI_CARGO"
           echo "app:         $APP"
 
           FAIL=0
-          for name_val in "cli:$CLI" "tauri.conf:$TAURI_CONF" "tauri-cargo:$TAURI_CARGO" "app:$APP"; do
+          for name_val in "vestad:$VESTAD" "cli:$CLI" "tests:$TESTS" "tauri.conf:$TAURI_CONF" "tauri-cargo:$TAURI_CARGO" "app:$APP"; do
             name="${name_val%%:*}"
             val="${name_val#*:}"
             if [ "$AGENT" != "$val" ]; then
@@ -123,24 +125,24 @@ jobs:
           node-version: 22
 
       - name: Install deps
-        working-directory: app
+        working-directory: apps
         run: npm ci
 
       - name: Lint
-        working-directory: app
-        run: npm run lint
+        working-directory: apps
+        run: npm -w @vesta/web run lint
 
       - name: Format check
-        working-directory: app
-        run: npm run format -- --check
+        working-directory: apps
+        run: npm -w @vesta/web run format -- --check
 
       - name: Type check
-        working-directory: app
-        run: npm run check
+        working-directory: apps
+        run: npm -w @vesta/web run check
 
       - name: Run tests
-        working-directory: app
-        run: npm run test
+        working-directory: apps
+        run: npm -w @vesta/web run test
 
   # ── Integration tests (real vestad + real client, Docker required) ─────
   test-integration:
@@ -167,9 +169,11 @@ jobs:
         run: docker pull ghcr.io/elyxlz/vesta:latest
 
       - name: Build vestad
-        run: cargo build -p vestad
+        working-directory: vestad
+        run: cargo build
 
       - name: Run integration tests (excludes live tests)
+        working-directory: vestad
         run: cargo test -p vesta-tests --test server --test multi_user --test oauth --test migrations -- --test-threads=8
 
   # ── Check vesta (clippy + tests, PRs only) ────────────────────────────
@@ -200,26 +204,33 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: .
+          workspaces: |
+            cli
+            vestad
           key: ${{ matrix.target }}
 
-      - name: Clippy
-        run: cargo clippy --workspace --exclude vesta-tests --exclude vestad --target ${{ matrix.target }} -- -D warnings
+      - name: Clippy (cli)
+        working-directory: cli
+        run: cargo clippy --target ${{ matrix.target }} -- -D warnings
 
       - name: Clippy (vestad, Linux only)
         if: matrix.run-vestad
+        working-directory: vestad
         run: cargo clippy -p vestad --target ${{ matrix.target }} -- -D warnings
 
-      - name: Test
+      - name: Test (cli)
         if: matrix.run-tests
-        run: cargo test --workspace --exclude vesta-tests --exclude vestad --target ${{ matrix.target }}
+        working-directory: cli
+        run: cargo test --target ${{ matrix.target }}
 
       - name: Test (vestad, Linux only)
         if: matrix.run-vestad
+        working-directory: vestad
         run: cargo test -p vestad --target ${{ matrix.target }}
 
       - name: Docker integration tests (vestad, Linux only)
         if: matrix.run-vestad
+        working-directory: vestad
         run: |
           docker pull ghcr.io/elyxlz/vesta:latest
           cargo test -p vestad --target ${{ matrix.target }} -- --ignored
@@ -257,7 +268,9 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: .
+          workspaces: |
+            cli
+            vestad
           key: ${{ matrix.target }}
 
       - name: Install Linux cross-compile deps
@@ -265,38 +278,38 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu
-          mkdir -p .cargo
-          echo '[target.aarch64-unknown-linux-gnu]' >> .cargo/config.toml
-          echo 'linker = "aarch64-linux-gnu-gcc"' >> .cargo/config.toml
+          mkdir -p cli/.cargo
+          echo '[target.aarch64-unknown-linux-gnu]' >> cli/.cargo/config.toml
+          echo 'linker = "aarch64-linux-gnu-gcc"' >> cli/.cargo/config.toml
 
-      - name: Clippy
+      - name: Clippy (cli)
         if: "!matrix.cross"
-        working-directory: .
-        run: cargo clippy --workspace --exclude vesta-tests --exclude vestad --target ${{ matrix.target }} -- -D warnings
+        working-directory: cli
+        run: cargo clippy --target ${{ matrix.target }} -- -D warnings
 
       - name: Clippy (vestad, Linux only)
         if: "!matrix.cross && runner.os == 'Linux'"
-        working-directory: .
+        working-directory: vestad
         run: cargo clippy -p vestad --target ${{ matrix.target }} -- -D warnings
 
-      - name: Test
+      - name: Test (cli)
         if: "!matrix.cross"
-        working-directory: .
-        run: cargo test --workspace --exclude vesta-tests --exclude vestad --target ${{ matrix.target }}
+        working-directory: cli
+        run: cargo test --target ${{ matrix.target }}
 
       - name: Test (vestad, Linux only)
         if: "!matrix.cross && runner.os == 'Linux'"
-        working-directory: .
+        working-directory: vestad
         run: cargo test -p vestad --target ${{ matrix.target }}
 
       - name: Build vesta
-        working-directory: .
-        run: cargo build --release -p vesta --target ${{ matrix.target }}
+        working-directory: cli
+        run: cargo build --release --target ${{ matrix.target }}
 
       - name: Package
         run: |
           mkdir staging
-          cp target/${{ matrix.target }}/release/vesta staging/
+          cp cli/target/${{ matrix.target }}/release/vesta staging/
           tar -czf ${{ matrix.artifact }}.tar.gz -C staging .
 
       - uses: actions/upload-artifact@v7
@@ -331,7 +344,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: .
+          workspaces: vestad
           key: vestad-${{ matrix.target }}
 
       - name: Install musl toolchain
@@ -345,7 +358,7 @@ jobs:
         run: cargo install cross --locked
 
       - name: Build vestad
-        working-directory: .
+        working-directory: vestad
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -360,7 +373,7 @@ jobs:
       - name: Package
         run: |
           mkdir staging
-          cp target/${{ matrix.target }}/release/vestad staging/
+          cp vestad/target/${{ matrix.target }}/release/vestad staging/
           tar -czf ${{ matrix.artifact }}.tar.gz -C staging .
 
       - uses: actions/upload-artifact@v7
@@ -405,12 +418,12 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: .
+          workspaces: cli
           key: x86_64-pc-windows-msvc
 
       - name: Clippy
-        working-directory: .
-        run: cargo clippy -p vesta --target x86_64-pc-windows-msvc -- -D warnings
+        working-directory: cli
+        run: cargo clippy --target x86_64-pc-windows-msvc -- -D warnings
 
   # ── Build Windows CLI (native MSVC) ──────────────────────────────────
   build-windows:
@@ -432,17 +445,17 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: .
+          workspaces: cli
           key: x86_64-pc-windows-msvc
 
       - name: Build vesta
-        working-directory: .
-        run: cargo build --release -p vesta --target x86_64-pc-windows-msvc
+        working-directory: cli
+        run: cargo build --release --target x86_64-pc-windows-msvc
 
       - name: Smoke test
         shell: bash
         run: |
-          CLI="target/x86_64-pc-windows-msvc/release/vesta.exe"
+          CLI="cli/target/x86_64-pc-windows-msvc/release/vesta.exe"
           "$CLI" --version
           "$CLI" --help
 
@@ -450,7 +463,7 @@ jobs:
         shell: bash
         run: |
           mkdir vesta-windows
-          cp target/x86_64-pc-windows-msvc/release/vesta.exe vesta-windows/
+          cp cli/target/x86_64-pc-windows-msvc/release/vesta.exe vesta-windows/
           7z a vesta-x86_64-pc-windows-msvc.zip vesta-windows/
 
       - uses: actions/upload-artifact@v7
@@ -461,7 +474,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: windows-cli-exe
-          path: target/x86_64-pc-windows-msvc/release/vesta.exe
+          path: cli/target/x86_64-pc-windows-msvc/release/vesta.exe
 
   # ── Build Tauri app (macOS) ───────────────────────────────────────────
   build-tauri-macos:
@@ -493,7 +506,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: app/src-tauri
+          workspaces: apps/desktop/src-tauri
           key: ${{ matrix.target }}
 
       - name: Setup Node
@@ -502,7 +515,7 @@ jobs:
           node-version: 22
 
       - name: Install frontend deps
-        working-directory: app
+        working-directory: apps
         run: npm install
 
       - name: Build Tauri app
@@ -512,7 +525,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          projectPath: app
+          projectPath: apps/desktop
           tauriScript: npx tauri
           args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
 
@@ -520,7 +533,7 @@ jobs:
         if: github.event_name != 'pull_request'
         run: |
           mkdir -p tauri-out
-          find app/src-tauri/target/${{ matrix.target }}/release/bundle \
+          find apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle \
             -type f \( -name '*.dmg' -o -name '*.tar.gz' -o -name '*.sig' \) \
             -exec cp {} tauri-out/ \;
           ARCH_PREFIX=$(echo "${{ matrix.target }}" | cut -d'-' -f1)
@@ -565,7 +578,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: app/src-tauri
+          workspaces: apps/desktop/src-tauri
           key: ${{ matrix.target }}
 
       - name: Setup Node
@@ -589,12 +602,12 @@ jobs:
       - name: Install vestad into resources
         run: |
           tar -xzf /tmp/vestad-artifact/vestad-*.tar.gz -C /tmp/vestad-artifact/
-          mkdir -p app/src-tauri/resources
-          cp /tmp/vestad-artifact/vestad app/src-tauri/resources/vestad
-          chmod +x app/src-tauri/resources/vestad
+          mkdir -p apps/desktop/src-tauri/resources
+          cp /tmp/vestad-artifact/vestad apps/desktop/src-tauri/resources/vestad
+          chmod +x apps/desktop/src-tauri/resources/vestad
 
       - name: Install frontend deps
-        working-directory: app
+        working-directory: apps
         run: npm install
 
       - name: Build Tauri app
@@ -604,7 +617,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          projectPath: app
+          projectPath: apps/desktop
           tauriScript: npx tauri
           args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
 
@@ -612,7 +625,7 @@ jobs:
         if: github.event_name != 'pull_request'
         run: |
           mkdir -p tauri-out
-          find app/src-tauri/target/${{ matrix.target }}/release/bundle \
+          find apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle \
             -type f \( -name '*.deb' -o -name '*.rpm' -o -name '*.tar.gz' -o -name '*.sig' \) \
             -exec cp {} tauri-out/ \;
           [ "$(ls -A tauri-out)" ] || { echo "No artifacts collected"; exit 1; }
@@ -640,7 +653,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: app/src-tauri
+          workspaces: apps/desktop/src-tauri
           key: x86_64-pc-windows-msvc
 
       - name: Setup Node
@@ -668,7 +681,7 @@ jobs:
           rm /tmp/nsis.zip
 
       - name: Install frontend deps
-        working-directory: app
+        working-directory: apps
         run: npm install
 
       - name: Build Tauri app
@@ -678,7 +691,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          projectPath: app
+          projectPath: apps/desktop
           tauriScript: npx tauri
           args: --target x86_64-pc-windows-msvc --bundles nsis
 
@@ -687,8 +700,8 @@ jobs:
         shell: bash
         run: |
           mkdir -p tauri-out
-          cp app/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe tauri-out/
-          find app/src-tauri/target/x86_64-pc-windows-msvc/release/bundle -name '*.sig' -exec cp {} tauri-out/ \;
+          cp apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe tauri-out/
+          find apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle -name '*.sig' -exec cp {} tauri-out/ \;
 
       - uses: actions/upload-artifact@v7
         if: github.event_name != 'pull_request'
@@ -715,7 +728,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: app/src-tauri
+          workspaces: apps/desktop/src-tauri
           key: android
 
       - name: Setup Java
@@ -736,15 +749,15 @@ jobs:
           node-version: 22
 
       - name: Install frontend deps
-        working-directory: app
+        working-directory: apps
         run: npm install
 
       - name: Initialize Android project
-        working-directory: app
+        working-directory: apps/desktop
         run: npx tauri android init
 
       - name: Build Android APK
-        working-directory: app
+        working-directory: apps/desktop
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
         run: npx tauri android build --apk
@@ -753,8 +766,8 @@ jobs:
         if: github.event_name != 'pull_request'
         run: |
           mkdir -p tauri-out
-          find app/src-tauri/gen/android -name '*.apk' -exec cp {} tauri-out/ \;
-          VERSION=$(python3 -c "import json; print(json.load(open('app/src-tauri/tauri.conf.json'))['version'])")
+          find apps/desktop/src-tauri/gen/android -name '*.apk' -exec cp {} tauri-out/ \;
+          VERSION=$(python3 -c "import json; print(json.load(open('apps/desktop/src-tauri/tauri.conf.json'))['version'])")
           for f in tauri-out/*.apk; do
             mv "$f" "tauri-out/Vesta_${VERSION}.apk"
           done
@@ -797,7 +810,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         if: env.SKIP_IOS != 'true'
         with:
-          workspaces: app/src-tauri
+          workspaces: apps/desktop/src-tauri
           key: ios
 
       - name: Setup Node
@@ -833,25 +846,25 @@ jobs:
 
       - name: Install frontend deps
         if: env.SKIP_IOS != 'true'
-        working-directory: app
+        working-directory: apps
         run: npm install
 
       - name: Initialize iOS project
         if: env.SKIP_IOS != 'true'
-        working-directory: app
+        working-directory: apps/desktop
         run: npx tauri ios init
 
       - name: Build iOS
         if: env.SKIP_IOS != 'true'
-        working-directory: app
+        working-directory: apps/desktop
         run: npx tauri ios build --export-method app-store-connect
 
       - name: Collect artifacts
         if: env.SKIP_IOS != 'true'
         run: |
           mkdir -p tauri-out
-          find app/src-tauri/gen/apple -name '*.ipa' -exec cp {} tauri-out/ \;
-          VERSION=$(python3 -c "import json; print(json.load(open('app/src-tauri/tauri.conf.json'))['version'])")
+          find apps/desktop/src-tauri/gen/apple -name '*.ipa' -exec cp {} tauri-out/ \;
+          VERSION=$(python3 -c "import json; print(json.load(open('apps/desktop/src-tauri/tauri.conf.json'))['version'])")
           for f in tauri-out/*.ipa; do
             mv "$f" "tauri-out/Vesta_${VERSION}.ipa"
           done

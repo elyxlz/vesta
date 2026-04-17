@@ -1,0 +1,25 @@
+# Context is the repo root; the image only needs agent/ + vestad/Dockerfile.
+
+# Anything outside agent/ that's large or irrelevant to the image
+apps/
+cli/
+node_modules/
+target/
+.git/
+.github/
+.claude/
+
+# vestad/ — keep Dockerfile; drop bulky/unused things
+vestad/target/
+vestad/tests-integration/
+
+# Python junk inside agent/
+agent/.venv/
+agent/.ruff_cache/
+agent/.pytest_cache/
+agent/tests/
+agent/**/__pycache__/
+agent/**/*.pyc
+agent/**/*.egg-info/
+agent/skills/generate-index.py
+agent/skills/index.json
