@@ -24,18 +24,20 @@ COPY agent/ ./agent/
 # Non-default skills are removed from the image and excluded from sparse checkout,
 # so upstream merges won't pull them in. The skills-registry install command adds
 # skills to sparse checkout on demand, opting them into future upstream merges.
+# Remove non-default skills from the image (they'll be installed via sparse checkout on demand)
+RUN for d in agent/skills/*/; do \
+      name="$(basename "$d")"; \
+      grep -qx "$name" agent/skills/default-skills.txt || rm -rf "$d"; \
+    done && rm -f agent/skills/default-skills.txt
+
+# Git repo with sparse checkout — only tracks installed skills so upstream merges
+# don't pull in uninstalled ones. Must run AFTER skill pruning above.
 RUN git init && git remote add origin https://github.com/elyxlz/vesta.git && \
     git sparse-checkout init --cone && \
     AGENT_DIRS=$(find agent -mindepth 1 -maxdepth 1 -type d ! -name skills ! -name .venv | tr '\n' ' ') && \
     SKILL_DIRS=$(find agent/skills -mindepth 1 -maxdepth 1 -type d | tr '\n' ' ') && \
     git sparse-checkout set $AGENT_DIRS $SKILL_DIRS && \
     printf '/*\n!.gitignore\n!/agent/\n' > .gitignore
-
-# Remove non-default skills from the image (they'll be installed via sparse checkout on demand)
-RUN for d in agent/skills/*/; do \
-      name="$(basename "$d")"; \
-      grep -qx "$name" agent/skills/default-skills.txt || rm -rf "$d"; \
-    done && rm -f agent/skills/default-skills.txt
 
 # SDK discovers skills from .claude/skills/ relative to cwd (shared with Claude credentials under ~/.claude)
 RUN mkdir -p .claude && ln -s ../agent/skills .claude/skills && \
