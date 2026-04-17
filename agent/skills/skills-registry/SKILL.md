@@ -38,7 +38,7 @@ ls ~/agent/skills/
 
 ## Sparse checkout layout
 
-The agent's git working tree uses a **restrictive sparse checkout** — only `agent/` is tracked, with bind-mounted paths excluded and all skills excluded by default. Each installed skill is added as an explicit inclusion:
+The agent's git working tree uses a **restrictive sparse checkout**: only `agent/` is tracked, with bind-mounted paths excluded and all skills excluded by default. Each installed skill is added as an explicit inclusion:
 
 ```
 agent/
