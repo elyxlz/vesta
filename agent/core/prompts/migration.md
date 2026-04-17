@@ -7,6 +7,14 @@ grep -rl '/root/vesta\|~/vesta\|vesta/skills\|vesta/notifications' ~/agent/promp
 
 If any files are found, replace `/root/vesta/` with `/root/agent/`, `~/vesta/` with `~/agent/`, and old source path references like `vesta/config.py` with `core/config.py`. Read each file to understand context before replacing.
 
+Remove agent prompts that now live in core (the core versions are always up to date via bind mount):
+
+```bash
+for f in first_start_greeting.md first_start_setup.md nightly_dream.md notification_suffix.md proactive_check.md; do
+  rm -f ~/agent/prompts/$f
+done
+```
+
 Then verify your workspace layout:
 
 ```bash
