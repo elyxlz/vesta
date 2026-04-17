@@ -25,7 +25,7 @@ Core code (`agent/core/`, `agent/pyproject.toml`, `agent/uv.lock`) is managed by
    ```bash
    ROOT_ENTRIES=$(git -C ~ ls-tree --name-only HEAD 2>/dev/null | wc -l)
    if [ "$ROOT_ENTRIES" -lt 5 ]; then
-     echo "Tree is stripped — restoring full upstream tree..."
+     echo "Tree is stripped - restoring full upstream tree..."
      git -C ~ fetch origin "$VESTA_UPSTREAM_REF"
      # Restore non-agent files from upstream into the index (no disk writes)
      git -C ~ ls-tree -r FETCH_HEAD | grep -v $'\tagent/' | grep -v $'\t\.gitignore$' | while IFS=$'\t' read mode_type_hash path; do
