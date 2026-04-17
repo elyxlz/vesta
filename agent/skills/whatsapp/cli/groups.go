@@ -205,7 +205,7 @@ func (wac *WhatsAppClient) GetGroupInfo(groupIdentifier string) (map[string]any,
 		"topic_id":     info.TopicID,
 		"owner":        info.OwnerJID.String(),
 		"created_at":   info.GroupCreated.String(),
-		"participants":  participants,
+		"participants": participants,
 		"is_locked":    info.IsLocked,
 		"is_announce":  info.IsAnnounce,
 	}, nil
