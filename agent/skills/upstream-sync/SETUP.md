@@ -169,7 +169,24 @@ If it exists but is not checked out:
 git -C ~ checkout "$AGENT_NAME"
 ```
 
-## 6. Stage only meaningful local state
+## 6. Populate index with full upstream tree
+
+Before staging local changes, populate the index with the full upstream tree. This ensures the first commit contains the complete upstream file set, so subsequent `git diff` against upstream only shows real differences in `agent/`.
+
+```bash
+# Fetch upstream ref
+git -C ~ fetch origin "$VESTA_UPSTREAM_REF"
+
+# Populate index with the full upstream tree (does NOT write to disk)
+git -C ~ read-tree FETCH_HEAD
+
+# Reapply sparse checkout to set skip-worktree on non-agent files
+git -C ~ sparse-checkout reapply
+```
+
+Non-agent files stay in the index (and therefore in the commit tree) but are not checked out to disk. Sparse checkout manages that transparently.
+
+## 7. Stage only meaningful local state
 
 ```bash
 git -C ~ add agent/ --ignore-errors
@@ -186,7 +203,14 @@ git -C ~ status
 
 Do not continue until `git status` shows only meaningful code, prompt, skill, config, or local-state changes you actually want represented on your branch.
 
-## 7. Commit your current state
+After staging, run the safety step to ensure no non-agent files are accidentally staged for deletion:
+
+```bash
+# Safety: ensure no non-agent files are accidentally staged for deletion
+git -C ~ diff --cached --name-only --diff-filter=D | grep -v '^agent/' | grep -v '^\.gitignore$' | xargs -r git -C ~ reset HEAD -- 2>/dev/null || true
+```
+
+## 8. Commit your current state
 
 If there are staged changes, commit them:
 
@@ -196,9 +220,9 @@ git -C ~ commit -m "chore: checkpoint local state before $VESTA_UPSTREAM_REF ups
 
 Use that exact message format for the local checkpoint commit. This commit is your clean local checkpoint before upstream sync. If there is nothing to commit, continue.
 
-## 8. Merge upstream
+## 9. Merge upstream
 
-Fetch upstream:
+Fetch upstream (already fetched in step 6, but re-fetch if time has passed):
 
 ```bash
 git -C ~ fetch origin "$VESTA_UPSTREAM_REF"
@@ -209,6 +233,8 @@ Merge it:
 ```bash
 git -C ~ merge FETCH_HEAD --no-edit
 ```
+
+If you populated the index with `read-tree` in step 6, the merge should cleanly skip all non-agent files since they already match upstream. Only actual `agent/` changes will appear as conflicts.
 
 If there are conflicts, resolve them with this rule:
 
@@ -234,7 +260,7 @@ git -C ~ add <resolved-files>
 git -C ~ commit --no-edit
 ```
 
-## 9. Verify the result
+## 10. Verify the result
 
 Run:
 
@@ -242,7 +268,7 @@ Run:
 git -C ~ rev-parse --show-toplevel
 git -C ~ branch --show-current
 git -C ~ status
-git -C ~ diff FETCH_HEAD..$AGENT_NAME
+git -C ~ diff FETCH_HEAD..$AGENT_NAME -- agent/
 ```
 
 You are done only if:

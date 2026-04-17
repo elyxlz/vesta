@@ -11,6 +11,7 @@ env/
 *.egg-info/
 dist/
 build/
+node_modules/
 
 # Test / coverage / linters
 .coverage
@@ -19,6 +20,44 @@ htmlcov/
 .ruff_cache/
 .tox/
 
+# Runtime data (local research, session state, secrets)
+data/
+
 # Runtime memory (created at startup, not tracked)
 memory/conversations/
 memory/dreamer/
+
+# Dreamer state (runtime)
+dreamer/
+
+# Notifications (runtime)
+notifications/
+
+# Logs
+logs/
+
+# Model files
+*.bin
+*.onnx
+*.pt
+*.gguf
+
+# Databases
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+
+# Media
+*.mp3
+*.mp4
+*.wav
+*.webm
+
+# Archives
+*.zip
+*.tar.gz
+
+# Build artifacts
+skills/*/cli/build/
+skills/dashboard/app/core

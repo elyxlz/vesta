@@ -9,7 +9,7 @@ Bring your local workspace into order, checkpoint your current state on your bra
 
 ## Ownership
 
-At `~` (repo root is `$HOME`), the repo tracks `agent/` and `.gitignore`. Repo-root `.claude/` stays local and does not show up as untracked noise. Use `~/agent/.gitignore` for large or local-only files you discover during setup so `git status` ends up commit-ready.
+At `~` (repo root is `$HOME`), the git tree contains the full upstream repo to keep diffs clean, but sparse checkout limits what's on disk to `agent/` (minus bind-mounted paths) and `.gitignore`. Repo-root `.claude/` stays local and does not show up as untracked noise. Use `~/agent/.gitignore` for large or local-only files you discover during setup so `git status` ends up commit-ready.
 
 You own `agent/skills/`, `agent/prompts/`, `agent/MEMORY.md`, `agent/.gitignore`, and repo-root `.claude/` (symlink / SDK layout) on disk; git commits focus on `agent/`.
 
@@ -24,6 +24,8 @@ Core code (`agent/core/`, `agent/pyproject.toml`, `agent/uv.lock`) is managed by
    cd ~
    git add agent/ --ignore-errors
    git reset HEAD -- '*.bin' '*.onnx' '*.pt' '*.db' '*.sqlite' '*.mp3' '*.mp4' '*.wav' '*.zip' '*.tar.gz' '**/node_modules' '**/dist' '**/.venv' '**/__pycache__'
+   # Safety: ensure no non-agent files are accidentally staged for deletion
+   git diff --cached --name-only --diff-filter=D | grep -v '^agent/' | grep -v '^\.gitignore$' | xargs -r git reset HEAD -- 2>/dev/null || true
    git status
    ```
    Add untracked large files to `~/agent/.gitignore`. If there are staged changes, commit them with this exact message format:
@@ -78,4 +80,4 @@ v0.1.132 (upstream ref)
   * merge upstream
 ```
 
-View local customizations vs upstream: `git diff FETCH_HEAD..$AGENT_NAME` (after a fetch)
+View local customizations vs upstream: `git diff FETCH_HEAD..$AGENT_NAME -- agent/` (after a fetch)
