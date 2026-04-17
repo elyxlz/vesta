@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SKILL_NAME="${1:?Usage: skills-uninstall <skill-name>}"
+SKILLS_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+DEST="$SKILLS_DIR/$SKILL_NAME"
+
+if [ ! -d "$DEST" ]; then
+    echo "Skill '$SKILL_NAME' is not installed."
+    exit 0
+fi
+
+echo "Uninstalling '$SKILL_NAME'..."
+
+REPO_ROOT=$(git -C ~ rev-parse --show-toplevel)
+
+# Remove from sparse checkout so the skill dir disappears from the working tree.
+# Use sparse-checkout set with the filtered list rather than sparse-checkout remove,
+# since git versions older than 2.35 don't have a reliable `sparse-checkout remove`.
+SPARSE_PATH="agent/skills/$SKILL_NAME"
+NEW_LIST=$(git -C "$REPO_ROOT" sparse-checkout list | grep -vxF "$SPARSE_PATH" || true)
+if [ -z "$NEW_LIST" ]; then
+    echo "Error: removing '$SKILL_NAME' would leave sparse checkout empty. Aborting."
+    exit 1
+fi
+git -C "$REPO_ROOT" sparse-checkout set $NEW_LIST
+
+echo "Uninstalled '$SKILL_NAME'. Restart Vesta to deactivate it."

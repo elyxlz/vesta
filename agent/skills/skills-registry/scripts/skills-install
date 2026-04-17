@@ -11,7 +11,8 @@ if [ -d "$DEST" ]; then
 fi
 
 # Add the skill to sparse checkout so it appears from the git repo.
-# This means upstream merges will update it, and local changes are tracked.
+# Sparse checkout uses a restrictive base (agent/ only, no skills/ wildcard),
+# so each skill must be explicitly added here.
 echo "Installing '$SKILL_NAME' via sparse checkout..."
 
 REPO_ROOT=$(git -C ~ rev-parse --show-toplevel)

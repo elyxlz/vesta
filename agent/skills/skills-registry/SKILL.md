@@ -22,11 +22,36 @@ Vesta's skills come from a registry on GitHub (`agent/skills/`). You can search 
 
 After installing, restart yourself with the `restart_vesta` tool to load the new skill into context.
 
+## Uninstall a skill
+
+```bash
+~/agent/skills/skills-registry/scripts/skills-uninstall <name>
+```
+
+This removes the skill from git sparse checkout so it no longer appears in the working tree or upstream diffs.
+
 ## Check what's installed
 
 ```bash
 ls ~/agent/skills/
 ```
+
+## Sparse checkout layout
+
+The agent's git working tree uses a **restrictive sparse checkout** — only `agent/` is tracked, with bind-mounted paths excluded and all skills excluded by default. Each installed skill is added as an explicit inclusion:
+
+```
+agent/
+!agent/core/
+!agent/pyproject.toml
+!agent/uv.lock
+!agent/skills/*/
+agent/skills/tasks/
+agent/skills/whatsapp/
+... (one line per installed skill)
+```
+
+This keeps upstream diffs clean: only files the agent actually uses appear in `git diff FETCH_HEAD..HEAD`. The vestad daemon sets up this base config when creating a new agent container; `skills-install` and `skills-uninstall` manage individual skill entries.
 
 ## Notes
 
