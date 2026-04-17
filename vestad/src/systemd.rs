@@ -151,6 +151,22 @@ pub fn exec_journal(lines: usize, follow: bool) -> ! {
     process::exit(1);
 }
 
+/// Spawn `journalctl --user -u vestad -n LINES [-f]` with stdout piped.
+/// Tokio will SIGKILL the child when the returned handle is dropped, so a
+/// client disconnecting (e.g. Ctrl-C) tears the follow down.
+pub fn spawn_journal_stream(lines: usize, follow: bool) -> Result<tokio::process::Child, String> {
+    let mut cmd = tokio::process::Command::new("journalctl");
+    cmd.args(["--user", "-u", SERVICE_NAME, "-n", &lines.to_string(), "--no-hostname", "-o", "cat"]);
+    if follow {
+        cmd.arg("-f");
+    }
+    cmd.stdout(process::Stdio::piped())
+        .stderr(process::Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|e| format!("failed to spawn journalctl: {}", e))
+}
+
 pub fn main_pid() -> Option<u32> {
     let output = Command::new("systemctl")
         .args(["--user", "show", SERVICE_NAME, "--property=MainPID", "--value"])

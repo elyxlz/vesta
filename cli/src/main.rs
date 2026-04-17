@@ -193,6 +193,15 @@ enum Command {
 enum GatewayAction {
     /// Restart the remote vestad daemon
     Restart,
+    /// Stream vestad logs from the remote gateway
+    Logs {
+        /// Number of lines to show initially
+        #[arg(long, default_value = "500")]
+        tail: u64,
+        /// Follow the log (tail -f)
+        #[arg(long, short)]
+        follow: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -585,6 +594,10 @@ fn run(cli: Cli) {
                 let c = get_client(host_ref, token_ref);
                 c.restart_gateway().unwrap_or_else(|e| platform::die(&e));
                 eprintln!("vestad: restart initiated");
+            }
+            GatewayAction::Logs { tail, follow } => {
+                let c = get_client(host_ref, token_ref);
+                c.stream_gateway_logs(tail, follow).unwrap_or_else(|e| platform::die(&e));
             }
         },
 

@@ -249,6 +249,48 @@ async fn version(State(state): State<SharedState>) -> Json<serde_json::Value> {
     }))
 }
 
+#[derive(Deserialize)]
+struct GatewayLogsQuery {
+    tail: Option<u64>,
+    follow: Option<bool>,
+}
+
+async fn gateway_logs_handler(
+    Query(query): Query<GatewayLogsQuery>,
+) -> Result<Sse<impl futures_core::Stream<Item = Result<Event, std::io::Error>>>, (StatusCode, Json<serde_json::Value>)> {
+    let tail = query.tail.unwrap_or(DEFAULT_LOG_TAIL_LINES) as usize;
+    let follow = query.follow.unwrap_or(false);
+
+    let mut child = systemd::spawn_journal_stream(tail, follow)
+        .map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+
+    let stdout = child.stdout.take().ok_or_else(|| {
+        err_response(StatusCode::INTERNAL_SERVER_ERROR, "journalctl stdout not captured")
+    })?;
+
+    let stream = async_stream::stream! {
+        use tokio::io::AsyncBufReadExt;
+        let reader = tokio::io::BufReader::new(stdout);
+        let mut lines = reader.lines();
+        loop {
+            match lines.next_line().await {
+                Ok(Some(line)) => yield Ok(Event::default().data(line)),
+                Ok(None) => break,
+                Err(e) => {
+                    yield Ok(Event::default().data(format!("error: {}", e)));
+                    break;
+                }
+            }
+        }
+        // Reap the child so kill_on_drop's SIGKILL is clean if we got here
+        // via follow-mode exiting on its own.
+        let _ = child.wait().await;
+        yield Ok(Event::default().event("gateway_stopped").data(""));
+    };
+
+    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
+}
+
 async fn restart_gateway_handler() -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     if !systemd::is_active() {
         return Err(err_response(
@@ -1359,6 +1401,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/version", get(version))
         .route("/self-update", post(self_update_handler))
         .route("/gateway/restart", post(restart_gateway_handler))
+        .route("/gateway/logs", get(gateway_logs_handler))
         .route("/tunnel", get(tunnel_handler))
         .route("/agents", get(list_agents_handler))
         .route("/agents", post(create_agent_handler))
