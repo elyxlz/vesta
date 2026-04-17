@@ -309,7 +309,7 @@ async fn restart_gateway_handler() -> Result<Json<serde_json::Value>, (StatusCod
     Ok(Json(serde_json::json!({"ok": true, "restarting": true})))
 }
 
-async fn self_update_handler(
+async fn gateway_update_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     if state.dev_mode {
@@ -318,7 +318,7 @@ async fn self_update_handler(
     if state.updating.swap(true, std::sync::atomic::Ordering::SeqCst) {
         return Err(err_response(StatusCode::CONFLICT, "update already in progress"));
     }
-    tracing::info!("self-update requested via API");
+    tracing::info!("gateway update requested via API");
     let result = tokio::task::spawn_blocking(self_update::perform_update)
         .await
         .unwrap();
@@ -1395,7 +1395,7 @@ pub fn build_router(state: SharedState) -> Router {
 
     let vestad_protected = Router::new()
         .route("/version", get(version))
-        .route("/self-update", post(self_update_handler))
+        .route("/gateway/update", post(gateway_update_handler))
         .route("/gateway/restart", post(restart_gateway_handler))
         .route("/gateway/logs", get(gateway_logs_handler))
         .route("/tunnel", get(tunnel_handler))
@@ -1628,38 +1628,11 @@ fn spawn_auto_backup_task(state: SharedState) {
 
 fn spawn_update_check_task(state: SharedState) {
     tokio::spawn(async move {
-        let mut last_attempted: Option<String> = None;
         loop {
-            let info_result = tokio::task::spawn_blocking(update_check::check_once).await;
-            match info_result {
+            match tokio::task::spawn_blocking(update_check::check_once).await {
                 Ok(Ok(info)) => {
                     let mut slot = state.update_info.lock().await;
-                    *slot = Some(info.clone());
-                    drop(slot);
-
-                    if info.update_available
-                        && last_attempted.as_ref() != Some(&info.latest)
-                        && !state.updating.swap(true, std::sync::atomic::Ordering::SeqCst)
-                    {
-                        tracing::info!(
-                            "update available: v{} -> v{}, auto-updating...",
-                            info.current, info.latest
-                        );
-                        last_attempted = Some(info.latest.clone());
-
-                        match tokio::task::spawn_blocking(self_update::perform_update).await {
-                            Ok(Ok(true)) => {
-                                tracing::info!("auto-update: restarting via systemd");
-                                return;
-                            }
-                            Ok(Ok(false)) => {
-                                tracing::info!("auto-update: binary replaced, awaiting restart");
-                            }
-                            Ok(Err(e)) => tracing::error!("auto-update failed: {}", e),
-                            Err(e) => tracing::error!("auto-update task panicked: {}", e),
-                        }
-                        state.updating.store(false, std::sync::atomic::Ordering::SeqCst);
-                    }
+                    *slot = Some(info);
                 }
                 Ok(Err(e)) => tracing::warn!("update check failed: {}", e),
                 Err(e) => tracing::error!("update check task failed: {}", e),
