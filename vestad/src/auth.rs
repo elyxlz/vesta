@@ -55,22 +55,68 @@ pub async fn auth_middleware_agent_token(
         return next.run(request).await;
     }
 
-    if let Some(agent_name) = extract_agent_name(request.uri().path()) {
-        if let Some(provided) = headers.get("x-agent-token").and_then(|v| v.to_str().ok()) {
-            let (_, expected) = crate::docker::read_agent_port_and_token(&agent_name, &state.env_config.agents_dir);
-            if let Some(expected) = expected {
-                if provided == expected {
-                    return next.run(request).await;
-                }
-            }
-        }
+    let path = request.uri().path().to_string();
+    let Some(agent_name) = extract_agent_name(&path) else {
+        tracing::warn!(path = %path, reason = "path-missing-agent-name", "agent token auth failed");
+        return unauthorized();
+    };
+
+    let provided = headers.get("x-agent-token").and_then(|v| v.to_str().ok());
+    let Some(provided) = provided else {
+        tracing::warn!(
+            path = %path,
+            agent = %agent_name,
+            reason = "header-missing",
+            "agent token auth failed",
+        );
+        return unauthorized();
+    };
+
+    let (_, expected) = crate::docker::read_agent_port_and_token(&agent_name, &state.env_config.agents_dir);
+    let Some(expected) = expected else {
+        tracing::warn!(
+            path = %path,
+            agent = %agent_name,
+            reason = "env-file-missing-or-no-token",
+            agents_dir = %state.env_config.agents_dir.display(),
+            "agent token auth failed",
+        );
+        return unauthorized();
+    };
+
+    if provided == expected {
+        return next.run(request).await;
     }
 
-    let path = request.uri().path().to_string();
-    tracing::warn!(path = %path, "agent token auth failed");
+    tracing::warn!(
+        path = %path,
+        agent = %agent_name,
+        reason = "token-mismatch",
+        provided_fp = %token_fingerprint(provided),
+        expected_fp = %token_fingerprint(&expected),
+        provided_len = provided.len(),
+        expected_len = expected.len(),
+        "agent token auth failed",
+    );
+    unauthorized()
+}
+
+fn unauthorized() -> Response {
     (StatusCode::UNAUTHORIZED, Json(serde_json::json!({
         "error": "unauthorized — pass X-Agent-Token header with the AGENT_TOKEN from the agent's environment"
     }))).into_response()
+}
+
+/// Short, non-reversible fingerprint of a token for diagnostic logs.
+/// Returns the first 6 hex chars of its SHA-256 — enough to tell two tokens
+/// apart without leaking the secret itself.
+fn token_fingerprint(token: &str) -> String {
+    let digest = ring::digest::digest(&ring::digest::SHA256, token.as_bytes());
+    let mut out = String::with_capacity(6);
+    for byte in digest.as_ref().iter().take(3) {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
 }
 
 pub(crate) fn has_valid_api_auth(headers: &HeaderMap, uri: &axum::http::Uri, api_key: &str) -> bool {
