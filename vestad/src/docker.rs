@@ -543,14 +543,9 @@ fn build_context_tar(context: &std::path::Path) -> Result<bytes::Bytes, DockerEr
 /// next to the Dockerfile (Docker 20.10+ convention); falls back to a
 /// `.dockerignore` at the build context root.
 fn load_dockerignore(context: &std::path::Path) -> Vec<String> {
-    let per_dockerfile = context.join(format!("{DOCKERFILE_REL}.dockerignore"));
-    let root = context.join(".dockerignore");
-    let path = if per_dockerfile.exists() {
-        per_dockerfile
-    } else {
-        root
-    };
-    let Ok(content) = std::fs::read_to_string(&path) else { return Vec::new() };
+    let content = std::fs::read_to_string(context.join(format!("{DOCKERFILE_REL}.dockerignore")))
+        .or_else(|_| std::fs::read_to_string(context.join(".dockerignore")))
+        .unwrap_or_default();
     content.lines()
         .map(|l| l.trim())
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
