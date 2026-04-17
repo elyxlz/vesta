@@ -363,6 +363,11 @@ impl Client {
         Ok(())
     }
 
+    pub fn restart_gateway(&self) -> Result<(), String> {
+        self.post("/gateway/restart")?;
+        Ok(())
+    }
+
     pub fn destroy_agent(&self, name: &str) -> Result<(), String> {
         self.post(&format!("/agents/{}/destroy", name))?;
         Ok(())

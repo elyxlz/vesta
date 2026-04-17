@@ -102,6 +102,11 @@ enum Command {
         /// Agent name
         name: String,
     },
+    /// Manage the remote vestad gateway daemon
+    Gateway {
+        #[command(subcommand)]
+        action: GatewayAction,
+    },
     /// Authenticate Claude for an agent
     Auth {
         /// Agent name
@@ -182,6 +187,12 @@ enum Command {
     Uninstall,
     /// Print version information
     Version,
+}
+
+#[derive(Subcommand)]
+enum GatewayAction {
+    /// Restart the remote vestad daemon
+    Restart,
 }
 
 #[derive(Subcommand)]
@@ -568,6 +579,14 @@ fn run(cli: Cli) {
             c.restart_agent(&name).unwrap_or_else(|e| platform::die(&e));
             eprintln!("{}: restarted", name);
         }
+
+        Command::Gateway { action } => match action {
+            GatewayAction::Restart => {
+                let c = get_client(host_ref, token_ref);
+                c.restart_gateway().unwrap_or_else(|e| platform::die(&e));
+                eprintln!("vestad: restart initiated");
+            }
+        },
 
         Command::Auth { name, token } => {
             let c = get_client(host_ref, token_ref);

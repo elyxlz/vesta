@@ -14,7 +14,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, atomic::AtomicBool};
 use tokio::sync::{Mutex, RwLock};
 
-use crate::{agent_proxy, agent_status, auth, backup, control_ws, docker, self_update, update_check};
+use crate::{agent_proxy, agent_status, auth, backup, control_ws, docker, self_update, systemd, update_check};
+
+const GATEWAY_RESTART_DELAY_MS: u64 = 200;
 
 const API_KEY_BYTES: usize = 32;
 pub(crate) const PROXY_MAX_BODY_BYTES: usize = 10 * 1024 * 1024; // 10 MB
@@ -245,6 +247,28 @@ async fn version(State(state): State<SharedState>) -> Json<serde_json::Value> {
         "update_available": update_available,
         "dev_mode": state.dev_mode,
     }))
+}
+
+async fn restart_gateway_handler() -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    if !systemd::is_active() {
+        return Err(err_response(
+            StatusCode::PRECONDITION_FAILED,
+            "vestad is not running under systemd — cannot self-restart",
+        ));
+    }
+    tracing::info!("gateway restart requested via API");
+    // Defer the systemctl call so the HTTP response can flush before this
+    // process is killed. systemd::restart is blocking, so hop it onto the
+    // blocking pool.
+    tokio::spawn(async {
+        tokio::time::sleep(tokio::time::Duration::from_millis(GATEWAY_RESTART_DELAY_MS)).await;
+        match tokio::task::spawn_blocking(systemd::restart).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => tracing::error!(error = %e, "gateway restart failed"),
+            Err(e) => tracing::error!(error = %e, "gateway restart task panicked"),
+        }
+    });
+    Ok(Json(serde_json::json!({"ok": true, "restarting": true})))
 }
 
 async fn self_update_handler(
@@ -1334,6 +1358,7 @@ pub fn build_router(state: SharedState) -> Router {
     let vestad_protected = Router::new()
         .route("/version", get(version))
         .route("/self-update", post(self_update_handler))
+        .route("/gateway/restart", post(restart_gateway_handler))
         .route("/tunnel", get(tunnel_handler))
         .route("/agents", get(list_agents_handler))
         .route("/agents", post(create_agent_handler))
