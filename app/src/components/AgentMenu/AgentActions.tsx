@@ -52,7 +52,7 @@ export function buildActionSections(input: AgentActionsInput): ActionSection[] {
   const sections: ActionSection[] = [];
 
   const viewItems: ActionItem[] = [];
-  if (input.showAliveActions) {
+  if (input.isRunning) {
     viewItems.push({
       key: "logs",
       icon: <ScrollText data-icon="inline-start" />,

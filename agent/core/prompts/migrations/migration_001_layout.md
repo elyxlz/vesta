@@ -38,6 +38,6 @@ cd ~/agent && uv sync --frozen 2>/dev/null || uv sync
 
 For each skill that has a SETUP.md, check if its dependencies need rebuilding (e.g. go binaries, npm packages). Read the SETUP.md and run the install/build steps if the binaries are missing or stale. Then restart any services listed in `~/agent/prompts/restart.md`.
 
-After everything is done, restart yourself using `restart_vesta` so the process picks up all changes cleanly.
+If you made any changes (fixed paths, removed files, rebuilt deps, or fixed layout), restart yourself using `restart_vesta` so the process picks up all changes cleanly. If everything was already correct and no changes were needed, skip the restart.
 
 If any layout check fails, read `~/agent/skills/upstream-sync/SETUP.md` and follow it to fix the layout, then rebuild deps and restart as above.
