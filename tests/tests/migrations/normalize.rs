@@ -103,7 +103,8 @@ if [ -d /root/vesta/.git ] && [ ! -d /root/.git ]; then
   git -C /root init
   git -C /root remote add origin https://github.com/elyxlz/vesta.git
   git -C /root sparse-checkout init --cone
-  git -C /root sparse-checkout set agent
+  SKILL_DIRS=$(find /root/agent/skills -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sed 's|/root/||' | tr '\n' ' ')
+  git -C /root sparse-checkout set agent/core agent/prompts agent/dreamer $SKILL_DIRS
   printf '%s\n' '/*' '!.gitignore' '!/agent/' > /root/.gitignore
 fi
 "#,
