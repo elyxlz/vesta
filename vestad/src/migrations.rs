@@ -17,77 +17,25 @@ const NORMALIZE_HELPER_SLEEP_SECS: &str = "600";
 // One-time container-layout migration for pre-agent-dir releases.
 //
 // Old images stored the repo and worktree directly under /root/vesta. Current
-// images expect the git repo at /root with tracked content under /root/agent.
-// During rebuild we preserve the old filesystem via docker commit, then run
-// this script inside a temporary helper container to rewrite that preserved
-// filesystem into the new layout before creating the real rebuilt container.
-//
-// This intentionally preserves the old files/state while replacing the old git
-// metadata with a fresh repo rooted at /root. After a container has been
-// normalized once, future rebuilds skip this path entirely.
+// images expect tracked content under /root/agent. We only do the minimum here
+// to get the agent to boot — move agent state (data/, prompts/, skills/, MEMORY.md,
+// etc.) from /root/vesta/ into /root/agent/. The agent's own migration_001_layout.md
+// prompt handles the rest post-boot: git setup, stale path refs, and removing
+// /root/vesta. Things that are bind-mounted at runtime (core/, pyproject.toml,
+// uv.lock) and things we don't want to relocate blindly (.venv, .git, .claude)
+// are skipped.
 const LEGACY_LAYOUT_NORMALIZE_SCRIPT: &str = r#"set -euo pipefail
-if [ -d /root/vesta/.git ] && [ ! -d /root/.git ]; then
+if [ -d /root/vesta ] && [ ! -d /root/.git ]; then
   mkdir -p /root/agent
   shopt -s dotglob nullglob
-
-  merge_dirs() {
-    local src="$1" dst="$2"
-    mkdir -p "$dst"
-    for child in "$src"/* "$src"/.[!.]* "$src"/..?*; do
-      [ -e "$child" ] || continue
-      local name
-      name="$(basename "$child")"
-      if [ ! -e "$dst/$name" ]; then
-        mv "$child" "$dst/"
-      elif [ -d "$child" ] && [ -d "$dst/$name" ]; then
-        merge_dirs "$child" "$dst/$name"
-      fi
-    done
-    rmdir "$src" 2>/dev/null || true
-  }
-
-  # Only merge ~/vesta/agent/* contents into ~/agent/ — not repo-level files
-  if [ -d /root/vesta/agent ]; then
-    merge_dirs /root/vesta/agent /root/agent
-  fi
-
-  # Move agent-owned paths from ~/vesta/ root (old layouts stored data/logs/notifications here)
-  for name in data logs notifications dreamer; do
-    for path in /root/vesta/$name /root/$name; do
-      [ -d "$path" ] || continue
-      merge_dirs "$path" "/root/agent/$name"
-    done
+  for item in /root/vesta/*; do
+    name="$(basename "$item")"
+    case "$name" in
+      core|src|pyproject.toml|uv.lock|.venv|.git|.claude) continue ;;
+    esac
+    [ -e "/root/agent/$name" ] && continue
+    mv "$item" /root/agent/
   done
-
-  rm -rf /root/vesta
-  rm -rf /root/agent/.claude
-  mkdir -p /root/.claude
-  ln -sfn ../agent/skills /root/.claude/skills
-
-  rm -rf /root/.git
-  git -C /root init
-  git -C /root remote add origin https://github.com/elyxlz/vesta.git
-  git -C /root sparse-checkout init --cone
-  AGENT_DIRS=$(find /root/agent -mindepth 1 -maxdepth 1 -type d ! -name skills ! -name .venv 2>/dev/null | sed 's|/root/||' | tr '\n' ' ')
-  SKILL_DIRS=$(find /root/agent/skills -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sed 's|/root/||' | tr '\n' ' ')
-  git -C /root sparse-checkout set $AGENT_DIRS $SKILL_DIRS
-  printf '%s\n' '/*' '!.gitignore' '!/agent/' > /root/.gitignore
-fi
-
-# Also handle src/vesta → core flatten+rename if present after layout normalization.
-# Only moves files into the expected directory structure; the host-mounted code
-# (manage_agent_code=true) or new Docker image provides correct source files.
-V=/root/agent/src/vesta
-if [ -d "$V" ] && [ ! -d /root/agent/core ]; then
-  if [ -d "$V/core" ]; then
-    for f in "$V"/core/*.py; do
-      [ -f "$f" ] || continue
-      mv "$f" "$V/$(basename "$f")"
-    done
-    rm -rf "$V/core"
-  fi
-  mv "$V" /root/agent/core
-  rm -rf /root/agent/src
 fi
 "#;
 
