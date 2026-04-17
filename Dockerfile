@@ -26,8 +26,7 @@ COPY agent/ ./agent/
 # skills to sparse checkout on demand, opting them into future upstream merges.
 RUN git init && git remote add origin https://github.com/elyxlz/vesta.git && \
     git sparse-checkout init --cone && \
-    SKILL_DIRS=$(cat agent/skills/default-skills.txt | sed 's|^|agent/skills/|') && \
-    git sparse-checkout set agent/core agent/prompts agent/dreamer $SKILL_DIRS && \
+    git sparse-checkout set agent && \
     printf '/*\n!.gitignore\n!/agent/\n' > .gitignore
 
 # Remove non-default skills from the image (they'll be installed via sparse checkout on demand)
