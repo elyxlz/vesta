@@ -78,4 +78,4 @@ v0.1.132 (upstream ref)
   * merge upstream
 ```
 
-View local customizations vs upstream: `git diff FETCH_HEAD..$AGENT_NAME` (after a fetch)
+View local customizations vs upstream: `git diff FETCH_HEAD..$AGENT_NAME -- agent/` (after a fetch)
