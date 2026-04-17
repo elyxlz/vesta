@@ -22,6 +22,12 @@ test -f ~/agent/.gitignore && echo "OK: gitignore"
 git -C ~ diff --quiet && echo "OK: clean tree"
 ```
 
-If ALL layout checks pass, you're done.
+If ALL layout checks pass, rebuild skill dependencies and restart services:
 
-If any check fails, read `~/agent/skills/upstream-sync/SETUP.md` and follow it to fix the layout.
+```bash
+cd ~/agent && uv sync --frozen 2>/dev/null || uv sync
+```
+
+For each skill that has a SETUP.md, check if its dependencies need rebuilding (e.g. go binaries, npm packages). Read the SETUP.md and run the install/build steps if the binaries are missing or stale. Then restart any services listed in `~/agent/prompts/restart.md`.
+
+If any layout check fails, read `~/agent/skills/upstream-sync/SETUP.md` and follow it to fix the layout.
