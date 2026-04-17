@@ -21,7 +21,7 @@ pub(crate) const PROXY_MAX_BODY_BYTES: usize = 10 * 1024 * 1024; // 10 MB
 
 const RESERVED_SERVICE_NAMES: &[&str] = &[
     "start", "stop", "restart", "destroy", "rebuild", "wait-ready",
-    "auth", "logs", "backups", "settings", "services",
+    "auth", "logs", "tree", "backups", "settings", "services",
 ];
 const DEFAULT_LOG_TAIL_LINES: u64 = 500;
 const AUTO_BACKUP_CHECK_INTERVAL_SECS: u64 = 3600;
@@ -634,6 +634,52 @@ async fn logs_handler(
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
+
+// --- File tree ---
+
+async fn tree_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    docker::validate_name(&name).map_err(map_docker_err)?;
+    let cname = docker::container_name(&name);
+    docker::ensure_running(&state.docker, &cname).await
+        .map_err(|e| err_response(StatusCode::BAD_REQUEST, &e.to_string()))?;
+
+    let exec = state.docker.create_exec(&cname, bollard::exec::CreateExecOptions {
+        cmd: Some(vec![
+            "find".to_string(), "/root".to_string(),
+            "-not".to_string(), "-path".to_string(), "*/.git/*".to_string(),
+            "-not".to_string(), "-path".to_string(), "*/.venv/*".to_string(),
+            "-not".to_string(), "-path".to_string(), "*/__pycache__/*".to_string(),
+            "-not".to_string(), "-path".to_string(), "*/.cache/*".to_string(),
+            "-not".to_string(), "-path".to_string(), "*/node_modules/*".to_string(),
+        ]),
+        attach_stdout: Some(true),
+        attach_stderr: Some(false),
+        ..Default::default()
+    }).await.map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
+
+    let output = state.docker.start_exec(&exec.id, None).await
+        .map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
+
+    let mut lines = Vec::new();
+    if let bollard::exec::StartExecResults::Attached { mut output, .. } = output {
+        use futures_util::StreamExt;
+        while let Some(Ok(chunk)) = output.next().await {
+            let text = chunk.to_string();
+            for line in text.lines() {
+                let trimmed = line.trim();
+                if !trimmed.is_empty() {
+                    lines.push(trimmed.to_string());
+                }
+            }
+        }
+    }
+
+    lines.sort();
+    Ok(Json(serde_json::json!({ "tree": lines })))
+}
 
 // --- Unified settings ---
 
@@ -1304,6 +1350,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/auth/code", post(complete_auth_handler))
         .route("/agents/{name}/auth/token", post(inject_token_handler))
         .route("/agents/{name}/logs", get(logs_handler))
+        .route("/agents/{name}/tree", get(tree_handler))
         .route("/backups", get(list_all_backups_handler))
         .route("/agents/{name}/backups", post(create_backup_handler))
         .route("/agents/{name}/backups", get(list_backups_handler))
