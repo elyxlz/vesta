@@ -1489,8 +1489,7 @@ pub async fn create_agent(docker: &Docker, name: &str, env_config: &AgentEnvConf
     let image = resolve_image(docker).await?;
 
     if manage_core_code {
-        let code_source = if cfg!(debug_assertions) { "local repo" } else { "github" };
-        tracing::info!(agent = %name, source = code_source, "fetching agent code");
+        tracing::info!(agent = %name, "ensuring agent code");
         crate::agent_code::ensure_agent_code(&env_config.config_dir)
             .map_err(|e| DockerError::Failed(format!("agent code: {e}")))?;
     }

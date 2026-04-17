@@ -1684,11 +1684,11 @@ pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: S
         tracing::error!(error = %e, "config directory validation failed — aborting startup");
         std::process::exit(1);
     }
-    if cfg!(debug_assertions) {
-        tracing::info!("mode: dev (debug build, agent code from local repo)");
-    } else {
-        tracing::info!(version = env!("CARGO_PKG_VERSION"), "mode: prod (release build, agent code from github)");
-    }
+    tracing::info!(
+        version = env!("CARGO_PKG_VERSION"),
+        mode = if cfg!(debug_assertions) { "dev" } else { "prod" },
+        "agent code embedded in binary",
+    );
     if let Err(e) = crate::agent_code::ensure_agent_code(&env_config.config_dir) {
         tracing::error!(error = %e, "failed to ensure agent code");
     }
