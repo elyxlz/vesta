@@ -10,7 +10,7 @@ If any files are found, replace `/root/vesta/` with `/root/agent/`, `~/vesta/` w
 Remove agent prompts that now live in core (the core versions are always up to date via bind mount):
 
 ```bash
-for f in first_start_greeting.md first_start_setup.md nightly_dream.md notification_suffix.md proactive_check.md; do
+for f in first_start_greeting.md first_start_setup.md nightly_dream.md notification_suffix.md proactive_check.md dream.md; do
   rm -f ~/agent/prompts/$f
 done
 ```
