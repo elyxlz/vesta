@@ -58,7 +58,7 @@ async def test_skips_when_already_run_today(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_compacts_and_restarts(tmp_path):
+async def test_clears_session_and_restarts(tmp_path):
     async def side_effect(msg, *, state, config, is_user):
         return (["OK"], state)
 
@@ -74,8 +74,10 @@ async def test_compacts_and_restarts(tmp_path):
         initial_queue=[("dreamer prompt content", False)],
         extra_patches={"core.loops._now": lambda: fake_now},
     )
-    assert state.session_id == "pre-dreamer-session"
+    # Session should be cleared (not preserved) so the next boot starts fresh
+    assert state.session_id is None
     assert state.dreamer_active is False
     assert state.graceful_shutdown.is_set()
-    assert state.restart_reason == "nightly — dreamer ran, context compacted"
-    assert messages == ["dreamer prompt content", "/compact"]
+    assert state.restart_reason == "nightly — dreamer ran, session cleared for fresh context"
+    # No /compact message — session deletion replaces it
+    assert messages == ["dreamer prompt content"]
