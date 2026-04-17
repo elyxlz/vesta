@@ -325,14 +325,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # musl targets for static binaries
+          # musl targets for static binaries; build natively per arch
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
             artifact: vestad-x86_64-unknown-linux-gnu
           - target: aarch64-unknown-linux-musl
-            os: ubuntu-latest
+            os: ubuntu-24.04-arm
             artifact: vestad-aarch64-unknown-linux-gnu
-            cross: true
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
@@ -348,14 +347,9 @@ jobs:
           key: vestad-${{ matrix.target }}
 
       - name: Install musl toolchain
-        if: ${{ !matrix.cross }}
         run: |
           sudo apt-get update
           sudo apt-get install -y musl-tools
-
-      - name: Install cross
-        if: matrix.cross
-        run: cargo install cross --locked
 
       - name: Build vestad
         working-directory: vestad
@@ -363,12 +357,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
-        run: |
-          if [ "${{ matrix.cross }}" = "true" ]; then
-            cross build --release -p vestad --target ${{ matrix.target }}
-          else
-            cargo build --release -p vestad --target ${{ matrix.target }}
-          fi
+        run: cargo build --release --target ${{ matrix.target }}
 
       - name: Package
         run: |
