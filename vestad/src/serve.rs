@@ -649,7 +649,6 @@ async fn tree_handler(
     let exec = state.docker.create_exec(&cname, bollard::exec::CreateExecOptions {
         cmd: Some(vec![
             "find".to_string(), "/root".to_string(),
-            "-not".to_string(), "-path".to_string(), "*/.git/*".to_string(),
             "-not".to_string(), "-path".to_string(), "*/.venv/*".to_string(),
             "-not".to_string(), "-path".to_string(), "*/__pycache__/*".to_string(),
             "-not".to_string(), "-path".to_string(), "*/.cache/*".to_string(),
