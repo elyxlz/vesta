@@ -69,8 +69,6 @@ impl TestServerBuilder {
     }
 }
 
-/// Kill vestad processes left behind by previous test runs (those whose HOME is a
-/// temp directory). Ignores the user's real vestad instance.
 /// Remove Docker containers left behind by previous test runs that crashed
 /// before TestAgent::drop could clean up. Targets containers from test users
 /// (unique_user generates names like "prefix-tPID-N") and e2e test containers.
