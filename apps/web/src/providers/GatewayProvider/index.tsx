@@ -6,15 +6,29 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { apiFetch } from "@/api/client";
-import { getConnection, authHeaders } from "@/lib/connection";
+import { apiFetch, apiJson } from "@/api/client";
+import { getConnection } from "@/lib/connection";
 import { ensureFreshToken } from "@/lib/token-refresh";
 import { useAuth } from "@/providers/AuthProvider";
 import { VersionMismatchDialog } from "@/components/VersionMismatchDialog";
-import type { AgentInfo } from "@/lib/types";
+import type { AgentInfo, GatewayVersionInfo } from "@/lib/types";
+
+const VERSION_FETCH_TIMEOUT_MS = 5000;
+
+async function fetchVersionInfo(): Promise<GatewayVersionInfo | null> {
+  try {
+    return await apiJson<GatewayVersionInfo>("/version", {
+      signal: AbortSignal.timeout(VERSION_FETCH_TIMEOUT_MS),
+    });
+  } catch {
+    return null;
+  }
+}
 
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
+
+const VERSION_POLL_MS = 60000;
 
 interface GatewayContextValue {
   reachable: boolean;
@@ -22,6 +36,8 @@ interface GatewayContextValue {
   gatewayBranch: string | null;
   gatewayPort: number;
   versionChecked: boolean;
+  updateAvailable: boolean;
+  latestVersion: string | null;
   agents: AgentInfo[];
   agentsFetched: boolean;
   send: (event: object) => boolean;
@@ -36,6 +52,8 @@ const disconnectedValue: GatewayContextValue = {
   gatewayBranch: null,
   gatewayPort: 0,
   versionChecked: true,
+  updateAvailable: false,
+  latestVersion: null,
   agents: [],
   agentsFetched: false,
   send: () => false,
@@ -57,6 +75,8 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
   const [gatewayPort, setGatewayPort] = useState(0);
 
   const [versionChecked, setVersionChecked] = useState(false);
+  const [updateAvailable, setUpdateAvailable] = useState(false);
+  const [latestVersion, setLatestVersion] = useState<string | null>(null);
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [agentsFetched, setAgentsFetched] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
@@ -65,8 +85,8 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
   const skipVersionGateRef = useRef(false);
 
   const triggerGatewayUpdate = () => {
-    apiFetch("/self-update", { method: "POST" }).catch((err) => {
-      console.warn("[gateway] self-update request failed:", err);
+    apiFetch("/gateway/update", { method: "POST" }).catch((err) => {
+      console.warn("[gateway] update request failed:", err);
     });
     skipVersionGateRef.current = true;
     setConnectEpoch((e) => e + 1);
@@ -93,25 +113,14 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
       }
 
       // Fetch version early via HTTP before WS connects
-      try {
-        const conn = getConnection();
-        if (conn) {
-          const resp = await fetch(`${conn.url}/version`, {
-            headers: authHeaders(),
-            signal: AbortSignal.timeout(5000),
-          });
-          if (!cancelled && resp.ok) {
-            const data = await resp.json();
-            if (data.version) {
-              setGatewayVersion(data.version);
-              setGatewayBranch(data.branch || null);
-              setVersionChecked(true);
-              if (data.version !== __APP_VERSION__ && !skipVersionGateRef.current) return;
-            }
-          }
-        }
-      } catch {
-        /* version check failed, proceed with WS */
+      const data = await fetchVersionInfo();
+      if (!cancelled && data?.version) {
+        setGatewayVersion(data.version);
+        setGatewayBranch(data.branch ?? null);
+        setUpdateAvailable(!!data.update_available);
+        setLatestVersion(data.latest_version ?? null);
+        setVersionChecked(true);
+        if (data.version !== __APP_VERSION__ && !skipVersionGateRef.current) return;
       }
       if (!cancelled) setVersionChecked(true);
 
@@ -175,6 +184,24 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
     };
   }, [connectEpoch]);
 
+  useEffect(() => {
+    if (!reachable) return;
+    let cancelled = false;
+
+    const pollVersion = async () => {
+      const data = await fetchVersionInfo();
+      if (cancelled || !data) return;
+      setUpdateAvailable(!!data.update_available);
+      setLatestVersion(data.latest_version ?? null);
+    };
+
+    const timer = setInterval(pollVersion, VERSION_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [reachable]);
+
   const send = (event: object): boolean => {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return false;
@@ -193,6 +220,8 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
         gatewayBranch,
         gatewayPort,
         versionChecked,
+        updateAvailable,
+        latestVersion,
         agents,
         agentsFetched,
         send,

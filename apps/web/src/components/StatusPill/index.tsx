@@ -1,12 +1,14 @@
 import { getConnection } from "@/lib/connection";
 import { useGateway } from "@/providers/GatewayProvider";
+import { Button } from "@/components/ui/button";
 
 interface StatusPillProps {
   showHostname?: boolean;
 }
 
 export function StatusPill({ showHostname = true }: StatusPillProps) {
-  const { reachable } = useGateway();
+  const { reachable, updateAvailable, latestVersion, triggerGatewayUpdate } =
+    useGateway();
 
   const hostname = (() => {
     const conn = getConnection();
@@ -27,6 +29,16 @@ export function StatusPill({ showHostname = true }: StatusPillProps) {
         <span className="text-sm text-secondary-foreground truncate hidden sm:block">
           {hostname}
         </span>
+      )}
+      {updateAvailable && (
+        <Button
+          size="xs"
+          variant="outline"
+          onClick={triggerGatewayUpdate}
+          title={latestVersion ? `Update to v${latestVersion}` : "Update available"}
+        >
+          update
+        </Button>
       )}
     </div>
   );

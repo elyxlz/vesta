@@ -1,4 +1,4 @@
-pub const CHECK_INTERVAL_SECS: u64 = 6 * 60 * 60;
+pub const CHECK_INTERVAL_SECS: u64 = 10 * 60;
 const FETCH_TIMEOUT_SECS: u64 = 10;
 
 const GITHUB_RELEASES_LATEST_URL: &str =
@@ -6,7 +6,6 @@ const GITHUB_RELEASES_LATEST_URL: &str =
 
 #[derive(Clone, Debug)]
 pub struct UpdateInfo {
-    pub current: String,
     pub latest: String,
     pub update_available: bool,
 }
@@ -14,11 +13,9 @@ pub struct UpdateInfo {
 pub fn check_once() -> Result<UpdateInfo, String> {
     let latest = fetch_latest_release_tag(Some(FETCH_TIMEOUT_SECS))
         .ok_or_else(|| "failed to fetch latest release".to_string())?;
-    let current = env!("CARGO_PKG_VERSION").to_string();
-    let update_available = version_less_than(&current, &latest);
+    let update_available = version_less_than(env!("CARGO_PKG_VERSION"), &latest);
 
     Ok(UpdateInfo {
-        current,
         latest,
         update_available,
     })

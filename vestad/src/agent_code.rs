@@ -98,6 +98,10 @@ mod tests {
         assert!(dir.join(MAIN_PY).is_file());
         assert!(dir.join("pyproject.toml").is_file());
         assert!(dir.join("uv.lock").is_file());
+        // Non-.py files under core/ (prompts, skill manifests) must also be embedded
+        // — the agent's prompt loader depends on them at runtime.
+        assert!(dir.join("core/prompts/nightly_dream.md").is_file());
+        assert!(dir.join("core/prompts/notification_suffix.md").is_file());
         assert_eq!(
             fs::read_to_string(dir.join(FINGERPRINT_MARKER)).expect("marker"),
             embed_fingerprint(),

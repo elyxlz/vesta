@@ -49,3 +49,12 @@ export type LogEvent =
   | { kind: "Line"; text: string }
   | { kind: "End" }
   | { kind: "Error"; message: string };
+
+export interface GatewayVersionInfo {
+  version: string;
+  api_compat: string;
+  dev_mode: boolean;
+  latest_version: string | null;
+  update_available: boolean | null;
+  branch?: string | null;
+}
