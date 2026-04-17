@@ -102,10 +102,17 @@ async def queue_greeting(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.V
         (config.data_dir / "first_start_done").write_text("1")
         return
 
-    migration_prompt = load_prompt("migration", config)
-    if migration_prompt:
-        await queue.put((migration_prompt.strip(), False))
-        logger.startup("Queued migration prompt")
+    migration_files: dict[str, pl.Path] = {}
+    for prompts_dir in (config.prompts_dir, config.core_prompts_dir):
+        for path in sorted(prompts_dir.glob("migration_*.md")):
+            if path.stem not in migration_files:
+                migration_files[path.stem] = path
+    for name, path in sorted(migration_files.items()):
+        flag = config.data_dir / f"{name}_done"
+        if not flag.exists():
+            await queue.put((path.read_text().strip(), False))
+            flag.write_text("1")
+            logger.startup(f"Queued migration: {name}")
 
     extras = []
     flag = config.data_dir / "show_dreamer_summary"
