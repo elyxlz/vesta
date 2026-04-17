@@ -136,31 +136,37 @@ pub fn print_status() {
         .status();
 }
 
+fn journal_args(lines: usize, follow: bool) -> Vec<String> {
+    let mut args = vec![
+        "--user".into(),
+        "-u".into(),
+        SERVICE_NAME.into(),
+        "-n".into(),
+        lines.to_string(),
+        "--no-hostname".into(),
+        "-o".into(),
+        "cat".into(),
+    ];
+    if follow {
+        args.push("-f".into());
+    }
+    args
+}
+
 pub fn exec_journal(lines: usize, follow: bool) -> ! {
     use std::os::unix::process::CommandExt;
 
-    let lines_str = lines.to_string();
-    let mut cmd = Command::new("journalctl");
-    cmd.args(["--user", "-u", SERVICE_NAME, "-n", &lines_str, "--no-hostname", "-o", "cat"]);
-    if follow {
-        cmd.arg("-f");
-    }
-
-    let err = cmd.exec();
+    let err = Command::new("journalctl")
+        .args(journal_args(lines, follow))
+        .exec();
     eprintln!("failed to exec journalctl: {}", err);
     process::exit(1);
 }
 
-/// Spawn `journalctl --user -u vestad -n LINES [-f]` with stdout piped.
-/// Tokio will SIGKILL the child when the returned handle is dropped, so a
-/// client disconnecting (e.g. Ctrl-C) tears the follow down.
 pub fn spawn_journal_stream(lines: usize, follow: bool) -> Result<tokio::process::Child, String> {
-    let mut cmd = tokio::process::Command::new("journalctl");
-    cmd.args(["--user", "-u", SERVICE_NAME, "-n", &lines.to_string(), "--no-hostname", "-o", "cat"]);
-    if follow {
-        cmd.arg("-f");
-    }
-    cmd.stdout(process::Stdio::piped())
+    tokio::process::Command::new("journalctl")
+        .args(journal_args(lines, follow))
+        .stdout(process::Stdio::piped())
         .stderr(process::Stdio::null())
         .kill_on_drop(true)
         .spawn()

@@ -252,16 +252,16 @@ async fn version(State(state): State<SharedState>) -> Json<serde_json::Value> {
 #[derive(Deserialize)]
 struct GatewayLogsQuery {
     tail: Option<u64>,
-    follow: Option<bool>,
+    #[serde(default)]
+    follow: bool,
 }
 
 async fn gateway_logs_handler(
     Query(query): Query<GatewayLogsQuery>,
 ) -> Result<Sse<impl futures_core::Stream<Item = Result<Event, std::io::Error>>>, (StatusCode, Json<serde_json::Value>)> {
     let tail = query.tail.unwrap_or(DEFAULT_LOG_TAIL_LINES) as usize;
-    let follow = query.follow.unwrap_or(false);
 
-    let mut child = systemd::spawn_journal_stream(tail, follow)
+    let mut child = systemd::spawn_journal_stream(tail, query.follow)
         .map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
 
     let stdout = child.stdout.take().ok_or_else(|| {
@@ -282,8 +282,6 @@ async fn gateway_logs_handler(
                 }
             }
         }
-        // Reap the child so kill_on_drop's SIGKILL is clean if we got here
-        // via follow-mode exiting on its own.
         let _ = child.wait().await;
         yield Ok(Event::default().event("gateway_stopped").data(""));
     };
@@ -299,9 +297,7 @@ async fn restart_gateway_handler() -> Result<Json<serde_json::Value>, (StatusCod
         ));
     }
     tracing::info!("gateway restart requested via API");
-    // Defer the systemctl call so the HTTP response can flush before this
-    // process is killed. systemd::restart is blocking, so hop it onto the
-    // blocking pool.
+    // Delay so the HTTP response can flush before systemctl kills this process.
     tokio::spawn(async {
         tokio::time::sleep(tokio::time::Duration::from_millis(GATEWAY_RESTART_DELAY_MS)).await;
         match tokio::task::spawn_blocking(systemd::restart).await {
