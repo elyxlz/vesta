@@ -40,6 +40,7 @@ def _sanitize(filename: str) -> str | None:
 
 # --- Routes ---
 
+
 async def health(_request: web.Request) -> web.Response:
     return web.Response(text="ok")
 
@@ -145,6 +146,7 @@ async def serve_audio(request: web.Request) -> web.Response:
 
 async def search_text(request: web.Request) -> web.Response:
     from search import search_books
+
     q = request.query.get("q", "").strip()
     if not q:
         return web.json_response([], headers=CORS)
@@ -159,14 +161,16 @@ async def search_text(request: web.Request) -> web.Response:
             title = book.get("title", "")
             author = book.get("author", "")
             if ql in title.lower() or ql in author.lower():
-                title_matches.append({
-                    "book": title,
-                    "author": author,
-                    "chapter": "",
-                    "passage": book.get("description", "")[:200] or title,
-                    "filename": book.get("filename", ""),
-                    "match_type": "title",
-                })
+                title_matches.append(
+                    {
+                        "book": title,
+                        "author": author,
+                        "chapter": "",
+                        "passage": book.get("description", "")[:200] or title,
+                        "filename": book.get("filename", ""),
+                        "match_type": "title",
+                    }
+                )
 
     # Content matches
     results = search_books(q, limit=limit)
@@ -181,6 +185,7 @@ async def search_text(request: web.Request) -> web.Response:
 
 async def search_semantic(request: web.Request) -> web.Response:
     from search import semantic_search
+
     q = request.query.get("q", "").strip()
     if not q:
         return web.json_response([], headers=CORS)

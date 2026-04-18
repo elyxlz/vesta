@@ -20,6 +20,7 @@ from xml.etree import ElementTree as ET
 
 from bs4 import BeautifulSoup
 import warnings
+
 warnings.filterwarnings("ignore")
 
 BOOKS_DIR = Path.home() / "agent" / "data" / "skills" / "library" / "books"
@@ -34,25 +35,48 @@ NS_XHTML = "http://www.w3.org/1999/xhtml"
 NS_EPUB = "http://www.idpf.org/2007/ops"
 
 FRONT_MATTER_KEYWORDS = [
-    "cover", "copyright", "title page", "titlepage", "dedication",
-    "also by", "about the author", "about the publisher", "epigraph",
-    "frontmatter", "front matter", "halftitle", "half title",
-    "other books", "books by", "praise for", "advance praise",
-    "table of contents", "contents", "toc",
+    "cover",
+    "copyright",
+    "title page",
+    "titlepage",
+    "dedication",
+    "also by",
+    "about the author",
+    "about the publisher",
+    "epigraph",
+    "frontmatter",
+    "front matter",
+    "halftitle",
+    "half title",
+    "other books",
+    "books by",
+    "praise for",
+    "advance praise",
+    "table of contents",
+    "contents",
+    "toc",
 ]
 
 FRONT_MATTER_HTML_KEYWORDS = [
-    "copyright", "isbn", "published by", "all rights reserved",
-    "dedication", "also by", "other books by", "praise for",
-    "advance praise", "library of congress", "cataloging-in-publication",
+    "copyright",
+    "isbn",
+    "published by",
+    "all rights reserved",
+    "dedication",
+    "also by",
+    "other books by",
+    "praise for",
+    "advance praise",
+    "library of congress",
+    "cataloging-in-publication",
 ]
 
 
 def sanitize_filename(name: str) -> str:
     """Convert epub filename to a safe JSON filename."""
     name = Path(name).stem
-    name = re.sub(r'[^\w\s-]', '', name)
-    name = re.sub(r'\s+', '_', name.strip())
+    name = re.sub(r"[^\w\s-]", "", name)
+    name = re.sub(r"\s+", "_", name.strip())
     return name[:100]
 
 
@@ -76,42 +100,63 @@ def is_front_matter_html(text: str) -> bool:
 
 def is_generic_chapter_label(label: str) -> bool:
     """Check if a label is just 'Chapter N' or similar generic."""
-    return bool(re.match(r'^(chapter\s*\d*|part\s*\d*|section\s*\d*)$', label.strip(), re.IGNORECASE))
+    return bool(re.match(r"^(chapter\s*\d*|part\s*\d*|section\s*\d*)$", label.strip(), re.IGNORECASE))
 
 
 def clean_html(html_content: str) -> str:
     """Clean HTML to keep only readable content."""
-    soup = BeautifulSoup(html_content, 'lxml')
+    soup = BeautifulSoup(html_content, "lxml")
 
-    for tag in soup.find_all(['script', 'style', 'img', 'svg', 'link', 'meta']):
+    for tag in soup.find_all(["script", "style", "img", "svg", "link", "meta"]):
         tag.decompose()
 
-    body = soup.find('body')
+    body = soup.find("body")
     if body:
         soup = body
 
-    allowed = {'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'br', 'em', 'strong',
-               'i', 'b', 'blockquote', 'ul', 'ol', 'li', 'div', 'span', 'a', 'sup', 'sub'}
+    allowed = {
+        "p",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "br",
+        "em",
+        "strong",
+        "i",
+        "b",
+        "blockquote",
+        "ul",
+        "ol",
+        "li",
+        "div",
+        "span",
+        "a",
+        "sup",
+        "sub",
+    }
 
     for tag in soup.find_all(True):
         if tag.name not in allowed:
             tag.unwrap()
         else:
             attrs = {}
-            if tag.name == 'a' and tag.get('href'):
-                attrs['href'] = tag['href']
+            if tag.name == "a" and tag.get("href"):
+                attrs["href"] = tag["href"]
             tag.attrs = attrs
 
     result = str(soup)
-    result = re.sub(r'\n\s*\n\s*\n', '\n\n', result)
+    result = re.sub(r"\n\s*\n\s*\n", "\n\n", result)
     return result.strip()
 
 
 def extract_headings(html_content: str) -> list[str]:
     """Extract h1/h2/h3 text from HTML content."""
-    soup = BeautifulSoup(html_content, 'lxml')
+    soup = BeautifulSoup(html_content, "lxml")
     headings = []
-    for tag in ['h1', 'h2', 'h3']:
+    for tag in ["h1", "h2", "h3"]:
         for el in soup.find_all(tag):
             text = el.get_text(strip=True)
             if text and len(text) < 300:
@@ -121,18 +166,18 @@ def extract_headings(html_content: str) -> list[str]:
 
 def get_text_length(html_content: str) -> int:
     """Get plain text length of HTML."""
-    soup = BeautifulSoup(html_content, 'lxml')
+    soup = BeautifulSoup(html_content, "lxml")
     return len(soup.get_text(strip=True))
 
 
 def normalize_href(href: str) -> str:
     """Normalize a TOC href to just the filename (no fragment, no path prefix)."""
     # Remove fragment
-    href = href.split('#')[0]
+    href = href.split("#")[0]
     # Decode percent-encoding
     href = unquote(href)
     # Get just the filename
-    href = href.rsplit('/', 1)[-1] if '/' in href else href
+    href = href.rsplit("/", 1)[-1] if "/" in href else href
     return href
 
 
@@ -158,7 +203,7 @@ def parse_opf(zf: zipfile.ZipFile, opf_path: str):
     """Parse the OPF file. Returns (metadata, manifest, spine, ncx_id, nav_id, opf_dir)."""
     xml = zf.read(opf_path).decode("utf-8")
     root = ET.fromstring(xml)
-    opf_dir = opf_path.rsplit('/', 1)[0] + '/' if '/' in opf_path else ''
+    opf_dir = opf_path.rsplit("/", 1)[0] + "/" if "/" in opf_path else ""
 
     # Metadata
     title = ""
@@ -233,11 +278,13 @@ def parse_ncx(zf: zipfile.ZipFile, ncx_path: str) -> list[dict]:
         if label_el is not None and content_el is not None:
             label = (label_el.text or "").strip()
             src = content_el.get("src", "")
-            entries.append({
-                "label": label,
-                "href_file": normalize_href(src),
-                "href_full": src,
-            })
+            entries.append(
+                {
+                    "label": label,
+                    "href_file": normalize_href(src),
+                    "href_full": src,
+                }
+            )
     return entries
 
 
@@ -247,21 +294,23 @@ def parse_nav(zf: zipfile.ZipFile, nav_path: str) -> list[dict]:
         html = zf.read(nav_path).decode("utf-8")
     except KeyError:
         return []
-    soup = BeautifulSoup(html, 'lxml')
+    soup = BeautifulSoup(html, "lxml")
     # Find the TOC nav element
-    toc_nav = soup.find('nav', attrs={'epub:type': 'toc'}) or soup.find('nav')
+    toc_nav = soup.find("nav", attrs={"epub:type": "toc"}) or soup.find("nav")
     if not toc_nav:
         return []
     entries = []
-    for a in toc_nav.find_all('a'):
-        href = a.get('href', '')
+    for a in toc_nav.find_all("a"):
+        href = a.get("href", "")
         label = a.get_text(strip=True)
         if href and label:
-            entries.append({
-                "label": label,
-                "href_file": normalize_href(href),
-                "href_full": href,
-            })
+            entries.append(
+                {
+                    "label": label,
+                    "href_file": normalize_href(href),
+                    "href_full": href,
+                }
+            )
     return entries
 
 
@@ -340,7 +389,7 @@ def extract_epub(epub_path: Path) -> dict | None:
             continue
 
         # Determine filename for TOC lookup
-        fname = item["href"].rsplit('/', 1)[-1] if '/' in item["href"] else item["href"]
+        fname = item["href"].rsplit("/", 1)[-1] if "/" in item["href"] else item["href"]
 
         # Get title from TOC
         toc_label = file_to_toc.get(fname, "")
@@ -374,16 +423,18 @@ def extract_epub(epub_path: Path) -> dict | None:
         is_fm = False
         if toc_label and is_front_matter_label(toc_label):
             is_fm = True
-        elif text_len < 500 and is_front_matter_html(BeautifulSoup(content, 'lxml').get_text()):
+        elif text_len < 500 and is_front_matter_html(BeautifulSoup(content, "lxml").get_text()):
             is_fm = True
 
-        raw_chapters.append({
-            "title": chapter_title,
-            "html": html,
-            "text_len": text_len,
-            "is_front_matter": is_fm,
-            "has_toc_entry": bool(toc_label),
-        })
+        raw_chapters.append(
+            {
+                "title": chapter_title,
+                "html": html,
+                "text_len": text_len,
+                "is_front_matter": is_fm,
+                "has_toc_entry": bool(toc_label),
+            }
+        )
 
     # 6. Merge tiny sections and assign fallback titles
     chapters = []
@@ -391,11 +442,7 @@ def extract_epub(epub_path: Path) -> dict | None:
 
     for i, ch in enumerate(raw_chapters):
         # Merge tiny sections without TOC entries into previous chapter
-        if (not ch["has_toc_entry"]
-                and ch["text_len"] < 200
-                and not ch["title"]
-                and chapters
-                and not ch["is_front_matter"]):
+        if not ch["has_toc_entry"] and ch["text_len"] < 200 and not ch["title"] and chapters and not ch["is_front_matter"]:
             # Merge into previous
             chapters[-1]["html"] += "\n" + ch["html"]
             continue
@@ -404,8 +451,7 @@ def extract_epub(epub_path: Path) -> dict | None:
         if not ch["title"]:
             if ch["is_front_matter"]:
                 ch["title"] = "Front Matter"
-            elif ch["text_len"] < 200 and is_front_matter_html(
-                    BeautifulSoup(ch["html"], 'lxml').get_text()):
+            elif ch["text_len"] < 200 and is_front_matter_html(BeautifulSoup(ch["html"], "lxml").get_text()):
                 ch["is_front_matter"] = True
                 ch["title"] = "Front Matter"
             else:
@@ -420,10 +466,12 @@ def extract_epub(epub_path: Path) -> dict | None:
         if ch["is_front_matter"] and not ch["title"].startswith("—"):
             ch["title"] = f"— {ch['title']}"
 
-        chapters.append({
-            "title": ch["title"],
-            "html": ch["html"],
-        })
+        chapters.append(
+            {
+                "title": ch["title"],
+                "html": ch["html"],
+            }
+        )
 
     if not chapters:
         print(f"  WARNING: No chapters extracted from {epub_path.name}")
@@ -454,14 +502,14 @@ def main():
 
         if out_path.exists() and not force:
             mapping[epub_path.name] = json_name
-            print(f"[{i+1}/{len(epub_files)}] SKIP (exists): {epub_path.name}")
+            print(f"[{i + 1}/{len(epub_files)}] SKIP (exists): {epub_path.name}")
             continue
 
-        print(f"[{i+1}/{len(epub_files)}] Extracting: {epub_path.name}")
+        print(f"[{i + 1}/{len(epub_files)}] Extracting: {epub_path.name}")
         result = extract_epub(epub_path)
 
         if result:
-            with open(out_path, 'w', encoding='utf-8') as f:
+            with open(out_path, "w", encoding="utf-8") as f:
                 json.dump(result, f, ensure_ascii=False)
             size_kb = out_path.stat().st_size / 1024
             print(f"  -> {json_name} ({size_kb:.0f} KB, {len(result['chapters'])} chapters)")
@@ -471,7 +519,7 @@ def main():
 
     # Save mapping
     mapping_path = OUTPUT_DIR / "_mapping.json"
-    with open(mapping_path, 'w') as f:
+    with open(mapping_path, "w") as f:
         json.dump(mapping, f, indent=2)
 
     print(f"\nDone! Extracted {len(mapping)} books to {OUTPUT_DIR}")

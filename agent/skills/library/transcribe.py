@@ -17,9 +17,9 @@ WHISPER_SOCKET = "/tmp/whisper-server.sock"
 def get_chapters(audio_path: str) -> list[dict]:
     """Extract chapter metadata from m4b using ffprobe."""
     result = subprocess.run(
-        ["ffprobe", "-v", "quiet", "-print_format", "json",
-         "-show_format", "-show_chapters", audio_path],
-        capture_output=True, text=True,
+        ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", "-show_chapters", audio_path],
+        capture_output=True,
+        text=True,
     )
     data = json.loads(result.stdout)
     chapters = data.get("chapters", [])
@@ -29,7 +29,7 @@ def get_chapters(audio_path: str) -> list[dict]:
         return [{"title": "Full", "start": 0.0, "end": duration}]
     return [
         {
-            "title": ch["tags"].get("title", f"Chapter {i+1}"),
+            "title": ch["tags"].get("title", f"Chapter {i + 1}"),
             "start": float(ch["start_time"]),
             "end": float(ch["end_time"]),
         }
@@ -40,9 +40,9 @@ def get_chapters(audio_path: str) -> list[dict]:
 def get_metadata(audio_path: str) -> dict:
     """Extract title and author from m4b metadata."""
     result = subprocess.run(
-        ["ffprobe", "-v", "quiet", "-print_format", "json",
-         "-show_format", audio_path],
-        capture_output=True, text=True,
+        ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", audio_path],
+        capture_output=True,
+        text=True,
     )
     data = json.loads(result.stdout)
     tags = data.get("format", {}).get("tags", {})
@@ -55,9 +55,7 @@ def get_metadata(audio_path: str) -> dict:
 def extract_chapter_audio(audio_path: str, start: float, end: float, out_path: str):
     """Extract a chapter's audio to a wav file."""
     subprocess.run(
-        ["ffmpeg", "-y", "-i", audio_path,
-         "-ss", str(start), "-to", str(end),
-         "-ac", "1", "-ar", "16000", "-f", "wav", out_path],
+        ["ffmpeg", "-y", "-i", audio_path, "-ss", str(start), "-to", str(end), "-ac", "1", "-ar", "16000", "-f", "wav", out_path],
         capture_output=True,
     )
 
@@ -94,18 +92,18 @@ def transcribe_book(audio_path: str, output_path: str = None):
     meta = get_metadata(audio_path)
     chapters = get_chapters(audio_path)
 
-    print(f"\n{'='*60}", flush=True)
+    print(f"\n{'=' * 60}", flush=True)
     print(f"Book: {meta['title']} by {meta['author']}", flush=True)
     print(f"Chapters: {len(chapters)}", flush=True)
     total_duration = sum(c["end"] - c["start"] for c in chapters)
-    print(f"Duration: {total_duration/3600:.1f} hours", flush=True)
-    print(f"{'='*60}", flush=True)
+    print(f"Duration: {total_duration / 3600:.1f} hours", flush=True)
+    print(f"{'=' * 60}", flush=True)
 
     result_chapters = []
 
     for i, ch in enumerate(chapters):
         duration = ch["end"] - ch["start"]
-        print(f"\n  [{i+1}/{len(chapters)}] {ch['title']} ({duration/60:.1f} min)", flush=True)
+        print(f"\n  [{i + 1}/{len(chapters)}] {ch['title']} ({duration / 60:.1f} min)", flush=True)
 
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as tmp:
             extract_chapter_audio(audio_path, ch["start"], ch["end"], tmp.name)

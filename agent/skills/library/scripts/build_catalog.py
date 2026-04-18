@@ -90,6 +90,7 @@ def parse_opf_metadata(zf: zipfile.ZipFile, opf_path: str) -> tuple[dict, dict, 
 
     meta_el = root.find(f"{{{NS_OPF}}}metadata")
     if meta_el is not None:
+
         def _text(tag):
             el = meta_el.find(f"{{{NS_DC}}}{tag}")
             return (el.text or "").strip() if el is not None and el.text else ""
@@ -107,9 +108,7 @@ def parse_opf_metadata(zf: zipfile.ZipFile, opf_path: str) -> tuple[dict, dict, 
     # Strip HTML from description
     if meta["description"]:
         try:
-            meta["description"] = BeautifulSoup(
-                meta["description"], "lxml"
-            ).get_text(" ", strip=True)
+            meta["description"] = BeautifulSoup(meta["description"], "lxml").get_text(" ", strip=True)
         except Exception:
             pass
 
@@ -203,10 +202,17 @@ def audio_metadata(audio_path: Path) -> dict:
     try:
         result = subprocess.run(
             [
-                "ffprobe", "-v", "quiet", "-print_format", "json",
-                "-show_format", str(audio_path),
+                "ffprobe",
+                "-v",
+                "quiet",
+                "-print_format",
+                "json",
+                "-show_format",
+                str(audio_path),
             ],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         data = json.loads(result.stdout or "{}")
     except (FileNotFoundError, subprocess.TimeoutExpired, json.JSONDecodeError):
@@ -215,12 +221,7 @@ def audio_metadata(audio_path: Path) -> dict:
     tags = fmt.get("tags", {}) or {}
     info = {}
     # Narrator is often in composer/artist/performer
-    narrator = (
-        tags.get("composer")
-        or tags.get("performer")
-        or tags.get("narrator")
-        or tags.get("artist")
-    )
+    narrator = tags.get("composer") or tags.get("performer") or tags.get("narrator") or tags.get("artist")
     if narrator:
         info["narrator"] = narrator
     try:

@@ -19,7 +19,7 @@ EMBEDDINGS_DIR.mkdir(parents=True, exist_ok=True)
 
 CHUNK_WORDS = 500
 CHUNK_OVERLAP = 50  # words overlap between chunks
-MODEL_NAME = 'all-MiniLM-L6-v2'
+MODEL_NAME = "all-MiniLM-L6-v2"
 BATCH_SIZE = 256
 
 
@@ -44,18 +44,18 @@ def chunk_text(text: str, book_title: str, author: str, chapters: list) -> list:
     # For each chapter, find its word range
     chapter_word_ranges = []
     for ch in chapters:
-        ch_offset = ch['offset']
+        ch_offset = ch["offset"]
         # Find nearest word index
         best_wi = 0
-        best_dist = float('inf')
+        best_dist = float("inf")
         for ci, wi in char_to_word.items():
             if abs(ci - ch_offset) < best_dist:
                 best_dist = abs(ci - ch_offset)
                 best_wi = wi
-        chapter_word_ranges.append((best_wi, ch['title']))
+        chapter_word_ranges.append((best_wi, ch["title"]))
 
     def get_chapter_for_word(word_idx):
-        ch_title = chapters[0]['title'] if chapters else 'Unknown'
+        ch_title = chapters[0]["title"] if chapters else "Unknown"
         for start_wi, title in chapter_word_ranges:
             if word_idx >= start_wi:
                 ch_title = title
@@ -68,7 +68,7 @@ def chunk_text(text: str, book_title: str, author: str, chapters: list) -> list:
     while i < len(words):
         end = min(i + CHUNK_WORDS, len(words))
         chunk_words = words[i:end]
-        chunk_text_str = ' '.join(chunk_words)
+        chunk_text_str = " ".join(chunk_words)
 
         # Skip very short chunks (< 30 words) unless it's the last
         if len(chunk_words) < 30 and i > 0:
@@ -76,13 +76,15 @@ def chunk_text(text: str, book_title: str, author: str, chapters: list) -> list:
 
         chapter = get_chapter_for_word(i)
 
-        chunks.append({
-            'book': book_title,
-            'author': author,
-            'chapter': chapter,
-            'word_offset': i,
-            'text': chunk_text_str,
-        })
+        chunks.append(
+            {
+                "book": book_title,
+                "author": author,
+                "chapter": chapter,
+                "word_offset": i,
+                "text": chunk_text_str,
+            }
+        )
 
         i += CHUNK_WORDS - CHUNK_OVERLAP
 
@@ -91,25 +93,25 @@ def chunk_text(text: str, book_title: str, author: str, chapters: list) -> list:
 
 def build_chunks():
     """Build all chunks from corpus."""
-    with open(INDEX_PATH, encoding='utf-8') as f:
+    with open(INDEX_PATH, encoding="utf-8") as f:
         index = json.load(f)
 
     all_chunks = []
     for i, book in enumerate(index):
-        corpus_path = CORPUS_DIR / book['filename']
-        with open(corpus_path, encoding='utf-8') as f:
+        corpus_path = CORPUS_DIR / book["filename"]
+        with open(corpus_path, encoding="utf-8") as f:
             text = f.read()
 
         # Skip the TITLE/AUTHOR header lines
-        lines = text.split('\n', 2)
+        lines = text.split("\n", 2)
         if len(lines) > 2:
             text = lines[2]
 
-        chunks = chunk_text(text, book['title'], book['author'], book['chapters'])
+        chunks = chunk_text(text, book["title"], book["author"], book["chapters"])
         all_chunks.extend(chunks)
 
         if (i + 1) % 20 == 0 or i == 0:
-            print(f"  [{i+1}/{len(index)}] {book['title']}: {len(chunks)} chunks")
+            print(f"  [{i + 1}/{len(index)}] {book['title']}: {len(chunks)} chunks")
 
     print(f"\nTotal chunks: {len(all_chunks)}")
     return all_chunks
@@ -121,15 +123,15 @@ def build_embeddings(chunks: list, resume_from: int = 0):
     import torch
     from sentence_transformers import SentenceTransformer
 
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
-    if device == 'cuda':
+    if device == "cuda":
         print(f"GPU: {torch.cuda.get_device_name(0)}")
 
     print(f"Loading model: {MODEL_NAME}")
     model = SentenceTransformer(MODEL_NAME, device=device)
 
-    texts = [c['text'] for c in chunks]
+    texts = [c["text"] for c in chunks]
     total = len(texts)
 
     # Check for existing partial embeddings
@@ -168,8 +170,8 @@ def build_embeddings(chunks: list, resume_from: int = 0):
             # Save progress
             partial = np.vstack(embeddings_list)
             np.save(str(EMBEDDINGS_PATH), partial)
-            with open(PROGRESS_PATH, 'w') as f:
-                json.dump({'completed': batch_end, 'total': total}, f)
+            with open(PROGRESS_PATH, "w") as f:
+                json.dump({"completed": batch_end, "total": total}, f)
 
     all_embeddings = np.vstack(embeddings_list)
     print(f"\nEmbeddings shape: {all_embeddings.shape}")
@@ -186,19 +188,19 @@ def main():
     if PROGRESS_PATH.exists() and CHUNKS_PATH.exists():
         with open(PROGRESS_PATH) as f:
             progress = json.load(f)
-        resume_from = progress.get('completed', 0)
+        resume_from = progress.get("completed", 0)
         print(f"Found progress file: {resume_from} chunks already done")
 
     # Step 1: Build chunks
     if CHUNKS_PATH.exists() and resume_from > 0:
         print("Loading existing chunks...")
-        with open(CHUNKS_PATH, encoding='utf-8') as f:
+        with open(CHUNKS_PATH, encoding="utf-8") as f:
             all_chunks = json.load(f)
         print(f"Loaded {len(all_chunks)} chunks")
     else:
         print("Building chunks from corpus...")
         all_chunks = build_chunks()
-        with open(CHUNKS_PATH, 'w', encoding='utf-8') as f:
+        with open(CHUNKS_PATH, "w", encoding="utf-8") as f:
             json.dump(all_chunks, f, ensure_ascii=False)
         print(f"Saved chunks to {CHUNKS_PATH}")
 
@@ -208,6 +210,7 @@ def main():
 
     # Save final
     import numpy as np
+
     np.save(str(EMBEDDINGS_PATH), embeddings)
 
     # Clean up progress file
@@ -220,5 +223,5 @@ def main():
     print(f"  Size: {EMBEDDINGS_PATH.stat().st_size / 1024 / 1024:.1f} MB")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
