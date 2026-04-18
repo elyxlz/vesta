@@ -207,13 +207,9 @@ func (wac *WhatsAppClient) handleReaction(evt *events.Message) {
 func (wac *WhatsAppClient) handleHistorySync(evt *events.HistorySync) {
 	wac.logger.Infof("Processing history sync with %d conversations", len(evt.Data.Conversations))
 
-	tx, err := wac.store.Begin()
-	if err != nil {
-		wac.logger.Errorf("Failed to begin history sync transaction: %v", err)
-		return
-	}
-	defer tx.Rollback()
-
+	// Commit one transaction per conversation so the writer lock releases between
+	// conversations, allowing other writes (add-contact, live events) to make
+	// progress during large first-pair backfills.
 	for _, conversation := range evt.Data.Conversations {
 		if conversation.ID == nil {
 			continue
@@ -225,67 +221,76 @@ func (wac *WhatsAppClient) handleHistorySync(evt *events.HistorySync) {
 			continue
 		}
 
-		name := wac.getChatName(jid)
-
-		// Store chat FIRST so the FTS AFTER INSERT trigger can look up chat name.
-		// Chats with no messages in this sync batch must still be recorded.
-		chatTimestamp := time.Now()
-		if len(conversation.Messages) > 0 {
-			if m0 := conversation.Messages[0]; m0 != nil && m0.Message != nil {
-				chatTimestamp = time.Unix(int64(m0.Message.GetMessageTimestamp()), 0)
+		err = func() error {
+			tx, err := wac.store.Begin()
+			if err != nil {
+				return err
 			}
-		}
-		if err := wac.store.StoreChatTx(tx, chatJID, name, chatTimestamp); err != nil {
-			wac.logger.Warnf("Failed to store history chat: %v", err)
-		}
+			defer tx.Rollback()
 
-		for _, msg := range conversation.Messages {
-			if msg == nil || msg.Message == nil {
-				continue
-			}
+			name := wac.getChatName(jid)
 
-			content := extractTextContent(msg.Message.Message)
-			isForwarded := msg.Message.Message != nil && isMessageForwarded(msg.Message.Message)
-			mediaType, filename, url, mediaKey, fileSHA256, fileEncSHA256, fileLength := extractMediaInfo(msg.Message.Message)
-
-			if content == "" && mediaType == "" {
-				continue
-			}
-
-			timestamp := time.Unix(int64(msg.Message.GetMessageTimestamp()), 0)
-
-			var sender string
-			isFromMe := false
-			if msg.Message.Key != nil {
-				if msg.Message.Key.FromMe != nil {
-					isFromMe = *msg.Message.Key.FromMe
-				}
-				if !isFromMe && msg.Message.Key.Participant != nil {
-					sender = *msg.Message.Key.Participant
-				} else if isFromMe {
-					sender = wac.client.Store.ID.User
-				} else {
-					sender = jid.User
+			// Store chat FIRST so the FTS AFTER INSERT trigger can look up chat name.
+			// Chats with no messages in this sync batch must still be recorded.
+			chatTimestamp := time.Now()
+			if len(conversation.Messages) > 0 {
+				if m0 := conversation.Messages[0]; m0 != nil && m0.Message != nil {
+					chatTimestamp = time.Unix(int64(m0.Message.GetMessageTimestamp()), 0)
 				}
 			}
-
-			msgID := ""
-			if msg.Message.Key != nil && msg.Message.Key.ID != nil {
-				msgID = *msg.Message.Key.ID
+			if err := wac.store.StoreChatTx(tx, chatJID, name, chatTimestamp); err != nil {
+				wac.logger.Warnf("Failed to store history chat: %v", err)
 			}
 
-			if err := wac.store.StoreMessageTx(tx, StoreMessageParams{
-				ID: msgID, ChatJID: chatJID, Sender: sender, Content: content,
-				Timestamp: timestamp, IsFromMe: isFromMe, IsForwarded: isForwarded,
-				MediaType: mediaType, Filename: filename, URL: url,
-				MediaKey: mediaKey, FileSHA256: fileSHA256, FileEncSHA256: fileEncSHA256, FileLength: fileLength,
-			}); err != nil {
-				wac.logger.Warnf("Failed to store history message: %v", err)
+			for _, msg := range conversation.Messages {
+				if msg == nil || msg.Message == nil {
+					continue
+				}
+
+				content := extractTextContent(msg.Message.Message)
+				isForwarded := msg.Message.Message != nil && isMessageForwarded(msg.Message.Message)
+				mediaType, filename, url, mediaKey, fileSHA256, fileEncSHA256, fileLength := extractMediaInfo(msg.Message.Message)
+
+				if content == "" && mediaType == "" {
+					continue
+				}
+
+				timestamp := time.Unix(int64(msg.Message.GetMessageTimestamp()), 0)
+
+				var sender string
+				isFromMe := false
+				if msg.Message.Key != nil {
+					if msg.Message.Key.FromMe != nil {
+						isFromMe = *msg.Message.Key.FromMe
+					}
+					if !isFromMe && msg.Message.Key.Participant != nil {
+						sender = *msg.Message.Key.Participant
+					} else if isFromMe {
+						sender = wac.client.Store.ID.User
+					} else {
+						sender = jid.User
+					}
+				}
+
+				msgID := ""
+				if msg.Message.Key != nil && msg.Message.Key.ID != nil {
+					msgID = *msg.Message.Key.ID
+				}
+
+				if err := wac.store.StoreMessageTx(tx, StoreMessageParams{
+					ID: msgID, ChatJID: chatJID, Sender: sender, Content: content,
+					Timestamp: timestamp, IsFromMe: isFromMe, IsForwarded: isForwarded,
+					MediaType: mediaType, Filename: filename, URL: url,
+					MediaKey: mediaKey, FileSHA256: fileSHA256, FileEncSHA256: fileEncSHA256, FileLength: fileLength,
+				}); err != nil {
+					wac.logger.Warnf("Failed to store history message: %v", err)
+				}
 			}
+
+			return tx.Commit()
+		}()
+		if err != nil {
+			wac.logger.Warnf("Failed to store history conversation %s: %v", chatJID, err)
 		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		wac.logger.Errorf("Failed to commit history sync transaction: %v", err)
 	}
 }

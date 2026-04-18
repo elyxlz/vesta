@@ -23,10 +23,14 @@ func NewMessageStore(dataDir string) (*MessageStore, error) {
 		return nil, fmt.Errorf("failed to create data directory: %v", err)
 	}
 
-	db, err := sql.Open("sqlite3", dbPath+"?_foreign_keys=on")
+	db, err := sql.Open("sqlite3", dbPath+"?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open message database: %v", err)
 	}
+	// SQLite allows only one writer; pin the pool to one connection so concurrent
+	// callers queue instead of racing on separate connections (which would surface
+	// as SQLITE_BUSY even with a busy_timeout set).
+	db.SetMaxOpenConns(1)
 
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS chats (
