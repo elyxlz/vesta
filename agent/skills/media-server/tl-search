@@ -1,0 +1,451 @@
+#!/usr/bin/env bash
+# tl-search — Search TorrentLeech and optionally add results to qBittorrent
+#
+# Usage:
+#   tl-search <query> [options]
+#
+# Options:
+#   --cat <id|name>     Category filter (movies, tv, all, or numeric ID)
+#   --limit <n>         Max results to show (default: 20)
+#   --add <n>           Add result number N to qBittorrent
+#   --path <path>       Save path for added torrent (default: /media/Plex)
+#   --json              Output raw JSON
+#   --relogin           Force re-authentication
+#
+# Categories:
+#   movies   = 1,8,9,10,11,12,13,14,15,29,36,37,43,47
+#   tv       = 2,26,27,32,44
+#   all      = (no filter)
+#
+# Environment:
+#   TL_USERNAME     TorrentLeech username (required)
+#   TL_PASSWORD     TorrentLeech password (required)
+#   TL_COOKIE_FILE  Cookie jar path (default: ~/.tl_cookies)
+#   QB_PORT         qBittorrent port (default: 8888)
+#   PLEX_MEDIA_PATH Base media path (default: /media/Plex)
+
+set -euo pipefail
+
+# --- Configuration ---
+TL_USERNAME="${TL_USERNAME:?TL_USERNAME env var is required}"
+TL_PASSWORD="${TL_PASSWORD:?TL_PASSWORD env var is required}"
+TL_COOKIE_FILE="${TL_COOKIE_FILE:-$HOME/.tl_cookies}"
+TL_BASE="https://www.torrentleech.org"
+
+QB_PORT="${QB_PORT:-8888}"
+QB_API="http://localhost:$QB_PORT/api/v2"
+MEDIA_PATH="${PLEX_MEDIA_PATH:-/media/Plex}"
+
+CURL_OPTS=(-s -L --max-time 30)
+# Add proxy if configured
+if [[ -n "${SOCKS5_HOST:-}" ]]; then
+    SOCKS5_USER_PART=""
+    if [[ -n "${SOCKS5_USER:-}" && -n "${SOCKS5_PASS:-}" ]]; then
+        SOCKS5_USER_PART="${SOCKS5_USER}:${SOCKS5_PASS}@"
+    fi
+    CURL_OPTS+=(--proxy "socks5://${SOCKS5_USER_PART}${SOCKS5_HOST}:${SOCKS5_PORT:-1080}")
+fi
+
+# --- Category mappings ---
+declare -A CAT_MAP=(
+    [movies]="1,8,9,10,11,12,13,14,15,29,36,37,43,47"
+    [tv]="2,26,27,32,44"
+    [all]=""
+)
+
+# --- Functions ---
+
+tl_login() {
+    echo "Logging in to TorrentLeech as $TL_USERNAME..." >&2
+    local response
+    response=$(curl "${CURL_OPTS[@]}" \
+        -c "$TL_COOKIE_FILE" \
+        -b "$TL_COOKIE_FILE" \
+        -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
+        -H "Referer: $TL_BASE/user/account/login/" \
+        -H "Content-Type: application/x-www-form-urlencoded" \
+        -d "username=$TL_USERNAME&password=$TL_PASSWORD" \
+        -w "\n%{http_code}" \
+        "$TL_BASE/user/account/login/" 2>&1)
+
+    local http_code
+    http_code=$(echo "$response" | tail -1)
+    local body
+    body=$(echo "$response" | sed '$d')
+
+    if [[ "$http_code" == "200" ]] || [[ "$http_code" == "302" ]]; then
+        # Check if cookies were set
+        if [[ -f "$TL_COOKIE_FILE" ]] && grep -q "torrentleech" "$TL_COOKIE_FILE" 2>/dev/null; then
+            echo "Login successful." >&2
+            return 0
+        fi
+    fi
+
+    # Check for specific errors
+    if echo "$body" | grep -qi "site-blocked\|blocked\|captcha\|cloudflare"; then
+        echo "ERROR: Connection blocked (ISP/Cloudflare). Try using a VPN/proxy:" >&2
+        echo "  export SOCKS5_HOST=your-proxy-host" >&2
+        echo "  export SOCKS5_PORT=1080" >&2
+        echo "  export SOCKS5_USER=username" >&2
+        echo "  export SOCKS5_PASS=password" >&2
+        return 1
+    fi
+
+    echo "Login may have failed (HTTP $http_code). Continuing anyway..." >&2
+    return 0
+}
+
+tl_ensure_auth() {
+    local force="${1:-}"
+    if [[ "$force" == "force" ]] || [[ ! -f "$TL_COOKIE_FILE" ]]; then
+        tl_login
+        return $?
+    fi
+
+    # Check if cookies are still valid (less than 24h old)
+    local cookie_age=999999
+    if [[ -f "$TL_COOKIE_FILE" ]]; then
+        local now
+        now=$(date +%s)
+        local file_time
+        file_time=$(stat -c %Y "$TL_COOKIE_FILE" 2>/dev/null || echo 0)
+        cookie_age=$(( now - file_time ))
+    fi
+
+    if (( cookie_age > 86400 )); then
+        tl_login
+        return $?
+    fi
+
+    return 0
+}
+
+tl_search() {
+    local query="$1"
+    local categories="${2:-}"
+    local limit="${3:-20}"
+
+    tl_ensure_auth
+
+    # Build the search URL
+    # TorrentLeech browse/search API
+    local encoded_query
+    encoded_query=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$query'))")
+
+    local url="$TL_BASE/torrents/browse/list/query/$encoded_query"
+    if [[ -n "$categories" ]]; then
+        url="$url/categories/$categories"
+    fi
+    url="$url/orderby/seeders/order/desc"
+
+    local response
+    response=$(curl "${CURL_OPTS[@]}" \
+        -b "$TL_COOKIE_FILE" \
+        -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
+        -H "Accept: application/json" \
+        -H "X-Requested-With: XMLHttpRequest" \
+        "$url" 2>&1)
+
+    echo "$response"
+}
+
+format_results() {
+    local json="$1"
+    local limit="${2:-20}"
+
+    python3 << 'PYEOF'
+import json, sys
+
+try:
+    data = json.loads(r"""JSONDATA""")
+except (json.JSONDecodeError, Exception) as e:
+    # Try to detect common errors
+    raw = r"""JSONDATA"""
+    if "site-blocked" in raw.lower() or "blocked" in raw.lower():
+        print("ERROR: Connection blocked by ISP. Use a VPN/SOCKS5 proxy.", file=sys.stderr)
+    elif "login" in raw.lower() or "account" in raw.lower():
+        print("ERROR: Not authenticated. Run with --relogin flag.", file=sys.stderr)
+    elif "SSL" in raw or "ssl" in raw or "wrong version" in raw:
+        print("ERROR: SSL/TLS error - likely ISP blocking. Use a VPN/SOCKS5 proxy.", file=sys.stderr)
+        print(f"Raw: {raw[:200]}", file=sys.stderr)
+    else:
+        print(f"ERROR: Could not parse response: {e}", file=sys.stderr)
+        print(f"Raw: {raw[:300]}", file=sys.stderr)
+    sys.exit(1)
+
+torrents = data.get("torrentList", data.get("torrents", []))
+total = data.get("numFound", len(torrents))
+limit = LIMIT_VAL
+
+print(f"Found {total} results (showing {min(limit, len(torrents))}):")
+print()
+print(f"{'#':>3}  {'Seeds':>5}  {'Leech':>5}  {'Size':>10}  {'Name'}")
+print(f"{'':->3}  {'':->5}  {'':->5}  {'':->10}  {'':->60}")
+
+for i, t in enumerate(torrents[:limit]):
+    name = t.get("name", t.get("filename", "Unknown"))
+    seeds = t.get("seeders", 0)
+    leech = t.get("leechers", 0)
+    size = t.get("size", 0)
+    fid = t.get("fid", t.get("id", ""))
+    filename = t.get("filename", name)
+    cat = t.get("categoryID", "")
+
+    # Format size
+    if isinstance(size, (int, float)):
+        if size > 1073741824:
+            size_str = f"{size/1073741824:.2f} GB"
+        elif size > 1048576:
+            size_str = f"{size/1048576:.1f} MB"
+        else:
+            size_str = f"{size/1024:.0f} KB"
+    else:
+        size_str = str(size)
+
+    print(f"{i+1:3d}  {seeds:5d}  {leech:5d}  {size_str:>10}  {name[:80]}")
+
+    # Store download info for --add
+    dl_url = f"/download/{fid}/{filename}.torrent"
+    print(f"     -> fid={fid}  dl={dl_url}")
+    print()
+PYEOF
+}
+
+download_torrent() {
+    local fid="$1"
+    local filename="$2"
+
+    tl_ensure_auth
+
+    local dl_url="$TL_BASE/download/$fid/$filename.torrent"
+    local tmp_file="/tmp/tl_${fid}.torrent"
+
+    echo "Downloading torrent $fid..." >&2
+    curl "${CURL_OPTS[@]}" \
+        -b "$TL_COOKIE_FILE" \
+        -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
+        -o "$tmp_file" \
+        "$dl_url" 2>&1
+
+    if [[ -f "$tmp_file" ]] && [[ -s "$tmp_file" ]]; then
+        # Verify it's actually a torrent file (bencoded data starts with 'd')
+        local head_bytes
+        head_bytes=$(head -c 20 "$tmp_file" 2>/dev/null)
+        if [[ "$head_bytes" == d* ]]; then
+            echo "$tmp_file"
+            return 0
+        fi
+        echo "ERROR: Downloaded file does not appear to be a torrent." >&2
+        echo "Content: $(head -c 200 "$tmp_file")" >&2
+        rm -f "$tmp_file"
+        return 1
+    fi
+
+    echo "ERROR: Failed to download torrent file." >&2
+    return 1
+}
+
+add_to_qbittorrent() {
+    local torrent_file="$1"
+    local save_path="$2"
+
+    echo "Adding to qBittorrent (save to: $save_path)..." >&2
+    local result
+    result=$(curl -s -X POST "$QB_API/torrents/add" \
+        -F "torrents=@$torrent_file" \
+        -F "savepath=$save_path" 2>&1)
+
+    if [[ "$result" == "Ok." ]] || [[ -z "$result" ]]; then
+        echo "Successfully added to qBittorrent!" >&2
+        rm -f "$torrent_file"
+        return 0
+    else
+        echo "qBittorrent response: $result" >&2
+        return 1
+    fi
+}
+
+usage() {
+    cat << 'EOF'
+tl-search — Search TorrentLeech and add torrents to qBittorrent
+
+Usage:
+  tl-search <query> [options]
+
+Options:
+  --cat <category>    Category: movies, tv, all (default: all)
+  --limit <n>         Max results (default: 20)
+  --add <n>           Add result #n to qBittorrent
+  --path <path>       Save path for --add (default: /media/Plex)
+  --json              Output raw JSON response
+  --relogin           Force re-authentication
+  --help              Show this help
+
+Examples:
+  tl-search "Inception 2010"
+  tl-search "Breaking Bad" --cat tv
+  tl-search "Dune 2024" --cat movies --limit 5
+  tl-search "Dune 2024" --cat movies --add 1 --path /media/Plex/Movies
+
+Environment variables:
+  TL_USERNAME       TorrentLeech username
+  TL_PASSWORD       TorrentLeech password
+  TL_COOKIE_FILE    Cookie file path (~/.tl_cookies)
+  SOCKS5_HOST       SOCKS5 proxy host (for ISP bypass)
+  SOCKS5_PORT       SOCKS5 proxy port (default: 1080)
+  SOCKS5_USER       SOCKS5 proxy username
+  SOCKS5_PASS       SOCKS5 proxy password
+  QB_PORT           qBittorrent port (default: 8888)
+  PLEX_MEDIA_PATH   Media base path (default: /media/Plex)
+EOF
+}
+
+# --- Main ---
+
+if [[ $# -eq 0 ]] || [[ "$1" == "--help" ]] || [[ "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+
+query="$1"
+shift
+
+cat_filter=""
+limit=20
+add_num=""
+save_path="$MEDIA_PATH"
+raw_json=false
+force_relogin=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --cat|-c)
+            cat_key="$2"
+            if [[ -n "${CAT_MAP[$cat_key]+x}" ]]; then
+                cat_filter="${CAT_MAP[$cat_key]}"
+            else
+                cat_filter="$cat_key"
+            fi
+            shift 2
+            ;;
+        --limit|-l)
+            limit="$2"
+            shift 2
+            ;;
+        --add|-a)
+            add_num="$2"
+            shift 2
+            ;;
+        --path|-p|--save-path)
+            save_path="$2"
+            shift 2
+            ;;
+        --json)
+            raw_json=true
+            shift
+            ;;
+        --relogin)
+            force_relogin="force"
+            shift
+            ;;
+        *)
+            echo "ERROR: unknown argument: $1" >&2
+            echo "Valid flags: --cat/-c, --limit/-l, --add/-a, --path/-p (aliases: --save-path), --json, --relogin" >&2
+            exit 1
+            ;;
+    esac
+done
+
+# Force relogin if requested
+if [[ -n "$force_relogin" ]]; then
+    rm -f "$TL_COOKIE_FILE"
+    tl_ensure_auth force
+fi
+
+echo "Searching TorrentLeech for: '$query'" >&2
+[[ -n "$cat_filter" ]] && echo "Category filter: $cat_filter" >&2
+
+# Perform search
+result=$(tl_search "$query" "$cat_filter" "$limit")
+
+if $raw_json; then
+    echo "$result"
+    exit 0
+fi
+
+# Replace placeholders in the Python formatter and run it
+formatted=$(python3 << PYEOF
+import json, sys
+
+raw = '''$result'''
+
+try:
+    data = json.loads(raw)
+except (json.JSONDecodeError, Exception) as e:
+    if "site-blocked" in raw.lower() or "blocked" in raw.lower() or "SSL" in raw or "wrong version" in raw.lower():
+        print("ERROR: Connection blocked by ISP. Configure a SOCKS5 proxy:", file=sys.stderr)
+        print("  export SOCKS5_HOST=your-proxy-host", file=sys.stderr)
+        print("  export SOCKS5_PORT=1080", file=sys.stderr)
+        print("  export SOCKS5_USER=username", file=sys.stderr)
+        print("  export SOCKS5_PASS=password", file=sys.stderr)
+    elif "login" in raw.lower() or "account" in raw.lower():
+        print("ERROR: Not authenticated. Run with --relogin flag.", file=sys.stderr)
+    else:
+        print(f"ERROR: Could not parse response: {e}", file=sys.stderr)
+        print(f"Response: {raw[:500]}", file=sys.stderr)
+    sys.exit(1)
+
+torrents = data.get("torrentList", data.get("torrents", []))
+total = data.get("numFound", len(torrents))
+limit = $limit
+
+print(f"Found {total} results (showing {min(limit, len(torrents))}):")
+print()
+print(f"{'#':>3}  {'Seeds':>5}  {'Leech':>5}  {'Size':>10}  {'Name'}")
+print(f"{'---':>3}  {'-----':>5}  {'-----':>5}  {'----------':>10}  {'------------------------------------------------------------'}")
+
+for i, t in enumerate(torrents[:limit]):
+    name = t.get("name", t.get("filename", "Unknown"))
+    seeds = t.get("seeders", 0)
+    leech = t.get("leechers", 0)
+    size = t.get("size", 0)
+    fid = t.get("fid", t.get("id", ""))
+    filename = t.get("filename", name)
+
+    if isinstance(size, (int, float)):
+        if size > 1073741824:
+            size_str = f"{size/1073741824:.2f} GB"
+        elif size > 1048576:
+            size_str = f"{size/1048576:.1f} MB"
+        else:
+            size_str = f"{size/1024:.0f} KB"
+    else:
+        size_str = str(size)
+
+    print(f"{i+1:3d}  {seeds:5d}  {leech:5d}  {size_str:>10}  {name[:80]}")
+    print(f"     fid={fid}")
+    print()
+PYEOF
+)
+
+echo "$formatted"
+
+# Handle --add
+if [[ -n "$add_num" ]]; then
+    # Extract the fid from the formatted output
+    fid_line=$(echo "$formatted" | grep "fid=" | sed -n "${add_num}p")
+    fid=$(echo "$fid_line" | grep -oP 'fid=\K[0-9]+')
+
+    if [[ -z "$fid" ]]; then
+        echo "ERROR: Could not find result #$add_num" >&2
+        exit 1
+    fi
+
+    echo "" >&2
+    echo "Adding result #$add_num (fid=$fid) to qBittorrent..." >&2
+
+    torrent_file=$(download_torrent "$fid" "download")
+    if [[ $? -eq 0 ]] && [[ -n "$torrent_file" ]]; then
+        add_to_qbittorrent "$torrent_file" "$save_path"
+    fi
+fi

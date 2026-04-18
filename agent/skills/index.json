@@ -112,6 +112,10 @@
     "description": "Voice input/output, transcription, TTS, API keys; manages ~/.voice/voice_config.json."
   },
   {
+    "name": "vpn",
+    "description": "This skill should be used when the user asks about \"vpn\", \"proxy\", \"socks5\", \"nordvpn\", \"tunnel\", \"proxy url\", or needs to route traffic through a VPN/proxy, check proxy status, or configure proxy settings for other skills."
+  },
+  {
     "name": "what-day",
     "description": "Determine the day of the week for any date."
   },

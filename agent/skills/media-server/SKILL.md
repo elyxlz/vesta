@@ -88,58 +88,74 @@ A helper script is available at `~/agent/skills/media-server/qb`. Run it with:
 
 ## Torrent Search
 
-qBittorrent supports search plugins for torrent sites. Configure tracker credentials in the plugin files.
+qBittorrent supports search plugins for torrent sites. A TorrentLeech plugin is included.
 
 **Required env vars for tracker search:**
-- `TRACKER_USERNAME` - tracker site username
-- `TRACKER_PASSWORD` - tracker site password
-- `TRACKER_COOKIE_UID` - tracker cookie UID (if cookie-based auth)
-- `TRACKER_COOKIE_PASS` - tracker cookie pass hash
+- `TL_USERNAME` - TorrentLeech username
+- `TL_PASSWORD` - TorrentLeech password
 - `SOCKS5_USER` - SOCKS5 proxy username (e.g. VPN provider)
 - `SOCKS5_PASS` - SOCKS5 proxy password
-- `SOCKS5_HOST` - SOCKS5 proxy host (e.g. `amsterdam.nl.socks.nordhold.net`)
+- `SOCKS5_HOST` - SOCKS5 proxy host
 - `SOCKS5_PORT` - SOCKS5 proxy port (default: 1080)
 
-### Search via qBittorrent plugin API
+**IMPORTANT:** Some ISPs block tracker sites. A SOCKS5 proxy or VPN is required for search to work. Use the **vpn** skill to get the proxy URL:
+
+```bash
+PROXY_URL=$(~/agent/skills/vpn/vpn proxy-url)
+```
+
+### Search via qBittorrent plugin (preferred)
+
+```bash
+~/agent/skills/media-server/qb search "Movie Name" movies
+~/agent/skills/media-server/qb search "TV Show" tv
+~/agent/skills/media-server/qb search "anything" --plugin torrentleech
+```
+
+### Search via standalone tl-search script
+
+```bash
+~/agent/skills/media-server/tl-search "Inception 2010" --cat movies
+~/agent/skills/media-server/tl-search "Breaking Bad" --cat tv --limit 10
+~/agent/skills/media-server/tl-search "Dune 2024" --cat movies --add 1 --path $PLEX_MEDIA_PATH/Movies
+~/agent/skills/media-server/tl-search "query" --json   # raw JSON output
+```
+
+### Search via qBittorrent API directly
 
 ```bash
 # Start search
 ssh -p $MEDIA_SERVER_SSH_PORT $MEDIA_SERVER_USER@$MEDIA_SERVER_HOST "curl -s -X POST 'http://localhost:$QB_PORT/api/v2/search/start' \
-  -d 'pattern=SEARCH+TERMS&plugins=<TRACKER_PLUGIN>&category=movies'"
+  -d 'pattern=SEARCH+TERMS&plugins=torrentleech&category=movies'"
 
 # Get search results (use the ID returned above)
 ssh -p $MEDIA_SERVER_SSH_PORT $MEDIA_SERVER_USER@$MEDIA_SERVER_HOST "curl -s 'http://localhost:$QB_PORT/api/v2/search/results?id=SEARCH_ID&limit=20&offset=0'"
 
-# Stop search
-ssh -p $MEDIA_SERVER_SSH_PORT $MEDIA_SERVER_USER@$MEDIA_SERVER_HOST "curl -s -X POST 'http://localhost:$QB_PORT/api/v2/search/stop' -d 'id=SEARCH_ID'"
+# Stop/delete search
+ssh -p $MEDIA_SERVER_SSH_PORT $MEDIA_SERVER_USER@$MEDIA_SERVER_HOST "curl -s -X POST 'http://localhost:$QB_PORT/api/v2/search/delete' -d 'id=SEARCH_ID'"
 ```
 
 **Note:** qBittorrent search plugins may appear as `enabled: false` in the API listing but still work when called via `/api/v2/search/start` specifying the plugin name directly.
 
-### Direct tracker API search (with SOCKS5 proxy)
+### Installing the TorrentLeech plugin
 
 ```bash
-ssh -p $MEDIA_SERVER_SSH_PORT $MEDIA_SERVER_USER@$MEDIA_SERVER_HOST \
-  'curl -s -b "tracker_uid=$TRACKER_COOKIE_UID; tracker_pass=$TRACKER_COOKIE_PASS" \
-  --proxy socks5://$SOCKS5_USER:$SOCKS5_PASS@$SOCKS5_HOST:$SOCKS5_PORT \
-  "<TRACKER_URL>/torrents/browse/list/query/SEARCH+TERMS/categories/CATEGORY_IDS/orderby/seeders/order/desc"'
+# Plugin source is at ~/agent/skills/media-server/torrentleech.py
+# Serve and install via API:
+python3 -m http.server 9999 --directory ~/agent/skills/media-server/ &
+curl -X POST 'http://localhost:$QB_PORT/api/v2/search/installPlugin' \
+  -d 'sources=http://localhost:9999/torrentleech.py'
+kill %1
 ```
 
-### Download .torrent file via proxy
-
-```bash
-ssh -p $MEDIA_SERVER_SSH_PORT $MEDIA_SERVER_USER@$MEDIA_SERVER_HOST \
-  "curl -s -o /tmp/movie.torrent \
-  -b 'tracker_uid=$TRACKER_COOKIE_UID; tracker_pass=$TRACKER_COOKIE_PASS' \
-  --proxy socks5://$SOCKS5_USER:$SOCKS5_PASS@$SOCKS5_HOST:$SOCKS5_PORT \
-  '<TRACKER_URL>/download/FID/FILENAME.torrent'"
-```
-
-**Torrent download URL format (typical):**
-```
-<TRACKER_URL>/download/{fid}/{filename}
-```
-May require session cookies cached on the server.
+### TorrentLeech categories
+- **movies:** 1,8,9,10,11,12,13,14,15,29,36,37,43,47
+- **tv:** 2,26,27,32,44
+- **music:** 16-25
+- **games:** 3,33-35,38-42
+- **software:** 4,28,30,31
+- **anime:** 5,6,7
+- **books:** 45,46
 
 ## Media Library
 
