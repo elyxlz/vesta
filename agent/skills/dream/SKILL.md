@@ -130,7 +130,7 @@ Run `~/agent/skills/dream/scripts/redact_secrets.sh` to scan the event DB for AP
 
 ## Summary
 
-Write what you changed and why to `~/agent/dreamer/YYYY-MM-DDTHH.md` (e.g. `2026-04-14T03.md`). Include:
+Write what you changed and why to `~/agent/dreamer/YYYY-MM-DDTHHMM.md` (e.g. `2026-04-14T0347.md`). The minutes matter: two dreams in the same hour must not overwrite each other. Include:
 - Key things that happened or were accomplished today
 - What each fix was and what triggered it
 - Whether each validated or not
