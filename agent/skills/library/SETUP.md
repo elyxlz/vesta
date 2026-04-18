@@ -10,13 +10,13 @@ and search endpoints.
 uv pip install aiohttp beautifulsoup4 lxml sentence-transformers numpy torch
 ```
 
-- `aiohttp` — HTTP server (`server.py`)
-- `beautifulsoup4`, `lxml` — epub HTML parsing (`extract_books.py`, `build_catalog.py`)
-- `sentence-transformers`, `numpy`, `torch` — semantic search (`build_index.py`, `search.py`)
+- `aiohttp`: HTTP server (`server.py`)
+- `beautifulsoup4`, `lxml`: epub HTML parsing (`extract_books.py`, `build_catalog.py`)
+- `sentence-transformers`, `numpy`, `torch`: semantic search (`build_index.py`, `search.py`)
 
 Optional, only required if you use `transcribe.py` to transcribe audiobooks:
 
-- `ffmpeg` / `ffprobe` (CLI) — chapter extraction + wav conversion
+- `ffmpeg` / `ffprobe` (CLI): chapter extraction + wav conversion
 - A running `whisper-server` listening on `/tmp/whisper-server.sock`
 
 `build_catalog.py` also shells out to `ffprobe` to pull narrator and duration
@@ -30,8 +30,8 @@ mkdir -p ~/agent/data/skills/library/{books,audio,covers,text,search/corpus,sear
 
 Drop your source files in:
 
-- `~/agent/data/skills/library/books/` — `.epub` files
-- `~/agent/data/skills/library/audio/` — `.m4b` / `.mp3` audiobook files
+- `~/agent/data/skills/library/books/`: `.epub` files
+- `~/agent/data/skills/library/audio/`: `.m4b` / `.mp3` audiobook files
 
 ## 3. Import workflow
 
@@ -48,7 +48,7 @@ python scripts/build_catalog.py
 python scripts/build_index.py
 ```
 
-`build_catalog.py` is idempotent — re-running updates existing entries and
+`build_catalog.py` is idempotent: re-running updates existing entries and
 appends new ones. Audio-only books (no matching epub) get an entry with
 `"audio_only": true`.
 

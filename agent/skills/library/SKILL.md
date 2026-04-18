@@ -75,4 +75,4 @@ The Library page is registered in the dashboard config, providing a browsable UI
 2. Run `python scripts/extract_books.py` to extract chapter text to `~/agent/data/skills/library/text/`
 3. Run `python scripts/build_catalog.py` to rebuild `~/agent/data/skills/library/catalog.json` with metadata and covers
 4. (Optional) Run `python scripts/build_index.py` to rebuild semantic search embeddings
-5. Place audiobook files (`.m4b`, `.mp3`) in `~/agent/data/skills/library/audio/` — matched to books by filename
+5. Place audiobook files (`.m4b`, `.mp3`) in `~/agent/data/skills/library/audio/`: matched to books by filename
