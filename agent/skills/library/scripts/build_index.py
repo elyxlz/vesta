@@ -2,8 +2,6 @@
 """Build semantic search embeddings index for the book corpus."""
 
 import json
-import os
-import sys
 import time
 from pathlib import Path
 
@@ -93,13 +91,13 @@ def chunk_text(text: str, book_title: str, author: str, chapters: list) -> list:
 
 def build_chunks():
     """Build all chunks from corpus."""
-    with open(INDEX_PATH, 'r', encoding='utf-8') as f:
+    with open(INDEX_PATH, encoding='utf-8') as f:
         index = json.load(f)
 
     all_chunks = []
     for i, book in enumerate(index):
         corpus_path = CORPUS_DIR / book['filename']
-        with open(corpus_path, 'r', encoding='utf-8') as f:
+        with open(corpus_path, encoding='utf-8') as f:
             text = f.read()
 
         # Skip the TITLE/AUTHOR header lines
@@ -185,9 +183,8 @@ def main():
 
     # Check for resume
     resume_from = 0
-    existing_chunks = None
     if PROGRESS_PATH.exists() and CHUNKS_PATH.exists():
-        with open(PROGRESS_PATH, 'r') as f:
+        with open(PROGRESS_PATH) as f:
             progress = json.load(f)
         resume_from = progress.get('completed', 0)
         print(f"Found progress file: {resume_from} chunks already done")
@@ -195,7 +192,7 @@ def main():
     # Step 1: Build chunks
     if CHUNKS_PATH.exists() and resume_from > 0:
         print("Loading existing chunks...")
-        with open(CHUNKS_PATH, 'r', encoding='utf-8') as f:
+        with open(CHUNKS_PATH, encoding='utf-8') as f:
             all_chunks = json.load(f)
         print(f"Loaded {len(all_chunks)} chunks")
     else:
@@ -217,7 +214,7 @@ def main():
     if PROGRESS_PATH.exists():
         PROGRESS_PATH.unlink()
 
-    print(f"\nDone!")
+    print("\nDone!")
     print(f"  Chunks: {CHUNKS_PATH} ({len(all_chunks)} chunks)")
     print(f"  Embeddings: {EMBEDDINGS_PATH} ({embeddings.shape})")
     print(f"  Size: {EMBEDDINGS_PATH.stat().st_size / 1024 / 1024:.1f} MB")

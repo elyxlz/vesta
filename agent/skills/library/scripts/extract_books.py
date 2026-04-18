@@ -11,12 +11,11 @@ Parses epub ZIP directly for best chapter title extraction:
 """
 
 import json
-import os
 import re
 import sys
 import zipfile
 from pathlib import Path
-from urllib.parse import unquote, urljoin
+from urllib.parse import unquote
 from xml.etree import ElementTree as ET
 
 from bs4 import BeautifulSoup
@@ -468,7 +467,7 @@ def main():
             print(f"  -> {json_name} ({size_kb:.0f} KB, {len(result['chapters'])} chapters)")
             mapping[epub_path.name] = json_name
         else:
-            print(f"  -> FAILED")
+            print("  -> FAILED")
 
     # Save mapping
     mapping_path = OUTPUT_DIR / "_mapping.json"

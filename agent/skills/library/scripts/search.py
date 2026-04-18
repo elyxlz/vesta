@@ -2,11 +2,8 @@
 """Book search system: plain text search and semantic search across 183+ epub books."""
 
 import json
-import os
 import re
-import sys
 from pathlib import Path
-from typing import List, Dict, Optional
 
 SEARCH_DIR = Path.home() / "agent" / "data" / "skills" / "library" / "search"
 CORPUS_DIR = SEARCH_DIR / "corpus"
@@ -23,7 +20,7 @@ _corpus_cache = {}
 def _load_index():
     global _corpus_index
     if _corpus_index is None:
-        with open(INDEX_PATH, 'r', encoding='utf-8') as f:
+        with open(INDEX_PATH, encoding='utf-8') as f:
             _corpus_index = json.load(f)
     return _corpus_index
 
@@ -31,7 +28,7 @@ def _load_index():
 def _load_corpus(filename: str) -> str:
     if filename not in _corpus_cache:
         path = CORPUS_DIR / filename
-        with open(path, 'r', encoding='utf-8') as f:
+        with open(path, encoding='utf-8') as f:
             _corpus_cache[filename] = f.read()
     return _corpus_cache[filename]
 
@@ -51,7 +48,7 @@ def _find_chapter(book_entry: dict, position: int) -> str:
     return 'Unknown'
 
 
-def search_books(query: str, limit: int = 10, case_sensitive: bool = False) -> List[Dict]:
+def search_books(query: str, limit: int = 10, case_sensitive: bool = False) -> list[dict]:
     """
     Full-text search across all books.
 
@@ -115,7 +112,7 @@ def search_books(query: str, limit: int = 10, case_sensitive: bool = False) -> L
     return results[:limit]
 
 
-def search_books_regex(pattern: str, limit: int = 10, flags: int = re.IGNORECASE) -> List[Dict]:
+def search_books_regex(pattern: str, limit: int = 10, flags: int = re.IGNORECASE) -> list[dict]:
     """
     Regex search across all books.
 
@@ -191,7 +188,7 @@ def _load_semantic():
         return False
 
     import numpy as np
-    with open(CHUNKS_PATH, 'r', encoding='utf-8') as f:
+    with open(CHUNKS_PATH, encoding='utf-8') as f:
         _chunks_data = json.load(f)
     _embeddings_array = np.load(str(EMBEDDINGS_PATH))
     _semantic_loaded = True
@@ -209,7 +206,7 @@ def _get_model():
     return _model
 
 
-def semantic_search(query: str, limit: int = 5) -> List[Dict]:
+def semantic_search(query: str, limit: int = 5) -> list[dict]:
     """
     Semantic search using embeddings.
 
