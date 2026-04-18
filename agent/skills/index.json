@@ -1,9 +1,5 @@
 [
   {
-    "name": "app-chat",
-    "description": "This skill handles messages from the Vesta app (desktop/web). When a user sends a message through the Vesta app, it arrives as a notification. Reply using the `app-chat` CLI. Requires a background daemon."
-  },
-  {
     "name": "browser",
     "description": "Use for \"browse\", \"open a website\", \"navigate to\", \"click\", \"fill form\","
   },
@@ -34,6 +30,10 @@
   {
     "name": "keeper",
     "description": "This skill should be used when the user asks about \"passwords\", \"credentials\", \"vault\", \"secrets\", \"keeper\", \"password manager\", \"logins\", \"TOTP\", \"2FA codes\", or needs to store, retrieve, search, share, or manage passwords and secure records."
+  },
+  {
+    "name": "library",
+    "description": "personal ebook and audiobook library with search, reading, and audio playback. Use when the user asks about books, reading, their kindle/audible library, or wants to search their book collection."
   },
   {
     "name": "media-server",
