@@ -89,7 +89,7 @@
   },
   {
     "name": "whatsapp",
-    "description": "This skill should be used when the user asks about \"whatsapp\", \"message\", \"text\", \"chat\", or needs to send/receive messages via WhatsApp. Requires a background daemon."
+    "description": "Use when the user mentions \"whatsapp\" or \"wa\", or asks to send/read/react-to WhatsApp messages, contacts, or groups. Does NOT cover generic \"text\"/\"message\" intents \u2014 those may mean Telegram or SMS. Requires the `whatsapp serve` daemon."
   },
   {
     "name": "whisper",

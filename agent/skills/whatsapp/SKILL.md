@@ -1,48 +1,54 @@
 ---
 name: whatsapp
-description: This skill should be used when the user asks about "whatsapp", "message", "text", "chat", or needs to send/receive messages via WhatsApp. Requires a background daemon.
+description: Use when the user mentions "whatsapp" or "wa", or asks to send/read/react-to WhatsApp messages, contacts, or groups. Does NOT cover generic "text"/"message" intents — those may mean Telegram or SMS. Requires the `whatsapp serve` daemon.
 ---
 
-# WhatsApp - CLI: whatsapp
+# WhatsApp — CLI: `whatsapp`
 
-**Setup**: See [SETUP.md](SETUP.md)
-**Background**: `screen -dmS whatsapp whatsapp serve --notifications-dir ~/agent/notifications`
-
-## Gotchas
-- CLI syntax: command MUST come before flags. `whatsapp serve --instance name` NOT `whatsapp --instance name serve`
-- `send` uses flags, not positional args: `whatsapp send --to 'Name' --message 'text'`
-- `--to` accepts contact names, phone numbers, or group names (the CLI resolves them to JIDs)
-- `--notifications-dir` is REQUIRED for `serve`. It will exit silently without it
-- **Never send multiple messages in parallel tool calls.** If one parallel call is rejected/fails while another succeeds, you may mistakenly resend the successful one, causing duplicates. Always send WhatsApp messages sequentially (one tool call at a time)
-
-## Authentication
-QR code is the default (and preferred) auth method. Run `whatsapp authenticate`, upload the QR image, and have the user scan it from WhatsApp > Linked Devices.
-```bash
-whatsapp authenticate
-```
-Phone pairing (`whatsapp pair-phone --phone '+1234567890'`) works as a fallback if QR scanning isn't convenient.
+**Setup / first-time auth / re-auth**: see [SETUP.md](SETUP.md).
+**Start daemon**: `screen -dmS whatsapp whatsapp serve --notifications-dir ~/agent/notifications`
 
 ## Quick Reference
-Run `whatsapp --help` or `whatsapp <command> --help` for full flags and options not listed here.
+
+Run `whatsapp --help` or `whatsapp <command> --help` for the full flag list.
+
 ```bash
-whatsapp send --to '+1234567890' --message 'Hello!'
+whatsapp send --to 'Name' --message 'Hello!'                  # --to: contact name, phone, or group
+whatsapp send --to '+12025551234' --message 'Hi'              # phone numbers need leading +
+whatsapp send-file --to 'Name' --file-path /path/to/file.pdf
+whatsapp react --chat-id '<jid>' --message-id '<id>' --emoji '👍'
+whatsapp revoke-message --to 'Name' --message-id '<id>'       # unsend
+whatsapp download-media --to 'Name' --message-id '<id>'       # saved to ~/.whatsapp/downloads/
 whatsapp chats
+whatsapp messages --to 'Name' --limit 20                      # reads local DB only
+whatsapp backfill --to 'Name'                                 # asks the phone for older history
 whatsapp contacts
-whatsapp messages --to 'Name' --limit 20
 whatsapp groups
-whatsapp react --chat-id "<jid>" --message-id "<id>" --emoji "👍"
-whatsapp backfill --to 'Name'
-whatsapp send-file --to "+1234567890" --file-path /path/to/document.pdf
-whatsapp revoke-message --to 'Name' --message-id '<id>'  # delete/unsend a message
-whatsapp download-media --to 'Name' --message-id '<id>'  # download image/video/doc, saved to ~/.whatsapp/downloads/
+whatsapp add-contact --name 'Name' --phone '+12025551234'
 ```
 
-## Notes
-- Phone numbers must include country code with `+` prefix
-- Chat IDs are JIDs (e.g., `1234567890@s.whatsapp.net`)
-- Group IDs end with `@g.us`
-- The binary is installed to `~/.local/bin/whatsapp`
-- Auth state is stored in `~/.whatsapp/` (default) or `~/.whatsapp/{instance}/` for named instances
+## Rules
+
+- **Send messages one tool call at a time — never batch WhatsApp sends in a single parallel tool-call block.**
+  *Why:* If one parallel call fails while another succeeds, you can't tell which went through. Retrying "the failed one" sends a duplicate that the recipient sees.
+
+- **Subcommand goes before flags.** Use `whatsapp serve --instance foo`, not `whatsapp --instance foo serve`.
+  *Why:* Global flags parsed before the subcommand are silently misinterpreted by the CLI.
+
+- **`whatsapp serve` requires `--notifications-dir`.**
+  *Why:* Without it the daemon exits silently (no stderr), and every subsequent command reports "daemon not running."
+
+- **Do not restart the daemon once the user is authenticated**, unless the user explicitly confirms a full re-auth is acceptable.
+  *Why:* Restarting mid-session can invalidate the WhatsApp pairing and force the user to rescan the QR.
+
+- **Before sending to an unknown phone number, save it first with `add-contact`.**
+  *Why:* Sending to a raw JID that has no saved contact row triggers the `requireManualContact` guard and blocks replies/notifications from resolving correctly.
+
+## Conventions
+
+- Phone numbers: E.164 with leading `+` (e.g. `+12025551234`).
+- JIDs: direct chats end in `@s.whatsapp.net`, groups in `@g.us`. Only pass JIDs where a flag explicitly asks for one (e.g. `--chat-id`).
+- Auth state: `~/.whatsapp/` (or `~/.whatsapp/{instance}/` for named instances).
 
 ### Contact Preferences
 [How the user prefers to communicate with different contacts]
