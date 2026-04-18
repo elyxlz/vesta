@@ -86,7 +86,7 @@ fn latest_released_vestad_upgrades_to_current_and_agent_git_state_is_valid() {
     assert!(
         sparse.lines().any(|line| {
             let trimmed = line.trim();
-            trimmed == "agent" || trimmed.starts_with("agent/")
+            trimmed == "agent" || trimmed == "agent/" || trimmed == "/agent/" || trimmed.starts_with("agent/")
         }),
         "expected sparse-checkout to include agent paths, got: {sparse}"
     );
