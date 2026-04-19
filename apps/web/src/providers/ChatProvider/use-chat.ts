@@ -6,10 +6,13 @@ const RECONNECT_BASE = 1000;
 const RECONNECT_MAX = 30000;
 const MAX_MESSAGES = 5000;
 
-const TYPING_DELAY_PER_CHAR = 25;
-const TYPING_DELAY_MIN = 1500;
-const TYPING_DELAY_MAX = 6000;
-const TYPING_VARIANCE = 0.2;
+// Simulated typing delay before a chat message is rendered + spoken. Set to
+// zero so the assistant feels snappy; the audio is still queued serially by
+// `useVoice.speak` so overlapping messages don't cut each other off.
+const TYPING_DELAY_PER_CHAR = 0;
+const TYPING_DELAY_MIN = 0;
+const TYPING_DELAY_MAX = 0;
+const TYPING_VARIANCE = 0;
 
 function typingDelay(charCount: number): number {
   const raw = Math.min(TYPING_DELAY_MIN + TYPING_DELAY_PER_CHAR * charCount, TYPING_DELAY_MAX);
