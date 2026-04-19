@@ -27,5 +27,6 @@ app-chat history --limit 20
 ## Notes
 - Always reply to app messages using `app-chat send`, not through any other channel
 - Send multiple short messages instead of one long one (like texting)
-- Lowercase, no bullet points, no newlines within a single message
+- Lowercase, no bullets, keep messages tight — texting feel, not document feel
+- Messages render as markdown: use fenced ``` blocks for code/commands, `[label](url)` for links. Newlines work but multiple short messages still beat one long one
 - The daemon auto-reconnects if the agent restarts
