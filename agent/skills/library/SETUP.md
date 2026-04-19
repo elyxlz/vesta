@@ -7,11 +7,12 @@ and search endpoints.
 ## 1. Install dependencies
 
 ```bash
-uv pip install aiohttp beautifulsoup4 lxml sentence-transformers numpy torch
+uv pip install aiohttp beautifulsoup4 lxml pillow sentence-transformers numpy torch
 ```
 
 - `aiohttp`: HTTP server (`server.py`)
 - `beautifulsoup4`, `lxml`: epub HTML parsing (`extract_books.py`, `build_catalog.py`)
+- `pillow`: thumbnail generation for the catalog's inline `cover_b64` field (`build_catalog.py`). If absent, the build still succeeds but the catalog ships without thumbnails.
 - `sentence-transformers`, `numpy`, `torch`: semantic search (`build_index.py`, `search.py`)
 
 Optional, only required if you use `transcribe.py` to transcribe audiobooks:

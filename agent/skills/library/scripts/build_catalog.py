@@ -6,19 +6,31 @@ date, word_count) from each epub's OPF, saves the cover image to
 ~/agent/data/skills/library/covers/<sanitized>.jpg, and matches audio files in ~/agent/data/skills/library/audio/
 by normalized filename similarity.
 
-Idempotent: re-running updates existing entries and adds new ones. Never
-writes base64-embedded covers (covers are served via GET /cover/<filename>).
+Idempotent: re-running updates existing entries and adds new ones. Each entry
+gets a freshly-generated `cover_b64` field (a resized data URL) regenerated
+from the on-disk cover on every build, so the catalog grid can render
+thumbnails without per-cover authenticated fetches and stale drift is
+impossible. Full-size covers remain available via GET /cover/<filename>.
 """
 
+import base64
 import json
 import re
 import subprocess
 import sys
 import zipfile
+from io import BytesIO
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
 from bs4 import BeautifulSoup
+
+try:
+    from PIL import Image  # type: ignore
+
+    _HAS_PILLOW = True
+except ImportError:
+    _HAS_PILLOW = False
 
 DATA_DIR = Path.home() / "agent" / "data" / "skills" / "library"
 BOOKS_DIR = DATA_DIR / "books"
@@ -26,6 +38,41 @@ AUDIO_DIR = DATA_DIR / "audio"
 COVERS_DIR = DATA_DIR / "covers"
 CATALOG_PATH = DATA_DIR / "catalog.json"
 TEXT_DIR = DATA_DIR / "text"
+
+# Thumbnail generation for the `cover_b64` data-URL embedded in each catalog
+# entry. Kept small so the whole catalog.json stays around 1-2 MB for a few
+# hundred books. The dashboard grid reads these inline, avoiding N
+# authenticated fetches at page load.
+THUMB_WIDTH = 200
+THUMB_JPEG_QUALITY = 75
+
+
+def make_cover_thumb_b64(cover_rel: str) -> str | None:
+    """Resize the on-disk cover to a base64 data URL, fresh every build.
+
+    Returns None if Pillow is unavailable, the cover path is empty, or the
+    image cannot be opened. Always reads from disk so the catalog can never
+    drift from the underlying cover file.
+    """
+    if not cover_rel or not _HAS_PILLOW:
+        return None
+    cover_path = DATA_DIR / cover_rel
+    if not cover_path.exists():
+        return None
+    try:
+        with Image.open(cover_path) as img:
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+            if img.width > THUMB_WIDTH:
+                new_h = int(img.height * (THUMB_WIDTH / img.width))
+                img = img.resize((THUMB_WIDTH, new_h), Image.LANCZOS)
+            buf = BytesIO()
+            img.save(buf, format="JPEG", quality=THUMB_JPEG_QUALITY, optimize=True)
+            b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+            return f"data:image/jpeg;base64,{b64}"
+    except Exception:
+        return None
+
 
 NS_CONTAINER = "urn:oasis:names:tc:opendocument:xmlns:container"
 NS_OPF = "http://www.idpf.org/2007/opf"
@@ -368,10 +415,16 @@ def main():
         # but always overwrite freshly-extracted fields).
         prev = existing.get(entry["filename"])
         if prev:
-            # Preserve cover_b64 only if still present upstream (deprecated, but don't
-            # silently drop it if a user kept it around; we do not re-add it ourselves).
             if "pdf_file" in prev:
                 entry["pdf_file"] = prev["pdf_file"]
+
+        # Always regenerate cover_b64 from the on-disk cover so the catalog
+        # can never go stale.
+        thumb = make_cover_thumb_b64(entry.get("cover") or "")
+        if thumb:
+            entry["cover_b64"] = thumb
+        else:
+            entry.pop("cover_b64", None)
 
         new_catalog.append(entry)
         key = normalize_for_match(epub_path.name)[:20]
@@ -385,16 +438,23 @@ def main():
         if prev:
             # Merge: keep previously-extracted metadata (title/author/cover/etc.)
             merged = {**prev}
-            # Drop deprecated base64 covers
-            merged.pop("cover_b64", None)
             # Overwrite with re-extracted audio info
             for k in ("duration", "duration_seconds", "narrator"):
                 if k in entry:
                     merged[k] = entry[k]
             merged["audio_only"] = True
             merged["audio_file"] = entry["audio_file"]
+            # Regenerate cover_b64 fresh from the on-disk cover, if any.
+            thumb = make_cover_thumb_b64(merged.get("cover") or "")
+            if thumb:
+                merged["cover_b64"] = thumb
+            else:
+                merged.pop("cover_b64", None)
             new_catalog.append(merged)
         else:
+            thumb = make_cover_thumb_b64(entry.get("cover") or "")
+            if thumb:
+                entry["cover_b64"] = thumb
             new_catalog.append(entry)
 
     # Sort by title
