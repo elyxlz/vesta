@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { VestaEvent, AgentActivityState } from "@/lib/types";
 import { wsUrl, fetchHistory } from "@/lib/connection";
+import { useChatPacing } from "@/stores/use-chat-pacing";
 
 const RECONNECT_BASE = 1000;
 const RECONNECT_MAX = 30000;
@@ -74,7 +75,7 @@ export function useChat({ name, active, onAssistantMessage, onPrefetch }: UseCha
       setIsTyping(false);
       return;
     }
-    if (queue.length > 3) {
+    if (queue.length > 3 || !useChatPacing.getState().natural) {
       flushQueue();
       return;
     }
