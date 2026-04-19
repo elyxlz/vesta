@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { getConnection } from "@/lib/connection";
 import { useGateway } from "@/providers/GatewayProvider";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 
 interface StatusPillProps {
   showHostname?: boolean;
@@ -9,6 +11,12 @@ interface StatusPillProps {
 export function StatusPill({ showHostname = true }: StatusPillProps) {
   const { reachable, updateAvailable, latestVersion, triggerGatewayUpdate } =
     useGateway();
+  const [updating, setUpdating] = useState(false);
+
+  const handleUpdate = () => {
+    setUpdating(true);
+    triggerGatewayUpdate();
+  };
 
   const hostname = (() => {
     const conn = getConnection();
@@ -33,12 +41,13 @@ export function StatusPill({ showHostname = true }: StatusPillProps) {
       {updateAvailable && (
         <Button
           size="xs"
-          variant="outline"
-          onClick={triggerGatewayUpdate}
+          onClick={handleUpdate}
+          disabled={updating}
           title={
             latestVersion ? `Update to v${latestVersion}` : "Update available"
           }
         >
+          {updating && <Spinner className="size-3" />}
           update
         </Button>
       )}
