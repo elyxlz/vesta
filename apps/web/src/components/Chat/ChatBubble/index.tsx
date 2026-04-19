@@ -60,7 +60,7 @@ export function ChatBubble({
         )}
       >
         <span
-          className="min-w-0 break-words"
+          className="min-w-0 break-words whitespace-pre-wrap"
           dangerouslySetInnerHTML={{ __html: linkify(text) }}
         />
         {ts && (
