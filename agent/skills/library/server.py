@@ -274,6 +274,7 @@ async def set_selected(request: web.Request) -> web.Response:
     except (ValueError, json.JSONDecodeError):
         return web.json_response({"error": "invalid json"}, status=400, headers=CORS)
     import datetime as dt
+
     current = _read_selected()
     # Allowed fields: filename (str|null), position (int|null), highlight (str|null).
     allowed = {"filename", "position", "highlight"}
@@ -286,11 +287,13 @@ async def set_selected(request: web.Request) -> web.Response:
 
 
 async def options_handler(_request: web.Request) -> web.Response:
-    return web.Response(headers={
-        **CORS,
-        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization",
-    })
+    return web.Response(
+        headers={
+            **CORS,
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+        }
+    )
 
 
 # --- App ---
