@@ -15,7 +15,7 @@ Client/server architecture. `vestad` daemon runs on the host (manages Docker con
 - **Server** (`vestad/`): standalone Rust crate — `vestad` daemon. Manages Docker containers, serves API. Contains `vestad/tests-integration/` as a workspace member for end-to-end tests.
 - **Web App** (`apps/web/`): React + TypeScript SPA served by vestad at `/app` and embedded in the Tauri desktop wrapper. Components in `apps/web/src/components/`, providers in `apps/web/src/providers/`.
 - **Desktop App** (`apps/desktop/`): Tauri wrapper around `@vesta/web`. Only `src-tauri/` + a thin `package.json` — no frontend code of its own.
-- **Skills** (`agent/skills/`): Each skill directory has `SKILL.md` + scripts. No MCP servers.
+- **Skills** (`agent/skills/` + `agent/core/skills/`): Each skill directory has `SKILL.md` + scripts. `agent/core/skills/` holds built-in skills shipped with the agent (e.g. `app-chat`); `agent/skills/` holds the rest. No MCP servers.
 - **Integration Tests** (`tests/`): Separate Rust crate with end-to-end tests (real vestad + client, requires Docker).
 
 ### Key Flows
@@ -32,7 +32,7 @@ Client/server architecture. `vestad` daemon runs on the host (manages Docker con
 
 **Auth**: vestad generates an API key at `~/.config/vesta/vestad/api-key` (clients use `Bearer` token or `?token=` query param). Each agent gets a unique `AGENT_TOKEN` for agent-to-vestad auth via `X-Agent-Token` header. TLS uses self-signed certs with fingerprint verification (no CA chain).
 
-**Skills**: Each skill in `agent/skills/{name}/` has `SKILL.md` (YAML frontmatter with name/description) + CLI tools. Skills are registered as tools via Claude Agent SDK. `skills/index.json` is auto-generated and must be committed when skills change.
+**Skills**: Each skill in `agent/skills/{name}/` or `agent/core/skills/{name}/` has `SKILL.md` (YAML frontmatter with name/description) + CLI tools. Skills are registered as tools via Claude Agent SDK. `agent/skills/index.json` is auto-generated from both directories and must be committed when skills change.
 
 **Backup/restore**: `docker commit` creates image snapshots (`vesta-backup:{name}_{type}_{timestamp}`). Retention: 3 daily, 2 weekly, 1 monthly. Export/import via `docker save/load` for cross-machine transfer. All `~/agent/` state (events.db, session_id) survives backup/restore.
 
