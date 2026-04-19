@@ -5,6 +5,7 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { LoadingScreen } from "@/components/LoadingScreen";
 import { AuthProvider, useAuth } from "@/providers/AuthProvider";
 import { GatewayProvider, useGateway } from "@/providers/GatewayProvider";
+import { NotificationProvider } from "@/providers/NotificationProvider";
 import { isTauri } from "@/lib/env";
 import { cn } from "@/lib/utils";
 import { router } from "@/router";
@@ -63,7 +64,9 @@ export default function App() {
             <TooltipProvider delayDuration={300}>
               <AuthProvider>
                 <GatewayProvider>
-                  <AppContent />
+                  <NotificationProvider>
+                    <AppContent />
+                  </NotificationProvider>
                 </GatewayProvider>
               </AuthProvider>
             </TooltipProvider>

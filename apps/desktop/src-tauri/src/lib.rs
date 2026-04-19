@@ -2,6 +2,21 @@
 mod fps_unlock;
 
 #[tauri::command]
+fn focus_window(app: tauri::AppHandle) {
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    {
+        use tauri::Manager;
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.show();
+            let _ = window.unminimize();
+            let _ = window.set_focus();
+        }
+    }
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    let _ = app;
+}
+
+#[tauri::command]
 fn set_theme(window: tauri::Window, theme: String) {
     #[cfg(not(any(target_os = "ios", target_os = "android")))]
     {
@@ -106,6 +121,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_notification::init())
         .setup(|_app| {
             #[cfg(not(target_os = "android"))]
             use tauri::Manager;
@@ -189,11 +205,11 @@ pub fn run() {
         .invoke_handler({
             #[cfg(target_os = "linux")]
             {
-                tauri::generate_handler![set_theme, install_update]
+                tauri::generate_handler![set_theme, focus_window, install_update]
             }
             #[cfg(not(target_os = "linux"))]
             {
-                tauri::generate_handler![set_theme]
+                tauri::generate_handler![set_theme, focus_window]
             }
         })
         .build(tauri::generate_context!())

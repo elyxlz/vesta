@@ -26,8 +26,9 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
 
     Send: all events from the event bus are pushed to connected clients.
     Recv: clients can emit events (e.g. user messages, chat replies).
-    On connect: sends recent history."""
+    On connect: sends recent history unless ?skip_history=1 is passed."""
     event_bus: EventBus = request.app["event_bus"]
+    skip_history = request.query.get("skip_history", "") in ("1", "true")
 
     ws = web.WebSocketResponse()
     await ws.prepare(request)
@@ -36,9 +37,10 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
     recv_task: asyncio.Task[None] | None = None
     send_task: asyncio.Task[None] | None = None
     try:
-        events, cursor = event_bus.recent()
-        if events:
-            await ws.send_json(HistoryEvent(type="history", events=events, state=event_bus.state, cursor=cursor))
+        if not skip_history:
+            events, cursor = event_bus.recent()
+            if events:
+                await ws.send_json(HistoryEvent(type="history", events=events, state=event_bus.state, cursor=cursor))
         recv_task = asyncio.create_task(_recv_loop(ws, event_bus))
         send_task = asyncio.create_task(_send_loop(ws, sub))
         await asyncio.wait([recv_task, send_task], return_when=asyncio.FIRST_COMPLETED)

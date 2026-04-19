@@ -143,11 +143,17 @@ export function apiUrl(path: string): string {
   return `${conn.url}${path}`;
 }
 
-export function wsUrl(name: string): string {
+export interface WsUrlOptions {
+  skipHistory?: boolean;
+}
+
+export function wsUrl(name: string, opts: WsUrlOptions = {}): string {
   const conn = getConnection();
   if (!conn) throw new Error("not connected to vestad");
   const base = conn.url.replace(/^http/, "ws");
-  return `${base}/agents/${name}/ws?token=${encodeURIComponent(conn.accessToken)}`;
+  const params = new URLSearchParams({ token: conn.accessToken });
+  if (opts.skipHistory) params.set("skip_history", "1");
+  return `${base}/agents/${name}/ws?${params.toString()}`;
 }
 
 export async function fetchHistory(
