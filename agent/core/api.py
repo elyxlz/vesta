@@ -81,8 +81,10 @@ async def _send_loop(ws: web.WebSocketResponse, sub: asyncio.Queue[VestaEvent]) 
         while True:
             event = await sub.get()
             await ws.send_json(event)
-    except (ConnectionError, RuntimeError, TypeError, asyncio.CancelledError):
+    except asyncio.CancelledError:
         pass
+    except (ConnectionError, RuntimeError, TypeError) as e:
+        logger.info(f"ws send_loop exited: {type(e).__name__}: {e}")
 
 
 async def _history_handler(request: web.Request) -> web.Response:

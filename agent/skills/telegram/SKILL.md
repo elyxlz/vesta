@@ -1,6 +1,6 @@
 ---
 name: telegram
-description: This skill should be used when the user asks about "telegram", "tg", "telegram message", or needs to send/receive messages via Telegram. Requires a background daemon.
+description: Use this skill to reply to notifications with `source=telegram`, or when the user asks about "telegram", "tg", "telegram message", or needs to send/receive messages via Telegram. Always reply to telegram notifications via `telegram send`, never via any other channel. Requires a background daemon.
 ---
 
 # Telegram - CLI: telegram
