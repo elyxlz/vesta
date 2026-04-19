@@ -1,6 +1,6 @@
 [package]
 name = "vesta-tests"
-version = "0.1.141"
+version = "0.1.142"
 edition = "2021"
 publish = false
 
