@@ -1,10 +1,6 @@
 import { useEffect } from "react";
 import { Activity, RefreshCw } from "lucide-react";
-import {
-  Field,
-  FieldContent,
-  FieldLabel,
-} from "@/components/ui/field";
+import { Field, FieldContent, FieldLabel } from "@/components/ui/field";
 import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";

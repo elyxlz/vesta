@@ -13,7 +13,10 @@ const TYPING_DELAY_MAX = 6000;
 const TYPING_VARIANCE = 0.2;
 
 function typingDelay(charCount: number): number {
-  const raw = Math.min(TYPING_DELAY_MIN + TYPING_DELAY_PER_CHAR * charCount, TYPING_DELAY_MAX);
+  const raw = Math.min(
+    TYPING_DELAY_MIN + TYPING_DELAY_PER_CHAR * charCount,
+    TYPING_DELAY_MAX,
+  );
   const variance = Math.floor(raw * TYPING_VARIANCE);
   return raw + Math.floor(Math.random() * variance * 2) - variance;
 }
@@ -33,7 +36,12 @@ interface UseChatOptions {
   onPrefetch?: (text: string) => void;
 }
 
-export function useChat({ name, active, onAssistantMessage, onPrefetch }: UseChatOptions) {
+export function useChat({
+  name,
+  active,
+  onAssistantMessage,
+  onPrefetch,
+}: UseChatOptions) {
   const [messages, setMessages] = useState<VestaEvent[]>([]);
   const [agentState, setAgentState] = useState<AgentActivityState>("idle");
   const [isTyping, setIsTyping] = useState(false);
@@ -57,7 +65,9 @@ export function useChat({ name, active, onAssistantMessage, onPrefetch }: UseCha
     for (const event of chatQueueRef.current) {
       setMessages((prev) => {
         const updated = [...prev, event];
-        return updated.length > MAX_MESSAGES ? updated.slice(-MAX_MESSAGES) : updated;
+        return updated.length > MAX_MESSAGES
+          ? updated.slice(-MAX_MESSAGES)
+          : updated;
       });
       if (event.type === "chat") {
         onAssistantMessageRef.current?.(event.text);
@@ -89,7 +99,9 @@ export function useChat({ name, active, onAssistantMessage, onPrefetch }: UseCha
       queue.shift();
       setMessages((prev) => {
         const updated = [...prev, next];
-        return updated.length > MAX_MESSAGES ? updated.slice(-MAX_MESSAGES) : updated;
+        return updated.length > MAX_MESSAGES
+          ? updated.slice(-MAX_MESSAGES)
+          : updated;
       });
       if (text) {
         onAssistantMessageRef.current?.(text);
@@ -99,10 +111,13 @@ export function useChat({ name, active, onAssistantMessage, onPrefetch }: UseCha
     }, delay);
   }, [flushQueue]);
 
-  const enqueueChatMessage = useCallback((event: VestaEvent) => {
-    chatQueueRef.current.push(event);
-    drainQueue();
-  }, [drainQueue]);
+  const enqueueChatMessage = useCallback(
+    (event: VestaEvent) => {
+      chatQueueRef.current.push(event);
+      drainQueue();
+    },
+    [drainQueue],
+  );
 
   useEffect(() => {
     if (!active || !name) return;

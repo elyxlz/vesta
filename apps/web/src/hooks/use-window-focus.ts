@@ -18,7 +18,8 @@ export function useWindowFocus(): boolean {
     const onFocus = () => setFocused(true);
     const onBlur = () => setFocused(false);
     const onVisibility = () => {
-      if (document.visibilityState === "visible") setFocused(document.hasFocus());
+      if (document.visibilityState === "visible")
+        setFocused(document.hasFocus());
       else setFocused(false);
     };
 

@@ -90,7 +90,9 @@ export const useVoice = create<VoiceState>((set, get) => {
       try {
         const cached = ttsPrefetchCache.get(text);
         ttsPrefetchCache.delete(text);
-        const prefetched = cached ? await cached.catch(() => undefined) : undefined;
+        const prefetched = cached
+          ? await cached.catch(() => undefined)
+          : undefined;
         await streamSpeech(text, agentName, controller.signal, prefetched);
       } catch (err) {
         if (!controller.signal.aborted) {
@@ -137,8 +139,7 @@ export const useVoice = create<VoiceState>((set, get) => {
       const { sttAvailable, agentName } = get();
       if (!sttAvailable || !agentName) {
         set({
-          voiceError:
-            "Voice input not configured — ask the agent to set it up",
+          voiceError: "Voice input not configured — ask the agent to set it up",
         });
         return;
       }

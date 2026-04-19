@@ -35,7 +35,9 @@ export function StatusPill({ showHostname = true }: StatusPillProps) {
           size="xs"
           variant="outline"
           onClick={triggerGatewayUpdate}
-          title={latestVersion ? `Update to v${latestVersion}` : "Update available"}
+          title={
+            latestVersion ? `Update to v${latestVersion}` : "Update available"
+          }
         >
           update
         </Button>

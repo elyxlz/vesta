@@ -144,7 +144,12 @@ export function AgentMenu() {
           <Tabs defaultValue="socket">
             <TabsList>
               <TabsTrigger value="socket">control socket</TabsTrigger>
-              <TabsTrigger value="tree" onClick={() => { if (!treeLines && !treeLoading) fetchTree(); }}>
+              <TabsTrigger
+                value="tree"
+                onClick={() => {
+                  if (!treeLines && !treeLoading) fetchTree();
+                }}
+              >
                 file tree
               </TabsTrigger>
             </TabsList>
