@@ -1,7 +1,7 @@
 [
   {
     "name": "app-chat",
-    "description": "Use this skill to reply to notifications with `source=app-chat` (messages from the Vesta desktop/web app). Always reply via `app-chat send` \u2014 never via any other channel. Requires a background daemon."
+    "description": "Use this skill to reply to notifications with `source=app-chat` (messages from the Vesta desktop/web app). Always reply via `app-chat send`, never via any other channel. Requires a background daemon."
   },
   {
     "name": "browser",
@@ -65,7 +65,7 @@
   },
   {
     "name": "telegram",
-    "description": "Use this skill to reply to notifications with `source=telegram`, or when the user asks about \"telegram\", \"tg\", \"telegram message\", or needs to send/receive messages via Telegram. Always reply to telegram notifications via `telegram send` \u2014 never via any other channel. Requires a background daemon."
+    "description": "Use this skill to reply to notifications with `source=telegram`, or when the user asks about \"telegram\", \"tg\", \"telegram message\", or needs to send/receive messages via Telegram. Always reply to telegram notifications via `telegram send`, never via any other channel. Requires a background daemon."
   },
   {
     "name": "tv",
@@ -89,7 +89,7 @@
   },
   {
     "name": "whatsapp",
-    "description": "Use this skill to reply to notifications with `source=whatsapp`, or when the user asks about \"whatsapp\", \"message\", \"text\", \"chat\", or needs to send/receive messages via WhatsApp. Always reply to whatsapp notifications via `whatsapp send` \u2014 never via any other channel. Requires a background daemon."
+    "description": "Use this skill to reply to notifications with `source=whatsapp`, or when the user asks about \"whatsapp\", \"message\", \"text\", \"chat\", or needs to send/receive messages via WhatsApp. Always reply to whatsapp notifications via `whatsapp send`, never via any other channel. Requires a background daemon."
   },
   {
     "name": "whisper",

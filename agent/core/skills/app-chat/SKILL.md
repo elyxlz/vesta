@@ -1,6 +1,6 @@
 ---
 name: app-chat
-description: Use this skill to reply to notifications with `source=app-chat` (messages from the Vesta desktop/web app). Always reply via `app-chat send` — never via any other channel. Requires a background daemon.
+description: Use this skill to reply to notifications with `source=app-chat` (messages from the Vesta desktop/web app). Always reply via `app-chat send`, never via any other channel. Requires a background daemon.
 ---
 
 # App Chat - CLI: app-chat
