@@ -41,7 +41,6 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
 
   const {
     messages,
-    isTyping,
     connected,
     hasMore,
     loadingMore,
@@ -197,7 +196,6 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
           chatMessages={chatMessages}
           connected={connected}
           agentName={name}
-          isTyping={isTyping}
         />
 
         <div className="relative">

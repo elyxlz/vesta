@@ -6,20 +6,6 @@ const RECONNECT_BASE = 1000;
 const RECONNECT_MAX = 30000;
 const MAX_MESSAGES = 5000;
 
-// Simulated typing delay before a chat message is rendered + spoken. Set to
-// zero so the assistant feels snappy; the audio is still queued serially by
-// `useVoice.speak` so overlapping messages don't cut each other off.
-const TYPING_DELAY_PER_CHAR = 0;
-const TYPING_DELAY_MIN = 0;
-const TYPING_DELAY_MAX = 0;
-const TYPING_VARIANCE = 0;
-
-function typingDelay(charCount: number): number {
-  const raw = Math.min(TYPING_DELAY_MIN + TYPING_DELAY_PER_CHAR * charCount, TYPING_DELAY_MAX);
-  const variance = Math.floor(raw * TYPING_VARIANCE);
-  return raw + Math.floor(Math.random() * variance * 2) - variance;
-}
-
 // Module-level sender so non-descendant components (Settings, etc.) can push
 // typed events over the already-open chat WebSocket without opening their
 // own connection.
@@ -38,7 +24,6 @@ interface UseChatOptions {
 export function useChat({ name, active, onAssistantMessage, onPrefetch }: UseChatOptions) {
   const [messages, setMessages] = useState<VestaEvent[]>([]);
   const [agentState, setAgentState] = useState<AgentActivityState>("idle");
-  const [isTyping, setIsTyping] = useState(false);
   const [connected, setConnected] = useState(false);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -51,60 +36,18 @@ export function useChat({ name, active, onAssistantMessage, onPrefetch }: UseCha
   onAssistantMessageRef.current = onAssistantMessage;
   const onPrefetchRef = useRef(onPrefetch);
   onPrefetchRef.current = onPrefetch;
-  const chatQueueRef = useRef<VestaEvent[]>([]);
-  const drainingRef = useRef(false);
-  const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const flushQueue = useCallback(() => {
-    for (const event of chatQueueRef.current) {
-      setMessages((prev) => {
-        const updated = [...prev, event];
-        return updated.length > MAX_MESSAGES ? updated.slice(-MAX_MESSAGES) : updated;
-      });
-      if (event.type === "chat") {
-        onAssistantMessageRef.current?.(event.text);
-      }
+  const appendChatMessage = useCallback((event: VestaEvent) => {
+    setMessages((prev) => {
+      const updated = [...prev, event];
+      return updated.length > MAX_MESSAGES ? updated.slice(-MAX_MESSAGES) : updated;
+    });
+    if (event.type === "chat") {
+      const text = event.text;
+      onPrefetchRef.current?.(text);
+      onAssistantMessageRef.current?.(text);
     }
-    chatQueueRef.current = [];
-    drainingRef.current = false;
-    setIsTyping(false);
   }, []);
-
-  const drainQueue = useCallback(() => {
-    if (drainingRef.current) return;
-    const queue = chatQueueRef.current;
-    if (queue.length === 0) {
-      setIsTyping(false);
-      return;
-    }
-    if (queue.length > 3) {
-      flushQueue();
-      return;
-    }
-    const next = queue[0];
-    drainingRef.current = true;
-    setIsTyping(true);
-    const text = next.type === "chat" ? next.text : undefined;
-    if (text) onPrefetchRef.current?.(text);
-    const delay = typingDelay(text?.length ?? 0);
-    typingTimerRef.current = setTimeout(() => {
-      queue.shift();
-      setMessages((prev) => {
-        const updated = [...prev, next];
-        return updated.length > MAX_MESSAGES ? updated.slice(-MAX_MESSAGES) : updated;
-      });
-      if (text) {
-        onAssistantMessageRef.current?.(text);
-      }
-      drainingRef.current = false;
-      drainQueue();
-    }, delay);
-  }, [flushQueue]);
-
-  const enqueueChatMessage = useCallback((event: VestaEvent) => {
-    chatQueueRef.current.push(event);
-    drainQueue();
-  }, [drainQueue]);
 
   useEffect(() => {
     if (!active || !name) return;
@@ -118,10 +61,6 @@ export function useChat({ name, active, onAssistantMessage, onPrefetch }: UseCha
     setHistoryLoaded(false);
     cursorRef.current = null;
     pendingEchoesRef.current = [];
-    if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
-    chatQueueRef.current = [];
-    drainingRef.current = false;
-    setIsTyping(false);
 
     const doConnect = () => {
       if (cancelled) return;
@@ -146,10 +85,6 @@ export function useChat({ name, active, onAssistantMessage, onPrefetch }: UseCha
         setMessages([]);
         cursorRef.current = null;
         pendingEchoesRef.current = [];
-        if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
-        chatQueueRef.current = [];
-        drainingRef.current = false;
-        setIsTyping(false);
       };
 
       socket.onmessage = (e) => {
@@ -175,7 +110,7 @@ export function useChat({ name, active, onAssistantMessage, onPrefetch }: UseCha
             }
           }
           if (event.type === "chat") {
-            enqueueChatMessage(event);
+            appendChatMessage(event);
           } else {
             setMessages((prev) => {
               const updated = [...prev, event];
@@ -217,12 +152,8 @@ export function useChat({ name, active, onAssistantMessage, onPrefetch }: UseCha
       }
       wsRef.current = null;
       setConnected(false);
-      if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
-      chatQueueRef.current = [];
-      drainingRef.current = false;
-      setIsTyping(false);
     };
-  }, [active, name]);
+  }, [active, name, appendChatMessage]);
 
   const send = useCallback((text: string): boolean => {
     const ws = wsRef.current;
@@ -277,7 +208,6 @@ export function useChat({ name, active, onAssistantMessage, onPrefetch }: UseCha
   return {
     messages,
     agentState,
-    isTyping,
     connected,
     historyLoaded,
     hasMore,

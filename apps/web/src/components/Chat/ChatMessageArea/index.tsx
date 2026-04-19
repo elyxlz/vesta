@@ -20,7 +20,6 @@ interface ChatMessageAreaProps {
   chatMessages: VestaEvent[];
   connected: boolean;
   agentName: string;
-  isTyping: boolean;
 }
 
 export function ChatMessageArea({
@@ -34,7 +33,6 @@ export function ChatMessageArea({
   chatMessages,
   connected,
   agentName,
-  isTyping,
 }: ChatMessageAreaProps) {
   return (
     <CardContent className="flex-1 min-h-0 overflow-hidden p-0 relative">
@@ -66,15 +64,6 @@ export function ChatMessageArea({
         }}
       >
         <div ref={bottomRef} className="h-px shrink-0" />
-        {isTyping && (
-          <div className="flex justify-start mt-2">
-            <div className="flex items-center gap-1 bg-secondary text-secondary-foreground rounded-2xl rounded-bl-sm px-3.5 py-2.5">
-              <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce [animation-delay:0ms]" />
-              <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce [animation-delay:150ms]" />
-              <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce [animation-delay:300ms]" />
-            </div>
-          </div>
-        )}
         <div>
           {chatMessages.length === 0 ? (
             <div className="flex flex-col items-center gap-2 py-2">
