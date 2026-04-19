@@ -1,6 +1,6 @@
 ---
 name: whatsapp
-description: This skill should be used when the user asks about "whatsapp", "message", "text", "chat", or needs to send/receive messages via WhatsApp. Requires a background daemon.
+description: Use this skill to reply to notifications with `source=whatsapp`, or when the user asks about "whatsapp", "message", "text", "chat", or needs to send/receive messages via WhatsApp. Always reply to whatsapp notifications via `whatsapp send` — never via any other channel. Requires a background daemon.
 ---
 
 # WhatsApp - CLI: whatsapp

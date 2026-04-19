@@ -175,6 +175,47 @@ def test_notification_format_for_display():
     assert "sender=alice" in display
 
 
+@pytest.mark.parametrize(
+    "payload,expected_substr",
+    [
+        (
+            {"timestamp": "2025-01-01T00:00:00", "source": "whatsapp", "type": "message", "contact_name": "Alice", "message": "hi"},
+            "whatsapp send --to 'Alice'",
+        ),
+        (
+            {"timestamp": "2025-01-01T00:00:00", "source": "whatsapp", "type": "message", "chat_name": "Group", "sender": "bob", "message": "hi"},
+            "whatsapp send --to 'Group'",
+        ),
+        (
+            {"timestamp": "2025-01-01T00:00:00", "source": "telegram", "type": "message", "contact_name": "Carol", "message": "hi"},
+            "telegram send 'Carol'",
+        ),
+        (
+            {"timestamp": "2025-01-01T00:00:00", "source": "app-chat", "type": "message", "message": "hi"},
+            "app-chat send --message",
+        ),
+    ],
+    ids=["whatsapp-direct", "whatsapp-group", "telegram-direct", "app-chat"],
+)
+def test_batch_includes_reply_hint(payload, expected_substr):
+    notif = vm.Notification.model_validate(payload)
+    formatted = format_notification_batch([notif])
+    assert "→ Reply with:" in formatted
+    assert expected_substr in formatted
+
+
+def test_batch_no_hint_for_unknown_source():
+    notif = vm.Notification.model_validate({"timestamp": "2025-01-01T00:00:00", "source": "email", "type": "message", "sender": "alice"})
+    formatted = format_notification_batch([notif])
+    assert "→ Reply with:" not in formatted
+
+
+def test_batch_no_hint_for_non_message_type():
+    notif = vm.Notification.model_validate({"timestamp": "2025-01-01T00:00:00", "source": "whatsapp", "type": "reaction", "contact_name": "Alice", "emoji": "👍"})
+    formatted = format_notification_batch([notif])
+    assert "→ Reply with:" not in formatted
+
+
 # --- load_new_notifications ---
 
 
