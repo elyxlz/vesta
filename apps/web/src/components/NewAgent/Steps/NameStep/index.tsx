@@ -8,11 +8,7 @@ import {
   FieldLabel,
   FieldDescription,
 } from "@/components/ui/field";
-import {
-  createAgent,
-  authenticate,
-  type AuthStartResult,
-} from "@/api";
+import { createAgent, authenticate, type AuthStartResult } from "@/api";
 import { useGateway } from "@/providers/GatewayProvider";
 import { useOnboarding } from "@/stores/use-onboarding";
 
@@ -91,9 +87,7 @@ export function NameStep({
         create
       </Button>
 
-      {error && (
-        <p className="text-xs text-destructive text-center">{error}</p>
-      )}
+      {error && <p className="text-xs text-destructive text-center">{error}</p>}
     </div>
   );
 }

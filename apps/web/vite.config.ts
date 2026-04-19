@@ -12,7 +12,9 @@ function resolveInNodeModules(pkgRelPath: string): string {
     if (existsSync(candidate)) return candidate;
     const parent = path.dirname(dir);
     if (parent === dir) {
-      throw new Error(`could not find node_modules/${pkgRelPath} walking up from ${__dirname}`);
+      throw new Error(
+        `could not find node_modules/${pkgRelPath} walking up from ${__dirname}`,
+      );
     }
     dir = parent;
   }
@@ -35,7 +37,9 @@ const versionMatch = cargoToml.match(
   /\[package\][^[]*?\nversion\s*=\s*"([^"]+)"/,
 );
 if (!versionMatch) {
-  throw new Error("could not read [package] version from ../../vestad/Cargo.toml");
+  throw new Error(
+    "could not read [package] version from ../../vestad/Cargo.toml",
+  );
 }
 const version = versionMatch[1];
 
@@ -87,7 +91,9 @@ export default defineConfig({
     port: isTauri ? 1420 : 1430,
     strictPort: true,
     host: host || "0.0.0.0",
-    hmr: host ? { protocol: "ws", host, port: isTauri ? 1421 : 1431 } : undefined,
+    hmr: host
+      ? { protocol: "ws", host, port: isTauri ? 1421 : 1431 }
+      : undefined,
     proxy: host
       ? undefined
       : {

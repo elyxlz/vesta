@@ -134,7 +134,7 @@ jobs:
 
       - name: Format check
         working-directory: apps
-        run: npm -w @vesta/web run format -- --check
+        run: npm -w @vesta/web run format:check
 
       - name: Type check
         working-directory: apps

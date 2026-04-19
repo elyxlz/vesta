@@ -1,4 +1,5 @@
 import { motion } from "motion/react";
+import { useNavigate } from "react-router-dom";
 import { Orb } from "@/components/Orb";
 import type { OrbVisualState } from "@/components/Orb/styles";
 import { agentIslandContentTransition } from "./transitions";
@@ -6,20 +7,19 @@ import { agentIslandContentTransition } from "./transitions";
 type AgentIslandCollapsedProps = {
   name: string;
   orbState: OrbVisualState;
-  onExpand: () => void;
 };
 
 export function AgentIslandCollapsed({
   name,
   orbState,
-  onExpand,
 }: AgentIslandCollapsedProps) {
+  const navigate = useNavigate();
   return (
     <div
       className="flex h-8 w-full min-w-0 cursor-pointer touch-manipulation items-center gap-1.5 will-change-transform"
       onPointerDown={(event) => {
         if (event.pointerType === "touch") {
-          onExpand();
+          navigate("/");
         }
       }}
     >

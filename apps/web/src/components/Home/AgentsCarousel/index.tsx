@@ -52,7 +52,11 @@ function CarouselCard({ agent }: { agent: AgentInfo }) {
   return (
     <motion.div
       className="flex h-full items-center justify-center"
-      style={{ width: `${AGENT_CAROUSEL_CARD_WIDTH}px`, aspectRatio: "1/1", scale }}
+      style={{
+        width: `${AGENT_CAROUSEL_CARD_WIDTH}px`,
+        aspectRatio: "1/1",
+        scale,
+      }}
     >
       <AgentCard agent={agent} enableTracking={isCentered} />
     </motion.div>

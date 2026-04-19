@@ -56,7 +56,9 @@ interface NotificationContextValue {
   setChattingAgent: (agentName: string | null) => void;
 }
 
-const NotificationContext = createContext<NotificationContextValue | null>(null);
+const NotificationContext = createContext<NotificationContextValue | null>(
+  null,
+);
 
 export function useNotifications(): NotificationContextValue {
   return (
@@ -102,7 +104,10 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     const body = text.trim();
     if (!body) return;
     try {
-      const n = new Notification(agentName, { body: truncate(body), tag: agentName });
+      const n = new Notification(agentName, {
+        body: truncate(body),
+        tag: agentName,
+      });
       const autoClose = setTimeout(() => n.close(), NOTIFICATION_AUTO_CLOSE_MS);
       n.onclick = () => {
         clearTimeout(autoClose);

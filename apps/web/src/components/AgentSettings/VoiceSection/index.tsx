@@ -150,8 +150,8 @@ export function TtsCard() {
                 </span>
                 <span className="text-foreground tabular-nums">
                   {chars &&
-                    typeof chars.character_count === "number" &&
-                    typeof chars.character_limit === "number"
+                  typeof chars.character_count === "number" &&
+                  typeof chars.character_limit === "number"
                     ? `${chars.character_count.toLocaleString()} / ${chars.character_limit.toLocaleString()}`
                     : "—"}
                 </span>
@@ -174,7 +174,11 @@ function UsageCollapsible({
   children: React.ReactNode;
 }) {
   return (
-    <Collapsible onOpenChange={(isOpen) => { if (isOpen) onOpen(); }}>
+    <Collapsible
+      onOpenChange={(isOpen) => {
+        if (isOpen) onOpen();
+      }}
+    >
       <CollapsibleTrigger asChild>
         <Button
           variant="ghost"
@@ -451,7 +455,10 @@ function SelectSetting({
     return (
       <>
         <VoicePicker setting={setting} onChange={onChange} />
-        <SubSettingsCollapsible setting={setting} updateSetting={updateSetting} />
+        <SubSettingsCollapsible
+          setting={setting}
+          updateSetting={updateSetting}
+        />
       </>
     );
   }
@@ -468,7 +475,8 @@ function SelectSetting({
             <ChevronDown className="size-4 transition-transform [[data-state=closed]_&]:-rotate-90" />
             {setting.label}:{" "}
             <span className="text-foreground font-medium">
-              {options.find((o) => o.value === setting.value)?.label ?? "Unknown"}
+              {options.find((o) => o.value === setting.value)?.label ??
+                "Unknown"}
             </span>
           </Button>
         </CollapsibleTrigger>
@@ -561,17 +569,19 @@ function VoicePicker({
             return (
               <button
                 key={opt.value}
-                className={`group relative flex flex-col items-center gap-1.5 rounded-lg p-2 transition-colors cursor-pointer ${selected
+                className={`group relative flex flex-col items-center gap-1.5 rounded-lg p-2 transition-colors cursor-pointer ${
+                  selected
                     ? "bg-primary/10 ring-1 ring-primary/30"
                     : "hover:bg-muted"
-                  }`}
+                }`}
                 onClick={() => select(opt)}
               >
                 <div
-                  className={`relative size-9 rounded-full flex items-center justify-center text-xs font-medium ${selected
+                  className={`relative size-9 rounded-full flex items-center justify-center text-xs font-medium ${
+                    selected
                       ? "bg-primary text-primary-foreground"
                       : "bg-muted text-muted-foreground"
-                    }`}
+                  }`}
                 >
                   {opt.label[0]}
                   {opt.preview && (
@@ -594,10 +604,11 @@ function VoicePicker({
                   )}
                 </div>
                 <span
-                  className={`text-[10px] leading-tight text-center truncate max-w-full ${selected
+                  className={`text-[10px] leading-tight text-center truncate max-w-full ${
+                    selected
                       ? "text-primary font-medium"
                       : "text-muted-foreground"
-                    }`}
+                  }`}
                 >
                   {opt.label}
                 </span>

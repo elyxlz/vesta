@@ -26,7 +26,10 @@ export function Navbar({ leading, center, trailing }: NavbarProps) {
         data-tauri-drag-region
         className="grid grid-cols-[1fr_auto_1fr] items-center"
       >
-        <div data-tauri-drag-region className="flex items-center gap-2 justify-self-start">
+        <div
+          data-tauri-drag-region
+          className="flex items-center gap-2 justify-self-start"
+        >
           {leading}
         </div>
 
@@ -38,7 +41,10 @@ export function Navbar({ leading, center, trailing }: NavbarProps) {
           {center}
         </div>
 
-        <div data-tauri-drag-region className="flex items-center gap-2 justify-self-end">
+        <div
+          data-tauri-drag-region
+          className="flex items-center gap-2 justify-self-end"
+        >
           {trailing}
           <WindowControls />
         </div>

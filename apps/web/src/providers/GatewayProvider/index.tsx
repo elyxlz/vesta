@@ -120,7 +120,8 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
         setUpdateAvailable(!!data.update_available);
         setLatestVersion(data.latest_version ?? null);
         setVersionChecked(true);
-        if (data.version !== __APP_VERSION__ && !skipVersionGateRef.current) return;
+        if (data.version !== __APP_VERSION__ && !skipVersionGateRef.current)
+          return;
       }
       if (!cancelled) setVersionChecked(true);
 

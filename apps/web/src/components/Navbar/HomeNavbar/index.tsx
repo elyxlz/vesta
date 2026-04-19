@@ -75,9 +75,7 @@ export function HomeNavbar() {
   return (
     <Navbar
       leading={<Leading />}
-      center={
-        <LogoText />
-      }
+      center={<LogoText />}
       trailing={
         <>
           <StatusPill />

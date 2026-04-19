@@ -129,15 +129,12 @@ export function prefetchSpeech(
   agentName: string,
   signal?: AbortSignal,
 ): Promise<Response> {
-  return apiFetch(
-    `/agents/${encodeURIComponent(agentName)}/voice/tts/speak`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
-      signal,
-    },
-  );
+  return apiFetch(`/agents/${encodeURIComponent(agentName)}/voice/tts/speak`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text }),
+    signal,
+  });
 }
 
 export async function streamSpeech(
@@ -146,7 +143,7 @@ export async function streamSpeech(
   signal?: AbortSignal,
   prefetched?: Response,
 ): Promise<void> {
-  const res = prefetched ?? await prefetchSpeech(text, agentName, signal);
+  const res = prefetched ?? (await prefetchSpeech(text, agentName, signal));
 
   const contentType = res.headers.get("content-type") || "";
   if (contentType.includes("audio/mpeg") || contentType.includes("audio/mp3")) {

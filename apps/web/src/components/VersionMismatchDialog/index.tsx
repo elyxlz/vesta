@@ -73,9 +73,7 @@ export function VersionMismatchDialog({
   return (
     <>
       <Navbar
-        center={
-          <LogoText />
-        }
+        center={<LogoText />}
         trailing={
           <>
             <StatusPill />

@@ -1,10 +1,7 @@
 import type { RefObject } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { CardContent } from "@/components/ui/card";
-import {
-  calendarDayKey,
-  formatChatDayStampLabel,
-} from "@/lib/chat-day-stamp";
+import { calendarDayKey, formatChatDayStampLabel } from "@/lib/chat-day-stamp";
 import type { VestaEvent } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { ChatBubble } from "../ChatBubble";
@@ -92,8 +89,7 @@ export function ChatMessageArea({
                   const prev = chatMessages[i - 1];
                   const dayKey = calendarDayKey(msg.ts);
                   const showDayStamp = Boolean(
-                    dayKey &&
-                      (lastDayKey === null || dayKey !== lastDayKey),
+                    dayKey && (lastDayKey === null || dayKey !== lastDayKey),
                   );
                   if (dayKey) lastDayKey = dayKey;
                   const isTool = msg.type === "tool_start";

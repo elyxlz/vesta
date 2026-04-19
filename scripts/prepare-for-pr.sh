@@ -141,7 +141,7 @@ else
     run_in apps "npm install" npm install
   fi
   run_in apps "web lint"         npm -w @vesta/web run lint
-  run_in apps "web format check" npm -w @vesta/web run format -- --check
+  run_in apps "web format check" npm -w @vesta/web run format:check
   run_in apps "web type check"   npm -w @vesta/web run check
   run_in apps "web tests"        npm -w @vesta/web run test
 fi

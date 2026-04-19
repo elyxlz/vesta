@@ -11,16 +11,8 @@ import {
 } from "./AgentsCarousel/constants";
 import { EmptyState } from "./EmptyState";
 
-function SkeletonCard({
-  index,
-  opacity,
-}: {
-  index: number;
-  opacity: number;
-}) {
-  const scale = scaleForCarouselItemOffset(
-    index * AGENT_CAROUSEL_ITEM_STRIDE,
-  );
+function SkeletonCard({ index, opacity }: { index: number; opacity: number }) {
+  const scale = scaleForCarouselItemOffset(index * AGENT_CAROUSEL_ITEM_STRIDE);
   return (
     <motion.div
       className="flex shrink-0 items-center justify-center"
@@ -60,11 +52,7 @@ function SkeletonList() {
       transition={{ duration: 0.3 }}
     >
       {Array.from({ length: SKELETON_COUNT }, (_, i) => (
-        <SkeletonCard
-          key={i}
-          index={i}
-          opacity={1 - i / SKELETON_COUNT}
-        />
+        <SkeletonCard key={i} index={i} opacity={1 - i / SKELETON_COUNT} />
       ))}
       <p className="absolute bottom-12 left-0 right-0 text-center text-sm text-muted-foreground">
         loading agents…

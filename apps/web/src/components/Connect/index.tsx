@@ -79,7 +79,7 @@ export function Connect() {
                 <Input
                   id="host"
                   type="url"
-                  placeholder="https://your-tunnel.example.com"
+                  placeholder="host"
                   autoComplete="url"
                   value={host}
                   onChange={(e) => setHost(e.target.value)}
