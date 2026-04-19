@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import {
@@ -14,9 +14,24 @@ import { SiteHeader } from "@/components/site-header"
 import { getAgentName, waitForAuth } from "@/lib/parent-bridge"
 import { config, type PageConfig } from "./config"
 
+const AGENT_PAGE_ID = "agent"
+
+/** Replace the "Agent" page title with "Agent <agentName>" once the bridge reveals the name. */
+function applyAgentName(pages: PageConfig[], agentName: string | null): PageConfig[] {
+  if (!agentName) return pages
+  const titled = agentName.charAt(0).toUpperCase() + agentName.slice(1)
+  return pages.map((p) => {
+    if (p.id === AGENT_PAGE_ID) return { ...p, title: `Agent ${titled}` }
+    if (p.children) return { ...p, children: applyAgentName(p.children, agentName) }
+    return p
+  })
+}
+
 const SHOW_EMPTY_STATE = config.pages.length === 0
 const STORAGE_KEY = "vesta-dashboard-page-order"
 const ACTIVE_PAGE_KEY = "vesta-dashboard-active-page"
+const IDLE_RESET_PAGE_ID = "agent"
+const IDLE_RESET_MS = 5 * 60 * 1000 // 5 min of no user interaction → jump back to agent page
 
 function findPage(pages: PageConfig[], id: string): PageConfig | undefined {
   for (const p of pages) {
@@ -64,11 +79,35 @@ function loadActivePage(pages: PageConfig[]): string {
   return firstNavigablePage(pages)
 }
 
-function DashboardContent() {
+function DashboardContent({ agentName }: { agentName: string | null }) {
   const shellRef = useShellRef()
-  const [pages, setPages] = useState(loadPageOrder)
+  const [rawPages, setRawPages] = useState(loadPageOrder)
+  const pages = useMemo(() => applyAgentName(rawPages, agentName), [rawPages, agentName])
   const [activePageId, setActivePageId] = useState(() => loadActivePage(pages))
   const activePage = findPage(pages, activePageId)
+
+  // Idle reset: after IDLE_RESET_MS of no user interaction, navigate to the agent page.
+  useEffect(() => {
+    if (!hasPage(pages, IDLE_RESET_PAGE_ID)) return
+    let timer: number | undefined
+    const reset = () => {
+      if (timer !== undefined) window.clearTimeout(timer)
+      timer = window.setTimeout(() => {
+        setActivePageId((current) => {
+          if (current === IDLE_RESET_PAGE_ID) return current
+          localStorage.setItem(ACTIVE_PAGE_KEY, IDLE_RESET_PAGE_ID)
+          return IDLE_RESET_PAGE_ID
+        })
+      }, IDLE_RESET_MS)
+    }
+    const events: (keyof WindowEventMap)[] = ["mousemove", "mousedown", "keydown", "touchstart", "scroll", "wheel"]
+    events.forEach((e) => window.addEventListener(e, reset, { passive: true }))
+    reset()
+    return () => {
+      if (timer !== undefined) window.clearTimeout(timer)
+      events.forEach((e) => window.removeEventListener(e, reset))
+    }
+  }, [pages])
 
   return (
     <TooltipProvider>
@@ -85,7 +124,7 @@ function DashboardContent() {
           config={config}
           pages={pages}
           onReorder={(reordered) => {
-            setPages(reordered)
+            setRawPages(reordered)
             localStorage.setItem(STORAGE_KEY, JSON.stringify(reordered.map((p) => p.id)))
           }}
           activePageId={activePageId}
@@ -132,7 +171,7 @@ export default function App() {
 
   return (
     <Shell>
-      <DashboardContent />
+      <DashboardContent agentName={agentName} />
     </Shell>
   )
 }

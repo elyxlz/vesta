@@ -9,7 +9,8 @@
 // ============================================================================
 
 import type { ComponentType, ReactNode } from "react"
-import { LayoutDashboardIcon } from "lucide-react"
+import { LayoutDashboardIcon, BrainIcon } from "lucide-react"
+import AgentPage from "./pages/agent"
 
 // --- Types ---
 
@@ -34,6 +35,11 @@ export const config: DashboardConfig = {
   titleIcon: <LayoutDashboardIcon className="size-5!" />,
 
   pages: [
-    // Add pages here:
+    {
+      id: "agent",
+      title: "Agent",
+      icon: <BrainIcon className="size-4" />,
+      component: AgentPage,
+    },
   ],
 }
