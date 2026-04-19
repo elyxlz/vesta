@@ -183,7 +183,14 @@ def test_notification_format_for_display():
             "whatsapp send --to 'Alice'",
         ),
         (
-            {"timestamp": "2025-01-01T00:00:00", "source": "whatsapp", "type": "message", "chat_name": "Group", "sender": "bob", "message": "hi"},
+            {
+                "timestamp": "2025-01-01T00:00:00",
+                "source": "whatsapp",
+                "type": "message",
+                "chat_name": "Group",
+                "sender": "bob",
+                "message": "hi",
+            },
             "whatsapp send --to 'Group'",
         ),
         (
@@ -211,7 +218,9 @@ def test_batch_no_hint_for_unknown_source():
 
 
 def test_batch_no_hint_for_non_message_type():
-    notif = vm.Notification.model_validate({"timestamp": "2025-01-01T00:00:00", "source": "whatsapp", "type": "reaction", "contact_name": "Alice", "emoji": "👍"})
+    notif = vm.Notification.model_validate(
+        {"timestamp": "2025-01-01T00:00:00", "source": "whatsapp", "type": "reaction", "contact_name": "Alice", "emoji": "👍"}
+    )
     formatted = format_notification_batch([notif])
     assert "→ Reply with:" not in formatted
 
