@@ -159,10 +159,11 @@ pub struct AppState {
     pub(crate) settings: RwLock<Settings>,
     dev_mode: bool,
     pub(crate) agent_status_cache: Arc<agent_status::AgentStatusCache>,
+    pub(crate) https_port: u16,
 }
 
 impl AppState {
-    fn new(api_key: String, env_config: docker::AgentEnvConfig, docker: bollard::Docker, tunnel_url: Option<String>, dev_mode: bool) -> Self {
+    fn new(api_key: String, env_config: docker::AgentEnvConfig, docker: bollard::Docker, tunnel_url: Option<String>, dev_mode: bool, https_port: u16) -> Self {
         let settings = load_settings();
         Self {
             api_key,
@@ -177,6 +178,7 @@ impl AppState {
             settings: RwLock::new(settings),
             dev_mode,
             agent_status_cache: Arc::new(agent_status::AgentStatusCache::new()),
+            https_port,
         }
     }
 
@@ -1669,7 +1671,7 @@ pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: S
     docker::reconcile_containers(&docker, &env_config, &|name| {
         agent_settings.get(name).is_none_or(|s| s.manage_agent_code)
     }).await;
-    let state = Arc::new(AppState::new(api_key, env_config, docker.clone(), tunnel_url, dev_mode));
+    let state = Arc::new(AppState::new(api_key, env_config, docker.clone(), tunnel_url, dev_mode, port));
     agent_status::spawn_agent_status_task(
         state.agent_status_cache.clone(),
         docker,

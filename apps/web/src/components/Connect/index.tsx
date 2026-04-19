@@ -5,11 +5,30 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { FieldGroup, Field, FieldLabel } from "@/components/ui/field";
 import { fadeSlide } from "@/lib/motion";
+import { isTauri } from "@/lib/env";
 import { useAuth } from "@/providers/AuthProvider";
+
+function vestadUrl(): string {
+  const meta = document.querySelector<HTMLMetaElement>(
+    'meta[name="vestad-port"]',
+  );
+  const port = meta?.content;
+  if (!port || !/^\d+$/.test(port)) {
+    throw new Error("vestad port not available — reload the page");
+  }
+  return `https://localhost:${port}`;
+}
+
+function normalizeHost(input: string): string {
+  const trimmed = input.trim().replace(/\/+$/, "");
+  if (!/^https?:\/\//i.test(trimmed)) return `https://${trimmed}`;
+  return trimmed;
+}
 
 export function Connect() {
   const { connected, connect } = useAuth();
   const [apiKey, setApiKey] = useState("");
+  const [host, setHost] = useState("");
   const [error, setError] = useState("");
   const [details, setDetails] = useState("");
   const [showDetails, setShowDetails] = useState(false);
@@ -19,12 +38,14 @@ export function Connect() {
 
   const handleConnect = async () => {
     if (!apiKey.trim() || busy) return;
+    if (isTauri && !host.trim()) return;
     setBusy(true);
     setError("");
     setDetails("");
 
     try {
-      await connect(window.location.origin, apiKey.trim());
+      const url = isTauri ? normalizeHost(host) : vestadUrl();
+      await connect(url, apiKey.trim());
     } catch (e: unknown) {
       const msg = (e as { message?: string })?.message || "connection failed";
       setError("could not reach server");
@@ -50,6 +71,22 @@ export function Connect() {
           </div>
 
           <FieldGroup className="gap-3">
+            {isTauri && (
+              <Field>
+                <FieldLabel htmlFor="host" className="sr-only">
+                  Host
+                </FieldLabel>
+                <Input
+                  id="host"
+                  type="url"
+                  placeholder="https://your-tunnel.example.com"
+                  autoComplete="url"
+                  value={host}
+                  onChange={(e) => setHost(e.target.value)}
+                  className="text-center text-sm"
+                />
+              </Field>
+            )}
             <Field>
               <FieldLabel htmlFor="key" className="sr-only">
                 Key
@@ -69,7 +106,7 @@ export function Connect() {
 
           <Button
             type="submit"
-            disabled={!apiKey.trim() || busy}
+            disabled={!apiKey.trim() || (isTauri && !host.trim()) || busy}
             className="w-full"
           >
             {busy ? "connecting..." : "connect"}
