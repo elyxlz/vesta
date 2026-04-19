@@ -8,6 +8,10 @@
     "description": "Use for \"browse\", \"open a website\", \"navigate to\", \"click\", \"fill form\","
   },
   {
+    "name": "context",
+    "description": "Use when the user asks about \"context window\", \"token usage\", \"how much context is left\", SDK response time / latency, or wants to monitor the agent's live context consumption and runtime activity. Exposes a vestad-registered HTTP service that reads the SDK-authoritative `get_context_usage()` values logged by `core/client.py`, plus USAGE / state / tool / message lines, and ships a dashboard page that visualizes them."
+  },
+  {
     "name": "dashboard",
     "description": "Use when you need to build, modify, or customize anything on the user's dashboard (widgets, layouts, pages, views, or any custom UI)."
   },
