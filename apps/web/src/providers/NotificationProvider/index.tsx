@@ -45,7 +45,7 @@ async function focusAndNavigate(agentName: string): Promise<void> {
   } else {
     window.focus();
   }
-  router.navigate(`/agent/${encodeURIComponent(agentName)}/chat`);
+  router.navigate(`/agent/${encodeURIComponent(agentName)}`);
 }
 
 interface NotificationContextValue {
