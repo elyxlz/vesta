@@ -18,6 +18,7 @@ loop picks it up, sets nap_active, queues the nightly_dream prompt. Same
 session reset + restart flow as the nightly dreamer, only the restart
 reason label differs.
 """
+
 import datetime as dt
 import glob
 import json
@@ -75,6 +76,7 @@ def _write_last_idle_notified(ts: float) -> None:
         _USER_IDLE_STAMP.write_text(str(ts))
     except OSError:
         pass
+
 
 NOTIFICATIONS_DIR = pl.Path.home() / "agent" / "notifications"
 
@@ -201,6 +203,7 @@ def _timeseries(bucket_minutes: int = 5, limit: int = 24) -> list[dict]:
       dur_min / dur_avg / dur_max (seconds across all turns in window).
     """
     from datetime import datetime as _dt
+
     bucket_s = max(60, bucket_minutes * 60)
 
     def _floor(ts: float) -> float:
@@ -291,11 +294,13 @@ def _read_history(limit: int = 20) -> list[dict]:
         turns = _perf_turns(limit=500)
         if turns:
             from datetime import datetime as _dt
+
             def _parse(s: str) -> float:
                 try:
                     return _dt.fromisoformat(s).timestamp()
                 except ValueError:
                     return 0.0
+
             turn_ts = [(_parse(t["ts"]), t) for t in turns]
             for i, entry in enumerate(out):
                 target = _parse(history_stamps[i])
@@ -386,7 +391,7 @@ def _write_user_idle_notification(idle_seconds: float, threshold_minutes: int) -
             "idle_minutes": int(idle_seconds // 60),
             "threshold_minutes": threshold_minutes,
             "interrupt": False,
-            "timestamp": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "timestamp": dt.datetime.now(dt.UTC).isoformat(),
         }
         filename = f"{int(time.time() * 1e6)}-context-user_idle.json"
         tmp = NOTIFICATIONS_DIR / f"{filename}.tmp"
@@ -456,15 +461,17 @@ def _perf_turns(limit: int = 60) -> list[dict]:
         out_tok = int(m.group("out_tok"))
         if in_tok == 0 and out_tok == 0:
             continue  # interrupt cycle, not a real turn
-        turns.append({
-            "ts": m.group("ts"),
-            "in_tok": in_tok,
-            "out_tok": out_tok,
-            "cache_read": int(m.group("cr")),
-            "cache_write": int(m.group("cw")),
-            "cost": float(m.group("cost")),
-            "duration_s": float(m.group("dur")),
-        })
+        turns.append(
+            {
+                "ts": m.group("ts"),
+                "in_tok": in_tok,
+                "out_tok": out_tok,
+                "cache_read": int(m.group("cr")),
+                "cache_write": int(m.group("cw")),
+                "cost": float(m.group("cost")),
+                "duration_s": float(m.group("dur")),
+            }
+        )
     return turns[-limit:]
 
 
@@ -509,12 +516,14 @@ def _activity_feed(limit: int = 30) -> list[dict]:
         if kind == "MESSAGE" and rest.startswith("{"):
             # Raw SDK init payloads, skip.
             continue
-        raw.append({
-            "ts": m.group("ts"),
-            "actor": actor,
-            "kind": kind,
-            "text": rest,
-        })
+        raw.append(
+            {
+                "ts": m.group("ts"),
+                "actor": actor,
+                "kind": kind,
+                "text": rest,
+            }
+        )
 
     # Pair [ASSISTANT] lines with nearby `app-chat send` / `whatsapp send`
     # tool calls. If the assistant text reached a user channel, skip it.
@@ -549,11 +558,13 @@ def _activity_feed(limit: int = 30) -> list[dict]:
         text = ev["text"]
         if len(text) > 400:
             text = text[:400] + "…"
-        out.append({
-            "ts": ev["ts"],
-            "kind": ev["kind"],
-            "text": text,
-        })
+        out.append(
+            {
+                "ts": ev["ts"],
+                "kind": ev["kind"],
+                "text": text,
+            }
+        )
 
     return out[-limit:]
 
@@ -579,10 +590,7 @@ def _sampler_loop():
                     idle = _last_user_activity_seconds()
                     idle_threshold = cfg["idle_minutes"] * 60
                     if idle is not None and idle >= idle_threshold:
-                        _trigger_nap(
-                            f"soft threshold ({pct:.1f}% >= {cfg['soft_pct']}%) "
-                            f"and idle for {int(idle)}s"
-                        )
+                        _trigger_nap(f"soft threshold ({pct:.1f}% >= {cfg['soft_pct']}%) and idle for {int(idle)}s")
         except Exception as e:
             print(f"[context-server] sampler error: {e}", flush=True)
         time.sleep(60)
@@ -603,8 +611,10 @@ class Handler(BaseHTTPRequestHandler):
             limit = 60
             for pair in q.split("&"):
                 if pair.startswith("limit="):
-                    try: limit = max(1, min(500, int(pair.split("=", 1)[1])))
-                    except ValueError: pass
+                    try:
+                        limit = max(1, min(500, int(pair.split("=", 1)[1])))
+                    except ValueError:
+                        pass
             self._send(200, {"turns": _perf_turns(limit)})
         elif path == "activity":
             # Optional ?limit=N
@@ -612,8 +622,10 @@ class Handler(BaseHTTPRequestHandler):
             limit = 30
             for pair in q.split("&"):
                 if pair.startswith("limit="):
-                    try: limit = max(1, min(200, int(pair.split("=", 1)[1])))
-                    except ValueError: pass
+                    try:
+                        limit = max(1, min(200, int(pair.split("=", 1)[1])))
+                    except ValueError:
+                        pass
             self._send(200, {"events": _activity_feed(limit)})
         else:
             self._send(404, {"error": "not found"})
