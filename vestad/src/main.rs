@@ -120,10 +120,19 @@ fn die(msg: impl std::fmt::Display) -> ! {
 }
 
 fn find_available_port() -> Option<u16> {
-    std::net::TcpListener::bind(("0.0.0.0", 0))
-        .ok()
-        .and_then(|l| l.local_addr().ok())
-        .map(|addr| addr.port())
+    // serve.rs binds HTTPS on 0.0.0.0:N and HTTP on 127.0.0.1:N+1, so both must be free.
+    const MAX_ATTEMPTS: u8 = 16;
+    for _ in 0..MAX_ATTEMPTS {
+        let port = std::net::TcpListener::bind(("0.0.0.0", 0))
+            .ok()
+            .and_then(|l| l.local_addr().ok())
+            .map(|addr| addr.port())?;
+        let Some(http_port) = port.checked_add(1) else { continue };
+        if std::net::TcpListener::bind(("127.0.0.1", http_port)).is_ok() {
+            return Some(port);
+        }
+    }
+    None
 }
 
 fn resolve_port(explicit: Option<u16>, config: &std::path::Path) -> u16 {
