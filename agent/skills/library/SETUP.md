@@ -55,25 +55,44 @@ appends new ones. Audio-only books (no matching epub) get an entry with
 
 ## 4. Dashboard integration
 
-The dashboard's Library page expects a service named `library` registered with
-vestad. The skill's `serve:` command in `SKILL.md` handles registration and
-starts the server under `screen`. The dashboard fetches `/catalog`, book text
-from `/text/<filename>`, covers from `/cover/<filename>`, and streams audio
-from `/audio/<filename>` (with HTTP range support).
+The skill ships a ready-made library page for the `dashboard` skill, at
+`~/agent/skills/library/dashboard/library.tsx`. It renders a browsable grid
+with cover thumbnails, an author/subject filter popover, sort toggles, a
+click-through reader with scroll/highlight support, and a lightweight audio
+player.
 
-If the Library page is not appearing in the dashboard, make sure:
+To wire it up:
 
-1. The skill is installed and its `serve:` directive has run (registering the
-   `/library` service with vestad).
+1. Copy the page into your dashboard's `pages/` directory:
+
+   ```bash
+   cp ~/agent/skills/library/dashboard/library.tsx \
+     ~/agent/skills/dashboard/app/src/pages/library.tsx
+   ```
+
+2. Register it in `~/agent/skills/dashboard/app/src/config.tsx` as a sidebar
+   nav item. See the dashboard skill's `SKILL.md` for the config shape.
+
+3. Make sure the `library` service is registered with vestad: the skill's
+   `serve:` directive in `SKILL.md` handles this automatically. The page uses
+   `apiFetch("library/catalog")` etc. which routes through the dashboard's
+   authenticated proxy.
+
+If the page is not appearing, check:
+
+1. The skill is installed and its `serve:` directive has run.
 2. `~/agent/data/skills/library/catalog.json` exists and is non-empty.
+3. The nav entry is present in your dashboard `config.tsx`.
 
 ## 5. Notes on the catalog format
 
 - `cover` is a relative path string like `"covers/My_Book.jpg"`. The server
   serves cover images from `GET /cover/<filename>`.
-- `cover_b64` (a data URL embedded in the catalog) is **deprecated**. Older
-  catalogs may contain it; `build_catalog.py` will not write it. Covers should
-  be fetched via the `/cover/` route instead.
+- `cover_b64` is a base64 data URL embedded in each catalog entry, a resized
+  (200px wide) JPEG of the cover. Regenerated from disk on every build by
+  `build_catalog.py` (requires Pillow). Lets the dashboard grid render all
+  thumbnails from a single authenticated `/catalog` fetch instead of firing
+  per-cover requests; native `<img>` tags can't attach bearer auth.
 - `audio_file` is a bare filename (e.g. `"My Book.m4b"`) served by
   `GET /audio/<filename>`.
 - `audio_only: true` indicates an audiobook with no matching ebook.
