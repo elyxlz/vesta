@@ -1,4 +1,4 @@
-import { linkify } from "@/lib/linkify";
+import { Markdown } from "@/lib/markdown";
 import type { VestaEvent } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { ToolCallLabel } from "../ToolCallLabel";
@@ -59,10 +59,9 @@ export function ChatBubble({
             : "bg-secondary text-secondary-foreground rounded-bl-sm",
         )}
       >
-        <span
-          className="min-w-0 break-words whitespace-pre-wrap"
-          dangerouslySetInnerHTML={{ __html: linkify(text) }}
-        />
+        <div className="min-w-0 break-words">
+          <Markdown>{text}</Markdown>
+        </div>
         {ts && (
           <span
             className={cn(
