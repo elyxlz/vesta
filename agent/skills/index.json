@@ -12,6 +12,10 @@
     "description": "Use when you need to build, modify, or customize anything on the user's dashboard (widgets, layouts, pages, views, or any custom UI)."
   },
   {
+    "name": "declutter",
+    "description": "This skill should be used when the user asks about \"cleanup\", \"disk space\", \"clean up\", \"free space\", \"cache\", \"declutter\", or wants to reclaim storage in their vesta agent container."
+  },
+  {
     "name": "dream",
     "description": "Self-improvement and memory curation. Used by the nightly dreamer, but can also be used anytime."
   },
