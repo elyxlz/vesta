@@ -13,8 +13,9 @@ Client/server architecture. `vestad` daemon runs on the host (manages Docker con
 - **Agent** (`agent/core/`): Async Python. Entry point `main.py`. Core loop in `core/loops.py` (message processing, notification monitoring). WebSocket server in `api.py`.
 - **CLI** (`cli/`): standalone Rust crate — `vesta` client binary. Connects to vestad over HTTPS.
 - **Server** (`vestad/`): standalone Rust crate — `vestad` daemon. Manages Docker containers, serves API. Contains `vestad/tests-integration/` as a workspace member for end-to-end tests.
-- **Web App** (`apps/web/`): React + TypeScript SPA served by vestad at `/app` and embedded in the Tauri desktop wrapper. Components in `apps/web/src/components/`, providers in `apps/web/src/providers/`.
-- **Desktop App** (`apps/desktop/`): Tauri wrapper around `@vesta/web`. Only `src-tauri/` + a thin `package.json` — no frontend code of its own.
+- **Web App** (`apps/web/`): React + TypeScript SPA served by vestad at `/app` and embedded in both Tauri wrappers. Components in `apps/web/src/components/`, providers in `apps/web/src/providers/`.
+- **Desktop App** (`apps/desktop/`): Tauri wrapper around `@vesta/web` for macOS/Windows/Linux. Only `src-tauri/` + a thin `package.json` — no frontend code of its own.
+- **Mobile App** (`apps/mobile/`): Separate Tauri wrapper around `@vesta/web` for iOS/Android. Self-contained — independent Cargo crate (`vesta-mobile`), bundle id `com.vestarun.mobile`, no shared Rust code with desktop.
 - **Skills** (`agent/skills/` + `agent/core/skills/`): Each skill directory has `SKILL.md` + scripts. `agent/core/skills/` holds built-in skills shipped with the agent (e.g. `app-chat`); `agent/skills/` holds the rest. No MCP servers.
 - **Integration Tests** (`tests/`): Separate Rust crate with end-to-end tests (real vestad + client, requires Docker).
 
@@ -73,8 +74,11 @@ npm install                                # Installs workspace deps (one-time /
 npm -w @vesta/web run test                 # Web tests
 npm -w @vesta/web run lint                 # Web lint
 npm -w @vesta/web run check                # Web type check
-npm -w @vesta/desktop run tauri -- <args>  # Run the Tauri CLI (dev, build, etc.)
+npm -w @vesta/desktop run tauri -- <args>  # Run the desktop Tauri CLI (dev, build, etc.)
+npm -w @vesta/mobile run ios:build         # Build signed iOS .ipa (also ios:dev, android:build, android:dev)
 ```
+
+On iOS, install the resulting .ipa to a paired device without Xcode GUI: `xcrun devicectl device install app --device <udid> apps/mobile/src-tauri/gen/apple/build/arm64/Vesta.ipa`. Never press ▶ in the generated Xcode project — the "Build Rust Code" phase depends on `npm` on PATH, and Xcode launched from Finder doesn't inherit nvm.
 
 ### Releasing
 
@@ -112,7 +116,7 @@ Run locally on master. Bumps versions, updates lockfiles, commits, pushes, and c
 
 ## CI
 
-Runs on push to `master` and PRs. Checks: version sync across sources (`agent/pyproject.toml`, `vestad/Cargo.toml`, `cli/Cargo.toml`, `vestad/tests-integration/Cargo.toml`, `apps/desktop/src-tauri/Cargo.toml`, `apps/desktop/src-tauri/tauri.conf.json`, `apps/web/package.json`), ruff, ty, cargo clippy, pytest, `uv.lock` freshness. Releases are triggered by `gh release create` (via `./release.sh`).
+Runs on push to `master` and PRs. Checks: version sync across sources (`agent/pyproject.toml`, `vestad/Cargo.toml`, `cli/Cargo.toml`, `vestad/tests-integration/Cargo.toml`, `apps/desktop/src-tauri/Cargo.toml`, `apps/desktop/src-tauri/tauri.conf.json`, `apps/desktop/package.json`, `apps/mobile/src-tauri/Cargo.toml`, `apps/mobile/src-tauri/tauri.conf.json`, `apps/mobile/package.json`, `apps/web/package.json`), ruff, ty, cargo clippy, pytest, `uv.lock` freshness. Releases are triggered by `gh release create` (via `./release.sh`). Mobile (iOS/Android) builds from `apps/mobile`, desktop builds from `apps/desktop` — they share no Rust code.
 
 ## Karpathy Guidelines
 

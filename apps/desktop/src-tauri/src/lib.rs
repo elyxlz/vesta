@@ -3,32 +3,22 @@ mod fps_unlock;
 
 #[tauri::command]
 fn focus_window(app: tauri::AppHandle) {
-    #[cfg(not(any(target_os = "ios", target_os = "android")))]
-    {
-        use tauri::Manager;
-        if let Some(window) = app.get_webview_window("main") {
-            let _ = window.show();
-            let _ = window.unminimize();
-            let _ = window.set_focus();
-        }
+    use tauri::Manager;
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
     }
-    #[cfg(any(target_os = "ios", target_os = "android"))]
-    let _ = app;
 }
 
 #[tauri::command]
 fn set_theme(window: tauri::Window, theme: String) {
-    #[cfg(not(any(target_os = "ios", target_os = "android")))]
-    {
-        let tauri_theme = match theme.as_str() {
-            "dark" => Some(tauri::Theme::Dark),
-            "light" => Some(tauri::Theme::Light),
-            _ => None,
-        };
-        let _ = window.set_theme(tauri_theme);
-    }
-    #[cfg(any(target_os = "ios", target_os = "android"))]
-    let _ = (window, theme);
+    let tauri_theme = match theme.as_str() {
+        "dark" => Some(tauri::Theme::Dark),
+        "light" => Some(tauri::Theme::Light),
+        _ => None,
+    };
+    let _ = window.set_theme(tauri_theme);
 }
 
 #[cfg(target_os = "linux")]
@@ -107,12 +97,6 @@ async fn install_update(version: String) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(mobile)]
-#[tauri::mobile_entry_point]
-pub fn mobile_entry_point() {
-    run();
-}
-
 pub fn run() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 
@@ -123,7 +107,6 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
         .setup(|_app| {
-            #[cfg(not(target_os = "android"))]
             use tauri::Manager;
 
             #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -149,32 +132,6 @@ pub fn run() {
                         let _ = window_vibrancy::apply_acrylic(&window, Some((0, 0, 0, 20)));
                     }
                 }
-            }
-
-            #[cfg(target_os = "ios")]
-            if let Some(window) = _app.get_webview_window("main") {
-                window.with_webview(|webview| {
-                    unsafe {
-                        let wv: *mut std::ffi::c_void = webview.inner();
-                        let wv_ref = &*(wv as *const objc2::runtime::AnyObject);
-
-                        // Enable native swipe back/forward navigation
-                        let _: () = objc2::msg_send![
-                            wv_ref,
-                            setAllowsBackForwardNavigationGestures: objc2::runtime::Bool::YES
-                        ];
-
-                        let scroll_view: *mut std::ffi::c_void =
-                            objc2::msg_send![wv_ref, scrollView];
-                        if !scroll_view.is_null() {
-                            let sv_ref = &*(scroll_view as *const objc2::runtime::AnyObject);
-                            let _: () = objc2::msg_send![
-                                sv_ref,
-                                setContentInsetAdjustmentBehavior: 2i64
-                            ];
-                        }
-                    }
-                }).ok();
             }
 
             // On Linux, disable decorations so Wayland transparency works
