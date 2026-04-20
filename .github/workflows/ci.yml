@@ -54,20 +54,28 @@ jobs:
           VESTAD=$(grep '^version = ' vestad/Cargo.toml | head -1 | cut -d'"' -f2)
           CLI=$(grep '^version = ' cli/Cargo.toml | head -1 | cut -d'"' -f2)
           TESTS=$(grep '^version = ' vestad/tests-integration/Cargo.toml | head -1 | cut -d'"' -f2)
-          TAURI_CONF=$(python3 -c "import json; print(json.load(open('apps/desktop/src-tauri/tauri.conf.json'))['version'])")
-          TAURI_CARGO=$(grep '^version = ' apps/desktop/src-tauri/Cargo.toml | head -1 | cut -d'"' -f2)
+          DESKTOP_CONF=$(python3 -c "import json; print(json.load(open('apps/desktop/src-tauri/tauri.conf.json'))['version'])")
+          DESKTOP_CARGO=$(grep '^version = ' apps/desktop/src-tauri/Cargo.toml | head -1 | cut -d'"' -f2)
+          DESKTOP_PKG=$(python3 -c "import json; print(json.load(open('apps/desktop/package.json'))['version'])")
+          MOBILE_CONF=$(python3 -c "import json; print(json.load(open('apps/mobile/src-tauri/tauri.conf.json'))['version'])")
+          MOBILE_CARGO=$(grep '^version = ' apps/mobile/src-tauri/Cargo.toml | head -1 | cut -d'"' -f2)
+          MOBILE_PKG=$(python3 -c "import json; print(json.load(open('apps/mobile/package.json'))['version'])")
           APP=$(python3 -c "import json; print(json.load(open('apps/web/package.json'))['version'])")
 
-          echo "agent:       $AGENT"
-          echo "vestad:      $VESTAD"
-          echo "cli:         $CLI"
-          echo "tests:       $TESTS"
-          echo "tauri.conf:  $TAURI_CONF"
-          echo "tauri cargo: $TAURI_CARGO"
-          echo "app:         $APP"
+          echo "agent:         $AGENT"
+          echo "vestad:        $VESTAD"
+          echo "cli:           $CLI"
+          echo "tests:         $TESTS"
+          echo "desktop.conf:  $DESKTOP_CONF"
+          echo "desktop cargo: $DESKTOP_CARGO"
+          echo "desktop pkg:   $DESKTOP_PKG"
+          echo "mobile.conf:   $MOBILE_CONF"
+          echo "mobile cargo:  $MOBILE_CARGO"
+          echo "mobile pkg:    $MOBILE_PKG"
+          echo "app:           $APP"
 
           FAIL=0
-          for name_val in "vestad:$VESTAD" "cli:$CLI" "tests:$TESTS" "tauri.conf:$TAURI_CONF" "tauri-cargo:$TAURI_CARGO" "app:$APP"; do
+          for name_val in "vestad:$VESTAD" "cli:$CLI" "tests:$TESTS" "desktop.conf:$DESKTOP_CONF" "desktop-cargo:$DESKTOP_CARGO" "desktop-pkg:$DESKTOP_PKG" "mobile.conf:$MOBILE_CONF" "mobile-cargo:$MOBILE_CARGO" "mobile-pkg:$MOBILE_PKG" "app:$APP"; do
             name="${name_val%%:*}"
             val="${name_val#*:}"
             if [ "$AGENT" != "$val" ]; then
@@ -717,7 +725,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: apps/desktop/src-tauri
+          workspaces: apps/mobile/src-tauri
           key: android
 
       - name: Setup Java
@@ -742,11 +750,11 @@ jobs:
         run: npm install
 
       - name: Initialize Android project
-        working-directory: apps/desktop
+        working-directory: apps/mobile
         run: npx tauri android init
 
       - name: Build Android APK
-        working-directory: apps/desktop
+        working-directory: apps/mobile
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
         run: npx tauri android build --apk
@@ -755,8 +763,8 @@ jobs:
         if: github.event_name != 'pull_request'
         run: |
           mkdir -p tauri-out
-          find apps/desktop/src-tauri/gen/android -name '*.apk' -exec cp {} tauri-out/ \;
-          VERSION=$(python3 -c "import json; print(json.load(open('apps/desktop/src-tauri/tauri.conf.json'))['version'])")
+          find apps/mobile/src-tauri/gen/android -name '*.apk' -exec cp {} tauri-out/ \;
+          VERSION=$(python3 -c "import json; print(json.load(open('apps/mobile/src-tauri/tauri.conf.json'))['version'])")
           for f in tauri-out/*.apk; do
             mv "$f" "tauri-out/Vesta_${VERSION}.apk"
           done
@@ -799,7 +807,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         if: env.SKIP_IOS != 'true'
         with:
-          workspaces: apps/desktop/src-tauri
+          workspaces: apps/mobile/src-tauri
           key: ios
 
       - name: Setup Node
@@ -840,20 +848,20 @@ jobs:
 
       - name: Initialize iOS project
         if: env.SKIP_IOS != 'true'
-        working-directory: apps/desktop
+        working-directory: apps/mobile
         run: npx tauri ios init
 
       - name: Build iOS
         if: env.SKIP_IOS != 'true'
-        working-directory: apps/desktop
+        working-directory: apps/mobile
         run: npx tauri ios build --export-method app-store-connect
 
       - name: Collect artifacts
         if: env.SKIP_IOS != 'true'
         run: |
           mkdir -p tauri-out
-          find apps/desktop/src-tauri/gen/apple -name '*.ipa' -exec cp {} tauri-out/ \;
-          VERSION=$(python3 -c "import json; print(json.load(open('apps/desktop/src-tauri/tauri.conf.json'))['version'])")
+          find apps/mobile/src-tauri/gen/apple -name '*.ipa' -exec cp {} tauri-out/ \;
+          VERSION=$(python3 -c "import json; print(json.load(open('apps/mobile/src-tauri/tauri.conf.json'))['version'])")
           for f in tauri-out/*.ipa; do
             mv "$f" "tauri-out/Vesta_${VERSION}.ipa"
           done

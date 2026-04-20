@@ -3,7 +3,8 @@
   "private": true,
   "workspaces": [
     "web",
-    "desktop"
+    "desktop",
+    "mobile"
   ],
   "scripts": {
     "web:dev": "npm -w @vesta/web run dev",
@@ -13,6 +14,10 @@
     "web:test": "npm -w @vesta/web run test",
     "desktop:dev": "npm -w @vesta/desktop run dev",
     "desktop:build": "npm -w @vesta/desktop run build",
+    "mobile:ios:dev": "npm -w @vesta/mobile run ios:dev",
+    "mobile:ios:build": "npm -w @vesta/mobile run ios:build",
+    "mobile:android:dev": "npm -w @vesta/mobile run android:dev",
+    "mobile:android:build": "npm -w @vesta/mobile run android:build",
     "tauri": "npm -w @vesta/desktop run tauri"
   }
 }

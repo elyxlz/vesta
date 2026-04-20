@@ -8,3 +8,5 @@ desktop/src-tauri/target/
 desktop/src-tauri/binaries/vesta-*
 desktop/src-tauri/resources/*.tar.gz
 desktop/src-tauri/resources/vestad
+mobile/src-tauri/gen/
+mobile/src-tauri/target/
