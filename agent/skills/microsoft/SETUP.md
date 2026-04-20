@@ -2,10 +2,10 @@
 
 1. Create an Azure App Registration at https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade
    - Name: anything (e.g. "Vesta")
-   - Supported account types: "Accounts in any organizational directory and personal Microsoft accounts"
+   - Supported account types: select the **third option** (multitenant + personal Microsoft accounts), labeled "Accounts in any organizational directory ... and personal Microsoft accounts". Works for both work/school and personal accounts
    - Redirect URI: leave blank (device flow doesn't need one)
-   - Under "API permissions", add: `Mail.ReadWrite`, `Mail.Send`, `Calendars.ReadWrite`, `MailboxSettings.ReadWrite`
-   - Under "Authentication", enable "Allow public client flows"
+   - Under "API permissions": click "Add a permission" → "Microsoft Graph" → **"Delegated permissions"** (not Application permissions) → search and add: `Mail.ReadWrite`, `Mail.Send`, `Calendars.ReadWrite`, `MailboxSettings.ReadWrite`
+   - Under "Authentication" (may show as "Authentication (Preview)"): go to the **Settings** tab → toggle "Allow public client flows" to **Yes** → click Save
 2. Copy the **Application (client) ID**
 3. Set environment variable:
    ```
