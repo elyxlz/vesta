@@ -698,7 +698,11 @@ jobs:
         run: |
           mkdir -p tauri-out
           cp apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe tauri-out/
-          find apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle -name '*.sig' -exec cp {} tauri-out/ \;
+          # The updater artifact (.nsis.zip) is what the updater plugin downloads;
+          # without it, the release manifest signature is empty and Windows fails
+          # with "update failed". createUpdaterArtifacts in tauri.conf.json enables it.
+          find apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle \
+            -type f \( -name '*.nsis.zip' -o -name '*.sig' \) -exec cp {} tauri-out/ \;
 
       - uses: actions/upload-artifact@v7
         if: github.event_name != 'pull_request'
@@ -1028,6 +1032,7 @@ jobs:
             -name '*.tar.gz' -o -name '*.zip' -o \
             -name '*.deb' -o -name '*.rpm' -o -name '*.dmg' -o \
             -name '*-setup.exe' -o -name '*_x64-setup.exe' -o \
+            -name '*.nsis.zip' -o \
             -name '*.apk' -o -name '*.ipa' -o \
             -name '*.sig' \
           \) -exec cp {} release/ \;
@@ -1063,8 +1068,8 @@ jobs:
                 "signature": "$(read_sig Vesta_x86_64.app.tar.gz.sig)"
               },
               "windows-x86_64": {
-                "url": "${BASE}/Vesta_${VERSION}_x64-setup.exe",
-                "signature": "$(read_sig Vesta_${VERSION}_x64-setup.exe.sig)"
+                "url": "${BASE}/Vesta_${VERSION}_x64-setup.nsis.zip",
+                "signature": "$(read_sig Vesta_${VERSION}_x64-setup.nsis.zip.sig)"
               }
             }
           }
