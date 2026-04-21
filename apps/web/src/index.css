@@ -47,6 +47,10 @@
   --page-padding-x: 1.5rem;
 }
 
+html[data-platform="android"] {
+  --safe-area-pb: max(0.5rem, calc(1rem - env(safe-area-inset-bottom, 0px)));
+}
+
 @supports not (corner-shape: squircle) {
   :root {
     --rounded-squircle-lg: calc(var(--radius) * 3);

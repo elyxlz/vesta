@@ -753,6 +753,11 @@ jobs:
         working-directory: apps/mobile
         run: npx tauri android init
 
+      # Tauri's AndroidManifest template only declares INTERNET. Add the
+      # microphone permissions the web app's getUserMedia call needs.
+      - name: Add runtime permissions to AndroidManifest
+        run: python3 scripts/android-add-permissions.py apps/mobile/src-tauri/gen/android/app/src/main/AndroidManifest.xml
+
       # Set up release signing if the ANDROID_KEYSTORE_BASE64 secret is configured.
       # If the secret is missing, the next step falls back to a debug-signed APK
       # so CI doesn't break (debug APKs install on-device but can't be used for
