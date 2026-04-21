@@ -14,10 +14,10 @@ import pathlib
 import re
 import sys
 
-IMPORTS_BLOCK = """import java.io.FileInputStream
-import java.util.Properties
-
-"""
+REQUIRED_IMPORTS = (
+    "import java.io.FileInputStream",
+    "import java.util.Properties",
+)
 
 KEYSTORE_LOAD_BLOCK = """
 val keystorePropertiesFile = rootProject.file("keystore.properties")
@@ -56,9 +56,12 @@ def main() -> None:
         print(f"{path}: already patched")
         return
 
-    # 1a. Add imports at the very top. Kotlin DSL requires them before `plugins {}`
-    #     and does not auto-qualify java.util.* / java.io.*.
-    text = IMPORTS_BLOCK + text
+    # 1a. Add any missing imports at the top. Tauri's generated file already
+    #     imports Properties, so duplicate imports fail with "Conflicting import,
+    #     imported name 'Properties' is ambiguous". Only add what's missing.
+    missing = [imp for imp in REQUIRED_IMPORTS if imp not in text]
+    if missing:
+        text = "\n".join(missing) + "\n\n" + text
 
     # 1b. Insert keystore loader before the top-level `android {` block.
     android_block = re.search(r"(?m)^android\s*\{", text)
