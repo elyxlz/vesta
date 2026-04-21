@@ -365,7 +365,20 @@ async def monitor_loop(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.Stat
 
                 notifications = await load_new_notifications(state=state, config=config)
                 interrupt_notifs = [n for n in notifications if n.interrupt]
-                pending_passive.extend(n for n in notifications if not n.interrupt)
+                # Dedupe passives by file_path. Between ticks, undelivered passive
+                # notification files stay on disk, so each tick's load_new_notifications
+                # re-returns them. Without dedupe, pending_passive accumulates N*K
+                # copies of the same message by the time the event bus is idle and
+                # the batch is flushed.
+                seen_paths = {n.file_path for n in pending_passive if n.file_path}
+                for n in notifications:
+                    if n.interrupt:
+                        continue
+                    if n.file_path and n.file_path in seen_paths:
+                        continue
+                    pending_passive.append(n)
+                    if n.file_path:
+                        seen_paths.add(n.file_path)
 
                 if interrupt_notifs:
                     await process_batch(interrupt_notifs, queue=queue, state=state, config=config)
