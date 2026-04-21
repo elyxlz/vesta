@@ -1,10 +1,14 @@
 """Agent HTTP/WS server.
 
 Routes:
-  - WS   /ws              bidirectional event bus
-  - GET  /history         paginated event history (cursor optional)
-  - GET  /search          full-text search over events
-  - GET  /usage           plan usage limits and rate limit status
+  - WS   /ws                   bidirectional event bus
+  - GET  /history              paginated event history (cursor optional)
+  - GET  /search               full-text search over events
+  - GET  /usage                plan usage limits and rate limit status
+  - GET  /memory               read MEMORY.md
+  - PUT  /memory               overwrite MEMORY.md (applies on next restart)
+  - GET  /personalities        list available personality presets
+  - POST /personality/apply    apply a personality preset to MEMORY.md
 """
 
 import asyncio
@@ -17,6 +21,8 @@ from aiohttp import web
 
 from .events import ChatEvent, EventBus, HistoryEvent, UserEvent, VestaEvent
 from .config import VestaConfig
+from .helpers import get_memory_path
+from . import personalities as pers
 
 logger = logging.getLogger("vesta.api")
 
@@ -183,6 +189,55 @@ async def _usage_handler(request: web.Request) -> web.Response:
         return web.json_response({"error": str(e)}, status=502)
 
 
+async def _memory_get_handler(request: web.Request) -> web.Response:
+    """Return current contents of MEMORY.md."""
+    config: VestaConfig = request.app["config"]
+    path = get_memory_path(config)
+    if not path.exists():
+        return web.json_response({"error": "MEMORY.md not found"}, status=404)
+    return web.json_response({"content": path.read_text()})
+
+
+async def _memory_put_handler(request: web.Request) -> web.Response:
+    """Overwrite MEMORY.md. Takes effect after agent restart."""
+    config: VestaConfig = request.app["config"]
+    try:
+        data = await request.json()
+    except (json.JSONDecodeError, TypeError):
+        return web.json_response({"error": "invalid json body"}, status=400)
+    if "content" not in data or not isinstance(data["content"], str):
+        return web.json_response({"error": "body must be {content: string}"}, status=400)
+    path = get_memory_path(config)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(data["content"])
+    return web.json_response({"ok": True})
+
+
+async def _personalities_list_handler(request: web.Request) -> web.Response:
+    """Return available personality presets."""
+    config: VestaConfig = request.app["config"]
+    return web.json_response({"personalities": pers.list_personalities(config)})
+
+
+async def _personality_apply_handler(request: web.Request) -> web.Response:
+    """Apply a personality preset to MEMORY.md. Takes effect after agent restart."""
+    config: VestaConfig = request.app["config"]
+    try:
+        data = await request.json()
+    except (json.JSONDecodeError, TypeError):
+        return web.json_response({"error": "invalid json body"}, status=400)
+    name = data["name"] if "name" in data and isinstance(data["name"], str) else None
+    if not name:
+        return web.json_response({"error": "body must be {name: string}"}, status=400)
+    try:
+        pers.apply_personality(name, config)
+    except FileNotFoundError as e:
+        return web.json_response({"error": str(e)}, status=404)
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    return web.json_response({"ok": True})
+
+
 @web.middleware
 async def _auth_middleware(request: web.Request, handler):
     expected = request.app.get("agent_token")
@@ -203,10 +258,15 @@ async def start_ws_server(
     app = web.Application(middlewares=[_auth_middleware])
     app["event_bus"] = event_bus
     app["agent_token"] = config.agent_token
+    app["config"] = config
     app.router.add_get("/ws", _ws_handler)
     app.router.add_get("/history", _history_handler)
     app.router.add_get("/search", _search_handler)
     app.router.add_get("/usage", _usage_handler)
+    app.router.add_get("/memory", _memory_get_handler)
+    app.router.add_put("/memory", _memory_put_handler)
+    app.router.add_get("/personalities", _personalities_list_handler)
+    app.router.add_post("/personality/apply", _personality_apply_handler)
 
     runner = web.AppRunner(app)
     await runner.setup()

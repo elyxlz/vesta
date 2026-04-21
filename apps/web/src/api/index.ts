@@ -13,6 +13,12 @@ export {
   type BackupInfo,
   waitForReady,
 } from "./agents";
+export { fetchMemory, saveMemory } from "./memory";
+export {
+  fetchPersonalities,
+  applyPersonality,
+  type Personality,
+} from "./personalities";
 export { authenticate, submitAuthCode, type AuthStartResult } from "./auth";
 export { streamLogs, stopLogs } from "./logs";
 export { connectToServer } from "./server";

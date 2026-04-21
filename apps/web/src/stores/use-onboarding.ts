@@ -5,6 +5,7 @@ export type OnboardingStep =
   | "creating"
   | "auth"
   | "finalizing"
+  | "personality"
   | "done";
 
 interface OnboardingState {
