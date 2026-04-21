@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "vestad"
-version = "0.1.146"
+version = "0.1.147"
 license = "MIT"
 repository = "https://github.com/elyxlz/vesta"
 authors = ["elyxlz"]
