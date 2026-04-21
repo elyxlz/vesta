@@ -753,11 +753,44 @@ jobs:
         working-directory: apps/mobile
         run: npx tauri android init
 
+      # Set up release signing if the ANDROID_KEYSTORE_BASE64 secret is configured.
+      # If the secret is missing, the next step falls back to a debug-signed APK
+      # so CI doesn't break (debug APKs install on-device but can't be used for
+      # real Play Store updates because Android tracks signing certs per app).
+      - name: Set up release signing
+        id: signing
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::ANDROID_KEYSTORE_BASE64 secret not set — building debug-signed APK (not suitable for Play Store updates)"
+            exit 0
+          fi
+          KEYSTORE_PATH="$RUNNER_TEMP/release.jks"
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$KEYSTORE_PATH"
+          cat > apps/mobile/src-tauri/gen/android/keystore.properties <<EOF
+          storePassword=$ANDROID_KEYSTORE_PASSWORD
+          keyPassword=$ANDROID_KEY_PASSWORD
+          keyAlias=$ANDROID_KEY_ALIAS
+          storeFile=$KEYSTORE_PATH
+          EOF
+          python3 scripts/android-sign-patch.py apps/mobile/src-tauri/gen/android/app/build.gradle.kts
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+
       - name: Build Android APK
         working-directory: apps/mobile
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
-        run: npx tauri android build --apk
+        run: |
+          if [ "${{ steps.signing.outputs.signed }}" = "true" ]; then
+            npx tauri android build --apk
+          else
+            npx tauri android build --apk --debug
+          fi
 
       - name: Collect artifacts
         if: github.event_name != 'pull_request'
@@ -765,8 +798,12 @@ jobs:
           mkdir -p tauri-out
           find apps/mobile/src-tauri/gen/android -name '*.apk' -exec cp {} tauri-out/ \;
           VERSION=$(python3 -c "import json; print(json.load(open('apps/mobile/src-tauri/tauri.conf.json'))['version'])")
+          SUFFIX=""
+          if [ "${{ steps.signing.outputs.signed }}" != "true" ]; then
+            SUFFIX="-debug"
+          fi
           for f in tauri-out/*.apk; do
-            mv "$f" "tauri-out/Vesta_${VERSION}.apk"
+            mv "$f" "tauri-out/Vesta_${VERSION}${SUFFIX}.apk"
           done
           ls -lh tauri-out/
 
