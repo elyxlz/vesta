@@ -753,11 +753,16 @@ jobs:
         working-directory: apps/mobile
         run: npx tauri android init
 
+      # Debug build produces a debug-signed APK that installs on-device without a
+      # release keystore. Release signing is a TODO: generate a keystore, store
+      # it as ANDROID_KEYSTORE_BASE64 + password secrets, wire it into
+      # apps/mobile/src-tauri/gen/android/app/build.gradle.kts signingConfigs,
+      # then drop --debug.
       - name: Build Android APK
         working-directory: apps/mobile
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
-        run: npx tauri android build --apk
+        run: npx tauri android build --apk --debug
 
       - name: Collect artifacts
         if: github.event_name != 'pull_request'
@@ -766,7 +771,7 @@ jobs:
           find apps/mobile/src-tauri/gen/android -name '*.apk' -exec cp {} tauri-out/ \;
           VERSION=$(python3 -c "import json; print(json.load(open('apps/mobile/src-tauri/tauri.conf.json'))['version'])")
           for f in tauri-out/*.apk; do
-            mv "$f" "tauri-out/Vesta_${VERSION}.apk"
+            mv "$f" "tauri-out/Vesta_${VERSION}-debug.apk"
           done
           ls -lh tauri-out/
 
