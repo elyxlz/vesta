@@ -9,6 +9,9 @@ import { isTauri } from "@/lib/env";
 import { useAuth } from "@/providers/AuthProvider";
 
 function vestadUrl(): string {
+  // vestad serves /app with a port meta tag. If it's present and real (not the
+  // unreplaced Vite placeholder), the page was served by vestad and its origin
+  // is the correct URL, whether vestad is on localhost or a remote host.
   const meta = document.querySelector<HTMLMetaElement>(
     'meta[name="vestad-port"]',
   );
@@ -16,7 +19,7 @@ function vestadUrl(): string {
   if (!port || !/^\d+$/.test(port)) {
     throw new Error("vestad port not available — reload the page");
   }
-  return `https://localhost:${port}`;
+  return window.location.origin;
 }
 
 function normalizeHost(input: string): string {
