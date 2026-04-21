@@ -14,21 +14,26 @@ import pathlib
 import re
 import sys
 
+IMPORTS_BLOCK = """import java.io.FileInputStream
+import java.util.Properties
+
+"""
+
 KEYSTORE_LOAD_BLOCK = """
 val keystorePropertiesFile = rootProject.file("keystore.properties")
-val keystoreProperties = java.util.Properties()
+val keystoreProperties = Properties()
 if (keystorePropertiesFile.exists()) {
-    keystoreProperties.load(java.io.FileInputStream(keystorePropertiesFile))
+    keystoreProperties.load(FileInputStream(keystorePropertiesFile))
 }
 
 """
 
 SIGNING_CONFIGS_BLOCK = """    signingConfigs {
         create("release") {
-            keyAlias = keystoreProperties["keyAlias"] as String
-            keyPassword = keystoreProperties["keyPassword"] as String
-            storeFile = file(keystoreProperties["storeFile"] as String)
-            storePassword = keystoreProperties["storePassword"] as String
+            keyAlias = keystoreProperties.getProperty("keyAlias")
+            keyPassword = keystoreProperties.getProperty("keyPassword")
+            storeFile = file(keystoreProperties.getProperty("storeFile"))
+            storePassword = keystoreProperties.getProperty("storePassword")
         }
     }
 
@@ -51,7 +56,11 @@ def main() -> None:
         print(f"{path}: already patched")
         return
 
-    # 1. Insert keystore loader before the top-level `android {` block.
+    # 1a. Add imports at the very top. Kotlin DSL requires them before `plugins {}`
+    #     and does not auto-qualify java.util.* / java.io.*.
+    text = IMPORTS_BLOCK + text
+
+    # 1b. Insert keystore loader before the top-level `android {` block.
     android_block = re.search(r"(?m)^android\s*\{", text)
     if not android_block:
         sys.exit("could not find 'android {' block")
