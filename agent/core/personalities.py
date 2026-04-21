@@ -73,23 +73,21 @@ def list_personalities(config: vm.VestaConfig) -> list[dict]:
         return []
 
     memory_path = get_memory_path(config)
-    active_block = (
-        _normalized_active_block(memory_path.read_text(), config.agent_name)
-        if memory_path.exists()
-        else None
-    )
+    active_block = _normalized_active_block(memory_path.read_text(), config.agent_name) if memory_path.exists() else None
 
     results: list[dict] = []
     for path in sorted(pdir.glob("*.md")):
         meta, _ = _parse_frontmatter(path.read_text())
         preset_body = _preset_body(path).strip()
-        results.append({
-            "name": path.stem,
-            "title": meta["title"] if "title" in meta else path.stem.replace("-", " "),
-            "emoji": meta["emoji"] if "emoji" in meta else "",
-            "description": meta["description"] if "description" in meta else "",
-            "active": active_block is not None and active_block == preset_body,
-        })
+        results.append(
+            {
+                "name": path.stem,
+                "title": meta["title"] if "title" in meta else path.stem.replace("-", " "),
+                "emoji": meta["emoji"] if "emoji" in meta else "",
+                "description": meta["description"] if "description" in meta else "",
+                "active": active_block is not None and active_block == preset_body,
+            }
+        )
     return results
 
 
@@ -109,10 +107,7 @@ def apply_personality(name: str, config: vm.VestaConfig) -> None:
     memory_text = memory_path.read_text()
     match = _SECTION_RE.search(memory_text)
     if not match:
-        raise ValueError(
-            "could not find a personality section in MEMORY.md "
-            "(expected an H2 header containing 'personality' or 'identity')"
-        )
+        raise ValueError("could not find a personality section in MEMORY.md (expected an H2 header containing 'personality' or 'identity')")
 
     new_body = _preset_body(preset_path).strip().replace("[agent_name]", config.agent_name)
     updated = memory_text[: match.start()] + match.group(1) + "\n\n" + new_body + "\n\n" + memory_text[match.end() :]
