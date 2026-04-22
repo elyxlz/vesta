@@ -13,8 +13,8 @@ const (
 	ConnectRetryAttempts = 10
 	ConnectRetryDelay    = 1 * time.Second
 
-	StaleCheckInterval    = 5 * time.Minute
-	StaleMessageThreshold = 10 * time.Minute
+	StaleCheckInterval    = 10 * time.Minute
+	StaleMessageThreshold = 30 * time.Minute
 
 	MaxSenderCacheSize    = 10_000
 	SenderCacheEvictBatch = 2_000

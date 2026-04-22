@@ -21,7 +21,7 @@ var mentionPattern = regexp.MustCompile(`@(\+?\w+)`)
 // WhatsApp spam filters silently drop messages containing user@IP patterns.
 var userAtIPPattern = regexp.MustCompile(`\w+@\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}`)
 
-func (wac *WhatsAppClient) SendMessageWithPresence(recipient, message string) (bool, string) {
+func (wac *WhatsAppClient) SendMessageWithPresence(recipient, message string, quotedMessageID string) (bool, string) {
 	if recipient == "" || message == "" {
 		return false, "Recipient and message are required. Provide a contact name, phone number, or group name plus the message text"
 	}
@@ -69,7 +69,19 @@ func (wac *WhatsAppClient) SendMessageWithPresence(recipient, message string) (b
 	}
 
 	resolvedText, mentionedJIDs := wac.parseMentions(message)
-	msg := buildMessage(resolvedText, mentionedJIDs)
+
+	// Look up the sender of the quoted message if reply-to is set.
+	var quotedParticipant, quotedContent string
+	if quotedMessageID != "" && wac.store != nil {
+		if sender, err := wac.store.GetMessageSender(quotedMessageID); err == nil && sender != "" {
+			quotedParticipant = sender
+		}
+		if content, err := wac.store.GetMessageContent(quotedMessageID); err == nil && content != "" {
+			quotedContent = content
+		}
+	}
+
+	msg := buildMessage(resolvedText, mentionedJIDs, quotedMessageID, quotedParticipant, quotedContent)
 
 	resp, err := wac.client.SendMessage(context.Background(), jid, msg)
 	if err != nil {
@@ -307,15 +319,28 @@ func (wac *WhatsAppClient) parseMentions(text string) (string, []string) {
 }
 
 // buildMessage creates a waProto.Message, using ExtendedTextMessage with
-// ContextInfo if mentions are present, or simple Conversation otherwise.
-func buildMessage(text string, mentionedJIDs []string) *waProto.Message {
-	if len(mentionedJIDs) > 0 {
+// ContextInfo if mentions are present or a quoted message ID is set,
+// or simple Conversation otherwise.
+func buildMessage(text string, mentionedJIDs []string, quotedMessageID, quotedParticipant, quotedContent string) *waProto.Message {
+	if len(mentionedJIDs) > 0 || quotedMessageID != "" {
+		ctx := &waProto.ContextInfo{
+			MentionedJID: mentionedJIDs,
+		}
+		if quotedMessageID != "" {
+			ctx.StanzaID = proto.String(quotedMessageID)
+			if quotedParticipant != "" {
+				ctx.Participant = proto.String(quotedParticipant)
+			}
+			if quotedContent != "" {
+				ctx.QuotedMessage = &waProto.Message{
+					Conversation: proto.String(quotedContent),
+				}
+			}
+		}
 		return &waProto.Message{
 			ExtendedTextMessage: &waProto.ExtendedTextMessage{
-				Text: proto.String(text),
-				ContextInfo: &waProto.ContextInfo{
-					MentionedJID: mentionedJIDs,
-				},
+				Text:        proto.String(text),
+				ContextInfo: ctx,
 			},
 		}
 	}
