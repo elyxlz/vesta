@@ -34,9 +34,9 @@ pub fn fetch_latest_tag() -> Option<String> {
 }
 
 fn fetch_latest_release_tag(timeout_secs: Option<u64>) -> Result<String, String> {
-    // We intentionally omit curl's `-f` so HTTP errors still return a body —
-    // this lets us surface GitHub's rate-limit message to the caller instead
-    // of collapsing every failure into a generic error.
+    // Omit curl's `-f` so HTTP errors still return a body. This surfaces
+    // GitHub's rate-limit message to the caller instead of collapsing every
+    // failure into a generic error.
     let mut args: Vec<String> = vec![
         "-sSL".into(),
         "-H".into(),
@@ -108,9 +108,8 @@ fn snippet(s: &str) -> String {
     if s.is_empty() {
         return "<empty>".into();
     }
-    let mut it = s.char_indices();
-    match it.nth(ERROR_SNIPPET_MAX_LEN) {
-        Some((idx, _)) => format!("{}…", &s[..idx]),
+    match s.char_indices().nth(ERROR_SNIPPET_MAX_LEN) {
+        Some((end, _)) => format!("{}…", &s[..end]),
         None => s.to_string(),
     }
 }
