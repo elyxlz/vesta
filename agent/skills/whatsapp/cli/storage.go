@@ -276,6 +276,19 @@ func (ms *MessageStore) UpdateDeliveryStatus(messageID, chatJID, status string, 
 	return err
 }
 
+// GetMessageSender returns the sender JID string for a given message ID.
+func (ms *MessageStore) GetMessageSender(messageID string) (string, error) {
+	var sender sql.NullString
+	err := ms.db.QueryRow(`SELECT sender FROM messages WHERE id = ? LIMIT 1`, messageID).Scan(&sender)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return sender.String, nil
+}
+
 func (ms *MessageStore) GetDeliveryStatus(messageID, chatJID string) (string, *time.Time, error) {
 	var status sql.NullString
 	var ts sql.NullTime
