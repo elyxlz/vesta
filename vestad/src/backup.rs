@@ -4,8 +4,8 @@ use bollard::Docker;
 
 use crate::docker::{
     container_created, container_name, container_size_rw, container_status, create_container,
-    docker_cp_content, docker_root_dir, get_agent_name, image_exists, inspect_container,
-    list_images_by_reference, list_managed_containers, remove_container_force, remove_image,
+    docker_cp_content, docker_root_dir, image_exists, inspect_container,
+    list_images_by_reference, remove_container_force, remove_image,
     snapshot_container, start_container, stop_container_with_timeout, tag_image, validate_name,
     AgentEnvConfig, ContainerStatus, DockerError,
 };
@@ -24,8 +24,7 @@ pub const MIN_AGE_FOR_BACKUP_SECS: u64 = 6 * 3600;
 /// lifetime of the returned Flock. Used to coordinate between the vestad API and
 /// the `vestad backup export/import` CLI which bypasses the server.
 pub fn agent_file_lock(name: &str) -> Result<nix::fcntl::Flock<File>, DockerError> {
-    let home = std::env::var("HOME").unwrap_or_default();
-    let lock_dir = std::path::PathBuf::from(home).join(".config/vesta/vestad/locks");
+    let lock_dir = crate::paths::config_dir_or_relative().join("locks");
     std::fs::create_dir_all(&lock_dir)
         .map_err(|e| DockerError::Failed(format!("failed to create lock dir: {e}")))?;
     let lock_path = lock_dir.join(format!("{name}.lock"));
@@ -87,11 +86,7 @@ pub fn parse_backup_tag(tag: &str) -> Option<(String, BackupType, String)> {
 }
 
 pub fn now_timestamp() -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    now_timestamp_from_epoch(now)
+    now_timestamp_from_epoch(crate::time_utils::now_epoch_secs())
 }
 
 pub fn now_timestamp_from_epoch(epoch_secs: u64) -> String {
@@ -106,11 +101,7 @@ pub async fn container_age_secs(docker: &Docker, name: &str) -> Option<u64> {
     let cname = container_name(name);
     let created = container_created(docker, &cname).await?;
     let created_epoch = parse_rfc3339_epoch(created.trim())?;
-    let now_epoch = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()?
-        .as_secs();
-    Some(now_epoch.saturating_sub(created_epoch))
+    Some(crate::time_utils::now_epoch_secs().saturating_sub(created_epoch))
 }
 
 /// Parse an RFC3339 timestamp (e.g. "2026-04-07T13:11:12.123Z") to unix epoch seconds.
@@ -547,12 +538,11 @@ pub async fn cleanup_backups(
 
 /// List all agent names that have containers.
 pub async fn list_agent_names(docker: &Docker) -> Vec<String> {
-    let containers = list_managed_containers(docker).await;
-    let mut names = Vec::with_capacity(containers.len());
-    for cname in &containers {
-        names.push(get_agent_name(docker, cname).await);
-    }
-    names
+    crate::docker::list_managed_agents(docker)
+        .await
+        .into_iter()
+        .map(|a| a.agent_name)
+        .collect()
 }
 
 #[cfg(test)]

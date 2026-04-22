@@ -107,10 +107,21 @@ pub enum ContainerStatus {
     Dead,
 }
 
+#[derive(Serialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentStatus {
+    Alive,
+    Starting,
+    NotAuthenticated,
+    Stopped,
+    Dead,
+    NotFound,
+}
+
 #[derive(Serialize, Clone)]
 pub struct StatusJson {
     pub name: String,
-    pub status: &'static str,
+    pub status: AgentStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     pub ws_port: u16,
@@ -119,7 +130,7 @@ pub struct StatusJson {
 #[derive(Serialize, Clone, PartialEq)]
 pub struct ListEntry {
     pub name: String,
-    pub status: &'static str,
+    pub status: AgentStatus,
     pub ws_port: u16,
 }
 
@@ -309,38 +320,23 @@ pub struct ContainerInfo {
     pub status: ContainerStatus,
     pub port: Option<u16>,
     pub id: Option<String>,
-    pub agent_name: Option<String>,
 }
 
-pub async fn combined_status(docker: &Docker, cname: &str, info: &ContainerInfo) -> &'static str {
+pub async fn combined_status(docker: &Docker, cname: &str, info: &ContainerInfo) -> AgentStatus {
     match info.status {
         ContainerStatus::Running => {
-            let authenticated = is_authenticated(docker, cname).await;
-            if !authenticated {
-                return "not_authenticated";
+            if !is_authenticated(docker, cname).await {
+                return AgentStatus::NotAuthenticated;
             }
-            let agent_ready = info.port.is_some_and(is_agent_ready_sync);
-            if agent_ready { "alive" } else { "starting" }
+            if info.port.is_some_and(is_agent_ready_sync) {
+                AgentStatus::Alive
+            } else {
+                AgentStatus::Starting
+            }
         }
-        ContainerStatus::Dead => "dead",
-        ContainerStatus::Stopped => "stopped",
-        ContainerStatus::NotFound => "not_found",
-    }
-}
-
-/// Read the agent name from the `vesta.agent_name` Docker label. Older managed
-/// containers may not have that label yet, so we fall back to the legacy
-/// `vesta-{user}-{agent}` container naming scheme via migrations.rs.
-pub async fn get_agent_name(docker: &Docker, cname: &str) -> String {
-    match docker.inspect_container(cname, None).await {
-        Ok(info) => {
-            info.config
-                .and_then(|c| c.labels)
-                .and_then(|labels| labels.get(LABEL_AGENT_NAME).cloned())
-                .filter(|s| !s.trim().is_empty())
-                .unwrap_or_else(|| name_from_cname(cname))
-        }
-        Err(_) => name_from_cname(cname),
+        ContainerStatus::Dead => AgentStatus::Dead,
+        ContainerStatus::Stopped => AgentStatus::Stopped,
+        ContainerStatus::NotFound => AgentStatus::NotFound,
     }
 }
 
@@ -375,20 +371,19 @@ pub(crate) async fn inspect_container(docker: &Docker, cname: &str, agents_dir: 
                 .unwrap_or(ContainerStatus::Stopped);
             let id = info.id.as_ref()
                 .map(|id| id.chars().take(12).collect::<String>());
-            let agent_name = info.config.as_ref()
+            let name = info.config.as_ref()
                 .and_then(|c| c.labels.as_ref())
                 .and_then(|labels| labels.get(LABEL_AGENT_NAME).cloned())
-                .filter(|s| !s.trim().is_empty());
-            let name = agent_name.clone().unwrap_or_else(|| name_from_cname(cname));
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| name_from_cname(cname));
             let port = agents_dir.and_then(|dir| read_env_value(dir, &name, "WS_PORT"))
                 .and_then(|v| v.parse().ok());
-            ContainerInfo { status, port, id, agent_name }
+            ContainerInfo { status, port, id }
         }
         Err(_) => ContainerInfo {
             status: ContainerStatus::NotFound,
             port: None,
             id: None,
-            agent_name: None,
         },
     }
 }
@@ -411,11 +406,7 @@ pub async fn is_authenticated(docker: &Docker, cname: &str) -> bool {
     let Some(expires_at) = creds["claudeAiOauth"]["expiresAt"].as_u64() else {
         return false;
     };
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64;
-    expires_at > now_ms
+    expires_at > crate::time_utils::now_epoch_millis() as u64
 }
 
 /// Sync TCP-only readiness check (no marker file).
@@ -912,7 +903,15 @@ pub fn update_all_agent_env_files(agents_dir: &std::path::Path, vestad_port: u16
 
 // --- Container listing ---
 
-pub async fn list_managed_containers(docker: &Docker) -> Vec<String> {
+pub struct ManagedAgent {
+    pub cname: String,
+    pub agent_name: String,
+}
+
+/// List all managed containers owned by the current user, paired with the
+/// agent name derived from the `vesta.agent_name` label (falling back to the
+/// legacy `vesta-{user}-{agent}` naming scheme). One Docker call total.
+pub async fn list_managed_agents(docker: &Docker) -> Vec<ManagedAgent> {
     let mut filters = HashMap::new();
     filters.insert("label".to_string(), vec!["vesta.managed=true".to_string()]);
 
@@ -932,21 +931,26 @@ pub async fn list_managed_containers(docker: &Docker) -> Vec<String> {
         .into_iter()
         .filter_map(|c| {
             let names = c.names?;
-            let name = names.first()?.strip_prefix('/')?.to_string();
+            let cname = names.first()?.strip_prefix('/')?.to_string();
             let labels = c.labels.unwrap_or_default();
             let owner = labels.get(LABEL_USER).cloned().unwrap_or_default();
             let modern_owned_by_user =
                 crate::migrations::modern_container_owned_by_user(&owner, &user);
             let legacy_owned_by_user =
-                crate::migrations::legacy_container_owned_by_user(&name, &owner, &user);
-            if modern_owned_by_user || legacy_owned_by_user {
-                Some(name)
-            } else {
-                None
+                crate::migrations::legacy_container_owned_by_user(&cname, &owner, &user);
+            if !modern_owned_by_user && !legacy_owned_by_user {
+                return None;
             }
+            let agent_name = labels
+                .get(LABEL_AGENT_NAME)
+                .cloned()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| name_from_cname(&cname));
+            Some(ManagedAgent { cname, agent_name })
         })
         .collect()
 }
+
 
 // --- GPU detection ---
 
@@ -1421,11 +1425,7 @@ pub async fn complete_auth_flow(client: &reqwest::Client, input: &str, code_veri
     let refresh_token = token_data.get("refresh_token").and_then(|v| v.as_str());
     let expires_in = token_data["expires_in"].as_u64().unwrap_or(DEFAULT_TOKEN_EXPIRES_SECS);
 
-    let expires_at = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis()
-        + (expires_in as u128) * 1000;
+    let expires_at = crate::time_utils::now_epoch_millis() + (expires_in as u128) * 1000;
 
     let mut creds = serde_json::json!({
         "claudeAiOauth": {
@@ -1460,13 +1460,12 @@ pub async fn get_status(docker: &Docker, name: &str, agents_dir: &std::path::Pat
 }
 
 pub async fn list_agents(docker: &Docker, agents_dir: &std::path::Path) -> Vec<ListEntry> {
-    let containers = list_managed_containers(docker).await;
+    let agents = list_managed_agents(docker).await;
     let mut entries = Vec::new();
-    for cname in &containers {
+    for ManagedAgent { cname, agent_name } in &agents {
         let info = inspect_container(docker, cname, Some(agents_dir)).await;
-        let name = info.agent_name.clone().unwrap_or_else(|| name_from_cname(cname));
         entries.push(ListEntry {
-            name,
+            name: agent_name.clone(),
             status: combined_status(docker, cname, &info).await,
             ws_port: info.port.unwrap_or(0),
         });
@@ -1524,22 +1523,21 @@ pub struct StartAllResult {
 }
 
 pub async fn start_all_agents(docker: &Docker) -> Vec<StartAllResult> {
-    let containers = list_managed_containers(docker).await;
+    let agents = list_managed_agents(docker).await;
     let mut results = Vec::new();
-    for cname in &containers {
-        let name = get_agent_name(docker, cname).await;
+    for ManagedAgent { cname, agent_name } in &agents {
         if container_status(docker, cname).await != ContainerStatus::Running {
             if start_container(docker, cname).await {
-                results.push(StartAllResult { name, ok: true, error: None });
+                results.push(StartAllResult { name: agent_name.clone(), ok: true, error: None });
             } else {
                 results.push(StartAllResult {
-                    name,
+                    name: agent_name.clone(),
                     ok: false,
                     error: Some("failed to start".into()),
                 });
             }
         } else {
-            results.push(StartAllResult { name, ok: true, error: None });
+            results.push(StartAllResult { name: agent_name.clone(), ok: true, error: None });
         }
     }
     results
@@ -1571,15 +1569,14 @@ pub async fn restart_agent(docker: &Docker, name: &str) -> Result<(), DockerErro
 /// Called once at startup after agent code and env files are ready.
 /// `manages_core_code` returns whether a given agent name has vestad-managed core code mounts (default true).
 pub async fn reconcile_containers(docker: &Docker, env_config: &AgentEnvConfig, manages_core_code: &(dyn Fn(&str) -> bool + Send + Sync)) {
-    let containers = list_managed_containers(docker).await;
-    if containers.is_empty() {
+    let agents = list_managed_agents(docker).await;
+    if agents.is_empty() {
         return;
     }
 
     // Phase 1: ensure env files exist, track which are running
     let mut was_running = std::collections::HashSet::new();
-    for cname in &containers {
-        let name = get_agent_name(docker, cname).await;
+    for ManagedAgent { cname, agent_name: name } in &agents {
         if container_status(docker, cname).await == ContainerStatus::Running {
             was_running.insert(name.clone());
         }
@@ -1600,7 +1597,7 @@ pub async fn reconcile_containers(docker: &Docker, env_config: &AgentEnvConfig, 
                 .or_else(|| allocate_port(&env_config.agents_dir).ok());
             if let Some(port) = port {
                 let token = generate_agent_token();
-                if let Err(e) = write_agent_env_file(env_config, &name, port, &token, None) {
+                if let Err(e) = write_agent_env_file(env_config, name, port, &token, None) {
                     tracing::error!(agent = %name, error = %e, "failed to create env file");
                 }
             } else {
@@ -1611,9 +1608,8 @@ pub async fn reconcile_containers(docker: &Docker, env_config: &AgentEnvConfig, 
 
     // Phase 2: rebuild containers with wrong config
     let mut agent_code_ok = false;
-    for cname in &containers {
-        let name = get_agent_name(docker, cname).await;
-        let manage_core_code = manages_core_code(&name);
+    for ManagedAgent { cname, agent_name: name } in &agents {
+        let manage_core_code = manages_core_code(name);
         if !needs_rebuild(docker, cname, manage_core_code).await {
             tracing::info!(agent = %name, "config ok, no rebuild needed");
             continue;
@@ -1628,21 +1624,20 @@ pub async fn reconcile_containers(docker: &Docker, env_config: &AgentEnvConfig, 
                 }
             }
         }
-        match rebuild_agent(docker, &name, env_config, manage_core_code).await {
+        match rebuild_agent(docker, name, env_config, manage_core_code).await {
             Ok(()) => tracing::info!(agent = %name, "rebuild complete"),
             Err(e) => tracing::error!(agent = %name, error = %e, "rebuild failed"),
         }
     }
 
     // Phase 3: restart running agents (picks up new env), start rebuilt ones
-    for cname in &containers {
-        let name = get_agent_name(docker, cname).await;
+    for ManagedAgent { cname, agent_name: name } in &agents {
         match container_status(docker, cname).await {
             ContainerStatus::Running => {
                 tracing::info!(agent = %name, "restarting");
                 docker.restart_container(cname, Some(RestartContainerOptions { t: Some(CONTAINER_RESTART_TIMEOUT_SECS), signal: None })).await.ok();
             }
-            ContainerStatus::Stopped if was_running.contains(&name) => {
+            ContainerStatus::Stopped if was_running.contains(name) => {
                 tracing::info!(agent = %name, "starting after rebuild");
                 start_container(docker, cname).await;
             }
@@ -1655,12 +1650,11 @@ pub async fn reconcile_containers(docker: &Docker, env_config: &AgentEnvConfig, 
     // Summary: log which agents are running after reconciliation
     let mut running = Vec::new();
     let mut stopped = Vec::new();
-    for cname in &containers {
-        let name = get_agent_name(docker, cname).await;
+    for ManagedAgent { cname, agent_name: name } in &agents {
         if container_status(docker, cname).await == ContainerStatus::Running {
-            running.push(name);
+            running.push(name.clone());
         } else {
-            stopped.push(name);
+            stopped.push(name.clone());
         }
     }
     if !running.is_empty() {
@@ -1796,10 +1790,7 @@ pub async fn rebuild_agent(docker: &Docker, name: &str, env_config: &AgentEnvCon
         }
     };
 
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
+    let ts = crate::time_utils::now_epoch_secs();
     let backup_tag = format!("vesta-rebuild:{}_{}", name, ts);
     let normalized_tag = format!("vesta-rebuild:{}_{}-normalized", name, ts);
     let helper_name = format!("{}-normalize", cname);

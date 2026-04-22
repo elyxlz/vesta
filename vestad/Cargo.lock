@@ -2542,6 +2542,7 @@ dependencies = [
  "async-stream",
  "axum",
  "axum-server",
+ "base64",
  "bollard",
  "bytes",
  "clap",
