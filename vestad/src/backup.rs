@@ -372,14 +372,39 @@ pub async fn list_backups(docker: &Docker, name: &str) -> Result<Vec<BackupInfo>
             name
         )));
     }
+    let owned_agents = list_agent_names(docker).await;
+    if !owned_agents.iter().any(|owned| owned == name) {
+        return Err(DockerError::NotFound(format!(
+            "agent '{}' not found",
+            name
+        )));
+    }
     let reference = format!("{}:{}*", BACKUP_IMAGE_PREFIX, name);
-    Ok(query_backup_images(docker, &reference, Some(name)).await)
+    let backups = query_backup_images(docker, &reference, Some(name)).await;
+    Ok(filter_backups_by_owned_agents(backups, &owned_agents))
 }
 
-/// List all backup images regardless of whether the agent container exists.
+/// List all backup images belonging to agents managed by this vestad instance.
+/// Docker images are a machine-wide resource, so we filter out images whose
+/// `{agent_name}` prefix is not in the current user's agent set. This prevents
+/// leaking other OS users' backups on shared hosts.
 pub async fn list_all_backups(docker: &Docker) -> Vec<BackupInfo> {
     let reference = format!("{}:*", BACKUP_IMAGE_PREFIX);
-    query_backup_images(docker, &reference, None).await
+    let backups = query_backup_images(docker, &reference, None).await;
+    let owned_agents = list_agent_names(docker).await;
+    filter_backups_by_owned_agents(backups, &owned_agents)
+}
+
+/// Pure filter: keep only backups whose `agent_name` is in `owned_agents`.
+/// Extracted for unit testing and shared between list and list-all paths.
+pub fn filter_backups_by_owned_agents(
+    backups: Vec<BackupInfo>,
+    owned_agents: &[String],
+) -> Vec<BackupInfo> {
+    backups
+        .into_iter()
+        .filter(|backup| owned_agents.iter().any(|owned| owned == &backup.agent_name))
+        .collect()
 }
 
 /// Restore an agent from a backup image.
@@ -440,7 +465,10 @@ pub async fn restore_backup(
     Ok(())
 }
 
-/// Delete a backup image. Verifies the backup belongs to the named agent.
+/// Delete a backup image. Verifies the backup belongs to the named agent and
+/// that the named agent is managed by this vestad instance. The latter check
+/// prevents a user from deleting another OS user's backup on a shared host
+/// where docker images are a machine-wide resource.
 pub async fn delete_backup(
     docker: &Docker,
     name: &str,
@@ -452,6 +480,13 @@ pub async fn delete_backup(
         return Err(DockerError::Failed(format!(
             "backup '{}' belongs to agent '{}', not '{}'",
             backup_id, parsed_name, name
+        )));
+    }
+    let owned_agents = list_agent_names(docker).await;
+    if !owned_agents.iter().any(|owned| owned == name) {
+        return Err(DockerError::NotFound(format!(
+            "agent '{}' not found",
+            name
         )));
     }
     if remove_image(docker, backup_id).await.is_err() {
@@ -699,6 +734,69 @@ mod tests {
         let to_delete = compute_backups_to_delete(&backups, &DEFAULT_RETENTION);
         // 3 daily (keep all), 2 weekly (keep all), 1 monthly (keep all), manual not touched
         assert!(to_delete.is_empty());
+    }
+
+    // ── Owner filter tests ────────────────────────────────────────
+
+    #[test]
+    fn filter_keeps_only_owned_agents() {
+        let backups = vec![
+            make_backup("mine", BackupType::Daily, "20260401-120000"),
+            make_backup("theirs", BackupType::Daily, "20260401-120000"),
+            make_backup("mine", BackupType::Weekly, "20260329-120000"),
+            make_backup("another-user-agent", BackupType::Manual, "20260320-120000"),
+        ];
+        let owned = vec!["mine".to_string()];
+        let filtered = filter_backups_by_owned_agents(backups, &owned);
+        assert_eq!(filtered.len(), 2);
+        assert!(filtered.iter().all(|b| b.agent_name == "mine"));
+    }
+
+    #[test]
+    fn filter_empty_owned_returns_nothing() {
+        let backups = vec![
+            make_backup("alice", BackupType::Daily, "20260401-120000"),
+            make_backup("bob", BackupType::Weekly, "20260329-120000"),
+        ];
+        let filtered = filter_backups_by_owned_agents(backups, &[]);
+        assert!(filtered.is_empty());
+    }
+
+    #[test]
+    fn filter_empty_backups_returns_empty() {
+        let owned = vec!["alice".to_string(), "bob".to_string()];
+        let filtered = filter_backups_by_owned_agents(Vec::new(), &owned);
+        assert!(filtered.is_empty());
+    }
+
+    #[test]
+    fn filter_multi_owned_keeps_each_match() {
+        let backups = vec![
+            make_backup("alice", BackupType::Daily, "20260401-120000"),
+            make_backup("bob", BackupType::Daily, "20260401-120000"),
+            make_backup("carol", BackupType::Daily, "20260401-120000"),
+        ];
+        let owned = vec!["alice".to_string(), "carol".to_string()];
+        let filtered = filter_backups_by_owned_agents(backups, &owned);
+        assert_eq!(filtered.len(), 2);
+        let names: Vec<&str> = filtered.iter().map(|b| b.agent_name.as_str()).collect();
+        assert!(names.contains(&"alice"));
+        assert!(names.contains(&"carol"));
+        assert!(!names.contains(&"bob"));
+    }
+
+    #[test]
+    fn filter_exact_name_match_not_prefix() {
+        // Ensures we match exact agent names, not prefixes. "my-agent" must not
+        // match a backup whose agent_name is "my-agent-evil".
+        let backups = vec![
+            make_backup("my-agent", BackupType::Daily, "20260401-120000"),
+            make_backup("my-agent-evil", BackupType::Daily, "20260401-120000"),
+        ];
+        let owned = vec!["my-agent".to_string()];
+        let filtered = filter_backups_by_owned_agents(backups, &owned);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].agent_name, "my-agent");
     }
 
     #[test]
