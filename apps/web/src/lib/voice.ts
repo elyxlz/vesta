@@ -336,13 +336,15 @@ export class Transcriber {
       this.active = false;
       if (err instanceof DOMException) {
         if (err.name === "NotAllowedError")
-          throw new Error("Microphone permission denied");
+          throw new Error("Microphone permission denied", { cause: err });
         if (err.name === "NotFoundError")
-          throw new Error("No microphone found");
+          throw new Error("No microphone found", { cause: err });
         if (err.name === "NotReadableError")
-          throw new Error("Microphone is in use by another app");
+          throw new Error("Microphone is in use by another app", {
+            cause: err,
+          });
       }
-      throw new Error("Could not access microphone");
+      throw new Error("Could not access microphone", { cause: err });
     }
 
     let socket: WebSocket;
