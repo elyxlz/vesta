@@ -71,14 +71,17 @@ func (wac *WhatsAppClient) SendMessageWithPresence(recipient, message string, qu
 	resolvedText, mentionedJIDs := wac.parseMentions(message)
 
 	// Look up the sender of the quoted message if reply-to is set.
-	var quotedParticipant string
+	var quotedParticipant, quotedContent string
 	if quotedMessageID != "" && wac.store != nil {
 		if sender, err := wac.store.GetMessageSender(quotedMessageID); err == nil && sender != "" {
 			quotedParticipant = sender
 		}
+		if content, err := wac.store.GetMessageContent(quotedMessageID); err == nil && content != "" {
+			quotedContent = content
+		}
 	}
 
-	msg := buildMessage(resolvedText, mentionedJIDs, quotedMessageID, quotedParticipant)
+	msg := buildMessage(resolvedText, mentionedJIDs, quotedMessageID, quotedParticipant, quotedContent)
 
 	resp, err := wac.client.SendMessage(context.Background(), jid, msg)
 	if err != nil {
@@ -318,7 +321,7 @@ func (wac *WhatsAppClient) parseMentions(text string) (string, []string) {
 // buildMessage creates a waProto.Message, using ExtendedTextMessage with
 // ContextInfo if mentions are present or a quoted message ID is set,
 // or simple Conversation otherwise.
-func buildMessage(text string, mentionedJIDs []string, quotedMessageID, quotedParticipant string) *waProto.Message {
+func buildMessage(text string, mentionedJIDs []string, quotedMessageID, quotedParticipant, quotedContent string) *waProto.Message {
 	if len(mentionedJIDs) > 0 || quotedMessageID != "" {
 		ctx := &waProto.ContextInfo{
 			MentionedJID: mentionedJIDs,
@@ -327,6 +330,11 @@ func buildMessage(text string, mentionedJIDs []string, quotedMessageID, quotedPa
 			ctx.StanzaID = proto.String(quotedMessageID)
 			if quotedParticipant != "" {
 				ctx.Participant = proto.String(quotedParticipant)
+			}
+			if quotedContent != "" {
+				ctx.QuotedMessage = &waProto.Message{
+					Conversation: proto.String(quotedContent),
+				}
 			}
 		}
 		return &waProto.Message{

@@ -15,6 +15,12 @@ description: Use when the user mentions "whatsapp" or "wa", or asks to send/read
 - Flags for a specific subcommand: `whatsapp <subcommand> --help`. The top-level `whatsapp` with no args prints the command list.
 - Names for `--to` / `--chat-id` / `--group`: contact name, phone (`+E.164`), group name, or JID - the CLI resolves them.
 
+## Reply / Quote
+```bash
+whatsapp send --to 'Name' --message 'reply text' --reply-to '<message_id>'
+```
+The `--reply-to` flag quotes the referenced message in WhatsApp's native reply UI. The message ID can be found in incoming notification payloads (`message_id` field) or `list-messages` output.
+
 ## Commands
 
 Aliases in parentheses. Positional signature shown after `:` for commands that take positionals.
@@ -82,6 +88,21 @@ Aliases in parentheses. Positional signature shown after `:` for commands that t
 - Phone numbers: E.164 with leading `+` (e.g. `+12025551234`).
 - JIDs: direct chats end in `@s.whatsapp.net`, groups in `@g.us`. Only pass JIDs where a flag explicitly asks for one (e.g. `--chat-id`).
 - Auth state: `~/.whatsapp/` (or `~/.whatsapp/{instance}/` for named instances).
+
+## Developing & Testing Changes
+
+The WhatsApp CLI runs as a **daemon** via `screen`. One-shot commands (send, list, etc.) connect to the daemon over a Unix socket. This means:
+
+1. **Rebuild**: `cd ~/agent/skills/whatsapp/cli && CGO_ENABLED=1 go build -tags "fts5" -o ~/.local/bin/whatsapp .`
+2. **Restart daemon**: The running daemon uses the old binary. You MUST restart it to pick up changes:
+   ```bash
+   screen -S whatsapp -X quit
+   sleep 1
+   screen -dmS whatsapp whatsapp serve --notifications-dir ~/agent/notifications
+   ```
+3. **Test**: Send a message and verify the new behavior. The daemon handles all command execution, so changes won't take effect until step 2.
+
+**Common mistake**: rebuilding the binary and testing immediately without restarting the daemon. The CLI client just forwards commands to the daemon over the socket, so the daemon process must be running the new binary.
 
 ### Contact Preferences
 [How the user prefers to communicate with different contacts]

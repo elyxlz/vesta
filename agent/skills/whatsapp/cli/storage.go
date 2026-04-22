@@ -276,17 +276,37 @@ func (ms *MessageStore) UpdateDeliveryStatus(messageID, chatJID, status string, 
 	return err
 }
 
-// GetMessageSender returns the sender JID string for a given message ID.
+// GetMessageSender returns the chat JID string for a given message ID.
+// For messages not sent by the local user, returns the chat_jid (the actual JID).
+// For messages sent by the local user, returns empty string.
 func (ms *MessageStore) GetMessageSender(messageID string) (string, error) {
-	var sender sql.NullString
-	err := ms.db.QueryRow(`SELECT sender FROM messages WHERE id = ? LIMIT 1`, messageID).Scan(&sender)
+	var chatJID sql.NullString
+	var isFromMe bool
+	err := ms.db.QueryRow(`SELECT chat_jid, is_from_me FROM messages WHERE id = ? LIMIT 1`, messageID).Scan(&chatJID, &isFromMe)
 	if err == sql.ErrNoRows {
 		return "", nil
 	}
 	if err != nil {
 		return "", err
 	}
-	return sender.String, nil
+	if !isFromMe {
+		return chatJID.String, nil
+	}
+	return "", nil
+}
+
+// GetMessageContent returns the text content of a message by ID.
+// If the message is not found, it returns an empty string and no error.
+func (ms *MessageStore) GetMessageContent(messageID string) (string, error) {
+	var content sql.NullString
+	err := ms.db.QueryRow(`SELECT content FROM messages WHERE id = ? LIMIT 1`, messageID).Scan(&content)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return content.String, nil
 }
 
 func (ms *MessageStore) GetDeliveryStatus(messageID, chatJID string) (string, *time.Time, error) {
