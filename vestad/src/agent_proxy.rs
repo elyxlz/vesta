@@ -19,6 +19,22 @@ async fn resolve_service(
     settings.services.get(agent_name)?.get(service_name).copied()
 }
 
+/// Split the axum-captured `{*path}` tail into `(first_segment, forwarded_subpath)`.
+///
+/// The axum wildcard strips the leading `/`, so a request for
+/// `GET /agents/foo/dashboard/assets/index.js` arrives here with
+/// `path = "dashboard/assets/index.js"`. The first segment selects the
+/// upstream (registered service, or fallback to the agent). The remainder,
+/// with a leading `/` re-added, is the path we forward upstream.
+fn split_service_subpath(path: &str) -> (&str, &str) {
+    let first = path.split('/').next().unwrap_or("");
+    if first.is_empty() {
+        return ("", "/");
+    }
+    let rest = &path[first.len()..];
+    if rest.is_empty() { (first, "/") } else { (first, rest) }
+}
+
 pub async fn agent_proxy_handler(
     State(state): State<SharedState>,
     Path((name, path)): Path<(String, String)>,
@@ -37,12 +53,10 @@ pub async fn agent_proxy_handler(
     let agent_port = agent_port
         .ok_or_else(|| err_response(StatusCode::INTERNAL_SERVER_ERROR, "agent has no port — check the agent's .env file in ~/.config/vesta/vestad/agents/"))?;
 
-    let first_segment = path.split('/').next().unwrap_or("");
+    let (first_segment, service_subpath) = split_service_subpath(&path);
     let (target_port, stripped_path, service) = if !first_segment.is_empty() {
         if let Some(entry) = resolve_service(&state, &name, first_segment).await {
-            let rest = &path[first_segment.len()..];
-            let rest = if rest.is_empty() { "/" } else { rest };
-            (entry.port, rest.to_string(), Some(entry))
+            (entry.port, service_subpath.to_string(), Some(entry))
         } else {
             (agent_port, format!("/{}", path), None)
         }
@@ -218,4 +232,40 @@ async fn forward_http_to_container(
     builder
         .body(body)
         .map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("build response: {}", e)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::split_service_subpath;
+
+    #[test]
+    fn forwards_nested_asset_path_to_service() {
+        assert_eq!(
+            split_service_subpath("dashboard/assets/index-abc.js"),
+            ("dashboard", "/assets/index-abc.js"),
+        );
+    }
+
+    #[test]
+    fn forwards_deeply_nested_path_to_service() {
+        assert_eq!(
+            split_service_subpath("dashboard/a/b/c/d.png"),
+            ("dashboard", "/a/b/c/d.png"),
+        );
+    }
+
+    #[test]
+    fn forwards_root_with_trailing_slash_as_root() {
+        assert_eq!(split_service_subpath("dashboard/"), ("dashboard", "/"));
+    }
+
+    #[test]
+    fn forwards_root_without_trailing_slash_as_root() {
+        assert_eq!(split_service_subpath("dashboard"), ("dashboard", "/"));
+    }
+
+    #[test]
+    fn empty_path_yields_empty_segment() {
+        assert_eq!(split_service_subpath(""), ("", "/"));
+    }
 }
