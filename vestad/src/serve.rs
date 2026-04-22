@@ -80,6 +80,18 @@ pub fn ensure_tls(config_dir: &std::path::Path) -> (String, String, String) {
             }
         }
     }
+    // Mark as a TLS server cert only; without EKU, some clients (schannel /
+    // WebView2) treat the cert as potentially mTLS-capable and get confused
+    // by post-handshake messages. See issue #341.
+    params
+        .extended_key_usages
+        .push(rcgen::ExtendedKeyUsagePurpose::ServerAuth);
+    params
+        .key_usages
+        .push(rcgen::KeyUsagePurpose::DigitalSignature);
+    params
+        .key_usages
+        .push(rcgen::KeyUsagePurpose::KeyEncipherment);
     // 10 year validity
     params.not_after = rcgen::date_time_ymd(2036, 1, 1);
 
@@ -115,6 +127,28 @@ pub fn ensure_tls(config_dir: &std::path::Path) -> (String, String, String) {
     }
 
     (cert_pem, key_pem, fingerprint)
+}
+
+// Build a rustls `ServerConfig` that:
+// - does no client-cert auth (vestad authenticates with bearer tokens),
+// - advertises h2 + http/1.1 via ALPN in the initial ServerHello,
+// - disables post-handshake TLS 1.3 NewSessionTicket messages.
+//
+// Windows schannel (used by WebView2, the desktop app's webview) misinterprets
+// post-handshake NewSessionTicket as a renegotiation request, which TLS 1.3
+// clients then refuse, breaking LAN connections. See issue #341.
+fn build_server_tls_config(cert_pem: &str, key_pem: &str) -> std::io::Result<rustls::ServerConfig> {
+    let certs = rustls_pemfile::certs(&mut cert_pem.as_bytes())
+        .collect::<Result<Vec<_>, _>>()?;
+    let key = rustls_pemfile::private_key(&mut key_pem.as_bytes())?
+        .ok_or_else(|| std::io::Error::other("no private key in key.pem"))?;
+    let mut config = rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .map_err(std::io::Error::other)?;
+    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+    config.send_tls13_tickets = 0;
+    Ok(config)
 }
 
 // --- API key generation ---
@@ -1685,12 +1719,9 @@ pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: S
         spawn_update_check_task(state);
     }
 
-    let rustls_config = axum_server::tls_rustls::RustlsConfig::from_pem(
-        cert_pem.into_bytes(),
-        key_pem.into_bytes(),
-    )
-    .await
-    .expect("failed to configure TLS");
+    let rustls_config = axum_server::tls_rustls::RustlsConfig::from_config(Arc::new(
+        build_server_tls_config(&cert_pem, &key_pem).expect("failed to configure TLS"),
+    ));
 
     // HTTPS on 0.0.0.0 for remote access
     let https_addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
@@ -1722,5 +1753,26 @@ pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: S
     tokio::select! {
         r = http_handle => r.expect("http task panicked"),
         r = https_handle => r.expect("https task panicked"),
+    }
+}
+
+#[cfg(test)]
+mod tls_config_tests {
+    use super::build_server_tls_config;
+
+    #[test]
+    fn disables_tls13_tickets_and_sets_alpn() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let tmp = tempfile::tempdir().unwrap();
+        let (cert_pem, key_pem, _fp) = super::ensure_tls(tmp.path());
+        let config = build_server_tls_config(&cert_pem, &key_pem).unwrap();
+        assert_eq!(
+            config.send_tls13_tickets, 0,
+            "TLS 1.3 post-handshake tickets must be disabled (schannel/WebView2 treats them as renegotiation, see issue #341)",
+        );
+        assert_eq!(
+            config.alpn_protocols,
+            vec![b"h2".to_vec(), b"http/1.1".to_vec()],
+        );
     }
 }
