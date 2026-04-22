@@ -107,10 +107,21 @@ pub enum ContainerStatus {
     Dead,
 }
 
+#[derive(Serialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentStatus {
+    Alive,
+    Starting,
+    NotAuthenticated,
+    Stopped,
+    Dead,
+    NotFound,
+}
+
 #[derive(Serialize, Clone)]
 pub struct StatusJson {
     pub name: String,
-    pub status: &'static str,
+    pub status: AgentStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     pub ws_port: u16,
@@ -119,7 +130,7 @@ pub struct StatusJson {
 #[derive(Serialize, Clone, PartialEq)]
 pub struct ListEntry {
     pub name: String,
-    pub status: &'static str,
+    pub status: AgentStatus,
     pub ws_port: u16,
 }
 
@@ -311,19 +322,21 @@ pub struct ContainerInfo {
     pub id: Option<String>,
 }
 
-pub async fn combined_status(docker: &Docker, cname: &str, info: &ContainerInfo) -> &'static str {
+pub async fn combined_status(docker: &Docker, cname: &str, info: &ContainerInfo) -> AgentStatus {
     match info.status {
         ContainerStatus::Running => {
-            let authenticated = is_authenticated(docker, cname).await;
-            if !authenticated {
-                return "not_authenticated";
+            if !is_authenticated(docker, cname).await {
+                return AgentStatus::NotAuthenticated;
             }
-            let agent_ready = info.port.is_some_and(is_agent_ready_sync);
-            if agent_ready { "alive" } else { "starting" }
+            if info.port.is_some_and(is_agent_ready_sync) {
+                AgentStatus::Alive
+            } else {
+                AgentStatus::Starting
+            }
         }
-        ContainerStatus::Dead => "dead",
-        ContainerStatus::Stopped => "stopped",
-        ContainerStatus::NotFound => "not_found",
+        ContainerStatus::Dead => AgentStatus::Dead,
+        ContainerStatus::Stopped => AgentStatus::Stopped,
+        ContainerStatus::NotFound => AgentStatus::NotFound,
     }
 }
 

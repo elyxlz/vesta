@@ -169,7 +169,7 @@ pub fn spawn_agent_status_task(cache: Arc<AgentStatusCache>, docker: Docker, age
             // Reconcile internal WS connections for activity state
             let alive_agents: HashMap<String, u16> = agents
                 .iter()
-                .filter(|a| a.status == "alive")
+                .filter(|a| a.status == docker::AgentStatus::Alive)
                 .map(|a| (a.name.clone(), a.ws_port))
                 .collect();
 
