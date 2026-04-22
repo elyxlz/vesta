@@ -918,6 +918,13 @@ fn all_registered_ports(registry: &HashMap<String, HashMap<String, ServiceEntry>
 const SERVICE_PORT_ALLOC_RETRIES: usize = 5;
 const CACHED_PORT_CONNECT_TIMEOUT_MS: u64 = 200;
 
+fn no_free_ports_err() -> (StatusCode, Json<serde_json::Value>) {
+    err_response(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "no free ports available in range 49152-65535 — too many services registered, or all ports are in use",
+    )
+}
+
 /// Find a free port not used by any registered service or other process.
 /// Uses OS-assigned ports with retries to avoid races with other vestad instances.
 fn allocate_service_port(registry: &HashMap<String, HashMap<String, ServiceEntry>>) -> Option<u16> {
@@ -940,17 +947,13 @@ fn allocate_service_port(registry: &HashMap<String, HashMap<String, ServiceEntry
 /// the port is free to bind (service not started yet but nothing blocks it).
 /// Returns false if the port is stuck in a zombie/TIME_WAIT state — a new
 /// process cannot bind to it and nothing is listening. See issue #371.
-fn is_cached_port_reusable(port: u16) -> bool {
+async fn is_cached_port_reusable(port: u16) -> bool {
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
-    if std::net::TcpStream::connect_timeout(
-        &addr,
-        std::time::Duration::from_millis(CACHED_PORT_CONNECT_TIMEOUT_MS),
-    )
-    .is_ok()
-    {
+    let timeout = std::time::Duration::from_millis(CACHED_PORT_CONNECT_TIMEOUT_MS);
+    if let Ok(Ok(_)) = tokio::time::timeout(timeout, tokio::net::TcpStream::connect(addr)).await {
         return true;
     }
-    std::net::TcpListener::bind(("127.0.0.1", port)).is_ok()
+    tokio::net::TcpListener::bind(("127.0.0.1", port)).await.is_ok()
 }
 
 async fn register_service_handler(
@@ -983,14 +986,12 @@ async fn register_service_handler(
     // trap the service in a crash loop with no recovery from inside the container.
     let cached_port = settings.services.get(&name).and_then(|s| s.get(&service_name)).map(|e| e.port);
     let port = match cached_port {
-        Some(p) if is_cached_port_reusable(p) => p,
+        Some(p) if is_cached_port_reusable(p).await => p,
         Some(p) => {
             tracing::warn!(agent = %name, service = %service_name, stale_port = p, "cached service port is stuck (connect+bind both failed), allocating a fresh one");
-            allocate_service_port(&settings.services)
-                .ok_or_else(|| err_response(StatusCode::SERVICE_UNAVAILABLE, "no free ports available in range 49152-65535 — too many services registered, or all ports are in use"))?
+            allocate_service_port(&settings.services).ok_or_else(no_free_ports_err)?
         }
-        None => allocate_service_port(&settings.services)
-            .ok_or_else(|| err_response(StatusCode::SERVICE_UNAVAILABLE, "no free ports available in range 49152-65535 — too many services registered, or all ports are in use"))?,
+        None => allocate_service_port(&settings.services).ok_or_else(no_free_ports_err)?,
     };
 
     let entry = ServiceEntry { port, public: body.public };
@@ -1755,21 +1756,18 @@ pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: S
 mod tests {
     use super::is_cached_port_reusable;
 
-    #[test]
-    fn cached_port_is_reusable_when_free() {
-        // Port with nothing bound to it: bind succeeds, reuse is safe.
+    #[tokio::test]
+    async fn cached_port_is_reusable_when_free() {
         let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let port = listener.local_addr().unwrap().port();
         drop(listener);
-        assert!(is_cached_port_reusable(port), "a free port must be reusable");
+        assert!(is_cached_port_reusable(port).await, "a free port must be reusable");
     }
 
-    #[test]
-    fn cached_port_is_reusable_when_listening() {
-        // Port with a live listener: TCP connect succeeds, reuse returns the
-        // same port — service is still alive.
+    #[tokio::test]
+    async fn cached_port_is_reusable_when_listening() {
         let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let port = listener.local_addr().unwrap().port();
-        assert!(is_cached_port_reusable(port), "a listening port must be reusable");
+        assert!(is_cached_port_reusable(port).await, "a listening port must be reusable");
     }
 }
