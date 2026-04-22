@@ -1514,10 +1514,7 @@ pub fn build_router(state: SharedState) -> Router {
 // --- Auto-backup background task ---
 
 fn local_hour() -> u8 {
-    let epoch = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as libc::time_t;
+    let epoch = crate::time_utils::now_epoch_secs() as libc::time_t;
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
     unsafe { libc::localtime_r(&epoch, &mut tm) };
     tm.tm_hour as u8
@@ -1554,10 +1551,7 @@ fn spawn_auto_backup_task(state: SharedState) {
 
             tracing::info!(agent_count = agents.len(), "auto-backup: starting cycle");
 
-            let now_epoch = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
+            let now_epoch = crate::time_utils::now_epoch_secs();
             let today_date = &backup::now_timestamp()[..8];
             let seven_days_ago = backup::now_timestamp_from_epoch(now_epoch - 7 * 86400);
             let thirty_days_ago = backup::now_timestamp_from_epoch(now_epoch - 30 * 86400);

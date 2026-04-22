@@ -87,15 +87,8 @@ fn b64url_decode(s: &str) -> Result<Vec<u8>, JwtError> {
 
 const HEADER_B64: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"; // {"alg":"HS256","typ":"JWT"}
 
-fn now_epoch_secs() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-}
-
 pub fn create_token(api_key: &str, typ: &str, ttl_secs: u64) -> String {
-    let now = now_epoch_secs();
+    let now = crate::time_utils::now_epoch_secs();
 
     let claims = Claims {
         sub: "vesta-app".into(),
@@ -132,7 +125,7 @@ pub fn validate_token(api_key: &str, token: &str, expected_typ: &str) -> Result<
     let claims: Claims = serde_json::from_slice(&payload_bytes)
         .map_err(|_| JwtError::DecodeFailed)?;
 
-    if claims.exp < now_epoch_secs() {
+    if claims.exp < crate::time_utils::now_epoch_secs() {
         return Err(JwtError::Expired);
     }
 

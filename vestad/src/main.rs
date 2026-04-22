@@ -15,6 +15,7 @@ mod migrations;
 mod docker;
 mod jwt;
 mod paths;
+mod time_utils;
 mod self_update;
 mod serve;
 mod systemd;

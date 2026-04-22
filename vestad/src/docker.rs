@@ -406,11 +406,7 @@ pub async fn is_authenticated(docker: &Docker, cname: &str) -> bool {
     let Some(expires_at) = creds["claudeAiOauth"]["expiresAt"].as_u64() else {
         return false;
     };
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64;
-    expires_at > now_ms
+    expires_at > crate::time_utils::now_epoch_millis() as u64
 }
 
 /// Sync TCP-only readiness check (no marker file).
@@ -1429,11 +1425,7 @@ pub async fn complete_auth_flow(client: &reqwest::Client, input: &str, code_veri
     let refresh_token = token_data.get("refresh_token").and_then(|v| v.as_str());
     let expires_in = token_data["expires_in"].as_u64().unwrap_or(DEFAULT_TOKEN_EXPIRES_SECS);
 
-    let expires_at = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis()
-        + (expires_in as u128) * 1000;
+    let expires_at = crate::time_utils::now_epoch_millis() + (expires_in as u128) * 1000;
 
     let mut creds = serde_json::json!({
         "claudeAiOauth": {
@@ -1798,10 +1790,7 @@ pub async fn rebuild_agent(docker: &Docker, name: &str, env_config: &AgentEnvCon
         }
     };
 
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
+    let ts = crate::time_utils::now_epoch_secs();
     let backup_tag = format!("vesta-rebuild:{}_{}", name, ts);
     let normalized_tag = format!("vesta-rebuild:{}_{}-normalized", name, ts);
     let helper_name = format!("{}-normalize", cname);

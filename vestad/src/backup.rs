@@ -86,11 +86,7 @@ pub fn parse_backup_tag(tag: &str) -> Option<(String, BackupType, String)> {
 }
 
 pub fn now_timestamp() -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    now_timestamp_from_epoch(now)
+    now_timestamp_from_epoch(crate::time_utils::now_epoch_secs())
 }
 
 pub fn now_timestamp_from_epoch(epoch_secs: u64) -> String {
@@ -105,11 +101,7 @@ pub async fn container_age_secs(docker: &Docker, name: &str) -> Option<u64> {
     let cname = container_name(name);
     let created = container_created(docker, &cname).await?;
     let created_epoch = parse_rfc3339_epoch(created.trim())?;
-    let now_epoch = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()?
-        .as_secs();
-    Some(now_epoch.saturating_sub(created_epoch))
+    Some(crate::time_utils::now_epoch_secs().saturating_sub(created_epoch))
 }
 
 /// Parse an RFC3339 timestamp (e.g. "2026-04-07T13:11:12.123Z") to unix epoch seconds.
