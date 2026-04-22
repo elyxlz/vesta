@@ -365,7 +365,9 @@ async def monitor_loop(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.Stat
 
                 notifications = await load_new_notifications(state=state, config=config)
                 interrupt_notifs = [n for n in notifications if n.interrupt]
-                pending_passive.extend(n for n in notifications if not n.interrupt)
+                # Passive files stay on disk until the batch flushes, so reloads would duplicate.
+                queued_paths = {n.file_path for n in pending_passive if n.file_path}
+                pending_passive.extend(n for n in notifications if not n.interrupt and (not n.file_path or n.file_path not in queued_paths))
 
                 if interrupt_notifs:
                     await process_batch(interrupt_notifs, queue=queue, state=state, config=config)
