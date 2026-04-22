@@ -23,10 +23,14 @@ func NewMessageStore(dataDir string) (*MessageStore, error) {
 		return nil, fmt.Errorf("failed to create data directory: %v", err)
 	}
 
-	db, err := sql.Open("sqlite3", dbPath+"?_foreign_keys=on")
+	db, err := sql.Open("sqlite3", dbPath+"?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open message database: %v", err)
 	}
+	// SQLite allows only one writer; pin the pool to one connection so concurrent
+	// callers queue instead of racing on separate connections (which would surface
+	// as SQLITE_BUSY even with a busy_timeout set).
+	db.SetMaxOpenConns(1)
 
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS chats (
@@ -270,6 +274,39 @@ func (ms *MessageStore) UpdateDeliveryStatus(messageID, chatJID, status string, 
 		WHERE id = ? AND chat_jid = ?
 	`, status, timestamp, messageID, chatJID)
 	return err
+}
+
+// GetMessageSender returns the chat JID string for a given message ID.
+// For messages not sent by the local user, returns the chat_jid (the actual JID).
+// For messages sent by the local user, returns empty string.
+func (ms *MessageStore) GetMessageSender(messageID string) (string, error) {
+	var chatJID sql.NullString
+	var isFromMe bool
+	err := ms.db.QueryRow(`SELECT chat_jid, is_from_me FROM messages WHERE id = ? LIMIT 1`, messageID).Scan(&chatJID, &isFromMe)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if !isFromMe {
+		return chatJID.String, nil
+	}
+	return "", nil
+}
+
+// GetMessageContent returns the text content of a message by ID.
+// If the message is not found, it returns an empty string and no error.
+func (ms *MessageStore) GetMessageContent(messageID string) (string, error) {
+	var content sql.NullString
+	err := ms.db.QueryRow(`SELECT content FROM messages WHERE id = ? LIMIT 1`, messageID).Scan(&content)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return content.String, nil
 }
 
 func (ms *MessageStore) GetDeliveryStatus(messageID, chatJID string) (string, *time.Time, error) {

@@ -431,17 +431,18 @@ func cmdListChats(args []string, wac *WhatsAppClient) (any, error) {
 }
 
 func cmdSendMessage(args []string, wac *WhatsAppClient) (any, error) {
-	var to, message string
+	var to, message, replyTo string
 	fs := flag.NewFlagSet("send-message", flag.ContinueOnError)
 	fs.StringVar(&to, "to", "", "Recipient")
 	fs.StringVar(&message, "message", "", "Message text")
+	fs.StringVar(&replyTo, "reply-to", "", "Message ID to reply/quote (optional)")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
 	if to == "" || message == "" {
 		return nil, fmt.Errorf("--to and --message are required")
 	}
-	success, msg := wac.SendMessageWithPresence(to, message)
+	success, msg := wac.SendMessageWithPresence(to, message, replyTo)
 	result := successResult(success, msg)
 	if success && userAtIPPattern.MatchString(message) {
 		result["delivery_warning"] = "Message contains a user@IP pattern which WhatsApp spam filters may silently drop. Use 'check-delivery' to verify delivery."

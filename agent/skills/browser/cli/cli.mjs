@@ -367,13 +367,13 @@ async function cmdClose(args) {
 const DEFAULT_MAX_CHARS = Number(process.env.BROWSER_MAX_CHARS) || 50000;
 
 function snapshotOpts(extra = {}) {
-  return { interactive: true, maxChars: DEFAULT_MAX_CHARS, ...extra };
+  return { interactive: true, maxChars: DEFAULT_MAX_CHARS, mode: 'role', ...extra };
 }
 
 async function cmdSnapshot(args) {
   const browser = await connect();
   const page = await currentPage(browser);
-  const opts = {};
+  const opts = { mode: 'role' };
   if (args.flags.interactive) opts.interactive = true;
   if (args.flags.compact) opts.compact = true;
   if (args.flags.mode) opts.mode = args.flags.mode;
@@ -405,7 +405,7 @@ async function cmdClick(args) {
   const browser = await connect();
   const page = await currentPage(browser);
   // populate ref map
-  await page.snapshot();
+  await page.snapshot({ mode: 'role' });
   const opts = {};
   if (args.flags.double) opts.doubleClick = true;
   if (args.flags.right) opts.button = 'right';
@@ -426,7 +426,7 @@ async function cmdType(args) {
   if (!ref || !text) fail('Usage: browser type <ref> <text>');
   const browser = await connect();
   const page = await currentPage(browser);
-  await page.snapshot();
+  await page.snapshot({ mode: 'role' });
   const opts = {};
   if (args.flags.submit) opts.submit = true;
   if (args.flags.slowly) opts.slowly = true;
@@ -446,7 +446,7 @@ async function cmdHover(args) {
   if (!ref) fail('Usage: browser hover <ref>');
   const browser = await connect();
   const page = await currentPage(browser);
-  await page.snapshot();
+  await page.snapshot({ mode: 'role' });
   await page.hover(ref);
   const snap = await page.snapshot(snapshotOpts());
   out({ status: 'hovered', ref, snapshot: snap.snapshot, stats: snap.stats });
@@ -458,7 +458,7 @@ async function cmdSelect(args) {
   if (!ref || !values.length) fail('Usage: browser select <ref> <value...>');
   const browser = await connect();
   const page = await currentPage(browser);
-  await page.snapshot();
+  await page.snapshot({ mode: 'role' });
   await page.select(ref, ...values);
   const snap = await page.snapshot(snapshotOpts());
   out({ status: 'selected', ref, values, snapshot: snap.snapshot, stats: snap.stats });
@@ -470,7 +470,7 @@ async function cmdDrag(args) {
   if (!from || !to) fail('Usage: browser drag <fromRef> <toRef>');
   const browser = await connect();
   const page = await currentPage(browser);
-  await page.snapshot();
+  await page.snapshot({ mode: 'role' });
   await page.drag(from, to);
   const snap = await page.snapshot(snapshotOpts());
   out({ status: 'dragged', from, to, snapshot: snap.snapshot, stats: snap.stats });
@@ -483,7 +483,7 @@ async function cmdFill(args) {
   try { fields = JSON.parse(json); } catch { fail('Invalid JSON for fill fields'); }
   const browser = await connect();
   const page = await currentPage(browser);
-  await page.snapshot();
+  await page.snapshot({ mode: 'role' });
   await page.fill(fields);
   const snap = await page.snapshot(snapshotOpts());
   out({ status: 'filled', count: fields.length, snapshot: snap.snapshot, stats: snap.stats });
@@ -504,7 +504,7 @@ async function cmdScroll(args) {
   const browser = await connect();
   const page = await currentPage(browser);
   if (ref) {
-    await page.snapshot();
+    await page.snapshot({ mode: 'role' });
     await page.scrollIntoView(ref);
     const snap = await page.snapshot(snapshotOpts());
     out({ status: 'scrolled', ref, snapshot: snap.snapshot, stats: snap.stats });
@@ -573,7 +573,7 @@ async function cmdDownload(args) {
   if (!ref) fail('Usage: browser download <ref> [path]');
   const browser = await connect();
   const page = await currentPage(browser);
-  await page.snapshot();
+  await page.snapshot({ mode: 'role' });
   const result = await page.download(ref, savePath);
   out({ status: 'downloaded', url: result.url, filename: result.suggestedFilename, path: result.path });
 }

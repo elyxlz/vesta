@@ -115,6 +115,8 @@ browser resize 1920 1080                # Resize viewport
 
 ## Multi-Agent / Concurrent Use
 
+**Memory warning:** Each Chrome instance uses 200 to 400 MB of RAM. On memory-constrained hosts, running 3 or more browser agents in parallel can trigger the OOM killer and crash the container. Prefer sequential browser agents for scraping tasks that span many sites.
+
 Multiple subagents can each run their own Chrome instance concurrently. Port allocation is automatic; each `browser launch` finds a free port starting from 9222, so no conflicts occur.
 
 **Session isolation via `BROWSER_SESSION` env var:**

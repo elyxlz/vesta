@@ -1,3 +1,6 @@
+use std::net::Ipv4Addr;
+use std::time::Duration;
+
 use axum::{
     body::Body,
     extract::{ws::WebSocketUpgrade, Path, Request, State},
@@ -5,10 +8,37 @@ use axum::{
     response::Response,
     Json,
 };
+use tokio::net::TcpStream;
+use tokio::time::Instant;
 
 use crate::auth;
 use crate::docker;
 use crate::serve::{ServiceEntry, SharedState, err_response, map_docker_err, PROXY_MAX_BODY_BYTES};
+
+// When a freshly-registered service is still binding its port (e.g. `vite preview`
+// takes a couple of seconds), wait briefly for the upstream to start accepting
+// connections before proxying. Without this, the first iframe load hits 502 and
+// the app caches "unavailable" until a manual refresh. See issue #379.
+const UPSTREAM_READY_TIMEOUT: Duration = Duration::from_secs(5);
+const UPSTREAM_READY_POLL_INITIAL: Duration = Duration::from_millis(25);
+const UPSTREAM_READY_POLL_MAX: Duration = Duration::from_millis(250);
+
+async fn wait_for_upstream(port: u16, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    let mut delay = UPSTREAM_READY_POLL_INITIAL;
+    loop {
+        if TcpStream::connect((Ipv4Addr::LOCALHOST, port)).await.is_ok() {
+            return;
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            return;
+        }
+        let remaining = deadline - now;
+        tokio::time::sleep(delay.min(remaining)).await;
+        delay = (delay * 2).min(UPSTREAM_READY_POLL_MAX);
+    }
+}
 
 async fn resolve_service(
     state: &crate::serve::AppState,
@@ -83,6 +113,10 @@ pub async fn agent_proxy_handler(
         .map(|v| v.as_bytes().eq_ignore_ascii_case(b"websocket"))
         .unwrap_or(false);
 
+    // Only wait for registered services — the raw agent port is already running
+    // by the time ensure_running() returns, so a wait there would just mask dead agents.
+    let is_registered_service = service.is_some();
+
     if is_ws_upgrade {
         let (mut parts, _body) = request.into_parts();
         let ws = match WebSocketUpgrade::from_request_parts(&mut parts, &state).await {
@@ -97,11 +131,17 @@ pub async fn agent_proxy_handler(
         let ws_token = if is_public { None } else { agent_token.clone() };
         Ok(ws.on_upgrade(move |socket| async move {
             drop(guard);
+            if is_registered_service {
+                wait_for_upstream(target_port, UPSTREAM_READY_TIMEOUT).await;
+            }
             ws_proxy(socket, target_port, &target_path, ws_token.as_deref()).await;
         }))
     } else {
         drop(guard);
         let token = if is_public { None } else { agent_token.as_deref() };
+        if is_registered_service {
+            wait_for_upstream(target_port, UPSTREAM_READY_TIMEOUT).await;
+        }
         forward_http_to_container(&state.http_client, target_port, &target_path, request, token)
             .await
     }
@@ -236,7 +276,11 @@ async fn forward_http_to_container(
 
 #[cfg(test)]
 mod tests {
-    use super::split_service_subpath;
+    use super::{split_service_subpath, wait_for_upstream};
+    use std::net::Ipv4Addr;
+    use std::time::Duration;
+    use tokio::net::TcpListener;
+    use tokio::time::Instant;
 
     #[test]
     fn forwards_nested_asset_path_to_service() {
@@ -267,5 +311,51 @@ mod tests {
     #[test]
     fn empty_path_yields_empty_segment() {
         assert_eq!(split_service_subpath(""), ("", "/"));
+    }
+
+    #[tokio::test]
+    async fn wait_returns_immediately_when_port_is_listening() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let start = Instant::now();
+        wait_for_upstream(port, Duration::from_secs(5)).await;
+        assert!(start.elapsed() < Duration::from_millis(100));
+    }
+
+    #[tokio::test]
+    async fn wait_returns_after_timeout_when_port_never_binds() {
+        // Reserve a port by binding+dropping, so nothing is listening there now.
+        let port = {
+            let tmp = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+            tmp.local_addr().unwrap().port()
+        };
+
+        let start = Instant::now();
+        wait_for_upstream(port, Duration::from_millis(300)).await;
+        let elapsed = start.elapsed();
+        assert!(elapsed >= Duration::from_millis(300));
+        assert!(elapsed < Duration::from_millis(1200));
+    }
+
+    #[tokio::test]
+    async fn wait_returns_once_port_starts_listening_mid_wait() {
+        let port = {
+            let tmp = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+            tmp.local_addr().unwrap().port()
+        };
+
+        let binder = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            TcpListener::bind((Ipv4Addr::LOCALHOST, port)).await.unwrap()
+        });
+
+        let start = Instant::now();
+        wait_for_upstream(port, Duration::from_secs(5)).await;
+        let elapsed = start.elapsed();
+        assert!(elapsed >= Duration::from_millis(150));
+        assert!(elapsed < Duration::from_millis(800));
+
+        drop(binder.await.unwrap());
     }
 }

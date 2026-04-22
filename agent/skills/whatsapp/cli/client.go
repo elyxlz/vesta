@@ -63,7 +63,7 @@ func NewWhatsAppClient(dataDir, notificationsDir, instance string, readOnly bool
 	dbLog := waLog.Stdout("Database", "INFO", true)
 	whatsappDBPath := filepath.Join(dataDir, "whatsapp.db")
 
-	container, err := sqlstore.New(context.Background(), "sqlite3", fmt.Sprintf("file:%s?_foreign_keys=on", whatsappDBPath), dbLog)
+	container, err := sqlstore.New(context.Background(), "sqlite3", fmt.Sprintf("file:%s?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000", whatsappDBPath), dbLog)
 	if err != nil {
 		store.Close()
 		return nil, fmt.Errorf("failed to connect to whatsapp database: %v", err)

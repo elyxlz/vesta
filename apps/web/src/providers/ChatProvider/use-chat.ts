@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { VestaEvent, AgentActivityState } from "@/lib/types";
+import type { VestaEvent, AgentActivityState, InputMethod } from "@/lib/types";
 import { wsUrl, fetchHistory } from "@/lib/connection";
 import { useChatPacing } from "@/stores/use-chat-pacing";
 
@@ -237,22 +237,32 @@ export function useChat({
     };
   }, [active, name]);
 
-  const send = useCallback((text: string): boolean => {
-    const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return false;
-    ws.send(JSON.stringify({ type: "message", text }));
-    pendingEchoesRef.current.push(text);
-    setMessages((prev) => {
-      const updated: VestaEvent[] = [
-        ...prev,
-        { type: "user", text, ts: new Date().toISOString() },
-      ];
-      return updated.length > MAX_MESSAGES
-        ? updated.slice(-MAX_MESSAGES)
-        : updated;
-    });
-    return true;
-  }, []);
+  const send = useCallback(
+    (text: string, inputMethod: InputMethod = "typed"): boolean => {
+      const ws = wsRef.current;
+      if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+      ws.send(
+        JSON.stringify({ type: "message", text, input_method: inputMethod }),
+      );
+      pendingEchoesRef.current.push(text);
+      setMessages((prev) => {
+        const updated: VestaEvent[] = [
+          ...prev,
+          {
+            type: "user",
+            text,
+            input_method: inputMethod,
+            ts: new Date().toISOString(),
+          },
+        ];
+        return updated.length > MAX_MESSAGES
+          ? updated.slice(-MAX_MESSAGES)
+          : updated;
+      });
+      return true;
+    },
+    [],
+  );
 
   const sendEvent = useCallback((event: object): boolean => {
     const ws = wsRef.current;
