@@ -11,7 +11,6 @@ const platform = detectPlatform();
 const d = document.documentElement;
 d.dataset.platform = platform;
 
-
 if (isTauri) {
   d.classList.add("tauri");
   if (platform === "macos" || platform === "windows" || platform === "linux") {

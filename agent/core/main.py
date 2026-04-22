@@ -84,14 +84,17 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
     processor_task = asyncio.create_task(message_processor(message_queue, state=state, config=config))
 
     def _on_processor_done(task: asyncio.Task[None]) -> None:
-        if task.cancelled():
+        if task.cancelled() or state.shutdown_event.is_set() or state.graceful_shutdown.is_set():
             return
         exc = task.exception()
         if exc is not None:
             exit_code, stderr_tail = format_crash_detail(exc, state.stderr_buffer)
             logger.error(f"message_processor crashed: {type(exc).__name__}: {exc} | exit_code={exit_code}\nRecent stderr:\n{stderr_tail}")
             state.restart_reason = f"crash — {type(exc).__name__}: {exc}"
-            state.graceful_shutdown.set()
+        else:
+            logger.error("message_processor exited without error — restarting")
+            state.restart_reason = "crash — processor exited silently"
+        state.graceful_shutdown.set()
 
     processor_task.add_done_callback(_on_processor_done)
 

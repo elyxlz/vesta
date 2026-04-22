@@ -1,12 +1,7 @@
 import { type Dispatch, type SetStateAction } from "react";
 import { type MotionValue } from "motion/react";
 import { useMatch, useNavigate } from "react-router-dom";
-import {
-  Home,
-  KeyRound,
-  LayoutDashboard,
-  MessageSquare,
-} from "lucide-react";
+import { Home, KeyRound, LayoutDashboard, MessageSquare } from "lucide-react";
 import { AgentIsland } from "@/components/AgentIsland";
 import { AgentMenu } from "@/components/AgentMenu";
 import { MobileNavbar } from "@/components/MobileNavbar";
@@ -68,9 +63,7 @@ export function AgentNavbar({
                 <Button
                   variant="outline"
                   size="icon-lg"
-                  onClick={() =>
-                    navigate(`/agent/${encodeURIComponent(name)}`)
-                  }
+                  onClick={() => navigate(`/agent/${encodeURIComponent(name)}`)}
                 >
                   <LayoutDashboard />
                 </Button>

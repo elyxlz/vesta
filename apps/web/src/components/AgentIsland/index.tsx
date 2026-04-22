@@ -74,11 +74,7 @@ export function AgentIsland() {
                   error={error}
                 />
               ) : (
-                <AgentIslandCollapsed
-                  name={name}
-                  orbState={orbState}
-                  onExpand={() => setExpanded(true)}
-                />
+                <AgentIslandCollapsed name={name} orbState={orbState} />
               )}
             </div>
           </LayoutGroup>

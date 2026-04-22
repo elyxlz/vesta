@@ -13,7 +13,9 @@ interface SpacebarModeState {
 }
 
 export const useSpacebarMode = create<SpacebarModeState>((set) => ({
-  mode: (localStorage.getItem(STORAGE_KEY) === "hold" ? "hold" : "toggle") as SpacebarMode,
+  mode: (localStorage.getItem(STORAGE_KEY) === "hold"
+    ? "hold"
+    : "toggle") as SpacebarMode,
   setMode: (mode) => {
     localStorage.setItem(STORAGE_KEY, mode);
     set({ mode });

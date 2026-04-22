@@ -294,6 +294,21 @@ func (ms *MessageStore) GetDeliveryStatus(messageID, chatJID string) (string, *t
 	return status.String, tsPtr, nil
 }
 
+// UpgradeSentToDelivered upgrades all outgoing messages in a chat that are
+// still in "sent" status to "delivered". This is used when we receive an
+// incoming message in a direct chat, which implies the contact saw the chat
+// (and thus our messages were delivered), even if they have read receipts off.
+func (ms *MessageStore) UpgradeSentToDelivered(chatJID string, asOfTime time.Time) (int64, error) {
+	res, err := ms.db.Exec(`
+		UPDATE messages SET delivery_status = ?, delivery_timestamp = ?
+		WHERE chat_jid = ? AND is_from_me = 1 AND delivery_status = ? AND timestamp <= ?
+	`, DeliveryStatusDelivered, asOfTime, chatJID, DeliveryStatusSent, asOfTime)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 func (ms *MessageStore) GetRecentOutgoingStatus(chatJID string, limit int) ([]map[string]any, error) {
 	if limit <= 0 {
 		limit = 10

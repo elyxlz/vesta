@@ -1,6 +1,6 @@
 import { useNavigate } from "react-router-dom";
 import { AuthFlow } from "@/components/AuthFlow";
-import { deleteAgent, waitForReady, type AuthStartResult } from "@/api";
+import { deleteAgent, type AuthStartResult } from "@/api";
 import { useGateway } from "@/providers/GatewayProvider";
 import { useOnboarding } from "@/stores/use-onboarding";
 
@@ -35,18 +35,7 @@ export function AuthStep({
             /* best-effort cleanup */
           }
         }}
-        onComplete={async () => {
-          setStep("finalizing");
-          for (let i = 0; i < 9; i++) {
-            try {
-              await waitForReady(agentName, 20);
-              break;
-            } catch {
-              if (i === 8) break;
-            }
-          }
-          onDone();
-        }}
+        onComplete={onDone}
       />
     </div>
   );

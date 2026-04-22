@@ -5,11 +5,33 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { FieldGroup, Field, FieldLabel } from "@/components/ui/field";
 import { fadeSlide } from "@/lib/motion";
+import { isTauri } from "@/lib/env";
 import { useAuth } from "@/providers/AuthProvider";
+
+function vestadUrl(): string {
+  // vestad serves /app with a port meta tag. If it's present and real (not the
+  // unreplaced Vite placeholder), the page was served by vestad and its origin
+  // is the correct URL, whether vestad is on localhost or a remote host.
+  const meta = document.querySelector<HTMLMetaElement>(
+    'meta[name="vestad-port"]',
+  );
+  const port = meta?.content;
+  if (!port || !/^\d+$/.test(port)) {
+    throw new Error("vestad port not available — reload the page");
+  }
+  return window.location.origin;
+}
+
+function normalizeHost(input: string): string {
+  const trimmed = input.trim().replace(/\/+$/, "");
+  if (!/^https?:\/\//i.test(trimmed)) return `https://${trimmed}`;
+  return trimmed;
+}
 
 export function Connect() {
   const { connected, connect } = useAuth();
   const [apiKey, setApiKey] = useState("");
+  const [host, setHost] = useState("");
   const [error, setError] = useState("");
   const [details, setDetails] = useState("");
   const [showDetails, setShowDetails] = useState(false);
@@ -19,12 +41,14 @@ export function Connect() {
 
   const handleConnect = async () => {
     if (!apiKey.trim() || busy) return;
+    if (isTauri && !host.trim()) return;
     setBusy(true);
     setError("");
     setDetails("");
 
     try {
-      await connect(window.location.origin, apiKey.trim());
+      const url = isTauri ? normalizeHost(host) : vestadUrl();
+      await connect(url, apiKey.trim());
     } catch (e: unknown) {
       const msg = (e as { message?: string })?.message || "connection failed";
       setError("could not reach server");
@@ -50,6 +74,22 @@ export function Connect() {
           </div>
 
           <FieldGroup className="gap-3">
+            {isTauri && (
+              <Field>
+                <FieldLabel htmlFor="host" className="sr-only">
+                  Host
+                </FieldLabel>
+                <Input
+                  id="host"
+                  type="url"
+                  placeholder="host"
+                  autoComplete="url"
+                  value={host}
+                  onChange={(e) => setHost(e.target.value)}
+                  className="text-center text-sm"
+                />
+              </Field>
+            )}
             <Field>
               <FieldLabel htmlFor="key" className="sr-only">
                 Key
@@ -69,7 +109,7 @@ export function Connect() {
 
           <Button
             type="submit"
-            disabled={!apiKey.trim() || busy}
+            disabled={!apiKey.trim() || (isTauri && !host.trim()) || busy}
             className="w-full"
           >
             {busy ? "connecting..." : "connect"}

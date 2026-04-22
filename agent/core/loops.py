@@ -52,12 +52,37 @@ async def delete_notification_files(notifications: list[vm.Notification]) -> Non
         pl.Path(path_str).unlink(missing_ok=True)
 
 
+def _reply_hint(notif: vm.Notification) -> str:
+    """Inline command hint so the model invokes the reply skill instead of forgetting."""
+    if notif.type != "message":
+        return ""
+    if notif.source == "app-chat":
+        return "\n→ Reply with: `app-chat send --message '...'`"
+    if notif.source in ("whatsapp", "telegram"):
+        data = notif.model_dump(exclude={"file_path", "type", "source", "interrupt", "timestamp"})
+        recipient = None
+        for key in ("chat_name", "contact_name"):
+            if key in data and data[key]:
+                recipient = data[key]
+                break
+        if not recipient:
+            return ""
+        if notif.source == "whatsapp":
+            return f"\n→ Reply with: `whatsapp send --to '{recipient}' --message '...'`"
+        return f"\n→ Reply with: `telegram send '{recipient}' '...'`"
+    return ""
+
+
+def _format_one(notif: vm.Notification) -> str:
+    return notif.format_for_display() + _reply_hint(notif)
+
+
 def format_notification_batch(notifications: list[vm.Notification], *, suffix: str = "") -> str:
     suffix_str = f"\n\n{suffix}" if suffix else ""
     if len(notifications) == 1:
-        return notifications[0].format_for_display() + suffix_str
+        return _format_one(notifications[0]) + suffix_str
 
-    prompts = [n.format_for_display() for n in notifications]
+    prompts = [_format_one(n) for n in notifications]
     return "[NOTIFICATIONS]\n" + "\n".join(prompts) + suffix_str
 
 

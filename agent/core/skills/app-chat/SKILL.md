@@ -1,6 +1,6 @@
 ---
 name: app-chat
-description: This skill handles messages from the Vesta app (desktop/web). When a user sends a message through the Vesta app, it arrives as a notification. Reply using the `app-chat` CLI. Requires a background daemon.
+description: Use this skill to reply to notifications with `source=app-chat` (messages from the Vesta desktop/web app). Always reply via `app-chat send`, never via any other channel. Requires a background daemon.
 ---
 
 # App Chat - CLI: app-chat
@@ -27,5 +27,6 @@ app-chat history --limit 20
 ## Notes
 - Always reply to app messages using `app-chat send`, not through any other channel
 - Send multiple short messages instead of one long one (like texting)
-- Lowercase, no bullet points, no newlines within a single message
+- Lowercase, no bullets, keep messages tight — texting feel, not document feel
+- Messages render as markdown: use fenced ``` blocks for code/commands, `[label](url)` for links. Newlines work but multiple short messages still beat one long one
 - The daemon auto-reconnects if the agent restarts

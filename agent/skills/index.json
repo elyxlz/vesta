@@ -1,7 +1,7 @@
 [
   {
     "name": "app-chat",
-    "description": "This skill handles messages from the Vesta app (desktop/web). When a user sends a message through the Vesta app, it arrives as a notification. Reply using the `app-chat` CLI. Requires a background daemon."
+    "description": "Use this skill to reply to notifications with `source=app-chat` (messages from the Vesta desktop/web app). Always reply via `app-chat send`, never via any other channel. Requires a background daemon."
   },
   {
     "name": "browser",
@@ -65,7 +65,7 @@
   },
   {
     "name": "telegram",
-    "description": "This skill should be used when the user asks about \"telegram\", \"tg\", \"telegram message\", or needs to send/receive messages via Telegram. Requires a background daemon."
+    "description": "Use this skill to reply to notifications with `source=telegram`, or when the user asks about \"telegram\", \"tg\", \"telegram message\", or needs to send/receive messages via Telegram. Always reply to telegram notifications via `telegram send`, never via any other channel. Requires a background daemon."
   },
   {
     "name": "tv",
@@ -89,7 +89,7 @@
   },
   {
     "name": "whatsapp",
-    "description": "Use when the user mentions \"whatsapp\" or \"wa\", or asks to send/read/react-to WhatsApp messages, contacts, or groups. Does NOT cover generic \"text\"/\"message\" intents \u2014 those may mean Telegram or SMS. Requires the `whatsapp serve` daemon."
+    "description": "Use when the user mentions \"whatsapp\" or \"wa\", or asks to send/read/react-to WhatsApp messages, contacts, or groups. Does NOT cover generic \"text\"/\"message\" intents, which may mean Telegram or SMS. Requires the `whatsapp serve` daemon."
   },
   {
     "name": "whisper",

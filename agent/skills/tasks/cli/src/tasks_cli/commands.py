@@ -199,11 +199,22 @@ def update_task(
     status: str | None = None,
     title: str | None = None,
     priority: int | str | None = None,
+    due_datetime: str | None = None,
+    timezone: str | None = None,
+    due_in_minutes: int | None = None,
+    due_in_hours: int | None = None,
+    due_in_days: int | None = None,
 ) -> dict:
     if status and status not in ("pending", "done"):
         raise ValueError(f"Status must be pending or done, got {status}")
     if priority is not None:
         priority = normalize_priority(priority)
+
+    new_due_date: str | None = None
+    due_date_changed = False
+    if due_datetime is not None or due_in_minutes is not None or due_in_hours is not None or due_in_days is not None:
+        new_due_date = _compute_due_date(due_datetime, timezone, due_in_minutes, due_in_hours, due_in_days)
+        due_date_changed = True
 
     with closing(db.get_db(config.data_dir)) as conn:
         cursor = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
@@ -223,15 +234,31 @@ def update_task(
                 db.delete_auto_reminders(conn, task_id)
             elif status == "pending":
                 updates.append("completed_at = NULL")
-                # Recreate auto-reminders if task has a due date and is reopened
-                old_due = result["due_date"]
-                if old_due:
-                    db.create_auto_reminders(conn, task_id, result["title"], old_due, result["priority"])
+                # Recreate auto-reminders if task has a due date and is reopened.
+                # If due date is also being updated in this call, skip here;
+                # the due-date block below handles reminder recreation with the new value.
+                if not due_date_changed:
+                    old_due = result["due_date"]
+                    if old_due:
+                        db.create_auto_reminders(conn, task_id, result["title"], old_due, result["priority"])
 
         for field, value in [("title", title), ("priority", priority)]:
             if value is not None:
                 updates.append(f"{field} = ?")
                 params.append(value)
+
+        if due_date_changed:
+            updates.append("due_date = ?")
+            params.append(new_due_date)
+            db.delete_auto_reminders(conn, task_id)
+            if new_due_date:
+                # Use updated title/priority if provided in the same call, else existing.
+                reminder_title = title if title is not None else result["title"]
+                reminder_priority = priority if priority is not None else result["priority"]
+                # Only create reminders if the task is (or will be) pending.
+                effective_status = status if status is not None else result["status"]
+                if effective_status == "pending":
+                    db.create_auto_reminders(conn, task_id, reminder_title, new_due_date, reminder_priority)
 
         if updates:
             params.append(task_id)

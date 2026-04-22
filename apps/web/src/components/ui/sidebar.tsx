@@ -124,7 +124,16 @@ function SidebarProvider({
       toggleSidebar,
       container,
     }),
-    [state, open, setOpen, isMobile, openMobile, setOpenMobile, toggleSidebar, container],
+    [
+      state,
+      open,
+      setOpen,
+      isMobile,
+      openMobile,
+      setOpenMobile,
+      toggleSidebar,
+      container,
+    ],
   );
 
   return (
@@ -163,7 +172,8 @@ function Sidebar({
   variant?: "sidebar" | "floating" | "inset";
   collapsible?: "offcanvas" | "icon" | "none";
 }) {
-  const { isMobile, state, openMobile, setOpenMobile, container } = useSidebar();
+  const { isMobile, state, openMobile, setOpenMobile, container } =
+    useSidebar();
 
   if (collapsible === "none") {
     return (
@@ -202,7 +212,9 @@ function Sidebar({
             className="flex flex-col gap-2 overflow-y-auto px-1 sm:px-2 md:px-4 [&_[data-sidebar=header]]:p-0"
             onClick={(e) => {
               const target = e.target as HTMLElement;
-              const button = target.closest("[data-sidebar=menu-button]:not([data-slot=collapsible-trigger]), [data-sidebar=menu-sub-button]");
+              const button = target.closest(
+                "[data-sidebar=menu-button]:not([data-slot=collapsible-trigger]), [data-sidebar=menu-sub-button]",
+              );
               if (button) setOpenMobile(false);
             }}
           >

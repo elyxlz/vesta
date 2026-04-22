@@ -1,6 +1,6 @@
 use axum::{
     body::Body,
-    extract::Path,
+    extract::{Path, State},
     http::{header, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
@@ -8,28 +8,28 @@ use axum::{
 };
 use rust_embed::RustEmbed;
 
+use crate::serve::SharedState;
+
 #[derive(RustEmbed)]
 #[folder = "../apps/web/dist"]
 struct AppAssets;
 
 const IMMUTABLE_CACHE: &str = "public, max-age=31536000, immutable";
 const NO_CACHE: &str = "no-cache";
+const VESTAD_PORT_PLACEHOLDER: &str = "__VESTAD_PORT__";
 
-pub fn router<S>() -> Router<S>
-where
-    S: Clone + Send + Sync + 'static,
-{
+pub fn router() -> Router<SharedState> {
     Router::new()
         .route("/app", get(index))
         .route("/app/", get(index))
         .route("/app/{*path}", get(asset))
 }
 
-async fn index() -> Response {
-    serve_index()
+async fn index(State(state): State<SharedState>) -> Response {
+    serve_index(state.https_port)
 }
 
-async fn asset(Path(path): Path<String>) -> Response {
+async fn asset(State(state): State<SharedState>, Path(path): Path<String>) -> Response {
     if let Some(file) = AppAssets::get(&path) {
         let mime = mime_guess::from_path(&path).first_or_octet_stream();
         let cache = if path.starts_with("assets/") {
@@ -56,17 +56,22 @@ async fn asset(Path(path): Path<String>) -> Response {
         return (StatusCode::NOT_FOUND, "not found").into_response();
     }
 
-    serve_index()
+    serve_index(state.https_port)
 }
 
-fn serve_index() -> Response {
+fn serve_index(https_port: u16) -> Response {
     match AppAssets::get("index.html") {
-        Some(file) => Response::builder()
-            .status(StatusCode::OK)
-            .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
-            .header(header::CACHE_CONTROL, NO_CACHE)
-            .body(Body::from(file.data.into_owned()))
-            .expect("valid index.html response"),
+        Some(file) => {
+            let html = std::str::from_utf8(&file.data)
+                .expect("index.html is valid utf-8")
+                .replace(VESTAD_PORT_PLACEHOLDER, &https_port.to_string());
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+                .header(header::CACHE_CONTROL, NO_CACHE)
+                .body(Body::from(html))
+                .expect("valid index.html response")
+        }
         None => (
             StatusCode::NOT_FOUND,
             "vesta app bundle not built — run `npm --workspace @vesta/web run build`",

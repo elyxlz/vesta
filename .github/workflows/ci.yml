@@ -54,20 +54,28 @@ jobs:
           VESTAD=$(grep '^version = ' vestad/Cargo.toml | head -1 | cut -d'"' -f2)
           CLI=$(grep '^version = ' cli/Cargo.toml | head -1 | cut -d'"' -f2)
           TESTS=$(grep '^version = ' vestad/tests-integration/Cargo.toml | head -1 | cut -d'"' -f2)
-          TAURI_CONF=$(python3 -c "import json; print(json.load(open('apps/desktop/src-tauri/tauri.conf.json'))['version'])")
-          TAURI_CARGO=$(grep '^version = ' apps/desktop/src-tauri/Cargo.toml | head -1 | cut -d'"' -f2)
+          DESKTOP_CONF=$(python3 -c "import json; print(json.load(open('apps/desktop/src-tauri/tauri.conf.json'))['version'])")
+          DESKTOP_CARGO=$(grep '^version = ' apps/desktop/src-tauri/Cargo.toml | head -1 | cut -d'"' -f2)
+          DESKTOP_PKG=$(python3 -c "import json; print(json.load(open('apps/desktop/package.json'))['version'])")
+          MOBILE_CONF=$(python3 -c "import json; print(json.load(open('apps/mobile/src-tauri/tauri.conf.json'))['version'])")
+          MOBILE_CARGO=$(grep '^version = ' apps/mobile/src-tauri/Cargo.toml | head -1 | cut -d'"' -f2)
+          MOBILE_PKG=$(python3 -c "import json; print(json.load(open('apps/mobile/package.json'))['version'])")
           APP=$(python3 -c "import json; print(json.load(open('apps/web/package.json'))['version'])")
 
-          echo "agent:       $AGENT"
-          echo "vestad:      $VESTAD"
-          echo "cli:         $CLI"
-          echo "tests:       $TESTS"
-          echo "tauri.conf:  $TAURI_CONF"
-          echo "tauri cargo: $TAURI_CARGO"
-          echo "app:         $APP"
+          echo "agent:         $AGENT"
+          echo "vestad:        $VESTAD"
+          echo "cli:           $CLI"
+          echo "tests:         $TESTS"
+          echo "desktop.conf:  $DESKTOP_CONF"
+          echo "desktop cargo: $DESKTOP_CARGO"
+          echo "desktop pkg:   $DESKTOP_PKG"
+          echo "mobile.conf:   $MOBILE_CONF"
+          echo "mobile cargo:  $MOBILE_CARGO"
+          echo "mobile pkg:    $MOBILE_PKG"
+          echo "app:           $APP"
 
           FAIL=0
-          for name_val in "vestad:$VESTAD" "cli:$CLI" "tests:$TESTS" "tauri.conf:$TAURI_CONF" "tauri-cargo:$TAURI_CARGO" "app:$APP"; do
+          for name_val in "vestad:$VESTAD" "cli:$CLI" "tests:$TESTS" "desktop.conf:$DESKTOP_CONF" "desktop-cargo:$DESKTOP_CARGO" "desktop-pkg:$DESKTOP_PKG" "mobile.conf:$MOBILE_CONF" "mobile-cargo:$MOBILE_CARGO" "mobile-pkg:$MOBILE_PKG" "app:$APP"; do
             name="${name_val%%:*}"
             val="${name_val#*:}"
             if [ "$AGENT" != "$val" ]; then
@@ -134,7 +142,7 @@ jobs:
 
       - name: Format check
         working-directory: apps
-        run: npm -w @vesta/web run format -- --check
+        run: npm -w @vesta/web run format:check
 
       - name: Type check
         working-directory: apps
@@ -690,7 +698,11 @@ jobs:
         run: |
           mkdir -p tauri-out
           cp apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe tauri-out/
-          find apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle -name '*.sig' -exec cp {} tauri-out/ \;
+          # The updater artifact (.nsis.zip) is what the updater plugin downloads;
+          # without it, the release manifest signature is empty and Windows fails
+          # with "update failed". createUpdaterArtifacts in tauri.conf.json enables it.
+          find apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle \
+            -type f \( -name '*.nsis.zip' -o -name '*.sig' \) -exec cp {} tauri-out/ \;
 
       - uses: actions/upload-artifact@v7
         if: github.event_name != 'pull_request'
@@ -717,7 +729,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: apps/desktop/src-tauri
+          workspaces: apps/mobile/src-tauri
           key: android
 
       - name: Setup Java
@@ -742,23 +754,65 @@ jobs:
         run: npm install
 
       - name: Initialize Android project
-        working-directory: apps/desktop
+        working-directory: apps/mobile
         run: npx tauri android init
 
+      # Tauri's AndroidManifest template only declares INTERNET. Add the
+      # microphone permissions the web app's getUserMedia call needs.
+      - name: Add runtime permissions to AndroidManifest
+        run: python3 scripts/android-add-permissions.py apps/mobile/src-tauri/gen/android/app/src/main/AndroidManifest.xml
+
+      # Set up release signing if the ANDROID_KEYSTORE_BASE64 secret is configured.
+      # If the secret is missing, the next step falls back to a debug-signed APK
+      # so CI doesn't break (debug APKs install on-device but can't be used for
+      # real Play Store updates because Android tracks signing certs per app).
+      - name: Set up release signing
+        id: signing
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::ANDROID_KEYSTORE_BASE64 secret not set — building debug-signed APK (not suitable for Play Store updates)"
+            exit 0
+          fi
+          KEYSTORE_PATH="$RUNNER_TEMP/release.jks"
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$KEYSTORE_PATH"
+          cat > apps/mobile/src-tauri/gen/android/keystore.properties <<EOF
+          storePassword=$ANDROID_KEYSTORE_PASSWORD
+          keyPassword=$ANDROID_KEY_PASSWORD
+          keyAlias=$ANDROID_KEY_ALIAS
+          storeFile=$KEYSTORE_PATH
+          EOF
+          python3 scripts/android-sign-patch.py apps/mobile/src-tauri/gen/android/app/build.gradle.kts
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+
       - name: Build Android APK
-        working-directory: apps/desktop
+        working-directory: apps/mobile
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
-        run: npx tauri android build --apk
+        run: |
+          if [ "${{ steps.signing.outputs.signed }}" = "true" ]; then
+            npx tauri android build --apk
+          else
+            npx tauri android build --apk --debug
+          fi
 
       - name: Collect artifacts
         if: github.event_name != 'pull_request'
         run: |
           mkdir -p tauri-out
-          find apps/desktop/src-tauri/gen/android -name '*.apk' -exec cp {} tauri-out/ \;
-          VERSION=$(python3 -c "import json; print(json.load(open('apps/desktop/src-tauri/tauri.conf.json'))['version'])")
+          find apps/mobile/src-tauri/gen/android -name '*.apk' -exec cp {} tauri-out/ \;
+          VERSION=$(python3 -c "import json; print(json.load(open('apps/mobile/src-tauri/tauri.conf.json'))['version'])")
+          SUFFIX=""
+          if [ "${{ steps.signing.outputs.signed }}" != "true" ]; then
+            SUFFIX="-debug"
+          fi
           for f in tauri-out/*.apk; do
-            mv "$f" "tauri-out/Vesta_${VERSION}.apk"
+            mv "$f" "tauri-out/Vesta_${VERSION}${SUFFIX}.apk"
           done
           ls -lh tauri-out/
 
@@ -799,7 +853,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         if: env.SKIP_IOS != 'true'
         with:
-          workspaces: apps/desktop/src-tauri
+          workspaces: apps/mobile/src-tauri
           key: ios
 
       - name: Setup Node
@@ -840,20 +894,20 @@ jobs:
 
       - name: Initialize iOS project
         if: env.SKIP_IOS != 'true'
-        working-directory: apps/desktop
+        working-directory: apps/mobile
         run: npx tauri ios init
 
       - name: Build iOS
         if: env.SKIP_IOS != 'true'
-        working-directory: apps/desktop
+        working-directory: apps/mobile
         run: npx tauri ios build --export-method app-store-connect
 
       - name: Collect artifacts
         if: env.SKIP_IOS != 'true'
         run: |
           mkdir -p tauri-out
-          find apps/desktop/src-tauri/gen/apple -name '*.ipa' -exec cp {} tauri-out/ \;
-          VERSION=$(python3 -c "import json; print(json.load(open('apps/desktop/src-tauri/tauri.conf.json'))['version'])")
+          find apps/mobile/src-tauri/gen/apple -name '*.ipa' -exec cp {} tauri-out/ \;
+          VERSION=$(python3 -c "import json; print(json.load(open('apps/mobile/src-tauri/tauri.conf.json'))['version'])")
           for f in tauri-out/*.ipa; do
             mv "$f" "tauri-out/Vesta_${VERSION}.ipa"
           done
@@ -978,6 +1032,7 @@ jobs:
             -name '*.tar.gz' -o -name '*.zip' -o \
             -name '*.deb' -o -name '*.rpm' -o -name '*.dmg' -o \
             -name '*-setup.exe' -o -name '*_x64-setup.exe' -o \
+            -name '*.nsis.zip' -o \
             -name '*.apk' -o -name '*.ipa' -o \
             -name '*.sig' \
           \) -exec cp {} release/ \;
@@ -1013,8 +1068,8 @@ jobs:
                 "signature": "$(read_sig Vesta_x86_64.app.tar.gz.sig)"
               },
               "windows-x86_64": {
-                "url": "${BASE}/Vesta_${VERSION}_x64-setup.exe",
-                "signature": "$(read_sig Vesta_${VERSION}_x64-setup.exe.sig)"
+                "url": "${BASE}/Vesta_${VERSION}_x64-setup.nsis.zip",
+                "signature": "$(read_sig Vesta_${VERSION}_x64-setup.nsis.zip.sig)"
               }
             }
           }

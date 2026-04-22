@@ -68,10 +68,7 @@ export function ChatComposer({
           enterKeyHint="send"
           className="max-h-[120px] md:text-base"
         />
-        {(sttAvailable ||
-          !isRecording ||
-          !voiceAutoSend ||
-          isSpeaking) && (
+        {(sttAvailable || !isRecording || !voiceAutoSend || isSpeaking) && (
           <InputGroupAddon align="inline-end" className="gap-0">
             {isSpeaking && (
               <InputGroupButton

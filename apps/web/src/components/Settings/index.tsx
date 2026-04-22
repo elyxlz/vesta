@@ -23,6 +23,14 @@ import { useTauri } from "@/providers/TauriProvider";
 import { useGateway } from "@/providers/GatewayProvider";
 import { getConnection } from "@/lib/connection";
 import { StatusPill } from "@/components/StatusPill";
+import { Switch } from "@/components/ui/switch";
+import {
+  Field,
+  FieldContent,
+  FieldDescription,
+  FieldLabel,
+} from "@/components/ui/field";
+import { useChatPacing } from "@/stores/use-chat-pacing";
 
 interface SettingsDialogProps {
   open: boolean;
@@ -39,6 +47,8 @@ export function SettingsDialog({
   const { disconnect } = useAuth();
   const { reachable, gatewayVersion, gatewayBranch } = useGateway();
   const { isTauri } = useTauri();
+  const naturalPacing = useChatPacing((s) => s.natural);
+  const setNaturalPacing = useChatPacing((s) => s.setNatural);
 
   const hostname = (() => {
     const conn = getConnection();
@@ -89,6 +99,24 @@ export function SettingsDialog({
                 <Moon /> Dark
               </ToggleGroupItem>
             </ToggleGroup>
+          </MenuSection>
+
+          <MenuSection title="Chat">
+            <Field
+              orientation="horizontal"
+              className="items-center justify-between"
+            >
+              <FieldContent>
+                <FieldLabel className="text-sm">natural pacing</FieldLabel>
+                <FieldDescription>
+                  simulate typing delay before assistant messages appear
+                </FieldDescription>
+              </FieldContent>
+              <Switch
+                checked={naturalPacing}
+                onCheckedChange={setNaturalPacing}
+              />
+            </Field>
           </MenuSection>
 
           <MenuSection title="Connection">

@@ -59,6 +59,7 @@ Providers read the agent name from `useSelectedAgent()` internally — don't pas
 ## Hooks
 
 `hooks/` is **only** for hooks shared across multiple unrelated consumers:
+
 - `use-mobile.ts` — responsive breakpoint detection
 - `use-auto-scroll.ts` — scroll-to-bottom behavior
 - `use-optimistic-toggle.ts` — optimistic boolean toggle
@@ -85,6 +86,7 @@ RootLayout
 `AgentLayout` renders the shared Navbar (with AgentIsland + AgentMenu) once above the `<Outlet />`, so these components persist across route changes without remounting.
 
 Provider stack in `AgentLayout`:
+
 ```
 SelectedAgentProvider → VoiceProvider → ChatProvider → ModalsProvider
 ```

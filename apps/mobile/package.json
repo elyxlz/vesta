@@ -1,0 +1,24 @@
+{
+  "name": "@vesta/mobile",
+  "private": true,
+  "version": "0.1.147",
+  "description": "Vesta mobile app (Tauri wrapper around @vesta/web for iOS/Android)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/elyxlz/vesta"
+  },
+  "type": "module",
+  "scripts": {
+    "tauri": "tauri",
+    "ios:init": "tauri ios init",
+    "ios:dev": "tauri ios dev",
+    "ios:build": "tauri ios build",
+    "android:init": "tauri android init",
+    "android:dev": "tauri android dev",
+    "android:build": "tauri android build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.10.1"
+  }
+}

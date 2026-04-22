@@ -6,6 +6,7 @@ import { useOnboarding } from "@/stores/use-onboarding";
 import { NameStep } from "./Steps/NameStep";
 import { CreatingStep } from "./Steps/CreatingStep";
 import { AuthStep } from "./Steps/AuthStep";
+import { PersonalityStep } from "./Steps/PersonalityStep";
 import { FinalizingStep } from "./Steps/FinalizingStep";
 import { DoneStep } from "./Steps/DoneStep";
 
@@ -14,6 +15,7 @@ export function NewAgent() {
   const setStep = useOnboarding((s) => s.setStep);
   const [agentName, setAgentName] = useState("");
   const [authStart, setAuthStart] = useState<AuthStartResult | null>(null);
+  const [personality, setPersonality] = useState<string | null>(null);
 
   useEffect(() => {
     setStep("name");
@@ -27,10 +29,26 @@ export function NewAgent() {
         <AuthStep
           agentName={agentName}
           authStart={authStart}
+          onDone={() => setStep("personality")}
+        />
+      );
+    if (step === "personality")
+      return (
+        <PersonalityStep
+          onPicked={(name) => {
+            setPersonality(name);
+            setStep("finalizing");
+          }}
+        />
+      );
+    if (step === "finalizing")
+      return (
+        <FinalizingStep
+          agentName={agentName}
+          personality={personality}
           onDone={() => setStep("done")}
         />
       );
-    if (step === "finalizing") return <FinalizingStep />;
     if (step === "done") return <DoneStep agentName={agentName} />;
     return (
       <NameStep

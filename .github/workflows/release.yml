@@ -1,0 +1,120 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump type"
+        type: choice
+        required: true
+        default: patch
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: master
+          token: ${{ secrets.RELEASE_PAT }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install Tauri system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential pkg-config \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Compute new version
+        id: bump
+        run: |
+          CURRENT=$(grep '^version = ' agent/pyproject.toml | cut -d'"' -f2)
+          IFS='.' read -r major minor patch_v <<< "$CURRENT"
+          case "${{ inputs.bump }}" in
+            patch) NEW="${major}.${minor}.$((patch_v + 1))" ;;
+            minor) NEW="${major}.$((minor + 1)).0" ;;
+            major) NEW="$((major + 1)).0.0" ;;
+          esac
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+          echo "new=$NEW" >> "$GITHUB_OUTPUT"
+          echo "tag=v$NEW" >> "$GITHUB_OUTPUT"
+          echo "Bumping $CURRENT -> $NEW"
+
+      - name: Bump version in all sources
+        env:
+          CURRENT: ${{ steps.bump.outputs.current }}
+          NEW: ${{ steps.bump.outputs.new }}
+        run: |
+          sed -i "s|^version = \"${CURRENT}\"|version = \"${NEW}\"|" agent/pyproject.toml
+          sed -i "0,/^version = \"${CURRENT}\"/s|^version = \"${CURRENT}\"|version = \"${NEW}\"|" vestad/Cargo.toml
+          sed -i "0,/^version = \"${CURRENT}\"/s|^version = \"${CURRENT}\"|version = \"${NEW}\"|" vestad/tests-integration/Cargo.toml
+          sed -i "0,/^version = \"${CURRENT}\"/s|^version = \"${CURRENT}\"|version = \"${NEW}\"|" cli/Cargo.toml
+          sed -i "0,/^version = \"${CURRENT}\"/s|^version = \"${CURRENT}\"|version = \"${NEW}\"|" apps/desktop/src-tauri/Cargo.toml
+          sed -i "0,/^version = \"${CURRENT}\"/s|^version = \"${CURRENT}\"|version = \"${NEW}\"|" apps/mobile/src-tauri/Cargo.toml
+          sed -i "s|\"version\": \"${CURRENT}\"|\"version\": \"${NEW}\"|" apps/desktop/src-tauri/tauri.conf.json
+          sed -i "s|\"version\": \"${CURRENT}\"|\"version\": \"${NEW}\"|" apps/mobile/src-tauri/tauri.conf.json
+          sed -i "s|\"version\": \"${CURRENT}\"|\"version\": \"${NEW}\"|" apps/web/package.json
+          sed -i "s|\"version\": \"${CURRENT}\"|\"version\": \"${NEW}\"|" apps/desktop/package.json
+          sed -i "s|\"version\": \"${CURRENT}\"|\"version\": \"${NEW}\"|" apps/mobile/package.json
+
+      - name: Refresh lockfiles
+        run: |
+          (cd vestad && cargo check --quiet) &
+          (cd cli && cargo check --quiet) &
+          (cd apps/desktop/src-tauri && cargo check --quiet) &
+          (cd apps/mobile/src-tauri && cargo check --quiet) &
+          (cd agent && uv lock --quiet) &
+          wait
+
+      - name: Commit and push
+        env:
+          NEW: ${{ steps.bump.outputs.new }}
+        run: |
+          git add -A
+          git commit -m "Bump version to ${NEW}"
+          git push origin master
+
+      - name: Create GitHub prerelease
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          TAG: ${{ steps.bump.outputs.tag }}
+        run: |
+          gh release create "$TAG" --title "$TAG" --generate-notes --target master --prerelease
+          echo "Created prerelease $TAG"
+
+      - name: Cleanup on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          TAG: ${{ steps.bump.outputs.tag }}
+        run: |
+          gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
+          git fetch origin master
+          if git log origin/master -1 --pretty=%s | grep -q "^Bump version to "; then
+            git reset --hard HEAD~1
+            git push --force-with-lease origin master
+          fi

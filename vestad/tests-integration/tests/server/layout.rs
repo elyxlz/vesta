@@ -5,20 +5,41 @@ fn container_id(agent_name: &str) -> String {
     status.id.unwrap_or_else(|| panic!("agent {agent_name} has no container id"))
 }
 
+const ENTRYPOINT_POLL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+const ENTRYPOINT_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Poll a `test -<flag> <path>` check until it succeeds or the timeout elapses.
+/// CI runners are slow under contention — a single post-sleep check races with
+/// the entrypoint's filesystem setup.
+fn wait_for_path(cid: &str, flag: char, path: &str) {
+    let deadline = std::time::Instant::now() + ENTRYPOINT_POLL_TIMEOUT;
+    let script = format!("test -{flag} {path}");
+    loop {
+        if exec_in_container(cid, &script).is_ok() {
+            return;
+        }
+        if std::time::Instant::now() >= deadline {
+            panic!(
+                "expected {} {path} to exist within {}s",
+                if flag == 'd' { "directory" } else { "file" },
+                ENTRYPOINT_POLL_TIMEOUT.as_secs()
+            );
+        }
+        std::thread::sleep(ENTRYPOINT_POLL_INTERVAL);
+    }
+}
+
 #[test]
 fn fresh_agent_has_expected_directory_structure() {
     let c = SERVER.client();
     let agent = TestAgent::create_built(&c, &unique_agent("layout")).unwrap();
     let cid = container_id(&agent.name);
 
-    // Wait for entrypoint to finish setting up the filesystem
     c.wait_ready(&agent.name, 10).ok(); // may not become ready without auth, that's fine
-    std::thread::sleep(std::time::Duration::from_secs(5));
 
     // Root-level directories created by Dockerfile + entrypoint
     for dir in ["/root/.git", "/root/.claude", "/root/agent"] {
-        exec_in_container(&cid, &format!("test -d {dir}"))
-            .unwrap_or_else(|_| panic!("expected directory {dir} to exist"));
+        wait_for_path(&cid, 'd', dir);
     }
 
     // .claude/skills symlink points to agent skills
@@ -37,14 +58,12 @@ fn fresh_agent_has_expected_directory_structure() {
         "/root/agent/skills",
         "/root/agent/core",
     ] {
-        exec_in_container(&cid, &format!("test -d {dir}"))
-            .unwrap_or_else(|_| panic!("expected directory {dir} to exist"));
+        wait_for_path(&cid, 'd', dir);
     }
 
     // Key files exist
     for file in ["/root/agent/MEMORY.md", "/root/agent/pyproject.toml", "/root/.gitignore"] {
-        exec_in_container(&cid, &format!("test -f {file}"))
-            .unwrap_or_else(|_| panic!("expected file {file} to exist"));
+        wait_for_path(&cid, 'f', file);
     }
 
     // Git state: repo root is /root, on the agent's branch

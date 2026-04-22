@@ -1,10 +1,14 @@
 """Agent HTTP/WS server.
 
 Routes:
-  - WS   /ws              bidirectional event bus
-  - GET  /history         paginated event history (cursor optional)
-  - GET  /search          full-text search over events
-  - GET  /usage           plan usage limits and rate limit status
+  - WS   /ws                   bidirectional event bus
+  - GET  /history              paginated event history (cursor optional)
+  - GET  /search               full-text search over events
+  - GET  /usage                plan usage limits and rate limit status
+  - GET  /memory               read MEMORY.md
+  - PUT  /memory               overwrite MEMORY.md (applies on next restart)
+  - GET  /personalities        list available personality presets
+  - POST /personality/apply    apply a personality preset to MEMORY.md
 """
 
 import asyncio
@@ -17,6 +21,8 @@ from aiohttp import web
 
 from .events import ChatEvent, EventBus, HistoryEvent, UserEvent, VestaEvent
 from .config import VestaConfig
+from .helpers import get_memory_path
+from . import personalities as pers
 
 logger = logging.getLogger("vesta.api")
 
@@ -26,8 +32,9 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
 
     Send: all events from the event bus are pushed to connected clients.
     Recv: clients can emit events (e.g. user messages, chat replies).
-    On connect: sends recent history."""
+    On connect: sends recent history unless ?skip_history=1 is passed."""
     event_bus: EventBus = request.app["event_bus"]
+    skip_history = request.query.get("skip_history", "") in ("1", "true")
 
     ws = web.WebSocketResponse()
     await ws.prepare(request)
@@ -36,9 +43,10 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
     recv_task: asyncio.Task[None] | None = None
     send_task: asyncio.Task[None] | None = None
     try:
-        events, cursor = event_bus.recent()
-        if events:
-            await ws.send_json(HistoryEvent(type="history", events=events, state=event_bus.state, cursor=cursor))
+        if not skip_history:
+            events, cursor = event_bus.recent()
+            if events:
+                await ws.send_json(HistoryEvent(type="history", events=events, state=event_bus.state, cursor=cursor))
         recv_task = asyncio.create_task(_recv_loop(ws, event_bus))
         send_task = asyncio.create_task(_send_loop(ws, sub))
         await asyncio.wait([recv_task, send_task], return_when=asyncio.FIRST_COMPLETED)
@@ -81,8 +89,10 @@ async def _send_loop(ws: web.WebSocketResponse, sub: asyncio.Queue[VestaEvent]) 
         while True:
             event = await sub.get()
             await ws.send_json(event)
-    except (ConnectionError, RuntimeError, TypeError, asyncio.CancelledError):
+    except asyncio.CancelledError:
         pass
+    except (ConnectionError, RuntimeError, TypeError) as e:
+        logger.info(f"ws send_loop exited: {type(e).__name__}: {e}")
 
 
 async def _history_handler(request: web.Request) -> web.Response:
@@ -179,6 +189,55 @@ async def _usage_handler(request: web.Request) -> web.Response:
         return web.json_response({"error": str(e)}, status=502)
 
 
+async def _memory_get_handler(request: web.Request) -> web.Response:
+    """Return current contents of MEMORY.md."""
+    config: VestaConfig = request.app["config"]
+    path = get_memory_path(config)
+    if not path.exists():
+        return web.json_response({"error": "MEMORY.md not found"}, status=404)
+    return web.json_response({"content": path.read_text()})
+
+
+async def _memory_put_handler(request: web.Request) -> web.Response:
+    """Overwrite MEMORY.md. Takes effect after agent restart."""
+    config: VestaConfig = request.app["config"]
+    try:
+        data = await request.json()
+    except (json.JSONDecodeError, TypeError):
+        return web.json_response({"error": "invalid json body"}, status=400)
+    if "content" not in data or not isinstance(data["content"], str):
+        return web.json_response({"error": "body must be {content: string}"}, status=400)
+    path = get_memory_path(config)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(data["content"])
+    return web.json_response({"ok": True})
+
+
+async def _personalities_list_handler(request: web.Request) -> web.Response:
+    """Return available personality presets."""
+    config: VestaConfig = request.app["config"]
+    return web.json_response({"personalities": pers.list_personalities(config)})
+
+
+async def _personality_apply_handler(request: web.Request) -> web.Response:
+    """Apply a personality preset to MEMORY.md. Takes effect after agent restart."""
+    config: VestaConfig = request.app["config"]
+    try:
+        data = await request.json()
+    except (json.JSONDecodeError, TypeError):
+        return web.json_response({"error": "invalid json body"}, status=400)
+    name = data["name"] if "name" in data and isinstance(data["name"], str) else None
+    if not name:
+        return web.json_response({"error": "body must be {name: string}"}, status=400)
+    try:
+        pers.apply_personality(name, config)
+    except FileNotFoundError as e:
+        return web.json_response({"error": str(e)}, status=404)
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    return web.json_response({"ok": True})
+
+
 @web.middleware
 async def _auth_middleware(request: web.Request, handler):
     expected = request.app.get("agent_token")
@@ -199,10 +258,15 @@ async def start_ws_server(
     app = web.Application(middlewares=[_auth_middleware])
     app["event_bus"] = event_bus
     app["agent_token"] = config.agent_token
+    app["config"] = config
     app.router.add_get("/ws", _ws_handler)
     app.router.add_get("/history", _history_handler)
     app.router.add_get("/search", _search_handler)
     app.router.add_get("/usage", _usage_handler)
+    app.router.add_get("/memory", _memory_get_handler)
+    app.router.add_put("/memory", _memory_put_handler)
+    app.router.add_get("/personalities", _personalities_list_handler)
+    app.router.add_post("/personality/apply", _personality_apply_handler)
 
     runner = web.AppRunner(app)
     await runner.setup()

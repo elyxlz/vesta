@@ -1,6 +1,6 @@
 ---
 name: whatsapp
-description: Use when the user mentions "whatsapp" or "wa", or asks to send/read/react-to WhatsApp messages, contacts, or groups. Does NOT cover generic "text"/"message" intents - those may mean Telegram or SMS. Requires the `whatsapp serve` daemon.
+description: Use when the user mentions "whatsapp" or "wa", or asks to send/read/react-to WhatsApp messages, contacts, or groups. Does NOT cover generic "text"/"message" intents, which may mean Telegram or SMS. Requires the `whatsapp serve` daemon.
 ---
 
 # WhatsApp - CLI: `whatsapp`
@@ -62,7 +62,7 @@ Aliases in parentheses. Positional signature shown after `:` for commands that t
 
 ## Rules
 
-- **Send messages one tool call at a time - never batch WhatsApp sends in a single parallel tool-call block.**
+- **Send messages one tool call at a time. Never batch WhatsApp sends in a single parallel tool-call block.**
   *Why:* If one parallel call fails while another succeeds, you can't tell which went through. Retrying "the failed one" sends a duplicate that the recipient sees.
 
 - **`whatsapp serve` requires `--notifications-dir`.**
@@ -75,7 +75,7 @@ Aliases in parentheses. Positional signature shown after `:` for commands that t
   *Why:* Sending to a raw JID with no saved contact row triggers the `requireManualContact` guard and blocks the send.
 
 - **Right after first-pair auth, `database is locked` can occur transiently during history backfill.**
-  *Why:* WhatsApp pushes up to 2 years of history; each conversation is persisted in a short transaction that can briefly exceed the 5s busy-timeout on large chats. If a write fails with "database is locked" within the first minute or two after authentication, wait 10-20 seconds and retry - do not treat it as a real failure. This does not occur on subsequent runs.
+  *Why:* WhatsApp pushes up to 2 years of history; each conversation is persisted in a short transaction that can briefly exceed the 5s busy-timeout on large chats. If a write fails with "database is locked" within the first minute or two after authentication, wait 10-20 seconds and retry; do not treat it as a real failure. This does not occur on subsequent runs.
 
 ## Conventions
 

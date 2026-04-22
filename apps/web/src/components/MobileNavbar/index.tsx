@@ -107,7 +107,7 @@ export function MobileNavbar({ progress }: { progress: MotionValue<number> }) {
         aria-current={isDashboard ? "page" : undefined}
         tabIndex={interactive ? undefined : -1}
         className={cn(
-          "flex h-9 flex-1 basis-0 items-center justify-center gap-2 rounded-2xl px-3 text-sm font-medium",
+          "flex h-9 items-center justify-center gap-2 rounded-2xl px-3 text-sm font-medium",
           active ? "text-white" : "text-muted-foreground",
         )}
       >
@@ -121,7 +121,7 @@ export function MobileNavbar({ progress }: { progress: MotionValue<number> }) {
         aria-current={isChat ? "page" : undefined}
         tabIndex={interactive ? undefined : -1}
         className={cn(
-          "flex h-9 flex-1 basis-0 items-center justify-center gap-2 rounded-2xl px-3 text-sm font-medium",
+          "flex h-9 items-center justify-center gap-2 rounded-2xl px-3 text-sm font-medium",
           active ? "text-white" : "text-muted-foreground",
         )}
       >
@@ -139,7 +139,7 @@ export function MobileNavbar({ progress }: { progress: MotionValue<number> }) {
     >
       <div
         ref={pillMeasureRef}
-        className="relative flex w-[70%] justify-center gap-0.5 overflow-hidden rounded-4xl bg-card p-1 text-card-foreground shadow-md ring-1 ring-foreground/5 dark:ring-foreground/10"
+        className="relative flex w-fit gap-0.5 overflow-hidden rounded-4xl bg-card p-1 text-card-foreground shadow-md ring-1 ring-foreground/5 dark:ring-foreground/10"
       >
         <div className="relative flex w-full gap-0.5">
           {renderButtons({ active: false, interactive: true })}

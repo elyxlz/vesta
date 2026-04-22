@@ -25,3 +25,6 @@ target/
 # Cursor / editor config
 .cursor/
 .editorconfig
+
+# Personal notes
+ROADMAP.md

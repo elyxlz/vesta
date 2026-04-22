@@ -157,6 +157,11 @@ def main():
     p_update.add_argument("--status", default=None)
     p_update.add_argument("--title", default=None)
     p_update.add_argument("--priority", default=None)
+    p_update.add_argument("--due-datetime", default=None)
+    p_update.add_argument("--timezone", default=None)
+    p_update.add_argument("--due-in-minutes", type=int, default=None)
+    p_update.add_argument("--due-in-hours", type=int, default=None)
+    p_update.add_argument("--due-in-days", type=int, default=None)
 
     # delete
     p_delete = sub.add_parser("delete", help="Delete a task")
@@ -338,6 +343,11 @@ def _handle_task(args, config: Config):
             status=args.status,
             title=args.title,
             priority=args.priority,
+            due_datetime=args.due_datetime,
+            timezone=args.timezone,
+            due_in_minutes=args.due_in_minutes,
+            due_in_hours=args.due_in_hours,
+            due_in_days=args.due_in_days,
         )
     elif args.command == "delete":
         task_id = args.id_pos or args.task_id
