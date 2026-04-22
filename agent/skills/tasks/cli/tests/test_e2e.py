@@ -259,6 +259,32 @@ class TestUpdateTask:
         r = tasks_cli(home, "update", added["id"], "--status", "invalid")
         assert r.returncode != 0
 
+    def test_update_due_in_hours(self, shared_env):
+        home, _, _ = shared_env
+        added = parse(tasks_cli(home, "add", "push me", "--due-in-hours", "1"))
+        assert added["due_date"] is not None
+        original_due = added["due_date"]
+        data = parse(tasks_cli(home, "update", added["id"], "--due-in-days", "7"))
+        assert data["due_date"] is not None
+        assert data["due_date"] != original_due
+
+    def test_update_due_datetime(self, shared_env):
+        home, _, _ = shared_env
+        added = parse(tasks_cli(home, "add", "specific time"))
+        data = parse(
+            tasks_cli(
+                home,
+                "update",
+                added["id"],
+                "--due-datetime",
+                "2030-01-15T12:00:00",
+                "--timezone",
+                "UTC",
+            )
+        )
+        assert data["due_date"] is not None
+        assert "2030-01-15" in data["due_date"]
+
 
 class TestDeleteTask:
     def test_delete(self, shared_env):
