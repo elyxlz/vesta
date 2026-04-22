@@ -84,7 +84,7 @@ const AGENT_ENTRYPOINT_STEPS: &[&str] = &[
     "git -C ~ config user.email \"$AGENT_NAME@vesta\"",
     "uv sync --frozen --project /root/agent",
     "test -L ~/.claude/skills || { mkdir -p ~/.claude && ln -sfn ../agent/skills ~/.claude/skills; }",
-    "git -C ~ rev-parse --verify \"$AGENT_NAME\" 2>/dev/null || git -C ~ checkout -b \"$AGENT_NAME\"",
+    "if ! git -C ~ rev-parse --verify \"$AGENT_NAME\" 2>/dev/null; then git -C ~ checkout -b \"$AGENT_NAME\" && (git -C ~ fetch origin \"$VESTA_UPSTREAM_REF\" && git -C ~ merge FETCH_HEAD --no-edit --allow-unrelated-histories || true); else git -C ~ checkout \"$AGENT_NAME\"; fi",
     "git -C ~ add agent/ .gitignore --ignore-errors && (git -C ~ diff --cached --quiet || git -C ~ commit -m \"vesta v$(grep '^version' /root/agent/pyproject.toml | head -1 | cut -d'\"' -f2)\")",
     "mount | grep -q '/root/agent/core ' && git -C ~ update-index --skip-worktree agent/core agent/pyproject.toml agent/uv.lock 2>/dev/null || true",
     "cd /root/agent && exec uv run --frozen python -m core.main",

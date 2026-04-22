@@ -23,19 +23,15 @@ Core code (`agent/core/`, `agent/pyproject.toml`, `agent/uv.lock`) is managed by
 
    First, check if the tree needs repair (existing agents may have stripped trees from before this fix):
    ```bash
+   git -C ~ fetch origin "$VESTA_UPSTREAM_REF"
    ROOT_ENTRIES=$(git -C ~ ls-tree --name-only HEAD 2>/dev/null | wc -l)
-   if [ "$ROOT_ENTRIES" -lt 5 ]; then
-     echo "Tree is stripped - restoring full upstream tree..."
-     git -C ~ fetch origin "$VESTA_UPSTREAM_REF"
-     # Restore non-agent files from upstream into the index (no disk writes)
-     git -C ~ ls-tree -r FETCH_HEAD | grep -v $'\tagent/' | grep -v $'\t\.gitignore$' | while IFS=$'\t' read mode_type_hash path; do
-       mode=$(echo "$mode_type_hash" | awk '{print $1}')
-       hash=$(echo "$mode_type_hash" | awk '{print $3}')
-       git -C ~ update-index --add --cacheinfo "$mode,$hash,$path"
-     done
-     # Restore upstream agent files missing from tree (core, uninstalled skills)
-     git -C ~ ls-tree -r FETCH_HEAD -- agent/ | while IFS=$'\t' read mode_type_hash path; do
-       git -C ~ ls-tree HEAD -- "$path" >/dev/null 2>&1 || {
+   UPSTREAM_ENTRIES=$(git -C ~ ls-tree --name-only FETCH_HEAD 2>/dev/null | wc -l)
+   MISSING_COUNT=$(git -C ~ diff FETCH_HEAD HEAD --name-status 2>/dev/null | grep -c '^D' || echo 0)
+   if [ "$ROOT_ENTRIES" -lt 5 ] || [ "$MISSING_COUNT" -gt 10 ]; then
+     echo "Tree needs repair ($ROOT_ENTRIES root entries, $MISSING_COUNT files stripped) - restoring full upstream tree..."
+     # Restore all files from upstream that are missing from our tree (no disk writes)
+     git -C ~ ls-tree -r FETCH_HEAD | while IFS=$'\t' read mode_type_hash path; do
+       [ -z "$(git -C ~ ls-tree HEAD -- "$path" 2>/dev/null)" ] && {
          mode=$(echo "$mode_type_hash" | awk '{print $1}')
          hash=$(echo "$mode_type_hash" | awk '{print $3}')
          git -C ~ update-index --add --cacheinfo "$mode,$hash,$path"
@@ -88,7 +84,7 @@ Core code (`agent/core/`, `agent/pyproject.toml`, `agent/uv.lock`) is managed by
      - rename or reorganize logic to avoid collisions
    - **Vestad-managed paths** (`core/`, `pyproject.toml`, `uv.lock`) are not automatic `--theirs` files. If local behavior matters, carry it forward into the merged version.
    - Only take one side wholesale when the other side is clearly obsolete, redundant, generated, or a strict subset.
-   - Do not stop at “conflict markers removed”. Re-read the merged file and verify both sides' behavior still exists.
+   - Do not stop at "conflict markers removed". Re-read the merged file and verify both sides' behavior still exists.
 
    After all conflicts are resolved: `git commit --no-edit`
 
