@@ -1,5 +1,8 @@
+use base64::Engine;
 use ring::hmac;
 use serde::{Deserialize, Serialize};
+
+const B64: base64::engine::GeneralPurpose = base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
 pub const ACCESS_TOKEN_TTL: u64 = 3600; // 1 hour
 pub const REFRESH_TOKEN_TTL: u64 = 7 * 86400; // 7 days
@@ -34,55 +37,11 @@ pub struct Claims {
 }
 
 fn b64url_encode(data: &[u8]) -> String {
-    let mut out = String::new();
-    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-    let mut i = 0;
-    while i < data.len() {
-        let b0 = data[i] as usize;
-        let b1 = if i + 1 < data.len() { data[i + 1] as usize } else { 0 };
-        let b2 = if i + 2 < data.len() { data[i + 2] as usize } else { 0 };
-        out.push(CHARS[b0 >> 2] as char);
-        out.push(CHARS[((b0 & 3) << 4) | (b1 >> 4)] as char);
-        if i + 1 < data.len() {
-            out.push(CHARS[((b1 & 0xf) << 2) | (b2 >> 6)] as char);
-        }
-        if i + 2 < data.len() {
-            out.push(CHARS[b2 & 0x3f] as char);
-        }
-        i += 3;
-    }
-    out
+    B64.encode(data)
 }
 
 fn b64url_decode(s: &str) -> Result<Vec<u8>, JwtError> {
-    let mut table = [255u8; 128];
-    for (i, &c) in b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_".iter().enumerate() {
-        table[c as usize] = i as u8;
-    }
-
-    let bytes: Vec<u8> = s.bytes().map(|b| {
-        if (b as usize) < 128 { table[b as usize] } else { 255 }
-    }).collect();
-
-    if bytes.contains(&255) {
-        return Err(JwtError::DecodeFailed);
-    }
-
-    let mut out = Vec::with_capacity(bytes.len() * 3 / 4);
-    let chunks = bytes.chunks(4);
-    for chunk in chunks {
-        let len = chunk.len();
-        if len >= 2 {
-            out.push((chunk[0] << 2) | (chunk[1] >> 4));
-        }
-        if len >= 3 {
-            out.push((chunk[1] << 4) | (chunk[2] >> 2));
-        }
-        if len >= 4 {
-            out.push((chunk[2] << 6) | chunk[3]);
-        }
-    }
-    Ok(out)
+    B64.decode(s).map_err(|_| JwtError::DecodeFailed)
 }
 
 const HEADER_B64: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"; // {"alg":"HS256","typ":"JWT"}
