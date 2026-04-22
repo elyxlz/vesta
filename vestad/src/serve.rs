@@ -916,6 +916,14 @@ fn all_registered_ports(registry: &HashMap<String, HashMap<String, ServiceEntry>
 }
 
 const SERVICE_PORT_ALLOC_RETRIES: usize = 5;
+const CACHED_PORT_CONNECT_TIMEOUT_MS: u64 = 200;
+
+fn no_free_ports_err() -> (StatusCode, Json<serde_json::Value>) {
+    err_response(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "no free ports available in range 49152-65535 — too many services registered, or all ports are in use",
+    )
+}
 
 /// Find a free port not used by any registered service or other process.
 /// Uses OS-assigned ports with retries to avoid races with other vestad instances.
@@ -932,6 +940,20 @@ fn allocate_service_port(registry: &HashMap<String, HashMap<String, ServiceEntry
     (SERVICE_PORT_MIN..=SERVICE_PORT_MAX).find(|p| {
         !used.contains(p) && std::net::TcpListener::bind(("127.0.0.1", *p)).is_ok()
     })
+}
+
+/// Check whether a cached service port can still be safely reused.
+/// Returns true if something is listening on the port (service alive) OR
+/// the port is free to bind (service not started yet but nothing blocks it).
+/// Returns false if the port is stuck in a zombie/TIME_WAIT state — a new
+/// process cannot bind to it and nothing is listening. See issue #371.
+async fn is_cached_port_reusable(port: u16) -> bool {
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    let timeout = std::time::Duration::from_millis(CACHED_PORT_CONNECT_TIMEOUT_MS);
+    if let Ok(Ok(_)) = tokio::time::timeout(timeout, tokio::net::TcpStream::connect(addr)).await {
+        return true;
+    }
+    tokio::net::TcpListener::bind(("127.0.0.1", port)).await.is_ok()
 }
 
 async fn register_service_handler(
@@ -959,12 +981,17 @@ async fn register_service_handler(
 
     let mut settings = state.settings.write().await;
 
-    // Reuse existing port if already registered, otherwise allocate a new one
-    let port = if let Some(existing) = settings.services.get(&name).and_then(|s| s.get(&service_name)) {
-        existing.port
-    } else {
-        allocate_service_port(&settings.services)
-            .ok_or_else(|| err_response(StatusCode::SERVICE_UNAVAILABLE, "no free ports available in range 49152-65535 — too many services registered, or all ports are in use"))?
+    // Reuse existing port if already registered AND the cached port is still
+    // reusable. A stuck cached port (zombie process, TIME_WAIT) would otherwise
+    // trap the service in a crash loop with no recovery from inside the container.
+    let cached_port = settings.services.get(&name).and_then(|s| s.get(&service_name)).map(|e| e.port);
+    let port = match cached_port {
+        Some(p) if is_cached_port_reusable(p).await => p,
+        Some(p) => {
+            tracing::warn!(agent = %name, service = %service_name, stale_port = p, "cached service port is stuck (connect+bind both failed), allocating a fresh one");
+            allocate_service_port(&settings.services).ok_or_else(no_free_ports_err)?
+        }
+        None => allocate_service_port(&settings.services).ok_or_else(no_free_ports_err)?,
     };
 
     let entry = ServiceEntry { port, public: body.public };
@@ -1722,5 +1749,25 @@ pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: S
     tokio::select! {
         r = http_handle => r.expect("http task panicked"),
         r = https_handle => r.expect("https task panicked"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_cached_port_reusable;
+
+    #[tokio::test]
+    async fn cached_port_is_reusable_when_free() {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        assert!(is_cached_port_reusable(port).await, "a free port must be reusable");
+    }
+
+    #[tokio::test]
+    async fn cached_port_is_reusable_when_listening() {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        assert!(is_cached_port_reusable(port).await, "a listening port must be reusable");
     }
 }
