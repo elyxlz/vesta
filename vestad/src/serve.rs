@@ -842,8 +842,7 @@ struct AgentBackupOverride {
 }
 
 fn settings_file() -> std::path::PathBuf {
-    let home = std::env::var("HOME").unwrap_or_default();
-    std::path::PathBuf::from(home).join(".config/vesta/vestad/settings.json")
+    crate::paths::config_dir_or_relative().join("settings.json")
 }
 
 fn load_settings() -> Settings {
@@ -1673,11 +1672,34 @@ fn spawn_update_check_task(state: SharedState) {
 
 // --- Server start ---
 
-#[allow(clippy::too_many_arguments)]
-pub async fn run_server(port: u16, http_listener: tokio::net::TcpListener, api_key: String, cert_pem: String, key_pem: String, tunnel_url: Option<String>, config_dir: std::path::PathBuf, docker: bollard::Docker, dev_mode: bool) {
+pub struct ServerConfig {
+    pub port: u16,
+    pub http_listener: tokio::net::TcpListener,
+    pub api_key: String,
+    pub cert_pem: String,
+    pub key_pem: String,
+    pub tunnel_url: Option<String>,
+    pub config_dir: std::path::PathBuf,
+    pub docker: bollard::Docker,
+    pub dev_mode: bool,
+}
+
+pub async fn run_server(cfg: ServerConfig) {
+    let ServerConfig {
+        port,
+        http_listener,
+        api_key,
+        cert_pem,
+        key_pem,
+        tunnel_url,
+        config_dir,
+        docker,
+        dev_mode,
+    } = cfg;
+    let agents_dir = config_dir.join("agents");
     let env_config = docker::AgentEnvConfig {
-        config_dir: config_dir.clone(),
-        agents_dir: config_dir.join("agents"),
+        config_dir,
+        agents_dir,
         vestad_port: port,
         vestad_tunnel: tunnel_url.clone(),
         upstream_ref: detect_upstream_ref(),

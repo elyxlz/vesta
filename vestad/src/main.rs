@@ -14,6 +14,7 @@ mod control_ws;
 mod migrations;
 mod docker;
 mod jwt;
+mod paths;
 mod self_update;
 mod serve;
 mod systemd;
@@ -156,8 +157,7 @@ fn resolve_port(explicit: Option<u16>, config: &std::path::Path) -> u16 {
 }
 
 fn config_dir() -> std::path::PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| die("HOME not set"));
-    std::path::PathBuf::from(home).join(".config/vesta/vestad")
+    paths::config_dir().unwrap_or_else(|| die("HOME not set"))
 }
 
 
@@ -284,7 +284,17 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool) {
             };
 
             let dev_mode = cfg!(debug_assertions) || std::env::var("VESTAD_DEV").is_ok();
-            serve::run_server(port, http_listener, api_key, cert_pem, key_pem, tunnel_url, config.clone(), docker.clone(), dev_mode).await;
+            serve::run_server(serve::ServerConfig {
+                port,
+                http_listener,
+                api_key,
+                cert_pem,
+                key_pem,
+                tunnel_url,
+                config_dir: config.clone(),
+                docker: docker.clone(),
+                dev_mode,
+            }).await;
 
             if let Some(mut child) = tunnel_child {
                 child.kill().await.ok();
