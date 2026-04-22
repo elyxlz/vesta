@@ -116,6 +116,18 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 		wac.logger.Warnf("Failed to store message: %v", err)
 	}
 
+	// If we receive a message from someone in a direct chat, it implies they
+	// saw the conversation, so upgrade any "sent" outgoing messages to
+	// "delivered". This prevents false-positive stale-message alerts for
+	// contacts who have delivery receipts turned off.
+	if !info.IsFromMe && isDirectChat && wac.store != nil {
+		if n, err := wac.store.UpgradeSentToDelivered(info.Chat.String(), info.Timestamp); err != nil {
+			wac.logger.Warnf("Failed to upgrade sent→delivered for %s: %v", info.Chat, err)
+		} else if n > 0 {
+			wac.logger.Infof("Upgraded %d sent→delivered for %s (contact replied)", n, info.Chat)
+		}
+	}
+
 	// Build notification context (shared by sync and async paths)
 	shouldNotify := wac.notificationsDir != "" && !info.IsFromMe && !wac.skipSenders[contactPhone]
 	var notifCtx NotifContext
