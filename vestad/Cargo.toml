@@ -46,6 +46,7 @@ flate2 = "1"
 tokio-util = { version = "0.7", features = ["io"] }
 rust-embed = { version = "8", features = ["compression", "include-exclude", "debug-embed"] }
 mime_guess = "2"
+base64 = "0.22"
 
 [dev-dependencies]
 tempfile = "3"

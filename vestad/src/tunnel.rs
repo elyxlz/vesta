@@ -222,7 +222,10 @@ pub fn setup_tunnel(config_dir: &Path, subdomain: &str) -> Result<TunnelConfig, 
 
     let create_url = format!("{}/accounts/{}/cfd_tunnel", CF_API_BASE, env.account_id);
     let tunnel_secret: String = (0..32).map(|_| format!("{:02x}", rand::random::<u8>())).collect();
-    let secret_b64 = base64_encode(&tunnel_secret);
+    let secret_b64 = {
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD.encode(tunnel_secret.as_bytes())
+    };
 
     let resp = cf_request("POST", &create_url, &env.api_token, Some(serde_json::json!({
         "name": tunnel_name,
@@ -443,16 +446,3 @@ mod tests {
     }
 }
 
-fn base64_encode(input: &str) -> String {
-    use std::io::Write;
-    let mut output = std::process::Command::new("base64")
-        .arg("-w0")
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .spawn()
-        .expect("base64 command not found");
-
-    output.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
-    let out = output.wait_with_output().unwrap();
-    String::from_utf8(out.stdout).unwrap().trim().to_string()
-}

@@ -4,8 +4,8 @@ use bollard::Docker;
 
 use crate::docker::{
     container_created, container_name, container_size_rw, container_status, create_container,
-    docker_cp_content, docker_root_dir, get_agent_name, image_exists, inspect_container,
-    list_images_by_reference, list_managed_containers, remove_container_force, remove_image,
+    docker_cp_content, docker_root_dir, image_exists, inspect_container,
+    list_images_by_reference, remove_container_force, remove_image,
     snapshot_container, start_container, stop_container_with_timeout, tag_image, validate_name,
     AgentEnvConfig, ContainerStatus, DockerError,
 };
@@ -547,12 +547,11 @@ pub async fn cleanup_backups(
 
 /// List all agent names that have containers.
 pub async fn list_agent_names(docker: &Docker) -> Vec<String> {
-    let containers = list_managed_containers(docker).await;
-    let mut names = Vec::with_capacity(containers.len());
-    for cname in &containers {
-        names.push(get_agent_name(docker, cname).await);
-    }
-    names
+    crate::docker::list_managed_agents(docker)
+        .await
+        .into_iter()
+        .map(|a| a.agent_name)
+        .collect()
 }
 
 #[cfg(test)]
