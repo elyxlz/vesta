@@ -196,6 +196,36 @@ fn read_server_info(config: &std::path::Path) -> (Option<String>, Option<String>
     (tunnel_url, local_url, api_key)
 }
 
+/// Bind the HTTP listener atomically inside the tokio runtime. If the HTTP port
+/// (N+1) is in use, re-select a new N via find_available_port and retry. This
+/// closes the TOCTOU race where find_available_port's probe was dropped before
+/// serve.rs bound the port, letting a parallel vestad steal it.
+async fn bind_http_atomically(
+    explicit: Option<u16>,
+    config: &std::path::Path,
+) -> (u16, tokio::net::TcpListener) {
+    const MAX_BIND_ATTEMPTS: u8 = 16;
+    let mut port = resolve_port(explicit, config);
+    for attempt in 0..MAX_BIND_ATTEMPTS {
+        let Some(http_port) = port.checked_add(1) else {
+            port = find_available_port().unwrap_or_else(|| die("no available port found"));
+            continue;
+        };
+        match tokio::net::TcpListener::bind(("127.0.0.1", http_port)).await {
+            Ok(listener) => return (port, listener),
+            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+                if attempt + 1 == MAX_BIND_ATTEMPTS {
+                    die(format!("http bind retries exhausted on port {}: {}", http_port, e));
+                }
+                tracing::warn!(port, http_port, "http port raced, reselecting");
+                port = find_available_port().unwrap_or_else(|| die("no available port found"));
+            }
+            Err(e) => die(format!("failed to bind http listener: {}", e)),
+        }
+    }
+    unreachable!()
+}
+
 fn run_server_foreground(port: Option<u16>, no_tunnel: bool) {
     let config = config_dir();
 
@@ -210,38 +240,37 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool) {
             .args(["-f", &format!("cloudflared.*{}", cf_config.display())])
             .output().ok();
     }
-    let port = resolve_port(port, &config);
-    serve::write_port_file(&config, port);
 
     let api_key = serve::ensure_api_key(&config);
     let (cert_pem, key_pem, _fingerprint) = serve::ensure_tls(&config);
-
-    let tunnel_url = if !no_tunnel {
-        match tunnel::ensure_tunnel(&config) {
-            Ok(tc) => Some(format!("https://{}", tc.hostname)),
-            Err(e) => {
-                tracing::warn!("tunnel setup failed: {e}, running without tunnel");
-                None
-            }
-        }
-    } else {
-        None
-    };
-
-    serve::update_agent_env_files(&config, port, tunnel_url.as_deref());
-
-    let local_url = format!("http://localhost:{}", port + 1);
-
-    let user = std::env::var("USER").or_else(|_| std::env::var("LOGNAME")).unwrap_or_else(|_| "unknown".into());
-    eprintln!();
-    eprintln!("  \x1b[1;35mvestad\x1b[0m v{} \x1b[2m(user: {}, port: {})\x1b[0m", env!("CARGO_PKG_VERSION"), user, port);
-    print_server_info(tunnel_url.as_deref(), &local_url, &api_key);
 
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .unwrap()
         .block_on(async {
+            let (port, http_listener) = bind_http_atomically(port, &config).await;
+            serve::write_port_file(&config, port);
+
+            let tunnel_url = if !no_tunnel {
+                match tunnel::ensure_tunnel(&config) {
+                    Ok(tc) => Some(format!("https://{}", tc.hostname)),
+                    Err(e) => {
+                        tracing::warn!("tunnel setup failed: {e}, running without tunnel");
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+
+            serve::update_agent_env_files(&config, port, tunnel_url.as_deref());
+            let local_url = format!("http://localhost:{}", port + 1);
+            let user = std::env::var("USER").or_else(|_| std::env::var("LOGNAME")).unwrap_or_else(|_| "unknown".into());
+            eprintln!();
+            eprintln!("  \x1b[1;35mvestad\x1b[0m v{} \x1b[2m(user: {}, port: {})\x1b[0m", env!("CARGO_PKG_VERSION"), user, port);
+            print_server_info(tunnel_url.as_deref(), &local_url, &api_key);
+
             let tunnel_child = if tunnel_url.is_some() {
                 match tunnel::start_tunnel(&config, port).await {
                     Ok((child, _url)) => Some(child),
@@ -255,7 +284,7 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool) {
             };
 
             let dev_mode = cfg!(debug_assertions) || std::env::var("VESTAD_DEV").is_ok();
-            serve::run_server(port, api_key, cert_pem, key_pem, tunnel_url, config.clone(), docker.clone(), dev_mode).await;
+            serve::run_server(port, http_listener, api_key, cert_pem, key_pem, tunnel_url, config.clone(), docker.clone(), dev_mode).await;
 
             if let Some(mut child) = tunnel_child {
                 child.kill().await.ok();

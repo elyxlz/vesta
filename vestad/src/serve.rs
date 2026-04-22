@@ -1674,7 +1674,7 @@ fn spawn_update_check_task(state: SharedState) {
 // --- Server start ---
 
 #[allow(clippy::too_many_arguments)]
-pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: String, tunnel_url: Option<String>, config_dir: std::path::PathBuf, docker: bollard::Docker, dev_mode: bool) {
+pub async fn run_server(port: u16, http_listener: tokio::net::TcpListener, api_key: String, cert_pem: String, key_pem: String, tunnel_url: Option<String>, config_dir: std::path::PathBuf, docker: bollard::Docker, dev_mode: bool) {
     let env_config = docker::AgentEnvConfig {
         config_dir: config_dir.clone(),
         agents_dir: config_dir.join("agents"),
@@ -1719,22 +1719,18 @@ pub async fn run_server(port: u16, api_key: String, cert_pem: String, key_pem: S
     .await
     .expect("failed to configure TLS");
 
-    // HTTPS on 0.0.0.0 for remote access
+    // HTTP listener was bound atomically in main.rs before the runtime entered
+    // the async block, closing the TOCTOU race on the HTTP port. HTTPS binds
+    // inside axum_server::bind_rustls below; its window is short and a loss is
+    // loud (the task panics) rather than silent.
     let https_addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
 
-    // HTTP on 127.0.0.1 for local access (avoids self-signed cert issues)
-    let http_port = port + 1;
-    let http_addr = std::net::SocketAddr::from(([127, 0, 0, 1], http_port));
-
     tracing::info!(port, "https listening on 0.0.0.0");
-    tracing::info!(http_port, "http listening on 127.0.0.1");
+    tracing::info!(http_port = port + 1, "http listening on 127.0.0.1");
 
     let http_app = app.clone();
     let http_handle = tokio::spawn(async move {
-        let listener = tokio::net::TcpListener::bind(http_addr)
-            .await
-            .expect("failed to bind http listener");
-        axum::serve(listener, http_app.into_make_service_with_connect_info::<std::net::SocketAddr>())
+        axum::serve(http_listener, http_app.into_make_service_with_connect_info::<std::net::SocketAddr>())
             .await
             .expect("http server failed");
     });
