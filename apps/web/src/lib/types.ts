@@ -24,11 +24,13 @@ export type AgentActivityState = "idle" | "thinking";
 
 export type OnboardingStep = "name" | "connect" | "creating" | "auth" | "done";
 
+export type InputMethod = "voice" | "typed";
+
 type BaseEvent = { ts?: string };
 
 export type VestaEvent =
   | (BaseEvent & { type: "status"; state: AgentActivityState })
-  | (BaseEvent & { type: "user"; text: string })
+  | (BaseEvent & { type: "user"; text: string; input_method?: InputMethod })
   | (BaseEvent & { type: "assistant"; text: string })
   | (BaseEvent & { type: "thinking"; text: string; signature: string })
   | (BaseEvent & { type: "chat"; text: string })

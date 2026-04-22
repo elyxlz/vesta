@@ -46,6 +46,7 @@ class ThinkingEvent(_BaseEvent):
 class UserEvent(_BaseEvent):
     type: tp.Literal["user"]
     text: str
+    input_method: tp.NotRequired[tp.Literal["voice", "typed"]]
 
 
 class ErrorEvent(_BaseEvent):

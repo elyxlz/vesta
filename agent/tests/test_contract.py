@@ -25,7 +25,7 @@ from core.events import (
 # The single source of truth: every event type and its required fields (excluding base `ts`)
 EVENT_SPEC: dict[str, set[str]] = {
     "status": {"state"},
-    "user": {"text"},
+    "user": {"text", "input_method"},
     "assistant": {"text"},
     "thinking": {"text", "signature"},
     "chat": {"text"},
