@@ -1,12 +1,12 @@
-use bollard::container::{
-    Config, CreateContainerOptions, ListContainersOptions,
-    RemoveContainerOptions, StartContainerOptions, StopContainerOptions, UploadToContainerOptions,
-};
-use bollard::image::{
-    BuildImageOptions, CreateImageOptions, ImportImageOptions,
-    ListImagesOptions, RemoveImageOptions, TagImageOptions,
+use bollard::models::ContainerCreateBody;
+use bollard::query_parameters::{
+    BuildImageOptions, CreateContainerOptions, CreateImageOptions, DownloadFromContainerOptions,
+    ImportImageOptions, InspectContainerOptions, ListContainersOptions, ListImagesOptions,
+    RemoveContainerOptions, RemoveImageOptions, RestartContainerOptions, StopContainerOptions,
+    TagImageOptions, UploadToContainerOptions,
 };
 use bollard::Docker;
+use bytes::Bytes;
 use futures_util::StreamExt;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -95,8 +95,8 @@ pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
     vec!["sh".into(), "-c".into(), script]
 }
 
-const CONTAINER_STOP_TIMEOUT_SECS: i64 = 10;
-const CONTAINER_RESTART_TIMEOUT_SECS: isize = 10;
+const CONTAINER_STOP_TIMEOUT_SECS: i32 = 10;
+const CONTAINER_RESTART_TIMEOUT_SECS: i32 = 10;
 const LOADED_IMAGE_PREFIX: &str = "Loaded image: ";
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -267,7 +267,7 @@ pub async fn upload_to_container(
             path: container_dir.to_string(),
             ..Default::default()
         }),
-        tar_data.into(),
+        bollard::body_full(Bytes::from(tar_data)),
     ).await?;
     Ok(())
 }
@@ -277,7 +277,7 @@ pub async fn download_from_container(
     cname: &str,
     container_path: &str,
 ) -> Option<String> {
-    let stream = docker.download_from_container(cname, Some(bollard::container::DownloadFromContainerOptions {
+    let stream = docker.download_from_container(cname, Some(DownloadFromContainerOptions {
         path: container_path.to_string(),
     }));
 
@@ -684,18 +684,18 @@ pub async fn resolve_image(docker: &Docker) -> Result<&'static str, DockerError>
     if let Ok(context) = find_dockerfile() {
         let tar_body = build_context_tar(&context)?;
         let opts = BuildImageOptions {
-            t: LOCAL_IMAGE_TAG,
-            dockerfile: DOCKERFILE_REL,
+            t: Some(LOCAL_IMAGE_TAG.to_string()),
+            dockerfile: DOCKERFILE_REL.to_string(),
             q: true,
             rm: true,
             ..Default::default()
         };
-        let mut stream = docker.build_image(opts, None, Some(tar_body));
+        let mut stream = docker.build_image(opts, None, Some(bollard::body_full(tar_body)));
         while let Some(msg) = stream.next().await {
             match msg {
                 Err(e) => return Err(DockerError::Failed(format!("image build failed: {e}"))),
                 Ok(info) => {
-                    if let Some(err) = info.error {
+                    if let Some(err) = info.error_detail.and_then(|d| d.message) {
                         return Err(DockerError::Failed(format!("image build failed: {err}")));
                     }
                 }
@@ -705,7 +705,7 @@ pub async fn resolve_image(docker: &Docker) -> Result<&'static str, DockerError>
         Ok(LOCAL_IMAGE_TAG)
     } else {
         let opts = CreateImageOptions {
-            from_image: VESTA_IMAGE,
+            from_image: Some(VESTA_IMAGE.to_string()),
             ..Default::default()
         };
         let mut stream = docker.create_image(Some(opts), None, None);
@@ -914,11 +914,11 @@ pub fn update_all_agent_env_files(agents_dir: &std::path::Path, vestad_port: u16
 
 pub async fn list_managed_containers(docker: &Docker) -> Vec<String> {
     let mut filters = HashMap::new();
-    filters.insert("label", vec!["vesta.managed=true"]);
+    filters.insert("label".to_string(), vec!["vesta.managed=true".to_string()]);
 
     let opts = ListContainersOptions {
         all: true,
-        filters,
+        filters: Some(filters),
         ..Default::default()
     };
 
@@ -983,17 +983,17 @@ async fn gpu_available(docker: &Docker) -> GpuStatus {
 
 // --- Container lifecycle helpers (used by backup.rs) ---
 
-pub async fn stop_container_with_timeout(docker: &Docker, cname: &str, timeout_secs: i64) -> Result<(), DockerError> {
-    docker.stop_container(cname, Some(StopContainerOptions { t: timeout_secs })).await?;
+pub async fn stop_container_with_timeout(docker: &Docker, cname: &str, timeout_secs: i32) -> Result<(), DockerError> {
+    docker.stop_container(cname, Some(StopContainerOptions { t: Some(timeout_secs), signal: None })).await?;
     Ok(())
 }
 
 pub async fn start_container(docker: &Docker, cname: &str) -> bool {
-    docker.start_container(cname, None::<StartContainerOptions<String>>).await.is_ok()
+    docker.start_container(cname, None).await.is_ok()
 }
 
 pub async fn tag_image(docker: &Docker, source: &str, repo: &str, tag: &str) -> Result<(), DockerError> {
-    docker.tag_image(source, Some(TagImageOptions { repo, tag })).await?;
+    docker.tag_image(source, Some(TagImageOptions { repo: Some(repo.to_string()), tag: Some(tag.to_string()) })).await?;
     Ok(())
 }
 
@@ -1059,7 +1059,7 @@ pub async fn import_image_gzip(docker: &Docker, input: &std::path::Path) -> Resu
     let file = tokio::fs::File::open(input).await
         .map_err(|e| DockerError::Failed(format!("failed to open input file: {e}")))?;
     let byte_stream = tokio_util::codec::FramedRead::new(file, tokio_util::codec::BytesCodec::new())
-        .filter_map(|r| async { r.ok().map(|b| b.freeze()) });
+        .filter_map(|r| async { r.ok().map(|b| Ok::<Bytes, std::io::Error>(b.freeze())) });
 
     let opts = ImportImageOptions { ..Default::default() };
     let mut stream = docker.import_image_stream(opts, byte_stream, None);
@@ -1085,9 +1085,9 @@ pub async fn image_exists(docker: &Docker, image: &str) -> bool {
 
 pub async fn list_images_by_reference(docker: &Docker, reference: &str) -> Vec<(String, u64)> {
     let mut filters = HashMap::new();
-    filters.insert("reference", vec![reference]);
+    filters.insert("reference".to_string(), vec![reference.to_string()]);
     let opts = ListImagesOptions {
-        filters,
+        filters: Some(filters),
         ..Default::default()
     };
     match docker.list_images(Some(opts)).await {
@@ -1111,7 +1111,7 @@ pub async fn docker_root_dir(docker: &Docker) -> String {
 }
 
 pub async fn container_size_rw(docker: &Docker, cname: &str) -> Option<u64> {
-    let info = docker.inspect_container(cname, Some(bollard::container::InspectContainerOptions { size: true })).await.ok()?;
+    let info = docker.inspect_container(cname, Some(InspectContainerOptions { size: true })).await.ok()?;
     info.size_rw.map(|s| s as u64)
 }
 
@@ -1121,7 +1121,7 @@ pub async fn container_created(docker: &Docker, cname: &str) -> Option<String> {
 }
 
 pub async fn remove_container_force(docker: &Docker, cname: &str) -> Result<(), DockerError> {
-    docker.remove_container(cname, Some(RemoveContainerOptions { force: true, ..Default::default() })).await?;
+    docker.remove_container(cname, Some(RemoveContainerOptions { force: true, v: false, link: false })).await?;
     Ok(())
 }
 
@@ -1240,7 +1240,7 @@ pub async fn create_container(docker: &Docker, cname: &str, image: &str, port: u
         ..Default::default()
     };
 
-    let config = Config {
+    let config = ContainerCreateBody {
         image: Some(image.to_string()),
         tty: Some(true),
         labels: Some(labels),
@@ -1251,7 +1251,7 @@ pub async fn create_container(docker: &Docker, cname: &str, image: &str, port: u
     };
 
     let create_opts = CreateContainerOptions {
-        name: cname,
+        name: Some(cname.to_string()),
         ..Default::default()
     };
 
@@ -1287,7 +1287,7 @@ pub async fn inject_credentials(docker: &Docker, container: &str, credentials: &
             path: "/root/.claude/".to_string(),
             ..Default::default()
         }),
-        tar_data.into(),
+        bollard::body_full(Bytes::from(tar_data)),
     ).await?;
 
     docker_cp_content(docker, container, "{\"hasCompletedOnboarding\":true}", CLAUDE_JSON_PATH).await?;
@@ -1555,7 +1555,7 @@ pub async fn stop_agent(docker: &Docker, name: &str) -> Result<(), DockerError> 
         ContainerStatus::Stopped => return Ok(()),
         ContainerStatus::Running => {}
     }
-    docker.stop_container(&cname, Some(StopContainerOptions { t: CONTAINER_STOP_TIMEOUT_SECS })).await?;
+    docker.stop_container(&cname, Some(StopContainerOptions { t: Some(CONTAINER_STOP_TIMEOUT_SECS), signal: None })).await?;
     Ok(())
 }
 
@@ -1563,7 +1563,7 @@ pub async fn restart_agent(docker: &Docker, name: &str) -> Result<(), DockerErro
     validate_name(name)?;
     let cname = container_name(name);
     ensure_exists(docker, &cname).await?;
-    docker.restart_container(&cname, Some(bollard::container::RestartContainerOptions { t: CONTAINER_RESTART_TIMEOUT_SECS })).await?;
+    docker.restart_container(&cname, Some(RestartContainerOptions { t: Some(CONTAINER_RESTART_TIMEOUT_SECS), signal: None })).await?;
     Ok(())
 }
 
@@ -1640,7 +1640,7 @@ pub async fn reconcile_containers(docker: &Docker, env_config: &AgentEnvConfig, 
         match container_status(docker, cname).await {
             ContainerStatus::Running => {
                 tracing::info!(agent = %name, "restarting");
-                docker.restart_container(cname, Some(bollard::container::RestartContainerOptions { t: CONTAINER_RESTART_TIMEOUT_SECS })).await.ok();
+                docker.restart_container(cname, Some(RestartContainerOptions { t: Some(CONTAINER_RESTART_TIMEOUT_SECS), signal: None })).await.ok();
             }
             ContainerStatus::Stopped if was_running.contains(&name) => {
                 tracing::info!(agent = %name, "starting after rebuild");
@@ -1678,7 +1678,7 @@ pub async fn destroy_agent(docker: &Docker, name: &str, agents_dir: &std::path::
     match cs {
         ContainerStatus::NotFound => return Err(DockerError::NotFound(format!("agent '{}' not found", name))),
         ContainerStatus::Dead => return Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name))),
-        ContainerStatus::Running => { docker.stop_container(&cname, Some(StopContainerOptions { t: CONTAINER_STOP_TIMEOUT_SECS })).await.ok(); }
+        ContainerStatus::Running => { docker.stop_container(&cname, Some(StopContainerOptions { t: Some(CONTAINER_STOP_TIMEOUT_SECS), signal: None })).await.ok(); }
         ContainerStatus::Stopped => {}
     }
     remove_container_force(docker, &cname).await?;
@@ -2172,7 +2172,7 @@ mod tests {
             ..Default::default()
         };
 
-        let config = bollard::container::Config {
+        let config = ContainerCreateBody {
             image: Some(VESTA_IMAGE.to_string()),
             tty: Some(true),
             labels: Some(labels),
@@ -2182,7 +2182,7 @@ mod tests {
         };
 
         docker.create_container(
-            Some(CreateContainerOptions { name: tc.name.as_str(), platform: None }),
+            Some(CreateContainerOptions { name: Some(tc.name.clone()), platform: String::new() }),
             config,
         ).await.expect("failed to create test container");
     }

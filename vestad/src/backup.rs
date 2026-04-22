@@ -17,7 +17,7 @@ pub const DEFAULT_RETENTION_WEEKLY: usize = 2;
 pub const DEFAULT_RETENTION_MONTHLY: usize = 1;
 const MIN_DISK_SPACE_BYTES: u64 = 1_000_000_000; // 1 GB
 const DISK_SPACE_MARGIN_BYTES: u64 = 500_000_000; // 500 MB margin above container size
-pub const BACKUP_STOP_TIMEOUT_SECS: i64 = 30;
+pub const BACKUP_STOP_TIMEOUT_SECS: i32 = 30;
 pub const MIN_AGE_FOR_BACKUP_SECS: u64 = 6 * 3600;
 
 /// Acquire an exclusive file lock for the given agent. The lock is held for the

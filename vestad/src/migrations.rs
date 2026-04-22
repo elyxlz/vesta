@@ -1,5 +1,6 @@
-use bollard::container::{Config, CreateContainerOptions, StartContainerOptions};
 use bollard::exec::{CreateExecOptions, StartExecResults};
+use bollard::models::ContainerCreateBody;
+use bollard::query_parameters::CreateContainerOptions;
 use bollard::Docker;
 use futures_util::StreamExt;
 use std::collections::HashMap;
@@ -179,7 +180,7 @@ async fn run_migration_script(
     labels.insert("vesta.managed".to_string(), "false".to_string());
     labels.insert("vesta.user".to_string(), "__internal__".to_string());
     labels.insert("vesta.agent_name".to_string(), "__normalize__".to_string());
-    let config = Config {
+    let config = ContainerCreateBody {
         image: Some(image.to_string()),
         cmd: Some(vec![
             "sleep".to_string(),
@@ -190,13 +191,13 @@ async fn run_migration_script(
         ..Default::default()
     };
     let create_opts = CreateContainerOptions {
-        name: helper_name,
+        name: Some(helper_name.to_string()),
         ..Default::default()
     };
 
     remove_container_force_if_exists(docker, helper_name).await;
     docker.create_container(Some(create_opts), config).await?;
-    docker.start_container(helper_name, None::<StartContainerOptions<String>>).await?;
+    docker.start_container(helper_name, None).await?;
 
     let result = exec_container_script(docker, helper_name, script).await;
     if let Err(err) = result {
