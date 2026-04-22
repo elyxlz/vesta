@@ -29,10 +29,7 @@
         "zoomHotkeysEnabled": false,
         "visible": true,
         "windowEffects": {
-          "effects": [
-            "fullScreenUI",
-            "mica"
-          ],
+          "effects": ["fullScreenUI", "mica"],
           "radius": 28,
           "state": "active"
         },
@@ -62,9 +59,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": [
-      "resources/*"
-    ],
+    "resources": ["resources/*"],
     "macOS": {
       "entitlements": null
     }

@@ -340,7 +340,9 @@ export class Transcriber {
         if (err.name === "NotFoundError")
           throw new Error("No microphone found", { cause: err });
         if (err.name === "NotReadableError")
-          throw new Error("Microphone is in use by another app", { cause: err });
+          throw new Error("Microphone is in use by another app", {
+            cause: err,
+          });
       }
       throw new Error("Could not access microphone", { cause: err });
     }
