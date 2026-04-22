@@ -8,7 +8,7 @@ import {
   type SttStatus,
   type TtsStatus,
 } from "@/lib/voice";
-import type { ServiceInfo } from "@/lib/types";
+import type { InputMethod, ServiceInfo } from "@/lib/types";
 
 interface VoiceState {
   // Agent context (set by VoiceStoreEffects)
@@ -37,7 +37,7 @@ interface VoiceState {
   speak: (text: string) => void;
   stopSpeech: () => void;
   registerChatCallbacks: (
-    send: (text: string) => void,
+    send: (text: string, inputMethod?: InputMethod) => void,
     draft: (text: string) => void,
   ) => void;
 
@@ -60,7 +60,8 @@ interface VoiceState {
 
 // Mutable refs outside React — safe because the store is a singleton
 let transcriber: Transcriber | null = null;
-let sendCallback: ((text: string) => void) | null = null;
+let sendCallback: ((text: string, inputMethod?: InputMethod) => void) | null =
+  null;
 let draftCallback: ((text: string) => void) | null = null;
 let ttsAbort: AbortController | null = null;
 let ttsQueue: string[] = [];
@@ -156,7 +157,7 @@ export const useVoice = create<VoiceState>((set, get) => {
           if (!get().voiceAutoSend) draftCallback?.(text);
         },
         onTurnEnd: (text) => {
-          if (get().voiceAutoSend) sendCallback?.(text);
+          if (get().voiceAutoSend) sendCallback?.(text, "voice");
           else draftCallback?.(text);
           set({ liveTranscript: "" });
         },

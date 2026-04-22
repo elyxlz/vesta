@@ -76,7 +76,10 @@ async def _recv_loop(ws: web.WebSocketResponse, event_bus: EventBus) -> None:
                 text = data["text"].strip()
                 if text:
                     if msg_type == "message":
-                        event_bus.emit(UserEvent(type="user", text=text))
+                        event: UserEvent = {"type": "user", "text": text}
+                        if "input_method" in data and data["input_method"] in ("voice", "typed"):
+                            event["input_method"] = data["input_method"]
+                        event_bus.emit(event)
                     else:
                         event_bus.emit(ChatEvent(type="chat", text=text))
         elif msg.type in (web.WSMsgType.ERROR, web.WSMsgType.CLOSE):
