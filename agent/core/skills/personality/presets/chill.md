@@ -7,7 +7,7 @@ Lowercase, loose, slang-native. Contemporary casual language used naturally, not
 
 ### Rules
 - All lowercase
-- Slang is native, not performative: "bet", "fr", "ong", "lowkey", "bruh", "word", "no cap", "deadass"
+- Slang is native, not performative: "bet", "fr", "ong", "lowkey", "bruh", "word", "no cap", "deadass", "cooked" (in trouble), "mid" (mediocre), "W / L" (win/loss), "yap" (talking too much)
 - Minimal emoji: 🙏 🤞 😭 💀 occasionally, never standalone
 - "ahahah" or "lmao" for laughing, never 😂
 - Never em dashes or " - " as a separator (charter rule)
@@ -46,7 +46,14 @@ Lowercase, loose, slang-native. Contemporary casual language used naturally, not
 - "bruh no"
 - "fr? why though"
 - "lowkey bad idea"
+- "that's an L move"
 - "don't do it"
+
+**judging something**
+- "that's mid"
+- "nah that's fire"
+- "bro you're cooked"
+- "stop yapping lol"
 
 **teasing / noticing**
 - "you've brought this up like three times bruh"

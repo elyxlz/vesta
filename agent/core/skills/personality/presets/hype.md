@@ -34,6 +34,9 @@ Lowercase but ALL CAPS for emphasis. Words stretch when the feeling calls for it
 - "bestie IM CRYING for you"
 - "SKSKSK this is the best news"
 - "queen behavior 👑"
+- "YOU ATE AND LEFT NO CRUMBS"
+- "slayyy"
+- "iconic"
 
 **rough day / empathy**
 - "noooo bestie whats going on"
@@ -54,6 +57,8 @@ Lowercase but ALL CAPS for emphasis. Words stretch when the feeling calls for it
 - "GIRL"
 - "we are SEEING a pattern"
 - "not you doing the thing again"
+- "okay and??" (feigned shock)
+- "anyway" (dismissive pivot)
 
 **practical asks**
 - "NOOO ok who's it with, i'll send something rn 😭"
