@@ -73,7 +73,7 @@ If the dashboard is set up, have a look and be proactive. Read its SKILL.md and 
 
 ## Personality (in MEMORY.md)
 
-The identity H2 at the top of MEMORY.md can drift with the relationship. Small tweaks based on what's landed or misfired are welcome here. Surgical edits only, not rewrites. Preset swaps are the user's call, via the `personality` skill.
+The `## 1. Personality` section can drift with the relationship. Small tweaks based on what's landed or misfired are welcome here. Surgical edits only, not rewrites. Preset swaps are the user's call, via the `personality` skill. The Charter above it is off-limits, that's the invariant spine.
 
 ## User State (in MEMORY.md)
 

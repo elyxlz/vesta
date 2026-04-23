@@ -6,23 +6,40 @@ import { FieldDescription } from "@/components/ui/field";
 // The list is intentionally static so onboarding works before the agent is reachable.
 const PERSONALITIES = [
   {
-    name: "default",
+    name: "dry",
     emoji: "😏",
-    title: "sardonic",
-    description: "sardonic best friend, dry humor, sharp-tongued",
+    title: "dry",
+    description: "lowercase, minimal, dry humor. the safe default.",
   },
   {
-    name: "girl-bff",
+    name: "classic",
+    emoji: "😂",
+    title: "classic",
+    description: "capital letters, full punctuation, 😂 reactions.",
+  },
+  {
+    name: "polished",
+    emoji: "🎩",
+    title: "polished",
+    description: "sentence case, precise. an aide, not a friend.",
+  },
+  {
+    name: "terse",
+    emoji: "⚪",
+    title: "terse",
+    description: "ultra-minimal. no humor, no emoji, pure utility.",
+  },
+  {
+    name: "chill",
+    emoji: "🤙",
+    title: "chill",
+    description: "lowercase, slangy, relaxed. bet, fr, ahahah.",
+  },
+  {
+    name: "hype",
     emoji: "💅",
-    title: "bff",
-    description:
-      "warm, validating, gossipy best friend energy. hypes you up and calls you out with love",
-  },
-  {
-    name: "boy-bff",
-    emoji: "🤜",
-    title: "bro",
-    description: "ride-or-die bro, loyal, dry humor, gives you hell with love",
+    title: "hype",
+    description: "lowercase + CAPS, stretched words, emoji-rich.",
   },
 ] as const;
 
@@ -31,18 +48,19 @@ export function PersonalityStep({
 }: {
   onPicked: (name: string) => void;
 }) {
-  const [selected, setSelected] = useState<string>("default");
+  const [selected, setSelected] = useState<string>("dry");
 
   return (
-    <div className="flex flex-col items-center gap-4 w-[480px] max-w-full px-4">
+    <div className="flex flex-col items-center gap-4 w-[560px] max-w-full px-4">
       <div className="flex flex-col items-center gap-1 text-center">
         <h2 className="text-base font-semibold">pick a vibe</h2>
         <FieldDescription>
-          you can change this later in settings.
+          starting point, not a commitment. ask your agent to change it anytime,
+          and it'll keep shifting as it gets to know you.
         </FieldDescription>
       </div>
 
-      <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-3">
+      <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
         {PERSONALITIES.map((p) => {
           const isSelected = selected === p.name;
           return (
