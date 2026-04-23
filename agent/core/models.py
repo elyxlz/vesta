@@ -16,6 +16,9 @@ __all__ = ["State", "Notification", "VestaConfig"]
 CLEAN_RESTART = "restart — clean restart"
 NIGHTLY_RESTART = "nightly — dreamer ran, session cleared for fresh context"
 CRASH_RESTART = "crash — restarted after unexpected exit"
+PROCESSOR_CANCELLED_RESTART = "crash — processor cancelled unexpectedly"
+PROCESSOR_SILENT_EXIT_RESTART = "crash — processor exited silently"
+PROCESSING_CANCELLED_ERROR = "error — processing cancelled"
 
 
 @dc.dataclass

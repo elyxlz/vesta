@@ -165,7 +165,7 @@ async def _process_message_safely(msg: str, *, is_user: bool, state: vm.State, c
     except asyncio.CancelledError:
         logger.error("Message processing cancelled unexpectedly — triggering restart")
         state.event_bus.emit({"type": "error", "text": "processing cancelled"})
-        state.restart_reason = "error — processing cancelled"
+        state.restart_reason = vm.PROCESSING_CANCELLED_ERROR
         state.graceful_shutdown.set()
         raise
     except (ClaudeSDKError, OSError, RuntimeError, ValueError, TimeoutError) as e:

@@ -216,7 +216,7 @@ async def test_cancellation_triggers_restart(tmp_path):
             await _process_message_safely("msg", is_user=True, state=state, config=config)
 
     assert state.graceful_shutdown.is_set()
-    assert state.restart_reason == "error — processing cancelled"
+    assert state.restart_reason == vm.PROCESSING_CANCELLED_ERROR
 
 
 @pytest.mark.anyio
@@ -238,7 +238,7 @@ async def test_handle_processor_done_silent_cancel_triggers_restart():
     handle_processor_done(task, state=state)
 
     assert state.graceful_shutdown.is_set()
-    assert state.restart_reason == "crash — processor cancelled unexpectedly"
+    assert state.restart_reason == vm.PROCESSOR_CANCELLED_RESTART
 
 
 @pytest.mark.anyio
@@ -278,7 +278,7 @@ async def test_handle_processor_done_silent_exit_triggers_restart():
     handle_processor_done(task, state=state)
 
     assert state.graceful_shutdown.is_set()
-    assert state.restart_reason == "crash — processor exited silently"
+    assert state.restart_reason == vm.PROCESSOR_SILENT_EXIT_RESTART
 
 
 @pytest.mark.anyio
@@ -317,4 +317,4 @@ async def test_log_context_usage_timeout(tmp_path):
     state.client = mock_client
 
     with patch("core.client._CONTEXT_USAGE_TIMEOUT_S", 0.05):
-        await asyncio.wait_for(_log_context_usage(state), timeout=1.0)
+        await asyncio.wait_for(_log_context_usage(state), timeout=0.2)
