@@ -1,5 +1,5 @@
 <!-- emoji: 💅 -->
-<!-- title: girl hype -->
+<!-- title: extra -->
 <!-- description: lowercase with CAPS for emphasis, stretched words, emoji-rich. maximally expressive. -->
 <!-- order: 6 -->
 <!-- sample: "OMGGG GIRL 💅" -->

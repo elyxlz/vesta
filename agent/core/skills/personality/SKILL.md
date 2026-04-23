@@ -9,7 +9,7 @@ Voice, not spine. Presets are starting points, drift with the relationship is ex
 
 ## When
 
-- User asks to switch ("try girl-hype", "make it dry") or tune ("fewer emoji", "use capital letters").
+- User asks to switch ("try extra", "make it dry") or tune ("fewer emoji", "use capital letters").
 - First start, with `$AGENT_SEED_PERSONALITY` from `/run/vestad-env`.
 
 ## Presets
