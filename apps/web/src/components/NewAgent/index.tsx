@@ -15,7 +15,7 @@ export function NewAgent() {
   const setStep = useOnboarding((s) => s.setStep);
   const [agentName, setAgentName] = useState("");
   const [authStart, setAuthStart] = useState<AuthStartResult | null>(null);
-  const [personality, setPersonality] = useState<string | null>(null);
+  const [seedPersonality, setSeedPersonality] = useState<string | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -24,11 +24,11 @@ export function NewAgent() {
   }, []);
 
   useEffect(() => {
-    if (step !== "creating" || !agentName || !personality) return;
+    if (step !== "creating" || !agentName || !seedPersonality) return;
     let cancelled = false;
     (async () => {
       try {
-        await createAgent(agentName, personality);
+        await createAgent(agentName, seedPersonality);
         const auth = await authenticate(agentName);
         if (cancelled) return;
         setAuthStart(auth);
@@ -44,14 +44,14 @@ export function NewAgent() {
     return () => {
       cancelled = true;
     };
-  }, [step, agentName, personality, setStep]);
+  }, [step, agentName, seedPersonality, setStep]);
 
   const content = (() => {
     if (step === "personality")
       return (
         <PersonalityStep
           onPicked={(name) => {
-            setPersonality(name);
+            setSeedPersonality(name);
             setStep("creating");
           }}
         />

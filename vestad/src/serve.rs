@@ -428,7 +428,7 @@ struct CreateBody {
     name: Option<String>,
     manage_agent_code: Option<bool>,
     timezone: Option<String>,
-    personality: Option<String>,
+    seed_personality: Option<String>,
 }
 
 async fn create_agent_handler(
@@ -452,7 +452,7 @@ async fn create_agent_handler(
     }
 
     let name =
-        docker::create_agent(&state.docker, &name, &state.env_config, manage_core_code, body.timezone.as_deref(), body.personality.as_deref())
+        docker::create_agent(&state.docker, &name, &state.env_config, manage_core_code, body.timezone.as_deref(), body.seed_personality.as_deref())
             .await
             .map_err(map_docker_err)?;
 

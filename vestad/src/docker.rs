@@ -837,7 +837,7 @@ pub fn write_agent_env_file(
     ws_port: u16,
     agent_token: &str,
     timezone: Option<&str>,
-    personality: Option<&str>,
+    seed_personality: Option<&str>,
 ) -> Result<std::path::PathBuf, DockerError> {
     std::fs::create_dir_all(&env_config.agents_dir)
         .map_err(|e| DockerError::Failed(format!("failed to create agents dir: {e}")))?;
@@ -858,7 +858,7 @@ pub fn write_agent_env_file(
     append_optional("VESTAD_TUNNEL", env_config.vestad_tunnel.as_deref());
     append_optional("VESTA_UPSTREAM_REF", env_config.upstream_ref.as_deref());
     append_optional("TZ", timezone);
-    append_optional("AGENT_SEED_PERSONALITY", Some(personality.unwrap_or("dry")));
+    append_optional("AGENT_SEED_PERSONALITY", Some(seed_personality.unwrap_or("dry")));
     std::fs::write(&env_path, &content)
         .map_err(|e| DockerError::Failed(format!("failed to write agent env file: {e}")))?;
     #[cfg(unix)]
@@ -1190,9 +1190,9 @@ pub async fn snapshot_container(_docker: &Docker, cname: &str, tag: &str, change
 // --- Container creation ---
 
 #[allow(clippy::too_many_arguments)]
-pub async fn create_container(docker: &Docker, cname: &str, image: &str, port: u16, agent_name: &str, env_config: &AgentEnvConfig, manage_core_code: bool, timezone: Option<&str>, personality: Option<&str>) -> Result<(), DockerError> {
+pub async fn create_container(docker: &Docker, cname: &str, image: &str, port: u16, agent_name: &str, env_config: &AgentEnvConfig, manage_core_code: bool, timezone: Option<&str>, seed_personality: Option<&str>) -> Result<(), DockerError> {
     let agent_token = generate_agent_token();
-    let env_path = write_agent_env_file(env_config, agent_name, port, &agent_token, timezone, personality)?;
+    let env_path = write_agent_env_file(env_config, agent_name, port, &agent_token, timezone, seed_personality)?;
     let env_mount = format!("{}:{}:ro,z", env_path.display(), MOUNT_DESTS[0]);
 
     let code_dir = crate::agent_code::agent_code_dir(&env_config.config_dir);
@@ -1474,7 +1474,7 @@ pub async fn list_agents(docker: &Docker, agents_dir: &std::path::Path) -> Vec<L
     entries
 }
 
-pub async fn create_agent(docker: &Docker, name: &str, env_config: &AgentEnvConfig, manage_core_code: bool, timezone: Option<&str>, personality: Option<&str>) -> Result<String, DockerError> {
+pub async fn create_agent(docker: &Docker, name: &str, env_config: &AgentEnvConfig, manage_core_code: bool, timezone: Option<&str>, seed_personality: Option<&str>) -> Result<String, DockerError> {
     let name = if name == "ignisinextinctus" { "vesta" } else { name };
     validate_name(name)?;
     if name != "vesta" && name.contains("vesta") {
@@ -1495,7 +1495,7 @@ pub async fn create_agent(docker: &Docker, name: &str, env_config: &AgentEnvConf
     }
 
     let port = allocate_port(&env_config.agents_dir)?;
-    create_container(docker, &cname, image, port, name, env_config, manage_core_code, timezone, personality).await?;
+    create_container(docker, &cname, image, port, name, env_config, manage_core_code, timezone, seed_personality).await?;
     Ok(name.to_string())
 }
 
