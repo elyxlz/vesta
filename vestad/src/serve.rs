@@ -344,6 +344,24 @@ async fn tunnel_handler(
     }
 }
 
+#[derive(Deserialize)]
+struct PresetFrontmatter {
+    #[serde(default)]
+    emoji: String,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    sample: String,
+    #[serde(default = "default_preset_order")]
+    order: u32,
+}
+
+fn default_preset_order() -> u32 {
+    u32::MAX
+}
+
 #[derive(Serialize)]
 struct Personality {
     name: String,
@@ -364,51 +382,20 @@ async fn list_personalities_handler() -> Json<Vec<Personality>> {
         let Some(file) = crate::agent_embed::AgentSource::get(&path) else { continue };
         let Ok(content) = std::str::from_utf8(&file.data) else { continue };
 
-        let mut emoji = String::new();
-        let mut title = name.replace('-', " ");
-        let mut description = String::new();
-        let mut sample = String::new();
-        let mut order = u32::MAX;
+        // Preset files open with a YAML frontmatter block delimited by `---`
+        let Some(rest) = content.strip_prefix("---\n") else { continue };
+        let Some((yaml, _body)) = rest.split_once("\n---") else { continue };
+        let Ok(meta) = serde_yaml::from_str::<PresetFrontmatter>(yaml) else { continue };
 
-        for line in content.lines() {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-            if !line.starts_with("<!--") {
-                break;
-            }
-            let Some(inner) = line
-                .strip_prefix("<!--")
-                .and_then(|s| s.strip_suffix("-->"))
-                .map(str::trim)
-            else {
-                continue;
-            };
-            let Some((key, val)) = inner.split_once(':') else { continue };
-            let key = key.trim();
-            let val = val.trim().trim_matches('"').to_string();
-            match key {
-                "emoji" => emoji = val,
-                "title" => title = val,
-                "description" => description = val,
-                "sample" => sample = val,
-                "order" => {
-                    if let Ok(n) = val.parse::<u32>() {
-                        order = n;
-                    }
-                }
-                _ => {}
-            }
-        }
+        let title = if meta.title.is_empty() { name.replace('-', " ") } else { meta.title };
 
         results.push(Personality {
             name: name.to_string(),
-            emoji,
+            emoji: meta.emoji,
             title,
-            description,
-            sample,
-            order,
+            description: meta.description,
+            sample: meta.sample,
+            order: meta.order,
         });
     }
 
