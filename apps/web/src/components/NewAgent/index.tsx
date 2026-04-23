@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { type AuthStartResult } from "@/api";
+import { createAgent, authenticate, type AuthStartResult } from "@/api";
 import { fadeSlide } from "@/lib/motion";
 import { useOnboarding } from "@/stores/use-onboarding";
 import { NameStep } from "./Steps/NameStep";
@@ -16,46 +16,70 @@ export function NewAgent() {
   const [agentName, setAgentName] = useState("");
   const [authStart, setAuthStart] = useState<AuthStartResult | null>(null);
   const [personality, setPersonality] = useState<string | null>(null);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   useEffect(() => {
     setStep("name");
     return () => setStep(null);
   }, []);
 
+  useEffect(() => {
+    if (step !== "creating" || !agentName || !personality) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        await createAgent(agentName, personality);
+        const auth = await authenticate(agentName);
+        if (cancelled) return;
+        setAuthStart(auth);
+        setStep("auth");
+      } catch (e) {
+        if (cancelled) return;
+        setCreateError(
+          (e as { message?: string })?.message || "creation failed",
+        );
+        setStep("name");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [step, agentName, personality, setStep]);
+
   const content = (() => {
+    if (step === "personality")
+      return (
+        <PersonalityStep
+          onPicked={(name) => {
+            setPersonality(name);
+            setStep("creating");
+          }}
+        />
+      );
     if (step === "creating") return <CreatingStep />;
     if (step === "auth" && authStart)
       return (
         <AuthStep
           agentName={agentName}
           authStart={authStart}
-          onDone={() => setStep("personality")}
-        />
-      );
-    if (step === "personality")
-      return (
-        <PersonalityStep
-          onPicked={(name) => {
-            setPersonality(name);
-            setStep("finalizing");
-          }}
+          onDone={() => setStep("finalizing")}
         />
       );
     if (step === "finalizing")
       return (
         <FinalizingStep
           agentName={agentName}
-          personality={personality}
           onDone={() => setStep("done")}
         />
       );
     if (step === "done") return <DoneStep agentName={agentName} />;
     return (
       <NameStep
-        onCreated={(name, auth) => {
+        initialError={createError}
+        onNamed={(name) => {
           setAgentName(name);
-          setAuthStart(auth);
-          setStep("auth");
+          setCreateError(null);
+          setStep("personality");
         }}
       />
     );

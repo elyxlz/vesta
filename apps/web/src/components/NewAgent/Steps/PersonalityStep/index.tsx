@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { FieldDescription } from "@/components/ui/field";
 
-// Keep in sync with agent/core/prompts/personalities/*.md.
+// Keep in sync with agent/core/skills/personality/presets/*.md.
 // The list is intentionally static so onboarding works before the agent is reachable.
 const PERSONALITIES = [
   {

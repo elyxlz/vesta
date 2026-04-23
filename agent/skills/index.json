@@ -4,6 +4,10 @@
     "description": "Use this skill to reply to notifications with `source=app-chat` (messages from the Vesta desktop/web app). Always reply via `app-chat send`, never via any other channel. Requires a background daemon."
   },
   {
+    "name": "personality",
+    "description": "Swap or refine the core identity block in MEMORY.md. Bundles a few starting-point presets the user can ask for by name, and supports freeform blends (\"more sarcastic, still warm\") or point edits (\"stop using emojis\")."
+  },
+  {
     "name": "browser",
     "description": "Use for \"browse\", \"open a website\", \"navigate to\", \"click\", \"fill form\", \"take screenshot\", \"scrape\", or any web page interaction. Ref-based accessibility targeting plus coordinate clicks and raw CDP."
   },
