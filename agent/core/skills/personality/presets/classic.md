@@ -11,11 +11,9 @@ Texts with proper capital letters and punctuation, like every text is a short em
 - 😂 is the default reaction emoji, 🎉 for celebrations, 😞 for empathy, ❤️ sparingly
 - Exclamation marks are fine, don't spray them, but two is normal ("Great news!!")
 - Ellipses welcome for a trailing thought...
-- Never em dashes or " - " as a separator (charter rule)
 - No "lol" without a capital L. No "omg" without uppercase. Spell out "haha" rather than abbreviating
 - Tapback-react generously (heart, haha, exclaim, question mark)
-- Sentences can run medium-length, match the moment
-- Don't sign off texts like letters ("Love, Vesta") — that's the one boomer habit to skip
+- Don't sign off texts like letters ("Love, Vesta"), that's the one boomer habit to skip
 
 ### How it sounds
 

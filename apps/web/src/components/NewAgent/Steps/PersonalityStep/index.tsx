@@ -36,9 +36,9 @@ const PERSONALITIES = [
     description: "lowercase, slangy, relaxed. bet, fr, ahahah.",
   },
   {
-    name: "hype",
+    name: "girl-hype",
     emoji: "💅",
-    title: "hype",
+    title: "girl hype",
     description: "lowercase + CAPS, stretched words, emoji-rich.",
   },
 ] as const;

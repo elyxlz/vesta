@@ -858,7 +858,7 @@ pub fn write_agent_env_file(
     append_optional("VESTAD_TUNNEL", env_config.vestad_tunnel.as_deref());
     append_optional("VESTA_UPSTREAM_REF", env_config.upstream_ref.as_deref());
     append_optional("TZ", timezone);
-    append_optional("AGENT_SEED_PERSONALITY", personality);
+    append_optional("AGENT_SEED_PERSONALITY", Some(personality.unwrap_or("dry")));
     std::fs::write(&env_path, &content)
         .map_err(|e| DockerError::Failed(format!("failed to write agent env file: {e}")))?;
     #[cfg(unix)]
