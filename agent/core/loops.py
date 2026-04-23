@@ -310,7 +310,9 @@ async def check_proactive_task(queue: asyncio.Queue[tuple[str, bool]], *, config
     prompt = load_prompt("proactive_check", config)
     if not prompt:
         return
-    logger.proactive(f"Running {config.proactive_check_interval}-minute check...")
+    pending = queue.qsize()
+    suffix = f" (queue={pending} pending — processor may be stuck)" if pending > 0 else ""
+    logger.proactive(f"Running {config.proactive_check_interval}-minute check...{suffix}")
     await queue.put((prompt, False))
 
 
