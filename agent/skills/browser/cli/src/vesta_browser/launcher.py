@@ -163,7 +163,9 @@ def is_cdp_reachable(port: int, timeout_s: float = 0.5) -> bool:
     try:
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=timeout_s) as r:
             return r.status == 200
-    except Exception:
+    except (TimeoutError, OSError):
+        # urllib raises URLError (OSError subclass) for refused/reset connections and
+        # socket.timeout (TimeoutError) on the deadline. Treat both as "not ready yet".
         return False
 
 
@@ -267,7 +269,7 @@ def launch(
     if proc.stderr:
         try:
             proc.stderr.close()
-        except Exception:
+        except OSError:
             pass
     try:
         proc.kill()

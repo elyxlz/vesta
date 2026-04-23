@@ -22,7 +22,7 @@ def _snapshot_banner(interactive_only: bool = False) -> str:
     """Take a snapshot and format it. Called after every mutating action."""
     try:
         snap = snapshot.snapshot(interactive_only=interactive_only, compact=False)
-    except Exception as e:
+    except (RuntimeError, OSError) as e:
         return f"(snapshot failed: {e})"
     header = f"# {snap['title'] or '(no title)'}\n# {snap['url']}\n# {snap['ref_count']} interactive refs"
     banner = helpers.recipe_banner(snap["url"])
@@ -185,13 +185,14 @@ def cmd_type(args: argparse.Namespace) -> int:
 
 def cmd_press(args: argparse.Namespace) -> int:
     admin.ensure_daemon()
+    key = args.key
     mods = [m.capitalize() for m in (args.modifiers or [])]
-    if "+" in args.key and not args.modifiers:
+    if "+" in key and not args.modifiers:
         # Accept "Control+a" shorthand.
-        pieces = args.key.split("+")
+        pieces = key.split("+")
         mods = [p.capitalize() for p in pieces[:-1]]
-        args.key = pieces[-1]
-    helpers.press_key(args.key, modifiers=mods or 0)
+        key = pieces[-1]
+    helpers.press_key(key, modifiers=mods or 0)
     helpers.wait(0.2)
     _print_snapshot()
     return 0
