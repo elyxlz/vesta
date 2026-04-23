@@ -1,7 +1,7 @@
 {
   "name": "@vesta/web",
   "private": true,
-  "version": "0.1.147",
+  "version": "0.1.148",
   "description": "Vesta web app (served by vestad at /app)",
   "license": "MIT",
   "repository": {
