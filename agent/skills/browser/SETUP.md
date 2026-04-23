@@ -59,9 +59,9 @@ browser connect http://<user-ip>:9222
 
 ## Environment variables
 
-- `BROWSER_SESSION` — namespaces socket / pid / port / refs. Default: `default`.
-- `VESTA_BROWSER_CDP_WS` — override the CDP websocket URL (for remote / connected browsers).
-- `VESTA_BROWSER_CDP_PORT` — override the local CDP port (auto-set by `browser launch`).
-- `VESTA_BROWSER_NO_STEALTH=1` — skip webdriver hide + UA scrub on attach.
-- `VESTA_BROWSER_NO_SANDBOX=1` — add `--no-sandbox` (useful in container, root-as-user).
-- `VESTA_BROWSER_EXECUTABLE` — path to a specific Chromium binary.
+- `BROWSER_SESSION`: namespaces socket, pid, port, and refs. Default: `default`.
+- `VESTA_BROWSER_CDP_WS`: override the CDP websocket URL (for remote or connected browsers).
+- `VESTA_BROWSER_CDP_PORT`: override the local CDP port (auto-set by `browser launch`).
+- `VESTA_BROWSER_NO_STEALTH=1`: skip webdriver hide and UA scrub on attach.
+- `VESTA_BROWSER_NO_SANDBOX=1`: add `--no-sandbox` (useful in container, root-as-user).
+- `VESTA_BROWSER_EXECUTABLE`: path to a specific Chromium binary.

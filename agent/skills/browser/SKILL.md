@@ -7,7 +7,7 @@ description: Use for "browse", "open a website", "navigate to", "click", "fill f
 
 Raw Chrome DevTools Protocol. Accessibility-tree snapshots with numbered refs (`e1`, `e2`)
 for the ergonomic path, and `click(x, y)` + screenshots for everything accessibility can't see.
-The helpers are Python, short, and agent-editable — when something is missing, write it.
+The helpers are Python, short, and agent-editable. When something is missing, write it.
 
 **Setup**: [SETUP.md](SETUP.md)
 
@@ -38,8 +38,8 @@ browser snapshot --interactive          # only interactive elements
 browser screenshot --path /tmp/s.png    # PNG of current viewport
 ```
 
-Every action command returns an updated snapshot. Use refs from the **most recent** snapshot only
-— a fresh snapshot invalidates older refs.
+Every action command returns an updated snapshot. Use refs from the **most recent** snapshot only;
+a fresh snapshot invalidates older refs.
 
 ### 2. Python stdin mode (programmatic, multi-step flows)
 
@@ -116,7 +116,7 @@ Drop to **`click(x, y)` / `browser click --at X Y`** when:
 - The accessibility tree is misleading or the element has no ARIA role
 - You're following a screenshot-based flow (read pixel, click pixel, re-screenshot to verify)
 
-`Input.dispatchMouseEvent` hit-tests in Chrome's browser process — the click lands at that point
+`Input.dispatchMouseEvent` hit-tests in Chrome's browser process; the click lands at that point
 regardless of DOM structure.
 
 ## When you need something new
@@ -135,25 +135,29 @@ PY
 
 ## Contribute back what you learn
 
-**If you figured out something non-obvious about a site or mechanic, file a skill before you
-finish.** The agent loop on a site gets better only because past agents wrote down what they
-learned. Use the existing `upstream-pr` skill.
+**If you figured out something non-obvious about a site or mechanic, or wrote a helper that's
+broadly useful, contribute it upstream before you finish.** The agent loop on a site gets
+better only because past agents wrote down what they learned. Use the existing `upstream-pr`
+skill.
 
-What's worth a PR:
-- A private API (XHR/fetch endpoint + payload shape) that beats DOM scraping
-- A stable selector, or the obfuscated one to avoid
-- A framework quirk (React combobox that only commits on Escape, Vue scroll container, etc.)
-- A URL pattern / required query param / direct route that skips a loader
-- A wait that `wait_for_load()` misses, with the reason
-- A trap: stale IDs, unicode quirks, beforeunload, CAPTCHA surfaces
+Three kinds of upstreamable work, in order of frequency:
 
-What *not* to put in a skill file:
+1. **Domain skill** under `domain-skills/<host>/<topic>.md`. Private APIs, stable selectors,
+   framework quirks, URL patterns, waits, traps. See the pattern in existing skill files.
+2. **Interaction skill** under `interaction-skills/<mechanic>.md`. Reusable mechanics (new
+   dialog pattern, a shadow-DOM trick, an upload variant).
+3. **New helper in `helpers.py`** when the primitive is broadly useful (a new CDP wrapper,
+   a smarter `wait_for_X`, a hardened `http_get` header handler). Filter: would every other
+   Vesta benefit, or is this a personal quirk? Upstream if generic. Keep it local if
+   site-specific or user-specific (put it in a `domain-skills/` recipe instead).
+
+What *not* to put anywhere shared:
 - Pixel coordinates (break on viewport/zoom). Describe how to locate the target.
 - Narration of the specific task you just did.
-- Secrets, cookies, session tokens.
+- Secrets, cookies, session tokens, personal credentials.
 
-Write skills under `domain-skills/<host>/<topic>.md` or `interaction-skills/<mechanic>.md`, then
-use the `upstream-pr` skill to submit a PR.
+Flow: edit the file locally (it takes effect immediately thanks to `uv tool install --editable`),
+verify it works, then use the `upstream-pr` skill to open a PR to `elyxlz/vesta`.
 
 ## Multi-session (parallel sub-agents)
 
@@ -171,7 +175,7 @@ BROWSER_SESSION=agent-2 browser open "https://b.com"
 Each session state lives under `/tmp/vesta-browser-<name>.*` (socket, pid, cdp-port, log,
 refs cache). `browser stop` cleans its own; `browser stop-all` nukes everything.
 
-Memory warning: each Chrome uses 200–400 MB. Running 3+ concurrently on a memory-constrained
+Memory warning: each Chrome uses 200 to 400 MB. Running 3+ concurrently on a memory-constrained
 host can OOM. Prefer sequential for wide-scrape tasks.
 
 ## Stealth
