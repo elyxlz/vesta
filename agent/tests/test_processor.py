@@ -193,3 +193,128 @@ async def test_process_message_no_correction_on_empty_response(tmp_path):
         await process_message("hello", state=state, config=config, is_user=True)
 
     assert len(converse_calls) == 1
+
+
+@pytest.mark.anyio
+async def test_cancellation_triggers_restart(tmp_path):
+    """If process_message raises CancelledError, restart_reason + graceful_shutdown must be set.
+
+    Regression test for a silent-death bug: CancelledError used to propagate uncaught through
+    _process_message_safely, bypassing the restart trigger and leaving the agent wedged until
+    backup SIGTERM hours later.
+    """
+    from core.loops import _process_message_safely
+
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    state = vm.State()
+
+    async def cancel_side_effect(msg, *, state, config, is_user):
+        raise asyncio.CancelledError
+
+    with patch("core.loops.process_message", side_effect=cancel_side_effect):
+        with pytest.raises(asyncio.CancelledError):
+            await _process_message_safely("msg", is_user=True, state=state, config=config)
+
+    assert state.graceful_shutdown.is_set()
+    assert state.restart_reason == "error — processing cancelled"
+
+
+@pytest.mark.anyio
+async def test_handle_processor_done_silent_cancel_triggers_restart():
+    """Regression: a cancelled processor task used to return silently, leaving the agent wedged.
+    Now it must log + set restart_reason + set graceful_shutdown."""
+    from core.main import handle_processor_done
+
+    state = vm.State()
+
+    async def cancellable():
+        await asyncio.sleep(10)
+
+    task = asyncio.create_task(cancellable())
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+    handle_processor_done(task, state=state)
+
+    assert state.graceful_shutdown.is_set()
+    assert state.restart_reason == "crash — processor cancelled unexpectedly"
+
+
+@pytest.mark.anyio
+async def test_handle_processor_done_exception_triggers_restart():
+    """A crashed processor task should log the exception and set restart_reason."""
+    from core.main import handle_processor_done
+
+    state = vm.State()
+
+    async def crasher():
+        raise RuntimeError("simulated crash")
+
+    task = asyncio.create_task(crasher())
+    with contextlib.suppress(RuntimeError):
+        await task
+
+    handle_processor_done(task, state=state)
+
+    assert state.graceful_shutdown.is_set()
+    assert state.restart_reason is not None
+    assert "RuntimeError" in state.restart_reason
+
+
+@pytest.mark.anyio
+async def test_handle_processor_done_silent_exit_triggers_restart():
+    """A processor task that returns without error or cancellation should still trigger restart."""
+    from core.main import handle_processor_done
+
+    state = vm.State()
+
+    async def silent():
+        return None
+
+    task = asyncio.create_task(silent())
+    await task
+
+    handle_processor_done(task, state=state)
+
+    assert state.graceful_shutdown.is_set()
+    assert state.restart_reason == "crash — processor exited silently"
+
+
+@pytest.mark.anyio
+async def test_handle_processor_done_noop_during_shutdown():
+    """If shutdown was already initiated, the callback must not override the restart_reason."""
+    from core.main import handle_processor_done
+
+    state = vm.State()
+    state.graceful_shutdown.set()
+    state.restart_reason = "nightly — dreamer ran, session cleared for fresh context"
+
+    async def silent():
+        return None
+
+    task = asyncio.create_task(silent())
+    await task
+
+    handle_processor_done(task, state=state)
+
+    assert state.restart_reason == "nightly — dreamer ran, session cleared for fresh context"
+
+
+@pytest.mark.anyio
+async def test_log_context_usage_timeout(tmp_path):
+    """If get_context_usage hangs, _log_context_usage must time out and not raise."""
+    from core.client import _log_context_usage
+
+    state = vm.State()
+    mock_client = MagicMock()
+
+    async def hang_forever():
+        await asyncio.sleep(10)
+        return {"percentage": 0, "totalTokens": 0, "maxTokens": 0}
+
+    mock_client.get_context_usage = hang_forever
+    state.client = mock_client
+
+    with patch("core.client._CONTEXT_USAGE_TIMEOUT_S", 0.05):
+        await asyncio.wait_for(_log_context_usage(state), timeout=1.0)

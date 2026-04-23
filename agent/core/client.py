@@ -488,16 +488,21 @@ def _contains_dashes(texts: list[str]) -> bool:
     return any(_EM_DASH in t or _EN_DASH in t or " - " in t for t in texts)
 
 
+_CONTEXT_USAGE_TIMEOUT_S = 10.0
+
+
 async def _log_context_usage(state: vm.State) -> None:
     if not state.client:
         return
     try:
-        usage = await state.client.get_context_usage()
+        usage = await asyncio.wait_for(state.client.get_context_usage(), timeout=_CONTEXT_USAGE_TIMEOUT_S)
         pct = usage["percentage"]
         total = usage["totalTokens"]
         max_tok = usage["maxTokens"]
         log_fn = logger.warning if pct > 80 else logger.usage
         log_fn(f"Context: {pct:.0f}% ({total:,}/{max_tok:,} tokens)")
+    except TimeoutError:
+        logger.warning(f"get_context_usage hung for {_CONTEXT_USAGE_TIMEOUT_S}s — skipping")
     except (OSError, RuntimeError, KeyError, TypeError):
         pass
 
