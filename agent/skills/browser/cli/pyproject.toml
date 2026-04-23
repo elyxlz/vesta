@@ -1,0 +1,29 @@
+[project]
+name = "vesta-browser"
+version = "0.1.0"
+description = "Self-healing browser harness for Vesta agents. Raw CDP, per-session daemon, agent-editable helpers."
+readme = {text = "", content-type = "text/plain"}
+authors = [
+    { name = "elyxlz" },
+]
+license = { text = "MIT" }
+requires-python = ">=3.11"
+dependencies = [
+    "cdp-use==1.4.5",
+    "websockets>=15",
+]
+
+[project.scripts]
+browser = "vesta_browser.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vesta_browser"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

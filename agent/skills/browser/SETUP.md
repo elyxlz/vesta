@@ -1,82 +1,67 @@
 # Browser Setup
 
-## Install Dependencies
+The Vesta Docker image installs the browser CLI and Chromium at build time. These are the steps
+the Dockerfile runs; follow them manually only if you're setting up outside the container.
+
+## Install
 
 ```bash
-# 1. Node.js (if not installed)
-curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y nodejs
+# 1. Chromium binary (via playwright-core's installer)
+npx -y playwright-core install --with-deps chromium
 
-# 2. Xvfb for stealth mode (virtual display)
-apt-get install -y xvfb
+# 2. The browser CLI, installed editable so agent edits to helpers.py take effect immediately
+uv tool install --editable ~/agent/skills/browser/cli
 
-# 3. Build and install the browser CLI
-cd ~/agent/skills/browser/cli && npm install && npm run build && npm install -g .
-
-# 4. Install Chromium (matched to playwright-core version)
-npx playwright-core install --with-deps chromium
+# Verify
+command -v browser
+browser --help
 ```
 
-## Stealth Mode (Bypass Bot Detection)
+`uv tool install --editable` links the CLI script to the source checkout. When the agent edits
+`~/agent/skills/browser/cli/src/vesta_browser/helpers.py` the next `browser` call picks up the
+change without reinstalling.
 
-Many sites (Cloudflare, etc.) detect and block automated browsers. The browser CLI has
-built-in stealth but **headless mode still gets caught**. For maximum stealth:
+## Xvfb for stealth mode
 
-### Xvfb (Virtual Display)
-
-Xvfb lets you run a headed browser without a physical screen. Sites see a normal browser
-window, not headless automation.
+Headless Chrome still leaks automation signals even with the full stealth arg set. For sites
+with aggressive bot detection, run headed on a virtual display:
 
 ```bash
-# Install Xvfb (first time only)
-apt-get install -y xvfb
-
-# Start virtual display (once per session, before launching browser)
+apt-get install -y xvfb                                  # one-time
 screen -dmS xvfb Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp
+DISPLAY=:99 browser launch --stealth
 ```
 
-### What Stealth Does Under the Hood
+Add the Xvfb start line to `~/agent/prompts/restart.md` so it comes back up on container restart.
 
-The browser CLI applies multiple layers automatically:
+## Remote assist (user takeover)
 
-1. **`navigator.webdriver` hidden**: injected via `addInitScript` on every page, so
-   `navigator.webdriver` returns `undefined` instead of `true`
-2. **`--disable-blink-features=AutomationControlled`**: Chrome flag that removes the
-   `AutomationControlled` feature, preventing sites from detecting Chromium automation
-3. **Headed via Xvfb**: runs a real browser window on a virtual display, avoiding all
-   the fingerprinting differences between headless and headed Chrome (screen dimensions,
-   WebGL renderer, missing plugins, etc.)
-
-## Remote Assist Setup (noVNC)
-
-When the automated browser gets stuck on CAPTCHAs, sign-in blocks, or fingerprint detection,
-you can hand control to the user via noVNC. They get a link, interact with the browser from
-their phone/laptop, and you take back over. This is the preferred approach when vesta runs on
-the same network as the user.
+Install these when a site defeats stealth and you need the user to log in via noVNC:
 
 ```bash
-# Install noVNC dependencies (first time only)
-apt-get install -y novnc x11vnc scrot
+apt-get install -y novnc x11vnc openbox xdotool scrot
 ```
 
-See the "Remote Assist" section in SKILL.md for the full flow.
+See SKILL.md § "VNC takeover" for the flow.
 
-## Troubleshooting: Remote Control (Alternative)
+## Connecting to the user's real browser
 
-If noVNC isn't suitable (e.g. vesta is on a remote server, not the user's LAN), you can
-connect to the user's own browser remotely instead:
+When Vesta runs on the same LAN as the user and you need *their* session cookies, have them
+start Chrome with remote debugging and `browser connect`:
 
-1. Ask the user to open their browser with remote debugging:
-   - **Brave**: `brave --remote-debugging-port=9222`
-   - **Chrome**: `google-chrome --remote-debugging-port=9222`
-   - **Edge**: `microsoft-edge --remote-debugging-port=9222`
-   - Or add `--remote-debugging-port=9222` to their browser shortcut for always-on access
-2. Ask the user for their machine's IP address (or `localhost` if Vesta runs on the same machine)
-3. Connect: `browser connect http://<ip>:9222`
-4. Now you control their actual browser, with all their cookies, logins, and extensions
+```bash
+# User side (on their machine):
+google-chrome --remote-debugging-port=9222
 
-## Restart
-
-Add to `~/agent/prompts/restart.md`:
+# Vesta side:
+browser connect http://<user-ip>:9222
 ```
-screen -dmS xvfb Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp
-```
+
+## Environment variables
+
+- `BROWSER_SESSION` — namespaces socket / pid / port / refs. Default: `default`.
+- `VESTA_BROWSER_CDP_WS` — override the CDP websocket URL (for remote / connected browsers).
+- `VESTA_BROWSER_CDP_PORT` — override the local CDP port (auto-set by `browser launch`).
+- `VESTA_BROWSER_NO_STEALTH=1` — skip webdriver hide + UA scrub on attach.
+- `VESTA_BROWSER_NO_SANDBOX=1` — add `--no-sandbox` (useful in container, root-as-user).
+- `VESTA_BROWSER_EXECUTABLE` — path to a specific Chromium binary.
