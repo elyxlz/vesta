@@ -10,7 +10,7 @@ requires-python = ">=3.12"
 dependencies = [
     "aioconsole>=0.8.2",
     "aiohttp>=3.13.5",
-    "claude-agent-sdk>=0.1.63",
+    "claude-agent-sdk>=0.1.65",
     "pydantic>=2.13.2",
     "pydantic-settings>=2.14.0",
     "rich>=15.0.0",
