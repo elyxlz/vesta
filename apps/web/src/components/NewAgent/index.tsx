@@ -67,10 +67,7 @@ export function NewAgent() {
       );
     if (step === "finalizing")
       return (
-        <FinalizingStep
-          agentName={agentName}
-          onDone={() => setStep("done")}
-        />
+        <FinalizingStep agentName={agentName} onDone={() => setStep("done")} />
       );
     if (step === "done") return <DoneStep agentName={agentName} />;
     return (
