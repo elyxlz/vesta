@@ -850,18 +850,15 @@ pub fn write_agent_env_file(
          export VESTAD_PORT={}\n",
         env_config.vestad_port,
     );
-    if let Some(url) = &env_config.vestad_tunnel {
-        content.push_str(&format!("export VESTAD_TUNNEL={url}\n"));
-    }
-    if let Some(upstream) = &env_config.upstream_ref {
-        content.push_str(&format!("export VESTA_UPSTREAM_REF={upstream}\n"));
-    }
-    if let Some(tz) = timezone {
-        content.push_str(&format!("export TZ={tz}\n"));
-    }
-    if let Some(preset) = personality {
-        content.push_str(&format!("export AGENT_PERSONALITY={preset}\n"));
-    }
+    let mut append_optional = |key: &str, value: Option<&str>| {
+        if let Some(v) = value {
+            content.push_str(&format!("export {key}={v}\n"));
+        }
+    };
+    append_optional("VESTAD_TUNNEL", env_config.vestad_tunnel.as_deref());
+    append_optional("VESTA_UPSTREAM_REF", env_config.upstream_ref.as_deref());
+    append_optional("TZ", timezone);
+    append_optional("AGENT_PERSONALITY", personality);
     std::fs::write(&env_path, &content)
         .map_err(|e| DockerError::Failed(format!("failed to write agent env file: {e}")))?;
     #[cfg(unix)]

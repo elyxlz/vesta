@@ -5,7 +5,7 @@ description: Swap or refine the core identity block in MEMORY.md. Bundles a few 
 
 # Personality
 
-The agent's personality lives in the first H2 of `~/agent/MEMORY.md` (the `## 1. CORE IDENTITY & PERSONALITY` section). It's part of the system prompt on every turn. Presets are starting points, not fixed states. It's fine, and expected, for the personality to drift with the relationship.
+The agent's personality lives in the identity H2 at the top of `~/agent/MEMORY.md` (the first H2 whose title mentions personality or identity). It's part of the system prompt on every turn. Presets are starting points, not fixed states. It's fine, and expected, for the personality to drift with the relationship.
 
 ## When to use this skill
 
@@ -26,7 +26,7 @@ Currently shipped: `default`, `girl-bff`, `boy-bff`. List them with `ls ~/agent/
 1. `Read` the preset file.
 2. Skip the leading `<!-- key: value -->` lines and any blank lines.
 3. Substitute every `[agent_name]` with the actual agent name.
-4. `Edit` `~/agent/MEMORY.md`: replace the body under `## 1. CORE IDENTITY & PERSONALITY` (everything between that header and the next `## ` header) with the substituted preset body. Leave the H2 header itself intact. Leave everything outside that section alone.
+4. `Edit` `~/agent/MEMORY.md`: replace the body under the identity H2 (everything between that header and the next `## ` header) with the substituted preset body. Leave the H2 header itself intact. Leave everything outside that section alone.
 5. Confirm the change in one short message.
 
 ## Freeform tweaks
