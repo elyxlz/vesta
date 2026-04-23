@@ -344,6 +344,65 @@ async fn tunnel_handler(
     }
 }
 
+#[derive(Deserialize)]
+struct PresetFrontmatter {
+    #[serde(default)]
+    emoji: String,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    sample: String,
+    #[serde(default = "default_preset_order")]
+    order: u32,
+}
+
+fn default_preset_order() -> u32 {
+    u32::MAX
+}
+
+#[derive(Serialize)]
+struct Personality {
+    name: String,
+    emoji: String,
+    title: String,
+    description: String,
+    sample: String,
+    order: u32,
+}
+
+async fn list_personalities_handler() -> Json<Vec<Personality>> {
+    const PREFIX: &str = "core/skills/personality/presets/";
+    let mut results: Vec<Personality> = Vec::new();
+
+    for path in crate::agent_embed::AgentSource::iter() {
+        let Some(rest) = path.strip_prefix(PREFIX) else { continue };
+        let Some(name) = rest.strip_suffix(".md") else { continue };
+        let Some(file) = crate::agent_embed::AgentSource::get(&path) else { continue };
+        let Ok(content) = std::str::from_utf8(&file.data) else { continue };
+
+        // Preset files open with a YAML frontmatter block delimited by `---`
+        let Some(rest) = content.strip_prefix("---\n") else { continue };
+        let Some((yaml, _body)) = rest.split_once("\n---") else { continue };
+        let Ok(meta) = serde_yaml::from_str::<PresetFrontmatter>(yaml) else { continue };
+
+        let title = if meta.title.is_empty() { name.replace('-', " ") } else { meta.title };
+
+        results.push(Personality {
+            name: name.to_string(),
+            emoji: meta.emoji,
+            title,
+            description: meta.description,
+            sample: meta.sample,
+            order: meta.order,
+        });
+    }
+
+    results.sort_by(|a, b| a.order.cmp(&b.order).then_with(|| a.name.cmp(&b.name)));
+    Json(results)
+}
+
 async fn list_agents_handler(
     State(state): State<SharedState>,
 ) -> impl IntoResponse {
@@ -356,6 +415,7 @@ struct CreateBody {
     name: Option<String>,
     manage_agent_code: Option<bool>,
     timezone: Option<String>,
+    seed_personality: Option<String>,
 }
 
 async fn create_agent_handler(
@@ -379,7 +439,7 @@ async fn create_agent_handler(
     }
 
     let name =
-        docker::create_agent(&state.docker, &name, &state.env_config, manage_core_code, body.timezone.as_deref())
+        docker::create_agent(&state.docker, &name, &state.env_config, manage_core_code, body.timezone.as_deref(), body.seed_personality.as_deref())
             .await
             .map_err(map_docker_err)?;
 
@@ -1427,6 +1487,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/gateway/restart", post(restart_gateway_handler))
         .route("/gateway/logs", get(gateway_logs_handler))
         .route("/tunnel", get(tunnel_handler))
+        .route("/personalities", get(list_personalities_handler))
         .route("/agents", get(list_agents_handler))
         .route("/agents", post(create_agent_handler))
         .route("/agents/start", post(start_all_handler))

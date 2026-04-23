@@ -1,11 +1,18 @@
 import { apiJson } from "./client";
 
-export async function createAgent(name: string): Promise<void> {
+export async function createAgent(
+  name: string,
+  seedPersonality?: string,
+): Promise<void> {
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   await apiJson("/agents", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, timezone }),
+    body: JSON.stringify({
+      name,
+      timezone,
+      seed_personality: seedPersonality,
+    }),
   });
 }
 

@@ -1,7 +1,6 @@
 import { ActionsCard } from "./ActionsCard";
 import { KeybindsCard } from "./KeybindsSection";
 import { MemoryCard } from "./MemoryCard";
-import { PersonalityCard } from "./PersonalityCard";
 import { PlanUsage } from "./PlanUsage";
 import { SttCard, TtsCard } from "./VoiceSection";
 
@@ -19,7 +18,6 @@ export function AgentSettings() {
         </div>
         <div className="flex min-w-0 flex-col gap-4">
           <PlanUsage />
-          <PersonalityCard />
           <MemoryCard />
           <SttCard />
           <TtsCard />

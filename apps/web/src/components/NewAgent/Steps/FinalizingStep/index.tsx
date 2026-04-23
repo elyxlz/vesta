@@ -1,18 +1,15 @@
 import { useEffect } from "react";
 import { ProgressBar } from "@/components/ProgressBar";
 import { waitForReady } from "@/api";
-import { applyPersonality } from "@/api/personalities";
 
 const READY_RETRIES = 9;
 const READY_TIMEOUT_SECONDS = 20;
 
 export function FinalizingStep({
   agentName,
-  personality,
   onDone,
 }: {
   agentName: string;
-  personality: string | null;
   onDone: () => void;
 }) {
   useEffect(() => {
@@ -27,15 +24,6 @@ export function FinalizingStep({
           if (i === READY_RETRIES - 1) break;
         }
       }
-      if (cancelled) return;
-
-      if (personality && personality !== "default") {
-        try {
-          await applyPersonality(agentName, personality);
-        } catch {
-          /* non-fatal: default personality stays active */
-        }
-      }
       if (!cancelled) onDone();
     };
 
@@ -43,7 +31,7 @@ export function FinalizingStep({
     return () => {
       cancelled = true;
     };
-  }, [agentName, personality, onDone]);
+  }, [agentName, onDone]);
 
   return (
     <div className="flex flex-col items-center gap-3 w-[260px] max-w-full px-4">

@@ -8,9 +8,7 @@ import {
   FieldLabel,
   FieldDescription,
 } from "@/components/ui/field";
-import { createAgent, authenticate, type AuthStartResult } from "@/api";
 import { useGateway } from "@/providers/GatewayProvider";
-import { useOnboarding } from "@/stores/use-onboarding";
 
 function normalizeName(input: string): string {
   return input
@@ -23,35 +21,24 @@ function normalizeName(input: string): string {
 }
 
 export function NameStep({
-  onCreated,
+  initialError,
+  onNamed,
 }: {
-  onCreated: (name: string, auth: AuthStartResult) => void;
+  initialError?: string | null;
+  onNamed: (name: string) => void;
 }) {
   const navigate = useNavigate();
   const { agents } = useGateway();
-  const setStep = useOnboarding((s) => s.setStep);
   const [name, setName] = useState("");
-  const [error, setError] = useState("");
 
-  const handleCreate = async () => {
+  const submit = () => {
     const normalized = normalizeName(name);
     if (!normalized) return;
-
-    setError("");
-    setStep("creating");
-
-    try {
-      await createAgent(normalized);
-      const auth = await authenticate(normalized);
-      onCreated(normalized, auth);
-    } catch (e: unknown) {
-      setError((e as { message?: string })?.message || "creation failed");
-      setStep("name");
-    }
+    onNamed(normalized);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") handleCreate();
+    if (e.key === "Enter") submit();
     if (e.key === "Escape" && agents.length > 0) navigate("/");
   };
 
@@ -80,14 +67,16 @@ export function NameStep({
       </FieldGroup>
 
       <Button
-        onClick={handleCreate}
+        onClick={submit}
         disabled={!normalizeName(name)}
         className="w-full"
       >
-        create
+        continue
       </Button>
 
-      {error && <p className="text-xs text-destructive text-center">{error}</p>}
+      {initialError && (
+        <p className="text-xs text-destructive text-center">{initialError}</p>
+      )}
     </div>
   );
 }
