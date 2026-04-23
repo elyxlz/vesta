@@ -344,6 +344,74 @@ async fn tunnel_handler(
     }
 }
 
+#[derive(Serialize)]
+struct Personality {
+    name: String,
+    emoji: String,
+    title: String,
+    description: String,
+    order: u32,
+}
+
+async fn list_personalities_handler() -> Json<Vec<Personality>> {
+    const PREFIX: &str = "core/skills/personality/presets/";
+    let mut results: Vec<Personality> = Vec::new();
+
+    for path in crate::agent_embed::AgentSource::iter() {
+        let Some(rest) = path.strip_prefix(PREFIX) else { continue };
+        let Some(name) = rest.strip_suffix(".md") else { continue };
+        let Some(file) = crate::agent_embed::AgentSource::get(&path) else { continue };
+        let Ok(content) = std::str::from_utf8(&file.data) else { continue };
+
+        let mut emoji = String::new();
+        let mut title = name.replace('-', " ");
+        let mut description = String::new();
+        let mut order = u32::MAX;
+
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            if !line.starts_with("<!--") {
+                break;
+            }
+            let Some(inner) = line
+                .strip_prefix("<!--")
+                .and_then(|s| s.strip_suffix("-->"))
+                .map(str::trim)
+            else {
+                continue;
+            };
+            let Some((key, val)) = inner.split_once(':') else { continue };
+            let key = key.trim();
+            let val = val.trim().to_string();
+            match key {
+                "emoji" => emoji = val,
+                "title" => title = val,
+                "description" => description = val,
+                "order" => {
+                    if let Ok(n) = val.parse::<u32>() {
+                        order = n;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        results.push(Personality {
+            name: name.to_string(),
+            emoji,
+            title,
+            description,
+            order,
+        });
+    }
+
+    results.sort_by(|a, b| a.order.cmp(&b.order).then_with(|| a.name.cmp(&b.name)));
+    Json(results)
+}
+
 async fn list_agents_handler(
     State(state): State<SharedState>,
 ) -> impl IntoResponse {
@@ -1428,6 +1496,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/gateway/restart", post(restart_gateway_handler))
         .route("/gateway/logs", get(gateway_logs_handler))
         .route("/tunnel", get(tunnel_handler))
+        .route("/personalities", get(list_personalities_handler))
         .route("/agents", get(list_agents_handler))
         .route("/agents", post(create_agent_handler))
         .route("/agents/start", post(start_all_handler))

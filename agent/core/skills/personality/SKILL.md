@@ -14,7 +14,7 @@ Voice, not spine. Presets are starting points, drift with the relationship is ex
 
 ## Presets
 
-In `~/agent/skills/personality/presets/`: `dry`, `classic`, `polished`, `terse`, `chill`, `girl-hype`. `ls` lists them, `Read` one for its body.
+Live in `~/agent/skills/personality/presets/`. `ls` lists what's shipped, `Read` one for its body.
 
 ## Apply a preset
 
