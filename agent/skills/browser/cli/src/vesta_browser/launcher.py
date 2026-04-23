@@ -138,10 +138,7 @@ def find_chromium_executable(override: str | None = None) -> str:
     if which:
         return which
 
-    raise RuntimeError(
-        "No chromium executable found. Install via `npx playwright-core install chromium` "
-        "or set VESTA_BROWSER_EXECUTABLE."
-    )
+    raise RuntimeError("No chromium executable found. Install via `npx playwright-core install chromium` or set VESTA_BROWSER_EXECUTABLE.")
 
 
 def _port_free(port: int) -> bool:
@@ -173,20 +170,17 @@ def is_cdp_reachable(port: int, timeout_s: float = 0.5) -> bool:
 def read_ws_url(port: int, timeout_s: float = 2.0) -> str:
     with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=timeout_s) as r:
         data = json.loads(r.read())
-    ws = data.get("webSocketDebuggerUrl", "")
-    if not ws:
+    if "webSocketDebuggerUrl" not in data or not data["webSocketDebuggerUrl"]:
         raise RuntimeError(f"/json/version on port {port} returned no webSocketDebuggerUrl")
-    return ws
+    return data["webSocketDebuggerUrl"]
 
 
 def _ensure_clean_exit(user_data_dir: Path) -> None:
     """Flip profile 'exited_cleanly' so Chrome doesn't show the crash bubble on next launch."""
     prefs_path = user_data_dir / "Default" / "Preferences"
-    if not prefs_path.is_file():
-        return
     try:
         prefs = json.loads(prefs_path.read_text())
-    except Exception:
+    except (FileNotFoundError, json.JSONDecodeError):
         return
     prefs["exit_type"] = "Normal"
     prefs["exited_cleanly"] = True

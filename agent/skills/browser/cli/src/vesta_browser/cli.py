@@ -74,10 +74,10 @@ def cmd_connect(args: argparse.Namespace) -> int:
 
     with urllib.request.urlopen(f"{args.url.rstrip('/')}/json/version", timeout=5) as r:
         data = json.loads(r.read())
-    ws = data.get("webSocketDebuggerUrl", "")
-    if not ws:
+    if "webSocketDebuggerUrl" not in data or not data["webSocketDebuggerUrl"]:
         print(f"no webSocketDebuggerUrl at {args.url}/json/version", file=sys.stderr)
         return 1
+    ws = data["webSocketDebuggerUrl"]
     os.environ["VESTA_BROWSER_CDP_WS"] = ws
     admin.ensure_daemon()
     print(json.dumps({"session": admin._session_name(), "ws": ws}))
@@ -289,15 +289,12 @@ def cmd_stdin(args: argparse.Namespace) -> int:
     admin.ensure_daemon()
     if sys.stdin.isatty():
         print(
-            "browser stdin mode reads from stdin. Use:\n"
-            "  browser <<'PY'\n"
-            "  print(page_info())\n"
-            "  PY",
+            "browser stdin mode reads from stdin. Use:\n  browser <<'PY'\n  print(page_info())\n  PY",
             file=sys.stderr,
         )
         return 2
     code = sys.stdin.read()
-    exec_globals = {name: getattr(helpers, name) for name in dir(helpers) if not name.startswith("_")}
+    exec_globals = {name: value for name, value in vars(helpers).items() if not name.startswith("_")}
     exec_globals["snapshot"] = snapshot.snapshot
     exec(code, exec_globals)
     return 0
@@ -433,7 +430,7 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = _build_parser()
     args = parser.parse_args(argv)
-    if not getattr(args, "func", None):
+    if args.cmd is None:
         parser.print_help()
         return 1
     return args.func(args)

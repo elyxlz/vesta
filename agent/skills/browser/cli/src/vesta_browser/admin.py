@@ -14,21 +14,19 @@ from pathlib import Path
 from .daemon import log_path, pid_path, socket_path
 from .launcher import RunningChrome, launch
 
-# Track Chrome PIDs per session so we can stop them later.
-CHROME_PID_FILE_TMPL = "/tmp/vesta-browser-{name}.chrome-pid"
-CDP_PORT_FILE_TMPL = "/tmp/vesta-browser-{name}.cdp-port"
+SESSION_FILE_PREFIX = "/tmp/vesta-browser-"
+GRACEFUL_EXIT_POLLS = 25
+GRACEFUL_POLL_INTERVAL_S = 0.2
 
 
 def _session_name(name: str | None = None) -> str:
-    return name or os.environ.get("BROWSER_SESSION", "default")
+    if name:
+        return name
+    return os.environ["BROWSER_SESSION"] if "BROWSER_SESSION" in os.environ else "default"
 
 
-def _chrome_pid_file(name: str | None = None) -> Path:
-    return Path(CHROME_PID_FILE_TMPL.format(name=_session_name(name)))
-
-
-def _cdp_port_file(name: str | None = None) -> Path:
-    return Path(CDP_PORT_FILE_TMPL.format(name=_session_name(name)))
+def _session_file(name: str | None, suffix: str) -> Path:
+    return Path(f"{SESSION_FILE_PREFIX}{_session_name(name)}.{suffix}")
 
 
 def daemon_alive(name: str | None = None) -> bool:
@@ -59,8 +57,33 @@ def daemon_healthy(name: str | None = None) -> bool:
             data += chunk
         s.close()
         return b'"result"' in data
-    except Exception:
+    except (TimeoutError, OSError):
         return False
+
+
+def _terminate_pid(pid: int) -> None:
+    """SIGTERM then SIGKILL after a grace window. Best-effort — no-op if already dead."""
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    for _ in range(GRACEFUL_EXIT_POLLS):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return
+        time.sleep(GRACEFUL_POLL_INTERVAL_S)
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
+def _read_pid(path: Path) -> int | None:
+    try:
+        return int(path.read_text().strip())
+    except (FileNotFoundError, ValueError):
+        return None
 
 
 def restart_daemon(name: str | None = None) -> None:
@@ -75,25 +98,13 @@ def restart_daemon(name: str | None = None) -> None:
         s.sendall(b'{"meta":"shutdown"}\n')
         s.recv(1024)
         s.close()
-    except Exception:
+    except (TimeoutError, FileNotFoundError, ConnectionRefusedError, OSError):
+        # Daemon may already be dead; cleanup below is still needed.
         pass
 
-    try:
-        pid = int(Path(pid_file).read_text())
-    except (FileNotFoundError, ValueError):
-        pid = 0
+    pid = _read_pid(Path(pid_file))
     if pid:
-        for _ in range(75):
-            try:
-                os.kill(pid, 0)
-                time.sleep(0.2)
-            except ProcessLookupError:
-                break
-        else:
-            try:
-                os.kill(pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
+        _terminate_pid(pid)
 
     for p in (sock, pid_file):
         try:
@@ -124,23 +135,20 @@ def launch_chrome(
         executable=executable,
         extra_args=extra_args,
     )
-    _chrome_pid_file(session).write_text(str(running.pid))
-    _cdp_port_file(session).write_text(str(running.cdp_port))
+    _session_file(session, "chrome-pid").write_text(str(running.pid))
+    _session_file(session, "cdp-port").write_text(str(running.cdp_port))
     return running
 
 
 def read_session_port(name: str | None = None) -> int | None:
     try:
-        return int(_cdp_port_file(name).read_text().strip())
+        return int(_session_file(name, "cdp-port").read_text().strip())
     except (FileNotFoundError, ValueError):
         return None
 
 
 def read_session_chrome_pid(name: str | None = None) -> int | None:
-    try:
-        return int(_chrome_pid_file(name).read_text().strip())
-    except (FileNotFoundError, ValueError):
-        return None
+    return _read_pid(_session_file(name, "chrome-pid"))
 
 
 def stop_chrome(name: str | None = None) -> None:
@@ -148,24 +156,10 @@ def stop_chrome(name: str | None = None) -> None:
     session = _session_name(name)
     pid = read_session_chrome_pid(session)
     if pid:
+        _terminate_pid(pid)
+    for p in (_session_file(session, "chrome-pid"), _session_file(session, "cdp-port")):
         try:
-            os.kill(pid, signal.SIGTERM)
-            for _ in range(25):
-                try:
-                    os.kill(pid, 0)
-                    time.sleep(0.2)
-                except ProcessLookupError:
-                    break
-            else:
-                try:
-                    os.kill(pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-        except ProcessLookupError:
-            pass
-    for p in (_chrome_pid_file(session), _cdp_port_file(session)):
-        try:
-            os.unlink(p)
+            p.unlink()
         except FileNotFoundError:
             pass
 
@@ -185,8 +179,7 @@ def ensure_daemon(wait_s: float = 30.0, name: str | None = None) -> None:
         port = read_session_port(session)
         if port is None:
             raise RuntimeError(
-                "No Chrome for this session. Run `browser launch` first, "
-                "or set VESTA_BROWSER_CDP_WS to connect to a remote browser."
+                "No Chrome for this session. Run `browser launch` first, or set VESTA_BROWSER_CDP_WS to connect to a remote browser."
             )
         env["VESTA_BROWSER_CDP_PORT"] = str(port)
 
@@ -211,9 +204,7 @@ def ensure_daemon(wait_s: float = 30.0, name: str | None = None) -> None:
         tail = Path(log_path(session)).read_text().splitlines()[-1]
     except (FileNotFoundError, IndexError):
         pass
-    raise RuntimeError(
-        f"daemon {session!r} did not come up within {wait_s}s. Last log line: {tail or '(none)'}"
-    )
+    raise RuntimeError(f"daemon {session!r} did not come up within {wait_s}s. Last log line: {tail or '(none)'}")
 
 
 def send(req: dict, name: str | None = None) -> dict:
@@ -235,20 +226,17 @@ def send(req: dict, name: str | None = None) -> dict:
 
 
 def list_sessions() -> list[dict]:
-    """Enumerate sessions we know about by scanning /tmp/vesta-browser-*.pid files."""
+    """Enumerate sessions we know about by scanning /tmp/vesta-browser-*.chrome-pid files."""
     out = []
     for pid_f in Path("/tmp").glob("vesta-browser-*.chrome-pid"):
         name = pid_f.name.removeprefix("vesta-browser-").removesuffix(".chrome-pid")
-        try:
-            chrome_pid = int(pid_f.read_text().strip())
-            alive = _pid_alive(chrome_pid)
-        except Exception:
-            chrome_pid, alive = 0, False
+        chrome_pid = _read_pid(pid_f)
+        alive = _pid_alive(chrome_pid) if chrome_pid else False
         port = read_session_port(name)
         out.append(
             {
                 "name": name,
-                "chrome_pid": chrome_pid,
+                "chrome_pid": chrome_pid or 0,
                 "chrome_alive": alive,
                 "cdp_port": port,
                 "daemon_alive": daemon_alive(name),
@@ -268,8 +256,7 @@ def _pid_alive(pid: int) -> bool:
 def stop_all() -> None:
     """Stop every session this user has running."""
     for s in list_sessions():
-        restart_daemon(s["name"])
-        stop_chrome(s["name"])
+        shutdown(s["name"])
 
 
 def shutdown(name: str | None = None) -> None:
@@ -277,11 +264,8 @@ def shutdown(name: str | None = None) -> None:
     session = _session_name(name)
     restart_daemon(session)
     stop_chrome(session)
-    for path in (
-        log_path(session),
-        Path(f"/tmp/vesta-browser-{session}.refs.json"),
-    ):
+    for path in (Path(log_path(session)), _session_file(session, "refs.json")):
         try:
-            Path(path).unlink()
+            path.unlink()
         except FileNotFoundError:
             pass

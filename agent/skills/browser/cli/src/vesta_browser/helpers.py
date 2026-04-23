@@ -50,7 +50,8 @@ MODIFIER_BITS = {"Alt": 1, "Control": 2, "Meta": 4, "Shift": 8}
 
 def cdp(method: str, session_id: str | None = None, **params) -> dict:
     """Raw CDP. `cdp('Page.navigate', url='...')`. Escape hatch for anything not wrapped here."""
-    return send({"method": method, "params": params, "session_id": session_id}).get("result", {})
+    resp = send({"method": method, "params": params, "session_id": session_id})
+    return resp["result"] if "result" in resp else {}
 
 
 def drain_events() -> list[dict]:
@@ -60,11 +61,13 @@ def drain_events() -> list[dict]:
 
 def pending_dialog() -> dict | None:
     """If a native dialog is open, returns its params. Otherwise None."""
-    return send({"meta": "pending_dialog"}).get("dialog")
+    resp = send({"meta": "pending_dialog"})
+    return resp["dialog"] if "dialog" in resp else None
 
 
 def current_session_id() -> str | None:
-    return send({"meta": "session"}).get("session_id")
+    resp = send({"meta": "session"})
+    return resp["session_id"] if "session_id" in resp else None
 
 
 def _set_session(session_id: str) -> None:
@@ -85,8 +88,8 @@ def reload() -> dict:
 
 def back() -> dict:
     hist = cdp("Page.getNavigationHistory")
-    entries = hist.get("entries", [])
-    idx = hist.get("currentIndex", 0)
+    entries = hist["entries"]
+    idx = hist["currentIndex"]
     if idx <= 0:
         return {}
     return cdp("Page.navigateToHistoryEntry", entryId=entries[idx - 1]["id"])
@@ -94,8 +97,8 @@ def back() -> dict:
 
 def forward() -> dict:
     hist = cdp("Page.getNavigationHistory")
-    entries = hist.get("entries", [])
-    idx = hist.get("currentIndex", 0)
+    entries = hist["entries"]
+    idx = hist["currentIndex"]
     if idx >= len(entries) - 1:
         return {}
     return cdp("Page.navigateToHistoryEntry", entryId=entries[idx + 1]["id"])
@@ -122,19 +125,21 @@ def list_tabs(include_internal: bool = True) -> list[dict]:
     for t in cdp("Target.getTargets")["targetInfos"]:
         if t["type"] != "page":
             continue
-        url = t.get("url", "")
+        url = t["url"] if "url" in t else ""
         if not include_internal and url.startswith(INTERNAL_URL_PREFIXES):
             continue
-        out.append({"target_id": t["targetId"], "title": t.get("title", ""), "url": url})
+        title = t["title"] if "title" in t else ""
+        out.append({"target_id": t["targetId"], "title": title, "url": url})
     return out
 
 
 def current_tab() -> dict:
-    t = cdp("Target.getTargetInfo").get("targetInfo", {})
+    resp = cdp("Target.getTargetInfo")
+    info = resp["targetInfo"] if "targetInfo" in resp else {}
     return {
-        "target_id": t.get("targetId"),
-        "url": t.get("url", ""),
-        "title": t.get("title", ""),
+        "target_id": info["targetId"] if "targetId" in info else None,
+        "url": info["url"] if "url" in info else "",
+        "title": info["title"] if "title" in info else "",
     }
 
 
@@ -145,10 +150,10 @@ def ensure_real_tab() -> dict | None:
         return None
     try:
         cur = current_tab()
-        if cur["url"] and not cur["url"].startswith(INTERNAL_URL_PREFIXES):
-            return cur
-    except Exception:
-        pass
+    except RuntimeError:
+        cur = None
+    if cur and cur["url"] and not cur["url"].startswith(INTERNAL_URL_PREFIXES):
+        return cur
     switch_tab(tabs[0]["target_id"])
     return tabs[0]
 
@@ -156,7 +161,8 @@ def ensure_real_tab() -> dict | None:
 def iframe_target(url_substring: str) -> str | None:
     """First iframe target whose URL contains the substring."""
     for t in cdp("Target.getTargets")["targetInfos"]:
-        if t["type"] == "iframe" and url_substring in t.get("url", ""):
+        url = t["url"] if "url" in t else ""
+        if t["type"] == "iframe" and url_substring in url:
             return t["targetId"]
     return None
 
@@ -190,9 +196,15 @@ def press_key(key: str, modifiers: int | list[str] = 0) -> None:
     if isinstance(modifiers, list):
         mods = 0
         for m in modifiers:
-            mods |= MODIFIER_BITS.get(m, 0)
+            if m in MODIFIER_BITS:
+                mods |= MODIFIER_BITS[m]
         modifiers = mods
-    vk, code, text = SPECIAL_KEYS.get(key, (ord(key[0]) if len(key) == 1 else 0, key, key if len(key) == 1 else ""))
+    if key in SPECIAL_KEYS:
+        vk, code, text = SPECIAL_KEYS[key]
+    elif len(key) == 1:
+        vk, code, text = ord(key[0]), key, key
+    else:
+        vk, code, text = 0, key, ""
     base = {
         "key": key,
         "code": code,
@@ -253,7 +265,7 @@ def hover_ref(ref: str) -> None:
 
 
 def _current_target_id() -> str:
-    tid = current_tab().get("target_id")
+    tid = current_tab()["target_id"]
     if not tid:
         raise RuntimeError("no current target")
     return tid
@@ -263,17 +275,15 @@ def _scroll_into_view(backend_node_id: int) -> None:
     try:
         cdp("DOM.scrollIntoViewIfNeeded", backendNodeId=backend_node_id)
     except RuntimeError:
+        # Node may be hidden or not scrollable — click attempt will surface a better error.
         pass
 
 
 def _center_box(backend_node_id: int) -> tuple[float, float]:
-    box = cdp("DOM.getBoxModel", backendNodeId=backend_node_id).get("model", {})
-    content = box.get("content")
-    if not content or len(content) < 8:
-        raise RuntimeError(
-            f"element (backendNodeId={backend_node_id}) has no box. "
-            "It may be hidden, 0×0, or detached — take a fresh snapshot."
-        )
+    resp = cdp("DOM.getBoxModel", backendNodeId=backend_node_id)
+    if "model" not in resp or "content" not in resp["model"] or len(resp["model"]["content"]) < 8:
+        raise RuntimeError(f"element (backendNodeId={backend_node_id}) has no box. It may be hidden, 0×0, or detached — take a fresh snapshot.")
+    content = resp["model"]["content"]
     cx = (content[0] + content[4]) / 2
     cy = (content[1] + content[5]) / 2
     return cx, cy
@@ -324,7 +334,9 @@ def js(expression: str, target_id: str | None = None):
         returnByValue=True,
         awaitPromise=True,
     )
-    return r.get("result", {}).get("value")
+    if "result" not in r or "value" not in r["result"]:
+        return None
+    return r["result"]["value"]
 
 
 def upload_file(selector: str, path: str | list[str]) -> None:
@@ -372,10 +384,10 @@ def wait_for_url(pattern: str, timeout: float = 20.0, poll: float = 0.3) -> bool
     while time.time() < deadline:
         try:
             info = page_info()
-            if "url" in info and fnmatch.fnmatch(info["url"], pattern):
-                return True
-        except Exception:
-            pass
+        except RuntimeError:
+            info = {}
+        if "url" in info and fnmatch.fnmatch(info["url"], pattern):
+            return True
         time.sleep(poll)
     return False
 
@@ -394,7 +406,7 @@ def http_get(url: str, headers: dict[str, str] | None = None, timeout: float = 2
     req = urllib.request.Request(url, headers=hdrs)
     with urllib.request.urlopen(req, timeout=timeout) as r:
         data = r.read()
-        if r.headers.get("Content-Encoding") == "gzip":
+        if "Content-Encoding" in r.headers and r.headers["Content-Encoding"] == "gzip":
             data = gzip.decompress(data)
         return data.decode()
 
@@ -403,7 +415,6 @@ def http_get(url: str, headers: dict[str, str] | None = None, timeout: float = 2
 
 
 def _skills_root() -> Path:
-    """Root of the browser skill dir, used to locate domain-skills/."""
     # helpers.py is src/vesta_browser/helpers.py, so parents[3] is agent/skills/browser/.
     return Path(__file__).resolve().parents[3]
 

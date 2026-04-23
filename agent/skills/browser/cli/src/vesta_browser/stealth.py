@@ -7,10 +7,9 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 
-WEBDRIVER_HIDE_JS = (
-    "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
-)
+WEBDRIVER_HIDE_JS = "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
 
 # Also nudge a few fingerprint surfaces that headless Chrome leaves too obvious.
 FINGERPRINT_SOFTEN_JS = """
@@ -24,8 +23,8 @@ FINGERPRINT_SOFTEN_JS = """
 async def _call(cdp, method: str, params: dict | None = None, session_id: str | None = None):
     try:
         await asyncio.wait_for(cdp.send_raw(method, params or {}, session_id=session_id), timeout=3)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[vesta-browser] stealth {method} failed: {e}", file=sys.stderr)
 
 
 async def apply_to_session(cdp, session_id: str, ua: str | None = None) -> None:
@@ -73,14 +72,12 @@ def solve_cf_turnstile(timeout: float = 20.0, poll: float = 0.5) -> bool:
             "  return {x: r.left + r.width/2, y: r.top + r.height/2, w: r.width, h: r.height};"
             "})()"
         )
-        if found and found.get("w", 0) > 50:
+        if found and "w" in found and found["w"] > 50:
             # Click the center of the challenge iframe; CDP compositor click goes through.
             click(found["x"], found["y"])
             time.sleep(2.0)
             # Confirm the challenge is gone.
-            still = js(
-                "document.querySelector('iframe[src*=\"challenges.cloudflare.com\"]') !== null"
-            )
+            still = js("document.querySelector('iframe[src*=\"challenges.cloudflare.com\"]') !== null")
             if not still:
                 return True
         time.sleep(poll)

@@ -27,6 +27,7 @@ import os
 import socket
 import sys
 import time
+import urllib.request
 from collections import deque
 from pathlib import Path
 
@@ -43,10 +44,15 @@ INTERNAL_URL_PREFIXES = (
 )
 
 EVENT_BUFFER = 500
+DOMAIN_ENABLE_TIMEOUT_S = 5
+SESSION_REENABLE_TIMEOUT_S = 3
+TAB_MARK_TIMEOUT_S = 2
+UA_FETCH_TIMEOUT_S = 2
+WS_DISCOVERY_TIMEOUT_S = 3
 
 
 def _session_name() -> str:
-    return os.environ.get("BROWSER_SESSION", "default")
+    return os.environ["BROWSER_SESSION"] if "BROWSER_SESSION" in os.environ else "default"
 
 
 def socket_path(name: str | None = None) -> str:
@@ -66,11 +72,15 @@ def _log(msg: str) -> None:
         with open(log_path(), "a") as f:
             f.write(f"{time.strftime('%H:%M:%S')} {msg}\n")
     except OSError:
+        # Logging must never cascade. If the log file is unwritable we're already in trouble.
         pass
 
 
 def _is_real_page(target: dict) -> bool:
-    return target.get("type") == "page" and not target.get("url", "").startswith(INTERNAL_URL_PREFIXES)
+    if "type" not in target or target["type"] != "page":
+        return False
+    url = target["url"] if "url" in target else ""
+    return not url.startswith(INTERNAL_URL_PREFIXES)
 
 
 def resolve_ws_url() -> str:
@@ -79,27 +89,34 @@ def resolve_ws_url() -> str:
     Priority:
       1. VESTA_BROWSER_CDP_WS (explicit override, e.g. remote browser)
       2. VESTA_BROWSER_CDP_PORT (local Chrome we launched)
-      3. scan ports VESTA_BROWSER_CDP_PORT_START..+100 for a /json/version endpoint
     """
-    if ws := os.environ.get("VESTA_BROWSER_CDP_WS"):
-        return ws
+    if "VESTA_BROWSER_CDP_WS" in os.environ and os.environ["VESTA_BROWSER_CDP_WS"]:
+        return os.environ["VESTA_BROWSER_CDP_WS"]
 
-    import urllib.request
-
-    port_env = os.environ.get("VESTA_BROWSER_CDP_PORT")
-    if port_env:
-        port = int(port_env)
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=3) as r:
+    if "VESTA_BROWSER_CDP_PORT" in os.environ:
+        port = int(os.environ["VESTA_BROWSER_CDP_PORT"])
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=WS_DISCOVERY_TIMEOUT_S) as r:
             data = json.loads(r.read())
-        ws = data.get("webSocketDebuggerUrl", "")
-        if not ws:
+        if "webSocketDebuggerUrl" not in data or not data["webSocketDebuggerUrl"]:
             raise RuntimeError(f"/json/version on port {port} returned no webSocketDebuggerUrl")
-        return ws
+        return data["webSocketDebuggerUrl"]
 
-    raise RuntimeError(
-        "VESTA_BROWSER_CDP_PORT or VESTA_BROWSER_CDP_WS must be set. "
-        "Run `browser launch` first."
-    )
+    raise RuntimeError("VESTA_BROWSER_CDP_PORT or VESTA_BROWSER_CDP_WS must be set. Run `browser launch` first.")
+
+
+def _fetch_user_agent() -> str | None:
+    if "VESTA_BROWSER_CDP_PORT" not in os.environ:
+        return None
+    port = os.environ["VESTA_BROWSER_CDP_PORT"]
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=UA_FETCH_TIMEOUT_S) as r:
+            data = json.loads(r.read())
+    except (TimeoutError, OSError, json.JSONDecodeError) as e:
+        _log(f"UA fetch failed: {e}")
+        return None
+    if "User-Agent" in data and data["User-Agent"]:
+        return data["User-Agent"]
+    return None
 
 
 class Daemon:
@@ -126,31 +143,22 @@ class Daemon:
         )
         self.session = attach["sessionId"]
         _log(f"attached target={pages[0]['targetId']} session={self.session}")
-        for domain in ("Page", "DOM", "Runtime", "Network"):
+
+        async def _enable(domain: str) -> None:
             try:
                 await asyncio.wait_for(
                     self.cdp.send_raw(f"{domain}.enable", session_id=self.session),
-                    timeout=5,
+                    timeout=DOMAIN_ENABLE_TIMEOUT_S,
                 )
-            except Exception as e:
+            except (TimeoutError, RuntimeError) as e:
                 _log(f"enable {domain}: {e}")
 
-        if os.environ.get("VESTA_BROWSER_NO_STEALTH") != "1":
-            ua = await self._fetch_user_agent()
+        await asyncio.gather(*(_enable(d) for d in ("Page", "DOM", "Runtime", "Network")))
+
+        if "VESTA_BROWSER_NO_STEALTH" not in os.environ or os.environ["VESTA_BROWSER_NO_STEALTH"] != "1":
+            ua = _fetch_user_agent()
             await stealth.apply_to_session(self.cdp, self.session, ua=ua)
         return pages[0]
-
-    async def _fetch_user_agent(self) -> str | None:
-        port = os.environ.get("VESTA_BROWSER_CDP_PORT")
-        if not port:
-            return None
-        import urllib.request
-
-        try:
-            with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=2) as r:
-                return json.loads(r.read()).get("User-Agent") or None
-        except Exception:
-            return None
 
     async def start(self) -> None:
         self.ws_url = resolve_ws_url()
@@ -163,9 +171,8 @@ class Daemon:
 
         await self.attach_first_page()
 
-        # Tap events: buffer everything, track dialog state, mark active tab.
         orig = self.cdp._event_registry.handle_event
-        mark_js = "if(!document.title.startsWith('\U0001F7E2'))document.title='\U0001F7E2 '+document.title"
+        mark_js = "if(!document.title.startsWith('\U0001f7e2'))document.title='\U0001f7e2 '+document.title"
 
         async def tap(method: str, params: dict, session_id: str | None = None):
             self.events.append({"method": method, "params": params, "session_id": session_id})
@@ -182,9 +189,10 @@ class Daemon:
                             {"expression": mark_js},
                             session_id=self.session,
                         ),
-                        timeout=2,
+                        timeout=TAB_MARK_TIMEOUT_S,
                     )
-                except Exception:
+                except (TimeoutError, RuntimeError):
+                    # Tab-marking is cosmetic; don't let it kill event propagation.
                     pass
             return await orig(method, params, session_id)
 
@@ -192,7 +200,12 @@ class Daemon:
 
     async def handle(self, req: dict) -> dict:
         assert self.cdp is not None
-        meta = req.get("meta")
+        if "meta" in req:
+            return await self._handle_meta(req)
+        return await self._handle_cdp(req)
+
+    async def _handle_meta(self, req: dict) -> dict:
+        meta = req["meta"]
         if meta == "drain_events":
             out = list(self.events)
             self.events.clear()
@@ -200,15 +213,15 @@ class Daemon:
         if meta == "session":
             return {"session_id": self.session}
         if meta == "set_session":
-            self.session = req.get("session_id")
+            self.session = req["session_id"] if "session_id" in req else None
             if self.session:
                 try:
                     await asyncio.wait_for(
                         self.cdp.send_raw("Page.enable", session_id=self.session),
-                        timeout=3,
+                        timeout=SESSION_REENABLE_TIMEOUT_S,
                     )
-                except Exception:
-                    pass
+                except (TimeoutError, RuntimeError) as e:
+                    _log(f"re-enable Page on new session: {e}")
             return {"session_id": self.session}
         if meta == "pending_dialog":
             return {"dialog": self.dialog}
@@ -223,11 +236,18 @@ class Daemon:
         if meta == "shutdown":
             self.stop.set()
             return {"ok": True}
+        return {"error": f"unknown meta: {meta!r}"}
 
+    async def _handle_cdp(self, req: dict) -> dict:
         method = req["method"]
-        params = req.get("params") or {}
+        params = req["params"] if "params" in req and req["params"] else {}
         # Browser-level Target.* calls must not carry a session.
-        sid = None if method.startswith("Target.") else (req.get("session_id") or self.session)
+        if method.startswith("Target."):
+            sid: str | None = None
+        elif "session_id" in req and req["session_id"]:
+            sid = req["session_id"]
+        else:
+            sid = self.session
         try:
             return {"result": await self.cdp.send_raw(method, params, session_id=sid)}
         except Exception as e:
@@ -235,16 +255,16 @@ class Daemon:
             if "Session with given id not found" in msg and sid == self.session and sid:
                 _log(f"stale session {sid}, re-attaching")
                 if await self.attach_first_page():
-                    return {
-                        "result": await self.cdp.send_raw(method, params, session_id=self.session)
-                    }
+                    return {"result": await self.cdp.send_raw(method, params, session_id=self.session)}
             return {"error": msg}
 
 
 async def _serve(daemon: Daemon) -> None:
     sock = socket_path()
-    if os.path.exists(sock):
+    try:
         os.unlink(sock)
+    except FileNotFoundError:
+        pass
 
     async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
@@ -254,12 +274,12 @@ async def _serve(daemon: Daemon) -> None:
             resp = await daemon.handle(json.loads(line))
             writer.write((json.dumps(resp, default=str) + "\n").encode())
             await writer.drain()
-        except Exception as e:
+        except (json.JSONDecodeError, ConnectionError, OSError) as e:
             _log(f"conn: {e}")
             try:
                 writer.write((json.dumps({"error": str(e)}) + "\n").encode())
                 await writer.drain()
-            except Exception:
+            except (ConnectionError, OSError):
                 pass
         finally:
             writer.close()
