@@ -142,12 +142,17 @@ def _parse_sdk_message(msg: Message, *, sub_agent_context: str | None) -> tuple[
 
     if isinstance(msg, RateLimitEvent):
         info = msg.rate_limit_info
-        logger.warning(f"Rate limit {info.status} (utilization={info.utilization}, type={info.rate_limit_type})")
+        log_fn = logger.debug if info.status == "allowed" else logger.warning
+        log_fn(f"Rate limit {info.status} (utilization={info.utilization}, type={info.rate_limit_type})")
         return ([], [], sub_agent_context, None, False)
 
     if isinstance(msg, SystemMessage):
-        raw = json.dumps(msg.data, default=str)
-        logger.system(f"[{msg.subtype}] {raw[:500]}")
+        if msg.subtype == "init":
+            sid = msg.data["session_id"][:16] if isinstance(msg.data, dict) and "session_id" in msg.data else "?"
+            logger.debug(f"[init] session_id={sid}")
+        else:
+            raw = json.dumps(msg.data, default=str)
+            logger.system(f"[{msg.subtype}] {raw[:500]}")
         return ([], [], sub_agent_context, None, False)
 
     if not isinstance(msg, AssistantMessage):
@@ -395,6 +400,8 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
         assistant_texts.append(t)
 
     def _emit_thinking(block: ThinkingBlock) -> None:
+        if not block.thinking.strip():
+            return
         logger.thinking(block.thinking)
         state.event_bus.emit({"type": "thinking", "text": block.thinking, "signature": block.signature})
 
