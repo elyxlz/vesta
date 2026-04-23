@@ -69,6 +69,26 @@ def _make_signal_handler(state: vm.State, *, allow_force_exit: bool = False) -> 
     return handler
 
 
+def handle_processor_done(task: asyncio.Task[None], *, state: vm.State) -> None:
+    """Done-callback for the message_processor task. Guarantees restart_reason + graceful_shutdown
+    are set on any unexpected termination, so the agent never wedges silently."""
+    if state.shutdown_event.is_set() or state.graceful_shutdown.is_set():
+        return
+    if task.cancelled():
+        logger.error("message_processor cancelled unexpectedly — restarting")
+        state.restart_reason = vm.PROCESSOR_CANCELLED_RESTART
+    else:
+        exc = task.exception()
+        if exc is not None:
+            exit_code, stderr_tail = format_crash_detail(exc, state.stderr_buffer)
+            logger.error(f"message_processor crashed: {type(exc).__name__}: {exc} | exit_code={exit_code}\nRecent stderr:\n{stderr_tail}")
+            state.restart_reason = f"crash — {type(exc).__name__}: {exc}"
+        else:
+            logger.error("message_processor exited without error — restarting")
+            state.restart_reason = vm.PROCESSOR_SILENT_EXIT_RESTART
+    state.graceful_shutdown.set()
+
+
 async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: bool = False, restart_reason: str = vm.CLEAN_RESTART) -> None:
     signal.signal(signal.SIGHUP, signal.SIG_IGN)
     signal.signal(signal.SIGINT, _make_signal_handler(state, allow_force_exit=True))
@@ -82,21 +102,7 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
     logger.init(f"WebSocket server started on port {config.ws_port}")
 
     processor_task = asyncio.create_task(message_processor(message_queue, state=state, config=config))
-
-    def _on_processor_done(task: asyncio.Task[None]) -> None:
-        if task.cancelled() or state.shutdown_event.is_set() or state.graceful_shutdown.is_set():
-            return
-        exc = task.exception()
-        if exc is not None:
-            exit_code, stderr_tail = format_crash_detail(exc, state.stderr_buffer)
-            logger.error(f"message_processor crashed: {type(exc).__name__}: {exc} | exit_code={exit_code}\nRecent stderr:\n{stderr_tail}")
-            state.restart_reason = f"crash — {type(exc).__name__}: {exc}"
-        else:
-            logger.error("message_processor exited without error — restarting")
-            state.restart_reason = "crash — processor exited silently"
-        state.graceful_shutdown.set()
-
-    processor_task.add_done_callback(_on_processor_done)
+    processor_task.add_done_callback(lambda t: handle_processor_done(t, state=state))
 
     tasks = [
         asyncio.create_task(input_handler(message_queue, state=state)),

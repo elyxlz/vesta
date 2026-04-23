@@ -162,6 +162,12 @@ async def _process_message_safely(msg: str, *, is_user: bool, state: vm.State, c
             logger.system(preview.replace("\n", " "))
         state.event_bus.set_state("thinking")
         await process_message(msg, state=state, config=config, is_user=is_user)
+    except asyncio.CancelledError:
+        logger.error("Message processing cancelled unexpectedly — triggering restart")
+        state.event_bus.emit({"type": "error", "text": "processing cancelled"})
+        state.restart_reason = vm.PROCESSING_CANCELLED_ERROR
+        state.graceful_shutdown.set()
+        raise
     except (ClaudeSDKError, OSError, RuntimeError, ValueError, TimeoutError) as e:
         if isinstance(e, TimeoutError):
             error_msg = "Response timed out"
@@ -268,6 +274,11 @@ async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm
                             config.session_file.unlink(missing_ok=True)
                             state.session_id = None
                             (config.data_dir / "show_dreamer_summary").write_text("1")
+                            if state.last_dreamer_run is not None:
+                                try:
+                                    (config.data_dir / "last_dreamer_run").write_text(state.last_dreamer_run.isoformat())
+                                except OSError:
+                                    logger.warning("Could not persist last_dreamer_run")
                             state.restart_reason = vm.NIGHTLY_RESTART
                             state.graceful_shutdown.set()
                 finally:
@@ -315,10 +326,6 @@ async def process_nightly_memory(queue: asyncio.Queue[tuple[str, bool]], *, stat
             state.dreamer_active = True
             await queue.put((prompt, False))
             state.last_dreamer_run = now
-            try:
-                (config.data_dir / "last_dreamer_run").write_text(now.isoformat())
-            except OSError:
-                logger.warning("Could not persist last_dreamer_run")
             logger.dreamer("Dreamer prompt queued")
 
 
