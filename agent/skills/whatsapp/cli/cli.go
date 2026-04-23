@@ -189,10 +189,8 @@ func runServe(logger waLog.Logger) {
 
 	printJSON(map[string]string{"status": "serving"})
 
-	signal.Ignore(syscall.SIGHUP)
-
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	sig := <-sigChan
 
 	fmt.Fprintf(os.Stderr, "Shutting down (signal: %v)...\n", sig)
