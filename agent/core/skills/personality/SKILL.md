@@ -34,9 +34,22 @@ List them with `ls ~/agent/skills/personality/presets/`. Read one to see its bod
 
 ## Applying a preset
 
+Each preset file starts with HTML-comment frontmatter, then the body:
+
+```
+<!-- emoji: 😏 -->
+<!-- title: dry -->
+<!-- description: lowercase, minimal, dry humor. the safe default. -->
+
+### Voice
+Lowercase, short, dry. ...
+```
+
+Steps:
+
 1. `Read` the preset file.
-2. Skip the leading `<!-- key: value -->` lines and any blank lines.
-3. Substitute every `[agent_name]` with the actual agent name.
+2. Skip the leading `<!-- key: value -->` comment lines and any blank line after them. Take everything from the first `###` onward.
+3. Substitute every `[agent_name]` in that body with the actual agent name.
 4. `Edit` `~/agent/MEMORY.md`: replace the body under `## 1. Personality` (everything between that header and `## 2.`) with the substituted preset body. Leave the `## 1. Personality` header itself intact. Leave the Charter and every other section alone.
 5. Confirm the change in one short message, in the new voice.
 
