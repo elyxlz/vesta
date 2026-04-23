@@ -60,6 +60,11 @@ export function PersonalityStep({
                 <span className="text-[11px] leading-snug text-muted-foreground">
                   {p.description}
                 </span>
+                {p.sample && (
+                  <span className="mt-1 text-[11px] italic text-foreground/80">
+                    "{p.sample}"
+                  </span>
+                )}
               </button>
             );
           })}

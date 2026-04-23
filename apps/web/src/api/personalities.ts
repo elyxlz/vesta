@@ -5,6 +5,7 @@ export interface Personality {
   emoji: string;
   title: string;
   description: string;
+  sample: string;
   order: number;
 }
 

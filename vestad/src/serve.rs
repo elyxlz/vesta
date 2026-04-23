@@ -350,6 +350,7 @@ struct Personality {
     emoji: String,
     title: String,
     description: String,
+    sample: String,
     order: u32,
 }
 
@@ -366,6 +367,7 @@ async fn list_personalities_handler() -> Json<Vec<Personality>> {
         let mut emoji = String::new();
         let mut title = name.replace('-', " ");
         let mut description = String::new();
+        let mut sample = String::new();
         let mut order = u32::MAX;
 
         for line in content.lines() {
@@ -385,11 +387,12 @@ async fn list_personalities_handler() -> Json<Vec<Personality>> {
             };
             let Some((key, val)) = inner.split_once(':') else { continue };
             let key = key.trim();
-            let val = val.trim().to_string();
+            let val = val.trim().trim_matches('"').to_string();
             match key {
                 "emoji" => emoji = val,
                 "title" => title = val,
                 "description" => description = val,
+                "sample" => sample = val,
                 "order" => {
                     if let Ok(n) = val.parse::<u32>() {
                         order = n;
@@ -404,6 +407,7 @@ async fn list_personalities_handler() -> Json<Vec<Personality>> {
             emoji,
             title,
             description,
+            sample,
             order,
         });
     }
