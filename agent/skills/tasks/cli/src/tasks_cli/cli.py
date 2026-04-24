@@ -247,8 +247,7 @@ def _main_remind():
 
             if subcmd == "list":
                 args = _build_remind_list_parser().parse_args(rest)
-                result = _do_remind_list(config, args)
-                _print_reminder_list_result(args, result)
+                _print_list(args, _do_remind_list(config, args), fmt.format_reminder_list)
                 return
             elif subcmd == "delete":
                 args = _build_remind_delete_parser().parse_args(rest)
@@ -348,8 +347,7 @@ def _handle_task(args, config: Config):
         print(json.dumps(result, indent=2))
         return
     elif args.command == "list":
-        result = commands.list_tasks(config, show_completed=args.show_completed)
-        _print_task_list_result(args, result)
+        _print_list(args, commands.list_tasks(config, show_completed=args.show_completed), fmt.format_task_list)
         return
     elif args.command == "get":
         task_id = args.id_pos or args.task_id
@@ -386,8 +384,7 @@ def _handle_task(args, config: Config):
         query = args.query_pos or args.query
         if not query:
             raise ValueError('query is required: tasks search "query" or tasks search --query "query"')
-        result = commands.search_tasks(config, query=query, show_completed=args.show_completed)
-        _print_task_list_result(args, result)
+        _print_list(args, commands.search_tasks(config, query=query, show_completed=args.show_completed), fmt.format_task_list)
         return
     else:
         return
@@ -395,47 +392,21 @@ def _handle_task(args, config: Config):
     print(json.dumps(result, indent=2))
 
 
-def _format_flags(args) -> tuple[bool, bool]:
-    """Return (want_compact_json, want_pretty_json) based on argparse args."""
+def _print_list(args, result: list, formatter) -> None:
+    """Dispatch a list-style command result to --json-pretty / --json / compact formatter."""
     attrs = vars(args)
-    return (
-        "json" in attrs and attrs["json"],
-        "json_pretty" in attrs and attrs["json_pretty"],
-    )
-
-
-def _print_task_list_result(args, result: list) -> None:
-    want_json, want_pretty = _format_flags(args)
-    if want_pretty:
+    if "json_pretty" in attrs and attrs["json_pretty"]:
         print(json.dumps(result, indent=2))
-        return
-    if want_json:
+    elif "json" in attrs and attrs["json"]:
         print(json.dumps(result))
-        return
-    print(fmt.format_task_list(result))
-
-
-def _print_reminder_list_result(args, result: list) -> None:
-    want_json, want_pretty = _format_flags(args)
-    if want_pretty:
-        print(json.dumps(result, indent=2))
-        return
-    if want_json:
-        print(json.dumps(result))
-        return
-    print(fmt.format_reminder_list(result))
+    else:
+        print(formatter(result))
 
 
 def _print_get_field_result(fields: list[str], result: dict) -> None:
-    """Print raw field values when --field is given. Single field: raw value. Multiple: tab-separated."""
-    values = []
-    for f in fields:
-        v = result[f] if f in result else ""
-        values.append("" if v is None else str(v))
-    if len(values) == 1:
-        print(values[0])
-    else:
-        print("\t".join(values))
+    """Raw field values: one field prints the value alone; multiple are tab-separated."""
+    values = ["" if (f not in result or result[f] is None) else str(result[f]) for f in fields]
+    print(values[0] if len(values) == 1 else "\t".join(values))
 
 
 def _run_serve(config: Config, notif_dir: Path, *, port: int):

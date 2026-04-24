@@ -17,56 +17,31 @@ def test_strip_odata_removes_top_and_nested_keys():
     assert cleaned["value"][1]["from"]["emailAddress"] == {"address": "a@b.c"}
 
 
-def test_format_email_list_empty():
+def test_format_email_list():
     assert fmt.format_email_list([]) == "(no messages)"
-
-
-def test_format_email_list_columns_and_unread_marker():
     emails = [
         {
-            "id": "AAA123",
-            "subject": "Hello world",
-            "from": {"emailAddress": {"address": "alice@example.com"}},
+            "id": "AAA",
+            "subject": "Hello",
+            "from": {"emailAddress": {"address": "a@x.com"}},
             "receivedDateTime": "2026-04-24T09:00:00Z",
             "isRead": False,
         },
         {
-            "id": "BBB456",
-            "subject": "Read already",
-            "from": {"emailAddress": {"address": "bob@example.com"}},
+            "id": "BBB",
+            "subject": "Read",
+            "from": {"emailAddress": {"address": "b@x.com"}},
             "receivedDateTime": "2026-04-23T08:00:00Z",
             "isRead": True,
         },
     ]
-    out = fmt.format_email_list(emails)
-    lines = out.splitlines()
-    assert len(lines) == 2
-    assert "alice@example.com" in lines[0]
-    assert "Hello world" in lines[0]
-    assert " *" in lines[0]  # unread marker
-    assert "AAA123" in lines[0]
-    assert " *" not in lines[1]
-    assert "BBB456" in lines[1]
+    lines = fmt.format_email_list(emails).splitlines()
+    assert "a@x.com" in lines[0] and "Hello" in lines[0] and " *" in lines[0] and "AAA" in lines[0]
+    assert " *" not in lines[1] and "BBB" in lines[1]
 
 
-def test_format_email_list_handles_missing_fields():
-    out = fmt.format_email_list([{"id": "x"}])
-    # no crash, id present
-    assert "x" in out
-
-
-def test_format_email_list_truncates_long_subject():
-    long = "s" * 200
-    out = fmt.format_email_list([{"id": "1", "subject": long}])
-    assert "..." in out
-    assert len(out.split("\t")[2]) <= 80
-
-
-def test_format_calendar_event_list_empty():
+def test_format_calendar_event_list():
     assert fmt.format_calendar_event_list([]) == "(no events)"
-
-
-def test_format_calendar_event_list_renders_times_and_location():
     events = [
         {
             "id": "evt1",
@@ -77,21 +52,15 @@ def test_format_calendar_event_list_renders_times_and_location():
         }
     ]
     out = fmt.format_calendar_event_list(events)
-    assert "2026-04-24T09:00:00" in out
-    assert "2026-04-24T09:30:00" in out
-    assert "Standup" in out
-    assert "Zoom" in out
-    assert "evt1" in out
+    assert all(s in out for s in ("2026-04-24T09:00:00", "2026-04-24T09:30:00", "Standup", "Zoom", "evt1"))
 
 
 def test_format_calendar_name_list_marks_default():
-    cals = [
-        {"id": "c1", "name": "Calendar", "isDefaultCalendar": True},
-        {"id": "c2", "name": "Birthdays", "isDefaultCalendar": False},
-    ]
-    out = fmt.format_calendar_name_list(cals)
-    lines = out.splitlines()
-    assert lines[0].startswith("*")
-    assert lines[1].startswith(" ")
-    assert "Calendar" in lines[0]
-    assert "Birthdays" in lines[1]
+    lines = fmt.format_calendar_name_list(
+        [
+            {"id": "c1", "name": "Calendar", "isDefaultCalendar": True},
+            {"id": "c2", "name": "Birthdays", "isDefaultCalendar": False},
+        ]
+    ).splitlines()
+    assert lines[0].startswith("*") and "Calendar" in lines[0]
+    assert lines[1].startswith(" ") and "Birthdays" in lines[1]

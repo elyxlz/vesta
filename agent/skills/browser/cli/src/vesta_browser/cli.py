@@ -146,48 +146,27 @@ def cmd_snapshot(args: argparse.Namespace) -> int:
     return 0
 
 
+_SCREENSHOT_EXT = {"png": "png", "jpeg": "jpg", "webp": "webp"}
+
+
 def cmd_screenshot(args: argparse.Namespace) -> int:
     admin.ensure_daemon()
-    fmt = _screenshot_format(args)
-    region = _parse_region(args.region) if args.region else None
-    path = args.path if args.path else _default_screenshot_path(fmt)
-    path = helpers.screenshot(
-        path=path,
-        full_page=args.full_page,
-        format=fmt,
-        region=region,
-        quality=args.quality,
-    )
-    print(path)
+    lower = args.path.lower() if args.path else ""
+    if args.webp or lower.endswith(".webp"):
+        fmt = "webp"
+    elif args.jpeg or lower.endswith((".jpg", ".jpeg")):
+        fmt = "jpeg"
+    else:
+        fmt = "png"
+    region = None
+    if args.region:
+        parts = args.region.split(",")
+        if len(parts) != 4:
+            raise ValueError(f"--region expects 'x,y,w,h', got {args.region!r}")
+        region = (float(parts[0]), float(parts[1]), float(parts[2]), float(parts[3]))
+    path = args.path or f"/tmp/screenshot.{_SCREENSHOT_EXT[fmt]}"
+    print(helpers.screenshot(path=path, full_page=args.full_page, format=fmt, region=region, quality=args.quality))
     return 0
-
-
-def _screenshot_format(args: argparse.Namespace) -> str:
-    """Resolve screenshot format from --webp/--jpeg flags or inferred from --path suffix."""
-    if args.webp:
-        return "webp"
-    if args.jpeg:
-        return "jpeg"
-    if args.path:
-        lower = args.path.lower()
-        if lower.endswith(".webp"):
-            return "webp"
-        if lower.endswith(".jpg") or lower.endswith(".jpeg"):
-            return "jpeg"
-    return "png"
-
-
-def _default_screenshot_path(fmt: str) -> str:
-    ext = {"png": "png", "jpeg": "jpg", "webp": "webp"}[fmt]
-    return f"/tmp/screenshot.{ext}"
-
-
-def _parse_region(raw: str) -> tuple[float, float, float, float]:
-    parts = raw.split(",")
-    if len(parts) != 4:
-        raise ValueError(f"--region expects 'x,y,w,h', got {raw!r}")
-    x, y, w, h = (float(p) for p in parts)
-    return x, y, w, h
 
 
 def cmd_pdf(args: argparse.Namespace) -> int:

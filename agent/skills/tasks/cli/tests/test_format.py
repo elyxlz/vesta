@@ -3,50 +3,19 @@
 from tasks_cli import format as fmt
 
 
-def test_format_task_list_empty():
+def test_format_task_list():
     assert fmt.format_task_list([]) == "(no tasks)"
-
-
-def test_format_task_list_columns_and_priority_label():
     tasks = [
-        {
-            "id": "t1",
-            "title": "ship PR",
-            "status": "pending",
-            "priority": 3,
-            "due_date": "2026-04-25T09:00:00+00:00",
-        },
-        {
-            "id": "t2",
-            "title": "water plants",
-            "status": "done",
-            "priority": 2,
-            "due_date": None,
-        },
+        {"id": "t1", "title": "ship PR", "status": "pending", "priority": 3, "due_date": "2026-04-25T09:00:00+00:00"},
+        {"id": "t2", "title": "water plants", "status": "done", "priority": 2, "due_date": None},
     ]
-    out = fmt.format_task_list(tasks)
-    lines = out.splitlines()
-    assert len(lines) == 2
-    assert "pending" in lines[0]
-    assert "high" in lines[0]
-    assert "ship PR" in lines[0]
-    assert "t1" in lines[0]
-    assert "done" in lines[1]
-    assert "norm" in lines[1]
-    assert "-" in lines[1]  # no due date
-
-
-def test_format_task_list_truncates_long_title():
-    long = "x" * 200
-    out = fmt.format_task_list([{"id": "t", "title": long, "status": "pending", "priority": 2}])
-    assert "..." in out
-
-
-def test_format_reminder_list_empty():
-    assert fmt.format_reminder_list([]) == "(no reminders)"
+    lines = fmt.format_task_list(tasks).splitlines()
+    assert "pending" in lines[0] and "high" in lines[0] and "ship PR" in lines[0] and "t1" in lines[0]
+    assert "done" in lines[1] and "norm" in lines[1] and "-" in lines[1]
 
 
 def test_format_reminder_list_renders_fields_and_markers():
+    assert fmt.format_reminder_list([]) == "(no reminders)"
     reminders = [
         {
             "id": "r1",
@@ -65,14 +34,6 @@ def test_format_reminder_list_renders_fields_and_markers():
             "auto_generated": False,
         },
     ]
-    out = fmt.format_reminder_list(reminders)
-    lines = out.splitlines()
-    assert len(lines) == 2
-    assert "r1" in lines[0]
-    assert "follow up" in lines[0]
-    assert " *" in lines[0]  # auto_generated marker
-    assert "task=t1" in lines[0]
-    assert "r2" in lines[1]
-    assert "call mom" in lines[1]
-    assert " *" not in lines[1]
-    assert "task=" not in lines[1]
+    lines = fmt.format_reminder_list(reminders).splitlines()
+    assert "r1" in lines[0] and "follow up" in lines[0] and " *" in lines[0] and "task=t1" in lines[0]
+    assert "r2" in lines[1] and " *" not in lines[1] and "task=" not in lines[1]

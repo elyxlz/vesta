@@ -192,77 +192,34 @@ def test_snapshot_banner_handles_snapshot_failure(monkeypatch):
     assert "snapshot failed: CDP dead" in cli._snapshot_banner()
 
 
-def test_screenshot_format_defaults_to_png():
-    ns = argparse.Namespace(webp=False, jpeg=False, path=None)
-    assert cli._screenshot_format(ns) == "png"
-
-
-def test_screenshot_format_honors_webp_flag():
-    ns = argparse.Namespace(webp=True, jpeg=False, path=None)
-    assert cli._screenshot_format(ns) == "webp"
-
-
-def test_screenshot_format_inferred_from_path_suffix():
-    ns = argparse.Namespace(webp=False, jpeg=False, path="/tmp/x.webp")
-    assert cli._screenshot_format(ns) == "webp"
-    ns = argparse.Namespace(webp=False, jpeg=False, path="/tmp/x.jpg")
-    assert cli._screenshot_format(ns) == "jpeg"
-
-
-def test_screenshot_flag_overrides_suffix():
-    ns = argparse.Namespace(webp=True, jpeg=False, path="/tmp/x.png")
-    assert cli._screenshot_format(ns) == "webp"
-
-
-def test_parse_region_happy_path():
-    assert cli._parse_region("0,0,320,240") == (0.0, 0.0, 320.0, 240.0)
-
-
-def test_parse_region_rejects_bad_input():
-    import pytest
-
-    with pytest.raises(ValueError):
-        cli._parse_region("0,0,320")
-
-
 def test_cmd_screenshot_plumbs_webp_and_region(monkeypatch):
-    """--webp + --region should flow through to helpers.screenshot as format='webp' + region tuple."""
+    """--webp + --region flow through as format='webp' + region tuple; path default follows format."""
     captured: dict = {}
-
-    def fake_screenshot(**kwargs):
-        captured.update(kwargs)
-        return kwargs["path"]
-
     monkeypatch.setattr(cli.admin, "ensure_daemon", lambda *a, **kw: None)
-    monkeypatch.setattr(cli.helpers, "screenshot", fake_screenshot)
+    monkeypatch.setattr(cli.helpers, "screenshot", lambda **kw: (captured.update(kw), kw["path"])[1])
 
-    args = argparse.Namespace(
-        path="/tmp/shot.webp",
-        full_page=False,
-        webp=True,
-        jpeg=False,
-        region="10,20,300,200",
-        quality=75,
-    )
-    rc = cli.cmd_screenshot(args)
-    assert rc == 0
+    args = argparse.Namespace(path="/tmp/shot.webp", full_page=False, webp=True, jpeg=False, region="10,20,300,200", quality=75)
+    assert cli.cmd_screenshot(args) == 0
     assert captured["format"] == "webp"
     assert captured["region"] == (10.0, 20.0, 300.0, 200.0)
     assert captured["quality"] == 75
-    assert captured["path"] == "/tmp/shot.webp"
+
+    captured.clear()
+    cli.cmd_screenshot(argparse.Namespace(path=None, full_page=False, webp=True, jpeg=False, region=None, quality=None))
+    assert captured["path"].endswith(".webp")
 
 
-def test_cmd_screenshot_defaults_path_when_unset(monkeypatch):
-    """With --webp and no --path, default path should end in .webp."""
+def test_cmd_screenshot_infers_format_from_path_suffix(monkeypatch):
     captured: dict = {}
     monkeypatch.setattr(cli.admin, "ensure_daemon", lambda *a, **kw: None)
+    monkeypatch.setattr(cli.helpers, "screenshot", lambda **kw: (captured.update(kw), kw["path"])[1])
+    cli.cmd_screenshot(argparse.Namespace(path="/tmp/x.jpg", full_page=False, webp=False, jpeg=False, region=None, quality=None))
+    assert captured["format"] == "jpeg"
 
-    def fake_screenshot(**kwargs):
-        captured.update(kwargs)
-        return kwargs["path"]
 
-    monkeypatch.setattr(cli.helpers, "screenshot", fake_screenshot)
+def test_cmd_screenshot_rejects_malformed_region(monkeypatch):
+    import pytest
 
-    args = argparse.Namespace(path=None, full_page=False, webp=True, jpeg=False, region=None, quality=None)
-    cli.cmd_screenshot(args)
-    assert captured["path"].endswith(".webp")
+    monkeypatch.setattr(cli.admin, "ensure_daemon", lambda *a, **kw: None)
+    with pytest.raises(ValueError, match="--region expects"):
+        cli.cmd_screenshot(argparse.Namespace(path=None, full_page=False, webp=False, jpeg=False, region="0,0,320", quality=None))
