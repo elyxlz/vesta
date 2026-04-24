@@ -1,6 +1,6 @@
 ---
 name: dashboard
-description: Use when you need to build, modify, or customize anything on the user's dashboard (widgets, layouts, pages, views, or any custom UI).
+description: Build or modify the user's dashboard: widgets, pages, layouts, or custom UI.
 serve: PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' -d '{"name":"dashboard","public":true}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])") && screen -dmS dashboard sh -c "cd ~/agent/skills/dashboard/app && npx vite preview --port $PORT --host 0.0.0.0"
 ---
 

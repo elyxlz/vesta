@@ -1,6 +1,6 @@
 ---
 name: media-server
-description: This skill should be used when the user asks about "plex", "movies", "tv shows", "torrents", "downloads", "qbittorrent", "media", "streaming", or needs to search for, download, or browse their media library.
+description: Plex, movies, TV shows, torrents, qBittorrent; download and browse library.
 ---
 
 # Media Server - Plex & Torrent Management

@@ -1,6 +1,6 @@
 ---
 name: upstream-pr
-description: Create PRs, issues, and contributions to the upstream elyxlz/vesta repo. Use for any GitHub operations -- pushing branches, creating PRs, checking CI status, or accessing the GitHub API.
+description: Upstream elyxlz/vesta GitHub ops: branches, PRs, issues, CI, API.
 ---
 
 # Upstream PR

@@ -1,6 +1,6 @@
 ---
 name: home-assistant
-description: This skill should be used when the user asks about "home", "house", "energy", "power", "temperature", "climate", "weather", "security", "cameras", "motion", "alarm", "location", "where am I", "battery", or needs to interact with Home Assistant devices, sensors, or automations. No daemon required, queries HA API on demand.
+description: Home Assistant: energy, temperature, cameras, alarms, devices, sensors, automations.
 ---
 
 # Home Assistant - CLI: ha

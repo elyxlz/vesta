@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, UTC
 from contextlib import closing
 from pathlib import Path
-from typing import TypedDict
+from typing import Any, TypedDict
 import json
 import logging
 import uuid
@@ -277,6 +277,46 @@ def get_task(config: Config, *, task_id: str) -> dict:
         if not result:
             raise ValueError(f"Task '{task_id}' not found. Use list to see available tasks.")
         return _task_with_metadata(config.data_dir, dict(result), include_content=True)
+
+
+TASK_FIELDS = (
+    "id",
+    "title",
+    "status",
+    "priority",
+    "due_date",
+    "created_at",
+    "completed_at",
+    "metadata_path",
+    "metadata",
+)
+
+
+def get_task_fields(config: Config, *, task_id: str, fields: list[str]) -> dict:
+    """Return only the requested fields; skip reading metadata unless asked."""
+    unknown = [f for f in fields if f not in TASK_FIELDS]
+    if unknown:
+        raise ValueError(f"Unknown field(s): {', '.join(unknown)}. Valid: {', '.join(TASK_FIELDS)}")
+
+    want_metadata = "metadata" in fields
+    want_db = [f for f in fields if f in TASK_FIELDS and f not in ("metadata", "metadata_path")]
+
+    out: dict[str, Any] = {}
+    if want_db or "metadata_path" in fields:
+        with closing(db.get_db(config.data_dir)) as conn:
+            cursor = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
+            row = cursor.fetchone()
+            if not row:
+                raise ValueError(f"Task '{task_id}' not found. Use list to see available tasks.")
+            for f in want_db:
+                out[f] = row[f]
+            if "metadata_path" in fields:
+                out["metadata_path"] = str(_get_metadata_path(config.data_dir, task_id))
+
+    if want_metadata:
+        out["metadata"] = _read_metadata(config.data_dir, task_id)
+
+    return out
 
 
 def delete_task(config: Config, *, task_id: str) -> dict:

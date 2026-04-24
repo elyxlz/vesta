@@ -1,6 +1,6 @@
 ---
 name: google
-description: This skill should be used when the user asks about "gmail", "google email", "google calendar", "gcal", "google meet", or needs to read/send emails via Gmail, manage Google Calendar events, create Google Meet links, or handle scheduling via Google. Requires a background daemon.
+description: Gmail, Google Calendar, Meet: email, events, scheduling. Requires daemon.
 ---
 
 # Google - CLI: google

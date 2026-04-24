@@ -1,6 +1,6 @@
 ---
 name: tv
-description: Use for "TV", "Samsung TV", "television", "watch", "play on TV", "YouTube on TV", "volume", "turn on TV", "turn off TV", or any Samsung Smart TV control.
+description: Samsung Smart TV: watch, volume, power, YouTube, playback control.
 ---
 
 # Samsung TV -- Python: samsungtvws

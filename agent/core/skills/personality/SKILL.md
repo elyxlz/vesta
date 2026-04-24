@@ -1,6 +1,6 @@
 ---
 name: personality
-description: Swap or tune the voice of the agent. Only touches the `## 1. Personality` section of MEMORY.md, never the Charter or anything below.
+description: Swap or tune the agent's voice; edits only MEMORY.md's Personality section.
 ---
 
 # Personality

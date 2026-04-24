@@ -1,6 +1,6 @@
 ---
 name: ssh
-description: Use when the user wants to allow another computer to SSH into this machine, share remote access, or set up a public SSH tunnel. Creates an internet-accessible SSH endpoint via bore.
+description: Expose this machine over SSH via bore (public TCP tunnel).
 ---
 
 # SSH Access

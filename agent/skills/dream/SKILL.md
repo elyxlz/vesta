@@ -1,6 +1,6 @@
 ---
 name: dream
-description: Self-improvement and memory curation. Used by the nightly dreamer, but can also be used anytime.
+description: Self-improvement and memory curation; used nightly by the dreamer or anytime.
 ---
 
 # Dream - Self-Improvement & Memory Curation

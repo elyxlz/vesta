@@ -1,6 +1,6 @@
 ---
 name: onedrive
-description: This skill should be used when the user asks about "OneDrive", "cloud files", "sync files", "mount drive", or needs to access, mount, or manage OneDrive cloud storage.
+description: OneDrive cloud files: access, mount, or manage via rclone.
 ---
 
 # OneDrive

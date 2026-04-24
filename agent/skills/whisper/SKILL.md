@@ -1,6 +1,6 @@
 ---
 name: whisper
-description: Use for "transcribe", "transcription", "speech to text", "audio to text", "convert audio", or when the user wants text extracted from any audio or video file.
+description: Transcribe audio or video files to text (speech-to-text).
 ---
 
 # Whisper - Local Audio Transcription

@@ -1,6 +1,6 @@
 ---
 name: keeper
-description: This skill should be used when the user asks about "passwords", "credentials", "vault", "secrets", "keeper", "password manager", "logins", "TOTP", "2FA codes", or needs to store, retrieve, search, share, or manage passwords and secure records.
+description: Passwords, credentials, vault, 2FA/TOTP via Keeper; store, retrieve, manage.
 ---
 
 # Keeper - CLI: keeper

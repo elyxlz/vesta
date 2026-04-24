@@ -1,6 +1,6 @@
 ---
 name: microsoft
-description: This skill should be used when the user asks about "email", "emails", "inbox", "messages", "calendar", "schedule", "scheduling", "meetings", "appointments", "events", "outlook", or needs to read/send emails, manage calendar events, or handle time-based tasks via Microsoft/Outlook. Requires a background daemon.
+description: Outlook email, inbox, calendar, meetings, events via Microsoft. Requires daemon.
 ---
 
 # Microsoft - CLI: microsoft
@@ -53,6 +53,7 @@ microsoft calendar respond --account user@example.com --id <event_id> --response
 - `--no-attachments` on email get skips attachment metadata
 - `--save-to` on email get saves the email body text to a file (NOT JSON, plain text only)
 - `--categories` on email update accepts multiple space-separated category names
+- `email list`, `email search`, `calendar list`, and `calendar calendars` default to a compact tab-separated table; pass `--json` for one-line JSON or `--json-pretty` for indented JSON. Graph `@odata.*` metadata is stripped from every result.
 
 ## Email Attachments
 

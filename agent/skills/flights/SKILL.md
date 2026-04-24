@@ -1,6 +1,6 @@
 ---
 name: flights
-description: Use this skill when the user asks about flights, plane tickets, airfare, travel deals, cheap flights, or wants to search for routes between cities/airports. Covers one-way, round-trip, and date-flexible searches. Books via Trip.com (primary, browser automation) or Duffel API (fallback).
+description: Search flights, airfare, routes; book via Trip.com or Duffel.
 ---
 
 # Flights

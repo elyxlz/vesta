@@ -1,6 +1,6 @@
 ---
 name: spotify
-description: This skill should be used when the user asks about "spotify", "music", "playlist", "playlists", "song", "songs", "track", "tracks", "now playing", "what's playing", "play", "pause", "skip", "queue", or needs to search for music, manage playlists, or control playback.
+description: Spotify: music, playlists, tracks, playback, queue, library management.
 ---
 
 # Spotify - CLI: spotify
