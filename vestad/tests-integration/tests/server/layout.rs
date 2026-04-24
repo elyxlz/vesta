@@ -37,8 +37,11 @@ fn fresh_agent_has_expected_directory_structure() {
 
     c.wait_ready(&agent.name, 10).ok(); // may not become ready without auth, that's fine
 
-    // Root-level directories created by Dockerfile + entrypoint
-    for dir in ["/root/.git", "/root/.claude", "/root/agent"] {
+    // Root-level directories created by entrypoint / image COPY. Git state
+    // (/root/.git, branch, sparse-checkout, .gitignore) is no longer asserted
+    // here: it is initialized by the agent on first start via
+    // upstream-sync/SETUP.md, which requires auth — outside this test's scope.
+    for dir in ["/root/.claude", "/root/agent"] {
         wait_for_path(&cid, 'd', dir);
     }
 
@@ -62,28 +65,12 @@ fn fresh_agent_has_expected_directory_structure() {
     }
 
     // Key files exist
-    for file in ["/root/agent/MEMORY.md", "/root/agent/pyproject.toml", "/root/.gitignore"] {
+    for file in ["/root/agent/MEMORY.md", "/root/agent/pyproject.toml"] {
         wait_for_path(&cid, 'f', file);
     }
 
-    // Git state: repo root is /root, on the agent's branch
-    let toplevel = exec_in_container(&cid, "git -C /root rev-parse --show-toplevel").unwrap();
-    assert_eq!(toplevel, "/root", "git repo root should be /root");
-
-    let branch = exec_in_container(&cid, "git -C /root branch --show-current").unwrap();
-    assert_eq!(branch, agent.name, "should be on agent's branch");
-
-    // Sparse checkout includes agent (cone mode: "agent/subdir", non-cone mode: "/agent/")
-    let sparse = exec_in_container(&cid, "git -C /root sparse-checkout list").unwrap();
-    assert!(
-        sparse.lines().any(|l| {
-            let t = l.trim();
-            t.starts_with("agent/") || t == "/agent/" || t == "agent/"
-        }),
-        "sparse-checkout should include agent/ paths, got: {sparse}"
-    );
-
-    // Nothing at repo root that shouldn't be there
+    // Nothing at repo root that shouldn't be there. `.git` and `.gitignore` are
+    // listed because the agent creates them later via upstream-sync/SETUP.md.
     let root_entries = exec_in_container(&cid, "ls -1 /root").unwrap();
     for entry in root_entries.lines() {
         assert!(
