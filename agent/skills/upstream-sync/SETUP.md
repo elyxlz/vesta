@@ -6,6 +6,7 @@ Use this when your filesystem or git state is not in the expected shape yet. The
 
 At the end, all of this should be true:
 
+- `~/.git` exists and `origin` points at the upstream repo
 - `git -C ~ rev-parse --show-toplevel` prints `~`
 - `git -C ~ branch --show-current` prints `$AGENT_NAME`
 - your real local code and customizations live under `~/agent`
@@ -28,6 +29,30 @@ You need these values:
 
 - `AGENT_NAME`
 - `VESTA_UPSTREAM_REF`
+
+## 1a. Initialize the git repo if missing
+
+Fresh containers do not ship with a git repo at `~`. If `~/.git` is missing, create it from scratch before continuing:
+
+```bash
+if [ ! -d ~/.git ]; then
+  cd ~
+  git init
+  git remote add origin https://github.com/elyxlz/vesta.git
+  git sparse-checkout init --no-cone
+  printf '/agent/\n!/agent/core/\n!/agent/pyproject.toml\n!/agent/uv.lock\n/.gitignore\n' > .git/info/sparse-checkout
+  printf '/*\n!.gitignore\n!/agent/\n' > .gitignore
+fi
+```
+
+Ensure the commit identity matches your name (safe to re-run):
+
+```bash
+git -C ~ config user.name "$AGENT_NAME"
+git -C ~ config user.email "$AGENT_NAME@vesta"
+```
+
+The sparse-checkout pattern keeps bind-mounted paths (`agent/core/`, `agent/pyproject.toml`, `agent/uv.lock`) out of the worktree so vestad's read-only mounts do not look like local modifications. The skills-registry skill appends to this set when you install non-default skills; do not overwrite the pattern once it exists.
 
 ## 2. Inspect filesystem and git state
 
@@ -182,6 +207,12 @@ git -C ~ read-tree FETCH_HEAD
 
 # Reapply sparse checkout to set skip-worktree on non-agent files
 git -C ~ sparse-checkout reapply
+
+# If vestad bind-mounts core/pyproject/uv.lock from the host, mark them skip-worktree
+# so the mounted content does not show as local modifications.
+if mount | grep -q '/root/agent/core '; then
+  git -C ~ update-index --skip-worktree agent/core agent/pyproject.toml agent/uv.lock 2>/dev/null || true
+fi
 ```
 
 Non-agent files stay in the index (and therefore in the commit tree) but are not checked out to disk. Sparse checkout manages that transparently.
