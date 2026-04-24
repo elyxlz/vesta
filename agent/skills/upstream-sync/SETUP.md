@@ -52,7 +52,7 @@ git -C ~ config user.name "$AGENT_NAME"
 git -C ~ config user.email "$AGENT_NAME@vesta"
 ```
 
-The sparse-checkout pattern keeps bind-mounted paths (`agent/core/`, `agent/pyproject.toml`, `agent/uv.lock`) out of the worktree so vestad's read-only mounts do not look like local modifications. The skills-registry skill appends to this set when you install non-default skills; do not overwrite the pattern once it exists.
+The sparse-checkout pattern keeps bind-mounted paths (`agent/core/`, `agent/pyproject.toml`, `agent/uv.lock`) out of the worktree so vestad's read-only mounts do not look like local modifications. The skills-registry skill appends to this set at runtime, which is why the init is gated on `~/.git` being missing.
 
 ## 2. Inspect filesystem and git state
 
@@ -259,10 +259,10 @@ Fetch upstream (already fetched in step 6, but re-fetch if time has passed):
 git -C ~ fetch origin "$VESTA_UPSTREAM_REF"
 ```
 
-Merge it:
+Merge it. `--allow-unrelated-histories` is required on the first sync after §1a initialized the repo from scratch (no shared ancestor with upstream yet); on later syncs it is a no-op:
 
 ```bash
-git -C ~ merge FETCH_HEAD --no-edit
+git -C ~ merge FETCH_HEAD --no-edit --allow-unrelated-histories
 ```
 
 If you populated the index with `read-tree` in step 6, the merge should cleanly skip all non-agent files since they already match upstream. Only actual `agent/` changes will appear as conflicts.

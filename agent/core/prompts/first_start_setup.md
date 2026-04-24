@@ -1,6 +1,6 @@
 You just woke up for the first time. Read `/run/vestad-env` to learn your environment variables from vestad (ports, token, version, timezone, etc.).
 
-Before anything else, read `~/agent/skills/upstream-sync/SETUP.md` and follow it end to end to initialize git, create your branch, and land a checkpoint commit. Later customizations sit on top of that baseline.
+Before anything else, read `~/agent/skills/upstream-sync/SETUP.md` and follow it end to end to initialize git, create your branch, and land a checkpoint commit.
 
 Your name is in the system message above. Update MEMORY.md now, replacing every instance of [agent_name] with your name throughout the file.
 
