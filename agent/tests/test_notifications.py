@@ -147,8 +147,9 @@ async def test_delete_handles_already_deleted(tmp_path):
 def test_batch_single():
     notif = vm.Notification(timestamp=dt.datetime(2025, 1, 1), source="test", type="message")
     formatted = format_notification_batch([notif])
-    assert "[NOTIFICATIONS]" not in formatted
-    assert "[message from test]" in formatted
+    assert "<notifications>" in formatted
+    assert '<notification source="test" type="message">' in formatted
+    assert "</notifications>" in formatted
 
 
 def test_batch_multiple():
@@ -157,9 +158,11 @@ def test_batch_multiple():
         vm.Notification(timestamp=dt.datetime(2025, 1, 1, 0, 0, 1), source="test", type="alert"),
     ]
     formatted = format_notification_batch(notifs)
-    assert "[NOTIFICATIONS]" in formatted
-    assert "[message from test]" in formatted
-    assert "[alert from test]" in formatted
+    assert formatted.count("<notification ") == 2
+    assert '<notification source="test" type="message">' in formatted
+    assert '<notification source="test" type="alert">' in formatted
+    assert formatted.startswith("<notifications>\n")
+    assert formatted.endswith("</notifications>")
 
 
 def test_batch_with_suffix():
@@ -171,7 +174,8 @@ def test_batch_with_suffix():
 def test_notification_format_for_display():
     notif = vm.Notification.model_validate({"timestamp": "2025-01-01T00:00:00", "source": "email", "type": "message", "sender": "alice"})
     display = notif.format_for_display()
-    assert "[message from email]" in display
+    assert display.startswith('<notification source="email" type="message">')
+    assert display.endswith("</notification>")
     assert "sender=alice" in display
 
 
@@ -321,7 +325,7 @@ async def test_process_batch_queues_prompt(tmp_path):
 
     assert not queue.empty()
     prompt, is_user = await queue.get()
-    assert "[message from test]" in prompt
+    assert '<notification source="test" type="message">' in prompt
     assert is_user is False
 
 
