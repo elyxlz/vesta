@@ -7,6 +7,20 @@ description: Create PRs, issues, and contributions to the upstream elyxlz/vesta 
 
 Contribute improvements back to `elyxlz/vesta`. Authentication is handled by the `vesta-upstream` GitHub App -- no personal tokens needed.
 
+## Attribution -- always required
+
+Every PR and every issue you create must include your agent name and the vesta version you are running, so maintainers know which agent on which version hit the bug or proposed the change.
+
+- Agent name: `$AGENT_NAME`
+- Vesta version: `$VESTA_UPSTREAM_REF` (e.g. `v0.1.148` in release builds, a branch name in dev)
+
+`pr.py` automatically appends `Submitted by **<name>** on <version>` to every PR body. For **issues**, there is no wrapper -- you must add the same footer to the body yourself:
+
+```
+---
+Submitted by **$AGENT_NAME** on `$VESTA_UPSTREAM_REF`
+```
+
 ## GitHub token
 
 For any GitHub API call (issues, check-runs, PR status):
@@ -29,7 +43,7 @@ Local code diverges from upstream, so never branch from local HEAD. Use a clean 
 
 2. **Apply changes** to `/tmp/vesta-pr`. Only universal improvements -- no personal config, memory, or credentials.
 
-3. **Create a GitHub issue first** (use `--token-only` for API access), then reference it in the PR.
+3. **Create a GitHub issue first** (use `--token-only` for API access), then reference it in the PR. Include the attribution footer in the issue body (see "Attribution" above).
 
 4. **Commit and submit:**
    ```bash
