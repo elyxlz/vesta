@@ -15,12 +15,8 @@ ENV PATH="/root/.local/bin:${PATH}"
 
 WORKDIR /root
 
-# Build context is the repo root; this Dockerfile lives at vestad/Dockerfile.
-# Git repo + sparse-checkout are set up by the agent on first start (upstream-sync/SETUP.md).
 COPY agent/ ./agent/
 
-# Remove non-default skills from the image. Non-default skills are installed on demand by
-# the skills-registry skill, which also adds them to the sparse-checkout set.
 RUN for d in agent/skills/*/; do \
       name="$(basename "$d")"; \
       grep -qx "$name" agent/skills/default-skills.txt || rm -rf "$d"; \
