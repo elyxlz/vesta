@@ -1,3 +1,4 @@
+import re
 from datetime import datetime, timedelta, UTC
 from zoneinfo import ZoneInfo
 
@@ -6,6 +7,19 @@ from googleapiclient.errors import HttpError
 from . import api, notifications
 from .context import GoogleContext
 from .gmail import _get_header
+
+
+# Zero-width / bidi formatting characters that marketing emails use to pad previews.
+_INVISIBLE = re.compile(r"[​-‏‪-‮⁠⁦-⁩﻿]")
+_WHITESPACE_RUN = re.compile(r"\s+")
+
+
+def clean_preview(text: str) -> str:
+    return _WHITESPACE_RUN.sub(" ", _INVISIBLE.sub("", text)).strip()
+
+
+def strip_fractional(iso: str) -> str:
+    return re.sub(r"\.\d+", "", iso)
 
 
 def _format_threshold_label(minutes: int) -> str:
@@ -94,7 +108,6 @@ def run(ctx: GoogleContext):
                         headers = msg_payload["headers"] if "headers" in msg_payload else []
                         sender = _get_header(headers, "From")
                         subject = _get_header(headers, "Subject")
-                        date = _get_header(headers, "Date")
                         snippet = msg["snippet"] if "snippet" in msg else ""
 
                         notifications.write_notification(
@@ -102,8 +115,7 @@ def run(ctx: GoogleContext):
                             "email",
                             sender=sender,
                             subject=subject,
-                            preview=snippet[:200],
-                            received_at=date,
+                            preview=clean_preview(snippet)[:200],
                             missed=catching_up or None,
                         )
                     except HttpError as e:
@@ -162,9 +174,8 @@ def run(ctx: GoogleContext):
                             ctx.notif_dir,
                             "calendar",
                             subject=subject,
-                            start_time=start_str,
+                            start_time=strip_fractional(start_str),
                             minutes_until=mins_until,
-                            reminder_window=label,
                             location=location,
                             missed=(catching_up and event_time < new_check_time) or None,
                         )

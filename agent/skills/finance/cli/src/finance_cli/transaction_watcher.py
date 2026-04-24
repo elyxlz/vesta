@@ -102,16 +102,8 @@ def write_notification(tx: dict) -> None:
     notification = {
         "type": "finance",
         "source": "finance",
-        "timestamp": datetime.now(UTC).isoformat(),
+        "timestamp": datetime.now(UTC).replace(microsecond=0).isoformat(),
         "message": f"New transaction: {formatted}",
-        "data": {
-            "amount": tx.get("transaction_amount", {}),
-            "description": format_tx(tx).split(" — ", 1)[1] if " — " in format_tx(tx) else "",
-            "creditor": (tx.get("creditor", {}) or {}).get("name", "") if isinstance(tx.get("creditor"), dict) else tx.get("creditor_name", ""),
-            "debtor": (tx.get("debtor", {}) or {}).get("name", "") if isinstance(tx.get("debtor"), dict) else tx.get("debtor_name", ""),
-            "date": tx.get("booking_date", ""),
-            "credit_debit": tx.get("credit_debit_indicator", ""),
-        },
     }
 
     filename = f"finance_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}_{hash(formatted) % 10000:04d}.json"

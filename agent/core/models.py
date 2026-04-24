@@ -72,6 +72,17 @@ class Notification(pyd.BaseModel):
     file_path: str | None = pyd.Field(default=None, exclude=True)
 
     def format_for_display(self) -> str:
+        """Render the notification for agent context: drop empty/falsey fields and microsecond precision.
+
+        Boolean fields should be named so True is the interesting case (e.g. `contact_unknown`,
+        `is_forwarded`, `missed`); a False value conveys nothing and costs tokens, so we skip it.
+        """
         data = self.model_dump(exclude={"file_path", "type", "source", "interrupt"})
-        parts = [f"{k}={v}" for k, v in data.items() if v is not None]
+        parts = []
+        for key, value in data.items():
+            if value is None or value == "" or value is False or value == []:
+                continue
+            if isinstance(value, dt.datetime):
+                value = value.replace(microsecond=0).isoformat()
+            parts.append(f"{key}={value}")
         return f"[{self.type} from {self.source}] {', '.join(parts)}"

@@ -175,6 +175,44 @@ def test_notification_format_for_display():
     assert "sender=alice" in display
 
 
+def test_format_for_display_drops_empty_and_false_fields():
+    """Empty strings, False bools, empty lists, and None should not appear in context."""
+    notif = vm.Notification.model_validate({
+        "timestamp": "2025-01-01T00:00:00",
+        "source": "whatsapp",
+        "type": "message",
+        "contact_name": "Alice",
+        "message": "hi",
+        "chat_name": "",
+        "media_type": "",
+        "is_forwarded": False,
+        "quoted_text": None,
+        "tags": [],
+        "contact_unknown": True,
+    })
+    display = notif.format_for_display()
+    assert "contact_name=Alice" in display
+    assert "message=hi" in display
+    assert "contact_unknown=True" in display  # True bool kept (interesting case)
+    assert "chat_name=" not in display
+    assert "media_type=" not in display
+    assert "is_forwarded" not in display
+    assert "quoted_text" not in display
+    assert "tags" not in display
+
+
+def test_format_for_display_strips_timestamp_microseconds():
+    notif = vm.Notification.model_validate({
+        "timestamp": "2025-01-01T12:34:56.123456+00:00",
+        "source": "tasks",
+        "type": "reminder",
+        "message": "ping",
+    })
+    display = notif.format_for_display()
+    assert ".123456" not in display
+    assert "timestamp=2025-01-01T12:34:56+00:00" in display
+
+
 @pytest.mark.parametrize(
     "payload,expected_substr",
     [

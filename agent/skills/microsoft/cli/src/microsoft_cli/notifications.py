@@ -12,7 +12,7 @@ def write_notification(notif_dir: Path, type: str, **fields):
         "source": "microsoft",
         "type": type,
         **{k: v for k, v in fields.items() if v is not None},
-        "timestamp": datetime.now(UTC).isoformat(),
+        "timestamp": datetime.now(UTC).replace(microsecond=0).isoformat(),
     }
 
     filename = f"{int(time.time() * 1e6)}-microsoft-{type}.json"
