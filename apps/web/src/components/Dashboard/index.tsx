@@ -67,10 +67,7 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
         // fall back to the legacy path. If the service is genuinely public
         // it'll load; if not, the iframe will show an auth error and the
         // user can refresh once vestad is upgraded.
-        console.debug(
-          "dashboard session mint failed, using legacy path:",
-          err,
-        );
+        console.debug("dashboard session mint failed, using legacy path:", err);
         setSessionUrl(
           `${conn.url}/agents/${encodeURIComponent(name)}/dashboard/`,
         );
