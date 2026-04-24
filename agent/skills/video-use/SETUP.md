@@ -12,7 +12,7 @@ brew install ffmpeg
 brew install yt-dlp         # optional
 ```
 
-`ffmpeg` is mandatory - every cut, fade, encode, and subtitle burn goes through it. `yt-dlp` is only needed if you want the nested session to fetch clips from YouTube / other sites.
+`ffmpeg` is mandatory: every cut, fade, encode, and subtitle burn goes through it. `yt-dlp` is only needed if you want the nested session to fetch clips from YouTube / other sites.
 
 ## 2. Clone and sync
 
