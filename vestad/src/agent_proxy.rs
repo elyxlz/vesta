@@ -65,6 +65,26 @@ fn split_service_subpath(path: &str) -> (&str, &str) {
     if rest.is_empty() { (first, "/") } else { (first, rest) }
 }
 
+/// Match `services/{svc}/s/{sid}/{rest...}` → `(svc, sid, /rest)`.
+/// Returns `None` if the shape doesn't match. Used to route iframe
+/// sub-resource requests authenticated by a session id in the path.
+fn split_session_subpath(path: &str) -> Option<(&str, &str, String)> {
+    let rest = path.strip_prefix("services/")?;
+    let (svc, rest) = rest.split_once('/')?;
+    if svc.is_empty() {
+        return None;
+    }
+    let rest = rest.strip_prefix("s/")?;
+    let (sid, rest) = match rest.split_once('/') {
+        Some((sid, rest)) => (sid, format!("/{}", rest)),
+        None => (rest, "/".to_string()),
+    };
+    if sid.is_empty() {
+        return None;
+    }
+    Some((svc, sid, rest))
+}
+
 pub async fn agent_proxy_handler(
     State(state): State<SharedState>,
     Path((name, path)): Path<(String, String)>,
@@ -83,20 +103,48 @@ pub async fn agent_proxy_handler(
     let agent_port = agent_port
         .ok_or_else(|| err_response(StatusCode::INTERNAL_SERVER_ERROR, "agent has no port — check the agent's .env file in ~/.config/vesta/vestad/agents/"))?;
 
-    let (first_segment, service_subpath) = split_service_subpath(&path);
-    let (target_port, stripped_path, service) = if !first_segment.is_empty() {
-        if let Some(entry) = resolve_service(&state, &name, first_segment).await {
-            (entry.port, service_subpath.to_string(), Some(entry))
-        } else {
-            (agent_port, format!("/{}", path), None)
+    let (target_port, stripped_path, service, via_session) = if let Some((svc, sid, rest)) =
+        split_session_subpath(&path)
+    {
+        let Some(entry) = resolve_service(&state, &name, svc).await else {
+            return Err(err_response(
+                StatusCode::NOT_FOUND,
+                &format!("service '{}' not registered for agent '{}'", svc, name),
+            ));
+        };
+        let Some((bound_agent, bound_service)) = state.service_sessions.lookup_and_touch(sid).await else {
+            return Err(err_response(
+                StatusCode::UNAUTHORIZED,
+                "session expired or invalid — refresh the parent app",
+            ));
+        };
+        if bound_agent != name || bound_service != svc {
+            // Don't leak whether the session exists — treat mismatch as not-found.
+            return Err(err_response(
+                StatusCode::NOT_FOUND,
+                "session does not match agent/service",
+            ));
         }
+        (entry.port, rest, Some(entry), true)
     } else {
-        (agent_port, format!("/{}", path), None)
+        let (first_segment, service_subpath) = split_service_subpath(&path);
+        if first_segment.is_empty() {
+            (agent_port, format!("/{}", path), None, false)
+        } else if let Some(entry) = resolve_service(&state, &name, first_segment).await {
+            (entry.port, service_subpath.to_string(), Some(entry), false)
+        } else {
+            (agent_port, format!("/{}", path), None, false)
+        }
     };
 
-    // Public services are fully open; everything else requires auth.
+    // Public services are fully open; session-authed requests skip the header
+    // check (session id in the path is the auth). Everything else requires a
+    // Bearer token or ?token= query param.
     let is_public = service.as_ref().is_some_and(|s| s.public);
-    if !is_public && !auth::has_valid_api_auth(request.headers(), request.uri(), &state.api_key) {
+    if !via_session
+        && !is_public
+        && !auth::has_valid_api_auth(request.headers(), request.uri(), &state.api_key)
+    {
         return Err(err_response(StatusCode::UNAUTHORIZED, "unauthorized — pass a valid Bearer token or ?token= query parameter"));
     }
 
@@ -276,7 +324,7 @@ async fn forward_http_to_container(
 
 #[cfg(test)]
 mod tests {
-    use super::{split_service_subpath, wait_for_upstream};
+    use super::{split_service_subpath, split_session_subpath, wait_for_upstream};
     use std::net::Ipv4Addr;
     use std::time::Duration;
     use tokio::net::TcpListener;
@@ -311,6 +359,53 @@ mod tests {
     #[test]
     fn empty_path_yields_empty_segment() {
         assert_eq!(split_service_subpath(""), ("", "/"));
+    }
+
+    #[test]
+    fn session_subpath_parses_nested_asset() {
+        assert_eq!(
+            split_session_subpath("services/dashboard/s/abc123/assets/index.js"),
+            Some(("dashboard", "abc123", "/assets/index.js".to_string())),
+        );
+    }
+
+    #[test]
+    fn session_subpath_parses_root_with_trailing_slash() {
+        assert_eq!(
+            split_session_subpath("services/dashboard/s/abc123/"),
+            Some(("dashboard", "abc123", "/".to_string())),
+        );
+    }
+
+    #[test]
+    fn session_subpath_parses_root_without_trailing_slash() {
+        assert_eq!(
+            split_session_subpath("services/dashboard/s/abc123"),
+            Some(("dashboard", "abc123", "/".to_string())),
+        );
+    }
+
+    #[test]
+    fn session_subpath_rejects_non_services_prefix() {
+        assert_eq!(split_session_subpath("dashboard/assets/x.js"), None);
+        assert_eq!(split_session_subpath(""), None);
+    }
+
+    #[test]
+    fn session_subpath_rejects_missing_s_segment() {
+        assert_eq!(split_session_subpath("services/dashboard/x/abc/index.js"), None);
+        assert_eq!(split_session_subpath("services/dashboard/"), None);
+    }
+
+    #[test]
+    fn session_subpath_rejects_empty_session_id() {
+        assert_eq!(split_session_subpath("services/dashboard/s//index.js"), None);
+        assert_eq!(split_session_subpath("services/dashboard/s/"), None);
+    }
+
+    #[test]
+    fn session_subpath_rejects_empty_service_name() {
+        assert_eq!(split_session_subpath("services//s/abc/index.js"), None);
     }
 
     #[tokio::test]

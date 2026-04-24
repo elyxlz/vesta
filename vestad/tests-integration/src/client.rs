@@ -248,6 +248,41 @@ impl Client {
         Ok(())
     }
 
+    pub fn register_service(&self, agent: &str, agent_token: &str, body: &serde_json::Value) -> Result<serde_json::Value, String> {
+        let resp = self.agent.post(&format!("{}/agents/{}/services", self.base_url, agent))
+            .header("X-Agent-Token", agent_token)
+            .send_json(body).map_err(map_error)?;
+        let resp = check_response(resp)?;
+        resp.into_body().read_json().map_err(|e| format!("parse error: {}", e))
+    }
+
+    pub fn create_service_session(&self, agent: &str, service: &str) -> Result<serde_json::Value, String> {
+        let resp = self.post(&format!("/agents/{}/services/{}/session", agent, service))?;
+        resp.into_body().read_json().map_err(|e| format!("parse error: {}", e))
+    }
+
+    /// Like `post`, but returns the raw response status/body without turning
+    /// non-2xx into Err. Used for tests that want to assert on 401/404/etc.
+    pub fn post_raw(&self, path: &str) -> Result<(u16, String), String> {
+        let resp = self.agent.post(&format!("{}{}", self.base_url, path))
+            .header("Authorization", &format!("Bearer {}", self.api_key))
+            .send_empty().map_err(map_error)?;
+        let status = resp.status().as_u16();
+        let body = resp.into_body().read_to_string().map_err(|e| format!("read body: {}", e))?;
+        Ok((status, body))
+    }
+
+    /// GET without the default bearer — used to prove a session path
+    /// authenticates on its own (and to prove that missing auth on a
+    /// non-session path 401s).
+    pub fn get_raw_no_auth(&self, path: &str) -> Result<(u16, String), String> {
+        let resp = self.agent.get(&format!("{}{}", self.base_url, path))
+            .call().map_err(map_error)?;
+        let status = resp.status().as_u16();
+        let body = resp.into_body().read_to_string().map_err(|e| format!("read body: {}", e))?;
+        Ok((status, body))
+    }
+
     pub fn stream_logs(&self, name: &str) -> Result<(), String> {
         let resp = self.get(&format!("/agents/{}/logs", name))?;
         let reader = std::io::BufReader::new(resp.into_body().into_reader());
