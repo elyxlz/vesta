@@ -177,19 +177,21 @@ def test_notification_format_for_display():
 
 def test_format_for_display_drops_empty_and_false_fields():
     """Empty strings, False bools, empty lists, and None should not appear in context."""
-    notif = vm.Notification.model_validate({
-        "timestamp": "2025-01-01T00:00:00",
-        "source": "whatsapp",
-        "type": "message",
-        "contact_name": "Alice",
-        "message": "hi",
-        "chat_name": "",
-        "media_type": "",
-        "is_forwarded": False,
-        "quoted_text": None,
-        "tags": [],
-        "contact_unknown": True,
-    })
+    notif = vm.Notification.model_validate(
+        {
+            "timestamp": "2025-01-01T00:00:00",
+            "source": "whatsapp",
+            "type": "message",
+            "contact_name": "Alice",
+            "message": "hi",
+            "chat_name": "",
+            "media_type": "",
+            "is_forwarded": False,
+            "quoted_text": None,
+            "tags": [],
+            "contact_unknown": True,
+        }
+    )
     display = notif.format_for_display()
     assert "contact_name=Alice" in display
     assert "message=hi" in display
@@ -201,13 +203,30 @@ def test_format_for_display_drops_empty_and_false_fields():
     assert "tags" not in display
 
 
+def test_format_for_display_keeps_integer_zero():
+    """Integer 0 is falsey but meaningful (e.g. minutes_until=0 for a reminder firing now)."""
+    notif = vm.Notification.model_validate(
+        {
+            "timestamp": "2025-01-01T00:00:00",
+            "source": "microsoft",
+            "type": "calendar",
+            "subject": "Now",
+            "minutes_until": 0,
+        }
+    )
+    display = notif.format_for_display()
+    assert "minutes_until=0" in display
+
+
 def test_format_for_display_strips_timestamp_microseconds():
-    notif = vm.Notification.model_validate({
-        "timestamp": "2025-01-01T12:34:56.123456+00:00",
-        "source": "tasks",
-        "type": "reminder",
-        "message": "ping",
-    })
+    notif = vm.Notification.model_validate(
+        {
+            "timestamp": "2025-01-01T12:34:56.123456+00:00",
+            "source": "tasks",
+            "type": "reminder",
+            "message": "ping",
+        }
+    )
     display = notif.format_for_display()
     assert ".123456" not in display
     assert "timestamp=2025-01-01T12:34:56+00:00" in display
