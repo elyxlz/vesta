@@ -1000,15 +1000,9 @@ fn allocate_service_port(registry: &HashMap<String, HashMap<String, ServiceEntry
     })
 }
 
-/// Check whether a cached service port can still be safely reused.
-///
-/// Every caller of `POST /agents/:name/services` follows up by binding a
-/// service process to the returned port (see `agent/skills/*/SKILL.md`), so
-/// the only signal that tells us reuse is safe is whether *we* can bind the
-/// port. "Something is listening" is not enough — it could be an unrelated
-/// squatter (a surviving screen session under host networking, an
-/// ephemeral-range collision with vestad itself, etc.), and the caller's
-/// fresh bind would then fail with `EADDRINUSE`. See issues #371 and #433.
+/// Bindable = reusable. A port that merely has a listener isn't enough:
+/// callers always bind the returned port themselves, so a squatter would
+/// trap them in a crash loop. See #371 and #433.
 async fn is_cached_port_reusable(port: u16) -> bool {
     tokio::net::TcpListener::bind(("127.0.0.1", port)).await.is_ok()
 }
@@ -1038,9 +1032,6 @@ async fn register_service_handler(
 
     let mut settings = state.settings.write().await;
 
-    // Reuse the cached port only if it's still bindable. Anything else (stuck
-    // socket, squatter on the port) would trap the caller's service in a
-    // crash loop with no recovery from inside the container.
     let cached_port = settings.services.get(&name).and_then(|s| s.get(&service_name)).map(|e| e.port);
     let port = match cached_port {
         Some(p) if is_cached_port_reusable(p).await => p,
@@ -1835,10 +1826,7 @@ mod tests {
         assert!(is_cached_port_reusable(port).await, "a free port must be reusable");
     }
 
-    // Regression for #433: a port that's being squatted on by something other
-    // than the intended service (here simulated by a live listener) must be
-    // treated as not-reusable, because the caller's next step is always to
-    // bind it — and that bind would fail with EADDRINUSE.
+    // Regression for #433.
     #[tokio::test]
     async fn cached_port_is_not_reusable_when_squatted() {
         let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
