@@ -1,6 +1,6 @@
 ---
 name: tasks
-description: This skill should be used when the user asks about "tasks", "to-do", "todo", "task list", "reminders", "remind me", "alert", "notify", or needs to create, manage, track, or organize tasks, to-do items, reminders, and time-based notifications. Everything actionable becomes a task immediately. All work, progress, drafts go in task metadata. Reminders are nudges about when to think about something, standalone or linked to a task. IMPORTANT: this skill requires a background daemon. Before doing anything, immediately make sure the daemon is running. Read this skill to learn how.
+description: Tasks, to-dos, reminders, time-based alerts; create and manage. Requires daemon.
 ---
 
 # Tasks + Reminders - CLI: tasks
@@ -18,7 +18,9 @@ tasks search "groceries"
 tasks update <id> --status done
 tasks update <id> --title "Updated title" --priority high
 tasks get <id>
-tasks delete <id>                # CASCADE: linked reminders are deleted too
+tasks get <id> --field status              # just the status, no envelope
+tasks get <id> --field notes --field title # several fields, tab-separated
+tasks delete <id>                          # CASCADE: linked reminders are deleted too
 ```
 
 ### Task Options
@@ -27,6 +29,8 @@ tasks delete <id>                # CASCADE: linked reminders are deleted too
 - `--due-datetime` + `--timezone`: absolute (both required together)
 - `--show-completed`: include done tasks in list/search
 - `--initial-metadata`: string of metadata to attach when adding a task
+- `tasks list`, `tasks search`, and `tasks remind list` default to a compact tab-separated table; pass `--json` for one-line JSON or `--json-pretty` for indented JSON.
+- `tasks get --field <name>` returns only the named field(s) as raw text. Valid fields: `id`, `title`, `status`, `priority`, `due_date`, `created_at`, `completed_at`, `metadata_path`, `metadata`. Prefer this over `Read`-ing `~/.tasks/metadata/<id>.md` when you only need a specific field. Metadata content is read only when `--field metadata` is requested.
 
 ## Reminder Commands
 

@@ -292,8 +292,26 @@ def _center_box(backend_node_id: int) -> tuple[float, float]:
 # ── Visual ────────────────────────────────────────────────────
 
 
-def screenshot(path: str = "/tmp/screenshot.png", full_page: bool = False) -> str:
-    r = cdp("Page.captureScreenshot", format="png", captureBeyondViewport=full_page)
+def screenshot(
+    path: str = "/tmp/screenshot.png",
+    full_page: bool = False,
+    format: str = "png",
+    region: tuple[float, float, float, float] | None = None,
+    quality: int | None = None,
+) -> str:
+    """Capture a screenshot via CDP. `format` accepts 'png', 'jpeg', or 'webp'.
+    `region` is (x, y, width, height) for a clip rectangle. `quality` applies to jpeg/webp."""
+    if format not in ("png", "jpeg", "webp"):
+        raise ValueError(f"screenshot format must be png/jpeg/webp, got {format!r}")
+    params: dict = {"format": format, "captureBeyondViewport": full_page}
+    if region is not None:
+        x, y, w, h = region
+        if w <= 0 or h <= 0:
+            raise ValueError("screenshot region width and height must be positive")
+        params["clip"] = {"x": x, "y": y, "width": w, "height": h, "scale": 1}
+    if quality is not None and format in ("jpeg", "webp"):
+        params["quality"] = quality
+    r = cdp("Page.captureScreenshot", **params)
     Path(path).write_bytes(base64.b64decode(r["data"]))
     return path
 

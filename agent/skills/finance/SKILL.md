@@ -1,6 +1,6 @@
 ---
 name: finance
-description: Use this skill when the user asks about personal finance, spending, transactions, bank balances, budgeting, or wants to see where their money went. Provides access to bank account data via Enable Banking open banking API.
+description: Personal finance, spending, transactions, bank balances, budgets via Enable Banking.
 ---
 
 # Finance - CLI: finance / finance-watcher

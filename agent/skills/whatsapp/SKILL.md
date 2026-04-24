@@ -1,6 +1,6 @@
 ---
 name: whatsapp
-description: Use when the user mentions "whatsapp" or "wa", or asks to send/read/react-to WhatsApp messages, contacts, or groups. Does NOT cover generic "text"/"message" intents, which may mean Telegram or SMS. Requires the `whatsapp serve` daemon.
+description: WhatsApp messages, contacts, groups (not generic text/message). Requires whatsapp daemon.
 ---
 
 # WhatsApp - CLI: `whatsapp`

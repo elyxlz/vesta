@@ -148,9 +148,46 @@ def cmd_snapshot(args: argparse.Namespace) -> int:
 
 def cmd_screenshot(args: argparse.Namespace) -> int:
     admin.ensure_daemon()
-    path = helpers.screenshot(path=args.path, full_page=args.full_page)
+    fmt = _screenshot_format(args)
+    region = _parse_region(args.region) if args.region else None
+    path = args.path if args.path else _default_screenshot_path(fmt)
+    path = helpers.screenshot(
+        path=path,
+        full_page=args.full_page,
+        format=fmt,
+        region=region,
+        quality=args.quality,
+    )
     print(path)
     return 0
+
+
+def _screenshot_format(args: argparse.Namespace) -> str:
+    """Resolve screenshot format from --webp/--jpeg flags or inferred from --path suffix."""
+    if args.webp:
+        return "webp"
+    if args.jpeg:
+        return "jpeg"
+    if args.path:
+        lower = args.path.lower()
+        if lower.endswith(".webp"):
+            return "webp"
+        if lower.endswith(".jpg") or lower.endswith(".jpeg"):
+            return "jpeg"
+    return "png"
+
+
+def _default_screenshot_path(fmt: str) -> str:
+    ext = {"png": "png", "jpeg": "jpg", "webp": "webp"}[fmt]
+    return f"/tmp/screenshot.{ext}"
+
+
+def _parse_region(raw: str) -> tuple[float, float, float, float]:
+    parts = raw.split(",")
+    if len(parts) != 4:
+        raise ValueError(f"--region expects 'x,y,w,h', got {raw!r}")
+    x, y, w, h = (float(p) for p in parts)
+    return x, y, w, h
 
 
 def cmd_pdf(args: argparse.Namespace) -> int:
@@ -345,8 +382,13 @@ def _build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_snapshot)
 
     ssp = sub.add_parser("screenshot")
-    ssp.add_argument("--path", default="/tmp/screenshot.png")
+    ssp.add_argument("--path", default=None, help="Output path; extension picks format if --webp/--jpeg not set.")
     ssp.add_argument("--full-page", action="store_true")
+    fmt_group = ssp.add_mutually_exclusive_group()
+    fmt_group.add_argument("--webp", action="store_true", help="Encode as WebP (much smaller than PNG; prefer for routine UI checks).")
+    fmt_group.add_argument("--jpeg", action="store_true", help="Encode as JPEG.")
+    ssp.add_argument("--region", default=None, metavar="X,Y,W,H", help="Clip rectangle in CSS pixels: 'x,y,width,height'.")
+    ssp.add_argument("--quality", type=int, default=None, help="Quality 0-100 (webp/jpeg only).")
     ssp.set_defaults(func=cmd_screenshot)
 
     pp = sub.add_parser("pdf")

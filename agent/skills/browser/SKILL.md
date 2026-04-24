@@ -1,6 +1,6 @@
 ---
 name: browser
-description: Use for "browse", "open a website", "navigate to", "click", "fill form", "take screenshot", "scrape", or any web page interaction. Ref-based accessibility targeting plus coordinate clicks and raw CDP.
+description: Browse, navigate, click, fill forms, screenshot, or scrape web pages via CDP.
 ---
 
 # Browser
@@ -78,7 +78,7 @@ browser reload / back / forward
 
 # Reads
 browser snapshot [--interactive]                  # accessibility tree with e1/e2 refs
-browser screenshot [--path PATH] [--full-page]
+browser screenshot [--path PATH] [--full-page] [--webp] [--region X,Y,W,H] [--quality N]
 browser pdf [--path PATH]
 browser evaluate "() => document.title"           # run JS in the page
 browser cdp "Page.getFrameTree"                   # raw CDP escape hatch
@@ -105,6 +105,22 @@ browser wait --url "**/dashboard"
 browser wait --time 2000
 browser wait --load-state load
 ```
+
+## Screenshots: prefer WebP and regions
+
+Screenshots are costly in context. When you only need a visual sanity check or a specific area,
+use `--webp` (typically 5-10x smaller than PNG) and `--region` to clip to the part that matters:
+
+```bash
+browser screenshot --webp                         # whole viewport, much smaller file
+browser screenshot --webp --region 0,0,800,600    # top-left 800x600
+browser screenshot --path /tmp/s.webp             # format inferred from .webp suffix
+browser screenshot --webp --quality 70            # tune compression (0-100)
+```
+
+Use PNG only when you need lossless output (e.g. pixel-diffing UI state). For routine flows
+where you just need to confirm "did the form submit" or "is a dialog on screen", WebP is fine
+and keeps cache pressure down.
 
 ## Refs vs coordinates
 

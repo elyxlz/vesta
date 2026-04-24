@@ -1,6 +1,6 @@
 ---
 name: zoom
-description: This skill should be used when the user asks about "zoom", "zoom meeting", "zoom call", or needs to create, list, or delete Zoom meetings.
+description: Zoom meetings: create, list, or delete.
 ---
 
 # Zoom - CLI: zoom

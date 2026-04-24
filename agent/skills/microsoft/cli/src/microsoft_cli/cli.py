@@ -10,7 +10,7 @@ from pathlib import Path
 import httpx
 
 from .config import Config
-from . import auth_commands, email, calendar, monitor, notifications, block
+from . import auth_commands, email, calendar, monitor, notifications, block, format as fmt
 from .context import MicrosoftContext
 from .settings import MicrosoftSettings
 
@@ -24,6 +24,13 @@ def _remove_pid(config):
         (config.data_dir / "serve.pid").unlink()
     except FileNotFoundError:
         pass
+
+
+def _add_format_flags(parser: argparse.ArgumentParser) -> None:
+    """Attach mutually-exclusive --json / --json-pretty flags to a list-style subparser."""
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--json", action="store_true", help="Emit compact JSON instead of a table.")
+    group.add_argument("--json-pretty", action="store_true", help="Emit indented JSON instead of a table.")
 
 
 def _require_daemon(config):
@@ -63,6 +70,7 @@ def main():
     p_list_emails.add_argument("--account", required=True)
     p_list_emails.add_argument("--folder", default="inbox")
     p_list_emails.add_argument("--limit", type=int, default=10)
+    _add_format_flags(p_list_emails)
 
     p_get_email = email_sub.add_parser("get")
     p_get_email.add_argument("--account", required=True)
@@ -108,6 +116,7 @@ def main():
     p_search.add_argument("--query", required=True)
     p_search.add_argument("--limit", type=int, default=10)
     p_search.add_argument("--folder", default=None)
+    _add_format_flags(p_search)
 
     p_update = email_sub.add_parser("update")
     p_update.add_argument("--account", required=True)
@@ -136,9 +145,11 @@ def main():
     p_list_events.add_argument("--days-back", type=int, default=0)
     p_list_events.add_argument("--no-details", action="store_true")
     p_list_events.add_argument("--user-timezone", default=None)
+    _add_format_flags(p_list_events)
 
     p_list_cals = cal_sub.add_parser("calendars")
     p_list_cals.add_argument("--account", required=True)
+    _add_format_flags(p_list_cals)
 
     p_get_event = cal_sub.add_parser("get")
     p_get_event.add_argument("--account", required=True)
@@ -195,17 +206,44 @@ def main():
 
         if args.group == "auth":
             result = _dispatch_auth(args, config)
-            print(json.dumps(result, indent=2))
+            print(json.dumps(fmt.strip_odata(result), indent=2))
         elif args.group in ("email", "calendar"):
             with httpx.Client(timeout=30.0, follow_redirects=True) as client:
                 if args.group == "email":
                     result = _dispatch_email(args, config, client)
                 else:
                     result = _dispatch_calendar(args, config, client)
-                print(json.dumps(result, indent=2))
+                _print_result(args, result)
     except Exception as e:
         print(json.dumps({"error": str(e)}), file=sys.stderr)
         sys.exit(1)
+
+
+def _print_result(args, result) -> None:
+    """Route a command result to the compact formatter or a JSON variant."""
+    cleaned = fmt.strip_odata(result)
+    attrs = vars(args)
+    want_json = "json" in attrs and attrs["json"]
+    want_pretty = "json_pretty" in attrs and attrs["json_pretty"]
+
+    if want_pretty:
+        print(json.dumps(cleaned, indent=2))
+        return
+    if want_json:
+        print(json.dumps(cleaned))
+        return
+
+    if args.group == "email" and args.command in ("list", "search") and isinstance(cleaned, list):
+        print(fmt.format_email_list(cleaned))
+        return
+    if args.group == "calendar" and args.command == "list" and isinstance(cleaned, list):
+        print(fmt.format_calendar_event_list(cleaned))
+        return
+    if args.group == "calendar" and args.command == "calendars" and isinstance(cleaned, list):
+        print(fmt.format_calendar_name_list(cleaned))
+        return
+
+    print(json.dumps(cleaned, indent=2))
 
 
 def _dispatch_auth(args, config):

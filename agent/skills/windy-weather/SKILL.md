@@ -1,6 +1,6 @@
 ---
 name: windy-weather
-description: Use this skill when the user asks about "weather", "forecast", "will it rain", "temperature", "wind", "humidity", or needs current or upcoming weather conditions for any location. Powered by the Windy Point Forecast API.
+description: Weather, forecast, temperature, wind, humidity for any location via Windy.
 ---
 
 # Windy Weather Skill

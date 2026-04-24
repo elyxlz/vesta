@@ -10,8 +10,15 @@ from datetime import datetime, UTC
 from pathlib import Path
 
 from .config import Config
-from . import commands, db
+from . import commands, db, format as fmt
 from .scheduler import create_scheduler
+
+
+def _add_format_flags(parser: argparse.ArgumentParser) -> None:
+    """Attach mutually-exclusive --json / --json-pretty flags to a list-style subparser."""
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--json", action="store_true", help="Emit compact JSON instead of a table.")
+    group.add_argument("--json-pretty", action="store_true", help="Emit indented JSON instead of a table.")
 
 
 def _write_pid(config):
@@ -95,6 +102,7 @@ def _build_remind_list_parser():
     p = argparse.ArgumentParser(prog="tasks remind list", add_help=False)
     p.add_argument("--task", default=None, dest="task_id")
     p.add_argument("--limit", type=int, default=50)
+    _add_format_flags(p)
     return p
 
 
@@ -144,11 +152,19 @@ def main():
     # list
     p_list = sub.add_parser("list", help="List tasks")
     p_list.add_argument("--show-completed", action="store_true")
+    _add_format_flags(p_list)
 
     # get
     p_get = sub.add_parser("get", help="Get a task by ID")
     p_get.add_argument("id_pos", nargs="?", default=None, metavar="id")
     p_get.add_argument("--id", default=None, dest="task_id")
+    p_get.add_argument(
+        "--field",
+        action="append",
+        default=None,
+        choices=list(commands.TASK_FIELDS),
+        help="Return only the named field(s). Repeat for multiple. Skips reading metadata unless --field metadata.",
+    )
 
     # update
     p_update = sub.add_parser("update", help="Update a task")
@@ -173,6 +189,7 @@ def main():
     p_search.add_argument("query_pos", nargs="?", default=None, metavar="query")
     p_search.add_argument("--query", default=None)
     p_search.add_argument("--show-completed", action="store_true")
+    _add_format_flags(p_search)
 
     # remind (placeholder for --help)
     sub.add_parser("remind", help="Set, list, delete, or update reminders")
@@ -231,6 +248,8 @@ def _main_remind():
             if subcmd == "list":
                 args = _build_remind_list_parser().parse_args(rest)
                 result = _do_remind_list(config, args)
+                _print_reminder_list_result(args, result)
+                return
             elif subcmd == "delete":
                 args = _build_remind_delete_parser().parse_args(rest)
                 result = _do_remind_delete(config, args)
@@ -326,12 +345,21 @@ def _handle_task(args, config: Config):
             priority=args.priority,
             initial_metadata=args.initial_metadata,
         )
+        print(json.dumps(result, indent=2))
+        return
     elif args.command == "list":
         result = commands.list_tasks(config, show_completed=args.show_completed)
+        _print_task_list_result(args, result)
+        return
     elif args.command == "get":
         task_id = args.id_pos or args.task_id
         if not task_id:
             raise ValueError("id is required: tasks get <id> or tasks get --id <id>")
+        if args.field:
+            fields = list(args.field)
+            result = commands.get_task_fields(config, task_id=task_id, fields=fields)
+            _print_get_field_result(fields, result)
+            return
         result = commands.get_task(config, task_id=task_id)
     elif args.command == "update":
         task_id = args.id_pos or args.task_id
@@ -359,10 +387,55 @@ def _handle_task(args, config: Config):
         if not query:
             raise ValueError('query is required: tasks search "query" or tasks search --query "query"')
         result = commands.search_tasks(config, query=query, show_completed=args.show_completed)
+        _print_task_list_result(args, result)
+        return
     else:
         return
 
     print(json.dumps(result, indent=2))
+
+
+def _format_flags(args) -> tuple[bool, bool]:
+    """Return (want_compact_json, want_pretty_json) based on argparse args."""
+    attrs = vars(args)
+    return (
+        "json" in attrs and attrs["json"],
+        "json_pretty" in attrs and attrs["json_pretty"],
+    )
+
+
+def _print_task_list_result(args, result: list) -> None:
+    want_json, want_pretty = _format_flags(args)
+    if want_pretty:
+        print(json.dumps(result, indent=2))
+        return
+    if want_json:
+        print(json.dumps(result))
+        return
+    print(fmt.format_task_list(result))
+
+
+def _print_reminder_list_result(args, result: list) -> None:
+    want_json, want_pretty = _format_flags(args)
+    if want_pretty:
+        print(json.dumps(result, indent=2))
+        return
+    if want_json:
+        print(json.dumps(result))
+        return
+    print(fmt.format_reminder_list(result))
+
+
+def _print_get_field_result(fields: list[str], result: dict) -> None:
+    """Print raw field values when --field is given. Single field: raw value. Multiple: tab-separated."""
+    values = []
+    for f in fields:
+        v = result[f] if f in result else ""
+        values.append("" if v is None else str(v))
+    if len(values) == 1:
+        print(values[0])
+    else:
+        print("\t".join(values))
 
 
 def _run_serve(config: Config, notif_dir: Path, *, port: int):

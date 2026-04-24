@@ -1,6 +1,6 @@
 ---
 name: proactive-check
-description: Periodic self-directed check-in. Use when the proactive check interval fires to decide whether to get started on something, reach out, research, set reminders, or take time for yourself. Can also be used anytime you want to proactively check in on the user's world.
+description: Periodic self-directed check-in; fires on interval to reach out or research.
 ---
 
 # Proactive Check

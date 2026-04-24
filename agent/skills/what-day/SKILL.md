@@ -1,6 +1,6 @@
 ---
 name: what-day
-description: This skill should be used when working with ANY date to determine what day of the week it falls on. Use this skill when the user mentions dates, scheduling, planning events, or needs to know day-of-week information.
+description: Determine the day of the week for any date.
 ---
 
 # What Day

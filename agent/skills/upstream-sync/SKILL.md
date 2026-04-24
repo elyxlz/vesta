@@ -1,6 +1,6 @@
 ---
 name: upstream-sync
-description: Sync local agent code with upstream. Use when checking for updates, merging new releases or branch changes, or resolving merge conflicts with upstream vesta.
+description: Sync local agent code with upstream vesta: updates, merges, conflicts.
 ---
 
 # Upstream Sync
