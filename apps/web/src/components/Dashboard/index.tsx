@@ -16,6 +16,8 @@ import {
 // Remint the session this many seconds before it actually expires, so the
 // iframe never hits a dead session mid-asset-load.
 const SESSION_REMINT_LEAD_SECS = 60;
+// Lower bound on the remint interval, in case vestad ever reports a tiny TTL.
+const SESSION_REMINT_MIN_SECS = 15;
 
 export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
   const { name, agent } = useSelectedAgent();
@@ -55,16 +57,20 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
         setSessionUrl(`${conn.url}${session.url}`);
         setIframeKey((k) => k + 1);
         const lead = Math.max(
-          15,
+          SESSION_REMINT_MIN_SECS,
           session.expiresIn - SESSION_REMINT_LEAD_SECS,
         );
         remintTimer = setTimeout(mint, lead * 1000);
-      } catch {
+      } catch (err) {
         if (cancelled) return;
         // Old vestad, transient failure, or service not yet registered:
         // fall back to the legacy path. If the service is genuinely public
         // it'll load; if not, the iframe will show an auth error and the
         // user can refresh once vestad is upgraded.
+        console.debug(
+          "dashboard session mint failed, using legacy path:",
+          err,
+        );
         setSessionUrl(
           `${conn.url}/agents/${encodeURIComponent(name)}/dashboard/`,
         );

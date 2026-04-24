@@ -31,19 +31,13 @@ fn create_session_requires_api_key() {
     let token = read_agent_token(&agent.name);
     register_dashboard(&agent.name, &token);
 
-    let url = format!("{}/agents/{}/services/dashboard/session", SERVER.config.url, agent.name);
-    let resp = ureq::Agent::config_builder()
-        .http_status_as_error(false)
-        .tls_config(
-            ureq::tls::TlsConfig::builder()
-                .root_certs(ureq::tls::RootCerts::Specific(std::sync::Arc::new(vec![
-                    ureq::tls::Certificate::from_pem(SERVER.config.cert_pem.as_ref().unwrap().as_bytes()).unwrap(),
-                ])))
-                .build(),
-        )
-        .build()
-        .new_agent()
-        .post(&url)
+    let resp = c
+        .raw_agent()
+        .post(&format!(
+            "{}/agents/{}/services/dashboard/session",
+            c.base_url(),
+            agent.name,
+        ))
         .send_empty()
         .unwrap();
     assert_eq!(resp.status().as_u16(), 401, "missing bearer should be 401");
@@ -165,24 +159,15 @@ fn invalidate_service_busts_sessions() {
     let resp = c.create_service_session(&agent.name, "dashboard").unwrap();
     let sid = resp["session_id"].as_str().unwrap().to_string();
 
-    // Fire the invalidate endpoint (X-Agent-Token auth, matches how the agent
-    // would call it after a rebuild).
-    let url = format!(
-        "{}/agents/{}/services/dashboard/invalidate",
-        SERVER.config.url, agent.name,
-    );
-    let tls = ureq::tls::TlsConfig::builder()
-        .root_certs(ureq::tls::RootCerts::Specific(std::sync::Arc::new(vec![
-            ureq::tls::Certificate::from_pem(SERVER.config.cert_pem.as_ref().unwrap().as_bytes()).unwrap(),
-        ])))
-        .build();
-    let agent_http = ureq::Agent::config_builder()
-        .http_status_as_error(false)
-        .tls_config(tls)
-        .build()
-        .new_agent();
-    let resp = agent_http
-        .post(&url)
+    // Fire the invalidate endpoint with X-Agent-Token (matches how the agent
+    // calls it after a rebuild).
+    let resp = c
+        .raw_agent()
+        .post(&format!(
+            "{}/agents/{}/services/dashboard/invalidate",
+            c.base_url(),
+            agent.name,
+        ))
         .header("X-Agent-Token", &token)
         .send_empty()
         .unwrap();

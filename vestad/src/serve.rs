@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, atomic::AtomicBool};
 use tokio::sync::{Mutex, RwLock};
 
-use crate::{agent_proxy, agent_status, auth, backup, control_ws, docker, self_update, service_sessions::{ServiceSessions, DEFAULT_SESSION_TTL}, systemd, update_check};
+use crate::{agent_proxy, agent_status, auth, backup, control_ws, docker, self_update, service_sessions::{ServiceSessions, SESSION_TTL}, systemd, update_check};
 
 const GATEWAY_RESTART_DELAY_MS: u64 = 200;
 
@@ -1084,14 +1084,13 @@ async fn create_service_session_handler(
         }
     }
 
-    let ttl = DEFAULT_SESSION_TTL;
-    let session_id = state.service_sessions.mint(&name, &service_name, ttl).await;
+    let session_id = state.service_sessions.mint(&name, &service_name).await;
     let url = format!("/agents/{}/services/{}/s/{}/", name, service_name, session_id);
     tracing::debug!(agent = %name, service = %service_name, "service session minted");
     Ok(Json(CreateServiceSessionResponse {
         session_id,
         url,
-        expires_in: ttl.as_secs(),
+        expires_in: SESSION_TTL.as_secs(),
     }))
 }
 

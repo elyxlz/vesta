@@ -248,6 +248,16 @@ impl Client {
         Ok(())
     }
 
+    /// Expose the inner ureq agent so tests can issue requests with custom
+    /// auth (X-Agent-Token, no auth, etc.) without re-setting up TLS.
+    pub fn raw_agent(&self) -> &ureq::Agent {
+        &self.agent
+    }
+
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
     pub fn register_service(&self, agent: &str, agent_token: &str, body: &serde_json::Value) -> Result<serde_json::Value, String> {
         let resp = self.agent.post(&format!("{}/agents/{}/services", self.base_url, agent))
             .header("X-Agent-Token", agent_token)
