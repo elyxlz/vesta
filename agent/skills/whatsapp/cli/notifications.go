@@ -10,6 +10,8 @@ import (
 	"github.com/google/uuid"
 )
 
+// Field conventions: booleans are named so `true` is the interesting case so `,omitempty`
+// drops the common-case `false` entirely, keeping notifications terse in the agent's context.
 type messageNotif struct {
 	Source          string `json:"source"`
 	Type            string `json:"type"`
@@ -25,8 +27,7 @@ type messageNotif struct {
 	QuotedText      string `json:"quoted_text,omitempty"`
 	Timestamp       string `json:"timestamp"`
 	MessageID       string `json:"message_id,omitempty"`
-	ContactSaved    bool   `json:"contact_saved"`
-	Note            string `json:"note,omitempty"`
+	ContactUnknown  bool   `json:"contact_unknown,omitempty"`
 }
 
 type reactionNotif struct {
@@ -38,11 +39,10 @@ type reactionNotif struct {
 	Sender          string `json:"sender,omitempty"`
 	ChatName        string `json:"chat_name,omitempty"`
 	ContactPhone    string `json:"contact_phone,omitempty"`
-	IsRemoved       bool   `json:"is_removed"`
+	IsRemoved       bool   `json:"is_removed,omitempty"`
 	Timestamp       string `json:"timestamp"`
 	TargetMessageID string `json:"target_message_id"`
-	ContactSaved    bool   `json:"contact_saved"`
-	Note            string `json:"note,omitempty"`
+	ContactUnknown  bool   `json:"contact_unknown,omitempty"`
 }
 
 func writeNotificationFile(notifDir string, data any, notifType string) error {
@@ -58,15 +58,6 @@ func writeNotificationFile(notifDir string, data any, notifType string) error {
 	}
 	filename := fmt.Sprintf("%s-whatsapp-%s.json", uuid.New().String(), notifType)
 	return os.WriteFile(filepath.Join(notifDir, filename), b, 0644)
-}
-
-const unknownContactNote = "Unknown contact. Ask the user who this is and add them as a contact once you know."
-
-func (ctx NotifContext) note() string {
-	if !ctx.ContactSaved && ctx.IsDirectChat && ctx.Instance == "" {
-		return unknownContactNote
-	}
-	return ""
 }
 
 func WriteNotification(
@@ -87,12 +78,14 @@ func WriteNotification(
 		QuotedText:      quotedText,
 		Timestamp:       time.Now().Format(time.RFC3339),
 		MessageID:       messageID,
-		ContactSaved:    ctx.ContactSaved,
-		Note:            ctx.note(),
+		ContactUnknown:  !ctx.ContactSaved,
 	}
 	if !ctx.IsDirectChat {
-		n.Sender = ctx.Sender
 		n.ChatName = ctx.ChatName
+		// Drop Sender when it's just the same JID as the chat (happens for unsaved group participants).
+		if ctx.Sender != ctx.ChatName {
+			n.Sender = ctx.Sender
+		}
 	}
 	return writeNotificationFile(ctx.NotifDir, n, "message")
 }
@@ -112,7 +105,7 @@ func WriteDeliveryFailureNotification(notifDir, instance string, messageIDs []st
 		Type:       "delivery_failure",
 		Instance:   instance,
 		MessageIDs: messageIDs,
-		Message:    fmt.Sprintf("%d message(s) were never delivered — likely silently dropped by WhatsApp. Check content for user@IP patterns or other spam-triggering strings.", len(messageIDs)),
+		Message:    fmt.Sprintf("%d message(s) were never delivered; likely silently dropped by WhatsApp. Check content for user@IP patterns or other spam-triggering strings.", len(messageIDs)),
 		Timestamp:  time.Now().UTC().Format(time.RFC3339),
 	}
 	return writeNotificationFile(notifDir, n, "delivery_failure")
@@ -132,12 +125,13 @@ func WriteReactionNotification(
 		IsRemoved:       isRemoved,
 		Timestamp:       time.Now().Format(time.RFC3339),
 		TargetMessageID: targetMessageID,
-		ContactSaved:    ctx.ContactSaved,
-		Note:            ctx.note(),
+		ContactUnknown:  !ctx.ContactSaved,
 	}
 	if !ctx.IsDirectChat {
-		n.Sender = ctx.Sender
 		n.ChatName = ctx.ChatName
+		if ctx.Sender != ctx.ChatName {
+			n.Sender = ctx.Sender
+		}
 	}
 	return writeNotificationFile(ctx.NotifDir, n, "reaction")
 }

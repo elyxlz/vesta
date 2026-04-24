@@ -1,8 +1,25 @@
+import re
 from datetime import datetime, timedelta, UTC
 from typing import TypedDict, NotRequired
 from zoneinfo import ZoneInfo
 from . import graph, auth, notifications
 from .context import MicrosoftContext
+
+
+# Zero-width and bidi / formatting characters that marketing emails use to pad previews with
+# invisible tokens. Strip before truncating so the 200-char budget buys real signal.
+_INVISIBLE = re.compile(r"[​-‏‪-‮⁠⁦-⁩﻿]")
+_WHITESPACE_RUN = re.compile(r"\s+")
+
+
+def clean_preview(text: str) -> str:
+    """Drop zero-width / bidi characters, collapse whitespace, strip."""
+    return _WHITESPACE_RUN.sub(" ", _INVISIBLE.sub("", text)).strip()
+
+
+def strip_fractional(iso: str) -> str:
+    """Remove fractional seconds from an ISO-8601 datetime string (Graph returns '.0000000')."""
+    return re.sub(r"\.\d+", "", iso)
 
 
 class EmailAddress(TypedDict):
@@ -141,15 +158,17 @@ def run(ctx: MicrosoftContext):
                             continue
 
                         logger.info(f"Writing notification for email from {sender_addr}")
+                        display_name = sender_name or sender_addr
+                        # Only include sender_address when it adds info beyond the display name.
+                        extra_addr = sender_addr if sender_name and sender_name != sender_addr else None
                         notifications.write_notification(
                             ctx.notif_dir,
                             "email",
-                            sender=sender_name or sender_addr,
+                            sender=display_name,
                             subject=email["subject"] if "subject" in email else None,
-                            preview=(email["bodyPreview"] if "bodyPreview" in email else "")[:200],
-                            sender_address=sender_addr,
+                            preview=clean_preview(email["bodyPreview"] if "bodyPreview" in email else "")[:200],
+                            sender_address=extra_addr,
                             account=acc.username,
-                            received_at=email["receivedDateTime"] if "receivedDateTime" in email else None,
                             missed=catching_up or None,
                         )
                 except Exception as e:
@@ -205,9 +224,8 @@ def run(ctx: MicrosoftContext):
                                 ctx.notif_dir,
                                 "calendar",
                                 subject=subject,
-                                start_time=start_dt,
+                                start_time=strip_fractional(start_dt),
                                 minutes_until=mins_until,
-                                reminder_window=label,
                                 location=loc,
                                 account=acc.username,
                                 missed=(catching_up and event_time < new_check_time) or None,

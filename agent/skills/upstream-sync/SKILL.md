@@ -102,4 +102,6 @@ v0.1.132 (upstream ref)
   * merge upstream
 ```
 
-View local customizations vs upstream: `git diff FETCH_HEAD..$AGENT_NAME -- agent/` (after a fetch)
+View local customizations vs upstream: `git diff FETCH_HEAD..$AGENT_NAME -- agent/` (after a fetch).
+
+For any "what's different between my branch and upstream" question (diffing, sync-readiness checks, drift reports), the baseline is `$VESTA_UPSTREAM_REF`, not `origin/master`. `origin/master` moves with every upstream commit, but the agent was deployed against a specific ref (a release tag in prod, a branch in dev) and that's what local changes should be measured against. Fetch that ref first (`git -C ~ fetch origin "$VESTA_UPSTREAM_REF"`) and diff against `FETCH_HEAD`. `origin/master` is only the right baseline for outbound contributions (upstream-pr worktrees).

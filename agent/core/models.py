@@ -72,6 +72,20 @@ class Notification(pyd.BaseModel):
     file_path: str | None = pyd.Field(default=None, exclude=True)
 
     def format_for_display(self) -> str:
+        """Render the notification as an XML element for unambiguous parsing.
+
+        Drops empty strings, False bools, empty lists, and None since they cost tokens without
+        carrying information. Booleans should be named so True is the interesting case
+        (`contact_unknown`, `is_forwarded`, `missed`). Strips microsecond precision from any
+        datetime field.
+        """
         data = self.model_dump(exclude={"file_path", "type", "source", "interrupt"})
-        parts = [f"{k}={v}" for k, v in data.items() if v is not None]
-        return f"[{self.type} from {self.source}] {', '.join(parts)}"
+        parts = []
+        for key, value in data.items():
+            if value is None or value == "" or value is False or value == []:
+                continue
+            if isinstance(value, dt.datetime):
+                value = value.replace(microsecond=0).isoformat()
+            parts.append(f"{key}={value}")
+        body = ", ".join(parts)
+        return f'<notification source="{self.source}" type="{self.type}">{body}</notification>'

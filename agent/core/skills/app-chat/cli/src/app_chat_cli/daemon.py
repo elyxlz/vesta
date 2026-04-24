@@ -164,7 +164,7 @@ def _replay_missed(state: DaemonState, events: list[dict[str, object]]) -> None:
 def _write_notification(state: DaemonState, message: str, *, timestamp: str | None = None) -> None:
     if not message.strip():
         return
-    ts = timestamp or dt.datetime.now(dt.UTC).isoformat()
+    ts = timestamp or dt.datetime.now(dt.UTC).replace(microsecond=0).isoformat()
     notification = {
         "timestamp": ts,
         "source": "app-chat",
