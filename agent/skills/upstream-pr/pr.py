@@ -82,8 +82,15 @@ def main():
     if not args.title:
         parser.error("--title is required when creating a PR")
 
-    # Resolve agent identity for commit authorship
-    agent_name = os.environ.get("AGENT_NAME", "vesta")
+    # Resolve agent identity and vesta version for commit authorship + PR attribution
+    if "AGENT_NAME" not in os.environ:
+        print("Error: AGENT_NAME is not set in env", file=sys.stderr)
+        sys.exit(1)
+    agent_name = os.environ["AGENT_NAME"]
+    if "VESTA_UPSTREAM_REF" not in os.environ:
+        print("Error: VESTA_UPSTREAM_REF is not set in env", file=sys.stderr)
+        sys.exit(1)
+    upstream_ref = os.environ["VESTA_UPSTREAM_REF"]
     author_name = f"{agent_name} (vesta)"
     author_email = f"{agent_name}@vesta.noreply"
 
@@ -126,7 +133,7 @@ def main():
     }
     # Append agent attribution to PR body
     body = args.body
-    attribution = f"\n\n---\nSubmitted by **{agent_name}**"
+    attribution = f"\n\n---\nSubmitted by **{agent_name}** on `{upstream_ref}`"
     body = f"{body}{attribution}" if body else attribution.lstrip()
 
     resp = requests.post(
