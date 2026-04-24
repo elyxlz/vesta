@@ -36,7 +36,7 @@ def write_reminder_notification(
         "reminder_id": reminder_id,
         "task_id": task_id,
         **(extra or {}),
-        "timestamp": datetime.now(UTC).isoformat(),
+        "timestamp": datetime.now(UTC).replace(microsecond=0).isoformat(),
     }
 
     filename = f"{int(time.time() * 1e6)}-tasks-reminder.json"

@@ -10,37 +10,37 @@ import (
 	"github.com/google/uuid"
 )
 
+// Field conventions: booleans are named so `true` is the interesting case so `,omitempty`
+// drops the common-case `false` entirely, keeping notifications terse in the agent's context.
 type messageNotif struct {
-	Source      string `json:"source"`
-	Type        string `json:"type"`
-	Instance    string `json:"instance,omitempty"`
-	ContactName string `json:"contact_name,omitempty"`
-	Message     string `json:"message"`
-	Sender      string `json:"sender,omitempty"`
-	ChatName    string `json:"chat_name,omitempty"`
-	Username    string `json:"username,omitempty"`
-	MediaType   string `json:"media_type,omitempty"`
-	ReplyToID   int64  `json:"reply_to_id,omitempty"`
-	Timestamp   string `json:"timestamp"`
-	MessageID   int64  `json:"message_id,omitempty"`
-	ContactSaved bool  `json:"contact_saved"`
-	Note        string `json:"note,omitempty"`
+	Source         string `json:"source"`
+	Type           string `json:"type"`
+	Instance       string `json:"instance,omitempty"`
+	ContactName    string `json:"contact_name,omitempty"`
+	Message        string `json:"message"`
+	Sender         string `json:"sender,omitempty"`
+	ChatName       string `json:"chat_name,omitempty"`
+	Username       string `json:"username,omitempty"`
+	MediaType      string `json:"media_type,omitempty"`
+	ReplyToID      int64  `json:"reply_to_id,omitempty"`
+	Timestamp      string `json:"timestamp"`
+	MessageID      int64  `json:"message_id,omitempty"`
+	ContactUnknown bool   `json:"contact_unknown,omitempty"`
 }
 
 type reactionNotif struct {
-	Source      string `json:"source"`
-	Type        string `json:"type"`
-	Instance    string `json:"instance,omitempty"`
-	ContactName string `json:"contact_name,omitempty"`
-	Emoji       string `json:"emoji,omitempty"`
-	Sender      string `json:"sender,omitempty"`
-	ChatName    string `json:"chat_name,omitempty"`
-	Username    string `json:"username,omitempty"`
-	IsRemoved   bool   `json:"is_removed"`
-	Timestamp   string `json:"timestamp"`
-	TargetMessageID int64 `json:"target_message_id"`
-	ContactSaved bool  `json:"contact_saved"`
-	Note        string `json:"note,omitempty"`
+	Source          string `json:"source"`
+	Type            string `json:"type"`
+	Instance        string `json:"instance,omitempty"`
+	ContactName     string `json:"contact_name,omitempty"`
+	Emoji           string `json:"emoji,omitempty"`
+	Sender          string `json:"sender,omitempty"`
+	ChatName        string `json:"chat_name,omitempty"`
+	Username        string `json:"username,omitempty"`
+	IsRemoved       bool   `json:"is_removed,omitempty"`
+	Timestamp       string `json:"timestamp"`
+	TargetMessageID int64  `json:"target_message_id"`
+	ContactUnknown  bool   `json:"contact_unknown,omitempty"`
 }
 
 func WriteNotification(
@@ -58,24 +58,23 @@ func WriteNotification(
 	}
 
 	notif := messageNotif{
-		Source:       "telegram",
-		Type:         "message",
-		Instance:     instance,
-		ContactName:  contactName,
-		Message:      content,
-		Username:     username,
-		MediaType:    mediaType,
-		ReplyToID:    replyToID,
-		Timestamp:    time.Now().Format(time.RFC3339),
-		MessageID:    messageID,
-		ContactSaved: contactSaved,
+		Source:         "telegram",
+		Type:           "message",
+		Instance:       instance,
+		ContactName:    contactName,
+		Message:        content,
+		Username:       username,
+		MediaType:      mediaType,
+		ReplyToID:      replyToID,
+		Timestamp:      time.Now().Format(time.RFC3339),
+		MessageID:      messageID,
+		ContactUnknown: !contactSaved,
 	}
 	if !isDirectChat {
-		notif.Sender = sender
 		notif.ChatName = chatName
-	}
-	if !contactSaved && isDirectChat && instance == "" {
-		notif.Note = "Unknown contact. Ask the user who this is and add them as a contact once you know."
+		if sender != chatName {
+			notif.Sender = sender
+		}
 	}
 
 	data, err := json.MarshalIndent(notif, "", "  ")
@@ -110,14 +109,13 @@ func WriteReactionNotification(
 		IsRemoved:       isRemoved,
 		Timestamp:       time.Now().Format(time.RFC3339),
 		TargetMessageID: targetMessageID,
-		ContactSaved:    contactSaved,
+		ContactUnknown:  !contactSaved,
 	}
 	if !isDirectChat {
-		notif.Sender = sender
 		notif.ChatName = chatName
-	}
-	if !contactSaved && isDirectChat && instance == "" {
-		notif.Note = "Unknown contact. Ask the user who this is and add them as a contact once you know."
+		if sender != chatName {
+			notif.Sender = sender
+		}
 	}
 
 	data, err := json.MarshalIndent(notif, "", "  ")

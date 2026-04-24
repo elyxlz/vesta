@@ -74,16 +74,18 @@ def _reply_hint(notif: vm.Notification) -> str:
 
 
 def _format_one(notif: vm.Notification) -> str:
-    return notif.format_for_display() + _reply_hint(notif)
+    """Embed the reply hint inside the <notification> element so the model sees them as one unit."""
+    body = notif.format_for_display()
+    hint = _reply_hint(notif)
+    if not hint:
+        return body
+    return body.replace("</notification>", f"{hint}\n</notification>")
 
 
 def format_notification_batch(notifications: list[vm.Notification], *, suffix: str = "") -> str:
     suffix_str = f"\n\n{suffix}" if suffix else ""
-    if len(notifications) == 1:
-        return _format_one(notifications[0]) + suffix_str
-
-    prompts = [_format_one(n) for n in notifications]
-    return "[NOTIFICATIONS]\n" + "\n".join(prompts) + suffix_str
+    inner = "\n".join(_format_one(n) for n in notifications)
+    return f"<notifications>\n{inner}\n</notifications>{suffix_str}"
 
 
 async def load_new_notifications(*, state: vm.State, config: vm.VestaConfig) -> list[vm.Notification]:

@@ -34,7 +34,7 @@ def _remove_pid(config):
 
 def _write_death_notification(notif_dir: Path, reason: str):
     notif_dir.mkdir(exist_ok=True)
-    notif = {"timestamp": datetime.now(UTC).isoformat(), "source": "tasks", "type": "daemon_died", "reason": reason}
+    notif = {"timestamp": datetime.now(UTC).replace(microsecond=0).isoformat(), "source": "tasks", "type": "daemon_died", "reason": reason}
     filename = f"{int(time.time() * 1e6)}-tasks-daemon_died.json"
     tmp = notif_dir / f"{filename}.tmp"
     tmp.write_text(json.dumps(notif))

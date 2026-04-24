@@ -1,1 +1,1 @@
-Consider timing and context before responding. Reply on the same channel it came from (whatsapp message → whatsapp skill). Check Learned Patterns in MEMORY.md for what to skip.
+Reply on the originating channel (whatsapp→`whatsapp send`, telegram→`telegram send`, app-chat→`app-chat send`). Check MEMORY.md Learned Patterns before responding.

@@ -180,9 +180,7 @@ def _write_notification(notif_dir: Path, tweet: dict) -> None:
         "handle": tweet["handle"],
         "content": tweet["text"],
         "url": tweet["url"],
-        "published": tweet["published"],
-        "timestamp": datetime.now(UTC).isoformat(),
-        "event_id": f"twitter:tweet:{tweet['guid']}",
+        "timestamp": datetime.now(UTC).replace(microsecond=0).isoformat(),
     }
     ts_us = int(time.time() * 1e6)
     filename = f"{ts_us}-twitter-tweet.json"
