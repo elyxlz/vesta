@@ -80,6 +80,10 @@
     "description": "Sync local agent code with upstream. Use when checking for updates, merging new releases or branch changes, or resolving merge conflicts with upstream vesta."
   },
   {
+    "name": "video-use",
+    "description": "Use for \"edit video\", \"video editing\", \"remove filler words\", \"cut dead space\", \"color grade\", \"add subtitles\", \"burn captions\", \"B-roll overlay\", \"launch video\", or whenever the user wants footage turned into a polished cut. Wraps browser-use/video-use, a Claude-Code-powered video editor that handles filler removal, auto color grading, 30ms audio fades, burned subtitles, and Manim/Remotion/PIL overlays."
+  },
+  {
     "name": "voice",
     "description": "Use when the user asks to enable/disable voice input/output, set up transcription or text-to-speech, rotate API keys, add custom voices, adjust the transcription sensitivity, or talks about the microphone/speaker in the Vesta app. This skill manages ~/.voice/voice_config.json, the single source of truth for STT/TTS keys, voice selection, keyterms, and thresholds. Use enable/disable to toggle without removing configuration; use clear only to wipe keys entirely."
   },
