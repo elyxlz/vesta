@@ -219,31 +219,33 @@ def main():
         sys.exit(1)
 
 
+_COMPACT_FORMATTERS = {
+    ("email", "list"): fmt.format_email_list,
+    ("email", "search"): fmt.format_email_list,
+    ("calendar", "list"): fmt.format_calendar_event_list,
+    ("calendar", "calendars"): fmt.format_calendar_name_list,
+}
+
+
 def _print_result(args, result) -> None:
     """Route a command result to the compact formatter or a JSON variant."""
-    cleaned = fmt.strip_odata(result)
     attrs = vars(args)
     want_json = "json" in attrs and attrs["json"]
     want_pretty = "json_pretty" in attrs and attrs["json_pretty"]
 
     if want_pretty:
-        print(json.dumps(cleaned, indent=2))
+        print(json.dumps(fmt.strip_odata(result), indent=2))
         return
     if want_json:
-        print(json.dumps(cleaned))
+        print(json.dumps(fmt.strip_odata(result)))
         return
 
-    if args.group == "email" and args.command in ("list", "search") and isinstance(cleaned, list):
-        print(fmt.format_email_list(cleaned))
-        return
-    if args.group == "calendar" and args.command == "list" and isinstance(cleaned, list):
-        print(fmt.format_calendar_event_list(cleaned))
-        return
-    if args.group == "calendar" and args.command == "calendars" and isinstance(cleaned, list):
-        print(fmt.format_calendar_name_list(cleaned))
+    formatter = _COMPACT_FORMATTERS[(args.group, args.command)] if (args.group, args.command) in _COMPACT_FORMATTERS else None
+    if formatter is not None and isinstance(result, list):
+        print(formatter(result))
         return
 
-    print(json.dumps(cleaned, indent=2))
+    print(json.dumps(fmt.strip_odata(result), indent=2))
 
 
 def _dispatch_auth(args, config):
