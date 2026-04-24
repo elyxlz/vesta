@@ -975,7 +975,6 @@ fn all_registered_ports(registry: &HashMap<String, HashMap<String, ServiceEntry>
 }
 
 const SERVICE_PORT_ALLOC_RETRIES: usize = 5;
-const CACHED_PORT_CONNECT_TIMEOUT_MS: u64 = 200;
 
 fn no_free_ports_err() -> (StatusCode, Json<serde_json::Value>) {
     err_response(
@@ -1002,16 +1001,15 @@ fn allocate_service_port(registry: &HashMap<String, HashMap<String, ServiceEntry
 }
 
 /// Check whether a cached service port can still be safely reused.
-/// Returns true if something is listening on the port (service alive) OR
-/// the port is free to bind (service not started yet but nothing blocks it).
-/// Returns false if the port is stuck in a zombie/TIME_WAIT state — a new
-/// process cannot bind to it and nothing is listening. See issue #371.
+///
+/// Every caller of `POST /agents/:name/services` follows up by binding a
+/// service process to the returned port (see `agent/skills/*/SKILL.md`), so
+/// the only signal that tells us reuse is safe is whether *we* can bind the
+/// port. "Something is listening" is not enough — it could be an unrelated
+/// squatter (a surviving screen session under host networking, an
+/// ephemeral-range collision with vestad itself, etc.), and the caller's
+/// fresh bind would then fail with `EADDRINUSE`. See issues #371 and #433.
 async fn is_cached_port_reusable(port: u16) -> bool {
-    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
-    let timeout = std::time::Duration::from_millis(CACHED_PORT_CONNECT_TIMEOUT_MS);
-    if let Ok(Ok(_)) = tokio::time::timeout(timeout, tokio::net::TcpStream::connect(addr)).await {
-        return true;
-    }
     tokio::net::TcpListener::bind(("127.0.0.1", port)).await.is_ok()
 }
 
@@ -1040,14 +1038,14 @@ async fn register_service_handler(
 
     let mut settings = state.settings.write().await;
 
-    // Reuse existing port if already registered AND the cached port is still
-    // reusable. A stuck cached port (zombie process, TIME_WAIT) would otherwise
-    // trap the service in a crash loop with no recovery from inside the container.
+    // Reuse the cached port only if it's still bindable. Anything else (stuck
+    // socket, squatter on the port) would trap the caller's service in a
+    // crash loop with no recovery from inside the container.
     let cached_port = settings.services.get(&name).and_then(|s| s.get(&service_name)).map(|e| e.port);
     let port = match cached_port {
         Some(p) if is_cached_port_reusable(p).await => p,
         Some(p) => {
-            tracing::warn!(agent = %name, service = %service_name, stale_port = p, "cached service port is stuck (connect+bind both failed), allocating a fresh one");
+            tracing::warn!(agent = %name, service = %service_name, stale_port = p, "cached service port is not bindable, allocating a fresh one");
             allocate_service_port(&settings.services).ok_or_else(no_free_ports_err)?
         }
         None => allocate_service_port(&settings.services).ok_or_else(no_free_ports_err)?,
@@ -1837,10 +1835,17 @@ mod tests {
         assert!(is_cached_port_reusable(port).await, "a free port must be reusable");
     }
 
+    // Regression for #433: a port that's being squatted on by something other
+    // than the intended service (here simulated by a live listener) must be
+    // treated as not-reusable, because the caller's next step is always to
+    // bind it — and that bind would fail with EADDRINUSE.
     #[tokio::test]
-    async fn cached_port_is_reusable_when_listening() {
+    async fn cached_port_is_not_reusable_when_squatted() {
         let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let port = listener.local_addr().unwrap().port();
-        assert!(is_cached_port_reusable(port).await, "a listening port must be reusable");
+        assert!(
+            !is_cached_port_reusable(port).await,
+            "a port held by another listener must not be reported reusable",
+        );
     }
 }
