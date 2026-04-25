@@ -33,7 +33,7 @@ import sys
 import time
 import traceback
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 ICLOUD_DIR = Path.home() / ".icloud"
 COOKIE_DIR = ICLOUD_DIR / "cookies"
@@ -99,7 +99,7 @@ def _write_config(**kwargs: Any) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def _load_creds_from_file() -> Optional[dict[str, str]]:
+def _load_creds_from_file() -> dict[str, str] | None:
     if not CREDS_FILE.exists():
         return None
     try:
@@ -111,7 +111,7 @@ def _load_creds_from_file() -> Optional[dict[str, str]]:
     return None
 
 
-def _load_creds_from_keeper() -> Optional[dict[str, str]]:
+def _load_creds_from_keeper() -> dict[str, str] | None:
     """Search Keeper for a record whose title matches an Apple ID hint.
 
     Tries `keeper search <hint>` then fetches the first matching record's
@@ -164,7 +164,7 @@ def _load_creds_from_keeper() -> Optional[dict[str, str]]:
     return None
 
 
-def _resolve_credentials(account_override: Optional[str] = None) -> dict[str, str]:
+def _resolve_credentials(account_override: str | None = None) -> dict[str, str]:
     creds = _load_creds_from_file() or _load_creds_from_keeper()
 
     # Allow account-only override via flag or env, password still must come
@@ -221,7 +221,7 @@ def _collect_phones(auth_data: dict) -> list[dict]:
     return out
 
 
-def _pick_phone_id(candidates: list[dict], suffix: Optional[str] = None) -> Optional[int]:
+def _pick_phone_id(candidates: list[dict], suffix: str | None = None) -> int | None:
     """Pick a trusted phone number id from Apple's auth_data.
 
     If `suffix` is provided, prefer numbers whose last digits match. Otherwise
@@ -257,7 +257,7 @@ def _pick_phone_id(candidates: list[dict], suffix: Optional[str] = None) -> Opti
     return None
 
 
-def _run_login_worker(account: str, password: str, phone_suffix: Optional[str] = None) -> int:
+def _run_login_worker(account: str, password: str, phone_suffix: str | None = None) -> int:
     """Long-running worker. Authenticates, triggers SMS, polls CODE_FILE,
     submits code, trusts session, persists cookies."""
     from pyicloud import PyiCloudService
@@ -331,7 +331,7 @@ def _run_login_worker(account: str, password: str, phone_suffix: Optional[str] =
             pass
 
     deadline = time.time() + POLL_TIMEOUT_S
-    code: Optional[str] = None
+    code: str | None = None
     while time.time() < deadline:
         if CODE_FILE.exists():
             raw = CODE_FILE.read_text().strip()
@@ -392,7 +392,7 @@ def cmd_auth_login(args: argparse.Namespace) -> None:
 
     # Phone suffix: explicit flag wins, then last-used config, else None
     # (which means "first / only trusted phone").
-    phone_suffix: Optional[str] = args.phone_suffix or _load_config().get("phone_suffix")
+    phone_suffix: str | None = args.phone_suffix or _load_config().get("phone_suffix")
 
     # If we're already trusted, short-circuit.
     try:

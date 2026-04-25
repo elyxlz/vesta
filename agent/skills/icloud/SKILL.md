@@ -1,6 +1,6 @@
 ---
 name: icloud
-description: Use this skill when the user asks about "icloud", "icloud photos", "shared album", "shared albums", "apple photos", "download photos from icloud", or needs to list/download iCloud Photo Stream / shared album content. Wraps pyicloud with SMS 2FA to a trusted phone number.
+description: iCloud Photos: list and download shared albums via pyicloud. SMS 2FA to a trusted phone.
 ---
 
 # iCloud Photos
