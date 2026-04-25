@@ -94,7 +94,7 @@ async def test_runner_cleanup_completes_quickly_with_open_ws(event_bus, tmp_path
     config = vm.VestaConfig(agent_dir=tmp_path / "agent", ws_port=_pick_port(), agent_token="test-token")
     runner = await start_ws_server(event_bus, config, host="127.0.0.1")
     base = f"http://127.0.0.1:{config.ws_port}"
-    auth = {"X-Agent-Token": config.agent_token}
+    auth = {"X-Agent-Token": "test-token"}
 
     async with ClientSession() as session:
         sockets = [
@@ -120,7 +120,7 @@ async def test_close_all_websockets_sends_close_frame(event_bus, tmp_path):
     config = vm.VestaConfig(agent_dir=tmp_path / "agent", ws_port=_pick_port(), agent_token="test-token")
     runner = await start_ws_server(event_bus, config, host="127.0.0.1")
     base = f"http://127.0.0.1:{config.ws_port}"
-    auth = {"X-Agent-Token": config.agent_token}
+    auth = {"X-Agent-Token": "test-token"}
 
     async with ClientSession() as session:
         ws = await session.ws_connect(f"{base}/ws?skip_history=1", headers=auth)
