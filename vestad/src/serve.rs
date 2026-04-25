@@ -1383,13 +1383,6 @@ pub fn write_port_file(config_dir: &std::path::Path, port: u16) {
     std::fs::write(&port_path, port.to_string()).ok();
 }
 
-/// Update VESTAD_PORT, VESTAD_TUNNEL, and VESTA_UPSTREAM_REF in all existing per-agent env files.
-/// Called at vestad startup so containers pick up the new values on restart.
-pub fn update_agent_env_files(config_dir: &std::path::Path, port: u16, tunnel_url: Option<&str>) {
-    let agents_dir = config_dir.join("agents");
-    docker::update_all_agent_env_files(&agents_dir, port, tunnel_url);
-}
-
 // --- PID file ---
 
 pub fn acquire_pid_lock(config_dir: &std::path::Path) -> Result<std::fs::File, String> {

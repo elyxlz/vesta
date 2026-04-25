@@ -115,13 +115,7 @@ CREDENTIALS_PATH = pl.Path("/root/.claude/.credentials.json")
 
 
 async def queue_greeting(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.VestaConfig, state: vm.State, reason: str) -> bool:
-    """Queue the startup message (first_start_setup or a restart summary).
-    Returns True if a message was queued — the caller uses this as the signal that
-    the agent should finish processing it before declaring itself ready.
-
-    For first_start, only Part A (setup) is queued here. Part B (the greeting
-    that talks to the user via app-chat) is queued by run_vesta after the WS
-    server binds, so app-chat can actually reach the agent."""
+    """Returns True if a startup prompt was queued."""
     if not CREDENTIALS_PATH.exists():
         logger.startup("No credentials yet — waiting for auth before starting")
         return False
@@ -237,14 +231,9 @@ async def _process_interruptible(
         raise
 
 
-async def message_processor(
-    queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig, wait_for_first_message: bool = False
-) -> None:
+async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig) -> None:
     logger.client("Creating new client session...")
     options = build_client_options(config, state)
-    pending_ready = wait_for_first_message
-    if not pending_ready:
-        state.first_setup_complete.set()
     retried = False
     while True:
         try:
@@ -261,8 +250,7 @@ async def message_processor(
 
                         await _process_interruptible(msg, is_user=is_user, queue=queue, state=state, config=config)
 
-                        if pending_ready:
-                            pending_ready = False
+                        if not state.first_setup_complete.is_set():
                             state.first_setup_complete.set()
                             logger.startup("Agent ready")
 

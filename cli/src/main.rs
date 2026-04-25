@@ -11,10 +11,7 @@ use common::{fetch_latest_release_tag, version_less_than};
 const VERSION_CACHE_TTL_SECS: u64 = 3600;
 const UPDATE_CHECK_TIMEOUT_MS: u64 = 100;
 const UPDATE_CHECK_POLL_MS: u64 = 10;
-// First-start setup (Part A) does git fetch + sparse-checkout, installs the
-// tasks/app-chat/dashboard skills, runs npm install + vite build for the
-// dashboard, and edits MEMORY.md. On a fresh agent that genuinely takes
-// several minutes, so the readiness wait has to be generous.
+// Pads for first-start setup (git fetch, npm install, vite build, etc.).
 const START_READY_TIMEOUT_SECS: u64 = 900;
 
 fn format_size(bytes: u64) -> String {

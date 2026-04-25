@@ -71,8 +71,7 @@ def _make_signal_handler(state: vm.State, *, allow_force_exit: bool = False) -> 
 
 
 def handle_processor_done(task: asyncio.Task[None], *, state: vm.State) -> None:
-    """Done-callback for the message_processor task. Guarantees restart_reason + graceful_shutdown
-    are set on any unexpected termination, so the agent never wedges silently."""
+    """Set restart_reason + graceful_shutdown on unexpected termination so the agent never wedges silently."""
     if state.shutdown_event.is_set() or state.graceful_shutdown.is_set():
         return
     if task.cancelled():
@@ -100,9 +99,10 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
     message_queue: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()
 
     greeting_reason = "first_start" if first_start else restart_reason
-    message_queued = await queue_greeting(message_queue, config=config, state=state, reason=greeting_reason)
+    if not await queue_greeting(message_queue, config=config, state=state, reason=greeting_reason):
+        state.first_setup_complete.set()
 
-    processor_task = asyncio.create_task(message_processor(message_queue, state=state, config=config, wait_for_first_message=message_queued))
+    processor_task = asyncio.create_task(message_processor(message_queue, state=state, config=config))
     processor_task.add_done_callback(lambda t: handle_processor_done(t, state=state))
 
     tasks = [
@@ -111,8 +111,7 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
         asyncio.create_task(monitor_loop(message_queue, state=state, config=config)),
     ]
 
-    # WS port doubles as the readiness signal — bind only once first-start setup
-    # (Part A) has been processed. For existing agents this resolves immediately.
+    # WS bind is the readiness signal; first-start defers it until setup is processed.
     ready_task = asyncio.create_task(state.first_setup_complete.wait())
     shutdown_task = asyncio.create_task(state.graceful_shutdown.wait())
     _, pending = await asyncio.wait([ready_task, shutdown_task], return_when=asyncio.FIRST_COMPLETED)
@@ -124,8 +123,7 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
         ws_runner = await start_ws_server(state.event_bus, config)
         logger.init(f"WebSocket server started on port {config.ws_port}")
 
-        # Part B: now that WS is up, queue the greeting prompt — it tells the
-        # agent to talk to the user via app-chat, which needs WS reachable.
+        # Greeting prompt drives app-chat, which needs WS reachable — queue after bind.
         if first_start:
             greeting_prompt = load_prompt("first_start_greeting", config)
             if greeting_prompt:

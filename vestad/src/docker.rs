@@ -877,6 +877,9 @@ pub fn write_agent_env_file(
     append_optional("VESTA_UPSTREAM_REF", detect_upstream_ref().as_deref());
     append_optional("TZ", timezone);
     append_optional("AGENT_SEED_PERSONALITY", Some(seed_personality.unwrap_or("dry")));
+    if std::fs::read_to_string(&env_path).map(|prev| prev == content).unwrap_or(false) {
+        return Ok(env_path);
+    }
     std::fs::write(&env_path, &content)
         .map_err(|e| DockerError::Failed(format!("failed to write agent env file: {e}")))?;
     #[cfg(unix)]
@@ -917,7 +920,11 @@ pub fn update_all_agent_env_files(agents_dir: &std::path::Path, vestad_port: u16
             new_lines.push(format!("export VESTA_UPSTREAM_REF={upstream}"));
         }
         new_lines.push(String::new());
-        std::fs::write(&path, new_lines.join("\n")).ok();
+        let new_content = new_lines.join("\n");
+        if new_content == content {
+            continue;
+        }
+        std::fs::write(&path, new_content).ok();
     }
 }
 

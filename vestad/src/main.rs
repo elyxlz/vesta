@@ -265,7 +265,7 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool) {
                 }
             };
 
-            serve::update_agent_env_files(&config, port, tunnel_url.as_deref());
+            docker::update_all_agent_env_files(&config.join("agents"), port, tunnel_url.as_deref());
             let local_url = format!("http://localhost:{}", port + 1);
             let user = std::env::var("USER").or_else(|_| std::env::var("LOGNAME")).unwrap_or_else(|_| "unknown".into());
             eprintln!();

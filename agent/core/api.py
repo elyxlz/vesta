@@ -254,8 +254,10 @@ async def start_ws_server(
 
 
 async def _close_all_websockets(app: web.Application) -> None:
-    for ws in set(app["websockets"]):
-        try:
-            await ws.close(code=_aiohttp.WSCloseCode.GOING_AWAY, message=b"server shutdown")
-        except (ConnectionError, RuntimeError):
-            pass
+    sockets = list(app["websockets"])
+    if not sockets:
+        return
+    await asyncio.gather(
+        *(ws.close(code=_aiohttp.WSCloseCode.GOING_AWAY, message=b"server shutdown") for ws in sockets),
+        return_exceptions=True,
+    )
