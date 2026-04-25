@@ -33,6 +33,7 @@ class State:
     client: ClaudeSDKClient | None = None
     shutdown_event: asyncio.Event = dc.field(default_factory=asyncio.Event)
     graceful_shutdown: asyncio.Event = dc.field(default_factory=asyncio.Event)
+    first_setup_complete: asyncio.Event = dc.field(default_factory=asyncio.Event)
     shutdown_count: int = 0
     session_id: str | None = None
     restart_reason: str | None = None

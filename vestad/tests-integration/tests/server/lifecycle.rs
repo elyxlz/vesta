@@ -96,7 +96,7 @@ fn creation_flow() {
     assert_ne!(c.agent_status(&agent.name).unwrap().status, "not_authenticated");
 
     c.restart_agent(&agent.name).unwrap();
-    c.wait_ready(&agent.name, 60).unwrap();
+    c.wait_until_alive(&agent.name, 60).unwrap();
 
     let st = c.agent_status(&agent.name).unwrap();
     assert_eq!(st.status, "alive");

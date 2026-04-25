@@ -7,7 +7,6 @@ import { NameStep } from "./Steps/NameStep";
 import { CreatingStep } from "./Steps/CreatingStep";
 import { AuthStep } from "./Steps/AuthStep";
 import { PersonalityStep } from "./Steps/PersonalityStep";
-import { FinalizingStep } from "./Steps/FinalizingStep";
 import { DoneStep } from "./Steps/DoneStep";
 
 export function NewAgent() {
@@ -62,12 +61,8 @@ export function NewAgent() {
         <AuthStep
           agentName={agentName}
           authStart={authStart}
-          onDone={() => setStep("finalizing")}
+          onDone={() => setStep("done")}
         />
-      );
-    if (step === "finalizing")
-      return (
-        <FinalizingStep agentName={agentName} onDone={() => setStep("done")} />
       );
     if (step === "done") return <DoneStep agentName={agentName} />;
     return (

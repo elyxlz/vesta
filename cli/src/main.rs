@@ -11,6 +11,7 @@ use common::{fetch_latest_release_tag, version_less_than};
 const VERSION_CACHE_TTL_SECS: u64 = 3600;
 const UPDATE_CHECK_TIMEOUT_MS: u64 = 100;
 const UPDATE_CHECK_POLL_MS: u64 = 10;
+const START_READY_TIMEOUT_SECS: u64 = 180;
 
 fn format_size(bytes: u64) -> String {
     if bytes >= 1_000_000_000 {
@@ -515,6 +516,9 @@ fn run(cli: Cli) {
 
             eprintln!("authenticating claude...");
             authenticate_agent(&c, &name);
+            eprintln!("finalizing first-time setup (this may take up to a minute)...");
+            c.wait_until_alive(&name, std::time::Duration::from_secs(START_READY_TIMEOUT_SECS))
+                .unwrap_or_else(|e| platform::die(&e));
             eprintln!("agent '{}' is ready.", name);
 
         }
@@ -548,7 +552,9 @@ fn run(cli: Cli) {
             match name {
                 Some(name) => {
                     c.start_agent(&name).unwrap_or_else(|e| platform::die(&e));
-                    eprintln!("{}: started", name);
+                    c.wait_until_alive(&name, std::time::Duration::from_secs(START_READY_TIMEOUT_SECS))
+                        .unwrap_or_else(|e| platform::die(&e));
+                    eprintln!("{}: ready", name);
                 }
                 None => {
                     let results = c.start_all().unwrap_or_else(|e| platform::die(&e));
@@ -556,14 +562,17 @@ fn run(cli: Cli) {
                         eprintln!("no agents found. create one with: vesta setup");
                     } else {
                         for r in &results {
-                            if r.ok {
-                                eprintln!("{}: started", r.name);
-                            } else {
+                            if !r.ok {
                                 eprintln!(
                                     "{}: {}",
                                     r.name,
                                     r.error.as_deref().unwrap_or("failed")
                                 );
+                                continue;
+                            }
+                            match c.wait_until_alive(&r.name, std::time::Duration::from_secs(START_READY_TIMEOUT_SECS)) {
+                                Ok(()) => eprintln!("{}: ready", r.name),
+                                Err(e) => eprintln!("{}: {}", r.name, e),
                             }
                         }
                     }
@@ -784,7 +793,8 @@ fn run(cli: Cli) {
 
         Command::WaitReady { name, timeout } => {
             let c = get_client(host_ref, token_ref);
-            c.wait_ready(&name, timeout).unwrap_or_else(|e| platform::die(&e));
+            c.wait_until_alive(&name, std::time::Duration::from_secs(timeout))
+                .unwrap_or_else(|e| platform::die(&e));
             eprintln!("{}: ready", name);
         }
 

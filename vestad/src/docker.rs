@@ -53,15 +53,12 @@ pub const VESTA_LOG_PATH: &str = "/root/agent/logs/vesta.log";
 pub const LOCAL_IMAGE_TAG: &str = "vesta:local";
 const MAX_DOCKERFILE_SEARCH_DEPTH: usize = 5;
 pub const CREDENTIALS_PATH: &str = "/root/.claude/.credentials.json";
-pub const AGENT_READY_MARKER_PATH: &str = "/root/agent/data/agent_ready";
 const CLAUDE_JSON_PATH: &str = "/root/.claude.json";
 const AGENT_TOKEN_BYTES: usize = 32;
 const PORT_ALLOC_RETRIES: usize = 10;
 const NAME_MAX_LEN: usize = 32;
 const DOCKER_DAEMON_PING_RETRIES: usize = 10;
 const AGENT_READY_TIMEOUT_MS: u64 = 200;
-const WAIT_READY_POLL_MS: u64 = 500;
-pub const DEFAULT_START_TIMEOUT_SECS: u64 = 120;
 const DEFAULT_TOKEN_EXPIRES_SECS: u64 = 28800;
 const LABEL_USER: &str = "vesta.user";
 const LABEL_AGENT_NAME: &str = "vesta.agent_name";
@@ -328,7 +325,7 @@ pub async fn combined_status(docker: &Docker, cname: &str, info: &ContainerInfo)
             if !is_authenticated(docker, cname).await {
                 return AgentStatus::NotAuthenticated;
             }
-            if info.port.is_some_and(is_agent_ready_sync) {
+            if info.port.is_some_and(is_agent_ready) {
                 AgentStatus::Alive
             } else {
                 AgentStatus::Starting
@@ -409,19 +406,13 @@ pub async fn is_authenticated(docker: &Docker, cname: &str) -> bool {
     expires_at > crate::time_utils::now_epoch_millis() as u64
 }
 
-/// Sync TCP-only readiness check (no marker file).
-pub fn is_agent_ready_sync(port: u16) -> bool {
+/// Readiness check: the agent binds its WS port only once it's ready to serve requests.
+pub fn is_agent_ready(port: u16) -> bool {
     std::net::TcpStream::connect_timeout(
         &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
         std::time::Duration::from_millis(AGENT_READY_TIMEOUT_MS),
     )
     .is_ok()
-}
-
-/// Full async readiness check: TCP + marker file.
-pub async fn is_agent_ready(docker: &Docker, port: u16, cname: &str) -> bool {
-    let tcp_ok = is_agent_ready_sync(port);
-    tcp_ok && read_container_file(docker, cname, AGENT_READY_MARKER_PATH).await.is_some()
 }
 
 pub async fn ensure_exists(docker: &Docker, cname: &str) -> Result<(), DockerError> {
@@ -1495,24 +1486,20 @@ pub async fn create_agent(docker: &Docker, name: &str, env_config: &AgentEnvConf
     Ok(name.to_string())
 }
 
-pub async fn start_agent(docker: &Docker, name: &str, agents_dir: &std::path::Path, timeout_secs: u64) -> Result<(), DockerError> {
+pub async fn start_agent(docker: &Docker, name: &str) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
     let cs = container_status(docker, &cname).await;
     match cs {
         ContainerStatus::NotFound => return Err(DockerError::NotFound(format!("agent '{}' not found", name))),
         ContainerStatus::Dead => return Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name))),
-        ContainerStatus::Running => {}
-        ContainerStatus::Stopped => {
-            if !start_container(docker, &cname).await {
-                return Err(DockerError::Failed(format!("failed to start '{}'", name)));
-            }
-        }
+        ContainerStatus::Running => return Ok(()),
+        ContainerStatus::Stopped => {}
     }
-    if !is_authenticated(docker, &cname).await {
-        return Ok(());
+    if !start_container(docker, &cname).await {
+        return Err(DockerError::Failed(format!("failed to start '{}'", name)));
     }
-    wait_ready_async(docker, name, timeout_secs, agents_dir).await
+    Ok(())
 }
 
 #[derive(Serialize)]
@@ -1523,26 +1510,25 @@ pub struct StartAllResult {
     pub error: Option<String>,
 }
 
-pub async fn start_all_agents(docker: &Docker, agents_dir: &std::path::Path, timeout_secs: u64) -> Vec<StartAllResult> {
+pub async fn start_all_agents(docker: &Docker) -> Vec<StartAllResult> {
     let agents = list_managed_agents(docker).await;
-    let futures = agents.into_iter().map(|ManagedAgent { cname, agent_name }| async move {
-        let already_running = container_status(docker, &cname).await == ContainerStatus::Running;
-        if !already_running && !start_container(docker, &cname).await {
-            return StartAllResult {
-                name: agent_name,
-                ok: false,
-                error: Some("failed to start".into()),
-            };
+    let mut results = Vec::new();
+    for ManagedAgent { cname, agent_name } in &agents {
+        if container_status(docker, cname).await != ContainerStatus::Running {
+            if start_container(docker, cname).await {
+                results.push(StartAllResult { name: agent_name.clone(), ok: true, error: None });
+            } else {
+                results.push(StartAllResult {
+                    name: agent_name.clone(),
+                    ok: false,
+                    error: Some("failed to start".into()),
+                });
+            }
+        } else {
+            results.push(StartAllResult { name: agent_name.clone(), ok: true, error: None });
         }
-        if !is_authenticated(docker, &cname).await {
-            return StartAllResult { name: agent_name, ok: true, error: None };
-        }
-        match wait_ready_async(docker, &agent_name, timeout_secs, agents_dir).await {
-            Ok(()) => StartAllResult { name: agent_name, ok: true, error: None },
-            Err(e) => StartAllResult { name: agent_name, ok: false, error: Some(e.to_string()) },
-        }
-    });
-    futures_util::future::join_all(futures).await
+    }
+    results
 }
 
 pub async fn stop_agent(docker: &Docker, name: &str) -> Result<(), DockerError> {
@@ -1559,15 +1545,12 @@ pub async fn stop_agent(docker: &Docker, name: &str) -> Result<(), DockerError> 
     Ok(())
 }
 
-pub async fn restart_agent(docker: &Docker, name: &str, agents_dir: &std::path::Path, timeout_secs: u64) -> Result<(), DockerError> {
+pub async fn restart_agent(docker: &Docker, name: &str) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
     ensure_exists(docker, &cname).await?;
     docker.restart_container(&cname, Some(RestartContainerOptions { t: Some(CONTAINER_RESTART_TIMEOUT_SECS), signal: None })).await?;
-    if !is_authenticated(docker, &cname).await {
-        return Ok(());
-    }
-    wait_ready_async(docker, name, timeout_secs, agents_dir).await
+    Ok(())
 }
 
 /// Ensure all containers match expected config and running agents are restarted.
@@ -1808,28 +1791,6 @@ pub async fn rebuild_agent(docker: &Docker, name: &str, env_config: &AgentEnvCon
     create_container(docker, &cname, &backup_tag, port, name, env_config, manage_core_code, None, None).await?;
 
     Ok(())
-}
-
-pub async fn wait_ready_async(docker: &Docker, name: &str, timeout_secs: u64, agents_dir: &std::path::Path) -> Result<(), DockerError> {
-    validate_name(name)?;
-    let cname = container_name(name);
-    ensure_running(docker, &cname).await?;
-    let port = read_env_value(agents_dir, name, "WS_PORT")
-        .and_then(|v| v.parse().ok())
-        .ok_or_else(|| DockerError::Failed("agent has no port".into()))?;
-
-    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(timeout_secs);
-    loop {
-        if is_agent_ready(docker, port, &cname).await {
-            return Ok(());
-        }
-        if tokio::time::Instant::now() >= deadline {
-            return Err(DockerError::Failed(format!(
-                "{name}: not ready after {timeout_secs}s"
-            )));
-        }
-        tokio::time::sleep(tokio::time::Duration::from_millis(WAIT_READY_POLL_MS)).await;
-    }
 }
 
 #[cfg(test)]

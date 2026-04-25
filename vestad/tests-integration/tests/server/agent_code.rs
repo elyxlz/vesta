@@ -26,7 +26,7 @@ fn manage_agent_code_true_reaches_ready() {
     let c = SERVER.client();
     let agent = TestAgent::create_with_manage_agent_code(&c, &unique_agent("manage-code")).unwrap();
     inject_fake_token(&c, &agent.name);
-    c.wait_ready(&agent.name, 180).expect("agent should become ready with core-code mounts");
+    c.wait_until_alive(&agent.name, 180).expect("agent should become ready with core-code mounts");
     let container = agent_container_name(&agent.name);
     assert_agent_core_paths_permissions(&container, true).expect("core paths should be read-only mounts");
 }
@@ -36,7 +36,7 @@ fn manage_agent_code_false_reaches_ready() {
     let c = SERVER.client();
     let agent = TestAgent::create_without_manage_agent_code(&c, &unique_agent("no-manage-code")).unwrap();
     inject_fake_token(&c, &agent.name);
-    c.wait_ready(&agent.name, 180).expect("agent should become ready without core-code mounts");
+    c.wait_until_alive(&agent.name, 180).expect("agent should become ready without core-code mounts");
     let container = agent_container_name(&agent.name);
     assert_agent_core_paths_permissions(&container, false).expect("core paths should be writable from image");
 }

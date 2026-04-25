@@ -200,9 +200,23 @@ impl Client {
         Ok(())
     }
 
-    pub fn wait_ready(&self, name: &str, timeout: u64) -> Result<(), String> {
-        self.get(&format!("/agents/{}/wait-ready?timeout={}", name, timeout))?;
-        Ok(())
+    pub fn wait_until_alive(&self, name: &str, timeout_secs: u64) -> Result<(), String> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+        let mut backoff = std::time::Duration::from_millis(200);
+        loop {
+            let status = self.agent_status(name)?;
+            match status.status.as_str() {
+                "alive" => return Ok(()),
+                "not_found" | "dead" | "stopped" | "not_authenticated" =>
+                    return Err(format!("{}: {}", name, status.status)),
+                _ => {}
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(format!("{}: timeout waiting for ready (status: {})", name, status.status));
+            }
+            std::thread::sleep(backoff);
+            backoff = (backoff * 2).min(std::time::Duration::from_secs(1));
+        }
     }
 
     pub fn start_auth(&self, name: &str) -> Result<AuthFlowResponse, String> {

@@ -98,10 +98,10 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
 
     message_queue: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()
 
-    ws_runner = await start_ws_server(state.event_bus, config)
-    logger.init(f"WebSocket server started on port {config.ws_port}")
+    greeting_reason = "first_start" if first_start else restart_reason
+    message_queued = await queue_greeting(message_queue, config=config, state=state, reason=greeting_reason)
 
-    processor_task = asyncio.create_task(message_processor(message_queue, state=state, config=config))
+    processor_task = asyncio.create_task(message_processor(message_queue, state=state, config=config, wait_for_first_message=message_queued))
     processor_task.add_done_callback(lambda t: handle_processor_done(t, state=state))
 
     tasks = [
@@ -110,8 +110,18 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
         asyncio.create_task(monitor_loop(message_queue, state=state, config=config)),
     ]
 
-    greeting_reason = "first_start" if first_start else restart_reason
-    await queue_greeting(message_queue, config=config, state=state, reason=greeting_reason)
+    # WS port doubles as the readiness signal — bind only once first-start setup
+    # (if any) has been processed. For existing agents this resolves immediately.
+    ready_task = asyncio.create_task(state.first_setup_complete.wait())
+    shutdown_task = asyncio.create_task(state.graceful_shutdown.wait())
+    _, pending = await asyncio.wait([ready_task, shutdown_task], return_when=asyncio.FIRST_COMPLETED)
+    for t in pending:
+        t.cancel()
+
+    ws_runner = None
+    if not state.graceful_shutdown.is_set():
+        ws_runner = await start_ws_server(state.event_bus, config)
+        logger.init(f"WebSocket server started on port {config.ws_port}")
 
     try:
         await state.graceful_shutdown.wait()
@@ -135,7 +145,8 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
     if pending:
         logger.shutdown("Shutdown timed out (SDK cleanup hung), forcing exit")
         os._exit(1)
-    await ws_runner.cleanup()
+    if ws_runner is not None:
+        await ws_runner.cleanup()
     state.event_bus.close()
     logger.shutdown("sweet dreams!")
 

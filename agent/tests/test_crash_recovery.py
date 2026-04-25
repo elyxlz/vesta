@@ -171,7 +171,7 @@ async def test_processor_crash_triggers_graceful_shutdown(tmp_path):
 
     state = vm.State()
 
-    async def crashing_processor(queue, *, state, config):
+    async def crashing_processor(queue, *, state, config, **kwargs):
         raise RuntimeError("processor exploded")
 
     with (

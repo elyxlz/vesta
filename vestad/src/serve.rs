@@ -22,7 +22,7 @@ const API_KEY_BYTES: usize = 32;
 pub(crate) const PROXY_MAX_BODY_BYTES: usize = 10 * 1024 * 1024; // 10 MB
 
 const RESERVED_SERVICE_NAMES: &[&str] = &[
-    "start", "stop", "restart", "destroy", "rebuild", "wait-ready",
+    "start", "stop", "restart", "destroy", "rebuild",
     "auth", "logs", "tree", "backups", "settings", "services",
 ];
 const DEFAULT_LOG_TAIL_LINES: u64 = 500;
@@ -443,7 +443,7 @@ async fn create_agent_handler(
             .await
             .map_err(map_docker_err)?;
 
-    docker::start_agent(&state.docker, &name, &state.env_config.agents_dir, docker::DEFAULT_START_TIMEOUT_SECS)
+    docker::start_agent(&state.docker, &name)
         .await
         .map_err(map_docker_err)?;
 
@@ -460,22 +460,15 @@ async fn agent_status_handler(
     Ok(Json(status))
 }
 
-#[derive(Deserialize, Default)]
-struct StartQuery {
-    timeout: Option<u64>,
-}
-
 async fn start_agent_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
-    Query(query): Query<StartQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     tracing::info!(name = %name, "starting agent");
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
-    let timeout = query.timeout.unwrap_or(docker::DEFAULT_START_TIMEOUT_SECS);
-    docker::start_agent(&state.docker, &name, &state.env_config.agents_dir, timeout)
+    docker::start_agent(&state.docker, &name)
         .await
         .map_err(map_docker_err)?;
     Ok(ok_json())
@@ -483,10 +476,8 @@ async fn start_agent_handler(
 
 async fn start_all_handler(
     State(state): State<SharedState>,
-    Query(query): Query<StartQuery>,
 ) -> impl IntoResponse {
-    let timeout = query.timeout.unwrap_or(docker::DEFAULT_START_TIMEOUT_SECS);
-    let results = docker::start_all_agents(&state.docker, &state.env_config.agents_dir, timeout).await;
+    let results = docker::start_all_agents(&state.docker).await;
 
     let has_error = results.iter().any(|r| !r.ok);
     let status = if has_error {
@@ -520,14 +511,12 @@ async fn stop_agent_handler(
 async fn restart_agent_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
-    Query(query): Query<StartQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     tracing::info!(name = %name, "restarting agent");
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
-    let timeout = query.timeout.unwrap_or(docker::DEFAULT_START_TIMEOUT_SECS);
-    docker::restart_agent(&state.docker, &name, &state.env_config.agents_dir, timeout)
+    docker::restart_agent(&state.docker, &name)
         .await
         .map_err(map_docker_err)?;
     Ok(ok_json())
@@ -566,26 +555,9 @@ async fn rebuild_agent_handler(
     docker::rebuild_agent(&state.docker, &name, &state.env_config, manage_core_code)
         .await
         .map_err(map_docker_err)?;
-    docker::start_agent(&state.docker, &name, &state.env_config.agents_dir, docker::DEFAULT_START_TIMEOUT_SECS)
+    docker::start_agent(&state.docker, &name)
         .await
         .map_err(map_docker_err)?;
-    Ok(ok_json())
-}
-
-#[derive(Deserialize)]
-struct WaitReadyQuery {
-    timeout: Option<u64>,
-}
-
-async fn wait_ready_handler(
-    State(state): State<SharedState>,
-    Path(name): Path<String>,
-    Query(query): Query<WaitReadyQuery>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let timeout = query.timeout.unwrap_or(30);
-    docker::wait_ready_async(&state.docker, &name, timeout, &state.env_config.agents_dir)
-        .await
-        .map_err(|e| err_response(StatusCode::SERVICE_UNAVAILABLE, &e.to_string()))?;
     Ok(ok_json())
 }
 
@@ -661,11 +633,12 @@ async fn complete_auth_handler(
         .await
         .map_err(map_docker_err)?;
 
-    // Restart the agent so it picks up the new credentials. Blocks until the agent reports ready.
+    // Restart the agent so it picks up the new credentials.
+    // Clients poll /status to detect when the agent becomes alive.
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
-    docker::restart_agent(&state.docker, &name, &state.env_config.agents_dir, docker::DEFAULT_START_TIMEOUT_SECS)
+    docker::restart_agent(&state.docker, &name)
         .await
         .map_err(map_docker_err)?;
 
@@ -1340,7 +1313,7 @@ async fn patch_agent_settings_handler(
         if let Err(e) = docker::rebuild_agent(&state.docker, &name, &state.env_config, new_manage_core_code).await {
             tracing::error!(agent = %name, error = %e, "rebuild after settings change failed");
         } else if was_running {
-            docker::start_agent(&state.docker, &name, &state.env_config.agents_dir, docker::DEFAULT_START_TIMEOUT_SECS).await.ok();
+            docker::start_agent(&state.docker, &name).await.ok();
         }
     }
 
@@ -1493,7 +1466,6 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/restart", post(restart_agent_handler))
         .route("/agents/{name}/destroy", post(destroy_agent_handler))
         .route("/agents/{name}/rebuild", post(rebuild_agent_handler))
-        .route("/agents/{name}/wait-ready", get(wait_ready_handler))
         .route("/agents/{name}/auth", post(start_auth_handler))
         .route("/agents/{name}/auth/code", post(complete_auth_handler))
         .route("/agents/{name}/auth/token", post(inject_token_handler))

@@ -7,7 +7,7 @@ use crate::docker::{
     docker_cp_content, docker_root_dir, image_exists, inspect_container,
     list_images_by_reference, remove_container_force, remove_image,
     snapshot_container, start_container, stop_container_with_timeout, tag_image, validate_name,
-    wait_ready_async, AgentEnvConfig, ContainerStatus, DockerError, DEFAULT_START_TIMEOUT_SECS,
+    AgentEnvConfig, ContainerStatus, DockerError,
 };
 use crate::types::{BackupInfo, BackupType, RetentionPolicy};
 
@@ -448,7 +448,7 @@ pub async fn restore_backup(
         ));
     }
 
-    wait_ready_async(docker, name, DEFAULT_START_TIMEOUT_SECS, &env_config.agents_dir).await
+    Ok(())
 }
 
 /// Delete a backup image. Verifies the backup belongs to the named agent and

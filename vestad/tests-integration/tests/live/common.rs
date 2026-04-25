@@ -158,6 +158,6 @@ pub fn setup_live_agent(
         }
         thread::sleep(Duration::from_secs(2));
     }
-    client.wait_ready(&agent.name, 600).expect("wait ready");
+    client.wait_until_alive(&agent.name, 600).expect("wait until alive");
     Some((agent, container))
 }

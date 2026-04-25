@@ -35,7 +35,7 @@ fn fresh_agent_has_expected_directory_structure() {
     let agent = TestAgent::create(&c, &unique_agent("layout")).unwrap();
     let cid = container_id(&agent.name);
 
-    c.wait_ready(&agent.name, 10).ok(); // may not become ready without auth, that's fine
+    c.wait_until_alive(&agent.name, 10).ok(); // will error without auth, that's fine
 
     // Root-level directories created by entrypoint / image COPY. Git state
     // (/root/.git, branch, sparse-checkout, .gitignore) is no longer asserted

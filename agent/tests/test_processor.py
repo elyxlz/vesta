@@ -21,6 +21,7 @@ async def _run_processor_test(
     from core.loops import message_processor
 
     config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config.data_dir.mkdir(parents=True, exist_ok=True)
     state = pre_state or vm.State()
     state.shutdown_event = asyncio.Event()
     queue: asyncio.Queue = asyncio.Queue()

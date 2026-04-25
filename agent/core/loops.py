@@ -114,10 +114,13 @@ async def process_batch(
 CREDENTIALS_PATH = pl.Path("/root/.claude/.credentials.json")
 
 
-async def queue_greeting(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.VestaConfig, state: vm.State, reason: str) -> None:
+async def queue_greeting(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.VestaConfig, state: vm.State, reason: str) -> bool:
+    """Queue the startup message (first_start_setup or a restart summary).
+    Returns True if a message was queued — the caller uses this as the signal that
+    the agent should finish processing it before declaring itself ready."""
     if not CREDENTIALS_PATH.exists():
         logger.startup("No credentials yet — waiting for auth before starting")
-        return
+        return False
 
     if reason == "first_start":
         setup_prompt = load_prompt("first_start_setup", config)
@@ -125,9 +128,14 @@ async def queue_greeting(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.V
             combined = f"[System: your name is {config.agent_name}]\n\n{setup_prompt.strip()}"
             await queue.put((combined, False))
             logger.startup("Queued first_start setup")
+            (config.data_dir / "first_start_done").write_text("1")
 
-        (config.data_dir / "first_start_done").write_text("1")
-        return
+            greeting_prompt = load_prompt("first_start_greeting", config)
+            if greeting_prompt:
+                await queue.put((greeting_prompt.strip(), False))
+                logger.startup("Queued first_start greeting")
+            return True
+        return False
 
     extras = []
     flag = config.data_dir / "show_dreamer_summary"
@@ -137,10 +145,11 @@ async def queue_greeting(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.V
             extras.append(f"[Dreamer Summary — {path.stem}]\n{path.read_text().strip()}")
     prompt = build_restart_context(reason, config, extras=extras)
     if not prompt or not prompt.strip():
-        return
+        return False
 
     await queue.put((prompt.strip(), False))
     logger.startup(f"Queued {reason} greeting")
+    return True
 
 
 # --- Message processing ---
@@ -229,10 +238,12 @@ async def _process_interruptible(
         raise
 
 
-async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig) -> None:
+async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig, wait_for_first_message: bool = False) -> None:
     logger.client("Creating new client session...")
     options = build_client_options(config, state)
-    ready_marker = config.data_dir / "agent_ready"
+    pending_ready = wait_for_first_message
+    if not pending_ready:
+        state.first_setup_complete.set()
     retried = False
     while True:
         try:
@@ -249,15 +260,10 @@ async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm
 
                         await _process_interruptible(msg, is_user=is_user, queue=queue, state=state, config=config)
 
-                        if not ready_marker.exists():
-                            ready_marker.parent.mkdir(parents=True, exist_ok=True)
-                            ready_marker.write_text("1")
+                        if pending_ready:
+                            pending_ready = False
+                            state.first_setup_complete.set()
                             logger.startup("Agent ready")
-
-                            greeting_prompt = load_prompt("first_start_greeting", config)
-                            if greeting_prompt:
-                                await queue.put((greeting_prompt.strip(), False))
-                                logger.startup("Queued first_start greeting")
 
                         if state.dreamer_active:
                             state.dreamer_active = False

@@ -15,7 +15,6 @@ import {
   restoreBackup,
   deleteBackup,
   deleteAgent,
-  waitForReady,
   type BackupInfo,
 } from "@/api";
 import { useAgentOps, type AgentOperation } from "@/stores/use-agent-ops";
@@ -83,7 +82,6 @@ export function SelectedAgentProvider({
       "starting",
       async () => {
         await startAgent(name);
-        await waitForReady(name);
       },
       "start failed",
     );
@@ -106,7 +104,6 @@ export function SelectedAgentProvider({
       "starting",
       async () => {
         await restartAgent(name);
-        await waitForReady(name);
       },
       "restart failed",
     );
@@ -118,7 +115,6 @@ export function SelectedAgentProvider({
       "rebuilding",
       async () => {
         await rebuildAgent(name);
-        await waitForReady(name);
       },
       "rebuild failed",
     );
@@ -157,7 +153,6 @@ export function SelectedAgentProvider({
       "restoring",
       async () => {
         await restoreBackup(name, backupId);
-        await waitForReady(name);
         await refreshBackups();
       },
       "restore failed",
