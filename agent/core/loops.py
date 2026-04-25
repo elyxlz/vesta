@@ -117,7 +117,11 @@ CREDENTIALS_PATH = pl.Path("/root/.claude/.credentials.json")
 async def queue_greeting(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.VestaConfig, state: vm.State, reason: str) -> bool:
     """Queue the startup message (first_start_setup or a restart summary).
     Returns True if a message was queued — the caller uses this as the signal that
-    the agent should finish processing it before declaring itself ready."""
+    the agent should finish processing it before declaring itself ready.
+
+    For first_start, only Part A (setup) is queued here. Part B (the greeting
+    that talks to the user via app-chat) is queued by run_vesta after the WS
+    server binds, so app-chat can actually reach the agent."""
     if not CREDENTIALS_PATH.exists():
         logger.startup("No credentials yet — waiting for auth before starting")
         return False
@@ -129,11 +133,6 @@ async def queue_greeting(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.V
             await queue.put((combined, False))
             logger.startup("Queued first_start setup")
             (config.data_dir / "first_start_done").write_text("1")
-
-            greeting_prompt = load_prompt("first_start_greeting", config)
-            if greeting_prompt:
-                await queue.put((greeting_prompt.strip(), False))
-                logger.startup("Queued first_start greeting")
             return True
         return False
 

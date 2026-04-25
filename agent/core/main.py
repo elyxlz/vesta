@@ -15,6 +15,7 @@ from . import models as vm
 from . import logger
 from .api import start_ws_server
 from .client import format_crash_detail
+from .helpers import load_prompt
 from .loops import message_processor, monitor_loop, queue_greeting
 
 SignalHandler = tp.Callable[[int, types.FrameType | None], None]
@@ -111,7 +112,7 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
     ]
 
     # WS port doubles as the readiness signal — bind only once first-start setup
-    # (if any) has been processed. For existing agents this resolves immediately.
+    # (Part A) has been processed. For existing agents this resolves immediately.
     ready_task = asyncio.create_task(state.first_setup_complete.wait())
     shutdown_task = asyncio.create_task(state.graceful_shutdown.wait())
     _, pending = await asyncio.wait([ready_task, shutdown_task], return_when=asyncio.FIRST_COMPLETED)
@@ -122,6 +123,14 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
     if not state.graceful_shutdown.is_set():
         ws_runner = await start_ws_server(state.event_bus, config)
         logger.init(f"WebSocket server started on port {config.ws_port}")
+
+        # Part B: now that WS is up, queue the greeting prompt — it tells the
+        # agent to talk to the user via app-chat, which needs WS reachable.
+        if first_start:
+            greeting_prompt = load_prompt("first_start_greeting", config)
+            if greeting_prompt:
+                await message_queue.put((greeting_prompt.strip(), False))
+                logger.startup("Queued first_start greeting")
 
     try:
         await state.graceful_shutdown.wait()
@@ -210,10 +219,12 @@ async def async_main() -> None:
     logger.setup(config.logs_dir, log_level=config.log_level)
     logger.init(f"{config.agent_name} starting")
 
-    restart_reason = _read_restart_reason(config)
     initial_state = init_state(config=config)
     first_start_marker = config.data_dir / "first_start_done"
     first_start = not first_start_marker.exists()
+    # On a never-run agent the restart_reason file is missing for innocent
+    # reasons; defaulting to CRASH_RESTART would log a misleading "crashed".
+    restart_reason = vm.FIRST_START_REASON if first_start else _read_restart_reason(config)
     logger.init(f"Starting main loop ({restart_reason})...")
     await run_vesta(config, state=initial_state, first_start=first_start, restart_reason=restart_reason)
 

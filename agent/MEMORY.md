@@ -92,14 +92,15 @@ The user's important people are [agent_name]'s important people too. Keeps track
 - New integrations follow the same pattern: daemon that writes JSON to `~/agent/notifications/`
 
 ### Service Registration
-- Register a service via `curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H 'Content-Type: application/json' -d '{"name":"<name>"}'`. Vestad allocates a port and returns `{"port": <N>}`
-- Start the server on the returned port, register once. Vestad persists registrations across restarts
-- vestad routes `/agents/{name}/{service}/...` directly to the registered port
-- `$VESTAD_PORT` is available as an env var (sourced from `/run/vestad-env` at container start)
+- All vestad calls must include the agent's own token: `-H "X-Agent-Token: $AGENT_TOKEN"`. Both `$VESTAD_PORT` and `$AGENT_TOKEN` come from `/run/vestad-env` and are exported into the agent's environment.
+- Register a service: `curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' -d '{"name":"<name>"}'`. Vestad allocates a port and returns `{"port": <N>}`
+- List your registered services: `curl -sk https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H "X-Agent-Token: $AGENT_TOKEN"`
+- Invalidate (notify clients to reload): `curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services/<name>/invalidate -H "X-Agent-Token: $AGENT_TOKEN"`. Optionally pass `{"scope": "<part>"}` to indicate what changed (e.g. `{"scope": "stt"}`); omit the body for a full invalidation.
+- Start the server on the returned port, register once. Vestad persists registrations across restarts.
+- vestad routes `/agents/{name}/{service}/...` directly to the registered port.
 - Use this for anything: skill servers (e.g. voice, dashboard), custom APIs, webhooks, etc.
-- To add a new server: register with vestad to get a port, start it in a screen session, and add the command to `restart.md`
-- **Public services**: pass `"public": true` in the registration body to make a service accessible without authentication (e.g. hosting a website). Public services are fully open, no auth token needed. Example: `curl -sk -X POST ... -d '{"name":"my-site", "public": true}'`. Default is `false` (requires auth).
-- **Invalidation**: after rebuilding/restarting a service or changing its config, notify connected clients by calling: `curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services/<name>/invalidate`. Optionally pass `{"scope": "<part>"}` to indicate what changed (e.g. `{"scope": "stt"}`). Omit the body for a full invalidation. This tells the app to reload/refresh that service (e.g. reload the dashboard iframe, re-fetch voice settings).
+- To add a new server: register with vestad to get a port, start it in a screen session, and add the command to `restart.md`.
+- **Public services**: pass `"public": true` in the registration body to make a service accessible without authentication (e.g. hosting a website). Public services are fully open, no auth token needed. Default is `false` (requires auth).
 
 ### Self-Modification
 - Edit skills, prompts, MEMORY.md freely
