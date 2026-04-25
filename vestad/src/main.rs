@@ -12,7 +12,6 @@ mod auth;
 mod backup;
 mod cloudflared_embed;
 mod control_ws;
-mod migrations;
 mod docker;
 mod jwt;
 mod paths;

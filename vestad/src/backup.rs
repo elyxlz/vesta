@@ -7,7 +7,7 @@ use crate::docker::{
     docker_cp_content, docker_root_dir, image_exists, inspect_container,
     list_images_by_reference, remove_container_force, remove_image,
     snapshot_container, start_container, stop_container_with_timeout, tag_image, validate_name,
-    AgentEnvConfig, ContainerStatus, DockerError,
+    wait_ready_async, AgentEnvConfig, ContainerStatus, DockerError, DEFAULT_START_TIMEOUT_SECS,
 };
 use crate::types::{BackupInfo, BackupType, RetentionPolicy};
 
@@ -66,23 +66,18 @@ pub fn backup_tag(agent_name: &str, backup_type: &BackupType, timestamp: &str) -
 }
 
 /// Parse a backup image tag into (agent_name, backup_type, timestamp).
-/// Supports both new format (`_` delimiter) and legacy format (`-` delimiter).
 pub fn parse_backup_tag(tag: &str) -> Option<(String, BackupType, String)> {
     let repo_tag = tag.strip_prefix(&format!("{}:", BACKUP_IMAGE_PREFIX))?;
 
-    // New format: {name}_{type}_{YYYYMMDD-HHMMSS} — unambiguous since `_` is not allowed in agent names
+    // {name}_{type}_{YYYYMMDD-HHMMSS} — unambiguous since `_` is not allowed in agent names
     let mut parts = repo_tag.rsplitn(3, '_');
     let timestamp = parts.next()?;
-    if let (Some(type_str), Some(name)) = (parts.next(), parts.next()) {
-        if !name.is_empty() && timestamp.len() == 15 && timestamp.as_bytes()[8] == b'-' {
-            if let Ok(bt) = type_str.parse::<BackupType>() {
-                return Some((name.to_string(), bt, timestamp.to_string()));
-            }
-        }
+    let (type_str, name) = (parts.next()?, parts.next()?);
+    if name.is_empty() || timestamp.len() != 15 || timestamp.as_bytes()[8] != b'-' {
+        return None;
     }
-
-    // Legacy format: {name}-{type}-{YYYYMMDD-HHMMSS} — ambiguous, uses suffix guessing
-    crate::migrations::parse_backup_tag_legacy(repo_tag)
+    let bt = type_str.parse::<BackupType>().ok()?;
+    Some((name.to_string(), bt, timestamp.to_string()))
 }
 
 pub fn now_timestamp() -> String {
@@ -453,7 +448,7 @@ pub async fn restore_backup(
         ));
     }
 
-    Ok(())
+    wait_ready_async(docker, name, DEFAULT_START_TIMEOUT_SECS, &env_config.agents_dir).await
 }
 
 /// Delete a backup image. Verifies the backup belongs to the named agent and
@@ -585,24 +580,6 @@ mod tests {
     fn parse_backup_tag_new_format_hyphenated_name() {
         let (name, bt, ts) =
             parse_backup_tag("vesta-backup:my-cool-agent_daily_20260404-120000").unwrap();
-        assert_eq!(name, "my-cool-agent");
-        assert_eq!(bt, BackupType::Daily);
-        assert_eq!(ts, "20260404-120000");
-    }
-
-    #[test]
-    fn parse_backup_tag_legacy_manual() {
-        let (name, bt, ts) =
-            parse_backup_tag("vesta-backup:myagent-manual-20260404-120000").unwrap();
-        assert_eq!(name, "myagent");
-        assert_eq!(bt, BackupType::Manual);
-        assert_eq!(ts, "20260404-120000");
-    }
-
-    #[test]
-    fn parse_backup_tag_legacy_hyphenated_name() {
-        let (name, bt, ts) =
-            parse_backup_tag("vesta-backup:my-cool-agent-daily-20260404-120000").unwrap();
         assert_eq!(name, "my-cool-agent");
         assert_eq!(bt, BackupType::Daily);
         assert_eq!(ts, "20260404-120000");

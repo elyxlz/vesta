@@ -61,6 +61,7 @@ const NAME_MAX_LEN: usize = 32;
 const DOCKER_DAEMON_PING_RETRIES: usize = 10;
 const AGENT_READY_TIMEOUT_MS: u64 = 200;
 const WAIT_READY_POLL_MS: u64 = 500;
+pub const DEFAULT_START_TIMEOUT_SECS: u64 = 120;
 const DEFAULT_TOKEN_EXPIRES_SECS: u64 = 28800;
 const LABEL_USER: &str = "vesta.user";
 const LABEL_AGENT_NAME: &str = "vesta.agent_name";
@@ -180,10 +181,13 @@ pub fn container_name(name: &str) -> String {
     format!("vesta-{}-{}", current_user(), name)
 }
 
-// Modern containers carry `vesta.agent_name`, so this fallback only exists for
-// older managed containers that predate that label.
+/// Strip the `vesta-{user}-` prefix from a container name, falling back to the
+/// raw name if it does not match. Modern containers carry the `vesta.agent_name`
+/// label and prefer that; this is only used as a fallback in error paths.
 pub fn name_from_cname(cname: &str) -> String {
-    crate::migrations::legacy_agent_name_from_container_name(cname, &current_user())
+    let user = current_user();
+    let user_prefix = format!("vesta-{user}-");
+    cname.strip_prefix(&user_prefix).unwrap_or(cname).to_string()
 }
 
 pub fn normalize_name(raw: &str) -> String {
@@ -931,11 +935,7 @@ pub async fn list_managed_agents(docker: &Docker) -> Vec<ManagedAgent> {
             let cname = names.first()?.strip_prefix('/')?.to_string();
             let labels = c.labels.unwrap_or_default();
             let owner = labels.get(LABEL_USER).cloned().unwrap_or_default();
-            let modern_owned_by_user =
-                crate::migrations::modern_container_owned_by_user(&owner, &user);
-            let legacy_owned_by_user =
-                crate::migrations::legacy_container_owned_by_user(&cname, &owner, &user);
-            if !modern_owned_by_user && !legacy_owned_by_user {
+            if owner != user {
                 return None;
             }
             let agent_name = labels
@@ -1495,20 +1495,24 @@ pub async fn create_agent(docker: &Docker, name: &str, env_config: &AgentEnvConf
     Ok(name.to_string())
 }
 
-pub async fn start_agent(docker: &Docker, name: &str) -> Result<(), DockerError> {
+pub async fn start_agent(docker: &Docker, name: &str, agents_dir: &std::path::Path, timeout_secs: u64) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
     let cs = container_status(docker, &cname).await;
     match cs {
         ContainerStatus::NotFound => return Err(DockerError::NotFound(format!("agent '{}' not found", name))),
         ContainerStatus::Dead => return Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name))),
-        ContainerStatus::Running => return Ok(()),
-        ContainerStatus::Stopped => {}
+        ContainerStatus::Running => {}
+        ContainerStatus::Stopped => {
+            if !start_container(docker, &cname).await {
+                return Err(DockerError::Failed(format!("failed to start '{}'", name)));
+            }
+        }
     }
-    if !start_container(docker, &cname).await {
-        return Err(DockerError::Failed(format!("failed to start '{}'", name)));
+    if !is_authenticated(docker, &cname).await {
+        return Ok(());
     }
-    Ok(())
+    wait_ready_async(docker, name, timeout_secs, agents_dir).await
 }
 
 #[derive(Serialize)]
@@ -1519,25 +1523,26 @@ pub struct StartAllResult {
     pub error: Option<String>,
 }
 
-pub async fn start_all_agents(docker: &Docker) -> Vec<StartAllResult> {
+pub async fn start_all_agents(docker: &Docker, agents_dir: &std::path::Path, timeout_secs: u64) -> Vec<StartAllResult> {
     let agents = list_managed_agents(docker).await;
-    let mut results = Vec::new();
-    for ManagedAgent { cname, agent_name } in &agents {
-        if container_status(docker, cname).await != ContainerStatus::Running {
-            if start_container(docker, cname).await {
-                results.push(StartAllResult { name: agent_name.clone(), ok: true, error: None });
-            } else {
-                results.push(StartAllResult {
-                    name: agent_name.clone(),
-                    ok: false,
-                    error: Some("failed to start".into()),
-                });
-            }
-        } else {
-            results.push(StartAllResult { name: agent_name.clone(), ok: true, error: None });
+    let futures = agents.into_iter().map(|ManagedAgent { cname, agent_name }| async move {
+        let already_running = container_status(docker, &cname).await == ContainerStatus::Running;
+        if !already_running && !start_container(docker, &cname).await {
+            return StartAllResult {
+                name: agent_name,
+                ok: false,
+                error: Some("failed to start".into()),
+            };
         }
-    }
-    results
+        if !is_authenticated(docker, &cname).await {
+            return StartAllResult { name: agent_name, ok: true, error: None };
+        }
+        match wait_ready_async(docker, &agent_name, timeout_secs, agents_dir).await {
+            Ok(()) => StartAllResult { name: agent_name, ok: true, error: None },
+            Err(e) => StartAllResult { name: agent_name, ok: false, error: Some(e.to_string()) },
+        }
+    });
+    futures_util::future::join_all(futures).await
 }
 
 pub async fn stop_agent(docker: &Docker, name: &str) -> Result<(), DockerError> {
@@ -1554,12 +1559,15 @@ pub async fn stop_agent(docker: &Docker, name: &str) -> Result<(), DockerError> 
     Ok(())
 }
 
-pub async fn restart_agent(docker: &Docker, name: &str) -> Result<(), DockerError> {
+pub async fn restart_agent(docker: &Docker, name: &str, agents_dir: &std::path::Path, timeout_secs: u64) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
     ensure_exists(docker, &cname).await?;
     docker.restart_container(&cname, Some(RestartContainerOptions { t: Some(CONTAINER_RESTART_TIMEOUT_SECS), signal: None })).await?;
-    Ok(())
+    if !is_authenticated(docker, &cname).await {
+        return Ok(());
+    }
+    wait_ready_async(docker, name, timeout_secs, agents_dir).await
 }
 
 /// Ensure all containers match expected config and running agents are restarted.
@@ -1789,59 +1797,15 @@ pub async fn rebuild_agent(docker: &Docker, name: &str, env_config: &AgentEnvCon
 
     let ts = crate::time_utils::now_epoch_secs();
     let backup_tag = format!("vesta-rebuild:{}_{}", name, ts);
-    let normalized_tag = format!("vesta-rebuild:{}_{}-normalized", name, ts);
-    let helper_name = format!("{}-normalize", cname);
 
     tracing::info!(agent = %name, "[1/3] snapshotting container filesystem...");
     snapshot_container(docker, &cname, &backup_tag, &[]).await?;
-
-    // Chain migrations on the snapshot. Each migration produces a new image
-    // tag if it modifies the filesystem; subsequent migrations inspect the
-    // latest image's helper container.
-    let mut current_image = backup_tag.clone();
-
-    // Migration 1: /root/vesta/ → /root + /root/agent/ (very old layout)
-    if crate::migrations::maybe_normalize_legacy_agent_snapshot(
-        docker,
-        &cname,
-        &current_image,
-        &helper_name,
-        &normalized_tag,
-    ).await? {
-        current_image = normalized_tag.clone();
-    }
-
-    // Migration 2: agent/src/vesta/ → agent/core/ (pre-0.1.135 layout)
-    let core_tag = format!("{normalized_tag}-core");
-    if crate::migrations::maybe_rename_src_vesta_to_core(
-        docker,
-        &cname,
-        &current_image,
-        &helper_name,
-        &core_tag,
-    ).await? {
-        current_image = core_tag;
-    }
-
-    // Migration 3: remove old unified upstream skill (replaced by upstream-sync + upstream-pr)
-    let upstream_tag = format!("{normalized_tag}-upstream");
-    if crate::migrations::maybe_remove_old_upstream_skill(
-        docker,
-        &cname,
-        &current_image,
-        &helper_name,
-        &upstream_tag,
-    ).await? {
-        current_image = upstream_tag;
-    }
-
-    let rebuild_image = current_image;
 
     tracing::info!(agent = %name, "[2/3] removing old container...");
     remove_container_force(docker, &cname).await.ok();
 
     tracing::info!(agent = %name, "[3/3] creating container with new config...");
-    create_container(docker, &cname, &rebuild_image, port, name, env_config, manage_core_code, None, None).await?;
+    create_container(docker, &cname, &backup_tag, port, name, env_config, manage_core_code, None, None).await?;
 
     Ok(())
 }

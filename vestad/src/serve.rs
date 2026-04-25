@@ -443,7 +443,7 @@ async fn create_agent_handler(
             .await
             .map_err(map_docker_err)?;
 
-    docker::start_agent(&state.docker, &name)
+    docker::start_agent(&state.docker, &name, &state.env_config.agents_dir, docker::DEFAULT_START_TIMEOUT_SECS)
         .await
         .map_err(map_docker_err)?;
 
@@ -460,15 +460,22 @@ async fn agent_status_handler(
     Ok(Json(status))
 }
 
+#[derive(Deserialize, Default)]
+struct StartQuery {
+    timeout: Option<u64>,
+}
+
 async fn start_agent_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
+    Query(query): Query<StartQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     tracing::info!(name = %name, "starting agent");
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
-    docker::start_agent(&state.docker, &name)
+    let timeout = query.timeout.unwrap_or(docker::DEFAULT_START_TIMEOUT_SECS);
+    docker::start_agent(&state.docker, &name, &state.env_config.agents_dir, timeout)
         .await
         .map_err(map_docker_err)?;
     Ok(ok_json())
@@ -476,8 +483,10 @@ async fn start_agent_handler(
 
 async fn start_all_handler(
     State(state): State<SharedState>,
+    Query(query): Query<StartQuery>,
 ) -> impl IntoResponse {
-    let results = docker::start_all_agents(&state.docker).await;
+    let timeout = query.timeout.unwrap_or(docker::DEFAULT_START_TIMEOUT_SECS);
+    let results = docker::start_all_agents(&state.docker, &state.env_config.agents_dir, timeout).await;
 
     let has_error = results.iter().any(|r| !r.ok);
     let status = if has_error {
@@ -511,12 +520,14 @@ async fn stop_agent_handler(
 async fn restart_agent_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
+    Query(query): Query<StartQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     tracing::info!(name = %name, "restarting agent");
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
-    docker::restart_agent(&state.docker, &name)
+    let timeout = query.timeout.unwrap_or(docker::DEFAULT_START_TIMEOUT_SECS);
+    docker::restart_agent(&state.docker, &name, &state.env_config.agents_dir, timeout)
         .await
         .map_err(map_docker_err)?;
     Ok(ok_json())
@@ -555,7 +566,7 @@ async fn rebuild_agent_handler(
     docker::rebuild_agent(&state.docker, &name, &state.env_config, manage_core_code)
         .await
         .map_err(map_docker_err)?;
-    docker::start_agent(&state.docker, &name)
+    docker::start_agent(&state.docker, &name, &state.env_config.agents_dir, docker::DEFAULT_START_TIMEOUT_SECS)
         .await
         .map_err(map_docker_err)?;
     Ok(ok_json())
@@ -650,12 +661,11 @@ async fn complete_auth_handler(
         .await
         .map_err(map_docker_err)?;
 
-    // Restart the agent so it picks up the new credentials.
-    // The client is responsible for polling wait-ready afterwards.
+    // Restart the agent so it picks up the new credentials. Blocks until the agent reports ready.
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
-    docker::restart_agent(&state.docker, &name)
+    docker::restart_agent(&state.docker, &name, &state.env_config.agents_dir, docker::DEFAULT_START_TIMEOUT_SECS)
         .await
         .map_err(map_docker_err)?;
 
@@ -922,10 +932,7 @@ fn load_settings() -> Settings {
         }
     }
 
-    let mut settings = Settings::default();
-    if let Some(services) = crate::migrations::migrate_legacy_services_json(&path) {
-        settings.services = services;
-    }
+    let settings = Settings::default();
 
     // Always write settings to disk so users can edit the file
     save_settings(&settings);
@@ -1333,7 +1340,7 @@ async fn patch_agent_settings_handler(
         if let Err(e) = docker::rebuild_agent(&state.docker, &name, &state.env_config, new_manage_core_code).await {
             tracing::error!(agent = %name, error = %e, "rebuild after settings change failed");
         } else if was_running {
-            docker::start_agent(&state.docker, &name).await.ok();
+            docker::start_agent(&state.docker, &name, &state.env_config.agents_dir, docker::DEFAULT_START_TIMEOUT_SECS).await.ok();
         }
     }
 
@@ -1505,7 +1512,6 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/settings/auto-backup", get(get_auto_backup_handler))
         .route("/settings/auto-backup", axum::routing::put(set_auto_backup_handler))
         .route("/ws", get(control_ws::control_ws_handler))
-        .route("/agents/{name}/services", get(list_services_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::auth_middleware,
@@ -1528,10 +1534,20 @@ pub fn build_router(state: SharedState) -> Router {
         ))
         .with_state(state.clone());
 
+    // Service listing: read-only, accepts either API key or the agent's token
+    let agents_services_read = Router::new()
+        .route("/agents/{name}/services", get(list_services_handler))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::auth_middleware_api_or_agent_token,
+        ))
+        .with_state(state.clone());
+
     Router::new()
         .merge(vestad_public)
         .merge(vestad_protected)
         .merge(agents_services)
+        .merge(agents_services_read)
         .merge(agents_proxy)
         .merge(crate::app_static::router())
         .layer(

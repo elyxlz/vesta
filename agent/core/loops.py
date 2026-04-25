@@ -129,14 +129,6 @@ async def queue_greeting(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.V
         (config.data_dir / "first_start_done").write_text("1")
         return
 
-    migrations_dir = config.core_prompts_dir / "migrations"
-    for path in sorted(migrations_dir.glob("migration_*.md")) if migrations_dir.is_dir() else []:
-        flag = config.data_dir / f"{path.stem}_done"
-        if not flag.exists():
-            await queue.put((path.read_text().strip(), False))
-            state.pending_migration_flags.append(flag)
-            logger.startup(f"Queued migration: {path.stem}")
-
     extras = []
     flag = config.data_dir / "show_dreamer_summary"
     if flag.exists():
@@ -256,11 +248,6 @@ async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm
                             continue
 
                         await _process_interruptible(msg, is_user=is_user, queue=queue, state=state, config=config)
-
-                        if state.pending_migration_flags:
-                            flag = state.pending_migration_flags.popleft()
-                            flag.write_text("1")
-                            logger.startup(f"Migration complete: {flag.stem}")
 
                         if not ready_marker.exists():
                             ready_marker.parent.mkdir(parents=True, exist_ok=True)
