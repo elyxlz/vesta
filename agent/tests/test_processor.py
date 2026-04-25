@@ -220,6 +220,29 @@ async def test_cancellation_triggers_restart(tmp_path):
 
 
 @pytest.mark.anyio
+async def test_cancellation_during_shutdown_is_silent(tmp_path):
+    """Regression: when shutdown is already in progress (e.g. restart_vesta tool fired SIGTERM),
+    the cancel that propagates to _process_message_safely must NOT log 'cancelled unexpectedly'
+    or override restart_reason. It's an expected cancellation, not a crash."""
+    from core.loops import _process_message_safely
+
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    state = vm.State()
+    state.shutdown_event = asyncio.Event()
+    state.shutdown_event.set()
+    state.graceful_shutdown.set()
+
+    async def cancel_side_effect(msg, *, state, config, is_user):
+        raise asyncio.CancelledError
+
+    with patch("core.loops.process_message", side_effect=cancel_side_effect):
+        with pytest.raises(asyncio.CancelledError):
+            await _process_message_safely("msg", is_user=True, state=state, config=config)
+
+    assert state.restart_reason is None, "shutdown-driven cancel must not override restart_reason"
+
+
+@pytest.mark.anyio
 async def test_handle_processor_done_silent_cancel_triggers_restart():
     """Regression: a cancelled processor task used to return silently, leaving the agent wedged.
     Now it must log + set restart_reason + set graceful_shutdown."""

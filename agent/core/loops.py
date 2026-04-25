@@ -165,6 +165,8 @@ async def _process_message_safely(msg: str, *, is_user: bool, state: vm.State, c
         state.event_bus.set_state("thinking")
         await process_message(msg, state=state, config=config, is_user=is_user)
     except asyncio.CancelledError:
+        if state.shutdown_event.is_set() or state.graceful_shutdown.is_set():
+            raise
         logger.error("Message processing cancelled unexpectedly — triggering restart")
         state.event_bus.emit({"type": "error", "text": "processing cancelled"})
         state.restart_reason = vm.PROCESSING_CANCELLED_ERROR
