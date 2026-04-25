@@ -46,9 +46,11 @@ fn fresh_agent_has_expected_directory_structure() {
     }
 
     // .claude/skills is a directory of per-skill symlinks flattening both
-    // /root/agent/skills/ and /root/agent/core/skills/.
+    // /root/agent/skills/ and /root/agent/core/skills/. The user-skills tree
+    // is pruned at image build time to default-skills.txt; pick a couple of
+    // entries we know are shipped.
     wait_for_path(&cid, 'd', "/root/.claude/skills");
-    for skill in ["personality", "app-chat", "microsoft"] {
+    for skill in ["personality", "app-chat", "tasks", "upstream-sync"] {
         let path = format!("/root/.claude/skills/{skill}");
         exec_in_container(&cid, &format!("test -L {path}"))
             .unwrap_or_else(|_| panic!("{path} should be a symlink"));

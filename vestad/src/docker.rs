@@ -777,7 +777,30 @@ pub struct AgentEnvConfig {
     pub agents_dir: std::path::PathBuf,
     pub vestad_port: u16,
     pub vestad_tunnel: Option<String>,
-    pub upstream_ref: Option<String>,
+}
+
+/// Compute the upstream ref the agent should sync against.
+///
+/// Dev builds: vestad's current git branch — re-evaluated on every call so that
+/// branch renames / checkouts take effect without a vestad restart.
+/// Release builds: the binary's version tag (`vX.Y.Z`).
+pub fn detect_upstream_ref() -> Option<String> {
+    if cfg!(debug_assertions) {
+        let output = std::process::Command::new("git")
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let branch = String::from_utf8(output.stdout).ok()?.trim().to_string();
+        if branch.is_empty() || branch == "HEAD" {
+            return None;
+        }
+        Some(branch)
+    } else {
+        Some(format!("v{}", env!("CARGO_PKG_VERSION")))
+    }
 }
 
 /// Validate that the config and agents directories exist, are writable, and have
@@ -851,7 +874,7 @@ pub fn write_agent_env_file(
         }
     };
     append_optional("VESTAD_TUNNEL", env_config.vestad_tunnel.as_deref());
-    append_optional("VESTA_UPSTREAM_REF", env_config.upstream_ref.as_deref());
+    append_optional("VESTA_UPSTREAM_REF", detect_upstream_ref().as_deref());
     append_optional("TZ", timezone);
     append_optional("AGENT_SEED_PERSONALITY", Some(seed_personality.unwrap_or("dry")));
     std::fs::write(&env_path, &content)
@@ -871,7 +894,8 @@ fn delete_agent_env_file(agents_dir: &std::path::Path, agent_name: &str) {
 
 /// Update VESTAD_PORT, VESTAD_TUNNEL, and VESTA_UPSTREAM_REF in all existing per-agent env files.
 /// Called at vestad startup so running containers pick up the new values on restart.
-pub fn update_all_agent_env_files(agents_dir: &std::path::Path, vestad_port: u16, vestad_tunnel: Option<&str>, upstream_ref: Option<&str>) {
+pub fn update_all_agent_env_files(agents_dir: &std::path::Path, vestad_port: u16, vestad_tunnel: Option<&str>) {
+    let upstream_ref = detect_upstream_ref();
     for name in env_file_names(agents_dir) {
         let path = agents_dir.join(format!("{name}.env"));
         let Ok(content) = std::fs::read_to_string(&path) else { continue };
@@ -889,7 +913,7 @@ pub fn update_all_agent_env_files(agents_dir: &std::path::Path, vestad_port: u16
         if let Some(url) = vestad_tunnel {
             new_lines.push(format!("export VESTAD_TUNNEL={url}"));
         }
-        if let Some(upstream) = upstream_ref {
+        if let Some(upstream) = &upstream_ref {
             new_lines.push(format!("export VESTA_UPSTREAM_REF={upstream}"));
         }
         new_lines.push(String::new());

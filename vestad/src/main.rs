@@ -501,7 +501,6 @@ fn main() {
                             agents_dir: config.join("agents"),
                             vestad_port,
                             vestad_tunnel,
-                            upstream_ref: None,
                         };
                         agent_code::ensure_agent_code(&config)
                             .unwrap_or_else(|e| die(format!("failed to populate agent code: {e}")));
