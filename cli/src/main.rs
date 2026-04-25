@@ -517,7 +517,7 @@ fn run(cli: Cli) {
 
             eprintln!("authenticating claude...");
             authenticate_agent(&c, &name);
-            eprintln!("finalizing first-time setup (this may take up to a minute)...");
+            eprintln!("finalizing first-time setup (this can take several minutes the first time)...");
             c.wait_until_alive(&name, std::time::Duration::from_secs(START_READY_TIMEOUT_SECS))
                 .unwrap_or_else(|e| platform::die(&e));
             eprintln!("agent '{}' is ready.", name);

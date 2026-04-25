@@ -121,12 +121,14 @@ async def queue_greeting(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.V
         return False
 
     if reason == "first_start":
+        # Always mark first-start as handled, even if the prompt is missing —
+        # otherwise the agent re-enters first-start on every reboot.
+        (config.data_dir / "first_start_done").write_text("1")
         setup_prompt = load_prompt("first_start_setup", config)
         if setup_prompt:
             combined = f"[System: your name is {config.agent_name}]\n\n{setup_prompt.strip()}"
             await queue.put((combined, False))
             logger.startup("Queued first_start setup")
-            (config.data_dir / "first_start_done").write_text("1")
             return True
         return False
 

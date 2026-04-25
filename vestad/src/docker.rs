@@ -81,8 +81,9 @@ const AGENT_ENTRYPOINT_STEPS: &[&str] = &[
     "uv sync --frozen --project /root/agent",
     // ~/.claude/skills is a real directory of per-skill symlinks. Both
     // /root/agent/skills/ and /root/agent/core/skills/ are flattened in;
-    // core entries are linked last so they win any name collision.
-    "[ -L ~/.claude/skills ] && rm ~/.claude/skills; mkdir -p ~/.claude/skills",
+    // core entries are linked last so they win any name collision. Reset
+    // every boot so uninstalled skills don't leave dangling symlinks.
+    "rm -rf ~/.claude/skills && mkdir -p ~/.claude/skills",
     "for d in /root/agent/skills/*/SKILL.md /root/agent/core/skills/*/SKILL.md; do [ -f \"$d\" ] || continue; s=$(dirname \"$d\"); ln -sfn \"$s\" ~/.claude/skills/$(basename \"$s\"); done",
     "test -f ~/.claude/settings.json || printf '{\"permissions\":{\"allow\":[]}}\\n' > ~/.claude/settings.json",
     "cd /root/agent && exec uv run --frozen python -m core.main",
