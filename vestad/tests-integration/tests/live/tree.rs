@@ -57,9 +57,9 @@ fn first_start_migrates_old_layout() {
     let branch = exec_in_container(&container, "git -C /root branch --show-current").unwrap();
     assert!(!branch.is_empty(), "should be on a branch");
 
-    // .claude/skills symlink
-    exec_in_container(&container, "test -L /root/.claude/skills")
-        .expect(".claude/skills should be a symlink after migration");
+    // .claude/skills is a directory of per-skill symlinks
+    exec_in_container(&container, "test -d /root/.claude/skills")
+        .expect(".claude/skills should be a directory after migration");
 }
 
 /// Seed the container with an old-style layout and mark first_start as done

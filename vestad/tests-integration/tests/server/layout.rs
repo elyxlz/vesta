@@ -45,11 +45,14 @@ fn fresh_agent_has_expected_directory_structure() {
         wait_for_path(&cid, 'd', dir);
     }
 
-    // .claude/skills symlink points to agent skills
-    exec_in_container(&cid, "test -L /root/.claude/skills")
-        .expect(".claude/skills should be a symlink");
-    let target = exec_in_container(&cid, "readlink /root/.claude/skills").unwrap();
-    assert!(target.contains("agent/skills"), "skills symlink should point to agent/skills, got: {target}");
+    // .claude/skills is a directory of per-skill symlinks flattening both
+    // /root/agent/skills/ and /root/agent/core/skills/.
+    wait_for_path(&cid, 'd', "/root/.claude/skills");
+    for skill in ["personality", "app-chat", "microsoft"] {
+        let path = format!("/root/.claude/skills/{skill}");
+        exec_in_container(&cid, &format!("test -L {path}"))
+            .unwrap_or_else(|_| panic!("{path} should be a symlink"));
+    }
 
     // Agent subdirectories
     for dir in [
