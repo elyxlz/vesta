@@ -7,6 +7,14 @@ description: Plex, movies, TV shows, torrents, qBittorrent; download and browse 
 
 Home media server running qBittorrent + Plex on a Linux box.
 
+## Quality guidelines
+
+Sensible defaults when downloading:
+
+- **Always ask 1080p or 4K before downloading.** Don't assume; quality preference varies per title and per user.
+- **For 4K, target 8GB+ (10GB+ even better).** Smaller "4K" releases are usually re-encoded and lower quality than the size suggests.
+- **If 4K isn't available on the tracker**, surface the top-end 1080p options (BluRay 8GB+ or REMUX) and let the user pick. Don't silently fall back to a small 1080p release.
+
 ## Connection
 
 ```bash
