@@ -177,7 +177,7 @@ def _resolve_credentials(account_override: str | None = None) -> dict[str, str]:
             print(
                 "Error: Apple ID specified but no password source available.\n"
                 f"  Create {CREDS_FILE} with "
-                "{\"account\": \"<email>\", \"password\": \"<password>\"}\n"
+                '{"account": "<email>", "password": "<password>"}\n'
                 "  or add an 'Apple ID' / 'iCloud' record to Keeper.",
                 file=sys.stderr,
             )
@@ -185,7 +185,7 @@ def _resolve_credentials(account_override: str | None = None) -> dict[str, str]:
             print(
                 "Error: no Apple ID credentials available. Either:\n"
                 f"  1. Create {CREDS_FILE} with "
-                "{\"account\": \"<email>\", \"password\": \"<password>\"}, or\n"
+                '{"account": "<email>", "password": "<password>"}, or\n'
                 "  2. Add a Keeper record titled 'Apple ID' or 'iCloud' "
                 "(login + password fields), or\n"
                 "  3. Pass --apple-id and store the password in one of the above.",
@@ -290,11 +290,7 @@ def _run_login_worker(account: str, password: str, phone_suffix: str | None = No
 
     phone_id = _pick_phone_id(candidates, suffix=phone_suffix)
     if phone_id is None:
-        msg = (
-            f"no trusted phone matched suffix {phone_suffix}"
-            if phone_suffix
-            else "no trusted phone numbers returned by Apple"
-        )
+        msg = f"no trusted phone matched suffix {phone_suffix}" if phone_suffix else "no trusted phone numbers returned by Apple"
         _write_state(
             phase="error",
             message=msg,
@@ -347,9 +343,7 @@ def _run_login_worker(account: str, password: str, phone_suffix: str | None = No
 
     _write_state(phase="submitting_code")
 
-    submit_headers = api._get_auth_headers(
-        {"Accept": f"{CONTENT_TYPE_JSON}, {CONTENT_TYPE_TEXT}"}
-    )
+    submit_headers = api._get_auth_headers({"Accept": f"{CONTENT_TYPE_JSON}, {CONTENT_TYPE_TEXT}"})
     submit_url = f"{api._auth_endpoint}/verify/phone/securitycode"
     submit_body = {
         "phoneNumber": {"id": phone_id},
@@ -441,8 +435,7 @@ def cmd_auth_login(args: argparse.Namespace) -> None:
         sys.exit(1)
     if state.get("phase") == "awaiting_code":
         print(
-            "\nNext: ask the user for the 6-digit SMS code, then run:\n"
-            "  icloud auth verify --code <code>",
+            "\nNext: ask the user for the 6-digit SMS code, then run:\n  icloud auth verify --code <code>",
             file=sys.stderr,
         )
 
@@ -456,8 +449,7 @@ def cmd_auth_verify(args: argparse.Namespace) -> None:
     state = _load_state()
     if state.get("phase") not in ("awaiting_code", "submitting_code"):
         print(
-            f"Warning: state phase is {state.get('phase')!r}; expected 'awaiting_code'. "
-            "Writing code anyway.",
+            f"Warning: state phase is {state.get('phase')!r}; expected 'awaiting_code'. Writing code anyway.",
             file=sys.stderr,
         )
     CODE_FILE.write_text(digits)
@@ -512,11 +504,7 @@ def cmd_auth_status(args: argparse.Namespace) -> None:
 
 def _connect() -> Any:
     cfg = _load_config()
-    account = (
-        os.environ.get("ICLOUD_APPLE_ID")
-        or cfg.get("account")
-        or _load_state().get("account")
-    )
+    account = os.environ.get("ICLOUD_APPLE_ID") or cfg.get("account") or _load_state().get("account")
     if not account:
         creds = _load_creds_from_file() or _load_creds_from_keeper()
         if creds:
@@ -611,7 +599,7 @@ def _human_size(n: int | None) -> str:
 
 
 def _safe_filename(name: str) -> str:
-    bad = '/\x00'
+    bad = "/\x00"
     return "".join("_" if c in bad else c for c in name)
 
 
@@ -689,8 +677,7 @@ def cmd_download(args: argparse.Namespace) -> None:
         total = None
 
     print(
-        f"Downloading album {name!r} (id={album.id}, count={total}) "
-        f"to {dest} [quality={args.quality}, videos={args.include_videos}]",
+        f"Downloading album {name!r} (id={album.id}, count={total}) to {dest} [quality={args.quality}, videos={args.include_videos}]",
         file=sys.stderr,
     )
 
@@ -714,8 +701,7 @@ def cmd_download(args: argparse.Namespace) -> None:
             elapsed = time.time() - started
             rate = i / elapsed if elapsed else 0
             print(
-                f"  [{i}/{total or '?'}] downloaded={downloaded} skipped={skipped} "
-                f"failed={len(failed)} ({rate:.1f}/s)",
+                f"  [{i}/{total or '?'}] downloaded={downloaded} skipped={skipped} failed={len(failed)} ({rate:.1f}/s)",
                 file=sys.stderr,
             )
 
@@ -802,8 +788,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--phone-suffix",
         dest="phone_suffix",
         default=None,
-        help="Last digits of the trusted phone to receive SMS on; "
-        "default: first/only trusted phone returned by Apple",
+        help="Last digits of the trusted phone to receive SMS on; default: first/only trusted phone returned by Apple",
     )
     a_login.add_argument(
         "--foreground",
