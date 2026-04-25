@@ -1,11 +1,11 @@
 # OneDrive Setup
 
-1. Install dependencies:
+1. Install dependencies and the latest rclone:
    ```bash
    apt-get install -y unzip fuse3
-   curl https://rclone.org/install.sh | bash
+   curl -fsSL https://rclone.org/install.sh | bash
    ```
-   unzip must be installed before rclone or the installer fails silently.
+   unzip must be installed before rclone or the installer fails silently. Always use the official install script: it pulls the latest stable release. Minimum supported version is v1.73 since earlier versions have broken personal-OneDrive content fetches. If rclone is already installed at an older version, the script upgrades in place. Verify after install: `rclone version` should show v1.73 or newer.
 
 2. You need an Azure App Registration with `Files.ReadWrite.All` permission and "Allow public client flows" enabled. If the Microsoft skill is already set up, reuse that app and just add the `Files.ReadWrite.All` permission to it.
 
