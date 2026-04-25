@@ -238,7 +238,9 @@ async def _process_interruptible(
         raise
 
 
-async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig, wait_for_first_message: bool = False) -> None:
+async def message_processor(
+    queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig, wait_for_first_message: bool = False
+) -> None:
     logger.client("Creating new client session...")
     options = build_client_options(config, state)
     pending_ready = wait_for_first_message
