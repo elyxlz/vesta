@@ -61,9 +61,9 @@ exa research "compare vector DBs for agent memory" --model exa-research-pro --wa
 Creates an async research task. Without `--wait`, returns the task ID so you can poll later with `exa research status <id>`. With `--wait`, polls until complete (up to ~10 min) and prints the final report.
 
 Models:
-- `exa-research-fast` — quick scan, cheapest
-- `exa-research` — default, balanced
-- `exa-research-pro` — deepest, slowest, most expensive
+- `exa-research-fast` - quick scan, cheapest
+- `exa-research` - default, balanced
+- `exa-research-pro` - deepest, slowest, most expensive
 
 ## Typical Usage Patterns
 

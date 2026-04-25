@@ -1,4 +1,4 @@
-"""Exa AI CLI — lightweight wrapper around https://api.exa.ai.
+"""Exa AI CLI - lightweight wrapper around https://api.exa.ai.
 
 Commands:
   exa auth setup --api-key <key>   # save key to ~/.exa/config.json
