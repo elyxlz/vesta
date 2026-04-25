@@ -40,4 +40,4 @@ exa search "hello world" --num 1
 
 ## Pricing
 
-Exa charges per request. See https://exa.ai/pricing. Every response includes `costDollars`. Deep research (`exa research`) can cost a few cents to dollars per task depending on model and scope - always mention cost to the user for long-running research.
+Exa charges per request. See https://exa.ai/pricing. Every response includes `costDollars`. Deep research (`exa research`) can cost a few cents to dollars per task depending on model and scope. Always mention cost to the user for long-running research.
