@@ -222,6 +222,12 @@ def get_email(
     if "body" in result:
         del result["body"]
 
+    result["body"] = {
+        "saved_to": str(save_path),
+        "length": len(full_body_content),
+        "size_bytes": saved_size,
+        "_note": "body saved to disk to keep agent context small; read the file at saved_to",
+    }
     result["body_saved_to"] = str(save_path)
     result["body_saved_size"] = saved_size
     result["body_length"] = len(full_body_content)

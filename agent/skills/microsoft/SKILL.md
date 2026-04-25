@@ -51,7 +51,8 @@ microsoft calendar respond --account user@example.com --id <event_id> --response
 - `--user-timezone` on calendar list converts times to the given IANA timezone
 - `--folder` on email list/search filters by folder (default "inbox")
 - `--no-attachments` on email get skips attachment metadata
-- `--save-to` on email get saves the email body text to a file (NOT JSON, plain text only)
+- `--save-to` on email get overrides the auto-save path for the body
+- **`email get` always saves the body to disk** under `~/.microsoft/emails/<timestamp>_<subject>_<id>.txt` and strips it from the JSON response. The JSON returns `body: {saved_to, length, size_bytes, _note}` plus the legacy `body_saved_to`, `body_saved_size`, `body_length` fields, and a short `preview`. To inspect content, read the file at `body.saved_to`. The full `body.content` field is intentionally never returned inline to keep agent context small. Bodies over 5000 chars also surface a warning telling you to grep/crop before pasting snippets
 - `--categories` on email update accepts multiple space-separated category names
 - `email list`, `email search`, `calendar list`, and `calendar calendars` default to a compact tab-separated table; pass `--json` for one-line JSON or `--json-pretty` for indented JSON. Graph `@odata.*` metadata is stripped from every result.
 
