@@ -22,7 +22,7 @@ fn latest_released_vestad_upgrades_to_current_and_agent_git_state_is_valid() {
 
     let released_client = released_server.client();
     let created_name = released_client
-        .create_agent(agent_name, false)
+        .create_agent(agent_name)
         .expect("create agent under released vestad");
     assert_eq!(created_name, agent_name);
 

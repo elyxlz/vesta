@@ -7,7 +7,7 @@ fn destroy_on_one_doesnt_affect_other() {
     let alice_client = alice.client();
     let bob_client = bob.client();
 
-    let alice_agent_name = alice_client.create_agent("cross-destroy", false).unwrap();
+    let alice_agent_name = alice_client.create_agent("cross-destroy").unwrap();
     let _bob_agent = TestAgent::create(&bob_client, "cross-destroy").unwrap();
 
     alice_client.destroy_agent(&alice_agent_name).unwrap();

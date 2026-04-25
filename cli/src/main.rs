@@ -62,9 +62,6 @@ struct Cli {
 enum Command {
     /// Create agent, start it, and authenticate Claude
     Setup {
-        /// Build the image locally instead of pulling
-        #[arg(long)]
-        build: bool,
         /// Skip confirmation prompts
         #[arg(long, short)]
         yes: bool,
@@ -77,9 +74,6 @@ enum Command {
     },
     /// Create an agent container (without starting or authenticating)
     Create {
-        /// Build the image locally instead of pulling
-        #[arg(long)]
-        build: bool,
         /// Agent name (prompted interactively if omitted)
         #[arg(long)]
         name: Option<String>,
@@ -500,7 +494,7 @@ fn run(cli: Cli) {
     let token_ref = cli.token.as_deref();
 
     match command {
-        Command::Setup { build, yes, name, no_manage_core_code } => {
+        Command::Setup { yes, name, no_manage_core_code } => {
             let c = get_client(host_ref, token_ref);
 
             let name = name
@@ -508,7 +502,7 @@ fn run(cli: Cli) {
                 .unwrap_or_else(prompt_name);
 
             let timezone = detect_timezone();
-            match c.create_agent(&name, build, !no_manage_core_code, timezone.as_deref()) {
+            match c.create_agent(&name, !no_manage_core_code, timezone.as_deref()) {
                 Ok(name) => eprintln!("created agent '{}'", name),
                 Err(e) if e.contains("already exists") && yes => {
                     eprintln!("agent '{}' already exists, continuing...", name);
@@ -525,13 +519,13 @@ fn run(cli: Cli) {
 
         }
 
-        Command::Create { build, name, no_manage_core_code } => {
+        Command::Create { name, no_manage_core_code } => {
             let c = get_client(host_ref, token_ref);
             let name = name
                 .map(|name| name.trim().to_string())
                 .unwrap_or_else(prompt_name);
             let timezone = detect_timezone();
-            let name = c.create_agent(&name, build, !no_manage_core_code, timezone.as_deref()).unwrap_or_else(|e| platform::die(&e));
+            let name = c.create_agent(&name, !no_manage_core_code, timezone.as_deref()).unwrap_or_else(|e| platform::die(&e));
             eprintln!("created (run 'vesta auth {}' to authenticate)", name);
         }
 

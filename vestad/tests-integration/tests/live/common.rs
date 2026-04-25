@@ -114,7 +114,7 @@ pub fn setup_live_agent(
     // Follow the real user creation path: build the image, then discover
     // the container via the API (not by hardcoding the naming convention).
     let client = Box::leak(Box::new(SERVER.client()));
-    let agent = TestAgent::create_built(client, name).unwrap();
+    let agent = TestAgent::create(client, name).unwrap();
 
     let status = client.agent_status(&agent.name).unwrap();
     let container = status.id.unwrap_or_else(|| panic!("agent {} has no container id", agent.name));

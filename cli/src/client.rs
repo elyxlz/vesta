@@ -316,8 +316,8 @@ impl Client {
             .map_err(|e| format!("parse error: {}", e))
     }
 
-    pub fn create_agent(&self, name: &str, build: bool, manage_agent_code: bool, timezone: Option<&str>) -> Result<String, String> {
-        let mut body = serde_json::json!({"name": name, "build": build, "manage_agent_code": manage_agent_code});
+    pub fn create_agent(&self, name: &str, manage_agent_code: bool, timezone: Option<&str>) -> Result<String, String> {
+        let mut body = serde_json::json!({"name": name, "manage_agent_code": manage_agent_code});
         if let Some(tz) = timezone {
             body["timezone"] = serde_json::json!(tz);
         }

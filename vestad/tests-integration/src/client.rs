@@ -153,12 +153,12 @@ impl Client {
         resp.into_body().read_json().map_err(|e| format!("parse error: {}", e))
     }
 
-    pub fn create_agent(&self, name: &str, build: bool) -> Result<String, String> {
-        self.create_agent_ex(name, build, None)
+    pub fn create_agent(&self, name: &str) -> Result<String, String> {
+        self.create_agent_ex(name, None)
     }
 
-    pub fn create_agent_ex(&self, name: &str, build: bool, manage_agent_code: Option<bool>) -> Result<String, String> {
-        let mut body = serde_json::json!({"name": name, "build": build});
+    pub fn create_agent_ex(&self, name: &str, manage_agent_code: Option<bool>) -> Result<String, String> {
+        let mut body = serde_json::json!({"name": name});
         if let Some(m) = manage_agent_code {
             body["manage_agent_code"] = serde_json::json!(m);
         }

@@ -32,7 +32,7 @@ fn wait_for_path(cid: &str, flag: char, path: &str) {
 #[test]
 fn fresh_agent_has_expected_directory_structure() {
     let c = SERVER.client();
-    let agent = TestAgent::create_built(&c, &unique_agent("layout")).unwrap();
+    let agent = TestAgent::create(&c, &unique_agent("layout")).unwrap();
     let cid = container_id(&agent.name);
 
     c.wait_ready(&agent.name, 10).ok(); // may not become ready without auth, that's fine

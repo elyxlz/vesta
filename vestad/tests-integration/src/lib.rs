@@ -260,28 +260,21 @@ impl<'a> TestAgent<'a> {
     pub fn create(client: &'a Client, name: &str) -> Result<Self, String> {
         let _ = client.stop_agent(name);
         let _ = client.destroy_agent(name);
-        let name = client.create_agent(name, false)?;
-        Ok(Self { name, client })
-    }
-
-    pub fn create_built(client: &'a Client, name: &str) -> Result<Self, String> {
-        let _ = client.stop_agent(name);
-        let _ = client.destroy_agent(name);
-        let name = client.create_agent(name, true)?;
+        let name = client.create_agent(name)?;
         Ok(Self { name, client })
     }
 
     pub fn create_with_manage_agent_code(client: &'a Client, name: &str) -> Result<Self, String> {
         let _ = client.stop_agent(name);
         let _ = client.destroy_agent(name);
-        let name = client.create_agent_ex(name, false, Some(true))?;
+        let name = client.create_agent_ex(name, Some(true))?;
         Ok(Self { name, client })
     }
 
     pub fn create_without_manage_agent_code(client: &'a Client, name: &str) -> Result<Self, String> {
         let _ = client.stop_agent(name);
         let _ = client.destroy_agent(name);
-        let name = client.create_agent_ex(name, false, Some(false))?;
+        let name = client.create_agent_ex(name, Some(false))?;
         Ok(Self { name, client })
     }
 }

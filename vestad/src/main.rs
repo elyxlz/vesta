@@ -10,6 +10,7 @@ mod agent_status;
 mod app_static;
 mod auth;
 mod backup;
+mod cloudflared_embed;
 mod control_ws;
 mod migrations;
 mod docker;
@@ -253,16 +254,16 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool) {
             let (port, http_listener) = bind_http_atomically(port, &config).await;
             serve::write_port_file(&config, port);
 
-            let tunnel_url = if !no_tunnel {
-                match tunnel::ensure_tunnel(&config) {
+            let tunnel_url = if no_tunnel {
+                None
+            } else {
+                match tunnel::ensure_cloudflared(&config).and_then(|_| tunnel::ensure_tunnel(&config)) {
                     Ok(tc) => Some(format!("https://{}", tc.hostname)),
                     Err(e) => {
                         tracing::warn!("tunnel setup failed: {e}, running without tunnel");
                         None
                     }
                 }
-            } else {
-                None
             };
 
             serve::update_agent_env_files(&config, port, tunnel_url.as_deref());
