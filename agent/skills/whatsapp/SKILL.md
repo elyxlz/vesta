@@ -77,6 +77,9 @@ Aliases in parentheses. Positional signature shown after `:` for commands that t
 - **Do not restart the daemon once the user is authenticated**, unless the user explicitly confirms a full re-auth is acceptable.
   *Why:* Restarting mid-session can invalidate the WhatsApp pairing and force the user to rescan the QR.
 
+- **Never kill whatsapp processes with signals (pkill, killall, kill, os.kill, SIGTERM).** Use `screen -S whatsapp -X quit` only, then sleep briefly, then start a new screen session.
+  *Why:* Sending SIGTERM to `whatsapp serve` propagates too broadly and crashes the entire container (exit code 143/144). Screen quit is always sufficient.
+
 - **Before sending to an unknown phone number, save it first with `add-contact`.**
   *Why:* Sending to a raw JID with no saved contact row triggers the `requireManualContact` guard and blocks the send.
 
