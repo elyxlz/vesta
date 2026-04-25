@@ -16,6 +16,10 @@
     "description": "Self-improvement and memory curation. Used by the nightly dreamer, but can also be used anytime."
   },
   {
+    "name": "exa",
+    "description": "Use this skill when the user asks for \"exa\", \"exa search\", \"deep research\", \"web search with citations\", \"answer with sources\", \"find similar websites\", \"find similar sites\", or needs AI-powered web search, semantic search, or agentic research over the live web. Wraps the Exa AI API (search, contents, answer, findSimilar, research)."
+  },
+  {
     "name": "finance",
     "description": "Use this skill when the user asks about personal finance, spending, transactions, bank balances, budgeting, or wants to see where their money went. Provides access to bank account data via Enable Banking open banking API."
   },
