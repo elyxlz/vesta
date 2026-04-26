@@ -1,165 +1,43 @@
 ---
 name: media-server
-description: Plex, movies, TV shows, torrents, qBittorrent; download and browse library.
+description: This skill should be used when the user asks about Plex, movies, TV shows, torrents, or downloads: searching trackers, adding torrents, monitoring progress, or browsing the Plex library.
 ---
 
-# Media Server - Plex & Torrent Management
+# Media Server
 
-Home media server running qBittorrent + Plex on a Linux box.
-
-## Quality guidelines
-
-Sensible defaults when downloading:
-
-- **Always ask 1080p or 4K before downloading.** Don't assume; quality preference varies per title and per user.
-- **For 4K, target 8GB+ (10GB+ even better).** Smaller "4K" releases are usually re-encoded and lower quality than the size suggests.
-- **If 4K isn't available on the tracker**, surface the top-end 1080p options (BluRay 8GB+ or REMUX) and let the user pick. Don't silently fall back to a small 1080p release.
+Home media server running qBittorrent + Plex on a Linux box, accessed over SSH. Use the `qb` wrapper for everything qBittorrent-related; use plugins under `plugins/<tracker>/` for per-tracker search.
 
 ## Connection
 
-```bash
-ssh -p $MEDIA_SERVER_SSH_PORT $MEDIA_SERVER_USER@$MEDIA_SERVER_HOST
-```
+Required env vars:
 
-Set the following environment variables:
-- `MEDIA_SERVER_HOST` - hostname or IP of the media server
-- `MEDIA_SERVER_SSH_PORT` - SSH port (e.g. 22)
-- `MEDIA_SERVER_USER` - SSH username
+- `MEDIA_SERVER_HOST`     hostname or IP
+- `MEDIA_SERVER_SSH_PORT` SSH port (default: 22)
+- `MEDIA_SERVER_USER`     SSH username
+- `QB_PORT`               qBittorrent WebUI port (default: 8888)
+- `PLEX_MEDIA_PATH`       Plex media base path (default: `/media/Plex`)
 
-Vesta's SSH key should be pre-installed. No password needed once configured.
+Vesta's SSH key should be pre-installed; no password needed. Tracker traffic must go through a proxy: pull it from the `vpn` skill rather than reading `SOCKS5_*` directly.
 
-## qBittorrent
-
-**Default port:** `$QB_PORT` (default: 8888)
-**Default save path:** `$PLEX_MEDIA_PATH` (e.g. `/media/Plex`)
-**Auth:** Configure `WebUI\LocalHostAuth=false` in qBittorrent settings for localhost access without login.
-
-### API
-
-Run all commands on the media server via SSH:
+## CLI
 
 ```bash
-# Check version
-ssh -p $MEDIA_SERVER_SSH_PORT $MEDIA_SERVER_USER@$MEDIA_SERVER_HOST "curl -s 'http://localhost:$QB_PORT/api/v2/app/version'"
-
-# List all torrents (JSON)
-ssh -p $MEDIA_SERVER_SSH_PORT $MEDIA_SERVER_USER@$MEDIA_SERVER_HOST "curl -s 'http://localhost:$QB_PORT/api/v2/torrents/info'"
-
-# List active downloads only
-ssh -p $MEDIA_SERVER_SSH_PORT $MEDIA_SERVER_USER@$MEDIA_SERVER_HOST "curl -s 'http://localhost:$QB_PORT/api/v2/torrents/info?filter=downloading'"
-
-# Add torrent by URL (magnet or .torrent URL)
-ssh -p $MEDIA_SERVER_SSH_PORT $MEDIA_SERVER_USER@$MEDIA_SERVER_HOST "curl -s -X POST 'http://localhost:$QB_PORT/api/v2/torrents/add' \
-  -F 'urls=magnet:?xt=urn:btih:...' \
-  -F 'savepath=$PLEX_MEDIA_PATH'"
-
-# Add torrent by uploading .torrent file
-ssh -p $MEDIA_SERVER_SSH_PORT $MEDIA_SERVER_USER@$MEDIA_SERVER_HOST "curl -s -X POST 'http://localhost:$QB_PORT/api/v2/torrents/add' \
-  -F 'torrents=@/path/to/file.torrent' \
-  -F 'savepath=$PLEX_MEDIA_PATH'"
-
-# Pause torrent
-ssh -p $MEDIA_SERVER_SSH_PORT $MEDIA_SERVER_USER@$MEDIA_SERVER_HOST "curl -s -X POST 'http://localhost:$QB_PORT/api/v2/torrents/stop' -d 'hashes=HASH'"
-
-# Resume torrent
-ssh -p $MEDIA_SERVER_SSH_PORT $MEDIA_SERVER_USER@$MEDIA_SERVER_HOST "curl -s -X POST 'http://localhost:$QB_PORT/api/v2/torrents/start' -d 'hashes=HASH'"
-
-# Delete torrent (keep files)
-ssh -p $MEDIA_SERVER_SSH_PORT $MEDIA_SERVER_USER@$MEDIA_SERVER_HOST "curl -s -X POST 'http://localhost:$QB_PORT/api/v2/torrents/delete' -d 'hashes=HASH&deleteFiles=false'"
-
-# Delete torrent + files
-ssh -p $MEDIA_SERVER_SSH_PORT $MEDIA_SERVER_USER@$MEDIA_SERVER_HOST "curl -s -X POST 'http://localhost:$QB_PORT/api/v2/torrents/delete' -d 'hashes=HASH&deleteFiles=true'"
-
-# Get torrent properties
-ssh -p $MEDIA_SERVER_SSH_PORT $MEDIA_SERVER_USER@$MEDIA_SERVER_HOST "curl -s 'http://localhost:$QB_PORT/api/v2/torrents/properties?hash=HASH'"
+~/agent/skills/media-server/qb status                          # Active/incomplete torrents with progress, speed, ETA
+~/agent/skills/media-server/qb ls [filter]                     # List all torrents (filter by name/path keyword)
+~/agent/skills/media-server/qb add <url> [--movies|--tv|--path PATH]   # Add by magnet or .torrent URL
+~/agent/skills/media-server/qb search <query> [movies|tv|all]  # Search via qBittorrent plugin
+~/agent/skills/media-server/qb pause <hash>
+~/agent/skills/media-server/qb resume <hash>
+~/agent/skills/media-server/qb delete <hash> [--files]         # --files also removes the data
+~/agent/skills/media-server/qb info <hash>                     # Properties for a single torrent
+~/agent/skills/media-server/qb disk                            # Free space + per-user usage on PLEX_MEDIA_PATH
+~/agent/skills/media-server/qb ls-plex [USER] [movies|tv]      # Browse Plex library
+~/agent/skills/media-server/qb find <keyword>                  # Find files in PLEX_MEDIA_PATH by name
 ```
 
-### Use the `qb` wrapper script
+`qb add` accepts URLs (magnets, http(s) `.torrent` URLs) only. For a `.torrent` already on disk, see "Adding a local .torrent" below.
 
-A helper script is available at `~/agent/skills/media-server/qb`. Run it with:
-
-```bash
-~/agent/skills/media-server/qb status
-~/agent/skills/media-server/qb add "magnet:?xt=..."
-~/agent/skills/media-server/qb add "magnet:?xt=..." --path /path/to/save
-~/agent/skills/media-server/qb ls
-~/agent/skills/media-server/qb ls movies    # filter by save path keyword
-```
-
-## Torrent Search
-
-qBittorrent supports search plugins for torrent sites. A TorrentLeech plugin is included.
-
-**Required env vars for tracker search:**
-- `TL_USERNAME` - TorrentLeech username
-- `TL_PASSWORD` - TorrentLeech password
-- `SOCKS5_USER` - SOCKS5 proxy username (e.g. VPN provider)
-- `SOCKS5_PASS` - SOCKS5 proxy password
-- `SOCKS5_HOST` - SOCKS5 proxy host
-- `SOCKS5_PORT` - SOCKS5 proxy port (default: 1080)
-
-**IMPORTANT:** Some ISPs block tracker sites. A SOCKS5 proxy or VPN is required for search to work. Use the **vpn** skill to get the proxy URL:
-
-```bash
-PROXY_URL=$(~/agent/skills/vpn/vpn proxy-url)
-```
-
-### Search via qBittorrent plugin (preferred)
-
-```bash
-~/agent/skills/media-server/qb search "Movie Name" movies
-~/agent/skills/media-server/qb search "TV Show" tv
-~/agent/skills/media-server/qb search "anything" --plugin torrentleech
-```
-
-### Search via standalone tl-search script
-
-```bash
-~/agent/skills/media-server/tl-search "Inception 2010" --cat movies
-~/agent/skills/media-server/tl-search "Breaking Bad" --cat tv --limit 10
-~/agent/skills/media-server/tl-search "Dune 2024" --cat movies --add 1 --path $PLEX_MEDIA_PATH/Movies
-~/agent/skills/media-server/tl-search "query" --json   # raw JSON output
-```
-
-### Search via qBittorrent API directly
-
-```bash
-# Start search
-ssh -p $MEDIA_SERVER_SSH_PORT $MEDIA_SERVER_USER@$MEDIA_SERVER_HOST "curl -s -X POST 'http://localhost:$QB_PORT/api/v2/search/start' \
-  -d 'pattern=SEARCH+TERMS&plugins=torrentleech&category=movies'"
-
-# Get search results (use the ID returned above)
-ssh -p $MEDIA_SERVER_SSH_PORT $MEDIA_SERVER_USER@$MEDIA_SERVER_HOST "curl -s 'http://localhost:$QB_PORT/api/v2/search/results?id=SEARCH_ID&limit=20&offset=0'"
-
-# Stop/delete search
-ssh -p $MEDIA_SERVER_SSH_PORT $MEDIA_SERVER_USER@$MEDIA_SERVER_HOST "curl -s -X POST 'http://localhost:$QB_PORT/api/v2/search/delete' -d 'id=SEARCH_ID'"
-```
-
-**Note:** qBittorrent search plugins may appear as `enabled: false` in the API listing but still work when called via `/api/v2/search/start` specifying the plugin name directly.
-
-### Installing the TorrentLeech plugin
-
-```bash
-# Plugin source is at ~/agent/skills/media-server/torrentleech.py
-# Serve and install via API:
-python3 -m http.server 9999 --directory ~/agent/skills/media-server/ &
-curl -X POST 'http://localhost:$QB_PORT/api/v2/search/installPlugin' \
-  -d 'sources=http://localhost:9999/torrentleech.py'
-kill %1
-```
-
-### TorrentLeech categories
-- **movies:** 1,8,9,10,11,12,13,14,15,29,36,37,43,47
-- **tv:** 2,26,27,32,44
-- **music:** 16-25
-- **games:** 3,33-35,38-42
-- **software:** 4,28,30,31
-- **anime:** 5,6,7
-- **books:** 45,46
-
-## Media Library
-
-**Location:** `$PLEX_MEDIA_PATH`
+## Library structure
 
 ```
 $PLEX_MEDIA_PATH/
@@ -169,70 +47,77 @@ $PLEX_MEDIA_PATH/
 ├── <User2>/
 │   ├── Movies/
 │   └── TVShows/
-└── Torrents/     (exported .torrent files archive)
+└── Torrents/   (exported .torrent file archive)
 ```
 
-## Checking Download Progress
+Route adds with `--movies` / `--tv` shortcuts on `qb add`, or `--path` for anything else.
 
-```bash
-# Quick status check - shows name, progress, state, speed
-ssh -p $MEDIA_SERVER_SSH_PORT $MEDIA_SERVER_USER@$MEDIA_SERVER_HOST "curl -s 'http://localhost:$QB_PORT/api/v2/torrents/info' | python3 -c \"
-import json, sys
-data = json.load(sys.stdin)
-active = [t for t in data if t['state'] not in ['stoppedUP']]
-print(f'Active: {len(active)} / Total: {len(data)}')
-for t in active:
-    pct = t['progress'] * 100
-    dl = t['dlspeed'] // 1024
-    eta_min = t['eta'] // 60 if t['eta'] < 8640000 else -1
-    print(f'{t[\\\"state\\\"]}: {pct:.1f}% | {dl}KB/s | ETA: {eta_min}min | {t[\\\"name\\\"][:60]}')
-\""
-```
+## Searching trackers
 
-## Browsing the Library
+Two paths, both go through the configured proxy:
 
-```bash
-# List a user's movies
-ssh -p $MEDIA_SERVER_SSH_PORT $MEDIA_SERVER_USER@$MEDIA_SERVER_HOST "ls $PLEX_MEDIA_PATH/<User>/Movies/"
+1. **`qb search <query>`** uses qBittorrent's built-in search API across all installed plugins. Quick, but plugin-dependent.
+2. **Per-plugin scrape script** at `plugins/<tracker>/search`. Logs in directly to the tracker, scrapes results, and can add the chosen result to qBittorrent in one call. Use this when `qb search` returns nothing or the plugin is flaky.
 
-# List a user's TV shows
-ssh -p $MEDIA_SERVER_SSH_PORT $MEDIA_SERVER_USER@$MEDIA_SERVER_HOST "ls $PLEX_MEDIA_PATH/<User>/TVShows/"
+Each plugin lives in its own directory with a README covering env vars, categories, and quirks. Currently installed:
 
-# Search for a title
-ssh -p $MEDIA_SERVER_SSH_PORT $MEDIA_SERVER_USER@$MEDIA_SERVER_HOST "find $PLEX_MEDIA_PATH/ -iname '*keyword*' 2>/dev/null"
+- **TorrentLeech**: `plugins/torrentleech/` (see its [README](plugins/torrentleech/README.md))
 
-# Check disk space
-ssh -p $MEDIA_SERVER_SSH_PORT $MEDIA_SERVER_USER@$MEDIA_SERVER_HOST "df -h $PLEX_MEDIA_PATH/"
-```
+To add a new tracker, create `plugins/<name>/` with a qBittorrent `.py` plugin and a `search` script following the TorrentLeech layout.
 
-## Workflow: Add a New Torrent
+## Adding a local .torrent
 
-1. **Search** the tracker directly with cookies + proxy (see Torrent Search section above)
-2. **Download the .torrent file** via proxy to the server's `/tmp/`
-3. **Upload** the .torrent file to qBittorrent:
+`qb add` does not upload local files. When a per-plugin `search` script downloads a `.torrent` to the server (typically `/tmp/`), upload it directly via the qBittorrent API:
+
 ```bash
 ssh -p $MEDIA_SERVER_SSH_PORT $MEDIA_SERVER_USER@$MEDIA_SERVER_HOST \
   "curl -s -X POST 'http://localhost:$QB_PORT/api/v2/torrents/add' \
-  -F 'torrents=@/tmp/movie.torrent' \
-  -F 'savepath=$PLEX_MEDIA_PATH/<User>/Movies'"
+   -F 'torrents=@/tmp/movie.torrent' \
+   -F 'savepath=$PLEX_MEDIA_PATH/<User>/Movies'"
 ```
-4. Monitor progress with `qb status`
 
-## qBittorrent Config Notes
+Most plugin `search` scripts do this for you with `--add <n> --path <dir>`.
 
-Recommended settings for the main instance:
-- `WebUI\LocalHostAuth=false` - no login needed from localhost
-- `WebUI\AuthSubnetWhitelist=192.168.0.0/24` - LAN also whitelisted (adjust to your subnet)
-- SOCKS5 proxy configured for all torrent traffic (VPN recommended)
-- Torrent export dir: `$PLEX_MEDIA_PATH/Torrents`
+## Examples
+
+```bash
+# What's downloading right now?
+~/agent/skills/media-server/qb status
+
+# Search via the built-in plugin
+~/agent/skills/media-server/qb search "dune part two" movies
+
+# Search and add directly via the TorrentLeech scraper
+~/agent/skills/media-server/plugins/torrentleech/search "Dune 2024" --cat movies --add 1 --path $PLEX_MEDIA_PATH/Mike/Movies
+
+# Add a magnet straight to a user's TV folder
+~/agent/skills/media-server/qb add "magnet:?xt=urn:btih:..." --tv
+
+# What does Mike already have?
+~/agent/skills/media-server/qb ls-plex mike movies
+
+# How much space is left?
+~/agent/skills/media-server/qb disk
+```
 
 ## Troubleshooting
 
-**WebUI returns Forbidden from localhost:** Ensure `WebUI\LocalHostAuth=false` is set. Restart the service:
+**WebUI returns Forbidden from localhost.** Set `WebUI\LocalHostAuth=false` in qBittorrent settings, then restart:
 ```bash
 sudo systemctl restart qbittorrent-nox@<QB_USER>
 ```
 
-**Tracker cookies expired:** Re-login by deleting the cached cookies file and triggering a search (the plugin will re-authenticate).
+**`qb search` returns nothing.** Plugin may be installed but flagged `enabled: false`; it still works via the API. Try `qb search <query> --plugin <name>` to call it explicitly, or fall back to the per-plugin `search` script.
 
-**Search plugin not finding results:** Even if plugins show `enabled: false`, they still work when called via `/api/v2/search/start` with the plugin name specified directly.
+**Tracker login fails / cookies expired.** Run the plugin's `search` script with `--relogin`, or delete its cookie file (per plugin README) and retry.
+
+**Search hangs or returns connection errors.** Tracker is probably blocked at the network level. Confirm the proxy is up with `~/agent/skills/vpn/vpn test`, then retry.
+
+## One-time qBittorrent config
+
+Recommended settings on the box:
+
+- `WebUI\LocalHostAuth=false` (no login from localhost)
+- `WebUI\AuthSubnetWhitelist=192.168.0.0/24` (or your LAN subnet)
+- SOCKS5 proxy configured for all torrent traffic (use a VPN)
+- Torrent export dir: `$PLEX_MEDIA_PATH/Torrents`

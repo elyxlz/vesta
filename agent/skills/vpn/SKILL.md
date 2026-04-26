@@ -1,49 +1,58 @@
 ---
 name: vpn
-description: This skill should be used when the user asks about "vpn", "proxy", "socks5", "nordvpn", "tunnel", "proxy url", or needs to route traffic through a VPN/proxy, check proxy status, or configure proxy settings for other skills.
+description: This skill should be used when the user asks about their VPN, proxy, or SOCKS5 connection: checking status, fetching the proxy URL for another skill, or switching the active provider.
 ---
 
-# VPN / Proxy Skill
+# VPN / Proxy
 
-Provider-agnostic VPN and proxy management. Other skills use this as the canonical source for proxy configuration instead of reading raw environment variables.
+Provider-agnostic VPN/proxy management. Other skills should call this rather than reading `SOCKS5_*` env vars directly, so the active provider can change in one place.
+
+## Connection
+
+Provider config lives at `~/.vpn/config.json`. Credentials are referenced by env-var name (e.g. `username_env: SOCKS5_USER`) so secrets stay in `.bashrc` / shell, not in the config file.
+
+A default config is created on first run with a placeholder `default` provider. Edit it before using the skill in earnest.
 
 ## CLI
 
 ```bash
-~/agent/skills/vpn/vpn status        # Show active provider and test connectivity
-~/agent/skills/vpn/vpn test          # Test connectivity through the proxy
-~/agent/skills/vpn/vpn proxy-url     # Output the proxy URL (socks5://user:pass@host:port)
-~/agent/skills/vpn/vpn providers     # List available providers
-~/agent/skills/vpn/vpn set-provider <name>   # Set the active provider
-~/agent/skills/vpn/vpn config        # Show current config (credentials masked)
+~/agent/skills/vpn/vpn status                # Active provider + connectivity check
+~/agent/skills/vpn/vpn test                  # Connectivity test through the proxy
+~/agent/skills/vpn/vpn proxy-url             # Print the proxy URL (socks5://user:pass@host:port)
+~/agent/skills/vpn/vpn providers             # List configured providers
+~/agent/skills/vpn/vpn set-provider <name>   # Switch active provider
+~/agent/skills/vpn/vpn config                # Show current config (credentials masked)
 ```
 
-## Usage from Other Skills
-
-Any skill that needs proxy/VPN access should call:
+## Using from other skills
 
 ```bash
 PROXY_URL=$(~/agent/skills/vpn/vpn proxy-url)
 curl --proxy "$PROXY_URL" https://example.com
 ```
 
-This replaces the old pattern of reading `SOCKS5_*` env vars directly.
+This is the canonical way for any skill that needs proxied traffic. Do not read `SOCKS5_*` directly in new code; the user might switch providers and expect everything to follow.
 
-## Config
+## Adding a provider
 
-Config is stored at `~/.vpn/config.json`. It holds a `providers` object and an `active_provider` field. Credentials are resolved from environment variables (referenced by name in the config) so secrets stay in `.bashrc` and out of the config file.
+Edit `~/.vpn/config.json` and add an entry under `providers`:
 
-## Providers
+```json
+{
+  "type": "socks5",
+  "host": "amsterdam.nl.socks.nordhold.net",
+  "port": 1080,
+  "username_env": "SOCKS5_USER",
+  "password_env": "SOCKS5_PASS"
+}
+```
 
-On first run, a default config is created at `~/.vpn/config.json` with a placeholder provider. Edit it to add your actual proxy/VPN details.
+Make sure the named env vars are exported in your shell, then activate it: `vpn set-provider <name>`.
 
-Example provider (NordVPN SOCKS5):
-- **Type:** SOCKS5 proxy
-- **Host:** `your-region.socks.nordhold.net`
-- **Port:** 1080
-- **Credentials:** Read from `SOCKS5_USER` / `SOCKS5_PASS` env vars
+## Troubleshooting
 
-## Adding a New Provider
+**`proxy-url` prints with `(unset)` in place of credentials.** The env vars referenced in the provider's `username_env` / `password_env` are not exported. Add them to `.bashrc` / `.zshrc` and reload the shell.
 
-1. Add an entry to `~/.vpn/config.json` under `providers` with `type`, `host`, `port`, and credential references.
-2. Set it active with `vpn set-provider <name>`.
+**`vpn test` fails but `vpn status` says configured.** Proxy host or credentials are wrong, or the provider is down. Try `vpn providers` to confirm the active one, `vpn config` to inspect, then test against the provider's own status page.
+
+**Wrong region / want to switch.** `vpn providers` to list, `vpn set-provider <name>` to switch. Skills calling `vpn proxy-url` will pick up the new value on the next call.

@@ -5,7 +5,7 @@
 # qBittorrent nova3 search engine plugin for TorrentLeech (torrentleech.org)
 # Install via qBittorrent API:
 #   curl -X POST 'http://localhost:$QB_PORT/api/v2/search/installPlugin' \
-#     -d 'sources=file://$HOME/agent/skills/media-server/torrentleech.py'
+#     -d 'sources=file://$HOME/agent/skills/media-server/plugins/torrentleech/torrentleech.py'
 #
 # Or copy to the nova3 engines directory:
 #   cp torrentleech.py ~/.local/share/qBittorrent/nova3/engines/

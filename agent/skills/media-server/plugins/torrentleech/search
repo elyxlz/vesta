@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# tl-search — Search TorrentLeech and optionally add results to qBittorrent
+# search — Search TorrentLeech and optionally add results to qBittorrent
 #
-# Usage:
-#   tl-search <query> [options]
+# Invoke as: ~/agent/skills/media-server/plugins/torrentleech/search <query> [options]
 #
 # Options:
 #   --cat <id|name>     Category filter (movies, tv, all, or numeric ID)
@@ -267,10 +266,10 @@ add_to_qbittorrent() {
 
 usage() {
     cat << 'EOF'
-tl-search — Search TorrentLeech and add torrents to qBittorrent
+search — Search TorrentLeech and add torrents to qBittorrent
 
 Usage:
-  tl-search <query> [options]
+  ~/agent/skills/media-server/plugins/torrentleech/search <query> [options]
 
 Options:
   --cat <category>    Category: movies, tv, all (default: all)
@@ -282,10 +281,10 @@ Options:
   --help              Show this help
 
 Examples:
-  tl-search "Inception 2010"
-  tl-search "Breaking Bad" --cat tv
-  tl-search "Dune 2024" --cat movies --limit 5
-  tl-search "Dune 2024" --cat movies --add 1 --path /media/Plex/Movies
+  search "Inception 2010"
+  search "Breaking Bad" --cat tv
+  search "Dune 2024" --cat movies --limit 5
+  search "Dune 2024" --cat movies --add 1 --path /media/Plex/Movies
 
 Environment variables:
   TL_USERNAME       TorrentLeech username
