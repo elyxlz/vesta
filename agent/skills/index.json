@@ -13,7 +13,7 @@
   },
   {
     "name": "claude-code",
-    "description": "Delegate coding tasks to Claude Code (Anthropic's autonomous coding CLI). Use for writing, refactoring, debugging, multi-file edits, code review, and anything else that touches code."
+    "description": "Delegate any serious coding task to Claude Code (Anthropic's autonomous coding CLI). Always use this for writing, refactoring, debugging, multi-file edits, building features, and code review. Only skip it for trivial one-line edits."
   },
   {
     "name": "dashboard",

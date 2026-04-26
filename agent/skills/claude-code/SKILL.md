@@ -1,20 +1,24 @@
 ---
 name: claude-code
-description: Delegate coding tasks to Claude Code (Anthropic's autonomous coding CLI). Use for writing, refactoring, debugging, multi-file edits, code review, and anything else that touches code.
+description: Delegate any serious coding task to Claude Code (Anthropic's autonomous coding CLI). Always use this for writing, refactoring, debugging, multi-file edits, building features, and code review. Only skip it for trivial one-line edits.
 ---
 
 # Claude Code - CLI: `claude`
 
-The `claude` CLI is a separate autonomous coding agent. Shell out to it in **print mode** (`-p`) for coding work. It has a coding-tuned system prompt, the right default tools, and runs to completion in one call. Vesta's own context stays clean: only the final result comes back.
+The `claude` CLI is a separate autonomous coding agent with a coding-tuned system prompt and the right default tools. **Default to this whenever the user asks for coding work.** Shell out to it in print mode (`-p`); it runs to completion in one call and only the final result comes back, so Vesta's own context stays clean.
 
 ## When to use
 
-- Anything that touches code: writing, editing, refactoring, debugging, building features
+**Use this for any serious coding task.** That includes:
+
+- Writing new code, features, or whole modules
+- Refactoring or restructuring existing code
+- Debugging, investigating failures, fixing bugs
 - Multi-file changes or "do this across the repo"
 - Code review, security review, "look at this diff"
-- Tasks that would otherwise burn many turns of Vesta's own loop reading/editing files
+- Anything that would otherwise burn many turns of Vesta's own loop reading and editing files
 
-For trivial one-line edits, just use Edit/Write directly. This tool exists for tasks where Claude Code's coding system prompt and tooling pay off.
+The only time to skip this skill is for a trivial one-line edit where shelling out is more overhead than the change itself. When in doubt, prefer this skill.
 
 ## Basic call
 
