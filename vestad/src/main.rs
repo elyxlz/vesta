@@ -553,7 +553,10 @@ fn main() {
         }
 
         Command::Update => {
-            self_update::perform_update().unwrap_or_else(|e| die(e.to_string()));
+            let outcome = self_update::perform_update().unwrap_or_else(|e| die(e.to_string()));
+            if !outcome.updated {
+                println!("vestad already at latest version (v{})", outcome.current);
+            }
         }
 
         Command::Version => {
