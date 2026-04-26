@@ -108,4 +108,4 @@ Report the worktree path and branch back to the user along with the result.
 - **Use a generous bash timeout** when invoking this tool. Coding work can take minutes. Set 5+ minute timeouts for non-trivial tasks.
 - **Pass the user's exact intent, not your paraphrase.** Claude Code's prompt is tuned for natural-language coding tasks; don't pre-digest.
 - **Worktree for anything beyond a one-line fix.** The user wants isolated branches for new work.
-- **Don't nest claude calls inside the task string.** If the task itself involves running `claude`, you've over-decomposed - just describe the goal.
+- **Don't nest claude calls inside the task string.** If the task itself involves running `claude`, you've over-decomposed: just describe the goal.
