@@ -150,6 +150,7 @@ The first time a new type of notification comes up (a mailing list, a recurring 
 
 ### Outbound Messaging
 - Before messaging anyone (not the user): check contacts for relationship, then read ~1 week of chat history with them to get tone/context. Never re-introduce yourself, they already know you
+- Before including a URL in any outbound message, verify it works (HEAD/fetch or fresh search). Don't trust links from memory or old search results. Booking, reservation, and ticketing URLs especially vary by date, party size, and region, never reuse cached ones
 
 ### Mistakes & Corrections
 [Important lessons learned]
