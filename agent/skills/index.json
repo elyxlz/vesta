@@ -1,39 +1,59 @@
 [
   {
     "name": "app-chat",
-    "description": "Use this skill to reply to notifications with `source=app-chat` (messages from the Vesta desktop/web app). Always reply via `app-chat send`, never via any other channel. Requires a background daemon."
+    "description": "Reply to notifications with `source=app-chat` via `app-chat send`. Requires daemon."
+  },
+  {
+    "name": "personality",
+    "description": "Swap or tune the agent's voice; edits only MEMORY.md's Personality section."
   },
   {
     "name": "browser",
-    "description": "Use for \"browse\", \"open a website\", \"navigate to\", \"click\", \"fill form\","
+    "description": "Browse, navigate, click, fill forms, screenshot, or scrape web pages via CDP."
+  },
+  {
+    "name": "claude-code",
+    "description": "Delegate heavy coding tasks to Claude Code (Anthropic's autonomous coding CLI). Use for large multi-file refactors, building entire features or modules, complex debugging that needs extensive exploration, and substantial code reviews. For small edits, single-file changes, and quick fixes, use Vesta's own Read/Edit/Bash tools directly."
   },
   {
     "name": "dashboard",
-    "description": "Use when you need to build, modify, or customize anything on the user's dashboard (widgets, layouts, pages, views, or any custom UI)."
+    "description": "Build or modify the user's dashboard: widgets, pages, layouts, or custom UI."
   },
   {
     "name": "dream",
-    "description": "Self-improvement and memory curation. Used by the nightly dreamer, but can also be used anytime."
+    "description": "Self-improvement and memory curation; used nightly by the dreamer or anytime."
+  },
+  {
+    "name": "essay-iter",
+    "description": "Iterate on any piece of academic writing through a four-reviewer review team per round. Reviewers check rubric alignment, in-distribution fit against reference essays, citation accuracy and style, and AI-text detection score. Loops draft and review until every reviewer is satisfied. Generic for coursework, dissertations, journal submissions, conference papers, or any academic writing where references, a rubric, or stylistic norms are available."
+  },
+  {
+    "name": "exa",
+    "description": "Use this skill when the user asks for \"exa\", \"exa search\", \"deep research\", \"web search with citations\", \"answer with sources\", \"find similar websites\", \"find similar sites\", or needs AI-powered web search, semantic search, or agentic research over the live web. Wraps the Exa AI API (search, contents, answer, findSimilar, research)."
   },
   {
     "name": "finance",
-    "description": "Use this skill when the user asks about personal finance, spending, transactions, bank balances, budgeting, or wants to see where their money went. Provides access to bank account data via Enable Banking open banking API."
+    "description": "Personal finance, spending, transactions, bank balances, budgets via Enable Banking."
   },
   {
     "name": "flights",
-    "description": "Use this skill when the user asks about flights, plane tickets, airfare, travel deals, cheap flights, or wants to search for routes between cities/airports. Covers one-way, round-trip, and date-flexible searches. Books via Trip.com (primary, browser automation) or Duffel API (fallback)."
+    "description": "Search flights, airfare, routes; book via Trip.com or Duffel."
   },
   {
     "name": "google",
-    "description": "This skill should be used when the user asks about \"gmail\", \"google email\", \"google calendar\", \"gcal\", \"google meet\", or needs to read/send emails via Gmail, manage Google Calendar events, create Google Meet links, or handle scheduling via Google. Requires a background daemon."
+    "description": "Gmail, Google Calendar, Meet: email, events, scheduling. Requires daemon."
   },
   {
     "name": "home-assistant",
-    "description": "This skill should be used when the user asks about \"home\", \"house\", \"energy\", \"power\", \"temperature\", \"climate\", \"weather\", \"security\", \"cameras\", \"motion\", \"alarm\", \"location\", \"where am I\", \"battery\", or needs to interact with Home Assistant devices, sensors, or automations. No daemon required, queries HA API on demand."
+    "description": "Home Assistant: energy, temperature, cameras, alarms, devices, sensors, automations."
+  },
+  {
+    "name": "icloud",
+    "description": "iCloud Photos: list and download shared albums via pyicloud. SMS 2FA to a trusted phone."
   },
   {
     "name": "keeper",
-    "description": "This skill should be used when the user asks about \"passwords\", \"credentials\", \"vault\", \"secrets\", \"keeper\", \"password manager\", \"logins\", \"TOTP\", \"2FA codes\", or needs to store, retrieve, search, share, or manage passwords and secure records."
+    "description": "Passwords, credentials, vault, 2FA/TOTP via Keeper; store, retrieve, manage."
   },
   {
     "name": "media-server",
@@ -41,47 +61,55 @@
   },
   {
     "name": "microsoft",
-    "description": "This skill should be used when the user asks about \"email\", \"emails\", \"inbox\", \"messages\", \"calendar\", \"schedule\", \"scheduling\", \"meetings\", \"appointments\", \"events\", \"outlook\", or needs to read/send emails, manage calendar events, or handle time-based tasks via Microsoft/Outlook. Requires a background daemon."
+    "description": "Outlook email, inbox, calendar, meetings, events via Microsoft. Requires daemon."
   },
   {
     "name": "onedrive",
-    "description": "This skill should be used when the user asks about \"OneDrive\", \"cloud files\", \"sync files\", \"mount drive\", or needs to access, mount, or manage OneDrive cloud storage."
+    "description": "OneDrive cloud files: access, mount, or manage via rclone."
+  },
+  {
+    "name": "proactive-check",
+    "description": "Periodic self-directed check-in; fires on interval to reach out or research."
   },
   {
     "name": "skills-registry",
-    "description": "Discover and install new capabilities from the skill registry. Use this when asked to add a new feature, when you want to explore what you could do, or when a user asks if you can do something you don't have a skill for yet. The registry lives on GitHub. Search it to find skills, then install them to give yourself new abilities."
+    "description": "Discover and install new capabilities from the GitHub skill registry."
   },
   {
     "name": "spotify",
-    "description": "This skill should be used when the user asks about \"spotify\", \"music\", \"playlist\", \"playlists\", \"song\", \"songs\", \"track\", \"tracks\", \"now playing\", \"what's playing\", \"play\", \"pause\", \"skip\", \"queue\", or needs to search for music, manage playlists, or control playback."
+    "description": "Spotify: music, playlists, tracks, playback, queue, library management."
   },
   {
     "name": "ssh",
-    "description": "Use when the user wants to allow another computer to SSH into this machine, share remote access, or set up a public SSH tunnel. Creates an internet-accessible SSH endpoint via bore."
+    "description": "Expose this machine over SSH via bore (public TCP tunnel)."
   },
   {
     "name": "tasks",
-    "description": "This skill should be used when the user asks about \"tasks\", \"to-do\", \"todo\", \"task list\", \"reminders\", \"remind me\", \"alert\", \"notify\", or needs to create, manage, track, or organize tasks, to-do items, reminders, and time-based notifications. Everything actionable becomes a task immediately. All work, progress, drafts go in task metadata. Reminders are nudges about when to think about something, standalone or linked to a task. IMPORTANT: this skill requires a background daemon. Before doing anything, immediately make sure the daemon is running. Read this skill to learn how."
+    "description": "Tasks, to-dos, reminders, time-based alerts; create and manage. Requires daemon."
   },
   {
     "name": "telegram",
-    "description": "Use this skill to reply to notifications with `source=telegram`, or when the user asks about \"telegram\", \"tg\", \"telegram message\", or needs to send/receive messages via Telegram. Always reply to telegram notifications via `telegram send`, never via any other channel. Requires a background daemon."
+    "description": "Telegram: send/receive messages; reply to source=telegram notifications. Requires daemon."
   },
   {
     "name": "tv",
-    "description": "Use for \"TV\", \"Samsung TV\", \"television\", \"watch\", \"play on TV\", \"YouTube on TV\", \"volume\", \"turn on TV\", \"turn off TV\", or any Samsung Smart TV control."
+    "description": "Samsung Smart TV: watch, volume, power, YouTube, playback control."
   },
   {
     "name": "upstream-pr",
-    "description": "Create PRs, issues, and contributions to the upstream elyxlz/vesta repo. Use for any GitHub operations -- pushing branches, creating PRs, checking CI status, or accessing the GitHub API."
+    "description": "Upstream elyxlz/vesta GitHub ops: branches, PRs, issues, CI, API."
   },
   {
     "name": "upstream-sync",
-    "description": "Sync local agent code with upstream. Use when checking for updates, merging new releases or branch changes, or resolving merge conflicts with upstream vesta."
+    "description": "Sync local agent code with upstream vesta: updates, merges, conflicts."
+  },
+  {
+    "name": "video-use",
+    "description": "Use for \"edit video\", \"video editing\", \"remove filler words\", \"cut dead space\", \"color grade\", \"add subtitles\", \"burn captions\", \"B-roll overlay\", \"launch video\", or whenever the user wants footage turned into a polished cut. Wraps browser-use/video-use, a Claude-Code-powered video editor that handles filler removal, auto color grading, 30ms audio fades, burned subtitles, and Manim/Remotion/PIL overlays."
   },
   {
     "name": "voice",
-    "description": "Use when the user asks to enable/disable voice input/output, set up transcription or text-to-speech, rotate API keys, add custom voices, adjust the transcription sensitivity, or talks about the microphone/speaker in the Vesta app. This skill manages ~/.voice/voice_config.json, the single source of truth for STT/TTS keys, voice selection, keyterms, and thresholds. Use enable/disable to toggle without removing configuration; use clear only to wipe keys entirely."
+    "description": "Voice input/output, transcription, TTS, API keys; manages ~/.voice/voice_config.json."
   },
   {
     "name": "vpn",
@@ -89,22 +117,22 @@
   },
   {
     "name": "what-day",
-    "description": "This skill should be used when working with ANY date to determine what day of the week it falls on. Use this skill when the user mentions dates, scheduling, planning events, or needs to know day-of-week information."
+    "description": "Determine the day of the week for any date."
   },
   {
     "name": "whatsapp",
-    "description": "Use this skill to reply to notifications with `source=whatsapp`, or when the user asks about \"whatsapp\", \"message\", \"text\", \"chat\", or needs to send/receive messages via WhatsApp. Always reply to whatsapp notifications via `whatsapp send`, never via any other channel. Requires a background daemon."
+    "description": "WhatsApp messages, contacts, groups (not generic text/message). Requires whatsapp daemon."
   },
   {
     "name": "whisper",
-    "description": "Use for \"transcribe\", \"transcription\", \"speech to text\", \"audio to text\", \"convert audio\", or when the user wants text extracted from any audio or video file."
+    "description": "Transcribe audio or video files to text (speech-to-text)."
   },
   {
     "name": "windy-weather",
-    "description": "Use this skill when the user asks about \"weather\", \"forecast\", \"will it rain\", \"temperature\", \"wind\", \"humidity\", or needs current or upcoming weather conditions for any location. Powered by the Windy Point Forecast API."
+    "description": "Weather, forecast, temperature, wind, humidity for any location via Windy."
   },
   {
     "name": "zoom",
-    "description": "This skill should be used when the user asks about \"zoom\", \"zoom meeting\", \"zoom call\", or needs to create, list, or delete Zoom meetings."
+    "description": "Zoom meetings: create, list, or delete."
   }
 ]

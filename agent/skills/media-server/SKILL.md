@@ -7,6 +7,14 @@ description: This skill should be used when the user asks about their home media
 
 A home server running qBittorrent on a Linux box, accessed over SSH, with a media library on disk for a downstream player (Plex, Jellyfin, Emby, etc.). Use the `qb` wrapper for download-client and library operations; use `plugins/<tracker>/` for search; see `integrations/<backend>/` for media-server-specific layouts and conventions.
 
+## Quality guidelines
+
+Sensible defaults when downloading:
+
+- **Always ask 1080p or 4K before downloading.** Don't assume; quality preference varies per title and per user.
+- **For 4K, target 8GB+ (10GB+ even better).** Smaller "4K" releases are usually re-encoded and lower quality than the size suggests.
+- **If 4K isn't available on the tracker**, surface the top-end 1080p options (BluRay 8GB+ or REMUX) and let the user pick. Don't silently fall back to a small 1080p release.
+
 ## Connection
 
 Required env vars:
