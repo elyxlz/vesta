@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -429,16 +430,36 @@ func cmdListChats(args []string, wac *WhatsAppClient) (any, error) {
 }
 
 func cmdSendMessage(args []string, wac *WhatsAppClient) (any, error) {
-	var to, message, replyTo string
+	var to, message, messageFile, replyTo string
 	fs := flag.NewFlagSet("send-message", flag.ContinueOnError)
 	fs.StringVar(&to, "to", "", "Recipient")
-	fs.StringVar(&message, "message", "", "Message text")
+	fs.StringVar(&message, "message", "", "Message text (use '-' to read from stdin)")
+	fs.StringVar(&messageFile, "message-file", "", "Path to a file containing the message body (use '-' for stdin). Preferred for multi-line text or content with apostrophes / quotes that complicate shell escaping.")
 	fs.StringVar(&replyTo, "reply-to", "", "Message ID to reply/quote (optional)")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
-	if to == "" || message == "" {
-		return nil, fmt.Errorf("--to and --message are required")
+	if to == "" {
+		return nil, fmt.Errorf("--to is required")
+	}
+	if (message == "") == (messageFile == "") {
+		return nil, fmt.Errorf("exactly one of --message or --message-file is required")
+	}
+	if messageFile != "" {
+		body, err := readMessageSource(messageFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read --message-file: %w", err)
+		}
+		message = body
+	} else if message == "-" {
+		body, err := readMessageSource("-")
+		if err != nil {
+			return nil, fmt.Errorf("failed to read stdin: %w", err)
+		}
+		message = body
+	}
+	if message == "" {
+		return nil, fmt.Errorf("message body is empty")
 	}
 	success, msg := wac.SendMessageWithPresence(to, message, replyTo)
 	result := successResult(success, msg)
@@ -446,6 +467,23 @@ func cmdSendMessage(args []string, wac *WhatsAppClient) (any, error) {
 		result["delivery_warning"] = "Message contains a user@IP pattern which WhatsApp spam filters may silently drop. Use 'check-delivery' to verify delivery."
 	}
 	return result, nil
+}
+
+// readMessageSource loads a message body from a file path or "-" for stdin.
+// Trailing newlines are stripped so content from `echo` or editor-saved files
+// does not produce a leading/trailing blank line in the sent message.
+func readMessageSource(src string) (string, error) {
+	var data []byte
+	var err error
+	if src == "-" {
+		data, err = io.ReadAll(os.Stdin)
+	} else {
+		data, err = os.ReadFile(src)
+	}
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimRight(string(data), "\r\n"), nil
 }
 
 func cmdSendFile(args []string, wac *WhatsAppClient) (any, error) {
