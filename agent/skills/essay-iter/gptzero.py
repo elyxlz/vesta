@@ -104,10 +104,7 @@ SUPABASE_PUBLISHABLE_KEY = "sb_publishable_-TRlvcmoZ3y9LvkQys7Vcg_TImPL6et"
 API_BASE = "https://api.gptzero.me"
 
 DEFAULT_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/147.0.0.0 Safari/537.36"
-    ),
+    "User-Agent": ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"),
     "Origin": "https://app.gptzero.me",
     "Referer": "https://app.gptzero.me/",
     "x-gptzero-platform": "webapp",
@@ -234,11 +231,7 @@ def _fetch_free_proxies(timeout: float = 8) -> list[str]:
                 if not line or ":" not in line:
                     continue
                 # accept "host:port" and full URLs
-                if (
-                    line.startswith("http://")
-                    or line.startswith("https://")
-                    or line.startswith("socks")
-                ):
+                if line.startswith("http://") or line.startswith("https://") or line.startswith("socks"):
                     out.append(line)
                 else:
                     out.append(f"http://{line}")
@@ -320,10 +313,7 @@ def _good_to_url(label: str) -> str | None:
 
 
 def _x_display_reachable(disp: str) -> bool:
-    return (
-        subprocess.run(["xdpyinfo", "-display", disp], capture_output=True).returncode
-        == 0
-    )
+    return subprocess.run(["xdpyinfo", "-display", disp], capture_output=True).returncode == 0
 
 
 def _ensure_display() -> str:
@@ -356,9 +346,7 @@ def _ensure_display() -> str:
         if _x_display_reachable(":99"):
             os.environ["DISPLAY"] = ":99"
             return ":99"
-    raise RuntimeError(
-        "Could not obtain an X display (tried :88, :99, :0; failed to start Xvfb)."
-    )
+    raise RuntimeError("Could not obtain an X display (tried :88, :99, :0; failed to start Xvfb).")
 
 
 # ---------------------------------------------------------------------------
@@ -500,17 +488,13 @@ def _bootstrap_via_browser(proxy: str | None = None) -> dict:
         for port in (9222, 9221, 9223):
             cached = _bootstrap_from_existing_cdp(port=port, timeout=30)
             if cached:
-                sys.stderr.write(
-                    f"[gptzero] bootstrapped via existing browser at :{port}\n"
-                )
+                sys.stderr.write(f"[gptzero] bootstrapped via existing browser at :{port}\n")
                 return cached
 
     try:
         import websocket  # type: ignore
     except ImportError as e:
-        raise RuntimeError(
-            "Bootstrap requires `websocket-client`. Install with `pip install websocket-client`."
-        ) from e
+        raise RuntimeError("Bootstrap requires `websocket-client`. Install with `pip install websocket-client`.") from e
 
     chromium = None
     for c in ("chromium", "chromium-browser", "google-chrome"):
@@ -518,9 +502,7 @@ def _bootstrap_via_browser(proxy: str | None = None) -> dict:
             chromium = c
             break
     if chromium is None:
-        raise RuntimeError(
-            "No Chromium binary found. Install with `apt install chromium`."
-        )
+        raise RuntimeError("No Chromium binary found. Install with `apt install chromium`.")
 
     display = _ensure_display()
 
@@ -546,9 +528,7 @@ def _bootstrap_via_browser(proxy: str | None = None) -> dict:
     env = os.environ.copy()
     env["DISPLAY"] = display
 
-    proc = subprocess.Popen(
-        args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env
-    )
+    proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
     try:
         # wait for CDP (longer window: chromium is slow on first launch)
         ok = False
@@ -564,16 +544,10 @@ def _bootstrap_via_browser(proxy: str | None = None) -> dict:
                 last_err = e
                 # if process died early, abort
                 if proc.poll() is not None:
-                    raise RuntimeError(
-                        f"Chromium exited early (rc={proc.returncode}). "
-                        f"DISPLAY={display}, proxy={proxy}"
-                    ) from e
+                    raise RuntimeError(f"Chromium exited early (rc={proc.returncode}). DISPLAY={display}, proxy={proxy}") from e
                 time.sleep(0.5)
         if not ok:
-            raise RuntimeError(
-                f"Chromium did not become CDP-reachable at 127.0.0.1:{port} "
-                f"(DISPLAY={display}, last error: {last_err})"
-            )
+            raise RuntimeError(f"Chromium did not become CDP-reachable at 127.0.0.1:{port} (DISPLAY={display}, last error: {last_err})")
 
         targets = json.loads(
             urllib.request.urlopen(f"http://127.0.0.1:{port}/json").read()  # noqa: S310
@@ -660,13 +634,9 @@ def _get_access_token(force_refresh: bool = False, proxy: str | None = None) -> 
             _save_cache(new)
             return new["access_token"]
         except requests.HTTPError as e:
-            sys.stderr.write(
-                f"[gptzero] refresh failed ({e}), falling through to bootstrap\n"
-            )
+            sys.stderr.write(f"[gptzero] refresh failed ({e}), falling through to bootstrap\n")
         except Exception as e:
-            sys.stderr.write(
-                f"[gptzero] refresh error ({e}), falling through to bootstrap\n"
-            )
+            sys.stderr.write(f"[gptzero] refresh error ({e}), falling through to bootstrap\n")
 
     new = _bootstrap_via_browser(proxy=proxy)
     _save_cache(new)
@@ -700,10 +670,7 @@ def _request_with_proxies(
     last_err: Exception | None = None
     for idx, p in enumerate(proxies):
         try:
-            sys.stderr.write(
-                f"[gptzero] {label}: trying proxy {idx + 1}/{len(proxies)} "
-                f"({p or 'DIRECT'})\n"
-            )
+            sys.stderr.write(f"[gptzero] {label}: trying proxy {idx + 1}/{len(proxies)} ({p or 'DIRECT'})\n")
             res = fn(p)
             _mark_proxy_good(p)
             return res, p
@@ -744,9 +711,7 @@ def _full_cookies(access_token: str, extra: dict | None = None) -> dict:
     return out
 
 
-def _new_scan_one(
-    access_token: str, proxy: str | None, cookies: dict | None = None
-) -> str:
+def _new_scan_one(access_token: str, proxy: str | None, cookies: dict | None = None) -> str:
     r = requests.post(
         f"{API_BASE}/v3/scan",
         headers=DEFAULT_HEADERS,
@@ -795,10 +760,7 @@ def _predict_one(
         body = r.text[:300]
         if "guest_user_quota_exceeded" in body or "AI scans per day" in body:
             reset = r.headers.get("ratelimit-reset", "?")
-            raise GPTZeroRateLimited(
-                f"guest quota exhausted (7 AI scans / 24h). "
-                f"Resets in ~{reset}s. Need a different IP+session pair."
-            )
+            raise GPTZeroRateLimited(f"guest quota exhausted (7 AI scans / 24h). Resets in ~{reset}s. Need a different IP+session pair.")
         raise GPTZeroRateLimited(f"429 on /v3/ai/text: {body}")
     r.raise_for_status()
     return r.json()
@@ -1013,11 +975,7 @@ def top_offenders(
         peak = max(probs)
         ptext = ""
         if pi < len(paragraphs):
-            ptext = (
-                paragraphs[pi].get("text")
-                or paragraphs[pi].get("paragraph")
-                or " ".join(it["text"] for it in items)
-            )
+            ptext = paragraphs[pi].get("text") or paragraphs[pi].get("paragraph") or " ".join(it["text"] for it in items)
         offsets = None
         if source_text and ptext:
             offsets = _find_offsets(source_text, ptext.strip())
@@ -1062,21 +1020,11 @@ def _smoke_test():
 
 
 def main(argv=None):
-    p = argparse.ArgumentParser(
-        description="GPTZero AI-text detection (free-tier reverse engineer)."
-    )
-    p.add_argument(
-        "file", nargs="?", help="Text/markdown file to scan. If '-', read stdin."
-    )
-    p.add_argument(
-        "--score", action="store_true", help="Print only the AI probability (0..1)."
-    )
-    p.add_argument(
-        "--refresh", action="store_true", help="Force-refresh the cached JWT."
-    )
-    p.add_argument(
-        "--no-multilingual", action="store_true", help="Disable multilingual mode."
-    )
+    p = argparse.ArgumentParser(description="GPTZero AI-text detection (free-tier reverse engineer).")
+    p.add_argument("file", nargs="?", help="Text/markdown file to scan. If '-', read stdin.")
+    p.add_argument("--score", action="store_true", help="Print only the AI probability (0..1).")
+    p.add_argument("--refresh", action="store_true", help="Force-refresh the cached JWT.")
+    p.add_argument("--no-multilingual", action="store_true", help="Disable multilingual mode.")
     p.add_argument("--smoke", action="store_true", help="Run the built-in smoke test.")
     p.add_argument(
         "--set-tokens",
@@ -1112,9 +1060,7 @@ def main(argv=None):
     if args.set_tokens:
         access, refresh = args.set_tokens
         exp = _decode_jwt_exp(access) or int(time.time()) + 3600
-        _save_cache(
-            {"access_token": access, "refresh_token": refresh, "expires_at": exp}
-        )
+        _save_cache({"access_token": access, "refresh_token": refresh, "expires_at": exp})
         print("seeded cache at", CACHE_FILE)
         return
 

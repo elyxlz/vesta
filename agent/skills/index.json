@@ -1,5 +1,13 @@
 [
   {
+    "name": "app-chat",
+    "description": "Reply to notifications with `source=app-chat` via `app-chat send`. Requires daemon."
+  },
+  {
+    "name": "personality",
+    "description": "Swap or tune the agent's voice; edits only MEMORY.md's Personality section."
+  },
+  {
     "name": "browser",
     "description": "Browse, navigate, click, fill forms, screenshot, or scrape web pages via CDP."
   },
