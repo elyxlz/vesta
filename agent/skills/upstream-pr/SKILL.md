@@ -20,8 +20,8 @@ Three gates before opening a worktree.
 Never file: personal config, memory files, credentials, user-specific customizations.
 
 **2. Issue, PR, or both?**
-- Clear problem and clear fix: **PR + issue**. Issue describes the problem; PR resolves it.
-- Clear pattern but the right fix isn't obvious: **issue only**. Describe the pattern, leave the fix open.
+- You have a fix: **PR + issue**.
+- You don't have a fix yet: **issue only**.
 
 **3. Strip personal information.** Upstream is public; the user must not be identifiable. No names, contact details, private context, or specifics tied to the user or their data. Describe the pattern in general terms ("agent claimed inability to access calendar when google skill was installed"), not the specific instance ("user asked about tuesday's meeting with..."). When in doubt, leave it out.
 
