@@ -38,7 +38,7 @@ def _now_utc() -> datetime:
     return datetime.now(UTC)
 
 
-def _to_utc_dt(datetime_str: str, timezone_str: str) -> datetime:
+def _parse_local_dt(datetime_str: str, timezone_str: str) -> datetime:
     from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
     try:
@@ -46,10 +46,14 @@ def _to_utc_dt(datetime_str: str, timezone_str: str) -> datetime:
     except (ZoneInfoNotFoundError, KeyError):
         raise ValueError(f"Invalid timezone: '{timezone_str}'. Use IANA names like 'Europe/London' or 'America/New_York'.")
 
-    naive = datetime.fromisoformat(datetime_str.replace("Z", "+00:00"))
-    if naive.tzinfo is not None:
-        return naive.astimezone(UTC)
-    return naive.replace(tzinfo=local_tz).astimezone(UTC)
+    parsed = datetime.fromisoformat(datetime_str.replace("Z", "+00:00"))
+    if parsed.tzinfo is not None:
+        return parsed.astimezone(local_tz)
+    return parsed.replace(tzinfo=local_tz)
+
+
+def _to_utc_dt(datetime_str: str, timezone_str: str) -> datetime:
+    return _parse_local_dt(datetime_str, timezone_str).astimezone(UTC)
 
 
 def _to_utc(datetime_str: str, timezone_str: str) -> str:
@@ -527,25 +531,28 @@ def remind_set(
     elif recurring in ("daily", "weekly", "monthly", "yearly"):
         if not scheduled_datetime or not tz:
             raise ValueError(f"scheduled_datetime and tz are required for {recurring} reminders")
-        utc_dt = _to_utc_dt(scheduled_datetime, tz)
+        local_dt = _parse_local_dt(scheduled_datetime, tz)
+        utc_dt = local_dt.astimezone(UTC)
         h, m = utc_dt.hour, utc_dt.minute
+        local_h, local_m = local_dt.hour, local_dt.minute
 
         if recurring == "daily":
             trigger = CronTrigger(hour=h, minute=m)
-            schedule_info = f"daily at {h:02d}:{m:02d} UTC"
+            schedule_info = f"daily at {local_h:02d}:{local_m:02d} {tz}"
             trigger_data = {"type": "cron", "hour": h, "minute": m}
         elif recurring == "weekly":
             day_name = utc_dt.strftime("%a").lower()
+            local_day_name = local_dt.strftime("%a").lower()
             trigger = CronTrigger(day_of_week=day_name, hour=h, minute=m)
-            schedule_info = f"weekly on {day_name} at {h:02d}:{m:02d} UTC"
+            schedule_info = f"weekly on {local_day_name} at {local_h:02d}:{local_m:02d} {tz}"
             trigger_data = {"type": "cron", "day_of_week": day_name, "hour": h, "minute": m}
         elif recurring == "monthly":
             trigger = CronTrigger(day=utc_dt.day, hour=h, minute=m)
-            schedule_info = f"monthly on day {utc_dt.day} at {h:02d}:{m:02d} UTC"
+            schedule_info = f"monthly on day {local_dt.day} at {local_h:02d}:{local_m:02d} {tz}"
             trigger_data = {"type": "cron", "day": utc_dt.day, "hour": h, "minute": m}
         else:  # yearly
             trigger = CronTrigger(month=utc_dt.month, day=utc_dt.day, hour=h, minute=m)
-            schedule_info = f"yearly on {utc_dt.month}/{utc_dt.day} at {h:02d}:{m:02d} UTC"
+            schedule_info = f"yearly on {local_dt.month}/{local_dt.day} at {local_h:02d}:{local_m:02d} {tz}"
             trigger_data = {"type": "cron", "month": utc_dt.month, "day": utc_dt.day, "hour": h, "minute": m}
         next_run = trigger.get_next_fire_time(None, _now_utc())
     elif scheduled_datetime:
