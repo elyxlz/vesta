@@ -307,9 +307,12 @@ async fn gateway_update_handler(
         .unwrap();
     state.updating.store(false, std::sync::atomic::Ordering::SeqCst);
     match result {
-        Ok(restarting) => Ok(Json(serde_json::json!({
+        Ok(outcome) => Ok(Json(serde_json::json!({
             "ok": true,
-            "restarting": restarting,
+            "updated": outcome.updated,
+            "restarting": outcome.restarted,
+            "current": outcome.current,
+            "latest": outcome.latest,
         }))),
         Err(e) => Err(err_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string())),
     }

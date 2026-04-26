@@ -19,17 +19,35 @@ impl fmt::Display for UpdateError {
     }
 }
 
+pub struct UpdateOutcome {
+    pub updated: bool,
+    pub restarted: bool,
+    pub current: String,
+    pub latest: String,
+}
+
 /// Downloads the latest vestad binary from GitHub, replaces the current binary,
 /// and restarts the systemd service. Agent code and container restarts are
 /// handled on the next vestad startup.
-/// Returns Ok(true) if a restart was triggered.
-pub fn perform_update() -> Result<bool, UpdateError> {
-    let tag = crate::update_check::fetch_latest_tag()
+/// No-op when the running version is already at or above the latest release.
+pub fn perform_update() -> Result<UpdateOutcome, UpdateError> {
+    let current = env!("CARGO_PKG_VERSION").to_string();
+    let latest = crate::update_check::fetch_latest_tag()
         .ok_or_else(|| UpdateError::Download("cannot determine latest version".into()))?;
 
-    tracing::info!(tag = %tag, "starting update");
+    if !crate::update_check::version_less_than(&current, &latest) {
+        tracing::info!(current = %current, latest = %latest, "already up to date, skipping");
+        return Ok(UpdateOutcome {
+            updated: false,
+            restarted: false,
+            current,
+            latest,
+        });
+    }
 
-    update_binary(&tag)?;
+    tracing::info!(tag = %latest, "starting update");
+
+    update_binary(&latest)?;
 
     // Don't reinstall the systemd service here — self-replace puts the new
     // binary at the same path, so the ExecStart line doesn't change. And
@@ -37,16 +55,23 @@ pub fn perform_update() -> Result<bool, UpdateError> {
     // " (deleted)" appended, which would break the service file.
     // The new binary calls ensure_service_installed() on startup if needed.
 
-    if crate::systemd::is_active() {
+    let restarted = if crate::systemd::is_active() {
         tracing::info!("restarting vestad...");
         if let Err(e) = crate::systemd::restart() {
             tracing::error!("failed to restart: {e}");
         }
-        Ok(true)
+        true
     } else {
         tracing::info!("updated. run 'vestad' to start.");
-        Ok(false)
-    }
+        false
+    };
+
+    Ok(UpdateOutcome {
+        updated: true,
+        restarted,
+        current,
+        latest,
+    })
 }
 
 fn update_binary(tag: &str) -> Result<(), UpdateError> {
