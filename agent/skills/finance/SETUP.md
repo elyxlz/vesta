@@ -27,6 +27,26 @@ finance auth login
 # Authorize at the URL → callback caught on localhost:7866
 ```
 
+### Production redirect URL
+
+Enable Banking's production app registration form rejects every form of `localhost`
+(`http://`, `https://`, `127.0.0.1`) with "unsupported scheme" / "invalid url" errors,
+so the localhost default only works for the sandbox / local dev path.
+
+For a real registered app, override the redirect with the `FINANCE_REDIRECT_URL`
+env var (set it in the agent env so the CLI inside the container picks it up):
+
+```bash
+export FINANCE_REDIRECT_URL="https://<your-public-host>/callback"
+```
+
+The natural fit on Vesta is a vestad public service tunnel: register a public
+service for the agent, point Enable Banking at
+`https://<vestad-tunnel>/agents/$AGENT_NAME/<service-name>/callback`, and run a
+small handler on the assigned port that pipes the captured `?code=...` URL
+through `finance auth callback --url <full-url>`. The handler itself is not
+shipped yet, see issue #464 for the followup.
+
 ## 5. Seed and start watcher
 
 ```bash
