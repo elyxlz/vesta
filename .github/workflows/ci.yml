@@ -37,10 +37,13 @@ jobs:
             cli:
               - 'cli/**'
               - 'vestad/**'
+              - '.github/workflows/ci.yml'
             app:
               - 'apps/**'
+              - '.github/workflows/ci.yml'
             agent:
               - 'agent/**'
+              - '.github/workflows/ci.yml'
 
   # ── Version check ──────────────────────────────────────────────────────
   version-check:
