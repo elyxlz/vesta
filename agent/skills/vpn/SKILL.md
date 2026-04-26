@@ -51,7 +51,7 @@ Make sure the named env vars are exported in your shell, then activate it: `vpn 
 
 ## Troubleshooting
 
-**`proxy-url` prints with `(unset)` in place of credentials.** The env vars referenced in the provider's `username_env` / `password_env` are not exported. Add them to `.bashrc` / `.zshrc` and reload the shell.
+**`proxy-url` prints without credentials** (just `socks5://host:port`, no `user:pass@`). The env vars referenced in the provider's `username_env` / `password_env` are not exported. Add them to `.bashrc` / `.zshrc` and reload the shell, then re-run.
 
 **`vpn test` fails but `vpn status` says configured.** Proxy host or credentials are wrong, or the provider is down. Try `vpn providers` to confirm the active one, `vpn config` to inspect, then test against the provider's own status page.
 
