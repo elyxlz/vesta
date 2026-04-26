@@ -40,7 +40,7 @@ fn fresh_agent_has_expected_directory_structure() {
     // Root-level directories created by entrypoint / image COPY. Git state
     // (/root/.git, branch, sparse-checkout, .gitignore) is no longer asserted
     // here: it is initialized by the agent on first start via
-    // upstream-sync/SETUP.md, which requires auth — outside this test's scope.
+    // upstream-sync/SETUP.md, which requires auth (outside this test's scope).
     for dir in ["/root/.claude", "/root/agent"] {
         wait_for_path(&cid, 'd', dir);
     }

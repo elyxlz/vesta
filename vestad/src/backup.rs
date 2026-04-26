@@ -69,7 +69,7 @@ pub fn backup_tag(agent_name: &str, backup_type: &BackupType, timestamp: &str) -
 pub fn parse_backup_tag(tag: &str) -> Option<(String, BackupType, String)> {
     let repo_tag = tag.strip_prefix(&format!("{}:", BACKUP_IMAGE_PREFIX))?;
 
-    // {name}_{type}_{YYYYMMDD-HHMMSS} — unambiguous since `_` is not allowed in agent names
+    // {name}_{type}_{YYYYMMDD-HHMMSS}, unambiguous since `_` is not allowed in agent names
     let mut parts = repo_tag.rsplitn(3, '_');
     let timestamp = parts.next()?;
     let (type_str, name) = (parts.next()?, parts.next()?);

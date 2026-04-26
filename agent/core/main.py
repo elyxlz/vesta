@@ -124,7 +124,7 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
         ws_runner = await start_ws_server(state.event_bus, config)
         logger.init(f"WebSocket server started on port {config.ws_port}")
 
-        # Greeting prompt drives app-chat, which needs WS reachable — queue after bind.
+        # Greeting prompt drives app-chat, which needs WS reachable. Queue after bind.
         # Skip if setup never ran (e.g. no creds yet); resuming the dead session next boot
         # would otherwise leave the greeting in front of the setup prompt.
         if first_start and setup_queued:

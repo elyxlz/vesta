@@ -386,7 +386,7 @@ impl Client {
 
     /// Poll `/agents/{name}` until `status == "alive"` or the deadline passes.
     /// Terminal non-alive states (not_found, dead, stopped, not_authenticated)
-    /// surface as immediate errors — the agent cannot become ready from those.
+    /// surface as immediate errors; the agent cannot become ready from those.
     pub fn wait_until_alive(&self, name: &str, timeout: Duration) -> Result<(), String> {
         let deadline = Instant::now() + timeout;
         let mut backoff = Duration::from_millis(200);

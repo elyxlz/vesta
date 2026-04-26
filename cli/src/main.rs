@@ -12,7 +12,7 @@ const VERSION_CACHE_TTL_SECS: u64 = 3600;
 const UPDATE_CHECK_TIMEOUT_MS: u64 = 100;
 const UPDATE_CHECK_POLL_MS: u64 = 10;
 // Pads for first-start setup (git fetch, npm install, vite build, etc.).
-const START_READY_TIMEOUT_SECS: u64 = 900;
+const START_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(900);
 
 fn format_size(bytes: u64) -> String {
     if bytes >= 1_000_000_000 {
@@ -518,7 +518,7 @@ fn run(cli: Cli) {
             eprintln!("authenticating claude...");
             authenticate_agent(&c, &name);
             eprintln!("finalizing first-time setup (this can take several minutes the first time)...");
-            c.wait_until_alive(&name, std::time::Duration::from_secs(START_READY_TIMEOUT_SECS))
+            c.wait_until_alive(&name, START_READY_TIMEOUT)
                 .unwrap_or_else(|e| platform::die(&e));
             eprintln!("agent '{}' is ready.", name);
 
@@ -553,7 +553,7 @@ fn run(cli: Cli) {
             match name {
                 Some(name) => {
                     c.start_agent(&name).unwrap_or_else(|e| platform::die(&e));
-                    c.wait_until_alive(&name, std::time::Duration::from_secs(START_READY_TIMEOUT_SECS))
+                    c.wait_until_alive(&name, START_READY_TIMEOUT)
                         .unwrap_or_else(|e| platform::die(&e));
                     eprintln!("{}: ready", name);
                 }
@@ -571,7 +571,7 @@ fn run(cli: Cli) {
                                 );
                                 continue;
                             }
-                            match c.wait_until_alive(&r.name, std::time::Duration::from_secs(START_READY_TIMEOUT_SECS)) {
+                            match c.wait_until_alive(&r.name, START_READY_TIMEOUT) {
                                 Ok(()) => eprintln!("{}: ready", r.name),
                                 Err(e) => eprintln!("{}: {}", r.name, e),
                             }

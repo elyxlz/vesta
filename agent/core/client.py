@@ -578,7 +578,7 @@ def _build_vesta_tools_server(state: vm.State, config: vm.VestaConfig) -> tp.Any
 
     @tool(
         "set_timezone",
-        "Set the agent's timezone (IANA, e.g. 'Europe/London'). Updates the running process and persists to ~/.bashrc — no restart needed.",
+        "Set the agent's timezone (IANA, e.g. 'Europe/London'). Updates the running process and persists to ~/.bashrc, no restart needed.",
         _SET_TIMEZONE_SCHEMA,
     )
     async def set_timezone(args: dict[str, tp.Any]) -> dict[str, tp.Any]:

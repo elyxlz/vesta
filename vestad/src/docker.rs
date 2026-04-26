@@ -782,7 +782,7 @@ pub struct AgentEnvConfig {
 
 /// Compute the upstream ref the agent should sync against.
 ///
-/// Dev builds: vestad's current git branch — re-evaluated on every call so that
+/// Dev builds: vestad's current git branch, re-evaluated on every call so that
 /// branch renames / checkouts take effect without a vestad restart.
 /// Release builds: the binary's version tag (`vX.Y.Z`).
 pub fn detect_upstream_ref() -> Option<String> {
