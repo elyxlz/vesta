@@ -348,6 +348,11 @@ pub fn download_latest_released_vestad() -> Result<ReleasedVestad, String> {
     let output = Command::new("curl")
         .args([
             "-fsSL",
+            "--retry",
+            "5",
+            "--retry-all-errors",
+            "--retry-delay",
+            "2",
             "-H",
             "Accept: application/vnd.github+json",
             "-H",
@@ -382,7 +387,15 @@ pub fn download_latest_released_vestad() -> Result<ReleasedVestad, String> {
     let tmpdir = tempfile::TempDir::new().map_err(|e| format!("tmpdir: {e}"))?;
     let archive_path = tmpdir.path().join("vestad.tar.gz");
     let output = Command::new("curl")
-        .args(["-fsSL", "-o"])
+        .args([
+            "-fsSL",
+            "--retry",
+            "5",
+            "--retry-all-errors",
+            "--retry-delay",
+            "2",
+            "-o",
+        ])
         .arg(&archive_path)
         .arg(&url)
         .output()
