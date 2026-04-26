@@ -17,6 +17,8 @@ A React app embedded in the main Vesta app that serves as the user's **life HQ**
 
 Only start building once the user has answered. Don't assume. Ask.
 
+**Exception, dreamer auto-builds.** During a dream pass, the agent may add widgets without asking. See the `dream` skill for when and how.
+
 ## Project structure
 
 ```text
