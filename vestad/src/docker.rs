@@ -98,6 +98,13 @@ const CONTAINER_STOP_TIMEOUT_SECS: i32 = 10;
 const CONTAINER_RESTART_TIMEOUT_SECS: i32 = 10;
 const LOADED_IMAGE_PREFIX: &str = "Loaded image: ";
 
+// Override bollard's 120s default to absorb slow image builds under CI contention.
+const DOCKER_TIMEOUT_SECS: u64 = 600;
+#[cfg(unix)]
+const DOCKER_SOCKET: &str = "unix:///var/run/docker.sock";
+#[cfg(windows)]
+const DOCKER_NAMED_PIPE: &str = "npipe:////./pipe/docker_engine";
+
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum ContainerStatus {
     Running,
@@ -136,8 +143,19 @@ pub struct ListEntry {
 // --- Docker connection ---
 
 pub fn connect() -> Result<Docker, DockerError> {
-    Docker::connect_with_local_defaults()
-        .map_err(|e| DockerError::Failed(format!("failed to connect to docker: {e}")))
+    #[cfg(unix)]
+    let result = Docker::connect_with_socket(
+        DOCKER_SOCKET,
+        DOCKER_TIMEOUT_SECS,
+        bollard::API_DEFAULT_VERSION,
+    );
+    #[cfg(windows)]
+    let result = Docker::connect_with_named_pipe(
+        DOCKER_NAMED_PIPE,
+        DOCKER_TIMEOUT_SECS,
+        bollard::API_DEFAULT_VERSION,
+    );
+    result.map_err(|e| DockerError::Failed(format!("failed to connect to docker: {e}")))
 }
 
 pub async fn ensure_docker(docker: &Docker) -> Result<(), DockerError> {
