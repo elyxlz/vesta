@@ -7,7 +7,7 @@
 #   --cat <id|name>     Category filter (movies, tv, all, or numeric ID)
 #   --limit <n>         Max results to show (default: 20)
 #   --add <n>           Add result number N to qBittorrent
-#   --path <path>       Save path for added torrent (default: /media/Plex)
+#   --path <path>       Save path for added torrent (default: /media/library)
 #   --json              Output raw JSON
 #   --relogin           Force re-authentication
 #
@@ -21,7 +21,7 @@
 #   TL_PASSWORD     TorrentLeech password (required)
 #   TL_COOKIE_FILE  Cookie jar path (default: ~/.tl_cookies)
 #   QB_PORT         qBittorrent port (default: 8888)
-#   PLEX_MEDIA_PATH Base media path (default: /media/Plex)
+#   MEDIA_LIBRARY_PATH Base media path (default: /media/library)
 
 set -euo pipefail
 
@@ -33,7 +33,7 @@ TL_BASE="https://www.torrentleech.org"
 
 QB_PORT="${QB_PORT:-8888}"
 QB_API="http://localhost:$QB_PORT/api/v2"
-MEDIA_PATH="${PLEX_MEDIA_PATH:-/media/Plex}"
+MEDIA_PATH="${MEDIA_LIBRARY_PATH:-/media/library}"
 
 CURL_OPTS=(-s -L --max-time 30)
 # Add proxy if configured
@@ -275,7 +275,7 @@ Options:
   --cat <category>    Category: movies, tv, all (default: all)
   --limit <n>         Max results (default: 20)
   --add <n>           Add result #n to qBittorrent
-  --path <path>       Save path for --add (default: /media/Plex)
+  --path <path>       Save path for --add (default: /media/library)
   --json              Output raw JSON response
   --relogin           Force re-authentication
   --help              Show this help
@@ -284,7 +284,7 @@ Examples:
   search "Inception 2010"
   search "Breaking Bad" --cat tv
   search "Dune 2024" --cat movies --limit 5
-  search "Dune 2024" --cat movies --add 1 --path /media/Plex/Movies
+  search "Dune 2024" --cat movies --add 1 --path /media/library/Movies
 
 Environment variables:
   TL_USERNAME       TorrentLeech username
@@ -295,7 +295,7 @@ Environment variables:
   SOCKS5_USER       SOCKS5 proxy username
   SOCKS5_PASS       SOCKS5 proxy password
   QB_PORT           qBittorrent port (default: 8888)
-  PLEX_MEDIA_PATH   Media base path (default: /media/Plex)
+  MEDIA_LIBRARY_PATH   Media base path (default: /media/library)
 EOF
 }
 

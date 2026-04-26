@@ -37,7 +37,7 @@
   },
   {
     "name": "media-server",
-    "description": "This skill should be used when the user asks about Plex, movies, TV shows, torrents, or downloads: searching trackers, adding torrents, monitoring progress, or browsing the Plex library."
+    "description": "This skill should be used when the user asks about their home media server: searching trackers, adding torrents, monitoring downloads, or browsing the media library."
   },
   {
     "name": "microsoft",
