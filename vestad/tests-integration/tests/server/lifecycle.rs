@@ -1,4 +1,12 @@
-use vesta_tests::{TestAgent, SERVER, inject_fake_token, is_up, unique_agent};
+use std::thread::sleep;
+use std::time::{Duration, Instant};
+
+use vesta_tests::{
+    TestAgent, SERVER, agent_container_name, docker_cmd, exec_in_container, inject_fake_token,
+    is_up, unique_agent,
+};
+
+const RESTART_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 #[test]
 fn create_and_list() {
@@ -126,4 +134,85 @@ fn start_nonexistent_error_message() {
 fn destroy_nonexistent_error_message() {
     let err = SERVER.client().destroy_agent("no-such-agent").unwrap_err();
     assert!(err.contains("not found") || err.contains("not_found"), "error should mention not found: {err}");
+}
+
+/// Verifies the container-restart contract behind the agent's `restart_vesta`
+/// MCP tool. The tool calls `os.kill(os.getpid(), SIGTERM)` from inside the
+/// agent's python process; the python interpreter exits, taking its `uv run`
+/// parent (PID 1) with it, and Docker's `unless-stopped` restart policy
+/// brings the container back up. Sending SIGTERM to PID 1 directly hits the
+/// same exit path without needing the live Claude API. Asserts both that
+/// status returns to "up" and that `RestartCount` advanced, which is proof
+/// of an actual restart rather than continuous uptime.
+#[test]
+fn restart_via_agent_sigterm_recovers() {
+    const ENTRYPOINT_READY_TIMEOUT_SECS: u64 = 60;
+    const RESTART_TIMEOUT_SECS: u64 = 60;
+
+    let client = SERVER.client();
+    let agent = TestAgent::create(&client, &unique_agent("sigterm-restart")).unwrap();
+
+    let initial_status = client.agent_status(&agent.name).unwrap();
+    assert!(is_up(&initial_status.status), "expected up after create, got {}", initial_status.status);
+
+    let container = agent_container_name(&agent.name);
+
+    wait_for_entrypoint_ready(&container, Duration::from_secs(ENTRYPOINT_READY_TIMEOUT_SECS))
+        .expect("agent entrypoint did not reach 'uv run'");
+
+    let initial_restart_count = inspect_restart_count(&container).expect("read initial restart count");
+
+    exec_in_container(&container, "kill -TERM 1").expect("send SIGTERM to PID 1");
+
+    let deadline = Instant::now() + Duration::from_secs(RESTART_TIMEOUT_SECS);
+    let (final_status, final_restart_count) = loop {
+        let status = client.agent_status(&agent.name).unwrap().status;
+        let restart_count = inspect_restart_count(&container).unwrap_or(initial_restart_count);
+        if restart_count > initial_restart_count && is_up(&status) {
+            break (status, restart_count);
+        }
+        if Instant::now() >= deadline {
+            panic!(
+                "container did not restart within {}s (status={}, restart_count {} -> {})",
+                RESTART_TIMEOUT_SECS, status, initial_restart_count, restart_count,
+            );
+        }
+        sleep(RESTART_POLL_INTERVAL);
+    };
+
+    assert!(is_up(&final_status), "expected up after restart, got {}", final_status);
+    assert!(
+        final_restart_count > initial_restart_count,
+        "expected RestartCount to advance ({} -> {})",
+        initial_restart_count,
+        final_restart_count,
+    );
+}
+
+fn inspect_restart_count(container: &str) -> Result<u64, String> {
+    let out = docker_cmd(&["inspect", "--format", "{{.RestartCount}}", container])?;
+    out.trim()
+        .parse::<u64>()
+        .map_err(|e| format!("parse RestartCount {out:?}: {e}"))
+}
+
+/// Wait until PID 1 inside the container is `uv run ...`, signalling that
+/// the bootstrap shell has finished setup and exec'd into the agent. Until
+/// then PID 1 is still `sh -c "<bootstrap script>"` and killing it would
+/// race with the bootstrap rather than test the steady-state restart
+/// contract.
+fn wait_for_entrypoint_ready(container: &str, timeout: Duration) -> Result<(), String> {
+    const READ_PID1_CMDLINE: &str = r#"tr '\0' ' ' < /proc/1/cmdline"#;
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Ok(out) = exec_in_container(container, READ_PID1_CMDLINE) {
+            if out.trim_start().starts_with("uv run") {
+                return Ok(());
+            }
+        }
+        if Instant::now() >= deadline {
+            return Err(format!("PID 1 was not `uv run ...` within {}s", timeout.as_secs()));
+        }
+        sleep(RESTART_POLL_INTERVAL);
+    }
 }
