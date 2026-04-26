@@ -14,7 +14,7 @@ description: Self-improvement and memory curation; used nightly by the dreamer o
 
 ## Order of operations
 
-1. **Self-improvement**: retrospective, review, fix, validate, upstream sync
+1. **Self-improvement**: retrospective, review, fix, validate, upstream, dashboard
 2. **User State**: update the snapshot in MEMORY.md
 3. **Memory curation**: prune, consolidate, move things out
 4. **Workspace cleanup**: keep the filesystem clean and disk usage manageable
@@ -59,20 +59,19 @@ Re-read the failing exchange and simulate: would the updated version have change
 
 ### 5. Upstream
 
-Two independent flows live here. Do whichever is warranted; skip if neither applies.
+Read `upstream-sync` then `upstream-pr` and follow them in order. Either can be a no-op — don't invent work to fill them. Note in the summary what was synced or filed (or that both were no-ops, and why).
 
-**Pull from upstream**: only sync against `$VESTA_UPSTREAM_REF` (a release tag, occasionally a feature branch). Do NOT compare against `origin/master`, do NOT report "N commits behind master". Master moves with in-progress maintainer work, not what your instance tracks. If your local is already at `$VESTA_UPSTREAM_REF`, this step is a no-op, note it and move on. Use the `upstream-sync` skill when an actual gap exists.
+### 6. Dashboard
 
-**Push fixes upstream**: when a dream produces a generally useful improvement (skill fix, new rule, bug repro), file it via the `upstream-pr` skill. If nothing tonight is worth filing, skip.
+Mine the retrospective signals from §1 and the current User State for recurring user patterns: questions repeated across days ("what's my balance?", "did the build pass?"), states checked over and over, numbers requested again and again. Threshold: roughly 3+ occurrences across recent dreamer summaries before acting.
 
-- Simple fixes (skill improvements, new rules, bug fixes): **PR + issue**. The issue describes the problem, the PR resolves it
-- Complex problems where the right solution isn't clear: **issue only**. Describe the pattern, leave the fix open
+For each qualifying pattern, build the widget directly via the `dashboard` skill. The "ask first" gate has a carve-out for dreamer additions; use it.
 
-**Privacy rule:** Before filing anything upstream, strip all personal information. No names, no contact details, no private context, no specifics that would identify the user or their data. Describe the pattern in general terms ("agent claimed inability to access calendar when google skill was installed") not the specific instance ("user asked about tuesday's meeting with..."). When in doubt, leave it out.
+Rules for dreamer-added widgets:
+- **Anything that kills the recurring ask is fair game** — live data, hardcoded reference values (wifi password, address, IBAN), static checklists, links. Pick the lightest form that answers the question.
+- **Note the addition in tonight's summary** with the recurrence count and a one-liner the morning agent can surface ("Added a balance widget — you've been asking daily").
 
-#### Dashboard check
-
-If the dashboard is set up, have a look and be proactive. Read its SKILL.md and see if anything needs attention.
+Same pass, opposite direction: stale widgets (data source gone, never opened, broken at build) get pruned. Note removals too.
 
 ## Personality (in MEMORY.md)
 

@@ -60,15 +60,23 @@ Local code diverges from upstream, so never branch from local HEAD. Use a clean 
 
 Only report a PR as done once every CI check is green.
 
-## What to PR
+## What to file
 
-If an improvement would benefit any vesta instance, it should be PR'd:
+If an improvement would benefit any vesta instance, push it upstream:
 - Bug fixes in agent code, skills, or prompts
 - New skills (strip personal config first)
 - Prompt improvements, SKILL.md improvements
 - Infrastructure or tooling improvements
 
-Do not PR: personal config, memory files, credentials, user-specific customizations.
+Do not file: personal config, memory files, credentials, user-specific customizations.
+
+**Issue, PR, or both:**
+- Simple fix (skill improvement, new rule, bug fix): **PR + issue**. Issue describes the problem; PR resolves it.
+- Pattern is clear but the right fix isn't: **issue only**. Describe the pattern, leave the fix open.
+
+## Privacy
+
+Strip all personal information before filing. No names, no contact details, no private context, no specifics that would identify the user or their data. Describe the pattern in general terms ("agent claimed inability to access calendar when google skill was installed"), not the specific instance ("user asked about tuesday's meeting with..."). When in doubt, leave it out.
 
 ## pr.py reference
 

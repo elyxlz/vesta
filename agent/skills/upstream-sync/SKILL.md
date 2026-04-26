@@ -9,6 +9,8 @@ Pull updates in. To push contributions out, see [upstream-pr](../upstream-pr/SKI
 
 Bring your local workspace into order, checkpoint your current state on your branch, then merge upstream. Goal: a clean, easy-to-merge shape relative to `$VESTA_UPSTREAM_REF` (a release tag in prod, e.g. `v0.1.132`, or a branch in dev, e.g. `feat/agent-source-dir`).
 
+**Baseline is `$VESTA_UPSTREAM_REF` only.** Never compare against `origin/master` and never report "N commits behind master" — master tracks in-progress maintainer work, not what your instance is pinned to. If `HEAD` already matches `$VESTA_UPSTREAM_REF`, this is a no-op; say so and stop.
+
 ## Ownership
 
 `~` is the repo root. Sparse checkout limits the worktree to `agent/` (minus bind-mounted paths) and root `.gitignore`. Repo-root `.claude/` stays local and untracked. Bulky/local-only stuff goes in `~/agent/.gitignore`.
