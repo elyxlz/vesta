@@ -28,6 +28,6 @@ pub fn load_server_config(host_flag: Option<&str>, token_flag: Option<&str>) -> 
 }
 
 pub fn die(msg: &str) -> ! {
-    eprintln!("error: {}", msg);
+    eprintln!("error: {msg}");
     std::process::exit(1);
 }
