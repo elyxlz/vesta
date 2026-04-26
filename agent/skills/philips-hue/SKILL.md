@@ -1,5 +1,5 @@
 ---
-name: hue
+name: philips-hue
 description: This skill should be used when the user asks about "lights", "hue", "philips", "lamp", "bright", "dim", "scene", "room", "colour", "color", or needs to control smart lights, set scenes, adjust brightness, or change light colours.
 ---
 
@@ -19,15 +19,15 @@ API base: `https://$HUE_BRIDGE_IP/api/$HUE_API_KEY/`. The bridge serves a self-s
 ## CLI
 
 ```bash
-~/agent/skills/hue/hue status                # Overview of all rooms and their state
-~/agent/skills/hue/hue rooms                 # List all rooms with lights and state
-~/agent/skills/hue/hue lights                # List all lights with state
-~/agent/skills/hue/hue on [room|light]       # Turn on (default: all)
-~/agent/skills/hue/hue off [room|light]      # Turn off (default: all)
-~/agent/skills/hue/hue dim 50 [room|light]   # Set brightness to 50% (1-100)
-~/agent/skills/hue/hue color red [room|light]   # Set colour by name or hex
-~/agent/skills/hue/hue scene cinema [room]   # Activate a scene (fuzzy match)
-~/agent/skills/hue/hue scenes [room]         # List available scenes
+~/agent/skills/philips-hue/hue status                # Overview of all rooms and their state
+~/agent/skills/philips-hue/hue rooms                 # List all rooms with lights and state
+~/agent/skills/philips-hue/hue lights                # List all lights with state
+~/agent/skills/philips-hue/hue on [room|light]       # Turn on (default: all)
+~/agent/skills/philips-hue/hue off [room|light]      # Turn off (default: all)
+~/agent/skills/philips-hue/hue dim 50 [room|light]   # Set brightness to 50% (1-100)
+~/agent/skills/philips-hue/hue color red [room|light]   # Set colour by name or hex
+~/agent/skills/philips-hue/hue scene cinema [room]   # Activate a scene (fuzzy match)
+~/agent/skills/philips-hue/hue scenes [room]         # List available scenes
 ```
 
 Room and scene names support fuzzy matching (e.g. "living" matches "Living room", "bed" matches "Bedroom").
@@ -49,7 +49,7 @@ Room and scene names support fuzzy matching (e.g. "living" matches "Living room"
 
 3. Set `HUE_BRIDGE_IP` and `HUE_API_KEY` in your environment.
 
-4. Verify: `~/agent/skills/hue/hue status`
+4. Verify: `~/agent/skills/philips-hue/hue status`
 
 ## Colours
 
@@ -58,9 +58,9 @@ Built-in names: red, blue, green, yellow, orange, purple, pink, cyan, warm, cool
 **Anything outside the built-in list, you translate to hex yourself.** If the user says "sunset", "candlelight", "deep ocean", "lavender mist", "Halloween orange", pick a hex that fits and pass it directly:
 
 ```bash
-~/agent/skills/hue/hue color "#FF7E50" living    # sunset
-~/agent/skills/hue/hue color "#FFB347" bedroom   # candlelight
-~/agent/skills/hue/hue color "#0B3D5C" office    # deep ocean
+~/agent/skills/philips-hue/hue color "#FF7E50" living    # sunset
+~/agent/skills/philips-hue/hue color "#FFB347" bedroom   # candlelight
+~/agent/skills/philips-hue/hue color "#0B3D5C" office    # deep ocean
 ```
 
 Mirror the mood the user described. They shouldn't have to know hex.
@@ -69,19 +69,19 @@ Mirror the mood the user described. They shouldn't have to know hex.
 
 ```bash
 # Turn off the bedroom
-~/agent/skills/hue/hue off bedroom
+~/agent/skills/philips-hue/hue off bedroom
 
 # Set living room to cinema scene
-~/agent/skills/hue/hue scene cinema living
+~/agent/skills/philips-hue/hue scene cinema living
 
 # Dim the office to 30%
-~/agent/skills/hue/hue dim 30 office
+~/agent/skills/philips-hue/hue dim 30 office
 
 # Set all lights to warm white
-~/agent/skills/hue/hue color warm
+~/agent/skills/philips-hue/hue color warm
 
 # Check what's on
-~/agent/skills/hue/hue status
+~/agent/skills/philips-hue/hue status
 ```
 
 ## Troubleshooting
@@ -95,3 +95,5 @@ Mirror the mood the user described. They shouldn't have to know hex.
 **Cert errors on direct curl.** The bridge serves a self-signed cert; pass `-k`. The `hue` wrapper handles this for you.
 
 **Room or scene not matching.** Fuzzy match is case-insensitive substring. Run `hue rooms` or `hue scenes` to see exact names; if multiple match, the first wins.
+
+**Commands succeed but the lights don't react.** The bulb is powered off at the wall switch. Hue bulbs need mains power to receive commands; if everything in `hue status` looks healthy and the API returns success, ask the user to flip the physical switch back on.

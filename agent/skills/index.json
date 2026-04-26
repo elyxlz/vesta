@@ -52,10 +52,6 @@
     "description": "iCloud Photos: list and download shared albums via pyicloud. SMS 2FA to a trusted phone."
   },
   {
-    "name": "hue",
-    "description": "This skill should be used when the user asks about \"lights\", \"hue\", \"philips\", \"lamp\", \"bright\", \"dim\", \"scene\", \"room\", \"colour\", \"color\", or needs to control smart lights, set scenes, adjust brightness, or change light colours."
-  },
-  {
     "name": "keeper",
     "description": "Passwords, credentials, vault, 2FA/TOTP via Keeper; store, retrieve, manage."
   },
@@ -74,6 +70,10 @@
   {
     "name": "proactive-check",
     "description": "Periodic self-directed check-in; fires on interval to reach out or research."
+  },
+  {
+    "name": "philips-hue",
+    "description": "This skill should be used when the user asks about \"lights\", \"hue\", \"philips\", \"lamp\", \"bright\", \"dim\", \"scene\", \"room\", \"colour\", \"color\", or needs to control smart lights, set scenes, adjust brightness, or change light colours."
   },
   {
     "name": "skills-registry",
