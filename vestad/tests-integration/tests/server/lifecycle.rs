@@ -6,6 +6,8 @@ use vesta_tests::{
     is_up, unique_agent,
 };
 
+const RESTART_POLL_INTERVAL: Duration = Duration::from_millis(500);
+
 #[test]
 fn create_and_list() {
     let c = SERVER.client();
@@ -146,7 +148,6 @@ fn destroy_nonexistent_error_message() {
 fn restart_via_agent_sigterm_recovers() {
     const ENTRYPOINT_READY_TIMEOUT_SECS: u64 = 60;
     const RESTART_TIMEOUT_SECS: u64 = 60;
-    const POLL_INTERVAL: Duration = Duration::from_millis(500);
 
     let client = SERVER.client();
     let agent = TestAgent::create(&client, &unique_agent("sigterm-restart")).unwrap();
@@ -156,9 +157,6 @@ fn restart_via_agent_sigterm_recovers() {
 
     let container = agent_container_name(&agent.name);
 
-    // The entrypoint runs `uv sync` etc. before `exec uv run python -m core.main`,
-    // so wait for PID 1 to actually be `uv run` before sending SIGTERM. Otherwise
-    // we'd kill the bootstrap shell mid-setup and the test would race.
     wait_for_entrypoint_ready(&container, Duration::from_secs(ENTRYPOINT_READY_TIMEOUT_SECS))
         .expect("agent entrypoint did not reach 'uv run'");
 
@@ -179,7 +177,7 @@ fn restart_via_agent_sigterm_recovers() {
                 RESTART_TIMEOUT_SECS, status, initial_restart_count, restart_count,
             );
         }
-        sleep(POLL_INTERVAL);
+        sleep(RESTART_POLL_INTERVAL);
     };
 
     assert!(is_up(&final_status), "expected up after restart, got {}", final_status);
@@ -215,6 +213,6 @@ fn wait_for_entrypoint_ready(container: &str, timeout: Duration) -> Result<(), S
         if Instant::now() >= deadline {
             return Err(format!("PID 1 was not `uv run ...` within {}s", timeout.as_secs()));
         }
-        sleep(Duration::from_millis(500));
+        sleep(RESTART_POLL_INTERVAL);
     }
 }
