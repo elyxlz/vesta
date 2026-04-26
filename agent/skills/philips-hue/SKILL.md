@@ -1,6 +1,6 @@
 ---
 name: philips-hue
-description: This skill should be used when the user asks about "lights", "hue", "philips", "lamp", "bright", "dim", "scene", "room", "colour", "color", or needs to control smart lights, set scenes, adjust brightness, or change light colours.
+description: This skill should be used when the user asks about Philips Hue lights: turning lights on/off, dimming, changing colours, activating scenes, or controlling rooms.
 ---
 
 # Philips Hue Smart Lights
