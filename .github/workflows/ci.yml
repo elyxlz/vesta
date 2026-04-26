@@ -37,10 +37,13 @@ jobs:
             cli:
               - 'cli/**'
               - 'vestad/**'
+              - '.github/workflows/ci.yml'
             app:
               - 'apps/**'
+              - '.github/workflows/ci.yml'
             agent:
               - 'agent/**'
+              - '.github/workflows/ci.yml'
 
   # ── Version check ──────────────────────────────────────────────────────
   version-check:
@@ -793,16 +796,23 @@ jobs:
           python3 scripts/android-sign-patch.py apps/mobile/src-tauri/gen/android/app/build.gradle.kts
           echo "signed=true" >> "$GITHUB_OUTPUT"
 
+      # Retry: Gradle bootstraps from GitHub on first run; GitHub release CDN
+      # occasionally 502s and there's no built-in retry on the Gradle wrapper.
       - name: Build Android APK
-        working-directory: apps/mobile
+        uses: nick-fields/retry@v3
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
-        run: |
-          if [ "${{ steps.signing.outputs.signed }}" = "true" ]; then
-            npx tauri android build --apk
-          else
-            npx tauri android build --apk --debug
-          fi
+        with:
+          timeout_minutes: 30
+          max_attempts: 3
+          shell: bash
+          command: |
+            cd apps/mobile
+            if [ "${{ steps.signing.outputs.signed }}" = "true" ]; then
+              npx tauri android build --apk
+            else
+              npx tauri android build --apk --debug
+            fi
 
       - name: Collect artifacts
         if: github.event_name != 'pull_request'
@@ -902,8 +912,12 @@ jobs:
 
       - name: Build iOS
         if: env.SKIP_IOS != 'true'
-        working-directory: apps/mobile
-        run: npx tauri ios build --export-method app-store-connect
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 45
+          max_attempts: 3
+          shell: bash
+          command: cd apps/mobile && npx tauri ios build --export-method app-store-connect
 
       - name: Collect artifacts
         if: env.SKIP_IOS != 'true'

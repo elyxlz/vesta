@@ -108,8 +108,16 @@ fn vendor_cloudflared(manifest_dir: &Path) {
         std::fs::create_dir_all(&vendored_dir)
             .expect("failed to create vendored dir");
         let url = format!("{}/cloudflared-linux-{}", CLOUDFLARED_DOWNLOAD_BASE, arch);
+        // GitHub release CDN occasionally 502s; retry on any transient error.
         let status = Command::new("curl")
-            .args(["-fsSL", "-o", dest.to_str().unwrap(), &url])
+            .args([
+                "-fsSL",
+                "--retry", "5",
+                "--retry-all-errors",
+                "--retry-delay", "2",
+                "-o", dest.to_str().unwrap(),
+                &url,
+            ])
             .status()
             .expect("failed to spawn curl while vendoring cloudflared (set VESTAD_SKIP_CLOUDFLARED=1 to skip)");
         if !status.success() {
