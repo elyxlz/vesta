@@ -59,7 +59,7 @@ Re-read the failing exchange and simulate: would the updated version have change
 
 ### 5. Upstream
 
-Read `upstream-sync` then `upstream-pr` and follow them in order. Either can be a no-op — don't invent work to fill them. Note in the summary what was synced or filed (or that both were no-ops, and why).
+Read `upstream-sync` then `upstream-pr` and follow them in order. Either can be a no-op; don't invent work to fill them. Note in the summary what was synced or filed (or that both were no-ops, and why).
 
 ### 6. Dashboard
 
@@ -68,8 +68,8 @@ Mine the retrospective signals from §1 and the current User State for recurring
 For each qualifying pattern, build the widget directly via the `dashboard` skill. The "ask first" gate has a carve-out for dreamer additions; use it.
 
 Rules for dreamer-added widgets:
-- **Anything that kills the recurring ask is fair game** — live data, hardcoded reference values (wifi password, address, IBAN), static checklists, links. Pick the lightest form that answers the question.
-- **Note the addition in tonight's summary** with the recurrence count and a one-liner the morning agent can surface ("Added a balance widget — you've been asking daily").
+- **Anything that kills the recurring ask is fair game**: live data, hardcoded reference values (wifi password, address, IBAN), static checklists, links. Pick the lightest form that answers the question.
+- **Note the addition in tonight's summary** with the recurrence count and a one-liner the morning agent can surface ("Added a balance widget, you've been asking daily").
 
 Same pass, opposite direction: stale widgets (data source gone, never opened, broken at build) get pruned. Note removals too.
 
