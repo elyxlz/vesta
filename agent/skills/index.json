@@ -12,6 +12,10 @@
     "description": "Browse, navigate, click, fill forms, screenshot, or scrape web pages via CDP."
   },
   {
+    "name": "claude-code",
+    "description": "Delegate heavy coding tasks to Claude Code (Anthropic's autonomous coding CLI). Use for large multi-file refactors, building entire features or modules, complex debugging that needs extensive exploration, and substantial code reviews. For small edits, single-file changes, and quick fixes, use Vesta's own Read/Edit/Bash tools directly."
+  },
+  {
     "name": "dashboard",
     "description": "Build or modify the user's dashboard: widgets, pages, layouts, or custom UI."
   },
