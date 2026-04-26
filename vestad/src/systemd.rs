@@ -92,6 +92,27 @@ pub fn is_active() -> bool {
         .unwrap_or(false)
 }
 
+/// Returns systemd's `is-active` state (`active`, `inactive`, `failed`,
+/// `activating`, etc.) or `unknown` when systemctl can't be invoked.
+pub fn active_state() -> String {
+    let output = Command::new("systemctl")
+        .args(["--user", "is-active", SERVICE_NAME])
+        .stderr(process::Stdio::null())
+        .output();
+    match output {
+        Ok(out) => {
+            let raw = String::from_utf8_lossy(&out.stdout);
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                "unknown".into()
+            } else {
+                trimmed.to_string()
+            }
+        }
+        Err(_) => "unknown".into(),
+    }
+}
+
 pub fn start() -> Result<(), String> {
     run_systemctl(&["start", SERVICE_NAME])
 }
@@ -127,13 +148,6 @@ pub fn wait_for_start() -> Result<(), String> {
     } else {
         Err("vestad failed to start — run 'vestad logs' for details".into())
     }
-}
-
-pub fn print_status() {
-    let _ = Command::new("systemctl")
-        .args(["--user", "status", SERVICE_NAME, "--no-pager"])
-        .stdin(process::Stdio::null())
-        .status();
 }
 
 fn journal_args(lines: usize, follow: bool) -> Vec<String> {

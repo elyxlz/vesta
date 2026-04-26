@@ -143,6 +143,11 @@ impl Client {
         resp.into_body().read_json().map_err(|e| format!("parse error: {}", e))
     }
 
+    pub fn status_json(&self) -> Result<serde_json::Value, String> {
+        let resp = self.get("/status")?;
+        resp.into_body().read_json().map_err(|e| format!("parse error: {}", e))
+    }
+
     pub fn list_agents(&self) -> Result<Vec<ListEntry>, String> {
         let resp = self.get("/agents")?;
         resp.into_body().read_json().map_err(|e| format!("parse error: {}", e))

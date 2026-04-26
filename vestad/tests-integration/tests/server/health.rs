@@ -38,6 +38,39 @@ fn port_file_contains_server_port() {
 }
 
 #[test]
+fn status_returns_canonical_shape() {
+    let body = SERVER.client().status_json().expect("status failed");
+
+    for key in [
+        "version",
+        "binary_path",
+        "latest_version",
+        "update_available",
+        "https_port",
+        "local_url",
+        "tunnel",
+        "systemd_state",
+        "systemd_pid",
+        "api_key_fingerprint",
+        "api_key",
+        "agent_count",
+    ] {
+        assert!(body.get(key).is_some(), "missing top-level key: {key}");
+    }
+
+    let tunnel = &body["tunnel"];
+    for key in ["configured", "url", "hostname", "tunnel_id"] {
+        assert!(tunnel.get(key).is_some(), "missing tunnel key: {key}");
+    }
+
+    assert!(body["version"].as_str().is_some_and(|v| !v.is_empty()));
+    assert!(body["api_key"].is_null(), "api_key must not be exposed via HTTP");
+    assert!(body["api_key_fingerprint"].as_str().is_some_and(|fp| fp.len() == 12));
+    assert_eq!(body["https_port"].as_u64(), Some(SERVER.port as u64));
+    assert!(body["agent_count"].as_u64().is_some());
+}
+
+#[test]
 fn api_key_file_exists_and_nonempty() {
     let key_path = SERVER._tmpdir_path().join(".config/vesta/vestad/api-key");
     let key = std::fs::read_to_string(&key_path)

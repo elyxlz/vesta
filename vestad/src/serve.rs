@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, atomic::AtomicBool};
 use tokio::sync::{Mutex, RwLock};
 
-use crate::{agent_proxy, agent_status, auth, backup, control_ws, docker, self_update, systemd, update_check};
+use crate::{agent_proxy, agent_status, auth, backup, control_ws, docker, self_update, status as status_report, systemd, update_check};
 
 const GATEWAY_RESTART_DELAY_MS: u64 = 200;
 
@@ -230,6 +230,28 @@ async fn version(State(state): State<SharedState>) -> Json<serde_json::Value> {
         "update_available": update_available,
         "dev_mode": state.dev_mode,
     }))
+}
+
+async fn status_handler(State(state): State<SharedState>) -> Json<status_report::StatusReport> {
+    let latest_version = state
+        .update_info
+        .lock()
+        .await
+        .as_ref()
+        .map(|info| info.latest.clone());
+    let report = status_report::gather_status(status_report::StatusInputs {
+        config_dir: &state.env_config.config_dir,
+        https_port: Some(state.https_port),
+        api_key: Some(state.api_key.clone()),
+        include_api_key: false,
+        latest_version,
+        binary_path: std::env::current_exe()
+            .ok()
+            .and_then(|path| path.to_str().map(|raw| raw.trim_end_matches(" (deleted)").to_string())),
+        systemd_state: systemd::active_state(),
+        systemd_pid: systemd::main_pid(),
+    });
+    Json(report)
 }
 
 #[derive(Deserialize)]
@@ -1425,6 +1447,7 @@ pub fn build_router(state: SharedState) -> Router {
 
     let vestad_protected = Router::new()
         .route("/version", get(version))
+        .route("/status", get(status_handler))
         .route("/gateway/update", post(gateway_update_handler))
         .route("/gateway/restart", post(restart_gateway_handler))
         .route("/gateway/logs", get(gateway_logs_handler))

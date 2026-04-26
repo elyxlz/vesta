@@ -18,6 +18,7 @@ mod paths;
 mod time_utils;
 mod self_update;
 mod serve;
+mod status;
 mod systemd;
 mod tunnel;
 mod types;
@@ -45,8 +46,15 @@ enum Command {
         #[arg(long)]
         standalone: bool,
     },
-    /// Show vestad service status
-    Status,
+    /// Show vestad service status (version, tunnel, systemd, agents).
+    Status {
+        /// Print as JSON.
+        #[arg(long)]
+        json: bool,
+        /// Reveal the full API key instead of just its fingerprint.
+        #[arg(long)]
+        show_secrets: bool,
+    },
     /// Stream vestad service logs
     Logs {
         /// Number of lines to show
@@ -346,6 +354,155 @@ fn run_server_systemd(port: Option<u16>, no_tunnel: bool) {
     eprintln!("  vestad stop       stop the service");
 }
 
+#[derive(Copy, Clone)]
+enum StatusPrintMode {
+    /// Full canonical output for `vestad status`.
+    Full,
+    /// Connection-info subset for the `vestad info` alias.
+    ConnectionInfo,
+    /// Tunnel subset for the `vestad tunnel status` alias.
+    TunnelOnly,
+}
+
+fn binary_path() -> Option<String> {
+    std::env::current_exe()
+        .ok()
+        .and_then(|path| path.to_str().map(|raw| raw.trim_end_matches(" (deleted)").to_string()))
+}
+
+fn read_https_port(config: &std::path::Path) -> Option<u16> {
+    std::fs::read_to_string(config.join("port"))
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u16>().ok())
+}
+
+fn read_api_key(config: &std::path::Path) -> Option<String> {
+    std::fs::read_to_string(config.join("api-key"))
+        .ok()
+        .map(|raw| raw.trim().to_string())
+        .filter(|trimmed| !trimmed.is_empty())
+}
+
+fn build_status_report(show_secrets: bool) -> status::StatusReport {
+    let config = config_dir();
+    let api_key = read_api_key(&config);
+    let https_port = read_https_port(&config);
+    let latest_version = update_check::fetch_latest_tag();
+    status::gather_status(status::StatusInputs {
+        config_dir: &config,
+        https_port,
+        api_key,
+        include_api_key: show_secrets,
+        latest_version,
+        binary_path: binary_path(),
+        systemd_state: systemd::active_state(),
+        systemd_pid: systemd::main_pid(),
+    })
+}
+
+const COLOR_LABEL: &str = "\x1b[36m";
+const COLOR_BOLD: &str = "\x1b[1m";
+const COLOR_DIM: &str = "\x1b[2m";
+const COLOR_KEY: &str = "\x1b[33m";
+const COLOR_RESET: &str = "\x1b[0m";
+
+fn print_status_human_full(report: &status::StatusReport) {
+    println!();
+    println!(
+        "  {COLOR_BOLD}\x1b[1;35mvestad{COLOR_RESET} v{}",
+        report.version
+    );
+    if let Some(path) = &report.binary_path {
+        println!("    {COLOR_LABEL}binary{COLOR_RESET}    {COLOR_DIM}{}{COLOR_RESET}", path);
+    }
+    println!(
+        "    {COLOR_LABEL}systemd{COLOR_RESET}   {}{}",
+        report.systemd_state,
+        report
+            .systemd_pid
+            .map(|pid| format!(" (pid {})", pid))
+            .unwrap_or_default(),
+    );
+    println!(
+        "    {COLOR_LABEL}agents{COLOR_RESET}    {}",
+        report.agent_count
+    );
+    match (&report.latest_version, report.update_available) {
+        (Some(latest), Some(true)) => println!(
+            "    {COLOR_LABEL}latest{COLOR_RESET}    {} {COLOR_KEY}(update available){COLOR_RESET}",
+            latest
+        ),
+        (Some(latest), _) => println!("    {COLOR_LABEL}latest{COLOR_RESET}    {}", latest),
+        (None, _) => println!("    {COLOR_LABEL}latest{COLOR_RESET}    {COLOR_DIM}(unknown){COLOR_RESET}"),
+    }
+
+    println!();
+    print_status_connection(report);
+    println!();
+    print_status_tunnel(report);
+    println!();
+}
+
+fn print_status_connection(report: &status::StatusReport) {
+    if let Some(local) = &report.local_url {
+        println!("    {COLOR_LABEL}local{COLOR_RESET}     {COLOR_BOLD}{}/app{COLOR_RESET}", local);
+    } else {
+        println!("    {COLOR_LABEL}local{COLOR_RESET}     {COLOR_DIM}(no port file: vestad not started){COLOR_RESET}");
+    }
+    match (&report.api_key, &report.api_key_fingerprint) {
+        (Some(key), _) => println!("    {COLOR_LABEL}key{COLOR_RESET}       {COLOR_KEY}{}{COLOR_RESET}", key),
+        (None, Some(fingerprint)) => println!(
+            "    {COLOR_LABEL}key{COLOR_RESET}       {COLOR_KEY}{}…{COLOR_RESET}  {COLOR_DIM}(fingerprint; use --show-secrets){COLOR_RESET}",
+            fingerprint
+        ),
+        (None, None) => println!("    {COLOR_LABEL}key{COLOR_RESET}       {COLOR_DIM}(no api-key file){COLOR_RESET}"),
+    }
+}
+
+fn print_status_tunnel(report: &status::StatusReport) {
+    if !report.tunnel.configured {
+        println!("    {COLOR_LABEL}tunnel{COLOR_RESET}    {COLOR_DIM}(not configured){COLOR_RESET}");
+        return;
+    }
+    if let Some(url) = &report.tunnel.url {
+        println!("    {COLOR_LABEL}tunnel{COLOR_RESET}    {COLOR_BOLD}{}{COLOR_RESET}", url);
+    }
+    if let Some(hostname) = &report.tunnel.hostname {
+        println!("      {COLOR_LABEL}hostname{COLOR_RESET}  {}", hostname);
+    }
+    if let Some(tunnel_id) = &report.tunnel.tunnel_id {
+        println!("      {COLOR_LABEL}id{COLOR_RESET}        {}", tunnel_id);
+    }
+}
+
+fn print_status_command(mode: StatusPrintMode, json: bool, show_secrets: bool) {
+    let report = build_status_report(show_secrets);
+
+    if json {
+        match serde_json::to_string_pretty(&report) {
+            Ok(rendered) => println!("{}", rendered),
+            Err(err) => die(format!("failed to serialize status: {}", err)),
+        }
+        return;
+    }
+
+    match mode {
+        StatusPrintMode::Full => print_status_human_full(&report),
+        StatusPrintMode::ConnectionInfo => {
+            println!();
+            print_status_connection(&report);
+            println!();
+            print_status_tunnel(&report);
+            println!();
+        }
+        StatusPrintMode::TunnelOnly => {
+            println!();
+            print_status_tunnel(&report);
+            println!();
+        }
+    }
+}
+
 fn main() {
     dotenvy::dotenv().ok();
 
@@ -372,20 +529,8 @@ fn main() {
             }
         }
 
-        Command::Status => {
-            let config = config_dir();
-            eprintln!("  \x1b[1;35mvestad\x1b[0m v{}", env!("CARGO_PKG_VERSION"));
-
-            let (tunnel_url, local_url, api_key) = read_server_info(&config);
-            if let Some(api_key) = &api_key {
-                print_server_info(
-                    tunnel_url.as_deref(),
-                    local_url.as_deref().unwrap_or("http://localhost:?"),
-                    api_key,
-                );
-            }
-
-            systemd::print_status();
+        Command::Status { json, show_secrets } => {
+            print_status_command(StatusPrintMode::Full, json, show_secrets);
         }
 
         Command::Logs { n, no_follow } => {
@@ -525,15 +670,8 @@ fn main() {
                         .unwrap_or_else(|e| die(e));
                 }
                 TunnelAction::Status => {
-                    match tunnel::get_tunnel_config(&config) {
-                        Some(tc) => {
-                            eprintln!("tunnel: https://{}", tc.hostname);
-                            eprintln!("tunnel id: {}", tc.tunnel_id);
-                        }
-                        None => {
-                            eprintln!("no tunnel configured");
-                        }
-                    }
+                    eprintln!("note: `vestad tunnel status` is now an alias for `vestad status`; consider switching");
+                    print_status_command(StatusPrintMode::TunnelOnly, false, false);
                 }
                 TunnelAction::Destroy => {
                     tunnel::destroy_tunnel(&config)
@@ -543,13 +681,8 @@ fn main() {
         }
 
         Command::Info => {
-            let config = config_dir();
-            let (tunnel_url, local_url, api_key) = read_server_info(&config);
-
-            let api_key = api_key.unwrap_or_else(|| die("no API key found — has vestad been started?"));
-            let local_url = local_url.unwrap_or_else(|| die("no port file found — is vestad running?"));
-
-            print_server_info(tunnel_url.as_deref(), &local_url, &api_key);
+            eprintln!("note: `vestad info` is now an alias for `vestad status`; consider switching");
+            print_status_command(StatusPrintMode::ConnectionInfo, false, false);
         }
 
         Command::Update => {
@@ -557,6 +690,7 @@ fn main() {
         }
 
         Command::Version => {
+            eprintln!("note: `vestad version` is now an alias for `vestad status`; consider switching");
             println!("v{}", env!("CARGO_PKG_VERSION"));
         }
 
