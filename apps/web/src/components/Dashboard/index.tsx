@@ -4,6 +4,7 @@ import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useTheme } from "@/providers/ThemeProvider";
 import { useTauri } from "@/providers/TauriProvider";
 import { getConnection } from "@/lib/connection";
+import { createServiceSession } from "@/api/service-sessions";
 import {
   Empty,
   EmptyHeader,
@@ -11,6 +12,12 @@ import {
   EmptyDescription,
   EmptyMedia,
 } from "@/components/ui/empty";
+
+// Remint the session this many seconds before it actually expires, so the
+// iframe never hits a dead session mid-asset-load.
+const SESSION_REMINT_LEAD_SECS = 60;
+// Lower bound on the remint interval, in case vestad ever reports a tiny TTL.
+const SESSION_REMINT_MIN_SECS = 15;
 
 export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
   const { name, agent } = useSelectedAgent();
@@ -20,43 +27,65 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
   const [error, setError] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [iframeKey, setIframeKey] = useState(0);
+  const [sessionUrl, setSessionUrl] = useState<string | null>(null);
   const handshakeRef = useRef(false);
 
   const dashboardService = agent.services?.dashboard;
   const hasDashboard = !!dashboardService;
-
-  // Reset iframe when the dashboard service appears
-  const prevHadDashboard = useRef(hasDashboard);
-  useEffect(() => {
-    if (hasDashboard && !prevHadDashboard.current) {
-      setError(false);
-      setLoaded(false);
-      setIframeKey((k) => k + 1);
-    }
-    prevHadDashboard.current = hasDashboard;
-  }, [hasDashboard]);
-
-  // Reload iframe when the dashboard service is invalidated
   const dashboardRev = dashboardService?.rev ?? 0;
-  const prevDashboardRev = useRef(dashboardRev);
+  const conn = getConnection();
+
+  // Mint a session for the dashboard iframe. Re-mint whenever the agent,
+  // skill rebuild, or connection identity changes. Falls back to the legacy
+  // public path if the vestad is too old to know the /session endpoint (this
+  // keeps new web app ↔ old vestad from breaking).
   useEffect(() => {
-    if (dashboardRev !== prevDashboardRev.current && hasDashboard) {
-      setError(false);
-      setLoaded(false);
-      setIframeKey((k) => k + 1);
+    if (!hasDashboard || !conn) {
+      setSessionUrl(null);
+      return;
     }
-    prevDashboardRev.current = dashboardRev;
-  }, [dashboardRev, hasDashboard]);
+
+    let cancelled = false;
+    let remintTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const mint = async () => {
+      try {
+        const session = await createServiceSession(name, "dashboard");
+        if (cancelled) return;
+        setError(false);
+        setLoaded(false);
+        setSessionUrl(`${conn.url}${session.url}`);
+        setIframeKey((k) => k + 1);
+        const lead = Math.max(
+          SESSION_REMINT_MIN_SECS,
+          session.expiresIn - SESSION_REMINT_LEAD_SECS,
+        );
+        remintTimer = setTimeout(mint, lead * 1000);
+      } catch (err) {
+        if (cancelled) return;
+        // Old vestad, transient failure, or service not yet registered:
+        // fall back to the legacy path. If the service is genuinely public
+        // it'll load; if not, the iframe will show an auth error and the
+        // user can refresh once vestad is upgraded.
+        console.debug("dashboard session mint failed, using legacy path:", err);
+        setSessionUrl(
+          `${conn.url}/agents/${encodeURIComponent(name)}/dashboard/`,
+        );
+        setIframeKey((k) => k + 1);
+      }
+    };
+
+    void mint();
+
+    return () => {
+      cancelled = true;
+      if (remintTimer) clearTimeout(remintTimer);
+    };
+  }, [hasDashboard, name, dashboardRev, conn]);
 
   useEffect(() => {
     handshakeRef.current = false;
   }, [iframeKey]);
-
-  const conn = getConnection();
-  const dashboardUrl =
-    hasDashboard && conn
-      ? `${conn.url}/agents/${encodeURIComponent(name)}/dashboard/`
-      : null;
 
   const sendContext = useCallback(() => {
     const frame = iframeRef.current?.contentWindow;
@@ -158,11 +187,15 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
     );
   }
 
+  if (!sessionUrl) {
+    return <div className="flex-1 h-full w-full bg-transparent" />;
+  }
+
   return (
     <iframe
       key={iframeKey}
       ref={iframeRef}
-      src={dashboardUrl!}
+      src={sessionUrl}
       allow="microphone; camera; display-capture; autoplay; fullscreen; picture-in-picture; clipboard-read; clipboard-write; geolocation; screen-wake-lock; web-share; payment; publickey-credentials-get; publickey-credentials-create; encrypted-media; midi; gamepad; xr-spatial-tracking; hid; serial; usb; bluetooth; idle-detection; local-fonts; storage-access; compute-pressure; window-management"
       className={`w-full h-full bg-transparent transition-opacity duration-200 ${loaded ? "opacity-100" : "opacity-0"}`}
       onLoad={() => {

@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, atomic::AtomicBool};
 use tokio::sync::{Mutex, RwLock};
 
-use crate::{agent_proxy, agent_status, auth, backup, control_ws, docker, self_update, systemd, update_check};
+use crate::{agent_proxy, agent_status, auth, backup, control_ws, docker, self_update, service_sessions::{ServiceSessions, SESSION_TTL}, systemd, update_check};
 
 const GATEWAY_RESTART_DELAY_MS: u64 = 200;
 
@@ -159,6 +159,7 @@ pub struct AppState {
     pub(crate) settings: RwLock<Settings>,
     dev_mode: bool,
     pub(crate) agent_status_cache: Arc<agent_status::AgentStatusCache>,
+    pub(crate) service_sessions: ServiceSessions,
     pub(crate) https_port: u16,
 }
 
@@ -178,6 +179,7 @@ impl AppState {
             settings: RwLock::new(settings),
             dev_mode,
             agent_status_cache: Arc::new(agent_status::AgentStatusCache::new()),
+            service_sessions: ServiceSessions::new(),
             https_port,
         }
     }
@@ -505,6 +507,7 @@ async fn stop_agent_handler(
         settings.services.remove(&name);
         save_settings(&settings);
     }
+    state.service_sessions.invalidate_agent(&name).await;
     Ok(ok_json())
 }
 
@@ -539,6 +542,7 @@ async fn destroy_agent_handler(
         settings.agents.remove(&name);
         save_settings(&settings);
     }
+    state.service_sessions.invalidate_agent(&name).await;
 
     Ok(ok_json())
 }
@@ -558,6 +562,7 @@ async fn rebuild_agent_handler(
     docker::start_agent(&state.docker, &name)
         .await
         .map_err(map_docker_err)?;
+    state.service_sessions.invalidate_agent(&name).await;
     Ok(ok_json())
 }
 
@@ -1050,6 +1055,45 @@ async fn register_service_handler(
     Ok(Json(serde_json::json!({"ok": true, "port": port, "public": body.public})))
 }
 
+#[derive(Serialize)]
+struct CreateServiceSessionResponse {
+    session_id: String,
+    url: String,
+    expires_in: u64,
+}
+
+/// Mint a short-lived session id that authenticates iframe sub-resource
+/// requests to a non-public service. See `service_sessions.rs`.
+async fn create_service_session_handler(
+    State(state): State<SharedState>,
+    Path((name, service_name)): Path<(String, String)>,
+) -> Result<Json<CreateServiceSessionResponse>, (StatusCode, Json<serde_json::Value>)> {
+    docker::validate_name(&name).map_err(map_docker_err)?;
+
+    {
+        let settings = state.settings.read().await;
+        let registered = settings
+            .services
+            .get(&name)
+            .is_some_and(|s| s.contains_key(&service_name));
+        if !registered {
+            return Err(err_response(
+                StatusCode::NOT_FOUND,
+                &format!("service '{}' not registered for agent '{}'", service_name, name),
+            ));
+        }
+    }
+
+    let session_id = state.service_sessions.mint(&name, &service_name).await;
+    let url = format!("/agents/{}/services/{}/s/{}/", name, service_name, session_id);
+    tracing::debug!(agent = %name, service = %service_name, "service session minted");
+    Ok(Json(CreateServiceSessionResponse {
+        session_id,
+        url,
+        expires_in: SESSION_TTL.as_secs(),
+    }))
+}
+
 async fn unregister_service_handler(
     State(state): State<SharedState>,
     Path((name, service_name)): Path<(String, String)>,
@@ -1063,6 +1107,8 @@ async fn unregister_service_handler(
     }
     save_settings(&settings);
     state.agent_status_cache.update_services(&settings.services);
+    drop(settings);
+    state.service_sessions.invalidate_service(&name, &service_name).await;
     tracing::info!(agent = %name, service = %service_name, "service unregistered");
     Ok(ok_json())
 }
@@ -1506,6 +1552,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/settings/auto-backup", axum::routing::put(set_auto_backup_handler))
         .route("/ws", get(control_ws::control_ws_handler))
         .route("/agents/{name}/services", get(list_services_handler))
+        .route("/agents/{name}/services/{service}/session", post(create_service_session_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::auth_middleware,

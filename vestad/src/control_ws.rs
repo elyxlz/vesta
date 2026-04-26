@@ -33,6 +33,9 @@ pub async fn invalidate_service_handler(
     state
         .agent_status_cache
         .invalidate_service(&name, &service_name, scope.as_deref());
+    // Bust outstanding iframe sessions so the parent app re-mints against the
+    // fresh build after a skill rebuild.
+    state.service_sessions.invalidate_service(&name, &service_name).await;
     tracing::debug!(agent = %name, service = %service_name, ?scope, "service invalidated");
     Ok(ok_json())
 }

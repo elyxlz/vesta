@@ -18,6 +18,7 @@ mod paths;
 mod time_utils;
 mod self_update;
 mod serve;
+mod service_sessions;
 mod systemd;
 mod tunnel;
 mod types;
