@@ -245,9 +245,7 @@ async fn status_handler(State(state): State<SharedState>) -> Json<status_report:
         api_key: Some(state.api_key.clone()),
         include_api_key: false,
         latest_version,
-        binary_path: std::env::current_exe()
-            .ok()
-            .and_then(|path| path.to_str().map(|raw| raw.trim_end_matches(" (deleted)").to_string())),
+        binary_path: status_report::current_binary_path(),
         systemd_state: systemd::active_state(),
         systemd_pid: systemd::main_pid(),
     });

@@ -1,8 +1,9 @@
+use std::fmt::Write as _;
 use std::path::Path;
 
 use serde::Serialize;
 
-use crate::tunnel;
+use crate::{tunnel, update_check};
 
 const FINGERPRINT_HEX_CHARS: usize = 12;
 
@@ -106,10 +107,10 @@ pub fn gather_status(inputs: StatusInputs<'_>) -> StatusReport {
     let version = env!("CARGO_PKG_VERSION").to_string();
     let update_available = latest_version
         .as_ref()
-        .map(|latest| version_less_than(&version, latest));
+        .map(|latest| update_check::version_less_than(&version, latest));
 
     let api_key_fingerprint = api_key.as_deref().map(fingerprint_api_key);
-    let api_key_field = if include_api_key { api_key.clone() } else { None };
+    let api_key_field = if include_api_key { api_key } else { None };
 
     let agent_count = count_agents(&config_dir.join("agents"));
 
@@ -133,9 +134,17 @@ pub fn fingerprint_api_key(key: &str) -> String {
     let digest = ring::digest::digest(&ring::digest::SHA256, key.as_bytes());
     let mut out = String::with_capacity(FINGERPRINT_HEX_CHARS);
     for byte in digest.as_ref().iter().take(FINGERPRINT_HEX_CHARS / 2) {
-        out.push_str(&format!("{byte:02x}"));
+        let _ = write!(out, "{byte:02x}");
     }
     out
+}
+
+/// Resolves the running vestad binary path. `None` when the OS can't report
+/// it; trims the `" (deleted)"` suffix Linux appends after self-update.
+pub fn current_binary_path() -> Option<String> {
+    std::env::current_exe()
+        .ok()
+        .and_then(|path| path.to_str().map(|raw| raw.trim_end_matches(" (deleted)").to_string()))
 }
 
 fn count_agents(agents_dir: &Path) -> usize {
@@ -153,13 +162,6 @@ fn count_agents(agents_dir: &Path) -> usize {
                     .unwrap_or(false)
         })
         .count()
-}
-
-fn version_less_than(left: &str, right: &str) -> bool {
-    let parse = |raw: &str| -> Vec<u64> {
-        raw.split('.').filter_map(|part| part.parse().ok()).collect()
-    };
-    parse(left) < parse(right)
 }
 
 #[cfg(test)]

@@ -364,12 +364,6 @@ enum StatusPrintMode {
     TunnelOnly,
 }
 
-fn binary_path() -> Option<String> {
-    std::env::current_exe()
-        .ok()
-        .and_then(|path| path.to_str().map(|raw| raw.trim_end_matches(" (deleted)").to_string()))
-}
-
 fn read_https_port(config: &std::path::Path) -> Option<u16> {
     std::fs::read_to_string(config.join("port"))
         .ok()
@@ -394,7 +388,7 @@ fn build_status_report(show_secrets: bool) -> status::StatusReport {
         api_key,
         include_api_key: show_secrets,
         latest_version,
-        binary_path: binary_path(),
+        binary_path: status::current_binary_path(),
         systemd_state: systemd::active_state(),
         systemd_pid: systemd::main_pid(),
     })
