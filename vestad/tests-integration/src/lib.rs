@@ -19,6 +19,9 @@ pub static SERVER: LazyLock<TestServer> = LazyLock::new(|| {
 static TEST_USER_COUNTER: AtomicU32 = AtomicU32::new(0);
 static TEST_AGENT_COUNTER: AtomicU32 = AtomicU32::new(0);
 
+/// curl flags that absorb transient GitHub API/CDN flakes during integration tests.
+const CURL_RETRY_ARGS: &[&str] = &["--retry", "5", "--retry-all-errors", "--retry-delay", "2"];
+
 /// Generate a unique user name for test isolation. Includes PID for cross-run
 /// uniqueness and an atomic counter for intra-run uniqueness. This prevents
 /// tests from seeing each other's Docker containers (vestad scopes by
@@ -346,8 +349,9 @@ pub struct ReleasedVestad {
 
 pub fn download_latest_released_vestad() -> Result<ReleasedVestad, String> {
     let output = Command::new("curl")
+        .arg("-fsSL")
+        .args(CURL_RETRY_ARGS)
         .args([
-            "-fsSL",
             "-H",
             "Accept: application/vnd.github+json",
             "-H",
@@ -382,7 +386,9 @@ pub fn download_latest_released_vestad() -> Result<ReleasedVestad, String> {
     let tmpdir = tempfile::TempDir::new().map_err(|e| format!("tmpdir: {e}"))?;
     let archive_path = tmpdir.path().join("vestad.tar.gz");
     let output = Command::new("curl")
-        .args(["-fsSL", "-o"])
+        .arg("-fsSL")
+        .args(CURL_RETRY_ARGS)
+        .arg("-o")
         .arg(&archive_path)
         .arg(&url)
         .output()
