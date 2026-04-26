@@ -1,6 +1,7 @@
 """Enable Banking API client with RS256 JWT auth."""
 
 import json
+import os
 import sys
 import uuid
 from datetime import datetime, UTC, timedelta
@@ -13,7 +14,7 @@ import jwt as pyjwt
 BASE_URL = "https://api.enablebanking.com"
 CALLBACK_PORT = 7866
 CALLBACK_PATH = "/callback"
-REDIRECT_URL = f"https://localhost:{CALLBACK_PORT}{CALLBACK_PATH}"
+REDIRECT_URL = os.environ.get("FINANCE_REDIRECT_URL", f"https://localhost:{CALLBACK_PORT}{CALLBACK_PATH}")
 
 # Consent valid for 90 days by default
 CONSENT_DAYS = 90
