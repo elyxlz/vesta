@@ -57,11 +57,14 @@ You can change anything. If a fix requires code, write the code.
 
 Re-read the failing exchange and simulate: would the updated version have changed the outcome? If no or unclear, revise further or note it as unresolved. Don't mark something fixed if you can't convince yourself it would have helped.
 
-### 5. Upstream sync (MANDATORY)
+### 5. Upstream
 
-**This step is NOT optional.** Every dream must include upstream sync. Skipping it causes debt that compounds. Read the `upstream` skill and follow its pull/push workflow. The dream summary must list what was synced. If nothing, explain why.
+Two independent flows live here. Do whichever is warranted; skip if neither applies.
 
-**What to push upstream:**
+**Pull from upstream**: only sync against `$VESTA_UPSTREAM_REF` (a release tag, occasionally a feature branch). Do NOT compare against `origin/master`, do NOT report "N commits behind master". Master moves with in-progress maintainer work, not what your instance tracks. If your local is already at `$VESTA_UPSTREAM_REF`, this step is a no-op, note it and move on. Use the `upstream-sync` skill when an actual gap exists.
+
+**Push fixes upstream**: when a dream produces a generally useful improvement (skill fix, new rule, bug repro), file it via the `upstream-pr` skill. If nothing tonight is worth filing, skip.
+
 - Simple fixes (skill improvements, new rules, bug fixes): **PR + issue**. The issue describes the problem, the PR resolves it
 - Complex problems where the right solution isn't clear: **issue only**. Describe the pattern, leave the fix open
 
