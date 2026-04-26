@@ -42,9 +42,9 @@ In `~/agent/.gitignore`, list bulky/machine-local stuff: `*.bin`, `*.onnx`, `*.p
 ```bash
 git -C ~ fetch origin "$VESTA_UPSTREAM_REF"
 
-# read-tree warns "not up to date and were left despite sparse patterns" on
-# the initial sync. Filter and ignore.
-git -C ~ read-tree FETCH_HEAD 2>&1 | grep -v "not up to date" || true
+# read-tree prints sparse-pattern warnings on the initial sync. Drop stderr;
+# real errors will surface from the next git command.
+git -C ~ read-tree FETCH_HEAD 2>/dev/null || true
 git -C ~ sparse-checkout reapply
 
 # Mark bind-mounted paths skip-worktree so the read-only mounts don't look modified.
@@ -58,9 +58,10 @@ fi
 ```bash
 git -C ~ add agent/ --ignore-errors
 git -C ~ reset HEAD -- '*.bin' '*.onnx' '*.pt' '*.db' '*.sqlite' '*.mp3' '*.mp4' '*.wav' '*.zip' '*.tar.gz' '**/node_modules' '**/dist' '**/.venv' '**/__pycache__'
-# Drop accidental non-agent deletions. Note: `git reset HEAD --` always prints
-# "Unstaged changes after reset" even when the tree is clean. Informational.
-git -C ~ diff --cached --name-only --diff-filter=D | grep -v '^agent/' | grep -v '^\.gitignore$' | xargs -r git -C ~ reset HEAD -- 2>/dev/null || true
+# Drop accidental non-agent deletions so upstream's tree wins on merge. Note:
+# `git reset HEAD --` always prints "Unstaged changes after reset" even when
+# the tree is clean. Informational.
+git -C ~ diff --cached --name-only --diff-filter=D | grep -v '^agent/' | xargs -r git -C ~ reset HEAD -- 2>/dev/null || true
 git -C ~ status
 ```
 

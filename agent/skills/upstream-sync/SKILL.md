@@ -46,8 +46,8 @@ Core code (`agent/core/`, `agent/pyproject.toml`, `agent/uv.lock`) is managed by
    cd ~
    git add agent/ --ignore-errors
    git reset HEAD -- '*.bin' '*.onnx' '*.pt' '*.db' '*.sqlite' '*.mp3' '*.mp4' '*.wav' '*.zip' '*.tar.gz' '**/node_modules' '**/dist' '**/.venv' '**/__pycache__'
-   # Safety: ensure no non-agent files are accidentally staged for deletion
-   git diff --cached --name-only --diff-filter=D | grep -v '^agent/' | grep -v '^\.gitignore$' | xargs -r git reset HEAD -- 2>/dev/null || true
+   # Safety: drop any non-agent deletions so upstream's tree wins on merge.
+   git diff --cached --name-only --diff-filter=D | grep -v '^agent/' | xargs -r git reset HEAD -- 2>/dev/null || true
    git status
    ```
    Add untracked large files to `~/agent/.gitignore`. If there are staged changes, commit them with this exact message format:
@@ -102,6 +102,6 @@ v0.1.132 (upstream ref)
   * merge upstream
 ```
 
-View local customizations vs upstream: `git diff FETCH_HEAD..$AGENT_NAME -- agent/` (after a fetch).
+Diff vs upstream: `git -C ~ fetch origin "$VESTA_UPSTREAM_REF" && git -C ~ diff FETCH_HEAD -- agent/`. Default to working-tree-vs-upstream (one ref, no `..HEAD`) so uncommitted edits show up. Use `FETCH_HEAD...HEAD` only for the strict committed-PR view.
 
-For any "what's different between my branch and upstream" question (diffing, sync-readiness checks, drift reports), the baseline is `$VESTA_UPSTREAM_REF`, not `origin/master`. `origin/master` moves with every upstream commit, but the agent was deployed against a specific ref (a release tag in prod, a branch in dev) and that's what local changes should be measured against. Fetch that ref first (`git -C ~ fetch origin "$VESTA_UPSTREAM_REF"`) and diff against `FETCH_HEAD`. `origin/master` is only the right baseline for outbound contributions (upstream-pr worktrees).
+Baseline is always `$VESTA_UPSTREAM_REF`, not `origin/master`. `origin/master` is only correct for outbound `upstream-pr` worktrees.

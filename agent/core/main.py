@@ -99,7 +99,8 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
     message_queue: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()
 
     greeting_reason = "first_start" if first_start else restart_reason
-    if not await queue_greeting(message_queue, config=config, state=state, reason=greeting_reason):
+    setup_queued = await queue_greeting(message_queue, config=config, state=state, reason=greeting_reason)
+    if not setup_queued:
         state.first_setup_complete.set()
 
     processor_task = asyncio.create_task(message_processor(message_queue, state=state, config=config))
@@ -124,7 +125,9 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
         logger.init(f"WebSocket server started on port {config.ws_port}")
 
         # Greeting prompt drives app-chat, which needs WS reachable — queue after bind.
-        if first_start:
+        # Skip if setup never ran (e.g. no creds yet); resuming the dead session next boot
+        # would otherwise leave the greeting in front of the setup prompt.
+        if first_start and setup_queued:
             greeting_prompt = load_prompt("first_start_greeting", config)
             if greeting_prompt:
                 await message_queue.put((greeting_prompt.strip(), False))
