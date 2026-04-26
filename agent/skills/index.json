@@ -20,6 +20,10 @@
     "description": "Self-improvement and memory curation; used nightly by the dreamer or anytime."
   },
   {
+    "name": "essay-iter",
+    "description": "Iterate on any piece of academic writing through a four-reviewer review team per round. Reviewers check rubric alignment, in-distribution fit against reference essays, citation accuracy and style, and AI-text detection score. Loops draft and review until every reviewer is satisfied. Generic for coursework, dissertations, journal submissions, conference papers, or any academic writing where references, a rubric, or stylistic norms are available."
+  },
+  {
     "name": "exa",
     "description": "Use this skill when the user asks for \"exa\", \"exa search\", \"deep research\", \"web search with citations\", \"answer with sources\", \"find similar websites\", \"find similar sites\", or needs AI-powered web search, semantic search, or agentic research over the live web. Wraps the Exa AI API (search, contents, answer, findSimilar, research)."
   },
