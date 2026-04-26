@@ -13,7 +13,7 @@
   },
   {
     "name": "claude-code",
-    "description": "Delegate any serious coding task to Claude Code (Anthropic's autonomous coding CLI). Always use this for writing, refactoring, debugging, multi-file edits, building features, and code review. Only skip it for trivial one-line edits."
+    "description": "Delegate heavy coding tasks to Claude Code (Anthropic's autonomous coding CLI). Use for large multi-file refactors, building entire features or modules, complex debugging that needs extensive exploration, and substantial code reviews. For small edits, single-file changes, and quick fixes, use Vesta's own Read/Edit/Bash tools directly."
   },
   {
     "name": "dashboard",

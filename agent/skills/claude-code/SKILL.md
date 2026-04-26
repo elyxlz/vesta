@@ -1,24 +1,35 @@
 ---
 name: claude-code
-description: Delegate any serious coding task to Claude Code (Anthropic's autonomous coding CLI). Always use this for writing, refactoring, debugging, multi-file edits, building features, and code review. Only skip it for trivial one-line edits.
+description: Delegate heavy coding tasks to Claude Code (Anthropic's autonomous coding CLI). Use for large multi-file refactors, building entire features or modules, complex debugging that needs extensive exploration, and substantial code reviews. For small edits, single-file changes, and quick fixes, use Vesta's own Read/Edit/Bash tools directly.
 ---
 
 # Claude Code - CLI: `claude`
 
-The `claude` CLI is a separate autonomous coding agent with a coding-tuned system prompt and the right default tools. **Default to this whenever the user asks for coding work.** Shell out to it in print mode (`-p`); it runs to completion in one call and only the final result comes back, so Vesta's own context stays clean.
+The `claude` CLI is a separate autonomous coding agent with a coding-tuned system prompt and the right default tools. Reserve it for **heavy** coding work where its specialized prompt and extended autonomous behavior pay off. For everyday small edits, just use Vesta's own Read/Edit/Bash tools.
 
-## When to use
+When you do invoke it, shell out in print mode (`-p`). It runs to completion in one call and only the final result comes back, so Vesta's own context stays clean.
 
-**Use this for any serious coding task.** That includes:
+## When to use this skill
 
-- Writing new code, features, or whole modules
-- Refactoring or restructuring existing code
-- Debugging, investigating failures, fixing bugs
-- Multi-file changes or "do this across the repo"
-- Code review, security review, "look at this diff"
+Reach for `claude` when the task is genuinely big:
+
+- Building a whole feature or new module
+- Multi-file refactors or "do this across the repo"
+- Complex debugging that needs extensive exploration before a fix
+- Substantial code reviews or security reviews of large diffs
 - Anything that would otherwise burn many turns of Vesta's own loop reading and editing files
 
-The only time to skip this skill is for a trivial one-line edit where shelling out is more overhead than the change itself. When in doubt, prefer this skill.
+## When NOT to use this skill
+
+For everything smaller, do it yourself with Read/Edit/Bash:
+
+- Single-file edits and small tweaks
+- Adding or changing a handful of lines
+- Quick fixes, typos, renames
+- Reading and explaining code
+- Small additions to existing functions
+
+Shelling out has its own overhead (subprocess, JSON parsing, the agent's autonomous turns). For modest work, that overhead exceeds the value of Claude Code's specialized prompt.
 
 ## Basic call
 
