@@ -68,6 +68,10 @@
     "description": "OneDrive cloud files: access, mount, or manage via rclone."
   },
   {
+    "name": "philips-hue",
+    "description": "This skill should be used when the user asks about Philips Hue lights: turning lights on/off, dimming, changing colours, activating scenes, or controlling rooms."
+  },
+  {
     "name": "proactive-check",
     "description": "Periodic self-directed check-in; fires on interval to reach out or research."
   },
