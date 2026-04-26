@@ -74,9 +74,7 @@ v0.1.132 (upstream ref)
   * merge upstream
 ```
 
-Diff vs upstream: `git -C ~ fetch origin "$VESTA_UPSTREAM_REF" && git -C ~ diff FETCH_HEAD -- agent/`. Default to working-tree-vs-upstream (one ref, no `..HEAD`) so uncommitted edits show up. Use `FETCH_HEAD...HEAD` only for the strict committed-PR view.
-
-Baseline is always `$VESTA_UPSTREAM_REF`, not `origin/master`. `origin/master` is only correct for outbound `upstream-pr` worktrees.
+Diff vs upstream: `git -C ~ fetch origin "$VESTA_UPSTREAM_REF" && git -C ~ diff FETCH_HEAD -- agent/`. Default to working-tree-vs-upstream (one ref, no `..HEAD`) so uncommitted edits show up. Use `FETCH_HEAD...HEAD` only for the strict committed-PR view. (`origin/master` is only correct for outbound `upstream-pr` worktrees.)
 
 ## Troubleshooting
 

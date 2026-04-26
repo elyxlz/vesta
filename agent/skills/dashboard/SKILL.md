@@ -17,7 +17,7 @@ A React app embedded in the main Vesta app that serves as the user's **life HQ**
 
 Only start building once the user has answered. Don't assume. Ask.
 
-**Exception — dreamer auto-builds.** During a dream pass, the agent may add widgets without asking when a recurring user pattern (≥3 occurrences across recent dreamer summaries) clearly maps to one. Anything that kills the recurring ask is fair game — live data, hardcoded reference values, static checklists, links. Note additions in tonight's summary so the morning agent can surface the change.
+**Exception — dreamer auto-builds.** During a dream pass, the agent may add widgets without asking. See the `dream` skill for when and how.
 
 ## Project structure
 
