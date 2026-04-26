@@ -58,7 +58,7 @@ cargo test -p vesta-tests --test migrations  # upgrade path test
 ## Notes
 
 - Live tests skip when `~/.claude/.credentials.json` is missing. In CI, set the `CLAUDE_CREDENTIALS` secret to the contents of this file.
-- The live migration test (`tree.rs`) seeds an old-style `~/vesta/` layout before auth, then verifies the agent's first-start prompt (`migration.md` + `first_start_setup.md`) migrates it correctly. `wait_ready` returns only after both prompts finish processing.
+- The live migration test (`tree.rs`) seeds an old-style `~/vesta/` layout before auth, then verifies the agent's first-start prompt (`migration.md` + `first_start_setup.md`) migrates it correctly. `wait_until_alive` returns only after first-start setup has been processed; the agent binds its WS port as its readiness signal.
 - The upgrade test downloads the latest released `vestad` binary from GitHub at runtime.
 - All tests require a working local Docker daemon.
 - Multi-user and live tests use `unique_user()` for Docker container isolation across concurrent and repeated runs.

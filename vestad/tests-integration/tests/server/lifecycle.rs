@@ -12,7 +12,7 @@ fn create_and_list() {
 fn create_duplicate_fails() {
     let c = SERVER.client();
     let agent = TestAgent::create(&c, &unique_agent("dup")).unwrap();
-    let result = c.create_agent(&agent.name, false);
+    let result = c.create_agent(&agent.name);
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(err.contains("already exists"), "unexpected error: {err}");
@@ -47,7 +47,7 @@ fn start_stop_restart() {
 #[test]
 fn destroy_removes_agent() {
     let c = SERVER.client();
-    let name = c.create_agent(&unique_agent("destroy"), false).unwrap();
+    let name = c.create_agent(&unique_agent("destroy")).unwrap();
     c.destroy_agent(&name).unwrap();
     let st = c.agent_status(&name).unwrap();
     assert_eq!(st.status, "not_found");
@@ -56,7 +56,7 @@ fn destroy_removes_agent() {
 #[test]
 fn destroy_stops_running_agent() {
     let c = SERVER.client();
-    let name = c.create_agent(&unique_agent("destroy-run"), false).unwrap();
+    let name = c.create_agent(&unique_agent("destroy-run")).unwrap();
     inject_fake_token(&c, &name);
     c.start_agent(&name).unwrap();
     assert!(is_up(&c.agent_status(&name).unwrap().status));
@@ -96,7 +96,7 @@ fn creation_flow() {
     assert_ne!(c.agent_status(&agent.name).unwrap().status, "not_authenticated");
 
     c.restart_agent(&agent.name).unwrap();
-    c.wait_ready(&agent.name, 60).unwrap();
+    c.wait_until_alive(&agent.name, 60).unwrap();
 
     let st = c.agent_status(&agent.name).unwrap();
     assert_eq!(st.status, "alive");

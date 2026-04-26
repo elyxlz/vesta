@@ -1,6 +1,6 @@
-Use the Read tool on `/run/vestad-env` to pull your environment variables from vestad (e.g. ports, tunnel URLs, version) into context. Sourcing it in a shell is not enough -- the values need to be visible to you, not just exported in a subshell.
+Read `/run/vestad-env` so the values are in your context (Read tool, not bash).
 
-Run each command below if the service isn't already running (`screen -ls` to check). Then check your User State in MEMORY.md and reach out on their preferred channel. Match the tone to the situation. If it's a new day, greet them warmly. If you just restarted mid-conversation, keep it brief. If you crashed, mention it. If it's the middle of the night, wait until morning.
+`screen -ls` to see what's already up. Start anything below that isn't. Then check User State in MEMORY.md and reach out on their preferred channel. Match the moment: new day → warm; mid-convo restart → brief; crash → mention it; middle of the night → wait.
 
 ## Services
 ```bash

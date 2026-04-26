@@ -1,5 +1,6 @@
-use std::io::{BufRead, Write};
+use std::io::{BufRead, IsTerminal, Write};
 use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use ureq::http::Response;
 use ureq::Body;
 
@@ -316,8 +317,8 @@ impl Client {
             .map_err(|e| format!("parse error: {}", e))
     }
 
-    pub fn create_agent(&self, name: &str, build: bool, manage_agent_code: bool, timezone: Option<&str>) -> Result<String, String> {
-        let mut body = serde_json::json!({"name": name, "build": build, "manage_agent_code": manage_agent_code});
+    pub fn create_agent(&self, name: &str, manage_agent_code: bool, timezone: Option<&str>) -> Result<String, String> {
+        let mut body = serde_json::json!({"name": name, "manage_agent_code": manage_agent_code});
         if let Some(tz) = timezone {
             body["timezone"] = serde_json::json!(tz);
         }
@@ -383,12 +384,26 @@ impl Client {
         Ok(())
     }
 
-    pub fn wait_ready(&self, name: &str, timeout: u64) -> Result<(), String> {
-        self.get(&format!(
-            "/agents/{}/wait-ready?timeout={}",
-            name, timeout
-        ))?;
-        Ok(())
+    /// Poll `/agents/{name}` until `status == "alive"` or the deadline passes.
+    /// Terminal non-alive states (not_found, dead, stopped, not_authenticated)
+    /// surface as immediate errors; the agent cannot become ready from those.
+    pub fn wait_until_alive(&self, name: &str, timeout: Duration) -> Result<(), String> {
+        let deadline = Instant::now() + timeout;
+        let mut backoff = Duration::from_millis(200);
+        loop {
+            let status = self.agent_status(name)?;
+            match status.status.as_str() {
+                "alive" => return Ok(()),
+                "not_found" | "dead" | "stopped" | "not_authenticated" =>
+                    return Err(format!("{}: {}", name, status.status)),
+                _ => {}
+            }
+            if Instant::now() >= deadline {
+                return Err(format!("{}: timeout waiting for ready (status: {})", name, status.status));
+            }
+            std::thread::sleep(backoff);
+            backoff = (backoff * 2).min(Duration::from_secs(1));
+        }
     }
 
     pub fn start_auth(&self, name: &str) -> Result<AuthFlowResponse, String> {
@@ -513,6 +528,40 @@ fn consume_sse_log_stream(
 
 const CHAT_READ_TIMEOUT_MS: u64 = 100;
 
+const ANSI_RESET: &str = "\x1b[0m";
+const ANSI_TS: &str = "\x1b[90m";
+const ANSI_YOU: &str = "\x1b[1;36m";
+const ANSI_AGENT: &str = "\x1b[1;35m";
+
+fn time_from_ts(ts: &str) -> String {
+    if ts.len() >= 16 && ts.is_char_boundary(11) && ts.is_char_boundary(16) {
+        ts[11..16].to_string()
+    } else {
+        ts.to_string()
+    }
+}
+
+fn time_now_utc() -> String {
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    format!("{:02}:{:02}", (secs / 3600) % 24, (secs / 60) % 60)
+}
+
+fn render_line(time: &str, nick: &str, nick_color: &str, text: &str, color: bool) {
+    if color {
+        println!(
+            "{ts_c}[{time}]{r} {nc}<{nick}>{r} {text}",
+            ts_c = ANSI_TS,
+            r = ANSI_RESET,
+            nc = nick_color,
+        );
+    } else {
+        println!("[{}] <{}> {}", time, nick, text);
+    }
+}
+
 /// Connect to Chat WebSocket and run interactive chat (CLI-only).
 pub fn chat(client: &Client, name: &str) -> Result<(), String> {
     let url = format!(
@@ -535,6 +584,8 @@ pub fn chat(client: &Client, name: &str) -> Result<(), String> {
     let (mut socket, _) =
         tungstenite::client_tls_with_config(url, tcp, None, Some(connector))
             .map_err(|e| format!("ws connect failed: {}", e))?;
+
+    let color = std::io::stdout().is_terminal();
 
     eprintln!("connected to {}. type a message and press enter.", name);
 
@@ -560,6 +611,11 @@ pub fn chat(client: &Client, name: &str) -> Result<(), String> {
     loop {
         if let Ok(input) = rx.try_recv() {
             if !input.is_empty() {
+                if color {
+                    print!("\x1b[1A\x1b[2K\r");
+                }
+                render_line(&time_now_utc(), "you", ANSI_YOU, &input, color);
+                std::io::stdout().flush().ok();
                 let msg = serde_json::json!({"type": "message", "text": input});
                 if socket
                     .send(tungstenite::Message::Text(msg.to_string().into()))
@@ -576,16 +632,23 @@ pub fn chat(client: &Client, name: &str) -> Result<(), String> {
                     match msg["type"].as_str() {
                         Some("chat") => {
                             if let Some(content) = msg["text"].as_str() {
-                                println!("{}", content);
+                                let time = time_from_ts(msg["ts"].as_str().unwrap_or(""));
+                                render_line(&time, name, ANSI_AGENT, content.trim_end(), color);
                                 std::io::stdout().flush().ok();
                             }
                         }
                         Some("history") => {
                             if let Some(events) = msg["events"].as_array() {
                                 for event in events {
-                                    if event["type"].as_str() == Some("chat") {
+                                    let event_type = event["type"].as_str().unwrap_or("");
+                                    let time = time_from_ts(event["ts"].as_str().unwrap_or(""));
+                                    if event_type == "user" {
                                         if let Some(content) = event["text"].as_str() {
-                                            println!("{}", content);
+                                            render_line(&time, "you", ANSI_YOU, content.trim_end(), color);
+                                        }
+                                    } else if event_type == "chat" {
+                                        if let Some(content) = event["text"].as_str() {
+                                            render_line(&time, name, ANSI_AGENT, content.trim_end(), color);
                                         }
                                     }
                                 }

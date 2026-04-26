@@ -5,6 +5,8 @@ description: Upstream elyxlz/vesta GitHub ops: branches, PRs, issues, CI, API.
 
 # Upstream PR
 
+Push contributions out. To pull updates in, see [upstream-sync](../upstream-sync/SKILL.md).
+
 Contribute improvements back to `elyxlz/vesta`. Authentication is handled by the `vesta-upstream` GitHub App -- no personal tokens needed.
 
 ## Attribution -- always required

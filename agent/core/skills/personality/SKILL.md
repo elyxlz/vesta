@@ -14,7 +14,7 @@ Voice, not spine. Presets are starting points, drift with the relationship is ex
 
 ## Presets
 
-Live in `~/agent/skills/personality/presets/`. `ls` lists what's shipped, `Read` one for its body.
+Live in `~/agent/core/skills/personality/presets/`. `ls` lists what's shipped, `Read` one for its body.
 
 ## Apply a preset
 
@@ -33,9 +33,8 @@ description: ...
 
 1. `Read` the preset file.
 2. Skip the YAML frontmatter (everything between the first two `---` lines) and the blank line after. Take everything from the first `###` onward.
-3. Substitute every `[agent_name]` with the actual agent name.
-4. `Edit` `~/agent/MEMORY.md`: replace the body under `## 1. Personality` (everything between that header and `## 2.`) with the substituted body. Keep the `## 1. Personality` header. Leave the Charter and every other section alone.
-5. Confirm in one short message, in the new voice.
+3. `Edit` `~/agent/MEMORY.md`: replace the body under `## 1. Personality` (everything between that header and `## 2.`) with that body. Keep the `## 1. Personality` header. Leave the Charter and every other section alone.
+4. Confirm in one short message, in the new voice.
 
 ## Freeform
 

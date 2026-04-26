@@ -11,6 +11,8 @@ use common::{fetch_latest_release_tag, version_less_than};
 const VERSION_CACHE_TTL_SECS: u64 = 3600;
 const UPDATE_CHECK_TIMEOUT_MS: u64 = 100;
 const UPDATE_CHECK_POLL_MS: u64 = 10;
+// Pads for first-start setup (git fetch, npm install, vite build, etc.).
+const START_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(900);
 
 fn format_size(bytes: u64) -> String {
     if bytes >= 1_000_000_000 {
@@ -62,9 +64,6 @@ struct Cli {
 enum Command {
     /// Create agent, start it, and authenticate Claude
     Setup {
-        /// Build the image locally instead of pulling
-        #[arg(long)]
-        build: bool,
         /// Skip confirmation prompts
         #[arg(long, short)]
         yes: bool,
@@ -77,9 +76,6 @@ enum Command {
     },
     /// Create an agent container (without starting or authenticating)
     Create {
-        /// Build the image locally instead of pulling
-        #[arg(long)]
-        build: bool,
         /// Agent name (prompted interactively if omitted)
         #[arg(long)]
         name: Option<String>,
@@ -500,7 +496,7 @@ fn run(cli: Cli) {
     let token_ref = cli.token.as_deref();
 
     match command {
-        Command::Setup { build, yes, name, no_manage_core_code } => {
+        Command::Setup { yes, name, no_manage_core_code } => {
             let c = get_client(host_ref, token_ref);
 
             let name = name
@@ -508,7 +504,7 @@ fn run(cli: Cli) {
                 .unwrap_or_else(prompt_name);
 
             let timezone = detect_timezone();
-            match c.create_agent(&name, build, !no_manage_core_code, timezone.as_deref()) {
+            match c.create_agent(&name, !no_manage_core_code, timezone.as_deref()) {
                 Ok(name) => eprintln!("created agent '{}'", name),
                 Err(e) if e.contains("already exists") && yes => {
                     eprintln!("agent '{}' already exists, continuing...", name);
@@ -521,17 +517,20 @@ fn run(cli: Cli) {
 
             eprintln!("authenticating claude...");
             authenticate_agent(&c, &name);
+            eprintln!("finalizing first-time setup (this can take several minutes the first time)...");
+            c.wait_until_alive(&name, START_READY_TIMEOUT)
+                .unwrap_or_else(|e| platform::die(&e));
             eprintln!("agent '{}' is ready.", name);
 
         }
 
-        Command::Create { build, name, no_manage_core_code } => {
+        Command::Create { name, no_manage_core_code } => {
             let c = get_client(host_ref, token_ref);
             let name = name
                 .map(|name| name.trim().to_string())
                 .unwrap_or_else(prompt_name);
             let timezone = detect_timezone();
-            let name = c.create_agent(&name, build, !no_manage_core_code, timezone.as_deref()).unwrap_or_else(|e| platform::die(&e));
+            let name = c.create_agent(&name, !no_manage_core_code, timezone.as_deref()).unwrap_or_else(|e| platform::die(&e));
             eprintln!("created (run 'vesta auth {}' to authenticate)", name);
         }
 
@@ -554,7 +553,9 @@ fn run(cli: Cli) {
             match name {
                 Some(name) => {
                     c.start_agent(&name).unwrap_or_else(|e| platform::die(&e));
-                    eprintln!("{}: started", name);
+                    c.wait_until_alive(&name, START_READY_TIMEOUT)
+                        .unwrap_or_else(|e| platform::die(&e));
+                    eprintln!("{}: ready", name);
                 }
                 None => {
                     let results = c.start_all().unwrap_or_else(|e| platform::die(&e));
@@ -562,14 +563,17 @@ fn run(cli: Cli) {
                         eprintln!("no agents found. create one with: vesta setup");
                     } else {
                         for r in &results {
-                            if r.ok {
-                                eprintln!("{}: started", r.name);
-                            } else {
+                            if !r.ok {
                                 eprintln!(
                                     "{}: {}",
                                     r.name,
                                     r.error.as_deref().unwrap_or("failed")
                                 );
+                                continue;
+                            }
+                            match c.wait_until_alive(&r.name, START_READY_TIMEOUT) {
+                                Ok(()) => eprintln!("{}: ready", r.name),
+                                Err(e) => eprintln!("{}: {}", r.name, e),
                             }
                         }
                     }
@@ -790,7 +794,8 @@ fn run(cli: Cli) {
 
         Command::WaitReady { name, timeout } => {
             let c = get_client(host_ref, token_ref);
-            c.wait_ready(&name, timeout).unwrap_or_else(|e| platform::die(&e));
+            c.wait_until_alive(&name, std::time::Duration::from_secs(timeout))
+                .unwrap_or_else(|e| platform::die(&e));
             eprintln!("{}: ready", name);
         }
 

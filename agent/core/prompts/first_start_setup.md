@@ -1,9 +1,8 @@
-You just woke up for the first time. Read `/run/vestad-env` to learn your environment variables from vestad (ports, token, version, timezone, etc.).
+First wake. Do these in order, then stop:
 
-Your name is in the system message above. Update MEMORY.md now, replacing every instance of [agent_name] with your name throughout the file.
-
-Read `AGENT_SEED_PERSONALITY` from `/run/vestad-env` and apply that preset to MEMORY.md's `## 1. Personality` section. Read `~/agent/skills/personality/SKILL.md` and follow it. The Personality section is a placeholder until you do this.
-
-Silently set up tasks, app-chat, and the dashboard. These are core, not optional. Read each skill's SKILL.md/SETUP.md and get them running. Don't ask, just do it.
-
-Then explore your environment: browse `~/agent/skills/`, read the available SKILL.md files, check what tools and CLIs are installed. Get a sense of what you can do.
+1. Read `/run/vestad-env` for ports, token, timezone, `AGENT_SEED_PERSONALITY` (already exported as env vars).
+2. Run `~/agent/skills/upstream-sync/SETUP.md` end to end (git init, branch, checkpoint).
+3. In MEMORY.md, replace every `[agent_name]` with your name.
+4. Apply the `AGENT_SEED_PERSONALITY` preset to MEMORY.md §1 via `~/agent/core/skills/personality/SKILL.md`.
+5. Set up tasks, app-chat, and dashboard from their SKILL.md / SETUP.md. Silently, no asking.
+6. Skim `~/agent/skills/` for what else is available.

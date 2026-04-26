@@ -1,9 +1,14 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+const CLOUDFLARED_DOWNLOAD_BASE: &str =
+    "https://github.com/cloudflare/cloudflared/releases/latest/download";
+
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=VESTAD_SKIP_APP_BUILD");
+    println!("cargo:rerun-if-env-changed=VESTAD_SKIP_CLOUDFLARED");
+    println!("cargo:rustc-check-cfg=cfg(cloudflared_vendored)");
 
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_root = manifest_dir
@@ -11,6 +16,8 @@ fn main() {
         .expect("vestad/Cargo.toml has a parent");
     let npm_root = repo_root.join("apps");
     let web_dir = npm_root.join("web");
+
+    vendor_cloudflared(&manifest_dir);
 
     for rel in [
         "src",
@@ -75,4 +82,40 @@ fn run_npm(cwd: &Path, args: &[&str]) {
             cwd.display(),
         ),
     }
+}
+
+fn vendor_cloudflared(manifest_dir: &Path) {
+    if std::env::var_os("VESTAD_SKIP_CLOUDFLARED").is_some() {
+        return;
+    }
+
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    if target_os != "linux" {
+        return;
+    }
+
+    let arch = match std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default().as_str() {
+        "x86_64" => "amd64",
+        "aarch64" => "arm64",
+        _ => return,
+    };
+
+    let vendored_dir = manifest_dir.join("vendored");
+    let dest = vendored_dir.join("cloudflared");
+    println!("cargo:rerun-if-changed={}", dest.display());
+
+    if !dest.exists() {
+        std::fs::create_dir_all(&vendored_dir)
+            .expect("failed to create vendored dir");
+        let url = format!("{}/cloudflared-linux-{}", CLOUDFLARED_DOWNLOAD_BASE, arch);
+        let status = Command::new("curl")
+            .args(["-fsSL", "-o", dest.to_str().unwrap(), &url])
+            .status()
+            .expect("failed to spawn curl while vendoring cloudflared (set VESTAD_SKIP_CLOUDFLARED=1 to skip)");
+        if !status.success() {
+            panic!("failed to download cloudflared from {url} (set VESTAD_SKIP_CLOUDFLARED=1 to skip)");
+        }
+    }
+
+    println!("cargo:rustc-cfg=cloudflared_vendored");
 }

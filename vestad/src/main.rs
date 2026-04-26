@@ -10,8 +10,8 @@ mod agent_status;
 mod app_static;
 mod auth;
 mod backup;
+mod cloudflared_embed;
 mod control_ws;
-mod migrations;
 mod docker;
 mod jwt;
 mod paths;
@@ -253,19 +253,19 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool) {
             let (port, http_listener) = bind_http_atomically(port, &config).await;
             serve::write_port_file(&config, port);
 
-            let tunnel_url = if !no_tunnel {
-                match tunnel::ensure_tunnel(&config) {
+            let tunnel_url = if no_tunnel {
+                None
+            } else {
+                match tunnel::ensure_cloudflared(&config).and_then(|_| tunnel::ensure_tunnel(&config)) {
                     Ok(tc) => Some(format!("https://{}", tc.hostname)),
                     Err(e) => {
                         tracing::warn!("tunnel setup failed: {e}, running without tunnel");
                         None
                     }
                 }
-            } else {
-                None
             };
 
-            serve::update_agent_env_files(&config, port, tunnel_url.as_deref());
+            docker::update_all_agent_env_files(&config.join("agents"), port, tunnel_url.as_deref());
             let local_url = format!("http://localhost:{}", port + 1);
             let user = std::env::var("USER").or_else(|_| std::env::var("LOGNAME")).unwrap_or_else(|_| "unknown".into());
             eprintln!();
@@ -501,7 +501,6 @@ fn main() {
                             agents_dir: config.join("agents"),
                             vestad_port,
                             vestad_tunnel,
-                            upstream_ref: None,
                         };
                         agent_code::ensure_agent_code(&config)
                             .unwrap_or_else(|e| die(format!("failed to populate agent code: {e}")));

@@ -84,14 +84,6 @@ export async function deleteBackup(
   );
 }
 
-export async function waitForReady(
-  name: string,
-  timeout?: number,
-): Promise<void> {
-  const t = timeout ?? 30;
-  await apiJson(`/agents/${encodeURIComponent(name)}/wait-ready?timeout=${t}`);
-}
-
 export interface RateLimit {
   utilization: number | null;
   resets_at: string | null;

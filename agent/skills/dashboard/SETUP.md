@@ -2,8 +2,9 @@
 
 ## 1. Install dependencies
 
+`node` and `npm` ship in the base image.
+
 ```bash
-which node || (curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y nodejs)
 cd ~/agent/skills/dashboard/app && npm install
 ```
 

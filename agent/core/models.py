@@ -2,7 +2,6 @@ import asyncio
 import collections
 import dataclasses as dc
 import datetime as dt
-import pathlib as pl
 import time
 
 import pydantic as pyd
@@ -16,6 +15,7 @@ __all__ = ["State", "Notification", "VestaConfig"]
 CLEAN_RESTART = "restart — clean restart"
 NIGHTLY_RESTART = "nightly — dreamer ran, session cleared for fresh context"
 CRASH_RESTART = "crash — restarted after unexpected exit"
+FIRST_START_REASON = "first start"
 PROCESSOR_CANCELLED_RESTART = "crash — processor cancelled unexpectedly"
 PROCESSOR_SILENT_EXIT_RESTART = "crash — processor exited silently"
 PROCESSING_CANCELLED_ERROR = "error — processing cancelled"
@@ -34,6 +34,7 @@ class State:
     client: ClaudeSDKClient | None = None
     shutdown_event: asyncio.Event = dc.field(default_factory=asyncio.Event)
     graceful_shutdown: asyncio.Event = dc.field(default_factory=asyncio.Event)
+    first_setup_complete: asyncio.Event = dc.field(default_factory=asyncio.Event)
     shutdown_count: int = 0
     session_id: str | None = None
     restart_reason: str | None = None
@@ -42,7 +43,6 @@ class State:
     interrupt_event: asyncio.Event | None = None
     event_bus: EventBus = dc.field(default_factory=EventBus)
     stderr_buffer: collections.deque[str] = dc.field(default_factory=lambda: collections.deque(maxlen=50))
-    pending_migration_flags: collections.deque[pl.Path] = dc.field(default_factory=collections.deque)
 
     # SDK activity tracking for hang detection
     last_sdk_activity: float = dc.field(default_factory=time.monotonic)

@@ -22,30 +22,11 @@ const API_KEY_BYTES: usize = 32;
 pub(crate) const PROXY_MAX_BODY_BYTES: usize = 10 * 1024 * 1024; // 10 MB
 
 const RESERVED_SERVICE_NAMES: &[&str] = &[
-    "start", "stop", "restart", "destroy", "rebuild", "wait-ready",
+    "start", "stop", "restart", "destroy", "rebuild",
     "auth", "logs", "tree", "backups", "settings", "services",
 ];
 const DEFAULT_LOG_TAIL_LINES: u64 = 500;
 const AUTO_BACKUP_CHECK_INTERVAL_SECS: u64 = 3600;
-
-fn detect_upstream_ref() -> Option<String> {
-    if cfg!(debug_assertions) {
-        let output = std::process::Command::new("git")
-            .args(["rev-parse", "--abbrev-ref", "HEAD"])
-            .output()
-            .ok()?;
-        if !output.status.success() {
-            return None;
-        }
-        let branch = String::from_utf8(output.stdout).ok()?.trim().to_string();
-        if branch.is_empty() || branch == "HEAD" {
-            return None;
-        }
-        Some(branch)
-    } else {
-        Some(format!("v{}", env!("CARGO_PKG_VERSION")))
-    }
-}
 
 // --- TLS cert generation ---
 
@@ -561,23 +542,6 @@ async fn rebuild_agent_handler(
     Ok(ok_json())
 }
 
-#[derive(Deserialize)]
-struct WaitReadyQuery {
-    timeout: Option<u64>,
-}
-
-async fn wait_ready_handler(
-    State(state): State<SharedState>,
-    Path(name): Path<String>,
-    Query(query): Query<WaitReadyQuery>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let timeout = query.timeout.unwrap_or(30);
-    docker::wait_ready_async(&state.docker, &name, timeout, &state.env_config.agents_dir)
-        .await
-        .map_err(|e| err_response(StatusCode::SERVICE_UNAVAILABLE, &e.to_string()))?;
-    Ok(ok_json())
-}
-
 // --- Auth endpoints ---
 
 #[derive(Serialize)]
@@ -651,7 +615,7 @@ async fn complete_auth_handler(
         .map_err(map_docker_err)?;
 
     // Restart the agent so it picks up the new credentials.
-    // The client is responsible for polling wait-ready afterwards.
+    // Clients poll /status to detect when the agent becomes alive.
     let lock = state.agent_lock(&name).await;
     let _guard = lock.write().await;
 
@@ -922,10 +886,7 @@ fn load_settings() -> Settings {
         }
     }
 
-    let mut settings = Settings::default();
-    if let Some(services) = crate::migrations::migrate_legacy_services_json(&path) {
-        settings.services = services;
-    }
+    let settings = Settings::default();
 
     // Always write settings to disk so users can edit the file
     save_settings(&settings);
@@ -1422,14 +1383,6 @@ pub fn write_port_file(config_dir: &std::path::Path, port: u16) {
     std::fs::write(&port_path, port.to_string()).ok();
 }
 
-/// Update VESTAD_PORT, VESTAD_TUNNEL, and VESTA_UPSTREAM_REF in all existing per-agent env files.
-/// Called at vestad startup so containers pick up the new values on restart.
-pub fn update_agent_env_files(config_dir: &std::path::Path, port: u16, tunnel_url: Option<&str>) {
-    let agents_dir = config_dir.join("agents");
-    let upstream_ref = detect_upstream_ref();
-    docker::update_all_agent_env_files(&agents_dir, port, tunnel_url, upstream_ref.as_deref());
-}
-
 // --- PID file ---
 
 pub fn acquire_pid_lock(config_dir: &std::path::Path) -> Result<std::fs::File, String> {
@@ -1486,7 +1439,6 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/restart", post(restart_agent_handler))
         .route("/agents/{name}/destroy", post(destroy_agent_handler))
         .route("/agents/{name}/rebuild", post(rebuild_agent_handler))
-        .route("/agents/{name}/wait-ready", get(wait_ready_handler))
         .route("/agents/{name}/auth", post(start_auth_handler))
         .route("/agents/{name}/auth/code", post(complete_auth_handler))
         .route("/agents/{name}/auth/token", post(inject_token_handler))
@@ -1505,7 +1457,6 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/settings/auto-backup", get(get_auto_backup_handler))
         .route("/settings/auto-backup", axum::routing::put(set_auto_backup_handler))
         .route("/ws", get(control_ws::control_ws_handler))
-        .route("/agents/{name}/services", get(list_services_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::auth_middleware,
@@ -1528,10 +1479,20 @@ pub fn build_router(state: SharedState) -> Router {
         ))
         .with_state(state.clone());
 
+    // Service listing: read-only, accepts either API key or the agent's token
+    let agents_services_read = Router::new()
+        .route("/agents/{name}/services", get(list_services_handler))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::auth_middleware_api_or_agent_token,
+        ))
+        .with_state(state.clone());
+
     Router::new()
         .merge(vestad_public)
         .merge(vestad_protected)
         .merge(agents_services)
+        .merge(agents_services_read)
         .merge(agents_proxy)
         .merge(crate::app_static::router())
         .layer(
@@ -1746,7 +1707,6 @@ pub async fn run_server(cfg: ServerConfig) {
         agents_dir,
         vestad_port: port,
         vestad_tunnel: tunnel_url.clone(),
-        upstream_ref: detect_upstream_ref(),
     };
     if let Err(e) = docker::validate_config_dir(&env_config) {
         tracing::error!(error = %e, "config directory validation failed — aborting startup");

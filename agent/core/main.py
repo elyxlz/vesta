@@ -15,6 +15,7 @@ from . import models as vm
 from . import logger
 from .api import start_ws_server
 from .client import format_crash_detail
+from .helpers import load_prompt
 from .loops import message_processor, monitor_loop, queue_greeting
 
 SignalHandler = tp.Callable[[int, types.FrameType | None], None]
@@ -70,8 +71,7 @@ def _make_signal_handler(state: vm.State, *, allow_force_exit: bool = False) -> 
 
 
 def handle_processor_done(task: asyncio.Task[None], *, state: vm.State) -> None:
-    """Done-callback for the message_processor task. Guarantees restart_reason + graceful_shutdown
-    are set on any unexpected termination, so the agent never wedges silently."""
+    """Set restart_reason + graceful_shutdown on unexpected termination so the agent never wedges silently."""
     if state.shutdown_event.is_set() or state.graceful_shutdown.is_set():
         return
     if task.cancelled():
@@ -98,8 +98,10 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
 
     message_queue: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()
 
-    ws_runner = await start_ws_server(state.event_bus, config)
-    logger.init(f"WebSocket server started on port {config.ws_port}")
+    greeting_reason = "first_start" if first_start else restart_reason
+    setup_queued = await queue_greeting(message_queue, config=config, state=state, reason=greeting_reason)
+    if not setup_queued:
+        state.first_setup_complete.set()
 
     processor_task = asyncio.create_task(message_processor(message_queue, state=state, config=config))
     processor_task.add_done_callback(lambda t: handle_processor_done(t, state=state))
@@ -110,8 +112,26 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
         asyncio.create_task(monitor_loop(message_queue, state=state, config=config)),
     ]
 
-    greeting_reason = "first_start" if first_start else restart_reason
-    await queue_greeting(message_queue, config=config, state=state, reason=greeting_reason)
+    # WS bind is the readiness signal; first-start defers it until setup is processed.
+    ready_task = asyncio.create_task(state.first_setup_complete.wait())
+    shutdown_task = asyncio.create_task(state.graceful_shutdown.wait())
+    _, pending = await asyncio.wait([ready_task, shutdown_task], return_when=asyncio.FIRST_COMPLETED)
+    for t in pending:
+        t.cancel()
+
+    ws_runner = None
+    if not state.graceful_shutdown.is_set():
+        ws_runner = await start_ws_server(state.event_bus, config)
+        logger.init(f"WebSocket server started on port {config.ws_port}")
+
+        # Greeting prompt drives app-chat, which needs WS reachable. Queue after bind.
+        # Skip if setup never ran (e.g. no creds yet); resuming the dead session next boot
+        # would otherwise leave the greeting in front of the setup prompt.
+        if first_start and setup_queued:
+            greeting_prompt = load_prompt("first_start_greeting", config)
+            if greeting_prompt:
+                await message_queue.put((greeting_prompt.strip(), False))
+                logger.startup("Queued first_start greeting")
 
     try:
         await state.graceful_shutdown.wait()
@@ -135,7 +155,8 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
     if pending:
         logger.shutdown("Shutdown timed out (SDK cleanup hung), forcing exit")
         os._exit(1)
-    await ws_runner.cleanup()
+    if ws_runner is not None:
+        await ws_runner.cleanup()
     state.event_bus.close()
     logger.shutdown("sweet dreams!")
 
@@ -199,10 +220,12 @@ async def async_main() -> None:
     logger.setup(config.logs_dir, log_level=config.log_level)
     logger.init(f"{config.agent_name} starting")
 
-    restart_reason = _read_restart_reason(config)
     initial_state = init_state(config=config)
     first_start_marker = config.data_dir / "first_start_done"
     first_start = not first_start_marker.exists()
+    # On a never-run agent the restart_reason file is missing for innocent
+    # reasons; defaulting to CRASH_RESTART would log a misleading "crashed".
+    restart_reason = vm.FIRST_START_REASON if first_start else _read_restart_reason(config)
     logger.init(f"Starting main loop ({restart_reason})...")
     await run_vesta(config, state=initial_state, first_start=first_start, restart_reason=restart_reason)
 

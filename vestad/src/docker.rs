@@ -53,14 +53,12 @@ pub const VESTA_LOG_PATH: &str = "/root/agent/logs/vesta.log";
 pub const LOCAL_IMAGE_TAG: &str = "vesta:local";
 const MAX_DOCKERFILE_SEARCH_DEPTH: usize = 5;
 pub const CREDENTIALS_PATH: &str = "/root/.claude/.credentials.json";
-pub const AGENT_READY_MARKER_PATH: &str = "/root/agent/data/agent_ready";
 const CLAUDE_JSON_PATH: &str = "/root/.claude.json";
 const AGENT_TOKEN_BYTES: usize = 32;
 const PORT_ALLOC_RETRIES: usize = 10;
 const NAME_MAX_LEN: usize = 32;
 const DOCKER_DAEMON_PING_RETRIES: usize = 10;
 const AGENT_READY_TIMEOUT_MS: u64 = 200;
-const WAIT_READY_POLL_MS: u64 = 500;
 const DEFAULT_TOKEN_EXPIRES_SECS: u64 = 28800;
 const LABEL_USER: &str = "vesta.user";
 const LABEL_AGENT_NAME: &str = "vesta.agent_name";
@@ -80,13 +78,14 @@ const AGENT_ENTRYPOINT_STEPS: &[&str] = &[
     "export PATH=\"/root/.local/bin:/root/.claude/local/bin:$PATH\"",
     ". /run/vestad-env",
     ". ~/.bashrc || true",
-    "git -C ~ config user.name \"$AGENT_NAME\"",
-    "git -C ~ config user.email \"$AGENT_NAME@vesta\"",
     "uv sync --frozen --project /root/agent",
-    "test -L ~/.claude/skills || { mkdir -p ~/.claude && ln -sfn ../agent/skills ~/.claude/skills; }",
-    "if ! git -C ~ rev-parse --verify \"$AGENT_NAME\" 2>/dev/null; then git -C ~ checkout -b \"$AGENT_NAME\" && (git -C ~ fetch origin \"$VESTA_UPSTREAM_REF\" && git -C ~ merge FETCH_HEAD --no-edit --allow-unrelated-histories || true); else git -C ~ checkout \"$AGENT_NAME\"; fi",
-    "git -C ~ add agent/ .gitignore --ignore-errors && (git -C ~ diff --cached --quiet || git -C ~ commit -m \"vesta v$(grep '^version' /root/agent/pyproject.toml | head -1 | cut -d'\"' -f2)\")",
-    "mount | grep -q '/root/agent/core ' && git -C ~ update-index --skip-worktree agent/core agent/pyproject.toml agent/uv.lock 2>/dev/null || true",
+    // ~/.claude/skills is a real directory of per-skill symlinks. Both
+    // /root/agent/skills/ and /root/agent/core/skills/ are flattened in;
+    // core entries are linked last so they win any name collision. Reset
+    // every boot so uninstalled skills don't leave dangling symlinks.
+    "rm -rf ~/.claude/skills && mkdir -p ~/.claude/skills",
+    "for d in /root/agent/skills/*/SKILL.md /root/agent/core/skills/*/SKILL.md; do [ -f \"$d\" ] || continue; s=$(dirname \"$d\"); ln -sfn \"$s\" ~/.claude/skills/$(basename \"$s\"); done",
+    "test -f ~/.claude/settings.json || printf '{\"permissions\":{\"allow\":[]}}\\n' > ~/.claude/settings.json",
     "cd /root/agent && exec uv run --frozen python -m core.main",
 ];
 
@@ -184,10 +183,13 @@ pub fn container_name(name: &str) -> String {
     format!("vesta-{}-{}", current_user(), name)
 }
 
-// Modern containers carry `vesta.agent_name`, so this fallback only exists for
-// older managed containers that predate that label.
+/// Strip the `vesta-{user}-` prefix from a container name, falling back to the
+/// raw name if it does not match. Modern containers carry the `vesta.agent_name`
+/// label and prefer that; this is only used as a fallback in error paths.
 pub fn name_from_cname(cname: &str) -> String {
-    crate::migrations::legacy_agent_name_from_container_name(cname, &current_user())
+    let user = current_user();
+    let user_prefix = format!("vesta-{user}-");
+    cname.strip_prefix(&user_prefix).unwrap_or(cname).to_string()
 }
 
 pub fn normalize_name(raw: &str) -> String {
@@ -328,7 +330,7 @@ pub async fn combined_status(docker: &Docker, cname: &str, info: &ContainerInfo)
             if !is_authenticated(docker, cname).await {
                 return AgentStatus::NotAuthenticated;
             }
-            if info.port.is_some_and(is_agent_ready_sync) {
+            if info.port.is_some_and(is_agent_ready) {
                 AgentStatus::Alive
             } else {
                 AgentStatus::Starting
@@ -409,19 +411,13 @@ pub async fn is_authenticated(docker: &Docker, cname: &str) -> bool {
     expires_at > crate::time_utils::now_epoch_millis() as u64
 }
 
-/// Sync TCP-only readiness check (no marker file).
-pub fn is_agent_ready_sync(port: u16) -> bool {
+/// Readiness check: the agent binds its WS port only once it's ready to serve requests.
+pub fn is_agent_ready(port: u16) -> bool {
     std::net::TcpStream::connect_timeout(
         &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
         std::time::Duration::from_millis(AGENT_READY_TIMEOUT_MS),
     )
     .is_ok()
-}
-
-/// Full async readiness check: TCP + marker file.
-pub async fn is_agent_ready(docker: &Docker, port: u16, cname: &str) -> bool {
-    let tcp_ok = is_agent_ready_sync(port);
-    tcp_ok && read_container_file(docker, cname, AGENT_READY_MARKER_PATH).await.is_some()
 }
 
 pub async fn ensure_exists(docker: &Docker, cname: &str) -> Result<(), DockerError> {
@@ -782,7 +778,30 @@ pub struct AgentEnvConfig {
     pub agents_dir: std::path::PathBuf,
     pub vestad_port: u16,
     pub vestad_tunnel: Option<String>,
-    pub upstream_ref: Option<String>,
+}
+
+/// Compute the upstream ref the agent should sync against.
+///
+/// Dev builds: vestad's current git branch, re-evaluated on every call so that
+/// branch renames / checkouts take effect without a vestad restart.
+/// Release builds: the binary's version tag (`vX.Y.Z`).
+pub fn detect_upstream_ref() -> Option<String> {
+    if cfg!(debug_assertions) {
+        let output = std::process::Command::new("git")
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let branch = String::from_utf8(output.stdout).ok()?.trim().to_string();
+        if branch.is_empty() || branch == "HEAD" {
+            return None;
+        }
+        Some(branch)
+    } else {
+        Some(format!("v{}", env!("CARGO_PKG_VERSION")))
+    }
 }
 
 /// Validate that the config and agents directories exist, are writable, and have
@@ -856,9 +875,12 @@ pub fn write_agent_env_file(
         }
     };
     append_optional("VESTAD_TUNNEL", env_config.vestad_tunnel.as_deref());
-    append_optional("VESTA_UPSTREAM_REF", env_config.upstream_ref.as_deref());
+    append_optional("VESTA_UPSTREAM_REF", detect_upstream_ref().as_deref());
     append_optional("TZ", timezone);
     append_optional("AGENT_SEED_PERSONALITY", Some(seed_personality.unwrap_or("dry")));
+    if std::fs::read_to_string(&env_path).map(|prev| prev == content).unwrap_or(false) {
+        return Ok(env_path);
+    }
     std::fs::write(&env_path, &content)
         .map_err(|e| DockerError::Failed(format!("failed to write agent env file: {e}")))?;
     #[cfg(unix)]
@@ -876,7 +898,8 @@ fn delete_agent_env_file(agents_dir: &std::path::Path, agent_name: &str) {
 
 /// Update VESTAD_PORT, VESTAD_TUNNEL, and VESTA_UPSTREAM_REF in all existing per-agent env files.
 /// Called at vestad startup so running containers pick up the new values on restart.
-pub fn update_all_agent_env_files(agents_dir: &std::path::Path, vestad_port: u16, vestad_tunnel: Option<&str>, upstream_ref: Option<&str>) {
+pub fn update_all_agent_env_files(agents_dir: &std::path::Path, vestad_port: u16, vestad_tunnel: Option<&str>) {
+    let upstream_ref = detect_upstream_ref();
     for name in env_file_names(agents_dir) {
         let path = agents_dir.join(format!("{name}.env"));
         let Ok(content) = std::fs::read_to_string(&path) else { continue };
@@ -894,11 +917,15 @@ pub fn update_all_agent_env_files(agents_dir: &std::path::Path, vestad_port: u16
         if let Some(url) = vestad_tunnel {
             new_lines.push(format!("export VESTAD_TUNNEL={url}"));
         }
-        if let Some(upstream) = upstream_ref {
+        if let Some(upstream) = &upstream_ref {
             new_lines.push(format!("export VESTA_UPSTREAM_REF={upstream}"));
         }
         new_lines.push(String::new());
-        std::fs::write(&path, new_lines.join("\n")).ok();
+        let new_content = new_lines.join("\n");
+        if new_content == content {
+            continue;
+        }
+        std::fs::write(&path, new_content).ok();
     }
 }
 
@@ -935,11 +962,7 @@ pub async fn list_managed_agents(docker: &Docker) -> Vec<ManagedAgent> {
             let cname = names.first()?.strip_prefix('/')?.to_string();
             let labels = c.labels.unwrap_or_default();
             let owner = labels.get(LABEL_USER).cloned().unwrap_or_default();
-            let modern_owned_by_user =
-                crate::migrations::modern_container_owned_by_user(&owner, &user);
-            let legacy_owned_by_user =
-                crate::migrations::legacy_container_owned_by_user(&cname, &owner, &user);
-            if !modern_owned_by_user && !legacy_owned_by_user {
+            if owner != user {
                 return None;
             }
             let agent_name = labels
@@ -1793,83 +1816,17 @@ pub async fn rebuild_agent(docker: &Docker, name: &str, env_config: &AgentEnvCon
 
     let ts = crate::time_utils::now_epoch_secs();
     let backup_tag = format!("vesta-rebuild:{}_{}", name, ts);
-    let normalized_tag = format!("vesta-rebuild:{}_{}-normalized", name, ts);
-    let helper_name = format!("{}-normalize", cname);
 
     tracing::info!(agent = %name, "[1/3] snapshotting container filesystem...");
     snapshot_container(docker, &cname, &backup_tag, &[]).await?;
-
-    // Chain migrations on the snapshot. Each migration produces a new image
-    // tag if it modifies the filesystem; subsequent migrations inspect the
-    // latest image's helper container.
-    let mut current_image = backup_tag.clone();
-
-    // Migration 1: /root/vesta/ → /root + /root/agent/ (very old layout)
-    if crate::migrations::maybe_normalize_legacy_agent_snapshot(
-        docker,
-        &cname,
-        &current_image,
-        &helper_name,
-        &normalized_tag,
-    ).await? {
-        current_image = normalized_tag.clone();
-    }
-
-    // Migration 2: agent/src/vesta/ → agent/core/ (pre-0.1.135 layout)
-    let core_tag = format!("{normalized_tag}-core");
-    if crate::migrations::maybe_rename_src_vesta_to_core(
-        docker,
-        &cname,
-        &current_image,
-        &helper_name,
-        &core_tag,
-    ).await? {
-        current_image = core_tag;
-    }
-
-    // Migration 3: remove old unified upstream skill (replaced by upstream-sync + upstream-pr)
-    let upstream_tag = format!("{normalized_tag}-upstream");
-    if crate::migrations::maybe_remove_old_upstream_skill(
-        docker,
-        &cname,
-        &current_image,
-        &helper_name,
-        &upstream_tag,
-    ).await? {
-        current_image = upstream_tag;
-    }
-
-    let rebuild_image = current_image;
 
     tracing::info!(agent = %name, "[2/3] removing old container...");
     remove_container_force(docker, &cname).await.ok();
 
     tracing::info!(agent = %name, "[3/3] creating container with new config...");
-    create_container(docker, &cname, &rebuild_image, port, name, env_config, manage_core_code, None, None).await?;
+    create_container(docker, &cname, &backup_tag, port, name, env_config, manage_core_code, None, None).await?;
 
     Ok(())
-}
-
-pub async fn wait_ready_async(docker: &Docker, name: &str, timeout_secs: u64, agents_dir: &std::path::Path) -> Result<(), DockerError> {
-    validate_name(name)?;
-    let cname = container_name(name);
-    ensure_running(docker, &cname).await?;
-    let port = read_env_value(agents_dir, name, "WS_PORT")
-        .and_then(|v| v.parse().ok())
-        .ok_or_else(|| DockerError::Failed("agent has no port".into()))?;
-
-    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(timeout_secs);
-    loop {
-        if is_agent_ready(docker, port, &cname).await {
-            return Ok(());
-        }
-        if tokio::time::Instant::now() >= deadline {
-            return Err(DockerError::Failed(format!(
-                "{name}: not ready after {timeout_secs}s"
-            )));
-        }
-        tokio::time::sleep(tokio::time::Duration::from_millis(WAIT_READY_POLL_MS)).await;
-    }
 }
 
 #[cfg(test)]
