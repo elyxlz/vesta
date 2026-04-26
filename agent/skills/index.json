@@ -40,6 +40,10 @@
     "description": "Home Assistant: energy, temperature, cameras, alarms, devices, sensors, automations."
   },
   {
+    "name": "icloud",
+    "description": "iCloud Photos: list and download shared albums via pyicloud. SMS 2FA to a trusted phone."
+  },
+  {
     "name": "keeper",
     "description": "Passwords, credentials, vault, 2FA/TOTP via Keeper; store, retrieve, manage."
   },
