@@ -57,7 +57,7 @@
   },
   {
     "name": "media-server",
-    "description": "Plex, movies, TV shows, torrents, qBittorrent; download and browse library."
+    "description": "This skill should be used when the user asks about their home media server: searching trackers, adding torrents, monitoring downloads, or browsing the media library."
   },
   {
     "name": "microsoft",
@@ -110,6 +110,10 @@
   {
     "name": "voice",
     "description": "Voice input/output, transcription, TTS, API keys; manages ~/.voice/voice_config.json."
+  },
+  {
+    "name": "vpn",
+    "description": "This skill should be used when the user asks about their VPN, proxy, or SOCKS5 connection: checking status, fetching the proxy URL for another skill, or switching the active provider."
   },
   {
     "name": "what-day",

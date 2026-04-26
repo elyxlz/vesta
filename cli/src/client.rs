@@ -46,8 +46,7 @@ impl rustls::client::danger::ServerCertVerifier for FingerprintVerifier {
             Ok(rustls::client::danger::ServerCertVerified::assertion())
         } else {
             Err(rustls::Error::General(format!(
-                "certificate fingerprint mismatch: expected {}, got {}",
-                expected, actual
+                "certificate fingerprint mismatch: expected {expected}, got {actual}"
             )))
         }
     }
@@ -81,7 +80,7 @@ fn cert_fingerprint(der: &[u8]) -> String {
         digest
             .as_ref()
             .iter()
-            .map(|b| format!("{:02X}", b))
+            .map(|b| format!("{b:02X}"))
             .collect::<Vec<_>>()
             .join(":")
     )
@@ -120,7 +119,7 @@ fn check_response(resp: Response<Body>) -> Result<Response<Body>, String> {
         404 => Err(error_msg.unwrap_or_else(|| "not found".into())),
         409 => Err(error_msg.unwrap_or_else(|| "conflict".into())),
         503 => Err(error_msg.unwrap_or_else(|| "vestad is not reachable — is it running?".into())),
-        _ => Err(error_msg.unwrap_or_else(|| format!("server error ({})", status))),
+        _ => Err(error_msg.unwrap_or_else(|| format!("server error ({status})"))),
     }
 }
 
@@ -129,7 +128,7 @@ fn map_error(e: ureq::Error) -> String {
         ureq::Error::ConnectionFailed | ureq::Error::Io(_) => {
             "server not reachable. check your connection.".into()
         }
-        other => format!("request failed: {}", other),
+        other => format!("request failed: {other}"),
     }
 }
 
@@ -163,7 +162,7 @@ fn read_sse_result(resp: Response<Body>) -> Result<String, String> {
     let mut data = String::new();
 
     for line in BufRead::lines(reader) {
-        let line = line.map_err(|e| format!("read error: {}", e))?;
+        let line = line.map_err(|e| format!("read error: {e}"))?;
 
         if let Some(ev) = line.strip_prefix("event:") {
             event_type = ev.trim().to_string();
@@ -307,14 +306,14 @@ impl Client {
         let resp = self.get("/agents")?;
         resp.into_body()
             .read_json()
-            .map_err(|e| format!("parse error: {}", e))
+            .map_err(|e| format!("parse error: {e}"))
     }
 
     pub fn agent_status(&self, name: &str) -> Result<StatusJson, String> {
-        let resp = self.get(&format!("/agents/{}", name))?;
+        let resp = self.get(&format!("/agents/{name}"))?;
         resp.into_body()
             .read_json()
-            .map_err(|e| format!("parse error: {}", e))
+            .map_err(|e| format!("parse error: {e}"))
     }
 
     pub fn create_agent(&self, name: &str, manage_agent_code: bool, timezone: Option<&str>) -> Result<String, String> {
@@ -326,22 +325,22 @@ impl Client {
         let v: serde_json::Value = resp
             .into_body()
             .read_json()
-            .map_err(|e| format!("parse error: {}", e))?;
+            .map_err(|e| format!("parse error: {e}"))?;
         Ok(v["name"].as_str().unwrap_or(name).to_string())
     }
 
     pub fn get_agent_settings(&self, name: &str) -> Result<serde_json::Value, String> {
-        let resp = self.get(&format!("/agents/{}/settings", name))?;
-        resp.into_body().read_json().map_err(|e| format!("parse error: {}", e))
+        let resp = self.get(&format!("/agents/{name}/settings"))?;
+        resp.into_body().read_json().map_err(|e| format!("parse error: {e}"))
     }
 
     pub fn patch_agent_settings(&self, name: &str, body: &serde_json::Value) -> Result<serde_json::Value, String> {
-        let resp = self.patch_json(&format!("/agents/{}/settings", name), body)?;
-        resp.into_body().read_json().map_err(|e| format!("parse error: {}", e))
+        let resp = self.patch_json(&format!("/agents/{name}/settings"), body)?;
+        resp.into_body().read_json().map_err(|e| format!("parse error: {e}"))
     }
 
     pub fn start_agent(&self, name: &str) -> Result<(), String> {
-        self.post(&format!("/agents/{}/start", name))?;
+        self.post(&format!("/agents/{name}/start"))?;
         Ok(())
     }
 
@@ -350,17 +349,17 @@ impl Client {
         let v: StartAllResponse = resp
             .into_body()
             .read_json()
-            .map_err(|e| format!("parse error: {}", e))?;
+            .map_err(|e| format!("parse error: {e}"))?;
         Ok(v.results)
     }
 
     pub fn stop_agent(&self, name: &str) -> Result<(), String> {
-        self.post(&format!("/agents/{}/stop", name))?;
+        self.post(&format!("/agents/{name}/stop"))?;
         Ok(())
     }
 
     pub fn restart_agent(&self, name: &str) -> Result<(), String> {
-        self.post(&format!("/agents/{}/restart", name))?;
+        self.post(&format!("/agents/{name}/restart"))?;
         Ok(())
     }
 
@@ -370,17 +369,17 @@ impl Client {
     }
 
     pub fn stream_gateway_logs(&self, tail: u64, follow: bool) -> Result<(), String> {
-        let resp = self.get(&format!("/gateway/logs?tail={}&follow={}", tail, follow))?;
+        let resp = self.get(&format!("/gateway/logs?tail={tail}&follow={follow}"))?;
         consume_sse_log_stream(resp, "gateway_stopped", None)
     }
 
     pub fn destroy_agent(&self, name: &str) -> Result<(), String> {
-        self.post(&format!("/agents/{}/destroy", name))?;
+        self.post(&format!("/agents/{name}/destroy"))?;
         Ok(())
     }
 
     pub fn rebuild_agent(&self, name: &str) -> Result<(), String> {
-        self.post(&format!("/agents/{}/rebuild", name))?;
+        self.post(&format!("/agents/{name}/rebuild"))?;
         Ok(())
     }
 
@@ -407,37 +406,37 @@ impl Client {
     }
 
     pub fn start_auth(&self, name: &str) -> Result<AuthFlowResponse, String> {
-        let resp = self.post(&format!("/agents/{}/auth", name))?;
+        let resp = self.post(&format!("/agents/{name}/auth"))?;
         resp.into_body()
             .read_json()
-            .map_err(|e| format!("parse error: {}", e))
+            .map_err(|e| format!("parse error: {e}"))
     }
 
     pub fn complete_auth(&self, name: &str, session_id: &str, code: &str) -> Result<(), String> {
         let body = serde_json::json!({"session_id": session_id, "code": code});
-        self.post_json(&format!("/agents/{}/auth/code", name), &body)?;
+        self.post_json(&format!("/agents/{name}/auth/code"), &body)?;
         Ok(())
     }
 
     pub fn inject_token(&self, name: &str, token: &str) -> Result<(), String> {
         let token_value: serde_json::Value =
-            serde_json::from_str(token).map_err(|e| format!("invalid token JSON: {}", e))?;
+            serde_json::from_str(token).map_err(|e| format!("invalid token JSON: {e}"))?;
         let body = serde_json::json!({"token": token_value});
-        self.post_json(&format!("/agents/{}/auth/token", name), &body)?;
+        self.post_json(&format!("/agents/{name}/auth/token"), &body)?;
         Ok(())
     }
 
     pub fn create_backup(&self, name: &str) -> Result<BackupInfo, String> {
-        let resp = self.post(&format!("/agents/{}/backups", name))?;
+        let resp = self.post(&format!("/agents/{name}/backups"))?;
         let data = read_sse_result(resp)?;
-        serde_json::from_str(&data).map_err(|e| format!("parse error: {}", e))
+        serde_json::from_str(&data).map_err(|e| format!("parse error: {e}"))
     }
 
     pub fn list_backups(&self, name: &str) -> Result<Vec<BackupInfo>, String> {
-        let resp = self.get(&format!("/agents/{}/backups", name))?;
+        let resp = self.get(&format!("/agents/{name}/backups"))?;
         resp.into_body()
             .read_json()
-            .map_err(|e| format!("parse error: {}", e))
+            .map_err(|e| format!("parse error: {e}"))
     }
 
     pub fn restore_backup(&self, name: &str, backup_id: &str) -> Result<(), String> {
@@ -459,46 +458,46 @@ impl Client {
         let resp = self.get("/settings/auto-backup")?;
         resp.into_body()
             .read_json()
-            .map_err(|e| format!("parse error: {}", e))
+            .map_err(|e| format!("parse error: {e}"))
     }
 
     pub fn set_auto_backup_settings(&self, body: &serde_json::Value) -> Result<serde_json::Value, String> {
         let resp = self.put_json("/settings/auto-backup", body)?;
         resp.into_body()
             .read_json()
-            .map_err(|e| format!("parse error: {}", e))
+            .map_err(|e| format!("parse error: {e}"))
     }
 
     pub fn list_all_backups(&self) -> Result<Vec<BackupInfo>, String> {
         let resp = self.get("/backups")?;
         resp.into_body()
             .read_json()
-            .map_err(|e| format!("parse error: {}", e))
+            .map_err(|e| format!("parse error: {e}"))
     }
 
     pub fn get_agent_backup_settings(&self, name: &str) -> Result<serde_json::Value, String> {
-        let resp = self.get(&format!("/agents/{}/settings/backup", name))?;
+        let resp = self.get(&format!("/agents/{name}/settings/backup"))?;
         resp.into_body()
             .read_json()
-            .map_err(|e| format!("parse error: {}", e))
+            .map_err(|e| format!("parse error: {e}"))
     }
 
     pub fn set_agent_backup_settings(&self, name: &str, body: &serde_json::Value) -> Result<serde_json::Value, String> {
-        let resp = self.put_json(&format!("/agents/{}/settings/backup", name), body)?;
+        let resp = self.put_json(&format!("/agents/{name}/settings/backup"), body)?;
         resp.into_body()
             .read_json()
-            .map_err(|e| format!("parse error: {}", e))
+            .map_err(|e| format!("parse error: {e}"))
     }
 
     pub fn delete_agent_backup_settings(&self, name: &str) -> Result<serde_json::Value, String> {
-        let resp = self.delete_req(&format!("/agents/{}/settings/backup", name))?;
+        let resp = self.delete_req(&format!("/agents/{name}/settings/backup"))?;
         resp.into_body()
             .read_json()
-            .map_err(|e| format!("parse error: {}", e))
+            .map_err(|e| format!("parse error: {e}"))
     }
 
     pub fn stream_logs(&self, name: &str, tail: u64) -> Result<(), String> {
-        let resp = self.get(&format!("/agents/{}/logs?tail={}", name, tail))?;
+        let resp = self.get(&format!("/agents/{name}/logs?tail={tail}"))?;
         consume_sse_log_stream(resp, "agent_stopped", Some("agent stopped"))
     }
 }
@@ -511,7 +510,7 @@ fn consume_sse_log_stream(
     let reader = std::io::BufReader::new(resp.into_body().into_reader());
     let stop_marker = format!("event:{stop_event}");
     for line in std::io::BufRead::lines(reader) {
-        let line = line.map_err(|e| format!("read error: {}", e))?;
+        let line = line.map_err(|e| format!("read error: {e}"))?;
         if let Some(data) = line.strip_prefix("data:") {
             println!("{}", data.trim_start());
         } else if line.starts_with(&stop_marker) {
@@ -552,13 +551,10 @@ fn time_now_utc() -> String {
 fn render_line(time: &str, nick: &str, nick_color: &str, text: &str, color: bool) {
     if color {
         println!(
-            "{ts_c}[{time}]{r} {nc}<{nick}>{r} {text}",
-            ts_c = ANSI_TS,
-            r = ANSI_RESET,
-            nc = nick_color,
+            "{ANSI_TS}[{time}]{ANSI_RESET} {nick_color}<{nick}>{ANSI_RESET} {text}",
         );
     } else {
-        println!("[{}] <{}> {}", time, nick, text);
+        println!("[{time}] <{nick}> {text}");
     }
 }
 
@@ -572,22 +568,22 @@ pub fn chat(client: &Client, name: &str) -> Result<(), String> {
     );
 
     let parsed: url::Url =
-        url.parse().map_err(|e| format!("invalid ws url: {}", e))?;
+        url.parse().map_err(|e| format!("invalid ws url: {e}"))?;
     let host = parsed.host_str().unwrap_or("localhost");
     let port = parsed.port_or_known_default().unwrap_or(443);
     let tcp = std::net::TcpStream::connect((host, port))
-        .map_err(|e| format!("ws tcp connect failed: {}", e))?;
+        .map_err(|e| format!("ws tcp connect failed: {e}"))?;
     tcp.set_read_timeout(Some(std::time::Duration::from_millis(CHAT_READ_TIMEOUT_MS)))
-        .map_err(|e| format!("failed to set read timeout: {}", e))?;
+        .map_err(|e| format!("failed to set read timeout: {e}"))?;
     let connector =
         tungstenite::Connector::Rustls(make_ws_rustls_config(client.cert_fingerprint().map(|s| s.to_string())));
     let (mut socket, _) =
         tungstenite::client_tls_with_config(url, tcp, None, Some(connector))
-            .map_err(|e| format!("ws connect failed: {}", e))?;
+            .map_err(|e| format!("ws connect failed: {e}"))?;
 
     let color = std::io::stdout().is_terminal();
 
-    eprintln!("connected to {}. type a message and press enter.", name);
+    eprintln!("connected to {name}. type a message and press enter.");
 
     let (tx, rx) = std::sync::mpsc::channel::<String>();
 
@@ -694,8 +690,8 @@ mod tests {
             name,
             token
         );
-        assert!(url.contains("/ws?"), "chat URL must use /ws, got: {}", url);
-        assert!(!url.contains("/ws/app-chat"), "chat URL must not use /ws/app-chat, got: {}", url);
+        assert!(url.contains("/ws?"), "chat URL must use /ws, got: {url}");
+        assert!(!url.contains("/ws/app-chat"), "chat URL must not use /ws/app-chat, got: {url}");
         assert_eq!(url, "ws://127.0.0.1:9001/agents/myagent/ws?token=mytoken");
     }
 }
