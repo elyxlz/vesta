@@ -515,16 +515,18 @@ jobs:
         working-directory: apps
         run: npm install
 
+      # Retry: bundle_dmg.sh occasionally fails on macos-latest runners when the
+      # window server is unresponsive to the AppleScript-driven Finder layout step.
       - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v0
+        uses: nick-fields/retry@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          projectPath: apps/desktop
-          tauriScript: npx tauri
-          args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+          timeout_minutes: 30
+          max_attempts: 3
+          command: cd apps/desktop && npx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
 
       - name: Collect artifacts
         if: github.event_name != 'pull_request'
@@ -608,15 +610,15 @@ jobs:
         run: npm install
 
       - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v0
+        uses: nick-fields/retry@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          projectPath: apps/desktop
-          tauriScript: npx tauri
-          args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+          timeout_minutes: 30
+          max_attempts: 3
+          command: cd apps/desktop && npx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
 
       - name: Collect artifacts
         if: github.event_name != 'pull_request'
@@ -682,15 +684,16 @@ jobs:
         run: npm install
 
       - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v0
+        uses: nick-fields/retry@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          projectPath: apps/desktop
-          tauriScript: npx tauri
-          args: --target x86_64-pc-windows-msvc --bundles nsis
+          timeout_minutes: 30
+          max_attempts: 3
+          shell: bash
+          command: cd apps/desktop && npx tauri build --target x86_64-pc-windows-msvc --bundles nsis
 
       - name: Collect artifacts
         if: github.event_name != 'pull_request'
