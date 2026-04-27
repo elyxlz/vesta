@@ -58,7 +58,23 @@ You own `agent/skills/`, `agent/prompts/`, `agent/MEMORY.md`, `agent/.gitignore`
 
    Then: `git -C ~ commit --no-edit`
 
-6. **Verify.** `git status` clean, branch is `$AGENT_NAME`, both sides' functionality preserved. History reads: local checkpoint, then upstream merge.
+6. **Reconcile generated artifacts.** Two things upstream cannot merge cleanly that need a deterministic post-merge fix:
+
+   - `agent/skills/index.json` is generated from disk. A textual merge of two arrays sometimes produces invalid or stale JSON, and any new skill directory pulled in from upstream needs an entry. Regenerate from the merged tree:
+     ```bash
+     cd ~/agent && uv run python skills/generate-index.py
+     ```
+   - `git merge` re-stats the working tree, which clears the `skip-worktree` bit on some bind-mounted paths. Re-apply so vestad's writes to `agent/core/`, `agent/pyproject.toml`, `agent/uv.lock` keep ignoring git instead of showing up as `modified`:
+     ```bash
+     git -C ~ ls-files agent/core agent/pyproject.toml agent/uv.lock | xargs -r git -C ~ update-index --skip-worktree
+     ```
+
+   If the regen changed `index.json`, commit it on top of the merge:
+   ```bash
+   git -C ~ add agent/skills/index.json && git -C ~ commit -m "chore: refresh skills/index.json post-sync"
+   ```
+
+7. **Verify.** `git status` clean, branch is `$AGENT_NAME`, both sides' functionality preserved. History reads: local checkpoint, then upstream merge, then (optionally) the index refresh.
 
 ## Branch model
 
