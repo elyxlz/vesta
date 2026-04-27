@@ -218,14 +218,23 @@ def setup_cmd(domain: str | None, local: str | None, worker_name: str | None) ->
     click.echo("creating routing rules...")
     while True:
         rules = cf_api.list_routing_rules(zone_id)
+        # Probe the two address shapes our rules will own. find_address_conflicts
+        # treats existing matcher values as globs, so `*@domain` and `local*@domain`
+        # are caught by the bare probe; `local+*@domain` is caught by the sub probe.
         bare_conflicts = cf_api.find_address_conflicts(
             rules, address, f"agent-{address}"
         )
-        sub_address = f"{local}+*@{domain}"
         sub_conflicts = cf_api.find_address_conflicts(
-            rules, sub_address, f"agent-{local}-subaddress"
+            rules, f"{local}+conflict-probe@{domain}", f"agent-{local}-subaddress"
         )
-        all_conflicts = bare_conflicts + sub_conflicts
+        # A rule may match both probes (e.g. catch-all); dedupe by tag.
+        seen_tags: set[str] = set()
+        all_conflicts = []
+        for r in bare_conflicts + sub_conflicts:
+            if r.tag in seen_tags:
+                continue
+            seen_tags.add(r.tag)
+            all_conflicts.append(r)
         if not all_conflicts:
             break
         click.echo(f"\n⚠ {address} (or its sub-addresses) is already routed:")

@@ -6,6 +6,7 @@ not exposed by `cloudflare` v4.3.1. Drop this shim once the SDK catches up.
 
 from __future__ import annotations
 
+import fnmatch
 import json
 from typing import Any
 
@@ -76,17 +77,42 @@ def _find_rule_by_name(rules: list[EmailRoutingRule], name: str) -> EmailRouting
 def find_address_conflicts(
     rules: list[EmailRoutingRule], address: str, our_rule_name: str
 ) -> list[EmailRoutingRule]:
-    """Return rules whose `to` matcher targets `address` but are NOT our own.
+    """Return enabled rules whose matchers would intercept `address`.
 
-    Detects another agent (or a stale rule) already routing the address we're
-    about to claim — so setup can prompt instead of silently shadowing it.
+    `address` must be a concrete address (no wildcards) — the function
+    treats every existing rule's matcher value as a glob pattern and
+    asks whether `address` falls inside it. This covers:
+
+    - `type="all"` rules (catch-all on the zone — eats every address).
+    - `type="literal", field="to"` rules whose value is an exact match.
+    - The same with CF wildcard literals (`*@domain`, `local*@domain`,
+      `local+*@domain`) — a `*` in the matcher value is treated as the
+      glob CF treats it as.
+
+    Skips rules named `our_rule_name` (those are ours to upsert) and
+    disabled rules (they don't route).
+
+    To probe both the bare address and the sub-address namespace, call
+    twice with two concrete probes (e.g. `local@domain` and
+    `local+probe@domain`).
     """
+    addr = address.lower()
     conflicts: list[EmailRoutingRule] = []
     for r in rules:
         if r.name == our_rule_name:
             continue
+        if not r.enabled:
+            continue
         for m in r.matchers:
-            if m.type == "literal" and m.field == "to" and m.value == address:
+            if m.type == "all":
+                conflicts.append(r)
+                break
+            if (
+                m.type == "literal"
+                and m.field == "to"
+                and m.value
+                and fnmatch.fnmatchcase(addr, m.value.lower())
+            ):
                 conflicts.append(r)
                 break
     return conflicts
