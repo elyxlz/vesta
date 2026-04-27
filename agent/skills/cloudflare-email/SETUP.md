@@ -23,6 +23,7 @@ In the Cloudflare dashboard:
 3. Permissions:
    - **Account** → **Email** → **Edit** (Email Routing + Email Sending)
    - **Account** → **Workers Scripts** → **Edit** (deploy the inbound Worker)
+   - **Zone** → **Zone** → **Read** (list zones to find your domain)
    - **Zone** → **Email Routing** → **Edit** (per-domain routing rules)
    - **Zone** → **DNS** → **Edit** (auto-add MX / SPF / DKIM)
 4. Account & Zone resources: scope to the specific account + the email domain.
