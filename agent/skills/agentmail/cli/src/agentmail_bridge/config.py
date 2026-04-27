@@ -11,7 +11,11 @@ CONFIG_DIR = Path.home() / ".agentmail"
 CONFIG_PATH = CONFIG_DIR / "config.json"
 NOTIFICATIONS_DIR = Path.home() / "agent" / "notifications"
 
-API_BASE_URL = "https://api.agentmail.to/v0"
+# Local install of the official AgentMail npm CLI. Setup runs
+# `npm install agentmail-cli` here (no -g) so our Python `agentmail` binary
+# can passthrough to it without colliding on PATH.
+NPM_CLI_DIR = CONFIG_DIR / "node_modules"
+NPM_CLI_BIN = NPM_CLI_DIR / ".bin" / "agentmail"
 
 AGENTMAIL_API_KEY_ENV = "AGENTMAIL_API_KEY"
 AGENTMAIL_WEBHOOK_SECRET_ENV = "AGENTMAIL_WEBHOOK_SECRET"

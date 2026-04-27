@@ -1,66 +1,81 @@
 ---
 name: agentmail
-description: Send and receive email as the agent via AgentMail (managed inbox-per-agent service with a free tier). Use when the user mentions "email", "send email", "agent inbox", or wants email without a custom domain. The agent's address is `${username}@agentmail.to`. Inbound mail arrives as a notification with `source=agentmail`. Setup is fully autonomous; no domain, no DNS, no user input on the happy path.
+description: Send and receive email as the agent via AgentMail (managed inbox-per-agent service with a free tier). Use when the user mentions "email", "send email", "agent inbox", or wants email without a custom domain. The agent's address is `${username}@agentmail.to`. Inbound mail arrives as a notification with `source=agentmail`. Setup is fully autonomous; no domain, no DNS, no user input on the happy path. The skill wraps the official `agentmail` CLI so all upstream commands work transparently.
 ---
 
 # agentmail
 
-Managed agent inbox via [AgentMail](https://agentmail.to). Free tier: 3
-inboxes per account, 3,000 sends/month (100/day), webhook-based inbound
-delivery. No domain, no DNS, no paid plan required for basic send + receive.
+Vesta-side bridge to [AgentMail](https://agentmail.to). Free tier: 3 inboxes,
+3,000 sends/month (100/day), webhook-based inbound. No domain, no DNS, no
+paid plan required.
 
 The agent's address is `${username}@agentmail.to`, where `username`
 defaults to the lowercased agent name.
 
-**Setup**: see [SETUP.md](SETUP.md). Autonomous on the happy path: setup
-creates a disposable mail.tm inbox to relay AgentMail's sign-up OTP, then
-discards it. Verified end-to-end against live APIs.
+## How this skill is structured
+
+The `agentmail` binary is a thin Python wrapper. Four verbs are
+Vesta-specific:
+
+- `agentmail setup` - autonomous AgentMail account + inbox + webhook
+  provisioning, plus a local install of the official CLI for passthrough.
+- `agentmail serve` - local FastAPI receiver for AgentMail webhooks; writes
+  notifications to `~/agent/notifications/`.
+- `agentmail status` - show the configured address, inbox id, webhook URL,
+  and last inbound notification.
+- `agentmail teardown` - delete the inbox + webhook + clear local config.
+
+**Anything else is passed through to the official `agentmail` CLI**
+(installed locally to `~/.agentmail/node_modules/.bin/` by setup). The
+agent only sees one binary on PATH.
 
 ## Quick reference
 
 ```bash
-agentmail setup                                              # autonomous (default)
-agentmail setup --prompt                                     # manual: ask for email + OTP
-agentmail setup --skip-signup                                # use AGENTMAIL_API_KEY from env
-agentmail send --to <addr> --subject <s> --body <b>
-agentmail send --to <addr> --subject <s> --body-file body.txt --html-file body.html
-agentmail send --to <addr> --subject <s> --body <b> --in-reply-to <message_id>
-agentmail status                                             # show address, inbox id, last inbound
-agentmail teardown                                           # delete inbox + clear config
+# Vesta verbs
+agentmail setup                                                  # autonomous (default)
+agentmail setup --prompt                                         # manual: ask for email + OTP
+agentmail setup --skip-signup                                    # use AGENTMAIL_API_KEY from env
+agentmail status
+agentmail teardown
+
+# Passthrough to the official CLI (full reference: https://docs.agentmail.to/integrations/cli)
+agentmail inboxes:messages send --inbox-id <id> --to <addr> --subject <s> --text <t>
+agentmail inboxes:messages reply --inbox-id <id> --message-id <id> --text <t>
+agentmail inboxes:threads list --inbox-id <id>
+agentmail inboxes:messages list --inbox-id <id>
+agentmail webhooks list
+agentmail --help                                                 # both Vesta verbs and passthrough help
 ```
+
+The `--inbox-id` is in `agentmail status` (key `inbox_id`).
 
 ## Sending email
 
-- Outbound: `POST https://api.agentmail.to/v0/inboxes/{inbox_id}/messages/send`
-  authenticated with `Bearer $AGENTMAIL_API_KEY`.
-- Free tier caps: 3,000/month, 100/day. The CLI surfaces AgentMail's error
-  body verbatim if you hit a quota or validation problem.
-- Pass both `--body` (plain text) and `--html-file` (HTML) when you can.
-  Text-only sends score worse on spam filters; HTML-only breaks for clients
-  that strip HTML.
-- To reply on the same thread, pass `--in-reply-to <message_id>` using the
-  `message_id` from the inbound notification verbatim (with angle brackets).
-  The CLI sets `In-Reply-To` and `References` headers per RFC 5322. (This is
-  distinct from CF's `reply_to` REST field, which sets the Reply-To envelope
-  address; we don't expose that.)
-
-### Reply-on-thread example
-
-Inbound notification:
-
-```json
-{ "source": "agentmail", "message_id": "<abc@email.amazonses.com>",
-  "from": "alice@example.com", "subject": "Lunch?" }
-```
-
-Reply on the same thread:
+Use the upstream verb:
 
 ```bash
-agentmail send \
-  --to alice@example.com \
-  --subject "Re: Lunch?" \
-  --body "Tomorrow at 1pm works." \
-  --in-reply-to "<abc@email.amazonses.com>"
+agentmail inboxes:messages send \
+  --inbox-id "$(agentmail status | jq -r .inbox_id)" \
+  --to recipient@example.com \
+  --subject "Hello" \
+  --text "Plain body" \
+  --html "<p>HTML body</p>"
+```
+
+Free tier caps: 3,000/month, 100/day. The CLI surfaces AgentMail's error
+body verbatim on failure. Pass both `--text` and `--html` when you can -
+text-only sends score worse on spam filters; HTML-only breaks for clients
+that strip HTML.
+
+To reply on the same thread, use `inboxes:messages reply` (the upstream
+CLI sets `In-Reply-To` and `References` correctly):
+
+```bash
+agentmail inboxes:messages reply \
+  --inbox-id <inbox_id> \
+  --message-id "<inbound-message-id>" \
+  --text "Tomorrow at 1pm works."
 ```
 
 ## Receiving email
@@ -97,7 +112,8 @@ picks it up like any other source.
 |---|---|
 | API key | env var `AGENTMAIL_API_KEY`, persisted to `~/.bashrc` |
 | Webhook secret | env var `AGENTMAIL_WEBHOOK_SECRET`, persisted to `~/.bashrc` |
-| Inbox id, address, organization id | `~/.agentmail/config.json` |
+| Inbox id, address, webhook id, username | `~/.agentmail/config.json` |
+| Official npm CLI | `~/.agentmail/node_modules/.bin/agentmail` |
 
 `~/.bashrc` is sourced by the agent process on container start, so secrets
 persist across restarts without any host-side mechanism.
@@ -120,6 +136,7 @@ inbound notification is tagged with its `source` so handlers can route.
 |---|---|---|
 | `setup` times out at the OTP poll step (3 min) | AgentMail's anti-fraud rejected the disposable domain (sign-up succeeded but no OTP delivered), or mail.tm is down | Run `agentmail setup --prompt` and provide your own email; or sign up at https://console.agentmail.to via the `browser` skill, then `export AGENTMAIL_API_KEY=<key> && agentmail setup --skip-signup` |
 | `setup` fails at `verify` with HTTP 401 | OTP wrong (regex pulled a non-OTP number from the email) or expired (~10 min window) | Re-run `agentmail setup` for a fresh disposable inbox + new OTP |
-| `send` fails with HTTP 401 | `AGENTMAIL_API_KEY` missing or rotated | Re-run `agentmail setup` (if missing) or `source ~/.bashrc` (if just rotated) |
-| `send` fails with HTTP 429 | Hit the 100/day or 3,000/month free-tier cap | Wait, or upgrade AgentMail to a paid plan |
+| `agentmail inboxes:messages send` fails with "official AgentMail CLI not installed" | Setup hadn't run, or its npm install step failed | Re-run `agentmail setup`; check the npm install log |
+| Send fails with HTTP 401 | `AGENTMAIL_API_KEY` missing or rotated | Re-run `agentmail setup` (if missing) or `source ~/.bashrc` (if just rotated) |
+| Send fails with HTTP 429 | Hit the 100/day or 3,000/month free-tier cap | Wait, or upgrade AgentMail to a paid plan |
 | Inbound never arrives | Webhook can't reach the local service | `agentmail status` should show `webhook_url`; `screen -ls` should show the `agentmail` session; the service must have been registered with `"public": true` |

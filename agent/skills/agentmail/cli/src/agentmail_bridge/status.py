@@ -7,7 +7,7 @@ import os
 
 import click
 
-from agentmail.config import (
+from agentmail_bridge.config import (
     AGENTMAIL_API_KEY_ENV,
     NOTIFICATIONS_DIR,
     load_config,

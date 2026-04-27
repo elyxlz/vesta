@@ -9,7 +9,7 @@
   },
   {
     "name": "agentmail",
-    "description": "Send and receive email as the agent via AgentMail (managed inbox-per-agent service with a free tier). Use when the user mentions \"email\", \"send email\", \"agent inbox\", or wants email without a custom domain. The agent's address is `${username}@agentmail.to`. Inbound mail arrives as a notification with `source=agentmail`. Setup is fully autonomous; no domain, no DNS, no user input on the happy path."
+    "description": "Send and receive email as the agent via AgentMail (managed inbox-per-agent service with a free tier). Use when the user mentions \"email\", \"send email\", \"agent inbox\", or wants email without a custom domain. The agent's address is `${username}@agentmail.to`. Inbound mail arrives as a notification with `source=agentmail`. Setup is fully autonomous; no domain, no DNS, no user input on the happy path. The skill wraps the official `agentmail` CLI so all upstream commands work transparently."
   },
   {
     "name": "browser",

@@ -19,7 +19,7 @@ import click
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query, Request
 
-from agentmail.config import (
+from agentmail_bridge.config import (
     NOTIFICATIONS_DIR,
     email_address,
     webhook_secret,
