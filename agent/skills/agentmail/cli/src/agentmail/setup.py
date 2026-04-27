@@ -31,19 +31,22 @@ def _resolve_webhook_url() -> str:
     return f"{tunnel.rstrip('/')}/agents/{agent_name()}/agentmail"
 
 
-def _autonomous_signup(username: str) -> str:
+def _autonomous_signup(username: str) -> dict:
     """Run the full sign-up flow without any user input.
 
-    Creates a disposable mail.tm inbox, signs up to AgentMail with it, polls
-    for the OTP, verifies. Returns the AgentMail API key. Raises RuntimeError
-    on any step failure (caller can decide whether to fall back).
+    Creates a disposable mail.tm inbox, signs up to AgentMail (which auto-
+    creates an inbox at `username@agentmail.to` and returns an api_key),
+    polls the disposable inbox for the OTP, calls verify to activate.
+    Returns the sign-up response augmented with the constructed email_address.
     """
     click.echo("creating disposable inbox for OTP delivery...")
     dispo = disposable_mail.create_account()
     click.echo(f"  using {dispo['email']}")
 
     click.echo("requesting AgentMail sign-up...")
-    api.sign_up(human_email=dispo["email"], username=username)
+    signup = api.sign_up(human_email=dispo["email"], username=username)
+    if "api_key" not in signup or "inbox_id" not in signup:
+        raise RuntimeError(f"sign-up response missing api_key or inbox_id: {signup}")
 
     click.echo("polling disposable inbox for OTP (up to 3 min)...")
     msg = disposable_mail.wait_for_message(dispo["token"], sender_contains="agentmail")
@@ -51,22 +54,23 @@ def _autonomous_signup(username: str) -> str:
     click.echo(f"  got OTP: {otp}")
 
     click.echo("verifying OTP...")
-    verify = api.verify_signup(human_email=dispo["email"], otp=otp)
-    if "api_key" not in verify:
-        raise RuntimeError(f"verify response missing api_key: {verify}")
-    return verify["api_key"]
+    api.verify_signup(api_key_token=signup["api_key"], otp_code=otp)
+
+    signup["email_address"] = f"{username}@agentmail.to"
+    return signup
 
 
-def _prompt_signup(username: str) -> str:
-    """Manual sign-up: ask the user for an email, then for the OTP they receive."""
+def _prompt_signup(username: str) -> dict:
+    """Manual sign-up: ask the user for an email, then the OTP they receive."""
     human_email = click.prompt("your email (where AgentMail will send the OTP)")
-    api.sign_up(human_email=human_email, username=username)
+    signup = api.sign_up(human_email=human_email, username=username)
+    if "api_key" not in signup or "inbox_id" not in signup:
+        raise RuntimeError(f"sign-up response missing api_key or inbox_id: {signup}")
     click.echo("  OTP sent. Check your inbox (expires in ~10 min).")
     otp = click.prompt("OTP code")
-    verify = api.verify_signup(human_email=human_email, otp=otp)
-    if "api_key" not in verify:
-        raise RuntimeError(f"verify response missing api_key: {verify}")
-    return verify["api_key"]
+    api.verify_signup(api_key_token=signup["api_key"], otp_code=otp)
+    signup["email_address"] = f"{username}@agentmail.to"
+    return signup
 
 
 @click.command("setup")
@@ -83,6 +87,8 @@ def setup_cmd(username: str | None, use_prompt: bool, skip_signup: bool) -> None
 
     have_key = bool(os.environ.get(AGENTMAIL_API_KEY_ENV, "").strip())
 
+    inbox: dict = {}
+
     if skip_signup or have_key:
         if have_key:
             click.echo(f"{AGENTMAIL_API_KEY_ENV} already set; skipping sign-up.")
@@ -94,19 +100,33 @@ def setup_cmd(username: str | None, use_prompt: bool, skip_signup: bool) -> None
                 err=True,
             )
             sys.exit(2)
+        # Skip-signup path: we don't have an inbox_id from sign-up. Create one.
+        click.echo(f"\ncreating inbox for username '{username}'...")
+        try:
+            inbox = api.create_inbox(
+                username=username,
+                display_name=agent_name(),
+                client_id=f"vesta-{agent_name()}",
+            )
+        except RuntimeError as e:
+            click.echo(f"  inbox create failed: {e}", err=True)
+            sys.exit(1)
+        if "inbox_id" not in inbox or "email_address" not in inbox:
+            click.echo(f"  unexpected inbox response: {inbox}", err=True)
+            sys.exit(1)
     elif use_prompt:
         click.echo("\nmanual sign-up (--prompt):")
         try:
-            api_key = _prompt_signup(username)
+            inbox = _prompt_signup(username)
         except Exception as e:
             click.echo(f"  sign-up failed: {e}", err=True)
             sys.exit(1)
-        bashrc_set(AGENTMAIL_API_KEY_ENV, api_key)
+        bashrc_set(AGENTMAIL_API_KEY_ENV, inbox["api_key"])
         click.echo(f"  api key persisted to ~/.bashrc as {AGENTMAIL_API_KEY_ENV}")
     else:
         click.echo("\nautonomous sign-up:")
         try:
-            api_key = _autonomous_signup(username)
+            inbox = _autonomous_signup(username)
         except Exception as e:
             click.echo(
                 f"\n  autonomous sign-up failed: {e}\n"
@@ -120,23 +140,9 @@ def setup_cmd(username: str | None, use_prompt: bool, skip_signup: bool) -> None
                 err=True,
             )
             sys.exit(1)
-        bashrc_set(AGENTMAIL_API_KEY_ENV, api_key)
+        bashrc_set(AGENTMAIL_API_KEY_ENV, inbox["api_key"])
         click.echo(f"  api key persisted to ~/.bashrc as {AGENTMAIL_API_KEY_ENV}")
 
-    # Inbox creation
-    click.echo(f"\ncreating inbox for username '{username}'...")
-    try:
-        inbox = api.create_inbox(
-            username=username,
-            display_name=agent_name(),
-            client_id=f"vesta-{agent_name()}",
-        )
-    except RuntimeError as e:
-        click.echo(f"  inbox create failed: {e}", err=True)
-        sys.exit(1)
-    if "inbox_id" not in inbox or "email_address" not in inbox:
-        click.echo(f"  unexpected inbox response: {inbox}", err=True)
-        sys.exit(1)
     click.echo(f"  inbox: {inbox['email_address']} (id {inbox['inbox_id']})")
 
     # Webhook registration

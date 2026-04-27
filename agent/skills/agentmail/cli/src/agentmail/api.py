@@ -34,25 +34,32 @@ def _raise_with_body(r: httpx.Response, action: str) -> None:
 
 
 def sign_up(human_email: str, username: str) -> dict:
-    """Start sign-up. Returns server response (typically empty plus 200)."""
+    """Sign up. Returns {api_key, inbox_id, organization_id}.
+
+    Sign-up is unauthenticated and auto-creates an inbox at
+    `username@agentmail.to`. The api_key in the response activates
+    immediately for most operations; verify_signup confirms human ownership
+    of the email but isn't required to use the API.
+    """
     with httpx.Client(base_url=API_BASE_URL, timeout=30.0) as c:
         r = c.post(
             "/agent/sign-up",
             json={"human_email": human_email, "username": username},
         )
         _raise_with_body(r, "sign-up")
-        return r.json() if r.text else {}
+        return r.json()
 
 
-def verify_signup(human_email: str, otp: str) -> dict:
-    """Verify the OTP from sign-up. Returns api_key, inbox_id, organization_id."""
+def verify_signup(api_key_token: str, otp_code: str) -> dict:
+    """Verify the OTP. Authenticated with the api_key returned by sign_up."""
     with httpx.Client(base_url=API_BASE_URL, timeout=30.0) as c:
         r = c.post(
             "/agent/verify",
-            json={"human_email": human_email, "otp": otp},
+            headers={"Authorization": f"Bearer {api_key_token}"},
+            json={"otp_code": otp_code},
         )
         _raise_with_body(r, "verify")
-        return r.json()
+        return r.json() if r.text else {}
 
 
 def create_inbox(

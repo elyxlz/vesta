@@ -11,7 +11,7 @@ CONFIG_DIR = Path.home() / ".agentmail"
 CONFIG_PATH = CONFIG_DIR / "config.json"
 NOTIFICATIONS_DIR = Path.home() / "agent" / "notifications"
 
-API_BASE_URL = "https://api.agentmail.to"
+API_BASE_URL = "https://api.agentmail.to/v0"
 
 AGENTMAIL_API_KEY_ENV = "AGENTMAIL_API_KEY"
 AGENTMAIL_WEBHOOK_SECRET_ENV = "AGENTMAIL_WEBHOOK_SECRET"
