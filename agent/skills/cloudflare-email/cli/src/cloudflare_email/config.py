@@ -78,9 +78,7 @@ def keeper_store(path: str, value: str) -> bool:
 def cf_api_token() -> str:
     token = keeper_get("cloudflare/api-token")
     if not token:
-        raise RuntimeError(
-            "Cloudflare API token missing. Run: keeper store cloudflare/api-token '<token>'"
-        )
+        raise RuntimeError("Cloudflare API token missing. Run: keeper store cloudflare/api-token '<token>'")
     return token
 
 

@@ -118,9 +118,7 @@ def setup_cmd(domain: str | None, local: str | None, worker_name: str | None) ->
     env["CLOUDFLARE_API_TOKEN"] = cf_api.cf_api_token()
     env["CLOUDFLARE_ACCOUNT_ID"] = account_id
     # write env-specific wrangler vars
-    (WORKER_DIR / ".env").write_text(
-        f"INBOUND_URL={inbound_url}\nWORKER_SECRET={secret}\n"
-    )
+    (WORKER_DIR / ".env").write_text(f"INBOUND_URL={inbound_url}\nWORKER_SECRET={secret}\n")
     try:
         subprocess.run(
             ["wrangler", "deploy", "--name", worker_name],
@@ -177,7 +175,7 @@ def setup_cmd(domain: str | None, local: str | None, worker_name: str | None) ->
     click.echo(
         "  PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services "
         "-H \"X-Agent-Token: $AGENT_TOKEN\" -H 'Content-Type: application/json' "
-        "-d '{\"name\":\"cloudflare-email\",\"public\":true}' | "
+        '-d \'{"name":"cloudflare-email","public":true}\' | '
         "python3 -c \"import sys,json; print(json.load(sys.stdin)['port'])\")"
     )
     click.echo("  screen -dmS cloudflare-email cloudflare-email serve --port $PORT")
@@ -196,9 +194,7 @@ def reconcile_cmd() -> None:
     cf_api.find_zone(cfg["domain"])
     click.echo("re-applying routing rules...")
     cf_api.upsert_worker_route_rule(cfg["zone_id"], cfg["address"], cfg["worker_name"])
-    cf_api.upsert_subaddress_rule(
-        cfg["zone_id"], cfg["local"], cfg["domain"], cfg["worker_name"]
-    )
+    cf_api.upsert_subaddress_rule(cfg["zone_id"], cfg["local"], cfg["domain"], cfg["worker_name"])
     click.echo("ok.")
 
 

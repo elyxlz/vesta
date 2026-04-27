@@ -122,7 +122,9 @@ def upsert_subaddress_rule(zone_id: str, local: str, domain: str, worker_name: s
         return r.json()["result"]
 
 
-def send_email(account_id: str, *, from_addr: str, to_addr: str, subject: str, body_text: str, body_html: str | None = None, reply_to: str | None = None) -> dict:
+def send_email(
+    account_id: str, *, from_addr: str, to_addr: str, subject: str, body_text: str, body_html: str | None = None, reply_to: str | None = None
+) -> dict:
     """Send via the Email Sending API."""
     payload = {
         "from": {"email": from_addr},
