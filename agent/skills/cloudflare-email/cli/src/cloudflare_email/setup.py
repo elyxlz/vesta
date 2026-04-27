@@ -24,7 +24,21 @@ from cloudflare_email.config import (
 )
 
 
-WORKER_DIR = Path(__file__).resolve().parents[3] / "worker"
+def _resolve_worker_dir() -> Path:
+    """Locate worker/. The CLI gets `uv tool install`ed into ~/.local/share/uv/...,
+    where the source tree's worker/ doesn't tag along. Probe likely locations
+    in order; the first one that has wrangler.toml wins."""
+    candidates = [
+        Path(__file__).resolve().parents[3] / "worker",  # editable install
+        Path.home() / "agent" / "skills" / "cloudflare-email" / "worker",  # vesta agent layout
+    ]
+    for path in candidates:
+        if (path / "wrangler.toml").is_file():
+            return path
+    return candidates[0]
+
+
+WORKER_DIR = _resolve_worker_dir()
 
 
 @click.command("setup")
