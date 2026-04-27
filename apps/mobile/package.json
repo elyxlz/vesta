@@ -1,7 +1,7 @@
 {
   "name": "@vesta/mobile",
   "private": true,
-  "version": "0.1.148",
+  "version": "0.1.149",
   "description": "Vesta mobile app (Tauri wrapper around @vesta/web for iOS/Android)",
   "license": "MIT",
   "repository": {
