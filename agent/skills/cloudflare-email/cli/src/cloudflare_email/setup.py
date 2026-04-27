@@ -109,11 +109,7 @@ def setup_cmd(domain: str | None, local: str | None, worker_name: str | None) ->
             text=True,
             timeout=30,
         )
-        listed_tokens = {
-            tok.strip(".,\"' ")
-            for line in proc.stdout.splitlines()
-            for tok in line.split()
-        }
+        listed_tokens = {tok.strip(".,\"' ") for line in proc.stdout.splitlines() for tok in line.split()}
         already_enabled = domain in listed_tokens
     except FileNotFoundError:
         click.echo(
@@ -221,12 +217,8 @@ def setup_cmd(domain: str | None, local: str | None, worker_name: str | None) ->
         # Probe the two address shapes our rules will own. find_address_conflicts
         # treats existing matcher values as globs, so `*@domain` and `local*@domain`
         # are caught by the bare probe; `local+*@domain` is caught by the sub probe.
-        bare_conflicts = cf_api.find_address_conflicts(
-            rules, address, f"agent-{address}"
-        )
-        sub_conflicts = cf_api.find_address_conflicts(
-            rules, f"{local}+conflict-probe@{domain}", f"agent-{local}-subaddress"
-        )
+        bare_conflicts = cf_api.find_address_conflicts(rules, address, f"agent-{address}")
+        sub_conflicts = cf_api.find_address_conflicts(rules, f"{local}+conflict-probe@{domain}", f"agent-{local}-subaddress")
         # A rule may match both probes (e.g. catch-all); dedupe by tag.
         seen_tags: set[str] = set()
         all_conflicts = []
@@ -287,7 +279,7 @@ def setup_cmd(domain: str | None, local: str | None, worker_name: str | None) ->
     click.echo(
         "  PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services "
         "-H \"X-Agent-Token: $AGENT_TOKEN\" -H 'Content-Type: application/json' "
-        "-d '{\"name\":\"cloudflare-email\",\"public\":true}' | "
+        '-d \'{"name":"cloudflare-email","public":true}\' | '
         "python3 -c \"import sys,json; print(json.load(sys.stdin)['port'])\")"
     )
     click.echo("  screen -dmS cloudflare-email cloudflare-email serve --port $PORT")
@@ -306,12 +298,8 @@ def reconcile_cmd() -> None:
     cf_api.find_zone(cfg["domain"])
     click.echo("re-applying routing rules...")
     rules = cf_api.list_routing_rules(cfg["zone_id"])
-    cf_api.upsert_worker_route_rule(
-        cfg["zone_id"], cfg["address"], cfg["worker_name"], rules=rules
-    )
-    cf_api.upsert_subaddress_rule(
-        cfg["zone_id"], cfg["local"], cfg["domain"], cfg["worker_name"], rules=rules
-    )
+    cf_api.upsert_worker_route_rule(cfg["zone_id"], cfg["address"], cfg["worker_name"], rules=rules)
+    cf_api.upsert_subaddress_rule(cfg["zone_id"], cfg["local"], cfg["domain"], cfg["worker_name"], rules=rules)
     click.echo("ok.")
 
 

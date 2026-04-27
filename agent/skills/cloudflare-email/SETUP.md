@@ -26,7 +26,7 @@ In the Cloudflare dashboard:
    - **Zone** → **Email Routing** → **Edit** (per-domain routing rules)
    - **Zone** → **DNS** → **Edit** (auto-add MX / SPF / DKIM)
 4. Account & Zone resources: scope to the specific account + the email domain.
-5. **Continue to summary** → **Create Token**. Copy the token — it's shown once.
+5. **Continue to summary** → **Create Token**. Copy the token now; it's shown once.
 
 ## 2. Stash the token in keeper
 
@@ -57,18 +57,18 @@ Setup walks through, in order:
    Worker. Before creating, setup checks whether either address is already
    routed by a foreign rule (another agent, or a stale leftover); if so, it
    prompts:
-   - **change** — pick a different local-part and re-check.
-   - **abort** — exit without touching anything.
+   - **change**: pick a different local-part and re-check.
+   - **abort**: exit without touching anything.
 
-   Setup never deletes a foreign rule — that would silently break the other
-   agent's inbound mail. If you're sure the conflicting rule is stale,
+   Setup never deletes a foreign rule, since that would silently break the
+   other agent's inbound mail. If you're sure the conflicting rule is stale,
    delete it by hand in the Cloudflare dashboard (or via
    `wrangler email routing rules delete`) and re-run setup.
 7. Persist `domain`, `address`, zone/account IDs, and worker name to
    `~/.cloudflare-email/config.json`. Also write `CF_EMAIL_DOMAIN` and
    `CF_EMAIL_ADDRESS` to `~/.bashrc` for convenience.
 
-After this completes, **DNS for outbound may take 5–15 minutes to
+After this completes, **DNS for outbound may take 5-15 minutes to
 propagate**. Inbound works immediately.
 
 **Verify**: `cloudflare-email status` should show `domain`, `address`, and
@@ -77,7 +77,7 @@ propagate**. Inbound works immediately.
 ## 4. Register and start the local service
 
 The Worker reaches the local FastAPI service through the public vestad
-tunnel — that's why the service must be registered with `"public": true`.
+tunnel; that's why the service must be registered with `"public": true`.
 
 ```bash
 PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services \
@@ -138,7 +138,7 @@ cloudflare-email teardown
 ```
 
 Removes both routing rules and deletes the Worker. MX records and the Email
-Routing zone setting stay in place — other workflows on the same domain may
-need them. To fully decommission, also run
+Routing zone setting stay in place, since other workflows on the same domain
+may need them. To fully decommission, also run
 `wrangler email sending disable <domain>` and remove the routing rule + DNS
 records in the Cloudflare dashboard.

@@ -74,9 +74,7 @@ def _find_rule_by_name(rules: list[EmailRoutingRule], name: str) -> EmailRouting
     return None
 
 
-def find_address_conflicts(
-    rules: list[EmailRoutingRule], address: str, our_rule_name: str
-) -> list[EmailRoutingRule]:
+def find_address_conflicts(rules: list[EmailRoutingRule], address: str, our_rule_name: str) -> list[EmailRoutingRule]:
     """Return enabled rules whose matchers would intercept `address`.
 
     `address` must be a concrete address (no wildcards) — the function
@@ -107,12 +105,7 @@ def find_address_conflicts(
             if m.type == "all":
                 conflicts.append(r)
                 break
-            if (
-                m.type == "literal"
-                and m.field == "to"
-                and m.value
-                and fnmatch.fnmatchcase(addr, m.value.lower())
-            ):
+            if m.type == "literal" and m.field == "to" and m.value and fnmatch.fnmatchcase(addr, m.value.lower()):
                 conflicts.append(r)
                 break
     return conflicts
@@ -233,7 +226,5 @@ def send_email(
                 body = r.json()
             except ValueError:
                 body = {"raw": r.text}
-            raise RuntimeError(
-                f"Email Sending API returned {r.status_code}: {json.dumps(body)}"
-            )
+            raise RuntimeError(f"Email Sending API returned {r.status_code}: {json.dumps(body)}")
         return r.json()
