@@ -354,12 +354,14 @@ func (wac *WhatsAppClient) startStaleMessageDetector() {
 					continue
 				}
 				if len(staleIDs) > 0 {
-					wac.logger.Warnf("Detected %d stale outgoing messages (stuck in 'sent' >%v): %v, marking as filtered and writing notification", len(staleIDs), StaleMessageThreshold, staleIDs)
-					if err := wac.store.MarkMessagesFiltered(staleIDs); err != nil {
-						wac.logger.Warnf("Failed to mark stale messages as filtered: %v", err)
-					}
-					if err := WriteDeliveryFailureNotification(wac.notificationsDir, wac.instance, staleIDs); err != nil {
-						wac.logger.Warnf("Failed to write delivery failure notification: %v", err)
+					// No delivery receipt arrived within StaleMessageThreshold.
+					// This is usually slow recipient connectivity or read-receipts-off,
+					// not actual filtering by WhatsApp. UpdateDeliveryStatus will
+					// self-heal the status field if a receipt arrives later, so we
+					// only mark + log here, no notification firing.
+					wac.logger.Warnf("Marking %d outgoing messages as unconfirmed (no delivery receipt within %v): %v", len(staleIDs), StaleMessageThreshold, staleIDs)
+					if err := wac.store.MarkMessagesUnconfirmed(staleIDs); err != nil {
+						wac.logger.Warnf("Failed to mark messages as unconfirmed: %v", err)
 					}
 				}
 			}
