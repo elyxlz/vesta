@@ -9,8 +9,7 @@ from __future__ import annotations
 import json
 import secrets
 import uuid
-from datetime import datetime, timezone
-from pathlib import Path
+from datetime import UTC, datetime
 
 import click
 import uvicorn
@@ -56,7 +55,7 @@ async def inbound(
         "body_text": payload.get("body_text", ""),
         "body_html": payload.get("body_html", ""),
         "headers": payload.get("headers", {}),
-        "received_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "received_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
     }
 
     NOTIFICATIONS_DIR.mkdir(parents=True, exist_ok=True)

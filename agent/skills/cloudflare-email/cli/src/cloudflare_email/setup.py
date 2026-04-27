@@ -29,7 +29,7 @@ def _bashrc_set(key: str, value: str) -> None:
     """Persist KEY=VALUE in ~/.bashrc, replacing any prior export."""
     bashrc = Path.home() / ".bashrc"
     text = bashrc.read_text() if bashrc.exists() else ""
-    lines = [l for l in text.splitlines() if not l.startswith(f"export {key}=")]
+    lines = [line for line in text.splitlines() if not line.startswith(f"export {key}=")]
     lines.append(f"export {key}={value}")
     bashrc.write_text("\n".join(lines) + "\n")
 
