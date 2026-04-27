@@ -119,13 +119,15 @@ or delete the routing rule for that sub-address.
 
 | What | Where |
 |---|---|
-| API token | keeper, path `cloudflare/api-token` |
-| Worker secret | keeper, path `cloudflare-email/worker-secret` |
+| API token | env var `CF_API_TOKEN`, persisted to `~/.bashrc` by setup |
+| Worker secret | env var `CF_WORKER_SECRET`, persisted to `~/.bashrc` by setup |
 | Domain, address, zone/account IDs, worker name | `~/.cloudflare-email/config.json` (written by setup) |
+| `CF_EMAIL_DOMAIN`, `CF_EMAIL_ADDRESS` | `~/.bashrc` for shell convenience (config.json is the source of truth) |
 
-`CF_EMAIL_DOMAIN` and `CF_EMAIL_ADDRESS` are also written to `~/.bashrc`
-for convenience in interactive shells, but the agent process reads from
-`config.json` directly; the env vars aren't load-bearing.
+`~/.bashrc` is sourced by the agent process on container start, so secrets
+persist across restarts without any host-side mechanism. Rotate by editing
+`~/.bashrc` (or by re-running `cloudflare-email setup`, which prompts again
+when `CF_API_TOKEN` is missing).
 
 ## Common mistakes
 

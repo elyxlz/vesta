@@ -28,13 +28,7 @@ In the Cloudflare dashboard:
 4. Account & Zone resources: scope to the specific account + the email domain.
 5. **Continue to summary** → **Create Token**. Copy the token now; it's shown once.
 
-## 2. Stash the token in keeper
-
-```bash
-keeper store cloudflare/api-token "<paste-the-token>"
-```
-
-## 3. Run the setup CLI
+## 2. Run the setup CLI
 
 ```bash
 cloudflare-email setup
@@ -42,7 +36,9 @@ cloudflare-email setup
 
 Setup walks through, in order:
 
-1. Verify the token, list zones, prompt for domain (default `vesta.run` if
+1. Prompt for the API token (hidden input). Persists `CF_API_TOKEN` to
+   `~/.bashrc` so it survives container restarts. Verifies the token, lists
+   zones, prompts for domain (default `vesta.run` if
    present) and local-part (default `$AGENT_NAME` lowercased).
 2. **Inbound:** enable Email Routing on the zone (adds MX records).
 3. **Outbound:** check `wrangler email sending list`; if the domain isn't
@@ -50,8 +46,8 @@ Setup walks through, in order:
    required SPF + DKIM records via `wrangler email sending dns get <domain>`.
 4. `npm install` in `worker/`, then `wrangler deploy` the Worker with
    `INBOUND_URL` pointing at the agent's vestad tunnel.
-5. Generate a worker secret, store it in keeper, set it on the deployed
-   Worker via `wrangler secret put`.
+5. Generate a worker secret, persist `CF_WORKER_SECRET` to `~/.bashrc`, set
+   it on the deployed Worker via `wrangler secret put`.
 6. Create two routing rules: a literal rule for `${local}@${domain}` and a
    wildcard literal rule for `${local}+*@${domain}`, both pointing at the
    Worker. Before creating, setup checks whether either address is already
@@ -74,7 +70,7 @@ propagate**. Inbound works immediately.
 **Verify**: `cloudflare-email status` should show `domain`, `address`, and
 `worker_name` filled in.
 
-## 4. Register and start the local service
+## 3. Register and start the local service
 
 The Worker reaches the local FastAPI service through the public vestad
 tunnel; that's why the service must be registered with `"public": true`.
@@ -95,7 +91,7 @@ service comes back up after a container restart.
 **Verify**: `curl http://127.0.0.1:$PORT/health` should return
 `{"ok": true, "address": "<your-address>"}`.
 
-## 5. Send a test email
+## 4. Send a test email
 
 ```bash
 cloudflare-email send \
@@ -121,10 +117,11 @@ ls -la ~/agent/notifications/ | grep cloudflare-email
 
 ## Token rotation
 
-If the token leaks or you want to rotate:
+If the token leaks or you want to rotate, edit `~/.bashrc` and replace the
+`export CF_API_TOKEN=...` line with the new value, then:
 
 ```bash
-keeper store cloudflare/api-token "<new-token>"
+source ~/.bashrc
 cloudflare-email reconcile
 ```
 

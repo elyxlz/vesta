@@ -1,6 +1,7 @@
-"""cloudflare-email setup: interactive setup. Verifies the API token, picks
-domain + address, enables email routing, deploys the inbound Worker, and stashes
-the worker secret in keeper."""
+"""cloudflare-email setup: interactive setup. Prompts for the API token,
+verifies it, picks domain + address, enables email routing, deploys the
+inbound Worker, generates a worker secret, and persists everything to
+~/.bashrc + ~/.cloudflare-email/config.json."""
 
 from __future__ import annotations
 
@@ -14,24 +15,16 @@ import click
 
 from cloudflare_email import cf_api
 from cloudflare_email.config import (
+    CF_API_TOKEN_ENV,
+    CF_WORKER_SECRET_ENV,
     agent_name,
-    keeper_get,
-    keeper_store,
+    bashrc_set,
     load_config,
     save_config,
 )
 
 
 WORKER_DIR = Path(__file__).resolve().parents[3] / "worker"
-
-
-def _bashrc_set(key: str, value: str) -> None:
-    """Persist KEY=VALUE in ~/.bashrc, replacing any prior export."""
-    bashrc = Path.home() / ".bashrc"
-    text = bashrc.read_text() if bashrc.exists() else ""
-    lines = [line for line in text.splitlines() if not line.startswith(f"export {key}=")]
-    lines.append(f"export {key}={value}")
-    bashrc.write_text("\n".join(lines) + "\n")
 
 
 @click.command("setup")
@@ -43,14 +36,18 @@ def setup_cmd(domain: str | None, local: str | None, worker_name: str | None) ->
     click.echo("cloudflare-email setup")
     click.echo("=" * 40)
 
-    # 1. verify token
+    # 1. ensure API token is in env (and ~/.bashrc for persistence across restarts)
+    if not os.environ.get(CF_API_TOKEN_ENV, "").strip():
+        click.echo(
+            f"\n{CF_API_TOKEN_ENV} is not set. Create a Cloudflare API token with:\n"
+            "  Account: Email:Edit, Workers Scripts:Edit\n"
+            "  Zone: Email Routing:Edit, DNS:Edit\n"
+            "(scope to the email domain only)\n"
+        )
+        token = click.prompt("paste the API token", hide_input=True)
+        bashrc_set(CF_API_TOKEN_ENV, token.strip())
+
     click.echo("verifying API token...")
-    if not keeper_get("cloudflare/api-token"):
-        click.echo("\nNo Cloudflare API token in keeper. Create one in CF dashboard with:")
-        click.echo("  Account: Email:Edit, Workers Scripts:Edit")
-        click.echo("  Zone: Email Routing:Edit, DNS:Edit")
-        click.echo("Then: keeper store cloudflare/api-token '<token>'")
-        sys.exit(2)
     try:
         verify = cf_api.verify_token()
         click.echo(f"  token ok, status={verify['status']}")
@@ -146,12 +143,11 @@ def setup_cmd(domain: str | None, local: str | None, worker_name: str | None) ->
         check=False,
     )
 
-    # 5. ensure worker secret exists
-    secret = keeper_get("cloudflare-email/worker-secret")
+    # 5. ensure worker secret exists (generate + persist to ~/.bashrc on first run)
+    secret = os.environ.get(CF_WORKER_SECRET_ENV, "").strip()
     if not secret:
         secret = secrets.token_urlsafe(32)
-        if not keeper_store("cloudflare-email/worker-secret", secret):
-            click.echo("warn: failed to write worker secret to keeper, holding in memory only")
+        bashrc_set(CF_WORKER_SECRET_ENV, secret)
 
     # 6. deploy worker
     if not worker_name:
@@ -268,8 +264,8 @@ def setup_cmd(domain: str | None, local: str | None, worker_name: str | None) ->
         }
     )
     save_config(cfg)
-    _bashrc_set("CF_EMAIL_DOMAIN", domain)
-    _bashrc_set("CF_EMAIL_ADDRESS", address)
+    bashrc_set("CF_EMAIL_DOMAIN", domain)
+    bashrc_set("CF_EMAIL_ADDRESS", address)
 
     click.echo("\nsetup complete.")
     click.echo(f"  address: {address}")

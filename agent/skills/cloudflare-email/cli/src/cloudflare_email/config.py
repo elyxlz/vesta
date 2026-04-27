@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 from pathlib import Path
 
 
 CONFIG_DIR = Path.home() / ".cloudflare-email"
 CONFIG_PATH = CONFIG_DIR / "config.json"
 NOTIFICATIONS_DIR = Path.home() / "agent" / "notifications"
+
+CF_API_TOKEN_ENV = "CF_API_TOKEN"
+CF_WORKER_SECRET_ENV = "CF_WORKER_SECRET"
 
 
 def load_config() -> dict:
@@ -44,43 +46,23 @@ def email_address() -> str:
     return f"{agent_name().lower()}@{email_domain()}"
 
 
-def keeper_get(path: str) -> str:
-    """Read a value from keeper. Returns empty string on miss."""
-    try:
-        out = subprocess.run(
-            ["keeper", "get", path],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if out.returncode == 0:
-            return out.stdout.strip()
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-    return ""
-
-
-def keeper_store(path: str, value: str) -> bool:
-    try:
-        result = subprocess.run(
-            ["keeper", "store", path, value],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
+def bashrc_set(key: str, value: str) -> None:
+    """Persist KEY=VALUE in ~/.bashrc, replacing any prior export. Also sets it
+    in the current process so the same setup run can use it without restart."""
+    bashrc = Path.home() / ".bashrc"
+    text = bashrc.read_text() if bashrc.exists() else ""
+    lines = [line for line in text.splitlines() if not line.startswith(f"export {key}=")]
+    lines.append(f"export {key}={value}")
+    bashrc.write_text("\n".join(lines) + "\n")
+    os.environ[key] = value
 
 
 def cf_api_token() -> str:
-    token = keeper_get("cloudflare/api-token")
+    token = os.environ.get(CF_API_TOKEN_ENV, "").strip()
     if not token:
-        raise RuntimeError("Cloudflare API token missing. Run: keeper store cloudflare/api-token '<token>'")
+        raise RuntimeError(f"{CF_API_TOKEN_ENV} not set. Run `cloudflare-email setup` to configure it.")
     return token
 
 
 def worker_secret() -> str:
-    return keeper_get("cloudflare-email/worker-secret")
+    return os.environ.get(CF_WORKER_SECRET_ENV, "").strip()
