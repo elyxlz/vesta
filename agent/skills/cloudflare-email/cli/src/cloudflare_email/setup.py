@@ -94,54 +94,69 @@ def setup_cmd(domain: str | None, local: str | None, worker_name: str | None) ->
     env["CLOUDFLARE_API_TOKEN"] = cf_api.cf_api_token()
     env["CLOUDFLARE_ACCOUNT_ID"] = account_id
 
-    # Pre-flight: skip enable if already onboarded.
-    click.echo("checking Email Sending status...")
-    already_enabled = False
-    try:
-        proc = subprocess.run(
-            ["wrangler", "email", "sending", "list"],
-            env=env,
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        listed_tokens = {tok.strip(".,\"' ") for line in proc.stdout.splitlines() for tok in line.split()}
-        already_enabled = domain in listed_tokens
-    except FileNotFoundError:
-        click.echo(
-            "error: wrangler not installed. Run `npm i -g wrangler` then re-run setup.",
-            err=True,
-        )
-        sys.exit(1)
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-        click.echo(f"  warn: could not list (will attempt enable anyway): {e}")
-
-    if already_enabled:
-        click.echo(f"  Email Sending already enabled on {domain}")
-    else:
-        click.echo("enabling Email Sending on the domain (outbound)...")
+    # Outbound (Email Sending) requires Cloudflare Workers Paid ($5/mo). Inbound
+    # (Email Routing) is free. Ask before attempting — graceful degrade if the
+    # user says yes but the account isn't actually on Workers Paid.
+    enable_outbound = click.confirm(
+        "\nEnable outbound email? Requires Cloudflare Workers Paid ($5/mo, "
+        "3,000 sends/mo included). Inbound works either way; skipping leaves "
+        "the agent able to receive but not reply.",
+        default=False,
+    )
+    outbound_ready = False
+    if enable_outbound:
+        click.echo("checking Email Sending status...")
+        already_enabled = False
         try:
-            subprocess.run(
-                ["wrangler", "email", "sending", "enable", domain],
+            proc = subprocess.run(
+                ["wrangler", "email", "sending", "list"],
                 env=env,
                 check=True,
+                capture_output=True,
+                text=True,
+                timeout=30,
             )
-        except subprocess.CalledProcessError as e:
+            listed_tokens = {tok.strip(".,\"' ") for line in proc.stdout.splitlines() for tok in line.split()}
+            already_enabled = domain in listed_tokens
+        except FileNotFoundError:
             click.echo(
-                f"  outbound onboarding failed: {e}\n"
-                f"  `cloudflare-email send` will not work until this is resolved.\n"
-                f"  Check the API token has Account:Email:Edit and Zone:DNS:Edit on {domain}.",
+                "error: wrangler not installed. Run `npm i -g wrangler` then re-run setup.",
                 err=True,
             )
             sys.exit(1)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            click.echo(f"  warn: could not list (will attempt enable anyway): {e}")
 
-    click.echo(f"DNS records required for outbound on {domain}:")
-    subprocess.run(
-        ["wrangler", "email", "sending", "dns", "get", domain],
-        env=env,
-        check=False,
-    )
+        if already_enabled:
+            click.echo(f"  Email Sending already enabled on {domain}")
+            outbound_ready = True
+        else:
+            click.echo("enabling Email Sending on the domain (outbound)...")
+            try:
+                subprocess.run(
+                    ["wrangler", "email", "sending", "enable", domain],
+                    env=env,
+                    check=True,
+                )
+                outbound_ready = True
+            except subprocess.CalledProcessError as e:
+                click.echo(
+                    f"  outbound enable failed: {e}\n"
+                    f"  Most likely cause: account isn't on Workers Paid "
+                    f"(Email Sending is paid-only). Continuing in inbound-only "
+                    f"mode. Re-run `cloudflare-email setup` after upgrading.",
+                    err=True,
+                )
+
+        if outbound_ready:
+            click.echo(f"DNS records required for outbound on {domain}:")
+            subprocess.run(
+                ["wrangler", "email", "sending", "dns", "get", domain],
+                env=env,
+                check=False,
+            )
+    else:
+        click.echo("  skipped — inbound-only setup.")
 
     # 5. ensure worker secret exists (generate + persist to ~/.bashrc on first run)
     secret = os.environ.get(CF_WORKER_SECRET_ENV, "").strip()
@@ -261,6 +276,7 @@ def setup_cmd(domain: str | None, local: str | None, worker_name: str | None) ->
             "local": local,
             "worker_name": worker_name,
             "inbound_url": inbound_url,
+            "outbound_enabled": outbound_ready,
         }
     )
     save_config(cfg)

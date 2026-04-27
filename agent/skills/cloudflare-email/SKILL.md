@@ -32,6 +32,10 @@ cloudflare-email teardown                                   # remove routing rul
 
 ## Sending email
 
+- **Cloudflare Email Sending requires Workers Paid** ($5/mo, 3,000 sends/mo
+  included). On free tier, outbound is unavailable; setup will offer to skip
+  it (inbound-only mode). `cloudflare-email status` shows
+  `outbound_enabled: true|false`.
 - Outbound goes through `POST /accounts/{account_id}/email/sending/send`
   (no Workers binding; the agent runs in a container, not a Worker).
 - The domain must be onboarded for sending. `setup` runs
@@ -133,8 +137,10 @@ when `CF_API_TOKEN` is missing).
 
 | Symptom | Cause | Fix |
 |---|---|---|
+| `send` fails with `outbound email is disabled` | Inbound-only setup, or Email Sending enable failed (typically: account not on Workers Paid) | Subscribe to Workers Paid and re-run `cloudflare-email setup` |
+| `send` fails with HTTP 403 code 2036 from CF | Account isn't on Workers Paid; Email Sending is gated behind it | Subscribe to Workers Paid; or use the skill in inbound-only mode |
 | `send` fails with "sender domain not verified" | DNS hasn't propagated after `wrangler email sending enable`, or `enable` was never run | Run `wrangler email sending dns get <domain>`, verify SPF + DKIM records exist, wait 5-15 min |
-| `send` fails with HTTP 400 on `from` | Using Workers-binding field shape (`{email: ...}`) | The CLI uses the REST shape (`{address: ...}`) - should be automatic; if you've patched it, revert |
+| `send` fails with HTTP 400 on `from` | Using Workers-binding field shape (`{email: ...}`) | The CLI uses the REST shape (`{address: ...}`); should be automatic |
 | Reply doesn't thread on the recipient's side | `--in-reply-to` not passed | Pass the inbound `message_id` verbatim (with angle brackets) as `--in-reply-to` |
 | Inbound never arrives | Worker can't reach the local service | Check `cloudflare-email status` shows `vestad_tunnel`; check `screen -ls` shows the `cloudflare-email` session; check the service was registered with `"public": true` |
 | `subscribe` returns "no confirmation email seen" | Provider requires JS / bot-protection | Click the confirmation link from the inbound notification manually |

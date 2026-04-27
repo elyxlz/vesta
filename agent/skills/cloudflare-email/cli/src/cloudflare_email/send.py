@@ -49,10 +49,19 @@ def send_cmd(
         sys.exit(2)
 
     cfg = load_config()
-    account_id = cfg.get("account_id")
-    if not account_id:
+    if "account_id" not in cfg:
         click.echo("error: skill not configured. Run `cloudflare-email setup` first", err=True)
         sys.exit(2)
+    if "outbound_enabled" in cfg and not cfg["outbound_enabled"]:
+        click.echo(
+            "error: outbound email is disabled (inbound-only setup, or Email "
+            "Sending enable failed at setup time).\n"
+            "  Cloudflare Email Sending requires Workers Paid ($5/mo). "
+            "Subscribe and re-run `cloudflare-email setup` to enable.",
+            err=True,
+        )
+        sys.exit(2)
+    account_id = cfg["account_id"]
 
     sender = from_addr or email_address()
     try:

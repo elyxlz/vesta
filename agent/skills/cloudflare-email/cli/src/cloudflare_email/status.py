@@ -37,6 +37,7 @@ def status_cmd() -> None:
         "domain": cfg.get("domain"),
         "worker_name": cfg.get("worker_name"),
         "inbound_url": cfg.get("inbound_url"),
+        "outbound_enabled": cfg.get("outbound_enabled", False),
         "last_inbound": last,
         "vestad_tunnel": os.environ.get("VESTAD_TUNNEL", ""),
     }

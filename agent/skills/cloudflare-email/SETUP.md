@@ -14,6 +14,12 @@ and confirming the domain + local-part.
   `postal-mime`, the MIME parser the inbound Worker uses.
 - `wrangler` CLI. Install with `npm i -g wrangler` if missing.
 
+**Outbound (sending) is paid.** Cloudflare Email Routing (inbound) is free on
+all plans, but Email Sending requires the **Workers Paid** plan ($5/mo, 3,000
+sends/mo included). On free tier, setup runs in inbound-only mode: the agent
+receives mail and processes it as notifications, but `cloudflare-email send`
+is disabled. You can upgrade later and re-run setup to enable outbound.
+
 ## 1. Create a Cloudflare API token
 
 In the Cloudflare dashboard:
@@ -42,9 +48,13 @@ Setup walks through, in order:
    zones, prompts for domain (default `vesta.run` if
    present) and local-part (default `$AGENT_NAME` lowercased).
 2. **Inbound:** enable Email Routing on the zone (adds MX records).
-3. **Outbound:** check `wrangler email sending list`; if the domain isn't
+3. **Outbound:** ask whether to enable outbound (Workers Paid required).
+   If yes, check `wrangler email sending list`; if the domain isn't
    onboarded, run `wrangler email sending enable <domain>` and print the
    required SPF + DKIM records via `wrangler email sending dns get <domain>`.
+   If the enable call fails (typically because the account isn't on Workers
+   Paid), setup logs the error and continues in inbound-only mode rather
+   than aborting.
 4. `npm install` in `worker/`, then `wrangler deploy` the Worker with
    `INBOUND_URL` pointing at the agent's vestad tunnel.
 5. Generate a worker secret, persist `CF_WORKER_SECRET` to `~/.bashrc`, set
