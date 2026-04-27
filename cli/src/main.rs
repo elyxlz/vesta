@@ -137,16 +137,10 @@ enum Command {
         #[command(subcommand)]
         action: BackupAction,
     },
-    /// View or update agent settings
+    /// View agent settings (manage_agent_code is fixed at create time and read-only here)
     Settings {
         /// Agent name
         name: String,
-        /// Enable vestad-managed core code (mount from host)
-        #[arg(long)]
-        manage_core_code: bool,
-        /// Disable vestad-managed core code (use image's baked-in code)
-        #[arg(long, conflicts_with = "manage_core_code")]
-        no_manage_core_code: bool,
     },
     /// Destroy an agent (irreversible)
     Destroy {
@@ -533,18 +527,11 @@ fn run(cli: Cli) {
             eprintln!("created (run 'vesta auth {name}' to authenticate)");
         }
 
-        Command::Settings { name, manage_core_code, no_manage_core_code } => {
+        Command::Settings { name } => {
             let c = get_client(host_ref, token_ref);
-            if manage_core_code || no_manage_core_code {
-                let body = serde_json::json!({"manage_agent_code": !no_manage_core_code});
-                let result = c.patch_agent_settings(&name, &body).unwrap_or_else(|e| platform::die(&e));
-                let val = result["manage_agent_code"].as_bool().unwrap_or(true);
-                eprintln!("{name}: manage_agent_code = {val}");
-            } else {
-                let result = c.get_agent_settings(&name).unwrap_or_else(|e| platform::die(&e));
-                let val = result["manage_agent_code"].as_bool().unwrap_or(true);
-                eprintln!("manage_agent_code = {val}");
-            }
+            let result = c.get_agent_settings(&name).unwrap_or_else(|e| platform::die(&e));
+            let val = result["manage_agent_code"].as_bool().unwrap_or(true);
+            eprintln!("manage_agent_code = {val}");
         }
 
         Command::Start { name } => {
