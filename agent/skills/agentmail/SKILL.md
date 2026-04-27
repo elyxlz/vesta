@@ -1,6 +1,6 @@
 ---
 name: agentmail
-description: Send and receive email as the agent via AgentMail (a managed inbox-per-agent service with a free tier). Use when the user mentions "email", "send email", "agent inbox", or wants email without a custom domain. The agent's address is `${username}@agentmail.to`. Inbound mail arrives as a notification with `source=agentmail`. One-time setup signs up programmatically; no domain or DNS needed.
+description: Send and receive email as the agent via AgentMail (a managed inbox-per-agent service with a free tier). Use when the user mentions "email", "send email", "agent inbox", or wants email without a custom domain. The agent's address is `${username}@agentmail.to`. Inbound mail arrives as a notification with `source=agentmail`. Setup is fully autonomous (no domain, no DNS, no user input on the happy path).
 ---
 
 # agentmail
@@ -13,8 +13,9 @@ basic send + receive.
 The agent's address is `${username}@agentmail.to` (default username is the
 lowercased agent name).
 
-**Setup**: see [SETUP.md](SETUP.md). Sign-up is programmatic via the AgentMail
-API; setup walks through it interactively, prompting for an email + OTP.
+**Setup**: see [SETUP.md](SETUP.md). Fully autonomous on the happy path:
+setup creates a disposable mail.tm inbox, uses it to receive AgentMail's
+sign-up OTP, then discards it. No user input required.
 
 ## Quick reference
 
@@ -94,16 +95,24 @@ inbound notification is tagged with its `source` so handlers can route.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `setup` fails at OTP verification | Pasted wrong code, or the OTP expired (typically 10 min) | Re-run `agentmail setup`, request a fresh code |
+| `setup` times out polling the disposable inbox | AgentMail's anti-fraud rejected the disposable domain (no OTP delivered), or mail.tm is down | Run `agentmail setup --prompt` to do it manually with your own email, or use the browser fallback below |
+| `setup` fails at the verify step | Wrong OTP extracted from email, or OTP expired | Re-run `agentmail setup` for a fresh disposable inbox + new OTP |
 | `send` fails with HTTP 401 | API key missing or rotated | Re-run `agentmail setup` (will detect the missing key) |
 | `send` fails with HTTP 429 | Hit the daily 100-send cap on free tier | Wait, or upgrade to AgentMail's paid plan |
 | Inbound never arrives | Webhook can't reach the local service | Check `agentmail status` shows `webhook_url`; confirm the local service is running with `screen -ls`; confirm vestad's public tunnel is up |
 
-## Manual sign-up (browser fallback)
+## Manual / browser fallbacks
 
-If the API sign-up flow fails (e.g. AgentMail changes their API, rate limits,
-or the user wants an account on the paid plan from the start), use the
-`browser` skill to sign up manually at https://console.agentmail.to/signup,
+The autonomous flow can fail if AgentMail block-lists the disposable email
+domain or mail.tm is down. Two recovery paths:
+
+**`agentmail setup --prompt`** (manual)
+
+Asks for your email and the OTP you receive. No disposable inbox.
+
+**Browser sign-up + `--skip-signup`** (most resilient)
+
+Use the `browser` skill to sign up at https://console.agentmail.to/signup,
 generate an API key from the dashboard, then:
 
 ```bash

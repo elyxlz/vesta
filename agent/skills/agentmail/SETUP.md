@@ -1,15 +1,15 @@
 # agentmail setup
 
-One-time setup, ~2 minutes. Sign-up is programmatic; you'll need to paste an
-OTP from your email once.
+One-time setup, ~2 minutes. Fully autonomous on the happy path: no email,
+no OTP, no clicks. Setup creates a disposable mail.tm inbox, signs up to
+AgentMail with it, polls for the OTP, verifies, and discards the disposable
+inbox.
 
 ## Prerequisites
 
-- An email address you control (any provider) where AgentMail will send the
-  OTP for sign-up verification.
-- `node` + `npm` not required (no Worker, no DNS).
-
-That's it. No Cloudflare account, no domain, no DNS records, no paid plan.
+That's it. No Cloudflare account, no domain, no DNS records, no email
+address from the user. AgentMail's free tier covers 3 inboxes, 3,000
+sends/month, webhook-based inbound.
 
 ## 1. Run the setup CLI
 
@@ -17,28 +17,48 @@ That's it. No Cloudflare account, no domain, no DNS records, no paid plan.
 agentmail setup
 ```
 
-Setup walks through, in order:
+Autonomous flow, in order:
 
-1. **Sign-up** (skipped if `AGENTMAIL_API_KEY` is already set):
-   - Prompts for `human_email` (where the OTP gets sent) and `username` (your
-     agent's local-part; default is `$AGENT_NAME` lowercased).
-   - POSTs to `https://api.agentmail.to/agent/sign-up`.
-   - Prompts you to paste the OTP (check your email; expires in ~10 min).
-   - POSTs to `/agent/verify`. Persists `AGENTMAIL_API_KEY` to `~/.bashrc`.
-2. **Inbox creation**: POSTs to `/inboxes` with the chosen username. Stores
-   the inbox id and full email address in `~/.agentmail/config.json`.
-3. **Webhook registration**: registers `${VESTAD_TUNNEL}/agents/${AGENT_NAME}/agentmail/webhook`
-   with AgentMail. Generates a shared `AGENTMAIL_WEBHOOK_SECRET`, persists it
-   to `~/.bashrc`, and includes it in the webhook URL as a query param. The
-   local service rejects unauthenticated callbacks.
+1. **Disposable inbox**: POST to `https://api.mail.tm/accounts` to create a
+   throwaway inbox; POST to `/token` for an auth token.
+2. **AgentMail sign-up**: POST `https://api.agentmail.to/agent/sign-up` using
+   the disposable email and the chosen username (default: `$AGENT_NAME`
+   lowercased).
+3. **OTP poll**: poll mail.tm `/messages` until an email from `agentmail`
+   arrives (timeout: 3 min). Extract the OTP (typically a 6-digit number).
+4. **Verify**: POST `/agent/verify` with the OTP. Persists the returned
+   `AGENTMAIL_API_KEY` to `~/.bashrc` (sourced by the agent's container on
+   restart).
+5. **Inbox creation**: POST `/inboxes` with the chosen username. Stores the
+   inbox id and full address in `~/.agentmail/config.json`.
+6. **Webhook registration**: registers
+   `${VESTAD_TUNNEL}/agents/${AGENT_NAME}/agentmail/webhook?secret=...` with
+   AgentMail. Generates a shared `AGENTMAIL_WEBHOOK_SECRET`, persists it to
+   `~/.bashrc`, and embeds it in the URL as a query param. The local service
+   rejects unauthenticated callbacks.
 
-After this, `cloudflare-email status`-equivalent verification:
+**Verify**:
 
 ```bash
 agentmail status
 ```
 
 …should print the inbox id, address, and webhook URL.
+
+### When autonomous fails
+
+The autonomous flow can break in two realistic ways:
+
+1. **AgentMail blocks the disposable email domain.** Sign-up succeeds but no
+   OTP arrives; setup times out at step 3.
+2. **mail.tm is down or rate-limiting.** Step 1 fails immediately.
+
+Both cases hard-exit with a clear message. Two recovery paths:
+
+- `agentmail setup --prompt`: manual mode. Asks for an email and OTP.
+- Browser fallback: use the `browser` skill to sign up at
+  https://console.agentmail.to, generate an API key, then
+  `export AGENTMAIL_API_KEY=<key> && agentmail setup --skip-signup`.
 
 ## 2. Register and start the local service
 
@@ -75,19 +95,6 @@ Reply to it from your personal inbox, then watch for the inbound notification:
 ```bash
 ls -la ~/agent/notifications/ | grep agentmail
 ```
-
-## Skip programmatic sign-up
-
-If you already have an AgentMail account (signed up via console or browser),
-grab your API key from `https://console.agentmail.to`, then:
-
-```bash
-export AGENTMAIL_API_KEY=<paste-key>
-agentmail setup --skip-signup
-```
-
-This skips the sign-up + OTP loop and only does inbox creation + webhook
-registration.
 
 ## Token rotation
 
