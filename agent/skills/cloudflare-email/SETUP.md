@@ -54,7 +54,12 @@ Setup walks through, in order:
    Worker via `wrangler secret put`.
 6. Create two routing rules: a literal rule for `${local}@${domain}` and a
    wildcard literal rule for `${local}+*@${domain}`, both pointing at the
-   Worker.
+   Worker. Before creating, setup checks whether either address is already
+   routed by a foreign rule (another agent, or a stale leftover); if so, it
+   prompts:
+   - **take** — delete the conflicting rule(s) and claim the address.
+   - **change** — pick a different local-part and re-check.
+   - **abort** — exit without touching anything.
 7. Persist `domain`, `address`, zone/account IDs, and worker name to
    `~/.cloudflare-email/config.json`. Also write `CF_EMAIL_DOMAIN` and
    `CF_EMAIL_ADDRESS` to `~/.bashrc` for convenience.

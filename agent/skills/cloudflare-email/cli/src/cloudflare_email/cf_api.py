@@ -73,6 +73,25 @@ def _find_rule_by_name(rules: list[EmailRoutingRule], name: str) -> EmailRouting
     return None
 
 
+def find_address_conflicts(
+    rules: list[EmailRoutingRule], address: str, our_rule_name: str
+) -> list[EmailRoutingRule]:
+    """Return rules whose `to` matcher targets `address` but are NOT our own.
+
+    Detects another agent (or a stale rule) already routing the address we're
+    about to claim — so setup can prompt instead of silently shadowing it.
+    """
+    conflicts: list[EmailRoutingRule] = []
+    for r in rules:
+        if r.name == our_rule_name:
+            continue
+        for m in r.matchers:
+            if m.type == "literal" and m.field == "to" and m.value == address:
+                conflicts.append(r)
+                break
+    return conflicts
+
+
 def upsert_worker_route_rule(
     zone_id: str,
     address: str,
