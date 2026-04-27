@@ -272,16 +272,6 @@ impl Client {
         check_response(resp)
     }
 
-    fn patch_json(&self, path: &str, body: &serde_json::Value) -> Result<Response<Body>, String> {
-        let resp = self
-            .agent
-            .patch(&format!("{}{}", self.base_url, path))
-            .header("Authorization", &format!("Bearer {}", self.api_key))
-            .send_json(body)
-            .map_err(map_error)?;
-        check_response(resp)
-    }
-
     fn put_json(&self, path: &str, body: &serde_json::Value) -> Result<Response<Body>, String> {
         let resp = self
             .agent
@@ -331,11 +321,6 @@ impl Client {
 
     pub fn get_agent_settings(&self, name: &str) -> Result<serde_json::Value, String> {
         let resp = self.get(&format!("/agents/{name}/settings"))?;
-        resp.into_body().read_json().map_err(|e| format!("parse error: {e}"))
-    }
-
-    pub fn patch_agent_settings(&self, name: &str, body: &serde_json::Value) -> Result<serde_json::Value, String> {
-        let resp = self.patch_json(&format!("/agents/{name}/settings"), body)?;
         resp.into_body().read_json().map_err(|e| format!("parse error: {e}"))
     }
 

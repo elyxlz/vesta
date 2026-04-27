@@ -1648,16 +1648,27 @@ pub async fn reconcile_containers(docker: &Docker, env_config: &AgentEnvConfig, 
         }
     }
 
-    // Phase 2: rebuild containers with wrong config
+    // Phase 2: rebuild containers with wrong config. Uses container-derived mount
+    // topology (not settings) so a stale settings.json can't redirect the rebuild
+    // into wiping bind-mounted core code.
     let mut agent_code_ok = false;
     for ManagedAgent { cname, agent_name: name } in &agents {
-        let manage_core_code = manages_core_code(name);
-        if !needs_rebuild(docker, cname, manage_core_code).await {
+        let has_core_mounts = container_has_core_mounts(docker, cname).await;
+        let settings_says = manages_core_code(name);
+        if has_core_mounts != settings_says {
+            tracing::warn!(
+                agent = %name,
+                settings_says,
+                container_has_core_mounts = has_core_mounts,
+                "settings.manage_agent_code disagrees with container — using container as source of truth. fix by destroying and recreating the agent."
+            );
+        }
+        if !needs_rebuild(docker, cname).await {
             tracing::info!(agent = %name, "config ok, no rebuild needed");
             continue;
         }
         tracing::info!(agent = %name, "rebuild needed");
-        if manage_core_code && !agent_code_ok {
+        if has_core_mounts && !agent_code_ok {
             match crate::agent_code::ensure_agent_code(&env_config.config_dir) {
                 Ok(_) => agent_code_ok = true,
                 Err(e) => {
@@ -1666,7 +1677,7 @@ pub async fn reconcile_containers(docker: &Docker, env_config: &AgentEnvConfig, 
                 }
             }
         }
-        match rebuild_agent(docker, name, env_config, manage_core_code).await {
+        match rebuild_agent(docker, name, env_config).await {
             Ok(()) => tracing::info!(agent = %name, "rebuild complete"),
             Err(e) => tracing::error!(agent = %name, error = %e, "rebuild failed"),
         }
@@ -1722,31 +1733,35 @@ pub async fn destroy_agent(docker: &Docker, name: &str, agents_dir: &std::path::
     Ok(())
 }
 
+/// Returns whether the container has the core-code bind mount attached. This is the
+/// source of truth for `manage_agent_code` post-creation: settings.json may drift via
+/// hand-edits, but the container's mount config reflects how it was actually created.
+async fn container_has_core_mounts(docker: &Docker, cname: &str) -> bool {
+    match docker.inspect_container(cname, None).await {
+        Ok(info) => info.mounts.as_deref().unwrap_or(&[]).iter()
+            .any(|m| m.destination.as_deref() == Some(MOUNT_DESTS[1])),
+        Err(_) => false,
+    }
+}
+
 /// Check if a container's config diverges from what create_container would produce.
-async fn needs_rebuild(docker: &Docker, cname: &str, manage_core_code: bool) -> bool {
+/// Mount divergence is intentionally NOT a trigger here — it's reported by reconcile
+/// as a warning. See `rebuild_agent` for why mount topology must come from the
+/// container, not from settings.
+async fn needs_rebuild(docker: &Docker, cname: &str) -> bool {
     let info = match docker.inspect_container(cname, None).await {
         Ok(i) => i,
         Err(_) => return true,
     };
 
-    // Check mounts
     let mounts = info.mounts.as_deref().unwrap_or(&[]);
     let mount_dests: Vec<&str> = mounts.iter()
         .filter_map(|m| m.destination.as_deref())
         .collect();
 
-    let expected_mounts: &[&str] = if manage_core_code { MOUNT_DESTS } else { &MOUNT_DESTS[..1] };
-    let missing: Vec<_> = expected_mounts.iter().filter(|d| !mount_dests.contains(*d)).collect();
-    if !missing.is_empty() {
-        tracing::info!(container = %cname, missing = ?missing, "rebuild needed: missing mounts");
+    if !mount_dests.contains(&MOUNT_DESTS[0]) {
+        tracing::info!(container = %cname, "rebuild needed: missing env-file mount");
         return true;
-    }
-    if !manage_core_code {
-        let unexpected: Vec<_> = MOUNT_DESTS[1..].iter().filter(|d| mount_dests.contains(*d)).collect();
-        if !unexpected.is_empty() {
-            tracing::info!(container = %cname, unexpected = ?unexpected, "rebuild needed: has core code mounts while manage_core_code is false");
-            return true;
-        }
     }
 
     // Check cmd
@@ -1809,9 +1824,11 @@ async fn needs_rebuild(docker: &Docker, cname: &str, manage_core_code: bool) -> 
 }
 
 /// Recreate a container with the latest container config (entrypoint, mounts, env file)
-/// while preserving the filesystem. Commits the old container, removes it, and creates
-/// a new one from the committed image.
-pub async fn rebuild_agent(docker: &Docker, name: &str, env_config: &AgentEnvConfig, manage_core_code: bool) -> Result<(), DockerError> {
+/// while preserving the filesystem. Snapshots the old container, removes it, and creates
+/// a new one from the snapshot. Mount topology is preserved from the existing container,
+/// not re-derived from settings — `manage_agent_code` is fixed at create time, so the
+/// running container is the source of truth for which bind mounts to attach.
+pub async fn rebuild_agent(docker: &Docker, name: &str, env_config: &AgentEnvConfig) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
     let info = inspect_container(docker, &cname, Some(&env_config.agents_dir)).await;
@@ -1820,6 +1837,14 @@ pub async fn rebuild_agent(docker: &Docker, name: &str, env_config: &AgentEnvCon
         ContainerStatus::Dead => return Err(DockerError::BrokenState(format!("agent '{}' is in a broken state", name))),
         _ => {}
     }
+
+    // Derive mount topology from the existing container so a stale settings.json can never
+    // wipe bind-mounted core code. If the container has the core-code bind mount, keep it.
+    let manage_core_code = match docker.inspect_container(&cname, None).await {
+        Ok(raw) => raw.mounts.as_deref().unwrap_or(&[]).iter()
+            .any(|m| m.destination.as_deref() == Some(MOUNT_DESTS[1])),
+        Err(e) => return Err(DockerError::from(e)),
+    };
 
     // Get port: try env file first, then container's baked-in env vars, then allocate new
     let container_port = read_container_env(docker, &cname, "WS_PORT").await
@@ -2208,7 +2233,7 @@ mod tests {
 
         create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), NETWORK_MODE, RESTART_POLICY).await;
 
-        assert!(!needs_rebuild(&docker, &tc.name, false).await, "fresh container should NOT need rebuild");
+        assert!(!needs_rebuild(&docker, &tc.name).await, "fresh container should NOT need rebuild");
     }
 
     #[tokio::test]
@@ -2237,7 +2262,7 @@ mod tests {
 
         create_test_container_async(&docker, &tc, &mounts, agent_container_entrypoint_cmd(), NETWORK_MODE, RESTART_POLICY).await;
 
-        assert!(!needs_rebuild(&docker, &tc.name, true).await, "container with all mounts should NOT need rebuild");
+        assert!(!needs_rebuild(&docker, &tc.name).await, "container with all mounts should NOT need rebuild");
     }
 
     #[tokio::test]
@@ -2251,7 +2276,7 @@ mod tests {
 
         create_test_container_async(&docker, &tc, &[env_mount], vec!["sh".into(), "-c".into(), "echo wrong".into()], NETWORK_MODE, RESTART_POLICY).await;
 
-        assert!(needs_rebuild(&docker, &tc.name, false).await, "container with wrong cmd SHOULD need rebuild");
+        assert!(needs_rebuild(&docker, &tc.name).await, "container with wrong cmd SHOULD need rebuild");
     }
 
     #[tokio::test]
@@ -2262,12 +2287,16 @@ mod tests {
 
         create_test_container_async(&docker, &tc, &[], agent_container_entrypoint_cmd(), NETWORK_MODE, RESTART_POLICY).await;
 
-        assert!(needs_rebuild(&docker, &tc.name, false).await, "container without env mount SHOULD need rebuild");
+        assert!(needs_rebuild(&docker, &tc.name).await, "container without env mount SHOULD need rebuild");
     }
 
     #[tokio::test]
     #[ignore]
-    async fn test_needs_rebuild_true_on_missing_code_mounts() {
+    async fn test_needs_rebuild_false_on_missing_code_mounts() {
+        // After the manage_agent_code-is-create-only refactor, missing core code mounts
+        // are no longer a rebuild trigger — `manage_agent_code` is fixed at create time
+        // and the container's mount topology IS the source of truth. Reconcile only
+        // logs a warning when settings.json drifts via hand-edits.
         let docker = test_docker();
         let tc = TestContainer::new("rebuild-nocode");
         let env_file = tempfile::NamedTempFile::new().expect("tempfile");
@@ -2276,7 +2305,7 @@ mod tests {
 
         create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), NETWORK_MODE, RESTART_POLICY).await;
 
-        assert!(needs_rebuild(&docker, &tc.name, true).await, "container missing code mounts SHOULD need rebuild when manage_core_code=true");
+        assert!(!needs_rebuild(&docker, &tc.name).await, "missing core code mounts should NOT trigger rebuild");
     }
 
     #[tokio::test]
@@ -2290,7 +2319,7 @@ mod tests {
 
         create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), "bridge", RESTART_POLICY).await;
 
-        assert!(needs_rebuild(&docker, &tc.name, false).await, "container with wrong network SHOULD need rebuild");
+        assert!(needs_rebuild(&docker, &tc.name).await, "container with wrong network SHOULD need rebuild");
     }
 
     #[tokio::test]
@@ -2304,7 +2333,7 @@ mod tests {
 
         create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), NETWORK_MODE, "no").await;
 
-        assert!(needs_rebuild(&docker, &tc.name, false).await, "container with wrong restart policy SHOULD need rebuild");
+        assert!(needs_rebuild(&docker, &tc.name).await, "container with wrong restart policy SHOULD need rebuild");
     }
 
     #[tokio::test]
@@ -2319,7 +2348,7 @@ mod tests {
 
         // Create with wrong network to force rebuild
         create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), "bridge", RESTART_POLICY).await;
-        assert!(needs_rebuild(&docker, &tc.name, false).await, "precondition: should need rebuild");
+        assert!(needs_rebuild(&docker, &tc.name).await, "precondition: should need rebuild");
 
         // Snapshot
         snapshot_container(&docker, &tc.name, &img.tag, &[]).await.expect("snapshot should succeed");
@@ -2328,6 +2357,6 @@ mod tests {
         remove_container_force(&docker, &tc.name).await.ok();
         create_test_container_async(&docker, &tc, &[env_mount], agent_container_entrypoint_cmd(), NETWORK_MODE, RESTART_POLICY).await;
 
-        assert!(!needs_rebuild(&docker, &tc.name, false).await, "rebuilt container should NOT need rebuild");
+        assert!(!needs_rebuild(&docker, &tc.name).await, "rebuilt container should NOT need rebuild");
     }
 }
