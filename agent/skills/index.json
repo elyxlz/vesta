@@ -17,7 +17,7 @@
   },
   {
     "name": "cloudflare-email",
-    "description": "Use this skill when the user asks about \"email\", \"send email\", \"subscribe to newsletter\", or needs the agent to send/receive email via Cloudflare Email Service. The agent's address is `${AGENT_NAME}@${CF_EMAIL_DOMAIN}` (e.g. athena@vesta.run). Inbound email lands as a notification with `source=cloudflare-email`. Requires a one-time setup, see SETUP.md."
+    "description": "Send and receive email as the agent via Cloudflare Email Service. Use when the user mentions \"email\", \"send email\", \"reply to that email\", \"subscribe to a newsletter\", or wants the agent to act on inbound mail. The agent's address is `${AGENT_NAME}@${CF_EMAIL_DOMAIN}` (e.g. `athena@vesta.run`). Inbound mail arrives as a notification with `source=cloudflare-email`. Requires one-time setup \u2014 see SETUP.md."
   },
   {
     "name": "dashboard",

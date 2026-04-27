@@ -1,7 +1,9 @@
-// Cloudflare Worker for cloudflare-email skill.
-// Triggered on every inbound email matching the routing rules created in setup.
-// Forwards a JSON summary of the message to the agent's local service via the
-// public vestad tunnel (INBOUND_URL), authenticated by the WORKER_SECRET.
+// Cloudflare Email Routing worker for the cloudflare-email skill.
+// Parses inbound mail with postal-mime and forwards a JSON summary to the
+// agent's local service via the public vestad tunnel (INBOUND_URL),
+// authenticated by the WORKER_SECRET.
+
+import PostalMime from "postal-mime";
 
 export default {
   async email(message, env, ctx) {
@@ -11,68 +13,43 @@ export default {
       return;
     }
 
-    const headers = {};
-    for (const [k, v] of message.headers.entries()) headers[k] = v;
+    // message.raw is single-use — buffer once, then parse.
+    const rawBuffer = await new Response(message.raw).arrayBuffer();
+    const parsed = await PostalMime.parse(rawBuffer);
 
-    const raw = await new Response(message.raw).text();
-    const { textBody, htmlBody } = parseMime(raw);
+    const headers = Object.fromEntries(message.headers.entries());
+
+    const toList = (parsed.to || [])
+      .map((t) => t.address)
+      .filter(Boolean)
+      .join(", ");
 
     const payload = {
-      message_id: message.headers.get("Message-ID") || "",
-      from: message.from,
-      to: message.to,
-      subject: message.headers.get("Subject") || "",
-      body_text: textBody,
-      body_html: htmlBody,
+      message_id: parsed.messageId || message.headers.get("message-id") || "",
+      from: parsed.from?.address || message.from,
+      to: toList || message.to,
+      subject: parsed.subject || message.headers.get("subject") || "",
+      body_text: parsed.text || "",
+      body_html: parsed.html || "",
+      in_reply_to: parsed.inReplyTo || "",
+      references: parsed.references || "",
       headers,
     };
 
-    try {
-      const r = await fetch(`${env.INBOUND_URL}/inbound`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-worker-secret": env.WORKER_SECRET,
-        },
-        body: JSON.stringify(payload),
-      });
-      if (!r.ok) {
-        const txt = await r.text();
-        console.log(`inbound POST failed: ${r.status} ${txt}`);
-        // don't reject the email; agent can still see the bounce later
-      }
-    } catch (err) {
-      console.log(`inbound POST error: ${err.message}`);
+    // Throw on failure so Cloudflare Email Routing retries / bounces. If we
+    // returned silently after consuming raw, the email would be dropped from
+    // the agent's perspective and the sender would get no signal.
+    const r = await fetch(`${env.INBOUND_URL}/inbound`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-worker-secret": env.WORKER_SECRET,
+      },
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) {
+      const txt = await r.text();
+      throw new Error(`inbound POST failed: ${r.status} ${txt}`);
     }
   },
 };
-
-// Minimal MIME parser. Pulls the first text/plain and first text/html parts.
-// Good enough for newsletters and basic correspondence; not a full parser.
-function parseMime(raw) {
-  const parts = raw.split(/\r?\n\r?\n/);
-  let textBody = "";
-  let htmlBody = "";
-  let inText = false;
-  let inHtml = false;
-  let buf = "";
-  for (const line of raw.split(/\r?\n/)) {
-    const lower = line.toLowerCase();
-    if (lower.startsWith("content-type:")) {
-      if (buf) {
-        if (inText) textBody = buf;
-        else if (inHtml) htmlBody = buf;
-      }
-      buf = "";
-      inText = lower.includes("text/plain");
-      inHtml = lower.includes("text/html");
-      continue;
-    }
-    if (inText || inHtml) buf += line + "\n";
-  }
-  if (buf) {
-    if (inText && !textBody) textBody = buf;
-    else if (inHtml && !htmlBody) htmlBody = buf;
-  }
-  return { textBody: textBody.trim(), htmlBody: htmlBody.trim() };
-}

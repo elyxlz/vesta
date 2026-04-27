@@ -53,7 +53,7 @@ def setup_cmd(domain: str | None, local: str | None, worker_name: str | None) ->
         sys.exit(2)
     try:
         verify = cf_api.verify_token()
-        click.echo(f"  token ok, status={verify['result'].get('status')}")
+        click.echo(f"  token ok, status={verify['status']}")
     except Exception as e:
         click.echo(f"  token verify failed: {e}", err=True)
         sys.exit(1)
@@ -64,19 +64,19 @@ def setup_cmd(domain: str | None, local: str | None, worker_name: str | None) ->
         click.echo("error: no zones on this CF account", err=True)
         sys.exit(1)
     if not domain:
-        zone_names = [z["name"] for z in zones]
+        zone_names = [z.name for z in zones]
         click.echo("\navailable domains:")
         for i, n in enumerate(zone_names):
             click.echo(f"  [{i}] {n}")
         default_idx = next((i for i, n in enumerate(zone_names) if n == "vesta.run"), 0)
         idx = click.prompt("pick a domain index", default=default_idx, type=int)
         domain = zone_names[idx]
-    zone = next((z for z in zones if z["name"] == domain), None)
+    zone = next((z for z in zones if z.name == domain), None)
     if not zone:
         click.echo(f"error: domain {domain} not found on account", err=True)
         sys.exit(1)
-    zone_id = zone["id"]
-    account_id = zone["account"]["id"]
+    zone_id = zone.id
+    account_id = zone.account.id
 
     # 3. pick local-part
     if not local:
@@ -85,13 +85,70 @@ def setup_cmd(domain: str | None, local: str | None, worker_name: str | None) ->
     address = f"{local}@{domain}"
     click.echo(f"\nagent address will be: {address}")
 
-    # 4. enable email routing
+    # 4. enable email routing (inbound) and email sending (outbound) on the domain
     click.echo("enabling Email Routing on the zone...")
     try:
         cf_api.enable_email_routing(zone_id)
         click.echo("  ok")
     except Exception as e:
         click.echo(f"  warn: {e}")
+
+    env = os.environ.copy()
+    env["CLOUDFLARE_API_TOKEN"] = cf_api.cf_api_token()
+    env["CLOUDFLARE_ACCOUNT_ID"] = account_id
+
+    # Pre-flight: skip enable if already onboarded.
+    click.echo("checking Email Sending status...")
+    already_enabled = False
+    try:
+        proc = subprocess.run(
+            ["wrangler", "email", "sending", "list"],
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        listed_tokens = {
+            tok.strip(".,\"' ")
+            for line in proc.stdout.splitlines()
+            for tok in line.split()
+        }
+        already_enabled = domain in listed_tokens
+    except FileNotFoundError:
+        click.echo(
+            "error: wrangler not installed. Run `npm i -g wrangler` then re-run setup.",
+            err=True,
+        )
+        sys.exit(1)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        click.echo(f"  warn: could not list (will attempt enable anyway): {e}")
+
+    if already_enabled:
+        click.echo(f"  Email Sending already enabled on {domain}")
+    else:
+        click.echo("enabling Email Sending on the domain (outbound)...")
+        try:
+            subprocess.run(
+                ["wrangler", "email", "sending", "enable", domain],
+                env=env,
+                check=True,
+            )
+        except subprocess.CalledProcessError as e:
+            click.echo(
+                f"  outbound onboarding failed: {e}\n"
+                f"  `cloudflare-email send` will not work until this is resolved.\n"
+                f"  Check the API token has Account:Email:Edit and Zone:DNS:Edit on {domain}.",
+                err=True,
+            )
+            sys.exit(1)
+
+    click.echo(f"DNS records required for outbound on {domain}:")
+    subprocess.run(
+        ["wrangler", "email", "sending", "dns", "get", domain],
+        env=env,
+        check=False,
+    )
 
     # 5. ensure worker secret exists
     secret = keeper_get("cloudflare-email/worker-secret")
@@ -114,24 +171,32 @@ def setup_cmd(domain: str | None, local: str | None, worker_name: str | None) ->
             err=True,
         )
         sys.exit(1)
-    env = os.environ.copy()
-    env["CLOUDFLARE_API_TOKEN"] = cf_api.cf_api_token()
-    env["CLOUDFLARE_ACCOUNT_ID"] = account_id
-    # write env-specific wrangler vars
-    (WORKER_DIR / ".env").write_text(f"INBOUND_URL={inbound_url}\nWORKER_SECRET={secret}\n")
+
+    # postal-mime is bundled at deploy time — install worker deps first.
+    click.echo("installing worker dependencies...")
+    try:
+        subprocess.run(["npm", "install"], cwd=str(WORKER_DIR), env=env, check=True)
+    except FileNotFoundError:
+        click.echo("error: npm not found. Install Node.js then re-run setup.", err=True)
+        sys.exit(1)
+    except subprocess.CalledProcessError as e:
+        click.echo(f"  npm install failed: {e}", err=True)
+        sys.exit(1)
+
     try:
         subprocess.run(
-            ["wrangler", "deploy", "--name", worker_name],
+            [
+                "wrangler",
+                "deploy",
+                "--name",
+                worker_name,
+                "--var",
+                f"INBOUND_URL:{inbound_url}",
+            ],
             cwd=str(WORKER_DIR),
             env=env,
             check=True,
         )
-    except FileNotFoundError:
-        click.echo(
-            "error: wrangler not installed. Run `npm i -g wrangler` then re-run setup.",
-            err=True,
-        )
-        sys.exit(1)
     except subprocess.CalledProcessError as e:
         click.echo(f"  wrangler deploy failed: {e}", err=True)
         sys.exit(1)
@@ -145,10 +210,11 @@ def setup_cmd(domain: str | None, local: str | None, worker_name: str | None) ->
         check=False,
     )
 
-    # 7. routing rules
+    # 7. routing rules — list once and reuse for both upserts
     click.echo("creating routing rules...")
-    cf_api.upsert_worker_route_rule(zone_id, address, worker_name)
-    cf_api.upsert_subaddress_rule(zone_id, local, domain, worker_name)
+    rules = cf_api.list_routing_rules(zone_id)
+    cf_api.upsert_worker_route_rule(zone_id, address, worker_name, rules=rules)
+    cf_api.upsert_subaddress_rule(zone_id, local, domain, worker_name, rules=rules)
 
     # 8. persist config
     cfg = load_config()
@@ -175,7 +241,7 @@ def setup_cmd(domain: str | None, local: str | None, worker_name: str | None) ->
     click.echo(
         "  PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services "
         "-H \"X-Agent-Token: $AGENT_TOKEN\" -H 'Content-Type: application/json' "
-        '-d \'{"name":"cloudflare-email","public":true}\' | '
+        "-d '{\"name\":\"cloudflare-email\",\"public\":true}' | "
         "python3 -c \"import sys,json; print(json.load(sys.stdin)['port'])\")"
     )
     click.echo("  screen -dmS cloudflare-email cloudflare-email serve --port $PORT")
@@ -193,16 +259,21 @@ def reconcile_cmd() -> None:
     click.echo("checking zone...")
     cf_api.find_zone(cfg["domain"])
     click.echo("re-applying routing rules...")
-    cf_api.upsert_worker_route_rule(cfg["zone_id"], cfg["address"], cfg["worker_name"])
-    cf_api.upsert_subaddress_rule(cfg["zone_id"], cfg["local"], cfg["domain"], cfg["worker_name"])
+    rules = cf_api.list_routing_rules(cfg["zone_id"])
+    cf_api.upsert_worker_route_rule(
+        cfg["zone_id"], cfg["address"], cfg["worker_name"], rules=rules
+    )
+    cf_api.upsert_subaddress_rule(
+        cfg["zone_id"], cfg["local"], cfg["domain"], cfg["worker_name"], rules=rules
+    )
     click.echo("ok.")
 
 
 def _resolve_inbound_url() -> str:
     """Resolve the public URL the Worker should POST inbound mail to.
     Reads VESTAD_TUNNEL from env (set by vestad on container start)."""
-    tunnel = os.environ.get("VESTAD_TUNNEL", "").strip()
+    tunnel = os.environ["VESTAD_TUNNEL"].strip() if "VESTAD_TUNNEL" in os.environ else ""
     if not tunnel:
         return ""
-    # vestad routes /agents/<name>/services/<name>/<path>
-    return f"{tunnel.rstrip('/')}/agents/{agent_name()}/services/cloudflare-email"
+    # vestad routes /agents/<name>/<service>/<path> through agent_proxy_handler.
+    return f"{tunnel.rstrip('/')}/agents/{agent_name()}/cloudflare-email"

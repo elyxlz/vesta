@@ -1,42 +1,85 @@
 ---
 name: cloudflare-email
-description: Use this skill when the user asks about "email", "send email", "subscribe to newsletter", or needs the agent to send/receive email via Cloudflare Email Service. The agent's address is `${AGENT_NAME}@${CF_EMAIL_DOMAIN}` (e.g. athena@vesta.run). Inbound email lands as a notification with `source=cloudflare-email`. Requires a one-time setup, see SETUP.md.
+description: Send and receive email as the agent via Cloudflare Email Service. Use when the user mentions "email", "send email", "reply to that email", "subscribe to a newsletter", or wants the agent to act on inbound mail. The agent's address is `${AGENT_NAME}@${CF_EMAIL_DOMAIN}` (e.g. `athena@vesta.run`). Inbound mail arrives as a notification with `source=cloudflare-email`. Requires one-time setup — see SETUP.md.
 ---
 
 # cloudflare-email
 
-Email send/receive for the agent via Cloudflare Email Service. The address is
-`${AGENT_NAME}@${CF_EMAIL_DOMAIN}`. Inbound email arrives as a notification, the
-agent replies with the `cloudflare-email` CLI on the same channel.
+Send and receive email as the agent. Outbound goes through the Email Sending
+REST API; inbound arrives via a Cloudflare Worker that posts each parsed
+message to a local FastAPI service, which writes a notification JSON the
+agent's notification loop picks up natively (same pattern as whatsapp /
+telegram).
 
-**Setup**: See [SETUP.md](SETUP.md). One-time, requires a Cloudflare account with
-a domain on the account and an API token.
+The address is `${AGENT_NAME}@${CF_EMAIL_DOMAIN}` (lowercased), e.g.
+`athena@vesta.run`.
+
+**Setup**: see [SETUP.md](SETUP.md). One-time, ~10 minutes, requires a
+Cloudflare account with a domain on it and an API token.
 
 ## Quick reference
 
 ```bash
-cloudflare-email setup                              # interactive: creates routing rule + deploys worker
+cloudflare-email setup                                      # one-time interactive setup
+cloudflare-email reconcile                                  # re-apply routing + secret after token rotation
 cloudflare-email send --to <addr> --subject <s> --body <b>
-cloudflare-email send --to <addr> --subject <s> --body-file /path/to/body.txt
-cloudflare-email send --to <addr> --subject <s> --body <b> --reply-to <msgid>
-cloudflare-email subscribe --url <newsletter-signup-url>   # signs up and watches inbox for confirmation link
-cloudflare-email status                             # shows configured domain, address, last inbound
+cloudflare-email send --to <addr> --subject <s> --body-file body.txt --html-file body.html
+cloudflare-email send --to <addr> --subject <s> --body <b> --in-reply-to <message_id>
+cloudflare-email subscribe --url <newsletter-signup-url>    # signs up using a sub-address
+cloudflare-email status                                     # show config + last inbound
+cloudflare-email teardown                                   # remove routing rules + worker
 ```
 
-## Notes
+## Sending email
 
-- Address: `${AGENT_NAME}@${CF_EMAIL_DOMAIN}`. Default domain is `vesta.run`, set via
-  env `CF_EMAIL_DOMAIN` in `~/.bashrc`. Agent name comes from `$AGENT_NAME`.
-- Sub-addressing works: `athena+newsletters@vesta.run`, `athena+research@vesta.run`,
-  etc. all route to the same agent. Useful for filtering inbound by namespace.
-- Outbound goes through the Cloudflare Email Send API. SPF/DKIM/DMARC are
-  auto-configured at routing-rule creation time.
-- Inbound is handled by a Cloudflare Worker (`worker/`) that POSTs to the local
-  service. Service writes to `~/agent/notifications/` so the agent picks it up
-  natively, same shape as whatsapp/telegram messages.
-- Auth: API token stored in keeper as `cloudflare/api-token`. Worker secret stored
-  in keeper as `cloudflare-email/worker-secret`. Domain stored in `~/.bashrc` as
-  `CF_EMAIL_DOMAIN`.
+- Outbound goes through `POST /accounts/{account_id}/email/sending/send`
+  (no Workers binding — the agent runs in a container, not a Worker).
+- The domain must be onboarded for sending. `setup` runs
+  `wrangler email sending enable <domain>` for you. After onboarding, DNS
+  (SPF + DKIM) propagation can take 5–15 min before sends succeed.
+- Pass both `--body` (plain text) and `--html-file` (HTML) when you can.
+  Text-only sends score worse on spam filters; HTML-only breaks for clients
+  that strip HTML.
+- To reply on the same thread, pass `--in-reply-to <message_id>` using the
+  `message_id` from the inbound notification. The CLI sets `In-Reply-To`
+  and `References` headers per RFC 5322. (This is distinct from CF's
+  `reply_to` REST field, which sets the Reply-To envelope address — we
+  don't expose that.)
+
+### Reply-on-thread example
+
+Inbound notification:
+
+```json
+{ "source": "cloudflare-email", "message_id": "<x123@example.com>",
+  "from": "alice@example.com", "subject": "Lunch?" }
+```
+
+Reply on the same thread:
+
+```bash
+cloudflare-email send \
+  --to alice@example.com \
+  --subject "Re: Lunch?" \
+  --body "Tomorrow at 1pm works." \
+  --in-reply-to "<x123@example.com>"
+```
+
+## Receiving email
+
+- A Cloudflare Worker (in `worker/`) parses inbound MIME with `postal-mime`
+  and POSTs the result to the local `cloudflare-email` service over the
+  public vestad tunnel, authenticated with a shared `WORKER_SECRET`.
+- The service writes a JSON file to `~/agent/notifications/`. The agent's
+  notification loop picks it up like any other source.
+- Sub-addressing works automatically: `${local}+<tag>@${domain}` routes to
+  the same agent. Use sub-addresses to namespace inbound:
+
+| Use case | Address pattern |
+|---|---|
+| Direct mail from a human | `athena@vesta.run` |
+| Newsletter signups | `athena+<source>@vesta.run` |
+| Account verification flows | `athena+verify-<service>@vesta.run` |
 
 ## Notification shape
 
@@ -50,25 +93,46 @@ cloudflare-email status                             # shows configured domain, a
   "subject": "...",
   "body_text": "...",
   "body_html": "...",
+  "in_reply_to": "<parent-rfc822-id>",
+  "references": "<root-id> <parent-id>",
+  "headers": {"...": "..."},
   "received_at": "2026-04-27T11:00:00Z"
 }
 ```
 
 ## Newsletter subscriptions
 
-`cloudflare-email subscribe --url <signup>` signs up using the agent's address,
-then watches for the confirmation email and clicks the link automatically. Logs
-the subscription source so the agent can unsubscribe later if the noise outweighs
-the value.
+`cloudflare-email subscribe --url <signup>` POSTs the agent's sub-address
+(`${local}+<host-slug>@${domain}`) to the signup form, then watches the
+inbox for ~5 min for a confirmation email and visits any
+`confirm|verify|activate|subscribe` link it finds. Best-effort: providers
+that require JavaScript or bot challenges will fail — in that case the
+confirmation email still lands as a normal notification, so the user
+(or agent) can click the link manually.
 
-## When to use a sub-address
+The subscription is logged to `~/.cloudflare-email/subscriptions.json`
+(signup URL, sub-address, timestamp). There is no `unsubscribe` command
+yet; to stop a feed, click the unsubscribe link in any inbound message
+or delete the routing rule for that sub-address.
 
-- Mo (or any human contact) emails the bare agent address: `athena@vesta.run`
-- Newsletter signups: `athena+<source>@vesta.run` so noise is sortable
-- Account verification flows: `athena+verify-<service>@vesta.run`
+## Configuration storage
 
-## Known limitations during CF beta
+| What | Where |
+|---|---|
+| API token | keeper, path `cloudflare/api-token` |
+| Worker secret | keeper, path `cloudflare-email/worker-secret` |
+| Domain, address, zone/account IDs, worker name | `~/.cloudflare-email/config.json` (written by setup) |
 
-- No IMAP/POP3 retrieval. All inbound goes via the Worker.
-- The Worker has a 30s execution limit per email. Long-form processing should
-  push the body to a queue (D1 or R2) and process async.
+`CF_EMAIL_DOMAIN` and `CF_EMAIL_ADDRESS` are also written to `~/.bashrc`
+for convenience in interactive shells, but the agent process reads from
+`config.json` directly — the env vars aren't load-bearing.
+
+## Common mistakes
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `send` fails with "sender domain not verified" | DNS hasn't propagated after `wrangler email sending enable`, or `enable` was never run | Run `wrangler email sending dns get <domain>`, verify SPF + DKIM records exist, wait 5–15 min |
+| `send` fails with HTTP 400 on `from` | Using Workers-binding field shape (`{email: ...}`) | The CLI uses the REST shape (`{address: ...}`) — should be automatic; if you've patched it, revert |
+| Reply doesn't thread on the recipient's side | `--in-reply-to` not passed | Pass the inbound `message_id` verbatim (with angle brackets) as `--in-reply-to` |
+| Inbound never arrives | Worker can't reach the local service | Check `cloudflare-email status` shows `vestad_tunnel`; check `screen -ls` shows the `cloudflare-email` session; check the service was registered with `"public": true` |
+| `subscribe` returns "no confirmation email seen" | Provider requires JS / bot-protection | Click the confirmation link from the inbound notification manually |

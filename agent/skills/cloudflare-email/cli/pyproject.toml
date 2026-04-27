@@ -8,7 +8,7 @@ dependencies = [
     "uvicorn>=0.30",
     "httpx>=0.27",
     "click>=8.1",
-    "python-dotenv>=1.0",
+    "cloudflare>=4.3",
 ]
 
 [project.scripts]

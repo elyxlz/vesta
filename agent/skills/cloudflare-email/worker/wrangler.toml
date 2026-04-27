@@ -1,11 +1,8 @@
 name = "cloudflare-email"
 main = "index.js"
 compatibility_date = "2026-04-01"
+compatibility_flags = ["nodejs_compat"]
 
-# INBOUND_URL is set per-deploy from .env (vestad tunnel).
-# WORKER_SECRET is set as a Worker secret (encrypted), not in this file.
-# Both are loaded by the setup CLI before deploy.
-
-[vars]
-# placeholders, overridden by env at deploy time
-INBOUND_URL = "https://example.invalid"
+# INBOUND_URL is injected per-deploy via `wrangler deploy --var INBOUND_URL:<url>`.
+# WORKER_SECRET is set as a Worker secret (encrypted) via `wrangler secret put`.
+# Both are wired by the setup CLI.

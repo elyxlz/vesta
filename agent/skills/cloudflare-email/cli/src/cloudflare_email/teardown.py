@@ -25,11 +25,10 @@ def teardown_cmd(yes: bool) -> None:
         )
     rules = cf_api.list_routing_rules(cfg["zone_id"])
     target_names = {f"agent-{cfg['address']}", f"agent-{cfg['local']}-subaddress"}
-    for r in rules:
-        if r.get("name") in target_names:
-            click.echo(f"deleting rule {r['name']}")
-            with cf_api._client() as c:
-                c.delete(f"/zones/{cfg['zone_id']}/email/routing/rules/{r['tag']}")
+    for rule in rules:
+        if rule.name in target_names:
+            click.echo(f"deleting rule {rule.name}")
+            cf_api.delete_routing_rule(cfg["zone_id"], rule.tag)
     env = os.environ.copy()
     env["CLOUDFLARE_API_TOKEN"] = cf_api.cf_api_token()
     env["CLOUDFLARE_ACCOUNT_ID"] = cfg["account_id"]

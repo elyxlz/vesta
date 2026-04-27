@@ -1,0 +1,8 @@
+{
+  "name": "cloudflare-email-worker",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "postal-mime": "^2.6.1"
+  }
+}

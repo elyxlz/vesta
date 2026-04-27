@@ -1,30 +1,32 @@
 # cloudflare-email setup
 
-One-time setup. Takes ~10 minutes. The agent runs interactively, you paste a
-token and confirm a few choices.
+One-time setup, ~10 minutes. Two interactive prompts: pasting the API token,
+and confirming the domain + local-part.
 
 ## Prerequisites
 
-- A Cloudflare account
-- A domain on that Cloudflare account (e.g. `vesta.run`). The domain's name
-  servers must be pointing at Cloudflare so email routing can attach MX records.
-- `wrangler` CLI installed locally for the Worker deploy. The setup will install
-  it via `npm i -g wrangler` if missing.
+- A Cloudflare account.
+- A domain on that account (e.g. `vesta.run`) with name servers pointing at
+  Cloudflare. Email Routing (inbound) and Email Sending (outbound) attach DNS
+  records (MX for routing; SPF + DKIM for sending), so Cloudflare must own DNS
+  for the zone.
+- `node` + `npm` on PATH. Setup runs `npm install` in `worker/` to bundle
+  `postal-mime`, the MIME parser the inbound Worker uses.
+- `wrangler` CLI. Install with `npm i -g wrangler` if missing.
 
 ## 1. Create a Cloudflare API token
 
 In the Cloudflare dashboard:
 
-1. Go to **My Profile** → **API Tokens** → **Create Token**
-2. Use **Custom Token**
+1. Go to **My Profile** → **API Tokens** → **Create Token**.
+2. Use **Custom Token**.
 3. Permissions:
-   - **Account** → **Email** → **Edit** (manages Email Routing + Email Send)
-   - **Account** → **Workers Scripts** → **Edit** (deploys the inbound Worker)
+   - **Account** → **Email** → **Edit** (Email Routing + Email Sending)
+   - **Account** → **Workers Scripts** → **Edit** (deploy the inbound Worker)
    - **Zone** → **Email Routing** → **Edit** (per-domain routing rules)
-   - **Zone** → **DNS** → **Edit** (auto-add MX/SPF/DKIM)
-4. Account/Zone resources: scope to the specific account + the email domain only
-5. Click **Continue to summary** then **Create Token**
-6. Copy the token. It's shown once.
+   - **Zone** → **DNS** → **Edit** (auto-add MX / SPF / DKIM)
+4. Account & Zone resources: scope to the specific account + the email domain.
+5. **Continue to summary** → **Create Token**. Copy the token — it's shown once.
 
 ## 2. Stash the token in keeper
 
@@ -38,49 +40,71 @@ keeper store cloudflare/api-token "<paste-the-token>"
 cloudflare-email setup
 ```
 
-The agent will:
+Setup walks through, in order:
 
-1. Read the token from keeper
-2. Verify the token works and list domains on the account
-3. Ask which domain to use (default: `vesta.run` if present, else first listed)
-4. Ask for the agent's email local-part (default: `$AGENT_NAME`, lowercased)
-5. Enable Email Routing on the chosen zone (adds MX records, configures SPF)
-6. Create a catch-all routing rule that forwards `${local}@${domain}` and
-   `${local}+*@${domain}` to the inbound Worker
-7. Deploy the inbound Worker (in `~/agent/skills/cloudflare-email/worker/`),
-   wired to call the local `cloudflare-email` service via the public vestad
-   tunnel
-8. Generate a shared secret, stash it as `cloudflare-email/worker-secret` in
-   keeper, set as a Worker secret too
-9. Write `CF_EMAIL_DOMAIN=<chosen-domain>` and `CF_EMAIL_ADDRESS=<full>` to
-   `~/.bashrc`
+1. Verify the token, list zones, prompt for domain (default `vesta.run` if
+   present) and local-part (default `$AGENT_NAME` lowercased).
+2. **Inbound:** enable Email Routing on the zone (adds MX records).
+3. **Outbound:** check `wrangler email sending list`; if the domain isn't
+   onboarded, run `wrangler email sending enable <domain>` and print the
+   required SPF + DKIM records via `wrangler email sending dns get <domain>`.
+4. `npm install` in `worker/`, then `wrangler deploy` the Worker with
+   `INBOUND_URL` pointing at the agent's vestad tunnel.
+5. Generate a worker secret, store it in keeper, set it on the deployed
+   Worker via `wrangler secret put`.
+6. Create two routing rules: a literal rule for `${local}@${domain}` and a
+   wildcard literal rule for `${local}+*@${domain}`, both pointing at the
+   Worker.
+7. Persist `domain`, `address`, zone/account IDs, and worker name to
+   `~/.cloudflare-email/config.json`. Also write `CF_EMAIL_DOMAIN` and
+   `CF_EMAIL_ADDRESS` to `~/.bashrc` for convenience.
+
+After this completes, **DNS for outbound may take 5–15 minutes to
+propagate**. Inbound works immediately.
+
+**Verify**: `cloudflare-email status` should show `domain`, `address`, and
+`worker_name` filled in.
 
 ## 4. Register and start the local service
 
+The Worker reaches the local FastAPI service through the public vestad
+tunnel — that's why the service must be registered with `"public": true`.
+
 ```bash
 PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services \
-  -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' \
-  -d '{"name":"cloudflare-email","public":true}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])")
+  -H "X-Agent-Token: $AGENT_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"cloudflare-email","public":true}' \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])")
+
 screen -dmS cloudflare-email cloudflare-email serve --port $PORT
 ```
 
-Add to `~/agent/prompts/restart.md`:
+Append the same two-line block to `~/agent/prompts/restart.md` so the
+service comes back up after a container restart.
 
-```bash
-PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' -d '{"name":"cloudflare-email","public":true}' | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])") && screen -dmS cloudflare-email cloudflare-email serve --port $PORT
-```
-
-The `public: true` is required: the Worker needs to reach the service through
-the vestad tunnel.
+**Verify**: `curl http://127.0.0.1:$PORT/health` should return
+`{"ok": true, "address": "<your-address>"}`.
 
 ## 5. Send a test email
 
 ```bash
-cloudflare-email send --to <your-personal-email> --subject "test from athena" --body "hello"
+cloudflare-email send \
+  --to <your-personal-email> \
+  --subject "test from $AGENT_NAME" \
+  --body "hello" \
+  --html-file /dev/stdin <<< "<p>hello</p>"
 ```
 
-Check it lands. Reply to it from your personal email, then watch for the
-inbound notification:
+If this returns `{"ok": false, "error": "...sender domain not verified..."}`,
+the SPF / DKIM records from step 3 haven't propagated yet. Check with:
+
+```bash
+wrangler email sending dns get <domain>
+```
+
+…and wait. Once the test send lands, reply to it from your personal inbox
+and confirm the inbound notification:
 
 ```bash
 ls -la ~/agent/notifications/ | grep cloudflare-email
@@ -88,14 +112,15 @@ ls -la ~/agent/notifications/ | grep cloudflare-email
 
 ## Token rotation
 
-If the API token leaks or you want to rotate:
+If the token leaks or you want to rotate:
 
 ```bash
 keeper store cloudflare/api-token "<new-token>"
-cloudflare-email setup --reconcile
+cloudflare-email reconcile
 ```
 
-The reconcile flag re-verifies routing + Worker + secret without re-prompting.
+`reconcile` re-applies the routing rules and re-verifies the Worker secret
+without re-prompting for the domain or local-part.
 
 ## Uninstall
 
@@ -103,6 +128,8 @@ The reconcile flag re-verifies routing + Worker + secret without re-prompting.
 cloudflare-email teardown
 ```
 
-Removes the routing rule, deletes the Worker, clears keeper entries. The MX
-records and Email Routing zone setting are left in place since other workflows
-may use them.
+Removes both routing rules and deletes the Worker. MX records and the Email
+Routing zone setting stay in place — other workflows on the same domain may
+need them. To fully decommission, also run
+`wrangler email sending disable <domain>` and remove the routing rule + DNS
+records in the Cloudflare dashboard.

@@ -1,40 +1,51 @@
-"""Thin wrapper around the Cloudflare REST API. Only the endpoints we need."""
+"""Thin wrapper over the official Cloudflare Python SDK.
+
+Outbound send still hits the REST endpoint directly — `email_service.send` is
+not exposed by `cloudflare` v4.3.1. Drop this shim once the SDK catches up.
+"""
 
 from __future__ import annotations
 
+import json
+from typing import Any
+
 import httpx
+from cloudflare import Cloudflare
+from cloudflare.types.email_routing import EmailRoutingRule
 
 from cloudflare_email.config import cf_api_token
 
 
-BASE = "https://api.cloudflare.com/client/v4"
+SEND_BASE_URL = "https://api.cloudflare.com/client/v4"
+
+# Avoid re-shelling to keeper for every SDK call. The token only rotates via
+# `keeper store ... && cloudflare-email reconcile`, and reconcile runs in a
+# fresh process — no stale-cache concern.
+_cached_token: str | None = None
 
 
-def _client() -> httpx.Client:
-    return httpx.Client(
-        base_url=BASE,
-        headers={"Authorization": f"Bearer {cf_api_token()}"},
-        timeout=30.0,
-    )
+def _resolve_token() -> str:
+    global _cached_token
+    if _cached_token is None:
+        _cached_token = cf_api_token()
+    return _cached_token
+
+
+def _client() -> Cloudflare:
+    return Cloudflare(api_token=_resolve_token())
 
 
 def verify_token() -> dict:
-    with _client() as c:
-        r = c.get("/user/tokens/verify")
-        r.raise_for_status()
-        return r.json()
+    return _client().user.tokens.verify().model_dump()
 
 
-def list_zones() -> list[dict]:
-    with _client() as c:
-        r = c.get("/zones", params={"per_page": 50})
-        r.raise_for_status()
-        return r.json()["result"]
+def list_zones() -> list:
+    return list(_client().zones.list())
 
 
-def find_zone(domain: str) -> dict | None:
-    for z in list_zones():
-        if z["name"] == domain:
+def find_zone(domain: str):
+    for z in _client().zones.list(name=domain):
+        if z.name == domain:
             return z
     return None
 
@@ -43,100 +54,141 @@ def get_account_id() -> str:
     zones = list_zones()
     if not zones:
         raise RuntimeError("No zones on this Cloudflare account")
-    return zones[0]["account"]["id"]
+    return zones[0].account.id
 
 
-def enable_email_routing(zone_id: str) -> dict:
-    """Enable Email Routing on a zone. Idempotent."""
-    with _client() as c:
-        r = c.post(f"/zones/{zone_id}/email/routing/enable")
-        if r.status_code == 409:
-            return c.get(f"/zones/{zone_id}/email/routing").json()["result"]
-        r.raise_for_status()
-        return r.json()["result"]
+def enable_email_routing(zone_id: str):
+    """Enable Email Routing on a zone. Idempotent — already-enabled returns settings."""
+    return _client().email_routing.enable(zone_id=zone_id, body={})
 
 
-def list_routing_rules(zone_id: str) -> list[dict]:
-    with _client() as c:
-        r = c.get(f"/zones/{zone_id}/email/routing/rules")
-        r.raise_for_status()
-        return r.json()["result"]
+def list_routing_rules(zone_id: str) -> list[EmailRoutingRule]:
+    return list(_client().email_routing.rules.list(zone_id=zone_id))
 
 
-def upsert_worker_route_rule(zone_id: str, address: str, worker_name: str) -> dict:
-    """Create or update a routing rule that forwards address (and +sub-addresses) to a Worker."""
-    rules = list_routing_rules(zone_id)
-    matching = [r for r in rules if r.get("name") == f"agent-{address}"]
-    payload = {
-        "name": f"agent-{address}",
-        "enabled": True,
-        "matchers": [
-            {"type": "literal", "field": "to", "value": address},
-        ],
-        "actions": [
-            {"type": "worker", "value": [worker_name]},
-        ],
-        "priority": 0,
-    }
-    with _client() as c:
-        if matching:
-            r = c.put(
-                f"/zones/{zone_id}/email/routing/rules/{matching[0]['tag']}",
-                json=payload,
-            )
-        else:
-            r = c.post(f"/zones/{zone_id}/email/routing/rules", json=payload)
-        r.raise_for_status()
-        return r.json()["result"]
+def _find_rule_by_name(rules: list[EmailRoutingRule], name: str) -> EmailRoutingRule | None:
+    for r in rules:
+        if r.name == name:
+            return r
+    return None
 
 
-def upsert_subaddress_rule(zone_id: str, local: str, domain: str, worker_name: str) -> dict:
-    """Catch-all rule for `local+*@domain` -> Worker."""
-    rules = list_routing_rules(zone_id)
-    rule_name = f"agent-{local}-subaddress"
-    matching = [r for r in rules if r.get("name") == rule_name]
-    payload = {
-        "name": rule_name,
-        "enabled": True,
-        "matchers": [
-            {
-                "type": "regex",
-                "field": "to",
-                "value": f"^{local}\\+.*@{domain.replace('.', '\\\\.')}$",
-            },
-        ],
-        "actions": [
-            {"type": "worker", "value": [worker_name]},
-        ],
-        "priority": 1,
-    }
-    with _client() as c:
-        if matching:
-            r = c.put(
-                f"/zones/{zone_id}/email/routing/rules/{matching[0]['tag']}",
-                json=payload,
-            )
-        else:
-            r = c.post(f"/zones/{zone_id}/email/routing/rules", json=payload)
-        r.raise_for_status()
-        return r.json()["result"]
+def upsert_worker_route_rule(
+    zone_id: str,
+    address: str,
+    worker_name: str,
+    *,
+    rule_name: str | None = None,
+    priority: int = 0,
+    rules: list[EmailRoutingRule] | None = None,
+):
+    """Create or update a routing rule that forwards `address` to `worker_name`.
+
+    Address may be exact (`agent@example.com`) or a CF wildcard literal
+    (`agent+*@example.com`). The SDK's matcher type stays `"literal"` for both.
+
+    Pass `rules` to reuse a pre-fetched list when upserting multiple rules in
+    a row (saves an API round-trip per call).
+    """
+    name = rule_name or f"agent-{address}"
+    actions: list[dict[str, Any]] = [{"type": "worker", "value": [worker_name]}]
+    matchers: list[dict[str, Any]] = [{"type": "literal", "field": "to", "value": address}]
+    client = _client()
+    existing = _find_rule_by_name(rules if rules is not None else list_routing_rules(zone_id), name)
+    if existing:
+        return client.email_routing.rules.update(
+            existing.tag,
+            zone_id=zone_id,
+            name=name,
+            enabled=True,
+            actions=actions,
+            matchers=matchers,
+            priority=priority,
+        )
+    return client.email_routing.rules.create(
+        zone_id=zone_id,
+        name=name,
+        enabled=True,
+        actions=actions,
+        matchers=matchers,
+        priority=priority,
+    )
+
+
+def upsert_subaddress_rule(
+    zone_id: str,
+    local: str,
+    domain: str,
+    worker_name: str,
+    *,
+    rules: list[EmailRoutingRule] | None = None,
+):
+    """Wildcard rule for `local+*@domain` -> worker.
+
+    Uses Cloudflare's wildcard literal matcher (announced 2024). The matcher
+    type is `"literal"` with a `+*` glob in the value — no regex required.
+    """
+    address = f"{local}+*@{domain}"
+    return upsert_worker_route_rule(
+        zone_id,
+        address,
+        worker_name,
+        rule_name=f"agent-{local}-subaddress",
+        priority=1,
+        rules=rules,
+    )
+
+
+def delete_routing_rule(zone_id: str, rule_tag: str):
+    return _client().email_routing.rules.delete(rule_tag, zone_id=zone_id)
 
 
 def send_email(
-    account_id: str, *, from_addr: str, to_addr: str, subject: str, body_text: str, body_html: str | None = None, reply_to: str | None = None
+    account_id: str,
+    *,
+    from_addr: str,
+    to_addr: str,
+    subject: str,
+    body_text: str,
+    body_html: str | None = None,
+    in_reply_to: str | None = None,
 ) -> dict:
-    """Send via the Email Sending API."""
-    payload = {
-        "from": {"email": from_addr},
-        "to": [{"email": to_addr}],
+    """Send via the Email Sending REST API.
+
+    Endpoint: POST /accounts/{account_id}/email/sending/send.
+    Not yet exposed by `cloudflare` v4.3.1 — direct REST call. Field names
+    follow the REST shape (`from.address`), not the Workers binding
+    (`from.email`).
+
+    `in_reply_to`, when set, is the Message-Id of a parent email. We map it
+    to the `In-Reply-To` and `References` headers per RFC 5322 — distinct
+    from CF's `reply_to` REST field, which sets the Reply-To envelope
+    address.
+    """
+    payload: dict[str, Any] = {
+        "from": {"address": from_addr},
+        "to": to_addr,
         "subject": subject,
         "text": body_text,
     }
     if body_html:
         payload["html"] = body_html
-    if reply_to:
-        payload["headers"] = {"In-Reply-To": reply_to, "References": reply_to}
-    with _client() as c:
+    if in_reply_to:
+        payload["headers"] = {"In-Reply-To": in_reply_to, "References": in_reply_to}
+    with httpx.Client(
+        base_url=SEND_BASE_URL,
+        headers={"Authorization": f"Bearer {cf_api_token()}"},
+        timeout=30.0,
+    ) as c:
         r = c.post(f"/accounts/{account_id}/email/sending/send", json=payload)
-        r.raise_for_status()
+        if r.status_code >= 400:
+            # Surface CF's error detail (e.g. "Sender domain not verified")
+            # instead of letting raise_for_status() swallow the response body.
+            try:
+                body = r.json()
+            except ValueError:
+                body = {"raw": r.text}
+            raise RuntimeError(
+                f"Email Sending API returned {r.status_code}: {json.dumps(body)}"
+            )
         return r.json()

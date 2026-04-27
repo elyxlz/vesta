@@ -23,7 +23,12 @@ from cloudflare_email.config import email_address, load_config
     help="Read body from file",
 )
 @click.option("--html-file", "html_file", type=click.Path(exists=True, dir_okay=False), help="Optional HTML body")
-@click.option("--reply-to", "reply_to", default=None, help="Message-Id of the email being replied to")
+@click.option(
+    "--in-reply-to",
+    "in_reply_to",
+    default=None,
+    help="Message-Id of the email being replied to (sets In-Reply-To + References for threading)",
+)
 @click.option("--from-addr", "from_addr", default=None, help="Override sender (default: agent's address)")
 def send_cmd(
     to_addr: str,
@@ -31,7 +36,7 @@ def send_cmd(
     body_text: str,
     body_file: str | None,
     html_file: str | None,
-    reply_to: str | None,
+    in_reply_to: str | None,
     from_addr: str | None,
 ) -> None:
     """Send an email."""
@@ -58,7 +63,7 @@ def send_cmd(
             subject=subject,
             body_text=body_text,
             body_html=body_html,
-            reply_to=reply_to,
+            in_reply_to=in_reply_to,
         )
     except Exception as e:
         click.echo(json.dumps({"ok": False, "error": str(e)}), err=True)
