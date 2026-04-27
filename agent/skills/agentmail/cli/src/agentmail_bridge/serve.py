@@ -81,7 +81,7 @@ async def webhook(request: Request, secret: str = Query(default="")) -> dict:
         "in_reply_to": _field(headers, "In-Reply-To", _field(message, "in_reply_to", "")),
         "references": _field(headers, "References", _field(message, "references", "")),
         "labels": _field(message, "labels", []),
-        "received_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
     }
 
     NOTIFICATIONS_DIR.mkdir(parents=True, exist_ok=True)
