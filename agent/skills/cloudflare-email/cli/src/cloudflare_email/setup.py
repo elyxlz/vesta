@@ -212,9 +212,9 @@ def setup_cmd(domain: str | None, local: str | None, worker_name: str | None) ->
 
     # 7. routing rules — list once, surface address conflicts, then upsert.
     # A conflict means another rule (a stale one, or another agent on the same
-    # domain) already routes the address we're about to claim. Silently
-    # creating ours alongside would either shadow theirs or get shadowed —
-    # neither is what the user wants. Prompt instead.
+    # domain) already routes the address we're about to claim. Setup never
+    # deletes a foreign rule — that would silently break another agent's
+    # inbound. The only safe options are change-and-retry or abort.
     click.echo("creating routing rules...")
     while True:
         rules = cf_api.list_routing_rules(zone_id)
@@ -232,28 +232,23 @@ def setup_cmd(domain: str | None, local: str | None, worker_name: str | None) ->
         for r in all_conflicts:
             actions = ", ".join(f"{a.type}={a.value}" for a in r.actions)
             click.echo(f"  - rule {r.name!r}: {actions}")
+        click.echo(
+            "Another agent (or a stale rule) already owns this address. "
+            "Pick a different local-part, or abort and remove the rule by hand "
+            "in the Cloudflare dashboard if you're sure it's stale."
+        )
         choice = click.prompt(
-            "  take = delete those rules and claim the address\n"
-            "  change = pick a different local-part\n"
-            "  abort = exit setup\n"
             "what now?",
-            type=click.Choice(["take", "change", "abort"]),
+            type=click.Choice(["change", "abort"]),
             default="abort",
         )
         if choice == "abort":
             click.echo("aborted.")
             sys.exit(2)
-        if choice == "change":
-            local = click.prompt("new local-part")
-            address = f"{local}@{domain}"
-            click.echo(f"new address: {address}")
-            continue
-        # choice == "take"
-        for r in all_conflicts:
-            click.echo(f"  deleting conflicting rule {r.name}")
-            cf_api.delete_routing_rule(zone_id, r.tag)
-        rules = cf_api.list_routing_rules(zone_id)
-        break
+        # choice == "change"
+        local = click.prompt("new local-part")
+        address = f"{local}@{domain}"
+        click.echo(f"new address: {address}")
 
     cf_api.upsert_worker_route_rule(zone_id, address, worker_name, rules=rules)
     cf_api.upsert_subaddress_rule(zone_id, local, domain, worker_name, rules=rules)

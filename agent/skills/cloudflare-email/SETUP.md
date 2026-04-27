@@ -57,9 +57,13 @@ Setup walks through, in order:
    Worker. Before creating, setup checks whether either address is already
    routed by a foreign rule (another agent, or a stale leftover); if so, it
    prompts:
-   - **take** — delete the conflicting rule(s) and claim the address.
    - **change** — pick a different local-part and re-check.
    - **abort** — exit without touching anything.
+
+   Setup never deletes a foreign rule — that would silently break the other
+   agent's inbound mail. If you're sure the conflicting rule is stale,
+   delete it by hand in the Cloudflare dashboard (or via
+   `wrangler email routing rules delete`) and re-run setup.
 7. Persist `domain`, `address`, zone/account IDs, and worker name to
    `~/.cloudflare-email/config.json`. Also write `CF_EMAIL_DOMAIN` and
    `CF_EMAIL_ADDRESS` to `~/.bashrc` for convenience.
