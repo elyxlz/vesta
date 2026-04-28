@@ -11,7 +11,7 @@ Bring your local workspace into order, checkpoint your current state on your bra
 
 ## Ownership
 
-`~` is the repo root. Sparse checkout limits the worktree to `agent/` (minus bind-mounted paths) and root `.gitignore`. Repo-root `.claude/` stays local and untracked. Bulky/local-only stuff goes in `~/agent/.gitignore`.
+`~` is the repo root. Sparse checkout limits the worktree to `agent/` (minus bind-mounted paths and uninstalled skills) and root `.gitignore`. Skill directories under `agent/skills/*/` are opt-in: only installed skills are on disk and in `git status`. `agent/skills/index.json` is always visible — it's the registry of available skills, regardless of what's installed. Repo-root `.claude/` stays local and untracked. Bulky/local-only stuff goes in `~/agent/.gitignore`.
 
 You own `agent/skills/`, `agent/prompts/`, `agent/MEMORY.md`, `agent/.gitignore`, and `.claude/`. Commits focus on `agent/`.
 
@@ -19,7 +19,18 @@ You own `agent/skills/`, `agent/prompts/`, `agent/MEMORY.md`, `agent/.gitignore`
 
 ## Sync steps
 
-1. **Normalize.** If the workspace is not in the expected shape, follow [SETUP.md](SETUP.md) first.
+1. **Normalize.** If the workspace is not in the expected shape, follow [SETUP.md](SETUP.md) first. Then narrow the sparse pattern to installed-only if it isn't already:
+   ```bash
+   if ! grep -qx '!/agent/skills/\*/' ~/.git/info/sparse-checkout 2>/dev/null; then
+     INSTALLED=$(find ~/agent/skills -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort -u)
+     {
+       printf '%s\n' '/agent/' '!/agent/core/' '!/agent/pyproject.toml' '!/agent/uv.lock' '!/agent/skills/*/' '/.gitignore'
+       for s in $INSTALLED; do printf '/agent/skills/%s/\n' "$s"; done
+     } > ~/.git/info/sparse-checkout
+     git -C ~ sparse-checkout reapply
+   fi
+   ```
+   This is a one-shot migration: it rewrites the sparse pattern to scope `agent/skills/*/` to only currently-installed skills, so future merges don't pull in newly-added upstream skills. Idempotent — the `grep` guard skips re-runs.
 
 2. **Checkpoint local work.** The merge fails with uncommitted changes; the checkpoint also gives you a clean base.
    ```bash

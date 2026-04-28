@@ -11,13 +11,18 @@ cd ~
 git init
 git remote add origin https://github.com/elyxlz/vesta.git
 git sparse-checkout init --no-cone
-printf '/agent/\n!/agent/core/\n!/agent/pyproject.toml\n!/agent/uv.lock\n/.gitignore\n' > .git/info/sparse-checkout
+{
+  printf '%s\n' '/agent/' '!/agent/core/' '!/agent/pyproject.toml' '!/agent/uv.lock' '!/agent/skills/*/' '/.gitignore'
+  for d in agent/skills/*/; do
+    [ -d "$d" ] && printf '/%s\n' "$d"
+  done
+} > .git/info/sparse-checkout
 git config user.name "$AGENT_NAME"
 git config user.email "$AGENT_NAME@vesta"
 git checkout -b "$AGENT_NAME"
 ```
 
-Sparse keeps `agent/core/`, `pyproject.toml`, `uv.lock` out of the worktree (vestad bind-mounts them read-only). Root `.gitignore` arrives on the first merge.
+Sparse keeps `agent/core/`, `pyproject.toml`, `uv.lock` out of the worktree (vestad bind-mounts them read-only) and treats `agent/skills/*/` as opt-in: only directories that already exist on disk (the defaults baked into the image) are added back as includes. New upstream skills land in the index and `agent/skills/index.json`, but stay off disk and out of `git status` until `skills-install` adds them. Root `.gitignore` arrives on the first merge.
 
 ## 2. Local ignores
 
