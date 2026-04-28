@@ -216,6 +216,9 @@ async def _process_interruptible(
 
                 if queue_task in done:
                     pending.append(queue_task.result())
+                    if state.compacting:
+                        logger.client(f"Compaction in flight, deferring interrupt ({len(pending)} pending)")
+                        continue
                     state.interrupt_event.set()
                     logger.client(f"Interrupting: new message queued ({len(pending)} pending)")
                     await process_task

@@ -188,6 +188,41 @@ async def test_process_interruptible_cancels_process_task(tmp_path):
 
 
 @pytest.mark.anyio
+async def test_process_interruptible_defers_interrupt_during_compaction(tmp_path):
+    """While state.compacting is True, new messages must be queued, not interrupt the in-flight task."""
+    from core.loops import _process_interruptible
+
+    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    state = vm.State()
+    state.shutdown_event = asyncio.Event()
+    state.compacting = True
+    queue: asyncio.Queue = asyncio.Queue()
+
+    processed: list[str] = []
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+
+    async def fake_process(msg, *, state, config, is_user):
+        processed.append(msg)
+        if msg == "first":
+            first_started.set()
+            await release_first.wait()
+            assert state.interrupt_event is None or not state.interrupt_event.is_set(), "interrupt must not fire while compacting"
+        return (["OK"], state)
+
+    with patch("core.loops._process_message_safely", fake_process):
+        task = asyncio.create_task(_process_interruptible("first", is_user=True, queue=queue, state=state, config=config))
+        await first_started.wait()
+        await queue.put(("second", True))
+        await asyncio.sleep(0.1)
+        assert state.interrupt_event is not None and not state.interrupt_event.is_set()
+        release_first.set()
+        await task
+
+    assert processed == ["first", "second"], f"second message must run after first, got: {processed}"
+
+
+@pytest.mark.anyio
 async def test_run_vesta_force_exits_on_hung_cleanup(tmp_path):
     """run_vesta must force-exit if task cleanup hangs (e.g. SDK __aexit__ blocking)."""
     from core.main import run_vesta

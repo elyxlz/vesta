@@ -264,6 +264,7 @@ def _make_hooks(state: vm.State) -> dict[HookEvent, list[HookMatcher]]:
 
     async def log_compact(input_data: PreCompactHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
         trigger = input_data["trigger"]
+        state.compacting = True
         logger.client(f"Context compaction starting (trigger={trigger})")
         return tp.cast(HookJSONOutput, {})
 
@@ -458,6 +459,8 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
 
             state.touch_activity("sdk_message")
             msg = tp.cast(Message, result)
+            if isinstance(msg, AssistantMessage):
+                state.compacting = False
             texts, thinking_blocks, sub_agent_context, session_id, _ = _parse_sdk_message(msg, sub_agent_context=sub_agent_context)
             if session_id and session_id != state.session_id:
                 if state.session_id:
