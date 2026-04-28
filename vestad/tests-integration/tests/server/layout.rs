@@ -1,4 +1,4 @@
-use vesta_tests::{TestAgent, SERVER, exec_in_container, unique_agent};
+use vesta_tests::{SERVER, SHARED_RO_AGENT, exec_in_container};
 
 fn container_id(agent_name: &str) -> String {
     let status = SERVER.client().agent_status(agent_name).unwrap();
@@ -31,11 +31,8 @@ fn wait_for_path(cid: &str, flag: char, path: &str) {
 
 #[test]
 fn fresh_agent_has_expected_directory_structure() {
-    let c = SERVER.client();
-    let agent = TestAgent::create(&c, &unique_agent("layout")).unwrap();
-    let cid = container_id(&agent.name);
-
-    c.wait_until_alive(&agent.name, 10).ok(); // will error without auth, that's fine
+    let name: &str = &SHARED_RO_AGENT;
+    let cid = container_id(name);
 
     // Root-level directories created by entrypoint / image COPY. Git state
     // (/root/.git, branch, sparse-checkout, .gitignore) is no longer asserted
