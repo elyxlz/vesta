@@ -126,9 +126,22 @@ def _create_inbox_for_existing_account(username: str) -> dict:
 
 
 @click.command("setup")
-@click.option("--username", default=None, help="Local-part for the agent's address (default: $AGENT_NAME lowercased)")
-@click.option("--prompt", "use_prompt", is_flag=True, help="Skip autonomous mode; ask the user for an email + OTP")
-@click.option("--skip-signup", is_flag=True, help="Skip sign-up; assume AGENTMAIL_API_KEY is already set")
+@click.option(
+    "--username",
+    default=None,
+    help="Local-part for the agent's address (default: $AGENT_NAME lowercased)",
+)
+@click.option(
+    "--prompt",
+    "use_prompt",
+    is_flag=True,
+    help="Skip autonomous mode; ask the user for an email + OTP",
+)
+@click.option(
+    "--skip-signup",
+    is_flag=True,
+    help="Skip sign-up; assume AGENTMAIL_API_KEY is already set",
+)
 def setup_cmd(username: str | None, use_prompt: bool, skip_signup: bool) -> None:
     """Set up AgentMail for the agent. Autonomous by default."""
     click.echo("agentmail setup")
@@ -179,6 +192,21 @@ def setup_cmd(username: str | None, use_prompt: bool, skip_signup: bool) -> None
         bashrc_set(AGENTMAIL_API_KEY_ENV, inbox["api_key"])
 
     click.echo(f"  inbox: {inbox['email_address']} (id {inbox['inbox_id']})")
+
+    # Set the inbox display_name to the agent name. AgentMail's sign-up path
+    # creates inboxes with display_name="AgentMail" by default, so without this
+    # the From header on outbound mail reads "AgentMail <user@agentmail.to>"
+    # instead of "athena <user@agentmail.to>". The skip-signup path already
+    # passes display_name on inbox create; this covers the autonomous and
+    # --prompt paths where the inbox is auto-created on sign_up.
+    try:
+        AgentMail(api_key=inbox["api_key"]).inboxes.update(
+            inbox_id=inbox["inbox_id"],
+            display_name=agent_name(),
+        )
+        click.echo(f"  display_name: {agent_name()}")
+    except Exception as e:
+        click.echo(f"  warn: display_name update failed (outbound From header will read 'AgentMail'): {e}")
 
     # Install the npm CLI for passthrough before the webhook step so that even
     # a partial setup (e.g. webhook fails because VESTAD_TUNNEL isn't set yet)
