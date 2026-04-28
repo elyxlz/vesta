@@ -26,8 +26,8 @@ Make every red open PR green. One pass: discover, fix, push, comment, report.
    **Skip** if any of:
    - `isDraft: true`
    - labels include `wip`, `blocked`, `do-not-merge`, or `needs-design`
-   - PR is from a fork (you can't push to fork branches without extra setup) — surface in the report instead
-   - PR's last commit is by you (`vesta-upstream` / agent) and the same failure already shows your "babysit-prs" comment with that commit SHA — you already tried, don't loop
+   - PR is from a fork (you can't push to fork branches without extra setup): surface in the report instead
+   - PR's last commit is by you (`vesta-upstream` / agent) and the same failure already shows your "babysit-prs" comment with that commit SHA: you already tried, don't loop
 
 2. **Fan out per PR.** For each in-scope red PR, dispatch a subagent with `Agent({ subagent_type: "general-purpose", isolation: "worktree", ... })` so each PR is fixed in its own checkout. Run them in parallel by sending all `Agent` calls in one message. Each subagent's prompt must include:
    - PR number, title, head branch
@@ -38,8 +38,8 @@ Make every red open PR green. One pass: discover, fix, push, comment, report.
 3. **Final report.** After all subagents return, summarize:
    - PRs now green ✅
    - PRs that pushed a fix but CI is still running ⏳
-   - PRs still red after retries — list them with the diagnosis the subagent landed on, so the user can decide what to do
-   - PRs skipped — list with reason (draft, fork, label, already-tried)
+   - PRs still red after retries: list them with the diagnosis the subagent landed on, so the user can decide what to do
+   - PRs skipped: list with reason (draft, fork, label, already-tried)
 
 ## Per-PR loop (what the subagent does)
 
@@ -57,9 +57,9 @@ The subagent has its own worktree. Inside it:
    ```
    Read enough log to identify the root cause. If the failure is in a step you don't recognize (custom action, deploy job), `gh run view <run-id>` for the full log.
 
-3. **Reproduce locally when possible.** Tests, lint, typecheck, build all run locally — run the same command the CI step ran (look at the step's `name` and the workflow file under `.github/workflows/`). For `cargo test -p vestad`, `uv run pytest`, `npm -w @vesta/web run check`, etc., run them and confirm you see the same failure.
+3. **Reproduce locally when possible.** Tests, lint, typecheck, build all run locally: run the same command the CI step ran (look at the step's `name` and the workflow file under `.github/workflows/`). For `cargo test -p vestad`, `uv run pytest`, `npm -w @vesta/web run check`, etc., run them and confirm you see the same failure.
 
-4. **Diagnose.** Write down the root cause in one sentence before changing anything. If it's "the test asserts X but the code does Y", decide which side is wrong — see "Code vs test" under Hard rules.
+4. **Diagnose.** Write down the root cause in one sentence before changing anything. If it's "the test asserts X but the code does Y", decide which side is wrong: see "Code vs test" under Hard rules.
 
 5. **Fix.** Edit the minimum set of files. Re-run the failing check locally; only proceed when it passes locally.
 
@@ -72,7 +72,7 @@ The subagent has its own worktree. Inside it:
 
 7. **Push.** `git push` to the PR's branch. Never `--force`.
 
-8. **Wait for CI to re-run.** Don't report green from your local run — let GitHub run it. Poll:
+8. **Wait for CI to re-run.** Don't report green from your local run: let GitHub run it. Poll:
    ```
    gh pr checks <N> --watch
    ```
@@ -112,10 +112,10 @@ Tried:
 - <one-line attempt 1>: <why it didn't work>
 - <one-line attempt 2>: <why it didn't work>
 
-Leaving for human review — the fix likely needs <design decision / context I don't have>.
+Leaving for human review: the fix likely needs <design decision / context I don't have>.
 ````
 
-Post comments with `gh pr comment <N> --body-file <tmpfile>` — heredocs in shell pipelines mangle backticks.
+Post comments with `gh pr comment <N> --body-file <tmpfile>`: heredocs in shell pipelines mangle backticks.
 
 ## Hard rules
 
@@ -163,8 +163,8 @@ Both `CheckRun` (Actions) and `StatusContext` (legacy statuses, e.g. Netlify, Co
 
 ## Don'ts
 
-- Don't run on PRs to repos you weren't invoked from — restrict to the current repo (`gh pr list` defaults to it; don't pass `--repo` overrides).
+- Don't run on PRs to repos you weren't invoked from: restrict to the current repo (`gh pr list` defaults to it; don't pass `--repo` overrides).
 - Don't post a comment on a PR you didn't change. Silent skips don't need announcements.
-- Don't post multiple comments per push — one comment per attempt, batched with all the changes from that attempt.
-- Don't run this skill against `master`/`main` — only against PR branches.
+- Don't post multiple comments per push: one comment per attempt, batched with all the changes from that attempt.
+- Don't run this skill against `master`/`main`: only against PR branches.
 - Don't delegate to `/ultrareview` or other interactive commands. Babysit-prs is autonomous; it produces actions, not review.
