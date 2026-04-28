@@ -102,7 +102,7 @@ git merge --allow-unrelated-histories --no-edit -q FETCH_HEAD
 /// `git status` is allowed to mention paths outside `agent/` (the debian
 /// helper container leaves dotfiles in `/root` that the real agent ignores
 /// via `~/agent/.gitignore`). What matters here is that nothing under
-/// `agent/skills/` shows up — uninstalled skill dirs must not pollute the
+/// `agent/skills/` shows up: uninstalled skill dirs must not pollute the
 /// porcelain output.
 fn assert_no_skill_noise(container: &str, ctx: &str) {
     let porcelain = exec_in_container(
@@ -219,7 +219,7 @@ fn upstream_sync_self_heal_narrows_old_broad_pattern() {
 
     install_git_and_seed_upstream(&c);
 
-    // Agent on the OLD broad pattern — every upstream skill ends up on disk.
+    // Agent on the OLD broad pattern: every upstream skill ends up on disk.
     exec_in_container(
         &c,
         r#"set -euo pipefail

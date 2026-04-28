@@ -11,7 +11,7 @@ Bring your local workspace into order, checkpoint your current state on your bra
 
 ## Ownership
 
-`~` is the repo root. Sparse checkout limits the worktree to `agent/` (minus bind-mounted paths and uninstalled skills) and root `.gitignore`. Skill directories under `agent/skills/*/` are opt-in: only installed skills are on disk and in `git status`. `agent/skills/index.json` is always visible — it's the registry of available skills, regardless of what's installed. Repo-root `.claude/` stays local and untracked. Bulky/local-only stuff goes in `~/agent/.gitignore`.
+`~` is the repo root. Sparse checkout limits the worktree to `agent/` (minus bind-mounted paths and uninstalled skills) and root `.gitignore`. Skill directories under `agent/skills/*/` are opt-in: only installed skills are on disk and in `git status`. `agent/skills/index.json` is always visible: it's the registry of available skills, regardless of what's installed. Repo-root `.claude/` stays local and untracked. Bulky/local-only stuff goes in `~/agent/.gitignore`.
 
 You own `agent/skills/`, `agent/prompts/`, `agent/MEMORY.md`, `agent/.gitignore`, and `.claude/`. Commits focus on `agent/`.
 
@@ -30,7 +30,7 @@ You own `agent/skills/`, `agent/prompts/`, `agent/MEMORY.md`, `agent/.gitignore`
      git -C ~ sparse-checkout reapply
    fi
    ```
-   This is a one-shot migration: it rewrites the sparse pattern to scope `agent/skills/*/` to only currently-installed skills, so future merges don't pull in newly-added upstream skills. Idempotent — the `grep` guard skips re-runs.
+   This is a one-shot migration: it rewrites the sparse pattern to scope `agent/skills/*/` to only currently-installed skills, so future merges don't pull in newly-added upstream skills. Idempotent: the `grep` guard skips re-runs.
 
 2. **Checkpoint local work.** The merge fails with uncommitted changes; the checkpoint also gives you a clean base.
    ```bash
