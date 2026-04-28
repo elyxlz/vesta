@@ -84,6 +84,11 @@ def list_events(
 ) -> list[dict[str, Any]]:
     settings = _get_settings()
 
+    if user_timezone is None:
+        user_timezone = graph.get_default_iana_timezone()
+    _validate_timezone(user_timezone)
+    extra_prefer = [f'outlook.timezone="{user_timezone}"']
+
     try:
         account_id = auth.get_account_id_by_email(account_email, config.cache_file, settings=settings)
 
@@ -117,6 +122,7 @@ def list_events(
                 endpoint,
                 account_id,
                 params=params,
+                extra_prefer=extra_prefer,
             )
         )
 
@@ -156,11 +162,27 @@ def get_event(
     *,
     account_email: str,
     event_id: str,
+    user_timezone: str | None = None,
 ) -> dict[str, Any]:
     settings = _get_settings()
     account_id = auth.get_account_id_by_email(account_email, config.cache_file, settings=settings)
 
-    result = graph.request(client, config.cache_file, config.scopes, settings, config.base_url, "GET", f"/me/events/{event_id}", account_id)
+    if user_timezone is None:
+        user_timezone = graph.get_default_iana_timezone()
+    _validate_timezone(user_timezone)
+    extra_prefer = [f'outlook.timezone="{user_timezone}"']
+
+    result = graph.request(
+        client,
+        config.cache_file,
+        config.scopes,
+        settings,
+        config.base_url,
+        "GET",
+        f"/me/events/{event_id}",
+        account_id,
+        extra_prefer=extra_prefer,
+    )
     if not result:
         raise ValueError(f"Event '{event_id}' not found")
     return result
