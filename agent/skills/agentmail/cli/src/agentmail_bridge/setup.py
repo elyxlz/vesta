@@ -29,9 +29,7 @@ from agentmail_bridge.config import (
 
 def _resolve_webhook_url() -> str:
     """Public URL AgentMail POSTs inbound mail to. Reads VESTAD_TUNNEL from env."""
-    tunnel = (
-        os.environ["VESTAD_TUNNEL"].strip() if "VESTAD_TUNNEL" in os.environ else ""
-    )
+    tunnel = os.environ["VESTAD_TUNNEL"].strip() if "VESTAD_TUNNEL" in os.environ else ""
     if not tunnel:
         return ""
     return f"{tunnel.rstrip('/')}/agents/{agent_name()}/agentmail"
@@ -60,9 +58,7 @@ def _install_npm_cli() -> None:
         click.echo(f"  npm install failed: {e}", err=True)
         sys.exit(1)
     if not NPM_CLI_BIN.exists():
-        click.echo(
-            f"  warn: expected binary at {NPM_CLI_BIN} but didn't find it", err=True
-        )
+        click.echo(f"  warn: expected binary at {NPM_CLI_BIN} but didn't find it", err=True)
 
 
 def _autonomous_signup(username: str) -> dict:
@@ -77,9 +73,7 @@ def _autonomous_signup(username: str) -> dict:
 
     click.echo("requesting AgentMail sign-up...")
     bootstrap_client = AgentMail(api_key="bootstrap")
-    signup = bootstrap_client.agent.sign_up(
-        human_email=dispo["email"], username=username
-    )
+    signup = bootstrap_client.agent.sign_up(human_email=dispo["email"], username=username)
 
     click.echo("polling disposable inbox for OTP (up to 3 min)...")
     msg = disposable_mail.wait_for_message(dispo["token"], sender_contains="agentmail")
@@ -167,9 +161,7 @@ def setup_cmd(username: str | None, use_prompt: bool, skip_signup: bool) -> None
                 err=True,
             )
             sys.exit(2)
-        click.echo(
-            f"{AGENTMAIL_API_KEY_ENV} already set; creating inbox without sign-up."
-        )
+        click.echo(f"{AGENTMAIL_API_KEY_ENV} already set; creating inbox without sign-up.")
         try:
             inbox = _create_inbox_for_existing_account(username)
         except Exception as e:
@@ -214,9 +206,7 @@ def setup_cmd(username: str | None, use_prompt: bool, skip_signup: bool) -> None
         )
         click.echo(f"  display_name: {agent_name()}")
     except Exception as e:
-        click.echo(
-            f"  warn: display_name update failed (outbound From header will read 'AgentMail'): {e}"
-        )
+        click.echo(f"  warn: display_name update failed (outbound From header will read 'AgentMail'): {e}")
 
     # Install the npm CLI for passthrough before the webhook step so that even
     # a partial setup (e.g. webhook fails because VESTAD_TUNNEL isn't set yet)
@@ -269,9 +259,7 @@ def setup_cmd(username: str | None, use_prompt: bool, skip_signup: bool) -> None
     click.echo(f"  inbox:   {inbox['inbox_id']}")
     click.echo(f"  webhook: {webhook_url}")
     click.echo(f"  npm cli: {NPM_CLI_BIN}")
-    click.echo(
-        "\nfor send / list / etc., the wrapper passes through to the official CLI:"
-    )
+    click.echo("\nfor send / list / etc., the wrapper passes through to the official CLI:")
     click.echo(f"  agentmail inboxes:messages send --inbox-id {inbox['inbox_id']} \\")
     click.echo("    --to recipient@example.com --subject 'hi' --text 'hello'")
     click.echo("\nnext: register and start the local webhook receiver")
