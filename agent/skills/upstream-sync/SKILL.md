@@ -64,9 +64,11 @@ You own `agent/skills/`, `agent/prompts/`, `agent/MEMORY.md`, `agent/.gitignore`
      ```bash
      cd ~/agent && uv run python skills/generate-index.py
      ```
-   - `git merge` re-stats the working tree, which clears the `skip-worktree` bit on some bind-mounted paths. Re-apply so vestad's writes to `agent/core/`, `agent/pyproject.toml`, `agent/uv.lock` keep ignoring git instead of showing up as `modified`:
+   - `git merge` re-stats the working tree, which clears the `skip-worktree` bit on some bind-mounted paths. Re-apply **only when those paths are actually bind-mounted** (vestad-managed containers); on unmanaged containers they are real tracked files and must remain editable / committable:
      ```bash
-     git -C ~ ls-files agent/core agent/pyproject.toml agent/uv.lock | xargs -r git -C ~ update-index --skip-worktree
+     if mount | grep -q '/root/agent/core '; then
+       git -C ~ ls-files agent/core agent/pyproject.toml agent/uv.lock | xargs -r git -C ~ update-index --skip-worktree
+     fi
      ```
 
    If the regen changed `index.json`, commit it on top of the merge:
