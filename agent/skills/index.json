@@ -20,6 +20,10 @@
     "description": "Delegate heavy coding tasks to Claude Code (Anthropic's autonomous coding CLI). Use for large multi-file refactors, building entire features or modules, complex debugging that needs extensive exploration, and substantial code reviews. For small edits, single-file changes, and quick fixes, use Vesta's own Read/Edit/Bash tools directly."
   },
   {
+    "name": "context",
+    "description": "Use when the user asks about \"context window\", \"token usage\", \"how much context is left\", or wants to monitor the agent's live context consumption. Exposes a vestad-registered HTTP service that reads the SDK-authoritative `get_context_usage()` values logged by core/client.py, and ships a dashboard page that visualizes them."
+  },
+  {
     "name": "dashboard",
     "description": "Build or modify the user's dashboard: widgets, pages, layouts, or custom UI."
   },

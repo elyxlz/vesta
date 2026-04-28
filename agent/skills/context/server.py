@@ -432,7 +432,7 @@ def _write_user_idle_notification(idle_seconds: float, threshold_minutes: int) -
             "idle_minutes": int(idle_seconds // 60),
             "threshold_minutes": threshold_minutes,
             "interrupt": False,
-            "timestamp": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "timestamp": dt.datetime.now(dt.UTC).isoformat(),
         }
         filename = f"{int(time.time() * 1e6)}-context-user_idle.json"
         tmp = NOTIFICATIONS_DIR / f"{filename}.tmp"
@@ -649,8 +649,10 @@ class Handler(BaseHTTPRequestHandler):
             limit = 60
             for pair in q.split("&"):
                 if pair.startswith("limit="):
-                    try: limit = max(1, min(500, int(pair.split("=", 1)[1])))
-                    except ValueError: pass
+                    try:
+                        limit = max(1, min(500, int(pair.split("=", 1)[1])))
+                    except ValueError:
+                        pass
             self._send(200, {"turns": _perf_turns(limit)})
         elif path == "activity":
             # Optional ?limit=N
@@ -658,8 +660,10 @@ class Handler(BaseHTTPRequestHandler):
             limit = 30
             for pair in q.split("&"):
                 if pair.startswith("limit="):
-                    try: limit = max(1, min(200, int(pair.split("=", 1)[1])))
-                    except ValueError: pass
+                    try:
+                        limit = max(1, min(200, int(pair.split("=", 1)[1])))
+                    except ValueError:
+                        pass
             self._send(200, {"events": _activity_feed(limit)})
         else:
             self._send(404, {"error": "not found"})
