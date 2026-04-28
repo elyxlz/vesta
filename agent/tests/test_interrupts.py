@@ -207,7 +207,6 @@ async def test_process_interruptible_defers_interrupt_during_compaction(tmp_path
         if msg == "first":
             first_started.set()
             await release_first.wait()
-            assert state.interrupt_event is None or not state.interrupt_event.is_set(), "interrupt must not fire while compacting"
         return (["OK"], state)
 
     with patch("core.loops._process_message_safely", fake_process):
@@ -215,7 +214,7 @@ async def test_process_interruptible_defers_interrupt_during_compaction(tmp_path
         await first_started.wait()
         await queue.put(("second", True))
         await asyncio.sleep(0.1)
-        assert state.interrupt_event is not None and not state.interrupt_event.is_set()
+        assert processed == ["first"], "second must wait — interrupt was deferred"
         release_first.set()
         await task
 

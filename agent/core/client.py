@@ -479,6 +479,7 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
             if filtered:
                 _emit(filtered)
     finally:
+        state.compacting = False
         watchdog_stop.set()
         await _cancel_task(watchdog_task)
         if interrupt_task and not interrupt_task.done():

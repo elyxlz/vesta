@@ -275,6 +275,7 @@ async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm
                 finally:
                     state.client = None
                     state.interrupt_event = None
+                    state.compacting = False
                     logger.client("Client session closed")
             break
         except (ClaudeSDKError, OSError, RuntimeError) as exc:
