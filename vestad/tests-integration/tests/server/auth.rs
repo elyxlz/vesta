@@ -1,10 +1,9 @@
-use vesta_tests::{TestAgent, SERVER, inject_fake_token, unique_agent};
+use vesta_tests::{TestAgent, SERVER, SHARED_RO_AGENT, inject_fake_token, unique_agent};
 
 #[test]
 fn start_auth_returns_url() {
     let c = SERVER.client();
-    let agent = TestAgent::create(&c, &unique_agent("auth-flow")).unwrap();
-    let auth = c.start_auth(&agent.name).unwrap();
+    let auth = c.start_auth(&SHARED_RO_AGENT).unwrap();
     assert!(!auth.auth_url.is_empty());
     assert!(!auth.session_id.is_empty());
     assert!(auth.auth_url.contains("oauth"));
@@ -13,8 +12,7 @@ fn start_auth_returns_url() {
 #[test]
 fn complete_auth_bad_session_fails() {
     let c = SERVER.client();
-    let agent = TestAgent::create(&c, &unique_agent("auth-bad")).unwrap();
-    assert!(c.complete_auth(&agent.name, "bogus-session", "bogus-code").is_err());
+    assert!(c.complete_auth(&SHARED_RO_AGENT, "bogus-session", "bogus-code").is_err());
 }
 
 #[test]

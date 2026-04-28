@@ -1,14 +1,15 @@
 use super::common::start_pair;
-use vesta_tests::TestAgent;
+use vesta_tests::{TestAgent, unique_agent};
 
 #[test]
 fn container_names_include_user() {
     let (alice, bob, alice_user, bob_user) = start_pair();
     let alice_client = alice.client();
     let bob_client = bob.client();
+    let name = unique_agent("prefix-test");
 
-    let _alice_agent = TestAgent::create(&alice_client, "prefix-test").unwrap();
-    let _bob_agent = TestAgent::create(&bob_client, "prefix-test").unwrap();
+    let _alice_agent = TestAgent::create(&alice_client, &name).unwrap();
+    let _bob_agent = TestAgent::create(&bob_client, &name).unwrap();
 
     let output = std::process::Command::new("docker")
         .args(["ps", "-a", "--format", "{{.Names}}"])
@@ -18,11 +19,11 @@ fn container_names_include_user() {
 
     let has_alice_container = container_names
         .lines()
-        .any(|name| name.contains(&alice_user) && name.contains("prefix-test"));
+        .any(|n| n.contains(alice_user) && n.contains(&name));
     let has_bob_container = container_names
         .lines()
-        .any(|name| name.contains(&bob_user) && name.contains("prefix-test"));
+        .any(|n| n.contains(bob_user) && n.contains(&name));
 
-    assert!(has_alice_container, "expected a container with '{alice_user}' and 'prefix-test' in name, got:\n{container_names}");
-    assert!(has_bob_container, "expected a container with '{bob_user}' and 'prefix-test' in name, got:\n{container_names}");
+    assert!(has_alice_container, "expected a container with '{alice_user}' and '{name}' in name, got:\n{container_names}");
+    assert!(has_bob_container, "expected a container with '{bob_user}' and '{name}' in name, got:\n{container_names}");
 }

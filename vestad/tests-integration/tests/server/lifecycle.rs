@@ -2,8 +2,8 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use vesta_tests::{
-    TestAgent, SERVER, agent_container_name, docker_cmd, exec_in_container, inject_fake_token,
-    is_up, unique_agent,
+    TestAgent, SERVER, SHARED_RO_AGENT, agent_container_name, docker_cmd, exec_in_container,
+    inject_fake_token, is_up, unique_agent,
 };
 
 const RESTART_POLL_INTERVAL: Duration = Duration::from_millis(500);
@@ -11,16 +11,15 @@ const RESTART_POLL_INTERVAL: Duration = Duration::from_millis(500);
 #[test]
 fn create_and_list() {
     let c = SERVER.client();
-    let agent = TestAgent::create(&c, &unique_agent("create-list")).unwrap();
     let list = c.list_agents().unwrap();
-    assert!(list.iter().any(|a| a.name == agent.name));
+    let name: &str = &SHARED_RO_AGENT;
+    assert!(list.iter().any(|a| a.name == name));
 }
 
 #[test]
 fn create_duplicate_fails() {
     let c = SERVER.client();
-    let agent = TestAgent::create(&c, &unique_agent("dup")).unwrap();
-    let result = c.create_agent(&agent.name);
+    let result = c.create_agent(&SHARED_RO_AGENT);
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(err.contains("already exists"), "unexpected error: {err}");
@@ -86,9 +85,7 @@ fn stop_nonexistent_fails() {
 #[test]
 fn create_auto_starts() {
     let c = SERVER.client();
-    let agent = TestAgent::create(&c, &unique_agent("autostart")).unwrap();
-
-    let st = c.agent_status(&agent.name).unwrap();
+    let st = c.agent_status(&SHARED_RO_AGENT).unwrap();
     assert!(is_up(&st.status), "expected up after create, got {}", st.status);
 }
 
