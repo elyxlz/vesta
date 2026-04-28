@@ -34,7 +34,7 @@ def status_cmd() -> None:
             last_payload = {}
         last = {
             "path": str(last_path),
-            "received_at": last_payload["received_at"] if "received_at" in last_payload else None,
+            "timestamp": last_payload["timestamp"] if "timestamp" in last_payload else None,
         }
     out = {
         "address": cfg["email_address"] if "email_address" in cfg else None,
