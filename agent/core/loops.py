@@ -256,18 +256,22 @@ async def message_processor(queue: asyncio.Queue[tuple[str, bool]], *, state: vm
                             state.first_setup_complete.set()
                             logger.startup("Agent ready")
 
-                        if state.dreamer_active:
+                        if state.dreamer_active or state.nap_active:
+                            was_nap = state.nap_active
                             state.dreamer_active = False
-                            logger.dreamer("Dreamer complete, clearing session for fresh context...")
+                            state.nap_active = False
+                            label = "Nap" if was_nap else "Dreamer"
+                            logger.dreamer(f"{label} complete, clearing session for fresh context...")
                             config.session_file.unlink(missing_ok=True)
                             state.session_id = None
                             (config.data_dir / "show_dreamer_summary").write_text("1")
-                            if state.last_dreamer_run is not None:
+                            # Only persist last_dreamer_run for nightly runs; nap shouldn't bump the nightly schedule.
+                            if not was_nap and state.last_dreamer_run is not None:
                                 try:
                                     (config.data_dir / "last_dreamer_run").write_text(state.last_dreamer_run.isoformat())
                                 except OSError:
                                     logger.warning("Could not persist last_dreamer_run")
-                            state.restart_reason = vm.NIGHTLY_RESTART
+                            state.restart_reason = vm.NAP_RESTART if was_nap else vm.NIGHTLY_RESTART
                             state.graceful_shutdown.set()
                 finally:
                     state.client = None
@@ -319,6 +323,33 @@ async def process_nightly_memory(queue: asyncio.Queue[tuple[str, bool]], *, stat
             logger.dreamer("Dreamer prompt queued")
 
 
+async def process_nap_request(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.State, config: vm.VestaConfig) -> None:
+    """Day nap trigger. An external actor (context-server, user) drops
+    `<data_dir>/nap_request`. We consume it, load the same dream prompt used
+    at night, set nap_active so the post-dream handler uses the NAP_RESTART
+    label, and queue the prompt. Same session reset + graceful shutdown flow.
+    """
+    if config.ephemeral:
+        return
+    if state.dreamer_active or state.nap_active:
+        return
+
+    trigger = config.data_dir / "nap_request"
+    if not trigger.exists():
+        return
+
+    try:
+        trigger.unlink()
+    except OSError:
+        pass
+
+    logger.dreamer("Nap requested, queueing day dream...")
+    prompt = load_prompt("nightly_dream", config) or ""
+    state.nap_active = True
+    await queue.put((prompt, False))
+    logger.dreamer("Nap prompt queued")
+
+
 # --- Monitor loop ---
 
 
@@ -359,6 +390,7 @@ async def monitor_loop(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.Stat
                     last_proactive = now
 
                 await process_nightly_memory(queue, state=state, config=config)
+                await process_nap_request(queue, state=state, config=config)
 
                 notifications = await load_new_notifications(state=state, config=config)
                 interrupt_notifs = [n for n in notifications if n.interrupt]

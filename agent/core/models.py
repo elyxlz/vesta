@@ -14,6 +14,7 @@ __all__ = ["State", "Notification", "VestaConfig"]
 
 CLEAN_RESTART = "restart — clean restart"
 NIGHTLY_RESTART = "nightly — dreamer ran, session cleared for fresh context"
+NAP_RESTART = "nap — day dream ran, session cleared for fresh context"
 CRASH_RESTART = "crash — restarted after unexpected exit"
 FIRST_START_REASON = "first start"
 PROCESSOR_CANCELLED_RESTART = "crash — processor cancelled unexpectedly"
@@ -40,6 +41,7 @@ class State:
     restart_reason: str | None = None
     last_dreamer_run: dt.datetime | None = None
     dreamer_active: bool = False
+    nap_active: bool = False
     interrupt_event: asyncio.Event | None = None
     event_bus: EventBus = dc.field(default_factory=EventBus)
     stderr_buffer: collections.deque[str] = dc.field(default_factory=lambda: collections.deque(maxlen=50))
