@@ -12,8 +12,14 @@ from watchfiles import awatch, Change
 
 from . import models as vm
 from . import logger
+from . import triage
 from .client import process_message, build_client_options, attempt_interrupt, persist_session_id, format_crash_detail, _cancel_task
 from .helpers import load_prompt, build_restart_context
+
+
+# Minimum seconds between passive flushes, so rapid trickles coalesce into one bigger batch.
+# Interrupts (explicit `interrupt: true` notifications) bypass this and still fire immediately.
+PASSIVE_FLUSH_INTERVAL = 60.0
 
 
 def _now() -> dt.datetime:
@@ -109,6 +115,49 @@ async def process_batch(
 
     await queue.put((prompt, False))
     await delete_notification_files(notifications)
+
+
+async def flush_passive_batch(
+    notifications: list[vm.Notification],
+    *,
+    queue: asyncio.Queue[tuple[str, bool]],
+    state: vm.State,
+    config: vm.VestaConfig,
+) -> None:
+    """Flush a batch of passive notifications via the triage sub-agent.
+
+    The triage layer either returns a filtered summary or drops the batch
+    entirely as noise. On any failure the raw batch is queued (current
+    behavior), so this path is strictly additive: at worst it does nothing.
+    """
+    if not notifications:
+        return
+
+    if not triage.is_enabled():
+        await process_batch(notifications, queue=queue, state=state, config=config)
+        return
+
+    try:
+        summary = await triage.triage_batch(notifications)
+    except Exception as e:  # noqa: BLE001 — defensive: never let triage break the loop
+        logger.error(f"triage path raised unexpectedly ({type(e).__name__}: {e}), falling back to raw flush")
+        await process_batch(notifications, queue=queue, state=state, config=config)
+        return
+
+    # Always remove the source files; triage has now decided their fate.
+    await delete_notification_files(notifications)
+
+    if summary is None:
+        # Nothing surfaced. Main agent stays clean.
+        return
+
+    suffix = load_prompt("notification_suffix", config) or ""
+    prompt = f"{summary}\n\n{suffix}" if suffix else summary
+
+    if state.client:
+        await attempt_interrupt(state, config=config, reason="Notification interrupt (triaged)")
+
+    await queue.put((prompt, False))
 
 
 CREDENTIALS_PATH = pl.Path("/root/.claude/.credentials.json")
@@ -370,8 +419,11 @@ async def monitor_loop(queue: asyncio.Queue[tuple[str, bool]], *, state: vm.Stat
                     await process_batch(interrupt_notifs, queue=queue, state=state, config=config)
 
                 if pending_passive and state.event_bus.state == "idle":
-                    await process_batch(pending_passive, queue=queue, state=state, config=config)
-                    pending_passive = []
+                    elapsed_ok = state.last_passive_flush is None or (now - state.last_passive_flush).total_seconds() >= PASSIVE_FLUSH_INTERVAL
+                    if elapsed_ok:
+                        await flush_passive_batch(pending_passive, queue=queue, state=state, config=config)
+                        pending_passive = []
+                        state.last_passive_flush = now
             except asyncio.CancelledError:
                 break
     finally:

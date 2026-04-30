@@ -44,6 +44,10 @@ class State:
     event_bus: EventBus = dc.field(default_factory=EventBus)
     stderr_buffer: collections.deque[str] = dc.field(default_factory=lambda: collections.deque(maxlen=50))
 
+    # Passive notification triage: track when the last batch was flushed so
+    # we can coalesce rapid trickles into one bigger batch (see core/triage.py).
+    last_passive_flush: dt.datetime | None = None
+
     # SDK activity tracking for hang detection
     last_sdk_activity: float = dc.field(default_factory=time.monotonic)
     last_sdk_activity_label: str = "init"
