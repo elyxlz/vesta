@@ -68,7 +68,7 @@ class Notification(pyd.BaseModel):
     timestamp: dt.datetime
     source: str
     type: str
-    interrupt: bool = pyd.Field(default=True, exclude=True)
+    interrupt: bool = pyd.Field(default=False, exclude=True)
     file_path: str | None = pyd.Field(default=None, exclude=True)
 
     def format_for_display(self) -> str:
