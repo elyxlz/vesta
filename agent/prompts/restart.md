@@ -6,3 +6,5 @@ Read `/run/vestad-env` so the values are in your context (Read tool, not bash).
 ```bash
 # [startup commands go here]
 ```
+
+# TODO: move this to a skill

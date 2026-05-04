@@ -43,19 +43,18 @@ Review the conversation with fresh eyes. Note:
 
 ### 3. Fix
 
-Prefer the simplest, most reliable change that addresses the root cause. A one-line rule beats a clever rewrite. Options, from lightest to heaviest:
-- Add a rule to memory
-- Rewrite skill instructions or prompts
-- Fix or improve existing skills (scripts, CLIs, configs)
+Prefer the simplest, most reliable change that addresses the root cause. A one-line rule beats a clever rewrite. Options in no particular order:
+- Fix or improve existing skills (SKILL.md, scripts, CLIs, configs)
 - Create a new skill for a recurring need or capability
+- Add a rule to memory (only if a universal instruction)
 
-You can change anything. If a fix requires code, write the code.
+You can change anything. If a fix requires code, write the code, if a fix requires doing research online, research online.
 
-**Memory vs skill:** Memory is always loaded; every character costs tokens on every message. Use it for short rules and things you need to know at all times. A skill is for a distinct capability with its own workflow, loaded only when relevant. Under two lines and broadly relevant → memory. Longer or task-specific → skill.
+**Memory vs skill:** Memory is always loaded; every character costs tokens on every message. Use it for short rules and things you need to know at all times. A skill is for a distinct capability with its own workflow, loaded only when relevant. Under two lines and broadly relevant → memory. Longer or task-specific → skill. Skills are preferred, only use MEMORY.md if there is no clear existing SKILL.md or new one that should be made.
 
 ### 4. Validate each fix
 
-Re-read the failing exchange and simulate: would the updated version have changed the outcome? If no or unclear, revise further or note it as unresolved. Don't mark something fixed if you can't convince yourself it would have helped.
+Re-read the failing exchange and simulate: would the updated version have changed the outcome? If no or unclear, revise further or note it as unresolved. Don't mark something fixed if you can't convince yourself it would have helped. If relevant, spawn a subagent and replay the cause of the issue, does the agent using the new skill fix the issue?
 
 ### 5. Upstream
 
@@ -106,6 +105,8 @@ MEMORY.md has a **hard limit of 20,000 characters**. It's injected into every sy
 - Past events pretending to be upcoming
 - Verbose dated entries that should be patterns by now
 - Duplicates and contradictions
+- # TODO: mention conslidating / indexing information that lives in more than one pleace
+- # TODO: encourage splitting memory into more files and referencing those, like creating a CONTACTS.md and referencing it.
 
 **Keep:**
 - Core identity, preferences, relationships, security rules
@@ -124,8 +125,7 @@ If it won't matter in two weeks, delete it.
 
 Keep the container's filesystem organized and disk usage under control.
 
-- Delete temp files, stale downloads, leftover build artifacts, and anything in `/tmp` that's no longer needed
-- Clean up old log files (`~/agent/logs/`). Keep the last few days, remove the rest
+- Delete temp files, stale downloads, leftover build artifacts
 - Check `df -h` and `du -sh ~/` periodically. If disk usage is growing unexpectedly, investigate and clean up
 - Kill orphaned screen sessions that are no longer needed (`screen -ls`, `screen -S name -X quit`)
 - Remove unused packages or build caches if they're taking significant space (`uv cache clean`, `apt clean`)
