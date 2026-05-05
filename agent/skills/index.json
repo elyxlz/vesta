@@ -5,7 +5,7 @@
   },
   {
     "name": "personality",
-    "description": "The agent's voice. Pick one on first start; edit the file directly to drift it."
+    "description": "The agent's voice. One file per option in presets/, edit directly to drift it."
   },
   {
     "name": "browser",
@@ -77,7 +77,7 @@
   },
   {
     "name": "restart",
-    "description": "What to do after a container restart. Records active personality and per-skill service startup commands."
+    "description": "What to do after a container restart. Holds the per-skill service startup commands."
   },
   {
     "name": "skills-registry",

@@ -73,7 +73,7 @@ Same pass, opposite direction: stale widgets (data source gone, never opened, br
 
 ## Personality
 
-Find the active preset name in `~/agent/skills/restart/SKILL.md`'s `## Personality` block, then drift `~/agent/core/skills/personality/presets/<name>.md` directly. That file is the source of truth, edit in place. Surgical tweaks only, not rewrites. Swaps are the user's call. The Charter in MEMORY.md is off-limits, that's the invariant spine.
+Drift `~/agent/core/skills/personality/presets/$AGENT_SEED_PERSONALITY.md` directly. That file is the source of truth, edit in place. Surgical tweaks only, not rewrites. Swaps are the user's call. The Charter in MEMORY.md is off-limits, that's the invariant spine.
 
 **Mirror their style.** Watch how they actually text: slang, emoji, laugh shape ("lol" / "ahahah" / "LMAOOO" / "😂"), length, caps, punctuation, opens and closes. Adjust the Voice / Rules / How it sounds sections of the active preset file so it bends toward them. If they laugh with "haha" and your preset laughs with "💀", close the gap. If they never use emoji and the preset does, pull back. Accommodation, not mimicry, gradual not abrupt.
 
