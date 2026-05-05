@@ -43,6 +43,7 @@ PROVIDERS: dict[str, dict] = {
         "smtp_host": "smtp.office365.com",
         "smtp_port": 587,
         "smtp_starttls": True,
+        "sent_folder": "Sent",
         "oauth_client_id": THUNDERBIRD_MS_CLIENT_ID,
         "oauth_authority": "https://login.microsoftonline.com/consumers",
         "oauth_scopes": [
@@ -58,6 +59,7 @@ PROVIDERS: dict[str, dict] = {
         "smtp_host": "smtp.gmail.com",
         "smtp_port": 587,
         "smtp_starttls": True,
+        "sent_folder": "[Gmail]/Sent Mail",
         "oauth_client_id": THUNDERBIRD_GOOGLE_CLIENT_ID,
         # Google does not use this field but we keep the shape uniform.
         "oauth_authority": "https://accounts.google.com",
@@ -73,6 +75,7 @@ PROVIDERS: dict[str, dict] = {
         "smtp_host": "smtp.mail.yahoo.com",
         "smtp_port": 587,
         "smtp_starttls": True,
+        "sent_folder": "Sent",
     },
     "icloud-app-password": {
         "label": "iCloud Mail (app password)",
@@ -82,6 +85,7 @@ PROVIDERS: dict[str, dict] = {
         "smtp_host": "smtp.mail.me.com",
         "smtp_port": 587,
         "smtp_starttls": True,
+        "sent_folder": "Sent Messages",
     },
     "fastmail-app-password": {
         "label": "Fastmail (app password)",
@@ -91,6 +95,7 @@ PROVIDERS: dict[str, dict] = {
         "smtp_host": "smtp.fastmail.com",
         "smtp_port": 587,
         "smtp_starttls": True,
+        "sent_folder": "Sent",
     },
     "generic": {
         "label": "Generic IMAP/SMTP (env-driven, no defaults)",
@@ -100,6 +105,7 @@ PROVIDERS: dict[str, dict] = {
         "smtp_host": None,
         "smtp_port": 587,
         "smtp_starttls": True,
+        "sent_folder": "Sent",
     },
 }
 
