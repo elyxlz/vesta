@@ -99,7 +99,7 @@ async def run_vesta(config: vm.VestaConfig, *, state: vm.State, first_start: boo
 
     message_queue: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()
 
-    migrations_queued = await queue_migrations(message_queue, config=config)
+    migrations_queued = await queue_migrations(message_queue, config=config, first_start=first_start)
     greeting_reason = "first_start" if first_start else restart_reason
     setup_queued = await queue_greeting(message_queue, config=config, state=state, reason=greeting_reason)
     if not migrations_queued and not setup_queued:

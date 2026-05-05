@@ -85,3 +85,55 @@ async def test_queue_migrations_no_pending_returns_zero(tmp_path):
 def test_applied_file_path_uses_data_dir(tmp_path):
     config = _make_config(tmp_path)
     assert applied_file(config) == config.data_dir / APPLIED_FILE_NAME
+
+
+@pytest.mark.anyio
+async def test_first_start_pre_marks_and_queues_nothing(tmp_path):
+    config = _make_config(tmp_path)
+    migrations_dir = config.agent_dir / "core" / "migrations"
+    (migrations_dir / "001-first.md").write_text("first")
+    (migrations_dir / "002-second.md").write_text("second")
+    queue: asyncio.Queue = asyncio.Queue()
+
+    count = await queue_migrations(queue, config=config, first_start=True)
+
+    assert count == 0
+    assert queue.empty()
+    assert applied_file(config).read_text().splitlines() == ["001-first", "002-second"]
+
+
+@pytest.mark.anyio
+async def test_legacy_agent_runs_migrations_on_subsequent_boot(tmp_path):
+    config = _make_config(tmp_path)
+    migrations_dir = config.agent_dir / "core" / "migrations"
+    (migrations_dir / "001-first.md").write_text("first body")
+    queue: asyncio.Queue = asyncio.Queue()
+
+    # Legacy agent has no migrations.applied file and isn't a first start.
+    count = await queue_migrations(queue, config=config, first_start=False)
+
+    assert count == 1
+    msg, _ = await queue.get()
+    assert "[Migration: 001-first]" in msg
+
+
+@pytest.mark.anyio
+async def test_post_first_start_migration_added_later_runs(tmp_path):
+    """A migration shipped after the agent's first boot should still queue."""
+    config = _make_config(tmp_path)
+    migrations_dir = config.agent_dir / "core" / "migrations"
+    (migrations_dir / "001-first.md").write_text("first")
+
+    # Simulate first start.
+    await queue_migrations(asyncio.Queue(), config=config, first_start=True)
+    assert applied_file(config).read_text().splitlines() == ["001-first"]
+
+    # Later image adds a new migration.
+    (migrations_dir / "002-second.md").write_text("second")
+    queue: asyncio.Queue = asyncio.Queue()
+
+    count = await queue_migrations(queue, config=config, first_start=False)
+
+    assert count == 1
+    msg, _ = await queue.get()
+    assert "[Migration: 002-second]" in msg

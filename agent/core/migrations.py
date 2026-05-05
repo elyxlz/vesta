@@ -5,6 +5,11 @@ stem is the migration name. On boot we queue every unapplied migration as a
 system message before the normal greeting; each prompt instructs the agent to
 append its own name to `~/agent/data/migrations.applied` once finished, so it
 won't run again.
+
+Fresh agents skip migrations entirely: on first start we mark every shipping
+migration as applied without running it. Migrations only exist to converge
+legacy state. Future migrations added in later images are not pre-marked, so
+they still queue when the user updates.
 """
 
 import asyncio
@@ -46,9 +51,18 @@ def list_pending(config: vm.VestaConfig) -> list[tuple[str, str]]:
     return pending
 
 
-async def queue_migrations(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.VestaConfig) -> int:
-    """Queue every pending migration as a system message. Returns the count queued."""
+async def queue_migrations(queue: asyncio.Queue[tuple[str, bool]], *, config: vm.VestaConfig, first_start: bool = False) -> int:
+    """Queue every pending migration as a system message. Returns the count queued. On first start, mark all pending migrations applied without queuing them — the agent is born already converged."""
     pending = list_pending(config)
+    if first_start:
+        if pending:
+            path = applied_file(config)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a") as f:
+                for name, _ in pending:
+                    f.write(f"{name}\n")
+            logger.startup(f"Pre-marked {len(pending)} migration(s) as applied (fresh agent)")
+        return 0
     for name, content in pending:
         prompt = f"[Migration: {name}]\n\n{content.strip()}"
         await queue.put((prompt, False))
