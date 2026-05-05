@@ -14,6 +14,10 @@ message via IMAP and chain a proper reply. The outbound message gets
 original sender as default recipient, and a quoted version of the
 original body appended below the user's text. Suppress the quote with
 ``--no-quote``.
+
+CC and BCC: pass ``--cc`` and ``--bcc`` (each repeatable) to add
+recipients. On replies the original CC list is preserved unless the
+user passes ``--cc`` explicitly, in which case the explicit list wins.
 """
 from __future__ import annotations
 
@@ -117,6 +121,8 @@ def fetch_original(
         "message_id": (parsed.get("Message-ID") or "").strip(),
         "references": (parsed.get("References") or "").strip(),
         "from": _decode(parsed.get("From")),
+        "to": _decode(parsed.get("To")),
+        "cc": _decode(parsed.get("Cc")),
         "subject": _decode(parsed.get("Subject")),
         "date": parsed.get("Date") or "",
         "body": _extract_plain_body(parsed),
@@ -130,6 +136,8 @@ def send(
     from_name: str | None = None,
     account: str | None = None,
     *,
+    cc: list[str] | None = None,
+    bcc: list[str] | None = None,
     reply_to_uid: str | None = None,
     reply_folder: str = "INBOX",
     quote: bool = True,
@@ -146,6 +154,10 @@ def send(
             "set smtp_host in the per-account config.json or EMAIL_CLIENT_SMTP_HOST"
         )
     display = from_name or _env("EMAIL_CLIENT_FROM_NAME", user.split("@", 1)[0])
+
+    cc_list = list(cc or [])
+    bcc_list = list(bcc or [])
+    cc_explicit = cc is not None and len(cc) > 0
 
     in_reply_to = ""
     references = ""
@@ -168,6 +180,8 @@ def send(
                     "cannot default --to from the original message; no usable From header"
                 )
             to = sender_addr
+        if not cc_explicit and orig.get("cc"):
+            cc_list = [c.strip() for c in orig["cc"].split(",") if c.strip()]
         if quote:
             body = (body or "") + _quote_body(orig["body"], orig["from"], orig["date"])
 
@@ -179,6 +193,10 @@ def send(
     msg = EmailMessage()
     msg["From"] = f"{display} <{user}>"
     msg["To"] = to
+    if cc_list:
+        msg["Cc"] = ", ".join(cc_list)
+    if bcc_list:
+        msg["Bcc"] = ", ".join(bcc_list)
     msg["Subject"] = subject
     if in_reply_to:
         msg["In-Reply-To"] = in_reply_to
@@ -231,6 +249,18 @@ def main():
         "case the original sender is the default)",
     )
     ap.add_argument(
+        "--cc",
+        action="append",
+        default=None,
+        help="CC recipient; pass multiple times for multiple addresses",
+    )
+    ap.add_argument(
+        "--bcc",
+        action="append",
+        default=None,
+        help="BCC recipient; pass multiple times for multiple addresses",
+    )
+    ap.add_argument(
         "--subject",
         default=None,
         help="subject (required unless --reply-to-uid is set, in which "
@@ -271,6 +301,8 @@ def main():
         args.body,
         args.from_name,
         account=args.account,
+        cc=args.cc,
+        bcc=args.bcc,
         reply_to_uid=args.reply_to_uid,
         reply_folder=args.reply_folder,
         quote=not args.no_quote,
