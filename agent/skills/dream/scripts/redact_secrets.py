@@ -14,12 +14,13 @@ PATTERNS = [
     r"gh[po]_[A-Za-z0-9]{36,}",
     r"glpat-[A-Za-z0-9_-]{20,}",
     r"AKIA[0-9A-Z]{16}",
+    r"PMAK-[A-Za-z0-9-]{20,}",
     r"eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}",
     r"BEGIN [A-Z ]+ PRIVATE KEY",
     r"(?:password|secret|api[_-]?key)[\"': =]+[^ \"']{4,}",
     r"(?:mongodb(?:\+srv)?|postgres(?:ql)?|mysql|redis)://[^ \"']+",
 ]
-REGEX = re.compile("|".join(PATTERNS))
+REGEX = re.compile("|".join(PATTERNS), re.IGNORECASE)
 
 
 def main() -> int:
