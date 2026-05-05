@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Provider profiles for the imap-mail skill.
+"""Provider profiles for the email-client skill.
 
 Each provider profile describes how to talk IMAP/SMTP to one mail
 host: where to connect, which OAuth client to use (if any), which
@@ -166,26 +166,55 @@ def get_profile(name: str) -> dict:
     return dict(PROVIDERS[name])
 
 
+_LEGACY_WARNED: set[str] = set()
+
+
+def _env_with_legacy(env: dict, key: str) -> str | None:
+    """Return env[key], falling back to the legacy IMAP_MAIL_<rest> name.
+
+    Emits a one-time deprecation warning to stderr when the fallback is
+    used. The new EMAIL_CLIENT_* names always win.
+    """
+    val = env.get(key)
+    if val:
+        return val
+    if not key.startswith("EMAIL_CLIENT_"):
+        return None
+    legacy = "IMAP_MAIL_" + key[len("EMAIL_CLIENT_") :]
+    legacy_val = env.get(legacy)
+    if legacy_val and legacy not in _LEGACY_WARNED:
+        import sys
+
+        _LEGACY_WARNED.add(legacy)
+        print(
+            f"email-client: warning: {legacy} is deprecated, "
+            f"rename to {key} in your shell rc",
+            file=sys.stderr,
+        )
+    return legacy_val
+
+
 def apply_env_overrides(profile: dict, env: dict) -> dict:
-    """Overlay ``IMAP_MAIL_*`` env vars onto a provider profile.
+    """Overlay ``EMAIL_CLIENT_*`` (or legacy ``IMAP_MAIL_*``) env vars
+    onto a provider profile.
 
     Any field set via env wins. Unset fields keep the profile default.
-    The keys honored here mirror the existing v0.1 env-var contract so
-    a user with ``IMAP_MAIL_HOST=...`` set in ``~/.bashrc`` keeps
-    working unchanged.
+    The keys honored here mirror the existing env-var contract so a
+    user with ``IMAP_MAIL_HOST=...`` set in ``~/.bashrc`` keeps working
+    for one release with a deprecation warning.
     """
     p = dict(profile)
     overrides = {
-        "imap_host": env.get("IMAP_MAIL_HOST"),
-        "smtp_host": env.get("IMAP_MAIL_SMTP_HOST"),
-        "smtp_port": env.get("IMAP_MAIL_SMTP_PORT"),
-        "oauth_client_id": env.get("IMAP_MAIL_OAUTH_CLIENT_ID"),
-        "oauth_authority": env.get("IMAP_MAIL_OAUTH_AUTHORITY"),
+        "imap_host": _env_with_legacy(env, "EMAIL_CLIENT_HOST"),
+        "smtp_host": _env_with_legacy(env, "EMAIL_CLIENT_SMTP_HOST"),
+        "smtp_port": _env_with_legacy(env, "EMAIL_CLIENT_SMTP_PORT"),
+        "oauth_client_id": _env_with_legacy(env, "EMAIL_CLIENT_OAUTH_CLIENT_ID"),
+        "oauth_authority": _env_with_legacy(env, "EMAIL_CLIENT_OAUTH_AUTHORITY"),
     }
     for k, v in overrides.items():
         if v:
             p[k] = int(v) if k.endswith("_port") else v
-    scopes = env.get("IMAP_MAIL_OAUTH_SCOPES")
+    scopes = _env_with_legacy(env, "EMAIL_CLIENT_OAUTH_SCOPES")
     if scopes:
         p["oauth_scopes"] = [s for s in scopes.split() if s]
     return p
@@ -195,16 +224,17 @@ def resolve_provider(env: dict) -> tuple[str, dict]:
     """Pick a provider for the current environment.
 
     Resolution order:
-      1. ``IMAP_MAIL_PROVIDER`` env var (explicit override)
-      2. Auto-detect from ``IMAP_MAIL_USER``'s domain
+      1. ``EMAIL_CLIENT_PROVIDER`` (or legacy ``IMAP_MAIL_PROVIDER``)
+      2. Auto-detect from ``EMAIL_CLIENT_USER`` (or legacy
+         ``IMAP_MAIL_USER``)'s domain
       3. Fall back to ``microsoft-personal`` for backwards compat with
-         the v0.1 release where the skill only supported Microsoft.
+         the original release where the skill only supported Microsoft.
 
     Returns ``(provider_name, profile_with_overrides)``.
     """
-    name = env.get("IMAP_MAIL_PROVIDER", "").strip()
+    name = (_env_with_legacy(env, "EMAIL_CLIENT_PROVIDER") or "").strip()
     if not name:
-        user = env.get("IMAP_MAIL_USER", "")
+        user = _env_with_legacy(env, "EMAIL_CLIENT_USER") or ""
         name = detect_provider(user) or "microsoft-personal"
     profile = apply_env_overrides(get_profile(name), env)
     return name, profile
